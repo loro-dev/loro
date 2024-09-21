@@ -105,6 +105,12 @@ mod text_chunk {
         }
 
         #[inline]
+        #[allow(unused)]
+        pub fn id_full(&self) -> IdFull {
+            self.id
+        }
+
+        #[inline]
         pub fn bytes(&self) -> &BytesSlice {
             &self.bytes
         }
@@ -390,9 +396,19 @@ pub(crate) enum RichtextStateChunk {
     },
 }
 
+impl Default for RichtextStateChunk {
+    fn default() -> Self {
+        Self::new_empty()
+    }
+}
+
 impl RichtextStateChunk {
     pub fn new_text(s: BytesSlice, id: IdFull) -> Self {
         Self::Text(TextChunk::new(s, id))
+    }
+
+    pub fn new_empty() -> Self {
+        Self::Text(TextChunk::new_empty())
     }
 
     pub fn new_style(style: Arc<StyleOp>, anchor_type: AnchorType) -> Self {
@@ -431,6 +447,19 @@ impl RichtextStateChunk {
         }
     }
 
+    pub(crate) fn counter(&self) -> Counter {
+        match self {
+            RichtextStateChunk::Text(t) => t.id().counter,
+            RichtextStateChunk::Style { style, anchor_type } => match anchor_type {
+                AnchorType::Start => style.id().counter,
+                AnchorType::End => {
+                    let id = style.id();
+                    id.counter + 1
+                }
+            },
+        }
+    }
+
     pub fn entity_range_to_event_range(&self, range: Range<usize>) -> Range<usize> {
         match self {
             RichtextStateChunk::Text(t) => t.entity_range_to_event_range(range),
@@ -442,6 +471,8 @@ impl RichtextStateChunk {
         }
     }
 }
+
+impl loro_delta::delta_trait::DeltaValue for RichtextStateChunk {}
 
 impl DeltaValue for RichtextStateChunk {
     fn value_extend(&mut self, other: Self) -> Result<(), Self> {

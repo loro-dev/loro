@@ -9,6 +9,7 @@ publish = false
 [dependencies]
 loro = { path = "../loro", features = ["counter"], package = "loro" }
 loro-without-counter = { git = "https://github.com/loro-dev/loro.git", rev = "90470658435ec4c62b5af59ebb82fe9e1f5aa761", package = "loro", default-features = false }
+loro-016 = { git = "https://github.com/loro-dev/loro.git", tag="loro-crdt@0.16.7", package = "loro"  }
 fxhash = { workspace = true }
 enum_dispatch = { workspace = true }
 enum-as-inner = { workspace = true }
@@ -18,6 +19,11 @@ arbitrary = "1"
 tabled = "0.10"
 rand = "0.8.5"
 serde_json = "1"
+num_cpus = "1.16.0"
+rayon = "1.10.0"
+bytes = "1"
+ensure-cov = { workspace = true }
+pretty_assertions = "1.4.0"
 
 [dev-dependencies]
 ctor = "0.2"

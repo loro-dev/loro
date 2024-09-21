@@ -31,6 +31,12 @@ test = false
 doc = false
 
 [[bin]]
+name = "gc_fuzz"
+path = "fuzz_targets/gc_fuzz.rs"
+test = false
+doc = false
+
+[[bin]]
 name = "mov"
 path = "fuzz_targets/mov.rs"
 test = false
@@ -51,5 +57,17 @@ doc = false
 [[bin]]
 name = "text-update"
 path = "fuzz_targets/text-update.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "kv_store"
+path = "fuzz_targets/kv_store.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "random_import"
+path = "fuzz_targets/random_import.rs"
 test = false
 doc = false

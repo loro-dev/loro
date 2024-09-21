@@ -43,6 +43,11 @@ impl LoroCounter {
     pub fn get_value(&self) -> f64 {
         self.handler.get_value().into_double().unwrap()
     }
+
+    /// Get the current value of the counter
+    pub fn get(&self) -> f64 {
+        self.handler.get_value().into_double().unwrap()
+    }
 }
 
 impl SealedTrait for LoroCounter {}

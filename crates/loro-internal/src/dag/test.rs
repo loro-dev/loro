@@ -1,7 +1,6 @@
-#![cfg(test)]
-
+use loro_common::HasCounter;
 use proptest::prelude::*;
-use std::cmp::Ordering;
+use std::{cmp::Ordering, sync::Arc};
 
 use super::*;
 use crate::{
@@ -16,7 +15,7 @@ struct TestNode {
     id: ID,
     lamport: Lamport,
     len: usize,
-    deps: Vec<ID>,
+    deps: Arc<Vec<ID>>,
 }
 
 impl TestNode {
@@ -24,7 +23,7 @@ impl TestNode {
         Self {
             id,
             lamport,
-            deps,
+            deps: Arc::new(deps),
             len,
         }
     }
@@ -43,7 +42,7 @@ impl Sliceable for TestNode {
             lamport: self.lamport + from as Lamport,
             len: to - from,
             deps: if from > 0 {
-                vec![self.id.inc(from as Counter - 1)]
+                Arc::new(vec![self.id.inc(from as Counter - 1)])
             } else {
                 self.deps.clone()
             },
@@ -60,6 +59,12 @@ impl HasLamport for TestNode {
 impl HasId for TestNode {
     fn id_start(&self) -> ID {
         self.id
+    }
+}
+
+impl HasCounter for TestNode {
+    fn ctr_start(&self) -> Counter {
+        self.id.counter
     }
 }
 
@@ -87,7 +92,7 @@ impl TestDag {
 impl Dag for TestDag {
     type Node = TestNode;
 
-    fn get(&self, id: ID) -> Option<&Self::Node> {
+    fn get(&self, id: ID) -> Option<Self::Node> {
         let arr = self.nodes.get(&id.peer)?;
         arr.binary_search_by(|node| {
             if node.id.counter > id.counter {
@@ -98,7 +103,7 @@ impl Dag for TestDag {
                 Ordering::Equal
             }
         })
-        .map_or(None, |x| Some(&arr[x]))
+        .map_or(None, |x| Some(arr[x].clone()))
     }
 
     fn frontier(&self) -> &[ID] {
@@ -274,6 +279,7 @@ fn test_dag() {
     // println!("{}", b.mermaid());
     assert_eq!(
         b.find_common_ancestor(&[ID::new(0, 2)], &[ID::new(1, 1)])
+            .0
             .first()
             .copied(),
         None,
@@ -682,9 +688,14 @@ mod find_common_ancestors {
         a.push(5);
         let actual = a
             .find_common_ancestor(&[ID::new(0, 2)], &[ID::new(0, 4)])
+            .0
             .first()
             .copied();
         assert_eq!(actual, Some(ID::new(0, 2)));
+        assert_eq!(
+            a.find_common_ancestor(&[ID::new(0, 2)], &[ID::new(0, 4)]).1,
+            DiffMode::Linear
+        );
     }
 
     #[test]
@@ -696,6 +707,7 @@ mod find_common_ancestors {
         a.merge(&b);
         let actual = a
             .find_common_ancestor(&[ID::new(0, 0)], &[ID::new(1, 0)])
+            .0
             .first()
             .copied();
         assert_eq!(actual, None);
@@ -710,9 +722,14 @@ mod find_common_ancestors {
         // should no exist any common ancestor between a and b
         let actual = a
             .find_common_ancestor(&[ID::new(0, 0)], &[ID::new(1, 0)])
+            .0
             .first()
             .copied();
         assert_eq!(actual, None);
+        assert_eq!(
+            a.find_common_ancestor(&[ID::new(0, 0)], &[ID::new(1, 0)]).1,
+            DiffMode::Checkout
+        )
     }
 
     #[test]
@@ -728,11 +745,13 @@ mod find_common_ancestors {
         println!("{}", a.mermaid());
         let actual = a
             .find_common_ancestor(&[ID::new(0, 4)], &[ID::new(0, 1), ID::new(1, 1)])
+            .0
             .first()
             .copied();
         assert_eq!(actual, None);
         let actual = a
             .find_common_ancestor(&[ID::new(0, 4)], &[ID::new(1, 1)])
+            .0
             .first()
             .copied();
         assert_eq!(actual, None);
@@ -750,6 +769,7 @@ mod find_common_ancestors {
         println!("{}", b.mermaid());
         assert_eq!(
             b.find_common_ancestor(&[ID::new(0, 3)], &[ID::new(1, 8)])
+                .0
                 .first()
                 .copied(),
             Some(ID::new(0, 2))
@@ -780,12 +800,14 @@ mod find_common_ancestors {
         println!("{}", a1.mermaid());
         assert_eq!(
             a1.find_common_ancestor(&[ID::new(0, 3)], &[ID::new(1, 4)])
+                .0
                 .first()
                 .copied(),
             Some(ID::new(0, 2))
         );
         assert_eq!(
             a1.find_common_ancestor(&[ID::new(2, 3)], &[ID::new(1, 3)])
+                .0
                 .iter()
                 .copied()
                 .collect::<Vec<_>>(),
@@ -948,7 +970,7 @@ mod find_common_ancestors_proptest {
         let a = dags[0].nodes.get(&0).unwrap().last().unwrap().id_last();
         let b = dags[1].nodes.get(&1).unwrap().last().unwrap().id_last();
         let actual = dags[0].find_common_ancestor(&[a], &[b]);
-        prop_assert_eq!(&**actual, &[expected]);
+        prop_assert_eq!(&**actual.0, &[expected]);
         Ok(())
     }
 
@@ -1096,7 +1118,7 @@ mod find_common_ancestors_proptest {
         dag_a.merge(dag_b);
         let a = dag_a.get_last_node().id;
         let b = dag_b.get_last_node().id;
-        let mut actual = dag_a.find_common_ancestor(&[a], &[b]);
+        let mut actual = dag_a.find_common_ancestor(&[a], &[b]).0;
         actual.sort();
         let actual = actual.iter().copied().collect::<Vec<_>>();
         if actual != expected {
@@ -1110,6 +1132,8 @@ mod find_common_ancestors_proptest {
 
 #[cfg(test)]
 mod dag_partial_iter {
+    use loro_common::HasCounterSpan;
+
     use crate::{dag::iter::IterReturn, tests::PROPTEST_FACTOR_10};
 
     use super::*;
@@ -1164,15 +1188,8 @@ mod dag_partial_iter {
                 }
                 let mut target_vv = vv.clone();
                 target_vv.forward(&diff_spans);
-                let mut vv = vv.clone();
 
-                for IterReturn {
-                    data,
-                    forward,
-                    retreat,
-                    slice,
-                } in a.iter_causal(&[node.id], diff_spans.clone())
-                {
+                for IterReturn { data, slice } in a.iter_causal(&[node.id], diff_spans.clone()) {
                     let sliced = data.slice(slice.start as usize, slice.end as usize);
                     {
                         // println!("-----------------------------------");
@@ -1182,8 +1199,6 @@ mod dag_partial_iter {
                         .get(&data.id.peer)
                         .unwrap()
                         .contains(sliced.id.counter));
-                    vv.forward(&forward);
-                    vv.retreat(&retreat);
                     let mut data_vv = map.get(&data.id).unwrap().clone();
                     data_vv.extend_to_include(IdSpan::new(
                         sliced.id.peer,
@@ -1193,9 +1208,8 @@ mod dag_partial_iter {
                     data_vv.shrink_to_exclude(IdSpan::new(
                         sliced.id.peer,
                         sliced.id.counter,
-                        sliced.id_end().counter,
+                        sliced.ctr_end(),
                     ));
-                    assert_eq!(vv, data_vv, "{} {}", data.id, sliced.id);
                 }
             }
         }

@@ -1,5 +1,103 @@
 # Changelog
 
+## 1.0.0-alpha.1
+
+### Patch Changes
+
+- ### 🚀 Features
+
+  - Get shallow value of doc (#463)
+  - Add state only snapshot & refine check slow test
+  - Add new cid method to js binding
+  - Jsonpath experimental support (#466)
+
+  ### 🐛 Bug Fixes
+
+  - Raise error if perform action on a deleted container (#465)
+  - Raise error if moving a deleted node
+  - Export snapshot error on a gc doc
+
+  ### 🚜 Refactor
+
+  - Tree contains & isDeleted (#467)
+
+  ### 🧪 Testing
+
+  - Check state correctness on trimmed doc
+
+- Updated dependencies
+  - loro-wasm@1.0.0-alpha.1
+
+## 1.0.0-alpha.0
+
+- Better encode schema that can be 100x faster
+- Less memory usage
+- You can trim needless history in snapshot now
+- Better architecture and extensibility
+
+## 0.16.12
+
+### Patch Changes
+
+- 46e21fc: Fix tree move issues
+- Updated dependencies [46e21fc]
+  - loro-wasm@0.16.12
+
+## 0.16.11
+
+### Patch Changes
+
+- dce00ab: Make loro-wasm work in cloudflare worker
+- Updated dependencies [dce00ab]
+  - loro-wasm@0.16.11
+
+## 0.16.10
+
+### Patch Changes
+
+- 7cf54e8: Fix batch importing with snapshot
+- Updated dependencies [7cf54e8]
+  - loro-wasm@0.16.10
+
+## 0.16.9
+
+### Patch Changes
+
+- a761430: Fix build script
+- Updated dependencies [a761430]
+  - loro-wasm@0.16.9
+
+## 0.16.8
+
+### Patch Changes
+
+- 38b4bcf: Add text update API
+
+  - Remove the patch for crypto
+  - Add text update API (#404)
+  - Check invalid root container name (#411)
+
+  ### 🐛 Bug Fixes
+
+  - Workaround lldb bug make loro crate debuggable (#414)
+  - Delete the **bring back** tree node from the undo container remap (#423)
+
+  ### 📚 Documentation
+
+  - Fix typo
+  - Refine docs about event (#417)
+
+  ### 🎨 Styling
+
+  - Use clippy to perf code (#407)
+
+  ### ⚙️ Miscellaneous Tasks
+
+  - Add test tools (#410)
+
+- Updated dependencies [38b4bcf]
+  - loro-wasm@0.16.8
+
 ## 0.16.7
 
 ### Patch Changes

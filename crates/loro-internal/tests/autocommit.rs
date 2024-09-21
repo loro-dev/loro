@@ -1,6 +1,7 @@
 use loro_common::ID;
 use loro_internal::{version::Frontiers, HandlerTrait, LoroDoc, TextHandler, ToJson};
 use serde_json::json;
+use tracing::trace;
 
 #[test]
 fn auto_commit() {
@@ -38,6 +39,11 @@ fn auto_commit_list() {
     text.insert(0, "world").unwrap();
     let value = doc_a.get_deep_value();
     assert_eq!(value.to_json_value(), json!({"list": ["world", "hello"]}))
+}
+
+#[ctor::ctor]
+fn init() {
+    dev_utils::setup_test_log();
 }
 
 #[test]

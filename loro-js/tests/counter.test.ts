@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CounterDiff, Loro } from "../src";
+import { CounterDiff, LoroDoc } from "../src";
 
 function oneMs(): Promise<void> {
   return new Promise((r) => setTimeout(r));
@@ -7,7 +7,7 @@ function oneMs(): Promise<void> {
 
 describe("counter", () => {
   it("increment", () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const counter = doc.getCounter("counter");
     counter.increment(1);
     counter.increment(2);
@@ -16,7 +16,7 @@ describe("counter", () => {
   });
 
    it("encode", async () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const counter = doc.getCounter("counter");
     counter.increment(1);
     counter.increment(2);
@@ -25,13 +25,13 @@ describe("counter", () => {
     const updates = doc.exportFrom();
     const snapshot = doc.exportSnapshot();
     const json = doc.exportJsonUpdates();
-    const doc2 = new Loro();
+    const doc2 = new LoroDoc();
     doc2.import(updates);
     expect(doc2.toJSON()).toStrictEqual(doc.toJSON());
-    const doc3 = new Loro();
+    const doc3 = new LoroDoc();
     doc3.import(snapshot);
     expect(doc3.toJSON()).toStrictEqual(doc.toJSON());
-    const doc4 = new Loro();
+    const doc4 = new LoroDoc();
     doc4.importJsonUpdates(json);
     expect(doc4.toJSON()).toStrictEqual(doc.toJSON());
   });
@@ -39,7 +39,7 @@ describe("counter", () => {
 
 describe("counter event", () => {
   it("event", async () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     let triggered = false;
     doc.subscribe((e) => {
       triggered = true;

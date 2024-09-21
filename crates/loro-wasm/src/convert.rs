@@ -10,7 +10,7 @@ use wasm_bindgen::JsValue;
 
 use crate::{
     frontiers_to_ids, Container, Cursor, JsContainer, JsImportBlobMetadata, LoroCounter, LoroList,
-    LoroMap, LoroMovableList, LoroText, LoroTree,
+    LoroMap, LoroMovableList, LoroText, LoroTree, VersionVector,
 };
 use wasm_bindgen::__rt::IntoJsResult;
 use wasm_bindgen::convert::RefFromWasmAbi;
@@ -76,6 +76,36 @@ pub(crate) fn js_to_container(js: JsContainer) -> Result<Container, JsValue> {
     };
 
     Ok(container)
+}
+
+pub(crate) fn js_to_version_vector(
+    js: JsValue,
+) -> Result<wasm_bindgen::__rt::Ref<'static, VersionVector>, JsValue> {
+    if !js.is_object() {
+        return Err(JsValue::from_str(&format!(
+            "Value supplied is not an object, but {:?}",
+            js
+        )));
+    }
+
+    if js.is_null() || js.is_undefined() {
+        return Err(JsValue::from_str(&format!(
+            "Value supplied is not an object, but {:?}",
+            js
+        )));
+    }
+
+    if !js.is_object() {
+        return Err(JsValue::from_str("Expected an object or Uint8Array"));
+    }
+
+    let Ok(ptr) = Reflect::get(&js, &JsValue::from_str("__wbg_ptr")) else {
+        return Err(JsValue::from_str("Cannot find pointer field"));
+    };
+
+    let ptr_u32: u32 = ptr.as_f64().unwrap() as u32;
+    let vv = unsafe { VersionVector::ref_from_abi(ptr_u32) };
+    Ok(vv)
 }
 
 pub(crate) fn resolved_diff_to_js(value: &Diff, doc: &Arc<LoroDoc>) -> JsValue {

@@ -1,17 +1,21 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   Container,
+  Diff,
   getType,
   isContainer,
-  Loro,
+  LoroDoc,
   LoroList,
   LoroMap,
   LoroText,
   LoroTree,
+  VersionVector,
+  MapDiff,
+  TextDiff,
 } from "../src";
 
 it("basic example", () => {
-  const doc = new Loro();
+  const doc = new LoroDoc();
   const list = doc.getList("list");
   list.insert(0, "A");
   list.insert(1, "B");
@@ -53,7 +57,7 @@ it("basic example", () => {
 });
 
 it("get or create on Map", () => {
-  const docA = new Loro();
+  const docA = new LoroDoc();
   const map = docA.getMap("map");
   const container = map.getOrCreateContainer("list", new LoroList());
   container.insert(0, 1);
@@ -66,8 +70,8 @@ it("get or create on Map", () => {
 });
 
 it("basic sync example", () => {
-  const docA = new Loro();
-  const docB = new Loro();
+  const docA = new LoroDoc();
+  const docB = new LoroDoc();
   const listA = docA.getList("list");
   listA.insert(0, "A");
   listA.insert(1, "B");
@@ -91,14 +95,14 @@ it("basic sync example", () => {
 });
 
 it("basic events", () => {
-  const doc = new Loro();
-  doc.subscribe((event) => {});
+  const doc = new LoroDoc();
+  doc.subscribe((event) => { });
   const list = doc.getList("list");
 });
 
 describe("list", () => {
   it("insert containers", () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const list = doc.getList("list");
     const map = list.insertContainer(0, new LoroMap());
     map.set("key", "value");
@@ -108,7 +112,7 @@ describe("list", () => {
   });
 
   it("toArray", () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const list = doc.getList("list");
     list.insert(0, 1);
     list.insert(1, 2);
@@ -123,7 +127,7 @@ describe("list", () => {
 
 describe("map", () => {
   it("get child container", () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const map = doc.getMap("map");
     const list = map.setContainer("key", new LoroList());
     list.insert(0, 1);
@@ -132,7 +136,7 @@ describe("map", () => {
   });
 
   it("set large int", () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const map = doc.getMap("map");
     map.set("key", 2147483699);
     expect(map.get("key")).toBe(2147483699);
@@ -141,12 +145,12 @@ describe("map", () => {
 
 describe("import", () => {
   it("pending", () => {
-    const a = new Loro();
+    const a = new LoroDoc();
     a.getText("text").insert(0, "a");
-    const b = new Loro();
+    const b = new LoroDoc();
     b.import(a.exportFrom());
     b.getText("text").insert(1, "b");
-    const c = new Loro();
+    const c = new LoroDoc();
     c.import(b.exportFrom());
     c.getText("text").insert(2, "c");
 
@@ -161,9 +165,9 @@ describe("import", () => {
   });
 
   it("import by frontiers", () => {
-    const a = new Loro();
+    const a = new LoroDoc();
     a.getText("text").insert(0, "a");
-    const b = new Loro();
+    const b = new LoroDoc();
     b.import(a.exportFrom());
     b.getText("text").insert(1, "b");
     b.getList("list").insert(0, [1, 2]);
@@ -173,18 +177,18 @@ describe("import", () => {
   });
 
   it("from snapshot", () => {
-    const a = new Loro();
+    const a = new LoroDoc();
     a.getText("text").insert(0, "hello");
     const bytes = a.exportSnapshot();
-    const b = Loro.fromSnapshot(bytes);
+    const b = LoroDoc.fromSnapshot(bytes);
     b.getText("text").insert(0, "123");
     expect(b.toJSON()).toStrictEqual({ text: "123hello" });
   });
 
   it("importBatch Error #181", () => {
-    const docA = new Loro();
+    const docA = new LoroDoc();
     const updateA = docA.exportSnapshot();
-    const docB = new Loro();
+    const docB = new LoroDoc();
     docB.importUpdateBatch([updateA]);
     docB.getText("text").insert(0, "hello");
     docB.commit();
@@ -193,16 +197,16 @@ describe("import", () => {
 
 describe("map", () => {
   it("keys", () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const map = doc.getMap("map");
     map.set("foo", "bar");
     map.set("baz", "bar");
     const entries = map.keys();
-    expect(entries).toStrictEqual(["foo", "baz"]);
+    expect(entries).toStrictEqual(["baz", "foo"]);
   });
 
   it("values", () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const map = doc.getMap("map");
     map.set("foo", "bar");
     map.set("baz", "bar");
@@ -211,7 +215,7 @@ describe("map", () => {
   });
 
   it("entries", () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const map = doc.getMap("map");
     map.set("foo", "bar");
     map.set("baz", "bar");
@@ -219,23 +223,23 @@ describe("map", () => {
     map.delete("new");
     const entries = map.entries();
     expect(entries).toStrictEqual([
-      ["foo", "bar"],
       ["baz", "bar"],
+      ["foo", "bar"],
     ]);
   });
 
   it("entries should return container handlers", () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const map = doc.getMap("map");
     map.setContainer("text", new LoroText());
     map.set("foo", "bar");
     const entries = map.entries();
-    expect((entries[0][1]! as Container).kind() === "Text").toBeTruthy();
+    expect((entries[1][1]! as Container).kind() === "Text").toBeTruthy();
   });
 });
 
 it("handlers should still be usable after doc is dropped", () => {
-  const doc = new Loro();
+  const doc = new LoroDoc();
   const text = doc.getText("text");
   const list = doc.getList("list");
   const map = doc.getMap("map");
@@ -249,9 +253,9 @@ it("handlers should still be usable after doc is dropped", () => {
 });
 
 it("get change with given lamport", () => {
-  const doc1 = new Loro();
+  const doc1 = new LoroDoc();
   doc1.setPeerId(1);
-  const doc2 = new Loro();
+  const doc2 = new LoroDoc();
   doc2.setPeerId(2);
   doc1.getText("text").insert(0, "01234");
   doc2.import(doc1.exportFrom());
@@ -304,7 +308,7 @@ it("isContainer", () => {
   expect(isContainer({})).toBeFalsy();
   expect(isContainer(undefined)).toBeFalsy();
   expect(isContainer(null)).toBeFalsy();
-  const doc = new Loro();
+  const doc = new LoroDoc();
   const t = doc.getText("t");
   expect(isContainer(t)).toBeTruthy();
   expect(isContainer(doc.getMap("m"))).toBeTruthy();
@@ -318,7 +322,7 @@ it("isContainer", () => {
 
 it("getValueType", () => {
   // Type tests
-  const doc = new Loro();
+  const doc = new LoroDoc();
   const t = doc.getText("t");
   expectTypeOf(getType(t)).toEqualTypeOf<"Text">();
   expect(getType(t)).toBe("Text");
@@ -346,7 +350,7 @@ it("getValueType", () => {
 });
 
 it("enable timestamp", () => {
-  const doc = new Loro();
+  const doc = new LoroDoc();
   doc.setPeerId(1);
   doc.getText("123").insert(0, "123");
   doc.commit();
@@ -360,12 +364,12 @@ it("enable timestamp", () => {
   doc.commit();
   {
     const c = doc.getChangeAt({ peer: "1", counter: 4 });
-    expect(c.timestamp).toBeCloseTo(Date.now(), -1);
+    expect(c.timestamp).toBeCloseTo(Date.now() / 1000, -1);
   }
 });
 
 it("commit with specified timestamp", () => {
-  const doc = new Loro();
+  const doc = new LoroDoc();
   doc.setPeerId(1);
   doc.getText("123").insert(0, "123");
   doc.commit(undefined, 111);
@@ -375,7 +379,7 @@ it("commit with specified timestamp", () => {
 
 it("can control the mergeable interval", () => {
   {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     doc.setPeerId(1);
     doc.getText("123").insert(0, "1");
     doc.commit(undefined, 110);
@@ -385,19 +389,20 @@ it("can control the mergeable interval", () => {
   }
 
   {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     doc.setPeerId(1);
     doc.setChangeMergeInterval(10);
     doc.getText("123").insert(0, "1");
     doc.commit(undefined, 110);
     doc.getText("123").insert(0, "1");
     doc.commit(undefined, 120);
+    console.log(doc.getAllChanges());
     expect(doc.getAllChanges().get("1")?.length).toBe(2);
   }
 });
 
 it("get container parent", () => {
-  const doc = new Loro();
+  const doc = new LoroDoc();
   const m = doc.getMap("m");
   expect(m.parent()).toBeUndefined();
   const list = m.setContainer("t", new LoroList());
@@ -428,7 +433,7 @@ it("prelim support", () => {
     text.delete(1, 1);
     expect(list.toJSON()).toStrictEqual([{ "3": 2, "9": 9, text: "Hello" }]);
   }
-  const doc = new Loro();
+  const doc = new LoroDoc();
   const rootMap = doc.getMap("map");
   rootMap.setContainer("test", map); // new way to create sub-container
 
@@ -451,7 +456,7 @@ it("prelim support", () => {
 });
 
 it("get elem by path", () => {
-  const doc = new Loro();
+  const doc = new LoroDoc();
   const map = doc.getMap("map");
   map.set("key", 1);
   expect(doc.getByPath("map/key")).toBe(1);
@@ -462,7 +467,7 @@ it("get elem by path", () => {
 });
 
 it("fork", () => {
-  const doc = new Loro();
+  const doc = new LoroDoc();
   const map = doc.getMap("map");
   map.set("key", 1);
   const doc2 = doc.fork();
@@ -475,3 +480,105 @@ it("fork", () => {
   doc.import(doc2.exportSnapshot());
   expect(doc.toJSON()).toStrictEqual({ map: { key: 2 } });
 });
+
+describe("export", () => {
+  it("test export update", () => {
+    const doc = new LoroDoc();
+    doc.getText("text").insert(0, "123");
+    doc.commit();
+    const updates = doc.export({ mode: "update", start_vv: new VersionVector(null) });
+    const doc2 = new LoroDoc();
+    doc2.import(updates);
+    expect(doc2.toJSON()).toStrictEqual({ text: "123" });
+  })
+
+  it("test export snapshot", () => {
+    const doc = new LoroDoc();
+    doc.getText("text").insert(0, "123");
+    doc.commit();
+    const snapshot = doc.export({ mode: "snapshot" });
+    const doc2 = new LoroDoc();
+    doc2.import(snapshot);
+    expect(doc2.toJSON()).toStrictEqual({ text: "123" });
+  })
+
+  it("test export gc-snapshot", () => {
+    const doc = new LoroDoc();
+    doc.getText("text").insert(0, "123");
+    doc.commit();
+    const snapshot = doc.export({ mode: "gc-snapshot", frontiers: doc.oplogFrontiers() });
+    const doc2 = new LoroDoc();
+    doc2.import(snapshot);
+    expect(doc2.toJSON()).toStrictEqual({ text: "123" });
+  })
+
+  it("test export updates-in-range", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    doc.getText("text").insert(0, "123");
+    doc.commit();
+    const bytes = doc.export({ mode: "updates-in-range", spans: [{ id: { peer: "1", counter: 0 }, len: 1 }] });
+    const doc2 = new LoroDoc();
+    doc2.import(bytes);
+    expect(doc2.toJSON()).toStrictEqual({ text: "1" });
+  })
+})
+it("has correct map value #453", async () => {
+  {
+    const doc = new LoroDoc();
+    const text = doc.getText("text");
+    text.insert(0, "Hello");
+    text.mark({ start: 0, end: 2 }, "bold", { b: {} });
+    expect(text.toDelta()).toStrictEqual([
+      { insert: "He", attributes: { bold: { b: {} } } },
+      { insert: "llo" }
+    ]);
+    let diff: Diff | undefined;
+    let expectedDiff: TextDiff = {
+      "type": "text",
+      "diff": [
+        { insert: "He", attributes: { bold: { b: {} } } },
+        { insert: "llo" }
+      ]
+    };
+    doc.subscribe(e => {
+      console.log("Text", e);
+      diff = e.events[0].diff;
+    })
+    doc.commit();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(diff).toStrictEqual(expectedDiff);
+  }
+  {
+    const map = new LoroMap();
+    map.set('a', { b: {} });
+    expect(map.toJSON()).toStrictEqual({ a: { b: {} } });
+  }
+  {
+    const doc = new LoroDoc();
+    const map = doc.getMap("map");
+    map.set('a', { b: {} });
+    doc.commit();
+    expect(map.toJSON()).toStrictEqual({ a: { b: {} } });
+  }
+  {
+    const doc = new LoroDoc();
+    let diff: Diff | undefined;
+    const expectedDiff: MapDiff = {
+      "type": "map",
+      "updated": {
+        "a": {
+          "b": {}
+        }
+      }
+    };
+    doc.subscribe(e => {
+      diff = e.events[0].diff;
+    })
+    const map = doc.getMap("map");
+    map.set('a', { b: {} });
+    doc.commit();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(diff).toStrictEqual(expectedDiff);
+  }
+})

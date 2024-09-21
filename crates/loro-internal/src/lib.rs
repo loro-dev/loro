@@ -21,21 +21,25 @@ pub use loro::LoroDoc;
 pub use loro_common;
 pub use oplog::OpLog;
 pub use state::DocState;
+pub use state::TreeParentId;
 pub use undo::UndoManager;
+pub use utils::subscription::Subscription;
 pub mod awareness;
-pub mod cursor;
-pub mod loro;
-pub mod obs;
-pub mod oplog;
-pub mod txn;
-
 pub mod change;
 pub mod configure;
 pub mod container;
+pub mod cursor;
 pub mod dag;
 pub mod encoding;
 pub mod id;
+#[cfg(feature = "jsonpath")]
+pub mod jsonpath;
+pub mod kv_store;
+pub mod loro;
+pub mod obs;
 pub mod op;
+pub mod oplog;
+pub mod txn;
 pub mod version;
 
 mod error;
@@ -52,7 +56,9 @@ pub mod delta;
 pub use loro_delta;
 pub mod event;
 
-pub(crate) mod group;
+pub use error::{LoroError, LoroResult};
+pub mod estimated_size;
+pub(crate) mod history_cache;
 pub(crate) mod macros;
 pub(crate) mod state;
 pub mod undo;
@@ -62,7 +68,7 @@ pub(crate) mod value;
 pub(crate) use loro_common::InternalString;
 
 pub use container::ContainerType;
-pub use encoding::json_schema::op::*;
+pub use encoding::json_schema::json;
 pub use loro_common::{loro_value, to_value};
 pub use loro_common::{
     Counter, CounterSpan, IdSpan, Lamport, LoroError, LoroResult, LoroTreeError, PeerID, TreeID, ID,

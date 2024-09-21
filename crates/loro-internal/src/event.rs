@@ -11,8 +11,9 @@ use crate::{
         Delta, MapDelta, Meta, MovableListInnerDelta, ResolvedMapDelta, StyleMeta, TreeDelta,
         TreeDiff,
     },
+    diff_calc::DiffMode,
     handler::ValueOrHandler,
-    op::SliceRanges,
+    op::SliceWithId,
     utils::string_slice::StringSlice,
     InternalString,
 };
@@ -113,6 +114,8 @@ pub(crate) struct InternalContainerDiff {
     pub(crate) bring_back: bool,
     pub(crate) is_container_deleted: bool,
     pub(crate) diff: DiffVariant,
+    /// This mode decides how should we apply the diff.
+    pub(crate) diff_mode: DiffMode,
 }
 
 #[derive(Default, Debug, Clone, EnumAsInner)]
@@ -182,6 +185,12 @@ impl std::fmt::Display for Index {
     }
 }
 
+impl From<usize> for Index {
+    fn from(s: usize) -> Self {
+        Index::Seq(s)
+    }
+}
+
 impl TryFrom<&str> for Index {
     type Error = &'static str;
     fn try_from(s: &str) -> Result<Self, &'static str> {
@@ -229,9 +238,9 @@ impl DiffVariant {
 #[non_exhaustive]
 #[derive(Clone, Debug, EnumAsInner)]
 pub(crate) enum InternalDiff {
-    ListRaw(Delta<SliceRanges>),
+    ListRaw(Delta<SliceWithId>),
     /// This always uses entity indexes.
-    RichtextRaw(Delta<RichtextStateChunk>),
+    RichtextRaw(DeltaRope<RichtextStateChunk, ()>),
     Map(MapDelta),
     Tree(TreeDelta),
     MovableList(MovableListInnerDelta),
@@ -353,7 +362,9 @@ impl InternalDiff {
                 Ok(InternalDiff::ListRaw(a.compose(b)))
             }
             (InternalDiff::RichtextRaw(a), InternalDiff::RichtextRaw(b)) => {
-                Ok(InternalDiff::RichtextRaw(a.compose(b)))
+                let mut ans = a.clone();
+                ans.compose(&b);
+                Ok(InternalDiff::RichtextRaw(ans))
             }
             (InternalDiff::Map(a), InternalDiff::Map(b)) => Ok(InternalDiff::Map(a.compose(b))),
             (InternalDiff::Tree(a), InternalDiff::Tree(b)) => Ok(InternalDiff::Tree(a.compose(b))),

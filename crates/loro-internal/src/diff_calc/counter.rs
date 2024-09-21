@@ -4,25 +4,23 @@ use loro_common::{ContainerID, ID};
 
 use crate::{container::idx::ContainerIdx, event::InternalDiff, OpLog};
 
-use super::DiffCalculatorTrait;
+use super::{DiffCalculatorTrait, DiffMode};
 
 #[derive(Debug)]
 pub(crate) struct CounterDiffCalculator {
-    idx: ContainerIdx,
     ops: BTreeMap<ID, f64>,
 }
 
 impl CounterDiffCalculator {
-    pub(crate) fn new(idx: ContainerIdx) -> Self {
+    pub(crate) fn new(_idx: ContainerIdx) -> Self {
         Self {
-            idx,
             ops: BTreeMap::new(),
         }
     }
 }
 
 impl DiffCalculatorTrait for CounterDiffCalculator {
-    fn start_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector) {}
+    fn start_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector, _mode: DiffMode) {}
 
     fn apply_change(
         &mut self,
@@ -37,15 +35,16 @@ impl DiffCalculatorTrait for CounterDiffCalculator {
         );
     }
 
-    fn stop_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector) {}
+    fn finish_this_round(&mut self) {}
 
     fn calculate_diff(
         &mut self,
+        _idx: ContainerIdx,
         _oplog: &OpLog,
         from: &crate::VersionVector,
         to: &crate::VersionVector,
         _on_new_container: impl FnMut(&ContainerID),
-    ) -> InternalDiff {
+    ) -> (InternalDiff, DiffMode) {
         let mut diff = 0.;
         let (b, a) = from.diff_iter(to);
 
@@ -59,6 +58,7 @@ impl DiffCalculatorTrait for CounterDiffCalculator {
                 diff += c;
             }
         }
-        InternalDiff::Counter(diff)
+
+        (InternalDiff::Counter(diff), DiffMode::Linear)
     }
 }

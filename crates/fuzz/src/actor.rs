@@ -9,10 +9,12 @@ use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
 use loro::{
-    Container, ContainerID, ContainerType, Frontiers, LoroDoc, LoroValue, PeerID, UndoManager, ID,
+    Container, ContainerID, ContainerType, Frontiers, LoroDoc, LoroError, LoroValue, PeerID,
+    UndoManager, ID,
 };
+use pretty_assertions::assert_eq;
 use rand::{rngs::StdRng, Rng, SeedableRng};
-use tracing::info_span;
+use tracing::{info_span, trace};
 
 use crate::{
     container::{CounterActor, ListActor, MovableListActor, TextActor, TreeActor},
@@ -47,11 +49,11 @@ impl Actor {
         loro.set_peer_id(id).unwrap();
         let undo = UndoManager::new(&loro);
         let tracker = Arc::new(Mutex::new(ContainerTracker::Map(MapTracker::empty(
-            ContainerID::new_root("sys:root", ContainerType::Map).unwrap(),
+            ContainerID::new_root("sys:root", ContainerType::Map),
         ))));
         let cb_tracker = tracker.clone();
         loro.subscribe_root(Arc::new(move |e| {
-            info_span!("ApplyDiff", id = id).in_scope(|| {
+            info_span!("[Fuzz] tracker.apply_diff", id = id).in_scope(|| {
                 let mut tracker = cb_tracker.lock().unwrap();
                 tracker.apply_diff(e)
             });
@@ -119,26 +121,40 @@ impl Actor {
         }
 
         if let Some(idx) = idx {
+            if let Container::Tree(tree) = &idx {
+                tree.enable_fractional_index(0);
+            }
             self.add_new_container(idx);
         }
     }
 
-    pub fn undo(&mut self, undo_length: u32) {
+    pub fn test_undo(&mut self, undo_length: u32) {
+        if !self.undo_manager.undo.can_undo() {
+            return;
+        }
+
         self.loro.attach();
         let before_undo = self.loro.get_deep_value();
 
+        // trace!("BeforeUndo {:#?}", self.loro.get_deep_value_with_id());
         // println!("\n\nstart undo\n");
         for _ in 0..undo_length {
             self.undo_manager.undo.undo(&self.loro).unwrap();
+            self.loro.commit();
         }
+        // trace!("AfterUndo {:#?}", self.loro.get_deep_value_with_id());
 
         // println!("\n\nstart redo\n");
         for _ in 0..undo_length {
             self.undo_manager.undo.redo(&self.loro).unwrap();
+            self.loro.commit();
         }
+        // trace!("AfterRedo {:#?}", self.loro.get_deep_value_with_id());
 
         let after_undo = self.loro.get_deep_value();
-        assert_value_eq(&before_undo, &after_undo);
+
+        assert_value_eq(&before_undo, &after_undo, None);
+        self.undo_manager.undo.clear();
     }
 
     pub fn check_tracker(&self) {
@@ -147,7 +163,7 @@ impl Actor {
             let tracker = self.tracker.lock().unwrap();
             let loro_value = loro.get_deep_value();
             let tracker_value = tracker.to_value();
-            assert_value_eq(&loro_value, &tracker_value);
+            assert_value_eq(&loro_value, &tracker_value, None);
             self.targets.values().for_each(|t| t.check_tracker());
         });
     }
@@ -161,21 +177,46 @@ impl Actor {
     }
 
     pub fn check_history(&mut self) {
+        // let v = self.loro.with_state(|s| s.get_all_container_value_flat());
+        // tracing::info!("ContainerValue = {:#?}", v);
         // let json = self
         //     .loro
         //     .export_json_updates(&Default::default(), &self.loro.oplog_vv());
         // let string = serde_json::to_string_pretty(&json).unwrap();
         // tracing::info!("json = {}", string);
-
+        self.loro.check_state_correctness_slow();
         for (f, v) in self.history.iter() {
             let f = Frontiers::from(f);
             let from = &self.loro.state_frontiers();
             let to = &f;
-            tracing::info_span!("Checkout", ?from, ?to).in_scope(|| {
-                self.loro.checkout(&f).unwrap();
+            let peer = self.peer;
+            tracing::info_span!("Checkout", ?from, ?to, ?peer).in_scope(|| {
+                match self.loro.checkout(&f) {
+                    Ok(_) => {}
+                    Err(LoroError::SwitchToTrimmedVersion) => {
+                        return;
+                    }
+                    Err(e) => {
+                        panic!("{}", e);
+                    }
+                }
                 // self.loro.check_state_correctness_slow();
                 let actual = self.loro.get_deep_value();
-                assert_value_eq(v, &actual);
+                assert_value_eq(
+                    v,
+                    &actual,
+                    Some(&mut || {
+                        self.loro.with_oplog(|log| {
+                            log.check_dag_correctness();
+                        });
+                        format!(
+                            "loro.vv = {:#?}, loro updates = {:#?}",
+                            self.loro.oplog_vv(),
+                            self.loro
+                                .export_json_updates(&Default::default(), &self.loro.oplog_vv())
+                        )
+                    }),
+                );
             });
         }
         let f = self.rand_frontiers();
@@ -183,14 +224,21 @@ impl Actor {
             return;
         }
 
-        self.loro.checkout(&f).unwrap();
-        self.loro.check_state_correctness_slow();
-        // check snapshot correctness after checkout
-        self.loro.checkout_to_latest();
-        let new_doc = LoroDoc::new();
-        new_doc.import(&self.loro.export_snapshot()).unwrap();
-        new_doc.checkout(&f).unwrap();
-        new_doc.check_state_correctness_slow();
+        match self.loro.checkout(&f) {
+            Ok(_) => {
+                // check snapshot correctness after checkout
+                self.loro.check_state_correctness_slow();
+                self.loro.checkout_to_latest();
+                let new_doc = LoroDoc::new();
+                new_doc
+                    .import(&self.loro.export(loro::ExportMode::Snapshot))
+                    .unwrap();
+                new_doc.checkout(&f).unwrap();
+                new_doc.check_state_correctness_slow();
+            }
+            Err(LoroError::SwitchToTrimmedVersion) => {}
+            Err(e) => panic!("{}", e),
+        }
     }
 
     fn rand_frontiers(&mut self) -> Frontiers {
@@ -236,7 +284,7 @@ impl Actor {
                     "map".to_string(),
                     Value::empty_container(
                         ContainerType::Map,
-                        ContainerID::new_root("map", ContainerType::Map).unwrap(),
+                        ContainerID::new_root("map", ContainerType::Map),
                     ),
                 );
                 self.targets.insert(
@@ -249,7 +297,7 @@ impl Actor {
                     "list".to_string(),
                     Value::empty_container(
                         ContainerType::List,
-                        ContainerID::new_root("list", ContainerType::List).unwrap(),
+                        ContainerID::new_root("list", ContainerType::List),
                     ),
                 );
                 self.targets.insert(
@@ -262,7 +310,7 @@ impl Actor {
                     "movable_list".to_string(),
                     Value::empty_container(
                         ContainerType::MovableList,
-                        ContainerID::new_root("movable_list", ContainerType::MovableList).unwrap(),
+                        ContainerID::new_root("movable_list", ContainerType::MovableList),
                     ),
                 );
                 self.targets.insert(
@@ -275,7 +323,7 @@ impl Actor {
                     "text".to_string(),
                     Value::empty_container(
                         ContainerType::Text,
-                        ContainerID::new_root("text", ContainerType::Text).unwrap(),
+                        ContainerID::new_root("text", ContainerType::Text),
                     ),
                 );
                 self.targets.insert(
@@ -288,7 +336,7 @@ impl Actor {
                     "tree".to_string(),
                     Value::empty_container(
                         ContainerType::Tree,
-                        ContainerID::new_root("tree", ContainerType::Tree).unwrap(),
+                        ContainerID::new_root("tree", ContainerType::Tree),
                     ),
                 );
                 self.targets.insert(
@@ -301,7 +349,7 @@ impl Actor {
                     "counter".to_string(),
                     Value::empty_container(
                         ContainerType::Counter,
-                        ContainerID::new_root("counter", ContainerType::Counter).unwrap(),
+                        ContainerID::new_root("counter", ContainerType::Counter),
                     ),
                 );
                 self.targets.insert(
@@ -311,6 +359,15 @@ impl Actor {
             }
             ContainerType::Unknown(_) => unreachable!(),
         }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn log_json_history(&self) {
+        let json = self
+            .loro
+            .export_json_updates(&Default::default(), &self.loro.oplog_vv());
+        let string = serde_json::to_string_pretty(&json).unwrap();
+        tracing::info!("vv={:?} json = {}", self.loro.oplog_vv(), string);
     }
 }
 
@@ -346,7 +403,7 @@ pub trait ActorTrait {
     fn add_new_container(&mut self, container: Container);
 }
 
-pub fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
+pub fn assert_value_eq(a: &LoroValue, b: &LoroValue, mut log: Option<&mut dyn FnMut() -> String>) {
     #[must_use]
     fn eq(a: &LoroValue, b: &LoroValue) -> bool {
         match (a, b) {
@@ -398,9 +455,10 @@ pub fn assert_value_eq(a: &LoroValue, b: &LoroValue) {
     }
     assert!(
         eq(a, b),
-        "Expect left == right, but\nleft = {:#?}\nright = {:#?}",
+        "Expect left == right, but\nleft = {:#?}\nright = {:#?}\n{}",
         a,
-        b
+        b,
+        log.as_mut().map_or(String::new(), |f| f())
     );
 }
 
@@ -484,7 +542,7 @@ impl Node {
         for (parent_id, child_ids) in parent_child_map.iter() {
             if let Some(parent_id) = parent_id {
                 if let Some(parent_node) = node_map.get_mut(parent_id) {
-                    for (_, child_id) in child_ids.into_iter().sorted_by_key(|x| x.0) {
+                    for (_, child_id) in child_ids.iter().sorted_by_key(|x| x.0) {
                         if let Some(child_node) = node_map_clone.remove(child_id) {
                             parent_node.children.push(child_node);
                         }
@@ -503,8 +561,6 @@ impl Node {
 }
 
 pub fn assert_tree_value_eq(a: &[LoroValue], b: &[LoroValue]) {
-    // println!("\n\na = {:#?}", a);
-    // println!("b = {:#?}", b);
     let a_tree = Node::from_loro_value(a);
     let b_tree = Node::from_loro_value(b);
     let mut a_q = VecDeque::from_iter([a_tree]);
@@ -519,7 +575,7 @@ pub fn assert_tree_value_eq(a: &[LoroValue], b: &[LoroValue]) {
                 let mut meta = x
                     .meta
                     .into_iter()
-                    .sorted_by_key(|(k, _)| k.clone())
+                    .sorted_by_cached_key(|(k, _)| k.clone())
                     .map(|(mut k, v)| {
                         k.push_str(v.as_string().map_or("", |f| f.as_str()));
                         k
@@ -536,7 +592,7 @@ pub fn assert_tree_value_eq(a: &[LoroValue], b: &[LoroValue]) {
                 let mut meta = x
                     .meta
                     .into_iter()
-                    .sorted_by_key(|(k, _)| k.clone())
+                    .sorted_by_cached_key(|(k, _)| k.clone())
                     .map(|(mut k, v)| {
                         k.push_str(v.as_string().map_or("", |f| f.as_str()));
                         k

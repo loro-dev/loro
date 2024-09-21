@@ -1,8 +1,8 @@
 use std::{collections::BTreeMap, ops::Deref};
 
-use crate::{change::Change, OpLog, VersionVector};
+use crate::{change::Change, version::ImVersionVector, OpLog, VersionVector};
 use fxhash::FxHashMap;
-use loro_common::{Counter, CounterSpan, HasCounterSpan, HasIdSpan, HasLamportSpan, PeerID, ID};
+use loro_common::{Counter, CounterSpan, HasCounterSpan, HasIdSpan, LoroResult, PeerID, ID};
 use smallvec::SmallVec;
 
 #[derive(Debug)]
@@ -40,11 +40,11 @@ impl OpLog {
     pub(super) fn extend_pending_changes_with_unknown_lamport(
         &mut self,
         remote_changes: Vec<Change>,
-        latest_vv: &VersionVector,
-    ) {
+    ) -> LoroResult<()> {
+        let mut result = Ok(());
         for change in remote_changes {
             let local_change = PendingChange::Unknown(change);
-            match remote_change_apply_state(latest_vv, &local_change) {
+            match remote_change_apply_state(self.vv(), self.trimmed_vv(), &local_change) {
                 ChangeState::AwaitingMissingDependency(miss_dep) => self
                     .pending_changes
                     .changes
@@ -53,25 +53,25 @@ impl OpLog {
                     .entry(miss_dep.counter)
                     .or_default()
                     .push(local_change),
-                _ => unreachable!(),
+                ChangeState::DependingOnTrimmedHistory(_ids) => {
+                    result = LoroResult::Err(
+                        loro_common::LoroError::ImportUpdatesThatDependsOnOutdatedVersion,
+                    );
+                }
+                ChangeState::Applied => unreachable!("already applied"),
+                ChangeState::CanApplyDirectly => unreachable!("can apply directly"),
             }
         }
-    }
-}
 
-/// This struct indicates that the dag frontiers should be updated after the change is applied.
-#[must_use]
-pub(crate) struct ShouldUpdateDagFrontiers {
-    pub(crate) should_update: bool,
+        result
+    }
 }
 
 impl OpLog {
     /// Try to apply pending changes.
     ///
     /// `new_ids` are the ID of the op that is just applied.
-    pub(crate) fn try_apply_pending(&mut self, mut new_ids: Vec<ID>) -> ShouldUpdateDagFrontiers {
-        let mut latest_vv = self.dag.vv.clone();
-        let mut updated = false;
+    pub(crate) fn try_apply_pending(&mut self, mut new_ids: Vec<ID>) {
         while let Some(id) = new_ids.pop() {
             let Some(tree) = self.pending_changes.changes.get_mut(&id.peer) else {
                 continue;
@@ -93,12 +93,14 @@ impl OpLog {
 
             for pending_changes in pending_set {
                 for pending_change in pending_changes {
-                    match remote_change_apply_state(&latest_vv, &pending_change) {
+                    match remote_change_apply_state(
+                        self.dag.vv(),
+                        self.dag.trimmed_vv(),
+                        &pending_change,
+                    ) {
                         ChangeState::CanApplyDirectly => {
                             new_ids.push(pending_change.id_last());
-                            latest_vv.set_end(pending_change.id_end());
                             self.apply_local_change_from_remote(pending_change);
-                            updated = true;
                         }
                         ChangeState::Applied => {}
                         ChangeState::AwaitingMissingDependency(miss_dep) => self
@@ -109,13 +111,12 @@ impl OpLog {
                             .entry(miss_dep.counter)
                             .or_default()
                             .push(pending_change),
+                        ChangeState::DependingOnTrimmedHistory(_) => {
+                            unreachable!()
+                        }
                     }
                 }
             }
-        }
-
-        ShouldUpdateDagFrontiers {
-            should_update: updated,
         }
     }
 
@@ -134,11 +135,8 @@ impl OpLog {
         let Some(change) = self.trim_the_known_part_of_change(change) else {
             return;
         };
-        self.next_lamport = self.next_lamport.max(change.lamport_end());
-        self.dag.vv.extend_to_include_last_id(change.id_last());
-        self.latest_timestamp = self.latest_timestamp.max(change.timestamp);
-        let mark = self.update_dag_on_new_change(&change);
-        self.insert_new_change(change, mark);
+
+        self.insert_new_change(change);
     }
 }
 
@@ -147,24 +145,32 @@ enum ChangeState {
     CanApplyDirectly,
     // The id of first missing dep
     AwaitingMissingDependency(ID),
+    DependingOnTrimmedHistory(Box<Vec<ID>>),
 }
 
-fn remote_change_apply_state(vv: &VersionVector, change: &Change) -> ChangeState {
+fn remote_change_apply_state(
+    vv: &VersionVector,
+    trimmed_vv: &ImVersionVector,
+    change: &Change,
+) -> ChangeState {
     let peer = change.id.peer;
     let CounterSpan { start, end } = change.ctr_span();
     let vv_latest_ctr = vv.get(&peer).copied().unwrap_or(0);
-    if vv_latest_ctr < start {
-        return ChangeState::AwaitingMissingDependency(change.id.inc(-1));
-    }
     if vv_latest_ctr >= end {
         return ChangeState::Applied;
     }
+
+    if vv_latest_ctr < start {
+        return ChangeState::AwaitingMissingDependency(change.id.inc(-1));
+    }
+
     for dep in change.deps.as_ref().iter() {
         let dep_vv_latest_ctr = vv.get(&dep.peer).copied().unwrap_or(0);
         if dep_vv_latest_ctr - 1 < dep.counter {
             return ChangeState::AwaitingMissingDependency(*dep);
         }
     }
+
     ChangeState::CanApplyDirectly
 }
 

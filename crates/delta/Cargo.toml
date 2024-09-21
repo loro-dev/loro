@@ -1,13 +1,13 @@
 [package]
 name = "loro-delta"
-version = "0.16.2"
+version = "0.16.12"
 edition = "2021"
 license = "MIT"
 description = "Loro internal library. It's used as a delta between two versions of text or lists. It's also an efficient Rope."
 homepage = "https://loro.dev"
 repository = "https://github.com/loro-dev/loro/"
 authors = ["Zixuan Chen", "Liang Zhao"]
-categories = ["data-structures", "text-editing"]
+categories = ["data-structures"]
 keywords = ["rope"]
 
 [dependencies]

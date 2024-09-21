@@ -2,20 +2,27 @@
   "cSpell.words": [
     "arbtest",
     "bolds",
+    "bools",
     "cids",
     "clippy",
     "collab",
+    "curr",
     "dhat",
     "flate",
     "fuzzer",
     "gmax",
+    "GPUI",
     "heapless",
+    "Helloii",
+    "Hoexllo",
     "idlp",
     "idspan",
     "insta",
     "Itertools",
+    "Kleppmann",
     "lamports",
     "Leeeon",
+    "Liangrun",
     "LOGSTORE",
     "napi",
     "nextest",
@@ -28,6 +35,8 @@
     "reparent",
     "RUSTFLAGS",
     "smstring",
+    "sstable",
+    "Stewen",
     "thiserror",
     "tinyvec",
     "txns",
@@ -43,7 +52,10 @@
     "RUST_BACKTRACE": "full",
     "DEBUG": "*"
   },
-  "rust-analyzer.cargo.features": ["test_utils"],
+  "rust-analyzer.cargo.features": [
+    "jsonpath",
+    "counter"
+  ],
   "editor.defaultFormatter": "rust-lang.rust-analyzer",
   "rust-analyzer.server.extraEnv": {
     "RUSTUP_TOOLCHAIN": "stable"

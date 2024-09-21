@@ -40,9 +40,6 @@
 
 https://github.com/loro-dev/loro/assets/18425020/fe246c47-a120-44b3-91d4-1e7232a5b4ac
 
-
-> ⚠️ **Notice**: The current API and encoding schema of Loro are **experimental** and **subject to change**. You should not use it in production. 
-
 Loro is a [CRDTs(Conflict-free Replicated Data Types)](https://crdt.tech/) library that makes building [local-first apps][local-first] easier. It is currently available for JavaScript (via WASM) and Rust developers. 
 
 Explore our vision in our blog: [**✨ Reimagine State Management with CRDTs**](https://loro.dev/blog/loro-now-open-source).

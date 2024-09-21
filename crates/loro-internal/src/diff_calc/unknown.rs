@@ -1,14 +1,14 @@
 use loro_common::ContainerID;
 
-use crate::{event::InternalDiff, OpLog};
+use crate::{container::idx::ContainerIdx, event::InternalDiff, OpLog};
 
-use super::DiffCalculatorTrait;
+use super::{DiffCalculatorTrait, DiffMode};
 
 #[derive(Debug, Default)]
 pub struct UnknownDiffCalculator;
 
 impl DiffCalculatorTrait for UnknownDiffCalculator {
-    fn start_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector) {}
+    fn start_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector, _mode: DiffMode) {}
 
     fn apply_change(
         &mut self,
@@ -18,15 +18,16 @@ impl DiffCalculatorTrait for UnknownDiffCalculator {
     ) {
     }
 
-    fn stop_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector) {}
+    fn finish_this_round(&mut self) {}
 
     fn calculate_diff(
         &mut self,
+        _idx: ContainerIdx,
         _oplog: &OpLog,
         _from: &crate::VersionVector,
         _to: &crate::VersionVector,
         _on_new_container: impl FnMut(&ContainerID),
-    ) -> InternalDiff {
-        InternalDiff::Unknown
+    ) -> (InternalDiff, DiffMode) {
+        (InternalDiff::Unknown, DiffMode::Checkout)
     }
 }

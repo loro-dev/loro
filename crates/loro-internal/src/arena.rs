@@ -9,6 +9,7 @@ use std::{
 use append_only_bytes::BytesSlice;
 use fxhash::FxHashMap;
 use loro_common::PeerID;
+use tracing::trace;
 
 use crate::{
     change::Lamport,
@@ -195,7 +196,7 @@ impl SharedArena {
         }
     }
 
-    pub fn log_all_container(&self) {
+    pub fn log_all_containers(&self) {
         self.inner
             .container_id_to_idx
             .lock()
@@ -216,13 +217,19 @@ impl SharedArena {
     }
 
     pub fn get_parent(&self, child: ContainerIdx) -> Option<ContainerIdx> {
+        if self.get_container_id(child).unwrap().is_root() {
+            // TODO: PERF: we can speed this up by use a special bit in ContainerIdx to indicate
+            // whether the target is a root container
+            return None;
+        }
+
         self.inner
             .parents
             .lock()
             .unwrap()
             .get(&child)
             .copied()
-            .flatten()
+            .expect("InternalError: Parent is not registered")
     }
 
     /// Call `f` on each ancestor of `container`, including `container` itself.
@@ -234,7 +241,7 @@ impl SharedArena {
         while let Some(c) = container {
             f(c, is_first);
             is_first = false;
-            container = self.get_parent(c);
+            container = self.get_parent(c)
         }
     }
 
@@ -363,7 +370,11 @@ impl SharedArena {
                 } => Op {
                     counter,
                     container,
-                    content: InnerContent::List(InnerListOp::Move { from, to, from_id }),
+                    content: InnerContent::List(InnerListOp::Move {
+                        from,
+                        to,
+                        elem_id: from_id,
+                    }),
                 },
                 ListOp::Set { elem_id, value } => Op {
                     counter,
@@ -374,7 +385,7 @@ impl SharedArena {
             crate::op::RawOpContent::Tree(tree) => Op {
                 counter,
                 container,
-                content: crate::op::InnerContent::Tree(tree),
+                content: crate::op::InnerContent::Tree(tree.clone()),
             },
             #[cfg(feature = "counter")]
             crate::op::RawOpContent::Counter(c) => Op {
@@ -387,7 +398,7 @@ impl SharedArena {
                 container,
                 content: crate::op::InnerContent::Future(crate::op::FutureInnerContent::Unknown {
                     prop,
-                    value,
+                    value: Box::new(value),
                 }),
             },
         }
@@ -462,6 +473,13 @@ impl SharedArena {
             }
         }
         None
+    }
+
+    pub(crate) fn log_all_values(&self) {
+        let values = self.inner.values.lock().unwrap();
+        for (i, v) in values.iter().enumerate() {
+            tracing::trace!("value {} {:?}", i, v);
+        }
     }
 }
 

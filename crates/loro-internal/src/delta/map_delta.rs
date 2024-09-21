@@ -14,7 +14,9 @@ use crate::{
 
 #[derive(Default, Debug, Clone, Serialize)]
 pub struct MapDelta {
-    pub updated: FxHashMap<InternalString, MapValue>,
+    /// If the value is none, it's a uncreate op that should remove the entry from the
+    /// map container.
+    pub updated: FxHashMap<InternalString, Option<MapValue>>,
 }
 
 #[derive(Debug, Clone)]
@@ -77,6 +79,14 @@ impl ResolvedMapValue {
                 .map(|v| ValueOrHandler::from_value(v, arena, txn, state)),
         }
     }
+
+    /// This is used to indicate that the entry is unset. (caused by checkout to before the entry is created)
+    pub fn new_unset() -> Self {
+        ResolvedMapValue {
+            idlp: IdLp::new(PeerID::default(), Lamport::MAX),
+            value: None,
+        }
+    }
 }
 
 impl MapDelta {
@@ -102,7 +112,7 @@ impl MapDelta {
 
     #[inline]
     pub fn with_entry(mut self, key: InternalString, map_value: MapValue) -> Self {
-        self.updated.insert(key, map_value);
+        self.updated.insert(key, Some(map_value));
         self
     }
 }

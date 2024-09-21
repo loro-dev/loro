@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use append_only_bytes::BytesSlice;
 use enum_as_inner::EnumAsInner;
-use loro_common::{HasId, HasIdSpan, IdLp, LoroValue, ID};
+use loro_common::{ContainerType, HasId, HasIdSpan, IdLp, LoroValue, ID};
 use rle::{HasLength, Mergable, Sliceable};
 use serde::{Deserialize, Serialize};
 
@@ -44,12 +44,13 @@ pub enum ListOp<'a> {
 
 #[derive(EnumAsInner, Debug, Clone)]
 pub enum InnerListOp {
-    // Note: len may not equal to slice.len() because for text len is unicode len while the slice
-    // is utf8 bytes.
+    // TODO: this is only used for list now? We should rename it to InsertList
     Insert {
         slice: SliceRange,
         pos: usize,
     },
+    // Note: len may not equal to slice.len() because for text len is unicode len while the slice
+    // is utf8 bytes.
     InsertText {
         slice: BytesSlice,
         unicode_start: u32,
@@ -60,7 +61,7 @@ pub enum InnerListOp {
     Move {
         from: u32,
         /// Element id
-        from_id: IdLp,
+        elem_id: IdLp,
         to: u32,
     },
     Set {
@@ -102,6 +103,22 @@ impl InnerListOp {
         Self::Insert {
             slice: SliceRange(slice),
             pos,
+        }
+    }
+
+    pub(crate) fn estimate_storage_size(&self, container_type: ContainerType) -> usize {
+        match self {
+            InnerListOp::Insert { slice, .. } => match container_type {
+                ContainerType::MovableList | ContainerType::List => 4 * slice.atom_len(),
+                ContainerType::Text => slice.atom_len(),
+                _ => unreachable!(),
+            },
+            InnerListOp::InsertText { slice, .. } => slice.len(),
+            InnerListOp::Delete(..) => 8,
+            InnerListOp::Move { .. } => 8,
+            InnerListOp::Set { .. } => 7,
+            InnerListOp::StyleStart { .. } => 10,
+            InnerListOp::StyleEnd => 1,
         }
     }
 }
@@ -616,7 +633,10 @@ impl Sliceable for InnerListOp {
             InnerListOp::StyleStart { .. }
             | InnerListOp::StyleEnd { .. }
             | InnerListOp::Move { .. }
-            | InnerListOp::Set { .. } => self.clone(),
+            | InnerListOp::Set { .. } => {
+                assert!(from == 0 && to == 1);
+                self.clone()
+            }
         }
     }
 }

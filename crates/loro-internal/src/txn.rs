@@ -7,10 +7,11 @@ use std::{
 
 use enum_as_inner::EnumAsInner;
 use generic_btree::rle::{HasLength as RleHasLength, Mergeable as GBSliceable};
-use loro_common::{ContainerType, IdLp, LoroResult};
+use loro_common::{ContainerType, IdLp, IdSpan, LoroResult};
 use loro_delta::{array_vec::ArrayVec, DeltaRopeBuilder};
 use rle::{HasLength, Mergable, RleVec};
 use smallvec::{smallvec, SmallVec};
+use tracing::trace;
 
 use crate::{
     change::{Change, Lamport, Timestamp},
@@ -35,10 +36,11 @@ use super::{
     event::{InternalContainerDiff, InternalDocDiff},
     handler::{ListHandler, MapHandler, TextHandler, TreeHandler},
     oplog::OpLog,
-    state::{DocState, State},
+    state::DocState,
 };
 
-pub type OnCommitFn = Box<dyn FnOnce(&Arc<Mutex<DocState>>) + Sync + Send>;
+pub(crate) type OnCommitFn =
+    Box<dyn FnOnce(&Arc<Mutex<DocState>>, &Arc<Mutex<OpLog>>, IdSpan) + Sync + Send>;
 
 pub struct Transaction {
     global_txn: Weak<Mutex<Option<Transaction>>>,
@@ -57,6 +59,7 @@ pub struct Transaction {
     finished: bool,
     on_commit: Option<OnCommitFn>,
     timestamp: Option<Timestamp>,
+    msg: Option<Arc<str>>,
 }
 
 impl std::fmt::Debug for Transaction {
@@ -247,9 +250,14 @@ impl Transaction {
         state_lock.start_txn(origin, crate::event::EventTriggerKind::Local);
         let arena = state_lock.arena.clone();
         let frontiers = state_lock.frontiers.clone();
-        let peer = state_lock.peer;
+        let peer = state_lock.peer.load(std::sync::atomic::Ordering::Relaxed);
         let next_counter = oplog_lock.next_id(peer).counter;
-        let next_lamport = oplog_lock.dag.frontiers_to_next_lamport(&frontiers);
+        debug_assert_eq!(&frontiers, oplog_lock.frontiers());
+        debug_assert_eq!(
+            oplog_lock.next_lamport,
+            oplog_lock.dag.frontiers_to_next_lamport(&frontiers)
+        );
+        let next_lamport = oplog_lock.next_lamport;
         drop(state_lock);
         drop(oplog_lock);
         Self {
@@ -269,6 +277,7 @@ impl Transaction {
             local_ops: RleVec::new(),
             finished: false,
             on_commit: None,
+            msg: None,
         }
     }
 
@@ -282,6 +291,10 @@ impl Transaction {
 
     pub fn set_timestamp(&mut self, time: Timestamp) {
         self.timestamp = Some(time);
+    }
+
+    pub fn set_msg(&mut self, msg: Option<Arc<str>>) {
+        self.msg = msg;
     }
 
     pub(crate) fn set_on_commit(&mut self, f: OnCommitFn) {
@@ -316,7 +329,7 @@ impl Transaction {
                 self.timestamp
                     .unwrap_or_else(|| oplog.get_timestamp_for_next_txn()),
             ),
-            has_dependents: false,
+            commit_msg: take(&mut self.msg),
         };
 
         let diff = if state.is_recording() {
@@ -350,6 +363,7 @@ impl Transaction {
                             bring_back: false,
                             is_container_deleted: false,
                             diff: (x.diff.into()),
+                            diff_mode: crate::diff_calc::DiffMode::Linear,
                         })
                         .collect(),
                 ),
@@ -359,7 +373,7 @@ impl Transaction {
         drop(state);
         drop(oplog);
         if let Some(on_commit) = self.on_commit.take() {
-            on_commit(&self.state);
+            on_commit(&self.state, &self.oplog, self.id_span());
         }
         Ok(())
     }
@@ -374,8 +388,19 @@ impl Transaction {
     ) -> LoroResult<()> {
         if Arc::as_ptr(&self.state) != Weak::as_ptr(state_ref) {
             return Err(LoroError::UnmatchedContext {
-                expected: self.state.lock().unwrap().peer,
-                found: state_ref.upgrade().unwrap().lock().unwrap().peer,
+                expected: self
+                    .state
+                    .lock()
+                    .unwrap()
+                    .peer
+                    .load(std::sync::atomic::Ordering::Relaxed),
+                found: state_ref
+                    .upgrade()
+                    .unwrap()
+                    .lock()
+                    .unwrap()
+                    .peer
+                    .load(std::sync::atomic::Ordering::Relaxed),
             });
         }
 
@@ -391,6 +416,11 @@ impl Transaction {
         };
 
         let mut state = self.state.lock().unwrap();
+        if state.is_deleted(container) {
+            return Err(LoroError::ContainerDeleted {
+                container: Box::new(state.arena.idx_to_id(container).unwrap()),
+            });
+        }
         let op = self.arena.convert_raw_op(&raw_op);
         state.apply_local_op(&raw_op, &op)?;
         drop(state);
@@ -473,24 +503,16 @@ impl Transaction {
         .unwrap()
     }
 
-    pub fn get_value_by_idx(&self, idx: ContainerIdx) -> LoroValue {
-        self.state.lock().unwrap().get_value_by_idx(idx)
-    }
-
-    #[allow(unused)]
-    pub(crate) fn with_state<F, R>(&self, idx: ContainerIdx, f: F) -> R
-    where
-        F: FnOnce(&State) -> R,
-    {
-        let state = self.state.lock().unwrap();
-        f(state.get_state(idx).unwrap())
-    }
-
     pub fn next_id(&self) -> ID {
         ID {
             peer: self.peer,
             counter: self.next_counter,
         }
+    }
+
+    #[inline]
+    pub fn id_span(&self) -> IdSpan {
+        IdSpan::new(self.peer, self.start_counter, self.next_counter)
     }
 
     pub fn next_idlp(&self) -> IdLp {

@@ -24,13 +24,12 @@ pub struct ListActor {
 
 impl ListActor {
     pub fn new(loro: Arc<LoroDoc>) -> Self {
-        let mut tracker =
-            MapTracker::empty(ContainerID::new_root("sys:root", ContainerType::Map).unwrap());
+        let mut tracker = MapTracker::empty(ContainerID::new_root("sys:root", ContainerType::Map));
         tracker.insert(
             "list".to_string(),
             Value::empty_container(
                 ContainerType::List,
-                ContainerID::new_root("list", ContainerType::List).unwrap(),
+                ContainerID::new_root("list", ContainerType::List),
             ),
         );
         let tracker = Arc::new(Mutex::new(ContainerTracker::Map(tracker)));
@@ -38,7 +37,7 @@ impl ListActor {
 
         let peer_id = loro.peer_id();
         loro.subscribe(
-            &ContainerID::new_root("list", ContainerType::List).unwrap(),
+            &ContainerID::new_root("list", ContainerType::List),
             Arc::new(move |event| {
                 let s = debug_span!("List event", peer = peer_id);
                 let _g = s.enter();
@@ -113,11 +112,10 @@ impl Actionable for ListAction {
                 let pos = *pos as usize;
                 match value {
                     FuzzValue::Container(c) => {
-                        let container = list.insert_container(pos, Container::new(*c)).unwrap();
-                        Some(container)
+                        super::unwrap(list.insert_container(pos, Container::new(*c)))
                     }
                     FuzzValue::I32(v) => {
-                        list.insert(pos, *v).unwrap();
+                        super::unwrap(list.insert(pos, *v));
                         None
                     }
                 }
@@ -125,7 +123,7 @@ impl Actionable for ListAction {
             ListAction::Delete { pos, len } => {
                 let pos = *pos as usize;
                 let len = *len as usize;
-                list.delete(pos, len).unwrap();
+                super::unwrap(list.delete(pos, len));
                 None
             }
         }

@@ -18,6 +18,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f26201604c87b1e01bd3d98f8d5d9a8fcbb815e8cedb41ffccbeb4bf593a35fe"
 
 [[package]]
+name = "ahash"
+version = "0.8.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e89da841a80418a9b391ebaea17f5c112ffaaa96f621d2c285b5174da76b9011"
+dependencies = [
+ "cfg-if",
+ "getrandom",
+ "once_cell",
+ "version_check",
+ "zerocopy",
+]
+
+[[package]]
 name = "android-tzdata"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -140,7 +153,7 @@ dependencies = [
  "arbitrary",
  "enum-as-inner 0.5.1",
  "flate2",
- "loro-common 0.16.2",
+ "loro-common 0.16.12",
  "rand",
  "serde_json",
 ]
@@ -198,6 +211,12 @@ name = "byteorder"
 version = "1.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "14c189c53d098945499cdfa7ecc63567cf3886b3332b312a5b4585d8d3a6a610"
+
+[[package]]
+name = "bytes"
+version = "1.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8318a53db07bb3f8dca91a600466bdb3f2eaadeedfdbcf02e1accbad9271ba50"
 
 [[package]]
 name = "cast"
@@ -418,16 +437,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6548a0ad5d2549e111e1f6a11a6c2e2d00ce6a3dafe22948d67c2b443f775e52"
 
 [[package]]
-name = "crossbeam-channel"
-version = "0.5.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2dd04ddaf88237dc3b8d8f9a3c1004b506b54b3313403944054d23c0870c521"
-dependencies = [
- "cfg-if",
- "crossbeam-utils",
-]
-
-[[package]]
 name = "crossbeam-deque"
 version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -482,9 +491,9 @@ dependencies = [
 
 [[package]]
 name = "darling"
-version = "0.20.3"
+version = "0.20.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0209d94da627ab5605dcccf08bb18afa5009cfbef48d8a8b7d7bdbc79be25c5e"
+checksum = "6f63b86c8a8826a49b8c21f08a2d07338eec8d900540f8630dc76284be802989"
 dependencies = [
  "darling_core",
  "darling_macro",
@@ -492,9 +501,9 @@ dependencies = [
 
 [[package]]
 name = "darling_core"
-version = "0.20.3"
+version = "0.20.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "177e3443818124b357d8e76f53be906d60937f0d3a90773a664fa63fa253e621"
+checksum = "95133861a8032aaea082871032f5815eb9e98cef03fa916ab4500513994df9e5"
 dependencies = [
  "fnv",
  "ident_case",
@@ -506,9 +515,9 @@ dependencies = [
 
 [[package]]
 name = "darling_macro"
-version = "0.20.3"
+version = "0.20.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "836a9bbc7ad63342d6d6e7b815ccab164bc77a2d95d84bc3117a8c0d5c98e2d5"
+checksum = "d336a2a514f6ccccaa3e09b02d41d35330c07ddf03a62165fcec10bb561c7806"
 dependencies = [
  "darling_core",
  "quote 1.0.35",
@@ -556,10 +565,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "diff"
+version = "0.1.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56254986775e3233ffa9c4d7d3faaf6d36a2c09d30b20687e9f88bc8bafc16c8"
+
+[[package]]
 name = "either"
 version = "1.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "60b1af1c220855b6ceac025d3f6ecdd2b7c4894bfe9cd9bda4fbb4bc7c0d4cf0"
+
+[[package]]
+name = "embedded-io"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef1a6892d9eef45c8fa6b9e0086428a2cca8491aca8f787c534a3d6d0bcb3ced"
+
+[[package]]
+name = "ensure-cov"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33753185802e107b8fa907192af1f0eca13b1fb33327a59266d650fef29b2b4e"
 
 [[package]]
 name = "enum-as-inner"
@@ -598,6 +625,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "equivalent"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5443807d6dff69373d433ab9ef5378ad8df50ca6298caf15de6e52e24aaf54d5"
+
+[[package]]
 name = "examples"
 version = "0.1.0"
 dependencies = [
@@ -606,11 +639,14 @@ dependencies = [
  "color-backtrace",
  "criterion 0.4.0",
  "ctor 0.2.6",
+ "dev-utils",
  "flate2",
- "loro 0.16.2",
+ "loro 0.16.12",
+ "rand",
  "serde_json",
  "tabled 0.15.0",
  "tracing",
+ "zstd",
 ]
 
 [[package]]
@@ -653,16 +689,22 @@ version = "0.1.0"
 dependencies = [
  "arbitrary",
  "arbtest",
+ "bytes",
  "color-backtrace",
  "ctor 0.2.6",
  "dev-utils",
+ "ensure-cov",
  "enum-as-inner 0.6.0",
  "enum_dispatch",
  "fxhash",
  "itertools 0.12.1",
- "loro 0.16.2",
+ "loro 0.16.12",
+ "loro 0.16.2 (git+https://github.com/loro-dev/loro.git?tag=loro-crdt@0.16.7)",
  "loro 0.16.2 (git+https://github.com/loro-dev/loro.git?rev=90470658435ec4c62b5af59ebb82fe9e1f5aa761)",
+ "num_cpus",
+ "pretty_assertions",
  "rand",
+ "rayon",
  "serde_json",
  "tabled 0.10.0",
  "tracing",
@@ -695,9 +737,9 @@ dependencies = [
 
 [[package]]
 name = "getrandom"
-version = "0.2.10"
+version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be4136b2a15dd319360be1c07d9933517ccf0be8f16bf62a3bee4f0d618df427"
+checksum = "c4567c8db10ae91089c99af84c68c38da3ec2f087c3f82960bcdbf3656b6f4d7"
 dependencies = [
  "cfg-if",
  "js-sys",
@@ -743,6 +785,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a9ee70c43aaf417c914396645a0fa852624801b24ebb7ae78fe8272889ac888"
 
 [[package]]
+name = "hashbrown"
+version = "0.14.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
+
+[[package]]
 name = "heapless"
 version = "0.7.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -777,15 +825,6 @@ name = "hermit-abi"
 version = "0.1.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "62b467343b94ba476dcb2500d242dadbb39557df889310ac77c5d99100aaac33"
-dependencies = [
- "libc",
-]
-
-[[package]]
-name = "hermit-abi"
-version = "0.2.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee512640fe35acbfb4bb779db6f0d80704c2cacfa2e39b601ef3e3f47d1ae4c7"
 dependencies = [
  "libc",
 ]
@@ -834,6 +873,7 @@ dependencies = [
  "bitmaps 2.1.0",
  "rand_core",
  "rand_xoshiro",
+ "serde",
  "sized-chunks",
  "typenum",
  "version_check",
@@ -868,7 +908,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1885e79c1fc4b10f0e172c475f458b7f7b93061064d98c3293e98c5ba0c8b399"
 dependencies = [
  "autocfg",
- "hashbrown",
+ "hashbrown 0.12.3",
 ]
 
 [[package]]
@@ -956,9 +996,9 @@ checksum = "884e2677b40cc8c339eaefcb701c32ef1fd2493d71118dc0ca4b6a736c93bd67"
 
 [[package]]
 name = "libc"
-version = "0.2.147"
+version = "0.2.158"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4668fb0ea861c1df094127ac5f1da3409a82116a4ba74fca2e58ef927159bb3"
+checksum = "d8adc4bb1803a324070e64a98ae98f38934d91957a99cfb3a43dcbc01bc56439"
 
 [[package]]
 name = "lock_api"
@@ -982,15 +1022,12 @@ dependencies = [
 [[package]]
 name = "loro"
 version = "0.16.2"
+source = "git+https://github.com/loro-dev/loro.git?tag=loro-crdt@0.16.7#d2b0520f8633f96146a49ec205bd5e7056880f1a"
 dependencies = [
- "anyhow",
- "ctor 0.2.6",
- "dev-utils",
  "enum-as-inner 0.6.0",
  "generic-btree",
- "loro-delta 0.16.2",
- "loro-internal 0.16.2",
- "serde_json",
+ "loro-delta 0.16.2 (git+https://github.com/loro-dev/loro.git?tag=loro-crdt@0.16.7)",
+ "loro-internal 0.16.2 (git+https://github.com/loro-dev/loro.git?tag=loro-crdt@0.16.7)",
  "tracing",
 ]
 
@@ -1008,20 +1045,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "loro"
+version = "0.16.12"
+dependencies = [
+ "anyhow",
+ "ctor 0.2.6",
+ "dev-utils",
+ "either",
+ "enum-as-inner 0.6.0",
+ "generic-btree",
+ "loro-common 0.16.12",
+ "loro-delta 0.16.12",
+ "loro-internal 0.16.12",
+ "loro-kv-store",
+ "pretty_assertions",
+ "rand",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
 name = "loro-common"
 version = "0.16.2"
+source = "git+https://github.com/loro-dev/loro.git?tag=loro-crdt@0.16.7#d2b0520f8633f96146a49ec205bd5e7056880f1a"
 dependencies = [
  "arbitrary",
  "enum-as-inner 0.6.0",
  "fxhash",
- "js-sys",
- "loro-rle 0.16.2",
+ "loro-rle 0.16.2 (git+https://github.com/loro-dev/loro.git?tag=loro-crdt@0.16.7)",
  "nonmax",
  "serde",
  "serde_columnar",
  "string_cache",
  "thiserror",
- "wasm-bindgen",
 ]
 
 [[package]]
@@ -1041,19 +1097,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "loro-common"
+version = "0.16.12"
+dependencies = [
+ "arbitrary",
+ "enum-as-inner 0.6.0",
+ "fxhash",
+ "js-sys",
+ "leb128",
+ "loro-rle 0.16.12",
+ "nonmax",
+ "serde",
+ "serde_columnar",
+ "serde_json",
+ "string_cache",
+ "thiserror",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "loro-delta"
 version = "0.16.2"
+source = "git+https://github.com/loro-dev/loro.git?tag=loro-crdt@0.16.7#d2b0520f8633f96146a49ec205bd5e7056880f1a"
 dependencies = [
  "arrayvec",
- "color-backtrace",
- "criterion 0.4.0",
- "ctor 0.2.6",
  "enum-as-inner 0.5.1",
  "generic-btree",
  "heapless 0.8.0",
- "rand",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -1076,19 +1147,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "loro-delta"
+version = "0.16.12"
+dependencies = [
+ "arrayvec",
+ "color-backtrace",
+ "criterion 0.4.0",
+ "ctor 0.2.6",
+ "enum-as-inner 0.5.1",
+ "generic-btree",
+ "heapless 0.8.0",
+ "rand",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "loro-internal"
 version = "0.16.2"
+source = "git+https://github.com/loro-dev/loro.git?tag=loro-crdt@0.16.7#d2b0520f8633f96146a49ec205bd5e7056880f1a"
 dependencies = [
  "append-only-bytes",
- "arbitrary",
- "arbtest",
  "arref",
- "base64",
- "bench-utils",
- "criterion 0.5.1",
- "ctor 0.1.26",
- "dev-utils",
- "dhat",
  "either",
  "enum-as-inner 0.6.0",
  "enum_dispatch",
@@ -1097,33 +1177,24 @@ dependencies = [
  "getrandom",
  "im",
  "itertools 0.12.1",
- "js-sys",
  "leb128",
- "loro-common 0.16.2",
- "loro-delta 0.16.2",
- "loro-rle 0.16.2",
- "loro_fractional_index 0.16.2",
+ "loro-common 0.16.2 (git+https://github.com/loro-dev/loro.git?tag=loro-crdt@0.16.7)",
+ "loro-delta 0.16.2 (git+https://github.com/loro-dev/loro.git?tag=loro-crdt@0.16.7)",
+ "loro-rle 0.16.2 (git+https://github.com/loro-dev/loro.git?tag=loro-crdt@0.16.7)",
+ "loro_fractional_index 0.16.2 (git+https://github.com/loro-dev/loro.git?tag=loro-crdt@0.16.7)",
  "md5",
- "miniz_oxide 0.7.1",
  "num",
  "num-derive",
  "num-traits",
  "once_cell",
  "postcard",
- "proptest",
- "proptest-derive",
  "rand",
  "serde",
- "serde-wasm-bindgen 0.5.0",
  "serde_columnar",
  "serde_json",
  "smallvec",
- "static_assertions",
- "tabled 0.10.0",
  "thiserror",
  "tracing",
- "wasm-bindgen",
- "zstd",
 ]
 
 [[package]]
@@ -1162,8 +1233,105 @@ dependencies = [
 ]
 
 [[package]]
+name = "loro-internal"
+version = "0.16.12"
+dependencies = [
+ "append-only-bytes",
+ "arbitrary",
+ "arbtest",
+ "arref",
+ "base64",
+ "bench-utils",
+ "bytes",
+ "criterion 0.5.1",
+ "ctor 0.1.26",
+ "dev-utils",
+ "dhat",
+ "either",
+ "ensure-cov",
+ "enum-as-inner 0.5.1",
+ "enum_dispatch",
+ "fxhash",
+ "generic-btree",
+ "getrandom",
+ "im",
+ "itertools 0.12.1",
+ "js-sys",
+ "leb128",
+ "loro-common 0.16.12",
+ "loro-delta 0.16.12",
+ "loro-kv-store",
+ "loro-rle 0.16.12",
+ "loro_fractional_index 0.16.12",
+ "md5",
+ "miniz_oxide 0.7.1",
+ "nonmax",
+ "num",
+ "num-derive",
+ "num-traits",
+ "once_cell",
+ "postcard",
+ "proptest",
+ "proptest-derive",
+ "rand",
+ "serde",
+ "serde-wasm-bindgen 0.5.0",
+ "serde_columnar",
+ "serde_json",
+ "smallvec",
+ "static_assertions",
+ "tabled 0.10.0",
+ "thiserror",
+ "tracing",
+ "wasm-bindgen",
+ "xxhash-rust",
+ "zstd",
+]
+
+[[package]]
+name = "loro-kv-store"
+version = "0.16.2"
+dependencies = [
+ "bytes",
+ "ensure-cov",
+ "fxhash",
+ "loro-common 0.16.12",
+ "lz4_flex",
+ "once_cell",
+ "quick_cache",
+ "rand",
+ "xxhash-rust",
+]
+
+[[package]]
 name = "loro-rle"
 version = "0.16.2"
+source = "git+https://github.com/loro-dev/loro.git?tag=loro-crdt@0.16.7#d2b0520f8633f96146a49ec205bd5e7056880f1a"
+dependencies = [
+ "append-only-bytes",
+ "arref",
+ "enum-as-inner 0.6.0",
+ "fxhash",
+ "num",
+ "smallvec",
+]
+
+[[package]]
+name = "loro-rle"
+version = "0.16.2"
+source = "git+https://github.com/loro-dev/loro.git?rev=90470658435ec4c62b5af59ebb82fe9e1f5aa761#90470658435ec4c62b5af59ebb82fe9e1f5aa761"
+dependencies = [
+ "append-only-bytes",
+ "arref",
+ "enum-as-inner 0.6.0",
+ "fxhash",
+ "num",
+ "smallvec",
+]
+
+[[package]]
+name = "loro-rle"
+version = "0.16.12"
 dependencies = [
  "append-only-bytes",
  "arref",
@@ -1179,19 +1347,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "loro-rle"
-version = "0.16.2"
-source = "git+https://github.com/loro-dev/loro.git?rev=90470658435ec4c62b5af59ebb82fe9e1f5aa761#90470658435ec4c62b5af59ebb82fe9e1f5aa761"
-dependencies = [
- "append-only-bytes",
- "arref",
- "enum-as-inner 0.6.0",
- "fxhash",
- "num",
- "smallvec",
-]
-
-[[package]]
 name = "loro-thunderdome"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1204,8 +1359,8 @@ dependencies = [
  "console_error_panic_hook",
  "getrandom",
  "js-sys",
- "loro-internal 0.16.2",
- "loro-rle 0.16.2",
+ "loro-internal 0.16.12",
+ "loro-rle 0.16.12",
  "serde",
  "serde-wasm-bindgen 0.6.5",
  "serde_json",
@@ -1218,9 +1373,8 @@ dependencies = [
 [[package]]
 name = "loro_fractional_index"
 version = "0.16.2"
+source = "git+https://github.com/loro-dev/loro.git?tag=loro-crdt@0.16.7#d2b0520f8633f96146a49ec205bd5e7056880f1a"
 dependencies = [
- "criterion 0.5.1",
- "fractional_index",
  "imbl",
  "rand",
  "serde",
@@ -1236,6 +1390,28 @@ dependencies = [
  "rand",
  "serde",
  "smallvec",
+]
+
+[[package]]
+name = "loro_fractional_index"
+version = "0.16.12"
+dependencies = [
+ "criterion 0.5.1",
+ "fractional_index",
+ "imbl",
+ "once_cell",
+ "rand",
+ "serde",
+ "smallvec",
+]
+
+[[package]]
+name = "lz4_flex"
+version = "0.11.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75761162ae2b0e580d7e7c390558127e5f01b4194debd6221fd8c207fc80e3f5"
+dependencies = [
+ "twox-hash",
 ]
 
 [[package]]
@@ -1407,11 +1583,11 @@ dependencies = [
 
 [[package]]
 name = "num_cpus"
-version = "1.15.0"
+version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fac9e2da13b5eb447a6ce3d392f23a29d8694bff781bf03a16cd9ac8697593b"
+checksum = "4161fcb6d602d4d2081af7c3a45852d875a03dd337a6bfdd6e06407b61342a43"
 dependencies = [
- "hermit-abi 0.2.6",
+ "hermit-abi 0.3.9",
  "libc",
 ]
 
@@ -1544,11 +1720,12 @@ dependencies = [
 
 [[package]]
 name = "postcard"
-version = "1.0.2"
+version = "1.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c2b180dc0bade59f03fd005cb967d3f1e5f69b13922dad0cd6e047cb8af2363"
+checksum = "a55c51ee6c0db07e68448e336cf8ea4131a620edefebf9893e759b2d793420f8"
 dependencies = [
  "cobs",
+ "embedded-io",
  "heapless 0.7.16",
  "serde",
 ]
@@ -1564,6 +1741,16 @@ name = "precomputed-hash"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "925383efa346730478fb4838dbe9137d2a47675ad789c546d150a6e1dd4ab31c"
+
+[[package]]
+name = "pretty_assertions"
+version = "1.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af7cee1a6c8a5b9208b3cb1061f10c0cb689087b3d8ce85fb9d2dd7a29b6ba66"
+dependencies = [
+ "diff",
+ "yansi",
+]
 
 [[package]]
 name = "proc-macro-error"
@@ -1651,6 +1838,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a993555f31e5a609f617c12db6250dedcac1b0a85076912c436e6fc9b2c8e6a3"
 
 [[package]]
+name = "quick_cache"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "27a893a83255c587d31137bc7e350387b49267b0deac44120fd8fa8bd0d61645"
+dependencies = [
+ "ahash",
+ "equivalent",
+ "hashbrown 0.14.5",
+ "parking_lot",
+]
+
+[[package]]
 name = "quote"
 version = "0.6.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1718,9 +1917,9 @@ dependencies = [
 
 [[package]]
 name = "rayon"
-version = "1.6.1"
+version = "1.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6db3a213adf02b3bcfd2d3846bb41cb22857d131789e01df434fb7e7bc0759b7"
+checksum = "b418a60154510ca1a002a752ca9714984e21e4241e804d32555251faf8b78ffa"
 dependencies = [
  "either",
  "rayon-core",
@@ -1728,14 +1927,12 @@ dependencies = [
 
 [[package]]
 name = "rayon-core"
-version = "1.10.1"
+version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cac410af5d00ab6884528b4ab69d1e8e146e8d471201800fa1b4524126de6ad3"
+checksum = "1465873a3dfdaa8ae7cb14b4383657caab0b3e8a0aa9ae8e04b044854c8dfce2"
 dependencies = [
- "crossbeam-channel",
  "crossbeam-deque",
  "crossbeam-utils",
- "num_cpus",
 ]
 
 [[package]]
@@ -1864,9 +2061,9 @@ dependencies = [
 
 [[package]]
 name = "serde_columnar"
-version = "0.3.4"
+version = "0.3.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5d54dd7e7a1ec134c842f8a3bdb5a1fc662d002682e0457f976f3046cf9ccf8"
+checksum = "6d4e3c0e46450edf7da174b610b9143eb8ca22059ace5016741fc9e20b88d1e7"
 dependencies = [
  "itertools 0.11.0",
  "postcard",
@@ -1877,9 +2074,9 @@ dependencies = [
 
 [[package]]
 name = "serde_columnar_derive"
-version = "0.3.4"
+version = "0.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e5eaacabbc55a397ffbb1ee32523f40f86fdefea8a8d9db19630d8b7c00edd1"
+checksum = "42c5d47942b2a7e76118b697fc0f94516a5d8366a3c0fee8d0e2b713e952e306"
 dependencies = [
  "darling",
  "proc-macro2 1.0.75",
@@ -1991,9 +2188,9 @@ dependencies = [
 
 [[package]]
 name = "strsim"
-version = "0.10.0"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73473c0e59e6d5812c5dfe2a064a6444949f089e20eec9a2e5506596494e4623"
+checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "syn"
@@ -2250,6 +2447,16 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "twox-hash"
+version = "1.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "97fee6b57c6a41524a810daee9286c02d7752c4253064d0b05472833a438f675"
+dependencies = [
+ "cfg-if",
+ "static_assertions",
 ]
 
 [[package]]
@@ -2630,28 +2837,60 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32b752e52a2da0ddfbdbcc6fceadfeede4c939ed16d13e648833a61dfb611ed8"
 
 [[package]]
-name = "zstd"
-version = "0.13.0"
+name = "xxhash-rust"
+version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bffb3309596d527cfcba7dfc6ed6052f1d39dfbd7c867aa2e865e4a449c10110"
+checksum = "6a5cbf750400958819fb6178eaa83bee5cd9c29a26a40cc241df8c70fdd46984"
+
+[[package]]
+name = "yansi"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09041cd90cf85f7f8b2df60c646f853b7f535ce68f85244eb6731cf89fa498ec"
+
+[[package]]
+name = "zerocopy"
+version = "0.7.35"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b9b4fd18abc82b8136838da5d50bae7bdea537c574d8dc1a34ed098d6c166f0"
+dependencies = [
+ "zerocopy-derive",
+]
+
+[[package]]
+name = "zerocopy-derive"
+version = "0.7.35"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fa4f8080344d4671fb4e831a13ad1e68092748387dfc4f55e356242fae12ce3e"
+dependencies = [
+ "proc-macro2 1.0.75",
+ "quote 1.0.35",
+ "syn 2.0.48",
+]
+
+[[package]]
+name = "zstd"
+version = "0.13.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fcf2b778a664581e31e389454a7072dab1647606d44f7feea22cd5abb9c9f3f9"
 dependencies = [
  "zstd-safe",
 ]
 
 [[package]]
 name = "zstd-safe"
-version = "7.0.0"
+version = "7.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43747c7422e2924c11144d5229878b98180ef8b06cca4ab5af37afc8a8d8ea3e"
+checksum = "54a3ab4db68cea366acc5c897c7b4d4d1b8994a9cd6e6f841f8964566a419059"
 dependencies = [
  "zstd-sys",
 ]
 
 [[package]]
 name = "zstd-sys"
-version = "2.0.9+zstd.1.5.5"
+version = "2.0.13+zstd.1.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e16efa8a874a0481a574084d34cc26fdb3b99627480f785888deb6386506656"
+checksum = "38ff0f21cfee8f97d94cef41359e0c89aa6113028ab0291aa8ca0038995a95aa"
 dependencies = [
  "cc",
  "pkg-config",

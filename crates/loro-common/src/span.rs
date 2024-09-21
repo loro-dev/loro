@@ -339,6 +339,26 @@ impl IdSpan {
             counter,
         })
     }
+
+    pub fn get_slice_range_on(&self, other: &Self) -> Option<(usize, usize)> {
+        if self.peer != other.peer {
+            return None;
+        }
+
+        let self_start = self.counter.start.min(self.counter.end);
+        let self_end = self.counter.start.max(self.counter.end);
+        let other_start = other.counter.start.min(other.counter.end);
+        let other_end = other.counter.start.max(other.counter.end);
+
+        if self_start >= other_end || self_end <= other_start {
+            return None;
+        }
+
+        let start = (self_start.max(other_start) - other_start) as usize;
+        let end = (self_end.min(other_end) - other_start) as usize;
+
+        Some((start, end))
+    }
 }
 
 impl HasLength for IdSpan {
@@ -397,13 +417,6 @@ pub trait HasCounterSpan: HasCounter + HasLength {
 
 impl<T: HasCounter + HasLength> HasCounterSpan for T {}
 
-impl<T: HasId> HasCounter for T {
-    #[inline]
-    fn ctr_start(&self) -> Counter {
-        self.id_start().counter
-    }
-}
-
 pub trait HasIdSpan: HasId + HasLength {
     fn intersect<T: HasIdSpan>(&self, other: &T) -> bool {
         let self_start = self.id_start();
@@ -456,6 +469,13 @@ impl HasId for IdSpan {
     #[inline]
     fn id_start(&self) -> ID {
         self.norm_id_start()
+    }
+}
+
+impl HasCounter for IdSpan {
+    #[inline]
+    fn ctr_start(&self) -> Counter {
+        self.counter.min()
     }
 }
 

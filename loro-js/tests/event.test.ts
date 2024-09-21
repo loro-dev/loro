@@ -4,6 +4,7 @@ import {
   getType,
   ListDiff,
   Loro,
+  LoroDoc,
   LoroEventBatch,
   LoroList,
   LoroMap,
@@ -14,7 +15,7 @@ import {
 
 describe("event", () => {
   it("target", async () => {
-    const loro = new Loro();
+    const loro = new LoroDoc();
     let lastEvent: undefined | LoroEventBatch;
     loro.subscribe((event) => {
       expect(event.by).toBe("local");
@@ -29,7 +30,7 @@ describe("event", () => {
   });
 
   it("path", async () => {
-    const loro = new Loro();
+    const loro = new LoroDoc();
     let lastEvent: undefined | LoroEventBatch;
     loro.subscribe((event) => {
       lastEvent = event;
@@ -52,7 +53,7 @@ describe("event", () => {
   });
 
   it("text diff", async () => {
-    const loro = new Loro();
+    const loro = new LoroDoc();
     let lastEvent: undefined | LoroEventBatch;
     loro.subscribe((event) => {
       lastEvent = event;
@@ -75,7 +76,7 @@ describe("event", () => {
   });
 
   it("list diff", async () => {
-    const loro = new Loro();
+    const loro = new LoroDoc();
     let lastEvent: undefined | LoroEventBatch;
     loro.subscribe((event) => {
       lastEvent = event;
@@ -98,7 +99,7 @@ describe("event", () => {
   });
 
   it("map diff", async () => {
-    const loro = new Loro();
+    const loro = new LoroDoc();
     let lastEvent: undefined | LoroEventBatch;
     loro.subscribe((event) => {
       lastEvent = event;
@@ -129,7 +130,7 @@ describe("event", () => {
   });
 
   it("tree", async () => {
-    const loro = new Loro();
+    const loro = new LoroDoc();
     let lastEvent: undefined | LoroEventBatch;
     loro.subscribe((event) => {
       lastEvent = event;
@@ -144,7 +145,7 @@ describe("event", () => {
 
   describe("subscribe container events", () => {
     it("text", async () => {
-      const loro = new Loro();
+      const loro = new LoroDoc();
       const text = loro.getText("text");
       let ran = 0;
       const sub = text.subscribe((event) => {
@@ -179,7 +180,7 @@ describe("event", () => {
     });
 
     it("map subscribe deep", async () => {
-      const loro = new Loro();
+      const loro = new LoroDoc();
       const map = loro.getMap("map");
       let times = 0;
       const sub = map.subscribe((event) => {
@@ -208,7 +209,7 @@ describe("event", () => {
     });
 
     it("list subscribe deep", async () => {
-      const loro = new Loro();
+      const loro = new LoroDoc();
       const list = loro.getList("list");
       let times = 0;
       const sub = list.subscribe((event) => {
@@ -236,7 +237,7 @@ describe("event", () => {
 
   describe("text event length should be utf16", () => {
     it("test", async () => {
-      const loro = new Loro();
+      const loro = new LoroDoc();
       const text = loro.getText("text");
       let string = "";
       text.subscribe((event) => {
@@ -285,7 +286,7 @@ describe("event", () => {
 
   describe("handler in event", () => {
     it("test", async () => {
-      const loro = new Loro();
+      const loro = new LoroDoc();
       const list = loro.getList("list");
       let first = true;
       loro.subscribe((e) => {
@@ -304,7 +305,7 @@ describe("event", () => {
   });
 
   it("diff can contain containers", async () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const list = doc.getList("list");
     let ran = false;
     doc.subscribe((event) => {
@@ -330,11 +331,11 @@ describe("event", () => {
   });
 
   it("remote event", async () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const list = doc.getList("list");
     list.insert(0, 123);
     {
-      const doc2 = new Loro();
+      const doc2 = new LoroDoc();
       let triggered = false;
       doc2.subscribe((event) => {
         expect(event.by).toBe("import");
@@ -345,7 +346,7 @@ describe("event", () => {
       expect(triggered).toBeTruthy();
     }
     {
-      const doc2 = new Loro();
+      const doc2 = new LoroDoc();
       let triggered = false;
       doc2.subscribe((event) => {
         expect(event.by).toBe("import");
@@ -358,7 +359,7 @@ describe("event", () => {
   });
 
   it("checkout event", async () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const list = doc.getList("list");
     list.insert(0, 123);
     doc.commit();
@@ -372,6 +373,124 @@ describe("event", () => {
     await oneMs();
     expect(triggered).toBeTruthy();
   });
+
+  describe("local updates events", () => {
+    it("basic", () => {
+      const loro = new Loro();
+      const text = loro.getText("text");
+      let updateReceived = false;
+
+      const unsubscribe = loro.subscribeLocalUpdates((update) => {
+        updateReceived = true;
+        expect(update).toBeInstanceOf(Uint8Array);
+        expect(update.length).toBeGreaterThan(0);
+      });
+
+      text.insert(0, "Hello");
+      loro.commit();
+
+      expect(updateReceived).toBe(true);
+
+      // Test unsubscribe
+      updateReceived = false;
+      unsubscribe();
+
+      text.insert(5, " World");
+      loro.commit();
+
+      expect(updateReceived).toBe(false);
+    });
+
+    it("multiple subscribers", () => {
+      const loro = new Loro();
+      const text = loro.getText("text");
+      let count1 = 0;
+      let count2 = 0;
+
+      const unsubscribe1 = loro.subscribeLocalUpdates(() => {
+        count1++;
+      });
+
+      const unsubscribe2 = loro.subscribeLocalUpdates(() => {
+        count2++;
+      });
+
+      text.insert(0, "Hello");
+      loro.commit();
+
+      expect(count1).toBe(1);
+      expect(count2).toBe(1);
+
+      unsubscribe1();
+
+      text.insert(5, " World");
+      loro.commit();
+
+      expect(count1).toBe(1);
+      expect(count2).toBe(2);
+
+      unsubscribe2();
+    });
+
+    it("updates for different containers", () => {
+      const loro = new Loro();
+      const text = loro.getText("text");
+      const list = loro.getList("list");
+      const map = loro.getMap("map");
+      let updates = 0;
+
+      loro.subscribeLocalUpdates(() => {
+        updates++;
+      });
+
+      text.insert(0, "Hello");
+      list.push("World");
+      map.set("key", "value");
+      loro.commit();
+
+      expect(updates).toBe(1);  // All changes are bundled in one update
+
+      text.insert(5, "!");
+      loro.commit();
+
+      expect(updates).toBe(2);
+    })
+
+    it("can be used to sync", () => {
+      const loro1 = new Loro();
+      const loro2 = new Loro();
+      const text1 = loro1.getText("text");
+      const text2 = loro2.getText("text");
+
+      loro1.subscribeLocalUpdates((updates) => {
+        loro2.import(updates);
+      });
+
+      loro2.subscribeLocalUpdates((updates) => {
+        loro1.import(updates);
+      });
+
+      text1.insert(0, "Hello");
+      loro1.commit();
+
+      expect(text2.toString()).toBe("Hello");
+
+      text2.insert(5, " World");
+      loro2.commit();
+
+      expect(text1.toString()).toBe("Hello World");
+
+      // Test concurrent edits
+      text1.insert(0, "1. ");
+      text2.insert(text2.length, "!");
+      loro1.commit();
+      loro2.commit();
+
+      // Both documents should converge to the same state
+      expect(text1.toString()).toBe("1. Hello World!");
+      expect(text2.toString()).toBe("1. Hello World!");
+    })
+  })
 });
 
 function oneMs(): Promise<void> {

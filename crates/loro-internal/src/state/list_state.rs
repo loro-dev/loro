@@ -1,9 +1,10 @@
 use std::{
+    io::Write,
     ops::RangeBounds,
     sync::{Arc, Mutex, Weak},
 };
 
-use super::ContainerState;
+use super::{ContainerState, DiffApplyContext, FastStateSnapshot};
 use crate::{
     arena::SharedArena,
     container::{idx::ContainerIdx, list::list_op::ListOp, ContainerID},
@@ -211,12 +212,31 @@ impl ListState {
                 .insert(value.into_container().unwrap(), leaf.leaf);
         }
 
-        for leaf in data.arr {
-            let v = &self.list.get_elem(leaf).unwrap().v;
-            if v.is_container() {
+        assert!(data.arr.is_empty());
+    }
+
+    pub fn push(&mut self, value: LoroValue, id: IdFull) {
+        if self.list.is_empty() {
+            let idx = self.list.push(Elem {
+                v: value.clone(),
+                id,
+            });
+
+            if value.is_container() {
                 self.child_container_to_leaf
-                    .insert(v.as_container().unwrap().clone(), leaf);
+                    .insert(value.into_container().unwrap(), idx.leaf);
             }
+            return;
+        }
+
+        let leaf = self.list.push(Elem {
+            v: value.clone(),
+            id,
+        });
+
+        if value.is_container() {
+            self.child_container_to_leaf
+                .insert(value.into_container().unwrap(), leaf.leaf);
         }
     }
 
@@ -344,9 +364,9 @@ impl ContainerState for ListState {
     fn apply_diff_and_convert(
         &mut self,
         diff: InternalDiff,
-        arena: &SharedArena,
-        txn: &Weak<Mutex<Option<Transaction>>>,
-        state: &Weak<Mutex<DocState>>,
+        DiffApplyContext {
+            arena, txn, state, ..
+        }: DiffApplyContext,
     ) -> Diff {
         let InternalDiff::ListRaw(delta) = diff else {
             unreachable!()
@@ -361,11 +381,14 @@ impl ContainerState for ListState {
                 }
                 crate::delta::DeltaItem::Insert { insert: value, .. } => {
                     let mut arr = Vec::new();
-                    for slices in value.ranges.iter() {
-                        for i in slices.0.start..slices.0.end {
-                            let value = arena.get_value(i as usize).unwrap();
-                            arr.push(value);
+                    match &value.values {
+                        either::Either::Left(range) => {
+                            for i in range.to_range() {
+                                let value = arena.get_value(i as usize).unwrap();
+                                arr.push(value);
+                            }
                         }
+                        either::Either::Right(v) => arr.push(v.clone()),
                     }
                     for arr in ArrayVec::from_many(
                         arr.iter()
@@ -387,13 +410,7 @@ impl ContainerState for ListState {
         Diff::List(ans)
     }
 
-    fn apply_diff(
-        &mut self,
-        diff: InternalDiff,
-        arena: &SharedArena,
-        _txn: &Weak<Mutex<Option<Transaction>>>,
-        _state: &Weak<Mutex<DocState>>,
-    ) {
+    fn apply_diff(&mut self, diff: InternalDiff, DiffApplyContext { arena, .. }: DiffApplyContext) {
         match diff {
             InternalDiff::ListRaw(delta) => {
                 let mut index = 0;
@@ -404,14 +421,17 @@ impl ContainerState for ListState {
                         }
                         crate::delta::DeltaItem::Insert { insert: value, .. } => {
                             let mut arr = Vec::new();
-                            for slices in value.ranges.iter() {
-                                for i in slices.0.start..slices.0.end {
-                                    let value = arena.get_value(i as usize).unwrap();
-                                    arr.push(value);
+                            match &value.values {
+                                either::Either::Left(range) => {
+                                    for i in range.to_range() {
+                                        let value = arena.get_value(i).unwrap();
+                                        arr.push(value);
+                                    }
                                 }
+                                either::Either::Right(v) => arr.push(v.clone()),
                             }
-                            let len = arr.len();
 
+                            let len = arr.len();
                             self.insert_batch(index, arr, value.id);
                             index += len;
                         }
@@ -506,7 +526,7 @@ impl ContainerState for ListState {
 
     #[doc = "Restore the state to the state represented by the ops that exported by `get_snapshot_ops`"]
     fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) -> LoroResult<()> {
-        assert_eq!(ctx.mode, EncodeMode::Snapshot);
+        assert_eq!(ctx.mode, EncodeMode::OutdatedSnapshot);
         let mut index = 0;
         for op in ctx.ops {
             let value = op.op.content.as_list().unwrap().as_insert().unwrap().0;
@@ -522,9 +542,104 @@ impl ContainerState for ListState {
     }
 }
 
+mod snapshot {
+    use std::io::Read;
+
+    use loro_common::{Counter, Lamport, PeerID};
+
+    use crate::{encoding::value_register::ValueRegister, state::ContainerCreationContext};
+
+    use super::*;
+
+    impl FastStateSnapshot for ListState {
+        /// Encodes the ListState snapshot in a compact binary format:
+        /// 1. Encodes the list values using postcard serialization
+        /// 2. Encodes a table of unique peer IDs
+        /// 3. For each element, encodes its ID as:
+        ///    - Index of the peer ID in the table (LEB128)
+        ///    - Counter (LEB128)
+        ///    - Lamport timestamp (LEB128)
+        fn encode_snapshot_fast<W: Write>(&mut self, mut w: W) {
+            let value = self.get_value().into_list().unwrap();
+            postcard::to_io(&value, &mut w).unwrap();
+            let mut peers: ValueRegister<PeerID> = ValueRegister::new();
+            let mut id_bytes = Vec::new();
+            for elem in self.iter_with_id() {
+                let id = elem.id;
+                let peer_idx = peers.register(&id.peer);
+                leb128::write::unsigned(&mut id_bytes, peer_idx as u64).unwrap();
+                leb128::write::unsigned(&mut id_bytes, id.counter as u64).unwrap();
+                leb128::write::unsigned(&mut id_bytes, id.lamport as u64).unwrap();
+            }
+
+            let peers = peers.unwrap_vec();
+            leb128::write::unsigned(&mut w, peers.len() as u64).unwrap();
+            for peer in peers {
+                w.write_all(&peer.to_le_bytes()).unwrap();
+            }
+
+            w.write_all(&id_bytes).unwrap();
+        }
+        fn decode_value(bytes: &[u8]) -> LoroResult<(LoroValue, &[u8])> {
+            let (value, bytes) = postcard::take_from_bytes(bytes).map_err(|_| {
+                loro_common::LoroError::DecodeError(
+                    "Decode list value failed".to_string().into_boxed_str(),
+                )
+            })?;
+            Ok((LoroValue::List(Arc::new(value)), bytes))
+        }
+
+        fn decode_snapshot_fast(
+            idx: ContainerIdx,
+            (v, mut bytes): (LoroValue, &[u8]),
+            _ctx: ContainerCreationContext,
+        ) -> LoroResult<Self>
+        where
+            Self: Sized,
+        {
+            let peer_num = leb128::read::unsigned(&mut bytes).unwrap() as usize;
+            let mut peers = Vec::with_capacity(peer_num);
+            for _ in 0..peer_num {
+                let mut buf = [0u8; 8];
+                bytes.read_exact(&mut buf).unwrap();
+                peers.push(PeerID::from_le_bytes(buf));
+            }
+
+            let list = v.as_list().unwrap();
+            let mut ans = Self::new(idx);
+            let mut i = 0;
+            while !bytes.is_empty() {
+                let peer_idx = leb128::read::unsigned(&mut bytes).unwrap();
+                let counter = leb128::read::unsigned(&mut bytes).unwrap();
+                let lamport = leb128::read::unsigned(&mut bytes).unwrap();
+                ans.insert(
+                    i,
+                    list[i].clone(),
+                    IdFull::new(
+                        peers[peer_idx as usize],
+                        counter as Counter,
+                        lamport as Lamport,
+                    ),
+                );
+                i += 1;
+            }
+
+            Ok(ans)
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
+    use loro_common::{Counter, Lamport};
+
+    use crate::state::ContainerCreationContext;
+
     use super::*;
+
+    fn id(name: &str) -> ContainerID {
+        ContainerID::new_root(name, crate::ContainerType::List)
+    }
 
     #[test]
     fn test() {
@@ -533,7 +648,7 @@ mod test {
             loro_common::ContainerType::List,
         ));
         fn id(name: &str) -> ContainerID {
-            ContainerID::new_root(name, crate::ContainerType::List).unwrap()
+            ContainerID::new_root(name, crate::ContainerType::List)
         }
         list.insert(0, LoroValue::Container(id("abc")), IdFull::new(0, 0, 0));
         list.insert(0, LoroValue::Container(id("x")), IdFull::new(0, 0, 0));
@@ -542,5 +657,40 @@ mod test {
         list.insert(1, LoroValue::Bool(false), IdFull::new(0, 0, 0));
         assert_eq!(list.get_child_container_index(&id("x")), Some(0));
         assert_eq!(list.get_child_container_index(&id("abc")), Some(2));
+    }
+
+    #[test]
+    fn test_list_fast_snapshot() {
+        let mut list = ListState::new(ContainerIdx::from_index_and_type(
+            0,
+            loro_common::ContainerType::List,
+        ));
+
+        list.insert(0, LoroValue::I64(0), IdFull::new(0, 0, 0));
+        list.insert(1, LoroValue::I64(2), IdFull::new(1, 1, 1));
+        let mut w = Vec::new();
+        list.encode_snapshot_fast(&mut w);
+        assert!(w.len() <= 28, "w.len() = {}", w.len());
+        let (v, left) = ListState::decode_value(&w).unwrap();
+        let mut new_list = ListState::decode_snapshot_fast(
+            ContainerIdx::from_index_and_type(0, loro_common::ContainerType::List),
+            (v.clone(), left),
+            ContainerCreationContext {
+                configure: &Default::default(),
+                peer: 0,
+            },
+        )
+        .unwrap();
+        new_list.check();
+        assert_eq!(
+            new_list.get_value(),
+            vec![LoroValue::I64(0), LoroValue::I64(2)].into()
+        );
+        assert_eq!(new_list.get_value(), v);
+        for (i, elem) in new_list.list.iter().enumerate() {
+            assert_eq!(elem.id.peer, i as u64);
+            assert_eq!(elem.id.counter, i as Counter);
+            assert_eq!(elem.id.lamport, i as Lamport);
+        }
     }
 }

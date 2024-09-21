@@ -1215,6 +1215,7 @@ fn undo_tree_concurrent_delete2() -> LoroResult<()> {
     Ok(())
 }
 
+/// ```text
 ///                    ┌ ─ ─ ─ ─            ┌ ─ ─ ─ ─
 ///                      Peer 1 │             Peer 2 │
 ///                    └ ─ ─ ─ ─            └ ─ ─ ─ ─
@@ -1259,6 +1260,7 @@ fn undo_tree_concurrent_delete2() -> LoroResult<()> {
 ///                      Cannot │
 ///                    │  Redo
 ///                     ─ ─ ─ ─ ┘
+/// ```
 #[test]
 fn undo_redo_when_collab() -> anyhow::Result<()> {
     let doc_a = LoroDoc::new();
@@ -1618,7 +1620,7 @@ fn undo_transform_cursor_position() -> anyhow::Result<()> {
     undo.undo(&doc)?;
 
     // Undo will create new "Hello". They have different IDs than the original ones.
-    // But the original cursors are binded on the original deleted text.
+    // But the original cursors are bound on the original deleted text.
     // So internally, the cursor positions are transformed.
 
     // The transformation should also consider the effect of the remote changes.

@@ -8,12 +8,15 @@ publish = false
 
 [dependencies]
 bench-utils = { path = "../bench-utils" }
-loro = { path = "../loro" }
+dev-utils = { path = "../dev-utils" }
+loro = { path = "../loro", features = ["counter"] }
 tabled = "0.15.0"
 arbitrary = { version = "1.3.0", features = ["derive"] }
 serde_json = { workspace = true }
 tracing = "0.1.40"
 criterion = "0.4.0"
+rand = "0.8.5"
+zstd = "0.13.2"
 
 [dev-dependencies]
 flate2 = "1.0"
@@ -22,4 +25,8 @@ ctor = "0.2"
 
 [[bench]]
 name = "list"
+harness = false
+
+[[bench]]
+name = "bench_text"
 harness = false

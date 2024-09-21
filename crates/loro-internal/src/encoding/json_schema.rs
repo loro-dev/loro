@@ -1,6 +1,10 @@
-use std::{borrow::Cow, sync::Arc};
+use std::sync::Arc;
 
-use loro_common::{ContainerID, ContainerType, IdLp, LoroResult, LoroValue, PeerID, TreeID, ID};
+use either::Either;
+use loro_common::{
+    ContainerID, ContainerType, HasCounterSpan, IdLp, LoroError, LoroResult, LoroValue, PeerID,
+    TreeID, ID,
+};
 use rle::{HasLength, RleVec, Sliceable};
 
 use crate::{
@@ -13,26 +17,27 @@ use crate::{
         tree::tree_op::TreeOp,
     },
     op::{FutureInnerContent, InnerContent, Op, SliceRange},
+    oplog::BlockChangeRef,
     version::Frontiers,
     OpLog, VersionVector,
 };
 
-use super::encode_reordered::{import_changes_to_oplog, ValueRegister};
-use op::{JsonOpContent, JsonSchema};
+use super::encode_reordered::{import_changes_to_oplog, ImportChangesResult, ValueRegister};
+use json::{JsonOpContent, JsonSchema};
 
 const SCHEMA_VERSION: u8 = 1;
 
 fn refine_vv(vv: &VersionVector, oplog: &OpLog) -> VersionVector {
     let mut refined = VersionVector::new();
-    for (peer, counter) in vv.iter() {
-        if counter == &0 {
+    for (&peer, &counter) in vv.iter() {
+        if counter == 0 {
             continue;
         }
-        let end = oplog.vv().get(peer).copied().unwrap_or(0);
-        if end <= *counter {
-            refined.insert(*peer, end);
+        let end = oplog.vv().get(&peer).copied().unwrap_or(0);
+        if end <= counter {
+            refined.insert(peer, end);
         } else {
-            refined.insert(*peer, *counter);
+            refined.insert(peer, counter);
         }
     }
     refined
@@ -61,37 +66,50 @@ pub(crate) fn export_json<'a, 'c: 'a>(
 
 pub(crate) fn import_json(oplog: &mut OpLog, json: JsonSchema) -> LoroResult<()> {
     let changes = decode_changes(json, &oplog.arena)?;
-    let (latest_ids, pending_changes) = import_changes_to_oplog(changes, oplog)?;
-    if oplog.try_apply_pending(latest_ids).should_update && !oplog.batch_importing {
-        oplog.dag.refresh_frontiers();
-    }
+    let ImportChangesResult {
+        latest_ids,
+        pending_changes,
+        changes_that_deps_on_trimmed_history,
+    } = import_changes_to_oplog(changes, oplog);
+    oplog.try_apply_pending(latest_ids);
     oplog.import_unknown_lamport_pending_changes(pending_changes)?;
-    Ok(())
+    if changes_that_deps_on_trimmed_history.is_empty() {
+        Ok(())
+    } else {
+        Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion)
+    }
 }
 
 fn init_encode<'s, 'a: 's>(
     oplog: &'a OpLog,
     start_vv: &VersionVector,
     end_vv: &VersionVector,
-) -> Vec<Cow<'s, Change>> {
-    let mut diff_changes: Vec<Cow<'a, Change>> = Vec::new();
+) -> Vec<Either<BlockChangeRef, Change>> {
+    let mut diff_changes: Vec<Either<BlockChangeRef, Change>> = Vec::new();
     for change in oplog.iter_changes_peer_by_peer(start_vv, end_vv) {
         let start_cnt = start_vv.get(&change.id.peer).copied().unwrap_or(0);
         let end_cnt = end_vv.get(&change.id.peer).copied().unwrap_or(0);
         if change.id.counter < start_cnt {
+            if change.ctr_end() <= start_cnt {
+                continue;
+            }
+
             let offset = start_cnt - change.id.counter;
             let to = change
                 .atom_len()
                 .min((end_cnt - change.id.counter) as usize);
-            diff_changes.push(Cow::Owned(change.slice(offset as usize, to)));
+            diff_changes.push(Either::Right(change.slice(offset as usize, to)));
         } else if change.id.counter + change.atom_len() as i32 > end_cnt {
             let len = end_cnt - change.id.counter;
-            diff_changes.push(Cow::Owned(change.slice(0, len as usize)));
+            diff_changes.push(Either::Right(change.slice(0, len as usize)));
         } else {
-            diff_changes.push(Cow::Borrowed(change));
+            diff_changes.push(Either::Left(change));
         }
     }
-    diff_changes.sort_by_key(|x| x.lamport);
+    diff_changes.sort_by_key(|x| match x {
+        Either::Left(c) => c.lamport,
+        Either::Right(c) => c.lamport,
+    });
     diff_changes
 }
 
@@ -169,12 +187,16 @@ fn convert_tree_id(tree: &TreeID, peers: &[PeerID]) -> TreeID {
 }
 
 fn encode_changes(
-    diff_changes: &[Cow<'_, Change>],
+    diff_changes: &[Either<BlockChangeRef, Change>],
     arena: &SharedArena,
     peer_register: &mut ValueRegister<PeerID>,
-) -> Vec<op::Change> {
+) -> Vec<json::JsonChange> {
     let mut changes = Vec::with_capacity(diff_changes.len());
     for change in diff_changes.iter() {
+        let change: &Change = match change {
+            Either::Left(c) => c,
+            Either::Right(c) => c,
+        };
         let mut ops = Vec::with_capacity(change.ops().len());
         for Op {
             counter,
@@ -199,7 +221,7 @@ fn encode_changes(
                                     }
                                 }
                             });
-                            op::ListOp::Insert {
+                            json::ListOp::Insert {
                                 pos: *pos,
                                 value: value.into(),
                             }
@@ -207,7 +229,7 @@ fn encode_changes(
                         InnerListOp::Delete(DeleteSpanWithId {
                             id_start,
                             span: DeleteSpan { pos, signed_len },
-                        }) => op::ListOp::Delete {
+                        }) => json::ListOp::Delete {
                             pos: *pos,
                             len: *signed_len,
                             start_id: register_id(id_start, peer_register),
@@ -228,7 +250,7 @@ fn encode_changes(
                                     }
                                 }
                             });
-                            op::MovableListOp::Insert {
+                            json::MovableListOp::Insert {
                                 pos: *pos,
                                 value: value.into(),
                             }
@@ -236,12 +258,16 @@ fn encode_changes(
                         InnerListOp::Delete(DeleteSpanWithId {
                             id_start,
                             span: DeleteSpan { pos, signed_len },
-                        }) => op::MovableListOp::Delete {
+                        }) => json::MovableListOp::Delete {
                             pos: *pos,
                             len: *signed_len,
                             start_id: register_id(id_start, peer_register),
                         },
-                        InnerListOp::Move { from, from_id, to } => op::MovableListOp::Move {
+                        InnerListOp::Move {
+                            from,
+                            elem_id: from_id,
+                            to,
+                        } => json::MovableListOp::Move {
                             from: *from,
                             to: *to,
                             elem_id: register_idlp(from_id, peer_register),
@@ -259,7 +285,7 @@ fn encode_changes(
                             } else {
                                 value.clone()
                             };
-                            op::MovableListOp::Set {
+                            json::MovableListOp::Set {
                                 elem_id: register_idlp(elem_id, peer_register),
                                 value,
                             }
@@ -277,12 +303,12 @@ fn encode_changes(
                             pos,
                         } => {
                             let text = String::from_utf8(slice.as_bytes().to_vec()).unwrap();
-                            op::TextOp::Insert { pos: *pos, text }
+                            json::TextOp::Insert { pos: *pos, text }
                         }
                         InnerListOp::Delete(DeleteSpanWithId {
                             id_start,
                             span: DeleteSpan { pos, signed_len },
-                        }) => op::TextOp::Delete {
+                        }) => json::TextOp::Delete {
                             pos: *pos,
                             len: *signed_len,
                             start_id: register_id(id_start, peer_register),
@@ -293,14 +319,14 @@ fn encode_changes(
                             key,
                             value,
                             info,
-                        } => op::TextOp::Mark {
+                        } => json::TextOp::Mark {
                             start: *start,
                             end: *end,
                             style_key: key.to_string(),
                             style_value: value.clone(),
                             info: info.to_byte(),
                         },
-                        InnerListOp::StyleEnd => op::TextOp::MarkEnd,
+                        InnerListOp::StyleEnd => json::TextOp::MarkEnd,
                         _ => unreachable!(),
                     }),
                     _ => unreachable!(),
@@ -320,12 +346,12 @@ fn encode_changes(
                             } else {
                                 v.clone()
                             };
-                            op::MapOp::Insert {
+                            json::MapOp::Insert {
                                 key: key.to_string(),
                                 value,
                             }
                         } else {
-                            op::MapOp::Delete {
+                            json::MapOp::Delete {
                                 key: key.to_string(),
                             }
                         })
@@ -335,12 +361,12 @@ fn encode_changes(
                 },
 
                 ContainerType::Tree => match content {
-                    InnerContent::Tree(op) => JsonOpContent::Tree(match op {
+                    InnerContent::Tree(op) => JsonOpContent::Tree(match &**op {
                         TreeOp::Create {
                             target,
                             parent,
                             position,
-                        } => op::TreeOp::Create {
+                        } => json::TreeOp::Create {
                             target: register_tree_id(target, peer_register),
                             parent: parent.map(|p| register_tree_id(&p, peer_register)),
                             fractional_index: position.clone(),
@@ -349,12 +375,12 @@ fn encode_changes(
                             target,
                             parent,
                             position,
-                        } => op::TreeOp::Move {
+                        } => json::TreeOp::Move {
                             target: register_tree_id(target, peer_register),
                             parent: parent.map(|p| register_tree_id(&p, peer_register)),
                             fractional_index: position.clone(),
                         },
-                        TreeOp::Delete { target } => op::TreeOp::Delete {
+                        TreeOp::Delete { target } => json::TreeOp::Delete {
                             target: register_tree_id(target, peer_register),
                         },
                     }),
@@ -365,9 +391,9 @@ fn encode_changes(
                     else {
                         unreachable!();
                     };
-                    JsonOpContent::Future(op::FutureOpWrapper {
+                    JsonOpContent::Future(json::FutureOpWrapper {
                         prop: *prop,
-                        value: op::FutureOp::Unknown(value.clone()),
+                        value: json::FutureOp::Unknown((**value).clone()),
                     })
                 }
                 #[cfg(feature = "counter")]
@@ -377,22 +403,22 @@ fn encode_changes(
                     };
                     match f {
                         FutureInnerContent::Counter(x) => {
-                            JsonOpContent::Future(op::FutureOpWrapper {
+                            JsonOpContent::Future(json::FutureOpWrapper {
                                 prop: 0,
-                                value: op::FutureOp::Counter(super::OwnedValue::F64(*x)),
+                                value: json::FutureOp::Counter(super::OwnedValue::F64(*x)),
                             })
                         }
                         _ => unreachable!(),
                     }
                 }
             };
-            ops.push(op::JsonOp {
+            ops.push(json::JsonOp {
                 counter: *counter,
                 container,
                 content: op,
             });
         }
-        let c = op::Change {
+        let c = json::JsonChange {
             id: register_id(&change.id, peer_register),
             ops,
             deps: change
@@ -402,8 +428,9 @@ fn encode_changes(
                 .collect(),
             lamport: change.lamport,
             timestamp: change.timestamp,
-            msg: None,
+            msg: change.message().map(|x| x.to_string()),
         };
+
         changes.push(c);
     }
     changes
@@ -412,12 +439,12 @@ fn encode_changes(
 fn decode_changes(json: JsonSchema, arena: &SharedArena) -> LoroResult<Vec<Change>> {
     let JsonSchema { peers, changes, .. } = json;
     let mut ans = Vec::with_capacity(changes.len());
-    for op::Change {
+    for json::JsonChange {
         id,
         timestamp,
         deps,
         lamport,
-        msg: _,
+        msg,
         ops: json_ops,
     } in changes
     {
@@ -433,15 +460,15 @@ fn decode_changes(json: JsonSchema, arena: &SharedArena) -> LoroResult<Vec<Chang
             deps: Frontiers::from_iter(deps.into_iter().map(|id| convert_id(&id, &peers))),
             lamport,
             ops,
-            has_dependents: false,
+            commit_msg: msg.map(|x| x.into()),
         };
         ans.push(change);
     }
     Ok(ans)
 }
 
-fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResult<Op> {
-    let op::JsonOp {
+fn decode_op(op: json::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResult<Op> {
+    let json::JsonOp {
         counter,
         container,
         content,
@@ -451,7 +478,7 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResul
     let content = match container.container_type() {
         ContainerType::Text => match content {
             JsonOpContent::Text(text) => match text {
-                op::TextOp::Insert { pos, text } => {
+                json::TextOp::Insert { pos, text } => {
                     let (slice, result) = arena.alloc_str_with_slice(&text);
                     InnerContent::List(InnerListOp::InsertText {
                         slice,
@@ -460,7 +487,7 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResul
                         pos,
                     })
                 }
-                op::TextOp::Delete {
+                json::TextOp::Delete {
                     pos,
                     len,
                     start_id: id_start,
@@ -474,7 +501,7 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResul
                         },
                     }))
                 }
-                op::TextOp::Mark {
+                json::TextOp::Mark {
                     start,
                     end,
                     style_key,
@@ -487,13 +514,13 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResul
                     value: style_value,
                     info: TextStyleInfoFlag::from_byte(info),
                 }),
-                op::TextOp::MarkEnd => InnerContent::List(InnerListOp::StyleEnd),
+                json::TextOp::MarkEnd => InnerContent::List(InnerListOp::StyleEnd),
             },
             _ => unreachable!(),
         },
         ContainerType::List => match content {
             JsonOpContent::List(list) => match list {
-                op::ListOp::Insert { pos, value } => {
+                json::ListOp::Insert { pos, value } => {
                     let mut values = value.into_list().unwrap();
                     Arc::make_mut(&mut values).iter_mut().for_each(|v| {
                         if let LoroValue::Container(id) = v {
@@ -508,7 +535,7 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResul
                         pos,
                     })
                 }
-                op::ListOp::Delete { pos, len, start_id } => {
+                json::ListOp::Delete { pos, len, start_id } => {
                     InnerContent::List(InnerListOp::Delete(DeleteSpanWithId {
                         id_start: convert_id(&start_id, peers),
                         span: DeleteSpan {
@@ -522,7 +549,7 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResul
         },
         ContainerType::MovableList => match content {
             JsonOpContent::MovableList(list) => match list {
-                op::MovableListOp::Insert { pos, value } => {
+                json::MovableListOp::Insert { pos, value } => {
                     let mut values = value.into_list().unwrap();
                     Arc::make_mut(&mut values).iter_mut().for_each(|v| {
                         if let LoroValue::Container(id) = v {
@@ -537,7 +564,7 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResul
                         pos,
                     })
                 }
-                op::MovableListOp::Delete { pos, len, start_id } => {
+                json::MovableListOp::Delete { pos, len, start_id } => {
                     InnerContent::List(InnerListOp::Delete(DeleteSpanWithId {
                         id_start: convert_id(&start_id, peers),
                         span: DeleteSpan {
@@ -546,15 +573,19 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResul
                         },
                     }))
                 }
-                op::MovableListOp::Move {
+                json::MovableListOp::Move {
                     from,
                     elem_id: from_id,
                     to,
                 } => {
                     let from_id = convert_idlp(&from_id, peers);
-                    InnerContent::List(InnerListOp::Move { from, from_id, to })
+                    InnerContent::List(InnerListOp::Move {
+                        from,
+                        elem_id: from_id,
+                        to,
+                    })
                 }
-                op::MovableListOp::Set { elem_id, mut value } => {
+                json::MovableListOp::Set { elem_id, mut value } => {
                     let elem_id = convert_idlp(&elem_id, peers);
                     if let LoroValue::Container(id) = &mut value {
                         *id = convert_container_id(id.clone(), peers);
@@ -566,7 +597,7 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResul
         },
         ContainerType::Map => match content {
             JsonOpContent::Map(map) => match map {
-                op::MapOp::Insert { key, mut value } => {
+                json::MapOp::Insert { key, mut value } => {
                     if let LoroValue::Container(id) = &mut value {
                         *id = convert_container_id(id.clone(), peers);
                     }
@@ -575,7 +606,7 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResul
                         value: Some(value),
                     })
                 }
-                op::MapOp::Delete { key } => InnerContent::Map(MapSet {
+                json::MapOp::Delete { key } => InnerContent::Map(MapSet {
                     key: key.into(),
                     value: None,
                 }),
@@ -584,50 +615,53 @@ fn decode_op(op: op::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResul
         },
         ContainerType::Tree => match content {
             JsonOpContent::Tree(tree) => match tree {
-                op::TreeOp::Create {
+                json::TreeOp::Create {
                     target,
                     parent,
                     fractional_index,
-                } => InnerContent::Tree(TreeOp::Create {
+                } => InnerContent::Tree(Arc::new(TreeOp::Create {
                     target: convert_tree_id(&target, peers),
                     parent: parent.map(|p| convert_tree_id(&p, peers)),
                     position: fractional_index,
-                }),
-                op::TreeOp::Move {
+                })),
+                json::TreeOp::Move {
                     target,
                     parent,
                     fractional_index,
-                } => InnerContent::Tree(TreeOp::Move {
+                } => InnerContent::Tree(Arc::new(TreeOp::Move {
                     target: convert_tree_id(&target, peers),
                     parent: parent.map(|p| convert_tree_id(&p, peers)),
                     position: fractional_index,
-                }),
-                op::TreeOp::Delete { target } => InnerContent::Tree(TreeOp::Delete {
+                })),
+                json::TreeOp::Delete { target } => InnerContent::Tree(Arc::new(TreeOp::Delete {
                     target: convert_tree_id(&target, peers),
-                }),
+                })),
             },
             _ => unreachable!(),
         },
         ContainerType::Unknown(_) => match content {
-            JsonOpContent::Future(op::FutureOpWrapper {
+            JsonOpContent::Future(json::FutureOpWrapper {
                 prop,
-                value: op::FutureOp::Unknown(value),
-            }) => InnerContent::Future(FutureInnerContent::Unknown { prop, value }),
+                value: json::FutureOp::Unknown(value),
+            }) => InnerContent::Future(FutureInnerContent::Unknown {
+                prop,
+                value: Box::new(value),
+            }),
             _ => unreachable!(),
         },
         #[cfg(feature = "counter")]
         ContainerType::Counter => {
-            let JsonOpContent::Future(op::FutureOpWrapper { prop: _, value }) = content else {
+            let JsonOpContent::Future(json::FutureOpWrapper { prop: _, value }) = content else {
                 unreachable!()
             };
             use crate::encoding::OwnedValue;
             match value {
-                op::FutureOp::Counter(OwnedValue::F64(c))
-                | op::FutureOp::Unknown(OwnedValue::F64(c)) => {
+                json::FutureOp::Counter(OwnedValue::F64(c))
+                | json::FutureOp::Unknown(OwnedValue::F64(c)) => {
                     InnerContent::Future(FutureInnerContent::Counter(c))
                 }
-                op::FutureOp::Counter(OwnedValue::I64(c))
-                | op::FutureOp::Unknown(OwnedValue::I64(c)) => {
+                json::FutureOp::Counter(OwnedValue::I64(c))
+                | json::FutureOp::Unknown(OwnedValue::I64(c)) => {
                     InnerContent::Future(FutureInnerContent::Counter(c as f64))
                 }
                 _ => unreachable!(),
@@ -665,7 +699,7 @@ impl TryFrom<String> for JsonSchema {
     }
 }
 
-pub mod op {
+pub mod json {
 
     use fractional_index::FractionalIndex;
     use loro_common::{ContainerID, IdLp, Lamport, LoroValue, PeerID, TreeID, ID};
@@ -681,10 +715,11 @@ pub mod op {
         pub start_version: Frontiers,
         #[serde(with = "self::serde_impl::peer_id")]
         pub peers: Vec<PeerID>,
-        pub changes: Vec<Change>,
+        pub changes: Vec<JsonChange>,
     }
+
     #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct Change {
+    pub struct JsonChange {
         #[serde(with = "self::serde_impl::id")]
         pub id: ID,
         pub timestamp: i64,

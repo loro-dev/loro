@@ -16,6 +16,7 @@ use fxhash::{FxHashMap, FxHashSet};
 use loro_common::IdSpanVector;
 use rle::{HasLength, Sliceable};
 use smallvec::{smallvec, SmallVec};
+use tracing::trace;
 mod iter;
 mod mermaid;
 #[cfg(test)]
@@ -23,6 +24,7 @@ mod test;
 
 use crate::{
     change::Lamport,
+    diff_calc::DiffMode,
     id::{Counter, PeerID, ID},
     span::{CounterSpan, HasId, HasIdSpan, HasLamport, HasLamportSpan, IdSpan},
     version::{Frontiers, VersionVector, VersionVectorDiff},
@@ -50,14 +52,14 @@ pub(crate) trait DagNode: HasLamport + HasId + HasLength + Debug + Sliceable {
 pub(crate) trait Dag: Debug {
     type Node: DagNode;
 
-    fn get(&self, id: ID) -> Option<&Self::Node>;
+    fn get(&self, id: ID) -> Option<Self::Node>;
     #[allow(unused)]
     fn frontier(&self) -> &[ID];
     fn vv(&self) -> VersionVector;
 }
 
 pub(crate) trait DagUtils: Dag {
-    fn find_common_ancestor(&self, a_id: &[ID], b_id: &[ID]) -> Frontiers;
+    fn find_common_ancestor(&self, a_id: &[ID], b_id: &[ID]) -> (Frontiers, DiffMode);
     /// Slow, should probably only use on dev
     #[allow(unused)]
     fn get_vv(&self, id: ID) -> VersionVector;
@@ -82,7 +84,7 @@ pub(crate) trait DagUtils: Dag {
 
 impl<T: Dag + ?Sized> DagUtils for T {
     #[inline]
-    fn find_common_ancestor(&self, a_id: &[ID], b_id: &[ID]) -> Frontiers {
+    fn find_common_ancestor(&self, a_id: &[ID], b_id: &[ID]) -> (Frontiers, DiffMode) {
         // TODO: perf: make it also return the spans to reach common_ancestors
         find_common_ancestor(&|id| self.get(id), a_id, b_id)
     }
@@ -99,16 +101,18 @@ impl<T: Dag + ?Sized> DagUtils for T {
 
     fn find_path(&self, from: &[ID], to: &[ID]) -> VersionVectorDiff {
         let mut ans = VersionVectorDiff::default();
+        trace!("find_path from={:?} to={:?}", from, to);
         if from == to {
             return ans;
         }
+
         if from.len() == 1 && to.len() == 1 {
             let from = from[0];
             let to = to[0];
             if from.peer == to.peer {
                 let from_span = self.get(from).unwrap();
                 let to_span = self.get(to).unwrap();
-                if std::ptr::eq(from_span, to_span) {
+                if from_span.id_start() == to_span.id_start() {
                     if from.counter < to.counter {
                         ans.right.insert(
                             from.peer,
@@ -195,7 +199,7 @@ impl<T: Dag + ?Sized> DagUtils for T {
 
 fn get_version_vector<'a, Get, D>(get: &'a Get, id: ID) -> VersionVector
 where
-    Get: Fn(ID) -> Option<&'a D>,
+    Get: Fn(ID) -> Option<D>,
     D: DagNode + 'a,
 {
     let mut vv = VersionVector::new();
@@ -209,18 +213,17 @@ where
 
     let mut stack = Vec::with_capacity(node.deps().len());
     for dep in node.deps() {
-        stack.push(dep);
+        stack.push(*dep);
     }
 
-    while !stack.is_empty() {
-        let node_id = *stack.pop().unwrap();
+    while let Some(node_id) = stack.pop() {
         let node = get(node_id).unwrap();
         let node_id_start = node.id_start();
         if !visited.contains(&node_id_start) {
             vv.try_update_last(node_id);
             for dep in node.deps() {
                 if !visited.contains(dep) {
-                    stack.push(dep);
+                    stack.push(*dep);
                 }
             }
 
@@ -267,7 +270,7 @@ impl<'a> Ord for OrdIdSpan<'a> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.lamport_last()
             .cmp(&other.lamport_last())
-            .then(self.id_last().cmp(&other.id_last()))
+            .then(self.id.peer.cmp(&other.id.peer))
     }
 }
 
@@ -283,14 +286,14 @@ impl<'a> OrdIdSpan<'a> {
     fn from_dag_node<D, F>(id: ID, get: &'a F) -> Option<OrdIdSpan>
     where
         D: DagNode + 'a,
-        F: Fn(ID) -> Option<&'a D>,
+        F: Fn(ID) -> Option<D>,
     {
         let span = get(id)?;
         let span_id = span.id_start();
         Some(OrdIdSpan {
             id: span_id,
             lamport: span.lamport(),
-            deps: Cow::Borrowed(span.deps()),
+            deps: Cow::Owned(span.deps().to_vec()),
             len: (id.counter - span_id.counter) as usize + 1,
         })
     }
@@ -307,13 +310,13 @@ impl<'a> OrdIdSpan<'a> {
 }
 
 #[inline(always)]
-fn find_common_ancestor<'a, F, D>(get: &'a F, a_id: &[ID], b_id: &[ID]) -> Frontiers
+fn find_common_ancestor<'a, F, D>(get: &'a F, a_id: &[ID], b_id: &[ID]) -> (Frontiers, DiffMode)
 where
     D: DagNode + 'a,
-    F: Fn(ID) -> Option<&'a D>,
+    F: Fn(ID) -> Option<D>,
 {
-    if a_id.is_empty() || b_id.is_empty() {
-        return Default::default();
+    if b_id.is_empty() {
+        return (Default::default(), DiffMode::Checkout);
     }
 
     _find_common_ancestor_new(get, a_id, b_id)
@@ -329,9 +332,10 @@ fn _find_common_ancestor<'a, F, D, G>(
 ) -> FxHashMap<PeerID, Counter>
 where
     D: DagNode + 'a,
-    F: Fn(ID) -> Option<&'a D>,
+    F: Fn(ID) -> Option<D>,
     G: FnMut(IdSpan, NodeType),
 {
+    trace!("a {:?} b {:?}", a_ids, b_ids);
     let mut ans: FxHashMap<PeerID, Counter> = Default::default();
     let mut queue: BinaryHeap<(OrdIdSpan, NodeType)> = BinaryHeap::new();
     for id in a_ids {
@@ -472,58 +476,97 @@ where
     ans
 }
 
-fn _find_common_ancestor_new<'a, F, D>(get: &'a F, left: &[ID], right: &[ID]) -> Frontiers
+fn _find_common_ancestor_new<'a, F, D>(
+    get: &'a F,
+    left: &[ID],
+    right: &[ID],
+) -> (Frontiers, DiffMode)
 where
     D: DagNode + 'a,
-    F: Fn(ID) -> Option<&'a D>,
+    F: Fn(ID) -> Option<D>,
 {
+    trace!("find_common_ancestor_new left={:?} right={:?}", left, right);
+    if right.is_empty() {
+        return (Default::default(), DiffMode::Checkout);
+    }
+
+    if left.is_empty() {
+        if right.len() == 1 {
+            let mut node_id = right[0];
+            let mut node = get(node_id).unwrap();
+            while node.deps().len() == 1 {
+                node_id = node.deps()[0];
+                node = get(node_id).unwrap();
+            }
+
+            if node.deps().is_empty() {
+                return (Default::default(), DiffMode::Linear);
+            }
+        }
+
+        return (Default::default(), DiffMode::ImportGreaterUpdates);
+    }
+
     if left.len() == 1 && right.len() == 1 {
         let left = left[0];
         let right = right[0];
         if left.peer == right.peer {
             let left_span = get(left).unwrap();
             let right_span = get(right).unwrap();
-            if std::ptr::eq(left_span, right_span) {
+            if left_span.id_start() == right_span.id_start() {
                 if left.counter < right.counter {
-                    return smallvec![left].into();
+                    return (smallvec![left].into(), DiffMode::Linear);
                 } else {
-                    return smallvec![right].into();
+                    return (smallvec![right].into(), DiffMode::Checkout);
                 }
             }
 
             if left_span.deps().len() == 1 && right_span.contains_id(left_span.deps()[0]) {
-                return smallvec![right].into();
+                return (smallvec![right].into(), DiffMode::Checkout);
             }
 
             if right_span.deps().len() == 1 && left_span.contains_id(right_span.deps()[0]) {
-                return smallvec![left].into();
+                return (smallvec![left].into(), DiffMode::Linear);
             }
         }
     }
 
+    let mut is_linear = left.len() <= 1 && right.len() == 1;
+    let mut is_right_greater = true;
     let mut ans: Frontiers = Default::default();
     let mut queue: BinaryHeap<(SmallVec<[OrdIdSpan; 1]>, NodeType)> = BinaryHeap::new();
 
-    fn ids_to_ord_id_spans<'a, D: DagNode + 'a, F: Fn(ID) -> Option<&'a D>>(
+    fn ids_to_ord_id_spans<'a, D: DagNode + 'a, F: Fn(ID) -> Option<D>>(
         ids: &[ID],
         get: &'a F,
-    ) -> SmallVec<[OrdIdSpan<'a>; 1]> {
-        let mut ans: SmallVec<[OrdIdSpan<'a>; 1]> = ids
-            .iter()
-            .map(|&id| OrdIdSpan::from_dag_node(id, get).unwrap())
-            .collect();
-        if ans.len() > 1 {
-            ans.sort();
-            ans.reverse();
+    ) -> Option<SmallVec<[OrdIdSpan<'a>; 1]>> {
+        trace!("ids_to_ord_id_spans {:?}", ids);
+        let mut ans: SmallVec<[OrdIdSpan<'a>; 1]> = SmallVec::with_capacity(ids.len());
+        for &id in ids {
+            if let Some(node) = OrdIdSpan::from_dag_node(id, get) {
+                ans.push(node);
+            } else {
+                return None;
+            }
         }
 
-        ans
+        if ans.len() > 1 {
+            ans.sort_unstable_by(|a, b| b.cmp(a));
+        }
+
+        Some(ans)
     }
 
-    queue.push((ids_to_ord_id_spans(left, get), NodeType::A));
-    queue.push((ids_to_ord_id_spans(right, get), NodeType::B));
+    queue.push((ids_to_ord_id_spans(left, get).unwrap(), NodeType::A));
+    queue.push((ids_to_ord_id_spans(right, get).unwrap(), NodeType::B));
     while let Some((mut node, mut node_type)) = queue.pop() {
+        trace!(
+            "find_common_ancestor_new queue pop {:?} {:?}",
+            node,
+            node_type
+        );
         while let Some((other_node, other_type)) = queue.peek() {
+            trace!("find_common_ancestor_new queue peek {:?}", other_node);
             if node == *other_node {
                 if node_type != *other_type {
                     node_type = NodeType::Shared;
@@ -540,7 +583,16 @@ where
                 ans = node.into_iter().map(|x| x.id_last()).collect();
             }
 
+            // Iteration is done and no common ancestor is found
+            // So the ans is empty
+            is_right_greater = false;
             break;
+        }
+
+        trace!("find_common_ancestor_new node_type {:?}", node_type);
+        // if node_type is A, then the left side is greater or parallel to the right side
+        if node_type == NodeType::A {
+            is_right_greater = false;
         }
 
         if node.len() > 1 {
@@ -574,13 +626,36 @@ where
         }
 
         if node[0].deps.len() > 0 {
-            queue.push((ids_to_ord_id_spans(node[0].deps.as_ref(), get), node_type));
+            if let Some(deps) = ids_to_ord_id_spans(node[0].deps.as_ref(), get) {
+                queue.push((deps, node_type));
+            } else {
+                // dep on trimmed history
+                panic!("deps on trimmed history");
+            }
+
+            is_linear = false;
         } else {
+            is_right_greater = false;
             break;
         }
     }
 
-    ans
+    let mode = if is_right_greater {
+        if ans.len() <= 1 {
+            debug_assert_eq!(ans.as_slice(), left);
+        }
+
+        if is_linear {
+            debug_assert!(ans.len() <= 1);
+            DiffMode::Linear
+        } else {
+            DiffMode::ImportGreaterUpdates
+        }
+    } else {
+        DiffMode::Checkout
+    };
+
+    (ans, mode)
 }
 
 pub fn remove_included_frontiers(frontiers: &mut VersionVector, new_change_deps: &[ID]) {
