@@ -27,7 +27,6 @@ pub(crate) fn export_gc_snapshot<W: std::io::Write>(
     assert!(!doc.is_detached());
     let oplog = doc.oplog().lock().unwrap();
     let start_from = calc_gc_doc_start(&oplog, start_from);
-    trace!("gc_start_from {:?}", &start_from);
     let mut start_vv = oplog.dag().frontiers_to_vv(&start_from).unwrap();
     for id in start_from.iter() {
         // we need to include the ops in start_from, this can make things easier

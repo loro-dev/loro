@@ -28,9 +28,10 @@ use crate::{
     dag::DagUtils,
     diff_calc::DiffCalculator,
     encoding::{
-        decode_snapshot, export_fast_snapshot, export_fast_updates, export_fast_updates_in_range,
-        export_gc_snapshot, export_snapshot, export_state_only_snapshot,
-        json_schema::json::JsonSchema, parse_header_and_body, EncodeMode, ParsedHeaderAndBody,
+        decode_snapshot, export_fast_snapshot, export_fast_snapshot_at, export_fast_updates,
+        export_fast_updates_in_range, export_gc_snapshot, export_snapshot,
+        export_state_only_snapshot, json_schema::json::JsonSchema, parse_header_and_body,
+        EncodeMode, ParsedHeaderAndBody,
     },
     event::{str_to_path, EventTriggerKind, Index, InternalDocDiff},
     handler::{Handler, MovableListHandler, TextHandler, TreeHandler, ValueOrHandler},
@@ -644,6 +645,13 @@ impl LoroDoc {
         }
     }
 
+    pub(crate) fn ignore_events(&self) {
+        let _events = {
+            let mut state = self.state.lock().unwrap();
+            state.take_events()
+        };
+    }
+
     #[instrument(skip_all)]
     pub fn export_snapshot(&self) -> Vec<u8> {
         self.commit_then_stop();
@@ -1133,7 +1141,7 @@ impl LoroDoc {
     }
 
     #[instrument(level = "info", skip(self))]
-    fn checkout_without_emitting(&self, frontiers: &Frontiers) -> Result<(), LoroError> {
+    pub(crate) fn checkout_without_emitting(&self, frontiers: &Frontiers) -> Result<(), LoroError> {
         self.commit_then_stop();
         let from_frontiers = self.state_frontiers();
         info!(
@@ -1529,6 +1537,7 @@ impl LoroDoc {
                 Some(f) => export_state_only_snapshot(self, &f),
                 None => export_state_only_snapshot(self, &self.oplog_frontiers()),
             },
+            ExportMode::SnapshotAt { version } => export_fast_snapshot_at(self, &version),
         };
 
         self.renew_txn_if_auto_commit();

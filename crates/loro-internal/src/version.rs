@@ -623,6 +623,38 @@ impl VersionVector {
         })
     }
 
+    /// Returns the spans that are in `self` but not in `rhs`
+    pub fn sub_iter_im<'a>(
+        &'a self,
+        rhs: &'a ImVersionVector,
+    ) -> impl Iterator<Item = IdSpan> + 'a {
+        self.iter().filter_map(move |(peer, &counter)| {
+            if let Some(&rhs_counter) = rhs.get(peer) {
+                if counter > rhs_counter {
+                    Some(IdSpan {
+                        peer: *peer,
+                        counter: CounterSpan {
+                            start: rhs_counter,
+                            end: counter,
+                        },
+                    })
+                } else {
+                    None
+                }
+            } else if counter > 0 {
+                Some(IdSpan {
+                    peer: *peer,
+                    counter: CounterSpan {
+                        start: 0,
+                        end: counter,
+                    },
+                })
+            } else {
+                None
+            }
+        })
+    }
+
     /// Iter all span from a -> b and b -> a
     pub fn iter_between<'a>(&'a self, other: &'a Self) -> impl Iterator<Item = IdSpan> + 'a {
         // PERF: can be optimized a little

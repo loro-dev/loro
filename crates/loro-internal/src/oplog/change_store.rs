@@ -500,6 +500,40 @@ impl ChangeStore {
         let arena = &self.arena;
         encode_blocks_in_store(new_store, arena, w);
     }
+
+    pub(crate) fn fork_changes_up_to(
+        &self,
+        start_vv: &ImVersionVector,
+        frontiers: &Frontiers,
+        vv: &VersionVector,
+    ) -> Bytes {
+        let new_store = ChangeStore::new_mem(&self.arena, self.merge_interval.clone());
+        for mut span in vv.sub_iter_im(start_vv) {
+            let counter_lower_bound = start_vv.get(&span.peer).copied().unwrap_or(0);
+            span.counter.start = span.counter.start.max(counter_lower_bound);
+            span.counter.end = span.counter.end.max(counter_lower_bound);
+            if span.counter.start >= span.counter.end {
+                continue;
+            }
+
+            // PERF: this can be optimized by reusing the current encoded blocks
+            // In the current method, it needs to parse and re-encode the blocks
+            for c in self.iter_changes(span) {
+                let start = ((start_vv.get(&c.id.peer).copied().unwrap_or(0) - c.id.counter).max(0)
+                    as usize)
+                    .min(c.atom_len());
+                let end = ((vv.get(&c.id.peer).copied().unwrap_or(0) - c.id.counter).max(0)
+                    as usize)
+                    .min(c.atom_len());
+
+                assert_ne!(start, end);
+                let ch = c.slice(start, end);
+                new_store.insert_change(ch, false);
+            }
+        }
+
+        new_store.encode_all(vv, frontiers)
+    }
 }
 
 fn encode_blocks_in_store<W: std::io::Write>(
