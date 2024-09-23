@@ -21,7 +21,6 @@ use loro_internal::FractionalIndex;
 use loro_internal::LoroDoc as InnerLoroDoc;
 use loro_internal::OpLog;
 use loro_internal::TreeNode as TreeNodeWithId;
-use loro_internal::TreeParentId;
 use loro_internal::{
     handler::Handler as InnerHandler, ListHandler as InnerListHandler,
     MapHandler as InnerMapHandler, MovableListHandler as InnerMovableListHandler,
@@ -57,6 +56,7 @@ pub use loro_internal::undo;
 pub use loro_internal::version::{Frontiers, VersionVector};
 pub use loro_internal::ApplyDiff;
 pub use loro_internal::Subscription;
+pub use loro_internal::TreeParentId;
 pub use loro_internal::UndoManager as InnerUndoManager;
 pub use loro_internal::{loro_value, to_value};
 pub use loro_internal::{LoroError, LoroResult, LoroValue, ToJson};
