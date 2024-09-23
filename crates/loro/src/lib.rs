@@ -20,7 +20,6 @@ use loro_internal::DocState;
 use loro_internal::FractionalIndex;
 use loro_internal::LoroDoc as InnerLoroDoc;
 use loro_internal::OpLog;
-use loro_internal::TreeNode as TreeNodeWithId;
 use loro_internal::{
     handler::Handler as InnerHandler, ListHandler as InnerListHandler,
     MapHandler as InnerMapHandler, MovableListHandler as InnerMovableListHandler,

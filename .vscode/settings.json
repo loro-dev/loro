@@ -54,7 +54,8 @@
   },
   "rust-analyzer.cargo.features": [
     "jsonpath",
-    "counter"
+    "counter",
+    "test_utils"
   ],
   "editor.defaultFormatter": "rust-lang.rust-analyzer",
   "rust-analyzer.server.extraEnv": {

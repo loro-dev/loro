@@ -40,6 +40,12 @@ pub enum LoroError {
     },
     #[error("Every op id should be unique. ID {id} has been used. You should use a new PeerID to edit the content. ")]
     UsedOpID { id: ID },
+    #[error("Concurrent ops with the same peer id is not allowed. PeerID: {peer}, LastCounter: {last_counter}, CurrentCounter: {current}")]
+    ConcurrentOpsWithSamePeerID {
+        peer: PeerID,
+        last_counter: i32,
+        current: i32,
+    },
     #[error("Movable Tree Error: {0}")]
     TreeError(#[from] LoroTreeError),
     #[error("Invalid argument ({0})")]

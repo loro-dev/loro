@@ -150,8 +150,6 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: Bytes) -> LoroResult<()> {
 impl OpLog {
     pub(super) fn decode_change_store(&mut self, bytes: bytes::Bytes) -> LoroResult<()> {
         let v = self.change_store().import_all(bytes)?;
-        self.next_lamport = v.next_lamport;
-        self.latest_timestamp = v.max_timestamp;
         // FIXME: handle start vv and start frontiers
         self.dag.set_version_by_fast_snapshot_import(v);
         Ok(())

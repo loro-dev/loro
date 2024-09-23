@@ -19,7 +19,7 @@ use tracing::{debug, debug_span, info, info_span, instrument, trace, warn};
 use crate::{
     arena::SharedArena,
     change::Timestamp,
-    configure::Configure,
+    configure::{Configure, DefaultRandom, SecureRandomGenerator},
     container::{
         idx::ContainerIdx, list::list_op::InnerListOp, richtext::config::StyleConfigMap,
         IntoContainerId,
@@ -49,37 +49,7 @@ use crate::{
 
 pub use crate::encoding::ExportMode;
 pub use crate::state::analyzer::{ContainerAnalysisInfo, DocAnalysis};
-
-/// `LoroApp` serves as the library's primary entry point.
-/// It's constituted by an [OpLog] and an [AppState].
-///
-/// - [OpLog] encompasses all operations, signifying the document history.
-/// - [AppState] signifies the current document state.
-///
-/// They will share a [super::arena::SharedArena]
-///
-/// # Detached Mode
-///
-/// This mode enables separate usage of [OpLog] and [AppState].
-/// It facilitates temporal navigation. [AppState] can be reverted to
-/// any version contained within the [OpLog].
-///
-/// `LoroApp::detach()` separates [AppState] from [OpLog]. In this mode,
-/// updates to [OpLog] won't affect [AppState], while updates to [AppState]
-/// will continue to affect [OpLog].
-pub struct LoroDoc {
-    oplog: Arc<Mutex<OpLog>>,
-    state: Arc<Mutex<DocState>>,
-    arena: SharedArena,
-    config: Configure,
-    observer: Arc<Observer>,
-    local_update_subs: SubscriberSet<(), LocalUpdateCallback>,
-    diff_calculator: Arc<Mutex<DiffCalculator>>,
-    // when dropping the doc, the txn will be committed
-    txn: Arc<Mutex<Option<Transaction>>>,
-    auto_commit: AtomicBool,
-    detached: AtomicBool,
-}
+pub(crate) use crate::LoroDoc;
 
 impl Default for LoroDoc {
     fn default() -> Self {
@@ -105,7 +75,7 @@ impl LoroDoc {
         let config: Configure = oplog.configure.clone();
         // share arena
         let state = DocState::new_arc(arena.clone(), Arc::downgrade(&global_txn), config.clone());
-        Self {
+        let ans = Self {
             oplog: Arc::new(Mutex::new(oplog)),
             state,
             config,
@@ -116,7 +86,8 @@ impl LoroDoc {
             diff_calculator: Arc::new(Mutex::new(DiffCalculator::new(true))),
             txn: global_txn,
             arena,
-        }
+        };
+        ans
     }
 
     pub fn fork(&self) -> Self {
@@ -144,7 +115,7 @@ impl LoroDoc {
             diff_calculator: Arc::new(Mutex::new(DiffCalculator::new(true))),
             txn,
             auto_commit: AtomicBool::new(false),
-            detached: AtomicBool::new(self.detached.load(std::sync::atomic::Ordering::Relaxed)),
+            detached: AtomicBool::new(self.is_detached()),
         };
 
         if self.auto_commit.load(std::sync::atomic::Ordering::Relaxed) {
@@ -177,6 +148,44 @@ impl LoroDoc {
     #[inline]
     pub fn set_change_merge_interval(&self, interval: i64) {
         self.config.set_merge_interval(interval);
+    }
+
+    /// Enables editing of the document in detached mode.
+    ///
+    /// By default, the document cannot be edited in detached mode (after calling
+    /// `detach` or checking out a version other than the latest). This method
+    /// allows editing in detached mode.
+    ///
+    /// # Important Notes:
+    ///
+    /// - After enabling this mode, the document will use a different PeerID. Each
+    ///   time you call checkout, a new PeerID will be used.
+    /// - If you set a custom PeerID while this mode is enabled, ensure that
+    ///   concurrent operations with the same PeerID are not possible.
+    /// - On detached mode, importing will not change the state of the document.
+    ///   It also doesn't change the version of the [DocState]. The changes will be
+    ///   recorded into [OpLog] only. You need to call `checkout` to make it take effect.
+    pub fn set_detached_editing(&self, enable: bool) {
+        self.config.set_detached_editing(enable);
+        if enable && self.is_detached() {
+            self.commit_then_stop();
+            self.renew_peer_id();
+            self.renew_txn_if_auto_commit();
+        }
+    }
+
+    /// Renews the PeerID for the document.
+    pub fn renew_peer_id(&self) {
+        let peer_id = DefaultRandom.next_u64();
+        self.set_peer_id(peer_id).unwrap();
+    }
+
+    pub fn can_edit(&self) -> bool {
+        !self.is_detached() || self.config.detached_editing()
+    }
+
+    pub fn is_detached_editing_enabled(&self) -> bool {
+        self.config.detached_editing()
     }
 
     #[inline]
@@ -213,13 +222,25 @@ impl LoroDoc {
             return false;
         }
 
+        if self.is_detached() {
+            return false;
+        }
+
         oplog.is_empty() && self.state.lock().unwrap().can_import_snapshot()
     }
 
     /// Whether [OpLog] and [DocState] are detached.
+    ///
+    /// If so, the document is in readonly mode by default and importing will not change the state of the document.
+    /// It also doesn't change the version of the [DocState]. The changes will be recorded into [OpLog] only.
+    /// You need to call `checkout` to make it take effect.
     #[inline(always)]
     pub fn is_detached(&self) -> bool {
         self.detached.load(Acquire)
+    }
+
+    pub(crate) fn set_detached(&self, detached: bool) {
+        self.detached.store(detached, Release);
     }
 
     #[inline(always)]
@@ -267,7 +288,7 @@ impl LoroDoc {
 
     #[inline(always)]
     pub fn detach(&self) {
-        self.detached.store(true, Release);
+        self.set_detached(true);
     }
 
     #[inline(always)]
@@ -280,38 +301,6 @@ impl LoroDoc {
     pub fn state_timestamp(&self) -> Timestamp {
         let f = &self.state.lock().unwrap().frontiers;
         self.oplog.lock().unwrap().get_timestamp_of_version(f)
-    }
-
-    /// Create a new transaction.
-    /// Every ops created inside one transaction will be packed into a single
-    /// [Change].
-    ///
-    /// There can only be one active transaction at a time for a [LoroDoc].
-    #[inline(always)]
-    pub fn txn(&self) -> Result<Transaction, LoroError> {
-        self.txn_with_origin("")
-    }
-
-    #[inline(always)]
-    pub fn with_txn<F, R>(&self, f: F) -> LoroResult<R>
-    where
-        F: FnOnce(&mut Transaction) -> LoroResult<R>,
-    {
-        let mut txn = self.txn().unwrap();
-        let v = f(&mut txn)?;
-        txn.commit()?;
-        Ok(v)
-    }
-
-    pub fn start_auto_commit(&self) {
-        self.auto_commit.store(true, Release);
-        let mut self_txn = self.txn.try_lock().unwrap();
-        if self_txn.is_some() || self.detached.load(Acquire) {
-            return;
-        }
-
-        let txn = self.txn().unwrap();
-        self_txn.replace(txn);
     }
 
     /// Commit the cumulative auto commit transaction.
@@ -366,7 +355,7 @@ impl LoroDoc {
         txn.commit().unwrap();
         if config.immediate_renew {
             let mut txn_guard = self.txn.try_lock().unwrap();
-            assert!(!self.detached.load(std::sync::atomic::Ordering::Acquire));
+            assert!(self.can_edit());
             *txn_guard = Some(self.txn().unwrap());
         }
 
@@ -390,62 +379,8 @@ impl LoroDoc {
     }
 
     #[inline]
-    pub fn renew_txn_if_auto_commit(&self) {
-        if self.auto_commit.load(Acquire) && !self.detached.load(Acquire) {
-            let mut self_txn = self.txn.try_lock().unwrap();
-            if self_txn.is_some() {
-                return;
-            }
-
-            let txn = self.txn().unwrap();
-            self_txn.replace(txn);
-        }
-    }
-
-    #[inline]
     pub(crate) fn get_global_txn(&self) -> Weak<Mutex<Option<Transaction>>> {
         Arc::downgrade(&self.txn)
-    }
-
-    /// Create a new transaction with specified origin.
-    ///
-    /// The origin will be propagated to the events.
-    /// There can only be one active transaction at a time for a [LoroDoc].
-    pub fn txn_with_origin(&self, origin: &str) -> Result<Transaction, LoroError> {
-        if self.is_detached() {
-            return Err(LoroError::TransactionError(
-                String::from("LoroDoc is in detached mode. OpLog and AppState are using different version. So it's readonly.").into_boxed_str(),
-            ));
-        }
-
-        let mut txn = Transaction::new_with_origin(
-            self.state.clone(),
-            self.oplog.clone(),
-            origin.into(),
-            self.get_global_txn(),
-        );
-
-        let obs = self.observer.clone();
-        let local_update_subs = self.local_update_subs.clone();
-        txn.set_on_commit(Box::new(move |state, oplog, id_span| {
-            let mut state = state.try_lock().unwrap();
-            let events = state.take_events();
-            drop(state);
-            for event in events {
-                obs.emit(event);
-            }
-
-            if !local_update_subs.is_empty() {
-                let bytes =
-                    { export_fast_updates_in_range(&oplog.try_lock().unwrap(), &[id_span]) };
-                local_update_subs.retain(&(), |callback| {
-                    callback(&bytes);
-                    true
-                });
-            }
-        }));
-
-        Ok(txn)
     }
 
     #[inline(always)]
@@ -558,7 +493,7 @@ impl LoroDoc {
         let old_vv = oplog.vv().clone();
         let old_frontiers = oplog.frontiers().clone();
         let result = f(&mut oplog);
-        if !self.detached.load(Acquire) {
+        if !self.is_detached() {
             debug!("checkout from {:?} to {:?}", old_vv, oplog.vv());
             let mut diff = DiffCalculator::new(false);
             if &old_vv != oplog.vv() {
@@ -585,53 +520,6 @@ impl LoroDoc {
             tracing::info!("Detached");
         }
         result
-    }
-
-    /// For fuzzing tests
-    #[cfg(feature = "test_utils")]
-    pub fn import_delta_updates_unchecked(&self, body: &[u8]) -> LoroResult<()> {
-        self.commit_then_stop();
-        let mut oplog = self.oplog.lock().unwrap();
-        let old_vv = oplog.vv().clone();
-        let old_frontiers = oplog.frontiers().clone();
-        let ans = oplog.decode(ParsedHeaderAndBody {
-            checksum: [0; 16],
-            checksum_body: body,
-            mode: EncodeMode::OutdatedRle,
-            body,
-        });
-        if ans.is_ok() && !self.detached.load(Acquire) {
-            let mut diff = DiffCalculator::new(false);
-            let diff = diff.calc_diff_internal(
-                &oplog,
-                &old_vv,
-                Some(&old_frontiers),
-                oplog.vv(),
-                Some(oplog.dag.get_frontiers()),
-                None,
-            );
-            let mut state = self.state.lock().unwrap();
-            state.apply_diff(
-                InternalDocDiff {
-                    origin: "".into(),
-                    diff: (diff).into(),
-                    by: EventTriggerKind::Import,
-                    new_version: Cow::Owned(oplog.frontiers().clone()),
-                },
-                false,
-            );
-        }
-        self.renew_txn_if_auto_commit();
-        ans
-    }
-
-    /// For fuzzing tests
-    #[cfg(feature = "test_utils")]
-    pub fn import_snapshot_unchecked(&self, bytes: &[u8]) -> LoroResult<()> {
-        self.commit_then_stop();
-        let ans = decode_snapshot(self, EncodeMode::OutdatedSnapshot, bytes);
-        self.renew_txn_if_auto_commit();
-        ans
     }
 
     fn emit_events(&self) {
@@ -844,7 +732,7 @@ impl LoroDoc {
         post_transform_base: Option<&DiffBatch>,
         before_diff: &mut dyn FnMut(&DiffBatch),
     ) -> LoroResult<CommitWhenDrop> {
-        if self.is_detached() {
+        if !self.can_edit() {
             return Err(LoroError::EditWhenDetached);
         }
 
@@ -890,7 +778,7 @@ impl LoroDoc {
         // println!("container remap: {:?}", container_remap);
 
         self.checkout_without_emitting(&latest_frontiers)?;
-        self.detached.store(false, Release);
+        self.set_detached(false);
         if was_recording {
             self.state.lock().unwrap().start_recording();
         }
@@ -967,7 +855,7 @@ impl LoroDoc {
         container_remap: &mut FxHashMap<ContainerID, ContainerID>,
         skip_unreachable: bool,
     ) -> LoroResult<()> {
-        if self.is_detached() {
+        if !self.can_edit() {
             return Err(LoroError::EditWhenDetached);
         }
 
@@ -1125,7 +1013,7 @@ impl LoroDoc {
         tracing::info_span!("CheckoutToLatest", peer = self.peer_id()).in_scope(|| {
             let f = self.oplog_frontiers();
             self.checkout(&f).unwrap();
-            self.detached.store(false, Release);
+            self.set_detached(false);
             self.renew_txn_if_auto_commit();
         });
     }
@@ -1187,7 +1075,7 @@ impl LoroDoc {
             ));
         };
 
-        self.detached.store(true, Release);
+        self.set_detached(true);
         let diff = calc.calc_diff_internal(
             &oplog,
             before,
@@ -1205,6 +1093,12 @@ impl LoroDoc {
             },
             true,
         );
+
+        if self.config.detached_editing() {
+            self.renew_peer_id();
+            self.renew_txn_if_auto_commit();
+        }
+
         Ok(())
     }
 

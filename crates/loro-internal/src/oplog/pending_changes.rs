@@ -27,7 +27,7 @@ impl Deref for PendingChange {
 
 #[derive(Debug, Default)]
 pub(crate) struct PendingChanges {
-    changes: FxHashMap<PeerID, BTreeMap<Counter, SmallVec<[PendingChange; 1]>>>,
+    changes: FxHashMap<PeerID, BTreeMap<Counter, Vec<PendingChange>>>,
 }
 
 impl PendingChanges {

@@ -47,9 +47,6 @@ pub struct OpLog {
     pub(crate) arena: SharedArena,
     change_store: ChangeStore,
     history_cache: Mutex<ContainerHistoryCache>,
-    /// **lamport starts from 0**
-    pub(crate) next_lamport: Lamport,
-    pub(crate) latest_timestamp: Timestamp,
     /// Pending changes that haven't been applied to the dag.
     /// A change can be imported only when all its deps are already imported.
     /// Key is the ID of the missing dep
@@ -65,8 +62,6 @@ impl std::fmt::Debug for OpLog {
         f.debug_struct("OpLog")
             .field("dag", &self.dag)
             .field("pending_changes", &self.pending_changes)
-            .field("next_lamport", &self.next_lamport)
-            .field("latest_timestamp", &self.latest_timestamp)
             .finish()
     }
 }
@@ -82,8 +77,6 @@ impl OpLog {
             dag: AppDag::new(change_store.clone()),
             change_store,
             arena,
-            next_lamport: 0,
-            latest_timestamp: Timestamp::default(),
             pending_changes: Default::default(),
             batch_importing: false,
             configure: cfg,
@@ -96,9 +89,12 @@ impl OpLog {
         configure: Configure,
         gc: Option<Arc<GcStore>>,
     ) -> Self {
-        let change_store = self
-            .change_store
-            .fork(arena.clone(), configure.merge_interval.clone());
+        let change_store = self.change_store.fork(
+            arena.clone(),
+            configure.merge_interval.clone(),
+            self.vv(),
+            self.frontiers(),
+        );
         Self {
             history_cache: Mutex::new(
                 self.history_cache
@@ -109,17 +105,10 @@ impl OpLog {
             change_store: change_store.clone(),
             dag: self.dag.fork(change_store),
             arena,
-            next_lamport: self.next_lamport,
-            latest_timestamp: self.latest_timestamp,
             pending_changes: Default::default(),
             batch_importing: false,
             configure,
         }
-    }
-
-    #[inline]
-    pub fn latest_timestamp(&self) -> Timestamp {
-        self.latest_timestamp
     }
 
     #[inline]
@@ -172,8 +161,6 @@ impl OpLog {
         );
         let _enter = s.enter();
         self.dag.handle_new_change(&change);
-        self.next_lamport = self.next_lamport.max(change.lamport_end());
-        self.latest_timestamp = self.latest_timestamp.max(change.timestamp);
         self.history_cache
             .lock()
             .unwrap()
@@ -214,6 +201,7 @@ impl OpLog {
         let Some(change) = self.trim_the_known_part_of_change(change) else {
             return Ok(());
         };
+
         self.check_id_is_not_duplicated(change.id)?;
         if let Err(id) = self.check_deps(&change.deps) {
             return Err(LoroError::DecodeError(
@@ -256,6 +244,41 @@ impl OpLog {
         let cur_end = self.dag.vv().get(&id.peer).cloned().unwrap_or(0);
         if cur_end > id.counter {
             return Err(LoroError::UsedOpID { id });
+        }
+
+        Ok(())
+    }
+
+    /// Ensure the new change is greater than the last peer's id and the counter is continuous.
+    ///
+    /// It can be false when users use detached editing mode and use a custom peer id.
+    // This method might be slow and can be optimized if needed in the future.
+    pub(crate) fn check_change_greater_than_last_peer_id(
+        &self,
+        peer: PeerID,
+        counter: Counter,
+        deps: &Frontiers,
+    ) -> Result<(), LoroError> {
+        if counter == 0 {
+            return Ok(());
+        }
+
+        if !self.configure.detached_editing() {
+            return Ok(());
+        }
+
+        let mut max_last_counter = 0;
+        for dep in deps.iter() {
+            let dep_vv = self.dag.get_vv(*dep).unwrap();
+            max_last_counter = max_last_counter.max(dep_vv.get(&peer).cloned().unwrap_or(0));
+        }
+
+        if counter != max_last_counter + 1 {
+            return Err(LoroError::ConcurrentOpsWithSamePeerID {
+                peer,
+                last_counter: max_last_counter,
+                current: counter,
+            });
         }
 
         Ok(())
@@ -661,6 +684,18 @@ impl OpLog {
 
     pub fn is_trimmed(&self) -> bool {
         !self.dag.trimmed_vv().is_empty()
+    }
+
+    pub fn get_greatest_timestamp(&self, frontiers: &Frontiers) -> Timestamp {
+        let mut max_timestamp = Timestamp::default();
+        for id in frontiers.iter() {
+            let change = self.get_change_at(*id).unwrap();
+            if change.timestamp > max_timestamp {
+                max_timestamp = change.timestamp;
+            }
+        }
+
+        max_timestamp
     }
 }
 

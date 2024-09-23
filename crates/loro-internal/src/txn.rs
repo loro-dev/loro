@@ -11,7 +11,6 @@ use loro_common::{ContainerType, IdLp, IdSpan, LoroResult};
 use loro_delta::{array_vec::ArrayVec, DeltaRopeBuilder};
 use rle::{HasLength, Mergable, RleVec};
 use smallvec::{smallvec, SmallVec};
-use tracing::trace;
 
 use crate::{
     change::{Change, Lamport, Timestamp},
@@ -22,6 +21,7 @@ use crate::{
         IntoContainerId,
     },
     delta::{ResolvedMapDelta, ResolvedMapValue, StyleMeta, StyleMetaItem, TreeDiff, TreeDiffItem},
+    encoding::export_fast_updates_in_range,
     event::{Diff, ListDeltaMeta, TextDiff},
     handler::{Handler, ValueOrHandler},
     id::{Counter, PeerID, ID},
@@ -38,6 +38,95 @@ use super::{
     oplog::OpLog,
     state::DocState,
 };
+
+impl crate::LoroDoc {
+    /// Create a new transaction.
+    /// Every ops created inside one transaction will be packed into a single
+    /// [Change].
+    ///
+    /// There can only be one active transaction at a time for a [LoroDoc].
+    #[inline(always)]
+    pub fn txn(&self) -> Result<Transaction, LoroError> {
+        self.txn_with_origin("")
+    }
+
+    /// Create a new transaction with specified origin.
+    ///
+    /// The origin will be propagated to the events.
+    /// There can only be one active transaction at a time for a [LoroDoc].
+    pub fn txn_with_origin(&self, origin: &str) -> Result<Transaction, LoroError> {
+        if !self.can_edit() {
+            return Err(LoroError::TransactionError(
+                String::from("LoroDoc is in readonly detached mode. To make it writable in detached mode, call `set_detached_editing(true)`.").into_boxed_str(),
+            ));
+        }
+
+        let mut txn = Transaction::new_with_origin(
+            self.state.clone(),
+            self.oplog.clone(),
+            origin.into(),
+            self.get_global_txn(),
+        );
+
+        let obs = self.observer.clone();
+        let local_update_subs = self.local_update_subs.clone();
+        txn.set_on_commit(Box::new(move |state, oplog, id_span| {
+            let mut state = state.try_lock().unwrap();
+            let events = state.take_events();
+            drop(state);
+            for event in events {
+                obs.emit(event);
+            }
+
+            if !local_update_subs.is_empty() {
+                let bytes =
+                    { export_fast_updates_in_range(&oplog.try_lock().unwrap(), &[id_span]) };
+                local_update_subs.retain(&(), |callback| {
+                    callback(&bytes);
+                    true
+                });
+            }
+        }));
+
+        Ok(txn)
+    }
+
+    #[inline(always)]
+    pub fn with_txn<F, R>(&self, f: F) -> LoroResult<R>
+    where
+        F: FnOnce(&mut Transaction) -> LoroResult<R>,
+    {
+        let mut txn = self.txn().unwrap();
+        let v = f(&mut txn)?;
+        txn.commit()?;
+        Ok(v)
+    }
+
+    pub fn start_auto_commit(&self) {
+        self.auto_commit
+            .store(true, std::sync::atomic::Ordering::Release);
+        let mut self_txn = self.txn.try_lock().unwrap();
+        if self_txn.is_some() || !self.can_edit() {
+            return;
+        }
+
+        let txn = self.txn().unwrap();
+        self_txn.replace(txn);
+    }
+
+    #[inline]
+    pub fn renew_txn_if_auto_commit(&self) {
+        if self.auto_commit.load(std::sync::atomic::Ordering::Acquire) && self.can_edit() {
+            let mut self_txn = self.txn.try_lock().unwrap();
+            if self_txn.is_some() {
+                return;
+            }
+
+            let txn = self.txn().unwrap();
+            self_txn.replace(txn);
+        }
+    }
+}
 
 pub(crate) type OnCommitFn =
     Box<dyn FnOnce(&Arc<Mutex<DocState>>, &Arc<Mutex<OpLog>>, IdSpan) + Sync + Send>;
@@ -60,6 +149,7 @@ pub struct Transaction {
     on_commit: Option<OnCommitFn>,
     timestamp: Option<Timestamp>,
     msg: Option<Arc<str>>,
+    latest_timestamp: Timestamp,
 }
 
 impl std::fmt::Debug for Transaction {
@@ -253,11 +343,11 @@ impl Transaction {
         let peer = state_lock.peer.load(std::sync::atomic::Ordering::Relaxed);
         let next_counter = oplog_lock.next_id(peer).counter;
         debug_assert_eq!(&frontiers, oplog_lock.frontiers());
-        debug_assert_eq!(
-            oplog_lock.next_lamport,
-            oplog_lock.dag.frontiers_to_next_lamport(&frontiers)
-        );
-        let next_lamport = oplog_lock.next_lamport;
+        let next_lamport = oplog_lock.dag.frontiers_to_next_lamport(&frontiers);
+        let latest_timestamp = oplog_lock.get_greatest_timestamp(&frontiers);
+        oplog_lock
+            .check_change_greater_than_last_peer_id(peer, next_counter, &frontiers)
+            .unwrap();
         drop(state_lock);
         drop(oplog_lock);
         Self {
@@ -278,15 +368,12 @@ impl Transaction {
             finished: false,
             on_commit: None,
             msg: None,
+            latest_timestamp,
         }
     }
 
     pub fn set_origin(&mut self, origin: InternalString) {
         self.origin = origin;
-    }
-
-    pub fn commit(mut self) -> Result<(), LoroError> {
-        self._commit()
     }
 
     pub fn set_timestamp(&mut self, time: Timestamp) {
@@ -303,6 +390,10 @@ impl Transaction {
 
     pub(crate) fn take_on_commit(&mut self) -> Option<OnCommitFn> {
         self.on_commit.take()
+    }
+
+    pub fn commit(mut self) -> Result<(), LoroError> {
+        self._commit()
     }
 
     fn _commit(&mut self) -> Result<(), LoroError> {
@@ -325,7 +416,7 @@ impl Transaction {
             ops,
             deps,
             id: ID::new(self.peer, self.start_counter),
-            timestamp: oplog.latest_timestamp.max(
+            timestamp: self.latest_timestamp.max(
                 self.timestamp
                     .unwrap_or_else(|| oplog.get_timestamp_for_next_txn()),
             ),
@@ -348,7 +439,7 @@ impl Transaction {
         if let Err(err) = oplog.import_local_change(change) {
             drop(state);
             drop(oplog);
-            panic!("{}", err);
+            return Err(err);
         }
 
         state.commit_txn(

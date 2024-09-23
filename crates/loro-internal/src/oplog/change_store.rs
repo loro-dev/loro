@@ -441,7 +441,14 @@ impl ChangeStore {
             .sum()
     }
 
-    pub fn fork(&self, arena: SharedArena, merge_interval: Arc<AtomicI64>) -> Self {
+    pub fn fork(
+        &self,
+        arena: SharedArena,
+        merge_interval: Arc<AtomicI64>,
+        vv: &VersionVector,
+        frontiers: &Frontiers,
+    ) -> Self {
+        self.flush_and_compact(vv, frontiers);
         let inner = self.inner.lock().unwrap();
         Self {
             inner: Arc::new(Mutex::new(ChangeStoreInner {
@@ -1557,11 +1564,6 @@ impl ChangesBlockBytes {
     fn len_changes(&self) -> usize {
         self.ensure_header().unwrap();
         self.header.get().unwrap().n_changes
-    }
-
-    #[allow(unused)]
-    fn find_deps_for(&mut self, id: ID) -> Frontiers {
-        unimplemented!()
     }
 }
 
