@@ -20,7 +20,7 @@ use loro_internal::{
     json::JsonSchema,
     loro::{CommitOptions, ExportMode},
     loro_common::{check_root_container_name, IdSpan},
-    obs::SubID,
+    subscription::SubID,
     undo::{UndoItemMeta, UndoOrRedo},
     version::Frontiers,
     ContainerType, DiffEvent, FxHashMap, HandlerTrait, LoroDoc as LoroDocInner, LoroValue,

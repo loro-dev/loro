@@ -36,10 +36,10 @@ use crate::{
     event::{str_to_path, EventTriggerKind, Index, InternalDocDiff},
     handler::{Handler, MovableListHandler, TextHandler, TreeHandler, ValueOrHandler},
     id::PeerID,
-    obs::{LocalUpdateCallback, Observer, SubID, Subscriber},
     op::InnerContent,
     oplog::{loro_dag::FrontiersNotIncluded, OpLog},
     state::DocState,
+    subscription::{LocalUpdateCallback, Observer, SubID, Subscriber},
     txn::Transaction,
     undo::DiffBatch,
     utils::subscription::{SubscriberSet, Subscription},
@@ -75,19 +75,19 @@ impl LoroDoc {
         let config: Configure = oplog.configure.clone();
         // share arena
         let state = DocState::new_arc(arena.clone(), Arc::downgrade(&global_txn), config.clone());
-        let ans = Self {
+        Self {
             oplog: Arc::new(Mutex::new(oplog)),
             state,
             config,
             detached: AtomicBool::new(false),
             auto_commit: AtomicBool::new(false),
-            local_update_subs: SubscriberSet::new(),
             observer: Arc::new(Observer::new(arena.clone())),
             diff_calculator: Arc::new(Mutex::new(DiffCalculator::new(true))),
             txn: global_txn,
             arena,
-        };
-        ans
+            local_update_subs: SubscriberSet::new(),
+            peer_id_change_subs: SubscriberSet::new(),
+        }
     }
 
     pub fn fork(&self) -> Self {
@@ -111,11 +111,13 @@ impl LoroDoc {
             arena,
             config,
             observer: Arc::new(Observer::new(self.arena.clone())),
-            local_update_subs: SubscriberSet::new(),
             diff_calculator: Arc::new(Mutex::new(DiffCalculator::new(true))),
             txn,
             auto_commit: AtomicBool::new(false),
             detached: AtomicBool::new(self.is_detached()),
+
+            local_update_subs: SubscriberSet::new(),
+            peer_id_change_subs: SubscriberSet::new(),
         };
 
         if self.auto_commit.load(std::sync::atomic::Ordering::Relaxed) {
@@ -268,6 +270,11 @@ impl LoroDoc {
 
             let new_txn = self.txn().unwrap();
             self.txn.lock().unwrap().replace(new_txn);
+
+            self.peer_id_change_subs.retain(&(), &mut |callback| {
+                callback(peer);
+                true
+            });
             return Ok(());
         }
 
@@ -283,6 +290,11 @@ impl LoroDoc {
         doc_state
             .peer
             .store(peer, std::sync::atomic::Ordering::Relaxed);
+        drop(doc_state);
+        self.peer_id_change_subs.retain(&(), &mut |callback| {
+            callback(peer);
+            true
+        });
         Ok(())
     }
 

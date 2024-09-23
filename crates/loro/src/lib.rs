@@ -13,7 +13,6 @@ use loro_internal::encoding::ImportBlobMetadata;
 use loro_internal::handler::HandlerTrait;
 use loro_internal::handler::ValueOrHandler;
 use loro_internal::loro_common::LoroTreeError;
-use loro_internal::obs::LocalUpdateCallback;
 use loro_internal::undo::{OnPop, OnPush};
 use loro_internal::version::ImVersionVector;
 use loro_internal::DocState;
@@ -32,6 +31,8 @@ use std::sync::Arc;
 use tracing::info;
 
 mod change_meta;
+pub use loro_internal::subscription::LocalUpdateCallback;
+pub use loro_internal::subscription::PeerIdUpdateCallback;
 pub mod event;
 pub use loro_internal::awareness;
 pub use loro_internal::configure::Configure;
@@ -49,8 +50,8 @@ pub use loro_internal::json::JsonSchema;
 pub use loro_internal::kv_store::{KvStore, MemKvStore};
 pub use loro_internal::loro::CommitOptions;
 pub use loro_internal::loro::DocAnalysis;
-pub use loro_internal::obs::SubID;
 pub use loro_internal::oplog::FrontiersNotIncluded;
+pub use loro_internal::subscription::SubID;
 pub use loro_internal::undo;
 pub use loro_internal::version::{Frontiers, VersionVector};
 pub use loro_internal::ApplyDiff;
@@ -595,6 +596,11 @@ impl LoroDoc {
     /// Subscribe the local update of the document.
     pub fn subscribe_local_update(&self, callback: LocalUpdateCallback) -> Subscription {
         self.doc.subscribe_local_update(callback)
+    }
+
+    /// Subscribe the peer id change of the document.
+    pub fn subscribe_peer_id_change(&self, callback: PeerIdUpdateCallback) -> Subscription {
+        self.doc.subscribe_peer_id_change(callback)
     }
 
     /// Estimate the size of the document states in memory.

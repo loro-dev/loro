@@ -24,10 +24,10 @@ pub use handler::{
     TreeHandler, UnknownHandler,
 };
 pub use loro_common;
-use obs::{LocalUpdateCallback, Observer};
 pub use oplog::OpLog;
 pub use state::DocState;
 pub use state::{TreeNode, TreeNodeWithChildren, TreeParentId};
+use subscription::{LocalUpdateCallback, Observer, PeerIdUpdateCallback};
 use txn::Transaction;
 pub use undo::UndoManager;
 use utils::subscription::SubscriberSet;
@@ -45,9 +45,9 @@ pub mod id;
 pub mod jsonpath;
 pub mod kv_store;
 pub mod loro;
-pub mod obs;
 pub mod op;
 pub mod oplog;
+pub mod subscription;
 pub mod txn;
 pub mod version;
 
@@ -109,10 +109,12 @@ pub struct LoroDoc {
     arena: SharedArena,
     config: Configure,
     observer: Arc<Observer>,
-    local_update_subs: SubscriberSet<(), LocalUpdateCallback>,
     diff_calculator: Arc<Mutex<DiffCalculator>>,
     // when dropping the doc, the txn will be committed
     txn: Arc<Mutex<Option<Transaction>>>,
     auto_commit: AtomicBool,
     detached: AtomicBool,
+
+    local_update_subs: SubscriberSet<(), LocalUpdateCallback>,
+    peer_id_change_subs: SubscriberSet<(), PeerIdUpdateCallback>,
 }

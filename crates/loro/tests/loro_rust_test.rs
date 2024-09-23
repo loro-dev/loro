@@ -1,6 +1,9 @@
 use std::{
     cmp::Ordering,
-    sync::{atomic::AtomicBool, Arc},
+    sync::{
+        atomic::{AtomicBool, AtomicU64},
+        Arc,
+    },
 };
 
 use loro::{
@@ -1704,4 +1707,25 @@ fn test_fork_at_target_frontiers() {
             "list": [1]
         })
     );
+}
+
+#[test]
+fn change_peer_id() {
+    use std::sync::atomic::Ordering;
+    let doc = LoroDoc::new();
+    let received_peer_id = Arc::new(AtomicU64::new(0));
+    let received_peer_id_clone = received_peer_id.clone();
+    let sub = doc.subscribe_peer_id_change(Box::new(move |peer_id| {
+        received_peer_id_clone.store(peer_id, Ordering::SeqCst);
+    }));
+
+    doc.set_peer_id(1).unwrap();
+    assert_eq!(received_peer_id.load(Ordering::SeqCst), 1);
+    doc.set_peer_id(2).unwrap();
+    assert_eq!(received_peer_id.load(Ordering::SeqCst), 2);
+    doc.set_peer_id(3).unwrap();
+    assert_eq!(received_peer_id.load(Ordering::SeqCst), 3);
+    sub.unsubscribe();
+    doc.set_peer_id(4).unwrap();
+    assert_eq!(received_peer_id.load(Ordering::SeqCst), 3);
 }

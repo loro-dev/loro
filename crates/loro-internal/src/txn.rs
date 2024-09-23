@@ -81,7 +81,7 @@ impl crate::LoroDoc {
             if !local_update_subs.is_empty() {
                 let bytes =
                     { export_fast_updates_in_range(&oplog.try_lock().unwrap(), &[id_span]) };
-                local_update_subs.retain(&(), |callback| {
+                local_update_subs.retain(&(), &mut |callback| {
                     callback(&bytes);
                     true
                 });
