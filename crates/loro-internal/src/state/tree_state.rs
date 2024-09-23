@@ -719,15 +719,18 @@ impl TreeState {
         !self.trees.contains_key(target)
     }
 
+    // Get all flat tree nodes, excluding deleted nodes.
     pub(crate) fn tree_nodes(&self) -> Vec<TreeNode> {
         self.get_all_tree_nodes_under(TreeParentId::Root)
     }
 
+    // Get all flat deleted nodes
     #[allow(unused)]
     pub(crate) fn deleted_tree_nodes(&self) -> Vec<TreeNode> {
         self.get_all_tree_nodes_under(TreeParentId::Deleted)
     }
 
+    // Get all flat tree nodes under the parent
     pub(crate) fn get_all_tree_nodes_under(&self, root: TreeParentId) -> Vec<TreeNode> {
         let mut ans = vec![];
         let children = self.children.get(&root);
@@ -739,7 +742,7 @@ impl TreeState {
             ans.push(TreeNode {
                 id: target,
                 parent,
-                position: position.position.clone(),
+                fractional_index: position.position.clone(),
                 index,
                 last_move_op: self.trees.get(&target).map(|x| x.last_move_op).unwrap(),
             });
@@ -753,6 +756,26 @@ impl TreeState {
                         }),
                 );
             }
+        }
+        ans
+    }
+
+    pub(crate) fn get_all_hierarchy_nodes_under(
+        &self,
+        root: TreeParentId,
+    ) -> Vec<TreeNodeWithChildren> {
+        let mut ans = vec![];
+        let Some(children) = self.children.get(&root) else {
+            return ans;
+        };
+        for (index, (position, &target)) in children.iter().enumerate() {
+            ans.push(TreeNodeWithChildren {
+                id: target,
+                parent: root,
+                fractional_index: position.position.clone(),
+                index,
+                children: self.get_all_hierarchy_nodes_under(TreeParentId::Node(target)),
+            })
         }
         ans
     }
@@ -771,7 +794,7 @@ impl TreeState {
                 ans.push(TreeNode {
                     id: *target,
                     parent: root,
-                    position: position.position.clone(),
+                    fractional_index: position.position.clone(),
                     index,
                     last_move_op: self.trees.get(target).map(|x| x.last_move_op).unwrap(),
                 });
@@ -1210,7 +1233,7 @@ impl ContainerState for TreeState {
     }
 
     fn get_value(&mut self) -> LoroValue {
-        self.tree_nodes()
+        self.get_all_hierarchy_nodes_under(TreeParentId::Root)
             .into_iter()
             .map(|x| x.into_value())
             .collect::<Vec<_>>()
@@ -1291,26 +1314,36 @@ impl ContainerState for TreeState {
 }
 
 // convert map container to LoroValue
-#[allow(clippy::ptr_arg)]
 pub(crate) fn get_meta_value(nodes: &mut Vec<LoroValue>, state: &mut DocState) {
     for node in nodes.iter_mut() {
         let map = Arc::make_mut(node.as_map_mut().unwrap());
         let meta = map.get_mut("meta").unwrap();
         let id = meta.as_container().unwrap();
         *meta = state.get_container_deep_value(state.arena.register_container(id));
+        let children = map.get_mut("children").unwrap().as_list_mut().unwrap();
+        get_meta_value(Arc::make_mut(children), state);
     }
 }
 
-#[derive(Debug)]
-pub(crate) struct TreeNode {
-    pub(crate) id: TreeID,
-    pub(crate) parent: TreeParentId,
-    pub(crate) position: FractionalIndex,
-    pub(crate) index: usize,
-    pub(crate) last_move_op: IdFull,
+#[derive(Debug, Clone)]
+pub struct TreeNode {
+    pub id: TreeID,
+    pub parent: TreeParentId,
+    pub fractional_index: FractionalIndex,
+    pub index: usize,
+    pub last_move_op: IdFull,
 }
 
-impl TreeNode {
+#[derive(Debug, Clone)]
+pub struct TreeNodeWithChildren {
+    pub id: TreeID,
+    pub parent: TreeParentId,
+    pub fractional_index: FractionalIndex,
+    pub index: usize,
+    pub children: Vec<TreeNodeWithChildren>,
+}
+
+impl TreeNodeWithChildren {
     fn into_value(self) -> LoroValue {
         let mut t = FxHashMap::default();
         t.insert("id".to_string(), self.id.to_string().into());
@@ -1327,7 +1360,15 @@ impl TreeNode {
         t.insert("index".to_string(), (self.index as i64).into());
         t.insert(
             "fractional_index".to_string(),
-            self.position.to_string().into(),
+            self.fractional_index.to_string().into(),
+        );
+        t.insert(
+            "children".to_string(),
+            self.children
+                .into_iter()
+                .map(|x| x.into_value())
+                .collect::<Vec<_>>()
+                .into(),
         );
         t.into()
     }
@@ -1477,7 +1518,7 @@ mod snapshot {
         let mut position_register = ValueRegister::new();
         let mut id_to_idx = FxHashMap::default();
         for node in input.iter() {
-            position_set.insert(node.position.clone());
+            position_set.insert(node.fractional_index.clone());
             let idx = node_ids.len();
             node_ids.push(EncodedTreeNodeId {
                 peer_idx: peers.register(&node.id.peer),
@@ -1503,7 +1544,7 @@ mod snapshot {
                 last_set_peer_idx: peers.register(&last_set_id.peer),
                 last_set_counter: last_set_id.counter,
                 last_set_lamport_sub_counter: last_set_id.lamport as i32 - last_set_id.counter,
-                fractional_index_idx: position_register.register(&node.position),
+                fractional_index_idx: position_register.register(&node.fractional_index),
             })
         }
 
