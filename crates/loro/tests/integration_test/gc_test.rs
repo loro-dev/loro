@@ -247,9 +247,9 @@ fn no_event_when_exporting_gc_snapshot() -> anyhow::Result<()> {
     doc.set_peer_id(1)?;
     gen_action(&doc, 0, 10);
     doc.commit();
-    let id = doc.subscribe_root(Arc::new(|diff| {
+    let _id = doc.subscribe_root(Arc::new(|_diff| {
         panic!("should not emit event");
     }));
-    let _snapshot = doc.export(loro::ExportMode::gc_snapshot(&doc.oplog_frontiers()));
+    let _snapshot = doc.export(loro::ExportMode::gc_snapshot_from_id(ID::new(1, 3)));
     Ok(())
 }
