@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.0.0-alpha.2
+
+### Patch Changes
+
+- ### 🚀 Features
+
+  - Fork doc at the target version (#469)
+
+  ### 🚜 Refactor
+
+  - BREAKING CHANGE: Use hierarchy value for tree value (#470)
+
+- Updated dependencies
+  - loro-wasm@1.0.0-alpha.2
+
 ## 1.0.0-alpha.1
 
 ### Patch Changes

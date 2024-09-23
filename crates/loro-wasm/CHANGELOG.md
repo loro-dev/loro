@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.0-alpha.2
+
+### Patch Changes
+
+- ### 🚀 Features
+
+  - Fork doc at the target version (#469)
+
+  ### 🚜 Refactor
+
+  - BREAKING CHANGE: Use hierarchy value for tree value (#470)
+
 ## 1.0.0-alpha.1
 
 ### Patch Changes
