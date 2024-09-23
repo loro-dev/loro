@@ -1166,7 +1166,7 @@ impl LoroDoc {
         }
 
         let mut state = self.state.lock().unwrap();
-        let mut calc = self.diff_calculator.lock().unwrap();
+        let mut calc = DiffCalculator::new(false);
         for &i in frontiers.iter() {
             if !oplog.dag.contains(i) {
                 drop(oplog);
