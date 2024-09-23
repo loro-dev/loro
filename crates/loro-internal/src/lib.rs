@@ -56,7 +56,6 @@ pub mod delta;
 pub use loro_delta;
 pub mod event;
 
-pub use error::{LoroError, LoroResult};
 pub mod estimated_size;
 pub(crate) mod history_cache;
 pub(crate) mod macros;

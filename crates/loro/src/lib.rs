@@ -2,7 +2,6 @@
 #![warn(missing_docs)]
 #![warn(missing_debug_implementations)]
 pub use change_meta::ChangeMeta;
-use either::Either;
 use event::{DiffEvent, Subscriber};
 use loro_internal::cursor::CannotFindRelativePosition;
 use loro_internal::cursor::Cursor;
@@ -11,14 +10,12 @@ use loro_internal::cursor::Side;
 use loro_internal::encoding::ImportBlobMetadata;
 use loro_internal::handler::HandlerTrait;
 use loro_internal::handler::ValueOrHandler;
-use loro_internal::loro_common::LoroTreeError;
 use loro_internal::obs::LocalUpdateCallback;
 use loro_internal::undo::{OnPop, OnPush};
 use loro_internal::version::ImVersionVector;
 use loro_internal::DocState;
 use loro_internal::LoroDoc as InnerLoroDoc;
 use loro_internal::OpLog;
-use loro_internal::TreeParentId;
 use loro_internal::{
     handler::Handler as InnerHandler, ListHandler as InnerListHandler,
     MapHandler as InnerMapHandler, MovableListHandler as InnerMovableListHandler,
@@ -42,7 +39,6 @@ pub use loro_internal::delta::{TreeDeltaItem, TreeDiff, TreeDiffItem, TreeExtern
 pub use loro_internal::encoding::ExportMode;
 pub use loro_internal::event::{EventTriggerKind, Index};
 pub use loro_internal::handler::TextDelta;
-pub use loro_internal::id::{PeerID, TreeID, ID};
 pub use loro_internal::json;
 pub use loro_internal::json::JsonSchema;
 pub use loro_internal::kv_store::{KvStore, MemKvStore};
@@ -56,7 +52,7 @@ pub use loro_internal::ApplyDiff;
 pub use loro_internal::Subscription;
 pub use loro_internal::UndoManager as InnerUndoManager;
 pub use loro_internal::{loro_value, to_value};
-pub use loro_internal::{Counter, CounterSpan, IdSpan, Lamport, PeerID, TreeID, ID};
+pub use loro_internal::{Counter, CounterSpan, IdSpan, Lamport, PeerID, TreeID, TreeParentId, ID};
 pub use loro_internal::{LoroError, LoroResult, LoroTreeError, LoroValue, ToJson};
 pub use loro_kv_store as kv_store;
 
@@ -1708,8 +1704,8 @@ impl LoroTree {
     /// # Errors
     ///
     /// - If the target node does not exist, return `LoroTreeError::TreeNodeNotExist`.
-    pub fn is_node_deleted(&self, target: TreeID) -> LoroResult<bool> {
-        self.handler.is_node_deleted(&target)
+    pub fn is_node_deleted(&self, target: &TreeID) -> LoroResult<bool> {
+        self.handler.is_node_deleted(target)
     }
 
     /// Return all nodes, including deleted nodes
@@ -1742,7 +1738,7 @@ impl LoroTree {
             .map(|x| x.to_string())
     }
 
-    /// Return the flat array of the forest.
+    /// Return the hierarchy array of the forest.
     ///
     /// Note: the metadata will be not resolved. So if you don't only care about hierarchy
     /// but also the metadata, you should use [TreeHandler::get_value_with_meta()].
@@ -1750,7 +1746,7 @@ impl LoroTree {
         self.handler.get_value()
     }
 
-    /// Return the flat array of the forest, each node is with metadata.
+    /// Return the hierarchy array of the forest, each node is with metadata.
     pub fn get_value_with_meta(&self) -> LoroValue {
         self.handler.get_deep_value()
     }
@@ -2271,7 +2267,7 @@ impl ValueOrContainer {
                 Container::Tree(c) => c.get_value(),
                 Container::MovableList(c) => c.get_deep_value(),
                 #[cfg(feature = "counter")]
-                Container::Counter(c) => c.get_value(),
+                Container::Counter(c) => c.get_value().into(),
                 Container::Unknown(_) => LoroValue::Null,
             },
         }

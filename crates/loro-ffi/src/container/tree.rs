@@ -6,6 +6,13 @@ use crate::{ContainerID, LoroValue};
 
 use super::LoroMap;
 
+pub enum TreeParentId {
+    Node { id: TreeID },
+    Root,
+    Deleted,
+    Unexist,
+}
+
 #[derive(Debug, Clone)]
 pub struct LoroTree {
     pub(crate) tree: loro::LoroTree,
@@ -43,7 +50,7 @@ impl LoroTree {
     /// // create a new child
     /// let child = tree.create(root).unwrap();
     /// ```
-    pub fn create<T: Into<Option<TreeID>>>(&self, parent: T) -> LoroResult<TreeID> {
+    pub fn create(&self, parent: TreeParentId) -> LoroResult<TreeID> {
         self.tree.create(parent)
     }
 
@@ -64,7 +71,7 @@ impl LoroTree {
     /// // create a new child at index 0
     /// let child = tree.create_at(root, 0).unwrap();
     /// ```
-    pub fn create_at<T: Into<Option<TreeID>>>(&self, parent: T, index: u32) -> LoroResult<TreeID> {
+    pub fn create_at(&self, parent: TreeParentId, index: u32) -> LoroResult<TreeID> {
         self.tree.create_at(parent, index as usize)
     }
 
@@ -84,7 +91,7 @@ impl LoroTree {
     /// // move `root2` to be a child of `root`.
     /// tree.mov(root2, root).unwrap();
     /// ```
-    pub fn mov<T: Into<Option<TreeID>>>(&self, target: TreeID, parent: T) -> LoroResult<()> {
+    pub fn mov(&self, target: TreeID, parent: TreeParentId) -> LoroResult<()> {
         self.tree.mov(target, parent)
     }
 
@@ -103,12 +110,7 @@ impl LoroTree {
     /// // move `root2` to be a child of `root` at index 0.
     /// tree.mov_to(root2, root, 0).unwrap();
     /// ```
-    pub fn mov_to<T: Into<Option<TreeID>>>(
-        &self,
-        target: TreeID,
-        parent: T,
-        to: u32,
-    ) -> LoroResult<()> {
+    pub fn mov_to(&self, target: TreeID, parent: TreeParentId, to: u32) -> LoroResult<()> {
         self.tree.mov_to(target, parent, to as usize)
     }
 
@@ -189,9 +191,9 @@ impl LoroTree {
     ///
     /// - If the target node does not exist, throws Error.
     /// - If the target node is a root node, return `None`.
-    pub fn parent(&self, target: TreeID) -> LoroResult<Option<TreeID>> {
+    pub fn parent(&self, target: TreeID) -> LoroResult<TreeParentId> {
         if let Some(p) = self.tree.parent(target) {
-            Ok(p)
+            Ok(p.into())
         } else {
             Err(LoroError::TreeError(LoroTreeError::TreeNodeNotExist(
                 target,
@@ -204,6 +206,15 @@ impl LoroTree {
         self.tree.contains(target)
     }
 
+    /// Return whether target node is deleted.
+    ///
+    /// # Errors
+    ///
+    /// - If the target node does not exist, return `LoroTreeError::TreeNodeNotExist`.
+    pub fn is_node_deleted(&self, target: TreeID) -> LoroResult<bool> {
+        self.tree.is_node_deleted(&target)
+    }
+
     /// Return all nodes
     pub fn nodes(&self) -> Vec<TreeID> {
         self.tree.nodes()
@@ -212,12 +223,12 @@ impl LoroTree {
     /// Return all children of the target node.
     ///
     /// If the parent node does not exist, return `None`.
-    pub fn children(&self, parent: Option<TreeID>) -> Option<Vec<TreeID>> {
+    pub fn children(&self, parent: TreeParentId) -> Option<Vec<TreeID>> {
         self.tree.children(parent)
     }
 
     /// Return the number of children of the target node.
-    pub fn children_num(&self, parent: Option<TreeID>) -> Option<u32> {
+    pub fn children_num(&self, parent: TreeParentId) -> Option<u32> {
         self.tree.children_num(parent).map(|v| v as u32)
     }
 
@@ -228,7 +239,7 @@ impl LoroTree {
 
     /// Return the fractional index of the target node with hex format.
     pub fn fractional_index(&self, target: TreeID) -> Option<String> {
-        self.tree.fractional_index(&target)
+        self.tree.fractional_index(target)
     }
 
     /// Return the flat array of the forest.
@@ -244,16 +255,55 @@ impl LoroTree {
         self.tree.get_value_with_meta().into()
     }
 
-    // This method is used for testing only.
-    #[doc(hidden)]
-    #[allow(non_snake_case)]
-    pub fn __internal__next_tree_id(&self) -> TreeID {
-        self.tree.__internal__next_tree_id()
+    /// Whether the fractional index is enabled.
+    pub fn is_fractional_index_enabled(&self) -> bool {
+        self.tree.is_fractional_index_enabled()
+    }
+
+    /// Enable fractional index for Tree Position.
+    ///
+    /// The jitter is used to avoid conflicts when multiple users are creating the node at the same position.
+    /// value 0 is default, which means no jitter, any value larger than 0 will enable jitter.
+    ///
+    /// Generally speaking, jitter will affect the growth rate of document size.
+    /// [Read more about it](https://www.loro.dev/blog/movable-tree#implementation-and-encoding-size)
+    #[inline]
+    pub fn enable_fractional_index(&self, jitter: u8) {
+        self.tree.enable_fractional_index(jitter);
+    }
+
+    /// Disable the fractional index generation for Tree Position when
+    /// you don't need the Tree's siblings to be sorted. The fractional index will be always default.
+    #[inline]
+    pub fn disable_fractional_index(&self) {
+        self.tree.disable_fractional_index();
     }
 }
 
 impl Default for LoroTree {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl From<loro::TreeParentId> for TreeParentId {
+    fn from(value: loro::TreeParentId) -> Self {
+        match value {
+            loro::TreeParentId::Node(id) => TreeParentId::Node { id },
+            loro::TreeParentId::Root => TreeParentId::Root,
+            loro::TreeParentId::Deleted => TreeParentId::Deleted,
+            loro::TreeParentId::Unexist => TreeParentId::Unexist,
+        }
+    }
+}
+
+impl From<TreeParentId> for loro::TreeParentId {
+    fn from(value: TreeParentId) -> Self {
+        match value {
+            TreeParentId::Node { id } => loro::TreeParentId::Node(id),
+            TreeParentId::Root => loro::TreeParentId::Root,
+            TreeParentId::Deleted => loro::TreeParentId::Deleted,
+            TreeParentId::Unexist => loro::TreeParentId::Unexist,
+        }
     }
 }

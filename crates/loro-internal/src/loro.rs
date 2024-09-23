@@ -1522,7 +1522,7 @@ impl LoroDoc {
             ExportMode::Snapshot => export_fast_snapshot(self),
             ExportMode::Updates { from } => export_fast_updates(self, &from),
             ExportMode::UpdatesInRange { spans } => {
-                export_fast_updates_in_range(&self.oplog.lock().unwrap(), &spans)
+                export_fast_updates_in_range(&self.oplog.lock().unwrap(), spans.as_ref())
             }
             ExportMode::GcSnapshot(f) => export_gc_snapshot(self, &f),
             ExportMode::StateOnly(f) => match f {

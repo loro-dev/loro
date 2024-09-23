@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
-use loro::{EventTriggerKind, TreeID};
+use loro::{EventTriggerKind, TreeID, TreeParentId};
 
 use crate::{ContainerID, LoroValue, ValueOrContainer};
 
@@ -121,16 +121,21 @@ pub struct TreeDiffItem {
 
 pub enum TreeExternalDiff {
     Create {
-        parent: Option<TreeID>,
+        parent: TreeParentId,
         index: u32,
         fractional_index: String,
     },
     Move {
-        parent: Option<TreeID>,
+        parent: TreeParentId,
         index: u32,
         fractional_index: String,
+        old_parent: TreeParentId,
+        old_index: u32,
     },
-    Delete,
+    Delete {
+        old_parent: TreeParentId,
+        old_index: u32,
+    },
 }
 
 impl<'a, 'b> From<&'b loro::event::ContainerDiff<'a>> for ContainerDiff {
@@ -266,7 +271,7 @@ impl<'a, 'b> From<&'b loro::event::Diff<'a>> for Diff {
                                 index,
                                 position,
                             } => TreeExternalDiff::Create {
-                                parent: *parent,
+                                parent: (*parent).into(),
                                 index: *index as u32,
                                 fractional_index: position.to_string(),
                             },
@@ -274,12 +279,22 @@ impl<'a, 'b> From<&'b loro::event::Diff<'a>> for Diff {
                                 parent,
                                 index,
                                 position,
+                                old_parent,
+                                old_index,
                             } => TreeExternalDiff::Move {
-                                parent: *parent,
+                                parent: (*parent).into(),
                                 index: *index as u32,
                                 fractional_index: position.to_string(),
+                                old_parent: (*old_parent).into(),
+                                old_index: *old_index as u32,
                             },
-                            loro::TreeExternalDiff::Delete => TreeExternalDiff::Delete,
+                            loro::TreeExternalDiff::Delete {
+                                old_parent,
+                                old_index,
+                            } => TreeExternalDiff::Delete {
+                                old_parent: (*old_parent).into(),
+                                old_index: *old_index as u32,
+                            },
                         },
                     });
                 }
