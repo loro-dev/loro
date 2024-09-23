@@ -240,3 +240,16 @@ fn the_vv_on_gc_doc() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn no_event_when_exporting_gc_snapshot() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    gen_action(&doc, 0, 10);
+    doc.commit();
+    let id = doc.subscribe_root(Arc::new(|diff| {
+        panic!("should not emit event");
+    }));
+    let _snapshot = doc.export(loro::ExportMode::gc_snapshot(&doc.oplog_frontiers()));
+    Ok(())
+}
