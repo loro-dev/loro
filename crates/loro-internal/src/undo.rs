@@ -158,7 +158,7 @@ pub type OnPush = Box<dyn Fn(UndoOrRedo, CounterSpan) -> UndoItemMeta + Send + S
 pub type OnPop = Box<dyn Fn(UndoOrRedo, CounterSpan, UndoItemMeta) + Send + Sync>;
 
 struct UndoManagerInner {
-    latest_counter: Option<Counter>,
+    next_counter: Option<Counter>,
     undo_stack: Stack,
     redo_stack: Stack,
     processing_undo: bool,
@@ -174,7 +174,7 @@ struct UndoManagerInner {
 impl std::fmt::Debug for UndoManagerInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("UndoManagerInner")
-            .field("latest_counter", &self.latest_counter)
+            .field("latest_counter", &self.next_counter)
             .field("undo_stack", &self.undo_stack)
             .field("redo_stack", &self.redo_stack)
             .field("processing_undo", &self.processing_undo)
@@ -371,7 +371,7 @@ impl Default for Stack {
 impl UndoManagerInner {
     fn new(last_counter: Counter) -> Self {
         Self {
-            latest_counter: Some(last_counter),
+            next_counter: Some(last_counter),
             undo_stack: Default::default(),
             redo_stack: Default::default(),
             processing_undo: false,
@@ -386,18 +386,18 @@ impl UndoManagerInner {
     }
 
     fn record_checkpoint(&mut self, latest_counter: Counter) {
-        if Some(latest_counter) == self.latest_counter {
+        if Some(latest_counter) == self.next_counter {
             return;
         }
 
-        if self.latest_counter.is_none() {
-            self.latest_counter = Some(latest_counter);
+        if self.next_counter.is_none() {
+            self.next_counter = Some(latest_counter);
             return;
         }
 
-        assert!(self.latest_counter.unwrap() < latest_counter);
+        assert!(self.next_counter.unwrap() < latest_counter);
         let now = get_sys_timestamp();
-        let span = CounterSpan::new(self.latest_counter.unwrap(), latest_counter);
+        let span = CounterSpan::new(self.next_counter.unwrap(), latest_counter);
         let meta = self
             .on_push
             .as_ref()
@@ -411,7 +411,7 @@ impl UndoManagerInner {
             self.undo_stack.push(span, meta);
         }
 
-        self.latest_counter = Some(latest_counter);
+        self.next_counter = Some(latest_counter);
         self.redo_stack.clear();
         while self.undo_stack.len() > self.max_stack_size {
             self.undo_stack.pop_front();
@@ -468,7 +468,7 @@ impl UndoManager {
                         // a remote event.
                         inner.undo_stack.compose_remote_event(event.events);
                         inner.redo_stack.compose_remote_event(event.events);
-                        inner.latest_counter = Some(id.counter + 1);
+                        inner.next_counter = Some(id.counter + 1);
                     } else {
                         inner.record_checkpoint(id.counter + 1);
                     }
@@ -500,15 +500,15 @@ impl UndoManager {
                 let mut inner = inner_clone.try_lock().unwrap();
                 inner.undo_stack.clear();
                 inner.redo_stack.clear();
-                inner.latest_counter = None;
+                inner.next_counter = None;
             }
         }));
 
-        let sub = doc.subscribe_peer_id_change(Box::new(move |peer_id| {
+        let sub = doc.subscribe_peer_id_change(Box::new(move |peer_id, counter| {
             let mut inner = inner_clone2.try_lock().unwrap();
             inner.undo_stack.clear();
             inner.redo_stack.clear();
-            inner.latest_counter = None;
+            inner.next_counter = Some(counter);
             peer_clone2.store(peer_id, std::sync::atomic::Ordering::Relaxed);
         }));
 
@@ -702,7 +702,7 @@ impl UndoManager {
                 }
 
                 get_opposite(&mut inner).push(CounterSpan::new(end_counter, new_counter), meta);
-                inner.latest_counter = Some(new_counter);
+                inner.next_counter = Some(new_counter);
                 executed = true;
                 break;
             } else {

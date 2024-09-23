@@ -177,7 +177,7 @@ impl PartialEq for Frontiers {
 
 impl Frontiers {
     #[inline]
-    pub(crate) fn from_id(id: ID) -> Self {
+    pub fn from_id(id: ID) -> Self {
         Self(smallvec![id])
     }
 

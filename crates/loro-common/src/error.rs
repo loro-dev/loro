@@ -50,7 +50,7 @@ pub enum LoroError {
     TreeError(#[from] LoroTreeError),
     #[error("Invalid argument ({0})")]
     ArgErr(Box<str>),
-    #[error("Auto commit has not started. The doc is readonly when detached. You should ensure autocommit is on and the doc and the state is attached.")]
+    #[error("Auto commit has not started. The doc is readonly when detached and detached editing is not enabled.")]
     AutoCommitNotStarted,
     #[error("Style configuration missing for \"({0:?})\". Please provide the style configuration using `configTextStyle` on your Loro doc.")]
     StyleConfigMissing(InternalString),

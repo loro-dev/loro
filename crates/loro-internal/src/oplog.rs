@@ -267,10 +267,10 @@ impl OpLog {
             return Ok(());
         }
 
-        let mut max_last_counter = 0;
+        let mut max_last_counter = -1;
         for dep in deps.iter() {
             let dep_vv = self.dag.get_vv(*dep).unwrap();
-            max_last_counter = max_last_counter.max(dep_vv.get(&peer).cloned().unwrap_or(0));
+            max_last_counter = max_last_counter.max(dep_vv.get(&peer).cloned().unwrap_or(0) - 1);
         }
 
         if counter != max_last_counter + 1 {

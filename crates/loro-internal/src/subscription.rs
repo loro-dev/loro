@@ -5,7 +5,7 @@ use std::sync::{
 
 use fxhash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
-use loro_common::{ContainerID, PeerID};
+use loro_common::{ContainerID, Counter, PeerID};
 use smallvec::SmallVec;
 
 use crate::{container::idx::ContainerIdx, ContainerDiff, LoroDoc, Subscription};
@@ -17,8 +17,8 @@ use super::{
 
 /// The callback of the local update.
 pub type LocalUpdateCallback = Box<dyn Fn(&[u8]) + Send + Sync + 'static>;
-/// The callback of the peer id change.
-pub type PeerIdUpdateCallback = Box<dyn Fn(PeerID) + Send + Sync + 'static>;
+/// The callback of the peer id change. The second argument is the next counter for the peer.
+pub type PeerIdUpdateCallback = Box<dyn Fn(PeerID, Counter) + Send + Sync + 'static>;
 pub type Subscriber = Arc<dyn (for<'a> Fn(DiffEvent<'a>)) + Send + Sync>;
 
 impl LoroDoc {

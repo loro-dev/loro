@@ -159,6 +159,37 @@ impl LoroDoc {
         self.doc.set_record_timestamp(record);
     }
 
+    /// Enables editing in detached mode, which is disabled by default.
+    ///
+    /// The doc enter detached mode after calling `detach` or checking out a non-latest version.
+    ///
+    /// # Important Notes:
+    ///
+    /// - This mode uses a different PeerID for each checkout.
+    /// - Ensure no concurrent operations share the same PeerID if set manually.
+    /// - Importing does not affect the document's state or version; changes are
+    ///   recorded in the [OpLog] only. Call `checkout` to apply changes.
+    #[inline]
+    pub fn set_detached_editing(&self, enable: bool) {
+        self.doc.set_detached_editing(enable);
+    }
+
+    /// Whether editing the doc in detached mode is allowed, which is disabled by
+    /// default.
+    ///
+    /// The doc enter detached mode after calling `detach` or checking out a non-latest version.
+    ///
+    /// # Important Notes:
+    ///
+    /// - This mode uses a different PeerID for each checkout.
+    /// - Ensure no concurrent operations share the same PeerID if set manually.
+    /// - Importing does not affect the document's state or version; changes are
+    ///   recorded in the [OpLog] only. Call `checkout` to apply changes.
+    #[inline]
+    pub fn is_detached_editing_enabled(&self) -> bool {
+        self.doc.is_detached_editing_enabled()
+    }
+
     /// Set the interval of mergeable changes, in milliseconds.
     ///
     /// If two continuous local changes are within the interval, they will be merged into one change.

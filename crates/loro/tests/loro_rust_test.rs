@@ -1715,7 +1715,7 @@ fn change_peer_id() {
     let doc = LoroDoc::new();
     let received_peer_id = Arc::new(AtomicU64::new(0));
     let received_peer_id_clone = received_peer_id.clone();
-    let sub = doc.subscribe_peer_id_change(Box::new(move |peer_id| {
+    let sub = doc.subscribe_peer_id_change(Box::new(move |peer_id, counter| {
         received_peer_id_clone.store(peer_id, Ordering::SeqCst);
     }));
 

@@ -177,7 +177,7 @@ impl LoroDoc {
     }
 
     /// Renews the PeerID for the document.
-    pub fn renew_peer_id(&self) {
+    pub(crate) fn renew_peer_id(&self) {
         let peer_id = DefaultRandom.next_u64();
         self.set_peer_id(peer_id).unwrap();
     }
@@ -256,6 +256,7 @@ impl LoroDoc {
 
     #[inline(always)]
     pub fn set_peer_id(&self, peer: PeerID) -> LoroResult<()> {
+        let next_id = self.oplog.lock().unwrap().next_id(peer);
         if self.auto_commit.load(Acquire) {
             let doc_state = self.state.lock().unwrap();
             doc_state
@@ -272,7 +273,7 @@ impl LoroDoc {
             self.txn.lock().unwrap().replace(new_txn);
 
             self.peer_id_change_subs.retain(&(), &mut |callback| {
-                callback(peer);
+                callback(peer, next_id.counter);
                 true
             });
             return Ok(());
@@ -292,7 +293,7 @@ impl LoroDoc {
             .store(peer, std::sync::atomic::Ordering::Relaxed);
         drop(doc_state);
         self.peer_id_change_subs.retain(&(), &mut |callback| {
-            callback(peer);
+            callback(peer, next_id.counter);
             true
         });
         Ok(())
@@ -818,6 +819,7 @@ impl LoroDoc {
     /// Calculate the diff between two versions so that apply diff on a will make the state same as b.
     ///
     /// NOTE: This method will make the doc enter the **detached mode**.
+    // FIXME: This method needs testing (no event should be emitted during processing this)
     pub fn diff(&self, a: &Frontiers, b: &Frontiers) -> LoroResult<DiffBatch> {
         {
             // check whether a and b are valid
@@ -837,6 +839,8 @@ impl LoroDoc {
         self.commit_then_stop();
 
         let ans = {
+            let was_detached = self.is_detached();
+            let old_frontiers = self.state_frontiers();
             self.state.lock().unwrap().stop_and_clear_recording();
             self.checkout_without_emitting(a).unwrap();
             self.state.lock().unwrap().start_recording();
@@ -844,6 +848,10 @@ impl LoroDoc {
             let mut state = self.state.lock().unwrap();
             let e = state.take_events();
             state.stop_and_clear_recording();
+            self.checkout_without_emitting(&old_frontiers).unwrap();
+            if !was_detached {
+                self.set_detached(false);
+            }
             DiffBatch::new(e)
         };
 
@@ -1017,8 +1025,8 @@ impl LoroDoc {
     }
 
     pub fn checkout_to_latest(&self) {
+        self.commit_then_renew();
         if !self.is_detached() {
-            self.commit_then_renew();
             return;
         }
 
@@ -1037,6 +1045,11 @@ impl LoroDoc {
     pub fn checkout(&self, frontiers: &Frontiers) -> LoroResult<()> {
         self.checkout_without_emitting(frontiers)?;
         self.emit_events();
+        if self.config.detached_editing() {
+            self.renew_peer_id();
+            self.renew_txn_if_auto_commit();
+        }
+
         Ok(())
     }
 
@@ -1106,11 +1119,8 @@ impl LoroDoc {
             true,
         );
 
-        if self.config.detached_editing() {
-            self.renew_peer_id();
-            self.renew_txn_if_auto_commit();
-        }
-
+        drop(state);
+        drop(oplog);
         Ok(())
     }
 

@@ -342,7 +342,6 @@ impl Transaction {
         let frontiers = state_lock.frontiers.clone();
         let peer = state_lock.peer.load(std::sync::atomic::Ordering::Relaxed);
         let next_counter = oplog_lock.next_id(peer).counter;
-        debug_assert_eq!(&frontiers, oplog_lock.frontiers());
         let next_lamport = oplog_lock.dag.frontiers_to_next_lamport(&frontiers);
         let latest_timestamp = oplog_lock.get_greatest_timestamp(&frontiers);
         oplog_lock
