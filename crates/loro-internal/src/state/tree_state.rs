@@ -1083,8 +1083,6 @@ impl ContainerState for TreeState {
                     TreeInternalDiff::UnCreate => {
                         // maybe the node created and moved to the parent deleted
                         if !self.is_node_deleted(&target).unwrap() {
-                            trace!("tree {:#?}", &self.trees);
-                            trace!("DEL from b {:?}", target);
                             ans.push(TreeDiffItem {
                                 target,
                                 action: TreeExternalDiff::Delete {
