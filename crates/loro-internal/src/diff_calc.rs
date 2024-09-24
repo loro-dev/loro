@@ -13,7 +13,8 @@ use itertools::Itertools;
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{
-    CompactIdLp, ContainerID, Counter, HasCounterSpan, IdFull, IdLp, IdSpan, LoroValue, PeerID, ID,
+    CompactIdLp, ContainerID, Counter, HasCounter, HasCounterSpan, HasIdSpan, IdFull, IdLp, IdSpan,
+    LoroValue, PeerID, ID,
 };
 use loro_delta::DeltaRope;
 use smallvec::SmallVec;
@@ -36,7 +37,7 @@ use crate::{
     event::{DiffVariant, InternalDiff},
     op::{InnerContent, RichOp, SliceRange, SliceWithId},
     span::{HasId, HasLamport},
-    version::Frontiers,
+    version::{Frontiers, VersionRange},
     InternalString, VersionVector,
 };
 
@@ -64,10 +65,7 @@ enum DiffCalculatorRetainMode {
     /// The diff calculator can only be used once.
     Once { used: bool },
     /// The diff calculator will be persisted and can be reused after the diff calc is done.
-    Persist {
-        has_all: bool,
-        last_vv: VersionVector,
-    },
+    Persist { recorded_ops_range: VersionRange },
 }
 
 /// This mode defines how the diff is calculated and how it should be applied on the state.
@@ -116,8 +114,7 @@ impl DiffCalculator {
             calculators: Default::default(),
             retain_mode: if persist {
                 DiffCalculatorRetainMode::Persist {
-                    has_all: false,
-                    last_vv: Default::default(),
+                    recorded_ops_range: Default::default(),
                 }
             } else {
                 DiffCalculatorRetainMode::Once { used: false }
@@ -158,61 +155,41 @@ impl DiffCalculator {
         let _e = s.enter();
 
         let mut use_persisted_shortcut = false;
+        let mut merged = before.clone();
+        merged.merge(after);
+        let (lca, mut diff_mode, iter) =
+            oplog.iter_from_lca_causally(before, before_frontiers, after, after_frontiers);
         match &mut self.retain_mode {
             DiffCalculatorRetainMode::Once { used } => {
                 if *used {
                     panic!("DiffCalculator with retain_mode Once can only be used once");
                 }
             }
-            DiffCalculatorRetainMode::Persist { has_all, last_vv } => {
-                if *has_all {
-                    let include_before = last_vv.includes_vv(before);
-                    let include_after = last_vv.includes_vv(after);
-                    if !include_after || !include_before {
-                        *has_all = false;
-                        *last_vv = Default::default();
-                    }
-                }
-
-                if *has_all {
+            DiffCalculatorRetainMode::Persist { recorded_ops_range } => {
+                if recorded_ops_range.contains_ops_between(&lca, &merged)
+                    && recorded_ops_range.contains_ops_between(before, after)
+                {
                     use_persisted_shortcut = true;
+                } else {
+                    diff_mode = DiffMode::Checkout;
+                    recorded_ops_range.clear();
                 }
             }
         }
 
         let affected_set = if !use_persisted_shortcut {
-            // if we don't have all the ops, we need to calculate the diff by tracing back
-            let mut merged = before.clone();
-            merged.merge(after);
-
-            let (lca, mut diff_mode, iter) =
-                oplog.iter_from_lca_causally(before, before_frontiers, after, after_frontiers);
-
-            if let DiffCalculatorRetainMode::Persist { has_all, last_vv } = &mut self.retain_mode {
-                if before.is_empty() {
-                    *has_all = true;
-                    *last_vv = Default::default();
-                }
-                diff_mode = DiffMode::Checkout;
-            }
-
             tracing::debug!("LCA: {:?} mode={:?}", &lca, diff_mode);
             let mut started_set = FxHashSet::default();
             for (change, (start_counter, end_counter), vv) in iter {
-                if let DiffCalculatorRetainMode::Persist { has_all, last_vv } =
+                if let DiffCalculatorRetainMode::Persist { recorded_ops_range } =
                     &mut self.retain_mode
                 {
-                    if *has_all {
-                        if change.id.counter > 0 {
-                            debug_assert!(
-                                last_vv.includes_id(change.id.inc(-1)),
-                                "{:?} {}",
-                                &last_vv,
-                                change.id
-                            );
-                        }
-
-                        last_vv.extend_to_include_end_id(ID::new(change.id.peer, end_counter));
+                    if container_filter.is_none() {
+                        recorded_ops_range.extends_to_include_id_span(IdSpan::new(
+                            change.peer(),
+                            start_counter,
+                            end_counter,
+                        ));
                     }
                 }
 
@@ -286,8 +263,12 @@ impl DiffCalculator {
             // Find a set of affected containers idx, if it's relatively cheap
             if before.distance_between(after) < self.calculators.len() || cfg!(debug_assertions) {
                 let mut set = FxHashSet::default();
-                oplog.for_each_change_within(before, after, |change| {
+                oplog.for_each_change_within(before, after, |change, (start, end)| {
                     for op in change.ops.iter() {
+                        if op.ctr_end() <= start || op.ctr_start() >= end {
+                            continue;
+                        }
+
                         let idx = op.container;
                         if let Some(filter) = container_filter {
                             if !filter(idx) {

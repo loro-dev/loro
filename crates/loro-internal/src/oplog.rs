@@ -28,7 +28,7 @@ use crate::state::GcStore;
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
 use change_store::BlockOpRef;
-use loro_common::{IdLp, IdSpan};
+use loro_common::{HasCounter, IdLp, IdSpan};
 use rle::{HasLength, RleVec, Sliceable};
 use smallvec::SmallVec;
 
@@ -433,12 +433,12 @@ impl OpLog {
         &self,
         a: &VersionVector,
         b: &VersionVector,
-        mut f: impl FnMut(&Change),
+        mut f: impl FnMut(&Change, (Counter, Counter)),
     ) {
         let spans = b.iter_between(a);
         for span in spans {
             for c in self.change_store.iter_changes(span) {
-                f(&c);
+                f(&c, (span.ctr_start(), span.ctr_end()));
             }
         }
     }
