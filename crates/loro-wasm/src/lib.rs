@@ -102,7 +102,7 @@ extern "C" {
     pub type JsTreeID;
     #[wasm_bindgen(typescript_type = "TreeID | undefined")]
     pub type JsParentTreeID;
-    #[wasm_bindgen(typescript_type = "{ withDelted: boolean }")]
+    #[wasm_bindgen(typescript_type = "{ withDeleted: boolean }")]
     pub type JsGetNodesProp;
     #[wasm_bindgen(typescript_type = "LoroTreeNode | undefined")]
     pub type JsTreeNodeOrUndefined;
@@ -4778,12 +4778,4 @@ export type UnknownOp = {
     data: Uint8Array
   }
 };
-
-export function newContainerID(id: OpId, type: ContainerType): ContainerID {
-    return `cid:${id.counter}@${id.peer}:${type}`;
-}
-
-export function newRootContainerID(name: string, type: ContainerType): ContainerID {
-    return `cid:root-${name}:${type}`;
-}
 "#;
