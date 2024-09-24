@@ -81,7 +81,7 @@
   "cortex-debug.variableUseNaturalFormat": true,
   "[markdown]": {},
   "[typescript]": {
-    "editor.defaultFormatter": "denoland.vscode-deno"
+    "editor.defaultFormatter": "vscode.typescript-language-features"
   },
   "vitest.enable": true,
   "[shellscript]": {
