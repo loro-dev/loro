@@ -235,7 +235,7 @@ pub(crate) fn encode_snapshot_at<W: std::io::Write>(
     }
     doc.checkout_without_emitting(&version_before_start)
         .unwrap();
-    doc.ignore_events();
+    doc.drop_pending_events();
     Ok(())
 }
 

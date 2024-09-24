@@ -55,18 +55,21 @@ pub(crate) fn export_gc_snapshot<W: std::io::Write>(
         &start_vv, &start_from,
     );
 
+    let latest_frontiers = oplog.frontiers().clone();
+    let state_frontiers = doc.state_frontiers();
+    let is_attached = !doc.is_detached();
     let oplog_bytes = oplog.export_change_store_from(&start_vv, &start_from);
     let latest_vv = oplog.vv();
     let ops_num: usize = latest_vv.sub_iter(&start_vv).map(|x| x.atom_len()).sum();
     drop(oplog);
-    doc.checkout(&start_from)?;
+    doc.checkout_without_emitting(&start_from)?;
     let mut state = doc.app_state().lock().unwrap();
     let alive_containers = state.ensure_all_alive_containers();
     let alive_c_bytes: BTreeSet<Vec<u8>> = alive_containers.iter().map(|x| x.to_bytes()).collect();
     state.store.flush();
     let gc_state_kv = state.store.get_kv().clone();
     drop(state);
-    doc.checkout_to_latest();
+    doc.checkout_without_emitting(&latest_frontiers).unwrap();
     let state_bytes = if ops_num > MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE {
         let mut state = doc.app_state().lock().unwrap();
         state.ensure_all_alive_containers();
@@ -90,6 +93,15 @@ pub(crate) fn export_gc_snapshot<W: std::io::Write>(
     };
 
     _encode_snapshot(snapshot, w);
+    if state_frontiers != latest_frontiers {
+        doc.checkout_without_emitting(&state_frontiers).unwrap();
+    }
+
+    if is_attached {
+        doc.set_detached(false);
+    }
+
+    doc.drop_pending_events();
     Ok(start_from)
 }
 
@@ -100,7 +112,6 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
 ) -> LoroResult<Frontiers> {
     let oplog = doc.oplog().lock().unwrap();
     let start_from = calc_gc_doc_start(&oplog, start_from);
-    trace!("gc_start_from {:?}", &start_from);
     let mut start_vv = oplog.dag().frontiers_to_vv(&start_from).unwrap();
     for id in start_from.iter() {
         // we need to include the ops in start_from, this can make things easier
@@ -119,15 +130,16 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
 
     let oplog_bytes =
         oplog.export_change_store_in_range(&start_vv, &start_from, &to_vv, &start_from);
+    let state_frontiers = doc.state_frontiers();
+    let is_attached = !doc.is_detached();
     drop(oplog);
-    doc.checkout(&start_from)?;
+    doc.checkout_without_emitting(&start_from)?;
     let mut state = doc.app_state().lock().unwrap();
     let alive_containers = state.ensure_all_alive_containers();
     let alive_c_bytes: BTreeSet<Vec<u8>> = alive_containers.iter().map(|x| x.to_bytes()).collect();
     state.store.flush();
     let gc_state_kv = state.store.get_kv().clone();
     drop(state);
-    doc.checkout_to_latest();
     let state_bytes = None;
     gc_state_kv.retain_keys(&alive_c_bytes);
     gc_state_kv.insert(FRONTIERS_KEY, start_from.encode().into());
@@ -137,8 +149,17 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
         state_bytes,
         gc_bytes: gc_state_bytes,
     };
-
     _encode_snapshot(snapshot, w);
+
+    if state_frontiers != start_from {
+        doc.checkout_without_emitting(&state_frontiers).unwrap();
+    }
+
+    if is_attached {
+        doc.set_detached(false);
+    }
+
+    doc.drop_pending_events();
     Ok(start_from)
 }
 
