@@ -1162,11 +1162,17 @@ impl DocState {
                     // the metadata of this node. When the user get the deep value,
                     // we need to add a field named `meta` to the tree node,
                     // whose value is deep value of map container.
-                    for node in list.iter() {
+                    let mut list = Arc::unwrap_or_clone(list);
+                    while let Some(node) = list.pop() {
                         let map = node.as_map().unwrap();
                         let meta = map.get("meta").unwrap();
                         let id = meta.as_container().unwrap();
                         ans.push(id.clone());
+                        let children = map.get("children").unwrap();
+                        let children = children.as_list().unwrap();
+                        for child in children.iter() {
+                            list.push(child.clone());
+                        }
                     }
                 } else {
                     for item in list.iter() {
