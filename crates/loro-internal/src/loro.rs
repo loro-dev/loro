@@ -222,6 +222,10 @@ impl LoroDoc {
         self.detached.load(Acquire)
     }
 
+    pub(crate) fn set_detached(&self, detached: bool) {
+        self.detached.store(detached, Release);
+    }
+
     #[inline(always)]
     pub fn peer_id(&self) -> PeerID {
         self.state
@@ -645,7 +649,7 @@ impl LoroDoc {
         }
     }
 
-    pub(crate) fn ignore_events(&self) {
+    pub(crate) fn drop_pending_events(&self) {
         let _events = {
             let mut state = self.state.lock().unwrap();
             state.take_events()
@@ -1150,6 +1154,11 @@ impl LoroDoc {
             frontiers,
             self.oplog_vv()
         );
+
+        if &from_frontiers == frontiers {
+            self.renew_txn_if_auto_commit();
+            return Ok(());
+        }
 
         let oplog = self.oplog.lock().unwrap();
         if oplog.dag.is_on_trimmed_history(frontiers) {

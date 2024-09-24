@@ -242,6 +242,19 @@ fn the_vv_on_gc_doc() -> anyhow::Result<()> {
 }
 
 #[test]
+fn no_event_when_exporting_gc_snapshot() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    gen_action(&doc, 0, 10);
+    doc.commit();
+    let _id = doc.subscribe_root(Arc::new(|_diff| {
+        panic!("should not emit event");
+    }));
+    let _snapshot = doc.export(loro::ExportMode::gc_snapshot_from_id(ID::new(1, 3)));
+    Ok(())
+}
+
+#[test]
 fn test_cursor_that_cannot_be_found_when_exporting_gc_snapshot() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(1)?;
