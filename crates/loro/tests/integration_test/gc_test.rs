@@ -251,6 +251,7 @@ fn no_event_when_exporting_gc_snapshot() -> anyhow::Result<()> {
         panic!("should not emit event");
     }));
     let _snapshot = doc.export(loro::ExportMode::gc_snapshot_from_id(ID::new(1, 3)));
+    Ok(())
 }
 
 #[test]
