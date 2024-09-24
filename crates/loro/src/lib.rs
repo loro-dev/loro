@@ -13,14 +13,12 @@ use loro_internal::encoding::ImportBlobMetadata;
 use loro_internal::handler::HandlerTrait;
 use loro_internal::handler::ValueOrHandler;
 use loro_internal::loro_common::LoroTreeError;
-use loro_internal::obs::LocalUpdateCallback;
 use loro_internal::undo::{OnPop, OnPush};
 use loro_internal::version::ImVersionVector;
 use loro_internal::DocState;
 use loro_internal::FractionalIndex;
 use loro_internal::LoroDoc as InnerLoroDoc;
 use loro_internal::OpLog;
-use loro_internal::TreeNode as TreeNodeWithId;
 use loro_internal::{
     handler::Handler as InnerHandler, ListHandler as InnerListHandler,
     MapHandler as InnerMapHandler, MovableListHandler as InnerMovableListHandler,
@@ -33,6 +31,8 @@ use std::sync::Arc;
 use tracing::info;
 
 mod change_meta;
+pub use loro_internal::subscription::LocalUpdateCallback;
+pub use loro_internal::subscription::PeerIdUpdateCallback;
 pub mod event;
 pub use loro_internal::awareness;
 pub use loro_internal::configure::Configure;
@@ -50,8 +50,8 @@ pub use loro_internal::json::JsonSchema;
 pub use loro_internal::kv_store::{KvStore, MemKvStore};
 pub use loro_internal::loro::CommitOptions;
 pub use loro_internal::loro::DocAnalysis;
-pub use loro_internal::obs::SubID;
 pub use loro_internal::oplog::FrontiersNotIncluded;
+pub use loro_internal::subscription::SubID;
 pub use loro_internal::undo;
 pub use loro_internal::version::{Frontiers, VersionVector};
 pub use loro_internal::ApplyDiff;
@@ -157,6 +157,37 @@ impl LoroDoc {
     #[inline]
     pub fn set_record_timestamp(&self, record: bool) {
         self.doc.set_record_timestamp(record);
+    }
+
+    /// Enables editing in detached mode, which is disabled by default.
+    ///
+    /// The doc enter detached mode after calling `detach` or checking out a non-latest version.
+    ///
+    /// # Important Notes:
+    ///
+    /// - This mode uses a different PeerID for each checkout.
+    /// - Ensure no concurrent operations share the same PeerID if set manually.
+    /// - Importing does not affect the document's state or version; changes are
+    ///   recorded in the [OpLog] only. Call `checkout` to apply changes.
+    #[inline]
+    pub fn set_detached_editing(&self, enable: bool) {
+        self.doc.set_detached_editing(enable);
+    }
+
+    /// Whether editing the doc in detached mode is allowed, which is disabled by
+    /// default.
+    ///
+    /// The doc enter detached mode after calling `detach` or checking out a non-latest version.
+    ///
+    /// # Important Notes:
+    ///
+    /// - This mode uses a different PeerID for each checkout.
+    /// - Ensure no concurrent operations share the same PeerID if set manually.
+    /// - Importing does not affect the document's state or version; changes are
+    ///   recorded in the [OpLog] only. Call `checkout` to apply changes.
+    #[inline]
+    pub fn is_detached_editing_enabled(&self) -> bool {
+        self.doc.is_detached_editing_enabled()
     }
 
     /// Set the interval of mergeable changes, in milliseconds.
@@ -596,6 +627,11 @@ impl LoroDoc {
     /// Subscribe the local update of the document.
     pub fn subscribe_local_update(&self, callback: LocalUpdateCallback) -> Subscription {
         self.doc.subscribe_local_update(callback)
+    }
+
+    /// Subscribe the peer id change of the document.
+    pub fn subscribe_peer_id_change(&self, callback: PeerIdUpdateCallback) -> Subscription {
+        self.doc.subscribe_peer_id_change(callback)
     }
 
     /// Estimate the size of the document states in memory.

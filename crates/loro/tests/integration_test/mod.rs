@@ -1,5 +1,6 @@
 use loro::LoroDoc;
 
+mod detached_editing_test;
 mod gc_test;
 #[cfg(feature = "jsonpath")]
 mod jsonpath_test;

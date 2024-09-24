@@ -11,18 +11,26 @@ pub mod arena;
 pub mod diff;
 pub mod diff_calc;
 pub mod handler;
+use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, Mutex};
+
+use arena::SharedArena;
+use configure::Configure;
+use diff_calc::DiffCalculator;
 pub use event::{ContainerDiff, DiffEvent, DocDiff, ListDiff, ListDiffInsertItem, ListDiffItem};
 pub use fxhash::FxHashMap;
 pub use handler::{
     BasicHandler, HandlerTrait, ListHandler, MapHandler, MovableListHandler, TextHandler,
     TreeHandler, UnknownHandler,
 };
-pub use loro::LoroDoc;
 pub use loro_common;
 pub use oplog::OpLog;
 pub use state::DocState;
 pub use state::{TreeNode, TreeNodeWithChildren, TreeParentId};
+use subscription::{LocalUpdateCallback, Observer, PeerIdUpdateCallback};
+use txn::Transaction;
 pub use undo::UndoManager;
+use utils::subscription::SubscriberSet;
 pub use utils::subscription::Subscription;
 pub mod awareness;
 pub mod change;
@@ -37,9 +45,9 @@ pub mod id;
 pub mod jsonpath;
 pub mod kv_store;
 pub mod loro;
-pub mod obs;
 pub mod op;
 pub mod oplog;
+pub mod subscription;
 pub mod txn;
 pub mod version;
 
@@ -77,3 +85,36 @@ pub use loro_common::{loro_value, to_value};
 pub use value::wasm;
 pub use value::{ApplyDiff, LoroValue, ToJson};
 pub use version::VersionVector;
+
+/// `LoroApp` serves as the library's primary entry point.
+/// It's constituted by an [OpLog] and an [AppState].
+///
+/// - [OpLog] encompasses all operations, signifying the document history.
+/// - [AppState] signifies the current document state.
+///
+/// They will share a [super::arena::SharedArena]
+///
+/// # Detached Mode
+///
+/// This mode enables separate usage of [OpLog] and [AppState].
+/// It facilitates temporal navigation. [AppState] can be reverted to
+/// any version contained within the [OpLog].
+///
+/// `LoroApp::detach()` separates [AppState] from [OpLog]. In this mode,
+/// updates to [OpLog] won't affect [AppState], while updates to [AppState]
+/// will continue to affect [OpLog].
+pub struct LoroDoc {
+    oplog: Arc<Mutex<OpLog>>,
+    state: Arc<Mutex<DocState>>,
+    arena: SharedArena,
+    config: Configure,
+    observer: Arc<Observer>,
+    diff_calculator: Arc<Mutex<DiffCalculator>>,
+    // when dropping the doc, the txn will be committed
+    txn: Arc<Mutex<Option<Transaction>>>,
+    auto_commit: AtomicBool,
+    detached: AtomicBool,
+
+    local_update_subs: SubscriberSet<(), LocalUpdateCallback>,
+    peer_id_change_subs: SubscriberSet<(), PeerIdUpdateCallback>,
+}

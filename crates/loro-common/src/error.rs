@@ -40,11 +40,17 @@ pub enum LoroError {
     },
     #[error("Every op id should be unique. ID {id} has been used. You should use a new PeerID to edit the content. ")]
     UsedOpID { id: ID },
+    #[error("Concurrent ops with the same peer id is not allowed. PeerID: {peer}, LastCounter: {last_counter}, CurrentCounter: {current}")]
+    ConcurrentOpsWithSamePeerID {
+        peer: PeerID,
+        last_counter: i32,
+        current: i32,
+    },
     #[error("Movable Tree Error: {0}")]
     TreeError(#[from] LoroTreeError),
     #[error("Invalid argument ({0})")]
     ArgErr(Box<str>),
-    #[error("Auto commit has not started. The doc is readonly when detached. You should ensure autocommit is on and the doc and the state is attached.")]
+    #[error("Auto commit has not started. The doc is readonly when detached and detached editing is not enabled.")]
     AutoCommitNotStarted,
     #[error("Style configuration missing for \"({0:?})\". Please provide the style configuration using `configTextStyle` on your Loro doc.")]
     StyleConfigMissing(InternalString),

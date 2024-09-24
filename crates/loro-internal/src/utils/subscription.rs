@@ -335,10 +335,7 @@ where
 
     /// Call the given callback for each subscriber to the given emitter.
     /// If the callback returns false, the subscriber is removed.
-    pub fn retain<F>(&self, emitter: &EmitterKey, mut f: F)
-    where
-        F: FnMut(&mut Callback) -> bool,
-    {
+    pub fn retain(&self, emitter: &EmitterKey, f: &mut dyn FnMut(&mut Callback) -> bool) {
         let Some(mut subscribers) = self
             .0
             .lock()
@@ -411,10 +408,15 @@ impl Subscription {
     }
 
     /// Detaches the subscription from this handle. The callback will
-    /// continue to be invoked until the views or models it has been
-    /// subscribed to are dropped
+    /// continue to be invoked until the doc has been subscribed to
+    /// are dropped
     pub fn detach(mut self) {
         self.unsubscribe.take();
+    }
+
+    #[inline]
+    pub fn unsubscribe(self) {
+        drop(self)
     }
 }
 

@@ -20,7 +20,7 @@ use loro_internal::{
     json::JsonSchema,
     loro::{CommitOptions, ExportMode},
     loro_common::{check_root_container_name, IdSpan},
-    obs::SubID,
+    subscription::SubID,
     undo::{UndoItemMeta, UndoOrRedo},
     version::Frontiers,
     ContainerType, DiffEvent, FxHashMap, HandlerTrait, LoroDoc as LoroDocInner, LoroValue,
@@ -320,6 +320,36 @@ impl LoroDoc {
         let doc = LoroDocInner::new();
         doc.start_auto_commit();
         Self(Arc::new(doc))
+    }
+
+    /// Enables editing in detached mode, which is disabled by default.
+    ///
+    /// The doc enter detached mode after calling `detach` or checking out a non-latest version.
+    ///
+    /// # Important Notes:
+    ///
+    /// - This mode uses a different PeerID for each checkout.
+    /// - Ensure no concurrent operations share the same PeerID if set manually.
+    /// - Importing does not affect the document's state or version; changes are
+    ///   recorded in the [OpLog] only. Call `checkout` to apply changes.
+    #[wasm_bindgen(js_name = "setDetachedEditing")]
+    pub fn set_detached_editing(&self, enable: bool) {
+        self.0.set_detached_editing(enable);
+    }
+
+    /// Whether the editing is enabled in detached mode.
+    ///
+    /// The doc enter detached mode after calling `detach` or checking out a non-latest version.
+    ///
+    /// # Important Notes:
+    ///
+    /// - This mode uses a different PeerID for each checkout.
+    /// - Ensure no concurrent operations share the same PeerID if set manually.
+    /// - Importing does not affect the document's state or version; changes are
+    ///   recorded in the [OpLog] only. Call `checkout` to apply changes.
+    #[wasm_bindgen(js_name = "isDetachedEditingEnabled")]
+    pub fn is_detached_editing_enabled(&self) -> bool {
+        self.0.is_detached_editing_enabled()
     }
 
     /// Set whether to record the timestamp of each change. Default is `false`.

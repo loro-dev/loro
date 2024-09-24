@@ -3686,7 +3686,6 @@ pub mod counter {
     use loro_common::LoroResult;
 
     use crate::{
-        state::ContainerState,
         txn::{EventHint, Transaction},
         HandlerTrait,
     };
