@@ -8,8 +8,13 @@ use fuzz::{
         GenericAction,
     },
     container::{MapAction, TextAction, TextActionInner, TreeAction, TreeActionInner},
-    crdt_fuzzer::{minify_error, test_multi_sites, Action, Action::*, FuzzTarget, FuzzValue::*},
-    test_multi_sites_with_gc,
+    crdt_fuzzer::{
+        minify_error, test_multi_sites,
+        Action::{self, *},
+        FuzzTarget,
+        FuzzValue::*,
+    },
+    test_multi_sites_on_one_doc, test_multi_sites_with_gc,
 };
 use loro::{ContainerType::*, LoroCounter, LoroDoc};
 
@@ -11041,6 +11046,87 @@ fn gc_fuzz_22() {
         ],
     )
 }
+
+#[test]
+fn detached_editing_arb_test() {
+    fn prop(u: &mut Unstructured<'_>, site_num: u8) -> arbitrary::Result<()> {
+        let xs = u.arbitrary::<Vec<Action>>()?;
+        if let Err(e) = std::panic::catch_unwind(|| {
+            test_multi_sites_on_one_doc(site_num, &mut xs.clone());
+        }) {
+            dbg!(xs);
+            println!("{:?}", e);
+            panic!()
+        } else {
+            Ok(())
+        }
+    }
+
+    arbtest::builder().budget_ms(5000).run(|u| prop(u, 5))
+}
+
+#[test]
+fn detached_editing_failed_case_0() {
+    test_multi_sites_on_one_doc(
+        5,
+        &mut vec![
+            Handle {
+                site: 41,
+                target: 163,
+                container: 46,
+                action: Generic(GenericAction {
+                    value: I32(50529027),
+                    bool: true,
+                    key: 50529027,
+                    pos: 217020518514230019,
+                    length: 217020518514230019,
+                    prop: 3298585412355,
+                }),
+            },
+            Handle {
+                site: 3,
+                target: 3,
+                container: 3,
+                action: Generic(GenericAction {
+                    value: I32(-989658365),
+                    bool: true,
+                    key: 16777215,
+                    pos: 562945658454016,
+                    length: 18446737545359261695,
+                    prop: 17726168133330218751,
+                }),
+            },
+            Handle {
+                site: 255,
+                target: 255,
+                container: 255,
+                action: Generic(GenericAction {
+                    value: I32(1375731456),
+                    bool: true,
+                    key: 4294967295,
+                    pos: 18446508778221207807,
+                    length: 17870283321392431103,
+                    prop: 1099511570175,
+                }),
+            },
+            SyncAll,
+            Handle {
+                site: 3,
+                target: 3,
+                container: 3,
+                action: Generic(GenericAction {
+                    value: I32(50529027),
+                    bool: true,
+                    key: 4294967043,
+                    pos: 18446744073709551615,
+                    length: 17732919271358463,
+                    prop: 4294967237,
+                }),
+            },
+        ],
+    )
+}
+
 #[test]
 fn minify() {
     minify_error(

@@ -37,6 +37,12 @@ test = false
 doc = false
 
 [[bin]]
+name = "one_doc_fuzz"
+path = "fuzz_targets/one_doc_fuzz.rs"
+test = false
+doc = false
+
+[[bin]]
 name = "mov"
 path = "fuzz_targets/mov.rs"
 test = false
