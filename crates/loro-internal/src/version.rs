@@ -964,7 +964,7 @@ pub fn shrink_frontiers(last_ids: &[ID], dag: &AppDag) -> Frontiers {
 
     let mut last_ids = last_ids.to_vec();
     // sort by lamport, ascending
-    last_ids.sort_by_cached_key(|x| ((dag.get_lamport(x).unwrap() as isize), x.peer));
+    last_ids.sort_by_cached_key(|x| dag.get_lamport(x).unwrap() as isize);
 
     for id in last_ids.iter().rev() {
         let vv = dag.get_vv(*id).unwrap();

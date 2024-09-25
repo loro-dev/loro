@@ -924,6 +924,7 @@ impl AppDag {
             let Some(x) = self.get(id) else {
                 unreachable!()
             };
+            assert!(id.counter >= x.cnt);
             (id.counter - x.cnt) as Lamport + x.lamport + 1
         };
 
@@ -931,6 +932,7 @@ impl AppDag {
             let Some(x) = self.get(*id) else {
                 unreachable!()
             };
+            assert!(id.counter >= x.cnt);
             lamport = lamport.max((id.counter - x.cnt) as Lamport + x.lamport + 1);
         }
 
