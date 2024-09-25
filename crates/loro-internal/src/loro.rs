@@ -44,7 +44,7 @@ use crate::{
     undo::DiffBatch,
     utils::subscription::{SubscriberSet, Subscription},
     version::{shrink_frontiers, Frontiers, ImVersionVector},
-    HandlerTrait, InternalString, ListHandler, LoroError, MapHandler, VersionVector,
+    DocDiff, HandlerTrait, InternalString, ListHandler, LoroError, MapHandler, VersionVector,
 };
 
 pub use crate::encoding::ExportMode;
@@ -546,11 +546,9 @@ impl LoroDoc {
         }
     }
 
-    pub(crate) fn drop_pending_events(&self) {
-        let _events = {
-            let mut state = self.state.lock().unwrap();
-            state.take_events()
-        };
+    pub(crate) fn drop_pending_events(&self) -> Vec<DocDiff> {
+        let mut state = self.state.lock().unwrap();
+        state.take_events()
     }
 
     #[instrument(skip_all)]

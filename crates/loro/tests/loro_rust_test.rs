@@ -1729,3 +1729,21 @@ fn change_peer_id() {
     doc.set_peer_id(4).unwrap();
     assert_eq!(received_peer_id.load(Ordering::SeqCst), 3);
 }
+
+#[test]
+fn test_encode_snapshot_when_checkout() {
+    let doc = LoroDoc::new();
+    doc.get_text("text").insert(0, "Hello").unwrap();
+    doc.commit();
+    let f = doc.state_frontiers();
+    doc.get_text("text").insert(5, " World").unwrap();
+    doc.commit();
+    doc.checkout(&f).unwrap();
+    let snapshot = doc.export(loro::ExportMode::snapshot());
+    let new_doc = LoroDoc::new();
+    new_doc.import(&snapshot).unwrap();
+    assert_eq!(
+        new_doc.get_deep_value().to_json_value(),
+        json!({"text": "Hello World"})
+    );
+}
