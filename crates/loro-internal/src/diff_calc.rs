@@ -666,14 +666,14 @@ impl DiffCalculatorTrait for ListDiffCalculator {
 
         match &op.op().content {
             crate::op::InnerContent::List(l) => match l {
-                crate::container::list::list_op::InnerListOp::Insert { slice, pos } => {
+                InnerListOp::Insert { slice, pos } => {
                     self.tracker.insert(
                         op.id_full(),
                         *pos,
                         RichtextChunk::new_text(slice.0.clone()),
                     );
                 }
-                crate::container::list::list_op::InnerListOp::Delete(del) => {
+                InnerListOp::Delete(del) => {
                     self.tracker.delete(
                         op.id_start(),
                         del.id_start,
@@ -916,7 +916,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                     | InnerListOp::Set { .. } => {
                         unreachable!()
                     }
-                    crate::container::list::list_op::InnerListOp::InsertText {
+                    InnerListOp::InsertText {
                         slice: _,
                         unicode_start,
                         unicode_len: len,
@@ -931,10 +931,10 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                             (),
                         );
                     }
-                    crate::container::list::list_op::InnerListOp::Delete(del) => {
+                    InnerListOp::Delete(del) => {
                         diff.delete(del.start() as usize, del.atom_len());
                     }
-                    crate::container::list::list_op::InnerListOp::StyleStart {
+                    InnerListOp::StyleStart {
                         start,
                         end,
                         key,
@@ -958,8 +958,37 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                             (),
                         );
                     }
-                    crate::container::list::list_op::InnerListOp::StyleEnd => {
-                        let (style_op, pos) = last_style_start.take().unwrap();
+                    InnerListOp::StyleEnd => {
+                        let (style_op, pos) = match last_style_start.take() {
+                            Some((style_op, pos)) => (style_op, pos),
+                            None => {
+                                let Some(start_op) = oplog.get_op_that_includes(op.id().inc(-1))
+                                else {
+                                    panic!("Unhandled checkout case")
+                                };
+
+                                let InnerListOp::StyleStart {
+                                    key,
+                                    value,
+                                    info,
+                                    end,
+                                    ..
+                                } = start_op.content.as_list().unwrap()
+                                else {
+                                    unreachable!()
+                                };
+                                let style_op = Arc::new(StyleOp {
+                                    lamport: op.lamport() - 1,
+                                    peer: op.peer,
+                                    cnt: op.id_start().counter - 1,
+                                    key: key.clone(),
+                                    value: value.clone(),
+                                    info: *info,
+                                });
+
+                                (style_op, *end)
+                            }
+                        };
                         assert_eq!(style_op.peer, op.peer);
                         assert_eq!(style_op.cnt, op.id_start().counter - 1);
                         diff.insert_value(
@@ -986,7 +1015,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                         | InnerListOp::Set { .. } => {
                             unreachable!()
                         }
-                        crate::container::list::list_op::InnerListOp::InsertText {
+                        InnerListOp::InsertText {
                             slice: _,
                             unicode_start,
                             unicode_len: len,
@@ -998,7 +1027,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                                 RichtextChunk::new_text(*unicode_start..*unicode_start + *len),
                             );
                         }
-                        crate::container::list::list_op::InnerListOp::Delete(del) => {
+                        InnerListOp::Delete(del) => {
                             tracker.delete(
                                 op.id_start(),
                                 del.id_start,
@@ -1007,7 +1036,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                                 del.is_reversed(),
                             );
                         }
-                        crate::container::list::list_op::InnerListOp::StyleStart {
+                        InnerListOp::StyleStart {
                             start,
                             end,
                             key,
@@ -1033,7 +1062,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                                 RichtextChunk::new_style_anchor(style_id as u32, AnchorType::Start),
                             );
                         }
-                        crate::container::list::list_op::InnerListOp::StyleEnd => {
+                        InnerListOp::StyleEnd => {
                             let id = op.id();
                             if let Some(pos) = styles.iter().rev().position(|(op, _pos)| {
                                 op.peer == id.peer && op.cnt == id.counter - 1
@@ -1182,20 +1211,17 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                                         let lamport = rich_op.lamport();
                                         let content = op.content.as_list().unwrap();
                                         match content {
-                                        crate::container::list::list_op::InnerListOp::InsertText {
-                                            slice,
-                                            ..
-                                        } => {
-                                            delta.push_insert(
-                                                RichtextStateChunk::Text(TextChunk::new(
-                                                    slice.clone(),
-                                                    IdFull::new(id.peer, op.counter, lamport),
-                                                )),
-                                                (),
-                                            );
+                                            InnerListOp::InsertText { slice, .. } => {
+                                                delta.push_insert(
+                                                    RichtextStateChunk::Text(TextChunk::new(
+                                                        slice.clone(),
+                                                        IdFull::new(id.peer, op.counter, lamport),
+                                                    )),
+                                                    (),
+                                                );
+                                            }
+                                            _ => unreachable!("{:?}", content),
                                         }
-                                        _ => unreachable!("{:?}", content),
-                                    }
                                     }
                                 }
 
@@ -1348,14 +1374,14 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
             let real_op = op.op();
             match &real_op.content {
                 crate::op::InnerContent::List(l) => match l {
-                    crate::container::list::list_op::InnerListOp::Insert { slice, pos } => {
+                    InnerListOp::Insert { slice, pos } => {
                         this.tracker.insert(
                             op.id_full(),
                             *pos,
                             RichtextChunk::new_text(slice.0.clone()),
                         );
                     }
-                    crate::container::list::list_op::InnerListOp::Delete(del) => {
+                    InnerListOp::Delete(del) => {
                         this.tracker.delete(
                             op.id_start(),
                             del.id_start,

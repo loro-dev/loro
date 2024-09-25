@@ -11372,6 +11372,42 @@ fn gc_fuzz_23() {
 }
 
 #[test]
+fn gc_fuzz_25() {
+    test_multi_sites_with_gc(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            Handle {
+                site: 219,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: true,
+                    key: 0,
+                    pos: 0,
+                    length: 0,
+                    prop: 33685248,
+                }),
+            },
+            Handle {
+                site: 219,
+                target: 255,
+                container: 207,
+                action: Generic(GenericAction {
+                    value: Container(Unknown(255)),
+                    bool: true,
+                    key: 8,
+                    pos: 576742222985166848,
+                    length: 15852445288443686912,
+                    prop: 557810552588529338,
+                }),
+            },
+        ],
+    )
+}
+
+#[test]
 fn minify() {
     minify_error(
         5,
