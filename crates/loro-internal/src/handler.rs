@@ -11,7 +11,7 @@ use crate::{
     diff::{myers_diff, OperateProxy},
     event::{Diff, TextDiffItem},
     op::ListSlice,
-    state::{ContainerState, IndexType, State, TreeParentId},
+    state::{IndexType, State, TreeParentId},
     txn::EventHint,
     utils::{string_slice::StringSlice, utf16::count_utf16_len},
 };
@@ -777,6 +777,7 @@ impl HandlerTrait for ListHandler {
         }
     }
 }
+
 #[derive(Clone)]
 pub struct UnknownHandler {
     inner: BasicHandler,
@@ -2690,6 +2691,21 @@ impl ListHandler {
             MaybeDetached::Attached(a) => a.is_deleted(),
         }
     }
+
+    pub fn clear(&self) -> LoroResult<()> {
+        match &self.inner {
+            MaybeDetached::Detached(l) => {
+                let mut l = l.try_lock().unwrap();
+                l.value.clear();
+                Ok(())
+            }
+            MaybeDetached::Attached(a) => a.with_txn(|txn| self.clear_with_txn(txn)),
+        }
+    }
+
+    pub fn clear_with_txn(&self, txn: &mut Transaction) -> LoroResult<()> {
+        self.delete_with_txn(txn, 0, self.len())
+    }
 }
 
 impl MovableListHandler {
@@ -3207,8 +3223,8 @@ impl MovableListHandler {
                 let a = state.as_movable_list_state().unwrap();
                 match a.get(index, IndexType::ForUser) {
                     Some(v) => {
-                        if let LoroValue::Container(id) = v {
-                            Some(ValueOrHandler::Handler(create_handler(m, id.clone())))
+                        if let LoroValue::Container(c) = v {
+                            Some(ValueOrHandler::Handler(create_handler(m, c.clone())))
                         } else {
                             Some(ValueOrHandler::Value(v.clone()))
                         }
@@ -3328,6 +3344,21 @@ impl MovableListHandler {
             MaybeDetached::Detached(_) => false,
             MaybeDetached::Attached(a) => a.is_deleted(),
         }
+    }
+
+    pub fn clear(&self) -> LoroResult<()> {
+        match &self.inner {
+            MaybeDetached::Detached(d) => {
+                let mut d = d.lock().unwrap();
+                d.value.clear();
+                Ok(())
+            }
+            MaybeDetached::Attached(a) => a.with_txn(|txn| self.clear_with_txn(txn)),
+        }
+    }
+
+    pub fn clear_with_txn(&self, txn: &mut Transaction) -> LoroResult<()> {
+        self.delete_with_txn(txn, 0, self.len())
     }
 }
 
@@ -3637,6 +3668,34 @@ impl MapHandler {
             MaybeDetached::Detached(_) => false,
             MaybeDetached::Attached(a) => a.is_deleted(),
         }
+    }
+
+    pub fn clear(&self) -> LoroResult<()> {
+        match &self.inner {
+            MaybeDetached::Detached(m) => {
+                let mut m = m.try_lock().unwrap();
+                m.value.clear();
+                Ok(())
+            }
+            MaybeDetached::Attached(a) => a.with_txn(|txn| self.clear_with_txn(txn)),
+        }
+    }
+
+    pub fn clear_with_txn(&self, txn: &mut Transaction) -> LoroResult<()> {
+        let keys: Vec<InternalString> = self.inner.try_attached_state()?.with_state(|state| {
+            state
+                .as_map_state()
+                .unwrap()
+                .iter()
+                .map(|(k, _)| k.clone())
+                .collect()
+        });
+
+        for key in keys {
+            self.delete_with_txn(txn, &key)?;
+        }
+
+        Ok(())
     }
 }
 

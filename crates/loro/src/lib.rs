@@ -1058,6 +1058,11 @@ impl LoroList {
     pub fn to_vec(&self) -> Vec<LoroValue> {
         Arc::unwrap_or_clone(self.get_value().into_list().unwrap())
     }
+
+    /// Delete all elements in the list.
+    pub fn clear(&self) -> LoroResult<()> {
+        self.handler.clear()
+    }
 }
 
 impl Default for LoroList {
@@ -1228,6 +1233,11 @@ impl LoroMap {
             self.handler
                 .get_or_create_container(key, child.to_handler())?,
         ))
+    }
+
+    /// Delete all key-value pairs in the map.
+    pub fn clear(&self) -> LoroResult<()> {
+        self.handler.clear()
     }
 }
 
@@ -2101,6 +2111,11 @@ impl LoroMovableList {
     /// ```
     pub fn to_vec(&self) -> Vec<LoroValue> {
         Arc::unwrap_or_clone(self.get_value().into_list().unwrap())
+    }
+
+    /// Delete all elements in the list.
+    pub fn clear(&self) -> LoroResult<()> {
+        self.handler.clear()
     }
 }
 
