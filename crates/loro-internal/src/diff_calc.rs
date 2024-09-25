@@ -180,6 +180,7 @@ impl DiffCalculator {
             }
         }
 
+        use_persisted_shortcut = false;
         let affected_set = if !use_persisted_shortcut {
             // if we don't have all the ops, we need to calculate the diff by tracing back
             let mut merged = before.clone();
@@ -196,6 +197,7 @@ impl DiffCalculator {
                 diff_mode = DiffMode::Checkout;
             }
 
+            diff_mode = DiffMode::Checkout;
             tracing::debug!("LCA: {:?} mode={:?}", &lca, diff_mode);
             let mut started_set = FxHashSet::default();
             for (change, (start_counter, end_counter), vv) in iter {

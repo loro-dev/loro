@@ -1218,11 +1218,17 @@ impl LoroDoc {
                 let mut current_state = self.app_state().try_lock().unwrap();
                 current_state.check_is_the_same(&mut calculated_state);
             } else {
-                let bytes = self.export_from(&Default::default());
+                let f = self.state_frontiers();
+                let vv = self
+                    .oplog()
+                    .lock()
+                    .unwrap()
+                    .dag
+                    .frontiers_to_vv(&f)
+                    .unwrap();
+                let bytes = self.export(ExportMode::updates_till(&vv));
                 let doc = Self::new();
-                doc.detach();
                 doc.import(&bytes).unwrap();
-                doc.checkout(&self.state_frontiers()).unwrap();
                 let mut calculated_state = doc.app_state().try_lock().unwrap();
                 let mut current_state = self.app_state().try_lock().unwrap();
                 current_state.check_is_the_same(&mut calculated_state);

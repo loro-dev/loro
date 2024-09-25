@@ -83,6 +83,19 @@ impl<'a> ExportMode<'a> {
             version: Cow::Borrowed(frontiers),
         }
     }
+
+    pub fn updates_till(vv: &VersionVector) -> ExportMode<'static> {
+        let mut spans = Vec::with_capacity(vv.len());
+        for (peer, counter) in vv.iter() {
+            if *counter > 0 {
+                spans.push(IdSpan::new(*peer, 0, *counter));
+            }
+        }
+
+        ExportMode::UpdatesInRange {
+            spans: Cow::Owned(spans),
+        }
+    }
 }
 
 const MAGIC_BYTES: [u8; 4] = *b"loro";
