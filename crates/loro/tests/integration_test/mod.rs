@@ -6,6 +6,7 @@ mod gc_test;
 mod jsonpath_test;
 mod snapshot_at_test;
 mod undo_test;
+mod text_update_test;
 
 fn gen_action(doc: &LoroDoc, seed: u64, mut ops_len: usize) {
     let mut rng = StdRng::seed_from_u64(seed);

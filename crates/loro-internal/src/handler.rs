@@ -8,7 +8,7 @@ use crate::{
     },
     cursor::{Cursor, Side},
     delta::{DeltaItem, Meta, StyleMeta, TreeExternalDiff},
-    diff::{myers_diff, DiffHandler, OperateProxy},
+    diff::{myers_diff, OperateProxy},
     event::{Diff, TextDiffItem},
     op::ListSlice,
     state::{ContainerState, IndexType, State, TreeParentId},
@@ -41,45 +41,7 @@ mod tree;
 const INSERT_CONTAINER_VALUE_ARG_ERROR: &str =
     "Cannot insert a LoroValue::Container directly. To create child container, use insert_container";
 
-struct DiffHook<'a> {
-    text: &'a TextHandler,
-    new: &'a [char],
-}
-
-impl<'a> DiffHook<'a> {
-    fn new(text: &'a TextHandler, new: &'a [char]) -> Self {
-        Self { text, new }
-    }
-}
-
-impl DiffHandler for DiffHook<'_> {
-    fn insert(&mut self, old_index: usize, new_index: usize, new_len: usize) {
-        self.text
-            .insert_unicode(
-                old_index,
-                &self.new[new_index..new_index + new_len]
-                    .iter()
-                    .collect::<String>(),
-            )
-            .unwrap();
-    }
-
-    fn delete(&mut self, old_index: usize, old_len: usize) {
-        self.text.delete_unicode(old_index, old_len).unwrap();
-    }
-
-    fn replace(&mut self, old_index: usize, old_len: usize, new_index: usize, new_len: usize) {
-        self.text.delete_unicode(old_index, old_len).unwrap();
-        self.text
-            .insert_unicode(
-                old_index,
-                &self.new[new_index..new_index + new_len]
-                    .iter()
-                    .collect::<String>(),
-            )
-            .unwrap();
-    }
-}
+mod text_update;
 
 pub trait HandlerTrait: Clone + Sized {
     fn is_attached(&self) -> bool;
@@ -2181,14 +2143,25 @@ impl TextHandler {
         Ok(())
     }
 
+    #[instrument(level = "trace", skip(self))]
     pub fn update(&self, text: &str) {
         let old_str = self.to_string();
-        let new = text.chars().collect::<Vec<char>>();
+        let new = text.chars().map(|x| x as u32).collect::<Vec<u32>>();
         myers_diff(
-            &mut OperateProxy::new(DiffHook::new(self, &new)),
-            &old_str.chars().collect::<Vec<char>>(),
+            &mut OperateProxy::new(text_update::DiffHook::new(self, &new)),
+            &old_str.chars().map(|x| x as u32).collect::<Vec<u32>>(),
             &new,
         );
+    }
+
+    #[instrument(level = "trace", skip(self))]
+    pub fn update_by_line(&self, text: &str) {
+        let hook = text_update::DiffHookForLine::new(self, text);
+        let old_lines = hook.get_old_arr().to_vec();
+        let new_lines = hook.get_new_arr().to_vec();
+        trace!("old_lines: {:?}", old_lines);
+        trace!("new_lines: {:?}", new_lines);
+        myers_diff(&mut OperateProxy::new(hook), &old_lines, &new_lines);
     }
 
     #[allow(clippy::inherent_to_string)]
