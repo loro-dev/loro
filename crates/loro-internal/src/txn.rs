@@ -615,6 +615,10 @@ impl Transaction {
     pub fn is_empty(&self) -> bool {
         self.local_ops.is_empty()
     }
+
+    pub(crate) fn len(&self) -> usize {
+        (self.next_counter - self.start_counter) as usize
+    }
 }
 
 impl Drop for Transaction {

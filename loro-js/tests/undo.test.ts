@@ -89,11 +89,11 @@ describe("undo", () => {
     doc.getText("text").insert(0, "hello");
     doc.commit();
     doc.getText("text").insert(0, "1");
-    doc.commit("sys:test");
+    doc.commit({ origin: "sys:test" });
     doc.getText("text").insert(2, "2");
-    doc.commit("sys:test");
+    doc.commit({ origin: "sys:test" });
     doc.getText("text").insert(4, "3");
-    doc.commit("sys:test");
+    doc.commit({ origin: "sys:test" });
     doc.getText("text").insert(8, " world!");
     doc.commit();
     doc.getText("text").insert(0, "Alice ");
@@ -202,7 +202,7 @@ describe("undo", () => {
     const doc = new LoroDoc();
     let cursors: Cursor[] = [];
     let poppedCursors: Cursor[] = [];
-    const undo = new UndoManager(doc , {
+    const undo = new UndoManager(doc, {
       mergeInterval: 0,
       onPop: (isUndo, value, counterRange) => {
         poppedCursors = value.cursors

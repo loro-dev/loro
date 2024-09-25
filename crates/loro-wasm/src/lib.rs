@@ -174,6 +174,8 @@ extern "C" {
     pub type JsJsonSchemaOrString;
     #[wasm_bindgen(typescript_type = "ExportMode")]
     pub type JsExportMode;
+    #[wasm_bindgen(typescript_type = "{ origin?: string, timestamp?: number, message?: string }")]
+    pub type JsCommitOption;
 }
 
 mod observer {
@@ -301,6 +303,7 @@ struct ChangeMeta {
     counter: Counter,
     deps: Vec<StringID>,
     timestamp: f64,
+    message: Option<Arc<str>>,
 }
 
 impl ChangeMeta {
@@ -621,23 +624,57 @@ impl LoroDoc {
 
     /// Commit the cumulative auto committed transaction.
     ///
-    /// You can specify the `origin` and `timestamp` of the commit.
+    /// You can specify the `origin`, `timestamp`, and `message` of the commit.
+    ///
+    /// The `origin` is used to mark the event, and the `message` works like a git commit message.
     ///
     /// The events will be emitted after a transaction is committed. A transaction is committed when:
     ///
     /// - `doc.commit()` is called.
-    /// - `doc.exportFrom(version)` is called.
+    /// - `doc.export(mode)` is called.
     /// - `doc.import(data)` is called.
     /// - `doc.checkout(version)` is called.
     ///
     /// NOTE: Timestamps are forced to be in ascending order.
     /// If you commit a new change with a timestamp that is less than the existing one,
     /// the largest existing timestamp will be used instead.
-    pub fn commit(&self, origin: Option<String>, timestamp: Option<f64>) {
-        let mut options = CommitOptions::default();
-        options.set_origin(origin.as_deref());
-        options.set_timestamp(timestamp.map(|x| x as i64));
-        self.0.commit_with(options);
+    ///
+    /// NOTE: The `origin` will not be persisted, but the `message` will.
+    pub fn commit(&self, options: Option<JsCommitOption>) -> JsResult<()> {
+        if let Some(options) = options {
+            if !options.is_object() {
+                return Err(JsValue::from_str("Commit options must be an object"));
+            }
+            let origin: Option<String> = Reflect::get(&options, &JsValue::from_str("origin"))
+                .ok()
+                .and_then(|x| x.as_string());
+            let timestamp: Option<f64> = Reflect::get(&options, &JsValue::from_str("timestamp"))
+                .ok()
+                .and_then(|x| x.as_f64());
+            let message: Option<String> = Reflect::get(&options, &JsValue::from_str("message"))
+                .ok()
+                .and_then(|x| x.as_string());
+
+            let mut options = CommitOptions::default();
+            options.set_origin(origin.as_deref());
+            options.set_timestamp(timestamp.map(|x| x as i64));
+            if let Some(msg) = message {
+                options = options.commit_msg(&msg);
+            }
+            self.0.commit_with(options);
+        } else {
+            self.0.commit_with(CommitOptions::default());
+        }
+        Ok(())
+    }
+
+    /// Get the number of operations in the pending transaction.
+    ///
+    /// The pending transaction is the one that is not committed yet. It will be committed
+    /// automatically after calling `doc.commit()`, `doc.export(mode)` or `doc.checkout(version)`.
+    #[wasm_bindgen(js_name = "getPendingTxnLength")]
+    pub fn get_pending_txn_len(&self) -> usize {
+        self.0.get_pending_txn_len()
     }
 
     /// Get a LoroText by container id.
@@ -1281,6 +1318,7 @@ impl LoroDoc {
                     })
                     .collect(),
                 timestamp: c.timestamp() as f64,
+                message: c.message().cloned(),
             };
             changes.entry(c.peer()).or_default().push(change_meta);
         });
@@ -1321,6 +1359,7 @@ impl LoroDoc {
                 })
                 .collect(),
             timestamp: change.timestamp() as f64,
+            message: change.message().cloned(),
         };
         Ok(change.to_js().into())
     }
@@ -1354,6 +1393,7 @@ impl LoroDoc {
                 })
                 .collect(),
             timestamp: change.timestamp() as f64,
+            message: change.message().cloned(),
         };
         Ok(change.to_js().into())
     }
@@ -4455,6 +4495,7 @@ export interface Change {
      */
     timestamp: number,
     deps: OpId[],
+    message: string | undefined,
 }
 
 

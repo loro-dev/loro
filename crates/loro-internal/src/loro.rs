@@ -1480,6 +1480,14 @@ impl LoroDoc {
     pub fn is_trimmed(&self) -> bool {
         !self.oplog().lock().unwrap().trimmed_vv().is_empty()
     }
+
+    pub fn get_pending_txn_len(&self) -> usize {
+        if let Some(txn) = self.txn.lock().unwrap().as_ref() {
+            txn.len()
+        } else {
+            0
+        }
+    }
 }
 
 // FIXME: PERF: This method is quite slow because it iterates all the changes
