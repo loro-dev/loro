@@ -841,13 +841,13 @@ fn get_out_of_bound_cursor() {
 
 #[test]
 fn awareness() {
-    let mut a = Awareness::new(1, 1);
+    let mut a = Awareness::new(1, 1000);
     a.set_local_state(1);
     assert_eq!(a.get_local_state(), Some(1.into()));
     a.set_local_state(2);
     assert_eq!(a.get_local_state(), Some(2.into()));
 
-    let mut b = Awareness::new(2, 1);
+    let mut b = Awareness::new(2, 1000);
     let (updated, added) = b.apply(&a.encode_all());
     assert_eq!(updated.len(), 0);
     assert_eq!(added, vec![1]);
