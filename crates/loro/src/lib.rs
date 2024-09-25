@@ -785,6 +785,14 @@ impl LoroDoc {
         new_doc.start_auto_commit();
         LoroDoc::_new(new_doc)
     }
+
+    /// Get the number of operations in the pending transaction.
+    ///
+    /// The pending transaction is the one that is not committed yet. It will be committed
+    /// after calling `doc.commit()`, `doc.export(mode)` or `doc.checkout(version)`.
+    pub fn get_pending_txn_len(&self) -> usize {
+        self.doc.get_pending_txn_len()
+    }
 }
 
 /// It's used to prevent the user from implementing the trait directly.

@@ -189,22 +189,15 @@ impl TreeDiffCalculator {
             }
             tracing::info!(msg="retreat ops", retreat_ops=?retreat_ops);
             for op in retreat_ops {
-                tree_cache
-                    .tree
-                    .get_mut(&op.op.target())
-                    .unwrap()
-                    .remove(&op);
-                tree_cache.current_vv.shrink_to_exclude(IdSpan::new(
-                    op.id.peer,
-                    op.id.counter,
-                    op.id.counter + 1,
-                ));
+                tree_cache.retreat_op(&op);
             }
+
             // forward and apply
             let current_frontiers = tree_cache.current_vv.to_frontiers(&oplog.dag);
             let forward_min_lamport = self
                 .get_min_lamport_by_frontiers(&current_frontiers, oplog)
                 .min(min_lamport);
+
             let max_lamport = self.get_max_lamport_by_frontiers(&to_frontiers, oplog);
             let mut forward_ops = vec![];
             let group = h
@@ -239,6 +232,7 @@ impl TreeDiffCalculator {
                 };
                 tree_cache.apply(op);
             }
+            tree_cache.current_vv = to.clone();
         });
     }
 
@@ -292,16 +286,7 @@ impl TreeDiffCalculator {
 
                 // tracing::info!("retreat ops {:?}", retreat_ops);
                 for op in retreat_ops.into_iter().sorted().rev() {
-                    tree_cache
-                        .tree
-                        .get_mut(&op.op.target())
-                        .unwrap()
-                        .remove(&op);
-                    tree_cache.current_vv.shrink_to_exclude(IdSpan::new(
-                        op.id.peer,
-                        op.id.counter,
-                        op.id.counter + 1,
-                    ));
+                    tree_cache.retreat_op(&op);
                     let (old_parent, position, last_effective_move_op_id) =
                         tree_cache.get_parent_with_id(op.op.target());
                     if op.effected {
@@ -340,7 +325,7 @@ impl TreeDiffCalculator {
                     }
                 }
             }
-
+            tree_cache.current_vv = lca_vv;
             // forward
             tracing::info!("forward");
             let group = h
@@ -407,6 +392,7 @@ impl TreeDiffCalculator {
                     }
                 }
             }
+            tree_cache.current_vv = to.clone();
             TreeDelta { diff: diffs }
         })
     }
@@ -485,6 +471,15 @@ impl std::fmt::Debug for TreeCacheForDiff {
 }
 
 impl TreeCacheForDiff {
+    fn retreat_op(&mut self, op: &MoveLamportAndID) {
+        self.tree.get_mut(&op.op.target()).unwrap().remove(&op);
+        self.current_vv.shrink_to_exclude(IdSpan::new(
+            op.id.peer,
+            op.id.counter,
+            op.id.counter + 1,
+        ));
+    }
+
     fn is_ancestor_of(&self, maybe_ancestor: &TreeID, node_id: &TreeParentId) -> bool {
         if !self.tree.contains_key(maybe_ancestor) {
             return false;

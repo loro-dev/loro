@@ -1084,7 +1084,7 @@ impl LoroDoc {
         }
 
         let mut state = self.state.lock().unwrap();
-        let mut calc = self.diff_calculator.lock().unwrap();
+        let mut calc = DiffCalculator::new(false);
         for &i in frontiers.iter() {
             if !oplog.dag.contains(i) {
                 drop(oplog);
@@ -1479,6 +1479,14 @@ impl LoroDoc {
 
     pub fn is_trimmed(&self) -> bool {
         !self.oplog().lock().unwrap().trimmed_vv().is_empty()
+    }
+
+    pub fn get_pending_txn_len(&self) -> usize {
+        if let Some(txn) = self.txn.lock().unwrap().as_ref() {
+            txn.len()
+        } else {
+            0
+        }
     }
 }
 
