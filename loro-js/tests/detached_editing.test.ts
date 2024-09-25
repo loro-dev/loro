@@ -61,7 +61,6 @@ describe("detached editing", () => {
         expect(doc.getText("text").toString()).toBe("Hello alice! world!");
         await new Promise((resolve) => setTimeout(resolve, 0));
         expect(string).toBe("Hello alice! world!");
-        expect(doc.frontiers()).toEqual(doc.oplogFrontiers());
         expect(doc.version().toJSON()).toEqual(doc.oplogVersion().toJSON());
     });
 

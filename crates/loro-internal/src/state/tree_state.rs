@@ -14,7 +14,6 @@ use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex, Weak};
-use tracing::trace;
 
 use super::{ContainerState, DiffApplyContext};
 use crate::container::idx::ContainerIdx;
