@@ -11048,6 +11048,132 @@ fn gc_fuzz_22() {
 }
 
 #[test]
+fn gc_fuzz_24() {
+    test_multi_sites_with_gc(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            SyncAll,
+            SyncAll,
+            SyncAll,
+            SyncAll,
+            SyncAll,
+            SyncAll,
+            SyncAll,
+            SyncAll,
+            Handle {
+                site: 11,
+                target: 11,
+                container: 11,
+                action: Generic(GenericAction {
+                    value: I32(185273099),
+                    bool: true,
+                    key: 185273099,
+                    pos: 795741901218843403,
+                    length: 5764338190115343115,
+                    prop: 814957259628957519,
+                }),
+            },
+            Handle {
+                site: 0,
+                target: 49,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: Container(Counter),
+                    bool: true,
+                    key: 3351758791,
+                    pos: 3010594536784644039,
+                    length: 14395694394777257927,
+                    prop: 795741901231212487,
+                }),
+            },
+            Handle {
+                site: 5,
+                target: 165,
+                container: 165,
+                action: Generic(GenericAction {
+                    value: I32(84215045),
+                    bool: true,
+                    key: 5,
+                    pos: 1280,
+                    length: 361700864190383360,
+                    prop: 361701409651229957,
+                }),
+            },
+            Handle {
+                site: 5,
+                target: 5,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(131072),
+                    bool: false,
+                    key: 4294907136,
+                    pos: 361701942142959381,
+                    length: 14395694391509714181,
+                    prop: 14395694394777257927,
+                }),
+            },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: Container(Counter),
+                    bool: true,
+                    key: 3351758791,
+                    pos: 14395520671940069319,
+                    length: 14395694394777257927,
+                    prop: 795741901218843591,
+                }),
+            },
+            SyncAllUndo {
+                site: 165,
+                op_len: 100663295,
+            },
+            Handle {
+                site: 5,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 84215040,
+                    pos: 361700864190383365,
+                    length: 361700864190383492,
+                    prop: 11936128518282651045,
+                }),
+            },
+            Handle {
+                site: 0,
+                target: 50,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(-60160),
+                    bool: true,
+                    key: 4294967288,
+                    pos: 361700864192480517,
+                    length: 18446744073706405637,
+                    prop: 795741901218843403,
+                }),
+            },
+            Handle {
+                site: 5,
+                target: 5,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 83886139,
+                    pos: 361700864190383365,
+                    length: 361700864198706437,
+                    prop: 11936128518282609925,
+                }),
+            },
+        ],
+    )
+}
+
+#[test]
 fn detached_editing_arb_test() {
     fn prop(u: &mut Unstructured<'_>, site_num: u8) -> arbitrary::Result<()> {
         let xs = u.arbitrary::<Vec<Action>>()?;
@@ -11126,6 +11252,8 @@ fn detached_editing_failed_case_0() {
         ],
     )
 }
+
+#[test]
 fn gc_fuzz_23() {
     test_multi_sites_with_gc(
         5,

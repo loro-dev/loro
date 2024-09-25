@@ -190,7 +190,7 @@ impl Actor {
             let from = &self.loro.state_frontiers();
             let to = &f;
             let peer = self.peer;
-            tracing::info_span!("Checkout", ?from, ?to, ?peer).in_scope(|| {
+            tracing::info_span!("FuzzCheckout", ?from, ?to, ?peer).in_scope(|| {
                 match self.loro.checkout(&f) {
                     Ok(_) => {}
                     Err(LoroError::SwitchToTrimmedVersion) => {
@@ -230,11 +230,16 @@ impl Actor {
                 self.loro.check_state_correctness_slow();
                 self.loro.checkout_to_latest();
                 let new_doc = LoroDoc::new();
-                new_doc
-                    .import(&self.loro.export(loro::ExportMode::Snapshot))
-                    .unwrap();
-                new_doc.checkout(&f).unwrap();
-                new_doc.check_state_correctness_slow();
+                info_span!("FuzzCheckoutCreatingNewSnapshotDoc",).in_scope(|| {
+                    new_doc
+                        .import(&self.loro.export(loro::ExportMode::Snapshot))
+                        .unwrap();
+                    assert_eq!(new_doc.get_deep_value(), self.loro.get_deep_value());
+                });
+                info_span!("FuzzCheckoutOnNewSnapshotDoc",).in_scope(|| {
+                    new_doc.checkout(&f).unwrap();
+                    new_doc.check_state_correctness_slow();
+                });
             }
             Err(LoroError::SwitchToTrimmedVersion) => {}
             Err(e) => panic!("{}", e),

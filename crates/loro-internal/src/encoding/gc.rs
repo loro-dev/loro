@@ -1,7 +1,7 @@
 use rle::HasLength;
 use std::collections::BTreeSet;
 
-use loro_common::LoroResult;
+use loro_common::{ContainerID, LoroResult, ID};
 use tracing::{debug, trace};
 
 use crate::{
@@ -65,7 +65,8 @@ pub(crate) fn export_gc_snapshot<W: std::io::Write>(
     doc.checkout_without_emitting(&start_from)?;
     let mut state = doc.app_state().lock().unwrap();
     let alive_containers = state.ensure_all_alive_containers();
-    let alive_c_bytes: BTreeSet<Vec<u8>> = alive_containers.iter().map(|x| x.to_bytes()).collect();
+    let mut alive_c_bytes: BTreeSet<Vec<u8>> =
+        alive_containers.iter().map(|x| x.to_bytes()).collect();
     state.store.flush();
     let gc_state_kv = state.store.get_kv().clone();
     drop(state);
@@ -74,6 +75,19 @@ pub(crate) fn export_gc_snapshot<W: std::io::Write>(
         let mut state = doc.app_state().lock().unwrap();
         state.ensure_all_alive_containers();
         state.store.encode();
+        // All the containers that are created after start_from need to be encoded
+        for cid in state.store.iter_all_container_ids() {
+            if let ContainerID::Normal { peer, counter, .. } = cid {
+                let temp_id = ID::new(peer, counter);
+                if !start_from.contains(&temp_id) {
+                    trace!("Retain Container {:?}", temp_id);
+                    alive_c_bytes.insert(cid.to_bytes());
+                }
+            } else {
+                alive_c_bytes.insert(cid.to_bytes());
+            }
+        }
+
         let new_kv = state.store.get_kv().clone();
         new_kv.remove_same(&gc_state_kv);
         new_kv.retain_keys(&alive_c_bytes);

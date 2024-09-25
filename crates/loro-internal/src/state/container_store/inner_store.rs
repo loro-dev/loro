@@ -93,6 +93,14 @@ impl InnerStore {
         self.store.iter_mut()
     }
 
+    pub(crate) fn iter_all_container_ids(&mut self) -> impl Iterator<Item = ContainerID> + '_ {
+        // PERF: we don't need to load all the containers here
+        self.load_all();
+        self.store
+            .keys()
+            .map(|idx| self.arena.get_container_id(*idx).unwrap())
+    }
+
     pub(crate) fn encode(&mut self) -> Bytes {
         self.flush();
         self.kv.export()
