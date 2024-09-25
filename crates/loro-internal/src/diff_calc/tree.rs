@@ -232,6 +232,7 @@ impl TreeDiffCalculator {
                 };
                 tree_cache.apply(op);
             }
+            tree_cache.current_vv = to.clone();
         });
     }
 
@@ -324,7 +325,7 @@ impl TreeDiffCalculator {
                     }
                 }
             }
-
+            tree_cache.current_vv = lca_vv;
             // forward
             tracing::info!("forward");
             let group = h
@@ -391,6 +392,7 @@ impl TreeDiffCalculator {
                     }
                 }
             }
+            tree_cache.current_vv = to.clone();
             TreeDelta { diff: diffs }
         })
     }
@@ -476,14 +478,6 @@ impl TreeCacheForDiff {
             op.id.counter,
             op.id.counter + 1,
         ));
-        // Only shrink cannot get the correct empty vv,
-        if self.is_empty() {
-            self.current_vv = VersionVector::default();
-        }
-    }
-
-    fn is_empty(&self) -> bool {
-        self.tree.iter().all(|(_, v)| v.is_empty())
     }
 
     fn is_ancestor_of(&self, maybe_ancestor: &TreeID, node_id: &TreeParentId) -> bool {
