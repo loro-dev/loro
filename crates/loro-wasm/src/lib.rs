@@ -2415,6 +2415,12 @@ impl LoroMap {
         };
         handler_to_js_value(Handler::Map(h), self.doc.clone()).into()
     }
+
+    /// Delete all key-value pairs in the map.
+    pub fn clear(&self) -> JsResult<()> {
+        self.handler.clear()?;
+        Ok(())
+    }
 }
 
 impl Default for LoroMap {
@@ -2742,6 +2748,12 @@ impl LoroList {
         } else {
             Ok(None)
         }
+    }
+
+    /// Delete all elements in the list.
+    pub fn clear(&self) -> JsResult<()> {
+        self.handler.clear()?;
+        Ok(())
     }
 }
 
@@ -3114,6 +3126,12 @@ impl LoroMovableList {
             let v: JsValue = v.into();
             v.into()
         }))
+    }
+
+    /// Delete all elements in the list.
+    pub fn clear(&self) -> JsResult<()> {
+        self.handler.clear()?;
+        Ok(())
     }
 }
 
