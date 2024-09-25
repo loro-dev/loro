@@ -10,6 +10,6 @@ fuzz_target!(|data: [&str; 3]| {
     text.update(old);
     text.update(new);
     assert_eq!(&text.to_string(), new);
-    text.update(new1);
+    text.update_by_line(new1);
     assert_eq!(&text.to_string(), new1);
 });

@@ -1352,8 +1352,13 @@ impl LoroText {
     }
 
     /// Update the current text based on the provided text.
-    pub fn update(&self, text: &str) -> () {
+    pub fn update(&self, text: &str) {
         self.handler.update(text);
+    }
+
+    /// Update the current text based on the provided text by line.
+    pub fn update_by_line(&self, text: &str) {
+        self.handler.update_by_line(text);
     }
 
     /// Apply a [delta](https://quilljs.com/docs/delta/) to the text container.
