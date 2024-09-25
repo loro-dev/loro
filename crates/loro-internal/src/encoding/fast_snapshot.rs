@@ -157,6 +157,10 @@ impl OpLog {
 }
 
 pub(crate) fn encode_snapshot<W: std::io::Write>(doc: &LoroDoc, w: &mut W) {
+    // events should be emitted before encode snapshot
+    assert!(doc.drop_pending_events().is_empty());
+    let old_state_frontiers = doc.state_frontiers();
+    let was_detached = doc.is_detached();
     let mut state = doc.app_state().try_lock().unwrap();
     let oplog = doc.oplog().try_lock().unwrap();
     let is_gc = state.store.gc_store().is_some();
@@ -169,11 +173,7 @@ pub(crate) fn encode_snapshot<W: std::io::Write>(doc: &LoroDoc, w: &mut W) {
         return;
     }
     assert!(!state.is_in_txn());
-    assert_eq!(oplog.frontiers(), &state.frontiers);
-
     let oplog_bytes = oplog.encode_change_store();
-    state.ensure_all_alive_containers();
-
     if oplog.is_trimmed() {
         assert_eq!(
             oplog.trimmed_frontiers(),
@@ -181,6 +181,15 @@ pub(crate) fn encode_snapshot<W: std::io::Write>(doc: &LoroDoc, w: &mut W) {
         );
     }
 
+    if was_detached {
+        let latest = oplog.frontiers().clone();
+        drop(oplog);
+        drop(state);
+        doc.checkout_without_emitting(&latest).unwrap();
+        state = doc.app_state().try_lock().unwrap();
+    }
+
+    state.ensure_all_alive_containers();
     let state_bytes = state.store.encode();
     _encode_snapshot(
         Snapshot {
@@ -190,6 +199,12 @@ pub(crate) fn encode_snapshot<W: std::io::Write>(doc: &LoroDoc, w: &mut W) {
         },
         w,
     );
+
+    if was_detached {
+        drop(state);
+        doc.checkout_without_emitting(&old_state_frontiers).unwrap();
+        doc.drop_pending_events();
+    }
 }
 
 pub(crate) fn encode_snapshot_at<W: std::io::Write>(

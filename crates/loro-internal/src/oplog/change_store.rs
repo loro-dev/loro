@@ -186,8 +186,10 @@ impl ChangeStore {
             for c in self.iter_changes(span) {
                 let start = ((span.counter.start - c.id.counter).max(0) as usize).min(c.atom_len());
                 let end = ((span.counter.end - c.id.counter).max(0) as usize).min(c.atom_len());
+                if start == end {
+                    continue;
+                }
 
-                assert_ne!(start, end);
                 let ch = c.slice(start, end);
                 new_store.insert_change(ch, false);
             }

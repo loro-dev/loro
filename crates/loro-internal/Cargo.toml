@@ -54,6 +54,7 @@ arref = "0.1.0"
 tracing = { version = "0.1" }
 nonmax = "0.5.5"
 ensure-cov = { workspace = true }
+pretty_assertions = "1.4.1"
 
 
 [dev-dependencies]

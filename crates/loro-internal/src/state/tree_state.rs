@@ -1,7 +1,7 @@
 use either::Either;
 use enum_as_inner::EnumAsInner;
 use fractional_index::FractionalIndex;
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
 use loro_common::{
     ContainerID, IdFull, IdLp, LoroError, LoroResult, LoroTreeError, LoroValue, PeerID, TreeID,
@@ -14,7 +14,6 @@ use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex, Weak};
-use tracing::trace;
 
 use super::{ContainerState, DiffApplyContext};
 use crate::container::idx::ContainerIdx;
@@ -140,6 +139,7 @@ impl Default for NodeChildren {
 }
 
 impl NodeChildren {
+    const MAX_SIZE_FOR_ARRAY: usize = 16;
     fn get_index_by_child_id(&self, target: &TreeID) -> Option<usize> {
         match self {
             NodeChildren::Vec(v) => v.iter().position(|(_, id)| id == target),
@@ -265,7 +265,7 @@ impl NodeChildren {
     fn insert_child(&mut self, pos: NodePosition, id: TreeID) {
         match self {
             NodeChildren::Vec(v) => {
-                if v.len() >= 16 {
+                if v.len() >= Self::MAX_SIZE_FOR_ARRAY {
                     self.upgrade();
                     return self.insert_child(pos, id);
                 }
@@ -931,6 +931,30 @@ impl TreeState {
             .then(|| self.children.get(parent).and_then(|x| x.get_id_at(index)))
             .flatten()
     }
+
+    /// Check the consistency between `self.trees` and `self.children`
+    ///
+    /// It's used for debug and test
+    #[allow(unused)]
+    pub(crate) fn check_tree_integrity(&self) {
+        let mut parent_children_map: FxHashMap<TreeParentId, FxHashSet<TreeID>> =
+            FxHashMap::default();
+        for (id, node) in self.trees.iter() {
+            let parent = node.parent;
+            parent_children_map.entry(parent).or_default().insert(*id);
+        }
+
+        for (parent, children) in parent_children_map.iter() {
+            let cached_children = self.get_children(parent).expect("parent not found");
+            let cached_children = cached_children.collect::<FxHashSet<_>>();
+            if &cached_children != children {
+                panic!(
+                    "tree integrity broken: children set of node {:?} is not consistent",
+                    parent
+                );
+            }
+        }
+    }
 }
 
 pub(crate) enum FractionalIndexGenResult {
@@ -993,7 +1017,6 @@ impl ContainerState for TreeState {
                                 if self.is_node_deleted(&target).unwrap() {
                                     if was_alive {
                                         // delete event
-                                        trace!("DEL from c");
                                         ans.push(TreeDiffItem {
                                             target,
                                             action: TreeExternalDiff::Delete {
@@ -1064,7 +1087,6 @@ impl ContainerState for TreeState {
                             send_event = false;
                         }
                         if send_event {
-                            trace!("DEL from A");
                             ans.push(TreeDiffItem {
                                 target,
                                 action: TreeExternalDiff::Delete {
@@ -1092,11 +1114,11 @@ impl ContainerState for TreeState {
                             });
                         }
                         // delete it from state
-                        let parent = self.trees.remove(&target);
-                        if let Some(parent) = parent {
-                            if !parent.parent.is_deleted() {
+                        let node = self.trees.remove(&target);
+                        if let Some(node) = node {
+                            if !node.parent.is_deleted() {
                                 self.children
-                                    .get_mut(&parent.parent)
+                                    .get_mut(&node.parent)
                                     .unwrap()
                                     .delete_child(&target);
                             }
@@ -1107,6 +1129,7 @@ impl ContainerState for TreeState {
             }
         }
 
+        // self.check_tree_integrity();
         Diff::Tree(TreeDiff { diff: ans })
     }
 
@@ -1157,6 +1180,7 @@ impl ContainerState for TreeState {
                 };
             }
         }
+        // self.check_tree_integrity();
     }
 
     fn apply_local_op(&mut self, raw_op: &RawOp, _op: &Op) -> LoroResult<()> {
@@ -1179,15 +1203,17 @@ impl ContainerState for TreeState {
                         raw_op.id_full(),
                         Some(position.clone()),
                         true,
-                    )
+                    )?;
                 }
                 TreeOp::Delete { target } => {
                     let parent = TreeParentId::Deleted;
-                    self.mov(*target, parent, raw_op.id_full(), None, true)
+                    self.mov(*target, parent, raw_op.id_full(), None, true)?;
                 }
             },
             _ => unreachable!(),
         }
+        // self.check_tree_integrity();
+        Ok(())
     }
 
     fn to_diff(

@@ -1404,7 +1404,7 @@ impl DocState {
                 }
             };
 
-            assert_eq!(
+            pretty_assertions::assert_eq!(
                 this_value,
                 other_value,
                 "[self!=other] id: {:?}, path: {:?}",

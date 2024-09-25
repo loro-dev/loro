@@ -4,6 +4,7 @@ use fractional_index::FractionalIndex;
 use fxhash::FxHashMap;
 use itertools::Itertools;
 use loro_common::{ContainerID, IdFull, IdLp, IdSpan, Lamport, PeerID, TreeID, ID};
+use tracing::trace;
 
 use crate::{
     container::{idx::ContainerIdx, tree::tree_op::TreeOp},
@@ -50,7 +51,7 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
 
     fn apply_change(
         &mut self,
-        oplog: &OpLog,
+        _oplog: &OpLog,
         op: crate::op::RichOp,
         _vv: Option<&crate::VersionVector>,
     ) {
@@ -193,11 +194,6 @@ impl TreeDiffCalculator {
             }
 
             // forward and apply
-            let current_frontiers = tree_cache.current_vv.to_frontiers(&oplog.dag);
-            let forward_min_lamport = self
-                .get_min_lamport_by_frontiers(&current_frontiers, oplog)
-                .min(min_lamport);
-
             let max_lamport = self.get_max_lamport_by_frontiers(&to_frontiers, oplog);
             let mut forward_ops = vec![];
             let group = h
@@ -207,7 +203,7 @@ impl TreeDiffCalculator {
                 .unwrap();
             for (idlp, op) in group.ops().range(
                 IdLp {
-                    lamport: forward_min_lamport,
+                    lamport: 0,
                     peer: 0,
                 }..=IdLp {
                     lamport: max_lamport,
@@ -246,7 +242,6 @@ impl TreeDiffCalculator {
             let mark = h.ensure_importing_caches_exist();
             let tree_ops = h.get_tree(&self.container, mark).unwrap();
             let mut tree_cache = tree_ops.tree().lock().unwrap();
-
             let s = tracing::span!(tracing::Level::INFO, "checkout_diff");
             let _e = s.enter();
             let to_frontiers = to.to_frontiers(&oplog.dag);
@@ -293,6 +288,14 @@ impl TreeDiffCalculator {
                         // we need to know whether old_parent is deleted
                         let is_parent_deleted = tree_cache.is_parent_deleted(op.op.parent_id());
                         let is_old_parent_deleted = tree_cache.is_parent_deleted(old_parent);
+                        if op.op.target().id() == op.id.id() {
+                            assert_eq!(
+                                old_parent,
+                                TreeParentId::Unexist,
+                                "old_parent = {:?} instead",
+                                &old_parent
+                            );
+                        }
                         let this_diff = TreeDeltaItem::new(
                             op.op.target(),
                             old_parent,

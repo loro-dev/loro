@@ -1,4 +1,4 @@
-use loro::{ContainerType, Frontiers, LoroDoc};
+use loro::{ContainerType, Frontiers, LoroDoc, LoroError, TreeID};
 use tabled::TableIteratorExt;
 use tracing::{info, info_span};
 
@@ -56,6 +56,7 @@ impl OneDocFuzzer {
                     ContainerType::List,
                     ContainerType::Map,
                     ContainerType::MovableList,
+                    ContainerType::Tree,
                 ];
                 *target %= valid_targets.len() as u8;
                 action.convert_to_inner(&valid_targets[*target as usize]);
@@ -157,7 +158,81 @@ impl OneDocFuzzer {
                                 crate::container::TextActionInner::Mark(_) => {}
                             }
                         }
-                        _ => {}
+                        crate::actions::ActionInner::Tree(tree_action) => {
+                            let tree = self.doc.get_tree("tree");
+                            tree.enable_fractional_index(0);
+                            let nodes = tree
+                                .nodes()
+                                .into_iter()
+                                .filter(|x| !tree.is_node_deleted(*x).unwrap())
+                                .collect::<Vec<_>>();
+                            let node_num = nodes.len();
+                            let crate::container::TreeAction { target, action } = tree_action;
+                            if node_num == 0
+                                || node_num < 2
+                                    && (matches!(
+                                        action,
+                                        crate::container::TreeActionInner::Move { .. }
+                                            | crate::container::TreeActionInner::Meta { .. }
+                                    ))
+                            {
+                                *action = crate::container::TreeActionInner::Create { index: 0 };
+                            }
+                            match action {
+                                crate::container::TreeActionInner::Create { index } => {
+                                    let id = tree.__internal__next_tree_id();
+                                    let len = tree.children_num(None).unwrap_or(0);
+                                    *index %= len + 1;
+                                    *target = (id.peer, id.counter);
+                                }
+                                crate::container::TreeActionInner::Delete => {
+                                    let target_index = target.0 as usize % node_num;
+                                    *target =
+                                        (nodes[target_index].peer, nodes[target_index].counter);
+                                }
+                                crate::container::TreeActionInner::Move { parent, index } => {
+                                    let target_index = target.0 as usize % node_num;
+                                    *target =
+                                        (nodes[target_index].peer, nodes[target_index].counter);
+                                    let mut parent_idx = parent.0 as usize % node_num;
+                                    while target_index == parent_idx {
+                                        parent_idx = (parent_idx + 1) % node_num;
+                                    }
+                                    *parent = (nodes[parent_idx].peer, nodes[parent_idx].counter);
+                                    *index %= tree
+                                        .children_num(TreeID::new(parent.0, parent.1))
+                                        .unwrap_or(0)
+                                        + 1;
+                                }
+                                crate::container::TreeActionInner::MoveBefore {
+                                    target,
+                                    before: (p, c),
+                                }
+                                | crate::container::TreeActionInner::MoveAfter {
+                                    target,
+                                    after: (p, c),
+                                } => {
+                                    let target_index = target.0 as usize % node_num;
+                                    *target =
+                                        (nodes[target_index].peer, nodes[target_index].counter);
+                                    let mut other_idx = *p as usize % node_num;
+                                    while target_index == other_idx {
+                                        other_idx = (other_idx + 1) % node_num;
+                                    }
+                                    *p = nodes[other_idx].peer;
+                                    *c = nodes[other_idx].counter;
+                                }
+                                crate::container::TreeActionInner::Meta { meta: (_, v) } => {
+                                    let target_index = target.0 as usize % node_num;
+                                    *target =
+                                        (nodes[target_index].peer, nodes[target_index].counter);
+                                    if matches!(v, FuzzValue::Container(_)) {
+                                        *v = FuzzValue::I32(0);
+                                    }
+                                }
+                            }
+                        }
+                        _ => unimplemented!(),
                     }
                 }
             }
@@ -231,6 +306,63 @@ impl OneDocFuzzer {
                                         .unwrap();
                                 }
                                 crate::container::TextActionInner::Mark(_) => {}
+                            }
+                        }
+                        crate::actions::ActionInner::Tree(tree_action) => {
+                            let tree = self.doc.get_tree("tree");
+                            let crate::container::TreeAction { target, action } = tree_action;
+                            let target = TreeID {
+                                peer: target.0,
+                                counter: target.1,
+                            };
+                            match action {
+                                crate::container::TreeActionInner::Create { index } => {
+                                    tree.create_at(None, *index).unwrap();
+                                }
+                                crate::container::TreeActionInner::Delete => {
+                                    tree.delete(target).unwrap();
+                                }
+                                crate::container::TreeActionInner::Move { parent, index } => {
+                                    let parent = TreeID {
+                                        peer: parent.0,
+                                        counter: parent.1,
+                                    };
+                                    if let Err(LoroError::TreeError(e)) =
+                                        tree.mov_to(target, Some(parent), *index)
+                                    {
+                                        // cycle move
+                                        tracing::warn!("move error {}", e);
+                                    }
+                                }
+                                crate::container::TreeActionInner::MoveBefore {
+                                    target,
+                                    before,
+                                } => {
+                                    let target = TreeID {
+                                        peer: target.0,
+                                        counter: target.1,
+                                    };
+                                    let before = TreeID {
+                                        peer: before.0,
+                                        counter: before.1,
+                                    };
+                                    tree.mov_before(target, before).unwrap();
+                                }
+                                crate::container::TreeActionInner::MoveAfter { target, after } => {
+                                    let target = TreeID {
+                                        peer: target.0,
+                                        counter: target.1,
+                                    };
+                                    let after = TreeID {
+                                        peer: after.0,
+                                        counter: after.1,
+                                    };
+                                    tree.mov_after(target, after).unwrap();
+                                }
+                                crate::container::TreeActionInner::Meta { meta: (k, v) } => {
+                                    let meta = tree.get_meta(target).unwrap();
+                                    meta.insert(k, v.to_string()).unwrap();
+                                }
                             }
                         }
                         _ => unimplemented!(),
