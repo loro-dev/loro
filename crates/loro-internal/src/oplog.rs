@@ -478,7 +478,7 @@ impl OpLog {
         let from_frontiers = match from_frontiers {
             Some(f) => f,
             None => {
-                from_frontiers_inner = Some(from.to_frontiers(&self.dag));
+                from_frontiers_inner = Some(self.dag.vv_to_frontiers(from));
                 from_frontiers_inner.as_ref().unwrap()
             }
         };
@@ -486,7 +486,7 @@ impl OpLog {
         let to_frontiers = match to_frontiers {
             Some(t) => t,
             None => {
-                to_frontiers_inner = Some(to.to_frontiers(&self.dag));
+                to_frontiers_inner = Some(self.dag.vv_to_frontiers(to));
                 to_frontiers_inner.as_ref().unwrap()
             }
         };

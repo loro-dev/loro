@@ -239,11 +239,10 @@ impl TreeDiffCalculator {
             let _e = s.enter();
             let to_frontiers = info.to_frontiers;
             let from_frontiers = info.from_frontiers;
-            let (common_ancestors, _mode) = oplog
-                .dag
-                .find_common_ancestor(&from_frontiers, &to_frontiers);
+            let (common_ancestors, _mode) =
+                oplog.dag.find_common_ancestor(from_frontiers, to_frontiers);
             let lca_vv = oplog.dag.frontiers_to_vv(&common_ancestors).unwrap();
-            let lca_frontiers = lca_vv.to_frontiers(&oplog.dag);
+            let lca_frontiers = common_ancestors;
             tracing::info!(
                 "from vv {:?} to vv {:?} current vv {:?} lca vv {:?}",
                 info.from_vv,
@@ -252,7 +251,7 @@ impl TreeDiffCalculator {
                 lca_vv
             );
 
-            let to_max_lamport = self.get_max_lamport_by_frontiers(&to_frontiers, oplog);
+            let to_max_lamport = self.get_max_lamport_by_frontiers(to_frontiers, oplog);
             let lca_min_lamport = self.get_min_lamport_by_frontiers(&lca_frontiers, oplog);
 
             // retreat for diff
