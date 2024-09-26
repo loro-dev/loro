@@ -3,8 +3,7 @@ use std::{collections::BTreeSet, sync::Arc};
 use fractional_index::FractionalIndex;
 use fxhash::FxHashMap;
 use itertools::Itertools;
-use loro_common::{ContainerID, IdFull, IdLp, IdSpan, Lamport, PeerID, TreeID, ID};
-use tracing::trace;
+use loro_common::{ContainerID, IdFull, IdLp, Lamport, PeerID, TreeID, ID};
 
 use crate::{
     container::{idx::ContainerIdx, tree::tree_op::TreeOp},
@@ -235,6 +234,8 @@ impl TreeDiffCalculator {
             let mark = h.ensure_importing_caches_exist();
             let tree_ops = h.get_tree(&self.container, mark).unwrap();
             let mut tree_cache = tree_ops.tree().lock().unwrap();
+            let mut parent_to_children_cache =
+                TreeParentToChildrenCache::init_from_tree_cache(&tree_cache);
             let s = tracing::span!(tracing::Level::INFO, "checkout_diff");
             let _e = s.enter();
             let to_frontiers = info.to_frontiers;
@@ -288,6 +289,11 @@ impl TreeDiffCalculator {
                                 &old_parent
                             );
                         }
+                        parent_to_children_cache.record_change(
+                            op.op.target(),
+                            op.op.parent_id(),
+                            old_parent,
+                        );
                         let this_diff = TreeDeltaItem::new(
                             op.op.target(),
                             old_parent,
@@ -302,8 +308,10 @@ impl TreeDiffCalculator {
                         if is_create {
                             let mut s = vec![op.op.target()];
                             while let Some(t) = s.pop() {
-                                let children =
-                                    tree_cache.get_children_with_id(TreeParentId::Node(t));
+                                let children = tree_cache.get_children_with_id(
+                                    TreeParentId::Node(t),
+                                    &parent_to_children_cache,
+                                );
                                 children.iter().for_each(|c| {
                                     diffs.push(TreeDeltaItem {
                                         target: c.0,
@@ -363,14 +371,21 @@ impl TreeDiffCalculator {
                             is_old_parent_deleted,
                             op.op.fractional_index(),
                         );
+                        parent_to_children_cache.record_change(
+                            op.op.target(),
+                            old_parent,
+                            op.op.parent_id(),
+                        );
                         let is_create = matches!(this_diff.action, TreeInternalDiff::Create { .. });
                         diffs.push(this_diff);
                         if is_create {
                             // TODO: per
                             let mut s = vec![op.op.target()];
                             while let Some(t) = s.pop() {
-                                let children =
-                                    tree_cache.get_children_with_id(TreeParentId::Node(t));
+                                let children = tree_cache.get_children_with_id(
+                                    TreeParentId::Node(t),
+                                    &parent_to_children_cache,
+                                );
                                 children.iter().for_each(|c| {
                                     diffs.push(TreeDeltaItem {
                                         target: c.0,
@@ -468,12 +483,8 @@ impl std::fmt::Debug for TreeCacheForDiff {
 
 impl TreeCacheForDiff {
     fn retreat_op(&mut self, op: &MoveLamportAndID) {
-        self.tree.get_mut(&op.op.target()).unwrap().remove(&op);
-        self.current_vv.shrink_to_exclude(IdSpan::new(
-            op.id.peer,
-            op.id.counter,
-            op.id.counter + 1,
-        ));
+        self.tree.get_mut(&op.op.target()).unwrap().remove(op);
+        self.current_vv.set_end(op.id.id());
     }
 
     fn is_ancestor_of(&self, maybe_ancestor: &TreeID, node_id: &TreeParentId) -> bool {
@@ -575,16 +586,19 @@ impl TreeCacheForDiff {
     fn get_children_with_id(
         &self,
         parent: TreeParentId,
+        cache: &TreeParentToChildrenCache,
     ) -> Vec<(TreeID, Option<FractionalIndex>, IdFull)> {
-        let mut ans = vec![];
-        for (tree_id, _) in self.tree.iter() {
-            let Some(op) = self.get_last_effective_move(*tree_id) else {
-                continue;
+        let Some(children_ids) = cache.get_children(parent) else {
+            return vec![];
+        };
+        let mut ans = Vec::with_capacity(children_ids.len());
+        for child in children_ids.iter() {
+            let Some(op) = self.get_last_effective_move(*child) else {
+                panic!("child {:?} has no last effective move", child);
             };
 
-            if op.op.parent_id() == parent {
-                ans.push((*tree_id, op.op.fractional_index().clone(), op.id_full()));
-            }
+            assert_eq!(op.op.parent_id(), parent);
+            ans.push((*child, op.op.fractional_index().clone(), op.id_full()));
         }
         // The children should be sorted by the position.
         // If the fractional index is the same, then sort by the lamport and peer.
@@ -593,5 +607,46 @@ impl TreeCacheForDiff {
                 .then(a.2.lamport.cmp(&b.2.lamport).then(a.2.peer.cmp(&b.2.peer)))
         });
         ans
+    }
+}
+
+#[derive(Debug)]
+struct TreeParentToChildrenCache {
+    cache: FxHashMap<TreeParentId, BTreeSet<TreeID>>,
+}
+
+impl TreeParentToChildrenCache {
+    fn get_children(&self, parent: TreeParentId) -> Option<&BTreeSet<TreeID>> {
+        self.cache.get(&parent)
+    }
+
+    fn init_from_tree_cache(tree_cache: &TreeCacheForDiff) -> Self {
+        let mut cache = Self {
+            cache: FxHashMap::default(),
+        };
+        for (tree_id, _) in tree_cache.tree.iter() {
+            let Some(op) = tree_cache.get_last_effective_move(*tree_id) else {
+                continue;
+            };
+
+            cache
+                .cache
+                .entry(op.op.parent_id())
+                .or_default()
+                .insert(op.op.target());
+        }
+        cache
+    }
+
+    fn record_change(
+        &mut self,
+        target: TreeID,
+        old_parent: TreeParentId,
+        new_parent: TreeParentId,
+    ) {
+        if !old_parent.is_unexist() {
+            self.cache.get_mut(&old_parent).unwrap().remove(&target);
+        }
+        self.cache.entry(new_parent).or_default().insert(target);
     }
 }
