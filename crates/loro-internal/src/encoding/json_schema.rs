@@ -222,7 +222,7 @@ fn encode_changes(
                                 }
                             });
                             json::ListOp::Insert {
-                                pos: *pos,
+                                pos: *pos as u32,
                                 value: value.into(),
                             }
                         }
@@ -230,8 +230,8 @@ fn encode_changes(
                             id_start,
                             span: DeleteSpan { pos, signed_len },
                         }) => json::ListOp::Delete {
-                            pos: *pos,
-                            len: *signed_len,
+                            pos: *pos as i32,
+                            len: *signed_len as i32,
                             start_id: register_id(id_start, peer_register),
                         },
                         _ => unreachable!(),
@@ -251,7 +251,7 @@ fn encode_changes(
                                 }
                             });
                             json::MovableListOp::Insert {
-                                pos: *pos,
+                                pos: *pos as u32,
                                 value: value.into(),
                             }
                         }
@@ -259,8 +259,8 @@ fn encode_changes(
                             id_start,
                             span: DeleteSpan { pos, signed_len },
                         }) => json::MovableListOp::Delete {
-                            pos: *pos,
-                            len: *signed_len,
+                            pos: *pos as i32,
+                            len: *signed_len as i32,
                             start_id: register_id(id_start, peer_register),
                         },
                         InnerListOp::Move {
@@ -309,8 +309,8 @@ fn encode_changes(
                             id_start,
                             span: DeleteSpan { pos, signed_len },
                         }) => json::TextOp::Delete {
-                            pos: *pos,
-                            len: *signed_len,
+                            pos: *pos as i32,
+                            len: *signed_len as i32,
                             start_id: register_id(id_start, peer_register),
                         },
                         InnerListOp::StyleStart {
@@ -496,8 +496,8 @@ fn decode_op(op: json::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroRes
                     InnerContent::List(InnerListOp::Delete(DeleteSpanWithId {
                         id_start,
                         span: DeleteSpan {
-                            pos,
-                            signed_len: len,
+                            pos: pos as isize,
+                            signed_len: len as isize,
                         },
                     }))
                 }
@@ -532,15 +532,15 @@ fn decode_op(op: json::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroRes
                     let range = arena.alloc_values(values.iter().cloned());
                     InnerContent::List(InnerListOp::Insert {
                         slice: SliceRange::new(range.start as u32..range.end as u32),
-                        pos,
+                        pos: pos as usize,
                     })
                 }
                 json::ListOp::Delete { pos, len, start_id } => {
                     InnerContent::List(InnerListOp::Delete(DeleteSpanWithId {
                         id_start: convert_id(&start_id, peers),
                         span: DeleteSpan {
-                            pos,
-                            signed_len: len,
+                            pos: pos as isize,
+                            signed_len: len as isize,
                         },
                     }))
                 }
@@ -561,15 +561,15 @@ fn decode_op(op: json::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroRes
                     let range = arena.alloc_values(values.iter().cloned());
                     InnerContent::List(InnerListOp::Insert {
                         slice: SliceRange::new(range.start as u32..range.end as u32),
-                        pos,
+                        pos: pos as usize,
                     })
                 }
                 json::MovableListOp::Delete { pos, len, start_id } => {
                     InnerContent::List(InnerListOp::Delete(DeleteSpanWithId {
                         id_start: convert_id(&start_id, peers),
                         span: DeleteSpan {
-                            pos,
-                            signed_len: len,
+                            pos: pos as isize,
+                            signed_len: len as isize,
                         },
                     }))
                 }
@@ -704,7 +704,6 @@ pub mod json {
     use fractional_index::FractionalIndex;
     use loro_common::{ContainerID, IdLp, Lamport, LoroValue, PeerID, TreeID, ID};
     use serde::{Deserialize, Serialize};
-    use smallvec::SmallVec;
 
     use crate::{encoding::OwnedValue, version::Frontiers};
 
@@ -724,7 +723,7 @@ pub mod json {
         pub id: ID,
         pub timestamp: i64,
         #[serde(with = "self::serde_impl::deps")]
-        pub deps: SmallVec<[ID; 2]>,
+        pub deps: Vec<ID>,
         pub lamport: Lamport,
         pub msg: Option<String>,
         pub ops: Vec<JsonOp>,
@@ -760,12 +759,12 @@ pub mod json {
     #[serde(tag = "type", rename_all = "snake_case")]
     pub enum ListOp {
         Insert {
-            pos: usize,
+            pos: u32,
             value: LoroValue,
         },
         Delete {
-            pos: isize,
-            len: isize,
+            pos: i32,
+            len: i32,
             #[serde(with = "self::serde_impl::id")]
             start_id: ID,
         },
@@ -775,12 +774,12 @@ pub mod json {
     #[serde(tag = "type", rename_all = "snake_case")]
     pub enum MovableListOp {
         Insert {
-            pos: usize,
+            pos: u32,
             value: LoroValue,
         },
         Delete {
-            pos: isize,
-            len: isize,
+            pos: i32,
+            len: i32,
             #[serde(with = "self::serde_impl::id")]
             start_id: ID,
         },
@@ -812,8 +811,8 @@ pub mod json {
             text: String,
         },
         Delete {
-            pos: isize,
-            len: isize,
+            pos: i32,
+            len: i32,
             #[serde(with = "self::serde_impl::id")]
             start_id: ID,
         },
@@ -939,11 +938,11 @@ pub mod json {
                                 }
                                 #[cfg(feature = "counter")]
                                 ContainerType::Counter => {
-                                    let (_key, v) =
+                                    let (_key, value) =
                                         map.next_entry::<String, OwnedValue>()?.unwrap();
                                     super::JsonOpContent::Future(super::FutureOpWrapper {
                                         prop: 0,
-                                        value: super::FutureOp::Counter(v),
+                                        value: super::FutureOp::Counter(value),
                                     })
                                 }
                                 _ => unreachable!(),
@@ -1038,7 +1037,7 @@ pub mod json {
                 s.collect_seq(deps.iter().map(|x| x.to_string()))
             }
 
-            pub fn deserialize<'de, 'a, D>(d: D) -> Result<smallvec::SmallVec<[ID; 2]>, D::Error>
+            pub fn deserialize<'de, 'a, D>(d: D) -> Result<Vec<ID>, D::Error>
             where
                 D: Deserializer<'de>,
             {

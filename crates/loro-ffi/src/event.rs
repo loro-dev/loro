@@ -1,8 +1,8 @@
 use std::{collections::HashMap, sync::Arc};
 
-use loro::{EventTriggerKind, TreeID, TreeParentId};
+use loro::{EventTriggerKind, TreeID};
 
-use crate::{ContainerID, LoroValue, ValueOrContainer};
+use crate::{ContainerID, LoroValue, TreeParentId, ValueOrContainer};
 
 pub trait Subscriber: Sync + Send {
     fn on_diff(&self, diff: DiffEvent);

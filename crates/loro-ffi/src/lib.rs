@@ -1,15 +1,25 @@
 mod value;
 
-use std::sync::Arc;
-
 use loro::Container;
+pub use loro::{
+    cursor::Side, undo::UndoOrRedo, CannotFindRelativePosition, Counter, CounterSpan,
+    EventTriggerKind, ExpandType, FractionalIndex, Frontiers, IdLp, IdSpan, JsonChange,
+    JsonFutureOp, JsonFutureOpWrapper, JsonListOp, JsonMapOp, JsonMovableListOp, JsonOp,
+    JsonOpContent, JsonPathError, JsonSchema, JsonTextOp, JsonTreeOp, Lamport, LoroError, PeerID,
+    StyleConfig, SubID, TreeID, VersionVector, ID,
+};
+pub use std::cmp::Ordering;
+use std::sync::Arc;
 pub use value::{ContainerID, ContainerType, LoroValue, LoroValueLike};
 mod doc;
-pub use doc::LoroDoc;
+pub use doc::{
+    ChangeMeta, CommitOptions, ContainerPath, ExportMode, ImportBlobMetadata, JsonSchemaLike,
+    LocalUpdateCallback, LoroDoc, PosQueryResult, Subscription, Unsubscriber,
+};
 mod container;
 pub use container::{
     ContainerIdLike, Cursor, LoroCounter, LoroList, LoroMap, LoroMovableList, LoroText, LoroTree,
-    LoroUnknown,
+    LoroUnknown, TreeParentId,
 };
 mod event;
 pub use event::{
@@ -18,11 +28,9 @@ pub use event::{
 };
 mod undo;
 pub use undo::{AbsolutePosition, CursorWithPos, OnPop, OnPush, UndoItemMeta, UndoManager};
+mod config;
+pub use config::{Configure, StyleConfigMap};
 mod version;
-pub use loro::{
-    cursor::Side, undo::UndoOrRedo, Counter, CounterSpan, EventTriggerKind, Frontiers, IdSpan,
-    Lamport, LoroError, PeerID, SubID, TreeID, VersionVector, ID,
-};
 
 // https://github.com/mozilla/uniffi-rs/issues/1372
 pub trait ValueOrContainer: Send + Sync {

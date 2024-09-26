@@ -159,6 +159,7 @@ pub struct CursorWithPos {
     pub cursor: Arc<Cursor>,
     pub pos: AbsolutePosition,
 }
+
 #[derive(Debug, Clone, Copy)]
 pub struct AbsolutePosition {
     pub pos: u32,

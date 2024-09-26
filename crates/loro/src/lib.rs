@@ -3,16 +3,15 @@
 #![warn(missing_debug_implementations)]
 pub use change_meta::ChangeMeta;
 use event::{DiffEvent, Subscriber};
-use loro_internal::cursor::CannotFindRelativePosition;
+pub use loro_internal::cursor::CannotFindRelativePosition;
 use loro_internal::cursor::Cursor;
 use loro_internal::cursor::PosQueryResult;
 use loro_internal::cursor::Side;
-use loro_internal::encoding::ImportBlobMetadata;
 use loro_internal::handler::HandlerTrait;
 use loro_internal::handler::ValueOrHandler;
 use loro_internal::obs::LocalUpdateCallback;
 use loro_internal::undo::{OnPop, OnPush};
-use loro_internal::version::ImVersionVector;
+pub use loro_internal::version::ImVersionVector;
 use loro_internal::DocState;
 use loro_internal::LoroDoc as InnerLoroDoc;
 use loro_internal::OpLog;
@@ -30,17 +29,23 @@ use tracing::info;
 mod change_meta;
 pub mod event;
 pub use loro_internal::awareness;
+pub use loro_internal::change::Timestamp;
 pub use loro_internal::configure::Configure;
-pub use loro_internal::configure::StyleConfigMap;
+pub use loro_internal::configure::{StyleConfig, StyleConfigMap};
 pub use loro_internal::container::richtext::ExpandType;
 pub use loro_internal::container::{ContainerID, ContainerType, IntoContainerId};
 pub use loro_internal::cursor;
 pub use loro_internal::delta::{TreeDeltaItem, TreeDiff, TreeDiffItem, TreeExternalDiff};
 pub use loro_internal::encoding::ExportMode;
+pub use loro_internal::encoding::ImportBlobMetadata;
 pub use loro_internal::event::{EventTriggerKind, Index};
 pub use loro_internal::handler::TextDelta;
 pub use loro_internal::json;
-pub use loro_internal::json::JsonSchema;
+pub use loro_internal::json::{
+    FutureOp as JsonFutureOp, FutureOpWrapper as JsonFutureOpWrapper, JsonChange, JsonOp,
+    JsonOpContent, JsonSchema, ListOp as JsonListOp, MapOp as JsonMapOp,
+    MovableListOp as JsonMovableListOp, TextOp as JsonTextOp, TreeOp as JsonTreeOp,
+};
 pub use loro_internal::kv_store::{KvStore, MemKvStore};
 pub use loro_internal::loro::CommitOptions;
 pub use loro_internal::loro::DocAnalysis;
@@ -52,7 +57,9 @@ pub use loro_internal::ApplyDiff;
 pub use loro_internal::Subscription;
 pub use loro_internal::UndoManager as InnerUndoManager;
 pub use loro_internal::{loro_value, to_value};
-pub use loro_internal::{Counter, CounterSpan, IdSpan, Lamport, PeerID, TreeID, TreeParentId, ID};
+pub use loro_internal::{
+    Counter, CounterSpan, FractionalIndex, IdLp, IdSpan, Lamport, PeerID, TreeID, TreeParentId, ID,
+};
 pub use loro_internal::{LoroError, LoroResult, LoroTreeError, LoroValue, ToJson};
 pub use loro_kv_store as kv_store;
 
@@ -237,7 +244,7 @@ impl LoroDoc {
     ///
     /// Learn more at https://loro.dev/docs/advanced/doc_state_and_oplog#attacheddetached-status
     #[inline]
-    pub fn detach(&mut self) {
+    pub fn detach(&self) {
         self.doc.detach()
     }
 

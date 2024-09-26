@@ -1160,6 +1160,7 @@ name = "loro-ffi"
 version = "0.16.2"
 dependencies = [
  "loro 0.16.12",
+ "serde_json",
 ]
 
 [[package]]

@@ -11,7 +11,7 @@ pub use list::{Cursor, LoroList};
 pub use map::LoroMap;
 pub use movable_list::LoroMovableList;
 pub use text::LoroText;
-pub use tree::LoroTree;
+pub use tree::{LoroTree, TreeParentId};
 pub use unknown::LoroUnknown;
 
 use crate::{ContainerID, ContainerType};
