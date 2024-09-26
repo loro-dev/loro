@@ -295,13 +295,6 @@ impl ContainerStore {
             }
         }
     }
-
-    pub(crate) fn compact_store(&mut self) {
-        self.store.compact_store();
-        if let Some(gc_store) = &mut self.gc_store {
-            gc_store.store.try_lock().unwrap().compact_store();
-        }
-    }
 }
 
 mod encode {

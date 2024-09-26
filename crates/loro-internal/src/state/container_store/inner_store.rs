@@ -121,11 +121,6 @@ impl InnerStore {
             }));
     }
 
-    pub(crate) fn compact_store(&mut self) {
-        self.flush();
-        self.store.clear();
-    }
-
     pub(crate) fn get_kv(&self) -> &KvWrapper {
         &self.kv
     }

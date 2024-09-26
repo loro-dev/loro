@@ -1449,12 +1449,6 @@ impl LoroDoc {
         self.oplog.try_lock().unwrap().compact_change_store();
     }
 
-    /// Compact the state store
-    #[inline]
-    pub fn compact_state_store(&self) {
-        self.state.try_lock().unwrap().compact_state_store();
-    }
-
     /// Analyze the container info of the doc
     ///
     /// This is used for development and debugging
