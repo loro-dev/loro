@@ -8,9 +8,9 @@ use loro_common::{HasCounter, HasCounterSpan, HasIdSpan, HasLamportSpan, PeerID}
 use once_cell::sync::OnceCell;
 use rle::{HasIndex, HasLength, Mergable, Sliceable};
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
 use std::fmt::Display;
-use std::ops::Deref;
+use std::ops::{ControlFlow, Deref};
 use std::sync::{Arc, Mutex};
 use tracing::{instrument, trace};
 
@@ -589,6 +589,57 @@ impl AppDag {
         }
 
         false
+    }
+
+    /// Travel the ancestors of the given id, and call the callback for each node
+    ///
+    /// It will travel the ancestors in the reverse order (from the greatest lamport to the smallest)
+    pub(crate) fn travel_ancestors(
+        &self,
+        id: ID,
+        f: &mut dyn FnMut(&AppDagNode) -> ControlFlow<()>,
+    ) {
+        struct PendingNode(AppDagNode);
+        impl PartialEq for PendingNode {
+            fn eq(&self, other: &Self) -> bool {
+                self.0.lamport_last() == other.0.lamport_last() && self.0.peer == other.0.peer
+            }
+        }
+        impl Eq for PendingNode {}
+        impl PartialOrd for PendingNode {
+            fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+                Some(self.cmp(other))
+            }
+        }
+        impl Ord for PendingNode {
+            fn cmp(&self, other: &Self) -> Ordering {
+                self.0
+                    .lamport_last()
+                    .cmp(&other.0.lamport_last())
+                    .then_with(|| self.0.peer.cmp(&other.0.peer))
+            }
+        }
+
+        let mut visited = FxHashSet::default();
+        let mut pending: BinaryHeap<PendingNode> = BinaryHeap::new();
+        pending.push(PendingNode(self.get(id).unwrap()));
+        while let Some(PendingNode(node)) = pending.pop() {
+            if f(&node).is_break() {
+                break;
+            }
+
+            for &dep in node.deps.iter() {
+                let Some(dep_node) = self.get(dep) else {
+                    continue;
+                };
+                if visited.contains(&dep_node.id_start()) {
+                    continue;
+                }
+
+                visited.insert(dep_node.id_start());
+                pending.push(PendingNode(dep_node));
+            }
+        }
     }
 }
 

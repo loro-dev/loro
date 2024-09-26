@@ -1067,7 +1067,7 @@ impl LoroDoc {
             return Ok(());
         }
 
-        let oplog = self.oplog.lock().unwrap();
+        let oplog = self.oplog.try_lock().unwrap();
         if oplog.dag.is_on_trimmed_history(frontiers) {
             drop(oplog);
             self.renew_txn_if_auto_commit();
@@ -1081,8 +1081,8 @@ impl LoroDoc {
             return Ok(());
         }
 
-        let mut state = self.state.lock().unwrap();
-        let mut calc = self.diff_calculator.lock().unwrap();
+        let mut state = self.state.try_lock().unwrap();
+        let mut calc = self.diff_calculator.try_lock().unwrap();
         for &i in frontiers.iter() {
             if !oplog.dag.contains(i) {
                 drop(oplog);
@@ -1123,12 +1123,16 @@ impl LoroDoc {
 
     #[inline]
     pub fn vv_to_frontiers(&self, vv: &VersionVector) -> Frontiers {
-        self.oplog.lock().unwrap().dag.vv_to_frontiers(vv)
+        self.oplog.try_lock().unwrap().dag.vv_to_frontiers(vv)
     }
 
     #[inline]
     pub fn frontiers_to_vv(&self, frontiers: &Frontiers) -> Option<VersionVector> {
-        self.oplog.lock().unwrap().dag.frontiers_to_vv(frontiers)
+        self.oplog
+            .try_lock()
+            .unwrap()
+            .dag
+            .frontiers_to_vv(frontiers)
     }
 
     /// Import ops from other doc.
@@ -1150,7 +1154,7 @@ impl LoroDoc {
 
     #[inline]
     pub fn len_changes(&self) -> usize {
-        let oplog = self.oplog.lock().unwrap();
+        let oplog = self.oplog.try_lock().unwrap();
         oplog.len_changes()
     }
 
