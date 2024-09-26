@@ -1551,6 +1551,10 @@ impl DocState {
     pub fn gc_store(&self) -> Option<&Arc<GcStore>> {
         self.store.gc_store()
     }
+
+    pub fn compact_state_store(&mut self) {
+        self.store.compact_store();
+    }
 }
 
 fn create_state_(idx: ContainerIdx, config: &Configure, peer: u64) -> State {

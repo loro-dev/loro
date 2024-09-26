@@ -714,10 +714,18 @@ impl LoroDoc {
 
     /// Encoded all ops and history cache to bytes and store them in the kv store.
     ///
-    /// The parsed ops will be dropped
+    /// This will free up the memory that used by parsed ops
     #[inline]
     pub fn compact_change_store(&self) {
         self.doc.compact_change_store()
+    }
+
+    /// Compact the state store
+    ///
+    /// This will free up the memory that used by the states.
+    #[inline]
+    pub fn compact_state_store(&self) {
+        self.doc.compact_state_store()
     }
 
     /// Export the document in the given mode.
