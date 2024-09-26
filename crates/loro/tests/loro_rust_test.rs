@@ -1,5 +1,6 @@
 use std::{
     cmp::Ordering,
+    ops::ControlFlow,
     sync::{
         atomic::{AtomicBool, AtomicU64},
         Arc,
@@ -1745,5 +1746,139 @@ fn test_encode_snapshot_when_checkout() {
     assert_eq!(
         new_doc.get_deep_value().to_json_value(),
         json!({"text": "Hello World"})
+    );
+}
+
+#[test]
+fn travel_change_ancestors() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    doc.get_text("text").insert(0, "Hello").unwrap();
+    doc.commit();
+    let doc2 = doc.fork();
+    doc2.set_peer_id(2).unwrap();
+    doc2.get_text("text").insert(5, " World").unwrap();
+    doc.get_text("text").insert(5, " Alice").unwrap();
+    doc.import(&doc2.export(loro::ExportMode::all_updates()))
+        .unwrap();
+    doc2.import(&doc.export(loro::ExportMode::all_updates()))
+        .unwrap();
+
+    doc.get_text("text").insert(0, "Y").unwrap();
+    doc2.get_text("text").insert(0, "N").unwrap();
+    doc.commit();
+    doc2.commit();
+    doc.import(&doc2.export(loro::ExportMode::all_updates()))
+        .unwrap();
+    doc.get_text("text").insert(0, "X").unwrap();
+    doc.commit();
+    let f = doc.state_frontiers();
+    assert_eq!(f.len(), 1);
+    let mut changes = vec![];
+    doc.travel_change_ancestors(f[0], &mut |meta| {
+        changes.push(meta.clone());
+        ControlFlow::Continue(())
+    });
+
+    let dbg_str = format!("{:#?}", changes);
+    assert_eq!(
+        dbg_str,
+        r#"[
+    ChangeMeta {
+        lamport: 12,
+        id: 12@1,
+        timestamp: 0,
+        message: None,
+        deps: Frontiers(
+            [
+                11@1,
+                6@2,
+            ],
+        ),
+        len: 1,
+    },
+    ChangeMeta {
+        lamport: 11,
+        id: 6@2,
+        timestamp: 0,
+        message: None,
+        deps: Frontiers(
+            [
+                5@2,
+                10@1,
+            ],
+        ),
+        len: 1,
+    },
+    ChangeMeta {
+        lamport: 11,
+        id: 11@1,
+        timestamp: 0,
+        message: None,
+        deps: Frontiers(
+            [
+                10@1,
+                5@2,
+            ],
+        ),
+        len: 1,
+    },
+    ChangeMeta {
+        lamport: 5,
+        id: 0@2,
+        timestamp: 0,
+        message: None,
+        deps: Frontiers(
+            [
+                4@1,
+            ],
+        ),
+        len: 6,
+    },
+    ChangeMeta {
+        lamport: 0,
+        id: 0@1,
+        timestamp: 0,
+        message: None,
+        deps: Frontiers(
+            [],
+        ),
+        len: 11,
+    },
+]"#
+    );
+
+    let mut changes = vec![];
+    doc.travel_change_ancestors(ID::new(2, 4), &mut |meta| {
+        changes.push(meta.clone());
+        ControlFlow::Continue(())
+    });
+    let dbg_str = format!("{:#?}", changes);
+    assert_eq!(
+        dbg_str,
+        r#"[
+    ChangeMeta {
+        lamport: 5,
+        id: 0@2,
+        timestamp: 0,
+        message: None,
+        deps: Frontiers(
+            [
+                4@1,
+            ],
+        ),
+        len: 6,
+    },
+    ChangeMeta {
+        lamport: 0,
+        id: 0@1,
+        timestamp: 0,
+        message: None,
+        deps: Frontiers(
+            [],
+        ),
+        len: 11,
+    },
+]"#
     );
 }
