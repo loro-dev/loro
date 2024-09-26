@@ -1230,7 +1230,7 @@ fn test_loro_export_local_updates() {
 
     let updates_clone = updates.clone();
     let subscription = doc.subscribe_local_update(Box::new(move |bytes: &[u8]| {
-        updates_clone.lock().unwrap().push(bytes.to_vec());
+        updates_clone.try_lock().unwrap().push(bytes.to_vec());
     }));
 
     // Make some changes
@@ -1241,7 +1241,7 @@ fn test_loro_export_local_updates() {
 
     // Check that updates were recorded
     {
-        let recorded_updates = updates.lock().unwrap();
+        let recorded_updates = updates.try_lock().unwrap();
         assert_eq!(recorded_updates.len(), 2);
 
         // Verify the content of the updates
@@ -1260,7 +1260,7 @@ fn test_loro_export_local_updates() {
         text.insert(11, "!").unwrap();
         doc.commit();
         // Check that no new update was recorded
-        assert_eq!(updates.lock().unwrap().len(), 2);
+        assert_eq!(updates.try_lock().unwrap().len(), 2);
     }
 }
 

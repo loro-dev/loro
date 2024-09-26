@@ -331,12 +331,12 @@ impl Transaction {
         origin: InternalString,
         global_txn: Weak<Mutex<Option<Transaction>>>,
     ) -> Self {
-        let mut state_lock = state.lock().unwrap();
+        let mut state_lock = state.try_lock().unwrap();
         if state_lock.is_in_txn() {
             panic!("Cannot start a transaction while another one is in progress");
         }
 
-        let oplog_lock = oplog.lock().unwrap();
+        let oplog_lock = oplog.try_lock().unwrap();
         state_lock.start_txn(origin, crate::event::EventTriggerKind::Local);
         let arena = state_lock.arena.clone();
         let frontiers = state_lock.frontiers.clone();
@@ -401,14 +401,14 @@ impl Transaction {
         }
 
         self.finished = true;
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.try_lock().unwrap();
         if self.local_ops.is_empty() {
             state.abort_txn();
             return Ok(());
         }
 
         let ops = std::mem::take(&mut self.local_ops);
-        let mut oplog = self.oplog.lock().unwrap();
+        let mut oplog = self.oplog.try_lock().unwrap();
         let deps = take(&mut self.frontiers);
         let change = Change {
             lamport: self.start_lamport,
@@ -480,14 +480,14 @@ impl Transaction {
             return Err(LoroError::UnmatchedContext {
                 expected: self
                     .state
-                    .lock()
+                    .try_lock()
                     .unwrap()
                     .peer
                     .load(std::sync::atomic::Ordering::Relaxed),
                 found: state_ref
                     .upgrade()
                     .unwrap()
-                    .lock()
+                    .try_lock()
                     .unwrap()
                     .peer
                     .load(std::sync::atomic::Ordering::Relaxed),
@@ -505,7 +505,7 @@ impl Transaction {
             content,
         };
 
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.try_lock().unwrap();
         if state.is_deleted(container) {
             return Err(LoroError::ContainerDeleted {
                 container: Box::new(state.arena.idx_to_id(container).unwrap()),

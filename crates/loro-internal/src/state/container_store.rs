@@ -299,7 +299,7 @@ impl ContainerStore {
     pub(crate) fn compact_store(&mut self) {
         self.store.compact_store();
         if let Some(gc_store) = &mut self.gc_store {
-            gc_store.store.lock().unwrap().compact_store();
+            gc_store.store.try_lock().unwrap().compact_store();
         }
     }
 }
@@ -570,7 +570,7 @@ mod test {
     #[test]
     fn test_container_store_exports_imports() {
         let doc = init_doc();
-        let mut s = doc.app_state().lock().unwrap();
+        let mut s = doc.app_state().try_lock().unwrap();
         let bytes = s.store.encode();
         let mut new_store = decode_container_store(bytes);
         s.store.check_eq_after_parsing(&mut new_store);

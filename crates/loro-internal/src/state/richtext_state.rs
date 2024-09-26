@@ -1159,7 +1159,7 @@ mod snapshot {
             text.delete(2, 5).unwrap();
             let mut bytes = Vec::new();
             doc.app_state()
-                .lock()
+                .try_lock()
                 .unwrap()
                 .get_text("text")
                 .unwrap()
@@ -1168,7 +1168,7 @@ mod snapshot {
 
             let delta = doc
                 .app_state()
-                .lock()
+                .try_lock()
                 .unwrap()
                 .get_text("text")
                 .unwrap()

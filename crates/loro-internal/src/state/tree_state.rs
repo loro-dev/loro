@@ -1693,7 +1693,7 @@ mod snapshot {
             let _c = tree.create(TreeParentId::Root).unwrap();
             tree.mov(b, TreeParentId::Node(a)).unwrap();
             let (bytes, value) = {
-                let mut doc_state = doc.app_state().lock().unwrap();
+                let mut doc_state = doc.app_state().try_lock().unwrap();
                 let tree_state = doc_state.get_tree("tree").unwrap();
                 let value = tree_state.get_value();
                 let mut bytes = Vec::new();
@@ -1712,7 +1712,7 @@ mod snapshot {
             )
             .unwrap();
 
-            let mut doc_state = doc.app_state().lock().unwrap();
+            let mut doc_state = doc.app_state().try_lock().unwrap();
             let tree_state = doc_state.get_tree("tree").unwrap();
             assert_eq!(&tree_state.trees, &new_tree_state.trees);
             let new_v = new_tree_state.get_value();

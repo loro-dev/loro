@@ -421,7 +421,7 @@ impl UndoManagerInner {
 
 fn get_counter_end(doc: &LoroDoc, peer: PeerID) -> Counter {
     doc.oplog()
-        .lock()
+        .try_lock()
         .unwrap()
         .vv()
         .get(&peer)
@@ -485,7 +485,7 @@ impl UndoManager {
                                 // If the concurrent event is a create event, it may bring the deleted tree node back,
                                 // so we need to remove it from the remap of the container.
                                 remap_containers_clone
-                                    .lock()
+                                    .try_lock()
                                     .unwrap()
                                     .remove(&target.associated_meta_container());
                             }
@@ -655,7 +655,7 @@ impl UndoManager {
                         peer: self.peer(),
                         counter: span.span,
                     },
-                    &mut self.container_remap.lock().unwrap(),
+                    &mut self.container_remap.try_lock().unwrap(),
                     Some(&remote_change_clone),
                     &mut |diff| {
                         info_span!("transform remote diff").in_scope(|| {
@@ -676,7 +676,7 @@ impl UndoManager {
                             cursor,
                             &remote_diff.try_lock().unwrap(),
                             doc,
-                            &self.container_remap.lock().unwrap(),
+                            &self.container_remap.try_lock().unwrap(),
                         );
                     }
 
