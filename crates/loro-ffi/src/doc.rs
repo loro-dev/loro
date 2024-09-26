@@ -8,14 +8,14 @@ use std::{
 use loro::{
     cursor::CannotFindRelativePosition, DocAnalysis, Frontiers, FrontiersNotIncluded, IdSpan,
     JsonPathError, JsonSchema, Lamport, LoroDoc as InnerLoroDoc, LoroError, LoroResult, PeerID,
-    SubID, Timestamp, VersionVector, ID,
+    SubID, Timestamp, ID,
 };
 
 use crate::{
     event::{DiffEvent, Subscriber},
     AbsolutePosition, Configure, ContainerID, ContainerIdLike, Cursor, Index, LoroCounter,
     LoroList, LoroMap, LoroMovableList, LoroText, LoroTree, LoroValue, StyleConfigMap,
-    ValueOrContainer,
+    ValueOrContainer, VersionVector,
 };
 
 pub struct LoroDoc {
@@ -273,14 +273,16 @@ impl LoroDoc {
     /// Export the current state with json-string format of the document.
     #[inline]
     pub fn export_json_updates(&self, start_vv: &VersionVector, end_vv: &VersionVector) -> String {
-        let json = self.doc.export_json_updates(start_vv, end_vv);
+        let json = self
+            .doc
+            .export_json_updates(&start_vv.into(), &end_vv.into());
         serde_json::to_string(&json).unwrap()
     }
 
     /// Export all the ops not included in the given `VersionVector`
     #[inline]
     pub fn export_from(&self, vv: &VersionVector) -> Vec<u8> {
-        self.doc.export_from(vv)
+        self.doc.export_from(&vv.into())
     }
 
     /// Export the current state and history of the document.
@@ -290,22 +292,24 @@ impl LoroDoc {
     }
 
     pub fn frontiers_to_vv(&self, frontiers: &Frontiers) -> Option<Arc<VersionVector>> {
-        self.doc.frontiers_to_vv(frontiers).map(Arc::new)
+        self.doc
+            .frontiers_to_vv(frontiers)
+            .map(|v| Arc::new(v.into()))
     }
 
     pub fn vv_to_frontiers(&self, vv: &VersionVector) -> Arc<Frontiers> {
-        Arc::new(self.doc.vv_to_frontiers(vv))
+        Arc::new(self.doc.vv_to_frontiers(&vv.into()))
     }
 
     // TODO: with oplog
     // TODO: with state
 
     pub fn oplog_vv(&self) -> Arc<VersionVector> {
-        Arc::new(self.doc.oplog_vv())
+        Arc::new(self.doc.oplog_vv().into())
     }
 
     pub fn state_vv(&self) -> Arc<VersionVector> {
-        Arc::new(self.doc.state_vv())
+        Arc::new(self.doc.state_vv().into())
     }
 
     /// Get the `VersionVector` of trimmed history
@@ -313,7 +317,7 @@ impl LoroDoc {
     /// The ops included by the trimmed history are not in the doc.
     #[inline]
     pub fn trimmed_vv(&self) -> Arc<VersionVector> {
-        Arc::new(VersionVector::from_im_vv(&self.doc.trimmed_vv()))
+        Arc::new(loro::VersionVector::from_im_vv(&self.doc.trimmed_vv()).into())
     }
 
     /// Get the total number of operations in the `OpLog`
@@ -614,8 +618,8 @@ pub struct ImportBlobMetadata {
 impl From<loro::ImportBlobMetadata> for ImportBlobMetadata {
     fn from(value: loro::ImportBlobMetadata) -> Self {
         Self {
-            partial_start_vv: Arc::new(value.partial_start_vv),
-            partial_end_vv: Arc::new(value.partial_end_vv),
+            partial_start_vv: Arc::new(value.partial_start_vv.into()),
+            partial_end_vv: Arc::new(value.partial_end_vv.into()),
             start_timestamp: value.start_timestamp,
             start_frontiers: Arc::new(value.start_frontiers),
             end_timestamp: value.end_timestamp,
@@ -713,7 +717,7 @@ impl From<ExportMode> for loro::ExportMode<'_> {
         match value {
             ExportMode::Snapshot => loro::ExportMode::Snapshot,
             ExportMode::Updates { from } => loro::ExportMode::Updates {
-                from: Cow::Owned(from),
+                from: Cow::Owned(from.into()),
             },
             ExportMode::UpdatesInRange { spans } => loro::ExportMode::UpdatesInRange {
                 spans: Cow::Owned(spans),

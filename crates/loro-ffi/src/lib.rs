@@ -6,7 +6,7 @@ pub use loro::{
     EventTriggerKind, ExpandType, FractionalIndex, Frontiers, IdLp, IdSpan, JsonChange,
     JsonFutureOp, JsonFutureOpWrapper, JsonListOp, JsonMapOp, JsonMovableListOp, JsonOp,
     JsonOpContent, JsonPathError, JsonSchema, JsonTextOp, JsonTreeOp, Lamport, LoroError, PeerID,
-    StyleConfig, SubID, TreeID, VersionVector, ID,
+    StyleConfig, SubID, TreeID, ID,
 };
 pub use std::cmp::Ordering;
 use std::sync::Arc;
@@ -31,6 +31,7 @@ pub use undo::{AbsolutePosition, CursorWithPos, OnPop, OnPush, UndoItemMeta, Und
 mod config;
 pub use config::{Configure, StyleConfigMap};
 mod version;
+pub use version::{VersionVector, VersionVectorDiff};
 
 // https://github.com/mozilla/uniffi-rs/issues/1372
 pub trait ValueOrContainer: Send + Sync {
