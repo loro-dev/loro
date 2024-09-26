@@ -190,6 +190,11 @@ impl Frontiers {
     }
 
     pub fn update_frontiers_on_new_change(&mut self, id: ID, deps: &Frontiers) {
+        if self.len() <= 8 && self == deps {
+            *self = Frontiers::from_id(id);
+            return;
+        }
+
         self.retain(|existing_id| {
             if existing_id.peer == id.peer {
                 assert!(id.counter > existing_id.counter);

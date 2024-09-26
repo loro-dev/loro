@@ -1579,6 +1579,7 @@ mod test {
     use super::*;
 
     fn test_encode_decode(doc: LoroDoc) {
+        doc.commit_then_renew();
         let oplog = doc.oplog().try_lock().unwrap();
         let bytes = oplog
             .change_store

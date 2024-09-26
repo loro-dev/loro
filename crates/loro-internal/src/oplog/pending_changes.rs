@@ -100,7 +100,7 @@ impl OpLog {
                     ) {
                         ChangeState::CanApplyDirectly => {
                             new_ids.push(pending_change.id_last());
-                            self.apply_local_change_from_remote(pending_change);
+                            self.apply_change_from_remote(pending_change);
                         }
                         ChangeState::Applied => {}
                         ChangeState::AwaitingMissingDependency(miss_dep) => self
@@ -120,7 +120,7 @@ impl OpLog {
         }
     }
 
-    pub(super) fn apply_local_change_from_remote(&mut self, change: PendingChange) {
+    pub(super) fn apply_change_from_remote(&mut self, change: PendingChange) {
         let change = match change {
             PendingChange::Known(mut c) => {
                 self.dag.calc_unknown_lamport_change(&mut c).unwrap();
@@ -136,7 +136,7 @@ impl OpLog {
             return;
         };
 
-        self.insert_new_change(change);
+        self.insert_new_change(change, false);
     }
 }
 

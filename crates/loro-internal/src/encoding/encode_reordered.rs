@@ -273,7 +273,7 @@ pub(crate) fn import_changes_to_oplog(
             continue;
         };
 
-        oplog.insert_new_change(change);
+        oplog.insert_new_change(change, false);
     }
 
     ImportChangesResult {

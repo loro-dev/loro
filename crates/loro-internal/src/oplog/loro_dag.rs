@@ -47,6 +47,7 @@ pub struct AppDag {
     /// But the ops in this set are not parsed yet. When they are parsed,
     /// we need to make sure it breaks at the given point.
     unhandled_dep_points: Mutex<BTreeSet<ID>>,
+    pending_txn_node: Option<AppDagNode>,
 }
 
 #[derive(Debug, Clone)]
@@ -104,6 +105,7 @@ impl AppDag {
             trimmed_frontiers: Default::default(),
             trimmed_frontiers_deps: Default::default(),
             trimmed_vv: Default::default(),
+            pending_txn_node: None,
         }
     }
 
@@ -128,9 +130,9 @@ impl AppDag {
     }
 
     #[tracing::instrument(skip_all, name = "handle_new_change")]
-    pub(super) fn handle_new_change(&mut self, change: &Change) {
+    pub(super) fn handle_new_change(&mut self, change: &Change, from_local: bool) {
         let len = change.content_len();
-        self.update_version_on_new_change(change);
+        self.update_version_on_new_change(change, from_local);
         #[cfg(debug_assertions)]
         {
             let unhandled_dep_points = self.unhandled_dep_points.try_lock().unwrap();
@@ -218,7 +220,6 @@ impl AppDag {
     }
 
     pub(crate) fn find_deps_of_id(&self, id: ID) -> Frontiers {
-        self.ensure_lazy_load_node(id);
         let Some(node) = self.get(id) else {
             return Frontiers::default();
         };
@@ -245,16 +246,24 @@ impl AppDag {
         f(last)
     }
 
-    fn update_version_on_new_change(&mut self, change: &Change) {
-        let id_last = change.id_last();
-        self.frontiers
-            .update_frontiers_on_new_change(id_last, &change.deps);
-        assert_eq!(
-            self.vv.get(&change.id.peer).copied().unwrap_or(0),
-            change.id.counter
-        );
-
-        self.vv.extend_to_include_last_id(id_last);
+    fn update_version_on_new_change(&mut self, change: &Change, from_local: bool) {
+        if from_local {
+            assert!(self.pending_txn_node.take().is_some());
+            assert_eq!(
+                self.vv.get(&change.id.peer).copied().unwrap_or(0),
+                change.ctr_end()
+            );
+        } else {
+            let id_last = change.id_last();
+            self.frontiers
+                .update_frontiers_on_new_change(id_last, &change.deps);
+            assert!(self.pending_txn_node.is_none());
+            assert_eq!(
+                self.vv.get(&change.id.peer).copied().unwrap_or(0),
+                change.id.counter
+            );
+            self.vv.extend_to_include_last_id(id_last);
+        }
     }
 
     pub(super) fn lazy_load_last_of_peer(&mut self, peer: u64) {
@@ -430,6 +439,7 @@ impl AppDag {
             trimmed_frontiers: self.trimmed_frontiers.clone(),
             trimmed_vv: self.trimmed_vv.clone(),
             trimmed_frontiers_deps: self.trimmed_frontiers_deps.clone(),
+            pending_txn_node: self.pending_txn_node.clone(),
         }
     }
 
@@ -445,7 +455,6 @@ impl AppDag {
         if let Some((vv, f)) = v.start_version {
             if !f.is_empty() {
                 assert!(f.len() == 1);
-                self.ensure_lazy_load_node(f[0]);
                 let node = self.get(f[0]).unwrap();
                 assert!(node.cnt == f[0].counter);
                 self.trimmed_frontiers_deps = node.deps.clone();
@@ -641,6 +650,44 @@ impl AppDag {
             }
         }
     }
+
+    pub(crate) fn update_version_on_new_local_op(
+        &mut self,
+        deps: &Frontiers,
+        start_id: ID,
+        start_lamport: Lamport,
+        len: usize,
+    ) {
+        let last_id = start_id.inc(len as Counter - 1);
+        self.vv.set_last(last_id);
+        self.frontiers.update_frontiers_on_new_change(last_id, deps);
+        match &mut self.pending_txn_node {
+            Some(node) => {
+                assert!(
+                    node.peer == start_id.peer
+                        && node.cnt + node.len as Counter == start_id.counter
+                        && deps.len() == 1
+                        && deps[0].peer == start_id.peer
+                );
+                let inner = Arc::make_mut(&mut node.inner);
+                inner.len += len;
+            }
+            None => {
+                let node = AppDagNode {
+                    inner: Arc::new(AppDagNodeInner {
+                        peer: start_id.peer,
+                        cnt: start_id.counter,
+                        lamport: start_lamport,
+                        deps: deps.clone(),
+                        vv: OnceCell::new(),
+                        has_succ: false,
+                        len,
+                    }),
+                };
+                self.pending_txn_node = Some(node);
+            }
+        }
+    }
 }
 
 fn check_always_dep_on_last_id(map: &BTreeMap<ID, AppDagNode>) {
@@ -771,6 +818,12 @@ impl Dag for AppDag {
             // by adding another layer of Arc?
             Some(x.1.clone())
         } else {
+            if let Some(node) = &self.pending_txn_node {
+                if node.peer == id.peer && node.cnt <= id.counter {
+                    assert!(node.cnt + node.len as Counter > id.counter);
+                    return Some(node.clone());
+                }
+            }
             None
         }
     }
@@ -840,7 +893,6 @@ impl AppDag {
     }
 
     pub fn get_lamport(&self, id: &ID) -> Option<Lamport> {
-        self.ensure_lazy_load_node(*id);
         self.get(*id).and_then(|node| {
             assert!(id.counter >= node.cnt);
             if node.cnt + node.len as Counter > id.counter {

@@ -152,7 +152,7 @@ impl OpLog {
     }
 
     /// This is the **only** place to update the `OpLog.changes`
-    pub(crate) fn insert_new_change(&mut self, change: Change) {
+    pub(crate) fn insert_new_change(&mut self, change: Change, from_local: bool) {
         let s = trace_span!(
             "insert_new_change",
             id = ?change.id,
@@ -160,7 +160,7 @@ impl OpLog {
             deps = ?change.deps
         );
         let _enter = s.enter();
-        self.dag.handle_new_change(&change);
+        self.dag.handle_new_change(&change, from_local);
         self.history_cache
             .try_lock()
             .unwrap()
@@ -198,27 +198,7 @@ impl OpLog {
     /// - Return Err(LoroError::UsedOpID) when the change's id is occupied
     /// - Return Err(LoroError::DecodeError) when the change's deps are missing
     pub(crate) fn import_local_change(&mut self, change: Change) -> Result<(), LoroError> {
-        let Some(change) = self.trim_the_known_part_of_change(change) else {
-            return Ok(());
-        };
-
-        self.check_id_is_not_duplicated(change.id)?;
-        if let Err(id) = self.check_deps(&change.deps) {
-            return Err(LoroError::DecodeError(
-                format!("Missing dep {:?}", id).into_boxed_str(),
-            ));
-        }
-
-        if cfg!(debug_assertions) {
-            let lamport = self.dag.frontiers_to_next_lamport(&change.deps);
-            assert_eq!(
-                lamport, change.lamport,
-                "{:#?}\nDAG={:#?}",
-                &change, &self.dag
-            );
-        }
-
-        self.insert_new_change(change);
+        self.insert_new_change(change, true);
         Ok(())
     }
 

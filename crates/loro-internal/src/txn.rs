@@ -495,6 +495,7 @@ impl Transaction {
         }
 
         let len = content.content_len();
+        assert!(len > 0);
         let raw_op = RawOp {
             id: ID {
                 peer: self.peer,
@@ -511,10 +512,31 @@ impl Transaction {
                 container: Box::new(state.arena.idx_to_id(container).unwrap()),
             });
         }
+
         let op = self.arena.convert_raw_op(&raw_op);
         state.apply_local_op(&raw_op, &op)?;
+        {
+            // update version info
+            let mut oplog = self.oplog.try_lock().unwrap();
+            let dep_id = Frontiers::from_id(ID::new(self.peer, self.next_counter - 1));
+            let start_id = ID::new(self.peer, self.next_counter);
+            self.next_counter += len as Counter;
+            oplog.dag.update_version_on_new_local_op(
+                if self.local_ops.is_empty() {
+                    &self.frontiers
+                } else {
+                    &dep_id
+                },
+                start_id,
+                self.next_lamport,
+                len,
+            );
+            self.next_lamport += len as Lamport;
+            // set frontiers to the last op id
+            let last_id = start_id.inc(len as Counter - 1);
+            state.frontiers = Frontiers::from_id(last_id);
+        };
         drop(state);
-
         debug_assert_eq!(
             event.rle_len(),
             op.atom_len(),
@@ -532,8 +554,6 @@ impl Transaction {
             }
         }
         self.local_ops.push(op);
-        self.next_counter += len as Counter;
-        self.next_lamport += len as Lamport;
         Ok(())
     }
 

@@ -1446,6 +1446,7 @@ impl LoroDoc {
     /// The parsed ops will be dropped
     #[inline]
     pub fn compact_change_store(&self) {
+        self.commit_then_renew();
         self.oplog.try_lock().unwrap().compact_change_store();
     }
 
