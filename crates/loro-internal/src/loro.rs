@@ -1,11 +1,15 @@
 use either::Either;
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
-use loro_common::{ContainerID, ContainerType, HasIdSpan, IdSpan, LoroResult, LoroValue, ID};
+use loro_common::{
+    ContainerID, ContainerType, HasIdSpan, HasLamportSpan, IdSpan, LoroResult, LoroValue, ID,
+};
 use rle::HasLength;
 use std::{
     borrow::Cow,
     cmp::Ordering,
+    collections::BinaryHeap,
+    ops::ControlFlow,
     sync::{
         atomic::{
             AtomicBool,
@@ -44,7 +48,8 @@ use crate::{
     undo::DiffBatch,
     utils::subscription::{SubscriberSet, Subscription},
     version::{shrink_frontiers, Frontiers, ImVersionVector},
-    DocDiff, HandlerTrait, InternalString, ListHandler, LoroError, MapHandler, VersionVector,
+    ChangeMeta, DocDiff, HandlerTrait, InternalString, ListHandler, LoroError, MapHandler,
+    VersionVector,
 };
 
 pub use crate::encoding::ExportMode;
@@ -1488,6 +1493,61 @@ impl LoroDoc {
             txn.len()
         } else {
             0
+        }
+    }
+
+    pub fn travel_change_ancestors(
+        &self,
+        id: ID,
+        f: &mut dyn FnMut(ChangeMeta) -> ControlFlow<()>,
+    ) {
+        struct PendingNode(ChangeMeta);
+        impl PartialEq for PendingNode {
+            fn eq(&self, other: &Self) -> bool {
+                self.0.lamport_last() == other.0.lamport_last() && self.0.id.peer == other.0.id.peer
+            }
+        }
+        impl Eq for PendingNode {}
+        impl PartialOrd for PendingNode {
+            fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+                Some(self.cmp(other))
+            }
+        }
+        impl Ord for PendingNode {
+            fn cmp(&self, other: &Self) -> Ordering {
+                self.0
+                    .lamport_last()
+                    .cmp(&other.0.lamport_last())
+                    .then_with(|| self.0.id.peer.cmp(&other.0.id.peer))
+            }
+        }
+
+        if !self.oplog().try_lock().unwrap().vv().includes_id(id) {
+            return;
+        }
+
+        let mut visited = FxHashSet::default();
+        let mut pending: BinaryHeap<PendingNode> = BinaryHeap::new();
+        pending.push(PendingNode(ChangeMeta::from_change(
+            &self.oplog().lock().unwrap().get_change_at(id).unwrap(),
+        )));
+        while let Some(PendingNode(node)) = pending.pop() {
+            let deps = node.deps.clone();
+            if f(node).is_break() {
+                break;
+            }
+
+            for &dep in deps.iter() {
+                let Some(dep_node) = self.oplog().lock().unwrap().get_change_at(dep) else {
+                    continue;
+                };
+                if visited.contains(&dep_node.id) {
+                    continue;
+                }
+
+                visited.insert(dep_node.id);
+                pending.push(PendingNode(ChangeMeta::from_change(&dep_node)));
+            }
         }
     }
 }

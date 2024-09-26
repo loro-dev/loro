@@ -8,6 +8,7 @@
 #![warn(missing_debug_implementations)]
 
 pub mod arena;
+mod change_meta;
 pub mod diff;
 pub mod diff_calc;
 pub mod handler;
@@ -17,6 +18,8 @@ use std::sync::{Arc, Mutex};
 use arena::SharedArena;
 use configure::Configure;
 use diff_calc::DiffCalculator;
+
+pub use change_meta::ChangeMeta;
 pub use event::{ContainerDiff, DiffEvent, DocDiff, ListDiff, ListDiffInsertItem, ListDiffItem};
 pub use fxhash::FxHashMap;
 pub use handler::{

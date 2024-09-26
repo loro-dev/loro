@@ -1,7 +1,6 @@
 #![doc = include_str!("../README.md")]
 #![warn(missing_docs)]
 #![warn(missing_debug_implementations)]
-pub use change_meta::ChangeMeta;
 use either::Either;
 use event::{DiffEvent, Subscriber};
 use loro_internal::container::IntoContainerId;
@@ -26,13 +25,14 @@ use loro_internal::{
     UnknownHandler as InnerUnknownHandler,
 };
 use std::cmp::Ordering;
+use std::ops::ControlFlow;
 use std::ops::Range;
 use std::sync::Arc;
 use tracing::info;
 
-mod change_meta;
 pub use loro_internal::subscription::LocalUpdateCallback;
 pub use loro_internal::subscription::PeerIdUpdateCallback;
+pub use loro_internal::ChangeMeta;
 pub mod event;
 pub use loro_internal::awareness;
 pub use loro_internal::configure::Configure;
@@ -792,6 +792,23 @@ impl LoroDoc {
     /// after calling `doc.commit()`, `doc.export(mode)` or `doc.checkout(version)`.
     pub fn get_pending_txn_len(&self) -> usize {
         self.doc.get_pending_txn_len()
+    }
+
+    /// Traverses the ancestors of the Change containing the given ID, including itself.
+    ///
+    /// This method visits all ancestors in causal order, from the latest to the oldest,
+    /// based on their Lamport timestamps.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The ID of the Change to start the traversal from.
+    /// * `f` - A mutable function that is called for each ancestor. It can return `ControlFlow::Break(())` to stop the traversal.
+    pub fn travel_change_ancestors(
+        &self,
+        id: ID,
+        f: &mut dyn FnMut(ChangeMeta) -> ControlFlow<()>,
+    ) {
+        self.doc.travel_change_ancestors(id, f)
     }
 }
 

@@ -1,6 +1,9 @@
 use std::{cmp::Ordering, sync::Arc};
 
-use loro_internal::{
+use loro_common::HasLamport;
+use rle::HasLength;
+
+use crate::{
     change::{Change, Lamport, Timestamp},
     id::ID,
     version::Frontiers,
@@ -56,8 +59,20 @@ impl Ord for ChangeMeta {
     }
 }
 
+impl HasLamport for ChangeMeta {
+    fn lamport(&self) -> loro_common::Lamport {
+        self.lamport
+    }
+}
+
+impl HasLength for ChangeMeta {
+    fn content_len(&self) -> usize {
+        self.len
+    }
+}
+
 impl ChangeMeta {
-    pub(super) fn from_change(c: &Change) -> Self {
+    pub fn from_change(c: &Change) -> Self {
         Self {
             id: c.id(),
             lamport: c.lamport(),
