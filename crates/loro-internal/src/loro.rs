@@ -513,9 +513,9 @@ impl LoroDoc {
                 let diff = diff.calc_diff_internal(
                     &oplog,
                     &old_vv,
-                    Some(&old_frontiers),
+                    &old_frontiers,
                     oplog.vv(),
-                    Some(oplog.dag.get_frontiers()),
+                    oplog.dag.get_frontiers(),
                     None,
                 );
                 let mut state = self.state.lock().unwrap();
@@ -1104,14 +1104,8 @@ impl LoroDoc {
         };
 
         self.set_detached(true);
-        let diff = calc.calc_diff_internal(
-            &oplog,
-            before,
-            Some(&state.frontiers),
-            after,
-            Some(&frontiers),
-            None,
-        );
+        let diff =
+            calc.calc_diff_internal(&oplog, before, &state.frontiers, after, &frontiers, None);
         state.apply_diff(
             InternalDocDiff {
                 origin: "checkout".into(),
@@ -1300,9 +1294,9 @@ impl LoroDoc {
                 diff_calc.calc_diff_internal(
                     &oplog,
                     before,
-                    Some(&before_frontiers),
+                    &before_frontiers,
                     oplog.vv(),
-                    Some(oplog.frontiers()),
+                    oplog.frontiers(),
                     Some(&|target| idx == target),
                 );
                 // TODO: remove depth info

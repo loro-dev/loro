@@ -4,7 +4,7 @@ use loro_common::{ContainerID, ID};
 
 use crate::{container::idx::ContainerIdx, event::InternalDiff, OpLog};
 
-use super::{DiffCalculatorTrait, DiffMode};
+use super::{DiffCalcVersionInfo, DiffCalculatorTrait, DiffMode};
 
 #[derive(Debug)]
 pub(crate) struct CounterDiffCalculator {
@@ -41,12 +41,11 @@ impl DiffCalculatorTrait for CounterDiffCalculator {
         &mut self,
         _idx: ContainerIdx,
         _oplog: &OpLog,
-        from: &crate::VersionVector,
-        to: &crate::VersionVector,
+        info: DiffCalcVersionInfo,
         _on_new_container: impl FnMut(&ContainerID),
     ) -> (InternalDiff, DiffMode) {
         let mut diff = 0.;
-        let (b, a) = from.diff_iter(to);
+        let (b, a) = info.from_vv.diff_iter(info.to_vv);
 
         for sub in b {
             for (_, c) in self.ops.range(sub.norm_id_start()..sub.norm_id_end()) {

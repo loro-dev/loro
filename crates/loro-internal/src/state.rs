@@ -818,9 +818,9 @@ impl DocState {
             let unknown_diffs = diff_calc.calc_diff_internal(
                 oplog,
                 &Default::default(),
-                Some(&Default::default()),
+                &Default::default(),
                 vv,
-                Some(&frontiers),
+                &frontiers,
                 Some(&|idx| !idx.is_unknown() && unknown_containers.contains(&idx)),
             );
             self.apply_diff(

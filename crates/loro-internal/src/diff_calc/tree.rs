@@ -16,7 +16,7 @@ use crate::{
     OpLog, VersionVector,
 };
 
-use super::{DiffCalculatorTrait, DiffMode};
+use super::{DiffCalcVersionInfo, DiffCalculatorTrait, DiffMode};
 
 #[derive(Debug)]
 pub(crate) struct TreeDiffCalculator {
@@ -111,13 +111,12 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
         &mut self,
         idx: ContainerIdx,
         oplog: &OpLog,
-        from: &crate::VersionVector,
-        to: &crate::VersionVector,
+        info: DiffCalcVersionInfo,
         mut on_new_container: impl FnMut(&ContainerID),
     ) -> (InternalDiff, DiffMode) {
         match &mut self.mode {
             TreeDiffCalculatorMode::Crdt => {
-                let diff = self.diff(oplog, from, to);
+                let diff = self.diff(oplog, info);
                 diff.diff.iter().for_each(|d| {
                     // the metadata could be modified before, so (re)create a node need emit the map container diffs
                     // `Create` here is because maybe in a diff calc uncreate and then create back
@@ -157,12 +156,12 @@ impl TreeDiffCalculator {
         }
     }
 
-    fn diff(&mut self, oplog: &OpLog, from: &VersionVector, to: &VersionVector) -> TreeDelta {
-        self.checkout(from, oplog);
-        self.checkout_diff(from, to, oplog)
+    fn diff(&mut self, oplog: &OpLog, info: DiffCalcVersionInfo) -> TreeDelta {
+        self.checkout(info.from_vv, info.from_frontiers, oplog);
+        self.checkout_diff(info, oplog)
     }
 
-    fn checkout(&mut self, to: &VersionVector, oplog: &OpLog) {
+    fn checkout(&mut self, to: &VersionVector, to_frontiers: &Frontiers, oplog: &OpLog) {
         oplog.with_history_cache(|h| {
             let mark = h.ensure_importing_caches_exist();
             let tree_ops = h.get_tree(&self.container, mark).unwrap();
@@ -174,7 +173,6 @@ impl TreeDiffCalculator {
                 tracing::info!("checkout: to == current_vv");
                 return;
             }
-            let to_frontiers = to.to_frontiers(&oplog.dag);
             let min_lamport = self.get_min_lamport_by_frontiers(&to_frontiers, oplog);
             // retreat
             let mut retreat_ops = vec![];
@@ -232,20 +230,15 @@ impl TreeDiffCalculator {
         });
     }
 
-    fn checkout_diff(
-        &mut self,
-        from: &VersionVector,
-        to: &VersionVector,
-        oplog: &OpLog,
-    ) -> TreeDelta {
+    fn checkout_diff(&mut self, info: DiffCalcVersionInfo, oplog: &OpLog) -> TreeDelta {
         oplog.with_history_cache(|h| {
             let mark = h.ensure_importing_caches_exist();
             let tree_ops = h.get_tree(&self.container, mark).unwrap();
             let mut tree_cache = tree_ops.tree().lock().unwrap();
             let s = tracing::span!(tracing::Level::INFO, "checkout_diff");
             let _e = s.enter();
-            let to_frontiers = to.to_frontiers(&oplog.dag);
-            let from_frontiers = from.to_frontiers(&oplog.dag);
+            let to_frontiers = info.to_frontiers;
+            let from_frontiers = info.from_frontiers;
             let (common_ancestors, _mode) = oplog
                 .dag
                 .find_common_ancestor(&from_frontiers, &to_frontiers);
@@ -253,8 +246,8 @@ impl TreeDiffCalculator {
             let lca_frontiers = lca_vv.to_frontiers(&oplog.dag);
             tracing::info!(
                 "from vv {:?} to vv {:?} current vv {:?} lca vv {:?}",
-                from,
-                to,
+                info.from_vv,
+                info.to_vv,
                 tree_cache.current_vv,
                 lca_vv
             );
@@ -266,7 +259,7 @@ impl TreeDiffCalculator {
             tracing::info!("start retreat");
             let mut diffs = vec![];
 
-            if !(tree_cache.current_vv == lca_vv && &lca_vv == from) {
+            if !(tree_cache.current_vv == lca_vv && &lca_vv == info.from_vv) {
                 let mut retreat_ops = vec![];
                 for (_target, ops) in tree_cache.tree.iter() {
                     for op in ops.iter().rev() {
@@ -346,7 +339,7 @@ impl TreeDiffCalculator {
                 },
             ) {
                 let id = ID::new(idlp.peer, op.counter);
-                if !tree_cache.current_vv.includes_id(id) && to.includes_id(id) {
+                if !tree_cache.current_vv.includes_id(id) && info.to_vv.includes_id(id) {
                     let op = MoveLamportAndID {
                         id: IdFull {
                             peer: id.peer,
@@ -395,7 +388,8 @@ impl TreeDiffCalculator {
                     }
                 }
             }
-            tree_cache.current_vv = to.clone();
+
+            tree_cache.current_vv = info.to_vv.clone();
             TreeDelta { diff: diffs }
         })
     }
