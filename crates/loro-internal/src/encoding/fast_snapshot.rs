@@ -15,9 +15,9 @@
 //!
 use std::io::{Read, Write};
 
-use crate::{encoding::gc, oplog::ChangeStore, LoroDoc, OpLog, VersionVector};
+use crate::{encoding::gc, oplog::ChangeStore, version::Frontiers, LoroDoc, OpLog, VersionVector};
 use bytes::{Buf, Bytes};
-use loro_common::{IdSpan, LoroError, LoroResult};
+use loro_common::{IdSpan, LoroEncodeError, LoroError, LoroResult};
 use tracing::trace;
 
 use super::encode_reordered::{import_changes_to_oplog, ImportChangesResult};
@@ -150,8 +150,6 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: Bytes) -> LoroResult<()> {
 impl OpLog {
     pub(super) fn decode_change_store(&mut self, bytes: bytes::Bytes) -> LoroResult<()> {
         let v = self.change_store().import_all(bytes)?;
-        self.next_lamport = v.next_lamport;
-        self.latest_timestamp = v.max_timestamp;
         // FIXME: handle start vv and start frontiers
         self.dag.set_version_by_fast_snapshot_import(v);
         Ok(())
@@ -159,10 +157,15 @@ impl OpLog {
 }
 
 pub(crate) fn encode_snapshot<W: std::io::Write>(doc: &LoroDoc, w: &mut W) {
+    // events should be emitted before encode snapshot
+    assert!(doc.drop_pending_events().is_empty());
+    let old_state_frontiers = doc.state_frontiers();
+    let was_detached = doc.is_detached();
     let mut state = doc.app_state().try_lock().unwrap();
     let oplog = doc.oplog().try_lock().unwrap();
     let is_gc = state.store.gc_store().is_some();
     if is_gc {
+        // TODO: PERF: this can be optimized by reusing the bytes of gc store
         let f = oplog.trimmed_frontiers().clone();
         drop(oplog);
         drop(state);
@@ -170,11 +173,7 @@ pub(crate) fn encode_snapshot<W: std::io::Write>(doc: &LoroDoc, w: &mut W) {
         return;
     }
     assert!(!state.is_in_txn());
-    assert_eq!(oplog.frontiers(), &state.frontiers);
-
     let oplog_bytes = oplog.encode_change_store();
-    state.ensure_all_alive_containers();
-
     if oplog.is_trimmed() {
         assert_eq!(
             oplog.trimmed_frontiers(),
@@ -182,6 +181,15 @@ pub(crate) fn encode_snapshot<W: std::io::Write>(doc: &LoroDoc, w: &mut W) {
         );
     }
 
+    if was_detached {
+        let latest = oplog.frontiers().clone();
+        drop(oplog);
+        drop(state);
+        doc.checkout_without_emitting(&latest).unwrap();
+        state = doc.app_state().try_lock().unwrap();
+    }
+
+    state.ensure_all_alive_containers();
     let state_bytes = state.store.encode();
     _encode_snapshot(
         Snapshot {
@@ -191,6 +199,59 @@ pub(crate) fn encode_snapshot<W: std::io::Write>(doc: &LoroDoc, w: &mut W) {
         },
         w,
     );
+
+    if was_detached {
+        drop(state);
+        doc.checkout_without_emitting(&old_state_frontiers).unwrap();
+        doc.drop_pending_events();
+    }
+}
+
+pub(crate) fn encode_snapshot_at<W: std::io::Write>(
+    doc: &LoroDoc,
+    frontiers: &Frontiers,
+    w: &mut W,
+) -> Result<(), LoroEncodeError> {
+    let version_before_start = doc.oplog_frontiers();
+    doc.checkout_without_emitting(frontiers).unwrap();
+    {
+        let mut state = doc.app_state().try_lock().unwrap();
+        let oplog = doc.oplog().try_lock().unwrap();
+        let is_gc = state.store.gc_store().is_some();
+        if is_gc {
+            unimplemented!()
+        }
+
+        assert!(!state.is_in_txn());
+        let Some(oplog_bytes) = oplog.fork_changes_up_to(frontiers) else {
+            return Err(LoroEncodeError::FrontiersNotFound(format!(
+                "frontiers: {:?} when export in SnapshotAt mode",
+                frontiers
+            )));
+        };
+
+        if oplog.is_trimmed() {
+            assert_eq!(
+                oplog.trimmed_frontiers(),
+                state.store.trimmed_frontiers().unwrap()
+            );
+        }
+
+        state.ensure_all_alive_containers();
+        let state_bytes = state.store.encode();
+        _encode_snapshot(
+            Snapshot {
+                oplog_bytes,
+                state_bytes: Some(state_bytes),
+                gc_bytes: Bytes::new(),
+            },
+            w,
+        );
+    }
+    doc.checkout_without_emitting(&version_before_start)
+        .unwrap();
+    doc.drop_pending_events();
+    Ok(())
 }
 
 pub(crate) fn decode_oplog(oplog: &mut OpLog, bytes: &[u8]) -> Result<(), LoroError> {

@@ -275,7 +275,7 @@ where
         callback: Callback,
     ) -> (Subscription, impl FnOnce()) {
         let active = Arc::new(AtomicBool::new(false));
-        let mut lock = self.0.lock().unwrap();
+        let mut lock = self.0.try_lock().unwrap();
         let subscriber_id = post_inc(&mut lock.next_subscriber_id);
         lock.subscribers
             .entry(emitter_key.clone())
@@ -292,7 +292,7 @@ where
 
         let subscription = Subscription {
             unsubscribe: Some(Box::new(move || {
-                let mut lock = this.lock().unwrap();
+                let mut lock = this.try_lock().unwrap();
                 let Some(subscribers) = lock.subscribers.get_mut(&emitter_key) else {
                     // remove was called with this emitter_key
                     return;
@@ -317,7 +317,7 @@ where
     }
 
     pub fn remove(&self, emitter: &EmitterKey) -> impl IntoIterator<Item = Callback> {
-        let mut lock = self.0.lock().unwrap();
+        let mut lock = self.0.try_lock().unwrap();
         let subscribers = lock.subscribers.remove(emitter);
         subscribers
             .unwrap_or_default()
@@ -335,13 +335,10 @@ where
 
     /// Call the given callback for each subscriber to the given emitter.
     /// If the callback returns false, the subscriber is removed.
-    pub fn retain<F>(&self, emitter: &EmitterKey, mut f: F)
-    where
-        F: FnMut(&mut Callback) -> bool,
-    {
+    pub fn retain(&self, emitter: &EmitterKey, f: &mut dyn FnMut(&mut Callback) -> bool) {
         let Some(mut subscribers) = self
             .0
-            .lock()
+            .try_lock()
             .unwrap()
             .subscribers
             .get_mut(emitter)
@@ -357,7 +354,7 @@ where
                 true
             }
         });
-        let mut lock = self.0.lock().unwrap();
+        let mut lock = self.0.try_lock().unwrap();
 
         // Add any new subscribers that were added while invoking the callback.
         if let Some(Some(new_subscribers)) = lock.subscribers.remove(emitter) {
@@ -377,7 +374,7 @@ where
 
     pub fn is_empty(&self) -> bool {
         self.0
-            .lock()
+            .try_lock()
             .unwrap()
             .subscribers
             .iter()
@@ -411,10 +408,15 @@ impl Subscription {
     }
 
     /// Detaches the subscription from this handle. The callback will
-    /// continue to be invoked until the views or models it has been
-    /// subscribed to are dropped
+    /// continue to be invoked until the doc has been subscribed to
+    /// are dropped
     pub fn detach(mut self) {
         self.unsubscribe.take();
+    }
+
+    #[inline]
+    pub fn unsubscribe(self) {
+        drop(self)
     }
 }
 

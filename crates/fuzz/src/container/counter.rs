@@ -37,7 +37,7 @@ impl CounterActor {
             Arc::new(move |event| {
                 let s = debug_span!("Counter event", peer = peer_id);
                 let _g = s.enter();
-                let mut counter = counter.lock().unwrap();
+                let mut counter = counter.try_lock().unwrap();
                 counter.apply_diff(event);
             }),
         );
@@ -61,7 +61,7 @@ impl ActorTrait for CounterActor {
         let loro = &self.loro;
         let counter = loro.get_counter("counter");
         let result = counter.get_value();
-        let tracker = self.tracker.lock().unwrap().to_value();
+        let tracker = self.tracker.try_lock().unwrap().to_value();
         assert_eq!(
             result,
             tracker

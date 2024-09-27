@@ -20,16 +20,16 @@ use loro_internal::{
     json::JsonSchema,
     loro::{CommitOptions, ExportMode},
     loro_common::{check_root_container_name, IdSpan},
-    obs::SubID,
+    subscription::SubID,
     undo::{UndoItemMeta, UndoOrRedo},
     version::Frontiers,
     ContainerType, DiffEvent, FxHashMap, HandlerTrait, LoroDoc as LoroDocInner, LoroValue,
-    MovableListHandler, TreeParentId, UndoManager as InnerUndoManager,
+    MovableListHandler, TreeNodeWithChildren, TreeParentId, UndoManager as InnerUndoManager,
     VersionVector as InternalVersionVector,
 };
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
-use std::{cell::RefCell, cmp::Ordering, rc::Rc, sync::Arc};
+use std::{cell::RefCell, cmp::Ordering, option, rc::Rc, sync::Arc};
 use wasm_bindgen::{__rt::IntoJsResult, prelude::*, throw_val};
 use wasm_bindgen_derive::TryFromJsValue;
 
@@ -102,6 +102,8 @@ extern "C" {
     pub type JsTreeID;
     #[wasm_bindgen(typescript_type = "TreeID | undefined")]
     pub type JsParentTreeID;
+    #[wasm_bindgen(typescript_type = "{ withDeleted: boolean }")]
+    pub type JsGetNodesProp;
     #[wasm_bindgen(typescript_type = "LoroTreeNode | undefined")]
     pub type JsTreeNodeOrUndefined;
     #[wasm_bindgen(typescript_type = "string | undefined")]
@@ -172,6 +174,8 @@ extern "C" {
     pub type JsJsonSchemaOrString;
     #[wasm_bindgen(typescript_type = "ExportMode")]
     pub type JsExportMode;
+    #[wasm_bindgen(typescript_type = "{ origin?: string, timestamp?: number, message?: string }")]
+    pub type JsCommitOption;
 }
 
 mod observer {
@@ -299,6 +303,7 @@ struct ChangeMeta {
     counter: Counter,
     deps: Vec<StringID>,
     timestamp: f64,
+    message: Option<Arc<str>>,
 }
 
 impl ChangeMeta {
@@ -318,6 +323,36 @@ impl LoroDoc {
         let doc = LoroDocInner::new();
         doc.start_auto_commit();
         Self(Arc::new(doc))
+    }
+
+    /// Enables editing in detached mode, which is disabled by default.
+    ///
+    /// The doc enter detached mode after calling `detach` or checking out a non-latest version.
+    ///
+    /// # Important Notes:
+    ///
+    /// - This mode uses a different PeerID for each checkout.
+    /// - Ensure no concurrent operations share the same PeerID if set manually.
+    /// - Importing does not affect the document's state or version; changes are
+    ///   recorded in the [OpLog] only. Call `checkout` to apply changes.
+    #[wasm_bindgen(js_name = "setDetachedEditing")]
+    pub fn set_detached_editing(&self, enable: bool) {
+        self.0.set_detached_editing(enable);
+    }
+
+    /// Whether the editing is enabled in detached mode.
+    ///
+    /// The doc enter detached mode after calling `detach` or checking out a non-latest version.
+    ///
+    /// # Important Notes:
+    ///
+    /// - This mode uses a different PeerID for each checkout.
+    /// - Ensure no concurrent operations share the same PeerID if set manually.
+    /// - Importing does not affect the document's state or version; changes are
+    ///   recorded in the [OpLog] only. Call `checkout` to apply changes.
+    #[wasm_bindgen(js_name = "isDetachedEditingEnabled")]
+    pub fn is_detached_editing_enabled(&self) -> bool {
+        self.0.is_detached_editing_enabled()
     }
 
     /// Set whether to record the timestamp of each change. Default is `false`.
@@ -589,23 +624,57 @@ impl LoroDoc {
 
     /// Commit the cumulative auto committed transaction.
     ///
-    /// You can specify the `origin` and `timestamp` of the commit.
+    /// You can specify the `origin`, `timestamp`, and `message` of the commit.
+    ///
+    /// The `origin` is used to mark the event, and the `message` works like a git commit message.
     ///
     /// The events will be emitted after a transaction is committed. A transaction is committed when:
     ///
     /// - `doc.commit()` is called.
-    /// - `doc.exportFrom(version)` is called.
+    /// - `doc.export(mode)` is called.
     /// - `doc.import(data)` is called.
     /// - `doc.checkout(version)` is called.
     ///
     /// NOTE: Timestamps are forced to be in ascending order.
     /// If you commit a new change with a timestamp that is less than the existing one,
     /// the largest existing timestamp will be used instead.
-    pub fn commit(&self, origin: Option<String>, timestamp: Option<f64>) {
-        let mut options = CommitOptions::default();
-        options.set_origin(origin.as_deref());
-        options.set_timestamp(timestamp.map(|x| x as i64));
-        self.0.commit_with(options);
+    ///
+    /// NOTE: The `origin` will not be persisted, but the `message` will.
+    pub fn commit(&self, options: Option<JsCommitOption>) -> JsResult<()> {
+        if let Some(options) = options {
+            if !options.is_object() {
+                return Err(JsValue::from_str("Commit options must be an object"));
+            }
+            let origin: Option<String> = Reflect::get(&options, &JsValue::from_str("origin"))
+                .ok()
+                .and_then(|x| x.as_string());
+            let timestamp: Option<f64> = Reflect::get(&options, &JsValue::from_str("timestamp"))
+                .ok()
+                .and_then(|x| x.as_f64());
+            let message: Option<String> = Reflect::get(&options, &JsValue::from_str("message"))
+                .ok()
+                .and_then(|x| x.as_string());
+
+            let mut options = CommitOptions::default();
+            options.set_origin(origin.as_deref());
+            options.set_timestamp(timestamp.map(|x| x as i64));
+            if let Some(msg) = message {
+                options = options.commit_msg(&msg);
+            }
+            self.0.commit_with(options);
+        } else {
+            self.0.commit_with(CommitOptions::default());
+        }
+        Ok(())
+    }
+
+    /// Get the number of operations in the pending transaction.
+    ///
+    /// The pending transaction is the one that is not committed yet. It will be committed
+    /// automatically after calling `doc.commit()`, `doc.export(mode)` or `doc.checkout(version)`.
+    #[wasm_bindgen(js_name = "getPendingTxnLength")]
+    pub fn get_pending_txn_len(&self) -> usize {
+        self.0.get_pending_txn_len()
     }
 
     /// Get a LoroText by container id.
@@ -1207,7 +1276,7 @@ impl LoroDoc {
     #[wasm_bindgen(js_name = "debugHistory")]
     pub fn debug_history(&self) {
         let borrow_mut = &self.0;
-        let oplog = borrow_mut.oplog().lock().unwrap();
+        let oplog = borrow_mut.oplog().try_lock().unwrap();
         console_log!("{:#?}", oplog.diagnose_size());
     }
 
@@ -1232,7 +1301,7 @@ impl LoroDoc {
     #[wasm_bindgen(js_name = "getAllChanges")]
     pub fn get_all_changes(&self) -> JsChanges {
         let borrow_mut = &self.0;
-        let oplog = borrow_mut.oplog().lock().unwrap();
+        let oplog = borrow_mut.oplog().try_lock().unwrap();
         let mut changes: FxHashMap<PeerID, Vec<ChangeMeta>> = FxHashMap::default();
         oplog.change_store().visit_all_changes(&mut |c| {
             let change_meta = ChangeMeta {
@@ -1249,6 +1318,7 @@ impl LoroDoc {
                     })
                     .collect(),
                 timestamp: c.timestamp() as f64,
+                message: c.message().cloned(),
             };
             changes.entry(c.peer()).or_default().push(change_meta);
         });
@@ -1271,7 +1341,7 @@ impl LoroDoc {
     pub fn get_change_at(&self, id: JsID) -> JsResult<JsChange> {
         let id = js_id_to_id(id)?;
         let borrow_mut = &self.0;
-        let oplog = borrow_mut.oplog().lock().unwrap();
+        let oplog = borrow_mut.oplog().try_lock().unwrap();
         let change = oplog
             .get_change_at(id)
             .ok_or_else(|| JsError::new(&format!("Change {:?} not found", id)))?;
@@ -1289,6 +1359,7 @@ impl LoroDoc {
                 })
                 .collect(),
             timestamp: change.timestamp() as f64,
+            message: change.message().cloned(),
         };
         Ok(change.to_js().into())
     }
@@ -1301,7 +1372,7 @@ impl LoroDoc {
         lamport: u32,
     ) -> JsResult<JsChangeOrUndefined> {
         let borrow_mut = &self.0;
-        let oplog = borrow_mut.oplog().lock().unwrap();
+        let oplog = borrow_mut.oplog().try_lock().unwrap();
         let Some(change) =
             oplog.get_change_with_lamport_lte(peer_id.parse().unwrap_throw(), lamport)
         else {
@@ -1322,6 +1393,7 @@ impl LoroDoc {
                 })
                 .collect(),
             timestamp: change.timestamp() as f64,
+            message: change.message().cloned(),
         };
         Ok(change.to_js().into())
     }
@@ -1331,7 +1403,7 @@ impl LoroDoc {
     pub fn get_ops_in_change(&self, id: JsID) -> JsResult<Vec<JsValue>> {
         let id = js_id_to_id(id)?;
         let borrow_mut = &self.0;
-        let oplog = borrow_mut.oplog().lock().unwrap();
+        let oplog = borrow_mut.oplog().try_lock().unwrap();
         let change = oplog
             .get_remote_change_at(id)
             .ok_or_else(|| JsError::new(&format!("Change {:?} not found", id)))?;
@@ -1381,7 +1453,7 @@ impl LoroDoc {
     /// ```
     #[wasm_bindgen(js_name = "vvToFrontiers")]
     pub fn vv_to_frontiers(&self, vv: &VersionVector) -> JsResult<JsIDs> {
-        let f = self.0.oplog().lock().unwrap().dag().vv_to_frontiers(&vv.0);
+        let f = self.0.oplog().try_lock().unwrap().dag().vv_to_frontiers(&vv.0);
         Ok(frontiers_to_ids(&f))
     }
 
@@ -2343,6 +2415,12 @@ impl LoroMap {
         };
         handler_to_js_value(Handler::Map(h), self.doc.clone()).into()
     }
+
+    /// Delete all key-value pairs in the map.
+    pub fn clear(&self) -> JsResult<()> {
+        self.handler.clear()?;
+        Ok(())
+    }
 }
 
 impl Default for LoroMap {
@@ -2670,6 +2748,12 @@ impl LoroList {
         } else {
             Ok(None)
         }
+    }
+
+    /// Delete all elements in the list.
+    pub fn clear(&self) -> JsResult<()> {
+        self.handler.clear()?;
+        Ok(())
     }
 }
 
@@ -3042,6 +3126,12 @@ impl LoroMovableList {
             let v: JsValue = v.into();
             v.into()
         }))
+    }
+
+    /// Delete all elements in the list.
+    pub fn clear(&self) -> JsResult<()> {
+        self.handler.clear()?;
+        Ok(())
     }
 }
 
@@ -3433,33 +3523,56 @@ impl LoroTree {
         Ok(ans)
     }
 
-    /// Get the flat array of the forest.
+    /// Get the hierarchy array of the forest.
     ///
     /// Note: the metadata will be not resolved. So if you don't only care about hierarchy
     /// but also the metadata, you should use `toJson()`.
     ///
     // TODO: perf
     #[wasm_bindgen(js_name = "toArray", skip_typescript)]
-    pub fn to_array(&mut self) -> JsResult<Array> {
-        let value = self.handler.get_value().into_list().unwrap();
+    pub fn to_array(&self) -> JsResult<Array> {
+        let value = self
+            .handler
+            .get_all_hierarchy_nodes_under(TreeParentId::Root);
+        self.get_node_with_children(value)
+    }
+
+    /// Get the flat array of the forest. If `with_deleted` is true, the deleted nodes will be included.
+    #[wasm_bindgen(js_name = "getNodes", skip_typescript)]
+    pub fn get_nodes(&self, options: JsGetNodesProp) -> JsResult<Array> {
+        let with_deleted = if options.is_undefined() {
+            false
+        } else {
+            Reflect::get(&options.into(), &JsValue::from_str("withDeleted"))?
+                .as_bool()
+                .unwrap_or(false)
+        };
+        let nodes = Array::new();
+        for v in self.handler.get_nodes_under(TreeParentId::Root) {
+            let node = LoroTreeNode::from_tree(v.id, self.handler.clone(), self.doc.clone());
+            nodes.push(&node.into());
+        }
+        if with_deleted {
+            for v in self.handler.get_nodes_under(TreeParentId::Deleted) {
+                let node = LoroTreeNode::from_tree(v.id, self.handler.clone(), self.doc.clone());
+                nodes.push(&node.into());
+            }
+        }
+        Ok(nodes)
+    }
+
+    fn get_node_with_children(&self, value: Vec<TreeNodeWithChildren>) -> JsResult<Array> {
         let ans = Array::new();
-        for v in value.as_ref() {
-            let v = v.as_map().unwrap();
-            let id: JsValue = TreeID::try_from(v["id"].as_string().unwrap().as_str())
-                .unwrap()
-                .into();
+        for v in value {
+            let id: JsValue = v.id.into();
             let id: JsTreeID = id.into();
-            let parent = if let LoroValue::String(p) = &v["parent"] {
-                Some(TreeID::try_from(p.as_str())?)
-            } else {
-                None
-            };
+            let parent = v.parent.tree_id();
             let parent: JsParentTreeID = parent
                 .map(|x| LoroTreeNode::from_tree(x, self.handler.clone(), self.doc.clone()).into())
                 .unwrap_or(JsValue::undefined())
                 .into();
-            let index = *v["index"].as_i64().unwrap() as u32;
-            let position = v["fractional_index"].as_string().unwrap();
+            let index = v.index;
+            let position = v.fractional_index.to_string();
             let map: LoroMap = self.get_node_by_id(&id).unwrap().data()?;
             let obj = Object::new();
             js_sys::Reflect::set(&obj, &"id".into(), &id)?;
@@ -3468,15 +3581,17 @@ impl LoroTree {
             js_sys::Reflect::set(
                 &obj,
                 &"fractional_index".into(),
-                &JsValue::from_str(position),
+                &JsValue::from_str(&position),
             )?;
             js_sys::Reflect::set(&obj, &"meta".into(), &map.into())?;
+            let children = self.get_node_with_children(v.children)?;
+            js_sys::Reflect::set(&obj, &"children".into(), &children)?;
             ans.push(&obj);
         }
         Ok(ans)
     }
 
-    /// Get the flat array with metadata of the forest.
+    /// Get the hierarchy array with metadata of the forest.
     ///
     /// @example
     /// ```ts
@@ -3486,7 +3601,7 @@ impl LoroTree {
     /// const tree = doc.getTree("tree");
     /// const root = tree.createNode();
     /// root.data.set("color", "red");
-    /// // [ { id: '0@F2462C4159C4C8D1', parent: null, meta: { color: 'red' } } ]
+    /// // [ { id: '0@F2462C4159C4C8D1', parent: null, meta: { color: 'red' }, children: [] } ]
     /// console.log(tree.toJSON());
     /// ```
     #[wasm_bindgen(js_name = "toJSON")]
@@ -4398,6 +4513,7 @@ export interface Change {
      */
     timestamp: number,
     deps: OpId[],
+    message: string | undefined,
 }
 
 
@@ -4530,10 +4646,12 @@ export type TreeNodeValue = {
     index: number,
     fractionalIndex: string,
     meta: LoroMap,
+    children: TreeNodeValue[],
 }
 
 interface LoroTree{
     toArray(): TreeNodeValue[];
+    getNodes(options?: { withDeleted: boolean = false }): LoroTreeNode[];
 }
 
 interface LoroMovableList {
@@ -4719,12 +4837,4 @@ export type UnknownOp = {
     data: Uint8Array
   }
 };
-
-export function newContainerID(id: OpId, type: ContainerType): ContainerID {
-    return `cid:${id.counter}@${id.peer}:${type}`;
-}
-
-export function newRootContainerID(name: string, type: ContainerType): ContainerID {
-    return `cid:root-${name}:${type}`;
-}
 "#;

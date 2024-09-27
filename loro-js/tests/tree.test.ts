@@ -87,13 +87,29 @@ describe("loro tree", () => {
     tree2.createNode(root.id);
     tree2.createNode(root.id);
     const arr = tree2.toArray();
-    assertEquals(arr.length, 3);
+    assertEquals(arr.length, 1);
+    assertEquals(arr[0].children.length, 2)
     const keys = Object.keys(arr[0]);
     assert(keys.includes("id"));
     assert(keys.includes("parent"));
     assert(keys.includes("index"));
     assert(keys.includes("fractional_index"));
     assert(keys.includes("meta"));
+    assert(keys.includes("children"));
+  });
+
+  it("getNodes", ()=>{
+    const loro2 = new LoroDoc();
+    const tree2 = loro2.getTree("root");
+    const root = tree2.createNode();
+    const child = root.createNode();
+    const nodes = tree2.getNodes({withDeleted: false});
+    assertEquals(nodes.length, 2);
+    assertEquals(nodes.map((n)=>{return n.id}), [root.id, child.id])
+    tree2.delete(child.id);
+    const nodesWithDeleted = tree2.getNodes({withDeleted:true});
+    assertEquals(nodesWithDeleted.map((n)=>{return n.id}), [root.id, child.id]);
+    assertEquals(tree2.getNodes({withDeleted: false}).map((n)=>{return n.id}), [root.id]);
   });
 
   it("subscribe", async () => {

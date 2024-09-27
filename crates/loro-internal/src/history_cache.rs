@@ -264,7 +264,7 @@ impl ContainerHistoryCache {
                                         op: Arc::new(TreeOp::Create {
                                             target: node.id,
                                             parent: node.parent.tree_id(),
-                                            position: node.position.clone(),
+                                            position: node.fractional_index.clone(),
                                         }),
                                         effected: true,
                                     })
@@ -322,7 +322,7 @@ impl ContainerHistoryCache {
             return Vec::new();
         };
 
-        let mut binding = state.store.lock().unwrap();
+        let mut binding = state.store.try_lock().unwrap();
         let Some(text) = binding.get_mut(idx) else {
             return Vec::new();
         };
@@ -362,7 +362,7 @@ impl ContainerHistoryCache {
             return Vec::new();
         };
 
-        let mut binding = state.store.lock().unwrap();
+        let mut binding = state.store.try_lock().unwrap();
         let Some(list) = binding.get_mut(idx) else {
             return Vec::new();
         };
@@ -639,7 +639,7 @@ impl TreeOpGroup {
     }
 
     pub(crate) fn record_gc_state(&mut self, nodes: Vec<MoveLamportAndID>) {
-        let mut tree = self.tree_for_diff.lock().unwrap();
+        let mut tree = self.tree_for_diff.try_lock().unwrap();
         for node in nodes.iter() {
             self.ops.insert(
                 node.id.idlp(),

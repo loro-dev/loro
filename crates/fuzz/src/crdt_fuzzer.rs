@@ -579,7 +579,7 @@ where
     for i in 0..actions.len() {
         let mut new = actions.clone();
         new.remove(i);
-        candidates.lock().unwrap().push_back(new);
+        candidates.try_lock().unwrap().push_back(new);
     }
 
     println!("Minifying...");
@@ -596,7 +596,7 @@ where
         threads.push(thread::spawn(move || {
             loop {
                 let candidate = {
-                    let Some(candidate) = candidates.lock().unwrap().pop_back() else {
+                    let Some(candidate) = candidates.try_lock().unwrap().pop_back() else {
                         return;
                     };
                     candidate
@@ -616,8 +616,8 @@ where
                 })
                 .is_err()
                 {
-                    let mut candidates = candidates.lock().unwrap();
-                    let mut minified = minified.lock().unwrap();
+                    let mut candidates = candidates.try_lock().unwrap();
+                    let mut minified = minified.try_lock().unwrap();
                     for i in 0..candidate.len() {
                         let mut new = candidate.clone();
                         new.remove(i);
@@ -633,7 +633,7 @@ where
                     }
                 }
 
-                if start.elapsed().as_secs() > 10 && minified.lock().unwrap().len() <= 4 {
+                if start.elapsed().as_secs() > 10 && minified.try_lock().unwrap().len() <= 4 {
                     break;
                 }
                 if start.elapsed().as_secs() > 60 {
@@ -647,7 +647,7 @@ where
         thread.join().unwrap();
     }
 
-    let minified = normalize(site_num, &mut minified.lock().unwrap());
+    let minified = normalize(site_num, &mut minified.try_lock().unwrap());
     println!(
         "Old Length {}, New Length {}",
         actions.len(),

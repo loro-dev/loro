@@ -1,5 +1,39 @@
 # Changelog
 
+## 1.0.0-alpha.3
+
+### Patch Changes
+
+- ### 🐛 Bug Fixes
+
+  - Cursor behavior when using gc-snapshot (#472)
+  - _(wasm)_ Type err
+
+  ### ⚙️ Miscellaneous Tasks
+
+  - Make tree parent id pub on loro crate
+
+  ### Feat
+
+  - Allow editing on detached mode (#473)
+
+  ### Fix
+
+  - Get tree's alive children correctly (#474)
+  - Should not emit event when exporting gc-snapshot (#471)
+
+## 1.0.0-alpha.2
+
+### Patch Changes
+
+- ### 🚀 Features
+
+  - Fork doc at the target version (#469)
+
+  ### 🚜 Refactor
+
+  - BREAKING CHANGE: Use hierarchy value for tree value (#470)
+
 ## 1.0.0-alpha.1
 
 ### Patch Changes

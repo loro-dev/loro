@@ -11,7 +11,7 @@ use smallvec::smallvec;
 use crate::{
     container::tree::tree_op::TreeOp,
     delta::{TreeDiffItem, TreeExternalDiff},
-    state::{FractionalIndexGenResult, NodePosition, TreeParentId},
+    state::{FractionalIndexGenResult, NodePosition, TreeNode, TreeNodeWithChildren, TreeParentId},
     txn::{EventHint, Transaction},
     BasicHandler, HandlerTrait, MapHandler,
 };
@@ -239,7 +239,7 @@ impl HandlerTrait for TreeHandler {
 
     fn get_attached(&self) -> Option<Self> {
         match &self.inner {
-            MaybeDetached::Detached(d) => d.lock().unwrap().attached.clone().map(|x| Self {
+            MaybeDetached::Detached(d) => d.try_lock().unwrap().attached.clone().map(|x| Self {
                 inner: MaybeDetached::Attached(x),
             }),
             MaybeDetached::Attached(_a) => Some(self.clone()),
@@ -816,8 +816,32 @@ impl TreeHandler {
         }
     }
 
+    pub fn get_nodes_under(&self, parent: TreeParentId) -> Vec<TreeNode> {
+        match &self.inner {
+            MaybeDetached::Detached(_t) => {
+                unreachable!()
+            }
+            MaybeDetached::Attached(a) => a.with_state(|state| {
+                let a = state.as_tree_state().unwrap();
+                a.get_all_tree_nodes_under(parent)
+            }),
+        }
+    }
     pub fn roots(&self) -> Vec<TreeID> {
         self.children(&TreeParentId::Root).unwrap_or_default()
+    }
+
+    pub fn get_all_hierarchy_nodes_under(&self, parent: TreeParentId) -> Vec<TreeNodeWithChildren> {
+        match &self.inner {
+            MaybeDetached::Detached(_t) => {
+                // TODO: implement
+                unimplemented!()
+            }
+            MaybeDetached::Attached(a) => a.with_state(|state| {
+                let a = state.as_tree_state().unwrap();
+                a.get_all_hierarchy_nodes_under(parent)
+            }),
+        }
     }
 
     #[allow(non_snake_case)]

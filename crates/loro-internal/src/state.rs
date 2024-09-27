@@ -1,6 +1,5 @@
 use std::{
     borrow::Cow,
-    f32::consts::E,
     io::Write,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -52,8 +51,8 @@ pub(crate) use container_store::GcStore;
 pub(crate) use list_state::ListState;
 pub(crate) use map_state::MapState;
 pub(crate) use richtext_state::RichtextState;
-pub use tree_state::TreeParentId;
 pub(crate) use tree_state::{get_meta_value, FractionalIndexGenResult, NodePosition, TreeState};
+pub use tree_state::{TreeNode, TreeNodeWithChildren, TreeParentId};
 
 use self::{container_store::ContainerWrapper, unknown_state::UnknownState};
 
@@ -819,9 +818,9 @@ impl DocState {
             let unknown_diffs = diff_calc.calc_diff_internal(
                 oplog,
                 &Default::default(),
-                Some(&Default::default()),
+                &Default::default(),
                 vv,
-                Some(&frontiers),
+                &frontiers,
                 Some(&|idx| !idx.is_unknown() && unknown_containers.contains(&idx)),
             );
             self.apply_diff(
@@ -1028,27 +1027,29 @@ impl DocState {
         match value {
             LoroValue::Container(_) => unreachable!(),
             LoroValue::List(mut list) => {
-                // FIXME: doesn't work for tree
-                if list.iter().all(|x| !x.is_container()) {
-                    return LoroValue::Map(Arc::new(fx_map!(
-                        "cid".into() => cid_str,
-                        "value".into() => LoroValue::List(list)
-                    )));
-                }
+                if container.get_type() == ContainerType::Tree {
+                    get_meta_value(Arc::make_mut(&mut list), self);
+                } else {
+                    if list.iter().all(|x| !x.is_container()) {
+                        return LoroValue::Map(Arc::new(fx_map!(
+                            "cid".into() => cid_str,
+                            "value".into() =>  LoroValue::List(list)
+                        )));
+                    }
 
-                let list_mut = Arc::make_mut(&mut list);
-                for item in list_mut.iter_mut() {
-                    if item.is_container() {
-                        let container = item.as_container().unwrap();
-                        let container_idx = self.arena.register_container(container);
-                        let value = self.get_container_deep_value_with_id(
-                            container_idx,
-                            Some(container.clone()),
-                        );
-                        *item = value;
+                    let list_mut = Arc::make_mut(&mut list);
+                    for item in list_mut.iter_mut() {
+                        if item.is_container() {
+                            let container = item.as_container().unwrap();
+                            let container_idx = self.arena.register_container(container);
+                            let value = self.get_container_deep_value_with_id(
+                                container_idx,
+                                Some(container.clone()),
+                            );
+                            *item = value;
+                        }
                     }
                 }
-
                 LoroValue::Map(Arc::new(fx_map!(
                     "cid".into() => cid_str,
                     "value".into() => LoroValue::List(list)
@@ -1161,11 +1162,17 @@ impl DocState {
                     // the metadata of this node. When the user get the deep value,
                     // we need to add a field named `meta` to the tree node,
                     // whose value is deep value of map container.
-                    for node in list.iter() {
+                    let mut list = Arc::unwrap_or_clone(list);
+                    while let Some(node) = list.pop() {
                         let map = node.as_map().unwrap();
                         let meta = map.get("meta").unwrap();
                         let id = meta.as_container().unwrap();
                         ans.push(id.clone());
+                        let children = map.get("children").unwrap();
+                        let children = children.as_list().unwrap();
+                        for child in children.iter() {
+                            list.push(child.clone());
+                        }
                     }
                 } else {
                     for item in list.iter() {
@@ -1397,7 +1404,7 @@ impl DocState {
                 }
             };
 
-            assert_eq!(
+            pretty_assertions::assert_eq!(
                 this_value,
                 other_value,
                 "[self!=other] id: {:?}, path: {:?}",

@@ -1,6 +1,10 @@
 use std::{
     cmp::Ordering,
-    sync::{atomic::AtomicBool, Arc},
+    ops::ControlFlow,
+    sync::{
+        atomic::{AtomicBool, AtomicU64},
+        Arc,
+    },
 };
 
 use loro::{
@@ -402,7 +406,7 @@ fn tree() {
     root_meta.insert("color", "red").unwrap();
     assert_eq!(
         tree.get_value_with_meta().to_json(),
-        r#"[{"parent":null,"meta":{"color":"red"},"id":"0@1","index":0,"fractional_index":"80"},{"parent":"0@1","meta":{},"id":"1@1","index":0,"fractional_index":"80"}]"#
+        r#"[{"parent":null,"meta":{"color":"red"},"id":"0@1","index":0,"children":[{"parent":"0@1","meta":{},"id":"1@1","index":0,"children":[],"fractional_index":"80"}],"fractional_index":"80"}]"#
     )
 }
 
@@ -838,13 +842,13 @@ fn get_out_of_bound_cursor() {
 
 #[test]
 fn awareness() {
-    let mut a = Awareness::new(1, 1);
+    let mut a = Awareness::new(1, 1000);
     a.set_local_state(1);
     assert_eq!(a.get_local_state(), Some(1.into()));
     a.set_local_state(2);
     assert_eq!(a.get_local_state(), Some(2.into()));
 
-    let mut b = Awareness::new(2, 1);
+    let mut b = Awareness::new(2, 1000);
     let (updated, added) = b.apply(&a.encode_all());
     assert_eq!(updated.len(), 0);
     assert_eq!(added, vec![1]);
@@ -1226,7 +1230,7 @@ fn test_loro_export_local_updates() {
 
     let updates_clone = updates.clone();
     let subscription = doc.subscribe_local_update(Box::new(move |bytes: &[u8]| {
-        updates_clone.lock().unwrap().push(bytes.to_vec());
+        updates_clone.try_lock().unwrap().push(bytes.to_vec());
     }));
 
     // Make some changes
@@ -1237,7 +1241,7 @@ fn test_loro_export_local_updates() {
 
     // Check that updates were recorded
     {
-        let recorded_updates = updates.lock().unwrap();
+        let recorded_updates = updates.try_lock().unwrap();
         assert_eq!(recorded_updates.len(), 2);
 
         // Verify the content of the updates
@@ -1256,7 +1260,7 @@ fn test_loro_export_local_updates() {
         text.insert(11, "!").unwrap();
         doc.commit();
         // Check that no new update was recorded
-        assert_eq!(updates.lock().unwrap().len(), 2);
+        assert_eq!(updates.try_lock().unwrap().len(), 2);
     }
 }
 
@@ -1332,21 +1336,22 @@ fn test_tree_checkout_on_trimmed_doc() -> LoroResult<()> {
                     "meta":{},
                     "id": "0@0",
                     "index": 0,
+                    "children": [{
+                        "parent": "0@0",
+                        "meta":{},
+                        "id": "1@0",
+                        "index": 0,
+                        "children": [],
+                        "fractional_index": "80",
+                    },{
+                        "parent": "0@0",
+                        "meta":{},
+                        "id": "3@0",
+                        "index": 1,
+                        "children": [],
+                        "fractional_index": "8180",
+                    },],
                     "fractional_index": "80",
-                },
-                {
-                    "parent": "0@0",
-                    "meta":{},
-                    "id": "1@0",
-                    "index": 0,
-                    "fractional_index": "80",
-                },
-                {
-                    "parent": "0@0",
-                    "meta":{},
-                    "id": "3@0",
-                    "index": 1,
-                    "fractional_index": "8180",
                 },
             ]
         })
@@ -1361,15 +1366,17 @@ fn test_tree_checkout_on_trimmed_doc() -> LoroResult<()> {
                     "meta":{},
                     "id": "0@0",
                     "index": 0,
+                    "children":[{
+                        "parent": "0@0",
+                        "meta":{},
+                        "id": "1@0",
+                        "index": 0,
+                        "children": [],
+                        "fractional_index": "80",
+                    }],
                     "fractional_index": "80",
                 },
-                {
-                    "parent": "0@0",
-                    "meta":{},
-                    "id": "1@0",
-                    "index": 0,
-                    "fractional_index": "80",
-                },
+
             ]
         })
     );
@@ -1383,6 +1390,7 @@ fn test_tree_checkout_on_trimmed_doc() -> LoroResult<()> {
                     "meta":{},
                     "id": "0@0",
                     "index": 0,
+                    "children": [],
                     "fractional_index": "80",
                 },
                 {
@@ -1390,6 +1398,7 @@ fn test_tree_checkout_on_trimmed_doc() -> LoroResult<()> {
                     "meta":{},
                     "id": "1@0",
                     "index": 1,
+                    "children": [],
                     "fractional_index": "8180",
                 },
             ]
@@ -1405,22 +1414,27 @@ fn test_tree_checkout_on_trimmed_doc() -> LoroResult<()> {
                     "meta":{},
                     "id": "0@0",
                     "index": 0,
+                    "children": [
+                        {
+                            "parent": "0@0",
+                            "meta":{},
+                            "id": "1@0",
+                            "index": 0,
+                            "children": [],
+                            "fractional_index": "80",
+                        },
+                        {
+                            "parent": "0@0",
+                            "meta":{},
+                            "id": "3@0",
+                            "index": 1,
+                            "children": [],
+                            "fractional_index": "8180",
+                        },
+                    ],
                     "fractional_index": "80",
                 },
-                {
-                    "parent": "0@0",
-                    "meta":{},
-                    "id": "1@0",
-                    "index": 0,
-                    "fractional_index": "80",
-                },
-                {
-                    "parent": "0@0",
-                    "meta":{},
-                    "id": "3@0",
-                    "index": 1,
-                    "fractional_index": "8180",
-                },
+
             ]
         })
     );
@@ -1473,22 +1487,25 @@ fn test_tree_with_other_ops_checkout_on_trimmed_doc() -> LoroResult<()> {
                     "meta":{},
                     "id": "0@0",
                     "index": 0,
+                    "children": [{
+                        "parent": "0@0",
+                        "meta":{},
+                        "id": "1@0",
+                        "index": 0,
+                        "children": [],
+                        "fractional_index": "80",
+                    },
+                    {
+                        "parent": "0@0",
+                        "meta":{},
+                        "id": "3@0",
+                        "index": 1,
+                        "children": [],
+                        "fractional_index": "8180",
+                    },],
                     "fractional_index": "80",
                 },
-                {
-                    "parent": "0@0",
-                    "meta":{},
-                    "id": "1@0",
-                    "index": 0,
-                    "fractional_index": "80",
-                },
-                {
-                    "parent": "0@0",
-                    "meta":{},
-                    "id": "3@0",
-                    "index": 1,
-                    "fractional_index": "8180",
-                },
+
             ]
             }
         )
@@ -1661,4 +1678,207 @@ fn checkout_should_reset_container_deleted_cache() {
     assert!(text.is_deleted());
     doc.checkout(&f).unwrap();
     assert!(!text.is_deleted());
+}
+
+#[test]
+fn test_fork_at_target_frontiers() {
+    let doc = LoroDoc::new();
+    let list = doc.get_movable_list("list");
+    let _text = list.push_container(LoroText::new()).unwrap();
+    doc.commit();
+    let f = doc.state_frontiers();
+    list.set(0, 1).unwrap();
+    doc.commit();
+    let snapshot = doc.export(loro::ExportMode::snapshot_at(&f));
+    let new_doc = LoroDoc::new();
+    new_doc.import(&snapshot).unwrap();
+    assert_eq!(new_doc.state_frontiers(), f);
+    assert_eq!(
+        new_doc.get_deep_value().to_json_value(),
+        json!({
+            "list": [""]
+        })
+    );
+    new_doc
+        .import(&doc.export(loro::ExportMode::all_updates()))
+        .unwrap();
+    assert_eq!(
+        new_doc.get_deep_value().to_json_value(),
+        json!({
+            "list": [1]
+        })
+    );
+}
+
+#[test]
+fn change_peer_id() {
+    use std::sync::atomic::Ordering;
+    let doc = LoroDoc::new();
+    let received_peer_id = Arc::new(AtomicU64::new(0));
+    let received_peer_id_clone = received_peer_id.clone();
+    let sub = doc.subscribe_peer_id_change(Box::new(move |peer_id, counter| {
+        received_peer_id_clone.store(peer_id, Ordering::SeqCst);
+    }));
+
+    doc.set_peer_id(1).unwrap();
+    assert_eq!(received_peer_id.load(Ordering::SeqCst), 1);
+    doc.set_peer_id(2).unwrap();
+    assert_eq!(received_peer_id.load(Ordering::SeqCst), 2);
+    doc.set_peer_id(3).unwrap();
+    assert_eq!(received_peer_id.load(Ordering::SeqCst), 3);
+    sub.unsubscribe();
+    doc.set_peer_id(4).unwrap();
+    assert_eq!(received_peer_id.load(Ordering::SeqCst), 3);
+}
+
+#[test]
+fn test_encode_snapshot_when_checkout() {
+    let doc = LoroDoc::new();
+    doc.get_text("text").insert(0, "Hello").unwrap();
+    doc.commit();
+    let f = doc.state_frontiers();
+    doc.get_text("text").insert(5, " World").unwrap();
+    doc.commit();
+    doc.checkout(&f).unwrap();
+    let snapshot = doc.export(loro::ExportMode::snapshot());
+    let new_doc = LoroDoc::new();
+    new_doc.import(&snapshot).unwrap();
+    assert_eq!(
+        new_doc.get_deep_value().to_json_value(),
+        json!({"text": "Hello World"})
+    );
+}
+
+#[test]
+fn travel_change_ancestors() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    doc.get_text("text").insert(0, "Hello").unwrap();
+    doc.commit();
+    let doc2 = doc.fork();
+    doc2.set_peer_id(2).unwrap();
+    doc2.get_text("text").insert(5, " World").unwrap();
+    doc.get_text("text").insert(5, " Alice").unwrap();
+    doc.import(&doc2.export(loro::ExportMode::all_updates()))
+        .unwrap();
+    doc2.import(&doc.export(loro::ExportMode::all_updates()))
+        .unwrap();
+
+    doc.get_text("text").insert(0, "Y").unwrap();
+    doc2.get_text("text").insert(0, "N").unwrap();
+    doc.commit();
+    doc2.commit();
+    doc.import(&doc2.export(loro::ExportMode::all_updates()))
+        .unwrap();
+    doc.get_text("text").insert(0, "X").unwrap();
+    doc.commit();
+    let f = doc.state_frontiers();
+    assert_eq!(f.len(), 1);
+    let mut changes = vec![];
+    doc.travel_change_ancestors(f[0], &mut |meta| {
+        changes.push(meta.clone());
+        ControlFlow::Continue(())
+    });
+
+    let dbg_str = format!("{:#?}", changes);
+    assert_eq!(
+        dbg_str,
+        r#"[
+    ChangeMeta {
+        lamport: 12,
+        id: 12@1,
+        timestamp: 0,
+        message: None,
+        deps: Frontiers(
+            [
+                11@1,
+                6@2,
+            ],
+        ),
+        len: 1,
+    },
+    ChangeMeta {
+        lamport: 11,
+        id: 6@2,
+        timestamp: 0,
+        message: None,
+        deps: Frontiers(
+            [
+                5@2,
+                10@1,
+            ],
+        ),
+        len: 1,
+    },
+    ChangeMeta {
+        lamport: 11,
+        id: 11@1,
+        timestamp: 0,
+        message: None,
+        deps: Frontiers(
+            [
+                10@1,
+                5@2,
+            ],
+        ),
+        len: 1,
+    },
+    ChangeMeta {
+        lamport: 5,
+        id: 0@2,
+        timestamp: 0,
+        message: None,
+        deps: Frontiers(
+            [
+                4@1,
+            ],
+        ),
+        len: 6,
+    },
+    ChangeMeta {
+        lamport: 0,
+        id: 0@1,
+        timestamp: 0,
+        message: None,
+        deps: Frontiers(
+            [],
+        ),
+        len: 11,
+    },
+]"#
+    );
+
+    let mut changes = vec![];
+    doc.travel_change_ancestors(ID::new(2, 4), &mut |meta| {
+        changes.push(meta.clone());
+        ControlFlow::Continue(())
+    });
+    let dbg_str = format!("{:#?}", changes);
+    assert_eq!(
+        dbg_str,
+        r#"[
+    ChangeMeta {
+        lamport: 5,
+        id: 0@2,
+        timestamp: 0,
+        message: None,
+        deps: Frontiers(
+            [
+                4@1,
+            ],
+        ),
+        len: 6,
+    },
+    ChangeMeta {
+        lamport: 0,
+        id: 0@1,
+        timestamp: 0,
+        message: None,
+        deps: Frontiers(
+            [],
+        ),
+        len: 11,
+    },
+]"#
+    );
 }

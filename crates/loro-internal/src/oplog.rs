@@ -47,9 +47,6 @@ pub struct OpLog {
     pub(crate) arena: SharedArena,
     change_store: ChangeStore,
     history_cache: Mutex<ContainerHistoryCache>,
-    /// **lamport starts from 0**
-    pub(crate) next_lamport: Lamport,
-    pub(crate) latest_timestamp: Timestamp,
     /// Pending changes that haven't been applied to the dag.
     /// A change can be imported only when all its deps are already imported.
     /// Key is the ID of the missing dep
@@ -65,8 +62,6 @@ impl std::fmt::Debug for OpLog {
         f.debug_struct("OpLog")
             .field("dag", &self.dag)
             .field("pending_changes", &self.pending_changes)
-            .field("next_lamport", &self.next_lamport)
-            .field("latest_timestamp", &self.latest_timestamp)
             .finish()
     }
 }
@@ -82,8 +77,6 @@ impl OpLog {
             dag: AppDag::new(change_store.clone()),
             change_store,
             arena,
-            next_lamport: 0,
-            latest_timestamp: Timestamp::default(),
             pending_changes: Default::default(),
             batch_importing: false,
             configure: cfg,
@@ -96,30 +89,26 @@ impl OpLog {
         configure: Configure,
         gc: Option<Arc<GcStore>>,
     ) -> Self {
-        let change_store = self
-            .change_store
-            .fork(arena.clone(), configure.merge_interval.clone());
+        let change_store = self.change_store.fork(
+            arena.clone(),
+            configure.merge_interval.clone(),
+            self.vv(),
+            self.frontiers(),
+        );
         Self {
             history_cache: Mutex::new(
                 self.history_cache
-                    .lock()
+                    .try_lock()
                     .unwrap()
                     .fork(change_store.clone(), gc),
             ),
             change_store: change_store.clone(),
             dag: self.dag.fork(change_store),
             arena,
-            next_lamport: self.next_lamport,
-            latest_timestamp: self.latest_timestamp,
             pending_changes: Default::default(),
             batch_importing: false,
             configure,
         }
-    }
-
-    #[inline]
-    pub fn latest_timestamp(&self) -> Timestamp {
-        self.latest_timestamp
     }
 
     #[inline]
@@ -163,7 +152,7 @@ impl OpLog {
     }
 
     /// This is the **only** place to update the `OpLog.changes`
-    pub(crate) fn insert_new_change(&mut self, change: Change) {
+    pub(crate) fn insert_new_change(&mut self, change: Change, from_local: bool) {
         let s = trace_span!(
             "insert_new_change",
             id = ?change.id,
@@ -171,11 +160,9 @@ impl OpLog {
             deps = ?change.deps
         );
         let _enter = s.enter();
-        self.dag.handle_new_change(&change);
-        self.next_lamport = self.next_lamport.max(change.lamport_end());
-        self.latest_timestamp = self.latest_timestamp.max(change.timestamp);
+        self.dag.handle_new_change(&change, from_local);
         self.history_cache
-            .lock()
+            .try_lock()
             .unwrap()
             .insert_by_new_change(&change, true, true);
         self.register_container_and_parent_link(&change);
@@ -187,16 +174,16 @@ impl OpLog {
     where
         F: FnOnce(&mut ContainerHistoryCache) -> R,
     {
-        let mut history_cache = self.history_cache.lock().unwrap();
+        let mut history_cache = self.history_cache.try_lock().unwrap();
         f(&mut history_cache)
     }
 
     pub fn has_history_cache(&self) -> bool {
-        self.history_cache.lock().unwrap().has_cache()
+        self.history_cache.try_lock().unwrap().has_cache()
     }
 
     pub fn free_history_cache(&self) {
-        let mut history_cache = self.history_cache.lock().unwrap();
+        let mut history_cache = self.history_cache.try_lock().unwrap();
         history_cache.free();
     }
 
@@ -211,26 +198,7 @@ impl OpLog {
     /// - Return Err(LoroError::UsedOpID) when the change's id is occupied
     /// - Return Err(LoroError::DecodeError) when the change's deps are missing
     pub(crate) fn import_local_change(&mut self, change: Change) -> Result<(), LoroError> {
-        let Some(change) = self.trim_the_known_part_of_change(change) else {
-            return Ok(());
-        };
-        self.check_id_is_not_duplicated(change.id)?;
-        if let Err(id) = self.check_deps(&change.deps) {
-            return Err(LoroError::DecodeError(
-                format!("Missing dep {:?}", id).into_boxed_str(),
-            ));
-        }
-
-        if cfg!(debug_assertions) {
-            let lamport = self.dag.frontiers_to_next_lamport(&change.deps);
-            assert_eq!(
-                lamport, change.lamport,
-                "{:#?}\nDAG={:#?}",
-                &change, &self.dag
-            );
-        }
-
-        self.insert_new_change(change);
+        self.insert_new_change(change, true);
         Ok(())
     }
 
@@ -256,6 +224,41 @@ impl OpLog {
         let cur_end = self.dag.vv().get(&id.peer).cloned().unwrap_or(0);
         if cur_end > id.counter {
             return Err(LoroError::UsedOpID { id });
+        }
+
+        Ok(())
+    }
+
+    /// Ensure the new change is greater than the last peer's id and the counter is continuous.
+    ///
+    /// It can be false when users use detached editing mode and use a custom peer id.
+    // This method might be slow and can be optimized if needed in the future.
+    pub(crate) fn check_change_greater_than_last_peer_id(
+        &self,
+        peer: PeerID,
+        counter: Counter,
+        deps: &Frontiers,
+    ) -> Result<(), LoroError> {
+        if counter == 0 {
+            return Ok(());
+        }
+
+        if !self.configure.detached_editing() {
+            return Ok(());
+        }
+
+        let mut max_last_counter = -1;
+        for dep in deps.iter() {
+            let dep_vv = self.dag.get_vv(*dep).unwrap();
+            max_last_counter = max_last_counter.max(dep_vv.get(&peer).cloned().unwrap_or(0) - 1);
+        }
+
+        if counter != max_last_counter + 1 {
+            return Err(LoroError::ConcurrentOpsWithSamePeerID {
+                peer,
+                last_counter: max_last_counter,
+                current: counter,
+            });
         }
 
         Ok(())
@@ -392,6 +395,14 @@ impl OpLog {
         self.change_store.export_blocks_in_range(spans, w)
     }
 
+    pub(crate) fn fork_changes_up_to(&self, frontiers: &Frontiers) -> Option<Bytes> {
+        let vv = self.dag.frontiers_to_vv(frontiers)?;
+        Some(
+            self.change_store
+                .fork_changes_up_to(self.dag.trimmed_vv(), frontiers, &vv),
+        )
+    }
+
     #[inline(always)]
     pub(crate) fn decode(&mut self, data: ParsedHeaderAndBody) -> Result<(), LoroError> {
         decode_oplog(self, data)
@@ -447,7 +458,7 @@ impl OpLog {
         let from_frontiers = match from_frontiers {
             Some(f) => f,
             None => {
-                from_frontiers_inner = Some(from.to_frontiers(&self.dag));
+                from_frontiers_inner = Some(self.dag.vv_to_frontiers(from));
                 from_frontiers_inner.as_ref().unwrap()
             }
         };
@@ -455,7 +466,7 @@ impl OpLog {
         let to_frontiers = match to_frontiers {
             Some(t) => t,
             None => {
-                to_frontiers_inner = Some(to.to_frontiers(&self.dag));
+                to_frontiers_inner = Some(self.dag.vv_to_frontiers(to));
                 to_frontiers_inner.as_ref().unwrap()
             }
         };
@@ -653,6 +664,18 @@ impl OpLog {
 
     pub fn is_trimmed(&self) -> bool {
         !self.dag.trimmed_vv().is_empty()
+    }
+
+    pub fn get_greatest_timestamp(&self, frontiers: &Frontiers) -> Timestamp {
+        let mut max_timestamp = Timestamp::default();
+        for id in frontiers.iter() {
+            let change = self.get_change_at(*id).unwrap();
+            if change.timestamp > max_timestamp {
+                max_timestamp = change.timestamp;
+            }
+        }
+
+        max_timestamp
     }
 }
 

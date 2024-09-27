@@ -4,7 +4,7 @@ use std::{
 };
 
 use super::gen_action;
-use loro::{ExportMode, Frontiers, LoroDoc, ID};
+use loro::{cursor::CannotFindRelativePosition, ExportMode, Frontiers, LoroDoc, ID};
 
 #[test]
 fn test_gc() -> anyhow::Result<()> {
@@ -238,5 +238,75 @@ fn the_vv_on_gc_doc() -> anyhow::Result<()> {
     assert_eq!(new_doc.oplog_frontiers(), new_doc.state_frontiers());
     assert_eq!(new_doc.get_deep_value(), doc.get_deep_value());
 
+    Ok(())
+}
+
+#[test]
+fn no_event_when_exporting_gc_snapshot() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    gen_action(&doc, 0, 10);
+    doc.commit();
+    let _id = doc.subscribe_root(Arc::new(|_diff| {
+        panic!("should not emit event");
+    }));
+    let _snapshot = doc.export(loro::ExportMode::gc_snapshot_from_id(ID::new(1, 3)));
+    Ok(())
+}
+
+#[test]
+fn test_cursor_that_cannot_be_found_when_exporting_gc_snapshot() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    doc.get_text("text").insert(0, "Hello world")?;
+    let c = doc
+        .get_text("text")
+        .get_cursor(3, loro::cursor::Side::Left)
+        .unwrap();
+    doc.get_text("text").delete(0, 5)?;
+    doc.commit();
+    let snapshot = doc.export(loro::ExportMode::gc_snapshot(&doc.oplog_frontiers()));
+    let new_doc = LoroDoc::new();
+    new_doc.import(&snapshot)?;
+    let result = new_doc.get_cursor_pos(&c);
+    match result {
+        Ok(v) => {
+            dbg!(v);
+            unreachable!()
+        }
+        Err(CannotFindRelativePosition::HistoryCleared) => {}
+        Err(x) => {
+            dbg!(x);
+            unreachable!()
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn test_cursor_that_can_be_found_when_exporting_gc_snapshot() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    doc.get_text("text").insert(0, "Hello world")?;
+    doc.commit();
+    let c = doc
+        .get_text("text")
+        .get_cursor(3, loro::cursor::Side::Left)
+        .unwrap();
+    doc.get_text("text").delete(0, 5)?;
+    doc.commit();
+    let snapshot = doc.export(loro::ExportMode::gc_snapshot_from_id(ID::new(1, 10)));
+    let new_doc = LoroDoc::new();
+    new_doc.import(&snapshot)?;
+    let result = new_doc.get_cursor_pos(&c);
+    match result {
+        Ok(v) => {
+            assert_eq!(v.current.pos, 0);
+        }
+        Err(x) => {
+            dbg!(x);
+            unreachable!()
+        }
+    }
     Ok(())
 }

@@ -273,7 +273,7 @@ pub(crate) fn import_changes_to_oplog(
             continue;
         };
 
-        oplog.insert_new_change(change);
+        oplog.insert_new_change(change, false);
     }
 
     ImportChangesResult {
@@ -664,7 +664,7 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
     })?;
 
     if !oplog.is_empty() {
-        unimplemented!("You can only import snapshot to a empty loro doc now");
+        unreachable!("Import snapshot to a non-empty loro doc");
     }
 
     assert!(state.frontiers.is_empty());

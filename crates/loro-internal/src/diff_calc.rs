@@ -105,6 +105,14 @@ pub(crate) enum DiffMode {
     Linear,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct DiffCalcVersionInfo<'a> {
+    from_vv: &'a VersionVector,
+    to_vv: &'a VersionVector,
+    from_frontiers: &'a Frontiers,
+    to_frontiers: &'a Frontiers,
+}
+
 impl DiffCalculator {
     /// Create a new diff calculator.
     ///
@@ -130,24 +138,13 @@ impl DiffCalculator {
         self.calculators.get(&container).map(|(_, c)| c)
     }
 
-    // PERF: if the causal order is linear, we can skip some of the calculation
-    #[allow(unused)]
-    pub(crate) fn calc_diff(
-        &mut self,
-        oplog: &super::oplog::OpLog,
-        before: &crate::VersionVector,
-        after: &crate::VersionVector,
-    ) -> Vec<InternalContainerDiff> {
-        self.calc_diff_internal(oplog, before, None, after, None, None)
-    }
-
     pub(crate) fn calc_diff_internal(
         &mut self,
         oplog: &super::oplog::OpLog,
         before: &crate::VersionVector,
-        before_frontiers: Option<&Frontiers>,
+        before_frontiers: &Frontiers,
         after: &crate::VersionVector,
-        after_frontiers: Option<&Frontiers>,
+        after_frontiers: &Frontiers,
         container_filter: Option<&dyn Fn(ContainerIdx) -> bool>,
     ) -> Vec<InternalContainerDiff> {
         if before == after {
@@ -185,8 +182,12 @@ impl DiffCalculator {
             let mut merged = before.clone();
             merged.merge(after);
 
-            let (lca, mut diff_mode, iter) =
-                oplog.iter_from_lca_causally(before, before_frontiers, after, after_frontiers);
+            let (lca, mut diff_mode, iter) = oplog.iter_from_lca_causally(
+                before,
+                Some(before_frontiers),
+                after,
+                Some(after_frontiers),
+            );
 
             if let DiffCalculatorRetainMode::Persist { has_all, last_vv } = &mut self.retain_mode {
                 if before.is_empty() {
@@ -323,6 +324,12 @@ impl DiffCalculator {
                 .collect()
         };
         let mut ans = FxHashMap::default();
+        let info = DiffCalcVersionInfo {
+            from_vv: before,
+            to_vv: after,
+            from_frontiers: before_frontiers,
+            to_frontiers: after_frontiers,
+        };
         while !all.is_empty() {
             // sort by depth and lamport, ensure we iterate from top to bottom
             all.sort_by_key(|x| x.0);
@@ -343,13 +350,12 @@ impl DiffCalculator {
                 let bring_back = new_containers.remove(&id);
 
                 info_span!("CalcDiff", ?id).in_scope(|| {
-                    let (diff, diff_mode) =
-                        calc.calculate_diff(container_idx, oplog, before, after, |c| {
-                            new_containers.insert(c.clone());
-                            container_id_to_depth
-                                .insert(c.clone(), depth.and_then(|d| d.checked_add(1)));
-                            oplog.arena.register_container(c);
-                        });
+                    let (diff, diff_mode) = calc.calculate_diff(container_idx, oplog, info, |c| {
+                        new_containers.insert(c.clone());
+                        container_id_to_depth
+                            .insert(c.clone(), depth.and_then(|d| d.checked_add(1)));
+                        oplog.arena.register_container(c);
+                    });
                     calc.finish_this_round();
                     if !diff.is_empty() || bring_back {
                         ans.insert(
@@ -461,8 +467,7 @@ pub(crate) trait DiffCalculatorTrait {
         &mut self,
         idx: ContainerIdx,
         oplog: &OpLog,
-        from: &crate::VersionVector,
-        to: &crate::VersionVector,
+        info: DiffCalcVersionInfo,
         on_new_container: impl FnMut(&ContainerID),
     ) -> (InternalDiff, DiffMode);
     /// This round of diff calc is finished, we can clear the cache
@@ -544,8 +549,7 @@ impl DiffCalculatorTrait for MapDiffCalculator {
         &mut self,
         _idx: ContainerIdx,
         oplog: &super::oplog::OpLog,
-        from: &crate::VersionVector,
-        to: &crate::VersionVector,
+        DiffCalcVersionInfo { from_vv, to_vv, .. }: DiffCalcVersionInfo,
         mut on_new_container: impl FnMut(&ContainerID),
     ) -> (InternalDiff, DiffMode) {
         match self.current_mode {
@@ -554,13 +558,13 @@ impl DiffCalculatorTrait for MapDiffCalculator {
                 let mut changed = Vec::new();
                 let from_map = checkout_index.get_container_latest_op_at_vv(
                     self.container_idx,
-                    from,
+                    from_vv,
                     Lamport::MAX,
                     oplog,
                 );
                 let mut to_map = checkout_index.get_container_latest_op_at_vv(
                     self.container_idx,
-                    to,
+                    to_vv,
                     Lamport::MAX,
                     oplog,
                 );
@@ -666,14 +670,14 @@ impl DiffCalculatorTrait for ListDiffCalculator {
 
         match &op.op().content {
             crate::op::InnerContent::List(l) => match l {
-                crate::container::list::list_op::InnerListOp::Insert { slice, pos } => {
+                InnerListOp::Insert { slice, pos } => {
                     self.tracker.insert(
                         op.id_full(),
                         *pos,
                         RichtextChunk::new_text(slice.0.clone()),
                     );
                 }
-                crate::container::list::list_op::InnerListOp::Delete(del) => {
+                InnerListOp::Delete(del) => {
                     self.tracker.delete(
                         op.id_start(),
                         del.id_start,
@@ -694,12 +698,11 @@ impl DiffCalculatorTrait for ListDiffCalculator {
         &mut self,
         idx: ContainerIdx,
         oplog: &OpLog,
-        from: &crate::VersionVector,
-        to: &crate::VersionVector,
+        info: DiffCalcVersionInfo,
         mut on_new_container: impl FnMut(&ContainerID),
     ) -> (InternalDiff, DiffMode) {
         let mut delta = Delta::new();
-        for item in self.tracker.diff(from, to) {
+        for item in self.tracker.diff(info.from_vv, info.to_vv) {
             match item {
                 CrdtRopeDelta::Retain(len) => {
                     delta = delta.retain(len);
@@ -916,7 +919,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                     | InnerListOp::Set { .. } => {
                         unreachable!()
                     }
-                    crate::container::list::list_op::InnerListOp::InsertText {
+                    InnerListOp::InsertText {
                         slice: _,
                         unicode_start,
                         unicode_len: len,
@@ -931,10 +934,10 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                             (),
                         );
                     }
-                    crate::container::list::list_op::InnerListOp::Delete(del) => {
+                    InnerListOp::Delete(del) => {
                         diff.delete(del.start() as usize, del.atom_len());
                     }
-                    crate::container::list::list_op::InnerListOp::StyleStart {
+                    InnerListOp::StyleStart {
                         start,
                         end,
                         key,
@@ -958,8 +961,37 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                             (),
                         );
                     }
-                    crate::container::list::list_op::InnerListOp::StyleEnd => {
-                        let (style_op, pos) = last_style_start.take().unwrap();
+                    InnerListOp::StyleEnd => {
+                        let (style_op, pos) = match last_style_start.take() {
+                            Some((style_op, pos)) => (style_op, pos),
+                            None => {
+                                let Some(start_op) = oplog.get_op_that_includes(op.id().inc(-1))
+                                else {
+                                    panic!("Unhandled checkout case")
+                                };
+
+                                let InnerListOp::StyleStart {
+                                    key,
+                                    value,
+                                    info,
+                                    end,
+                                    ..
+                                } = start_op.content.as_list().unwrap()
+                                else {
+                                    unreachable!()
+                                };
+                                let style_op = Arc::new(StyleOp {
+                                    lamport: op.lamport() - 1,
+                                    peer: op.peer,
+                                    cnt: op.id_start().counter - 1,
+                                    key: key.clone(),
+                                    value: value.clone(),
+                                    info: *info,
+                                });
+
+                                (style_op, *end)
+                            }
+                        };
                         assert_eq!(style_op.peer, op.peer);
                         assert_eq!(style_op.cnt, op.id_start().counter - 1);
                         diff.insert_value(
@@ -986,7 +1018,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                         | InnerListOp::Set { .. } => {
                             unreachable!()
                         }
-                        crate::container::list::list_op::InnerListOp::InsertText {
+                        InnerListOp::InsertText {
                             slice: _,
                             unicode_start,
                             unicode_len: len,
@@ -998,7 +1030,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                                 RichtextChunk::new_text(*unicode_start..*unicode_start + *len),
                             );
                         }
-                        crate::container::list::list_op::InnerListOp::Delete(del) => {
+                        InnerListOp::Delete(del) => {
                             tracker.delete(
                                 op.id_start(),
                                 del.id_start,
@@ -1007,7 +1039,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                                 del.is_reversed(),
                             );
                         }
-                        crate::container::list::list_op::InnerListOp::StyleStart {
+                        InnerListOp::StyleStart {
                             start,
                             end,
                             key,
@@ -1033,7 +1065,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                                 RichtextChunk::new_style_anchor(style_id as u32, AnchorType::Start),
                             );
                         }
-                        crate::container::list::list_op::InnerListOp::StyleEnd => {
+                        InnerListOp::StyleEnd => {
                             let id = op.id();
                             if let Some(pos) = styles.iter().rev().position(|(op, _pos)| {
                                 op.peer == id.peer && op.cnt == id.counter - 1
@@ -1102,8 +1134,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
         &mut self,
         idx: ContainerIdx,
         oplog: &OpLog,
-        from: &crate::VersionVector,
-        to: &crate::VersionVector,
+        info: DiffCalcVersionInfo,
         _: impl FnMut(&ContainerID),
     ) -> (InternalDiff, DiffMode) {
         match &mut *self.mode {
@@ -1114,9 +1145,8 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
             RichtextCalcMode::Crdt {
                 tracker, styles, ..
             } => {
-                tracing::debug!("CalcDiff {:?} {:?}", from, to);
                 let mut delta = DeltaRope::new();
-                for item in tracker.diff(from, to) {
+                for item in tracker.diff(info.from_vv, info.to_vv) {
                     match item {
                         CrdtRopeDelta::Retain(len) => {
                             delta.push_retain(len, ());
@@ -1182,20 +1212,17 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                                         let lamport = rich_op.lamport();
                                         let content = op.content.as_list().unwrap();
                                         match content {
-                                        crate::container::list::list_op::InnerListOp::InsertText {
-                                            slice,
-                                            ..
-                                        } => {
-                                            delta.push_insert(
-                                                RichtextStateChunk::Text(TextChunk::new(
-                                                    slice.clone(),
-                                                    IdFull::new(id.peer, op.counter, lamport),
-                                                )),
-                                                (),
-                                            );
+                                            InnerListOp::InsertText { slice, .. } => {
+                                                delta.push_insert(
+                                                    RichtextStateChunk::Text(TextChunk::new(
+                                                        slice.clone(),
+                                                        IdFull::new(id.peer, op.counter, lamport),
+                                                    )),
+                                                    (),
+                                                );
+                                            }
+                                            _ => unreachable!("{:?}", content),
                                         }
-                                        _ => unreachable!("{:?}", content),
-                                    }
                                     }
                                 }
 
@@ -1348,14 +1375,14 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
             let real_op = op.op();
             match &real_op.content {
                 crate::op::InnerContent::List(l) => match l {
-                    crate::container::list::list_op::InnerListOp::Insert { slice, pos } => {
+                    InnerListOp::Insert { slice, pos } => {
                         this.tracker.insert(
                             op.id_full(),
                             *pos,
                             RichtextChunk::new_text(slice.0.clone()),
                         );
                     }
-                    crate::container::list::list_op::InnerListOp::Delete(del) => {
+                    InnerListOp::Delete(del) => {
                         this.tracker.delete(
                             op.id_start(),
                             del.id_start,
@@ -1424,12 +1451,11 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
         &mut self,
         idx: ContainerIdx,
         oplog: &OpLog,
-        from: &crate::VersionVector,
-        to: &crate::VersionVector,
+        info: DiffCalcVersionInfo,
         mut on_new_container: impl FnMut(&ContainerID),
     ) -> (InternalDiff, DiffMode) {
         let (InternalDiff::ListRaw(list_diff), diff_mode) =
-            self.list.calculate_diff(idx, oplog, from, to, |_| {})
+            self.list.calculate_diff(idx, oplog, info, |_| {})
         else {
             unreachable!()
         };
@@ -1500,17 +1526,19 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                     // But we don't need to calc from, because the deletion is handled by the diff from list items
 
                     // TODO: PERF: Provide the lamport of to version
-                    let Some(pos) = checkout_index.last_pos(id, to, Lamport::MAX, oplog) else {
+                    let Some(pos) = checkout_index.last_pos(id, info.to_vv, Lamport::MAX, oplog)
+                    else {
                         return false;
                     };
                     // TODO: PERF: Provide the lamport of to version
                     let value = checkout_index
-                        .last_value(id, to, Lamport::MAX, oplog)
+                        .last_value(id, info.to_vv, Lamport::MAX, oplog)
                         .unwrap();
                     // TODO: PERF: Provide the lamport of to version
-                    let old_pos = checkout_index.last_pos(id, from, Lamport::MAX, oplog);
+                    let old_pos = checkout_index.last_pos(id, info.from_vv, Lamport::MAX, oplog);
                     // TODO: PERF: Provide the lamport of to version
-                    let old_value = checkout_index.last_value(id, from, Lamport::MAX, oplog);
+                    let old_value =
+                        checkout_index.last_value(id, info.from_vv, Lamport::MAX, oplog);
                     if old_pos.is_none() && old_value.is_none() {
                         if let LoroValue::Container(c) = &value.value {
                             on_new_container(c);

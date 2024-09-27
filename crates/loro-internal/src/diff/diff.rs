@@ -28,7 +28,7 @@ fn is_not_empty_range(start: usize, end: usize) -> bool {
     start < end
 }
 
-fn common_prefix(xs: &[char], ys: &[char]) -> usize {
+fn common_prefix(xs: &[u32], ys: &[u32]) -> usize {
     let chunk_size = 4;
     let off = zip(xs.chunks_exact(chunk_size), ys.chunks_exact(chunk_size))
         .take_while(|(xs_chunk, ys_chunk)| xs_chunk == ys_chunk)
@@ -39,7 +39,7 @@ fn common_prefix(xs: &[char], ys: &[char]) -> usize {
         .count()
 }
 
-fn common_suffix_len(old: &[char], new: &[char]) -> usize {
+fn common_suffix_len(old: &[u32], new: &[u32]) -> usize {
     let chunk_size = 4;
     let old_len = old.len();
     let new_len = new.len();
@@ -60,70 +60,28 @@ fn common_suffix_len(old: &[char], new: &[char]) -> usize {
 pub(crate) trait DiffHandler {
     fn insert(&mut self, old_index: usize, new_index: usize, new_len: usize);
     fn delete(&mut self, old_index: usize, old_len: usize);
-    fn replace(&mut self, old_index: usize, old_len: usize, new_index: usize, new_len: usize);
 }
 
 #[derive(Debug)]
 pub(crate) struct OperateProxy<D: DiffHandler> {
     handler: D,
-    offset: isize,
-    del: Option<(usize, usize)>,
-    ins: Option<(usize, usize, usize)>,
 }
 
 impl<D: DiffHandler> OperateProxy<D> {
     pub fn new(handler: D) -> Self {
-        Self {
-            handler,
-            offset: 0,
-            del: None,
-            ins: None,
-        }
-    }
-
-    pub fn flush_del_ins(&mut self) {
-        if let Some((del_old_index, del_old_len)) = self.del.take() {
-            if let Some((_, ins_new_index, ins_new_len)) = self.ins.take() {
-                self.handler.replace(
-                    (del_old_index as isize + self.offset) as usize,
-                    del_old_len,
-                    ins_new_index,
-                    ins_new_len,
-                );
-                self.offset = self.offset + ins_new_len as isize - del_old_len as isize;
-            } else {
-                self.handler
-                    .delete((del_old_index as isize + self.offset) as usize, del_old_len);
-                self.offset -= del_old_len as isize
-            }
-        } else if let Some((ins_old_index, ins_new_index, ins_new_len)) = self.ins.take() {
-            self.handler.insert(
-                (ins_old_index as isize + self.offset) as usize,
-                ins_new_index,
-                ins_new_len,
-            );
-            self.offset += ins_new_len as isize
-        }
+        Self { handler }
     }
 
     pub fn delete(&mut self, old_index: usize, old_len: usize) {
-        if let Some((del_old_index, del_old_len)) = self.del.take() {
-            self.del = Some((del_old_index, del_old_len + old_len));
-        } else {
-            self.del = Some((old_index, old_len));
-        }
+        self.handler.delete(old_index, old_len);
     }
 
     pub fn insert(&mut self, old_index: usize, new_index: usize, new_len: usize) {
-        self.ins = if let Some((ins_old_index, ins_new_index, ins_new_len)) = self.ins.take() {
-            Some((ins_old_index, ins_new_index, new_len + ins_new_len))
-        } else {
-            Some((old_index, new_index, new_len))
-        };
+        self.handler.insert(old_index, new_index, new_len);
     }
 }
 
-pub(crate) fn myers_diff<D: DiffHandler>(proxy: &mut OperateProxy<D>, old: &[char], new: &[char]) {
+pub(crate) fn myers_diff<D: DiffHandler>(proxy: &mut OperateProxy<D>, old: &[u32], new: &[u32]) {
     let max_d = (old.len() + new.len() + 1) / 2 + 1;
     let mut vb = OffsetVec::new(max_d);
     let mut vf = OffsetVec::new(max_d);
@@ -138,7 +96,6 @@ pub(crate) fn myers_diff<D: DiffHandler>(proxy: &mut OperateProxy<D>, old: &[cha
         &mut vf,
         &mut vb,
     );
-    proxy.flush_del_ins();
 }
 
 struct OffsetVec(isize, Vec<usize>);
@@ -167,10 +124,10 @@ impl IndexMut<isize> for OffsetVec {
 }
 
 fn find_middle_snake(
-    old: &[char],
+    old: &[u32],
     old_start: usize,
     old_end: usize,
-    new: &[char],
+    new: &[u32],
     new_start: usize,
     new_end: usize,
     vf: &mut OffsetVec,
@@ -231,10 +188,10 @@ fn find_middle_snake(
 
 fn conquer<D: DiffHandler>(
     proxy: &mut OperateProxy<D>,
-    old: &[char],
+    old: &[u32],
     mut old_start: usize,
     mut old_end: usize,
-    new: &[char],
+    new: &[u32],
     mut new_start: usize,
     mut new_end: usize,
     vf: &mut OffsetVec,
@@ -242,7 +199,6 @@ fn conquer<D: DiffHandler>(
 ) {
     let common_prefix_len = common_prefix(&old[old_start..old_end], &new[new_start..new_end]);
     if common_prefix_len > 0 {
-        proxy.flush_del_ins();
         old_start += common_prefix_len;
         new_start += common_prefix_len;
     }
@@ -266,9 +222,5 @@ fn conquer<D: DiffHandler>(
             proxy.delete(old_start, old_end - old_start);
             proxy.insert(old_start, new_start, new_end - new_start);
         }
-    }
-
-    if common_suffix_len > 0 {
-        proxy.flush_del_ins();
     }
 }

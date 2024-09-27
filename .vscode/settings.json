@@ -54,7 +54,8 @@
   },
   "rust-analyzer.cargo.features": [
     "jsonpath",
-    "counter"
+    "counter",
+    "test_utils"
   ],
   "editor.defaultFormatter": "rust-lang.rust-analyzer",
   "rust-analyzer.server.extraEnv": {
@@ -80,7 +81,7 @@
   "cortex-debug.variableUseNaturalFormat": true,
   "[markdown]": {},
   "[typescript]": {
-    "editor.defaultFormatter": "denoland.vscode-deno"
+    "editor.defaultFormatter": "vscode.typescript-language-features"
   },
   "vitest.enable": true,
   "[shellscript]": {

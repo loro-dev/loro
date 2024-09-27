@@ -5,7 +5,7 @@ use crate::{
 };
 use bytes::Bytes;
 use inner_store::InnerStore;
-use loro_common::{LoroResult, LoroValue};
+use loro_common::{ContainerID, LoroResult, LoroValue};
 use std::sync::{atomic::AtomicU64, Arc, Mutex};
 
 pub(crate) use container_wrapper::ContainerWrapper;
@@ -188,6 +188,10 @@ impl ContainerStore {
         &mut self,
     ) -> impl Iterator<Item = (&ContainerIdx, &mut ContainerWrapper)> {
         self.store.iter_all_containers_mut()
+    }
+
+    pub fn iter_all_container_ids(&mut self) -> impl Iterator<Item = ContainerID> + '_ {
+        self.store.iter_all_container_ids()
     }
 
     pub(super) fn get_or_create_mut(&mut self, idx: ContainerIdx) -> &mut State {
@@ -559,7 +563,7 @@ mod test {
     #[test]
     fn test_container_store_exports_imports() {
         let doc = init_doc();
-        let mut s = doc.app_state().lock().unwrap();
+        let mut s = doc.app_state().try_lock().unwrap();
         let bytes = s.store.encode();
         let mut new_store = decode_container_store(bytes);
         s.store.check_eq_after_parsing(&mut new_store);

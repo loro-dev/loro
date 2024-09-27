@@ -1,9 +1,9 @@
-mod counter;
-mod list;
-mod map;
-mod movable_list;
-mod text;
-mod tree;
+pub mod counter;
+pub mod list;
+pub mod map;
+pub mod movable_list;
+pub mod text;
+pub mod tree;
 pub use counter::*;
 pub use list::*;
 use loro::{LoroError, LoroResult};

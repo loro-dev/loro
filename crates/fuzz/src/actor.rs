@@ -54,7 +54,7 @@ impl Actor {
         let cb_tracker = tracker.clone();
         loro.subscribe_root(Arc::new(move |e| {
             info_span!("[Fuzz] tracker.apply_diff", id = id).in_scope(|| {
-                let mut tracker = cb_tracker.lock().unwrap();
+                let mut tracker = cb_tracker.try_lock().unwrap();
                 tracker.apply_diff(e)
             });
         }));
@@ -160,7 +160,7 @@ impl Actor {
     pub fn check_tracker(&self) {
         let loro = &self.loro;
         info_span!("Check tracker", "peer = {}", loro.peer_id()).in_scope(|| {
-            let tracker = self.tracker.lock().unwrap();
+            let tracker = self.tracker.try_lock().unwrap();
             let loro_value = loro.get_deep_value();
             let tracker_value = tracker.to_value();
             assert_value_eq(&loro_value, &tracker_value, None);
@@ -190,7 +190,7 @@ impl Actor {
             let from = &self.loro.state_frontiers();
             let to = &f;
             let peer = self.peer;
-            tracing::info_span!("Checkout", ?from, ?to, ?peer).in_scope(|| {
+            tracing::info_span!("FuzzCheckout", ?from, ?to, ?peer).in_scope(|| {
                 match self.loro.checkout(&f) {
                     Ok(_) => {}
                     Err(LoroError::SwitchToTrimmedVersion) => {
@@ -230,11 +230,16 @@ impl Actor {
                 self.loro.check_state_correctness_slow();
                 self.loro.checkout_to_latest();
                 let new_doc = LoroDoc::new();
-                new_doc
-                    .import(&self.loro.export(loro::ExportMode::Snapshot))
-                    .unwrap();
-                new_doc.checkout(&f).unwrap();
-                new_doc.check_state_correctness_slow();
+                info_span!("FuzzCheckoutCreatingNewSnapshotDoc",).in_scope(|| {
+                    new_doc
+                        .import(&self.loro.export(loro::ExportMode::Snapshot))
+                        .unwrap();
+                    assert_eq!(new_doc.get_deep_value(), self.loro.get_deep_value());
+                });
+                info_span!("FuzzCheckoutOnNewSnapshotDoc",).in_scope(|| {
+                    new_doc.checkout(&f).unwrap();
+                    new_doc.check_state_correctness_slow();
+                });
             }
             Err(LoroError::SwitchToTrimmedVersion) => {}
             Err(e) => panic!("{}", e),
@@ -280,7 +285,7 @@ impl Actor {
     pub fn register(&mut self, target: ContainerType) {
         match target {
             ContainerType::Map => {
-                self.tracker.lock().unwrap().as_map_mut().unwrap().insert(
+                self.tracker.try_lock().unwrap().as_map_mut().unwrap().insert(
                     "map".to_string(),
                     Value::empty_container(
                         ContainerType::Map,
@@ -293,7 +298,7 @@ impl Actor {
                 );
             }
             ContainerType::List => {
-                self.tracker.lock().unwrap().as_map_mut().unwrap().insert(
+                self.tracker.try_lock().unwrap().as_map_mut().unwrap().insert(
                     "list".to_string(),
                     Value::empty_container(
                         ContainerType::List,
@@ -306,7 +311,7 @@ impl Actor {
                 );
             }
             ContainerType::MovableList => {
-                self.tracker.lock().unwrap().as_map_mut().unwrap().insert(
+                self.tracker.try_lock().unwrap().as_map_mut().unwrap().insert(
                     "movable_list".to_string(),
                     Value::empty_container(
                         ContainerType::MovableList,
@@ -319,7 +324,7 @@ impl Actor {
                 );
             }
             ContainerType::Text => {
-                self.tracker.lock().unwrap().as_map_mut().unwrap().insert(
+                self.tracker.try_lock().unwrap().as_map_mut().unwrap().insert(
                     "text".to_string(),
                     Value::empty_container(
                         ContainerType::Text,
@@ -332,7 +337,7 @@ impl Actor {
                 );
             }
             ContainerType::Tree => {
-                self.tracker.lock().unwrap().as_map_mut().unwrap().insert(
+                self.tracker.try_lock().unwrap().as_map_mut().unwrap().insert(
                     "tree".to_string(),
                     Value::empty_container(
                         ContainerType::Tree,
@@ -345,7 +350,7 @@ impl Actor {
                 );
             }
             ContainerType::Counter => {
-                self.tracker.lock().unwrap().as_map_mut().unwrap().insert(
+                self.tracker.try_lock().unwrap().as_map_mut().unwrap().insert(
                     "counter".to_string(),
                     Value::empty_container(
                         ContainerType::Counter,
@@ -479,64 +484,41 @@ struct Node {
     position: String,
 }
 
-struct FlatNode {
-    id: String,
-    parent: Option<String>,
-    meta: FxHashMap<String, LoroValue>,
-    index: usize,
-    position: String,
-}
-
-impl FlatNode {
-    fn from_loro_value(value: &LoroValue) -> Self {
-        let map = value.as_map().unwrap();
-        let id = map.get("id").unwrap().as_string().unwrap().to_string();
-        let parent = map
-            .get("parent")
-            .unwrap()
-            .as_string()
-            .map(|x| x.to_string());
-
-        let meta = map.get("meta").unwrap().as_map().unwrap().as_ref().clone();
-        let index = *map.get("index").unwrap().as_i64().unwrap() as usize;
-        let position = map
-            .get("fractional_index")
-            .unwrap()
-            .as_string()
-            .unwrap()
-            .to_string();
-        FlatNode {
-            id,
-            parent,
-            meta,
-            index,
-            position,
-        }
-    }
-}
-
 impl Node {
     fn from_loro_value(value: &[LoroValue]) -> Vec<Self> {
         let mut node_map = FxHashMap::default();
         let mut parent_child_map = FxHashMap::default();
+        for node in value.iter() {
+            let map = node.as_map().unwrap();
+            let id = map.get("id").unwrap().as_string().unwrap().to_string();
+            let parent = map
+                .get("parent")
+                .unwrap()
+                .as_string()
+                .map(|x| x.to_string());
 
-        for flat_node in value.iter() {
-            let flat_node = FlatNode::from_loro_value(flat_node);
+            let meta = map.get("meta").unwrap().as_map().unwrap().as_ref().clone();
+            let index = *map.get("index").unwrap().as_i64().unwrap() as usize;
+            let position = map
+                .get("fractional_index")
+                .unwrap()
+                .as_string()
+                .unwrap()
+                .to_string();
+            let children = map.get("children").unwrap().as_list().unwrap();
+            let children = Node::from_loro_value(children);
             let tree_node = Node {
-                // id: flat_node.id.clone(),
-                // parent: flat_node.parent.clone(),
-                children: vec![],
-                meta: flat_node.meta,
-                // index: flat_node.index,
-                position: flat_node.position,
+                children,
+                meta,
+                position,
             };
 
-            node_map.insert(flat_node.id.clone(), tree_node);
+            node_map.insert(id.clone(), tree_node);
 
             parent_child_map
-                .entry(flat_node.parent)
+                .entry(parent)
                 .or_insert_with(Vec::new)
-                .push((flat_node.index, flat_node.id));
+                .push((index, id));
         }
         let mut node_map_clone = node_map.clone();
         for (parent_id, child_ids) in parent_child_map.iter() {

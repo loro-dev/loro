@@ -106,13 +106,13 @@ impl TreeActor {
         loro.subscribe(
             &ContainerID::new_root("tree", ContainerType::Tree),
             Arc::new(move |event| {
-                // println!("\nbefore {:?}", tree.lock().unwrap().as_map().unwrap());
+                // println!("\nbefore {:?}", tree.try_lock().unwrap().as_map().unwrap());
                 // println!(
                 //     "{:?}",
                 //     event.events.iter().map(|e| &e.diff).collect::<Vec<_>>()
                 // );
-                tree.lock().unwrap().apply_diff(event);
-                // println!("after {:?}\n", tree.lock().unwrap().as_map().unwrap());
+                tree.try_lock().unwrap().apply_diff(event);
+                // println!("after {:?}\n", tree.try_lock().unwrap().as_map().unwrap());
             }),
         );
 
@@ -135,7 +135,7 @@ impl ActorTrait for TreeActor {
         let loro = &self.loro;
         let tree = loro.get_tree("tree");
         let result = tree.get_value_with_meta();
-        let tracker = self.tracker.lock().unwrap().to_value();
+        let tracker = self.tracker.try_lock().unwrap().to_value();
         assert_value_eq(
             &result,
             tracker.into_map().unwrap().get("tree").unwrap(),
@@ -421,8 +421,8 @@ impl ApplyDiff for TreeTracker {
     }
 
     fn apply_diff(&mut self, diff: Diff) {
-        trace!("current tree: {:#?}", &self.tree);
-        trace!("applying diff: {:#?}", &diff);
+        // trace!("current tree: {:#?}", &self.tree);
+        // trace!("applying diff: {:#?}", &diff);
         let diff = diff.as_tree().unwrap();
         for diff in &diff.diff {
             let target = diff.target;
@@ -488,18 +488,9 @@ impl ApplyDiff for TreeTracker {
 
     fn to_value(&self) -> LoroValue {
         let mut list: Vec<FxHashMap<_, _>> = Vec::new();
-        let mut q = VecDeque::from_iter(
-            self.tree
-                .iter()
-                .sorted_unstable_by_key(|x| &x.position)
-                .enumerate(),
-        );
-
-        while let Some((i, node)) = q.pop_front() {
+        for (i, node) in self.tree.iter().enumerate() {
             list.push(node.to_value(i));
-            q.extend(node.children.iter().enumerate());
         }
-
         list.into()
     }
 }
@@ -537,6 +528,15 @@ impl TreeNode {
         );
         map.insert("fractional_index".to_string(), self.position.clone().into());
         map.insert("index".to_string(), (index as i64).into());
+        map.insert(
+            "children".to_string(),
+            self.children
+                .iter()
+                .enumerate()
+                .map(|(i, n)| n.to_value(i))
+                .collect::<Vec<_>>()
+                .into(),
+        );
         map
     }
 }

@@ -29,6 +29,7 @@ pub enum ExportMode<'a> {
     UpdatesInRange { spans: Cow<'a, [IdSpan]> },
     GcSnapshot(Cow<'a, Frontiers>),
     StateOnly(Option<Cow<'a, Frontiers>>),
+    SnapshotAt { version: Cow<'a, Frontiers> },
 }
 
 impl<'a> ExportMode<'a> {
@@ -75,6 +76,25 @@ impl<'a> ExportMode<'a> {
 
     pub fn state_only(frontiers: Option<&'a Frontiers>) -> Self {
         ExportMode::StateOnly(frontiers.map(Cow::Borrowed))
+    }
+
+    pub fn snapshot_at(frontiers: &'a Frontiers) -> Self {
+        ExportMode::SnapshotAt {
+            version: Cow::Borrowed(frontiers),
+        }
+    }
+
+    pub fn updates_till(vv: &VersionVector) -> ExportMode<'static> {
+        let mut spans = Vec::with_capacity(vv.len());
+        for (peer, counter) in vv.iter() {
+            if *counter > 0 {
+                spans.push(IdSpan::new(*peer, 0, *counter));
+            }
+        }
+
+        ExportMode::UpdatesInRange {
+            spans: Cow::Owned(spans),
+        }
     }
 }
 
@@ -321,6 +341,12 @@ pub(crate) fn export_snapshot(doc: &LoroDoc) -> Vec<u8> {
 pub(crate) fn export_fast_snapshot(doc: &LoroDoc) -> Vec<u8> {
     encode_with(EncodeMode::FastSnapshot, &mut |ans| {
         fast_snapshot::encode_snapshot(doc, ans);
+    })
+}
+
+pub(crate) fn export_fast_snapshot_at(doc: &LoroDoc, frontiers: &Frontiers) -> Vec<u8> {
+    encode_with(EncodeMode::FastSnapshot, &mut |ans| {
+        fast_snapshot::encode_snapshot_at(doc, frontiers, ans).unwrap();
     })
 }
 
