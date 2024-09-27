@@ -32,6 +32,8 @@ mod config;
 pub use config::{Configure, StyleConfigMap};
 mod version;
 pub use version::{Frontiers, VersionVector, VersionVectorDiff};
+mod awareness;
+pub use awareness::{Awareness, AwarenessPeerUpdate, PeerInfo};
 
 // https://github.com/mozilla/uniffi-rs/issues/1372
 pub trait ValueOrContainer: Send + Sync {
