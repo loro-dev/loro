@@ -6,15 +6,15 @@ use std::{
 };
 
 use loro::{
-    cursor::CannotFindRelativePosition, DocAnalysis, Frontiers, FrontiersNotIncluded, IdSpan,
-    JsonPathError, JsonSchema, Lamport, LoroDoc as InnerLoroDoc, LoroError, LoroResult, PeerID,
-    SubID, Timestamp, ID,
+    cursor::CannotFindRelativePosition, DocAnalysis, FrontiersNotIncluded, IdSpan, JsonPathError,
+    JsonSchema, Lamport, LoroDoc as InnerLoroDoc, LoroError, LoroResult, PeerID, SubID, Timestamp,
+    ID,
 };
 
 use crate::{
     event::{DiffEvent, Subscriber},
-    AbsolutePosition, Configure, ContainerID, ContainerIdLike, Cursor, Index, LoroCounter,
-    LoroList, LoroMap, LoroMovableList, LoroText, LoroTree, LoroValue, StyleConfigMap,
+    AbsolutePosition, Configure, ContainerID, ContainerIdLike, Cursor, Frontiers, Index,
+    LoroCounter, LoroList, LoroMap, LoroMovableList, LoroText, LoroTree, LoroValue, StyleConfigMap,
     ValueOrContainer, VersionVector,
 };
 
@@ -122,7 +122,7 @@ impl LoroDoc {
     /// You should call `attach` to attach the `DocState` to the latest version of `OpLog`.
     #[inline]
     pub fn checkout(&self, frontiers: &Frontiers) -> LoroResult<()> {
-        self.doc.checkout(frontiers)
+        self.doc.checkout(&frontiers.into())
     }
 
     /// Checkout the `DocState` to the latest version.
@@ -143,7 +143,7 @@ impl LoroDoc {
     /// If `other` contains any version that's not contained in the current OpLog, return [Ordering::Less].
     #[inline]
     pub fn cmp_with_frontiers(&self, other: &Frontiers) -> Ordering {
-        self.doc.cmp_with_frontiers(other)
+        self.doc.cmp_with_frontiers(&other.into())
     }
 
     // TODO:
@@ -152,7 +152,7 @@ impl LoroDoc {
         a: &Frontiers,
         b: &Frontiers,
     ) -> Result<Option<Ordering>, FrontiersNotIncluded> {
-        self.doc.cmp_frontiers(a, b)
+        self.doc.cmp_frontiers(&a.into(), &b.into())
     }
 
     /// Force the document enter the detached mode.
@@ -293,12 +293,12 @@ impl LoroDoc {
 
     pub fn frontiers_to_vv(&self, frontiers: &Frontiers) -> Option<Arc<VersionVector>> {
         self.doc
-            .frontiers_to_vv(frontiers)
+            .frontiers_to_vv(&frontiers.into())
             .map(|v| Arc::new(v.into()))
     }
 
     pub fn vv_to_frontiers(&self, vv: &VersionVector) -> Arc<Frontiers> {
-        Arc::new(self.doc.vv_to_frontiers(&vv.into()))
+        Arc::new(self.doc.vv_to_frontiers(&vv.into()).into())
     }
 
     // TODO: with oplog
@@ -348,11 +348,11 @@ impl LoroDoc {
     }
 
     pub fn oplog_frontiers(&self) -> Arc<Frontiers> {
-        Arc::new(self.doc.oplog_frontiers())
+        Arc::new(self.doc.oplog_frontiers().into())
     }
 
     pub fn state_frontiers(&self) -> Arc<Frontiers> {
-        Arc::new(self.doc.state_frontiers())
+        Arc::new(self.doc.state_frontiers().into())
     }
 
     /// Get the PeerID
@@ -485,13 +485,15 @@ impl LoroDoc {
 
     pub fn export_gc_snapshot(&self, frontiers: &Frontiers) -> Vec<u8> {
         self.doc
-            .export(loro::ExportMode::GcSnapshot(Cow::Borrowed(frontiers)))
+            .export(loro::ExportMode::GcSnapshot(Cow::Owned(frontiers.into())))
     }
 
     pub fn export_state_only(&self, frontiers: Option<Arc<Frontiers>>) -> Vec<u8> {
-        self.doc.export(loro::ExportMode::StateOnly(
-            frontiers.map(|x| Cow::Owned(Arc::try_unwrap(x).unwrap())),
-        ))
+        self.doc
+            .export(loro::ExportMode::StateOnly(frontiers.map(|x| {
+                let a = Arc::try_unwrap(x).unwrap();
+                Cow::Owned(loro::Frontiers::from(a))
+            })))
     }
 
     // TODO: impl
@@ -589,7 +591,7 @@ impl From<loro::ChangeMeta> for ChangeMeta {
             id: value.id,
             timestamp: value.timestamp,
             message: value.message.map(|x| (*x).to_string()),
-            deps: Arc::new(value.deps),
+            deps: Arc::new(value.deps.into()),
             len: value.len as u32,
         }
     }
@@ -621,7 +623,7 @@ impl From<loro::ImportBlobMetadata> for ImportBlobMetadata {
             partial_start_vv: Arc::new(value.partial_start_vv.into()),
             partial_end_vv: Arc::new(value.partial_end_vv.into()),
             start_timestamp: value.start_timestamp,
-            start_frontiers: Arc::new(value.start_frontiers),
+            start_frontiers: Arc::new(value.start_frontiers.into()),
             end_timestamp: value.end_timestamp,
             change_num: value.change_num,
             is_snapshot: value.is_snapshot,
@@ -723,10 +725,10 @@ impl From<ExportMode> for loro::ExportMode<'_> {
                 spans: Cow::Owned(spans),
             },
             ExportMode::GcSnapshot { frontiers } => {
-                loro::ExportMode::GcSnapshot(Cow::Owned(frontiers))
+                loro::ExportMode::GcSnapshot(Cow::Owned(frontiers.into()))
             }
             ExportMode::StateOnly { frontiers } => {
-                loro::ExportMode::StateOnly(frontiers.map(|x| Cow::Owned(x)))
+                loro::ExportMode::StateOnly(frontiers.map(|x| Cow::Owned(x.into())))
             }
         }
     }

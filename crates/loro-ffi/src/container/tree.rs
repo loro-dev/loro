@@ -75,6 +75,10 @@ impl LoroTree {
         self.tree.create_at(parent, index as usize)
     }
 
+    pub fn roots(&self) -> Vec<TreeID> {
+        self.tree.roots()
+    }
+
     /// Move the `target` node to be a child of the `parent` node.
     ///
     /// If the `parent` is `None`, the `target` node will be a root.
@@ -215,7 +219,7 @@ impl LoroTree {
         self.tree.is_node_deleted(&target)
     }
 
-    /// Return all nodes
+    /// Return all nodes, including deleted nodes
     pub fn nodes(&self) -> Vec<TreeID> {
         self.tree.nodes()
     }

@@ -3,10 +3,10 @@ mod value;
 use loro::Container;
 pub use loro::{
     cursor::Side, undo::UndoOrRedo, CannotFindRelativePosition, Counter, CounterSpan,
-    EventTriggerKind, ExpandType, FractionalIndex, Frontiers, IdLp, IdSpan, JsonChange,
-    JsonFutureOp, JsonFutureOpWrapper, JsonListOp, JsonMapOp, JsonMovableListOp, JsonOp,
-    JsonOpContent, JsonPathError, JsonSchema, JsonTextOp, JsonTreeOp, Lamport, LoroError, PeerID,
-    StyleConfig, SubID, TreeID, ID,
+    EventTriggerKind, ExpandType, FractionalIndex, IdLp, IdSpan, JsonChange, JsonFutureOp,
+    JsonFutureOpWrapper, JsonListOp, JsonMapOp, JsonMovableListOp, JsonOp, JsonOpContent,
+    JsonPathError, JsonSchema, JsonTextOp, JsonTreeOp, Lamport, LoroError, PeerID, StyleConfig,
+    SubID, TreeID, ID,
 };
 pub use std::cmp::Ordering;
 use std::sync::Arc;
@@ -31,7 +31,7 @@ pub use undo::{AbsolutePosition, CursorWithPos, OnPop, OnPush, UndoItemMeta, Und
 mod config;
 pub use config::{Configure, StyleConfigMap};
 mod version;
-pub use version::{VersionVector, VersionVectorDiff};
+pub use version::{Frontiers, VersionVector, VersionVectorDiff};
 
 // https://github.com/mozilla/uniffi-rs/issues/1372
 pub trait ValueOrContainer: Send + Sync {
