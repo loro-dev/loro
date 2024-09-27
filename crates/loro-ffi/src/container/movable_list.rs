@@ -243,26 +243,6 @@ impl LoroMovableList {
     /// accurately. To minimize the performance impact of history replay, the system
     /// updates cursor info to reference only the IDs of currently present elements,
     /// thereby reducing the need for replay.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use loro::LoroDoc;
-    /// use loro_internal::cursor::Side;
-    ///
-    /// let doc = LoroDoc::new();
-    /// let list = doc.get_movable_list("list");
-    /// list.insert(0, 0).unwrap();
-    /// let cursor = list.get_cursor(0, Side::Middle).unwrap();
-    /// assert_eq!(doc.get_cursor_pos(&cursor).unwrap().current.pos, 0);
-    /// list.insert(0, 0).unwrap();
-    /// assert_eq!(doc.get_cursor_pos(&cursor).unwrap().current.pos, 1);
-    /// list.insert(0, 0).unwrap();
-    /// list.insert(0, 0).unwrap();
-    /// assert_eq!(doc.get_cursor_pos(&cursor).unwrap().current.pos, 3);
-    /// list.insert(4, 0).unwrap();
-    /// assert_eq!(doc.get_cursor_pos(&cursor).unwrap().current.pos, 3);
-    /// ```
     pub fn get_cursor(&self, pos: u32, side: Side) -> Option<Arc<Cursor>> {
         self.list
             .get_cursor(pos as usize, side)

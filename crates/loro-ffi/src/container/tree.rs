@@ -58,19 +58,6 @@ impl LoroTree {
     ///
     /// If the `parent` is `None`, the created node is the root of a tree.
     /// If the `index` is greater than the number of children of the parent, error will be returned.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use loro::LoroDoc;
-    ///
-    /// let doc = LoroDoc::new();
-    /// let tree = doc.get_tree("tree");
-    /// // create a root
-    /// let root = tree.create(None).unwrap();
-    /// // create a new child at index 0
-    /// let child = tree.create_at(root, 0).unwrap();
-    /// ```
     pub fn create_at(&self, parent: TreeParentId, index: u32) -> LoroResult<TreeID> {
         self.tree.create_at(parent, index as usize)
     }
@@ -101,55 +88,16 @@ impl LoroTree {
 
     /// Move the `target` node to be a child of the `parent` node at the given index.
     /// If the `parent` is `None`, the `target` node will be a root.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use loro::LoroDoc;
-    ///
-    /// let doc = LoroDoc::new();
-    /// let tree = doc.get_tree("tree");
-    /// let root = tree.create(None).unwrap();
-    /// let root2 = tree.create(None).unwrap();
-    /// // move `root2` to be a child of `root` at index 0.
-    /// tree.mov_to(root2, root, 0).unwrap();
-    /// ```
     pub fn mov_to(&self, target: TreeID, parent: TreeParentId, to: u32) -> LoroResult<()> {
         self.tree.mov_to(target, parent, to as usize)
     }
 
     /// Move the `target` node to be a child after the `after` node with the same parent.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use loro::LoroDoc;
-    ///
-    /// let doc = LoroDoc::new();
-    /// let tree = doc.get_tree("tree");
-    /// let root = tree.create(None).unwrap();
-    /// let root2 = tree.create(None).unwrap();
-    /// // move `root` to be a child after `root2`.
-    /// tree.mov_after(root, root2).unwrap();
-    /// ```
     pub fn mov_after(&self, target: TreeID, after: TreeID) -> LoroResult<()> {
         self.tree.mov_after(target, after)
     }
 
     /// Move the `target` node to be a child before the `before` node with the same parent.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use loro::LoroDoc;
-    ///
-    /// let doc = LoroDoc::new();
-    /// let tree = doc.get_tree("tree");
-    /// let root = tree.create(None).unwrap();
-    /// let root2 = tree.create(None).unwrap();
-    /// // move `root` to be a child before `root2`.
-    /// tree.mov_before(root, root2).unwrap();
-    /// ```
     pub fn mov_before(&self, target: TreeID, before: TreeID) -> LoroResult<()> {
         self.tree.mov_before(target, before)
     }

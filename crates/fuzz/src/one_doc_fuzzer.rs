@@ -164,7 +164,7 @@ impl OneDocFuzzer {
                             let nodes = tree
                                 .nodes()
                                 .into_iter()
-                                .filter(|x| !tree.is_node_deleted(*x).unwrap())
+                                .filter(|x| !tree.is_node_deleted(x).unwrap())
                                 .collect::<Vec<_>>();
                             let node_num = nodes.len();
                             let crate::container::TreeAction { target, action } = tree_action;

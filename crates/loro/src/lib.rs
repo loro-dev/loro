@@ -1,7 +1,6 @@
 #![doc = include_str!("../README.md")]
 #![warn(missing_docs)]
 #![warn(missing_debug_implementations)]
-pub use change_meta::ChangeMeta;
 use event::{DiffEvent, Subscriber};
 pub use loro_internal::cursor::CannotFindRelativePosition;
 use loro_internal::cursor::Cursor;
@@ -12,7 +11,6 @@ use loro_internal::handler::ValueOrHandler;
 use loro_internal::undo::{OnPop, OnPush};
 pub use loro_internal::version::ImVersionVector;
 use loro_internal::DocState;
-use loro_internal::FractionalIndex;
 use loro_internal::LoroDoc as InnerLoroDoc;
 use loro_internal::OpLog;
 use loro_internal::{
@@ -58,7 +56,6 @@ pub use loro_internal::undo;
 pub use loro_internal::version::{Frontiers, VersionVector, VersionVectorDiff};
 pub use loro_internal::ApplyDiff;
 pub use loro_internal::Subscription;
-pub use loro_internal::TreeParentId;
 pub use loro_internal::UndoManager as InnerUndoManager;
 pub use loro_internal::{loro_value, to_value};
 pub use loro_internal::{
@@ -761,7 +758,8 @@ impl LoroDoc {
     /// # Example
     ///
     /// ```
-    /// # use loro::LoroDoc;
+    /// # use loro::{LoroDoc, ToJson};
+    ///
     /// let doc = LoroDoc::new();
     /// let map = doc.get_map("users");
     /// map.insert("alice", 30).unwrap();
@@ -769,7 +767,7 @@ impl LoroDoc {
     ///
     /// let result = doc.jsonpath("$.users.alice").unwrap();
     /// assert_eq!(result.len(), 1);
-    /// assert_eq!(result[0].to_json_value(), serde_json::json!(30));
+    /// assert_eq!(result[0].as_value().unwrap().to_json_value(), serde_json::json!(30));
     /// ```
     #[inline]
     #[cfg(feature = "jsonpath")]

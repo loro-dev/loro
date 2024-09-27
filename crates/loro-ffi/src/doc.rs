@@ -531,20 +531,6 @@ impl LoroDoc {
     /// A `Result` containing either:
     /// - `Ok(Vec<ValueOrHandler>)`: A vector of matching values or handlers.
     /// - `Err(String)`: An error message if the JSONPath expression is invalid or evaluation fails.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// # use loro::LoroDoc;
-    /// let doc = LoroDoc::new();
-    /// let map = doc.get_map("users");
-    /// map.insert("alice", 30).unwrap();
-    /// map.insert("bob", 25).unwrap();
-    ///
-    /// let result = doc.jsonpath("$.users.alice").unwrap();
-    /// assert_eq!(result.len(), 1);
-    /// assert_eq!(result[0].to_json_value(), serde_json::json!(30));
-    /// ```
     #[inline]
     pub fn jsonpath(&self, path: &str) -> Result<Vec<Arc<dyn ValueOrContainer>>, JsonPathError> {
         self.doc.jsonpath(path).map(|vec| {
