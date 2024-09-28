@@ -572,9 +572,9 @@ checksum = "56254986775e3233ffa9c4d7d3faaf6d36a2c09d30b20687e9f88bc8bafc16c8"
 
 [[package]]
 name = "either"
-version = "1.9.0"
+version = "1.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a26ae43d7bcc3b814de94796a5e736d4029efb0ee900c12e2d54c993ad1a1e07"
+checksum = "60b1af1c220855b6ceac025d3f6ecdd2b7c4894bfe9cd9bda4fbb4bc7c0d4cf0"
 
 [[package]]
 name = "embedded-io"
@@ -694,7 +694,7 @@ dependencies = [
  "ctor 0.2.6",
  "dev-utils",
  "ensure-cov",
- "enum-as-inner 0.5.1",
+ "enum-as-inner 0.6.0",
  "enum_dispatch",
  "fxhash",
  "itertools 0.12.1",
@@ -1052,7 +1052,6 @@ dependencies = [
  "anyhow",
  "ctor 0.2.6",
  "dev-utils",
- "either",
  "enum-as-inner 0.6.0",
  "generic-btree",
  "loro-common 0.16.12",
@@ -1157,6 +1156,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "loro-ffi"
+version = "0.16.2"
+dependencies = [
+ "loro 0.16.12",
+ "serde_json",
+]
+
+[[package]]
 name = "loro-internal"
 version = "0.16.2"
 source = "git+https://github.com/loro-dev/loro.git?tag=loro-crdt@0.16.7#d2b0520f8633f96146a49ec205bd5e7056880f1a"
@@ -1243,7 +1250,7 @@ dependencies = [
  "dhat",
  "either",
  "ensure-cov",
- "enum-as-inner 0.5.1",
+ "enum-as-inner 0.6.0",
  "enum_dispatch",
  "fxhash",
  "generic-btree",

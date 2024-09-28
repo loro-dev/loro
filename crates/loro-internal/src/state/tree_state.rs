@@ -73,11 +73,11 @@ pub(crate) struct NodePosition {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumAsInner, Serialize)]
 pub enum TreeParentId {
     Node(TreeID),
+    Root,
+    Deleted,
     // We use `Unexist` as the old parent of a new node created
     // so we can infer the retreat internal diff is `Uncreate`
     Unexist,
-    Deleted,
-    Root,
 }
 
 impl From<Option<TreeID>> for TreeParentId {

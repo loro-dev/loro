@@ -129,7 +129,7 @@ fn snapshot_from_016_can_be_imported_in_cur_version() {
             .get_map("map")
             .get("new_key")
             .unwrap()
-            .left()
+            .into_value()
             .unwrap(),
         loro::LoroValue::String(Arc::new("new_value".into()))
     );

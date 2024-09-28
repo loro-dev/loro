@@ -12,12 +12,13 @@ members = [
     "crates/dev-utils",
     "crates/delta",
     "crates/kv-store",
+    "crates/loro-ffi",
 ]
 resolver = "2"
 
 [workspace.dependencies]
 enum_dispatch = "0.3.11"
-enum-as-inner = "0.5.1"
+enum-as-inner = "0.6.0"
 fxhash = "0.2.1"
 tracing = { version = "0.1" }
 serde_columnar = { version = "0.3.10" }
@@ -30,3 +31,4 @@ bytes = "1"
 once_cell = "1.18.0"
 xxhash-rust = { version = "0.8.12", features = ["xxh32"] }
 ensure-cov = "0.1.0"
+either = "1.13.0"

@@ -68,14 +68,12 @@ pub mod delta;
 pub use loro_delta;
 pub mod event;
 
-pub use error::{LoroError, LoroResult};
 pub mod estimated_size;
 pub(crate) mod history_cache;
 pub(crate) mod macros;
 pub(crate) mod state;
 pub mod undo;
 pub(crate) mod value;
-pub(crate) use id::{PeerID, ID};
 
 // TODO: rename as Key?
 pub(crate) use loro_common::InternalString;
@@ -84,6 +82,10 @@ pub use container::ContainerType;
 pub use encoding::json_schema::json;
 pub use fractional_index::FractionalIndex;
 pub use loro_common::{loro_value, to_value};
+pub use loro_common::{
+    Counter, CounterSpan, IdLp, IdSpan, Lamport, LoroError, LoroResult, LoroTreeError, PeerID,
+    TreeID, ID,
+};
 #[cfg(feature = "wasm")]
 pub use value::wasm;
 pub use value::{ApplyDiff, LoroValue, ToJson};

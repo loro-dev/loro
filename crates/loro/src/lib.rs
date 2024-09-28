@@ -1,21 +1,16 @@
 #![doc = include_str!("../README.md")]
 #![warn(missing_docs)]
 #![warn(missing_debug_implementations)]
-use either::Either;
 use event::{DiffEvent, Subscriber};
-use loro_internal::container::IntoContainerId;
-use loro_internal::cursor::CannotFindRelativePosition;
+pub use loro_internal::cursor::CannotFindRelativePosition;
 use loro_internal::cursor::Cursor;
 use loro_internal::cursor::PosQueryResult;
 use loro_internal::cursor::Side;
-use loro_internal::encoding::ImportBlobMetadata;
 use loro_internal::handler::HandlerTrait;
 use loro_internal::handler::ValueOrHandler;
-use loro_internal::loro_common::LoroTreeError;
 use loro_internal::undo::{OnPop, OnPush};
-use loro_internal::version::ImVersionVector;
+pub use loro_internal::version::ImVersionVector;
 use loro_internal::DocState;
-use loro_internal::FractionalIndex;
 use loro_internal::LoroDoc as InnerLoroDoc;
 use loro_internal::OpLog;
 use loro_internal::{
@@ -35,31 +30,38 @@ pub use loro_internal::subscription::PeerIdUpdateCallback;
 pub use loro_internal::ChangeMeta;
 pub mod event;
 pub use loro_internal::awareness;
+pub use loro_internal::change::Timestamp;
 pub use loro_internal::configure::Configure;
-pub use loro_internal::configure::StyleConfigMap;
+pub use loro_internal::configure::{StyleConfig, StyleConfigMap};
 pub use loro_internal::container::richtext::ExpandType;
-pub use loro_internal::container::{ContainerID, ContainerType};
+pub use loro_internal::container::{ContainerID, ContainerType, IntoContainerId};
 pub use loro_internal::cursor;
-pub use loro_internal::delta::{TreeDeltaItem, TreeDiff, TreeExternalDiff};
+pub use loro_internal::delta::{TreeDeltaItem, TreeDiff, TreeDiffItem, TreeExternalDiff};
 pub use loro_internal::encoding::ExportMode;
-pub use loro_internal::event::Index;
+pub use loro_internal::encoding::ImportBlobMetadata;
+pub use loro_internal::event::{EventTriggerKind, Index};
 pub use loro_internal::handler::TextDelta;
-pub use loro_internal::id::{PeerID, TreeID, ID};
 pub use loro_internal::json;
-pub use loro_internal::json::JsonSchema;
+pub use loro_internal::json::{
+    FutureOp as JsonFutureOp, FutureOpWrapper as JsonFutureOpWrapper, JsonChange, JsonOp,
+    JsonOpContent, JsonSchema, ListOp as JsonListOp, MapOp as JsonMapOp,
+    MovableListOp as JsonMovableListOp, TextOp as JsonTextOp, TreeOp as JsonTreeOp,
+};
 pub use loro_internal::kv_store::{KvStore, MemKvStore};
 pub use loro_internal::loro::CommitOptions;
 pub use loro_internal::loro::DocAnalysis;
 pub use loro_internal::oplog::FrontiersNotIncluded;
 pub use loro_internal::subscription::SubID;
 pub use loro_internal::undo;
-pub use loro_internal::version::{Frontiers, VersionVector};
+pub use loro_internal::version::{Frontiers, VersionVector, VersionVectorDiff};
 pub use loro_internal::ApplyDiff;
 pub use loro_internal::Subscription;
-pub use loro_internal::TreeParentId;
 pub use loro_internal::UndoManager as InnerUndoManager;
 pub use loro_internal::{loro_value, to_value};
-pub use loro_internal::{LoroError, LoroResult, LoroValue, ToJson};
+pub use loro_internal::{
+    Counter, CounterSpan, FractionalIndex, IdLp, IdSpan, Lamport, PeerID, TreeID, TreeParentId, ID,
+};
+pub use loro_internal::{LoroError, LoroResult, LoroTreeError, LoroValue, ToJson};
 pub use loro_kv_store as kv_store;
 
 #[cfg(feature = "jsonpath")]
@@ -274,7 +276,7 @@ impl LoroDoc {
     ///
     /// Learn more at https://loro.dev/docs/advanced/doc_state_and_oplog#attacheddetached-status
     #[inline]
-    pub fn detach(&mut self) {
+    pub fn detach(&self) {
         self.doc.detach()
     }
 
@@ -756,7 +758,8 @@ impl LoroDoc {
     /// # Example
     ///
     /// ```
-    /// # use loro::LoroDoc;
+    /// # use loro::{LoroDoc, ToJson};
+    ///
     /// let doc = LoroDoc::new();
     /// let map = doc.get_map("users");
     /// map.insert("alice", 30).unwrap();
@@ -764,7 +767,7 @@ impl LoroDoc {
     ///
     /// let result = doc.jsonpath("$.users.alice").unwrap();
     /// assert_eq!(result.len(), 1);
-    /// assert_eq!(result[0].to_json_value(), serde_json::json!(30));
+    /// assert_eq!(result[0].as_value().unwrap().to_json_value(), serde_json::json!(30));
     /// ```
     #[inline]
     #[cfg(feature = "jsonpath")]
@@ -923,10 +926,12 @@ impl LoroList {
 
     /// Get the value at the given position.
     #[inline]
-    pub fn get(&self, index: usize) -> Option<Either<LoroValue, Container>> {
+    pub fn get(&self, index: usize) -> Option<ValueOrContainer> {
         match self.handler.get_(index) {
-            Some(ValueOrHandler::Handler(c)) => Some(Either::Right(c.into())),
-            Some(ValueOrHandler::Value(v)) => Some(Either::Left(v)),
+            Some(ValueOrHandler::Handler(c)) => {
+                Some(ValueOrContainer::Container(Container::from_handler(c)))
+            }
+            Some(ValueOrHandler::Value(v)) => Some(ValueOrContainer::Value(v)),
             None => None,
         }
     }
@@ -973,11 +978,13 @@ impl LoroList {
     }
 
     /// Iterate over the elements of the list.
-    pub fn for_each<I>(&self, f: I)
+    pub fn for_each<I>(&self, mut f: I)
     where
-        I: FnMut((usize, ValueOrHandler)),
+        I: FnMut((usize, ValueOrContainer)),
     {
-        self.handler.for_each(f)
+        self.handler.for_each(&mut |(index, v)| {
+            f((index, ValueOrContainer::from(v)));
+        })
     }
 
     /// Get the length of the list.
@@ -1202,11 +1209,13 @@ impl LoroMap {
     }
 
     /// Get the value of the map with the given key.
-    pub fn get(&self, key: &str) -> Option<Either<LoroValue, Container>> {
+    pub fn get(&self, key: &str) -> Option<ValueOrContainer> {
         match self.handler.get_(key) {
             None => None,
-            Some(ValueOrHandler::Handler(c)) => Some(Either::Right(c.into())),
-            Some(ValueOrHandler::Value(v)) => Some(Either::Left(v)),
+            Some(ValueOrHandler::Handler(c)) => {
+                Some(ValueOrContainer::Container(Container::from_handler(c)))
+            }
+            Some(ValueOrHandler::Value(v)) => Some(ValueOrContainer::Value(v)),
         }
     }
 
@@ -1795,8 +1804,8 @@ impl LoroTree {
     /// # Errors
     ///
     /// - If the target node does not exist, return `LoroTreeError::TreeNodeNotExist`.
-    pub fn is_node_deleted(&self, target: TreeID) -> LoroResult<bool> {
-        self.handler.is_node_deleted(&target)
+    pub fn is_node_deleted(&self, target: &TreeID) -> LoroResult<bool> {
+        self.handler.is_node_deleted(target)
     }
 
     /// Return all nodes, including deleted nodes
@@ -1845,7 +1854,7 @@ impl LoroTree {
             .map(|x| x.to_string())
     }
 
-    /// Return the flat array of the forest.
+    /// Return the hierarchy array of the forest.
     ///
     /// Note: the metadata will be not resolved. So if you don't only care about hierarchy
     /// but also the metadata, you should use [TreeHandler::get_value_with_meta()].
@@ -1853,7 +1862,7 @@ impl LoroTree {
         self.handler.get_value()
     }
 
-    /// Return the flat array of the forest, each node is with metadata.
+    /// Return the hierarchy array of the forest, each node is with metadata.
     pub fn get_value_with_meta(&self) -> LoroValue {
         self.handler.get_deep_value()
     }
@@ -1964,6 +1973,14 @@ impl LoroMovableList {
         self.handler.id().clone()
     }
 
+    /// Whether the container is attached to a document
+    ///
+    /// The edits on a detached container will not be persisted.
+    /// To attach the container to the document, please insert it into an attached container.
+    pub fn is_attached(&self) -> bool {
+        self.handler.is_attached()
+    }
+
     /// Insert a value at the given position.
     pub fn insert(&self, pos: usize, v: impl Into<LoroValue>) -> LoroResult<()> {
         self.handler.insert(pos, v)
@@ -1975,10 +1992,12 @@ impl LoroMovableList {
     }
 
     /// Get the value at the given position.
-    pub fn get(&self, index: usize) -> Option<Either<LoroValue, Container>> {
+    pub fn get(&self, index: usize) -> Option<ValueOrContainer> {
         match self.handler.get_(index) {
-            Some(ValueOrHandler::Handler(c)) => Some(Either::Right(c.into())),
-            Some(ValueOrHandler::Value(v)) => Some(Either::Left(v)),
+            Some(ValueOrHandler::Handler(c)) => {
+                Some(ValueOrContainer::Container(Container::from_handler(c)))
+            }
+            Some(ValueOrHandler::Value(v)) => Some(ValueOrContainer::Value(v)),
             None => None,
         }
     }
@@ -2009,10 +2028,12 @@ impl LoroMovableList {
     }
 
     /// Pop the last element of the list.
-    pub fn pop(&self) -> LoroResult<Option<Either<LoroValue, Container>>> {
+    pub fn pop(&self) -> LoroResult<Option<ValueOrContainer>> {
         Ok(match self.handler.pop_()? {
-            Some(ValueOrHandler::Handler(c)) => Some(Either::Right(c.into())),
-            Some(ValueOrHandler::Value(v)) => Some(Either::Left(v)),
+            Some(ValueOrHandler::Handler(c)) => {
+                Some(ValueOrContainer::Container(Container::from_handler(c)))
+            }
+            Some(ValueOrHandler::Value(v)) => Some(ValueOrContainer::Value(v)),
             None => None,
         })
     }
@@ -2146,6 +2167,13 @@ impl Default for LoroMovableList {
 #[derive(Clone, Debug)]
 pub struct LoroUnknown {
     handler: InnerUnknownHandler,
+}
+
+impl LoroUnknown {
+    /// Get the container id.
+    pub fn id(&self) -> ContainerID {
+        self.handler.id().clone()
+    }
 }
 
 impl SealedTrait for LoroUnknown {}
@@ -2360,7 +2388,7 @@ impl ValueOrContainer {
                 Container::Tree(c) => c.get_value(),
                 Container::MovableList(c) => c.get_deep_value(),
                 #[cfg(feature = "counter")]
-                Container::Counter(c) => c.get_value(),
+                Container::Counter(c) => c.get_value().into(),
                 Container::Unknown(_) => LoroValue::Null,
             },
         }
