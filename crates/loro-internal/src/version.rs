@@ -28,6 +28,71 @@ use crate::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VersionVector(FxHashMap<PeerID, Counter>);
 
+#[repr(transparent)]
+#[derive(Debug, Clone, Default)]
+pub struct VersionRange(pub(crate) FxHashMap<PeerID, (Counter, Counter)>);
+
+impl VersionRange {
+    pub fn new() -> Self {
+        Self(Default::default())
+    }
+
+    pub fn clear(&mut self) {
+        self.0.clear()
+    }
+
+    pub fn get(&self, peer: &PeerID) -> Option<&(Counter, Counter)> {
+        self.0.get(peer)
+    }
+
+    pub fn insert(&mut self, peer: PeerID, start: Counter, end: Counter) {
+        self.0.insert(peer, (start, end));
+    }
+
+    pub fn contains_ops_between(&self, vv_a: &VersionVector, vv_b: &VersionVector) -> bool {
+        for span in vv_a.sub_iter(vv_b) {
+            if !self.contains_id_span(IdSpan::new(
+                span.peer,
+                span.counter.start.saturating_sub(1),
+                span.counter.end,
+            )) {
+                return false;
+            }
+        }
+
+        for span in vv_b.sub_iter(vv_a) {
+            if !self.contains_id_span(IdSpan::new(
+                span.peer,
+                span.counter.start.saturating_sub(1),
+                span.counter.end,
+            )) {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    pub fn contains_id_span(&self, mut span: IdSpan) -> bool {
+        span.normalize_();
+        if let Some((start, end)) = self.get(&span.peer) {
+            start <= &span.counter.start && end >= &span.counter.end
+        } else {
+            false
+        }
+    }
+
+    pub fn extends_to_include_id_span(&mut self, mut span: IdSpan) {
+        span.normalize_();
+        if let Some((start, end)) = self.0.get_mut(&span.peer) {
+            *start = (*start).min(span.counter.start);
+            *end = (*end).max(span.counter.end);
+        } else {
+            self.insert(span.peer, span.counter.start, span.counter.end);
+        }
+    }
+}
+
 /// Immutable version vector
 ///
 /// It has O(1) clone time and O(logN) insert/delete/lookup time.
