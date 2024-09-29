@@ -2,20 +2,27 @@
   "cSpell.words": [
     "arbtest",
     "bolds",
+    "bools",
     "cids",
     "clippy",
     "collab",
+    "curr",
     "dhat",
     "flate",
     "fuzzer",
     "gmax",
+    "GPUI",
     "heapless",
+    "Helloii",
+    "Hoexllo",
     "idlp",
     "idspan",
     "insta",
     "Itertools",
+    "Kleppmann",
     "lamports",
     "Leeeon",
+    "Liangrun",
     "LOGSTORE",
     "napi",
     "nextest",
@@ -28,6 +35,8 @@
     "reparent",
     "RUSTFLAGS",
     "smstring",
+    "sstable",
+    "Stewen",
     "thiserror",
     "tinyvec",
     "txns",
@@ -44,8 +53,9 @@
     "DEBUG": "*"
   },
   "rust-analyzer.cargo.features": [
-    "test_utils",
-    // "counter"
+    "jsonpath",
+    "counter",
+    "test_utils"
   ],
   "editor.defaultFormatter": "rust-lang.rust-analyzer",
   "rust-analyzer.server.extraEnv": {
@@ -71,7 +81,10 @@
   "cortex-debug.variableUseNaturalFormat": true,
   "[markdown]": {},
   "[typescript]": {
-    "editor.defaultFormatter": "denoland.vscode-deno"
+    "editor.defaultFormatter": "vscode.typescript-language-features"
   },
-  "vitest.enable": true
+  "vitest.enable": true,
+  "[shellscript]": {
+    "editor.defaultFormatter": "foxundermoon.shell-format"
+  }
 }

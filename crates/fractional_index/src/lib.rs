@@ -9,14 +9,16 @@ use serde::{Deserialize, Serialize};
 mod jitter;
 
 const TERMINATOR: u8 = 128;
+static DEFAULT_FRACTIONAL_INDEX: once_cell::sync::Lazy<FractionalIndex> =
+    once_cell::sync::Lazy::new(|| FractionalIndex(Arc::new(vec![TERMINATOR])));
 
-#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord)]
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct FractionalIndex(Arc<Vec<u8>>);
 
 impl Default for FractionalIndex {
     fn default() -> Self {
-        FractionalIndex(Arc::new(vec![TERMINATOR]))
+        DEFAULT_FRACTIONAL_INDEX.clone()
     }
 }
 

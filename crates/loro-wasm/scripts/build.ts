@@ -1,4 +1,5 @@
 import * as path from "https://deno.land/std@0.105.0/path/mod.ts";
+import { gunzip, gzip } from "https://deno.land/x/compress@v0.4.5/mod.ts";
 const __dirname = path.dirname(path.fromFileUrl(import.meta.url));
 
 // deno run -A build.ts debug
@@ -41,25 +42,31 @@ async function build() {
         // const snip = `wasm-snip ./${target}/loro_wasm_bg.wasm -o ./${target}/loro_wasm_bg.wasm`;
         // console.log(">", snip);
         // await Deno.run({ cmd: snip.split(" "), cwd: LoroWasmDir }).status();
-        const cmd =
-          `wasm-opt -Os ./${target}/loro_wasm_bg.wasm -o ./${target}/loro_wasm_bg.wasm`;
+        const cmd = `wasm-opt -Os ./${target}/loro_wasm_bg.wasm -o ./${target}/loro_wasm_bg.wasm`;
         console.log(">", cmd);
         await Deno.run({ cmd: cmd.split(" "), cwd: LoroWasmDir }).status();
       }),
     );
   }
 
+  console.log("\n");
   console.log(
     "✅",
     "Build complete in",
     (performance.now() - startTime) / 1000,
     "s",
   );
+
+  if (profile === "release") {
+    const wasm = await Deno.readFile(path.resolve(LoroWasmDir, "bundler", "loro_wasm_bg.wasm"));
+    console.log("Wasm size: ", (wasm.length / 1024).toFixed(2), "KB");
+    const gzipped = await gzip(wasm);
+    console.log("Gzipped size: ", (gzipped.length / 1024).toFixed(2), "KB");
+  }
 }
 
 async function cargoBuild() {
-  const cmd =
-    `cargo build --target wasm32-unknown-unknown --profile ${profile}`;
+  const cmd = `cargo build --target wasm32-unknown-unknown --profile ${profile}`;
   console.log(cmd);
   const status = await Deno.run({
     cmd: cmd.split(" "),
@@ -87,8 +94,7 @@ async function buildTarget(target: string) {
   }
 
   // TODO: polyfill FinalizationRegistry
-  const cmd =
-    `wasm-bindgen --weak-refs --target ${target} --out-dir ${target} ../../target/wasm32-unknown-unknown/${profileDir}/loro_wasm.wasm`;
+  const cmd = `wasm-bindgen --weak-refs --target ${target} --out-dir ${target} ../../target/wasm32-unknown-unknown/${profileDir}/loro_wasm.wasm`;
   console.log(">", cmd);
   await Deno.run({ cmd: cmd.split(" "), cwd: LoroWasmDir }).status();
   console.log();
@@ -104,6 +110,16 @@ async function buildTarget(target: string) {
     await Deno.writeTextFile(
       path.resolve(targetDirPath, "loro_wasm.js"),
       wasm + "\n" + patch,
+    );
+  }
+  if (target === "bundler") {
+    console.log("🔨  Patching bundler target");
+    const patch = await Deno.readTextFile(
+      path.resolve(__dirname, "./bundler_patch.js"),
+    );
+    await Deno.writeTextFile(
+      path.resolve(targetDirPath, "loro_wasm.js"),
+      patch,
     );
   }
 }

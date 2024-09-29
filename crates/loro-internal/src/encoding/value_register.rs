@@ -56,4 +56,12 @@ impl<T: std::hash::Hash + Clone + PartialEq + Eq> ValueRegister<T> {
     pub fn unwrap_vec(self) -> Vec<T> {
         self.vec
     }
+
+    pub fn get_value(&self, index: usize) -> Option<&T> {
+        self.vec.get(index)
+    }
+
+    pub fn vec(&self) -> &Vec<T> {
+        &self.vec
+    }
 }

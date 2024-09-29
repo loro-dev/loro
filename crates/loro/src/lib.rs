@@ -1,20 +1,18 @@
 #![doc = include_str!("../README.md")]
 #![warn(missing_docs)]
 #![warn(missing_debug_implementations)]
-use either::Either;
 use event::{DiffEvent, Subscriber};
-use loro_internal::container::IntoContainerId;
-use loro_internal::cursor::CannotFindRelativePosition;
+pub use loro_internal::cursor::CannotFindRelativePosition;
 use loro_internal::cursor::Cursor;
 use loro_internal::cursor::PosQueryResult;
 use loro_internal::cursor::Side;
-use loro_internal::encoding::ImportBlobMetadata;
 use loro_internal::handler::HandlerTrait;
 use loro_internal::handler::ValueOrHandler;
 use loro_internal::undo::{OnPop, OnPush};
+pub use loro_internal::version::ImVersionVector;
+use loro_internal::DocState;
 use loro_internal::LoroDoc as InnerLoroDoc;
 use loro_internal::OpLog;
-
 use loro_internal::{
     handler::Handler as InnerHandler, ListHandler as InnerListHandler,
     MapHandler as InnerMapHandler, MovableListHandler as InnerMovableListHandler,
@@ -22,32 +20,54 @@ use loro_internal::{
     UnknownHandler as InnerUnknownHandler,
 };
 use std::cmp::Ordering;
+use std::ops::ControlFlow;
 use std::ops::Range;
 use std::sync::Arc;
-
 use tracing::info;
 
+pub use loro_internal::subscription::LocalUpdateCallback;
+pub use loro_internal::subscription::PeerIdUpdateCallback;
+pub use loro_internal::ChangeMeta;
 pub mod event;
 pub use loro_internal::awareness;
+pub use loro_internal::change::Timestamp;
 pub use loro_internal::configure::Configure;
-pub use loro_internal::configure::StyleConfigMap;
+pub use loro_internal::configure::{StyleConfig, StyleConfigMap};
 pub use loro_internal::container::richtext::ExpandType;
-pub use loro_internal::container::{ContainerID, ContainerType};
+pub use loro_internal::container::{ContainerID, ContainerType, IntoContainerId};
 pub use loro_internal::cursor;
-pub use loro_internal::delta::{TreeDeltaItem, TreeDiff, TreeExternalDiff};
-pub use loro_internal::event::Index;
+pub use loro_internal::delta::{TreeDeltaItem, TreeDiff, TreeDiffItem, TreeExternalDiff};
+pub use loro_internal::encoding::ExportMode;
+pub use loro_internal::encoding::ImportBlobMetadata;
+pub use loro_internal::event::{EventTriggerKind, Index};
 pub use loro_internal::handler::TextDelta;
-pub use loro_internal::id::{PeerID, TreeID, ID};
+pub use loro_internal::json;
+pub use loro_internal::json::{
+    FutureOp as JsonFutureOp, FutureOpWrapper as JsonFutureOpWrapper, JsonChange, JsonOp,
+    JsonOpContent, JsonSchema, ListOp as JsonListOp, MapOp as JsonMapOp,
+    MovableListOp as JsonMovableListOp, TextOp as JsonTextOp, TreeOp as JsonTreeOp,
+};
+pub use loro_internal::kv_store::{KvStore, MemKvStore};
 pub use loro_internal::loro::CommitOptions;
-pub use loro_internal::obs::SubID;
+pub use loro_internal::loro::DocAnalysis;
 pub use loro_internal::oplog::FrontiersNotIncluded;
+pub use loro_internal::subscription::SubID;
 pub use loro_internal::undo;
-pub use loro_internal::version::{Frontiers, VersionVector};
+pub use loro_internal::version::{Frontiers, VersionVector, VersionVectorDiff};
 pub use loro_internal::ApplyDiff;
-pub use loro_internal::JsonSchema;
+pub use loro_internal::Subscription;
 pub use loro_internal::UndoManager as InnerUndoManager;
 pub use loro_internal::{loro_value, to_value};
-pub use loro_internal::{LoroError, LoroResult, LoroValue, ToJson};
+pub use loro_internal::{
+    Counter, CounterSpan, FractionalIndex, IdLp, IdSpan, Lamport, PeerID, TreeID, TreeParentId, ID,
+};
+pub use loro_internal::{LoroError, LoroResult, LoroTreeError, LoroValue, ToJson};
+pub use loro_kv_store as kv_store;
+
+#[cfg(feature = "jsonpath")]
+pub use loro_internal::jsonpath;
+#[cfg(feature = "jsonpath")]
+pub use loro_internal::jsonpath::JsonPathError;
 
 #[cfg(feature = "counter")]
 mod counter;
@@ -57,9 +77,10 @@ pub use counter::LoroCounter;
 /// `LoroDoc` is the entry for the whole document.
 /// When it's dropped, all the associated [`Handler`]s will be invalidated.
 #[derive(Debug)]
-#[repr(transparent)]
 pub struct LoroDoc {
     doc: InnerLoroDoc,
+    #[cfg(debug_assertions)]
+    _temp: u8,
 }
 
 impl Default for LoroDoc {
@@ -69,28 +90,59 @@ impl Default for LoroDoc {
 }
 
 impl LoroDoc {
+    #[inline(always)]
+    fn _new(doc: InnerLoroDoc) -> Self {
+        Self {
+            doc,
+            #[cfg(debug_assertions)]
+            _temp: 0,
+        }
+    }
+
     /// Create a new `LoroDoc` instance.
+    #[inline]
     pub fn new() -> Self {
         let doc = InnerLoroDoc::default();
         doc.start_auto_commit();
 
-        LoroDoc { doc }
+        LoroDoc::_new(doc)
     }
 
     /// Duplicate the document with a different PeerID
     ///
     /// The time complexity and space complexity of this operation are both O(n),
+    #[inline]
     pub fn fork(&self) -> Self {
         let doc = self.doc.fork();
-        LoroDoc { doc }
+        LoroDoc::_new(doc)
     }
 
-    /// Get the configureations of the document.
+    /// Get the configurations of the document.
+    #[inline]
     pub fn config(&self) -> &Configure {
         self.doc.config()
     }
 
+    /// Get `Change` at the given id.
+    ///
+    /// `Change` is a grouped continuous operations that share the same id, timestamp, commit message.
+    ///
+    /// - The id of the `Change` is the id of its first op.
+    /// - The second op's id is `{ peer: change.id.peer, counter: change.id.counter + 1 }`
+    ///
+    /// The same applies on `Lamport`:
+    ///
+    /// - The lamport of the `Change` is the lamport of its first op.
+    /// - The second op's lamport is `change.lamport + 1`
+    ///
+    /// The length of the `Change` is how many operations it contains
+    pub fn get_change(&self, id: ID) -> Option<ChangeMeta> {
+        let change = self.doc.oplog().try_lock().unwrap().get_change_at(id)?;
+        Some(ChangeMeta::from_change(&change))
+    }
+
     /// Decodes the metadata for an imported blob from the provided bytes.
+    #[inline]
     pub fn decode_import_blob_meta(bytes: &[u8]) -> LoroResult<ImportBlobMetadata> {
         InnerLoroDoc::decode_import_blob_meta(bytes)
     }
@@ -99,7 +151,7 @@ impl LoroDoc {
     ///
     /// If enabled, the Unix timestamp will be recorded for each change automatically.
     ///
-    /// You can set each timestamp manually when commiting a change.
+    /// You can set each timestamp manually when committing a change.
     ///
     /// NOTE: Timestamps are forced to be in ascending order.
     /// If you commit a new change with a timestamp that is less than the existing one,
@@ -109,23 +161,44 @@ impl LoroDoc {
         self.doc.set_record_timestamp(record);
     }
 
+    /// Enables editing in detached mode, which is disabled by default.
+    ///
+    /// The doc enter detached mode after calling `detach` or checking out a non-latest version.
+    ///
+    /// # Important Notes:
+    ///
+    /// - This mode uses a different PeerID for each checkout.
+    /// - Ensure no concurrent operations share the same PeerID if set manually.
+    /// - Importing does not affect the document's state or version; changes are
+    ///   recorded in the [OpLog] only. Call `checkout` to apply changes.
+    #[inline]
+    pub fn set_detached_editing(&self, enable: bool) {
+        self.doc.set_detached_editing(enable);
+    }
+
+    /// Whether editing the doc in detached mode is allowed, which is disabled by
+    /// default.
+    ///
+    /// The doc enter detached mode after calling `detach` or checking out a non-latest version.
+    ///
+    /// # Important Notes:
+    ///
+    /// - This mode uses a different PeerID for each checkout.
+    /// - Ensure no concurrent operations share the same PeerID if set manually.
+    /// - Importing does not affect the document's state or version; changes are
+    ///   recorded in the [OpLog] only. Call `checkout` to apply changes.
+    #[inline]
+    pub fn is_detached_editing_enabled(&self) -> bool {
+        self.doc.is_detached_editing_enabled()
+    }
+
     /// Set the interval of mergeable changes, in milliseconds.
     ///
     /// If two continuous local changes are within the interval, they will be merged into one change.
-    /// The defualt value is 1000 seconds.
+    /// The default value is 1000 seconds.
     #[inline]
     pub fn set_change_merge_interval(&self, interval: i64) {
         self.doc.set_change_merge_interval(interval);
-    }
-
-    /// Set the jitter of the tree position(Fractional Index).
-    ///
-    /// The jitter is used to avoid conflicts when multiple users are creating the node at the same position.
-    /// value 0 is default, which means no jitter, any value larger than 0 will enable jitter.
-    /// Generally speaking, jitter will affect the growth rate of document size.
-    #[inline]
-    pub fn set_fractional_index_jitter(&self, jitter: u8) {
-        self.doc.set_fractional_index_jitter(jitter);
     }
 
     /// Set the rich text format configuration of the document.
@@ -135,6 +208,7 @@ impl LoroDoc {
     ///
     /// Expand is used to specify the behavior of expanding when new text is inserted at the
     /// beginning or end of the style.
+    #[inline]
     pub fn config_text_style(&self, text_style: StyleConfigMap) {
         self.doc.config_text_style(text_style)
     }
@@ -145,6 +219,7 @@ impl LoroDoc {
     /// > Being `detached` implies that the `DocState` is not synchronized with the latest version of the `OpLog`.
     /// > In a detached state, the document is not editable, and any `import` operations will be
     /// > recorded in the `OpLog` without being applied to the `DocState`.
+    #[inline]
     pub fn attach(&self) {
         self.doc.attach()
     }
@@ -156,7 +231,8 @@ impl LoroDoc {
     /// > In a detached state, the document is not editable, and any `import` operations will be
     /// > recorded in the `OpLog` without being applied to the `DocState`.
     ///
-    /// You should call `attach` to attach the `DocState` to the lastest version of `OpLog`.
+    /// You should call `attach` to attach the `DocState` to the latest version of `OpLog`.
+    #[inline]
     pub fn checkout(&self, frontiers: &Frontiers) -> LoroResult<()> {
         self.doc.checkout(frontiers)
     }
@@ -169,6 +245,7 @@ impl LoroDoc {
     /// > recorded in the `OpLog` without being applied to the `DocState`.
     ///
     /// This has the same effect as `attach`.
+    #[inline]
     pub fn checkout_to_latest(&self) {
         self.doc.checkout_to_latest()
     }
@@ -176,6 +253,7 @@ impl LoroDoc {
     /// Compare the frontiers with the current OpLog's version.
     ///
     /// If `other` contains any version that's not contained in the current OpLog, return [Ordering::Less].
+    #[inline]
     pub fn cmp_with_frontiers(&self, other: &Frontiers) -> Ordering {
         self.doc.cmp_with_frontiers(other)
     }
@@ -183,6 +261,7 @@ impl LoroDoc {
     /// Compare two frontiers.
     ///
     /// If the frontiers are not included in the document, return [`FrontiersNotIncluded`].
+    #[inline]
     pub fn cmp_frontiers(
         &self,
         a: &Frontiers,
@@ -196,20 +275,23 @@ impl LoroDoc {
     /// In this mode, when you importing new updates, the [loro_internal::DocState] will not be changed.
     ///
     /// Learn more at https://loro.dev/docs/advanced/doc_state_and_oplog#attacheddetached-status
-    pub fn detach(&mut self) {
+    #[inline]
+    pub fn detach(&self) {
         self.doc.detach()
     }
 
     /// Import a batch of updates/snapshot.
     ///
     /// The data can be in arbitrary order. The import result will be the same.
-    pub fn import_batch(&mut self, bytes: &[Vec<u8>]) -> LoroResult<()> {
+    #[inline]
+    pub fn import_batch(&self, bytes: &[Vec<u8>]) -> LoroResult<()> {
         self.doc.import_batch(bytes)
     }
 
     /// Get a [LoroMovableList] by container id.
     ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
+    #[inline]
     pub fn get_movable_list<I: IntoContainerId>(&self, id: I) -> LoroMovableList {
         LoroMovableList {
             handler: self.doc.get_movable_list(id),
@@ -219,6 +301,7 @@ impl LoroDoc {
     /// Get a [LoroList] by container id.
     ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
+    #[inline]
     pub fn get_list<I: IntoContainerId>(&self, id: I) -> LoroList {
         LoroList {
             handler: self.doc.get_list(id),
@@ -228,6 +311,7 @@ impl LoroDoc {
     /// Get a [LoroMap] by container id.
     ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
+    #[inline]
     pub fn get_map<I: IntoContainerId>(&self, id: I) -> LoroMap {
         LoroMap {
             handler: self.doc.get_map(id),
@@ -237,6 +321,7 @@ impl LoroDoc {
     /// Get a [LoroText] by container id.
     ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
+    #[inline]
     pub fn get_text<I: IntoContainerId>(&self, id: I) -> LoroText {
         LoroText {
             handler: self.doc.get_text(id),
@@ -246,6 +331,7 @@ impl LoroDoc {
     /// Get a [LoroTree] by container id.
     ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
+    #[inline]
     pub fn get_tree<I: IntoContainerId>(&self, id: I) -> LoroTree {
         LoroTree {
             handler: self.doc.get_tree(id),
@@ -256,6 +342,7 @@ impl LoroDoc {
     /// Get a [LoroCounter] by container id.
     ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
+    #[inline]
     pub fn get_counter<I: IntoContainerId>(&self, id: I) -> LoroCounter {
         LoroCounter {
             handler: self.doc.get_counter(id),
@@ -265,8 +352,13 @@ impl LoroDoc {
     /// Commit the cumulative auto commit transaction.
     ///
     /// There is a transaction behind every operation.
-    /// It will automatically commit when users invoke export or import.
-    /// The event will be sent after a transaction is committed
+    /// The events will be emitted after a transaction is committed. A transaction is committed when:
+    ///
+    /// - `doc.commit()` is called.
+    /// - `doc.exportFrom(version)` is called.
+    /// - `doc.import(data)` is called.
+    /// - `doc.checkout(version)` is called.
+    #[inline]
     pub fn commit(&self) {
         self.doc.commit_then_renew()
     }
@@ -276,17 +368,25 @@ impl LoroDoc {
     /// There is a transaction behind every operation.
     /// It will automatically commit when users invoke export or import.
     /// The event will be sent after a transaction is committed
+    #[inline]
     pub fn commit_with(&self, options: CommitOptions) {
         self.doc.commit_with(options)
     }
 
+    /// Set commit message for the current uncommitted changes
+    pub fn set_next_commit_message(&self, msg: &str) {
+        self.doc.set_next_commit_message(msg)
+    }
+
     /// Whether the document is in detached mode, where the [loro_internal::DocState] is not
     /// synchronized with the latest version of the [loro_internal::OpLog].
+    #[inline]
     pub fn is_detached(&self) -> bool {
         self.doc.is_detached()
     }
 
     /// Import updates/snapshot exported by [`LoroDoc::export_snapshot`] or [`LoroDoc::export_from`].
+    #[inline]
     pub fn import(&self, bytes: &[u8]) -> Result<(), LoroError> {
         self.doc.import_with(bytes, "".into())
     }
@@ -295,6 +395,7 @@ impl LoroDoc {
     ///
     /// It marks the import with a custom `origin` string. It can be used to track the import source
     /// in the generated events.
+    #[inline]
     pub fn import_with(&self, bytes: &[u8], origin: &str) -> Result<(), LoroError> {
         self.doc.import_with(bytes, origin.into())
     }
@@ -302,11 +403,13 @@ impl LoroDoc {
     /// Import the json schema updates.
     ///
     /// only supports backward compatibility but not forward compatibility.
+    #[inline]
     pub fn import_json_updates<T: TryInto<JsonSchema>>(&self, json: T) -> Result<(), LoroError> {
         self.doc.import_json_updates(json)
     }
 
     /// Export the current state with json-string format of the document.
+    #[inline]
     pub fn export_json_updates(
         &self,
         start_vv: &VersionVector,
@@ -316,57 +419,110 @@ impl LoroDoc {
     }
 
     /// Export all the ops not included in the given `VersionVector`
+    #[deprecated(
+        since = "1.0.0",
+        note = "Use `export` with `ExportMode::Updates` instead"
+    )]
+    #[inline]
     pub fn export_from(&self, vv: &VersionVector) -> Vec<u8> {
         self.doc.export_from(vv)
     }
 
     /// Export the current state and history of the document.
+    #[deprecated(
+        since = "1.0.0",
+        note = "Use `export` with `ExportMode::Snapshot` instead"
+    )]
+    #[inline]
     pub fn export_snapshot(&self) -> Vec<u8> {
         self.doc.export_snapshot()
     }
 
     /// Convert `Frontiers` into `VersionVector`
+    #[inline]
     pub fn frontiers_to_vv(&self, frontiers: &Frontiers) -> Option<VersionVector> {
         self.doc.frontiers_to_vv(frontiers)
     }
 
     /// Convert `VersionVector` into `Frontiers`
+    #[inline]
     pub fn vv_to_frontiers(&self, vv: &VersionVector) -> Frontiers {
         self.doc.vv_to_frontiers(vv)
     }
 
     /// Access the `OpLog`.
+    ///
+    /// NOTE: Please be ware that the API in `OpLog` is unstable
+    #[inline]
     pub fn with_oplog<R>(&self, f: impl FnOnce(&OpLog) -> R) -> R {
-        let oplog = self.doc.oplog().lock().unwrap();
+        let oplog = self.doc.oplog().try_lock().unwrap();
         f(&oplog)
     }
 
+    /// Access the `DocState`.
+    ///
+    /// NOTE: Please be ware that the API in `DocState` is unstable
+    #[inline]
+    pub fn with_state<R>(&self, f: impl FnOnce(&mut DocState) -> R) -> R {
+        let mut state = self.doc.app_state().try_lock().unwrap();
+        f(&mut state)
+    }
+
     /// Get the `VersionVector` version of `OpLog`
+    #[inline]
     pub fn oplog_vv(&self) -> VersionVector {
         self.doc.oplog_vv()
     }
 
     /// Get the `VersionVector` version of `OpLog`
+    #[inline]
     pub fn state_vv(&self) -> VersionVector {
         self.doc.state_vv()
     }
 
+    /// Get the `VersionVector` of trimmed history
+    ///
+    /// The ops included by the trimmed history are not in the doc.
+    #[inline]
+    pub fn trimmed_vv(&self) -> ImVersionVector {
+        self.doc.trimmed_vv()
+    }
+
     /// Get the total number of operations in the `OpLog`
+    #[inline]
     pub fn len_ops(&self) -> usize {
         self.doc.len_ops()
     }
 
     /// Get the total number of changes in the `OpLog`
+    #[inline]
     pub fn len_changes(&self) -> usize {
         self.doc.len_changes()
     }
 
+    /// Get the shallow value of the document.
+    #[inline]
+    pub fn get_value(&self) -> LoroValue {
+        self.doc.get_value()
+    }
+
     /// Get the current state of the document.
+    #[inline]
     pub fn get_deep_value(&self) -> LoroValue {
         self.doc.get_deep_value()
     }
 
+    /// Get the current state with container id of the doc
+    pub fn get_deep_value_with_id(&self) -> LoroValue {
+        self.doc
+            .app_state()
+            .try_lock()
+            .unwrap()
+            .get_deep_value_with_id()
+    }
+
     /// Get the `Frontiers` version of `OpLog`
+    #[inline]
     pub fn oplog_frontiers(&self) -> Frontiers {
         self.doc.oplog_frontiers()
     }
@@ -374,11 +530,13 @@ impl LoroDoc {
     /// Get the `Frontiers` version of `DocState`
     ///
     /// [Learn more about `Frontiers`]()
+    #[inline]
     pub fn state_frontiers(&self) -> Frontiers {
         self.doc.state_frontiers()
     }
 
     /// Get the PeerID
+    #[inline]
     pub fn peer_id(&self) -> PeerID {
         self.doc.peer_id()
     }
@@ -387,14 +545,22 @@ impl LoroDoc {
     ///
     /// NOTE: You need ot make sure there is no chance two peer have the same PeerID.
     /// If it happens, the document will be corrupted.
+    #[inline]
     pub fn set_peer_id(&self, peer: PeerID) -> LoroResult<()> {
         self.doc.set_peer_id(peer)
     }
 
     /// Subscribe the events of a container.
     ///
-    /// The callback will be invoked when the container is changed.
+    /// The callback will be invoked after a transaction that change the container.
     /// Returns a subscription id that can be used to unsubscribe.
+    ///
+    /// The events will be emitted after a transaction is committed. A transaction is committed when:
+    ///
+    /// - `doc.commit()` is called.
+    /// - `doc.exportFrom(version)` is called.
+    /// - `doc.import(data)` is called.
+    /// - `doc.checkout(version)` is called.
     ///
     /// # Example
     ///
@@ -426,6 +592,7 @@ impl LoroDoc {
     /// doc.commit();
     /// assert!(ran.load(std::sync::atomic::Ordering::Relaxed));
     /// ```
+    #[inline]
     pub fn subscribe(&self, container_id: &ContainerID, callback: Subscriber) -> SubID {
         self.doc.subscribe(
             container_id,
@@ -439,6 +606,14 @@ impl LoroDoc {
     ///
     /// The callback will be invoked when any part of the [loro_internal::DocState] is changed.
     /// Returns a subscription id that can be used to unsubscribe.
+    ///
+    /// The events will be emitted after a transaction is committed. A transaction is committed when:
+    ///
+    /// - `doc.commit()` is called.
+    /// - `doc.exportFrom(version)` is called.
+    /// - `doc.import(data)` is called.
+    /// - `doc.checkout(version)` is called.
+    #[inline]
     pub fn subscribe_root(&self, callback: Subscriber) -> SubID {
         // self.doc.subscribe_root(callback)
         self.doc.subscribe_root(Arc::new(move |e| {
@@ -446,28 +621,42 @@ impl LoroDoc {
         }))
     }
 
-    /// Remove a subscription.
+    /// Remove a subscription by subscription id.
     pub fn unsubscribe(&self, id: SubID) {
         self.doc.unsubscribe(id)
     }
 
+    /// Subscribe the local update of the document.
+    pub fn subscribe_local_update(&self, callback: LocalUpdateCallback) -> Subscription {
+        self.doc.subscribe_local_update(callback)
+    }
+
+    /// Subscribe the peer id change of the document.
+    pub fn subscribe_peer_id_change(&self, callback: PeerIdUpdateCallback) -> Subscription {
+        self.doc.subscribe_peer_id_change(callback)
+    }
+
     /// Estimate the size of the document states in memory.
+    #[inline]
     pub fn log_estimate_size(&self) {
         self.doc.log_estimated_size();
     }
 
     /// Check the correctness of the document state by comparing it with the state
     /// calculated by applying all the history.
+    #[inline]
     pub fn check_state_correctness_slow(&self) {
         self.doc.check_state_diff_calc_consistency_slow()
     }
 
     /// Get the handler by the path.
+    #[inline]
     pub fn get_by_path(&self, path: &[Index]) -> Option<ValueOrContainer> {
         self.doc.get_by_path(path).map(ValueOrContainer::from)
     }
 
     /// Get the handler by the string path.
+    #[inline]
     pub fn get_by_str_path(&self, path: &str) -> Option<ValueOrContainer> {
         self.doc.get_by_str_path(path).map(ValueOrContainer::from)
     }
@@ -490,6 +679,7 @@ impl LoroDoc {
     /// text.insert(0, "01234").unwrap();
     /// assert_eq!(doc.get_cursor_pos(&pos).unwrap().current.pos, 5);
     /// ```
+    #[inline]
     pub fn get_cursor_pos(
         &self,
         cursor: &Cursor,
@@ -498,8 +688,130 @@ impl LoroDoc {
     }
 
     /// Get the inner LoroDoc ref.
+    #[inline]
     pub fn inner(&self) -> &InnerLoroDoc {
         &self.doc
+    }
+
+    /// Whether the history cache is built.
+    #[inline]
+    pub fn has_history_cache(&self) -> bool {
+        self.doc.has_history_cache()
+    }
+
+    /// Free the history cache that is used for making checkout faster.
+    ///
+    /// If you use checkout that switching to an old/concurrent version, the history cache will be built.
+    /// You can free it by calling this method.
+    #[inline]
+    pub fn free_history_cache(&self) {
+        self.doc.free_history_cache()
+    }
+
+    /// Free the cached diff calculator that is used for checkout.
+    #[inline]
+    pub fn free_diff_calculator(&self) {
+        self.doc.free_diff_calculator()
+    }
+
+    /// Encoded all ops and history cache to bytes and store them in the kv store.
+    ///
+    /// This will free up the memory that used by parsed ops
+    #[inline]
+    pub fn compact_change_store(&self) {
+        self.doc.compact_change_store()
+    }
+
+    /// Export the document in the given mode.
+    pub fn export(&self, mode: ExportMode) -> Vec<u8> {
+        self.doc.export(mode)
+    }
+
+    /// Analyze the container info of the doc
+    ///
+    /// This is used for development and debugging. It can be slow.
+    pub fn analyze(&self) -> DocAnalysis {
+        self.doc.analyze()
+    }
+
+    /// Get the path from the root to the container
+    pub fn get_path_to_container(&self, id: &ContainerID) -> Option<Vec<(ContainerID, Index)>> {
+        self.doc.get_path_to_container(id)
+    }
+
+    /// Evaluate a JSONPath expression on the document and return matching values or handlers.
+    ///
+    /// This method allows querying the document structure using JSONPath syntax.
+    /// It returns a vector of `ValueOrHandler` which can represent either primitive values
+    /// or container handlers, depending on what the JSONPath expression matches.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - A string slice containing the JSONPath expression to evaluate.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing either:
+    /// - `Ok(Vec<ValueOrHandler>)`: A vector of matching values or handlers.
+    /// - `Err(String)`: An error message if the JSONPath expression is invalid or evaluation fails.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use loro::{LoroDoc, ToJson};
+    ///
+    /// let doc = LoroDoc::new();
+    /// let map = doc.get_map("users");
+    /// map.insert("alice", 30).unwrap();
+    /// map.insert("bob", 25).unwrap();
+    ///
+    /// let result = doc.jsonpath("$.users.alice").unwrap();
+    /// assert_eq!(result.len(), 1);
+    /// assert_eq!(result[0].as_value().unwrap().to_json_value(), serde_json::json!(30));
+    /// ```
+    #[inline]
+    #[cfg(feature = "jsonpath")]
+    pub fn jsonpath(&self, path: &str) -> Result<Vec<ValueOrContainer>, JsonPathError> {
+        self.doc.jsonpath(path).map(|vec| {
+            vec.into_iter()
+                .map(|v| match v {
+                    ValueOrHandler::Value(v) => ValueOrContainer::Value(v),
+                    ValueOrHandler::Handler(h) => ValueOrContainer::Container(h.into()),
+                })
+                .collect()
+        })
+    }
+
+    /// Fork the document at the given frontiers.
+    pub fn fork_at(&self, frontiers: &Frontiers) -> LoroDoc {
+        let new_doc = self.doc.fork_at(frontiers);
+        new_doc.start_auto_commit();
+        LoroDoc::_new(new_doc)
+    }
+
+    /// Get the number of operations in the pending transaction.
+    ///
+    /// The pending transaction is the one that is not committed yet. It will be committed
+    /// after calling `doc.commit()`, `doc.export(mode)` or `doc.checkout(version)`.
+    pub fn get_pending_txn_len(&self) -> usize {
+        self.doc.get_pending_txn_len()
+    }
+
+    /// Traverses the ancestors of the Change containing the given ID, including itself.
+    ///
+    /// This method visits all ancestors in causal order, from the latest to the oldest,
+    /// based on their Lamport timestamps.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The ID of the Change to start the traversal from.
+    /// * `f` - A mutable function that is called for each ancestor. It can return `ControlFlow::Break(())` to stop the traversal.
+    pub fn travel_change_ancestors(
+        &self,
+        id: ID,
+        f: &mut dyn FnMut(ChangeMeta) -> ControlFlow<()>,
+    ) {
+        self.doc.travel_change_ancestors(id, f)
     }
 }
 
@@ -614,10 +926,12 @@ impl LoroList {
 
     /// Get the value at the given position.
     #[inline]
-    pub fn get(&self, index: usize) -> Option<Either<LoroValue, Container>> {
+    pub fn get(&self, index: usize) -> Option<ValueOrContainer> {
         match self.handler.get_(index) {
-            Some(ValueOrHandler::Handler(c)) => Some(Either::Right(c.into())),
-            Some(ValueOrHandler::Value(v)) => Some(Either::Left(v)),
+            Some(ValueOrHandler::Handler(c)) => {
+                Some(ValueOrContainer::Container(Container::from_handler(c)))
+            }
+            Some(ValueOrHandler::Value(v)) => Some(ValueOrContainer::Value(v)),
             None => None,
         }
     }
@@ -664,11 +978,13 @@ impl LoroList {
     }
 
     /// Iterate over the elements of the list.
-    pub fn for_each<I>(&self, f: I)
+    pub fn for_each<I>(&self, mut f: I)
     where
-        I: FnMut((usize, ValueOrHandler)),
+        I: FnMut((usize, ValueOrContainer)),
     {
-        self.handler.for_each(f)
+        self.handler.for_each(&mut |(index, v)| {
+            f((index, ValueOrContainer::from(v)));
+        })
     }
 
     /// Get the length of the list.
@@ -739,6 +1055,37 @@ impl LoroList {
     /// ```
     pub fn get_cursor(&self, pos: usize, side: Side) -> Option<Cursor> {
         self.handler.get_cursor(pos, side)
+    }
+
+    /// Converts the LoroList to a Vec of LoroValue.
+    ///
+    /// This method unwraps the internal Arc and clones the data if necessary,
+    /// returning a Vec containing all the elements of the LoroList as LoroValue.
+    ///
+    /// # Returns
+    ///
+    /// A Vec<LoroValue> containing all elements of the LoroList.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use loro::{LoroDoc, LoroValue};
+    ///
+    /// let doc = LoroDoc::new();
+    /// let list = doc.get_list("my_list");
+    /// list.insert(0, 1).unwrap();
+    /// list.insert(1, "hello").unwrap();
+    /// list.insert(2, true).unwrap();
+    ///
+    /// let vec = list.to_vec();
+    /// ```
+    pub fn to_vec(&self) -> Vec<LoroValue> {
+        Arc::unwrap_or_clone(self.get_value().into_list().unwrap())
+    }
+
+    /// Delete all elements in the list.
+    pub fn clear(&self) -> LoroResult<()> {
+        self.handler.clear()
     }
 }
 
@@ -862,11 +1209,13 @@ impl LoroMap {
     }
 
     /// Get the value of the map with the given key.
-    pub fn get(&self, key: &str) -> Option<Either<LoroValue, Container>> {
+    pub fn get(&self, key: &str) -> Option<ValueOrContainer> {
         match self.handler.get_(key) {
             None => None,
-            Some(ValueOrHandler::Handler(c)) => Some(Either::Right(c.into())),
-            Some(ValueOrHandler::Value(v)) => Some(Either::Left(v)),
+            Some(ValueOrHandler::Handler(c)) => {
+                Some(ValueOrContainer::Container(Container::from_handler(c)))
+            }
+            Some(ValueOrHandler::Value(v)) => Some(ValueOrContainer::Value(v)),
         }
     }
 
@@ -910,6 +1259,11 @@ impl LoroMap {
             self.handler
                 .get_or_create_container(key, child.to_handler())?,
         ))
+    }
+
+    /// Delete all key-value pairs in the map.
+    pub fn clear(&self) -> LoroResult<()> {
+        self.handler.clear()
     }
 }
 
@@ -988,7 +1342,7 @@ impl LoroText {
 
     /// Insert a string at the given unicode position.
     pub fn insert(&self, pos: usize, s: &str) -> LoroResult<()> {
-        self.handler.insert(pos, s)
+        self.handler.insert_unicode(pos, s)
     }
 
     /// Insert a string at the given utf-8 position.
@@ -998,7 +1352,7 @@ impl LoroText {
 
     /// Delete a range of text at the given unicode position with unicode length.
     pub fn delete(&self, pos: usize, len: usize) -> LoroResult<()> {
-        self.handler.delete(pos, len)
+        self.handler.delete_unicode(pos, len)
     }
 
     /// Delete a range of text at the given utf-8 position with utf-8 length.
@@ -1039,6 +1393,16 @@ impl LoroText {
     /// Get the length of the text container in UTF-16.
     pub fn len_utf16(&self) -> usize {
         self.handler.len_utf16()
+    }
+
+    /// Update the current text based on the provided text.
+    pub fn update(&self, text: &str) {
+        self.handler.update(text);
+    }
+
+    /// Update the current text based on the provided text by line.
+    pub fn update_by_line(&self, text: &str) {
+        self.handler.update_by_line(text);
     }
 
     /// Apply a [delta](https://quilljs.com/docs/delta/) to the text container.
@@ -1159,6 +1523,11 @@ impl LoroText {
     pub fn get_cursor(&self, pos: usize, side: Side) -> Option<Cursor> {
         self.handler.get_cursor(pos, side)
     }
+
+    /// Whether the text container is deleted.
+    pub fn is_deleted(&self) -> bool {
+        self.handler.is_deleted()
+    }
 }
 
 impl Default for LoroText {
@@ -1170,6 +1539,8 @@ impl Default for LoroText {
 /// LoroTree container. It's used to model movable trees.
 ///
 /// You may use it to model directories, outline or other movable hierarchical data.
+///
+/// Learn more at https://loro.dev/docs/tutorial/tree
 #[derive(Clone, Debug)]
 pub struct LoroTree {
     handler: InnerTreeHandler,
@@ -1202,6 +1573,14 @@ impl ContainerTrait for LoroTree {
     fn try_from_container(container: Container) -> Option<Self> {
         container.into_tree().ok()
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct TreeNode {
+    pub id: TreeID,
+    pub parent: TreeParentId,
+    pub fractional_index: FractionalIndex,
+    pub index: usize,
 }
 
 impl LoroTree {
@@ -1240,10 +1619,13 @@ impl LoroTree {
     /// // create a new child
     /// let child = tree.create(root).unwrap();
     /// ```
-    pub fn create<T: Into<Option<TreeID>>>(&self, parent: T) -> LoroResult<TreeID> {
-        let parent = parent.into();
-        let index = self.children_num(parent).unwrap_or(0);
-        self.handler.create_at(parent, index)
+    pub fn create<T: Into<TreeParentId>>(&self, parent: T) -> LoroResult<TreeID> {
+        self.handler.create(parent.into())
+    }
+
+    /// Get the root nodes of the forest.
+    pub fn roots(&self) -> Vec<TreeID> {
+        self.handler.roots()
     }
 
     /// Create a new tree node at the given index and return the [`TreeID`].
@@ -1258,17 +1640,18 @@ impl LoroTree {
     ///
     /// let doc = LoroDoc::new();
     /// let tree = doc.get_tree("tree");
+    /// // enable generate fractional index
+    /// tree.enable_fractional_index(0);
     /// // create a root
     /// let root = tree.create(None).unwrap();
     /// // create a new child at index 0
     /// let child = tree.create_at(root, 0).unwrap();
     /// ```
-    pub fn create_at<T: Into<Option<TreeID>>>(
-        &self,
-        parent: T,
-        index: usize,
-    ) -> LoroResult<TreeID> {
-        self.handler.create_at(parent, index)
+    pub fn create_at<T: Into<TreeParentId>>(&self, parent: T, index: usize) -> LoroResult<TreeID> {
+        if !self.handler.is_fractional_index_enabled() {
+            return Err(LoroTreeError::FractionalIndexNotEnabled.into());
+        }
+        self.handler.create_at(parent.into(), index)
     }
 
     /// Move the `target` node to be a child of the `parent` node.
@@ -1287,10 +1670,8 @@ impl LoroTree {
     /// // move `root2` to be a child of `root`.
     /// tree.mov(root2, root).unwrap();
     /// ```
-    pub fn mov<T: Into<Option<TreeID>>>(&self, target: TreeID, parent: T) -> LoroResult<()> {
-        let parent = parent.into();
-        let index = self.children_num(parent).unwrap_or(0);
-        self.handler.move_to(target, parent, index)
+    pub fn mov<T: Into<TreeParentId>>(&self, target: TreeID, parent: T) -> LoroResult<()> {
+        self.handler.mov(target, parent.into())
     }
 
     /// Move the `target` node to be a child of the `parent` node at the given index.
@@ -1303,19 +1684,23 @@ impl LoroTree {
     ///
     /// let doc = LoroDoc::new();
     /// let tree = doc.get_tree("tree");
+    /// // enable generate fractional index
+    /// tree.enable_fractional_index(0);
     /// let root = tree.create(None).unwrap();
     /// let root2 = tree.create(None).unwrap();
     /// // move `root2` to be a child of `root` at index 0.
     /// tree.mov_to(root2, root, 0).unwrap();
     /// ```
-    pub fn mov_to<T: Into<Option<TreeID>>>(
+    pub fn mov_to<T: Into<TreeParentId>>(
         &self,
         target: TreeID,
         parent: T,
         to: usize,
     ) -> LoroResult<()> {
-        let parent = parent.into();
-        self.handler.move_to(target, parent, to)
+        if !self.handler.is_fractional_index_enabled() {
+            return Err(LoroTreeError::FractionalIndexNotEnabled.into());
+        }
+        self.handler.move_to(target, parent.into(), to)
     }
 
     /// Move the `target` node to be a child after the `after` node with the same parent.
@@ -1327,12 +1712,17 @@ impl LoroTree {
     ///
     /// let doc = LoroDoc::new();
     /// let tree = doc.get_tree("tree");
+    /// // enable generate fractional index
+    /// tree.enable_fractional_index(0);
     /// let root = tree.create(None).unwrap();
     /// let root2 = tree.create(None).unwrap();
     /// // move `root` to be a child after `root2`.
     /// tree.mov_after(root, root2).unwrap();
     /// ```
     pub fn mov_after(&self, target: TreeID, after: TreeID) -> LoroResult<()> {
+        if !self.handler.is_fractional_index_enabled() {
+            return Err(LoroTreeError::FractionalIndexNotEnabled.into());
+        }
         self.handler.mov_after(target, after)
     }
 
@@ -1345,12 +1735,17 @@ impl LoroTree {
     ///
     /// let doc = LoroDoc::new();
     /// let tree = doc.get_tree("tree");
+    /// // enable generate fractional index
+    /// tree.enable_fractional_index(0);
     /// let root = tree.create(None).unwrap();
     /// let root2 = tree.create(None).unwrap();
     /// // move `root` to be a child before `root2`.
     /// tree.mov_before(root, root2).unwrap();
     /// ```
     pub fn mov_before(&self, target: TreeID, before: TreeID) -> LoroResult<()> {
+        if !self.handler.is_fractional_index_enabled() {
+            return Err(LoroTreeError::FractionalIndexNotEnabled.into());
+        }
         self.handler.mov_before(target, before)
     }
 
@@ -1395,30 +1790,56 @@ impl LoroTree {
     ///
     /// - If the target node does not exist, return `None`.
     /// - If the target node is a root node, return `Some(None)`.
-    pub fn parent(&self, target: &TreeID) -> Option<Option<TreeID>> {
-        self.handler.get_node_parent(target)
+    pub fn parent(&self, target: TreeID) -> Option<TreeParentId> {
+        self.handler.get_node_parent(&target)
     }
 
-    /// Return whether target node exists.
+    /// Return whether target node exists. including deleted node.
     pub fn contains(&self, target: TreeID) -> bool {
         self.handler.contains(target)
     }
 
-    /// Return all nodes
+    /// Return whether target node is deleted.
+    ///
+    /// # Errors
+    ///
+    /// - If the target node does not exist, return `LoroTreeError::TreeNodeNotExist`.
+    pub fn is_node_deleted(&self, target: &TreeID) -> LoroResult<bool> {
+        self.handler.is_node_deleted(target)
+    }
+
+    /// Return all nodes, including deleted nodes
     pub fn nodes(&self) -> Vec<TreeID> {
         self.handler.nodes()
+    }
+
+    /// Return all nodes, if `with_deleted` is true, the deleted nodes will be included.
+    pub fn get_nodes(&self, with_deleted: bool) -> Vec<TreeNode> {
+        let mut ans = self.handler.get_nodes_under(TreeParentId::Root);
+        if with_deleted {
+            ans.extend(self.handler.get_nodes_under(TreeParentId::Deleted));
+        }
+        ans.into_iter()
+            .map(|x| TreeNode {
+                id: x.id,
+                parent: x.parent,
+                fractional_index: x.fractional_index,
+                index: x.index,
+            })
+            .collect()
     }
 
     /// Return all children of the target node.
     ///
     /// If the parent node does not exist, return `None`.
-    pub fn children(&self, parent: Option<TreeID>) -> Option<Vec<TreeID>> {
-        self.handler.children(parent)
+    pub fn children<T: Into<TreeParentId>>(&self, parent: T) -> Option<Vec<TreeID>> {
+        self.handler.children(&parent.into())
     }
 
     /// Return the number of children of the target node.
-    pub fn children_num(&self, parent: Option<TreeID>) -> Option<usize> {
-        self.handler.children_num(parent)
+    pub fn children_num<T: Into<TreeParentId>>(&self, parent: T) -> Option<usize> {
+        let parent: TreeParentId = parent.into();
+        self.handler.children_num(&parent)
     }
 
     /// Return container id of the tree.
@@ -1427,13 +1848,13 @@ impl LoroTree {
     }
 
     /// Return the fractional index of the target node with hex format.
-    pub fn fractional_index(&self, target: &TreeID) -> Option<String> {
+    pub fn fractional_index(&self, target: TreeID) -> Option<String> {
         self.handler
-            .get_position_by_tree_id(target)
+            .get_position_by_tree_id(&target)
             .map(|x| x.to_string())
     }
 
-    /// Return the flat array of the forest.
+    /// Return the hierarchy array of the forest.
     ///
     /// Note: the metadata will be not resolved. So if you don't only care about hierarchy
     /// but also the metadata, you should use [TreeHandler::get_value_with_meta()].
@@ -1441,7 +1862,7 @@ impl LoroTree {
         self.handler.get_value()
     }
 
-    /// Return the flat array of the forest, each node is with metadata.
+    /// Return the hierarchy array of the forest, each node is with metadata.
     pub fn get_value_with_meta(&self) -> LoroValue {
         self.handler.get_deep_value()
     }
@@ -1451,6 +1872,30 @@ impl LoroTree {
     #[allow(non_snake_case)]
     pub fn __internal__next_tree_id(&self) -> TreeID {
         self.handler.__internal__next_tree_id()
+    }
+
+    /// Whether the fractional index is enabled.
+    pub fn is_fractional_index_enabled(&self) -> bool {
+        self.handler.is_fractional_index_enabled()
+    }
+
+    /// Enable fractional index for Tree Position.
+    ///
+    /// The jitter is used to avoid conflicts when multiple users are creating the node at the same position.
+    /// value 0 is default, which means no jitter, any value larger than 0 will enable jitter.
+    ///
+    /// Generally speaking, jitter will affect the growth rate of document size.
+    /// [Read more about it](https://www.loro.dev/blog/movable-tree#implementation-and-encoding-size)
+    #[inline]
+    pub fn enable_fractional_index(&self, jitter: u8) {
+        self.handler.enable_fractional_index(jitter);
+    }
+
+    /// Disable the fractional index generation for Tree Position when
+    /// you don't need the Tree's siblings to be sorted. The fractional index will be always default.
+    #[inline]
+    pub fn disable_fractional_index(&self) {
+        self.handler.disable_fractional_index();
     }
 }
 
@@ -1528,6 +1973,14 @@ impl LoroMovableList {
         self.handler.id().clone()
     }
 
+    /// Whether the container is attached to a document
+    ///
+    /// The edits on a detached container will not be persisted.
+    /// To attach the container to the document, please insert it into an attached container.
+    pub fn is_attached(&self) -> bool {
+        self.handler.is_attached()
+    }
+
     /// Insert a value at the given position.
     pub fn insert(&self, pos: usize, v: impl Into<LoroValue>) -> LoroResult<()> {
         self.handler.insert(pos, v)
@@ -1539,10 +1992,12 @@ impl LoroMovableList {
     }
 
     /// Get the value at the given position.
-    pub fn get(&self, index: usize) -> Option<Either<LoroValue, Container>> {
+    pub fn get(&self, index: usize) -> Option<ValueOrContainer> {
         match self.handler.get_(index) {
-            Some(ValueOrHandler::Handler(c)) => Some(Either::Right(c.into())),
-            Some(ValueOrHandler::Value(v)) => Some(Either::Left(v)),
+            Some(ValueOrHandler::Handler(c)) => {
+                Some(ValueOrContainer::Container(Container::from_handler(c)))
+            }
+            Some(ValueOrHandler::Value(v)) => Some(ValueOrContainer::Value(v)),
             None => None,
         }
     }
@@ -1573,10 +2028,12 @@ impl LoroMovableList {
     }
 
     /// Pop the last element of the list.
-    pub fn pop(&self) -> LoroResult<Option<Either<LoroValue, Container>>> {
+    pub fn pop(&self) -> LoroResult<Option<ValueOrContainer>> {
         Ok(match self.handler.pop_()? {
-            Some(ValueOrHandler::Handler(c)) => Some(Either::Right(c.into())),
-            Some(ValueOrHandler::Value(v)) => Some(Either::Left(v)),
+            Some(ValueOrHandler::Handler(c)) => {
+                Some(ValueOrContainer::Container(Container::from_handler(c)))
+            }
+            Some(ValueOrHandler::Value(v)) => Some(ValueOrContainer::Value(v)),
             None => None,
         })
     }
@@ -1662,6 +2119,42 @@ impl LoroMovableList {
     pub fn get_cursor(&self, pos: usize, side: Side) -> Option<Cursor> {
         self.handler.get_cursor(pos, side)
     }
+
+    /// Get the elements of the list as a vector of LoroValues.
+    ///
+    /// This method returns a vector containing all the elements in the list as LoroValues.
+    /// It provides a convenient way to access the entire contents of the LoroMovableList
+    /// as a standard Rust vector.
+    ///
+    /// # Returns
+    ///
+    /// A `Vec<LoroValue>` containing all elements of the list.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use loro::LoroDoc;
+    ///
+    /// let doc = LoroDoc::new();
+    /// let list = doc.get_movable_list("mylist");
+    /// list.insert(0, 1).unwrap();
+    /// list.insert(1, "hello").unwrap();
+    /// list.insert(2, true).unwrap();
+    ///
+    /// let vec = list.to_vec();
+    /// assert_eq!(vec.len(), 3);
+    /// assert_eq!(vec[0], 1.into());
+    /// assert_eq!(vec[1], "hello".into());
+    /// assert_eq!(vec[2], true.into());
+    /// ```
+    pub fn to_vec(&self) -> Vec<LoroValue> {
+        Arc::unwrap_or_clone(self.get_value().into_list().unwrap())
+    }
+
+    /// Delete all elements in the list.
+    pub fn clear(&self) -> LoroResult<()> {
+        self.handler.clear()
+    }
 }
 
 impl Default for LoroMovableList {
@@ -1674,6 +2167,13 @@ impl Default for LoroMovableList {
 #[derive(Clone, Debug)]
 pub struct LoroUnknown {
     handler: InnerUnknownHandler,
+}
+
+impl LoroUnknown {
+    /// Get the container id.
+    pub fn id(&self) -> ContainerID {
+        self.handler.id().clone()
+    }
 }
 
 impl SealedTrait for LoroUnknown {}
@@ -1876,6 +2376,25 @@ pub enum ValueOrContainer {
     Container(Container),
 }
 
+impl ValueOrContainer {
+    /// Get the deep value of the value or container.
+    pub fn get_deep_value(&self) -> LoroValue {
+        match self {
+            ValueOrContainer::Value(v) => v.clone(),
+            ValueOrContainer::Container(c) => match c {
+                Container::List(c) => c.get_deep_value(),
+                Container::Map(c) => c.get_deep_value(),
+                Container::Text(c) => c.to_string().into(),
+                Container::Tree(c) => c.get_value(),
+                Container::MovableList(c) => c.get_deep_value(),
+                #[cfg(feature = "counter")]
+                Container::Counter(c) => c.get_value().into(),
+                Container::Unknown(_) => LoroValue::Null,
+            },
+        }
+    }
+}
+
 /// UndoManager can be used to undo and redo the changes made to the document with a certain peer.
 #[derive(Debug)]
 #[repr(transparent)]
@@ -1940,5 +2459,10 @@ impl UndoManager {
     /// The listener will be called when an undo/redo item is popped from the stack.
     pub fn set_on_pop(&mut self, on_pop: Option<OnPop>) {
         self.0.set_on_pop(on_pop)
+    }
+
+    /// Clear the undo stack and the redo stack
+    pub fn clear(&self) {
+        self.0.clear();
     }
 }

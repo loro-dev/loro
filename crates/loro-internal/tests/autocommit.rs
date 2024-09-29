@@ -1,6 +1,7 @@
 use loro_common::ID;
 use loro_internal::{version::Frontiers, HandlerTrait, LoroDoc, TextHandler, ToJson};
 use serde_json::json;
+use tracing::trace;
 
 #[test]
 fn auto_commit() {

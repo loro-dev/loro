@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use loro_internal::{
     handler::{counter::CounterHandler, Handler},
-    obs::SubID,
+    subscription::SubID,
     HandlerTrait, LoroDoc,
 };
 use wasm_bindgen::prelude::*;

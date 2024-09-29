@@ -473,17 +473,7 @@ pub struct RawTreeMove {
     pub is_parent_null: bool,
     pub parent_peer_idx: usize,
     pub parent_cnt: Counter,
-    pub fractional_index: Vec<u8>,
-}
-
-impl RawTreeMove {
-    pub fn as_tree_op(&self, peer_ids: &[u64]) -> LoroResult<TreeOp> {
-        unimplemented!()
-    }
-
-    pub fn from_tree_op<'p, 'a: 'p>(op: &'a TreeOp, registers: &mut ValueRegister<PeerID>) -> Self {
-        unimplemented!()
-    }
+    pub position_idx: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -908,6 +898,7 @@ impl<'a> ValueReader<'a> {
         Ok(ans)
     }
 
+    #[allow(unused)]
     fn read_binary_vec(&mut self) -> LoroResult<Vec<u8>> {
         let len = self.read_usize()?;
         if self.raw.len() < len {
@@ -978,7 +969,7 @@ impl<'a> ValueReader<'a> {
     fn read_raw_tree_move(&mut self) -> LoroResult<RawTreeMove> {
         let subject_peer_idx = self.read_usize()?;
         let subject_cnt = self.read_usize()?;
-        let fractional_index = self.read_binary_vec()?;
+        let position_idx = self.read_usize()?;
         let is_parent_null = self.read_u8()? != 0;
         let mut parent_peer_idx = 0;
         let mut parent_cnt = 0;
@@ -990,7 +981,7 @@ impl<'a> ValueReader<'a> {
         Ok(RawTreeMove {
             subject_peer_idx,
             subject_cnt: subject_cnt as i32,
-            fractional_index,
+            position_idx,
             is_parent_null,
             parent_peer_idx,
             parent_cnt: parent_cnt as i32,
@@ -1132,9 +1123,7 @@ impl ValueWriter {
         let len = self.buffer.len();
         self.write_usize(op.subject_peer_idx);
         self.write_usize(op.subject_cnt as usize);
-        self.write_usize(op.fractional_index.len());
-        self.buffer.extend_from_slice(&op.fractional_index);
-
+        self.write_usize(op.position_idx);
         self.write_u8(op.is_parent_null as u8);
         if op.is_parent_null {
             return self.buffer.len() - len;

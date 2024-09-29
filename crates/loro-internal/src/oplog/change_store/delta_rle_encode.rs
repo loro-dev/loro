@@ -36,6 +36,7 @@ impl<'a> UnsignedDeltaDecoder<'a> {
         Self { v, count, last: 0 }
     }
 
+    #[allow(unused)]
     pub fn rest(mut self) -> &'a [u8] {
         while self.next().is_some() {}
         self.v

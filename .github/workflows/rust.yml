@@ -4,7 +4,7 @@ on:
   push:
     branches: ["main"]
   pull_request:
-    branches: ["main"]
+    branches: ["main", "dev", "feat-gc"]
     types: [opened, synchronize, reopened, ready_for_review]
 
 env:

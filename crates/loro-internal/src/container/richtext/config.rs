@@ -94,6 +94,13 @@ impl StyleConfigMap {
             },
         );
 
+        map.map.insert(
+            "code".into(),
+            StyleConfig {
+                expand: ExpandType::None,
+            },
+        );
+
         map
     }
 }

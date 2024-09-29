@@ -21,7 +21,8 @@ pub fn get_end_list<T: DagNode, D: Dag<Node = T>>(graph: &D, start_list: &[ID]) 
 }
 
 fn end_dfs<T: DagNode, D: Dag<Node = T>>(graph: &D, current: &ID, end_set: &mut HashSet<ID>) {
-    let deps = graph.get(*current).unwrap().deps();
+    let binding = graph.get(*current).unwrap();
+    let deps = binding.deps();
     if deps.is_empty() {
         end_set.insert(*current);
     }

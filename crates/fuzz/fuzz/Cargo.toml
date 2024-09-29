@@ -13,6 +13,9 @@ libfuzzer-sys = "0.4"
 [dependencies.fuzz]
 path = ".."
 
+[dependencies.loro]
+path = "../../loro"
+
 # Prevent this from interfering with workspaces
 [workspace]
 members = ["."]
@@ -24,6 +27,18 @@ debug = 1
 [[bin]]
 name = "all"
 path = "fuzz_targets/all.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "gc_fuzz"
+path = "fuzz_targets/gc_fuzz.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "one_doc_fuzz"
+path = "fuzz_targets/one_doc_fuzz.rs"
 test = false
 doc = false
 
@@ -42,5 +57,23 @@ doc = false
 [[bin]]
 name = "counter"
 path = "fuzz_targets/counter.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "text-update"
+path = "fuzz_targets/text-update.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "kv_store"
+path = "fuzz_targets/kv_store.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "random_import"
+path = "fuzz_targets/random_import.rs"
 test = false
 doc = false

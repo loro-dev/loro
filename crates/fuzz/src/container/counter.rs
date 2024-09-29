@@ -37,7 +37,7 @@ impl CounterActor {
             Arc::new(move |event| {
                 let s = debug_span!("Counter event", peer = peer_id);
                 let _g = s.enter();
-                let mut counter = counter.lock().unwrap();
+                let mut counter = counter.try_lock().unwrap();
                 counter.apply_diff(event);
             }),
         );
@@ -61,8 +61,18 @@ impl ActorTrait for CounterActor {
         let loro = &self.loro;
         let counter = loro.get_counter("counter");
         let result = counter.get_value();
-        let tracker = self.tracker.lock().unwrap().to_value();
-        assert_eq!(&result, tracker.into_map().unwrap().get("counter").unwrap());
+        let tracker = self.tracker.try_lock().unwrap().to_value();
+        assert_eq!(
+            result,
+            tracker
+                .into_map()
+                .unwrap()
+                .get("counter")
+                .unwrap()
+                .clone()
+                .into_double()
+                .unwrap()
+        );
 
         use loro_without_counter::LoroDoc as LoroDocWithoutCounter;
         // snapshot to snapshot
@@ -70,7 +80,7 @@ impl ActorTrait for CounterActor {
         unknown_loro.import(&loro.export_snapshot()).unwrap();
         let new_loro = LoroDoc::new();
         new_loro.import(&unknown_loro.export_snapshot()).unwrap();
-        assert_value_eq(&new_loro.get_deep_value(), &loro.get_deep_value());
+        assert_value_eq(&new_loro.get_deep_value(), &loro.get_deep_value(), None);
 
         // updates to updates
         let unknown_loro = LoroDocWithoutCounter::new();
@@ -81,7 +91,7 @@ impl ActorTrait for CounterActor {
         new_loro
             .import(&unknown_loro.export_from(&Default::default()))
             .unwrap();
-        assert_value_eq(&new_loro.get_deep_value(), &loro.get_deep_value());
+        assert_value_eq(&new_loro.get_deep_value(), &loro.get_deep_value(), None);
 
         // snapshot to updates
         let unknown_loro = LoroDocWithoutCounter::new();
@@ -90,7 +100,7 @@ impl ActorTrait for CounterActor {
         new_loro
             .import(&unknown_loro.export_from(&Default::default()))
             .unwrap();
-        assert_value_eq(&new_loro.get_deep_value(), &loro.get_deep_value());
+        assert_value_eq(&new_loro.get_deep_value(), &loro.get_deep_value(), None);
 
         // updates to snapshot
         let unknown_loro = LoroDocWithoutCounter::new();
@@ -99,7 +109,7 @@ impl ActorTrait for CounterActor {
             .unwrap();
         let new_loro = LoroDoc::new();
         new_loro.import(&unknown_loro.export_snapshot()).unwrap();
-        assert_value_eq(&new_loro.get_deep_value(), &loro.get_deep_value());
+        assert_value_eq(&new_loro.get_deep_value(), &loro.get_deep_value(), None);
     }
 
     fn add_new_container(&mut self, container: Container) {
@@ -113,7 +123,7 @@ impl Actionable for CounterAction {
     fn apply(&self, actor: &mut ActionExecutor, container: usize) -> Option<Container> {
         let actor = actor.as_counter_actor_mut().unwrap();
         let counter = actor.containers.get(container).unwrap();
-        counter.increment(self.0 as f64).unwrap();
+        super::unwrap(counter.increment(self.0 as f64));
         None
     }
 

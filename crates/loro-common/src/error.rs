@@ -1,11 +1,11 @@
 use serde_columnar::ColumnarError;
 use thiserror::Error;
 
-use crate::{InternalString, PeerID, TreeID, ID};
+use crate::{ContainerID, InternalString, PeerID, TreeID, ID};
 
 pub type LoroResult<T> = Result<T, LoroError>;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, PartialEq)]
 pub enum LoroError {
     #[error("Context's client_id({found:?}) does not match Container's client_id({expected:?})")]
     UnmatchedContext { expected: PeerID, found: PeerID },
@@ -40,13 +40,19 @@ pub enum LoroError {
     },
     #[error("Every op id should be unique. ID {id} has been used. You should use a new PeerID to edit the content. ")]
     UsedOpID { id: ID },
+    #[error("Concurrent ops with the same peer id is not allowed. PeerID: {peer}, LastCounter: {last_counter}, CurrentCounter: {current}")]
+    ConcurrentOpsWithSamePeerID {
+        peer: PeerID,
+        last_counter: i32,
+        current: i32,
+    },
     #[error("Movable Tree Error: {0}")]
     TreeError(#[from] LoroTreeError),
     #[error("Invalid argument ({0})")]
     ArgErr(Box<str>),
-    #[error("Auto commit has not started. The doc is readonly when detached. You should ensure autocommit is on and the doc and the state is attached.")]
+    #[error("Auto commit has not started. The doc is readonly when detached and detached editing is not enabled.")]
     AutoCommitNotStarted,
-    #[error("You need to specify the style flag for \"({0:?})\" before mark with this key")]
+    #[error("Style configuration missing for \"({0:?})\". Please provide the style configuration using `configTextStyle` on your Loro doc.")]
     StyleConfigMissing(InternalString),
     #[error("Unknown Error ({0})")]
     Unknown(Box<str>),
@@ -74,9 +80,19 @@ pub enum LoroError {
     UTF16InUnicodeCodePoint { pos: usize },
     #[error("The end index cannot be less than the start index")]
     EndIndexLessThanStartIndex { start: usize, end: usize },
+    #[error("Invalid root container name! Don't include '/' or '\\0'")]
+    InvalidRootContainerName,
+    #[error("Import Failed: The dependencies of the importing updates are trimmed from the doc.")]
+    ImportUpdatesThatDependsOnOutdatedVersion,
+    #[error("You cannot switch a document to a version before the trimmed version.")]
+    SwitchToTrimmedVersion,
+    #[error(
+        "The container {container} is deleted. You cannot apply the op on a deleted container."
+    )]
+    ContainerDeleted { container: Box<ContainerID> },
 }
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, PartialEq)]
 pub enum LoroTreeError {
     #[error("`Cycle move` occurs when moving tree nodes.")]
     CyclicMoveError,
@@ -86,6 +102,16 @@ pub enum LoroTreeError {
     TreeNodeNotExist(TreeID),
     #[error("The index({index}) should be <= the length of children ({len})")]
     IndexOutOfBound { len: usize, index: usize },
+    #[error("Fractional index is not enabled, you should enable it first by `LoroTree::set_enable_fractional_index`")]
+    FractionalIndexNotEnabled,
+    #[error("TreeID {0:?} is deleted or does not exist")]
+    TreeNodeDeletedOrNotExist(TreeID),
+}
+
+#[derive(Error, Debug, PartialEq)]
+pub enum LoroEncodeError {
+    #[error("The frontiers are not found in this doc: {0}")]
+    FrontiersNotFound(String),
 }
 
 #[cfg(feature = "wasm")]

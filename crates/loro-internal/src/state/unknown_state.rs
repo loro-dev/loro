@@ -12,7 +12,7 @@ use crate::{
     DocState,
 };
 
-use super::ContainerState;
+use super::{ContainerState, DiffApplyContext};
 
 #[derive(Debug, Clone)]
 pub struct UnknownState {
@@ -38,23 +38,11 @@ impl ContainerState for UnknownState {
         false
     }
 
-    fn apply_diff_and_convert(
-        &mut self,
-        _diff: InternalDiff,
-        _arena: &SharedArena,
-        _txn: &Weak<Mutex<Option<Transaction>>>,
-        _state: &Weak<Mutex<DocState>>,
-    ) -> Diff {
+    fn apply_diff_and_convert(&mut self, _diff: InternalDiff, _ctx: DiffApplyContext) -> Diff {
         unreachable!()
     }
 
-    fn apply_diff(
-        &mut self,
-        _diff: InternalDiff,
-        _arena: &SharedArena,
-        _txn: &Weak<Mutex<Option<Transaction>>>,
-        _state: &Weak<Mutex<DocState>>,
-    ) {
+    fn apply_diff(&mut self, _diff: InternalDiff, _ctx: DiffApplyContext) {
         unreachable!()
     }
 

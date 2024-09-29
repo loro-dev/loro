@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { Delta, Loro, TextDiff } from "../src";
+import { Delta, LoroDoc, TextDiff } from "../src";
 import { Cursor, OpId, PeerID, setDebug } from "loro-wasm";
 
 describe("richtext", () => {
   it("mark", () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     doc.configTextStyle({
       bold: { expand: "after" },
       link: { expand: "before" },
@@ -26,7 +26,7 @@ describe("richtext", () => {
   });
 
   it("insert after emoji", () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const text = doc.getText("text");
     text.insert(0, "👨‍👩‍👦");
     text.insert(8, "a");
@@ -34,7 +34,7 @@ describe("richtext", () => {
   });
 
   it("emit event correctly", async () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const text = doc.getText("text");
     let triggered = false;
     text.subscribe((e) => {
@@ -63,7 +63,7 @@ describe("richtext", () => {
   });
 
   it("emit event from merging doc correctly", async () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const text = doc.getText("text");
     let called = false;
     text.subscribe((event) => {
@@ -83,7 +83,7 @@ describe("richtext", () => {
       }
     });
 
-    const docB = new Loro();
+    const docB = new LoroDoc();
     const textB = docB.getText("text");
     textB.insert(0, "Hello World!");
     textB.mark({ start: 0, end: 5 }, "bold", true);
@@ -93,7 +93,7 @@ describe("richtext", () => {
   });
 
   it("Delete emoji", async () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const text = doc.getText("text");
     text.insert(0, "012345👨‍👩‍👦6789");
     doc.commit();
@@ -116,13 +116,13 @@ describe("richtext", () => {
   });
 
   it("apply delta", async () => {
-    const doc1 = new Loro();
+    const doc1 = new LoroDoc();
     doc1.configTextStyle({
       link: { expand: "none" },
       bold: { expand: "after" },
     });
     const text1 = doc1.getText("text");
-    const doc2 = new Loro();
+    const doc2 = new LoroDoc();
     doc2.configTextStyle({
       link: { expand: "none" },
       bold: { expand: "after" },
@@ -154,7 +154,7 @@ describe("richtext", () => {
   });
 
   it("custom richtext type", async () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     doc.configTextStyle({
       myStyle: {
         expand: "none",
@@ -178,7 +178,7 @@ describe("richtext", () => {
   });
 
   it("allow overlapped styles", () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     doc.configTextStyle({
       comment: { expand: "none" },
     });
@@ -206,7 +206,7 @@ describe("richtext", () => {
   });
 
   it("Cursor example", () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const text = doc.getText("text");
     text.insert(0, "123");
     const pos0 = text.getCursor(0, 0);
@@ -222,7 +222,7 @@ describe("richtext", () => {
   });
 
   it("Get and query cursor", () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const text = doc.getText("text");
     doc.setPeerId("1");
     text.insert(0, "123");
@@ -243,7 +243,7 @@ describe("richtext", () => {
     const bytes = pos0!.encode();
     // Sending pos0 over the network
     const pos0decoded = Cursor.decode(bytes);
-    const docA = new Loro();
+    const docA = new LoroDoc();
     docA.import(doc.exportFrom());
     {
       const ans = docA.getCursorPos(pos0decoded!);
@@ -272,7 +272,7 @@ describe("richtext", () => {
   });
 
   it("Styles should not affect cursor pos", () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const text = doc.getText("text");
     text.insert(0, "Hello");
     const pos3 = text.getCursor(3);
@@ -282,13 +282,13 @@ describe("richtext", () => {
   });
 
   it("Insert cursed str", () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const text = doc.getText("text");
     text.insert(0, `“aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`);
   });
 
   it("Insert/delete by utf8 index", () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const text = doc.getText('t');
     text.insert(0, "你好");
     text.insertUtf8(3, "a");
@@ -303,28 +303,28 @@ describe("richtext", () => {
   });
 
   it("Slice", () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const text = doc.getText('t');
     text.insert(0, "你好");
     expect(text.slice(0, 1)).toStrictEqual("你");
   });
 
   it("Slice emoji", () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const text = doc.getText('t');
     text.insert(0, "😡😡😡");
     expect(text.slice(0, 2)).toStrictEqual("😡");
   });
 
   it("CharAt", () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const text = doc.getText('t');
     text.insert(0, "你好");
     expect(text.charAt(1)).toStrictEqual("好");
   });
 
   it("Splice", () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const text = doc.getText('t');
     text.insert(0, "你好");
     expect(text.splice(1, 1, "我")).toStrictEqual("好");
@@ -332,7 +332,7 @@ describe("richtext", () => {
   });
 
   it("Text iter", () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const text = doc.getText('t');
     text.insert(0, "你好");
     let str = "";
@@ -341,5 +341,13 @@ describe("richtext", () => {
       return true;
     });
     expect(text.toString(), "你好");
+  });
+
+  it("Text update", () => {
+    const doc = new LoroDoc();
+    const text = doc.getText('t');
+    text.insert(0, "Hello 😊Bro");
+    text.update("Hello World Bro😊");
+    expect(text.toString()).toStrictEqual("Hello World Bro😊");
   });
 });

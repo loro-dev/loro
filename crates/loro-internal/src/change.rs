@@ -26,15 +26,16 @@ pub type Lamport = u32;
 // PERF change slice and getting length is kinda slow I guess
 #[derive(Debug, Clone, PartialEq)]
 pub struct Change<O = Op> {
-    pub(crate) ops: RleVec<[O; 1]>,
-    pub(crate) deps: Frontiers,
     /// id of the first op in the change
     pub(crate) id: ID,
     /// Lamport timestamp of the change. It can be calculated from deps
     pub(crate) lamport: Lamport,
+    pub(crate) deps: Frontiers,
     /// [Unix time](https://en.wikipedia.org/wiki/Unix_time)
     /// It is the number of seconds that have elapsed since 00:00:00 UTC on 1 January 1970.
     pub(crate) timestamp: Timestamp,
+    pub(crate) commit_msg: Option<Arc<str>>,
+    pub(crate) ops: RleVec<[O; 1]>,
 }
 
 impl<O> Change<O> {
@@ -51,6 +52,7 @@ impl<O> Change<O> {
             id,
             lamport,
             timestamp,
+            commit_msg: None,
         }
     }
 
@@ -87,6 +89,10 @@ impl<O> Change<O> {
     #[inline]
     pub fn deps_on_self(&self) -> bool {
         self.deps.len() == 1 && self.deps[0].peer == self.id.peer
+    }
+
+    pub fn message(&self) -> Option<&Arc<str>> {
+        self.commit_msg.as_ref()
     }
 }
 
@@ -149,7 +155,17 @@ impl<O> Mergable for Change<O> {
     }
 }
 
-use std::fmt::Debug;
+impl<O: Mergable + HasLength + HasIndex + Debug> Change<O> {
+    pub fn len(&self) -> usize {
+        self.ops.span().as_()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.ops.is_empty()
+    }
+}
+
+use std::{fmt::Debug, sync::Arc};
 impl<O: Mergable + HasLength + HasIndex + Debug> HasLength for Change<O> {
     fn content_len(&self) -> usize {
         self.ops.span().as_()
@@ -211,6 +227,7 @@ impl<O: Mergable + HasLength + HasIndex + Sliceable + HasCounter + Debug> Slicea
             id: self.id.inc(from as Counter),
             lamport: self.lamport + from as Lamport,
             timestamp: self.timestamp,
+            commit_msg: self.commit_msg.clone(),
         }
     }
 }
@@ -222,14 +239,25 @@ impl DagNode for Change {
 }
 
 impl Change {
-    pub fn can_merge_right(&self, other: &Self) -> bool {
-        other.id.peer == self.id.peer
+    pub fn can_merge_right(&self, other: &Self, merge_interval: i64) -> bool {
+        if other.id.peer == self.id.peer
             && other.id.counter == self.id.counter + self.content_len() as Counter
             && other.deps.len() == 1
             && other.deps[0].peer == self.id.peer
+            && other.timestamp - self.timestamp < merge_interval
+            && self.commit_msg == other.commit_msg
+        {
+            debug_assert!(other.timestamp >= self.timestamp);
+            debug_assert!(other.lamport == self.lamport + self.len() as Lamport);
+            true
+        } else {
+            false
+        }
     }
 }
 
+/// [Unix time](https://en.wikipedia.org/wiki/Unix_time)
+/// It is the number of milliseconds that have elapsed since 00:00:00 UTC on 1 January 1970.
 #[cfg(not(all(feature = "wasm", target_arch = "wasm32")))]
 pub(crate) fn get_sys_timestamp() -> Timestamp {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -240,6 +268,8 @@ pub(crate) fn get_sys_timestamp() -> Timestamp {
         .as_()
 }
 
+/// [Unix time](https://en.wikipedia.org/wiki/Unix_time)
+/// It is the number of seconds that have elapsed since 00:00:00 UTC on 1 January 1970.
 #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
 pub fn get_sys_timestamp() -> Timestamp {
     use wasm_bindgen::prelude::wasm_bindgen;

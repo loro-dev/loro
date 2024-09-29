@@ -1,59 +1,124 @@
-#![allow(clippy::missing_safety_doc)]
+mod value;
 
-use std::ffi::{c_char, CStr, CString};
+use loro::Container;
+pub use loro::{
+    cursor::Side, undo::UndoOrRedo, CannotFindRelativePosition, Counter, CounterSpan,
+    EventTriggerKind, ExpandType, FractionalIndex, IdLp, IdSpan, JsonChange, JsonFutureOp,
+    JsonFutureOpWrapper, JsonListOp, JsonMapOp, JsonMovableListOp, JsonOp, JsonOpContent,
+    JsonPathError, JsonSchema, JsonTextOp, JsonTreeOp, Lamport, LoroError, PeerID, StyleConfig,
+    SubID, TreeID, ID,
+};
+pub use std::cmp::Ordering;
+use std::sync::Arc;
+pub use value::{ContainerID, ContainerType, LoroValue, LoroValueLike};
+mod doc;
+pub use doc::{
+    ChangeMeta, CommitOptions, ContainerPath, ExportMode, ImportBlobMetadata, JsonSchemaLike,
+    LocalUpdateCallback, LoroDoc, PosQueryResult, Subscription, Unsubscriber,
+};
+mod container;
+pub use container::{
+    ContainerIdLike, Cursor, LoroCounter, LoroList, LoroMap, LoroMovableList, LoroText, LoroTree,
+    LoroUnknown, TreeParentId,
+};
+mod event;
+pub use event::{
+    ContainerDiff, Diff, DiffEvent, Index, ListDiffItem, MapDelta, PathItem, Subscriber, TextDelta,
+    TreeDiff, TreeDiffItem, TreeExternalDiff,
+};
+mod undo;
+pub use undo::{AbsolutePosition, CursorWithPos, OnPop, OnPush, UndoItemMeta, UndoManager};
+mod config;
+pub use config::{Configure, StyleConfigMap};
+mod version;
+pub use version::{Frontiers, VersionVector, VersionVectorDiff};
+mod awareness;
+pub use awareness::{Awareness, AwarenessPeerUpdate, PeerInfo};
 
-use loro_internal::{LoroDoc, TextHandler};
-
-/// create Loro with a random unique client id
-#[no_mangle]
-pub extern "C" fn loro_new() -> *mut LoroDoc {
-    Box::into_raw(Box::default())
+// https://github.com/mozilla/uniffi-rs/issues/1372
+pub trait ValueOrContainer: Send + Sync {
+    fn is_value(&self) -> bool;
+    fn is_container(&self) -> bool;
+    fn as_value(&self) -> Option<LoroValue>;
+    fn as_container(&self) -> Option<ContainerID>;
+    fn as_loro_list(&self) -> Option<Arc<LoroList>>;
+    fn as_loro_text(&self) -> Option<Arc<LoroText>>;
+    fn as_loro_map(&self) -> Option<Arc<LoroMap>>;
+    fn as_loro_movable_list(&self) -> Option<Arc<LoroMovableList>>;
+    fn as_loro_tree(&self) -> Option<Arc<LoroTree>>;
+    fn as_loro_counter(&self) -> Option<Arc<LoroCounter>>;
 }
 
-/// Release all memory of Loro
-#[no_mangle]
-pub unsafe extern "C" fn loro_free(loro: *mut LoroDoc) {
-    if !loro.is_null() {
-        drop(Box::from_raw(loro));
+impl ValueOrContainer for loro::ValueOrContainer {
+    fn is_value(&self) -> bool {
+        loro::ValueOrContainer::is_value(self)
     }
-}
 
-#[no_mangle]
-pub unsafe extern "C" fn loro_get_text(loro: *mut LoroDoc, id: *const c_char) -> *mut TextHandler {
-    assert!(!loro.is_null());
-    assert!(!id.is_null());
-    let id = CStr::from_ptr(id).to_str().unwrap();
-    let text = loro.as_mut().unwrap().get_text(id);
-    Box::into_raw(Box::new(text))
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn text_free(text: *mut TextHandler) {
-    if !text.is_null() {
-        drop(Box::from_raw(text));
+    fn is_container(&self) -> bool {
+        loro::ValueOrContainer::is_container(self)
     }
-}
 
-#[no_mangle]
-pub unsafe extern "C" fn text_insert(
-    text: *mut TextHandler,
-    ctx: *const LoroDoc,
-    pos: usize,
-    value: *const c_char,
-) {
-    assert!(!text.is_null());
-    assert!(!ctx.is_null());
-    let text = text.as_mut().unwrap();
-    let ctx = ctx.as_ref().unwrap();
-    let value = CStr::from_ptr(value).to_str().unwrap();
-    let mut txn = ctx.txn().unwrap();
-    text.insert_with_txn(&mut txn, pos, value).unwrap();
-}
+    fn as_value(&self) -> Option<LoroValue> {
+        loro::ValueOrContainer::as_value(self)
+            .cloned()
+            .map(LoroValue::from)
+    }
 
-#[no_mangle]
-pub unsafe extern "C" fn text_value(text: *mut TextHandler) -> *mut c_char {
-    assert!(!text.is_null());
-    let text = text.as_mut().unwrap();
-    let value = text.get_value().as_string().unwrap().to_string();
-    CString::new(value).unwrap().into_raw()
+    fn as_container(&self) -> Option<ContainerID> {
+        loro::ValueOrContainer::as_container(self).map(|c| c.id().into())
+    }
+
+    fn as_loro_list(&self) -> Option<Arc<LoroList>> {
+        match self {
+            loro::ValueOrContainer::Container(Container::List(list)) => {
+                Some(Arc::new(LoroList { list: list.clone() }))
+            }
+            _ => None,
+        }
+    }
+
+    fn as_loro_text(&self) -> Option<Arc<LoroText>> {
+        match self {
+            loro::ValueOrContainer::Container(Container::Text(c)) => {
+                Some(Arc::new(LoroText { text: c.clone() }))
+            }
+            _ => None,
+        }
+    }
+
+    fn as_loro_map(&self) -> Option<Arc<LoroMap>> {
+        match self {
+            loro::ValueOrContainer::Container(Container::Map(c)) => {
+                Some(Arc::new(LoroMap { map: c.clone() }))
+            }
+            _ => None,
+        }
+    }
+
+    fn as_loro_movable_list(&self) -> Option<Arc<LoroMovableList>> {
+        match self {
+            loro::ValueOrContainer::Container(Container::MovableList(c)) => {
+                Some(Arc::new(LoroMovableList { list: c.clone() }))
+            }
+            _ => None,
+        }
+    }
+
+    fn as_loro_tree(&self) -> Option<Arc<LoroTree>> {
+        match self {
+            loro::ValueOrContainer::Container(Container::Tree(c)) => {
+                Some(Arc::new(LoroTree { tree: c.clone() }))
+            }
+            _ => None,
+        }
+    }
+
+    fn as_loro_counter(&self) -> Option<Arc<LoroCounter>> {
+        match self {
+            loro::ValueOrContainer::Container(Container::Counter(c)) => {
+                Some(Arc::new(LoroCounter { counter: c.clone() }))
+            }
+            _ => None,
+        }
+    }
 }

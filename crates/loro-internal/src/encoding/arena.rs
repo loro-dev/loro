@@ -1,6 +1,6 @@
 use std::{borrow::Cow, ops::Deref};
 
-use crate::{InternalString};
+use crate::InternalString;
 use fxhash::FxHashSet;
 use itertools::Itertools;
 use loro_common::{ContainerID, ContainerType, Counter, LoroError, LoroResult, PeerID, ID};
@@ -452,16 +452,17 @@ pub(super) struct PositionDelta<'a> {
 
 #[derive(Default)]
 #[columnar(ser, de)]
-pub(super) struct PositionArena<'a> {
+pub(crate) struct PositionArena<'a> {
     #[columnar(class = "vec", iter = "PositionDelta<'a>")]
     pub(super) positions: Vec<PositionDelta<'a>>,
 }
 
 impl<'a> PositionArena<'a> {
-    pub fn from_positions(positions: Vec<&'a [u8]>) -> Self {
-        let mut ans = Vec::with_capacity(positions.len());
+    pub fn from_positions(positions: impl IntoIterator<Item = &'a [u8]>) -> Self {
+        let iter = positions.into_iter();
+        let mut ans = Vec::with_capacity(iter.size_hint().0);
         let mut last_bytes: &[u8] = &[];
-        for p in positions {
+        for p in iter {
             let common = longest_common_prefix_length(last_bytes, p);
             let rest = &p[common..];
             last_bytes = p;
@@ -496,6 +497,22 @@ impl<'a> PositionArena<'a> {
     }
 
     pub fn decode<'de: 'a>(bytes: &'de [u8]) -> LoroResult<Self> {
+        Ok(serde_columnar::from_bytes(bytes)?)
+    }
+
+    pub fn encode_v2(&self) -> Vec<u8> {
+        if self.positions.is_empty() {
+            return Vec::new();
+        }
+
+        serde_columnar::to_vec(&self).unwrap()
+    }
+
+    pub fn decode_v2<'de: 'a>(bytes: &'de [u8]) -> LoroResult<Self> {
+        if bytes.is_empty() {
+            return Ok(Self::default());
+        }
+
         Ok(serde_columnar::from_bytes(bytes)?)
     }
 }

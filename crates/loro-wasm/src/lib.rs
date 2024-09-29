@@ -1,9 +1,10 @@
 //! Loro WASM bindings.
 #![allow(non_snake_case)]
 #![allow(clippy::empty_docs)]
+#![allow(clippy::doc_lazy_continuation)]
 #![warn(missing_docs)]
 
-use convert::resolved_diff_to_js;
+use convert::{js_to_version_vector, resolved_diff_to_js};
 use js_sys::{Array, Object, Promise, Reflect, Uint8Array};
 use loro_internal::{
     change::Lamport,
@@ -16,16 +17,19 @@ use loro_internal::{
         Handler, ListHandler, MapHandler, TextDelta, TextHandler, TreeHandler, ValueOrHandler,
     },
     id::{Counter, PeerID, TreeID, ID},
-    loro::CommitOptions,
-    obs::SubID,
+    json::JsonSchema,
+    loro::{CommitOptions, ExportMode},
+    loro_common::{check_root_container_name, IdSpan},
+    subscription::SubID,
     undo::{UndoItemMeta, UndoOrRedo},
     version::Frontiers,
-    ContainerType, DiffEvent, FxHashMap, HandlerTrait, JsonSchema, LoroDoc, LoroValue,
-    MovableListHandler, UndoManager as InnerUndoManager, VersionVector as InternalVersionVector,
+    ContainerType, DiffEvent, FxHashMap, HandlerTrait, LoroDoc as LoroDocInner, LoroValue,
+    MovableListHandler, TreeNodeWithChildren, TreeParentId, UndoManager as InnerUndoManager,
+    VersionVector as InternalVersionVector,
 };
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
-use std::{cell::RefCell, cmp::Ordering, rc::Rc, sync::Arc};
+use std::{cell::RefCell, cmp::Ordering, option, rc::Rc, sync::Arc};
 use wasm_bindgen::{__rt::IntoJsResult, prelude::*, throw_val};
 use wasm_bindgen_derive::TryFromJsValue;
 
@@ -59,9 +63,9 @@ type JsResult<T> = Result<T, JsValue>;
 ///
 /// @example
 /// ```ts
-/// import { Loro } import "loro-crdt"
+/// import { LoroDoc } import "loro-crdt"
 ///
-/// const loro = new Loro();
+/// const loro = new LoroDoc();
 /// const text = loro.getText("text");
 /// const list = loro.getList("list");
 /// const map = loro.getMap("Map");
@@ -70,7 +74,7 @@ type JsResult<T> = Result<T, JsValue>;
 ///
 // When FinalizationRegistry is unavailable, it's the users' responsibility to free the document.
 #[wasm_bindgen]
-pub struct Loro(Arc<LoroDoc>);
+pub struct LoroDoc(Arc<LoroDocInner>);
 
 #[wasm_bindgen]
 extern "C" {
@@ -82,7 +86,7 @@ extern "C" {
     pub type JsContainerID;
     #[wasm_bindgen(typescript_type = "ContainerID | string")]
     pub type JsIntoContainerID;
-    #[wasm_bindgen(typescript_type = "Transaction | Loro")]
+    #[wasm_bindgen(typescript_type = "Transaction | LoroDoc")]
     pub type JsTransaction;
     #[wasm_bindgen(typescript_type = "string | undefined")]
     pub type JsOrigin;
@@ -98,6 +102,8 @@ extern "C" {
     pub type JsTreeID;
     #[wasm_bindgen(typescript_type = "TreeID | undefined")]
     pub type JsParentTreeID;
+    #[wasm_bindgen(typescript_type = "{ withDeleted: boolean }")]
+    pub type JsGetNodesProp;
     #[wasm_bindgen(typescript_type = "LoroTreeNode | undefined")]
     pub type JsTreeNodeOrUndefined;
     #[wasm_bindgen(typescript_type = "string | undefined")]
@@ -166,6 +172,10 @@ extern "C" {
     pub type JsJsonSchema;
     #[wasm_bindgen(typescript_type = "string | JsonSchema")]
     pub type JsJsonSchemaOrString;
+    #[wasm_bindgen(typescript_type = "ExportMode")]
+    pub type JsExportMode;
+    #[wasm_bindgen(typescript_type = "{ origin?: string, timestamp?: number, message?: string }")]
+    pub type JsCommitOption;
 }
 
 mod observer {
@@ -268,9 +278,15 @@ fn js_value_to_container_id(
     }
 
     let s = cid.as_string().unwrap();
-    let cid = ContainerID::try_from(s.as_str())
-        .unwrap_or_else(|_| ContainerID::new_root(s.as_str(), kind));
-    Ok(cid)
+    if let Ok(cid) = ContainerID::try_from(s.as_str()) {
+        Ok(cid)
+    } else if check_root_container_name(s.as_str()) {
+        Ok(ContainerID::new_root(s.as_str(), kind))
+    } else {
+        Err(JsValue::from_str(
+            "Invalid root container name! Don't include '/' or '\\0'",
+        ))
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -287,6 +303,7 @@ struct ChangeMeta {
     counter: Counter,
     deps: Vec<StringID>,
     timestamp: f64,
+    message: Option<Arc<str>>,
 }
 
 impl ChangeMeta {
@@ -297,15 +314,45 @@ impl ChangeMeta {
 }
 
 #[wasm_bindgen]
-impl Loro {
+impl LoroDoc {
     /// Create a new loro document.
     ///
     /// New document will have random peer id.
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
-        let doc = LoroDoc::new();
+        let doc = LoroDocInner::new();
         doc.start_auto_commit();
         Self(Arc::new(doc))
+    }
+
+    /// Enables editing in detached mode, which is disabled by default.
+    ///
+    /// The doc enter detached mode after calling `detach` or checking out a non-latest version.
+    ///
+    /// # Important Notes:
+    ///
+    /// - This mode uses a different PeerID for each checkout.
+    /// - Ensure no concurrent operations share the same PeerID if set manually.
+    /// - Importing does not affect the document's state or version; changes are
+    ///   recorded in the [OpLog] only. Call `checkout` to apply changes.
+    #[wasm_bindgen(js_name = "setDetachedEditing")]
+    pub fn set_detached_editing(&self, enable: bool) {
+        self.0.set_detached_editing(enable);
+    }
+
+    /// Whether the editing is enabled in detached mode.
+    ///
+    /// The doc enter detached mode after calling `detach` or checking out a non-latest version.
+    ///
+    /// # Important Notes:
+    ///
+    /// - This mode uses a different PeerID for each checkout.
+    /// - Ensure no concurrent operations share the same PeerID if set manually.
+    /// - Importing does not affect the document's state or version; changes are
+    ///   recorded in the [OpLog] only. Call `checkout` to apply changes.
+    #[wasm_bindgen(js_name = "isDetachedEditingEnabled")]
+    pub fn is_detached_editing_enabled(&self) -> bool {
+        self.0.is_detached_editing_enabled()
     }
 
     /// Set whether to record the timestamp of each change. Default is `false`.
@@ -331,16 +378,6 @@ impl Loro {
         self.0.set_change_merge_interval(interval as i64);
     }
 
-    /// Set the jitter of the tree position(Fractional Index).
-    ///
-    /// The jitter is used to avoid conflicts when multiple users are creating the node at the same position.
-    /// value 0 is default, which means no jitter, any value larger than 0 will enable jitter.
-    /// Generally speaking, jitter will affect the growth rate of document size.
-    #[wasm_bindgen(js_name = "setFractionalIndexJitter")]
-    pub fn set_fractional_index_jitter(&self, jitter: u8) {
-        self.0.set_fractional_index_jitter(jitter);
-    }
-
     /// Set the rich text format configuration of the document.
     ///
     /// You need to config it if you use rich text `mark` method.
@@ -358,7 +395,7 @@ impl Loro {
     ///
     /// @example
     /// ```ts
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// doc.configTextStyle({
     ///   bold: { expand: "after" },
     ///   link: { expand: "before" }
@@ -412,15 +449,15 @@ impl Loro {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } import "loro-crdt"
+    /// import { LoroDoc } import "loro-crdt"
     ///
     /// const bytes = /* The bytes encoded from other loro document *\/;
-    /// const loro = Loro.fromSnapshot(bytes);
+    /// const loro = LoroDoc.fromSnapshot(bytes);
     /// ```
     ///
     #[wasm_bindgen(js_name = "fromSnapshot")]
-    pub fn from_snapshot(snapshot: &[u8]) -> JsResult<Loro> {
-        let doc = LoroDoc::from_snapshot(snapshot)?;
+    pub fn from_snapshot(snapshot: &[u8]) -> JsResult<LoroDoc> {
+        let doc = LoroDocInner::from_snapshot(snapshot)?;
         doc.start_auto_commit();
         Ok(Self(Arc::new(doc)))
     }
@@ -436,9 +473,9 @@ impl Loro {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const text = doc.getText("text");
     /// const frontiers = doc.frontiers();
     /// text.insert(0, "Hello World!");
@@ -462,9 +499,9 @@ impl Loro {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const text = doc.getText("text");
     /// const frontiers = doc.frontiers();
     /// text.insert(0, "Hello World!");
@@ -487,9 +524,9 @@ impl Loro {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// doc.detach();
     /// console.log(doc.is_detached());  // true
     /// ```
@@ -515,9 +552,9 @@ impl Loro {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const text = doc.getText("text");
     /// const frontiers = doc.frontiers();
     /// text.insert(0, "Hello World!");
@@ -545,9 +582,9 @@ impl Loro {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const text = doc.getText("text");
     /// const frontiers = doc.frontiers();
     /// text.insert(0, "Hello World!");
@@ -587,16 +624,57 @@ impl Loro {
 
     /// Commit the cumulative auto committed transaction.
     ///
-    /// You can specify the `origin` and `timestamp` of the commit.
+    /// You can specify the `origin`, `timestamp`, and `message` of the commit.
+    ///
+    /// The `origin` is used to mark the event, and the `message` works like a git commit message.
+    ///
+    /// The events will be emitted after a transaction is committed. A transaction is committed when:
+    ///
+    /// - `doc.commit()` is called.
+    /// - `doc.export(mode)` is called.
+    /// - `doc.import(data)` is called.
+    /// - `doc.checkout(version)` is called.
     ///
     /// NOTE: Timestamps are forced to be in ascending order.
     /// If you commit a new change with a timestamp that is less than the existing one,
     /// the largest existing timestamp will be used instead.
-    pub fn commit(&self, origin: Option<String>, timestamp: Option<f64>) {
-        let mut options = CommitOptions::default();
-        options.set_origin(origin.as_deref());
-        options.set_timestamp(timestamp.map(|x| x as i64));
-        self.0.commit_with(options);
+    ///
+    /// NOTE: The `origin` will not be persisted, but the `message` will.
+    pub fn commit(&self, options: Option<JsCommitOption>) -> JsResult<()> {
+        if let Some(options) = options {
+            if !options.is_object() {
+                return Err(JsValue::from_str("Commit options must be an object"));
+            }
+            let origin: Option<String> = Reflect::get(&options, &JsValue::from_str("origin"))
+                .ok()
+                .and_then(|x| x.as_string());
+            let timestamp: Option<f64> = Reflect::get(&options, &JsValue::from_str("timestamp"))
+                .ok()
+                .and_then(|x| x.as_f64());
+            let message: Option<String> = Reflect::get(&options, &JsValue::from_str("message"))
+                .ok()
+                .and_then(|x| x.as_string());
+
+            let mut options = CommitOptions::default();
+            options.set_origin(origin.as_deref());
+            options.set_timestamp(timestamp.map(|x| x as i64));
+            if let Some(msg) = message {
+                options = options.commit_msg(&msg);
+            }
+            self.0.commit_with(options);
+        } else {
+            self.0.commit_with(CommitOptions::default());
+        }
+        Ok(())
+    }
+
+    /// Get the number of operations in the pending transaction.
+    ///
+    /// The pending transaction is the one that is not committed yet. It will be committed
+    /// automatically after calling `doc.commit()`, `doc.export(mode)` or `doc.checkout(version)`.
+    #[wasm_bindgen(js_name = "getPendingTxnLength")]
+    pub fn get_pending_txn_len(&self) -> usize {
+        self.0.get_pending_txn_len()
     }
 
     /// Get a LoroText by container id.
@@ -606,9 +684,9 @@ impl Loro {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const text = doc.getText("text");
     /// ```
     #[wasm_bindgen(js_name = "getText")]
@@ -630,9 +708,9 @@ impl Loro {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const map = doc.getMap("map");
     /// ```
     #[wasm_bindgen(js_name = "getMap", skip_typescript)]
@@ -653,9 +731,9 @@ impl Loro {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const list = doc.getList("list");
     /// ```
     #[wasm_bindgen(js_name = "getList", skip_typescript)]
@@ -676,9 +754,9 @@ impl Loro {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const list = doc.getMovableList("list");
     /// ```
     #[wasm_bindgen(skip_typescript)]
@@ -711,9 +789,9 @@ impl Loro {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const tree = doc.getTree("tree");
     /// ```
     #[wasm_bindgen(js_name = "getTree", skip_typescript)]
@@ -732,9 +810,9 @@ impl Loro {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// let text = doc.getText("text");
     /// const textId = text.id;
     /// text = doc.getContainerById(textId);
@@ -807,6 +885,14 @@ impl Loro {
     #[inline(always)]
     pub fn version(&self) -> VersionVector {
         VersionVector(self.0.state_vv())
+    }
+
+    /// Get the version vector of the trimmed history
+    ///
+    /// All the ops in the trimmed history are removed from this doc.
+    #[wasm_bindgen(js_name = "trimmedVV")]
+    pub fn trimmed_vv(&self) -> VersionVector {
+        VersionVector(InternalVersionVector::from_im_vv(&self.0.trimmed_vv()))
     }
 
     /// Get the encoded version vector of the latest version in OpLog.
@@ -893,6 +979,8 @@ impl Loro {
 
     /// Export the snapshot of current version, it's include all content of
     /// operations and states
+    ///
+    /// @deprecated Use `export` instead
     #[wasm_bindgen(js_name = "exportSnapshot")]
     pub fn export_snapshot(&self) -> JsResult<Vec<u8>> {
         Ok(self.0.export_snapshot())
@@ -902,9 +990,9 @@ impl Loro {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const text = doc.getText("text");
     /// text.insert(0, "Hello");
     /// // get all updates of the doc
@@ -922,6 +1010,45 @@ impl Loro {
         } else {
             Ok(self.0.export_from(&Default::default()))
         }
+    }
+
+    /// Export the document based on the specified ExportMode.
+    ///
+    /// @param mode - The export mode to use. Can be one of:
+    ///   - `{ mode: "snapshot" }`: Export a full snapshot of the document.
+    ///   - `{ mode: "update", start_vv: VersionVector }`: Export updates from the given version vector.
+    ///   - `{ mode: "updates-in-range", spans: { id: ID, len: number }[] }`: Export updates within the specified ID spans.
+    ///   - `{ mode: "gc-snapshot", frontiers: Frontiers }`: Export a garbage-collected snapshot up to the given frontiers.
+    ///
+    /// @returns A byte array containing the exported data.
+    ///
+    /// @example
+    /// ```ts
+    /// import { LoroDoc } from "loro-crdt";
+    ///
+    /// const doc = new LoroDoc();
+    /// doc.setText("text", "Hello World");
+    ///
+    /// // Export a full snapshot
+    /// const snapshotBytes = doc.export({ mode: "snapshot" });
+    ///
+    /// // Export updates from a specific version
+    /// const vv = doc.oplogVersion();
+    /// doc.setText("text", "Hello Loro");
+    /// const updateBytes = doc.export({ mode: "update", start_vv: vv });
+    ///
+    /// // Export a garbage-collected snapshot
+    /// const gcBytes = doc.export({ mode: "gc-snapshot", frontiers: doc.oplogFrontiers() });
+    ///
+    /// // Export updates within specific ID spans
+    /// const spanBytes = doc.export({
+    ///   mode: "updates-in-range",
+    ///   spans: [{ id: "1", len: 10 }, { id: "2", len: 5 }]
+    /// });
+    /// ```
+    pub fn export(&self, mode: JsExportMode) -> JsResult<Vec<u8>> {
+        let export_mode = js_to_export_mode(mode)?;
+        Ok(self.0.export(export_mode))
     }
 
     /// Export updates from the specific version to the current version with JSON format.
@@ -973,15 +1100,15 @@ impl Loro {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const text = doc.getText("text");
     /// text.insert(0, "Hello");
     /// // get all updates of the doc
     /// const updates = doc.exportFrom();
     /// const snapshot = doc.exportSnapshot();
-    /// const doc2 = new Loro();
+    /// const doc2 = new LoroDoc();
     /// // import snapshot
     /// doc2.import(snapshot);
     /// // or import updates
@@ -998,14 +1125,14 @@ impl Loro {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const text = doc.getText("text");
     /// text.insert(0, "Hello");
     /// const updates = doc.exportFrom();
     /// const snapshot = doc.exportSnapshot();
-    /// const doc2 = new Loro();
+    /// const doc2 = new LoroDoc();
     /// doc2.importUpdateBatch([snapshot, updates]);
     /// ```
     #[wasm_bindgen(js_name = "importUpdateBatch")]
@@ -1023,13 +1150,35 @@ impl Loro {
         Ok(self.0.import_batch(&data)?)
     }
 
+    /// Get the shallow json format of the document state.
+    ///
+    /// @example
+    /// ```ts
+    /// import { LoroDoc } from "loro-crdt";
+    ///
+    /// const doc = new LoroDoc();
+    /// const list = doc.getList("list");
+    /// const tree = doc.getTree("tree");
+    /// const map = doc.getMap("map");
+    /// const shallowValue = doc.toShallowJSON();
+    /// /*
+    /// {"list": ..., "tree": ..., "map": ...}
+    ///  *\/
+    /// console.log(shallowValue);
+    /// ```
+    #[wasm_bindgen(js_name = "getShallowValue")]
+    pub fn get_shallow_value(&self) -> JsResult<JsValue> {
+        let json = self.0.get_value();
+        Ok(json.into())
+    }
+
     /// Get the json format of the document state.
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const list = doc.getList("list");
     /// list.insert(0, "Hello");
     /// const text = list.insertContainer(0, new LoroText());
@@ -1052,11 +1201,18 @@ impl Loro {
     ///
     /// Returns a subscription ID, which can be used to unsubscribe.
     ///
+    /// The events will be emitted after a transaction is committed. A transaction is committed when:
+    ///
+    /// - `doc.commit()` is called.
+    /// - `doc.exportFrom(version)` is called.
+    /// - `doc.import(data)` is called.
+    /// - `doc.checkout(version)` is called.
+    ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const text = doc.getText("text");
     /// doc.subscribe((event)=>{
     ///     console.log(event);
@@ -1081,9 +1237,9 @@ impl Loro {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const text = doc.getText("text");
     /// const subscription = doc.subscribe((event)=>{
     ///     console.log(event);
@@ -1097,11 +1253,30 @@ impl Loro {
         self.0.unsubscribe(SubID::from_u32(subscription))
     }
 
+    /// Subscribe the updates from local edits
+    #[wasm_bindgen(js_name = "subscribeLocalUpdates", skip_typescript)]
+    pub fn subscribe_local_updates(&self, f: js_sys::Function) -> JsValue {
+        let observer = observer::Observer::new(f);
+        let mut sub = Some(self.0.subscribe_local_update(Box::new(move |e| {
+            let arr = js_sys::Uint8Array::new_with_length(e.len() as u32);
+            arr.copy_from(e);
+            if let Err(e) = observer.call1(&arr.into()) {
+                console_error!("Error: {:?}", e);
+            }
+        })));
+
+        let closure = Closure::wrap(Box::new(move || {
+            drop(sub.take());
+        }) as Box<dyn FnMut()>);
+
+        closure.into_js_value()
+    }
+
     /// Debug the size of the history
     #[wasm_bindgen(js_name = "debugHistory")]
     pub fn debug_history(&self) {
         let borrow_mut = &self.0;
-        let oplog = borrow_mut.oplog().lock().unwrap();
+        let oplog = borrow_mut.oplog().try_lock().unwrap();
         console_log!("{:#?}", oplog.diagnose_size());
     }
 
@@ -1109,9 +1284,9 @@ impl Loro {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const text = doc.getText("text");
     /// text.insert(0, "Hello");
     /// const changes = doc.getAllChanges();
@@ -1126,7 +1301,7 @@ impl Loro {
     #[wasm_bindgen(js_name = "getAllChanges")]
     pub fn get_all_changes(&self) -> JsChanges {
         let borrow_mut = &self.0;
-        let oplog = borrow_mut.oplog().lock().unwrap();
+        let oplog = borrow_mut.oplog().try_lock().unwrap();
         let mut changes: FxHashMap<PeerID, Vec<ChangeMeta>> = FxHashMap::default();
         oplog.change_store().visit_all_changes(&mut |c| {
             let change_meta = ChangeMeta {
@@ -1143,6 +1318,7 @@ impl Loro {
                     })
                     .collect(),
                 timestamp: c.timestamp() as f64,
+                message: c.message().cloned(),
             };
             changes.entry(c.peer()).or_default().push(change_meta);
         });
@@ -1165,7 +1341,7 @@ impl Loro {
     pub fn get_change_at(&self, id: JsID) -> JsResult<JsChange> {
         let id = js_id_to_id(id)?;
         let borrow_mut = &self.0;
-        let oplog = borrow_mut.oplog().lock().unwrap();
+        let oplog = borrow_mut.oplog().try_lock().unwrap();
         let change = oplog
             .get_change_at(id)
             .ok_or_else(|| JsError::new(&format!("Change {:?} not found", id)))?;
@@ -1183,6 +1359,7 @@ impl Loro {
                 })
                 .collect(),
             timestamp: change.timestamp() as f64,
+            message: change.message().cloned(),
         };
         Ok(change.to_js().into())
     }
@@ -1195,8 +1372,9 @@ impl Loro {
         lamport: u32,
     ) -> JsResult<JsChangeOrUndefined> {
         let borrow_mut = &self.0;
-        let oplog = borrow_mut.oplog().lock().unwrap();
-        let Some(change) = oplog.get_change_with_lamport(peer_id.parse().unwrap_throw(), lamport)
+        let oplog = borrow_mut.oplog().try_lock().unwrap();
+        let Some(change) =
+            oplog.get_change_with_lamport_lte(peer_id.parse().unwrap_throw(), lamport)
         else {
             return Ok(JsValue::UNDEFINED.into());
         };
@@ -1215,6 +1393,7 @@ impl Loro {
                 })
                 .collect(),
             timestamp: change.timestamp() as f64,
+            message: change.message().cloned(),
         };
         Ok(change.to_js().into())
     }
@@ -1224,7 +1403,7 @@ impl Loro {
     pub fn get_ops_in_change(&self, id: JsID) -> JsResult<Vec<JsValue>> {
         let id = js_id_to_id(id)?;
         let borrow_mut = &self.0;
-        let oplog = borrow_mut.oplog().lock().unwrap();
+        let oplog = borrow_mut.oplog().try_lock().unwrap();
         let change = oplog
             .get_remote_change_at(id)
             .ok_or_else(|| JsError::new(&format!("Change {:?} not found", id)))?;
@@ -1240,9 +1419,9 @@ impl Loro {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const text = doc.getText("text");
     /// text.insert(0, "Hello");
     /// const frontiers = doc.frontiers();
@@ -1264,9 +1443,9 @@ impl Loro {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const text = doc.getText("text");
     /// text.insert(0, "Hello");
     /// const version = doc.version();
@@ -1274,7 +1453,7 @@ impl Loro {
     /// ```
     #[wasm_bindgen(js_name = "vvToFrontiers")]
     pub fn vv_to_frontiers(&self, vv: &VersionVector) -> JsResult<JsIDs> {
-        let f = self.0.oplog().lock().unwrap().dag().vv_to_frontiers(&vv.0);
+        let f = self.0.oplog().try_lock().unwrap().dag().vv_to_frontiers(&vv.0);
         Ok(frontiers_to_ids(&f))
     }
 
@@ -1282,9 +1461,9 @@ impl Loro {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const map = doc.getMap("map");
     /// map.set("key", 1);
     /// console.log(doc.getByPath("map/key")); // 1
@@ -1305,7 +1484,7 @@ impl Loro {
     ///
     /// @example
     /// ```ts
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const text = doc.getText("text");
     /// text.insert(0, "123");
     /// const pos0 = text.getCursor(0, 0);
@@ -1346,7 +1525,7 @@ impl Loro {
 }
 
 #[allow(unused)]
-fn call_subscriber(ob: observer::Observer, e: DiffEvent, doc: &Arc<LoroDoc>) {
+fn call_subscriber(ob: observer::Observer, e: DiffEvent, doc: &Arc<LoroDocInner>) {
     // We convert the event to js object here, so that we don't need to worry about GC.
     // In the future, when FinalizationRegistry[1] is stable, we can use `--weak-ref`[2] feature
     // in wasm-bindgen to avoid this.
@@ -1360,7 +1539,7 @@ fn call_subscriber(ob: observer::Observer, e: DiffEvent, doc: &Arc<LoroDoc>) {
 }
 
 #[allow(unused)]
-fn call_after_micro_task(ob: observer::Observer, event: DiffEvent, doc: &Arc<LoroDoc>) {
+fn call_after_micro_task(ob: observer::Observer, event: DiffEvent, doc: &Arc<LoroDocInner>) {
     let promise = Promise::resolve(&JsValue::NULL);
     type C = Closure<dyn FnMut(JsValue)>;
     let drop_handler: Rc<RefCell<Option<C>>> = Rc::new(RefCell::new(None));
@@ -1378,13 +1557,13 @@ fn call_after_micro_task(ob: observer::Observer, event: DiffEvent, doc: &Arc<Lor
     drop_handler.borrow_mut().replace(closure);
 }
 
-impl Default for Loro {
+impl Default for LoroDoc {
     fn default() -> Self {
         Self::new()
     }
 }
 
-fn diff_event_to_js_value(event: DiffEvent, doc: &Arc<LoroDoc>) -> JsValue {
+fn diff_event_to_js_value(event: DiffEvent, doc: &Arc<LoroDocInner>) -> JsValue {
     let obj = js_sys::Object::new();
     Reflect::set(&obj, &"by".into(), &event.event_meta.by.to_string().into()).unwrap();
     let origin: &str = &event.event_meta.origin;
@@ -1403,8 +1582,8 @@ fn diff_event_to_js_value(event: DiffEvent, doc: &Arc<LoroDoc>) -> JsValue {
 }
 
 /// /**
-/// * The concrete event of Loro.
-/// */
+///  * The concrete event of Loro.
+///  */
 /// export interface LoroEvent {
 ///   /**
 ///    * The container ID of the event's target.
@@ -1417,7 +1596,10 @@ fn diff_event_to_js_value(event: DiffEvent, doc: &Arc<LoroDoc>) -> JsValue {
 ///   path: Path;
 /// }
 ///
-fn container_diff_to_js_value(event: &loro_internal::ContainerDiff, doc: &Arc<LoroDoc>) -> JsValue {
+fn container_diff_to_js_value(
+    event: &loro_internal::ContainerDiff,
+    doc: &Arc<LoroDocInner>,
+) -> JsValue {
     let obj = js_sys::Object::new();
     Reflect::set(&obj, &"target".into(), &event.id.to_string().into()).unwrap();
     Reflect::set(&obj, &"diff".into(), &resolved_diff_to_js(&event.diff, doc)).unwrap();
@@ -1474,7 +1656,7 @@ fn convert_container_path_to_js_value(path: &[(ContainerID, Index)]) -> JsValue 
 #[wasm_bindgen]
 pub struct LoroText {
     handler: TextHandler,
-    doc: Option<Arc<LoroDoc>>,
+    doc: Option<Arc<LoroDocInner>>,
     delta_cache: Option<(usize, JsValue)>,
 }
 
@@ -1511,11 +1693,11 @@ impl LoroText {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const text = doc.getText("text");
-    /// text.insert(0, "Hello")
+    /// text.insert(0, "Hello");
     /// text.iter((str) => (console.log(str), true));
     /// ```
     pub fn iter(&self, callback: &js_sys::Function) {
@@ -1526,13 +1708,28 @@ impl LoroText {
         })
     }
 
+    /// Update the current text based on the provided text.
+    ///
+    /// @example
+    /// ```ts
+    /// import { LoroDoc } from "loro-crdt";
+    ///
+    /// const doc = new LoroDoc();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello");
+    /// text.update("Hello World");
+    /// ```
+    pub fn update(&self, text: &str) {
+        self.handler.update(text);
+    }
+
     /// Insert some string at index.
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const text = doc.getText("text");
     /// text.insert(0, "Hello");
     /// ```
@@ -1545,9 +1742,9 @@ impl LoroText {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const text = doc.getText("text");
     /// text.insert(0, "Hello");
     /// text.slice(0, 2); // "He"
@@ -1563,9 +1760,9 @@ impl LoroText {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const text = doc.getText("text");
     /// text.insert(0, "Hello");
     /// text.charAt(0); // "H"
@@ -1582,9 +1779,9 @@ impl LoroText {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const text = doc.getText("text");
     /// text.insert(0, "Hello");
     /// text.splice(2, 3, "llo"); // "llo"
@@ -1600,9 +1797,9 @@ impl LoroText {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const text = doc.getText("text");
     /// text.insertUtf8(0, "Hello");
     /// ```
@@ -1616,9 +1813,9 @@ impl LoroText {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const text = doc.getText("text");
     /// text.insert(0, "Hello");
     /// text.delete(1, 3);
@@ -1634,9 +1831,9 @@ impl LoroText {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const text = doc.getText("text");
     /// text.insertUtf8(0, "Hello");
     /// text.deleteUtf8(1, 3);
@@ -1659,9 +1856,9 @@ impl LoroText {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// doc.configTextStyle({bold: {expand: "after"}});
     /// const text = doc.getText("text");
     /// text.insert(0, "Hello World!");
@@ -1682,9 +1879,9 @@ impl LoroText {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// doc.configTextStyle({bold: {expand: "after"}});
     /// const text = doc.getText("text");
     /// text.insert(0, "Hello World!");
@@ -1711,9 +1908,9 @@ impl LoroText {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const text = doc.getText("text");
     /// doc.configTextStyle({bold: {expand: "after"}});
     /// text.insert(0, "Hello World!");
@@ -1750,6 +1947,13 @@ impl LoroText {
     }
 
     /// Subscribe to the changes of the text.
+    ///
+    /// The events will be emitted after a transaction is committed. A transaction is committed when:
+    ///
+    /// - `doc.commit()` is called.
+    /// - `doc.exportFrom(version)` is called.
+    /// - `doc.import(data)` is called.
+    /// - `doc.checkout(version)` is called.
     ///
     /// returns a subscription id, which can be used to unsubscribe.
     pub fn subscribe(&self, f: js_sys::Function) -> JsResult<u32> {
@@ -1792,9 +1996,9 @@ impl LoroText {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const text = doc.getText("text");
     /// doc.configTextStyle({bold: {expand: "after"}});
     /// text.insert(0, "Hello World!");
@@ -1876,7 +2080,7 @@ impl Default for LoroText {
 #[wasm_bindgen]
 pub struct LoroMap {
     handler: MapHandler,
-    doc: Option<Arc<LoroDoc>>,
+    doc: Option<Arc<LoroDocInner>>,
 }
 
 #[wasm_bindgen]
@@ -1904,9 +2108,9 @@ impl LoroMap {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const map = doc.getMap("map");
     /// map.set("foo", "bar");
     /// map.set("foo", "baz");
@@ -1922,9 +2126,9 @@ impl LoroMap {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const map = doc.getMap("map");
     /// map.set("foo", "bar");
     /// map.delete("foo");
@@ -1942,9 +2146,9 @@ impl LoroMap {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const map = doc.getMap("map");
     /// map.set("foo", "bar");
     /// const bar = map.get("foo");
@@ -1967,9 +2171,9 @@ impl LoroMap {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const map = doc.getMap("map");
     /// map.set("foo", "bar");
     /// const bar = map.get("foo");
@@ -1987,9 +2191,9 @@ impl LoroMap {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const map = doc.getMap("map");
     /// map.set("foo", "bar");
     /// map.set("baz", "bar");
@@ -2008,9 +2212,9 @@ impl LoroMap {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const map = doc.getMap("map");
     /// map.set("foo", "bar");
     /// map.set("baz", "bar");
@@ -2029,9 +2233,9 @@ impl LoroMap {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const map = doc.getMap("map");
     /// map.set("foo", "bar");
     /// map.set("baz", "bar");
@@ -2061,9 +2265,9 @@ impl LoroMap {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const map = doc.getMap("map");
     /// map.set("foo", "bar");
     /// const text = map.setContainer("text", new LoroText());
@@ -2079,9 +2283,9 @@ impl LoroMap {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const map = doc.getMap("map");
     /// map.set("foo", "bar");
     /// const text = map.setContainer("text", new LoroText());
@@ -2096,15 +2300,22 @@ impl LoroMap {
 
     /// Subscribe to the changes of the map.
     ///
-    /// returns a subscription id, which can be used to unsubscribe.
+    /// Returns a subscription id, which can be used to unsubscribe.
+    ///
+    /// The events will be emitted after a transaction is committed. A transaction is committed when:
+    ///
+    /// - `doc.commit()` is called.
+    /// - `doc.exportFrom(version)` is called.
+    /// - `doc.import(data)` is called.
+    /// - `doc.checkout(version)` is called.
     ///
     /// @param {Listener} f - Event listener
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const map = doc.getMap("map");
     /// map.subscribe((event)=>{
     ///     console.log(event);
@@ -2133,9 +2344,9 @@ impl LoroMap {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const map = doc.getMap("map");
     /// const subscription = map.subscribe((event)=>{
     ///     console.log(event);
@@ -2156,9 +2367,9 @@ impl LoroMap {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const map = doc.getMap("map");
     /// map.set("foo", "bar");
     /// console.log(map.size);   // 1
@@ -2204,6 +2415,12 @@ impl LoroMap {
         };
         handler_to_js_value(Handler::Map(h), self.doc.clone()).into()
     }
+
+    /// Delete all key-value pairs in the map.
+    pub fn clear(&self) -> JsResult<()> {
+        self.handler.clear()?;
+        Ok(())
+    }
 }
 
 impl Default for LoroMap {
@@ -2219,7 +2436,7 @@ impl Default for LoroMap {
 #[wasm_bindgen]
 pub struct LoroList {
     handler: ListHandler,
-    doc: Option<Arc<LoroDoc>>,
+    doc: Option<Arc<LoroDocInner>>,
 }
 
 #[wasm_bindgen]
@@ -2245,9 +2462,9 @@ impl LoroList {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const list = doc.getList("list");
     /// list.insert(0, 100);
     /// list.insert(1, "foo");
@@ -2265,9 +2482,9 @@ impl LoroList {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const list = doc.getList("list");
     /// list.insert(0, 100);
     /// list.delete(0, 1);
@@ -2282,9 +2499,9 @@ impl LoroList {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const list = doc.getList("list");
     /// list.insert(0, 100);
     /// console.log(list.get(0));  // 100
@@ -2315,9 +2532,9 @@ impl LoroList {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const list = doc.getList("list");
     /// list.insert(0, 100);
     /// list.insert(1, "foo");
@@ -2348,9 +2565,9 @@ impl LoroList {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const list = doc.getList("list");
     /// list.insert(0, 100);
     /// const text = list.insertContainer(1, new LoroText());
@@ -2367,9 +2584,9 @@ impl LoroList {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const list = doc.getList("list");
     /// list.insert(0, 100);
     /// const text = list.insertContainer(1, new LoroText());
@@ -2387,11 +2604,18 @@ impl LoroList {
     ///
     /// Returns a subscription id, which can be used to unsubscribe.
     ///
+    /// The events will be emitted after a transaction is committed. A transaction is committed when:
+    ///
+    /// - `doc.commit()` is called.
+    /// - `doc.exportFrom(version)` is called.
+    /// - `doc.import(data)` is called.
+    /// - `doc.checkout(version)` is called.
+    ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const list = doc.getList("list");
     /// list.subscribe((event)=>{
     ///     console.log(event);
@@ -2419,9 +2643,9 @@ impl LoroList {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const list = doc.getList("list");
     /// const subscription = list.subscribe((event)=>{
     ///     console.log(event);
@@ -2442,9 +2666,9 @@ impl LoroList {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const list = doc.getList("list");
     /// list.insert(0, 100);
     /// list.insert(1, "foo");
@@ -2511,7 +2735,7 @@ impl LoroList {
     #[wasm_bindgen(skip_typescript)]
     pub fn push(&self, value: JsLoroValue) -> JsResult<()> {
         let v: JsValue = value.into();
-        self.handler.push(v.into())?;
+        self.handler.push(v)?;
         Ok(())
     }
 
@@ -2524,6 +2748,12 @@ impl LoroList {
         } else {
             Ok(None)
         }
+    }
+
+    /// Delete all elements in the list.
+    pub fn clear(&self) -> JsResult<()> {
+        self.handler.clear()?;
+        Ok(())
     }
 }
 
@@ -2540,7 +2770,7 @@ impl Default for LoroList {
 #[wasm_bindgen]
 pub struct LoroMovableList {
     handler: MovableListHandler,
-    doc: Option<Arc<LoroDoc>>,
+    doc: Option<Arc<LoroDocInner>>,
 }
 
 impl Default for LoroMovableList {
@@ -2572,9 +2802,9 @@ impl LoroMovableList {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const list = doc.getList("list");
     /// list.insert(0, 100);
     /// list.insert(1, "foo");
@@ -2592,9 +2822,9 @@ impl LoroMovableList {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const list = doc.getList("list");
     /// list.insert(0, 100);
     /// list.delete(0, 1);
@@ -2609,9 +2839,9 @@ impl LoroMovableList {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const list = doc.getList("list");
     /// list.insert(0, 100);
     /// console.log(list.get(0));  // 100
@@ -2642,9 +2872,9 @@ impl LoroMovableList {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const list = doc.getList("list");
     /// list.insert(0, 100);
     /// list.insert(1, "foo");
@@ -2675,9 +2905,9 @@ impl LoroMovableList {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const list = doc.getList("list");
     /// list.insert(0, 100);
     /// const text = list.insertContainer(1, new LoroText());
@@ -2694,9 +2924,9 @@ impl LoroMovableList {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const list = doc.getList("list");
     /// list.insert(0, 100);
     /// const text = list.insertContainer(1, new LoroText());
@@ -2714,11 +2944,18 @@ impl LoroMovableList {
     ///
     /// Returns a subscription id, which can be used to unsubscribe.
     ///
+    /// The events will be emitted after a transaction is committed. A transaction is committed when:
+    ///
+    /// - `doc.commit()` is called.
+    /// - `doc.exportFrom(version)` is called.
+    /// - `doc.import(data)` is called.
+    /// - `doc.checkout(version)` is called.
+    ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const list = doc.getList("list");
     /// list.subscribe((event)=>{
     ///     console.log(event);
@@ -2746,9 +2983,9 @@ impl LoroMovableList {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const list = doc.getList("list");
     /// const subscription = list.subscribe((event)=>{
     ///     console.log(event);
@@ -2769,9 +3006,9 @@ impl LoroMovableList {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const list = doc.getList("list");
     /// list.insert(0, 100);
     /// list.insert(1, "foo");
@@ -2890,6 +3127,12 @@ impl LoroMovableList {
             v.into()
         }))
     }
+
+    /// Delete all elements in the list.
+    pub fn clear(&self) -> JsResult<()> {
+        self.handler.clear()?;
+        Ok(())
+    }
 }
 
 /// The handler of a tree(forest) container.
@@ -2899,7 +3142,7 @@ impl LoroMovableList {
 #[wasm_bindgen]
 pub struct LoroTree {
     handler: TreeHandler,
-    doc: Option<Arc<LoroDoc>>,
+    doc: Option<Arc<LoroDocInner>>,
 }
 
 extern crate alloc;
@@ -2909,7 +3152,7 @@ extern crate alloc;
 pub struct LoroTreeNode {
     id: TreeID,
     tree: TreeHandler,
-    doc: Option<Arc<LoroDoc>>,
+    doc: Option<Arc<LoroDocInner>>,
 }
 
 fn parse_js_parent(parent: &JsParentTreeID) -> JsResult<Option<TreeID>> {
@@ -2941,7 +3184,7 @@ fn parse_js_tree_id(target: &JsTreeID) -> JsResult<TreeID> {
 
 #[wasm_bindgen]
 impl LoroTreeNode {
-    fn from_tree(id: TreeID, tree: TreeHandler, doc: Option<Arc<LoroDoc>>) -> Self {
+    fn from_tree(id: TreeID, tree: TreeHandler, doc: Option<Arc<LoroDocInner>>) -> Self {
         Self { id, tree, doc }
     }
 
@@ -2959,9 +3202,9 @@ impl LoroTreeNode {
     ///
     /// @example
     /// ```typescript
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// let doc = new Loro();
+    /// let doc = new LoroDoc();
     /// let tree = doc.getTree("tree");
     /// let root = tree.createNode();
     /// let node = root.createNode();
@@ -2973,9 +3216,9 @@ impl LoroTreeNode {
     #[wasm_bindgen(js_name = "createNode", skip_typescript)]
     pub fn create_node(&self, index: Option<usize>) -> JsResult<LoroTreeNode> {
         let id = if let Some(index) = index {
-            self.tree.create_at(Some(self.id), index)?
+            self.tree.create_at(TreeParentId::Node(self.id), index)?
         } else {
-            self.tree.create(Some(self.id))?
+            self.tree.create(TreeParentId::Node(self.id))?
         };
         let node = LoroTreeNode::from_tree(id, self.tree.clone(), self.doc.clone());
         Ok(node)
@@ -2990,7 +3233,7 @@ impl LoroTreeNode {
     ///
     /// @example
     /// ```ts
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const tree = doc.getTree("tree");
     /// const root = tree.createChildNode();
     /// const node = root.createChildNode();
@@ -3005,9 +3248,10 @@ impl LoroTreeNode {
     pub fn mov(&self, parent: &JsTreeNodeOrUndefined, index: Option<usize>) -> JsResult<()> {
         let parent: Option<LoroTreeNode> = parse_js_tree_node(parent)?;
         if let Some(index) = index {
-            self.tree.move_to(self.id, parent.map(|x| x.id), index)?
+            self.tree
+                .move_to(self.id, parent.map(|x| x.id).into(), index)?
         } else {
-            self.tree.mov(self.id, parent.map(|x| x.id))?;
+            self.tree.mov(self.id, parent.map(|x| x.id).into())?;
         }
 
         Ok(())
@@ -3017,9 +3261,9 @@ impl LoroTreeNode {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const tree = doc.getTree("tree");
     /// const root = tree.createNode();
     /// const node = root.createNode();
@@ -3039,9 +3283,9 @@ impl LoroTreeNode {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const tree = doc.getTree("tree");
     /// const root = tree.createNode();
     /// const node = root.createNode();
@@ -3099,9 +3343,15 @@ impl LoroTreeNode {
     /// - The object returned is a new js object each time because it need to cross
     ///   the WASM boundary.
     #[wasm_bindgen]
-    pub fn parent(&self) -> Option<LoroTreeNode> {
-        let parent = self.tree.get_node_parent(&self.id).flatten();
-        parent.map(|p| LoroTreeNode::from_tree(p, self.tree.clone(), self.doc.clone()))
+    pub fn parent(&self) -> JsResult<Option<LoroTreeNode>> {
+        let parent = self
+            .tree
+            .get_node_parent(&self.id)
+            .ok_or(JsValue::from_str(&format!("TreeID({}) not found", self.id)))?;
+        let ans = parent
+            .tree_id()
+            .map(|p| LoroTreeNode::from_tree(p, self.tree.clone(), self.doc.clone()));
+        Ok(ans)
     }
 
     /// Get the children of this node.
@@ -3110,7 +3360,7 @@ impl LoroTreeNode {
     /// the WASM boundary.
     #[wasm_bindgen(skip_typescript)]
     pub fn children(&self) -> JsValue {
-        let Some(children) = self.tree.children(Some(self.id)) else {
+        let Some(children) = self.tree.children(&TreeParentId::Node(self.id)) else {
             return JsValue::undefined();
         };
         let children = children.into_iter().map(|c| {
@@ -3118,6 +3368,13 @@ impl LoroTreeNode {
             JsValue::from(node)
         });
         Array::from_iter(children).into()
+    }
+
+    /// Check if the node is deleted.
+    #[wasm_bindgen(js_name = "isDeleted")]
+    pub fn is_deleted(&self) -> JsResult<bool> {
+        let ans = self.tree.is_node_deleted(&self.id)?;
+        Ok(ans)
     }
 }
 
@@ -3147,9 +3404,9 @@ impl LoroTree {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const tree = doc.getTree("tree");
     /// const root = tree.createNode();
     /// const node = tree.createNode(undefined, 0);
@@ -3166,9 +3423,9 @@ impl LoroTree {
     ) -> JsResult<LoroTreeNode> {
         let parent: Option<TreeID> = parse_js_parent(parent)?;
         let id = if let Some(index) = index {
-            self.handler.create_at(parent, index)?
+            self.handler.create_at(parent.into(), index)?
         } else {
-            self.handler.create(parent)?
+            self.handler.create(parent.into())?
         };
         let node = LoroTreeNode::from_tree(id, self.handler.clone(), self.doc.clone());
         Ok(node)
@@ -3180,9 +3437,9 @@ impl LoroTree {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const tree = doc.getTree("tree");
     /// const root = tree.createNode();
     /// const node = root.createNode();
@@ -3202,9 +3459,9 @@ impl LoroTree {
         let parent = parse_js_parent(parent)?;
 
         if let Some(index) = index {
-            self.handler.move_to(target, parent, index)?
+            self.handler.move_to(target, parent.into(), index)?
         } else {
-            self.handler.mov(target, parent)?
+            self.handler.mov(target, parent.into())?
         };
 
         Ok(())
@@ -3214,9 +3471,9 @@ impl LoroTree {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const tree = doc.getTree("tree");
     /// const root = tree.createNode();
     /// const node = root.createNode();
@@ -3233,15 +3490,14 @@ impl LoroTree {
     pub fn get_node_by_id(&self, target: &JsTreeID) -> Option<LoroTreeNode> {
         let target: JsValue = target.into();
         let target = TreeID::try_from(target).ok()?;
-        if self.handler.contains(target) {
-            Some(LoroTreeNode::from_tree(
-                target,
-                self.handler.clone(),
-                self.doc.clone(),
-            ))
-        } else {
-            None
+        if self.handler.is_node_unexist(&target) {
+            return None;
         }
+        Some(LoroTreeNode::from_tree(
+            target,
+            self.handler.clone(),
+            self.doc.clone(),
+        ))
     }
 
     /// Get the id of the container.
@@ -3251,40 +3507,72 @@ impl LoroTree {
         value.into()
     }
 
-    /// Return `true` if the tree contains the TreeID, `false` if the target is deleted or wrong.
+    /// Return `true` if the tree contains the TreeID, include deleted node.
     #[wasm_bindgen(js_name = "has")]
     pub fn contains(&self, target: &JsTreeID) -> bool {
         let target: JsValue = target.into();
         self.handler.contains(target.try_into().unwrap())
     }
 
-    /// Get the flat array of the forest.
+    /// Return `None` if the node is not exist, otherwise return `Some(true)` if the node is deleted.
+    #[wasm_bindgen(js_name = "isNodeDeleted")]
+    pub fn is_node_deleted(&self, target: &JsTreeID) -> JsResult<bool> {
+        let target: JsValue = target.into();
+        let target = TreeID::try_from(target).unwrap();
+        let ans = self.handler.is_node_deleted(&target)?;
+        Ok(ans)
+    }
+
+    /// Get the hierarchy array of the forest.
     ///
     /// Note: the metadata will be not resolved. So if you don't only care about hierarchy
     /// but also the metadata, you should use `toJson()`.
     ///
     // TODO: perf
     #[wasm_bindgen(js_name = "toArray", skip_typescript)]
-    pub fn to_array(&mut self) -> JsResult<Array> {
-        let value = self.handler.get_value().into_list().unwrap();
+    pub fn to_array(&self) -> JsResult<Array> {
+        let value = self
+            .handler
+            .get_all_hierarchy_nodes_under(TreeParentId::Root);
+        self.get_node_with_children(value)
+    }
+
+    /// Get the flat array of the forest. If `with_deleted` is true, the deleted nodes will be included.
+    #[wasm_bindgen(js_name = "getNodes", skip_typescript)]
+    pub fn get_nodes(&self, options: JsGetNodesProp) -> JsResult<Array> {
+        let with_deleted = if options.is_undefined() {
+            false
+        } else {
+            Reflect::get(&options.into(), &JsValue::from_str("withDeleted"))?
+                .as_bool()
+                .unwrap_or(false)
+        };
+        let nodes = Array::new();
+        for v in self.handler.get_nodes_under(TreeParentId::Root) {
+            let node = LoroTreeNode::from_tree(v.id, self.handler.clone(), self.doc.clone());
+            nodes.push(&node.into());
+        }
+        if with_deleted {
+            for v in self.handler.get_nodes_under(TreeParentId::Deleted) {
+                let node = LoroTreeNode::from_tree(v.id, self.handler.clone(), self.doc.clone());
+                nodes.push(&node.into());
+            }
+        }
+        Ok(nodes)
+    }
+
+    fn get_node_with_children(&self, value: Vec<TreeNodeWithChildren>) -> JsResult<Array> {
         let ans = Array::new();
-        for v in value.as_ref() {
-            let v = v.as_map().unwrap();
-            let id: JsValue = TreeID::try_from(v["id"].as_string().unwrap().as_str())
-                .unwrap()
-                .into();
+        for v in value {
+            let id: JsValue = v.id.into();
             let id: JsTreeID = id.into();
-            let parent = if let LoroValue::String(p) = &v["parent"] {
-                Some(TreeID::try_from(p.as_str())?)
-            } else {
-                None
-            };
+            let parent = v.parent.tree_id();
             let parent: JsParentTreeID = parent
                 .map(|x| LoroTreeNode::from_tree(x, self.handler.clone(), self.doc.clone()).into())
                 .unwrap_or(JsValue::undefined())
                 .into();
-            let index = *v["index"].as_i64().unwrap() as u32;
-            let position = v["fractional_index"].as_string().unwrap();
+            let index = v.index;
+            let position = v.fractional_index.to_string();
             let map: LoroMap = self.get_node_by_id(&id).unwrap().data()?;
             let obj = Object::new();
             js_sys::Reflect::set(&obj, &"id".into(), &id)?;
@@ -3293,25 +3581,27 @@ impl LoroTree {
             js_sys::Reflect::set(
                 &obj,
                 &"fractional_index".into(),
-                &JsValue::from_str(position),
+                &JsValue::from_str(&position),
             )?;
             js_sys::Reflect::set(&obj, &"meta".into(), &map.into())?;
+            let children = self.get_node_with_children(v.children)?;
+            js_sys::Reflect::set(&obj, &"children".into(), &children)?;
             ans.push(&obj);
         }
         Ok(ans)
     }
 
-    /// Get the flat array with metadata of the forest.
+    /// Get the hierarchy array with metadata of the forest.
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const tree = doc.getTree("tree");
     /// const root = tree.createNode();
     /// root.data.set("color", "red");
-    /// // [ { id: '0@F2462C4159C4C8D1', parent: null, meta: { color: 'red' } } ]
+    /// // [ { id: '0@F2462C4159C4C8D1', parent: null, meta: { color: 'red' }, children: [] } ]
     /// console.log(tree.toJSON());
     /// ```
     #[wasm_bindgen(js_name = "toJSON")]
@@ -3319,13 +3609,13 @@ impl LoroTree {
         self.handler.get_deep_value().into()
     }
 
-    /// Get all tree ids of the forest.
+    /// Get all tree nodes of the forest, including deleted nodes.
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const tree = doc.getTree("tree");
     /// const root = tree.createNode();
     /// const node = root.createNode();
@@ -3366,11 +3656,18 @@ impl LoroTree {
     /// If a tree container is subscribed, the event of metadata changes will also be received as a MapDiff.
     /// And event's `path` will end with `TreeID`.
     ///
+    /// The events will be emitted after a transaction is committed. A transaction is committed when:
+    ///
+    /// - `doc.commit()` is called.
+    /// - `doc.exportFrom(version)` is called.
+    /// - `doc.import(data)` is called.
+    /// - `doc.checkout(version)` is called.
+    ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const tree = doc.getTree("tree");
     /// tree.subscribe((event)=>{
     ///     // event.type: "create" | "delete" | "move"
@@ -3399,9 +3696,9 @@ impl LoroTree {
     ///
     /// @example
     /// ```ts
-    /// import { Loro } from "loro-crdt";
+    /// import { LoroDoc } from "loro-crdt";
     ///
-    /// const doc = new Loro();
+    /// const doc = new LoroDoc();
     /// const tree = doc.getTree("tree");
     /// const subscription = tree.subscribe((event)=>{
     ///     console.log(event);
@@ -3456,6 +3753,25 @@ impl LoroTree {
             JsValue::UNDEFINED.into()
         }
     }
+
+    /// Set whether to generate fractional index for Tree Position.
+    ///
+    /// The jitter is used to avoid conflicts when multiple users are creating the node at the same position.
+    /// value 0 is default, which means no jitter, any value larger than 0 will enable jitter.
+    ///
+    /// Generally speaking, jitter will affect the growth rate of document size.
+    /// [Read more about it](https://www.loro.dev/blog/movable-tree#implementation-and-encoding-size)
+    #[wasm_bindgen(js_name = "enableFractionalIndex")]
+    pub fn enable_fractional_index(&self, jitter: u8) {
+        self.handler.enable_fractional_index(jitter);
+    }
+
+    /// Disable the fractional index generation for Tree Position when
+    /// you don't need the Tree's siblings to be sorted. The fractional index will be always default.
+    #[wasm_bindgen(js_name = "disableFractionalIndex")]
+    pub fn disable_fractional_index(&self) {
+        self.handler.disable_fractional_index();
+    }
 }
 
 impl Default for LoroTree {
@@ -3481,7 +3797,7 @@ impl Default for LoroTree {
 /// @example
 /// ```ts
 ///
-/// const doc = new Loro();
+/// const doc = new LoroDoc();
 /// const text = doc.getText("text");
 /// text.insert(0, "123");
 /// const pos0 = text.getCursor(0, 0);
@@ -3551,7 +3867,7 @@ impl Cursor {
 
 fn loro_value_to_js_value_or_container(
     value: ValueOrHandler,
-    doc: Option<Arc<LoroDoc>>,
+    doc: Option<Arc<LoroDocInner>>,
 ) -> JsValue {
     match value {
         ValueOrHandler::Value(v) => {
@@ -3581,7 +3897,7 @@ fn loro_value_to_js_value_or_container(
 #[derive(Debug)]
 pub struct UndoManager {
     undo: InnerUndoManager,
-    doc: Arc<LoroDoc>,
+    doc: Arc<LoroDocInner>,
 }
 
 #[wasm_bindgen]
@@ -3607,7 +3923,7 @@ impl UndoManager {
     ///    The function will have a meta data value that was attached to the given stack item when
     ///   `onPush` was called.
     #[wasm_bindgen(constructor)]
-    pub fn new(doc: &Loro, config: JsUndoConfig) -> Self {
+    pub fn new(doc: &LoroDoc, config: JsUndoConfig) -> Self {
         let max_undo_steps = Reflect::get(&config, &JsValue::from_str("maxUndoSteps"))
             .unwrap_or(JsValue::from_f64(100.0))
             .as_f64()
@@ -3692,7 +4008,7 @@ impl UndoManager {
     }
 
     /// Check if the undo manager is bound to the given document.
-    pub fn checkBinding(&self, doc: &Loro) -> bool {
+    pub fn checkBinding(&self, doc: &LoroDoc) -> bool {
         Arc::ptr_eq(&self.doc, &doc.0)
     }
 
@@ -3966,8 +4282,50 @@ impl Container {
 /// - changeNum
 #[wasm_bindgen(js_name = "decodeImportBlobMeta")]
 pub fn decode_import_blob_meta(blob: &[u8]) -> JsResult<JsImportBlobMetadata> {
-    let meta: ImportBlobMetadata = LoroDoc::decode_import_blob_meta(blob)?;
+    let meta: ImportBlobMetadata = LoroDocInner::decode_import_blob_meta(blob)?;
     Ok(meta.into())
+}
+
+fn js_to_export_mode(js_mode: JsExportMode) -> JsResult<ExportMode<'static>> {
+    let js_value: JsValue = js_mode.into();
+    let mode = js_sys::Reflect::get(&js_value, &JsValue::from_str("mode"))?
+        .as_string()
+        .ok_or_else(|| JsError::new("Invalid mode"))?;
+
+    match mode.as_str() {
+        "update" => {
+            let start_vv = js_sys::Reflect::get(&js_value, &JsValue::from_str("start_vv"))?;
+            let start_vv = js_to_version_vector(start_vv)?;
+            // TODO: PERF: avoid this clone
+            Ok(ExportMode::updates_owned(start_vv.0.clone()))
+        }
+        "snapshot" => Ok(ExportMode::Snapshot),
+        "gc-snapshot" => {
+            let frontiers: JsValue =
+                js_sys::Reflect::get(&js_value, &JsValue::from_str("frontiers"))?;
+            let frontiers: Vec<JsID> = js_sys::try_iter(&frontiers)?
+                .ok_or_else(|| JsError::new("frontiers is not iterable"))?
+                .map(|res| res.map(JsID::from))
+                .collect::<Result<_, _>>()?;
+            let frontiers = ids_to_frontiers(frontiers)?;
+            Ok(ExportMode::gc_snapshot_owned(frontiers))
+        }
+        "updates-in-range" => {
+            let spans = js_sys::Reflect::get(&js_value, &JsValue::from_str("spans"))?;
+            let spans: js_sys::Array = spans.dyn_into()?;
+            let mut rust_spans = Vec::new();
+            for span in spans.iter() {
+                let id = js_sys::Reflect::get(&span, &JsValue::from_str("id"))?;
+                let len = js_sys::Reflect::get(&span, &JsValue::from_str("len"))?
+                    .as_f64()
+                    .ok_or_else(|| JsError::new("Invalid len"))?;
+                let id = js_id_to_id(id.into())?;
+                rust_spans.push(id.to_span(len as usize));
+            }
+            Ok(ExportMode::updates_in_range(rust_spans))
+        }
+        _ => Err(JsError::new("Invalid export mode").into()),
+    }
 }
 
 #[wasm_bindgen(typescript_custom_section)]
@@ -3978,9 +4336,9 @@ const TYPES: &'static str = r#"
 * It is most commonly used to specify the type of sub-container to be created.
 * @example
 * ```ts
-* import { Loro } from "loro-crdt";
+* import { LoroDoc } from "loro-crdt";
 *
-* const doc = new Loro();
+* const doc = new LoroDoc();
 * const list = doc.getList("list");
 * list.insert(0, 100);
 * const containerType = "Text";
@@ -3995,9 +4353,9 @@ export type PeerID = `${number}`;
 *
 * @example
 * ```ts
-* import { Loro } from "loro-crdt";
+* import { LoroDoc } from "loro-crdt";
 *
-* const doc = new Loro();
+* const doc = new LoroDoc();
 * const list = doc.getList("list");
 * const containerId = list.id;
 * ```
@@ -4011,15 +4369,17 @@ export type ContainerID =
  */
 export type TreeID = `${number}@${PeerID}`;
 
-interface Loro {
+interface LoroDoc {
     /**
      * Export updates from the specific version to the current version
+     * 
+     * @deprecated Use `export` instead
      *
      *  @example
      *  ```ts
-     *  import { Loro } from "loro-crdt";
+     *  import { LoroDoc } from "loro-crdt";
      *
-     *  const doc = new Loro();
+     *  const doc = new LoroDoc();
      *  const text = doc.getText("text");
      *  text.insert(0, "Hello");
      *  // get all updates of the doc
@@ -4038,15 +4398,60 @@ interface Loro {
      *
      *  @example
      *  ```ts
-     *  import { Loro } from "loro-crdt";
+     *  import { LoroDoc } from "loro-crdt";
      *
-     *  const doc = new Loro();
+     *  const doc = new LoroDoc();
      *  let text = doc.getText("text");
      *  const textId = text.id;
      *  text = doc.getContainerById(textId);
      *  ```
      */
     getContainerById(id: ContainerID): Container;
+
+    /** 
+     * Subscribe to updates from local edits.
+     * 
+     * This method allows you to listen for local changes made to the document.
+     * It's useful for syncing changes with other instances or saving updates.
+     * 
+     * @param f - A callback function that receives a Uint8Array containing the update data.
+     * @returns A function to unsubscribe from the updates.
+     * 
+     * @example
+     * ```ts
+     * const loro = new Loro();
+     * const text = loro.getText("text");
+     * 
+     * const unsubscribe = loro.subscribeLocalUpdates((update) => {
+     *   console.log("Local update received:", update);
+     *   // You can send this update to other Loro instances
+     * });
+     * 
+     * text.insert(0, "Hello");
+     * loro.commit();
+     * 
+     * // Later, when you want to stop listening:
+     * unsubscribe();
+     * ```
+     * 
+     * @example
+     * ```ts
+     * const loro1 = new Loro();
+     * const loro2 = new Loro();
+     * 
+     * // Set up two-way sync
+     * loro1.subscribeLocalUpdates((updates) => {
+     *   loro2.import(updates);
+     * });
+     * 
+     * loro2.subscribeLocalUpdates((updates) => {
+     *   loro1.import(updates);
+     * });
+     * 
+     * // Now changes in loro1 will be reflected in loro2 and vice versa
+     * ```
+     */
+    subscribeLocalUpdates(f: (bytes: Uint8Array) => void): () => void
 }
 
 /**
@@ -4100,8 +4505,15 @@ export interface Change {
     counter: number,
     lamport: number,
     length: number,
+    /**
+     * The timestamp in seconds.
+     * 
+     * [Unix time](https://en.wikipedia.org/wiki/Unix_time)
+     * It is the number of seconds that have elapsed since 00:00:00 UTC on 1 January 1970.
+     */
     timestamp: number,
     deps: OpId[],
+    message: string | undefined,
 }
 
 
@@ -4172,7 +4584,7 @@ interface LoroText {
      * @example
      * ```ts
      *
-     * const doc = new Loro();
+     * const doc = new LoroDoc();
      * const text = doc.getText("text");
      * text.insert(0, "123");
      * const pos0 = text.getCursor(0, 0);
@@ -4210,7 +4622,7 @@ interface LoroList {
      * @example
      * ```ts
      *
-     * const doc = new Loro();
+     * const doc = new LoroDoc();
      * const text = doc.getList("list");
      * text.insert(0, "1");
      * const pos0 = text.getCursor(0, 0);
@@ -4234,10 +4646,12 @@ export type TreeNodeValue = {
     index: number,
     fractionalIndex: string,
     meta: LoroMap,
+    children: TreeNodeValue[],
 }
 
 interface LoroTree{
     toArray(): TreeNodeValue[];
+    getNodes(options?: { withDeleted: boolean = false }): LoroTreeNode[];
 }
 
 interface LoroMovableList {
@@ -4260,7 +4674,7 @@ interface LoroMovableList {
      * @example
      * ```ts
      *
-     * const doc = new Loro();
+     * const doc = new LoroDoc();
      * const text = doc.getMovableList("text");
      * text.insert(0, "1");
      * const pos0 = text.getCursor(0, 0);
@@ -4304,12 +4718,34 @@ export type JsonSchema = {
 
 export type JsonChange = {
   id: JsonOpID
+  /**
+   * The timestamp in seconds.
+   * 
+   * [Unix time](https://en.wikipedia.org/wiki/Unix_time)
+   * It is the number of seconds that have elapsed since 00:00:00 UTC on 1 January 1970.
+   */
   timestamp: number,
   deps: JsonOpID[],
   lamport: number,
   msg: string | null,
   ops: JsonOp[]
 }
+
+export type ExportMode = {
+    mode: "update",
+    start_vv: VersionVector,
+} | {
+    mode: "snapshot",
+} | {
+    mode: "gc-snapshot",
+    frontiers: Frontiers,
+} | {
+    mode: "updates-in-range",
+    spans: {
+        id: ID,
+        len: number,
+    }[],
+};
 
 export type JsonOp = {
   container: ContainerID,

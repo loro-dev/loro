@@ -21,16 +21,21 @@ pub struct TreeDiffItem {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TreeExternalDiff {
     Create {
-        parent: Option<TreeID>,
+        parent: TreeParentId,
         index: usize,
         position: FractionalIndex,
     },
     Move {
-        parent: Option<TreeID>,
+        parent: TreeParentId,
         index: usize,
         position: FractionalIndex,
+        old_parent: TreeParentId,
+        old_index: usize,
     },
-    Delete,
+    Delete {
+        old_parent: TreeParentId,
+        old_index: usize,
+    },
 }
 
 impl TreeDiff {

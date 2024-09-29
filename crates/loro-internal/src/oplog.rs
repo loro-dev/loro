@@ -1,38 +1,39 @@
 mod change_store;
-pub(crate) mod dag;
-mod iter;
+pub(crate) mod loro_dag;
 mod pending_changes;
 
-use once_cell::sync::OnceCell;
+use bytes::Bytes;
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
+use tracing::{debug, trace, trace_span};
 
+use self::change_store::iter::MergedChangeIter;
+use self::pending_changes::PendingChanges;
+use super::arena::SharedArena;
 use crate::change::{get_sys_timestamp, Change, Lamport, Timestamp};
 use crate::configure::Configure;
 use crate::container::list::list_op;
 use crate::dag::{Dag, DagUtils};
+use crate::diff_calc::DiffMode;
 use crate::encoding::ParsedHeaderAndBody;
 use crate::encoding::{decode_oplog, encode_oplog, EncodeMode};
 use crate::history_cache::ContainerHistoryCache;
 use crate::id::{Counter, PeerID, ID};
 use crate::op::{FutureInnerContent, ListSlice, RawOpContent, RemoteOp, RichOp};
-use crate::span::{HasCounterSpan, HasIdSpan, HasLamportSpan};
+use crate::span::{HasCounterSpan, HasLamportSpan};
+use crate::state::GcStore;
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
 use change_store::BlockOpRef;
-pub use change_store::{BlockChangeRef, ChangeStore};
-use loro_common::{HasId, IdLp, IdSpan};
-use rle::{HasLength, Mergable, RleVec, Sliceable};
+use loro_common::{HasCounter, IdLp, IdSpan};
+use rle::{HasLength, RleVec, Sliceable};
 use smallvec::SmallVec;
 
-pub use self::dag::FrontiersNotIncluded;
-use self::iter::MergedChangeIter;
-use self::pending_changes::PendingChanges;
-
-use super::arena::SharedArena;
+pub use self::loro_dag::{AppDag, AppDagNode, FrontiersNotIncluded};
+pub use change_store::{BlockChangeRef, ChangeStore};
 
 /// [OpLog] store all the ops i.e. the history.
 /// It allows multiple [AppState] to attach to it.
@@ -45,10 +46,7 @@ pub struct OpLog {
     pub(crate) dag: AppDag,
     pub(crate) arena: SharedArena,
     change_store: ChangeStore,
-    pub(crate) op_groups: ContainerHistoryCache,
-    /// **lamport starts from 0**
-    pub(crate) next_lamport: Lamport,
-    pub(crate) latest_timestamp: Timestamp,
+    history_cache: Mutex<ContainerHistoryCache>,
     /// Pending changes that haven't been applied to the dag.
     /// A change can be imported only when all its deps are already imported.
     /// Key is the ID of the missing dep
@@ -59,147 +57,58 @@ pub struct OpLog {
     pub(crate) configure: Configure,
 }
 
-/// [AppDag] maintains the causal graph of the app.
-/// It's faster to answer the question like what's the LCA version
-#[derive(Debug, Clone, Default)]
-pub struct AppDag {
-    pub(crate) map: BTreeMap<ID, AppDagNode>,
-    pub(crate) frontiers: Frontiers,
-    pub(crate) vv: VersionVector,
-}
-
-#[derive(Debug, Clone)]
-pub struct AppDagNode {
-    pub(crate) peer: PeerID,
-    pub(crate) cnt: Counter,
-    pub(crate) lamport: Lamport,
-    pub(crate) deps: Frontiers,
-    pub(crate) vv: OnceCell<ImVersionVector>,
-    /// A flag indicating whether any other nodes depend on this node.
-    /// The calculation of frontiers is based on this value.
-    pub(crate) has_succ: bool,
-    pub(crate) len: usize,
-}
-
-impl OpLog {
-    pub(crate) fn fork(&self, arena: SharedArena, configure: Configure) -> Self {
-        Self {
-            change_store: self
-                .change_store
-                .fork(arena.clone(), configure.merge_interval.clone()),
-            dag: self.dag.clone(),
-            arena: self.arena.clone(),
-            op_groups: self.op_groups.fork(arena.clone()),
-            next_lamport: self.next_lamport,
-            latest_timestamp: self.latest_timestamp,
-            pending_changes: Default::default(),
-            batch_importing: false,
-            configure,
-        }
-    }
-}
-
-impl AppDag {
-    pub fn get_mut(&mut self, id: ID) -> Option<&mut AppDagNode> {
-        let x = self.map.range_mut(..=id).next_back()?;
-        if x.1.contains_id(id) {
-            Some(x.1)
-        } else {
-            None
-        }
-    }
-
-    pub(crate) fn refresh_frontiers(&mut self) {
-        let vv_iter = self.vv.iter();
-        // PERF:
-        self.frontiers = vv_iter
-            .filter_map(|(peer, _)| {
-                let node = self.get_last_of_peer(*peer)?;
-                if node.has_succ {
-                    return None;
-                }
-
-                Some(ID::new(*peer, node.ctr_last()))
-            })
-            .collect();
-        // dbg!(&self);
-    }
-
-    /// If the lamport of change can be calculated, return Ok, otherwise, Err
-    pub(crate) fn calc_unknown_lamport_change(&self, change: &mut Change) -> Result<(), ()> {
-        for dep in change.deps.iter() {
-            match self.get_lamport(dep) {
-                Some(lamport) => {
-                    change.lamport = change.lamport.max(lamport + 1);
-                }
-                None => return Err(()),
-            }
-        }
-        Ok(())
-    }
-
-    pub(crate) fn find_deps_of_id(&self, id: ID) -> Frontiers {
-        let Some(node) = self.get(id) else {
-            return Frontiers::default();
-        };
-
-        let offset = id.counter - node.cnt;
-        if offset == 0 {
-            node.deps.clone()
-        } else {
-            ID::new(id.peer, node.cnt + offset - 1).into()
-        }
-    }
-
-    pub(crate) fn get_last_of_peer(&self, peer: PeerID) -> Option<&AppDagNode> {
-        self.map
-            .range(..=ID::new(peer, Counter::MAX))
-            .next_back()
-            .map(|(_, v)| v)
-    }
-
-    pub(crate) fn get_last_mut_of_peer(&mut self, peer: PeerID) -> Option<&mut AppDagNode> {
-        self.map
-            .range_mut(..=ID::new(peer, Counter::MAX))
-            .next_back()
-            .map(|(_, v)| v)
-    }
-}
-
 impl std::fmt::Debug for OpLog {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OpLog")
             .field("dag", &self.dag)
             .field("pending_changes", &self.pending_changes)
-            .field("next_lamport", &self.next_lamport)
-            .field("latest_timestamp", &self.latest_timestamp)
             .finish()
     }
 }
-
-pub(crate) struct EnsureDagNodeDepsAreAtTheEnd;
 
 impl OpLog {
     #[inline]
     pub(crate) fn new() -> Self {
         let arena = SharedArena::new();
         let cfg = Configure::default();
+        let change_store = ChangeStore::new_mem(&arena, cfg.merge_interval.clone());
         Self {
-            change_store: ChangeStore::new_mem(&arena, cfg.merge_interval.clone()),
-            dag: AppDag::default(),
-            op_groups: ContainerHistoryCache::new(arena.clone()),
+            history_cache: Mutex::new(ContainerHistoryCache::new(change_store.clone(), None)),
+            dag: AppDag::new(change_store.clone()),
+            change_store,
             arena,
-            next_lamport: 0,
-            latest_timestamp: Timestamp::default(),
             pending_changes: Default::default(),
             batch_importing: false,
             configure: cfg,
         }
     }
 
-    #[inline]
-    pub fn latest_timestamp(&self) -> Timestamp {
-        self.latest_timestamp
+    pub(crate) fn fork(
+        &self,
+        arena: SharedArena,
+        configure: Configure,
+        gc: Option<Arc<GcStore>>,
+    ) -> Self {
+        let change_store = self.change_store.fork(
+            arena.clone(),
+            configure.merge_interval.clone(),
+            self.vv(),
+            self.frontiers(),
+        );
+        Self {
+            history_cache: Mutex::new(
+                self.history_cache
+                    .try_lock()
+                    .unwrap()
+                    .fork(change_store.clone(), gc),
+            ),
+            change_store: change_store.clone(),
+            dag: self.dag.fork(change_store),
+            arena,
+            pending_changes: Default::default(),
+            batch_importing: false,
+            configure,
+        }
     }
 
     #[inline]
@@ -214,13 +123,16 @@ impl OpLog {
     /// Get the change with the given peer and lamport.
     ///
     /// If not found, return the change with the greatest lamport that is smaller than the given lamport.
-    pub fn get_change_with_lamport(
+    pub fn get_change_with_lamport_lte(
         &self,
         peer: PeerID,
         lamport: Lamport,
     ) -> Option<BlockChangeRef> {
-        self.change_store
-            .get_change_by_idlp(IdLp::new(peer, lamport))
+        let ans = self
+            .change_store
+            .get_change_by_lamport_lte(IdLp::new(peer, lamport))?;
+        debug_assert!(ans.lamport <= lamport);
+        Some(ans)
     }
 
     pub fn get_timestamp_of_version(&self, f: &Frontiers) -> Timestamp {
@@ -236,14 +148,43 @@ impl OpLog {
 
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.dag.map.is_empty() && self.arena.can_import_snapshot()
+        self.dag.is_empty() && self.arena.can_import_snapshot()
     }
 
     /// This is the **only** place to update the `OpLog.changes`
-    pub(crate) fn insert_new_change(&mut self, change: Change, _: EnsureDagNodeDepsAreAtTheEnd) {
-        self.op_groups.insert_by_change(&change);
-        self.change_store.insert_change(change.clone());
+    pub(crate) fn insert_new_change(&mut self, change: Change, from_local: bool) {
+        let s = trace_span!(
+            "insert_new_change",
+            id = ?change.id,
+            lamport = change.lamport,
+            deps = ?change.deps
+        );
+        let _enter = s.enter();
+        self.dag.handle_new_change(&change, from_local);
+        self.history_cache
+            .try_lock()
+            .unwrap()
+            .insert_by_new_change(&change, true, true);
         self.register_container_and_parent_link(&change);
+        self.change_store.insert_change(change, true);
+    }
+
+    #[inline(always)]
+    pub(crate) fn with_history_cache<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut ContainerHistoryCache) -> R,
+    {
+        let mut history_cache = self.history_cache.try_lock().unwrap();
+        f(&mut history_cache)
+    }
+
+    pub fn has_history_cache(&self) -> bool {
+        self.history_cache.try_lock().unwrap().has_cache()
+    }
+
+    pub fn free_history_cache(&self) {
+        let mut history_cache = self.history_cache.try_lock().unwrap();
+        history_cache.free();
     }
 
     /// Import a change.
@@ -257,111 +198,13 @@ impl OpLog {
     /// - Return Err(LoroError::UsedOpID) when the change's id is occupied
     /// - Return Err(LoroError::DecodeError) when the change's deps are missing
     pub(crate) fn import_local_change(&mut self, change: Change) -> Result<(), LoroError> {
-        let Some(change) = self.trim_the_known_part_of_change(change) else {
-            return Ok(());
-        };
-        self.check_id_is_not_duplicated(change.id)?;
-        if let Err(id) = self.check_deps(&change.deps) {
-            return Err(LoroError::DecodeError(
-                format!("Missing dep {:?}", id).into_boxed_str(),
-            ));
-        }
-
-        if cfg!(debug_assertions) {
-            let lamport = self.dag.frontiers_to_next_lamport(&change.deps);
-            assert_eq!(
-                lamport, change.lamport,
-                "{:#?}\nDAG={:#?}",
-                &change, &self.dag
-            );
-        }
-
-        self.next_lamport = self.next_lamport.max(change.lamport_end());
-        self.latest_timestamp = self.latest_timestamp.max(change.timestamp);
-        self.dag.vv.extend_to_include_last_id(change.id_last());
-        self.dag.frontiers.retain_non_included(&change.deps);
-        self.dag.frontiers.filter_peer(change.id.peer);
-        self.dag.frontiers.push(change.id_last());
-        let mark = self.update_dag_on_new_change(&change);
-        self.insert_new_change(change, mark);
+        self.insert_new_change(change, true);
         Ok(())
-    }
-
-    /// Every time we import a new change, it should run this function to update the dag
-    pub(crate) fn update_dag_on_new_change(
-        &mut self,
-        change: &Change,
-    ) -> EnsureDagNodeDepsAreAtTheEnd {
-        let len = change.content_len();
-        if change.deps_on_self() {
-            // don't need to push new element to dag because it only depends on itself
-            let last = self.dag.get_last_mut_of_peer(change.id.peer).unwrap();
-            assert_eq!(last.peer, change.id.peer, "peer id is not the same");
-            assert_eq!(
-                last.cnt + last.len as Counter,
-                change.id.counter,
-                "counter is not continuous"
-            );
-            assert_eq!(
-                last.lamport + last.len as Lamport,
-                change.lamport,
-                "lamport is not continuous"
-            );
-            last.len = (change.id.counter - last.cnt) as usize + len;
-            last.has_succ = false;
-        } else {
-            let vv = self.dag.frontiers_to_im_vv(&change.deps);
-            let mut pushed = false;
-            let node = AppDagNode {
-                vv: OnceCell::from(vv),
-                peer: change.id.peer,
-                cnt: change.id.counter,
-                lamport: change.lamport,
-                deps: change.deps.clone(),
-                has_succ: false,
-                len,
-            };
-            if let Some(last) = self.dag.get_last_mut_of_peer(change.id.peer) {
-                if change.id.counter > 0 {
-                    assert_eq!(
-                        last.ctr_end(),
-                        change.id.counter,
-                        "counter is not continuous"
-                    );
-                }
-
-                if last.is_mergable(&node, &()) {
-                    pushed = true;
-                    last.merge(&node, &());
-                }
-            }
-
-            if !pushed {
-                self.dag.map.insert(node.id_start(), node);
-            }
-
-            for dep in change.deps.iter() {
-                let target = self.dag.get_mut(*dep).unwrap();
-                if target.ctr_last() == dep.counter {
-                    target.has_succ = true;
-                } else {
-                    // We need to split the target node into two part
-                    // so that we can ensure the new change depends on the
-                    // last id of a dag node.
-                    let new_node =
-                        target.slice(dep.counter as usize - target.cnt as usize, target.len);
-                    target.len -= new_node.len;
-                    self.dag.map.insert(new_node.id_start(), new_node);
-                }
-            }
-        }
-
-        EnsureDagNodeDepsAreAtTheEnd
     }
 
     /// Trim the known part of change
     pub(crate) fn trim_the_known_part_of_change(&self, change: Change) -> Option<Change> {
-        let Some(&end) = self.dag.vv.get(&change.id.peer) else {
+        let Some(&end) = self.dag.vv().get(&change.id.peer) else {
             return Some(change);
         };
 
@@ -378,7 +221,7 @@ impl OpLog {
     }
 
     fn check_id_is_not_duplicated(&self, id: ID) -> Result<(), LoroError> {
-        let cur_end = self.dag.vv.get(&id.peer).cloned().unwrap_or(0);
+        let cur_end = self.dag.vv().get(&id.peer).cloned().unwrap_or(0);
         if cur_end > id.counter {
             return Err(LoroError::UsedOpID { id });
         }
@@ -386,9 +229,44 @@ impl OpLog {
         Ok(())
     }
 
+    /// Ensure the new change is greater than the last peer's id and the counter is continuous.
+    ///
+    /// It can be false when users use detached editing mode and use a custom peer id.
+    // This method might be slow and can be optimized if needed in the future.
+    pub(crate) fn check_change_greater_than_last_peer_id(
+        &self,
+        peer: PeerID,
+        counter: Counter,
+        deps: &Frontiers,
+    ) -> Result<(), LoroError> {
+        if counter == 0 {
+            return Ok(());
+        }
+
+        if !self.configure.detached_editing() {
+            return Ok(());
+        }
+
+        let mut max_last_counter = -1;
+        for dep in deps.iter() {
+            let dep_vv = self.dag.get_vv(*dep).unwrap();
+            max_last_counter = max_last_counter.max(dep_vv.get(&peer).cloned().unwrap_or(0) - 1);
+        }
+
+        if counter != max_last_counter + 1 {
+            return Err(LoroError::ConcurrentOpsWithSamePeerID {
+                peer,
+                last_counter: max_last_counter,
+                current: counter,
+            });
+        }
+
+        Ok(())
+    }
+
     fn check_deps(&self, deps: &Frontiers) -> Result<(), ID> {
         for dep in deps.iter() {
-            if !self.dag.vv.includes_id(*dep) {
+            if !self.dag.vv().includes_id(*dep) {
                 return Err(*dep);
             }
         }
@@ -397,16 +275,16 @@ impl OpLog {
     }
 
     pub(crate) fn next_id(&self, peer: PeerID) -> ID {
-        let cnt = self.dag.vv.get(&peer).copied().unwrap_or(0);
+        let cnt = self.dag.vv().get(&peer).copied().unwrap_or(0);
         ID::new(peer, cnt)
     }
 
     pub(crate) fn vv(&self) -> &VersionVector {
-        &self.dag.vv
+        self.dag.vv()
     }
 
     pub(crate) fn frontiers(&self) -> &Frontiers {
-        &self.dag.frontiers
+        self.dag.frontiers()
     }
 
     /// - Ordering::Less means self is less than target or parallel
@@ -474,9 +352,7 @@ impl OpLog {
         &mut self,
         remote_changes: Vec<Change>,
     ) -> Result<(), LoroError> {
-        let latest_vv = self.dag.vv.clone();
-        self.extend_pending_changes_with_unknown_lamport(remote_changes, &latest_vv);
-        Ok(())
+        self.extend_pending_changes_with_unknown_lamport(remote_changes)
     }
 
     /// lookup change by id.
@@ -492,6 +368,42 @@ impl OpLog {
     }
 
     #[inline(always)]
+    pub(crate) fn export_change_store_from(&self, vv: &VersionVector, f: &Frontiers) -> Bytes {
+        self.change_store
+            .export_from(vv, f, self.vv(), self.frontiers())
+    }
+
+    #[inline(always)]
+    pub(crate) fn export_change_store_in_range(
+        &self,
+        vv: &VersionVector,
+        f: &Frontiers,
+        to_vv: &VersionVector,
+        to_frontiers: &Frontiers,
+    ) -> Bytes {
+        self.change_store.export_from(vv, f, to_vv, to_frontiers)
+    }
+
+    #[inline(always)]
+    pub(crate) fn export_blocks_from<W: std::io::Write>(&self, vv: &VersionVector, w: &mut W) {
+        self.change_store
+            .export_blocks_from(vv, self.trimmed_vv(), self.vv(), w)
+    }
+
+    #[inline(always)]
+    pub(crate) fn export_blocks_in_range<W: std::io::Write>(&self, spans: &[IdSpan], w: &mut W) {
+        self.change_store.export_blocks_in_range(spans, w)
+    }
+
+    pub(crate) fn fork_changes_up_to(&self, frontiers: &Frontiers) -> Option<Bytes> {
+        let vv = self.dag.frontiers_to_vv(frontiers)?;
+        Some(
+            self.change_store
+                .fork_changes_up_to(self.dag.trimmed_vv(), frontiers, &vv),
+        )
+    }
+
+    #[inline(always)]
     pub(crate) fn decode(&mut self, data: ParsedHeaderAndBody) -> Result<(), LoroError> {
         decode_oplog(self, data)
     }
@@ -501,12 +413,12 @@ impl OpLog {
         &self,
         a: &VersionVector,
         b: &VersionVector,
-        mut f: impl FnMut(&Change),
+        mut f: impl FnMut(&Change, (Counter, Counter)),
     ) {
         let spans = b.iter_between(a);
         for span in spans {
             for c in self.change_store.iter_changes(span) {
-                f(&c);
+                f(&c, (span.ctr_start(), span.ctr_end()));
             }
         }
     }
@@ -524,35 +436,30 @@ impl OpLog {
     pub(crate) fn iter_from_lca_causally(
         &self,
         from: &VersionVector,
-        from_frontiers: Option<&Frontiers>,
+        from_frontiers: &Frontiers,
         to: &VersionVector,
-        to_frontiers: Option<&Frontiers>,
+        to_frontiers: &Frontiers,
     ) -> (
         VersionVector,
-        impl Iterator<Item = (BlockChangeRef, Counter, Rc<RefCell<VersionVector>>)> + '_,
+        DiffMode,
+        impl Iterator<
+                Item = (
+                    BlockChangeRef,
+                    (Counter, Counter),
+                    Rc<RefCell<VersionVector>>,
+                ),
+            > + '_,
     ) {
         let mut merged_vv = from.clone();
         merged_vv.merge(to);
-        let from_frontiers_inner;
-        let to_frontiers_inner;
+        debug!("to_frontiers={:?} vv={:?}", &to_frontiers, to);
+        trace!("trimmed vv = {:?}", self.dag.trimmed_vv());
+        let (common_ancestors, mut diff_mode) =
+            self.dag.find_common_ancestor(from_frontiers, to_frontiers);
+        if diff_mode == DiffMode::Checkout && to > from {
+            diff_mode = DiffMode::Import;
+        }
 
-        let from_frontiers = match from_frontiers {
-            Some(f) => f,
-            None => {
-                from_frontiers_inner = Some(from.to_frontiers(&self.dag));
-                from_frontiers_inner.as_ref().unwrap()
-            }
-        };
-
-        let to_frontiers = match to_frontiers {
-            Some(t) => t,
-            None => {
-                to_frontiers_inner = Some(to.to_frontiers(&self.dag));
-                to_frontiers_inner.as_ref().unwrap()
-            }
-        };
-
-        let common_ancestors = self.dag.find_common_ancestor(from_frontiers, to_frontiers);
         let common_ancestors_vv = self.dag.frontiers_to_vv(&common_ancestors).unwrap();
         // go from lca to merged_vv
         let diff = common_ancestors_vv.diff(&merged_vv).right;
@@ -562,11 +469,13 @@ impl OpLog {
         let vv = Rc::new(RefCell::new(VersionVector::default()));
         (
             common_ancestors_vv.clone(),
+            diff_mode,
             std::iter::from_fn(move || {
                 if let Some(inner) = &node {
                     let mut inner_vv = vv.borrow_mut();
                     // FIXME: PERF: it looks slow for large vv, like 10000+ entries
                     inner_vv.clear();
+                    self.dag.ensure_vv_for(&inner.data);
                     inner_vv.extend_to_include_vv(inner.data.vv.get().unwrap().iter());
                     let peer = inner.data.peer;
                     let cnt = inner
@@ -574,11 +483,12 @@ impl OpLog {
                         .cnt
                         .max(cur_cnt)
                         .max(common_ancestors_vv.get(&peer).copied().unwrap_or(0));
-                    let end = (inner.data.cnt + inner.data.len as Counter)
+                    let dag_node_end = (inner.data.cnt + inner.data.len as Counter)
                         .min(merged_vv.get(&peer).copied().unwrap_or(0));
+                    trace!("vv: {:?}", self.dag.vv());
                     let change = self.change_store.get_change(ID::new(peer, cnt)).unwrap();
 
-                    if change.ctr_end() < end {
+                    if change.ctr_end() < dag_node_end {
                         cur_cnt = change.ctr_end();
                     } else {
                         node = iter.next();
@@ -587,7 +497,7 @@ impl OpLog {
 
                     inner_vv.extend_to_include_end_id(change.id);
 
-                    Some((change, cnt, vv.clone()))
+                    Some((change, (cnt, dag_node_end), vv.clone()))
                 } else {
                     None
                 }
@@ -603,7 +513,7 @@ impl OpLog {
         let mut total_changes = 0;
         let mut total_ops = 0;
         let mut total_atom_ops = 0;
-        let total_dag_node = self.dag.map.len();
+        let total_dag_node = self.dag.total_parsed_dag_node();
         self.change_store.visit_all_changes(&mut |change| {
             total_changes += 1;
             total_ops += change.ops.len();
@@ -643,14 +553,16 @@ impl OpLog {
 
     pub fn get_timestamp_for_next_txn(&self) -> Timestamp {
         if self.configure.record_timestamp() {
-            get_sys_timestamp()
+            (get_sys_timestamp() + 500) / 1000
         } else {
             0
         }
     }
 
+    #[inline(never)]
     pub(crate) fn idlp_to_id(&self, id: loro_common::IdLp) -> Option<ID> {
-        let change = self.change_store.get_change_by_idlp(id)?;
+        let change = self.change_store.get_change_by_lamport_lte(id)?;
+
         if change.lamport > id.lamport || change.lamport_end() <= id.lamport {
             return None;
         }
@@ -669,7 +581,8 @@ impl OpLog {
         loro_common::IdLp { peer, lamport }
     }
 
-    pub(crate) fn get_op(&self, id: ID) -> Option<BlockOpRef> {
+    /// NOTE: This may return a op that includes the given id, not necessarily start with the given id
+    pub(crate) fn get_op_that_includes(&self, id: ID) -> Option<BlockOpRef> {
         let change = self.get_change_at(id)?;
         change.get_op_with_counter(id.counter)
     }
@@ -700,6 +613,50 @@ impl OpLog {
 
         ans
     }
+
+    #[inline]
+    pub fn compact_change_store(&mut self) {
+        self.change_store
+            .flush_and_compact(self.dag.vv(), self.dag.frontiers());
+    }
+
+    #[inline]
+    pub fn change_store_kv_size(&self) -> usize {
+        self.change_store.kv_size()
+    }
+
+    pub fn encode_change_store(&self) -> bytes::Bytes {
+        self.change_store
+            .encode_all(self.dag.vv(), self.dag.frontiers())
+    }
+
+    pub fn check_dag_correctness(&self) {
+        self.dag.check_dag_correctness();
+    }
+
+    pub fn trimmed_vv(&self) -> &ImVersionVector {
+        self.dag.trimmed_vv()
+    }
+
+    pub fn trimmed_frontiers(&self) -> &Frontiers {
+        self.dag.trimmed_frontiers()
+    }
+
+    pub fn is_trimmed(&self) -> bool {
+        !self.dag.trimmed_vv().is_empty()
+    }
+
+    pub fn get_greatest_timestamp(&self, frontiers: &Frontiers) -> Timestamp {
+        let mut max_timestamp = Timestamp::default();
+        for id in frontiers.iter() {
+            let change = self.get_change_at(*id).unwrap();
+            if change.timestamp > max_timestamp {
+                max_timestamp = change.timestamp;
+            }
+        }
+
+        max_timestamp
+    }
 }
 
 #[derive(Debug)]
@@ -727,6 +684,7 @@ pub(crate) fn convert_change_to_remote(
         deps: change.deps.clone(),
         lamport: change.lamport,
         timestamp: change.timestamp,
+        commit_msg: change.commit_msg.clone(),
     }
 }
 
@@ -796,13 +754,15 @@ pub(crate) fn local_op_to_remote(
             list_op::InnerListOp::StyleEnd => {
                 contents.push(RawOpContent::List(list_op::ListOp::StyleEnd))
             }
-            list_op::InnerListOp::Move { from, from_id, to } => {
-                contents.push(RawOpContent::List(list_op::ListOp::Move {
-                    from: *from,
-                    elem_id: *from_id,
-                    to: *to,
-                }))
-            }
+            list_op::InnerListOp::Move {
+                from,
+                elem_id: from_id,
+                to,
+            } => contents.push(RawOpContent::List(list_op::ListOp::Move {
+                from: *from,
+                elem_id: *from_id,
+                to: *to,
+            })),
             list_op::InnerListOp::Set { elem_id, value } => {
                 contents.push(RawOpContent::List(list_op::ListOp::Set {
                     elem_id: *elem_id,
@@ -824,7 +784,7 @@ pub(crate) fn local_op_to_remote(
             FutureInnerContent::Unknown { prop, value } => {
                 contents.push(crate::op::RawOpContent::Unknown {
                     prop: *prop,
-                    value: value.clone(),
+                    value: (**value).clone(),
                 })
             }
         },

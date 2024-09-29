@@ -2,42 +2,125 @@ pub(crate) mod arena;
 mod encode_reordered;
 pub(crate) mod value;
 pub(crate) mod value_register;
+use std::borrow::Cow;
+
 pub(crate) use encode_reordered::{
     decode_op, encode_op, get_op_prop, EncodedDeleteStartId, IterableEncodedDeleteStartId,
 };
+mod fast_snapshot;
+mod gc;
 pub(crate) mod json_schema;
 
 use crate::op::OpWithId;
 use crate::version::Frontiers;
 use crate::LoroDoc;
 use crate::{oplog::OpLog, LoroError, VersionVector};
-use loro_common::{IdLpSpan, LoroResult, PeerID};
+use loro_common::{IdLpSpan, IdSpan, LoroResult, PeerID, ID};
 use num_traits::{FromPrimitive, ToPrimitive};
 use rle::{HasLength, Sliceable};
 use serde::{Deserialize, Serialize};
 pub(crate) use value::OwnedValue;
+
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub enum ExportMode<'a> {
+    Snapshot,
+    Updates { from: Cow<'a, VersionVector> },
+    UpdatesInRange { spans: Cow<'a, [IdSpan]> },
+    GcSnapshot(Cow<'a, Frontiers>),
+    StateOnly(Option<Cow<'a, Frontiers>>),
+    SnapshotAt { version: Cow<'a, Frontiers> },
+}
+
+impl<'a> ExportMode<'a> {
+    pub fn snapshot() -> Self {
+        ExportMode::Snapshot
+    }
+
+    pub fn updates(from: &'a VersionVector) -> Self {
+        ExportMode::Updates {
+            from: Cow::Borrowed(from),
+        }
+    }
+
+    pub fn updates_owned(from: VersionVector) -> Self {
+        ExportMode::Updates {
+            from: Cow::Owned(from),
+        }
+    }
+
+    pub fn all_updates() -> Self {
+        ExportMode::Updates {
+            from: Cow::Owned(Default::default()),
+        }
+    }
+
+    pub fn updates_in_range(spans: impl Into<Cow<'a, [IdSpan]>>) -> Self {
+        ExportMode::UpdatesInRange {
+            spans: spans.into(),
+        }
+    }
+
+    pub fn gc_snapshot(frontiers: &'a Frontiers) -> Self {
+        ExportMode::GcSnapshot(Cow::Borrowed(frontiers))
+    }
+
+    pub fn gc_snapshot_owned(frontiers: Frontiers) -> Self {
+        ExportMode::GcSnapshot(Cow::Owned(frontiers))
+    }
+
+    pub fn gc_snapshot_from_id(id: ID) -> Self {
+        let frontiers = Frontiers::from_id(id);
+        ExportMode::GcSnapshot(Cow::Owned(frontiers))
+    }
+
+    pub fn state_only(frontiers: Option<&'a Frontiers>) -> Self {
+        ExportMode::StateOnly(frontiers.map(Cow::Borrowed))
+    }
+
+    pub fn snapshot_at(frontiers: &'a Frontiers) -> Self {
+        ExportMode::SnapshotAt {
+            version: Cow::Borrowed(frontiers),
+        }
+    }
+
+    pub fn updates_till(vv: &VersionVector) -> ExportMode<'static> {
+        let mut spans = Vec::with_capacity(vv.len());
+        for (peer, counter) in vv.iter() {
+            if *counter > 0 {
+                spans.push(IdSpan::new(*peer, 0, *counter));
+            }
+        }
+
+        ExportMode::UpdatesInRange {
+            spans: Cow::Owned(spans),
+        }
+    }
+}
+
 const MAGIC_BYTES: [u8; 4] = *b"loro";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum EncodeMode {
     // This is a config option, it won't be used in encoding.
     Auto = 255,
-    Rle = 1,
-    Snapshot = 2,
+    OutdatedRle = 1,
+    OutdatedSnapshot = 2,
+    FastSnapshot = 3,
+    FastUpdates = 4,
 }
 
 impl num_traits::FromPrimitive for EncodeMode {
     #[allow(trivial_numeric_casts)]
     #[inline]
     fn from_i64(n: i64) -> Option<Self> {
-        if n == EncodeMode::Auto as i64 {
-            Some(EncodeMode::Auto)
-        } else if n == EncodeMode::Rle as i64 {
-            Some(EncodeMode::Rle)
-        } else if n == EncodeMode::Snapshot as i64 {
-            Some(EncodeMode::Snapshot)
-        } else {
-            None
+        match n {
+            n if n == EncodeMode::Auto as i64 => Some(EncodeMode::Auto),
+            n if n == EncodeMode::OutdatedRle as i64 => Some(EncodeMode::OutdatedRle),
+            n if n == EncodeMode::OutdatedSnapshot as i64 => Some(EncodeMode::OutdatedSnapshot),
+            n if n == EncodeMode::FastSnapshot as i64 => Some(EncodeMode::FastSnapshot),
+            n if n == EncodeMode::FastUpdates as i64 => Some(EncodeMode::FastUpdates),
+            _ => None,
         }
     }
     #[inline]
@@ -52,8 +135,10 @@ impl num_traits::ToPrimitive for EncodeMode {
     fn to_i64(&self) -> Option<i64> {
         Some(match *self {
             EncodeMode::Auto => EncodeMode::Auto as i64,
-            EncodeMode::Rle => EncodeMode::Rle as i64,
-            EncodeMode::Snapshot => EncodeMode::Snapshot as i64,
+            EncodeMode::OutdatedRle => EncodeMode::OutdatedRle as i64,
+            EncodeMode::OutdatedSnapshot => EncodeMode::OutdatedSnapshot as i64,
+            EncodeMode::FastSnapshot => EncodeMode::FastSnapshot as i64,
+            EncodeMode::FastUpdates => EncodeMode::FastUpdates as i64,
         })
     }
     #[inline]
@@ -69,7 +154,7 @@ impl EncodeMode {
     }
 
     pub fn is_snapshot(self) -> bool {
-        matches!(self, EncodeMode::Snapshot)
+        matches!(self, EncodeMode::OutdatedSnapshot)
     }
 }
 
@@ -144,12 +229,12 @@ pub(crate) struct StateSnapshotDecodeContext<'a> {
 
 pub(crate) fn encode_oplog(oplog: &OpLog, vv: &VersionVector, mode: EncodeMode) -> Vec<u8> {
     let mode = match mode {
-        EncodeMode::Auto => EncodeMode::Rle,
+        EncodeMode::Auto => EncodeMode::OutdatedRle,
         mode => mode,
     };
 
     let body = match &mode {
-        EncodeMode::Rle => encode_reordered::encode_updates(oplog, vv),
+        EncodeMode::OutdatedRle => encode_reordered::encode_updates(oplog, vv),
         _ => unreachable!(),
     };
 
@@ -162,7 +247,11 @@ pub(crate) fn decode_oplog(
 ) -> Result<(), LoroError> {
     let ParsedHeaderAndBody { mode, body, .. } = parsed;
     match mode {
-        EncodeMode::Rle | EncodeMode::Snapshot => encode_reordered::decode_updates(oplog, body),
+        EncodeMode::OutdatedRle | EncodeMode::OutdatedSnapshot => {
+            encode_reordered::decode_updates(oplog, body)
+        }
+        EncodeMode::FastSnapshot => fast_snapshot::decode_oplog(oplog, body),
+        EncodeMode::FastUpdates => fast_snapshot::decode_updates(oplog, body.to_vec().into()),
         EncodeMode::Auto => unreachable!(),
     }
 }
@@ -174,11 +263,23 @@ pub(crate) struct ParsedHeaderAndBody<'a> {
     pub body: &'a [u8],
 }
 
+const XXH_SEED: u32 = u32::from_le_bytes(*b"LORO");
 impl ParsedHeaderAndBody<'_> {
     /// Return if the checksum is correct.
     fn check_checksum(&self) -> LoroResult<()> {
-        if md5::compute(self.checksum_body).0 != self.checksum {
-            return Err(LoroError::DecodeChecksumMismatchError);
+        match self.mode {
+            EncodeMode::OutdatedRle | EncodeMode::OutdatedSnapshot => {
+                if md5::compute(self.checksum_body).0 != self.checksum {
+                    return Err(LoroError::DecodeChecksumMismatchError);
+                }
+            }
+            EncodeMode::FastSnapshot | EncodeMode::FastUpdates => {
+                let expected = u32::from_le_bytes(self.checksum[12..16].try_into().unwrap());
+                if xxhash_rust::xxh32::xxh32(self.checksum_body, XXH_SEED) != expected {
+                    return Err(LoroError::DecodeChecksumMismatchError);
+                }
+            }
+            EncodeMode::Auto => unreachable!(),
         }
 
         Ok(())
@@ -234,7 +335,61 @@ pub(crate) fn export_snapshot(doc: &LoroDoc) -> Vec<u8> {
         &Default::default(),
     );
 
-    encode_header_and_body(EncodeMode::Snapshot, body)
+    encode_header_and_body(EncodeMode::OutdatedSnapshot, body)
+}
+
+pub(crate) fn export_fast_snapshot(doc: &LoroDoc) -> Vec<u8> {
+    encode_with(EncodeMode::FastSnapshot, &mut |ans| {
+        fast_snapshot::encode_snapshot(doc, ans);
+    })
+}
+
+pub(crate) fn export_fast_snapshot_at(doc: &LoroDoc, frontiers: &Frontiers) -> Vec<u8> {
+    encode_with(EncodeMode::FastSnapshot, &mut |ans| {
+        fast_snapshot::encode_snapshot_at(doc, frontiers, ans).unwrap();
+    })
+}
+
+pub(crate) fn export_fast_updates(doc: &LoroDoc, vv: &VersionVector) -> Vec<u8> {
+    encode_with(EncodeMode::FastUpdates, &mut |ans| {
+        fast_snapshot::encode_updates(doc, vv, ans);
+    })
+}
+
+pub(crate) fn export_fast_updates_in_range(oplog: &OpLog, spans: &[IdSpan]) -> Vec<u8> {
+    encode_with(EncodeMode::FastUpdates, &mut |ans| {
+        fast_snapshot::encode_updates_in_range(oplog, spans, ans);
+    })
+}
+
+pub(crate) fn export_gc_snapshot(doc: &LoroDoc, f: &Frontiers) -> Vec<u8> {
+    encode_with(EncodeMode::FastSnapshot, &mut |ans| {
+        gc::export_gc_snapshot(doc, f, ans).unwrap();
+    })
+}
+
+pub(crate) fn export_state_only_snapshot(doc: &LoroDoc, f: &Frontiers) -> Vec<u8> {
+    encode_with(EncodeMode::FastSnapshot, &mut |ans| {
+        gc::export_state_only_snapshot(doc, f, ans).unwrap();
+    })
+}
+
+fn encode_with(mode: EncodeMode, f: &mut dyn FnMut(&mut Vec<u8>)) -> Vec<u8> {
+    // HEADER
+    let mut ans = Vec::with_capacity(MIN_HEADER_SIZE);
+    ans.extend(MAGIC_BYTES);
+    let checksum = [0; 16];
+    ans.extend(checksum);
+    ans.extend(mode.to_bytes());
+
+    // BODY
+    f(&mut ans);
+
+    // CHECKSUM in HEADER
+    let checksum_body = &ans[20..];
+    let checksum = xxhash_rust::xxh32::xxh32(checksum_body, XXH_SEED);
+    ans[16..20].copy_from_slice(&checksum.to_le_bytes());
+    ans
 }
 
 pub(crate) fn decode_snapshot(
@@ -243,7 +398,8 @@ pub(crate) fn decode_snapshot(
     body: &[u8],
 ) -> Result<(), LoroError> {
     match mode {
-        EncodeMode::Snapshot => encode_reordered::decode_snapshot(doc, body),
+        EncodeMode::OutdatedSnapshot => encode_reordered::decode_snapshot(doc, body),
+        EncodeMode::FastSnapshot => fast_snapshot::decode_snapshot(doc, body.to_vec().into()),
         _ => unreachable!(),
     }
 }
@@ -273,5 +429,49 @@ impl LoroDoc {
     /// Decodes the metadata for an imported blob from the provided bytes.
     pub fn decode_import_blob_meta(blob: &[u8]) -> LoroResult<ImportBlobMetadata> {
         encode_reordered::decode_import_blob_meta(blob)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::sync::Arc;
+
+    use loro_common::{loro_value, ContainerID, ContainerType, LoroValue, ID};
+
+    #[test]
+    fn test_value_encode_size() {
+        fn assert_size(value: LoroValue, max_size: usize) {
+            let size = postcard::to_allocvec(&value).unwrap().len();
+            assert!(
+                size <= max_size,
+                "value: {:?}, size: {}, max_size: {}",
+                value,
+                size,
+                max_size
+            );
+        }
+
+        assert_size(LoroValue::Null, 1);
+        assert_size(LoroValue::I64(1), 2);
+        assert_size(LoroValue::Double(1.), 9);
+        assert_size(LoroValue::Bool(true), 2);
+        assert_size(LoroValue::String(Arc::new("123".to_string())), 5);
+        assert_size(LoroValue::Binary(Arc::new(vec![1, 2, 3])), 5);
+        assert_size(
+            loro_value!({
+                "a": 1,
+                "b": 2,
+            }),
+            10,
+        );
+        assert_size(loro_value!([1, 2, 3]), 8);
+        assert_size(
+            LoroValue::Container(ContainerID::new_normal(ID::new(1, 1), ContainerType::Map)),
+            5,
+        );
+        assert_size(
+            LoroValue::Container(ContainerID::new_root("a", ContainerType::Map)),
+            5,
+        );
     }
 }

@@ -38,6 +38,16 @@ impl TreeOp {
             TreeOp::Delete { target, .. } => *target,
         }
     }
+
+    #[allow(unused)]
+    pub(crate) fn parent(&self) -> Option<TreeID> {
+        match self {
+            TreeOp::Create { parent, .. } => *parent,
+            TreeOp::Move { parent, .. } => *parent,
+            TreeOp::Delete { .. } => Some(TreeID::delete_root()),
+        }
+    }
+
     pub(crate) fn parent_id(&self) -> TreeParentId {
         match self {
             TreeOp::Create { parent, .. } => TreeParentId::from(*parent),
@@ -45,6 +55,7 @@ impl TreeOp {
             TreeOp::Delete { .. } => TreeParentId::Deleted,
         }
     }
+
     pub(crate) fn fractional_index(&self) -> Option<FractionalIndex> {
         match self {
             TreeOp::Create { position, .. } | TreeOp::Move { position, .. } => {
@@ -52,11 +63,6 @@ impl TreeOp {
             }
             TreeOp::Delete { .. } => None,
         }
-    }
-
-    pub(crate) fn estimate_storage_size(&self) -> usize {
-        // TODO: use a better value
-        20
     }
 }
 

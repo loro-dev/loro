@@ -13,7 +13,7 @@ mod macros;
 mod span;
 mod value;
 
-pub use error::{LoroError, LoroResult, LoroTreeError};
+pub use error::{LoroEncodeError, LoroError, LoroResult, LoroTreeError};
 #[doc(hidden)]
 pub use fxhash::FxHashMap;
 pub use internal_string::InternalString;
@@ -62,6 +62,11 @@ impl ID {
 pub struct CompactId {
     pub peer: PeerID,
     pub counter: NonMaxI32,
+}
+
+/// Return whether the given name is a valid root container name.
+pub fn check_root_container_name(name: &str) -> bool {
+    !name.is_empty() && name.char_indices().all(|(_, x)| x != '/' && x != '\0')
 }
 
 impl CompactId {
@@ -243,7 +248,8 @@ impl ContainerID {
                 name,
                 container_type,
             } => {
-                writer.write_all(&[0, container_type.to_u8()])?;
+                let first_byte = container_type.to_u8() | 0b10000000;
+                writer.write_all(&[first_byte])?;
                 leb128::write::unsigned(writer, name.len() as u64)?;
                 writer.write_all(name.as_bytes())?;
             }
@@ -252,13 +258,50 @@ impl ContainerID {
                 counter,
                 container_type,
             } => {
-                writer.write_all(&[1, container_type.to_u8()])?;
+                let first_byte = container_type.to_u8();
+                writer.write_all(&[first_byte])?;
                 writer.write_all(&peer.to_le_bytes())?;
-                leb128::write::unsigned(writer, *counter as u64)?;
+                writer.write_all(&counter.to_le_bytes())?;
             }
         }
 
         Ok(())
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        // normal need 13 bytes
+        let mut bytes = Vec::with_capacity(13);
+        self.encode(&mut bytes).unwrap();
+        bytes
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        let first_byte = bytes[0];
+        let container_type = ContainerType::try_from_u8(first_byte & 0b01111111).unwrap();
+        let is_root = (first_byte & 0b10000000) != 0;
+
+        let mut reader = &bytes[1..];
+        match is_root {
+            true => {
+                let name_len = leb128::read::unsigned(&mut reader).unwrap();
+                let name = InternalString::from(
+                    std::str::from_utf8(&reader[..name_len as usize]).unwrap(),
+                );
+                Self::Root {
+                    name,
+                    container_type,
+                }
+            }
+            false => {
+                let peer = PeerID::from_le_bytes(reader[..8].try_into().unwrap());
+                let counter = i32::from_le_bytes(reader[8..12].try_into().unwrap());
+                Self::Normal {
+                    peer,
+                    counter,
+                    container_type,
+                }
+            }
+        }
     }
 }
 
@@ -352,9 +395,7 @@ impl ContainerType {
             4 => Ok(ContainerType::MovableList),
             #[cfg(feature = "counter")]
             5 => Ok(ContainerType::Counter),
-            _ => Err(LoroError::DecodeError(
-                format!("Unknown container type {v}").into_boxed_str(),
-            )),
+            x => Ok(ContainerType::Unknown(x)),
         }
     }
 }
@@ -453,9 +494,15 @@ mod container {
 
         #[inline]
         pub fn new_root(name: &str, container_type: ContainerType) -> Self {
-            ContainerID::Root {
-                name: name.into(),
-                container_type,
+            if !check_root_container_name(name) {
+                panic!(
+                    "Invalid root container name, it should not be empty or contain '/' or '\\0'"
+                );
+            } else {
+                ContainerID::Root {
+                    name: name.into(),
+                    container_type,
+                }
             }
         }
 
@@ -617,7 +664,7 @@ pub mod wasm {
 
 #[cfg(test)]
 mod test {
-    use crate::ContainerID;
+    use crate::{ContainerID, ContainerType, ID};
 
     #[test]
     fn test_container_id_convert_to_and_from_str() {
@@ -653,5 +700,39 @@ mod test {
         assert!(ContainerID::try_from("cid:x@0:Map").is_err());
         assert!(ContainerID::try_from("id:0@0:Map").is_err());
         assert!(ContainerID::try_from("cid:0@0:Unknown(6)").is_ok());
+    }
+
+    #[test]
+    fn test_container_id_encode_and_decode() {
+        let id = ContainerID::new_normal(ID::new(1, 2), ContainerType::Map);
+        let bytes = id.to_bytes();
+        assert_eq!(ContainerID::from_bytes(&bytes), id);
+
+        let id = ContainerID::new_normal(ID::new(u64::MAX, i32::MAX), ContainerType::Text);
+        let bytes = id.to_bytes();
+        assert_eq!(ContainerID::from_bytes(&bytes), id);
+
+        let id = ContainerID::new_root("test_root", ContainerType::List);
+        let bytes = id.to_bytes();
+        assert_eq!(ContainerID::from_bytes(&bytes), id);
+
+        let id = ContainerID::new_normal(ID::new(0, 0), ContainerType::MovableList);
+        let bytes = id.to_bytes();
+        assert_eq!(ContainerID::from_bytes(&bytes), id);
+
+        let id = ContainerID::new_root(&"x".repeat(1024), ContainerType::Tree);
+        let bytes = id.to_bytes();
+        assert_eq!(ContainerID::from_bytes(&bytes), id);
+
+        #[cfg(feature = "counter")]
+        {
+            let id = ContainerID::new_normal(ID::new(42, 100), ContainerType::Counter);
+            let bytes = id.to_bytes();
+            assert_eq!(ContainerID::from_bytes(&bytes), id);
+        }
+
+        let id = ContainerID::new_normal(ID::new(1, 1), ContainerType::Unknown(100));
+        let bytes = id.to_bytes();
+        assert_eq!(ContainerID::from_bytes(&bytes), id);
     }
 }

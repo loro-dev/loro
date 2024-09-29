@@ -1,5 +1,123 @@
 # Changelog
 
+## 1.0.0-alpha.3
+
+### Patch Changes
+
+- ### 🐛 Bug Fixes
+
+  - Cursor behavior when using gc-snapshot (#472)
+  - _(wasm)_ Type err
+
+  ### ⚙️ Miscellaneous Tasks
+
+  - Make tree parent id pub on loro crate
+
+  ### Feat
+
+  - Allow editing on detached mode (#473)
+
+  ### Fix
+
+  - Get tree's alive children correctly (#474)
+  - Should not emit event when exporting gc-snapshot (#471)
+
+## 1.0.0-alpha.2
+
+### Patch Changes
+
+- ### 🚀 Features
+
+  - Fork doc at the target version (#469)
+
+  ### 🚜 Refactor
+
+  - BREAKING CHANGE: Use hierarchy value for tree value (#470)
+
+## 1.0.0-alpha.1
+
+### Patch Changes
+
+- ### 🚀 Features
+
+  - Get shallow value of doc (#463)
+  - Add state only snapshot & refine check slow test
+  - Add new cid method to js binding
+  - Jsonpath experimental support (#466)
+
+  ### 🐛 Bug Fixes
+
+  - Raise error if perform action on a deleted container (#465)
+  - Raise error if moving a deleted node
+  - Export snapshot error on a gc doc
+
+  ### 🚜 Refactor
+
+  - Tree contains & isDeleted (#467)
+
+  ### 🧪 Testing
+
+  - Check state correctness on trimmed doc
+
+## 1.0.0-alpha.0
+
+- Better encode schema that can be 100x faster
+- Less memory usage
+- You can trim needless history in snapshot now
+- Better architecture and extensibility
+
+## 0.16.12
+
+### Patch Changes
+
+- 46e21fc: Fix tree move issues
+
+## 0.16.11
+
+### Patch Changes
+
+- dce00ab: Make loro-wasm work in cloudflare worker
+
+## 0.16.10
+
+### Patch Changes
+
+- 7cf54e8: Fix batch importing with snapshot
+
+## 0.16.9
+
+### Patch Changes
+
+- a761430: Fix build script
+
+## 0.16.8
+
+### Patch Changes
+
+- 38b4bcf: Add text update API
+
+  - Remove the patch for crypto
+  - Add text update API (#404)
+  - Check invalid root container name (#411)
+
+  ### 🐛 Bug Fixes
+
+  - Workaround lldb bug make loro crate debuggable (#414)
+  - Delete the **bring back** tree node from the undo container remap (#423)
+
+  ### 📚 Documentation
+
+  - Fix typo
+  - Refine docs about event (#417)
+
+  ### 🎨 Styling
+
+  - Use clippy to perf code (#407)
+
+  ### ⚙️ Miscellaneous Tasks
+
+  - Add test tools (#410)
+
 ## 0.16.7
 
 ### Patch Changes

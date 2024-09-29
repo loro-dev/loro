@@ -3,7 +3,7 @@ import {
   Container,
   ContainerID,
   Delta,
-  Loro,
+  LoroDoc,
   LoroList,
   LoroMap,
   LoroText,
@@ -12,7 +12,13 @@ import {
   OpId,
   TreeID,
   Value,
+  ContainerType,
 } from "loro-wasm";
+
+/**
+ * @deprecated Please use LoroDoc
+ */
+export class Loro extends LoroDoc { }
 export { Awareness } from "./awareness";
 
 export type Frontiers = OpId[];
@@ -84,20 +90,22 @@ export type MapDiff = {
 
 export type TreeDiffItem =
   | {
-      target: TreeID;
-      action: "create";
-      parent: TreeID | undefined;
-      index: number;
-      position: string;
-    }
-  | { target: TreeID; action: "delete" }
+    target: TreeID;
+    action: "create";
+    parent: TreeID | undefined;
+    index: number;
+    fractional_index: string;
+  }
+  | { target: TreeID; action: "delete"; old_parent: TreeID | undefined; old_index: number }
   | {
-      target: TreeID;
-      action: "move";
-      parent: TreeID | undefined;
-      index: number;
-      position: string;
-    };
+    target: TreeID;
+    action: "move";
+    parent: TreeID | undefined;
+    index: number;
+    fractional_index: string;
+    old_parent: TreeID | undefined;
+    old_index: number;
+  };
 
 export type TreeDiff = {
   type: "tree";
@@ -121,14 +129,12 @@ export function isContainerId(s: string): s is ContainerID {
   return s.startsWith("cid:");
 }
 
-export { Loro };
-
 /**  Whether the value is a container.
  *
  * # Example
  *
  * ```ts
- * const doc = new Loro();
+ * const doc = new LoroDoc();
  * const map = doc.getMap("map");
  * const list = doc.getList("list");
  * const text = doc.getText("text");
@@ -157,7 +163,7 @@ export function isContainer(value: any): value is Container {
  * # Example
  *
  * ```ts
- * const doc = new Loro();
+ * const doc = new LoroDoc();
  * const map = doc.getMap("map");
  * const list = doc.getList("list");
  * const text = doc.getText("text");
@@ -174,13 +180,13 @@ export function getType<T>(
 ): T extends LoroText
   ? "Text"
   : T extends LoroMap<any>
-    ? "Map"
-    : T extends LoroTree<any>
-      ? "Tree"
-      : T extends LoroList<any>
-        ? "List"
-        :T extends LoroCounter?"Counter"
-        : "Json" {
+  ? "Map"
+  : T extends LoroTree<any>
+  ? "Tree"
+  : T extends LoroList<any>
+  ? "List"
+  : T extends LoroCounter ? "Counter"
+  : "Json" {
   if (isContainer(value)) {
     return value.kind() as unknown as any;
   }
@@ -189,7 +195,7 @@ export function getType<T>(
 }
 
 declare module "loro-wasm" {
-  interface Loro {
+  interface LoroDoc {
     subscribe(listener: Listener): number;
   }
 
@@ -210,7 +216,7 @@ declare module "loro-wasm" {
     setOnPop(listener?: UndoConfig["onPop"]): void;
   }
 
-  interface Loro<
+  interface LoroDoc<
     T extends Record<string, Container> = Record<string, Container>,
   > {
     /**
@@ -221,9 +227,9 @@ declare module "loro-wasm" {
      *
      * @example
      * ```ts
-     * import { Loro } from "loro-crdt";
+     * import { LoroDoc } from "loro-crdt";
      *
-     * const doc = new Loro();
+     * const doc = new LoroDoc();
      * const map = doc.getMap("map");
      * ```
      */
@@ -238,9 +244,9 @@ declare module "loro-wasm" {
      *
      * @example
      * ```ts
-     * import { Loro } from "loro-crdt";
+     * import { LoroDoc } from "loro-crdt";
      *
-     * const doc = new Loro();
+     * const doc = new LoroDoc();
      * const list = doc.getList("list");
      * ```
      */
@@ -255,9 +261,9 @@ declare module "loro-wasm" {
      *
      * @example
      * ```ts
-     * import { Loro } from "loro-crdt";
+     * import { LoroDoc } from "loro-crdt";
      *
-     * const doc = new Loro();
+     * const doc = new LoroDoc();
      * const list = doc.getList("list");
      * ```
      */
@@ -272,9 +278,9 @@ declare module "loro-wasm" {
      *
      *  @example
      *  ```ts
-     *  import { Loro } from "loro-crdt";
+     *  import { LoroDoc } from "loro-crdt";
      *
-     *  const doc = new Loro();
+     *  const doc = new LoroDoc();
      *  const tree = doc.getTree("tree");
      *  ```
      */
@@ -285,16 +291,16 @@ declare module "loro-wasm" {
   }
 
   interface LoroList<T = unknown> {
-    new (): LoroList<T>;
+    new(): LoroList<T>;
     /**
      *  Get elements of the list. If the value is a child container, the corresponding
      *  `Container` will be returned.
      *
      *  @example
      *  ```ts
-     *  import { Loro } from "loro-crdt";
+     *  import { LoroDoc } from "loro-crdt";
      *
-     *  const doc = new Loro();
+     *  const doc = new LoroDoc();
      *  const list = doc.getList("list");
      *  list.insert(0, 100);
      *  list.insert(1, "foo");
@@ -309,9 +315,9 @@ declare module "loro-wasm" {
      *
      *  @example
      *  ```ts
-     *  import { Loro, LoroText } from "loro-crdt";
+     *  import { LoroDoc, LoroText } from "loro-crdt";
      *
-     *  const doc = new Loro();
+     *  const doc = new LoroDoc();
      *  const list = doc.getList("list");
      *  list.insert(0, 100);
      *  const text = list.insertContainer(1, new LoroText());
@@ -328,9 +334,9 @@ declare module "loro-wasm" {
      *
      *  @example
      *  ```ts
-     *  import { Loro } from "loro-crdt";
+     *  import { LoroDoc } from "loro-crdt";
      *
-     *  const doc = new Loro();
+     *  const doc = new LoroDoc();
      *  const list = doc.getList("list");
      *  list.insert(0, 100);
      *  console.log(list.get(0));  // 100
@@ -343,9 +349,9 @@ declare module "loro-wasm" {
      *
      *  @example
      *  ```ts
-     *  import { Loro } from "loro-crdt";
+     *  import { LoroDoc } from "loro-crdt";
      *
-     *  const doc = new Loro();
+     *  const doc = new LoroDoc();
      *  const list = doc.getList("list");
      *  list.insert(0, 100);
      *  list.insert(1, "foo");
@@ -361,16 +367,16 @@ declare module "loro-wasm" {
   }
 
   interface LoroMovableList<T = unknown> {
-    new (): LoroMovableList<T>;
+    new(): LoroMovableList<T>;
     /**
      *  Get elements of the list. If the value is a child container, the corresponding
      *  `Container` will be returned.
      *
      *  @example
      *  ```ts
-     *  import { Loro, LoroText } from "loro-crdt";
+     *  import { LoroDoc, LoroText } from "loro-crdt";
      *
-     *  const doc = new Loro();
+     *  const doc = new LoroDoc();
      *  const list = doc.getMovableList("list");
      *  list.insert(0, 100);
      *  list.insert(1, "foo");
@@ -385,9 +391,9 @@ declare module "loro-wasm" {
      *
      *  @example
      *  ```ts
-     *  import { Loro } from "loro-crdt";
+     *  import { LoroDoc } from "loro-crdt";
      *
-     *  const doc = new Loro();
+     *  const doc = new LoroDoc();
      *  const list = doc.getMovableList("list");
      *  list.insert(0, 100);
      *  const text = list.insertContainer(1, new LoroText());
@@ -404,10 +410,10 @@ declare module "loro-wasm" {
      *
      *  @example
      *  ```ts
-     *  import { Loro } from "loro-crdt";
+     *  import { LoroDoc } from "loro-crdt";
      *
-     *  const doc = new Loro();
-     *  const list = doc.getMoableList("list");
+     *  const doc = new LoroDoc();
+     *  const list = doc.getMovableList("list");
      *  list.insert(0, 100);
      *  console.log(list.get(0));  // 100
      *  console.log(list.get(1));  // undefined
@@ -419,9 +425,9 @@ declare module "loro-wasm" {
      *
      *  @example
      *  ```ts
-     *  import { Loro } from "loro-crdt";
+     *  import { LoroDoc } from "loro-crdt";
      *
-     *  const doc = new Loro();
+     *  const doc = new LoroDoc();
      *  const list = doc.getMovableList("list");
      *  list.insert(0, 100);
      *  list.insert(1, "foo");
@@ -447,9 +453,9 @@ declare module "loro-wasm" {
      *
      *  @example
      *  ```ts
-     *  import { Loro } from "loro-crdt";
+     *  import { LoroDoc } from "loro-crdt";
      *
-     *  const doc = new Loro();
+     *  const doc = new LoroDoc();
      *  const list = doc.getList("list");
      *  list.insert(0, 100);
      *  list.insert(1, "foo");
@@ -464,9 +470,9 @@ declare module "loro-wasm" {
      *
      *  @example
      *  ```ts
-     *  import { Loro } from "loro-crdt";
+     *  import { LoroDoc } from "loro-crdt";
      *
-     *  const doc = new Loro();
+     *  const doc = new LoroDoc();
      *  const list = doc.getMovableList("list");
      *  list.insert(0, 100);
      *  const text = list.setContainer(0, new LoroText());
@@ -483,7 +489,7 @@ declare module "loro-wasm" {
   interface LoroMap<
     T extends Record<string, unknown> = Record<string, unknown>,
   > {
-    new (): LoroMap<T>;
+    new(): LoroMap<T>;
     /**
      *  Get the value of the key. If the value is a child container, the corresponding
      *  `Container` will be returned.
@@ -492,9 +498,9 @@ declare module "loro-wasm" {
      *
      *  @example
      *  ```ts
-     *  import { Loro } from "loro-crdt";
+     *  import { LoroDoc } from "loro-crdt";
      *
-     *  const doc = new Loro();
+     *  const doc = new LoroDoc();
      *  const map = doc.getMap("map");
      *  map.set("foo", "bar");
      *  const bar = map.get("foo");
@@ -506,9 +512,9 @@ declare module "loro-wasm" {
      *
      *  @example
      *  ```ts
-     *  import { Loro } from "loro-crdt";
+     *  import { LoroDoc } from "loro-crdt";
      *
-     *  const doc = new Loro();
+     *  const doc = new LoroDoc();
      *  const map = doc.getMap("map");
      *  map.set("foo", "bar");
      *  const text = map.setContainer("text", new LoroText());
@@ -528,9 +534,9 @@ declare module "loro-wasm" {
      *
      *  @example
      *  ```ts
-     *  import { Loro } from "loro-crdt";
+     *  import { LoroDoc } from "loro-crdt";
      *
-     *  const doc = new Loro();
+     *  const doc = new LoroDoc();
      *  const map = doc.getMap("map");
      *  map.set("foo", "bar");
      *  const bar = map.get("foo");
@@ -544,9 +550,9 @@ declare module "loro-wasm" {
      *
      *  @example
      *  ```ts
-     *  import { Loro } from "loro-crdt";
+     *  import { LoroDoc } from "loro-crdt";
      *
-     *  const doc = new Loro();
+     *  const doc = new LoroDoc();
      *  const map = doc.getMap("map");
      *  map.set("foo", "bar");
      *  map.set("foo", "baz");
@@ -561,7 +567,7 @@ declare module "loro-wasm" {
   }
 
   interface LoroText {
-    new (): LoroText;
+    new(): LoroText;
     insert(pos: number, text: string): void;
     delete(pos: number, len: number): void;
     subscribe(listener: Listener): number;
@@ -570,7 +576,7 @@ declare module "loro-wasm" {
   interface LoroTree<
     T extends Record<string, unknown> = Record<string, unknown>,
   > {
-    new (): LoroTree<T>;
+    new(): LoroTree<T>;
     /**
      * Create a new tree node as the child of parent and return a `LoroTreeNode` instance.
      * If the parent is undefined, the tree node will be a root node.
@@ -579,9 +585,9 @@ declare module "loro-wasm" {
      *
      * @example
      * ```ts
-     * import { Loro } from "loro-crdt";
+     * import { LoroDoc } from "loro-crdt";
      *
-     * const doc = new Loro();
+     * const doc = new LoroDoc();
      * const tree = doc.getTree("tree");
      * const root = tree.createNode();
      * const node = tree.createNode(undefined, 0);
@@ -617,9 +623,9 @@ declare module "loro-wasm" {
      *
      * @example
      * ```typescript
-     * import { Loro } from "loro-crdt";
+     * import { LoroDoc } from "loro-crdt";
      *
-     * let doc = new Loro();
+     * let doc = new LoroDoc();
      * let tree = doc.getTree("tree");
      * let root = tree.createNode();
      * let node = root.createNode();
@@ -628,7 +634,7 @@ declare module "loro-wasm" {
      * //    /  \
      * // node2 node
      * ```
-     */ 
+     */
     createNode(index?: number): LoroTreeNode<T>;
     move(parent?: LoroTreeNode<T>, index?: number): void;
     parent(): LoroTreeNode<T> | undefined;
@@ -651,3 +657,11 @@ declare module "loro-wasm" {
 }
 
 type NonNullableType<T> = Exclude<T, null | undefined>;
+
+export function newContainerID(id: OpId, type: ContainerType): ContainerID {
+  return `cid:${id.counter}@${id.peer}:${type}`;
+}
+
+export function newRootContainerID(name: string, type: ContainerType): ContainerID {
+  return `cid:root-${name}:${type}`;
+}
