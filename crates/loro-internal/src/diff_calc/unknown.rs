@@ -2,7 +2,7 @@ use loro_common::ContainerID;
 
 use crate::{container::idx::ContainerIdx, event::InternalDiff, OpLog};
 
-use super::{DiffCalculatorTrait, DiffMode};
+use super::{DiffCalcVersionInfo, DiffCalculatorTrait, DiffMode};
 
 #[derive(Debug, Default)]
 pub struct UnknownDiffCalculator;
@@ -24,8 +24,7 @@ impl DiffCalculatorTrait for UnknownDiffCalculator {
         &mut self,
         _idx: ContainerIdx,
         _oplog: &OpLog,
-        _from: &crate::VersionVector,
-        _to: &crate::VersionVector,
+        _info: DiffCalcVersionInfo,
         _on_new_container: impl FnMut(&ContainerID),
     ) -> (InternalDiff, DiffMode) {
         (InternalDiff::Unknown, DiffMode::Checkout)

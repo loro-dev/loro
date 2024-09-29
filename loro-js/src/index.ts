@@ -1,13 +1,4 @@
-export {
-  AwarenessWasm, Change, Container, ContainerID, ContainerType,
-  Cursor, Delta, ExportMode, ImportBlobMetadata,
-  JsonChange, JsonContainerID, JsonOp, JsonOpID, JsonSchema,
-  JsonValue, ListOp, LoroCounter, LoroList, LoroMap, LoroDoc,
-  LoroMovableList, LoroText, LoroTree, LoroTreeNode, MapOp, MovableListOp,
-  OpId, PeerID, Side, TextOp, TreeID, TreeNodeValue, TreeOp, UndoConfig,
-  UndoManager, UnknownOp, Value, VersionVector, decodeImportBlobMeta, setDebug,
-  newContainerID, newRootContainerID
-} from "loro-wasm";
+export * from "loro-wasm";
 import {
   Container,
   ContainerID,
@@ -21,6 +12,7 @@ import {
   OpId,
   TreeID,
   Value,
+  ContainerType,
 } from "loro-wasm";
 
 /**
@@ -665,3 +657,11 @@ declare module "loro-wasm" {
 }
 
 type NonNullableType<T> = Exclude<T, null | undefined>;
+
+export function newContainerID(id: OpId, type: ContainerType): ContainerID {
+  return `cid:${id.counter}@${id.peer}:${type}`;
+}
+
+export function newRootContainerID(name: string, type: ContainerType): ContainerID {
+  return `cid:root-${name}:${type}`;
+}

@@ -372,7 +372,7 @@ it("commit with specified timestamp", () => {
   const doc = new LoroDoc();
   doc.setPeerId(1);
   doc.getText("123").insert(0, "123");
-  doc.commit(undefined, 111);
+  doc.commit({ timestamp: 111 });
   const c = doc.getChangeAt({ peer: "1", counter: 0 });
   expect(c.timestamp).toBe(111);
 });
@@ -382,9 +382,9 @@ it("can control the mergeable interval", () => {
     const doc = new LoroDoc();
     doc.setPeerId(1);
     doc.getText("123").insert(0, "1");
-    doc.commit(undefined, 110);
+    doc.commit({ timestamp: 110 });
     doc.getText("123").insert(0, "1");
-    doc.commit(undefined, 120);
+    doc.commit({ timestamp: 120 });
     expect(doc.getAllChanges().get("1")?.length).toBe(1);
   }
 
@@ -393,9 +393,9 @@ it("can control the mergeable interval", () => {
     doc.setPeerId(1);
     doc.setChangeMergeInterval(10);
     doc.getText("123").insert(0, "1");
-    doc.commit(undefined, 110);
+    doc.commit({ timestamp: 110 });
     doc.getText("123").insert(0, "1");
-    doc.commit(undefined, 120);
+    doc.commit({ timestamp: 120 });
     console.log(doc.getAllChanges());
     expect(doc.getAllChanges().get("1")?.length).toBe(2);
   }
@@ -581,4 +581,22 @@ it("has correct map value #453", async () => {
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(diff).toStrictEqual(expectedDiff);
   }
+})
+
+it("can set commit message", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId(1);
+  doc.getText("text").insert(0, "123");
+  doc.commit({ message: "Hello world" });
+  expect(doc.getChangeAt({ peer: "1", counter: 0 }).message).toBe("Hello world");
+})
+
+it("can query pending txn length", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId(1);
+  expect(doc.getPendingTxnLength()).toBe(0);
+  doc.getText("text").insert(0, "123");
+  expect(doc.getPendingTxnLength()).toBe(3);
+  doc.commit();
+  expect(doc.getPendingTxnLength()).toBe(0);
 })

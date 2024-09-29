@@ -1,8 +1,9 @@
-use loro_common::{HasCounter, HasCounterSpan, IdSpanVector};
+use itertools::Itertools;
+use loro_common::{HasCounter, HasCounterSpan, HasIdSpan, HasLamportSpan, IdFull, IdSpanVector};
 use smallvec::smallvec;
 use std::{
     cmp::Ordering,
-    ops::{Deref, DerefMut},
+    ops::{ControlFlow, Deref, DerefMut},
 };
 
 use fxhash::{FxHashMap, FxHashSet};
@@ -143,15 +144,6 @@ impl ImVersionVector {
         self.0.contains_key(k)
     }
 
-    /// Convert to a [Frontiers]
-    ///
-    /// # Panic
-    ///
-    /// When self is greater than dag.vv
-    pub fn to_frontiers(&self, dag: &AppDag) -> Frontiers {
-        dag.im_vv_to_frontiers(self)
-    }
-
     pub fn encode(&self) -> Vec<u8> {
         postcard::to_allocvec(self).unwrap()
     }
@@ -263,6 +255,11 @@ impl Frontiers {
     }
 
     pub fn update_frontiers_on_new_change(&mut self, id: ID, deps: &Frontiers) {
+        if self.len() <= 8 && self == deps {
+            *self = Frontiers::from_id(id);
+            return;
+        }
+
         self.retain(|existing_id| {
             if existing_id.peer == id.peer {
                 assert!(id.counter > existing_id.counter);
@@ -983,15 +980,6 @@ impl VersionVector {
         postcard::from_bytes(bytes).map_err(|_| LoroError::DecodeVersionVectorError)
     }
 
-    /// Convert to a [Frontiers]
-    ///
-    /// # Panic
-    ///
-    /// When self is greater than dag.vv
-    pub fn to_frontiers(&self, dag: &AppDag) -> Frontiers {
-        dag.vv_to_frontiers(self)
-    }
-
     pub(crate) fn trim(&self, vv: &VersionVector) -> VersionVector {
         let mut ans = VersionVector::new();
         for (client_id, &counter) in self.iter() {
@@ -1014,10 +1002,7 @@ impl VersionVector {
 /// Use minimal set of ids to represent the frontiers
 pub fn shrink_frontiers(last_ids: &[ID], dag: &AppDag) -> Frontiers {
     // it only keep the ids of ops that are concurrent to each other
-
     let mut frontiers = Frontiers::default();
-    let mut frontiers_vv = Vec::new();
-
     if last_ids.is_empty() {
         return frontiers;
     }
@@ -1027,28 +1012,58 @@ pub fn shrink_frontiers(last_ids: &[ID], dag: &AppDag) -> Frontiers {
         return frontiers;
     }
 
-    let mut last_ids = last_ids.to_vec();
-    // sort by lamport, ascending
-    last_ids.sort_by_cached_key(|x| ((dag.get_lamport(x).unwrap() as isize), x.peer));
+    let mut last_ids = filter_duplicated_peer_id(last_ids)
+        .into_iter()
+        .map(|x| IdFull::new(x.peer, x.counter, dag.get_lamport(&x).unwrap()))
+        .collect_vec();
 
+    if last_ids.len() == 1 {
+        frontiers.push(last_ids[0].id());
+        return frontiers;
+    }
+
+    // Iterate from the greatest lamport to the smallest
+    last_ids.sort_by_key(|x| x.lamport);
     for id in last_ids.iter().rev() {
-        let vv = dag.get_vv(*id).unwrap();
         let mut should_insert = true;
-        for f_vv in frontiers_vv.iter() {
-            if vv.partial_cmp(f_vv).is_some() {
-                // This is not concurrent op, should be ignored in frontiers
-                should_insert = false;
-                break;
-            }
+        let mut len = 0;
+        // travel backward because they have more similar lamport
+        for f_id in frontiers.iter().rev() {
+            dag.travel_ancestors(*f_id, &mut |x| {
+                len += 1;
+                if x.contains_id(id.id()) {
+                    should_insert = false;
+                    ControlFlow::Break(())
+                } else if x.lamport_last() < id.lamport {
+                    // Already travel to a node with smaller lamport, no need to continue, we are sure two ops are concurrent now
+                    ControlFlow::Break(())
+                } else {
+                    ControlFlow::Continue(())
+                }
+            });
         }
 
         if should_insert {
-            frontiers.push(*id);
-            frontiers_vv.push(vv);
+            frontiers.push(id.id());
         }
     }
 
     frontiers
+}
+
+fn filter_duplicated_peer_id(last_ids: &[ID]) -> Vec<ID> {
+    let mut peer_max_counters = FxHashMap::default();
+    for &id in last_ids {
+        let counter = peer_max_counters.entry(id.peer).or_insert(id.counter);
+        if id.counter > *counter {
+            *counter = id.counter;
+        }
+    }
+
+    peer_max_counters
+        .into_iter()
+        .map(|(peer, counter)| ID::new(peer, counter))
+        .collect()
 }
 
 impl Default for VersionVector {

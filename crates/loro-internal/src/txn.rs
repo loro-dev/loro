@@ -331,12 +331,12 @@ impl Transaction {
         origin: InternalString,
         global_txn: Weak<Mutex<Option<Transaction>>>,
     ) -> Self {
-        let mut state_lock = state.lock().unwrap();
+        let mut state_lock = state.try_lock().unwrap();
         if state_lock.is_in_txn() {
             panic!("Cannot start a transaction while another one is in progress");
         }
 
-        let oplog_lock = oplog.lock().unwrap();
+        let oplog_lock = oplog.try_lock().unwrap();
         state_lock.start_txn(origin, crate::event::EventTriggerKind::Local);
         let arena = state_lock.arena.clone();
         let frontiers = state_lock.frontiers.clone();
@@ -401,14 +401,14 @@ impl Transaction {
         }
 
         self.finished = true;
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.try_lock().unwrap();
         if self.local_ops.is_empty() {
             state.abort_txn();
             return Ok(());
         }
 
         let ops = std::mem::take(&mut self.local_ops);
-        let mut oplog = self.oplog.lock().unwrap();
+        let mut oplog = self.oplog.try_lock().unwrap();
         let deps = take(&mut self.frontiers);
         let change = Change {
             lamport: self.start_lamport,
@@ -480,14 +480,14 @@ impl Transaction {
             return Err(LoroError::UnmatchedContext {
                 expected: self
                     .state
-                    .lock()
+                    .try_lock()
                     .unwrap()
                     .peer
                     .load(std::sync::atomic::Ordering::Relaxed),
                 found: state_ref
                     .upgrade()
                     .unwrap()
-                    .lock()
+                    .try_lock()
                     .unwrap()
                     .peer
                     .load(std::sync::atomic::Ordering::Relaxed),
@@ -495,6 +495,7 @@ impl Transaction {
         }
 
         let len = content.content_len();
+        assert!(len > 0);
         let raw_op = RawOp {
             id: ID {
                 peer: self.peer,
@@ -505,16 +506,37 @@ impl Transaction {
             content,
         };
 
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.try_lock().unwrap();
         if state.is_deleted(container) {
             return Err(LoroError::ContainerDeleted {
                 container: Box::new(state.arena.idx_to_id(container).unwrap()),
             });
         }
+
         let op = self.arena.convert_raw_op(&raw_op);
         state.apply_local_op(&raw_op, &op)?;
+        {
+            // update version info
+            let mut oplog = self.oplog.try_lock().unwrap();
+            let dep_id = Frontiers::from_id(ID::new(self.peer, self.next_counter - 1));
+            let start_id = ID::new(self.peer, self.next_counter);
+            self.next_counter += len as Counter;
+            oplog.dag.update_version_on_new_local_op(
+                if self.local_ops.is_empty() {
+                    &self.frontiers
+                } else {
+                    &dep_id
+                },
+                start_id,
+                self.next_lamport,
+                len,
+            );
+            self.next_lamport += len as Lamport;
+            // set frontiers to the last op id
+            let last_id = start_id.inc(len as Counter - 1);
+            state.frontiers = Frontiers::from_id(last_id);
+        };
         drop(state);
-
         debug_assert_eq!(
             event.rle_len(),
             op.atom_len(),
@@ -532,8 +554,6 @@ impl Transaction {
             }
         }
         self.local_ops.push(op);
-        self.next_counter += len as Counter;
-        self.next_lamport += len as Lamport;
         Ok(())
     }
 
@@ -614,6 +634,10 @@ impl Transaction {
 
     pub fn is_empty(&self) -> bool {
         self.local_ops.is_empty()
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        (self.next_counter - self.start_counter) as usize
     }
 }
 

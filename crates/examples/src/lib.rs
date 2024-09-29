@@ -8,11 +8,11 @@ use std::{
 };
 use tracing::span;
 
-pub mod utils;
 pub mod draw;
 pub mod json;
 pub mod list;
 pub mod sheet;
+pub mod utils;
 pub mod test_preload {
     pub use bench_utils::json::JsonAction::*;
     pub use bench_utils::json::LoroValue::*;
@@ -182,7 +182,7 @@ pub fn minify_failed_tests_in_async_mode<T: ActorTrait>(
         let num_clone = Arc::clone(&num);
         let result = std::panic::catch_unwind(move || {
             let mut actors = ActorGroup::<T>::new(peer_num);
-            for action in actions_clone.lock().unwrap().iter_mut() {
+            for action in actions_clone.try_lock().unwrap().iter_mut() {
                 actors.apply_action(action);
                 num_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             }

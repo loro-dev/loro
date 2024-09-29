@@ -87,7 +87,7 @@ impl Observer {
     pub fn subscribe(&self, id: &ContainerID, callback: Subscriber) -> SubID {
         let idx = self.arena.register_container(id);
         let sub_id = self.fetch_add_next_id();
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.try_lock().unwrap();
         inner.subscribers.insert(sub_id, callback);
         inner.containers.entry(idx).or_default().insert(sub_id);
         sub_id
@@ -95,7 +95,7 @@ impl Observer {
 
     pub fn subscribe_root(&self, callback: Subscriber) -> SubID {
         let sub_id = self.fetch_add_next_id();
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.try_lock().unwrap();
         inner.subscribers.insert(sub_id, callback);
         inner.root.insert(sub_id);
         sub_id
@@ -110,7 +110,7 @@ impl Observer {
 
     pub(crate) fn emit(&self, doc_diff: DocDiff) {
         if self.taken_times.load(Ordering::Relaxed) > 0 {
-            self.inner.lock().unwrap().event_queue.push(doc_diff);
+            self.inner.try_lock().unwrap().event_queue.push(doc_diff);
             return;
         }
         let mut inner = self.take_inner();
@@ -175,14 +175,14 @@ impl Observer {
     fn take_inner(&self) -> ObserverInner {
         self.taken_times
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let mut inner_guard = self.inner.lock().unwrap();
+        let mut inner_guard = self.inner.try_lock().unwrap();
         std::mem::take(&mut *inner_guard)
     }
 
     fn reset_inner(&self, mut inner: ObserverInner) {
         let mut count = 0;
         loop {
-            let mut inner_guard = self.inner.lock().unwrap();
+            let mut inner_guard = self.inner.try_lock().unwrap();
             // need to merge the old and new sets
             if !inner_guard.containers.is_empty() {
                 for (key, set) in inner_guard.containers.iter() {

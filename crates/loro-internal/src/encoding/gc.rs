@@ -1,7 +1,7 @@
 use rle::HasLength;
 use std::collections::BTreeSet;
 
-use loro_common::LoroResult;
+use loro_common::{ContainerID, LoroResult, ID};
 use tracing::{debug, trace};
 
 use crate::{
@@ -24,7 +24,7 @@ pub(crate) fn export_gc_snapshot<W: std::io::Write>(
     start_from: &Frontiers,
     w: &mut W,
 ) -> LoroResult<Frontiers> {
-    let oplog = doc.oplog().lock().unwrap();
+    let oplog = doc.oplog().try_lock().unwrap();
     let start_from = calc_gc_doc_start(&oplog, start_from);
     let mut start_vv = oplog.dag().frontiers_to_vv(&start_from).unwrap();
     for id in start_from.iter() {
@@ -63,17 +63,31 @@ pub(crate) fn export_gc_snapshot<W: std::io::Write>(
     let ops_num: usize = latest_vv.sub_iter(&start_vv).map(|x| x.atom_len()).sum();
     drop(oplog);
     doc.checkout_without_emitting(&start_from)?;
-    let mut state = doc.app_state().lock().unwrap();
+    let mut state = doc.app_state().try_lock().unwrap();
     let alive_containers = state.ensure_all_alive_containers();
-    let alive_c_bytes: BTreeSet<Vec<u8>> = alive_containers.iter().map(|x| x.to_bytes()).collect();
+    let mut alive_c_bytes: BTreeSet<Vec<u8>> =
+        alive_containers.iter().map(|x| x.to_bytes()).collect();
     state.store.flush();
     let gc_state_kv = state.store.get_kv().clone();
     drop(state);
     doc.checkout_without_emitting(&latest_frontiers).unwrap();
     let state_bytes = if ops_num > MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE {
-        let mut state = doc.app_state().lock().unwrap();
+        let mut state = doc.app_state().try_lock().unwrap();
         state.ensure_all_alive_containers();
         state.store.encode();
+        // All the containers that are created after start_from need to be encoded
+        for cid in state.store.iter_all_container_ids() {
+            if let ContainerID::Normal { peer, counter, .. } = cid {
+                let temp_id = ID::new(peer, counter);
+                if !start_from.contains(&temp_id) {
+                    trace!("Retain Container {:?}", temp_id);
+                    alive_c_bytes.insert(cid.to_bytes());
+                }
+            } else {
+                alive_c_bytes.insert(cid.to_bytes());
+            }
+        }
+
         let new_kv = state.store.get_kv().clone();
         new_kv.remove_same(&gc_state_kv);
         new_kv.retain_keys(&alive_c_bytes);
@@ -110,7 +124,7 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
     start_from: &Frontiers,
     w: &mut W,
 ) -> LoroResult<Frontiers> {
-    let oplog = doc.oplog().lock().unwrap();
+    let oplog = doc.oplog().try_lock().unwrap();
     let start_from = calc_gc_doc_start(&oplog, start_from);
     let mut start_vv = oplog.dag().frontiers_to_vv(&start_from).unwrap();
     for id in start_from.iter() {
@@ -134,7 +148,7 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
     let is_attached = !doc.is_detached();
     drop(oplog);
     doc.checkout_without_emitting(&start_from)?;
-    let mut state = doc.app_state().lock().unwrap();
+    let mut state = doc.app_state().try_lock().unwrap();
     let alive_containers = state.ensure_all_alive_containers();
     let alive_c_bytes: BTreeSet<Vec<u8>> = alive_containers.iter().map(|x| x.to_bytes()).collect();
     state.store.flush();

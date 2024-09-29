@@ -40,7 +40,7 @@ describe("transaction", () => {
     assertEquals(count, 0);
     text.insert(0, "hello world");
     assertEquals(count, 0);
-    loro.commit("origin");
+    loro.commit({ origin: "origin" });
     await one_ms();
     assertEquals(count, 1);
   });

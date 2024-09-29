@@ -239,7 +239,7 @@ impl HandlerTrait for TreeHandler {
 
     fn get_attached(&self) -> Option<Self> {
         match &self.inner {
-            MaybeDetached::Detached(d) => d.lock().unwrap().attached.clone().map(|x| Self {
+            MaybeDetached::Detached(d) => d.try_lock().unwrap().attached.clone().map(|x| Self {
                 inner: MaybeDetached::Attached(x),
             }),
             MaybeDetached::Attached(_a) => Some(self.clone()),

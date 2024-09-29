@@ -1,7 +1,6 @@
 #![doc = include_str!("../README.md")]
 #![warn(missing_docs)]
 #![warn(missing_debug_implementations)]
-pub use change_meta::ChangeMeta;
 use either::Either;
 use event::{DiffEvent, Subscriber};
 use loro_internal::container::IntoContainerId;
@@ -26,13 +25,14 @@ use loro_internal::{
     UnknownHandler as InnerUnknownHandler,
 };
 use std::cmp::Ordering;
+use std::ops::ControlFlow;
 use std::ops::Range;
 use std::sync::Arc;
 use tracing::info;
 
-mod change_meta;
 pub use loro_internal::subscription::LocalUpdateCallback;
 pub use loro_internal::subscription::PeerIdUpdateCallback;
+pub use loro_internal::ChangeMeta;
 pub mod event;
 pub use loro_internal::awareness;
 pub use loro_internal::configure::Configure;
@@ -135,7 +135,7 @@ impl LoroDoc {
     ///
     /// The length of the `Change` is how many operations it contains
     pub fn get_change(&self, id: ID) -> Option<ChangeMeta> {
-        let change = self.doc.oplog().lock().unwrap().get_change_at(id)?;
+        let change = self.doc.oplog().try_lock().unwrap().get_change_at(id)?;
         Some(ChangeMeta::from_change(&change))
     }
 
@@ -453,7 +453,7 @@ impl LoroDoc {
     /// NOTE: Please be ware that the API in `OpLog` is unstable
     #[inline]
     pub fn with_oplog<R>(&self, f: impl FnOnce(&OpLog) -> R) -> R {
-        let oplog = self.doc.oplog().lock().unwrap();
+        let oplog = self.doc.oplog().try_lock().unwrap();
         f(&oplog)
     }
 
@@ -462,7 +462,7 @@ impl LoroDoc {
     /// NOTE: Please be ware that the API in `DocState` is unstable
     #[inline]
     pub fn with_state<R>(&self, f: impl FnOnce(&mut DocState) -> R) -> R {
-        let mut state = self.doc.app_state().lock().unwrap();
+        let mut state = self.doc.app_state().try_lock().unwrap();
         f(&mut state)
     }
 
@@ -514,7 +514,7 @@ impl LoroDoc {
     pub fn get_deep_value_with_id(&self) -> LoroValue {
         self.doc
             .app_state()
-            .lock()
+            .try_lock()
             .unwrap()
             .get_deep_value_with_id()
     }
@@ -714,7 +714,7 @@ impl LoroDoc {
 
     /// Encoded all ops and history cache to bytes and store them in the kv store.
     ///
-    /// The parsed ops will be dropped
+    /// This will free up the memory that used by parsed ops
     #[inline]
     pub fn compact_change_store(&self) {
         self.doc.compact_change_store()
@@ -784,6 +784,31 @@ impl LoroDoc {
         let new_doc = self.doc.fork_at(frontiers);
         new_doc.start_auto_commit();
         LoroDoc::_new(new_doc)
+    }
+
+    /// Get the number of operations in the pending transaction.
+    ///
+    /// The pending transaction is the one that is not committed yet. It will be committed
+    /// after calling `doc.commit()`, `doc.export(mode)` or `doc.checkout(version)`.
+    pub fn get_pending_txn_len(&self) -> usize {
+        self.doc.get_pending_txn_len()
+    }
+
+    /// Traverses the ancestors of the Change containing the given ID, including itself.
+    ///
+    /// This method visits all ancestors in causal order, from the latest to the oldest,
+    /// based on their Lamport timestamps.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The ID of the Change to start the traversal from.
+    /// * `f` - A mutable function that is called for each ancestor. It can return `ControlFlow::Break(())` to stop the traversal.
+    pub fn travel_change_ancestors(
+        &self,
+        id: ID,
+        f: &mut dyn FnMut(ChangeMeta) -> ControlFlow<()>,
+    ) {
+        self.doc.travel_change_ancestors(id, f)
     }
 }
 
@@ -1050,6 +1075,11 @@ impl LoroList {
     pub fn to_vec(&self) -> Vec<LoroValue> {
         Arc::unwrap_or_clone(self.get_value().into_list().unwrap())
     }
+
+    /// Delete all elements in the list.
+    pub fn clear(&self) -> LoroResult<()> {
+        self.handler.clear()
+    }
 }
 
 impl Default for LoroList {
@@ -1221,6 +1251,11 @@ impl LoroMap {
                 .get_or_create_container(key, child.to_handler())?,
         ))
     }
+
+    /// Delete all key-value pairs in the map.
+    pub fn clear(&self) -> LoroResult<()> {
+        self.handler.clear()
+    }
 }
 
 impl Default for LoroMap {
@@ -1352,8 +1387,13 @@ impl LoroText {
     }
 
     /// Update the current text based on the provided text.
-    pub fn update(&self, text: &str) -> () {
+    pub fn update(&self, text: &str) {
         self.handler.update(text);
+    }
+
+    /// Update the current text based on the provided text by line.
+    pub fn update_by_line(&self, text: &str) {
+        self.handler.update_by_line(text);
     }
 
     /// Apply a [delta](https://quilljs.com/docs/delta/) to the text container.
@@ -2088,6 +2128,11 @@ impl LoroMovableList {
     /// ```
     pub fn to_vec(&self) -> Vec<LoroValue> {
         Arc::unwrap_or_clone(self.get_value().into_list().unwrap())
+    }
+
+    /// Delete all elements in the list.
+    pub fn clear(&self) -> LoroResult<()> {
+        self.handler.clear()
     }
 }
 

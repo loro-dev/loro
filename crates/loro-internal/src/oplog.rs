@@ -98,7 +98,7 @@ impl OpLog {
         Self {
             history_cache: Mutex::new(
                 self.history_cache
-                    .lock()
+                    .try_lock()
                     .unwrap()
                     .fork(change_store.clone(), gc),
             ),
@@ -152,7 +152,7 @@ impl OpLog {
     }
 
     /// This is the **only** place to update the `OpLog.changes`
-    pub(crate) fn insert_new_change(&mut self, change: Change) {
+    pub(crate) fn insert_new_change(&mut self, change: Change, from_local: bool) {
         let s = trace_span!(
             "insert_new_change",
             id = ?change.id,
@@ -160,9 +160,9 @@ impl OpLog {
             deps = ?change.deps
         );
         let _enter = s.enter();
-        self.dag.handle_new_change(&change);
+        self.dag.handle_new_change(&change, from_local);
         self.history_cache
-            .lock()
+            .try_lock()
             .unwrap()
             .insert_by_new_change(&change, true, true);
         self.register_container_and_parent_link(&change);
@@ -174,16 +174,16 @@ impl OpLog {
     where
         F: FnOnce(&mut ContainerHistoryCache) -> R,
     {
-        let mut history_cache = self.history_cache.lock().unwrap();
+        let mut history_cache = self.history_cache.try_lock().unwrap();
         f(&mut history_cache)
     }
 
     pub fn has_history_cache(&self) -> bool {
-        self.history_cache.lock().unwrap().has_cache()
+        self.history_cache.try_lock().unwrap().has_cache()
     }
 
     pub fn free_history_cache(&self) {
-        let mut history_cache = self.history_cache.lock().unwrap();
+        let mut history_cache = self.history_cache.try_lock().unwrap();
         history_cache.free();
     }
 
@@ -198,27 +198,7 @@ impl OpLog {
     /// - Return Err(LoroError::UsedOpID) when the change's id is occupied
     /// - Return Err(LoroError::DecodeError) when the change's deps are missing
     pub(crate) fn import_local_change(&mut self, change: Change) -> Result<(), LoroError> {
-        let Some(change) = self.trim_the_known_part_of_change(change) else {
-            return Ok(());
-        };
-
-        self.check_id_is_not_duplicated(change.id)?;
-        if let Err(id) = self.check_deps(&change.deps) {
-            return Err(LoroError::DecodeError(
-                format!("Missing dep {:?}", id).into_boxed_str(),
-            ));
-        }
-
-        if cfg!(debug_assertions) {
-            let lamport = self.dag.frontiers_to_next_lamport(&change.deps);
-            assert_eq!(
-                lamport, change.lamport,
-                "{:#?}\nDAG={:#?}",
-                &change, &self.dag
-            );
-        }
-
-        self.insert_new_change(change);
+        self.insert_new_change(change, true);
         Ok(())
     }
 
@@ -478,7 +458,7 @@ impl OpLog {
         let from_frontiers = match from_frontiers {
             Some(f) => f,
             None => {
-                from_frontiers_inner = Some(from.to_frontiers(&self.dag));
+                from_frontiers_inner = Some(self.dag.vv_to_frontiers(from));
                 from_frontiers_inner.as_ref().unwrap()
             }
         };
@@ -486,7 +466,7 @@ impl OpLog {
         let to_frontiers = match to_frontiers {
             Some(t) => t,
             None => {
-                to_frontiers_inner = Some(to.to_frontiers(&self.dag));
+                to_frontiers_inner = Some(self.dag.vv_to_frontiers(to));
                 to_frontiers_inner.as_ref().unwrap()
             }
         };
