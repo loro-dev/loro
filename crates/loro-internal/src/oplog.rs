@@ -436,9 +436,9 @@ impl OpLog {
     pub(crate) fn iter_from_lca_causally(
         &self,
         from: &VersionVector,
-        from_frontiers: Option<&Frontiers>,
+        from_frontiers: &Frontiers,
         to: &VersionVector,
-        to_frontiers: Option<&Frontiers>,
+        to_frontiers: &Frontiers,
     ) -> (
         VersionVector,
         DiffMode,
@@ -452,26 +452,6 @@ impl OpLog {
     ) {
         let mut merged_vv = from.clone();
         merged_vv.merge(to);
-        let from_frontiers_inner;
-        let to_frontiers_inner;
-
-        let from_frontiers = match from_frontiers {
-            Some(f) => f,
-            None => {
-                from_frontiers_inner = Some(self.dag.vv_to_frontiers(from));
-                from_frontiers_inner.as_ref().unwrap()
-            }
-        };
-
-        let to_frontiers = match to_frontiers {
-            Some(t) => t,
-            None => {
-                to_frontiers_inner = Some(self.dag.vv_to_frontiers(to));
-                to_frontiers_inner.as_ref().unwrap()
-            }
-        };
-
-        debug!("from_frontiers={:?} vv={:?}", &from_frontiers, from);
         debug!("to_frontiers={:?} vv={:?}", &to_frontiers, to);
         trace!("trimmed vv = {:?}", self.dag.trimmed_vv());
         let (common_ancestors, mut diff_mode) =
