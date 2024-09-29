@@ -694,7 +694,7 @@ impl TreeHandler {
         match &self.inner {
             MaybeDetached::Detached(d) => {
                 let d = d.try_lock().unwrap();
-                d.value.map.get(target).is_none()
+                !d.value.map.contains_key(target)
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
                 let a = state.as_tree_state().unwrap();

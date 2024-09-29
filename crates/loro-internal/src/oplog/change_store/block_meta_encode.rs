@@ -149,9 +149,9 @@ pub(crate) fn decode_changes_header(
     }
     let mut counters = Vec::with_capacity(n_changes);
     let mut last = first_counter;
-    for i in 0..n_changes {
+    for len in lengths.iter() {
         counters.push(last);
-        last += lengths[i];
+        last += *len;
     }
 
     let lamport_decoder = DeltaOfDeltaDecoder::new(bytes).unwrap();

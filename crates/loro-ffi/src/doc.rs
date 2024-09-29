@@ -643,11 +643,11 @@ impl From<CommitOptions> for loro::CommitOptions {
 }
 
 pub trait JsonSchemaLike {
-    fn into_json_schema(&self) -> LoroResult<JsonSchema>;
+    fn to_json_schema(&self) -> LoroResult<JsonSchema>;
 }
 
 impl<T: TryInto<JsonSchema> + Clone> JsonSchemaLike for T {
-    fn into_json_schema(&self) -> LoroResult<JsonSchema> {
+    fn to_json_schema(&self) -> LoroResult<JsonSchema> {
         self.clone()
             .try_into()
             .map_err(|_| LoroError::InvalidJsonSchema)

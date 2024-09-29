@@ -234,7 +234,7 @@ impl MapState {
         let result = self.map.insert(key.clone(), value);
         match (result, value_yes) {
             (Some(x), true) => {
-                if let None = x.value {
+                if x.value.is_none() {
                     self.size += 1;
                 }
             }

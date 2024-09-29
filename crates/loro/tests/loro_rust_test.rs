@@ -1028,9 +1028,10 @@ fn test_gc_sync() {
     let doc = LoroDoc::new();
     doc.set_peer_id(1).unwrap();
     apply_random_ops(&doc, 123, 11);
-    let bytes = doc.export(loro::ExportMode::gc_snapshot_from_id(
-        ID::new(doc.peer_id(), 10).into(),
-    ));
+    let bytes = doc.export(loro::ExportMode::gc_snapshot_from_id(ID::new(
+        doc.peer_id(),
+        10,
+    )));
 
     let new_doc = LoroDoc::new();
     new_doc.set_peer_id(2).unwrap();
@@ -1073,9 +1074,10 @@ fn test_gc_empty() {
 fn test_gc_import_outdated_updates() {
     let doc = LoroDoc::new();
     apply_random_ops(&doc, 123, 11);
-    let bytes = doc.export(loro::ExportMode::gc_snapshot_from_id(
-        ID::new(doc.peer_id(), 5).into(),
-    ));
+    let bytes = doc.export(loro::ExportMode::gc_snapshot_from_id(ID::new(
+        doc.peer_id(),
+        5,
+    )));
     let new_doc = LoroDoc::new();
     new_doc.import(&bytes).unwrap();
 
@@ -1131,9 +1133,10 @@ fn test_calling_exporting_snapshot_on_gc_doc() {
 fn sync_two_trimmed_docs() {
     let doc = LoroDoc::new();
     apply_random_ops(&doc, 123, 11);
-    let bytes = doc.export(loro::ExportMode::gc_snapshot_from_id(
-        ID::new(doc.peer_id(), 10).into(),
-    ));
+    let bytes = doc.export(loro::ExportMode::gc_snapshot_from_id(ID::new(
+        doc.peer_id(),
+        10,
+    )));
 
     let doc_a = LoroDoc::new();
     doc_a.import(&bytes).unwrap();
@@ -1166,9 +1169,10 @@ fn test_map_checkout_on_trimmed_doc() {
     doc.get_map("map").insert("3", 3).unwrap();
     doc.get_map("map").insert("2", 4).unwrap();
 
-    let new_doc_bytes = doc.export(loro::ExportMode::gc_snapshot_from_id(
-        ID::new(doc.peer_id(), 1).into(),
-    ));
+    let new_doc_bytes = doc.export(loro::ExportMode::gc_snapshot_from_id(ID::new(
+        doc.peer_id(),
+        1,
+    )));
 
     let new_doc = LoroDoc::new();
     new_doc.import(&new_doc_bytes).unwrap();
@@ -1278,9 +1282,10 @@ fn test_movable_list_checkout_on_trimmed_doc() -> LoroResult<()> {
     list.mov(1, 0)?;
     list.delete(0, 1)?;
     list.set(0, 0)?;
-    let new_doc_bytes = doc.export(loro::ExportMode::gc_snapshot_from_id(
-        ID::new(doc.peer_id(), 2).into(),
-    ));
+    let new_doc_bytes = doc.export(loro::ExportMode::gc_snapshot_from_id(ID::new(
+        doc.peer_id(),
+        2,
+    )));
 
     let new_doc = LoroDoc::new();
     new_doc.import(&new_doc_bytes).unwrap();
@@ -1325,9 +1330,10 @@ fn test_tree_checkout_on_trimmed_doc() -> LoroResult<()> {
     let child2 = tree.create(None).unwrap();
     tree.mov(child2, root)?;
 
-    let new_doc_bytes = doc.export(loro::ExportMode::gc_snapshot_from_id(
-        ID::new(doc.peer_id(), 1).into(),
-    ));
+    let new_doc_bytes = doc.export(loro::ExportMode::gc_snapshot_from_id(ID::new(
+        doc.peer_id(),
+        1,
+    )));
 
     let new_doc = LoroDoc::new();
     new_doc.import(&new_doc_bytes).unwrap();
@@ -1720,7 +1726,7 @@ fn change_peer_id() {
     let doc = LoroDoc::new();
     let received_peer_id = Arc::new(AtomicU64::new(0));
     let received_peer_id_clone = received_peer_id.clone();
-    let sub = doc.subscribe_peer_id_change(Box::new(move |peer_id, counter| {
+    let sub = doc.subscribe_peer_id_change(Box::new(move |peer_id, _counter| {
         received_peer_id_clone.store(peer_id, Ordering::SeqCst);
     }));
 

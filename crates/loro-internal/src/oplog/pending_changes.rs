@@ -40,7 +40,6 @@ impl OpLog {
         &mut self,
         remote_changes: Vec<Change>,
     ) -> LoroResult<()> {
-        let mut result = Ok(());
         for change in remote_changes {
             let local_change = PendingChange::Unknown(change);
             match remote_change_apply_state(self.vv(), self.trimmed_vv(), &local_change) {
@@ -52,17 +51,12 @@ impl OpLog {
                     .entry(miss_dep.counter)
                     .or_default()
                     .push(local_change),
-                ChangeState::DependingOnTrimmedHistory(_ids) => {
-                    result = LoroResult::Err(
-                        loro_common::LoroError::ImportUpdatesThatDependsOnOutdatedVersion,
-                    );
-                }
                 ChangeState::Applied => unreachable!("already applied"),
                 ChangeState::CanApplyDirectly => unreachable!("can apply directly"),
             }
         }
 
-        result
+        Ok(())
     }
 }
 
@@ -110,9 +104,6 @@ impl OpLog {
                             .entry(miss_dep.counter)
                             .or_default()
                             .push(pending_change),
-                        ChangeState::DependingOnTrimmedHistory(_) => {
-                            unreachable!()
-                        }
                     }
                 }
             }
@@ -144,7 +135,6 @@ enum ChangeState {
     CanApplyDirectly,
     // The id of first missing dep
     AwaitingMissingDependency(ID),
-    DependingOnTrimmedHistory(Box<Vec<ID>>),
 }
 
 fn remote_change_apply_state(

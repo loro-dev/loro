@@ -64,6 +64,12 @@ impl DocAnalysis {
         self.containers.len()
     }
 
+    #[allow(unused)]
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn dropped_len(&self) -> usize {
         self.containers
             .iter()

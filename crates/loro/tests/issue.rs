@@ -10,5 +10,7 @@ fn issue_0() {
     let bytes = include_bytes!("./issue_0.bin");
     let doc = LoroDoc::new();
     doc.import_batch(&[bytes.into()]).unwrap();
+    #[allow(deprecated)]
     doc.export_snapshot();
+    doc.export(loro::ExportMode::Snapshot);
 }

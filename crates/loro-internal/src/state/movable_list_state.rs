@@ -748,7 +748,7 @@ impl MovableListState {
     }
 
     #[inline]
-    pub(crate) fn list(&self) -> &BTree<MovableListTreeTrait> {
+    fn list(&self) -> &BTree<MovableListTreeTrait> {
         self.inner.list()
     }
 

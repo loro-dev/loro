@@ -65,10 +65,6 @@ impl VersionVector {
         self.0.read().unwrap().partial_cmp(&other.0.read().unwrap())
     }
 
-    pub fn eq(&self, other: &VersionVector) -> bool {
-        self.0.read().unwrap().eq(&other.0.read().unwrap())
-    }
-
     pub fn encode(&self) -> Vec<u8> {
         self.0.read().unwrap().encode()
     }
@@ -79,16 +75,20 @@ impl VersionVector {
     }
 }
 
+impl PartialEq for VersionVector {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.read().unwrap().eq(&other.0.read().unwrap())
+    }
+}
+
+impl Eq for VersionVector {}
+
 #[derive(Debug)]
 pub struct Frontiers(loro::Frontiers);
 
 impl Frontiers {
     pub fn new() -> Self {
         Self(loro::Frontiers::default())
-    }
-
-    pub fn eq(&self, other: &Frontiers) -> bool {
-        self.0.eq(&other.0)
     }
 
     pub fn from_id(id: ID) -> Self {
@@ -106,6 +106,20 @@ impl Frontiers {
     pub fn decode(bytes: &[u8]) -> LoroResult<Self> {
         let ans = Self(loro::Frontiers::decode(bytes)?);
         Ok(ans)
+    }
+}
+
+impl PartialEq for Frontiers {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.eq(&other.0)
+    }
+}
+
+impl Eq for Frontiers {}
+
+impl Default for Frontiers {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

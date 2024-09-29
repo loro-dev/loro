@@ -1548,7 +1548,7 @@ impl DocState {
         Some(value)
     }
 
-    pub fn gc_store(&self) -> Option<&Arc<GcStore>> {
+    pub(crate) fn gc_store(&self) -> Option<&Arc<GcStore>> {
         self.store.gc_store()
     }
 }

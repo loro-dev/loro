@@ -298,13 +298,8 @@ impl ContainerStore {
 }
 
 mod encode {
-    use loro_common::{ContainerID, ContainerType, Counter, InternalString, LoroError, LoroResult};
     use serde::{Deserialize, Serialize};
-    use serde_columnar::{
-        AnyRleDecoder, AnyRleEncoder, BoolRleDecoder, BoolRleEncoder, DeltaRleDecoder,
-        DeltaRleEncoder,
-    };
-    use std::{borrow::Cow, io::Write};
+    use std::borrow::Cow;
 
     #[derive(Serialize, Deserialize)]
     struct EncodedStateStore<'a> {

@@ -1,4 +1,4 @@
-use loro::{LoroDoc, LoroList, LoroMap, LoroValue, ToJson, ValueOrContainer, ID};
+use loro::{LoroDoc, LoroList, LoroMap, LoroValue, ToJson, ValueOrContainer};
 use serde_json::json;
 
 fn to_json(v: Vec<ValueOrContainer>) -> serde_json::Value {
@@ -237,7 +237,7 @@ fn test_books_not_expensive() -> anyhow::Result<()> {
 fn test_everything() -> anyhow::Result<()> {
     let doc = setup_test_doc();
     let ans = doc.jsonpath("$..*")?;
-    assert!(ans.len() > 0);
+    assert!(!ans.is_empty());
     Ok(())
 }
 

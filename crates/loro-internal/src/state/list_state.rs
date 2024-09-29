@@ -637,10 +637,6 @@ mod test {
 
     use super::*;
 
-    fn id(name: &str) -> ContainerID {
-        ContainerID::new_root(name, crate::ContainerType::List)
-    }
-
     #[test]
     fn test() {
         let mut list = ListState::new(ContainerIdx::from_index_and_type(

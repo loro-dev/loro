@@ -265,16 +265,6 @@ impl OpLog {
         Ok(())
     }
 
-    fn check_deps(&self, deps: &Frontiers) -> Result<(), ID> {
-        for dep in deps.iter() {
-            if !self.dag.vv().includes_id(*dep) {
-                return Err(*dep);
-            }
-        }
-
-        Ok(())
-    }
-
     pub(crate) fn next_id(&self, peer: PeerID) -> ID {
         let cnt = self.dag.vv().get(&peer).copied().unwrap_or(0);
         ID::new(peer, cnt)

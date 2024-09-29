@@ -3153,6 +3153,7 @@ pub struct LoroTree {
 
 extern crate alloc;
 /// The handler of a tree node.
+#[allow(missing_docs)]
 #[derive(TryFromJsValue, Clone)]
 #[wasm_bindgen]
 pub struct LoroTreeNode {
