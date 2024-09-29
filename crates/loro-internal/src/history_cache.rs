@@ -791,7 +791,7 @@ impl MovableListHistoryCache {
             .find(|e| {
                 let counter = match &e.counter_or_value {
                     Either::Left(c) => *c,
-                    Either::Right(v) => -1,
+                    Either::Right(_) => -1,
                 };
                 vv.get(&e.peer).copied().unwrap_or(0) > counter
             })

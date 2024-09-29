@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 pub mod actions;
 pub mod actor;
 pub mod container;

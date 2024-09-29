@@ -19,9 +19,9 @@ use smallvec::{smallvec, SmallVec};
 use tracing::trace;
 mod iter;
 mod mermaid;
-#[cfg(any(test, feature = "test_utils"))]
+#[cfg(feature = "test_utils")]
 mod test;
-#[cfg(any(test, feature = "test_utils"))]
+#[cfg(feature = "test_utils")]
 pub use test::{fuzz_alloc_tree, Interaction};
 
 use crate::{
@@ -65,6 +65,7 @@ pub(crate) trait DagUtils: Dag {
     /// Slow, should probably only use on dev
     #[allow(unused)]
     fn get_vv(&self, id: ID) -> VersionVector;
+    #[allow(unused)]
     fn find_path(&self, from: &[ID], to: &[ID]) -> VersionVectorDiff;
     fn contains(&self, id: ID) -> bool;
     fn iter_causal(&self, from: &[ID], target: IdSpanVector) -> DagCausalIter<'_, Self>

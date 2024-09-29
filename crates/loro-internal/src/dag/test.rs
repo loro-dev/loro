@@ -1,3 +1,4 @@
+#![allow(unused)]
 use arbitrary::Arbitrary;
 use im::HashSet;
 use loro_common::HasCounter;
@@ -82,12 +83,6 @@ struct TestDag {
     version_vec: VersionVector,
     next_lamport: Lamport,
     client_id: PeerID,
-}
-
-impl TestDag {
-    fn is_first(&self) -> bool {
-        *self.version_vec.get(&self.client_id).unwrap_or(&0) == 0
-    }
 }
 
 impl Dag for TestDag {
@@ -383,6 +378,8 @@ mod iter {
 }
 
 mod dfs {
+    #[allow(unused)]
+    #[allow(dead_code)]
     use super::*;
     use crate::{allocation::calc_critical_version_dfs, delta::DeltaValue};
     use rand::{rngs::StdRng, SeedableRng};
@@ -449,9 +446,18 @@ mod dfs {
 }
 
 mod bfs {
-    use super::*;
-    use crate::{allocation::calc_critical_version, delta::DeltaValue};
+    use arref::array_mut_ref;
+    use loro_common::ID;
     use rand::{rngs::StdRng, SeedableRng};
+
+    use crate::{
+        allocation::calc_critical_version,
+        dag::{
+            test::{TestDag, TestNode},
+            Dag, Interaction,
+        },
+        delta::DeltaValue as _,
+    };
 
     #[test]
     fn test_bfs_small() {
@@ -560,6 +566,8 @@ mod mermaid {
 }
 
 mod get_version_vector {
+    #[allow(unused)]
+    #[allow(dead_code)]
     use super::*;
 
     #[test]

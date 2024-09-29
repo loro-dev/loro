@@ -26,12 +26,9 @@ use crate::{
     utils::query_by_len::{EntityIndexQueryWithEventIndex, IndexQueryWithEntityIndex, QueryByLen},
 };
 
-use self::{
-    cursor_cache::CursorCache,
-    query::{
-        EntityQuery, EntityQueryT, EventIndexQuery, EventIndexQueryT, UnicodeQuery, UnicodeQueryT,
-        Utf16Query, Utf16QueryT,
-    },
+use self::query::{
+    EntityQuery, EntityQueryT, EventIndexQuery, EventIndexQueryT, UnicodeQuery, UnicodeQueryT,
+    Utf16Query, Utf16QueryT,
 };
 
 use super::{
@@ -729,22 +726,6 @@ pub(crate) fn utf8_to_unicode_index(s: &str, utf8_index: usize) -> Result<usize,
     }
 }
 
-fn pos_to_unicode_index(s: &str, pos: usize, kind: PosType) -> Option<usize> {
-    match kind {
-        PosType::Bytes => utf8_to_unicode_index(s, pos).ok(),
-        PosType::Unicode => Some(pos),
-        PosType::Utf16 => utf16_to_unicode_index(s, pos).ok(),
-        PosType::Entity => Some(pos),
-        PosType::Event => {
-            if cfg!(feature = "wasm") {
-                utf16_to_unicode_index(s, pos).ok()
-            } else {
-                Some(pos)
-            }
-        }
-    }
-}
-
 #[derive(Clone, Debug, Copy, PartialEq, Eq, Default)]
 pub(crate) struct PosCache {
     pub(super) unicode_len: i32,
@@ -910,6 +891,7 @@ mod query {
         Unicode,
         #[allow(unused)]
         Utf16,
+        #[allow(unused)]
         Entity,
         Event,
     }
@@ -1077,272 +1059,6 @@ mod query {
 
         fn get_cache_entity_len(cache: &<RichtextTreeTrait as BTreeTrait>::Cache) -> usize {
             cache.entity_len as usize
-        }
-    }
-}
-
-mod cursor_cache {
-    use std::sync::atomic::AtomicUsize;
-
-    use super::{
-        pos_to_unicode_index, unicode_to_utf16_index, unicode_to_utf8_index, PosType,
-        RichtextTreeTrait,
-    };
-    use generic_btree::{rle::HasLength, BTree, Cursor, LeafIndex};
-
-    #[derive(Debug, Clone)]
-    struct CursorCacheItem {
-        pos: usize,
-        pos_type: PosType,
-        leaf: LeafIndex,
-    }
-
-    #[derive(Debug, Clone)]
-    struct EntityIndexCacheItem {
-        pos: usize,
-        pos_type: PosType,
-        entity_index: usize,
-        leaf: LeafIndex,
-    }
-
-    #[derive(Debug, Clone, Default)]
-    pub(super) struct CursorCache {
-        cursor: Option<CursorCacheItem>,
-        entity: Option<EntityIndexCacheItem>,
-    }
-
-    static CACHE_HIT: AtomicUsize = AtomicUsize::new(0);
-    static CACHE_MISS: AtomicUsize = AtomicUsize::new(0);
-
-    impl CursorCache {
-        // TODO: some of the invalidation can be changed into shifting pos
-        pub fn invalidate(&mut self) {
-            self.cursor.take();
-            self.entity.take();
-        }
-
-        pub fn invalidate_entity_cache_after(&mut self, entity_index: usize) {
-            if let Some(c) = self.entity.as_mut() {
-                if entity_index < c.entity_index {
-                    self.entity = None;
-                }
-            }
-        }
-
-        pub fn record_cursor(
-            &mut self,
-            pos: usize,
-            kind: PosType,
-            cursor: Cursor,
-            _tree: &BTree<RichtextTreeTrait>,
-        ) {
-            match kind {
-                PosType::Unicode | PosType::Entity => {
-                    self.cursor = Some(CursorCacheItem {
-                        pos: pos - cursor.offset,
-                        pos_type: kind,
-                        leaf: cursor.leaf,
-                    });
-                }
-                PosType::Utf16 => todo!(),
-                PosType::Event => todo!(),
-                PosType::Bytes => todo!(),
-            }
-        }
-
-        pub fn record_entity_index(
-            &mut self,
-            pos: usize,
-            kind: PosType,
-            entity_index: usize,
-            cursor: Cursor,
-            tree: &BTree<RichtextTreeTrait>,
-        ) -> Result<(), usize> {
-            match kind {
-                PosType::Bytes => {
-                    if cursor.offset == 0 {
-                        self.entity = Some(EntityIndexCacheItem {
-                            pos,
-                            pos_type: kind,
-                            entity_index,
-                            leaf: cursor.leaf,
-                        });
-                    } else {
-                        let elem = tree.get_elem(cursor.leaf).unwrap();
-                        let Some(s) = elem.as_str() else {
-                            return Ok(());
-                        };
-                        let utf8offset = unicode_to_utf8_index(s, cursor.offset).unwrap();
-                        if pos < utf8offset {
-                            return Err(pos);
-                        }
-                        self.entity = Some(EntityIndexCacheItem {
-                            pos: pos - utf8offset,
-                            pos_type: kind,
-                            entity_index: entity_index - cursor.offset,
-                            leaf: cursor.leaf,
-                        });
-                    }
-                    Ok(())
-                }
-                PosType::Unicode | PosType::Entity => {
-                    self.entity = Some(EntityIndexCacheItem {
-                        pos: pos - cursor.offset,
-                        pos_type: kind,
-                        entity_index: entity_index - cursor.offset,
-                        leaf: cursor.leaf,
-                    });
-                    Ok(())
-                }
-                PosType::Event if cfg!(not(feature = "wasm")) => {
-                    self.entity = Some(EntityIndexCacheItem {
-                        pos: pos - cursor.offset,
-                        pos_type: kind,
-                        entity_index: entity_index - cursor.offset,
-                        leaf: cursor.leaf,
-                    });
-                    Ok(())
-                }
-                _ => {
-                    // utf16
-                    if cursor.offset == 0 {
-                        self.entity = Some(EntityIndexCacheItem {
-                            pos,
-                            pos_type: kind,
-                            entity_index,
-                            leaf: cursor.leaf,
-                        });
-                    } else {
-                        let elem = tree.get_elem(cursor.leaf).unwrap();
-                        let Some(s) = elem.as_str() else {
-                            return Ok(());
-                        };
-                        let utf16offset = unicode_to_utf16_index(s, cursor.offset).unwrap();
-                        if pos < utf16offset {
-                            return Err(pos);
-                        }
-                        self.entity = Some(EntityIndexCacheItem {
-                            pos: pos - utf16offset,
-                            pos_type: kind,
-                            entity_index: entity_index - cursor.offset,
-                            leaf: cursor.leaf,
-                        });
-                    }
-                    Ok(())
-                }
-            }
-        }
-
-        pub fn get_cursor(
-            &self,
-            pos: usize,
-            pos_type: PosType,
-            tree: &BTree<RichtextTreeTrait>,
-        ) -> Option<Cursor> {
-            for c in self.cursor.iter() {
-                if c.pos_type != pos_type {
-                    continue;
-                }
-
-                let elem = tree.get_elem(c.leaf).unwrap();
-                let Some(s) = elem.as_str() else { continue };
-                if pos < c.pos {
-                    continue;
-                }
-
-                let offset = pos - c.pos;
-                let Some(offset) = pos_to_unicode_index(s, offset, pos_type) else {
-                    continue;
-                };
-
-                if offset <= elem.rle_len() {
-                    cache_hit();
-                    return Some(Cursor {
-                        leaf: c.leaf,
-                        offset,
-                    });
-                }
-            }
-
-            cache_miss();
-            None
-        }
-
-        pub fn get_entity_index(
-            &self,
-            pos: usize,
-            pos_type: PosType,
-            tree: &BTree<RichtextTreeTrait>,
-            has_style: bool,
-        ) -> Option<(usize, Cursor)> {
-            if has_style {
-                return None;
-            }
-
-            for c in self.entity.iter() {
-                if c.pos_type != pos_type {
-                    continue;
-                }
-                if pos < c.pos {
-                    continue;
-                }
-
-                let offset = pos - c.pos;
-                let leaf = tree.get_leaf(c.leaf.into());
-                let s = leaf.elem().as_str()?;
-                let Some(offset) = pos_to_unicode_index(s, offset, pos_type) else {
-                    continue;
-                };
-
-                if offset < leaf.elem().rle_len() {
-                    cache_hit();
-                    return Some((
-                        offset + c.entity_index,
-                        Cursor {
-                            leaf: c.leaf,
-                            offset,
-                        },
-                    ));
-                }
-
-                cache_hit();
-                return Some((
-                    offset + c.entity_index,
-                    Cursor {
-                        leaf: c.leaf,
-                        offset,
-                    },
-                ));
-            }
-
-            cache_miss();
-            None
-        }
-
-        #[allow(unused)]
-        pub fn diagnose() {
-            let hit = CACHE_HIT.load(std::sync::atomic::Ordering::Relaxed);
-            let miss = CACHE_MISS.load(std::sync::atomic::Ordering::Relaxed);
-            println!(
-                "hit: {}, miss: {}, hit rate: {}",
-                hit,
-                miss,
-                hit as f64 / (hit + miss) as f64
-            );
-        }
-    }
-
-    fn cache_hit() {
-        #[cfg(debug_assertions)]
-        {
-            CACHE_HIT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        }
-    }
-
-    fn cache_miss() {
-        #[cfg(debug_assertions)]
-        {
-            CACHE_MISS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
     }
 }
@@ -2263,7 +1979,6 @@ impl RichtextState {
     }
 
     pub fn diagnose(&self) {
-        CursorCache::diagnose();
         println!(
             "rope_nodes: {}, style_nodes: {}, text_len: {}",
             self.tree.node_len(),

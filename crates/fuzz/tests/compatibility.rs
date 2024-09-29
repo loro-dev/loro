@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 use std::sync::Arc;
 
 use loro::{ToJson as _, ID};

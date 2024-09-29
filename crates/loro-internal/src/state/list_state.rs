@@ -384,7 +384,7 @@ impl ContainerState for ListState {
                     match &value.values {
                         either::Either::Left(range) => {
                             for i in range.to_range() {
-                                let value = arena.get_value(i as usize).unwrap();
+                                let value = arena.get_value(i).unwrap();
                                 arr.push(value);
                             }
                         }
@@ -636,10 +636,6 @@ mod test {
     use crate::state::ContainerCreationContext;
 
     use super::*;
-
-    fn id(name: &str) -> ContainerID {
-        ContainerID::new_root(name, crate::ContainerType::List)
-    }
 
     #[test]
     fn test() {

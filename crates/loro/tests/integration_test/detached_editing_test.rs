@@ -1,12 +1,7 @@
 use std::sync::{Arc, Mutex};
 
-use super::gen_action;
-use loro::{
-    json::JsonChange, undo::UndoItemMeta, Frontiers, JsonSchema, LoroDoc, LoroError, UndoManager,
-    ID,
-};
+use loro::{Frontiers, LoroDoc, LoroError, UndoManager, ID};
 use loro_internal::vv;
-use tracing::{trace, trace_span};
 
 #[test]
 fn disallow_editing_on_detached_mode_by_default() {

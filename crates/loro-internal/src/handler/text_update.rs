@@ -2,7 +2,7 @@ use std::{char, sync::Arc};
 
 use fxhash::FxHashMap;
 use itertools::Itertools;
-use tracing::{instrument, trace};
+use tracing::trace;
 
 use crate::diff::DiffHandler;
 

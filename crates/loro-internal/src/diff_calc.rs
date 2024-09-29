@@ -13,8 +13,8 @@ use itertools::Itertools;
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{
-    CompactIdLp, ContainerID, Counter, HasCounter, HasCounterSpan, HasIdSpan, IdFull, IdLp, IdSpan,
-    LoroValue, PeerID, ID,
+    CompactIdLp, ContainerID, Counter, HasCounter, HasCounterSpan, IdFull, IdLp, IdSpan, LoroValue,
+    PeerID, ID,
 };
 use loro_delta::DeltaRope;
 use smallvec::SmallVec;

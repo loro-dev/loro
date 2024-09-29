@@ -14,7 +14,7 @@ use loro::{
 };
 use pretty_assertions::assert_eq;
 use rand::{rngs::StdRng, Rng, SeedableRng};
-use tracing::{info_span, trace};
+use tracing::info_span;
 
 use crate::{
     container::{CounterActor, ListActor, MovableListActor, TextActor, TreeActor},
@@ -285,78 +285,108 @@ impl Actor {
     pub fn register(&mut self, target: ContainerType) {
         match target {
             ContainerType::Map => {
-                self.tracker.try_lock().unwrap().as_map_mut().unwrap().insert(
-                    "map".to_string(),
-                    Value::empty_container(
-                        ContainerType::Map,
-                        ContainerID::new_root("map", ContainerType::Map),
-                    ),
-                );
+                self.tracker
+                    .try_lock()
+                    .unwrap()
+                    .as_map_mut()
+                    .unwrap()
+                    .insert(
+                        "map".to_string(),
+                        Value::empty_container(
+                            ContainerType::Map,
+                            ContainerID::new_root("map", ContainerType::Map),
+                        ),
+                    );
                 self.targets.insert(
                     target,
                     ActionExecutor::MapActor(MapActor::new(self.loro.clone())),
                 );
             }
             ContainerType::List => {
-                self.tracker.try_lock().unwrap().as_map_mut().unwrap().insert(
-                    "list".to_string(),
-                    Value::empty_container(
-                        ContainerType::List,
-                        ContainerID::new_root("list", ContainerType::List),
-                    ),
-                );
+                self.tracker
+                    .try_lock()
+                    .unwrap()
+                    .as_map_mut()
+                    .unwrap()
+                    .insert(
+                        "list".to_string(),
+                        Value::empty_container(
+                            ContainerType::List,
+                            ContainerID::new_root("list", ContainerType::List),
+                        ),
+                    );
                 self.targets.insert(
                     target,
                     ActionExecutor::ListActor(ListActor::new(self.loro.clone())),
                 );
             }
             ContainerType::MovableList => {
-                self.tracker.try_lock().unwrap().as_map_mut().unwrap().insert(
-                    "movable_list".to_string(),
-                    Value::empty_container(
-                        ContainerType::MovableList,
-                        ContainerID::new_root("movable_list", ContainerType::MovableList),
-                    ),
-                );
+                self.tracker
+                    .try_lock()
+                    .unwrap()
+                    .as_map_mut()
+                    .unwrap()
+                    .insert(
+                        "movable_list".to_string(),
+                        Value::empty_container(
+                            ContainerType::MovableList,
+                            ContainerID::new_root("movable_list", ContainerType::MovableList),
+                        ),
+                    );
                 self.targets.insert(
                     target,
                     ActionExecutor::MovableListActor(MovableListActor::new(self.loro.clone())),
                 );
             }
             ContainerType::Text => {
-                self.tracker.try_lock().unwrap().as_map_mut().unwrap().insert(
-                    "text".to_string(),
-                    Value::empty_container(
-                        ContainerType::Text,
-                        ContainerID::new_root("text", ContainerType::Text),
-                    ),
-                );
+                self.tracker
+                    .try_lock()
+                    .unwrap()
+                    .as_map_mut()
+                    .unwrap()
+                    .insert(
+                        "text".to_string(),
+                        Value::empty_container(
+                            ContainerType::Text,
+                            ContainerID::new_root("text", ContainerType::Text),
+                        ),
+                    );
                 self.targets.insert(
                     target,
                     ActionExecutor::TextActor(TextActor::new(self.loro.clone())),
                 );
             }
             ContainerType::Tree => {
-                self.tracker.try_lock().unwrap().as_map_mut().unwrap().insert(
-                    "tree".to_string(),
-                    Value::empty_container(
-                        ContainerType::Tree,
-                        ContainerID::new_root("tree", ContainerType::Tree),
-                    ),
-                );
+                self.tracker
+                    .try_lock()
+                    .unwrap()
+                    .as_map_mut()
+                    .unwrap()
+                    .insert(
+                        "tree".to_string(),
+                        Value::empty_container(
+                            ContainerType::Tree,
+                            ContainerID::new_root("tree", ContainerType::Tree),
+                        ),
+                    );
                 self.targets.insert(
                     target,
                     ActionExecutor::TreeActor(TreeActor::new(self.loro.clone())),
                 );
             }
             ContainerType::Counter => {
-                self.tracker.try_lock().unwrap().as_map_mut().unwrap().insert(
-                    "counter".to_string(),
-                    Value::empty_container(
-                        ContainerType::Counter,
-                        ContainerID::new_root("counter", ContainerType::Counter),
-                    ),
-                );
+                self.tracker
+                    .try_lock()
+                    .unwrap()
+                    .as_map_mut()
+                    .unwrap()
+                    .insert(
+                        "counter".to_string(),
+                        Value::empty_container(
+                            ContainerType::Counter,
+                            ContainerID::new_root("counter", ContainerType::Counter),
+                        ),
+                    );
                 self.targets.insert(
                     target,
                     ActionExecutor::CounterActor(CounterActor::new(self.loro.clone())),

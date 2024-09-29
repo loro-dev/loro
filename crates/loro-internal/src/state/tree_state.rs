@@ -1338,6 +1338,7 @@ impl ContainerState for TreeState {
 }
 
 // convert map container to LoroValue
+#[allow(clippy::ptr_arg)]
 pub(crate) fn get_meta_value(nodes: &mut Vec<LoroValue>, state: &mut DocState) {
     for node in nodes.iter_mut() {
         let map = Arc::make_mut(node.as_map_mut().unwrap());

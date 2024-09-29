@@ -46,6 +46,7 @@
     "unexist",
     "unmark",
     "unmergeable",
+    "Unsubscriber",
     "yspan"
   ],
   "rust-analyzer.runnableEnv": {

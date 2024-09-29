@@ -28,7 +28,6 @@ pub(crate) fn encode_changes(
     // First Counter + Change Len
     let mut lengths_bytes = Vec::new();
     let mut counter = vec![];
-    let mut n = 0;
 
     for (i, c) in block.iter().enumerate() {
         counter.push(c.id.counter);
@@ -53,7 +52,6 @@ pub(crate) fn encode_changes(
                 let peer_idx = peer_register.register(&dep.peer);
                 encoded_deps.peer_idx.append(peer_idx as u32).unwrap();
                 encoded_deps.counter.append(dep.counter as i64).unwrap();
-                n += 1;
             }
         }
 
@@ -151,9 +149,9 @@ pub(crate) fn decode_changes_header(
     }
     let mut counters = Vec::with_capacity(n_changes);
     let mut last = first_counter;
-    for i in 0..n_changes {
+    for len in lengths.iter() {
         counters.push(last);
-        last += lengths[i];
+        last += *len;
     }
 
     let lamport_decoder = DeltaOfDeltaDecoder::new(bytes).unwrap();

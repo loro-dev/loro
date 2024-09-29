@@ -748,7 +748,7 @@ impl MovableListState {
     }
 
     #[inline]
-    pub(crate) fn list(&self) -> &BTree<MovableListTreeTrait> {
+    fn list(&self) -> &BTree<MovableListTreeTrait> {
         self.inner.list()
     }
 
@@ -1010,12 +1010,6 @@ impl ContainerState for MovableListState {
         if cfg!(debug_assertions) {
             self.inner.check_consistency();
         }
-
-        let start_value = if cfg!(debug_assertions) {
-            Some(self.get_value())
-        } else {
-            None
-        };
 
         let mut event: ListDiff = DeltaRope::new();
         let mut maybe_moved: FxHashMap<CompactIdLp, (usize, LoroValue)> = FxHashMap::default();

@@ -254,8 +254,8 @@ struct Subscriber<Callback> {
 
 impl<EmitterKey, Callback> SubscriberSet<EmitterKey, Callback>
 where
-    EmitterKey: 'static + Ord + Clone + Debug,
-    Callback: 'static,
+    EmitterKey: 'static + Ord + Clone + Debug + Send + Sync,
+    Callback: 'static + Send + Sync,
 {
     pub fn new() -> Self {
         Self(Arc::new(Mutex::new(SubscriberSetState {
@@ -316,6 +316,7 @@ where
         (subscription, move || active.store(true, Ordering::Relaxed))
     }
 
+    #[allow(unused)]
     pub fn remove(&self, emitter: &EmitterKey) -> impl IntoIterator<Item = Callback> {
         let mut lock = self.0.try_lock().unwrap();
         let subscribers = lock.subscribers.remove(emitter);
@@ -395,13 +396,19 @@ fn post_inc(next_subscriber_id: &mut usize) -> usize {
 /// is cancelled and the callback will no longer be invoked.
 #[must_use]
 pub struct Subscription {
-    unsubscribe: Option<Box<dyn FnOnce() + 'static>>,
+    unsubscribe: Option<Box<dyn FnOnce() + 'static + Send + Sync>>,
+}
+
+impl std::fmt::Debug for Subscription {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Subscription").finish()
+    }
 }
 
 impl Subscription {
     /// Creates a new subscription with a callback that gets invoked when
     /// this subscription is dropped.
-    pub fn new(unsubscribe: impl 'static + FnOnce()) -> Self {
+    pub fn new(unsubscribe: impl 'static + Send + Sync + FnOnce()) -> Self {
         Self {
             unsubscribe: Some(Box::new(unsubscribe)),
         }

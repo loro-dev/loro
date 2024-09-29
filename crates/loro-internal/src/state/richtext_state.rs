@@ -1009,7 +1009,7 @@ mod snapshot {
                         spans.push(EncodedTextSpan {
                             peer_idx: peers.register(&id.peer),
                             counter: id.counter,
-                            lamport_sub_counter: id.lamport as i32 - id.counter as i32,
+                            lamport_sub_counter: id.lamport as i32 - id.counter,
                             len: t.unicode_len(),
                         })
                     }
@@ -1019,7 +1019,7 @@ mod snapshot {
                             spans.push(EncodedTextSpan {
                                 peer_idx: peers.register(&id.peer),
                                 counter: id.counter,
-                                lamport_sub_counter: id.lamport as i32 - id.counter as i32,
+                                lamport_sub_counter: id.lamport as i32 - id.counter,
                                 len: 0,
                             });
                             marks.push(EncodedMark {
@@ -1033,7 +1033,7 @@ mod snapshot {
                             spans.push(EncodedTextSpan {
                                 peer_idx: peers.register(&id.peer),
                                 counter: id.counter + 1,
-                                lamport_sub_counter: id.lamport as i32 - id.counter as i32,
+                                lamport_sub_counter: id.lamport as i32 - id.counter,
                                 len: -1,
                             })
                         }
@@ -1100,7 +1100,7 @@ mod snapshot {
                 let id_full = IdFull::new(
                     peers[peer_idx],
                     counter,
-                    (lamport_sub_counter + counter as i32) as u32,
+                    (lamport_sub_counter + counter) as u32,
                 );
                 let chunk = match len {
                     0 => {
@@ -1111,7 +1111,7 @@ mod snapshot {
                             info,
                         } = mark_iter.next().unwrap();
                         let style_op = Arc::new(StyleOp {
-                            lamport: (lamport_sub_counter + counter as i32) as u32,
+                            lamport: (lamport_sub_counter + counter) as u32,
                             peer: id_full.peer,
                             cnt: id_full.counter,
                             key: keys[key_idx].clone(),

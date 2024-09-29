@@ -254,7 +254,7 @@ impl LoroDoc {
     /// Import updates/snapshot exported by [`LoroDoc::export_snapshot`] or [`LoroDoc::export_from`].
     #[inline]
     pub fn import(&self, bytes: &[u8]) -> Result<(), LoroError> {
-        self.doc.import_with(bytes, "".into())
+        self.doc.import_with(bytes, "")
     }
 
     /// Import updates/snapshot exported by [`LoroDoc::export_snapshot`] or [`LoroDoc::export_from`].
@@ -263,7 +263,7 @@ impl LoroDoc {
     /// in the generated events.
     #[inline]
     pub fn import_with(&self, bytes: &[u8], origin: &str) -> Result<(), LoroError> {
-        self.doc.import_with(bytes, origin.into())
+        self.doc.import_with(bytes, origin)
     }
 
     pub fn import_json_updates(&self, json: &str) -> Result<(), LoroError> {
@@ -279,8 +279,14 @@ impl LoroDoc {
         serde_json::to_string(&json).unwrap()
     }
 
+    // TODO: add export method
     /// Export all the ops not included in the given `VersionVector`
     #[inline]
+    #[allow(deprecated)]
+    #[deprecated(
+        since = "1.0.0",
+        note = "Use `export` with `ExportMode::Updates` instead"
+    )]
     pub fn export_from(&self, vv: &VersionVector) -> Vec<u8> {
         self.doc.export_from(&vv.into())
     }
@@ -288,6 +294,7 @@ impl LoroDoc {
     /// Export the current state and history of the document.
     #[inline]
     pub fn export_snapshot(&self) -> Vec<u8> {
+        #[allow(deprecated)]
         self.doc.export_snapshot()
     }
 
@@ -636,11 +643,11 @@ impl From<CommitOptions> for loro::CommitOptions {
 }
 
 pub trait JsonSchemaLike {
-    fn into_json_schema(&self) -> LoroResult<JsonSchema>;
+    fn to_json_schema(&self) -> LoroResult<JsonSchema>;
 }
 
 impl<T: TryInto<JsonSchema> + Clone> JsonSchemaLike for T {
-    fn into_json_schema(&self) -> LoroResult<JsonSchema> {
+    fn to_json_schema(&self) -> LoroResult<JsonSchema> {
         self.clone()
             .try_into()
             .map_err(|_| LoroError::InvalidJsonSchema)

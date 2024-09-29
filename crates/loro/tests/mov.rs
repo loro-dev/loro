@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 
 use loro::{LoroDoc, LoroError, ToJson};
 use serde_json::json;

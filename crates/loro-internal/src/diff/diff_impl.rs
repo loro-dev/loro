@@ -20,7 +20,7 @@ use std::ops::{Index, IndexMut};
 /// Utility function to check if a range is empty that works on older rust versions
 #[inline(always)]
 fn is_empty_range(start: usize, end: usize) -> bool {
-    !(start < end)
+    start >= end
 }
 
 #[inline(always)]
@@ -123,6 +123,7 @@ impl IndexMut<isize> for OffsetVec {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn find_middle_snake(
     old: &[u32],
     old_start: usize,
@@ -186,6 +187,7 @@ fn find_middle_snake(
     None
 }
 
+#[allow(clippy::too_many_arguments)]
 fn conquer<D: DiffHandler>(
     proxy: &mut OperateProxy<D>,
     old: &[u32],

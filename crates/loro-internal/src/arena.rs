@@ -9,7 +9,6 @@ use std::{
 use append_only_bytes::BytesSlice;
 use fxhash::FxHashMap;
 use loro_common::PeerID;
-use tracing::trace;
 
 use crate::{
     change::Lamport,
@@ -96,7 +95,11 @@ impl SharedArena {
         if id.is_root() {
             self.inner.root_c_idx.try_lock().unwrap().push(idx);
             self.inner.parents.try_lock().unwrap().insert(idx, None);
-            self.inner.depth.try_lock().unwrap().push(NonZeroU16::new(1));
+            self.inner
+                .depth
+                .try_lock()
+                .unwrap()
+                .push(NonZeroU16::new(1));
         } else {
             self.inner.depth.try_lock().unwrap().push(None);
         }
@@ -266,7 +269,12 @@ impl SharedArena {
 
     #[inline]
     pub fn with_text_slice(&self, range: Range<usize>, mut f: impl FnMut(&str)) {
-        f(self.inner.str.try_lock().unwrap().slice_str_by_unicode(range))
+        f(self
+            .inner
+            .str
+            .try_lock()
+            .unwrap()
+            .slice_str_by_unicode(range))
     }
 
     #[inline]
@@ -292,7 +300,8 @@ impl SharedArena {
     }
 
     pub fn can_import_snapshot(&self) -> bool {
-        self.inner.str.try_lock().unwrap().is_empty() && self.inner.values.try_lock().unwrap().is_empty()
+        self.inner.str.try_lock().unwrap().is_empty()
+            && self.inner.values.try_lock().unwrap().is_empty()
     }
 
     fn inner_convert_op(
@@ -475,6 +484,7 @@ impl SharedArena {
         None
     }
 
+    #[allow(unused)]
     pub(crate) fn log_all_values(&self) {
         let values = self.inner.values.try_lock().unwrap();
         for (i, v) in values.iter().enumerate() {

@@ -109,7 +109,7 @@ fn parse_jsonpath(path: &str) -> Result<Vec<JSONPathToken>, JsonPathError> {
                 // Handle array index, slice, filter, or wildcard
                 let mut content = String::new();
                 let mut in_quotes = false;
-                while let Some(&c) = iter.next() {
+                for &c in iter.by_ref() {
                     if c == ']' && !in_quotes {
                         break;
                     }
@@ -535,7 +535,7 @@ impl PathValue for ListHandler {
         self.len()
     }
 
-    fn get_child_by_id(&self, id: ContainerID) -> Option<Handler> {
+    fn get_child_by_id(&self, _id: ContainerID) -> Option<Handler> {
         unimplemented!()
     }
 
@@ -577,7 +577,7 @@ impl PathValue for MovableListHandler {
         self.len()
     }
 
-    fn get_child_by_id(&self, id: ContainerID) -> Option<Handler> {
+    fn get_child_by_id(&self, _id: ContainerID) -> Option<Handler> {
         unimplemented!()
     }
 
@@ -613,7 +613,7 @@ impl PathValue for TextHandler {
 }
 
 impl PathValue for TreeHandler {
-    fn get_by_key(&self, key: &str) -> Option<ValueOrHandler> {
+    fn get_by_key(&self, _key: &str) -> Option<ValueOrHandler> {
         None
     }
 
@@ -621,7 +621,7 @@ impl PathValue for TreeHandler {
         None
     }
 
-    fn for_each_for_path(&self, f: &mut dyn FnMut(ValueOrHandler) -> ControlFlow<()>) {
+    fn for_each_for_path(&self, _f: &mut dyn FnMut(ValueOrHandler) -> ControlFlow<()>) {
         unimplemented!()
     }
 
@@ -629,7 +629,7 @@ impl PathValue for TreeHandler {
         unimplemented!()
     }
 
-    fn get_child_by_id(&self, id: ContainerID) -> Option<Handler> {
+    fn get_child_by_id(&self, _id: ContainerID) -> Option<Handler> {
         unimplemented!()
     }
 

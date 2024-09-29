@@ -2,7 +2,7 @@ use self::block_encode::{decode_block, decode_header, encode_block, ChangesBlock
 use super::{loro_dag::AppDagNodeInner, AppDagNode};
 use crate::{
     arena::SharedArena,
-    change::{Change, Timestamp},
+    change::Change,
     estimated_size::EstimatedSize,
     kv_store::KvStore,
     op::Op,
@@ -12,7 +12,6 @@ use crate::{
 };
 use block_encode::decode_block_range;
 use bytes::Bytes;
-use fxhash::FxHashMap;
 use itertools::Itertools;
 use loro_common::{
     Counter, HasCounterSpan, HasId, HasIdSpan, HasLamportSpan, IdLp, IdSpan, Lamport, LoroError,
@@ -31,7 +30,6 @@ use tracing::{debug, info_span, trace, warn};
 
 mod block_encode;
 mod block_meta_encode;
-mod delta_rle_encode;
 pub(super) mod iter;
 
 #[cfg(not(test))]
@@ -289,7 +287,7 @@ impl ChangeStore {
         }
     }
 
-    pub fn iter_blocks(&self, id_span: IdSpan) -> Vec<(Arc<ChangesBlock>, usize, usize)> {
+    pub(crate) fn iter_blocks(&self, id_span: IdSpan) -> Vec<(Arc<ChangesBlock>, usize, usize)> {
         if id_span.counter.start == id_span.counter.end {
             return vec![];
         }
@@ -552,7 +550,7 @@ fn encode_blocks_in_store<W: std::io::Write>(
 ) {
     let mut inner = new_store.inner.try_lock().unwrap();
     for (_id, block) in inner.mem_parsed_kv.iter_mut() {
-        let bytes = block.to_bytes(&arena);
+        let bytes = block.to_bytes(arena);
         leb128::write::unsigned(w, bytes.bytes.len() as u64).unwrap();
         w.write_all(&bytes.bytes).unwrap();
     }
@@ -607,11 +605,6 @@ mod mut_external_kv {
             let mut max_lamport = None;
             let mut max_timestamp = 0;
             drop(kv_store);
-            trace!(
-                "frontiers = {:#?}\n start_frontiers={:#?}",
-                &frontiers,
-                &start_frontiers
-            );
             for id in frontiers.iter() {
                 let c = self.get_change(*id).unwrap();
                 debug_assert_ne!(c.atom_len(), 0);
@@ -633,11 +626,6 @@ mod mut_external_kv {
             Ok(BatchDecodeInfo {
                 vv,
                 frontiers,
-                next_lamport: match max_lamport {
-                    Some(l) => l + 1,
-                    None => 0,
-                },
-                max_timestamp,
                 start_version: if start_vv.is_empty() {
                     None
                 } else {
@@ -647,19 +635,6 @@ mod mut_external_kv {
                     Some((start_vv, start_frontiers))
                 },
             })
-
-            // todo!("replace with kv store");
-            // let mut kv = self.mem_kv.try_lock().unwrap();
-            // assert!(kv.is_empty());
-            // let mut reader = blocks;
-            // while !reader.is_empty() {
-            //     let size = leb128::read::unsigned(&mut reader).unwrap();
-            //     let block_bytes = &reader[0..size as usize];
-            //     let block = ChangesBlock::from_bytes(Bytes::copy_from_slice(block_bytes))?;
-            //     kv.insert(block.id(), Arc::new(block));
-            //     reader = &reader[size as usize..];
-            // }
-            // Ok(())
         }
 
         /// Flush the cached change to kv_store
@@ -1136,8 +1111,6 @@ mod mut_inner_kv {
 pub(crate) struct BatchDecodeInfo {
     pub vv: VersionVector,
     pub frontiers: Frontiers,
-    pub next_lamport: Lamport,
-    pub max_timestamp: Timestamp,
     pub start_version: Option<(VersionVector, Frontiers)>,
 }
 

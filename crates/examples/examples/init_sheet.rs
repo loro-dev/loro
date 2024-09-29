@@ -8,7 +8,7 @@ pub fn main() {
     println!("init_duration {}", init_duration);
 
     let start = Instant::now();
-    let snapshot = doc.export_snapshot();
+    let snapshot = doc.export(loro::ExportMode::Snapshot);
     let duration = start.elapsed().as_secs_f64() * 1000.;
     println!("export duration {} size={}", duration, snapshot.len());
 }

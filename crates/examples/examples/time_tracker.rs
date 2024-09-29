@@ -3,7 +3,7 @@ use loro::{CommitOptions, LoroCounter, LoroDoc, LoroMap};
 
 #[derive(Debug)]
 struct NewProject {
-    m: LoroMap,
+    // m: LoroMap,
     c: LoroCounter,
 }
 
@@ -27,7 +27,7 @@ pub fn main() {
             .insert_container("used_time", LoroCounter::new())
             .unwrap();
         all_projects.push(NewProject {
-            m: project,
+            // m: project,
             c: counter,
         });
     }

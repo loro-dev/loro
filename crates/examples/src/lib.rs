@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 use bench_utils::{
     create_seed, gen_async_actions, gen_realtime_actions, make_actions_async, Action, ActionTrait,
 };

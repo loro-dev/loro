@@ -19,7 +19,7 @@ use loro_internal::{
     id::{Counter, PeerID, TreeID, ID},
     json::JsonSchema,
     loro::{CommitOptions, ExportMode},
-    loro_common::{check_root_container_name, IdSpan},
+    loro_common::check_root_container_name,
     subscription::SubID,
     undo::{UndoItemMeta, UndoOrRedo},
     version::Frontiers,
@@ -29,7 +29,7 @@ use loro_internal::{
 };
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
-use std::{cell::RefCell, cmp::Ordering, option, rc::Rc, sync::Arc};
+use std::{cell::RefCell, cmp::Ordering, rc::Rc, sync::Arc};
 use wasm_bindgen::{__rt::IntoJsResult, prelude::*, throw_val};
 use wasm_bindgen_derive::TryFromJsValue;
 
@@ -1453,7 +1453,13 @@ impl LoroDoc {
     /// ```
     #[wasm_bindgen(js_name = "vvToFrontiers")]
     pub fn vv_to_frontiers(&self, vv: &VersionVector) -> JsResult<JsIDs> {
-        let f = self.0.oplog().try_lock().unwrap().dag().vv_to_frontiers(&vv.0);
+        let f = self
+            .0
+            .oplog()
+            .try_lock()
+            .unwrap()
+            .dag()
+            .vv_to_frontiers(&vv.0);
         Ok(frontiers_to_ids(&f))
     }
 
@@ -3147,6 +3153,7 @@ pub struct LoroTree {
 
 extern crate alloc;
 /// The handler of a tree node.
+#[allow(missing_docs)]
 #[derive(TryFromJsValue, Clone)]
 #[wasm_bindgen]
 pub struct LoroTreeNode {
@@ -4372,7 +4379,7 @@ export type TreeID = `${number}@${PeerID}`;
 interface LoroDoc {
     /**
      * Export updates from the specific version to the current version
-     * 
+     *
      * @deprecated Use `export` instead
      *
      *  @example
@@ -4408,46 +4415,46 @@ interface LoroDoc {
      */
     getContainerById(id: ContainerID): Container;
 
-    /** 
+    /**
      * Subscribe to updates from local edits.
-     * 
+     *
      * This method allows you to listen for local changes made to the document.
      * It's useful for syncing changes with other instances or saving updates.
-     * 
+     *
      * @param f - A callback function that receives a Uint8Array containing the update data.
      * @returns A function to unsubscribe from the updates.
-     * 
+     *
      * @example
      * ```ts
      * const loro = new Loro();
      * const text = loro.getText("text");
-     * 
+     *
      * const unsubscribe = loro.subscribeLocalUpdates((update) => {
      *   console.log("Local update received:", update);
      *   // You can send this update to other Loro instances
      * });
-     * 
+     *
      * text.insert(0, "Hello");
      * loro.commit();
-     * 
+     *
      * // Later, when you want to stop listening:
      * unsubscribe();
      * ```
-     * 
+     *
      * @example
      * ```ts
      * const loro1 = new Loro();
      * const loro2 = new Loro();
-     * 
+     *
      * // Set up two-way sync
      * loro1.subscribeLocalUpdates((updates) => {
      *   loro2.import(updates);
      * });
-     * 
+     *
      * loro2.subscribeLocalUpdates((updates) => {
      *   loro1.import(updates);
      * });
-     * 
+     *
      * // Now changes in loro1 will be reflected in loro2 and vice versa
      * ```
      */
@@ -4507,7 +4514,7 @@ export interface Change {
     length: number,
     /**
      * The timestamp in seconds.
-     * 
+     *
      * [Unix time](https://en.wikipedia.org/wiki/Unix_time)
      * It is the number of seconds that have elapsed since 00:00:00 UTC on 1 January 1970.
      */
@@ -4720,7 +4727,7 @@ export type JsonChange = {
   id: JsonOpID
   /**
    * The timestamp in seconds.
-   * 
+   *
    * [Unix time](https://en.wikipedia.org/wiki/Unix_time)
    * It is the number of seconds that have elapsed since 00:00:00 UTC on 1 January 1970.
    */
