@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 use fuzz::{
     actions::{ActionWrapper::*, GenericAction},
     crdt_fuzzer::{test_multi_sites, Action::*, FuzzTarget, FuzzValue::*},

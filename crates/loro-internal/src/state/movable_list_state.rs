@@ -1011,12 +1011,6 @@ impl ContainerState for MovableListState {
             self.inner.check_consistency();
         }
 
-        let start_value = if cfg!(debug_assertions) {
-            Some(self.get_value())
-        } else {
-            None
-        };
-
         let mut event: ListDiff = DeltaRope::new();
         let mut maybe_moved: FxHashMap<CompactIdLp, (usize, LoroValue)> = FxHashMap::default();
         let need_compare = matches!(mode, DiffMode::Import);

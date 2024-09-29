@@ -904,7 +904,7 @@ impl TreeHandler {
         };
         a.with_state(|state| {
             let a = state.as_tree_state_mut().unwrap();
-            a.delete_position(parent, &target)
+            a.delete_position(parent, target)
         })
     }
 

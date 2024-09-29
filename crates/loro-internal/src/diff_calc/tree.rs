@@ -108,7 +108,7 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
 
     fn calculate_diff(
         &mut self,
-        idx: ContainerIdx,
+        _idx: ContainerIdx,
         oplog: &OpLog,
         info: DiffCalcVersionInfo,
         mut on_new_container: impl FnMut(&ContainerID),
@@ -172,7 +172,7 @@ impl TreeDiffCalculator {
                 tracing::info!("checkout: to == current_vv");
                 return;
             }
-            let min_lamport = self.get_min_lamport_by_frontiers(&to_frontiers, oplog);
+            let min_lamport = self.get_min_lamport_by_frontiers(to_frontiers, oplog);
             // retreat
             let mut retreat_ops = vec![];
             for (_target, ops) in tree_cache.tree.iter() {
@@ -191,7 +191,7 @@ impl TreeDiffCalculator {
             }
 
             // forward and apply
-            let max_lamport = self.get_max_lamport_by_frontiers(&to_frontiers, oplog);
+            let max_lamport = self.get_max_lamport_by_frontiers(to_frontiers, oplog);
             let mut forward_ops = vec![];
             let group = h
                 .get_importing_cache(&self.container, mark)

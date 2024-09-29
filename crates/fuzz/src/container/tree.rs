@@ -5,7 +5,6 @@ use std::{
 };
 
 use fxhash::FxHashMap;
-use itertools::Itertools;
 use loro::{
     event::Diff, Container, ContainerID, ContainerType, LoroDoc, LoroError, LoroTree, LoroValue,
     TreeExternalDiff, TreeID,

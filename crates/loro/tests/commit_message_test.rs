@@ -11,7 +11,8 @@ fn test_commit_message() {
 
     // The commit message can be synced to other peers as well
     let doc2 = LoroDoc::new();
-    doc2.import(&doc.export_snapshot()).unwrap();
+    doc2.import(&doc.export(loro::ExportMode::Snapshot))
+        .unwrap();
     let change = doc.get_change(ID::new(doc.peer_id(), 1)).unwrap();
     assert_eq!(change.message(), "edits");
 }
@@ -49,7 +50,7 @@ fn test_syncing_commit_message() {
     doc2.set_peer_id(2).unwrap();
 
     // Export changes from doc1 and import to doc2
-    let changes = doc1.export_from(&Default::default());
+    let changes = doc1.export(loro::ExportMode::all_updates());
     doc2.import(&changes).unwrap();
 
     // Verify the commit message was synced
@@ -74,7 +75,7 @@ fn test_commit_message_sync_via_snapshot() {
     doc1.commit_with(CommitOptions::new().commit_msg("second edit"));
 
     // Create a snapshot of doc1
-    let snapshot = doc1.export_snapshot();
+    let snapshot = doc1.export(loro::ExportMode::Snapshot);
 
     // Create a new doc from the snapshot
     let doc2 = LoroDoc::new();

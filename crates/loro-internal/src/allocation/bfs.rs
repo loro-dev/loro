@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use crate::{
     dag::{Dag, DagNode},
     id::ID,
@@ -14,7 +15,7 @@ struct SortBase {
 
 impl PartialOrd for SortBase {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.lamport.partial_cmp(&other.lamport)
+        Some(self.cmp(other))
     }
 }
 

@@ -59,6 +59,7 @@ impl DocAnalysis {
         Self { containers }
     }
 
+    #[allow(unused)]
     pub fn len(&self) -> usize {
         self.containers.len()
     }

@@ -273,6 +273,7 @@ impl ContainerWrapper {
         self.flushed = flushed;
     }
 
+    #[allow(unused)]
     pub(crate) fn parent(&self) -> Option<&ContainerID> {
         self.parent.as_ref()
     }

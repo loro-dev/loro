@@ -10,7 +10,7 @@ use arbitrary::Arbitrary;
 use fxhash::FxHashSet;
 use loro::{ContainerType, Frontiers, LoroError, LoroResult};
 use tabled::TableIteratorExt;
-use tracing::{debug, info, info_span, trace};
+use tracing::{info, info_span, trace};
 
 use crate::{actions::ActionWrapper, array_mut_ref};
 

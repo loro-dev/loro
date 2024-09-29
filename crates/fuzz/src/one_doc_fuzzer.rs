@@ -39,12 +39,12 @@ impl OneDocFuzzer {
                 }
             }
             Action::SyncAll => {}
-            Action::Checkout { site, to } => {}
+            Action::Checkout { .. } => {}
             Action::Handle {
                 site,
                 target,
-                container,
                 action,
+                ..
             } => {
                 if matches!(action, ActionWrapper::Action(_)) {
                     return;
@@ -63,9 +63,9 @@ impl OneDocFuzzer {
                 self.doc.checkout(&branch.frontiers).unwrap();
                 if let Some(action) = action.as_action_mut() {
                     match action {
-                        crate::actions::ActionInner::Map(map_action) => {}
+                        crate::actions::ActionInner::Map(..) => {}
                         crate::actions::ActionInner::List(list_action) => match list_action {
-                            crate::container::list::ListAction::Insert { pos, value } => {
+                            crate::container::list::ListAction::Insert { pos, .. } => {
                                 let len = self.doc.get_list("list").len();
                                 *pos %= (len as u8).saturating_add(1);
                             }
@@ -87,7 +87,7 @@ impl OneDocFuzzer {
                         },
                         crate::actions::ActionInner::MovableList(movable_list_action) => {
                             match movable_list_action {
-                                crate::actions::MovableListAction::Insert { pos, value } => {
+                                crate::actions::MovableListAction::Insert { pos, .. } => {
                                     let len = self.doc.get_movable_list("movable_list").len();
                                     *pos %= (len as u8).saturating_add(1);
                                 }
@@ -236,19 +236,14 @@ impl OneDocFuzzer {
                     }
                 }
             }
-            Action::Undo { site, op_len } => {}
-            Action::SyncAllUndo { site, op_len } => {}
+            Action::Undo { .. } => {}
+            Action::SyncAllUndo { .. } => {}
         }
     }
 
     fn apply_action(&mut self, action: &mut Action) {
         match action {
-            Action::Handle {
-                site,
-                target,
-                container,
-                action,
-            } => {
+            Action::Handle { site, action, .. } => {
                 let doc = &mut self.doc;
                 let branch = &mut self.branches[*site as usize];
                 doc.checkout(&branch.frontiers).unwrap();
@@ -302,8 +297,7 @@ impl OneDocFuzzer {
                                         .unwrap();
                                 }
                                 crate::container::TextActionInner::Delete => {
-                                    text.delete(text_action.pos as usize, text_action.len)
-                                        .unwrap();
+                                    text.delete(text_action.pos, text_action.len).unwrap();
                                 }
                                 crate::container::TextActionInner::Mark(_) => {}
                             }

@@ -242,7 +242,7 @@ impl MapState {
                 self.size += 1;
             }
             (Some(x), false) => {
-                if let Some(_) = x.value {
+                if x.value.is_some() {
                     self.size -= 1;
                 }
             }

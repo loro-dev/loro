@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 use std::{
     cmp::Ordering,
     ops::ControlFlow,
@@ -1090,9 +1091,10 @@ fn test_gc_import_outdated_updates() {
 fn test_gc_import_pending_updates_that_is_outdated() {
     let doc = LoroDoc::new();
     apply_random_ops(&doc, 123, 11);
-    let bytes = doc.export(loro::ExportMode::gc_snapshot_from_id(
-        ID::new(doc.peer_id(), 5).into(),
-    ));
+    let bytes = doc.export(loro::ExportMode::gc_snapshot_from_id(ID::new(
+        doc.peer_id(),
+        5,
+    )));
     let new_doc = LoroDoc::new();
     new_doc.import(&bytes).unwrap();
 
@@ -1112,9 +1114,10 @@ fn test_gc_import_pending_updates_that_is_outdated() {
 fn test_calling_exporting_snapshot_on_gc_doc() {
     let doc = LoroDoc::new();
     apply_random_ops(&doc, 123, 11);
-    let bytes = doc.export(loro::ExportMode::gc_snapshot_from_id(
-        ID::new(doc.peer_id(), 5).into(),
-    ));
+    let bytes = doc.export(loro::ExportMode::gc_snapshot_from_id(ID::new(
+        doc.peer_id(),
+        5,
+    )));
     let new_doc = LoroDoc::new();
     new_doc.import(&bytes).unwrap();
     let snapshot = new_doc.export(loro::ExportMode::Snapshot);
@@ -1264,6 +1267,7 @@ fn test_loro_export_local_updates() {
     }
 }
 
+#[test]
 fn test_movable_list_checkout_on_trimmed_doc() -> LoroResult<()> {
     let doc = LoroDoc::new();
     let list = doc.get_movable_list("list");

@@ -42,9 +42,9 @@ pub fn main() {
 
     println!(
         "Updates size: {}",
-        ByteSize(doc.export_from(&Default::default()).len())
+        ByteSize(doc.export(loro::ExportMode::Snapshot).len())
     );
-    let snapshot = doc.export_snapshot();
+    let snapshot = doc.export(loro::ExportMode::Snapshot);
     println!("Snapshot size: {}", ByteSize(snapshot.len()));
     doc.with_oplog(|oplog| {
         println!(
@@ -72,7 +72,8 @@ pub fn main() {
             }
         }
 
-        doc.import(&new_doc.export_from(&doc.oplog_vv())).unwrap();
+        doc.import(&new_doc.export(loro::ExportMode::updates(&doc.oplog_vv())))
+            .unwrap();
     }
 
     println!("Time taken to move {} nodes: {:?}", n * k, start.elapsed());
@@ -99,9 +100,9 @@ pub fn main() {
 
     println!(
         "Updates size: {}",
-        ByteSize(doc.export_from(&Default::default()).len())
+        ByteSize(doc.export(loro::ExportMode::all_updates()).len())
     );
-    let snapshot = doc.export_snapshot();
+    let snapshot = doc.export(loro::ExportMode::Snapshot);
     println!("Snapshot size: {}", ByteSize(snapshot.len()));
     doc.compact_change_store();
     doc.with_oplog(|oplog| {

@@ -220,6 +220,7 @@ impl OpLog {
         Some(change.slice(offset, change.atom_len()))
     }
 
+    #[allow(unused)]
     fn check_id_is_not_duplicated(&self, id: ID) -> Result<(), LoroError> {
         let cur_end = self.dag.vv().get(&id.peer).cloned().unwrap_or(0);
         if cur_end > id.counter {

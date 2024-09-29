@@ -1575,11 +1575,18 @@ impl ContainerTrait for LoroTree {
     }
 }
 
+/// A tree node in the [LoroTree].
 #[derive(Debug, Clone)]
 pub struct TreeNode {
+    /// ID of the tree node.
     pub id: TreeID,
+    /// ID of the parent tree node.
+    /// If the ndoe is deleted this value is TreeParentId::Deleted.
+    /// If you checkout to a version before the node is created, this value is TreeParentId::Unexist.
     pub parent: TreeParentId,
+    /// Fraction index of the node
     pub fractional_index: FractionalIndex,
+    /// The current index of the node in its parent's children list.
     pub index: usize,
 }
 

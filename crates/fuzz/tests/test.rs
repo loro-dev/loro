@@ -1,4 +1,4 @@
-use std::sync::Arc;
+#![allow(deprecated)]
 
 use arbitrary::Unstructured;
 use fuzz::{
@@ -17,6 +17,7 @@ use fuzz::{
     test_multi_sites_on_one_doc, test_multi_sites_with_gc,
 };
 use loro::{ContainerType::*, LoroCounter, LoroDoc};
+use std::sync::Arc;
 
 #[ctor::ctor]
 fn init() {

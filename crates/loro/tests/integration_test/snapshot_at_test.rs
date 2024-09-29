@@ -1,8 +1,7 @@
 use std::borrow::Cow;
 
 use super::gen_action;
-use loro::{ExportMode, LoroDoc, ToJson};
-use serde_json::json;
+use loro::{ExportMode, LoroDoc};
 
 #[test]
 fn test_snapshot_at_with_multiple_actions() -> anyhow::Result<()> {

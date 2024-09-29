@@ -402,7 +402,7 @@ fn decode_header_from_doc(doc: &EncodedBlock) -> Result<ChangesBlockHeader, Loro
         ..
     } = doc;
     let ans: ChangesBlockHeader = decode_changes_header(
-        &header,
+        header,
         *n_changes as usize,
         *counter_start as Counter,
         *counter_len as Counter,

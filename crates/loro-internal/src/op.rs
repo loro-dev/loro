@@ -11,7 +11,7 @@ use either::Either;
 use enum_as_inner::EnumAsInner;
 use loro_common::{CompactIdLp, ContainerType, CounterSpan, IdFull, IdLp, IdSpan};
 use rle::{HasIndex, HasLength, Mergable, Sliceable};
-use serde::{ser::SerializeSeq, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, ops::Range};
 
 mod content;

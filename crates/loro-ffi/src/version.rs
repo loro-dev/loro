@@ -4,6 +4,12 @@ use loro::{CounterSpan, IdSpan, LoroResult, PeerID, ID};
 
 pub struct VersionVector(RwLock<loro::VersionVector>);
 
+impl Default for VersionVector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl VersionVector {
     pub fn new() -> Self {
         Self(RwLock::new(loro::VersionVector::default()))

@@ -12,7 +12,6 @@ use crate::{
 };
 use block_encode::decode_block_range;
 use bytes::Bytes;
-use fxhash::FxHashMap;
 use itertools::Itertools;
 use loro_common::{
     Counter, HasCounterSpan, HasId, HasIdSpan, HasLamportSpan, IdLp, IdSpan, Lamport, LoroError,
@@ -552,7 +551,7 @@ fn encode_blocks_in_store<W: std::io::Write>(
 ) {
     let mut inner = new_store.inner.try_lock().unwrap();
     for (_id, block) in inner.mem_parsed_kv.iter_mut() {
-        let bytes = block.to_bytes(&arena);
+        let bytes = block.to_bytes(arena);
         leb128::write::unsigned(w, bytes.bytes.len() as u64).unwrap();
         w.write_all(&bytes.bytes).unwrap();
     }

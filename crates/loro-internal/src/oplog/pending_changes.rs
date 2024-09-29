@@ -3,7 +3,6 @@ use std::{collections::BTreeMap, ops::Deref};
 use crate::{change::Change, version::ImVersionVector, OpLog, VersionVector};
 use fxhash::FxHashMap;
 use loro_common::{Counter, CounterSpan, HasCounterSpan, HasIdSpan, LoroResult, PeerID, ID};
-use smallvec::SmallVec;
 
 #[derive(Debug)]
 pub enum PendingChange {
@@ -150,7 +149,7 @@ enum ChangeState {
 
 fn remote_change_apply_state(
     vv: &VersionVector,
-    trimmed_vv: &ImVersionVector,
+    _trimmed_vv: &ImVersionVector,
     change: &Change,
 ) -> ChangeState {
     let peer = change.id.peer;

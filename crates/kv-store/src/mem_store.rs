@@ -291,22 +291,19 @@ where
         }
         let ans = match (&self.current_mem, &self.current_sstable) {
             (Some((mem_key, _)), Some((iter_key, _))) => match mem_key.cmp(iter_key) {
-                Ordering::Less => self.current_mem.take().map(|kv| {
+                Ordering::Less => self.current_mem.take().inspect(|_kv| {
                     self.current_mem = self.mem.next();
-                    kv
                 }),
                 Ordering::Equal => {
                     self.current_sstable.take();
-                    self.current_mem.take().map(|kv| {
+                    self.current_mem.take().inspect(|_kv| {
                         self.current_mem = self.mem.next();
-                        kv
                     })
                 }
                 Ordering::Greater => self.current_sstable.take(),
             },
-            (Some(_), None) => self.current_mem.take().map(|kv| {
+            (Some(_), None) => self.current_mem.take().inspect(|_kv| {
                 self.current_mem = self.mem.next();
-                kv
             }),
             (None, Some(_)) => self.current_sstable.take(),
             (None, None) => None,
@@ -341,22 +338,19 @@ where
 
         let ans = match (&self.back_mem, &self.back_sstable) {
             (Some((mem_key, _)), Some((iter_key, _))) => match mem_key.cmp(iter_key) {
-                Ordering::Greater => self.back_mem.take().map(|kv| {
+                Ordering::Greater => self.back_mem.take().inspect(|_kv| {
                     self.back_mem = self.mem.next_back();
-                    kv
                 }),
                 Ordering::Equal => {
                     self.back_sstable.take();
-                    self.back_mem.take().map(|kv| {
+                    self.back_mem.take().inspect(|_kv| {
                         self.back_mem = self.mem.next_back();
-                        kv
                     })
                 }
                 Ordering::Less => self.back_sstable.take(),
             },
-            (Some(_), None) => self.back_mem.take().map(|kv| {
+            (Some(_), None) => self.back_mem.take().inspect(|_kv| {
                 self.back_mem = self.mem.next_back();
-                kv
             }),
             (None, Some(_)) => self.back_sstable.take(),
             (None, None) => None,
