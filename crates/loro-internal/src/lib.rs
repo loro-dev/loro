@@ -35,6 +35,7 @@ use txn::Transaction;
 pub use undo::UndoManager;
 use utils::subscription::SubscriberSet;
 pub use utils::subscription::Subscription;
+pub mod allocation;
 pub mod awareness;
 pub mod change;
 pub mod configure;

@@ -19,8 +19,10 @@ use smallvec::{smallvec, SmallVec};
 use tracing::trace;
 mod iter;
 mod mermaid;
-#[cfg(test)]
+#[cfg(any(test, feature = "test_utils"))]
 mod test;
+#[cfg(any(test, feature = "test_utils"))]
+pub use test::{fuzz_alloc_tree, Interaction};
 
 use crate::{
     change::Lamport,

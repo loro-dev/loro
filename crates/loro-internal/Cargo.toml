@@ -58,6 +58,7 @@ pretty_assertions = "1.4.1"
 
 
 [dev-dependencies]
+arbitrary = { version = "1" }
 miniz_oxide = "0.7.1"
 dhat = "0.3.1"
 rand = { version = "0.8.5" }
