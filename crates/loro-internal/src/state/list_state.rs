@@ -648,6 +648,7 @@ mod snapshot {
 
 #[cfg(test)]
 mod test {
+    use itertools::Itertools;
     use loro_common::{Counter, Lamport};
 
     use crate::state::ContainerCreationContext;
@@ -684,7 +685,7 @@ mod test {
 
         list.insert(0, LoroValue::I64(0), IdFull::new(0, 0, 0));
         list.insert(1, LoroValue::I64(2), IdFull::new(1, 1, 1));
-        list.insert(2, LoroValue::I64(2), IdFull::new(1, 2, 2));
+        list.insert(2, LoroValue::I64(4), IdFull::new(1, 2, 2));
         let mut w = Vec::new();
         list.encode_snapshot_fast(&mut w);
         assert!(w.len() <= 39, "w.len() = {}", w.len());
@@ -701,13 +702,20 @@ mod test {
         new_list.check();
         assert_eq!(
             new_list.get_value(),
-            vec![LoroValue::I64(0), LoroValue::I64(2)].into()
+            vec![LoroValue::I64(0), LoroValue::I64(2), LoroValue::I64(4)].into()
         );
         assert_eq!(new_list.get_value(), v);
-        for (i, elem) in new_list.list.iter().enumerate() {
-            assert_eq!(elem.id.peer, i as u64);
-            assert_eq!(elem.id.counter, i as Counter);
-            assert_eq!(elem.id.lamport, i as Lamport);
-        }
+        let v = new_list.list.iter().collect_vec();
+        assert_eq!(v[0].id.peer, 0);
+        assert_eq!(v[0].id.counter, 0 as Counter);
+        assert_eq!(v[0].id.lamport, 0 as Lamport);
+
+        assert_eq!(v[1].id.peer, 1);
+        assert_eq!(v[1].id.counter, 1 as Counter);
+        assert_eq!(v[1].id.lamport, 1 as Lamport);
+
+        assert_eq!(v[2].id.peer, 1);
+        assert_eq!(v[2].id.counter, 2 as Counter);
+        assert_eq!(v[2].id.lamport, 2 as Lamport);
     }
 }

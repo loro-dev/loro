@@ -284,6 +284,25 @@ impl NodeChildren {
         }
     }
 
+    fn push_child_in_order(&mut self, pos: NodePosition, id: TreeID) {
+        match self {
+            NodeChildren::Vec(v) => {
+                if v.len() >= Self::MAX_SIZE_FOR_ARRAY {
+                    self.upgrade();
+                    return self.push_child_in_order(pos, id);
+                }
+
+                if let Some(last) = v.last() {
+                    assert!(last.0 < pos);
+                }
+                v.push((pos, id));
+            }
+            NodeChildren::BTree(v) => {
+                v.push_child_in_order(pos, id);
+            }
+        }
+    }
+
     fn len(&self) -> usize {
         match self {
             NodeChildren::Vec(v) => v.len(),
@@ -347,6 +366,14 @@ mod btree {
                 },
             );
 
+            self.id_to_leaf_index.insert(id, c.leaf);
+        }
+
+        pub(super) fn push_child_in_order(&mut self, pos: NodePosition, id: TreeID) {
+            let c = self.tree.push(Elem {
+                pos: Arc::new(pos.clone()),
+                id,
+            });
             self.id_to_leaf_index.insert(id, c.leaf);
         }
 
@@ -677,6 +704,31 @@ impl TreeState {
         Ok(())
     }
 
+    fn _init_push_tree_node_in_order(
+        &mut self,
+        target: TreeID,
+        parent: TreeParentId,
+        last_move_op: IdFull,
+        position: Option<FractionalIndex>,
+    ) -> Result<(), LoroError> {
+        debug_assert!(!self.trees.contains_key(&target));
+        let entry = self.children.entry(parent).or_default();
+        let node_position =
+            NodePosition::new(position.clone().unwrap_or_default(), last_move_op.idlp());
+        debug_assert!(!entry.has_child(&node_position));
+        entry.push_child_in_order(node_position, target);
+        self.trees.insert(
+            target,
+            TreeStateNode {
+                parent,
+                position,
+                last_move_op,
+            },
+        );
+
+        Ok(())
+    }
+
     #[inline(never)]
     fn is_ancestor_of(&self, maybe_ancestor: &TreeID, node_id: &TreeParentId) -> bool {
         if !self.trees.contains_key(maybe_ancestor) {
@@ -780,9 +832,14 @@ impl TreeState {
         ans
     }
 
-    fn bfs_all_nodes_for_fast_snapshot(&self) -> Vec<TreeNode> {
+    fn bfs_all_alive_nodes_for_fast_snapshot(&self) -> Vec<TreeNode> {
         let mut ans = vec![];
         self._bfs_all_nodes(TreeParentId::Root, &mut ans);
+        ans
+    }
+
+    fn bfs_all_deleted_nodes_for_fast_snapshot(&self) -> Vec<TreeNode> {
+        let mut ans = vec![];
         self._bfs_all_nodes(TreeParentId::Deleted, &mut ans);
         ans
     }
@@ -1535,14 +1592,18 @@ mod snapshot {
         reserved_has_effect_bool_rle: Cow<'a, [u8]>,
     }
 
-    fn encode(state: &TreeState, input: Vec<TreeNode>) -> (ValueRegister<PeerID>, EncodedTree) {
+    fn encode(
+        state: &TreeState,
+        input: Vec<TreeNode>,
+        deleted_nodes: Vec<TreeNode>,
+    ) -> (ValueRegister<PeerID>, EncodedTree) {
         let mut peers: ValueRegister<PeerID> = ValueRegister::new();
         let mut position_set = BTreeSet::default();
         let mut nodes = Vec::with_capacity(input.len());
         let mut node_ids = Vec::with_capacity(input.len());
         let mut position_register = ValueRegister::new();
         let mut id_to_idx = FxHashMap::default();
-        for node in input.iter() {
+        for node in input.iter().chain(deleted_nodes.iter()) {
             position_set.insert(node.fractional_index.clone());
             let idx = node_ids.len();
             node_ids.push(EncodedTreeNodeId {
@@ -1556,7 +1617,25 @@ mod snapshot {
             position_register.register(&p);
         }
 
+        let alive_node_len = input.len();
         for node in input {
+            let n = state.trees.get(&node.id).unwrap();
+            let last_set_id = n.last_move_op;
+            nodes.push(EncodedTreeNode {
+                parent_idx_plus_two: match node.parent {
+                    TreeParentId::Deleted => 1,
+                    TreeParentId::Root => 0,
+                    TreeParentId::Node(id) => id_to_idx.get(&id).unwrap() + 2,
+                    TreeParentId::Unexist => unreachable!(),
+                },
+                last_set_peer_idx: peers.register(&last_set_id.peer),
+                last_set_counter: last_set_id.counter,
+                last_set_lamport_sub_counter: last_set_id.lamport as i32 - last_set_id.counter,
+                fractional_index_idx: position_register.register(&node.fractional_index),
+            })
+        }
+
+        for node in deleted_nodes {
             let n = state.trees.get(&node.id).unwrap();
             let last_set_id = n.last_move_op;
             nodes.push(EncodedTreeNode {
@@ -1601,8 +1680,9 @@ mod snapshot {
         /// 5. Stores parent relationships using indices, with special values for root and deleted nodes.
         /// 6. Encodes last move operation details (peer_idx, counter[Delta], lamport clock[Delta]) for each node.
         fn encode_snapshot_fast<W: std::io::prelude::Write>(&mut self, mut w: W) {
-            let all_nodes = self.bfs_all_nodes_for_fast_snapshot();
-            let (peers, encoded) = encode(self, all_nodes);
+            let all_alive_nodes = self.bfs_all_alive_nodes_for_fast_snapshot();
+            let all_deleted_nodes = self.bfs_all_deleted_nodes_for_fast_snapshot();
+            let (peers, encoded) = encode(self, all_alive_nodes, all_deleted_nodes);
             let peers = peers.unwrap_vec();
             leb128::write::unsigned(&mut w, peers.len() as u64).unwrap();
             for peer in peers {
@@ -1643,7 +1723,9 @@ mod snapshot {
                 .map(|x| TreeID::new(peers[x.peer_idx], x.counter))
                 .collect_vec();
             for (node_id, node) in node_ids.iter().zip(encoded.nodes.into_iter()) {
-                tree.mov(
+                // PERF: we don't need to mov the deleted node, instead we can cache them
+                // If the parent is TreeParentId::Deleted, then all the nodes afterwards are deleted
+                tree._init_push_tree_node_in_order(
                     *node_id,
                     match node.parent_idx_plus_two {
                         0 => TreeParentId::Root,
@@ -1661,7 +1743,6 @@ mod snapshot {
                     Some(FractionalIndex::from_bytes(
                         fractional_indexes[node.fractional_index_idx].clone(),
                     )),
-                    false,
                 )
                 .unwrap();
             }
