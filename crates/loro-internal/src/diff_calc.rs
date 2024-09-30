@@ -13,12 +13,11 @@ use itertools::Itertools;
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{
-    CompactIdLp, ContainerID, Counter, HasCounter, HasCounterSpan, IdFull, IdLp, IdSpan, LoroValue,
-    PeerID, ID,
+    CompactIdLp, ContainerID, Counter, HasCounterSpan, IdFull, IdLp, IdSpan, LoroValue, PeerID, ID,
 };
 use loro_delta::DeltaRope;
 use smallvec::SmallVec;
-use tracing::{debug, info_span, instrument};
+use tracing::{info_span, instrument};
 
 use crate::{
     change::Lamport,
@@ -37,7 +36,7 @@ use crate::{
     event::{DiffVariant, InternalDiff},
     op::{InnerContent, RichOp, SliceRange, SliceWithId},
     span::{HasId, HasLamport},
-    version::{Frontiers, VersionRange},
+    version::Frontiers,
     InternalString, VersionVector,
 };
 

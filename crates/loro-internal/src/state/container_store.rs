@@ -13,22 +13,11 @@ pub(crate) use container_wrapper::ContainerWrapper;
 mod container_wrapper;
 mod inner_store;
 
-///  Encoding Schema for Container Store
+/// Encoding Schema for Container Store
 ///
-/// ┌───────────────┬───────────────────────────────────┐
-/// │ 4B Container  │          N CID + Offsets          │
-/// │ Binary Offset │       (EncodedBy DeltaRLE)        │
-/// └───────────────┴───────────────────────────────────┘
-/// ┌───────────────────────────────────────────────────┐
-/// │                                                   │
-/// │                                                   │
-/// │                                                   │
-/// │              All Containers' Binary               │
-/// │                                                   │
-/// │                                                   │
-/// │                                                   │
-/// └───────────────────────────────────────────────────┘
-///
+/// KV-Store:
+/// - Key: Encoded Container ID
+/// - Value: Encoded Container State
 ///
 /// ─ ─ ─ ─ ─ ─ ─ For Each Container Type ─ ─ ─ ─ ─ ─ ─ ─
 ///

@@ -399,21 +399,6 @@ impl OpLog {
         decode_oplog(self, data)
     }
 
-    /// Iterates over all changes between `a` and `b` peer by peer (not in causal order, fast)
-    pub(crate) fn for_each_change_within(
-        &self,
-        a: &VersionVector,
-        b: &VersionVector,
-        mut f: impl FnMut(&Change, (Counter, Counter)),
-    ) {
-        let spans = b.iter_between(a);
-        for span in spans {
-            for c in self.change_store.iter_changes(span) {
-                f(&c, (span.ctr_start(), span.ctr_end()));
-            }
-        }
-    }
-
     /// iterates over all changes between LCA(common ancestors) to the merged version of (`from` and `to`) causally
     ///
     /// Tht iterator will include a version vector when the change is applied
