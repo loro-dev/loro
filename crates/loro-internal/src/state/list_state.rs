@@ -546,10 +546,27 @@ mod snapshot {
     use std::io::Read;
 
     use loro_common::{Counter, Lamport, PeerID};
+    use serde_columnar::columnar;
 
     use crate::{encoding::value_register::ValueRegister, state::ContainerCreationContext};
 
     use super::*;
+    #[columnar(vec, ser, de, iterable)]
+    #[derive(Debug, Clone)]
+    struct EncodedListId {
+        #[columnar(strategy = "DeltaRle")]
+        peer_idx: usize,
+        #[columnar(strategy = "DeltaRle")]
+        counter: i32,
+        #[columnar(strategy = "DeltaRle")]
+        lamport_sub_counter: i32,
+    }
+
+    #[columnar(ser, de)]
+    struct EncodedListIds {
+        #[columnar(class = "vec", iter = "EncodedListId")]
+        ids: Vec<EncodedListId>,
+    }
 
     impl FastStateSnapshot for ListState {
         /// Encodes the ListState snapshot in a compact binary format:
@@ -563,13 +580,15 @@ mod snapshot {
             let value = self.get_value().into_list().unwrap();
             postcard::to_io(&value, &mut w).unwrap();
             let mut peers: ValueRegister<PeerID> = ValueRegister::new();
-            let mut id_bytes = Vec::new();
+            let mut ids = Vec::with_capacity(self.len());
             for elem in self.iter_with_id() {
                 let id = elem.id;
                 let peer_idx = peers.register(&id.peer);
-                leb128::write::unsigned(&mut id_bytes, peer_idx as u64).unwrap();
-                leb128::write::unsigned(&mut id_bytes, id.counter as u64).unwrap();
-                leb128::write::unsigned(&mut id_bytes, id.lamport as u64).unwrap();
+                ids.push(EncodedListId {
+                    peer_idx,
+                    counter: id.counter,
+                    lamport_sub_counter: (id.lamport as i32 - id.counter),
+                });
             }
 
             let peers = peers.unwrap_vec();
@@ -578,6 +597,7 @@ mod snapshot {
                 w.write_all(&peer.to_le_bytes()).unwrap();
             }
 
+            let id_bytes = serde_columnar::to_vec(&EncodedListIds { ids }).unwrap();
             w.write_all(&id_bytes).unwrap();
         }
         fn decode_value(bytes: &[u8]) -> LoroResult<(LoroValue, &[u8])> {
@@ -605,23 +625,20 @@ mod snapshot {
                 peers.push(PeerID::from_le_bytes(buf));
             }
 
+            let EncodedListIds { ids } = serde_columnar::from_bytes(bytes).unwrap();
+
             let list = v.as_list().unwrap();
             let mut ans = Self::new(idx);
-            let mut i = 0;
-            while !bytes.is_empty() {
-                let peer_idx = leb128::read::unsigned(&mut bytes).unwrap();
-                let counter = leb128::read::unsigned(&mut bytes).unwrap();
-                let lamport = leb128::read::unsigned(&mut bytes).unwrap();
+            for (i, id) in ids.into_iter().enumerate() {
                 ans.insert(
                     i,
                     list[i].clone(),
                     IdFull::new(
-                        peers[peer_idx as usize],
-                        counter as Counter,
-                        lamport as Lamport,
+                        peers[id.peer_idx],
+                        id.counter as Counter,
+                        (id.lamport_sub_counter + id.counter) as Lamport,
                     ),
                 );
-                i += 1;
             }
 
             Ok(ans)
@@ -661,12 +678,16 @@ mod test {
             0,
             loro_common::ContainerType::List,
         ));
+        let mut w = Vec::new();
+        list.encode_snapshot_fast(&mut w);
+        println!("Empty: {}", w.len());
 
         list.insert(0, LoroValue::I64(0), IdFull::new(0, 0, 0));
         list.insert(1, LoroValue::I64(2), IdFull::new(1, 1, 1));
+        list.insert(2, LoroValue::I64(2), IdFull::new(1, 2, 2));
         let mut w = Vec::new();
         list.encode_snapshot_fast(&mut w);
-        assert!(w.len() <= 28, "w.len() = {}", w.len());
+        assert!(w.len() <= 39, "w.len() = {}", w.len());
         let (v, left) = ListState::decode_value(&w).unwrap();
         let mut new_list = ListState::decode_snapshot_fast(
             ContainerIdx::from_index_and_type(0, loro_common::ContainerType::List),
