@@ -65,7 +65,7 @@ enum DiffCalculatorRetainMode {
     /// The diff calculator can only be used once.
     Once { used: bool },
     /// The diff calculator will be persisted and can be reused after the diff calc is done.
-    Persist { recorded_ops_range: VersionRange },
+    Persist,
 }
 
 /// This mode defines how the diff is calculated and how it should be applied on the state.
@@ -121,9 +121,7 @@ impl DiffCalculator {
         Self {
             calculators: Default::default(),
             retain_mode: if persist {
-                DiffCalculatorRetainMode::Persist {
-                    recorded_ops_range: Default::default(),
-                }
+                DiffCalculatorRetainMode::Persist
             } else {
                 DiffCalculatorRetainMode::Once { used: false }
             },
@@ -151,7 +149,6 @@ impl DiffCalculator {
         let s = tracing::span!(tracing::Level::INFO, "DiffCalc", ?before, ?after,);
         let _e = s.enter();
 
-        let mut use_persisted_shortcut = false;
         let mut merged = before.clone();
         merged.merge(after);
         let (lca, mut diff_mode, iter) =
@@ -162,34 +159,15 @@ impl DiffCalculator {
                     panic!("DiffCalculator with retain_mode Once can only be used once");
                 }
             }
-            DiffCalculatorRetainMode::Persist { recorded_ops_range } => {
-                if recorded_ops_range.contains_ops_between(&lca, &merged)
-                    && recorded_ops_range.contains_ops_between(before, after)
-                {
-                    use_persisted_shortcut = true;
-                } else {
-                    diff_mode = DiffMode::Checkout;
-                    recorded_ops_range.clear();
-                }
+            DiffCalculatorRetainMode::Persist => {
+                diff_mode = DiffMode::Checkout;
             }
         }
 
-        let affected_set = if !use_persisted_shortcut {
+        let affected_set = {
             tracing::debug!("LCA: {:?} mode={:?}", &lca, diff_mode);
             let mut started_set = FxHashSet::default();
             for (change, (start_counter, end_counter), vv) in iter {
-                if let DiffCalculatorRetainMode::Persist { recorded_ops_range } =
-                    &mut self.retain_mode
-                {
-                    if container_filter.is_none() {
-                        recorded_ops_range.extends_to_include_id_span(IdSpan::new(
-                            change.peer(),
-                            start_counter,
-                            end_counter,
-                        ));
-                    }
-                }
-
                 let iter_start = change
                     .ops
                     .binary_search_by(|op| op.ctr_last().cmp(&start_counter))
@@ -253,33 +231,6 @@ impl DiffCalculator {
             }
 
             Some(started_set)
-        } else {
-            debug!("Use persisted shortcut");
-            // We can calculate the diff by the current calculators.
-
-            // Find a set of affected containers idx, if it's relatively cheap
-            if before.distance_between(after) < self.calculators.len() || cfg!(debug_assertions) {
-                let mut set = FxHashSet::default();
-                oplog.for_each_change_within(before, after, |change, (start, end)| {
-                    for op in change.ops.iter() {
-                        if op.ctr_end() <= start || op.ctr_start() >= end {
-                            continue;
-                        }
-
-                        let idx = op.container;
-                        if let Some(filter) = container_filter {
-                            if !filter(idx) {
-                                continue;
-                            }
-                        }
-
-                        set.insert(op.container);
-                    }
-                });
-                Some(set)
-            } else {
-                None
-            }
         };
 
         // Because we need to get correct `bring_back` value that indicates container is created during this round of diff calc,
