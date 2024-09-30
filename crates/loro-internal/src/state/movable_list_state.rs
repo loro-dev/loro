@@ -1842,6 +1842,63 @@ mod snapshot {
             assert_eq!(&list2.get_value(), &v);
             assert_eq!(&list.inner, &list2.inner);
         }
+
+        #[test]
+        fn test_movable_list_snapshot_size() {
+            let mut list = MovableListState::new(ContainerIdx::from_index_and_type(
+                0,
+                loro_common::ContainerType::MovableList,
+            ));
+
+            list.inner.insert_list_item(0, IdFull::new(0, 0, 0));
+            let _ = list.create_new_elem(
+                CompactIdLp::new(0, 0),
+                IdLp {
+                    lamport: 0,
+                    peer: 0,
+                },
+                LoroValue::I64(0),
+                IdLp {
+                    lamport: 0,
+                    peer: 0,
+                },
+            );
+
+            list.inner.insert_list_item(1, IdFull::new(0, 1, 1));
+            let _ = list.create_new_elem(
+                CompactIdLp::new(0, 1),
+                IdLp {
+                    peer: 0,
+                    lamport: 1,
+                },
+                LoroValue::I64(0),
+                IdLp {
+                    peer: 0,
+                    lamport: 1,
+                },
+            );
+
+            let mut bytes = Vec::new();
+            list.encode_snapshot_fast(&mut bytes);
+            assert!(bytes.len() <= 42, "{}", bytes.len());
+
+            list.inner.insert_list_item(2, IdFull::new(0, 1, 2));
+            let _ = list.create_new_elem(
+                CompactIdLp::new(0, 2),
+                IdLp {
+                    peer: 0,
+                    lamport: 2,
+                },
+                LoroValue::I64(0),
+                IdLp {
+                    peer: 0,
+                    lamport: 2,
+                },
+            );
+            let mut bytes = Vec::new();
+            list.encode_snapshot_fast(&mut bytes);
+            assert!(bytes.len() <= 47, "{}", bytes.len());
+        }
     }
 }
 
