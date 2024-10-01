@@ -502,11 +502,11 @@ describe("export", () => {
     expect(doc2.toJSON()).toStrictEqual({ text: "123" });
   })
 
-  it("test export gc-snapshot", () => {
+  it("test export trimmed-snapshot", () => {
     const doc = new LoroDoc();
     doc.getText("text").insert(0, "123");
     doc.commit();
-    const snapshot = doc.export({ mode: "gc-snapshot", frontiers: doc.oplogFrontiers() });
+    const snapshot = doc.export({ mode: "trimmed-snapshot", frontiers: doc.oplogFrontiers() });
     const doc2 = new LoroDoc();
     doc2.import(snapshot);
     expect(doc2.toJSON()).toStrictEqual({ text: "123" });

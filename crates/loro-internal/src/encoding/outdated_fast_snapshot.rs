@@ -15,7 +15,10 @@
 //!
 use std::io::{Read, Write};
 
-use crate::{encoding::gc, oplog::ChangeStore, version::Frontiers, LoroDoc, OpLog, VersionVector};
+use crate::{
+    encoding::trimmed_snapshot, oplog::ChangeStore, version::Frontiers, LoroDoc, OpLog,
+    VersionVector,
+};
 use bytes::{Buf, Bytes};
 use loro_common::{IdSpan, LoroEncodeError, LoroError, LoroResult};
 use tracing::trace;
@@ -26,7 +29,7 @@ pub(crate) const EMPTY_MARK: &[u8] = b"E";
 pub(super) struct Snapshot {
     pub oplog_bytes: Bytes,
     pub state_bytes: Option<Bytes>,
-    pub gc_bytes: Bytes,
+    pub trimmed_bytes: Bytes,
 }
 
 pub(super) fn _encode_snapshot<W: Write>(s: Snapshot, w: &mut W) {
@@ -39,9 +42,9 @@ pub(super) fn _encode_snapshot<W: Write>(s: Snapshot, w: &mut W) {
     w.write_all(&(state_bytes.len() as u32).to_le_bytes())
         .unwrap();
     w.write_all(&state_bytes).unwrap();
-    w.write_all(&(s.gc_bytes.len() as u32).to_le_bytes())
+    w.write_all(&(s.trimmed_bytes.len() as u32).to_le_bytes())
         .unwrap();
-    w.write_all(&s.gc_bytes).unwrap();
+    w.write_all(&s.trimmed_bytes).unwrap();
 }
 
 pub(super) fn _decode_snapshot_bytes(bytes: Bytes) -> LoroResult<Snapshot> {
@@ -55,12 +58,12 @@ pub(super) fn _decode_snapshot_bytes(bytes: Bytes) -> LoroResult<Snapshot> {
     } else {
         Some(state_bytes)
     };
-    let gc_bytes_len = read_u32_le(&mut r) as usize;
-    let gc_bytes = r.get_mut().copy_to_bytes(gc_bytes_len);
+    let trimmed_bytes_len = read_u32_le(&mut r) as usize;
+    let trimmed_bytes = r.get_mut().copy_to_bytes(trimmed_bytes_len);
     Ok(Snapshot {
         oplog_bytes,
         state_bytes,
-        gc_bytes,
+        trimmed_bytes: trimmed_bytes,
     })
 }
 
@@ -98,12 +101,12 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: Bytes) -> LoroResult<()> {
     let Snapshot {
         oplog_bytes,
         state_bytes,
-        gc_bytes,
+        trimmed_bytes,
     } = _decode_snapshot_bytes(bytes)?;
     oplog.decode_change_store(oplog_bytes)?;
     let need_calc = state_bytes.is_none();
     let state_frontiers;
-    if gc_bytes.is_empty() {
+    if trimmed_bytes.is_empty() {
         ensure_cov::notify_cov("loro_internal::import::snapshot::normal");
         if let Some(bytes) = state_bytes {
             state.store.decode(bytes)?;
@@ -111,23 +114,24 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: Bytes) -> LoroResult<()> {
         state_frontiers = oplog.frontiers().clone();
     } else {
         ensure_cov::notify_cov("loro_internal::import::snapshot::gc");
-        let gc_state_frontiers = state
-            .store
-            .decode_gc(gc_bytes.clone(), oplog.dag().trimmed_frontiers().clone())?;
+        let trimmed_state_frontiers = state.store.decode_gc(
+            trimmed_bytes.clone(),
+            oplog.dag().trimmed_frontiers().clone(),
+        )?;
         state
             .store
-            .decode_state_by_two_bytes(gc_bytes, state_bytes.unwrap_or_default())?;
+            .decode_state_by_two_bytes(trimmed_bytes, state_bytes.unwrap_or_default())?;
 
-        let gc_store = state.gc_store().cloned();
+        let trimmed_store = state.trimmed_store().cloned();
         oplog.with_history_cache(|h| {
-            h.set_gc_store(gc_store);
+            h.set_trimmed_store(trimmed_store);
         });
 
         if need_calc {
-            ensure_cov::notify_cov("gc_snapshot::need_calc");
-            state_frontiers = gc_state_frontiers.unwrap();
+            ensure_cov::notify_cov("trimmed_snapshot::need_calc");
+            state_frontiers = trimmed_state_frontiers.unwrap();
         } else {
-            ensure_cov::notify_cov("gc_snapshot::dont_need_calc");
+            ensure_cov::notify_cov("trimmed_snapshot::dont_need_calc");
             state_frontiers = oplog.frontiers().clone();
         }
     }
@@ -163,13 +167,13 @@ pub(crate) fn encode_snapshot<W: std::io::Write>(doc: &LoroDoc, w: &mut W) {
     let was_detached = doc.is_detached();
     let mut state = doc.app_state().try_lock().unwrap();
     let oplog = doc.oplog().try_lock().unwrap();
-    let is_gc = state.store.gc_store().is_some();
+    let is_gc = state.store.trimmed_store().is_some();
     if is_gc {
         // TODO: PERF: this can be optimized by reusing the bytes of gc store
         let f = oplog.trimmed_frontiers().clone();
         drop(oplog);
         drop(state);
-        gc::export_gc_snapshot(doc, &f, w).unwrap();
+        trimmed_snapshot::export_trimmed_snapshot(doc, &f, w).unwrap();
         return;
     }
     assert!(!state.is_in_txn());
@@ -195,7 +199,7 @@ pub(crate) fn encode_snapshot<W: std::io::Write>(doc: &LoroDoc, w: &mut W) {
         Snapshot {
             oplog_bytes,
             state_bytes: Some(state_bytes),
-            gc_bytes: Bytes::new(),
+            trimmed_bytes: Bytes::new(),
         },
         w,
     );
@@ -217,7 +221,7 @@ pub(crate) fn encode_snapshot_at<W: std::io::Write>(
     {
         let mut state = doc.app_state().try_lock().unwrap();
         let oplog = doc.oplog().try_lock().unwrap();
-        let is_gc = state.store.gc_store().is_some();
+        let is_gc = state.store.trimmed_store().is_some();
         if is_gc {
             unimplemented!()
         }
@@ -243,7 +247,7 @@ pub(crate) fn encode_snapshot_at<W: std::io::Write>(
             Snapshot {
                 oplog_bytes,
                 state_bytes: Some(state_bytes),
-                gc_bytes: Bytes::new(),
+                trimmed_bytes: Bytes::new(),
             },
             w,
         );

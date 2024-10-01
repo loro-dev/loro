@@ -364,7 +364,7 @@ pub fn test_multi_sites_with_gc(
     ensure_cov::notify_cov("fuzz_gc");
     let mut fuzzer = CRDTFuzzer::new(site_num, fuzz_targets);
     let mut applied = Vec::new();
-    let target_gc_index = actions.len() / 2;
+    let target_trimmed_index = actions.len() / 2;
     for (i, action) in actions.iter_mut().enumerate() {
         fuzzer.pre_process(action);
         info_span!("ApplyAction", ?action).in_scope(|| {
@@ -374,15 +374,15 @@ pub fn test_multi_sites_with_gc(
             fuzzer.apply_action(action);
         });
 
-        if i == target_gc_index {
+        if i == target_trimmed_index {
             info_span!("GC 1 => 0").in_scope(|| {
                 fuzzer.actors[1].loro.attach();
                 let f = fuzzer.actors[1].loro.oplog_frontiers();
                 if !f.is_empty() {
-                    ensure_cov::notify_cov("export_gc_snapshot");
+                    ensure_cov::notify_cov("export_trimmed_snapshot");
                     let bytes = fuzzer.actors[1]
                         .loro
-                        .export(loro::ExportMode::gc_snapshot(&f));
+                        .export(loro::ExportMode::trimmed_snapshot(&f));
                     fuzzer.actors[0].loro.import(&bytes).unwrap();
                 }
             })
@@ -510,9 +510,9 @@ pub fn test_multi_sites_with_gc(
     if COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 1_000 == 0 {
         let must_meet = [
             "fuzz_gc",
-            "export_gc_snapshot",
-            "gc_snapshot::need_calc",
-            "gc_snapshot::dont_need_calc",
+            "export_trimmed_snapshot",
+            "trimmed_snapshot::need_calc",
+            "trimmed_snapshot::dont_need_calc",
             "loro_internal::history_cache::find_text_chunks_in",
             "loro_internal::history_cache::find_list_chunks_in",
             "loro_internal::import",

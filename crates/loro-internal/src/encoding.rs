@@ -7,9 +7,9 @@ use std::borrow::Cow;
 pub(crate) use encode_reordered::{
     decode_op, encode_op, get_op_prop, EncodedDeleteStartId, IterableEncodedDeleteStartId,
 };
-mod fast_snapshot;
-mod gc;
 pub(crate) mod json_schema;
+mod outdated_fast_snapshot;
+mod trimmed_snapshot;
 
 use crate::op::OpWithId;
 use crate::version::Frontiers;
@@ -27,7 +27,7 @@ pub enum ExportMode<'a> {
     Snapshot,
     Updates { from: Cow<'a, VersionVector> },
     UpdatesInRange { spans: Cow<'a, [IdSpan]> },
-    GcSnapshot(Cow<'a, Frontiers>),
+    TrimmedSnapshot(Cow<'a, Frontiers>),
     StateOnly(Option<Cow<'a, Frontiers>>),
     SnapshotAt { version: Cow<'a, Frontiers> },
 }
@@ -61,17 +61,17 @@ impl<'a> ExportMode<'a> {
         }
     }
 
-    pub fn gc_snapshot(frontiers: &'a Frontiers) -> Self {
-        ExportMode::GcSnapshot(Cow::Borrowed(frontiers))
+    pub fn trimmed_snapshot(frontiers: &'a Frontiers) -> Self {
+        ExportMode::TrimmedSnapshot(Cow::Borrowed(frontiers))
     }
 
-    pub fn gc_snapshot_owned(frontiers: Frontiers) -> Self {
-        ExportMode::GcSnapshot(Cow::Owned(frontiers))
+    pub fn trimmed_snapshot_owned(frontiers: Frontiers) -> Self {
+        ExportMode::TrimmedSnapshot(Cow::Owned(frontiers))
     }
 
-    pub fn gc_snapshot_from_id(id: ID) -> Self {
+    pub fn trimmed_snapshot_from_id(id: ID) -> Self {
         let frontiers = Frontiers::from_id(id);
-        ExportMode::GcSnapshot(Cow::Owned(frontiers))
+        ExportMode::TrimmedSnapshot(Cow::Owned(frontiers))
     }
 
     pub fn state_only(frontiers: Option<&'a Frontiers>) -> Self {
@@ -250,8 +250,10 @@ pub(crate) fn decode_oplog(
         EncodeMode::OutdatedRle | EncodeMode::OutdatedSnapshot => {
             encode_reordered::decode_updates(oplog, body)
         }
-        EncodeMode::FastSnapshot => fast_snapshot::decode_oplog(oplog, body),
-        EncodeMode::FastUpdates => fast_snapshot::decode_updates(oplog, body.to_vec().into()),
+        EncodeMode::FastSnapshot => outdated_fast_snapshot::decode_oplog(oplog, body),
+        EncodeMode::FastUpdates => {
+            outdated_fast_snapshot::decode_updates(oplog, body.to_vec().into())
+        }
         EncodeMode::Auto => unreachable!(),
     }
 }
@@ -340,37 +342,37 @@ pub(crate) fn export_snapshot(doc: &LoroDoc) -> Vec<u8> {
 
 pub(crate) fn export_fast_snapshot(doc: &LoroDoc) -> Vec<u8> {
     encode_with(EncodeMode::FastSnapshot, &mut |ans| {
-        fast_snapshot::encode_snapshot(doc, ans);
+        outdated_fast_snapshot::encode_snapshot(doc, ans);
     })
 }
 
 pub(crate) fn export_fast_snapshot_at(doc: &LoroDoc, frontiers: &Frontiers) -> Vec<u8> {
     encode_with(EncodeMode::FastSnapshot, &mut |ans| {
-        fast_snapshot::encode_snapshot_at(doc, frontiers, ans).unwrap();
+        outdated_fast_snapshot::encode_snapshot_at(doc, frontiers, ans).unwrap();
     })
 }
 
 pub(crate) fn export_fast_updates(doc: &LoroDoc, vv: &VersionVector) -> Vec<u8> {
     encode_with(EncodeMode::FastUpdates, &mut |ans| {
-        fast_snapshot::encode_updates(doc, vv, ans);
+        outdated_fast_snapshot::encode_updates(doc, vv, ans);
     })
 }
 
 pub(crate) fn export_fast_updates_in_range(oplog: &OpLog, spans: &[IdSpan]) -> Vec<u8> {
     encode_with(EncodeMode::FastUpdates, &mut |ans| {
-        fast_snapshot::encode_updates_in_range(oplog, spans, ans);
+        outdated_fast_snapshot::encode_updates_in_range(oplog, spans, ans);
     })
 }
 
-pub(crate) fn export_gc_snapshot(doc: &LoroDoc, f: &Frontiers) -> Vec<u8> {
+pub(crate) fn export_trimmed_snapshot(doc: &LoroDoc, f: &Frontiers) -> Vec<u8> {
     encode_with(EncodeMode::FastSnapshot, &mut |ans| {
-        gc::export_gc_snapshot(doc, f, ans).unwrap();
+        trimmed_snapshot::export_trimmed_snapshot(doc, f, ans).unwrap();
     })
 }
 
 pub(crate) fn export_state_only_snapshot(doc: &LoroDoc, f: &Frontiers) -> Vec<u8> {
     encode_with(EncodeMode::FastSnapshot, &mut |ans| {
-        gc::export_state_only_snapshot(doc, f, ans).unwrap();
+        trimmed_snapshot::export_state_only_snapshot(doc, f, ans).unwrap();
     })
 }
 
@@ -399,7 +401,9 @@ pub(crate) fn decode_snapshot(
 ) -> Result<(), LoroError> {
     match mode {
         EncodeMode::OutdatedSnapshot => encode_reordered::decode_snapshot(doc, body),
-        EncodeMode::FastSnapshot => fast_snapshot::decode_snapshot(doc, body.to_vec().into()),
+        EncodeMode::FastSnapshot => {
+            outdated_fast_snapshot::decode_snapshot(doc, body.to_vec().into())
+        }
         _ => unreachable!(),
     }
 }
