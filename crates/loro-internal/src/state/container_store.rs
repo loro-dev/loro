@@ -38,7 +38,7 @@ mod inner_store;
 pub(crate) struct ContainerStore {
     arena: SharedArena,
     store: InnerStore,
-    gc_store: Option<Arc<GcStore>>,
+    trimmed_store: Option<Arc<GcStore>>,
     conf: Configure,
     peer: Arc<AtomicU64>,
 }
@@ -73,13 +73,13 @@ impl ContainerStore {
             store: InnerStore::new(arena.clone()),
             arena,
             conf,
-            gc_store: None,
+            trimmed_store: None,
             peer,
         }
     }
 
     pub fn can_import_snapshot(&self) -> bool {
-        if self.gc_store.is_some() {
+        if self.trimmed_store.is_some() {
             return false;
         }
 
@@ -99,8 +99,8 @@ impl ContainerStore {
             .map(|x| x.get_state(idx, ctx!(self)))
     }
 
-    pub fn gc_store(&self) -> Option<&Arc<GcStore>> {
-        self.gc_store.as_ref()
+    pub fn trimmed_store(&self) -> Option<&Arc<GcStore>> {
+        self.trimmed_store.as_ref()
     }
 
     pub fn get_value(&mut self, idx: ContainerIdx) -> Option<LoroValue> {
@@ -118,7 +118,7 @@ impl ContainerStore {
     }
 
     pub fn trimmed_frontiers(&self) -> Option<&Frontiers> {
-        self.gc_store.as_ref().map(|x| &x.trimmed_frontiers)
+        self.trimmed_store.as_ref().map(|x| &x.trimmed_frontiers)
     }
 
     pub(crate) fn decode(&mut self, bytes: Bytes) -> LoroResult<Option<Frontiers>> {
@@ -127,13 +127,13 @@ impl ContainerStore {
 
     pub(crate) fn decode_gc(
         &mut self,
-        gc_bytes: Bytes,
+        trimmed_bytes: Bytes,
         start_frontiers: Frontiers,
     ) -> LoroResult<Option<Frontiers>> {
-        assert!(self.gc_store.is_none());
+        assert!(self.trimmed_store.is_none());
         let mut inner = InnerStore::new(self.arena.clone());
-        let f = inner.decode(gc_bytes)?;
-        self.gc_store = Some(Arc::new(GcStore {
+        let f = inner.decode(trimmed_bytes)?;
+        self.trimmed_store = Some(Arc::new(GcStore {
             trimmed_frontiers: start_frontiers,
             store: Mutex::new(inner),
         }));
@@ -142,10 +142,11 @@ impl ContainerStore {
 
     pub(crate) fn decode_state_by_two_bytes(
         &mut self,
-        gc_bytes: Bytes,
+        trimmed_bytes: Bytes,
         state_bytes: Bytes,
     ) -> LoroResult<()> {
-        self.store.decode_twice(gc_bytes.clone(), state_bytes)?;
+        self.store
+            .decode_twice(trimmed_bytes.clone(), state_bytes)?;
         Ok(())
     }
 
@@ -236,7 +237,7 @@ impl ContainerStore {
             arena,
             conf: config,
             peer,
-            gc_store: None,
+            trimmed_store: None,
         }
     }
 

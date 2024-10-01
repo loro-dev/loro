@@ -1018,7 +1018,7 @@ impl LoroDoc {
     ///   - `{ mode: "snapshot" }`: Export a full snapshot of the document.
     ///   - `{ mode: "update", start_vv: VersionVector }`: Export updates from the given version vector.
     ///   - `{ mode: "updates-in-range", spans: { id: ID, len: number }[] }`: Export updates within the specified ID spans.
-    ///   - `{ mode: "gc-snapshot", frontiers: Frontiers }`: Export a garbage-collected snapshot up to the given frontiers.
+    ///   - `{ mode: "trimmed-snapshot", frontiers: Frontiers }`: Export a garbage-collected snapshot up to the given frontiers.
     ///
     /// @returns A byte array containing the exported data.
     ///
@@ -1038,7 +1038,7 @@ impl LoroDoc {
     /// const updateBytes = doc.export({ mode: "update", start_vv: vv });
     ///
     /// // Export a garbage-collected snapshot
-    /// const gcBytes = doc.export({ mode: "gc-snapshot", frontiers: doc.oplogFrontiers() });
+    /// const gcBytes = doc.export({ mode: "trimmed-snapshot", frontiers: doc.oplogFrontiers() });
     ///
     /// // Export updates within specific ID spans
     /// const spanBytes = doc.export({
@@ -4307,7 +4307,7 @@ fn js_to_export_mode(js_mode: JsExportMode) -> JsResult<ExportMode<'static>> {
             Ok(ExportMode::updates_owned(start_vv.0.clone()))
         }
         "snapshot" => Ok(ExportMode::Snapshot),
-        "gc-snapshot" => {
+        "trimmed-snapshot" => {
             let frontiers: JsValue =
                 js_sys::Reflect::get(&js_value, &JsValue::from_str("frontiers"))?;
             let frontiers: Vec<JsID> = js_sys::try_iter(&frontiers)?
@@ -4315,7 +4315,7 @@ fn js_to_export_mode(js_mode: JsExportMode) -> JsResult<ExportMode<'static>> {
                 .map(|res| res.map(JsID::from))
                 .collect::<Result<_, _>>()?;
             let frontiers = ids_to_frontiers(frontiers)?;
-            Ok(ExportMode::gc_snapshot_owned(frontiers))
+            Ok(ExportMode::trimmed_snapshot_owned(frontiers))
         }
         "updates-in-range" => {
             let spans = js_sys::Reflect::get(&js_value, &JsValue::from_str("spans"))?;
@@ -4744,7 +4744,7 @@ export type ExportMode = {
 } | {
     mode: "snapshot",
 } | {
-    mode: "gc-snapshot",
+    mode: "trimmed-snapshot",
     frontiers: Frontiers,
 } | {
     mode: "updates-in-range",

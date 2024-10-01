@@ -1024,11 +1024,11 @@ fn apply_random_ops(doc: &LoroDoc, seed: u64, mut op_len: usize) {
 }
 
 #[test]
-fn test_gc_sync() {
+fn test_trimmed_sync() {
     let doc = LoroDoc::new();
     doc.set_peer_id(1).unwrap();
     apply_random_ops(&doc, 123, 11);
-    let bytes = doc.export(loro::ExportMode::gc_snapshot_from_id(ID::new(
+    let bytes = doc.export(loro::ExportMode::trimmed_snapshot_from_id(ID::new(
         doc.peer_id(),
         10,
     )));
@@ -1052,10 +1052,10 @@ fn test_gc_sync() {
 }
 
 #[test]
-fn test_gc_empty() {
+fn test_trimmed_empty() {
     let doc = LoroDoc::new();
     apply_random_ops(&doc, 123, 11);
-    let bytes = doc.export(loro::ExportMode::gc_snapshot(&Frontiers::default()));
+    let bytes = doc.export(loro::ExportMode::trimmed_snapshot(&Frontiers::default()));
     let new_doc = LoroDoc::new();
     new_doc.import(&bytes).unwrap();
     assert_eq!(doc.get_deep_value(), new_doc.get_deep_value());
@@ -1071,10 +1071,10 @@ fn test_gc_empty() {
 }
 
 #[test]
-fn test_gc_import_outdated_updates() {
+fn test_trimmed_import_outdated_updates() {
     let doc = LoroDoc::new();
     apply_random_ops(&doc, 123, 11);
-    let bytes = doc.export(loro::ExportMode::gc_snapshot_from_id(ID::new(
+    let bytes = doc.export(loro::ExportMode::trimmed_snapshot_from_id(ID::new(
         doc.peer_id(),
         5,
     )));
@@ -1090,10 +1090,10 @@ fn test_gc_import_outdated_updates() {
 }
 
 #[test]
-fn test_gc_import_pending_updates_that_is_outdated() {
+fn test_trimmed_import_pending_updates_that_is_outdated() {
     let doc = LoroDoc::new();
     apply_random_ops(&doc, 123, 11);
-    let bytes = doc.export(loro::ExportMode::gc_snapshot_from_id(ID::new(
+    let bytes = doc.export(loro::ExportMode::trimmed_snapshot_from_id(ID::new(
         doc.peer_id(),
         5,
     )));
@@ -1113,10 +1113,10 @@ fn test_gc_import_pending_updates_that_is_outdated() {
 }
 
 #[test]
-fn test_calling_exporting_snapshot_on_gc_doc() {
+fn test_calling_exporting_snapshot_on_trimmed_doc() {
     let doc = LoroDoc::new();
     apply_random_ops(&doc, 123, 11);
-    let bytes = doc.export(loro::ExportMode::gc_snapshot_from_id(ID::new(
+    let bytes = doc.export(loro::ExportMode::trimmed_snapshot_from_id(ID::new(
         doc.peer_id(),
         5,
     )));
@@ -1133,7 +1133,7 @@ fn test_calling_exporting_snapshot_on_gc_doc() {
 fn sync_two_trimmed_docs() {
     let doc = LoroDoc::new();
     apply_random_ops(&doc, 123, 11);
-    let bytes = doc.export(loro::ExportMode::gc_snapshot_from_id(ID::new(
+    let bytes = doc.export(loro::ExportMode::trimmed_snapshot_from_id(ID::new(
         doc.peer_id(),
         10,
     )));
@@ -1169,7 +1169,7 @@ fn test_map_checkout_on_trimmed_doc() {
     doc.get_map("map").insert("3", 3).unwrap();
     doc.get_map("map").insert("2", 4).unwrap();
 
-    let new_doc_bytes = doc.export(loro::ExportMode::gc_snapshot_from_id(ID::new(
+    let new_doc_bytes = doc.export(loro::ExportMode::trimmed_snapshot_from_id(ID::new(
         doc.peer_id(),
         1,
     )));
@@ -1282,7 +1282,7 @@ fn test_movable_list_checkout_on_trimmed_doc() -> LoroResult<()> {
     list.mov(1, 0)?;
     list.delete(0, 1)?;
     list.set(0, 0)?;
-    let new_doc_bytes = doc.export(loro::ExportMode::gc_snapshot_from_id(ID::new(
+    let new_doc_bytes = doc.export(loro::ExportMode::trimmed_snapshot_from_id(ID::new(
         doc.peer_id(),
         2,
     )));
@@ -1330,7 +1330,7 @@ fn test_tree_checkout_on_trimmed_doc() -> LoroResult<()> {
     let child2 = tree.create(None).unwrap();
     tree.mov(child2, root)?;
 
-    let new_doc_bytes = doc.export(loro::ExportMode::gc_snapshot_from_id(ID::new(
+    let new_doc_bytes = doc.export(loro::ExportMode::trimmed_snapshot_from_id(ID::new(
         doc.peer_id(),
         1,
     )));
@@ -1471,17 +1471,17 @@ fn test_tree_with_other_ops_checkout_on_trimmed_doc() -> LoroResult<()> {
     map.insert("0", 0)?;
     map.insert("1", 1)?;
     doc.commit();
-    let gc_frontiers = doc.oplog_frontiers();
+    let trimmed_frontiers = doc.oplog_frontiers();
     map.insert("2", 2)?;
     tree.mov(child2, child1)?;
     tree.delete(child1)?;
 
-    let new_doc_bytes = doc.export(loro::ExportMode::gc_snapshot(&gc_frontiers));
+    let new_doc_bytes = doc.export(loro::ExportMode::trimmed_snapshot(&trimmed_frontiers));
 
     let new_doc = LoroDoc::new();
     new_doc.import(&new_doc_bytes).unwrap();
 
-    new_doc.checkout(&gc_frontiers)?;
+    new_doc.checkout(&trimmed_frontiers)?;
     let value = new_doc.get_deep_value();
     assert_eq!(
         value,
@@ -1529,7 +1529,7 @@ fn test_tree_with_other_ops_checkout_on_trimmed_doc() -> LoroResult<()> {
 }
 
 #[test]
-fn test_gc_can_remove_unreachable_states() -> LoroResult<()> {
+fn test_trimmed_can_remove_unreachable_states() -> LoroResult<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(1)?;
     let map = doc.get_map("map");
@@ -1568,7 +1568,7 @@ fn test_gc_can_remove_unreachable_states() -> LoroResult<()> {
     doc.checkout_to_latest();
 
     {
-        let snapshot = doc.export(loro::ExportMode::gc_snapshot_from_id(ID::new(1, 3)));
+        let snapshot = doc.export(loro::ExportMode::trimmed_snapshot_from_id(ID::new(1, 3)));
         let new_doc = LoroDoc::new();
         new_doc.import(&snapshot)?;
         let a = new_doc.analyze();
@@ -1581,7 +1581,7 @@ fn test_gc_can_remove_unreachable_states() -> LoroResult<()> {
     }
 
     {
-        let snapshot = doc.export(loro::ExportMode::gc_snapshot_from_id(ID::new(1, 4)));
+        let snapshot = doc.export(loro::ExportMode::trimmed_snapshot_from_id(ID::new(1, 4)));
         let new_doc = LoroDoc::new();
         new_doc.import(&snapshot)?;
         assert_eq!(new_doc.analyze().dropped_len(), 0);

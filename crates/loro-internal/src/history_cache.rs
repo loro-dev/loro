@@ -232,7 +232,7 @@ impl ContainerHistoryCache {
                         if for_checkout {
                             let c = self.for_checkout.as_mut().unwrap();
                             for (k, v) in m.iter() {
-                                c.map.record_gc_state_entry(*idx, k, v);
+                                c.map.record_trimmed_state_entry(*idx, k, v);
                             }
                         }
                     }
@@ -241,7 +241,7 @@ impl ContainerHistoryCache {
                             if for_checkout {
                                 let c = self.for_checkout.as_mut().unwrap();
                                 let item = l.get_list_item(elem.pos).unwrap();
-                                c.movable_list.record_gc_state(
+                                c.movable_list.record_trimmed_state(
                                     item.id,
                                     idlp.peer,
                                     idlp.lamport.into(),
@@ -256,7 +256,7 @@ impl ContainerHistoryCache {
                             let tree = c.entry(*idx).or_insert_with(|| {
                                 HistoryCacheForImporting::Tree(Default::default())
                             });
-                            tree.as_tree_mut().unwrap().record_gc_state(
+                            tree.as_tree_mut().unwrap().record_trimmed_state(
                                 t.tree_nodes()
                                     .into_iter()
                                     .map(|node| MoveLamportAndID {
@@ -308,8 +308,8 @@ impl ContainerHistoryCache {
         self.for_checkout = None;
     }
 
-    pub(crate) fn set_gc_store(&mut self, gc_store: Option<Arc<GcStore>>) {
-        self.gc = gc_store;
+    pub(crate) fn set_trimmed_store(&mut self, trimmed_store: Option<Arc<GcStore>>) {
+        self.gc = trimmed_store;
     }
 
     pub(crate) fn find_text_chunks_in(
@@ -517,7 +517,7 @@ impl HistoryCacheTrait for MapHistoryCache {
 }
 
 impl MapHistoryCache {
-    fn record_gc_state_entry(&mut self, idx: ContainerIdx, k: &InternalString, v: &MapValue) {
+    fn record_trimmed_state_entry(&mut self, idx: ContainerIdx, k: &InternalString, v: &MapValue) {
         let key_idx = self.keys.register(k);
         self.map.insert(MapHistoryCacheEntry {
             container: idx,
@@ -638,7 +638,7 @@ impl TreeOpGroup {
         &self.tree_for_diff
     }
 
-    pub(crate) fn record_gc_state(&mut self, nodes: Vec<MoveLamportAndID>) {
+    pub(crate) fn record_trimmed_state(&mut self, nodes: Vec<MoveLamportAndID>) {
         let mut tree = self.tree_for_diff.try_lock().unwrap();
         for node in nodes.iter() {
             self.ops.insert(
@@ -740,7 +740,7 @@ impl HistoryCacheTrait for MovableListHistoryCache {
 }
 
 impl MovableListHistoryCache {
-    pub(crate) fn record_gc_state(
+    pub(crate) fn record_trimmed_state(
         &mut self,
         id: IdFull,
         elem_peer: PeerID,

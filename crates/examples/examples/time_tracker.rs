@@ -52,8 +52,11 @@ pub fn main() {
     let snapshot = doc.export(loro::ExportMode::Snapshot);
     println!("Snapshot Size {}", ByteSize(snapshot.len()));
     println!("mem: {}", get_mem_usage());
-    let gc_snapshot = doc.export(loro::ExportMode::gc_snapshot(&doc.oplog_frontiers()));
-    println!("GC Shallow Snapshot Size {}", ByteSize(gc_snapshot.len()));
+    let trimmed_snapshot = doc.export(loro::ExportMode::trimmed_snapshot(&doc.oplog_frontiers()));
+    println!(
+        "GC Shallow Snapshot Size {}",
+        ByteSize(trimmed_snapshot.len())
+    );
     println!("mem: {}", get_mem_usage());
 
     examples::utils::bench_fast_snapshot(&doc);

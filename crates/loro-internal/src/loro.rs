@@ -33,9 +33,9 @@ use crate::{
     diff_calc::DiffCalculator,
     encoding::{
         decode_snapshot, export_fast_snapshot, export_fast_snapshot_at, export_fast_updates,
-        export_fast_updates_in_range, export_gc_snapshot, export_snapshot,
-        export_state_only_snapshot, json_schema::json::JsonSchema, parse_header_and_body,
-        EncodeMode, ParsedHeaderAndBody,
+        export_fast_updates_in_range, export_snapshot, export_state_only_snapshot,
+        export_trimmed_snapshot, json_schema::json::JsonSchema, parse_header_and_body, EncodeMode,
+        ParsedHeaderAndBody,
     },
     event::{str_to_path, EventTriggerKind, Index, InternalDocDiff},
     handler::{Handler, MovableListHandler, TextHandler, TreeHandler, ValueOrHandler},
@@ -105,7 +105,7 @@ impl LoroDoc {
             Arc::downgrade(&txn),
             config.clone(),
         );
-        let gc = new_state.try_lock().unwrap().gc_store().cloned();
+        let gc = new_state.try_lock().unwrap().trimmed_store().cloned();
         let doc = LoroDoc {
             oplog: Arc::new(Mutex::new(self.oplog().try_lock().unwrap().fork(
                 arena.clone(),
@@ -1474,7 +1474,7 @@ impl LoroDoc {
             ExportMode::UpdatesInRange { spans } => {
                 export_fast_updates_in_range(&self.oplog.try_lock().unwrap(), spans.as_ref())
             }
-            ExportMode::GcSnapshot(f) => export_gc_snapshot(self, &f),
+            ExportMode::TrimmedSnapshot(f) => export_trimmed_snapshot(self, &f),
             ExportMode::StateOnly(f) => match f {
                 Some(f) => export_state_only_snapshot(self, &f),
                 None => export_state_only_snapshot(self, &self.oplog_frontiers()),
