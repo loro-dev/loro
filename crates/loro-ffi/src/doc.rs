@@ -7,8 +7,8 @@ use std::{
 
 use loro::{
     cursor::CannotFindRelativePosition, DocAnalysis, FrontiersNotIncluded, IdSpan, JsonPathError,
-    JsonSchema, Lamport, LoroDoc as InnerLoroDoc, LoroError, LoroResult, PeerID, SubID, Timestamp,
-    ID,
+    JsonSchema, Lamport, LoroDoc as InnerLoroDoc, LoroEncodeError, LoroError, LoroResult, PeerID,
+    SubID, Timestamp, ID,
 };
 
 use crate::{
@@ -485,9 +485,11 @@ impl LoroDoc {
     // }
 
     pub fn export_updates_in_range(&self, spans: &[IdSpan]) -> Vec<u8> {
-        self.doc.export(loro::ExportMode::UpdatesInRange {
-            spans: Cow::Borrowed(spans),
-        })
+        self.doc
+            .export(loro::ExportMode::UpdatesInRange {
+                spans: Cow::Borrowed(spans),
+            })
+            .unwrap()
     }
 
     pub fn export_trimmed_snapshot(&self, frontiers: &Frontiers) -> Vec<u8> {
@@ -495,9 +497,13 @@ impl LoroDoc {
             .export(loro::ExportMode::TrimmedSnapshot(Cow::Owned(
                 frontiers.into(),
             )))
+            .unwrap()
     }
 
-    pub fn export_state_only(&self, frontiers: Option<Arc<Frontiers>>) -> Vec<u8> {
+    pub fn export_state_only(
+        &self,
+        frontiers: Option<Arc<Frontiers>>,
+    ) -> Result<Vec<u8>, LoroEncodeError> {
         self.doc
             .export(loro::ExportMode::StateOnly(frontiers.map(|x| {
                 let a = Arc::try_unwrap(x).unwrap();

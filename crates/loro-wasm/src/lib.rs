@@ -983,7 +983,7 @@ impl LoroDoc {
     /// @deprecated Use `export` instead
     #[wasm_bindgen(js_name = "exportSnapshot")]
     pub fn export_snapshot(&self) -> JsResult<Vec<u8>> {
-        Ok(self.0.export_snapshot())
+        Ok(self.0.export_snapshot()?)
     }
 
     /// Export updates from the specific version to the current version
@@ -1048,7 +1048,7 @@ impl LoroDoc {
     /// ```
     pub fn export(&self, mode: JsExportMode) -> JsResult<Vec<u8>> {
         let export_mode = js_to_export_mode(mode)?;
-        Ok(self.0.export(export_mode))
+        Ok(self.0.export(export_mode)?)
     }
 
     /// Export updates from the specific version to the current version with JSON format.

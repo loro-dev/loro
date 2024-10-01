@@ -61,7 +61,7 @@ pub use loro_internal::{loro_value, to_value};
 pub use loro_internal::{
     Counter, CounterSpan, FractionalIndex, IdLp, IdSpan, Lamport, PeerID, TreeID, TreeParentId, ID,
 };
-pub use loro_internal::{LoroError, LoroResult, LoroTreeError, LoroValue, ToJson};
+pub use loro_internal::{LoroEncodeError, LoroError, LoroResult, LoroTreeError, LoroValue, ToJson};
 pub use loro_kv_store as kv_store;
 
 #[cfg(feature = "jsonpath")]
@@ -435,7 +435,7 @@ impl LoroDoc {
     )]
     #[inline]
     pub fn export_snapshot(&self) -> Vec<u8> {
-        self.doc.export_snapshot()
+        self.doc.export_snapshot().unwrap()
     }
 
     /// Convert `Frontiers` into `VersionVector`
@@ -723,7 +723,7 @@ impl LoroDoc {
     }
 
     /// Export the document in the given mode.
-    pub fn export(&self, mode: ExportMode) -> Vec<u8> {
+    pub fn export(&self, mode: ExportMode) -> Result<Vec<u8>, LoroEncodeError> {
         self.doc.export(mode)
     }
 

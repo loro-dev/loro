@@ -14,7 +14,7 @@ enum Kind {
 
 fn empty_state() -> Vec<u8> {
     let doc = LoroDoc::new_auto_commit();
-    doc.export(ExportMode::StateOnly(None))
+    doc.export(ExportMode::StateOnly(None)).unwrap()
 }
 
 fn create_elem_sequentially(n: usize, kind: Kind) -> LoroResult<Vec<u8>> {
@@ -48,7 +48,7 @@ fn create_elem_sequentially(n: usize, kind: Kind) -> LoroResult<Vec<u8>> {
             }
         }
     }
-    let bytes = doc.export(ExportMode::StateOnly(None));
+    let bytes = doc.export(ExportMode::StateOnly(None)).unwrap();
     Ok(bytes)
 }
 
@@ -92,7 +92,7 @@ fn create_elem_randomly(n: usize, kind: Kind) -> LoroResult<Vec<u8>> {
         }
         doc.set_peer_id(rng.gen::<u64>()).unwrap();
     }
-    let bytes = doc.export(ExportMode::StateOnly(None));
+    let bytes = doc.export(ExportMode::StateOnly(None)).unwrap();
     Ok(bytes)
 }
 
@@ -102,7 +102,8 @@ fn main() -> LoroResult<()> {
         Kind::List,
         Kind::MovableList,
         Kind::Text,
-        // Kind::Tree,
+        #[allow(unused)]
+        Kind::Tree,
         #[cfg(feature = "counter")]
         Kind::Counter,
     ] {

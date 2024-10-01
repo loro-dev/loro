@@ -224,12 +224,12 @@ impl CRDTFuzzer {
                     2 => {
                         info_span!("FastSnapshot", from = i, to = j).in_scope(|| {
                             b_doc
-                                .import(&a_doc.export(loro::ExportMode::Snapshot))
+                                .import(&a_doc.export(loro::ExportMode::Snapshot).unwrap())
                                 .unwrap();
                         });
                         info_span!("FastSnapshot", from = j, to = i).in_scope(|| {
                             a_doc
-                                .import(&b_doc.export(loro::ExportMode::Snapshot))
+                                .import(&b_doc.export(loro::ExportMode::Snapshot).unwrap())
                                 .unwrap();
                         });
                     }
@@ -383,7 +383,7 @@ pub fn test_multi_sites_with_gc(
                     let bytes = fuzzer.actors[1]
                         .loro
                         .export(loro::ExportMode::trimmed_snapshot(&f));
-                    fuzzer.actors[0].loro.import(&bytes).unwrap();
+                    fuzzer.actors[0].loro.import(&bytes.unwrap()).unwrap();
                 }
             })
         }
@@ -428,12 +428,12 @@ pub fn test_multi_sites_with_gc(
                     2 => {
                         info_span!("FastSnapshot", from = i, to = j).in_scope(|| {
                             b_doc
-                                .import(&a_doc.export(loro::ExportMode::Snapshot))
+                                .import(&a_doc.export(loro::ExportMode::Snapshot).unwrap())
                                 .unwrap();
                         });
                         info_span!("FastSnapshot", from = j, to = i).in_scope(|| {
                             a_doc
-                                .import(&b_doc.export(loro::ExportMode::Snapshot))
+                                .import(&b_doc.export(loro::ExportMode::Snapshot).unwrap())
                                 .unwrap();
                         });
                     }

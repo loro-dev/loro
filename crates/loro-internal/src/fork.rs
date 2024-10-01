@@ -35,9 +35,11 @@ use crate::{version::Frontiers, LoroDoc};
 impl LoroDoc {
     /// Creates a new LoroDoc at a specified version (Frontiers)
     pub fn fork_at(&self, frontiers: &Frontiers) -> LoroDoc {
-        let bytes = self.export(crate::loro::ExportMode::SnapshotAt {
-            version: Cow::Borrowed(frontiers),
-        });
+        let bytes = self
+            .export(crate::loro::ExportMode::SnapshotAt {
+                version: Cow::Borrowed(frontiers),
+            })
+            .unwrap();
         let doc = LoroDoc::new();
         doc.import(&bytes).unwrap();
         doc

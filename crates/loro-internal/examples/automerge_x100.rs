@@ -21,7 +21,7 @@ fn main() {
     loro.diagnose_size();
     drop(actions);
     let start = Instant::now();
-    let snapshot = loro.export_snapshot();
+    let snapshot = loro.export_snapshot().unwrap();
     println!("Snapshot encoding time {}", start.elapsed().as_millis());
     let compressed = zstd::encode_all(&mut snapshot.as_slice(), 0).unwrap();
     println!(

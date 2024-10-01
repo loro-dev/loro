@@ -912,10 +912,10 @@ fn fast_snapshot_for_updates() {
     doc_b.commit();
 
     doc_b
-        .import(&doc_a.export(loro::ExportMode::Snapshot))
+        .import(&doc_a.export(loro::ExportMode::Snapshot).unwrap())
         .unwrap();
     doc_a
-        .import(&doc_b.export(loro::ExportMode::Snapshot))
+        .import(&doc_b.export(loro::ExportMode::Snapshot).unwrap())
         .unwrap();
 
     assert_eq!(doc_a.get_deep_value(), doc_b.get_deep_value());
@@ -943,7 +943,7 @@ fn new_update_encode_mode() {
 
     // Export updates from doc and import to doc2
     let updates = doc.export(loro::ExportMode::all_updates());
-    doc2.import(&updates).unwrap();
+    doc2.import(&updates.unwrap()).unwrap();
 
     // Check equality
     assert_eq!(doc.get_deep_value(), doc2.get_deep_value());
@@ -961,7 +961,7 @@ fn new_update_encode_mode() {
 
     // Export updates from doc2 and import to doc
     let updates2 = doc2.export(loro::ExportMode::updates(&doc.oplog_vv()));
-    doc.import(&updates2).unwrap();
+    doc.import(&updates2.unwrap()).unwrap();
 
     // Check equality after syncing back
     assert_eq!(doc.get_deep_value(), doc2.get_deep_value());
@@ -1035,19 +1035,19 @@ fn test_trimmed_sync() {
 
     let new_doc = LoroDoc::new();
     new_doc.set_peer_id(2).unwrap();
-    new_doc.import(&bytes).unwrap();
+    new_doc.import(&bytes.unwrap()).unwrap();
     assert_eq!(doc.get_deep_value(), new_doc.get_deep_value());
     let trim_end = new_doc.trimmed_vv().get(&doc.peer_id()).copied().unwrap();
     assert_eq!(trim_end, 10);
 
     apply_random_ops(&new_doc, 1234, 5);
     let updates = new_doc.export(loro::ExportMode::updates_owned(doc.oplog_vv()));
-    doc.import(&updates).unwrap();
+    doc.import(&updates.unwrap()).unwrap();
     assert_eq!(doc.get_deep_value(), new_doc.get_deep_value());
 
     apply_random_ops(&doc, 11, 5);
     let updates = doc.export(loro::ExportMode::updates_owned(new_doc.oplog_vv()));
-    new_doc.import(&updates).unwrap();
+    new_doc.import(&updates.unwrap()).unwrap();
     assert_eq!(doc.get_deep_value(), new_doc.get_deep_value());
 }
 
@@ -1057,7 +1057,7 @@ fn test_trimmed_empty() {
     apply_random_ops(&doc, 123, 11);
     let bytes = doc.export(loro::ExportMode::trimmed_snapshot(&Frontiers::default()));
     let new_doc = LoroDoc::new();
-    new_doc.import(&bytes).unwrap();
+    new_doc.import(&bytes.unwrap()).unwrap();
     assert_eq!(doc.get_deep_value(), new_doc.get_deep_value());
     apply_random_ops(&new_doc, 0, 10);
     doc.import(&new_doc.export_from(&Default::default()))
@@ -1066,7 +1066,7 @@ fn test_trimmed_empty() {
 
     let bytes = new_doc.export(loro::ExportMode::Snapshot);
     let doc_c = LoroDoc::new();
-    doc_c.import(&bytes).unwrap();
+    doc_c.import(&bytes.unwrap()).unwrap();
     assert_eq!(doc_c.get_deep_value(), new_doc.get_deep_value());
 }
 
@@ -1079,7 +1079,7 @@ fn test_trimmed_import_outdated_updates() {
         5,
     )));
     let new_doc = LoroDoc::new();
-    new_doc.import(&bytes).unwrap();
+    new_doc.import(&bytes.unwrap()).unwrap();
 
     let other_doc = LoroDoc::new();
     apply_random_ops(&other_doc, 123, 11);
@@ -1098,7 +1098,7 @@ fn test_trimmed_import_pending_updates_that_is_outdated() {
         5,
     )));
     let new_doc = LoroDoc::new();
-    new_doc.import(&bytes).unwrap();
+    new_doc.import(&bytes.unwrap()).unwrap();
 
     let other_doc = LoroDoc::new();
     apply_random_ops(&other_doc, 123, 5);
@@ -1121,10 +1121,10 @@ fn test_calling_exporting_snapshot_on_trimmed_doc() {
         5,
     )));
     let new_doc = LoroDoc::new();
-    new_doc.import(&bytes).unwrap();
+    new_doc.import(&bytes.unwrap()).unwrap();
     let snapshot = new_doc.export(loro::ExportMode::Snapshot);
     let doc_c = LoroDoc::new();
-    doc_c.import(&snapshot).unwrap();
+    doc_c.import(&snapshot.unwrap()).unwrap();
     assert_eq!(doc_c.get_deep_value(), new_doc.get_deep_value());
     assert_eq!(new_doc.trimmed_vv(), doc_c.trimmed_vv());
 }
@@ -1133,10 +1133,12 @@ fn test_calling_exporting_snapshot_on_trimmed_doc() {
 fn sync_two_trimmed_docs() {
     let doc = LoroDoc::new();
     apply_random_ops(&doc, 123, 11);
-    let bytes = doc.export(loro::ExportMode::trimmed_snapshot_from_id(ID::new(
-        doc.peer_id(),
-        10,
-    )));
+    let bytes = doc
+        .export(loro::ExportMode::trimmed_snapshot_from_id(ID::new(
+            doc.peer_id(),
+            10,
+        )))
+        .unwrap();
 
     let doc_a = LoroDoc::new();
     doc_a.import(&bytes).unwrap();
@@ -1175,7 +1177,7 @@ fn test_map_checkout_on_trimmed_doc() {
     )));
 
     let new_doc = LoroDoc::new();
-    new_doc.import(&new_doc_bytes).unwrap();
+    new_doc.import(&new_doc_bytes.unwrap()).unwrap();
     assert_eq!(
         new_doc.get_deep_value(),
         loro_value!({
@@ -1288,7 +1290,7 @@ fn test_movable_list_checkout_on_trimmed_doc() -> LoroResult<()> {
     )));
 
     let new_doc = LoroDoc::new();
-    new_doc.import(&new_doc_bytes).unwrap();
+    new_doc.import(&new_doc_bytes.unwrap()).unwrap();
     assert_eq!(
         new_doc.get_deep_value(),
         loro_value!({
@@ -1336,7 +1338,7 @@ fn test_tree_checkout_on_trimmed_doc() -> LoroResult<()> {
     )));
 
     let new_doc = LoroDoc::new();
-    new_doc.import(&new_doc_bytes).unwrap();
+    new_doc.import(&new_doc_bytes.unwrap()).unwrap();
     assert_eq!(
         new_doc.get_deep_value(),
         loro_value!({
@@ -1479,7 +1481,7 @@ fn test_tree_with_other_ops_checkout_on_trimmed_doc() -> LoroResult<()> {
     let new_doc_bytes = doc.export(loro::ExportMode::trimmed_snapshot(&trimmed_frontiers));
 
     let new_doc = LoroDoc::new();
-    new_doc.import(&new_doc_bytes).unwrap();
+    new_doc.import(&new_doc_bytes.unwrap()).unwrap();
 
     new_doc.checkout(&trimmed_frontiers)?;
     let value = new_doc.get_deep_value();
@@ -1570,7 +1572,7 @@ fn test_trimmed_can_remove_unreachable_states() -> LoroResult<()> {
     {
         let snapshot = doc.export(loro::ExportMode::trimmed_snapshot_from_id(ID::new(1, 3)));
         let new_doc = LoroDoc::new();
-        new_doc.import(&snapshot)?;
+        new_doc.import(&snapshot.unwrap())?;
         let a = new_doc.analyze();
         assert_eq!(a.len(), 4);
         assert_eq!(a.dropped_len(), 3);
@@ -1583,7 +1585,7 @@ fn test_trimmed_can_remove_unreachable_states() -> LoroResult<()> {
     {
         let snapshot = doc.export(loro::ExportMode::trimmed_snapshot_from_id(ID::new(1, 4)));
         let new_doc = LoroDoc::new();
-        new_doc.import(&snapshot)?;
+        new_doc.import(&snapshot.unwrap())?;
         assert_eq!(new_doc.analyze().dropped_len(), 0);
     }
 
@@ -1595,7 +1597,7 @@ fn small_update_size() {
     let doc = LoroDoc::new();
     let text = doc.get_text("text");
     text.insert(0, "h").unwrap();
-    let bytes = doc.export(loro::ExportMode::all_updates());
+    let bytes = doc.export(loro::ExportMode::all_updates()).unwrap();
     println!("Update bytes {:?}", dev_utils::ByteSize(bytes.len()));
     assert!(bytes.len() < 90, "Large update size {}", bytes.len());
 }
@@ -1701,7 +1703,7 @@ fn test_fork_at_target_frontiers() {
     doc.commit();
     let snapshot = doc.export(loro::ExportMode::snapshot_at(&f));
     let new_doc = LoroDoc::new();
-    new_doc.import(&snapshot).unwrap();
+    new_doc.import(&snapshot.unwrap()).unwrap();
     assert_eq!(new_doc.state_frontiers(), f);
     assert_eq!(
         new_doc.get_deep_value().to_json_value(),
@@ -1710,7 +1712,7 @@ fn test_fork_at_target_frontiers() {
         })
     );
     new_doc
-        .import(&doc.export(loro::ExportMode::all_updates()))
+        .import(&doc.export(loro::ExportMode::all_updates()).unwrap())
         .unwrap();
     assert_eq!(
         new_doc.get_deep_value().to_json_value(),
@@ -1752,7 +1754,7 @@ fn test_encode_snapshot_when_checkout() {
     doc.checkout(&f).unwrap();
     let snapshot = doc.export(loro::ExportMode::snapshot());
     let new_doc = LoroDoc::new();
-    new_doc.import(&snapshot).unwrap();
+    new_doc.import(&snapshot.unwrap()).unwrap();
     assert_eq!(
         new_doc.get_deep_value().to_json_value(),
         json!({"text": "Hello World"})
@@ -1769,16 +1771,16 @@ fn travel_change_ancestors() {
     doc2.set_peer_id(2).unwrap();
     doc2.get_text("text").insert(5, " World").unwrap();
     doc.get_text("text").insert(5, " Alice").unwrap();
-    doc.import(&doc2.export(loro::ExportMode::all_updates()))
+    doc.import(&doc2.export(loro::ExportMode::all_updates()).unwrap())
         .unwrap();
-    doc2.import(&doc.export(loro::ExportMode::all_updates()))
+    doc2.import(&doc.export(loro::ExportMode::all_updates()).unwrap())
         .unwrap();
 
     doc.get_text("text").insert(0, "Y").unwrap();
     doc2.get_text("text").insert(0, "N").unwrap();
     doc.commit();
     doc2.commit();
-    doc.import(&doc2.export(loro::ExportMode::all_updates()))
+    doc.import(&doc2.export(loro::ExportMode::all_updates()).unwrap())
         .unwrap();
     doc.get_text("text").insert(0, "X").unwrap();
     doc.commit();

@@ -28,7 +28,7 @@ use crate::state::GcStore;
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
 use change_store::BlockOpRef;
-use loro_common::{HasCounter, IdLp, IdSpan};
+use loro_common::{IdLp, IdSpan};
 use rle::{HasLength, RleVec, Sliceable};
 use smallvec::SmallVec;
 

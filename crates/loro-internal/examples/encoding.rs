@@ -40,7 +40,7 @@ fn main() {
     }
 
     let start = Instant::now();
-    let snapshot = loro.export_snapshot();
+    let snapshot = loro.export_snapshot().unwrap();
     println!("Snapshot time {}ms", start.elapsed().as_millis());
     let output = miniz_oxide::deflate::compress_to_vec(&snapshot, 6);
     println!(

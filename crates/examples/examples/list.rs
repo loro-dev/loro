@@ -61,10 +61,18 @@ pub fn main() {
                 random_insert(&mut list_a, 100, i);
                 random_insert(&mut list_b, 100, i);
                 doc_a
-                    .import(&doc_b.export(loro::ExportMode::updates(&doc_a.oplog_vv())))
+                    .import(
+                        &doc_b
+                            .export(loro::ExportMode::updates(&doc_a.oplog_vv()))
+                            .unwrap(),
+                    )
                     .unwrap();
                 doc_b
-                    .import(&doc_a.export(loro::ExportMode::updates(&doc_b.oplog_vv())))
+                    .import(
+                        &doc_a
+                            .export(loro::ExportMode::updates(&doc_b.oplog_vv()))
+                            .unwrap(),
+                    )
                     .unwrap();
             }
 
@@ -111,10 +119,18 @@ pub fn main() {
                 random_insert(&mut list_a, 100, i);
                 random_insert(&mut list_b, 100, i);
                 doc_a
-                    .import(&doc_b.export(loro::ExportMode::updates(&doc_a.oplog_vv())))
+                    .import(
+                        &doc_b
+                            .export(loro::ExportMode::updates(&doc_a.oplog_vv()))
+                            .unwrap(),
+                    )
                     .unwrap();
                 doc_b
-                    .import(&doc_a.export(loro::ExportMode::updates(&doc_b.oplog_vv())))
+                    .import(
+                        &doc_a
+                            .export(loro::ExportMode::updates(&doc_b.oplog_vv()))
+                            .unwrap(),
+                    )
                     .unwrap();
             }
 
@@ -128,19 +144,35 @@ pub fn main() {
             random_insert(&mut list_a, 1000, 0);
             random_insert(&mut list_b, 1000, 0);
             doc_a
-                .import(&doc_b.export(loro::ExportMode::updates(&doc_a.oplog_vv())))
+                .import(
+                    &doc_b
+                        .export(loro::ExportMode::updates(&doc_a.oplog_vv()))
+                        .unwrap(),
+                )
                 .unwrap();
             doc_b
-                .import(&doc_a.export(loro::ExportMode::updates(&doc_b.oplog_vv())))
+                .import(
+                    &doc_a
+                        .export(loro::ExportMode::updates(&doc_b.oplog_vv()))
+                        .unwrap(),
+                )
                 .unwrap();
             for i in 0..1000 {
                 random_set(&mut list_a, 100, i);
                 random_set(&mut list_b, 100, i);
                 doc_a
-                    .import(&doc_b.export(loro::ExportMode::updates(&doc_a.oplog_vv())))
+                    .import(
+                        &doc_b
+                            .export(loro::ExportMode::updates(&doc_a.oplog_vv()))
+                            .unwrap(),
+                    )
                     .unwrap();
                 doc_b
-                    .import(&doc_a.export(loro::ExportMode::updates(&doc_b.oplog_vv())))
+                    .import(
+                        &doc_a
+                            .export(loro::ExportMode::updates(&doc_b.oplog_vv()))
+                            .unwrap(),
+                    )
                     .unwrap();
             }
 
@@ -154,19 +186,35 @@ pub fn main() {
             random_insert(&mut list_a, 1000, 0);
             random_insert(&mut list_b, 1000, 0);
             doc_a
-                .import(&doc_b.export(loro::ExportMode::updates(&doc_a.oplog_vv())))
+                .import(
+                    &doc_b
+                        .export(loro::ExportMode::updates(&doc_a.oplog_vv()))
+                        .unwrap(),
+                )
                 .unwrap();
             doc_b
-                .import(&doc_a.export(loro::ExportMode::updates(&doc_b.oplog_vv())))
+                .import(
+                    &doc_a
+                        .export(loro::ExportMode::updates(&doc_b.oplog_vv()))
+                        .unwrap(),
+                )
                 .unwrap();
             for i in 0..1000 {
                 random_move(&mut list_a, 100, i);
                 random_move(&mut list_b, 100, i);
                 doc_a
-                    .import(&doc_b.export(loro::ExportMode::updates(&doc_a.oplog_vv())))
+                    .import(
+                        &doc_b
+                            .export(loro::ExportMode::updates(&doc_a.oplog_vv()))
+                            .unwrap(),
+                    )
                     .unwrap();
                 doc_b
-                    .import(&doc_a.export(loro::ExportMode::updates(&doc_b.oplog_vv())))
+                    .import(
+                        &doc_a
+                            .export(loro::ExportMode::updates(&doc_b.oplog_vv()))
+                            .unwrap(),
+                    )
                     .unwrap();
             }
 
@@ -186,11 +234,11 @@ fn run(name: &'static str, apply_task: impl FnOnce() -> LoroDoc) -> BenchResult 
     let apply_duration = start.elapsed().as_secs_f64() * 1000.;
 
     let start = Instant::now();
-    let snapshot = doc.export(loro::ExportMode::Snapshot);
+    let snapshot = doc.export(loro::ExportMode::Snapshot).unwrap();
     let encode_snapshot_duration = start.elapsed().as_secs_f64() * 1000.;
 
     let start = Instant::now();
-    let updates = doc.export(loro::ExportMode::all_updates());
+    let updates = doc.export(loro::ExportMode::all_updates()).unwrap();
     let encode_update_duration = start.elapsed().as_secs_f64() * 1000.;
 
     let start = Instant::now();

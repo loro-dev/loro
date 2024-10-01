@@ -232,7 +232,7 @@ impl Actor {
                 let new_doc = LoroDoc::new();
                 info_span!("FuzzCheckoutCreatingNewSnapshotDoc",).in_scope(|| {
                     new_doc
-                        .import(&self.loro.export(loro::ExportMode::Snapshot))
+                        .import(&self.loro.export(loro::ExportMode::Snapshot).unwrap())
                         .unwrap();
                     assert_eq!(new_doc.get_deep_value(), self.loro.get_deep_value());
                 });

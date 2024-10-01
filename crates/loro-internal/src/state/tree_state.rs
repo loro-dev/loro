@@ -1617,7 +1617,6 @@ mod snapshot {
             position_register.register(&p);
         }
 
-        let alive_node_len = input.len();
         for node in input {
             let n = state.trees.get(&node.id).unwrap();
             let last_set_id = n.last_move_op;

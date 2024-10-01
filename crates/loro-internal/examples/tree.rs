@@ -48,7 +48,10 @@ fn mov() {
         tree.move_to(ids[i], TreeParentId::Node(ids[j]), children_num)
             .unwrap_or_default();
     }
-    println!("encode snapshot size {:?}", loro.export_snapshot().len());
+    println!(
+        "encode snapshot size {:?}",
+        loro.export_snapshot().unwrap().len()
+    );
     println!(
         "encode updates size {:?}",
         loro.export_from(&Default::default()).len()
@@ -63,7 +66,10 @@ fn create() {
     for _ in 0..size {
         tree.create_at(TreeParentId::Root, 0).unwrap();
     }
-    println!("encode snapshot size {:?}\n", loro.export_snapshot().len());
+    println!(
+        "encode snapshot size {:?}\n",
+        loro.export_snapshot().unwrap().len()
+    );
     println!(
         "encode updates size {:?}",
         loro.export_from(&Default::default()).len()

@@ -23,7 +23,7 @@ fn test_snapshot_at_with_multiple_actions() -> anyhow::Result<()> {
         version: Cow::Borrowed(&frontiers_after_first_commit),
     });
     let new_doc_first = LoroDoc::new();
-    new_doc_first.import(&snapshot_at_first)?;
+    new_doc_first.import(&snapshot_at_first.unwrap())?;
 
     // Verify the state of the new document matches the expected state
     assert_eq!(new_doc_first.get_deep_value(), value_after_first_commit);
@@ -33,7 +33,7 @@ fn test_snapshot_at_with_multiple_actions() -> anyhow::Result<()> {
         version: Cow::Borrowed(&frontiers_after_second_commit),
     });
     let new_doc_second = LoroDoc::new();
-    new_doc_second.import(&snapshot_at_second)?;
+    new_doc_second.import(&snapshot_at_second.unwrap())?;
 
     // Verify the state of the new document matches the expected state
     assert_eq!(new_doc_second.get_deep_value(), value_after_second_commit);
@@ -60,7 +60,7 @@ fn test_fork_at_target_frontiers() -> anyhow::Result<()> {
     assert_eq!(new_doc.get_deep_value(), value_after_first_commit);
 
     // Import all updates to the new document
-    new_doc.import(&doc.export(ExportMode::all_updates()))?;
+    new_doc.import(&doc.export(ExportMode::all_updates()).unwrap())?;
     assert_eq!(new_doc.get_deep_value(), doc.get_deep_value());
 
     Ok(())

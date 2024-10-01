@@ -375,7 +375,7 @@ fn import_after_init_handlers() {
     b.get_list("list_a").insert(0, "list_a").unwrap();
     b.get_text("text").insert(0, "text").unwrap();
     b.get_map("map").insert("m", "map").unwrap();
-    a.import(&b.export_snapshot()).unwrap();
+    a.import(&b.export_snapshot().unwrap()).unwrap();
     a.commit_then_renew();
 }
 
@@ -383,7 +383,7 @@ fn import_after_init_handlers() {
 fn test_from_snapshot() {
     let a = LoroDoc::new_auto_commit();
     a.get_text("text").insert(0, "0").unwrap();
-    let snapshot = a.export_snapshot();
+    let snapshot = a.export_snapshot().unwrap();
     let c = LoroDoc::from_snapshot(&snapshot).unwrap();
     assert_eq!(a.get_deep_value(), c.get_deep_value());
     assert_eq!(a.oplog_frontiers(), c.oplog_frontiers());
@@ -699,7 +699,7 @@ fn map_concurrent_checkout() {
         })
         .unwrap();
     let vb_1 = doc_b.oplog_frontiers();
-    doc_a.import(&doc_b.export_snapshot()).unwrap();
+    doc_a.import(&doc_b.export_snapshot().unwrap()).unwrap();
     doc_a
         .with_txn(|txn| {
             meta_a.insert_with_txn(txn, "key", 2.into()).unwrap();
@@ -770,8 +770,8 @@ fn issue_batch_import_snapshot() {
     doc.get_map("map").insert("s", "hello world!").unwrap();
     doc2.get_map("map").insert("s", "hello?").unwrap();
 
-    let data1 = doc.export_snapshot();
-    let data2 = doc2.export_snapshot();
+    let data1 = doc.export_snapshot().unwrap();
+    let data2 = doc2.export_snapshot().unwrap();
     let doc3 = LoroDoc::new();
     doc3.import_batch(&[data1, data2]).unwrap();
 }
@@ -809,7 +809,7 @@ fn state_may_deadlock_when_import() {
 
         let doc2 = LoroDoc::new_auto_commit();
         doc2.get_map("map").insert("foo", 123).unwrap();
-        doc.import(&doc.export_snapshot()).unwrap();
+        doc.import(&doc.export_snapshot().unwrap()).unwrap();
     })
 }
 
@@ -878,7 +878,7 @@ fn empty_event() {
     doc.subscribe_root(Arc::new(move |_e| {
         fire_clone.store(true, std::sync::atomic::Ordering::Relaxed);
     }));
-    doc.import(&doc.export_snapshot()).unwrap();
+    doc.import(&doc.export_snapshot().unwrap()).unwrap();
     assert!(!fire.load(std::sync::atomic::Ordering::Relaxed));
 }
 

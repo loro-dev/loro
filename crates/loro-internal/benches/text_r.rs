@@ -38,7 +38,7 @@ mod run {
                 txn.commit().unwrap();
             }
 
-            let update = store.export_snapshot();
+            let update = store.export_snapshot().unwrap();
             drop(store);
             b.iter_batched(
                 || {
@@ -93,7 +93,7 @@ mod run {
             txn.commit().unwrap();
 
             b.iter(|| {
-                loro.export_snapshot();
+                loro.export_snapshot().unwrap();
             });
         });
 
@@ -137,7 +137,7 @@ mod run {
             }
             txn.commit().unwrap();
 
-            let data = loro.export_snapshot();
+            let data = loro.export_snapshot().unwrap();
             b.iter(|| {
                 let l = LoroDoc::new();
                 l.import(&data).unwrap();
@@ -344,7 +344,7 @@ mod run {
                     .unwrap();
                 loro.import(&loro_b.export_from(&loro.oplog_vv())).unwrap();
             }
-            let data = loro.export_snapshot();
+            let data = loro.export_snapshot().unwrap();
             b.iter(|| {
                 let loro = LoroDoc::default();
                 loro.import(&data).unwrap();

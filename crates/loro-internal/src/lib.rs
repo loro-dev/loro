@@ -84,8 +84,8 @@ pub use encoding::json_schema::json;
 pub use fractional_index::FractionalIndex;
 pub use loro_common::{loro_value, to_value};
 pub use loro_common::{
-    Counter, CounterSpan, IdLp, IdSpan, Lamport, LoroError, LoroResult, LoroTreeError, PeerID,
-    TreeID, ID,
+    Counter, CounterSpan, IdLp, IdSpan, Lamport, LoroEncodeError, LoroError, LoroResult,
+    LoroTreeError, PeerID, TreeID, ID,
 };
 #[cfg(feature = "wasm")]
 pub use value::wasm;

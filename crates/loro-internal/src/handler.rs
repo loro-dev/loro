@@ -4020,7 +4020,7 @@ mod test {
         txn.commit().unwrap();
 
         let loro2 = LoroDoc::new();
-        loro2.import(&loro.export_snapshot()).unwrap();
+        loro2.import(&loro.export_snapshot().unwrap()).unwrap();
         let handler2 = loro2.get_text("richtext");
         assert_eq!(
             handler2.get_richtext_value().to_json_value(),
@@ -4055,7 +4055,7 @@ mod test {
             r#"[{"parent":null,"meta":{"a":123},"id":"0@1","index":0,"children":[],"fractional_index":"80"}]"#,
             tree.get_deep_value().to_json()
         );
-        let bytes = loro.export_snapshot();
+        let bytes = loro.export_snapshot().unwrap();
         let loro2 = LoroDoc::new();
         loro2.import(&bytes).unwrap();
     }

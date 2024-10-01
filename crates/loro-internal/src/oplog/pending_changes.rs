@@ -211,7 +211,7 @@ mod test {
         let text_a = a.get_text("text");
         a.with_txn(|txn| text_a.insert_with_txn(txn, 0, "a"))
             .unwrap();
-        let update1 = a.export_snapshot();
+        let update1 = a.export_snapshot().unwrap();
         let version1 = a.oplog_vv();
         a.with_txn(|txn| text_a.insert_with_txn(txn, 1, "b"))
             .unwrap();
@@ -282,14 +282,14 @@ mod test {
         let text_b = b.get_text("text");
         a.with_txn(|txn| text_a.insert_with_txn(txn, 0, "1"))
             .unwrap();
-        b.import(&a.export_snapshot()).unwrap();
+        b.import(&a.export_snapshot().unwrap()).unwrap();
         b.with_txn(|txn| text_b.insert_with_txn(txn, 0, "1"))
             .unwrap();
         let b_change = b.export_from(&a.oplog_vv());
         a.with_txn(|txn| text_a.insert_with_txn(txn, 0, "1"))
             .unwrap();
         c.import(&b_change).unwrap();
-        c.import(&a.export_snapshot()).unwrap();
+        c.import(&a.export_snapshot().unwrap()).unwrap();
         a.import(&b_change).unwrap();
         assert_eq!(c.get_deep_value(), a.get_deep_value());
     }

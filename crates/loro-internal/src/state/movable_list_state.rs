@@ -1982,7 +1982,7 @@ mod test {
         }
         {
             let doc_b = LoroDoc::new_auto_commit();
-            doc_b.import(&doc.export_snapshot()).unwrap();
+            doc_b.import(&doc.export_snapshot().unwrap()).unwrap();
             assert_eq!(
                 doc_b.get_deep_value().to_json_value(),
                 json!({

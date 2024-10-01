@@ -11,7 +11,7 @@ fn test_commit_message() {
 
     // The commit message can be synced to other peers as well
     let doc2 = LoroDoc::new();
-    doc2.import(&doc.export(loro::ExportMode::Snapshot))
+    doc2.import(&doc.export(loro::ExportMode::Snapshot).unwrap())
         .unwrap();
     let change = doc.get_change(ID::new(doc.peer_id(), 1)).unwrap();
     assert_eq!(change.message(), "edits");
@@ -51,7 +51,7 @@ fn test_syncing_commit_message() {
 
     // Export changes from doc1 and import to doc2
     let changes = doc1.export(loro::ExportMode::all_updates());
-    doc2.import(&changes).unwrap();
+    doc2.import(&changes.unwrap()).unwrap();
 
     // Verify the commit message was synced
     let change = doc2.get_change(ID::new(1, 1)).unwrap();
@@ -79,7 +79,7 @@ fn test_commit_message_sync_via_snapshot() {
 
     // Create a new doc from the snapshot
     let doc2 = LoroDoc::new();
-    doc2.import(&snapshot).unwrap();
+    doc2.import(&snapshot.unwrap()).unwrap();
 
     // Verify the commit messages were preserved in the snapshot
     let change1 = doc2.get_change(ID::new(1, 1)).unwrap();
@@ -107,7 +107,7 @@ fn test_commit_message_sync_via_fast_snapshot() {
     doc1.commit_with(CommitOptions::new().commit_msg("second edit"));
 
     let snapshot = doc1.export(loro::ExportMode::Snapshot);
-    doc2.import(&snapshot).unwrap();
+    doc2.import(&snapshot.unwrap()).unwrap();
 
     // Verify the commit messages were preserved in the snapshot
     let change1 = doc2.get_change(ID::new(1, 1)).unwrap();
@@ -121,7 +121,7 @@ fn test_commit_message_sync_via_fast_snapshot() {
     assert_eq!(text2.to_string(), "hello world");
     text2.delete(0, 10).unwrap();
     doc2.set_next_commit_message("From text2");
-    doc1.import(&doc2.export(loro::ExportMode::Snapshot))
+    doc1.import(&doc2.export(loro::ExportMode::Snapshot).unwrap())
         .unwrap();
     let c = doc1.get_change(ID::new(doc2.peer_id(), 0)).unwrap();
     assert_eq!(c.message(), "From text2");

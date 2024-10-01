@@ -65,7 +65,7 @@ pub fn main() {
     println!("Time cost {:?}", start.elapsed());
 
     let start = Instant::now();
-    let updates = doc.export(loro::ExportMode::all_updates());
+    let updates = doc.export(loro::ExportMode::all_updates()).unwrap();
     println!("Export updates time cost {:?}", start.elapsed());
     let start = Instant::now();
     let doc2 = LoroDoc::new();

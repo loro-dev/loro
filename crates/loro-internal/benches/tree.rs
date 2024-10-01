@@ -123,7 +123,7 @@ mod tree {
             for _ in 0..size {
                 ids.push(tree_a.create(TreeParentId::Root).unwrap())
             }
-            doc_b.import(&doc_a.export_snapshot()).unwrap();
+            doc_b.import(&doc_a.export_snapshot().unwrap()).unwrap();
             let mut rng: StdRng = rand::SeedableRng::seed_from_u64(0);
             let n = 1000;
             b.iter(|| {
