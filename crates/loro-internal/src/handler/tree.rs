@@ -303,6 +303,12 @@ impl TreeHandler {
     }
 
     pub fn create(&self, parent: TreeParentId) -> LoroResult<TreeID> {
+        match parent {
+            TreeParentId::Deleted | TreeParentId::Unexist => {
+                return Err(LoroTreeError::InvalidParent.into());
+            }
+            _ => {}
+        }
         let index: usize = self.children_num(&parent).unwrap_or(0);
         self.create_at(parent, index)
     }

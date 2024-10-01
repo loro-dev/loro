@@ -158,6 +158,8 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
     gc_state_kv.retain_keys(&alive_c_bytes);
     gc_state_kv.insert(FRONTIERS_KEY, start_from.encode().into());
     let gc_state_bytes = gc_state_kv.export();
+    // println!("gc_state_bytes.len = {:?}", gc_state_bytes.len());
+    // println!("oplog_bytes.len = {:?}", oplog_bytes.len());
     let snapshot = Snapshot {
         oplog_bytes,
         state_bytes,

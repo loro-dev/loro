@@ -117,6 +117,7 @@ impl InnerStore {
                 let cid: Bytes = cid.to_bytes().into();
                 let value = c.encode();
                 c.set_flushed(true);
+                // println!("cid.len = {} value.len = {}", cid.len(), value.len());
                 Some((cid, value))
             }));
     }

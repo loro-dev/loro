@@ -96,6 +96,8 @@ pub enum LoroError {
 pub enum LoroTreeError {
     #[error("`Cycle move` occurs when moving tree nodes.")]
     CyclicMoveError,
+    #[error("The provided parent id is invalid")]
+    InvalidParent,
     #[error("The parent of tree node is not found {0:?}")]
     TreeNodeParentNotFound(TreeID),
     #[error("TreeID {0:?} doesn't exist")]
