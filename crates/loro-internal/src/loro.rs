@@ -1479,12 +1479,12 @@ impl LoroDoc {
             ExportMode::UpdatesInRange { spans } => {
                 export_fast_updates_in_range(&self.oplog.try_lock().unwrap(), spans.as_ref())
             }
-            ExportMode::TrimmedSnapshot(f) => export_trimmed_snapshot(self, &f),
+            ExportMode::TrimmedSnapshot(f) => export_trimmed_snapshot(self, &f)?,
             ExportMode::StateOnly(f) => match f {
-                Some(f) => export_state_only_snapshot(self, &f),
-                None => export_state_only_snapshot(self, &self.oplog_frontiers()),
+                Some(f) => export_state_only_snapshot(self, &f)?,
+                None => export_state_only_snapshot(self, &self.oplog_frontiers())?,
             },
-            ExportMode::SnapshotAt { version } => export_fast_snapshot_at(self, &version),
+            ExportMode::SnapshotAt { version } => export_fast_snapshot_at(self, &version)?,
         };
 
         self.renew_txn_if_auto_commit();

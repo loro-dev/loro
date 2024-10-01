@@ -317,3 +317,67 @@ fn test_cursor_that_can_be_found_when_exporting_trimmed_snapshot() -> anyhow::Re
     }
     Ok(())
 }
+
+#[test]
+fn test_export_trimmed_snapshot_from_trimmed_doc() -> anyhow::Result<()> {
+    // Create and populate the original document
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    gen_action(&doc, 123, 32);
+    doc.commit();
+
+    // Get the current frontiers and create some more actions
+    let frontiers = doc.oplog_frontiers();
+    gen_action(&doc, 123, 32);
+    doc.commit();
+
+    // Export using TrimmedSnapshot mode
+    let trimmed_bytes = doc.export(loro::ExportMode::trimmed_snapshot(&frontiers))?;
+
+    // Import into a new document
+    let trimmed_doc = LoroDoc::new();
+    trimmed_doc.import(&trimmed_bytes)?;
+
+    // Attempt to export a trimmed snapshot from the trimmed document
+    // using frontiers before its trimmed version
+    let result = trimmed_doc.export(loro::ExportMode::trimmed_snapshot_from_id(ID::new(1, 16)));
+
+    // The export should fail because the requested frontiers are before the trimmed version
+    assert!(result.is_err());
+
+    if let Err(e) = result {
+        assert!(matches!(e, loro::LoroEncodeError::FrontiersNotFound(..)));
+    } else {
+        panic!("Expected an error, but got Ok");
+    }
+
+    Ok(())
+}
+
+#[test]
+#[should_panic]
+fn test_export_snapshot_from_trimmed_doc() {
+    // Create and populate the original document
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    gen_action(&doc, 123, 32);
+    doc.commit();
+
+    // Get the current frontiers and create some more actions
+    let frontiers = doc.oplog_frontiers();
+    gen_action(&doc, 123, 32);
+    doc.commit();
+
+    // Export using TrimmedSnapshot mode
+    let trimmed_bytes = doc
+        .export(loro::ExportMode::trimmed_snapshot(&frontiers))
+        .unwrap();
+
+    // Import into a new document
+    let trimmed_doc = LoroDoc::new();
+    trimmed_doc.import(&trimmed_bytes).unwrap();
+
+    // Attempt to export a trimmed snapshot from the trimmed document
+    // using frontiers before its trimmed version
+    trimmed_doc.export_snapshot();
+}

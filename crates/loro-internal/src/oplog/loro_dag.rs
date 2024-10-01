@@ -576,6 +576,20 @@ impl AppDag {
         }
     }
 
+    pub(crate) fn can_export_trimmed_snapshot_on(&self, deps: &Frontiers) -> bool {
+        for id in deps.iter() {
+            if !self.vv.includes_id(*id) {
+                return false;
+            }
+        }
+
+        if self.is_on_trimmed_history(deps) {
+            return false;
+        }
+
+        true
+    }
+
     pub(crate) fn is_on_trimmed_history(&self, deps: &Frontiers) -> bool {
         trace!("Is on trimmed history? deps={:?}", deps);
         trace!("self.trimmed_vv {:?}", &self.trimmed_vv);
