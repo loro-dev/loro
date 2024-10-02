@@ -12,5 +12,5 @@ fn issue_0() {
     doc.import_batch(&[bytes.into()]).unwrap();
     #[allow(deprecated)]
     doc.export_snapshot();
-    doc.export(loro::ExportMode::Snapshot);
+    doc.export(loro::ExportMode::Snapshot).unwrap();
 }

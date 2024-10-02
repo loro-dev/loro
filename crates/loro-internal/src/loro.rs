@@ -2,7 +2,8 @@ use either::Either;
 use fxhash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
 use loro_common::{
-    ContainerID, ContainerType, HasIdSpan, HasLamportSpan, IdSpan, LoroResult, LoroValue, ID,
+    ContainerID, ContainerType, HasIdSpan, HasLamportSpan, IdSpan, LoroEncodeError, LoroResult,
+    LoroValue, ID,
 };
 use rle::HasLength;
 use std::{
@@ -557,11 +558,14 @@ impl LoroDoc {
     }
 
     #[instrument(skip_all)]
-    pub fn export_snapshot(&self) -> Vec<u8> {
+    pub fn export_snapshot(&self) -> Result<Vec<u8>, LoroEncodeError> {
+        if self.is_trimmed() {
+            return Err(LoroEncodeError::TrimmedSnapshotIncompatibleWithOldFormat);
+        }
         self.commit_then_stop();
         let ans = export_snapshot(self);
         self.renew_txn_if_auto_commit();
-        ans
+        Ok(ans)
     }
 
     /// Import the json schema updates.
@@ -1205,8 +1209,9 @@ impl LoroDoc {
                 // 5. Compare the states of the new document and the current document.
 
                 // Step 1: Export the initial state from the GC snapshot.
-                let initial_snapshot =
-                    self.export(ExportMode::state_only(Some(&self.trimmed_frontiers())));
+                let initial_snapshot = self
+                    .export(ExportMode::state_only(Some(&self.trimmed_frontiers())))
+                    .unwrap();
 
                 // Step 2: Create a new document and import the initial snapshot.
                 let doc = LoroDoc::new();
@@ -1215,7 +1220,7 @@ impl LoroDoc {
                 assert_eq!(self.get_deep_value(), doc.get_deep_value());
 
                 // Step 3: Export updates from the trimmed version vector to the current version.
-                let updates = self.export(ExportMode::all_updates());
+                let updates = self.export(ExportMode::all_updates()).unwrap();
 
                 // Step 4: Import these updates into the new document.
                 doc.import(&updates).unwrap();
@@ -1236,7 +1241,7 @@ impl LoroDoc {
                     .dag
                     .frontiers_to_vv(&f)
                     .unwrap();
-                let bytes = self.export(ExportMode::updates_till(&vv));
+                let bytes = self.export(ExportMode::updates_till(&vv)).unwrap();
                 let doc = Self::new();
                 doc.import(&bytes).unwrap();
                 let mut calculated_state = doc.app_state().try_lock().unwrap();
@@ -1466,7 +1471,7 @@ impl LoroDoc {
     }
 
     #[instrument(skip(self))]
-    pub fn export(&self, mode: ExportMode) -> Vec<u8> {
+    pub fn export(&self, mode: ExportMode) -> Result<Vec<u8>, LoroEncodeError> {
         self.commit_then_stop();
         let ans = match mode {
             ExportMode::Snapshot => export_fast_snapshot(self),
@@ -1474,16 +1479,16 @@ impl LoroDoc {
             ExportMode::UpdatesInRange { spans } => {
                 export_fast_updates_in_range(&self.oplog.try_lock().unwrap(), spans.as_ref())
             }
-            ExportMode::TrimmedSnapshot(f) => export_trimmed_snapshot(self, &f),
+            ExportMode::TrimmedSnapshot(f) => export_trimmed_snapshot(self, &f)?,
             ExportMode::StateOnly(f) => match f {
-                Some(f) => export_state_only_snapshot(self, &f),
-                None => export_state_only_snapshot(self, &self.oplog_frontiers()),
+                Some(f) => export_state_only_snapshot(self, &f)?,
+                None => export_state_only_snapshot(self, &self.oplog_frontiers())?,
             },
-            ExportMode::SnapshotAt { version } => export_fast_snapshot_at(self, &version),
+            ExportMode::SnapshotAt { version } => export_fast_snapshot_at(self, &version)?,
         };
 
         self.renew_txn_if_auto_commit();
-        ans
+        Ok(ans)
     }
 
     pub fn trimmed_vv(&self) -> ImVersionVector {
@@ -1677,7 +1682,7 @@ mod test {
         }
         txn.commit().unwrap();
         let b = LoroDoc::new();
-        b.import(&loro.export_snapshot()).unwrap();
+        b.import(&loro.export_snapshot().unwrap()).unwrap();
         loro.checkout(&Frontiers::default()).unwrap();
         {
             let json = &loro.get_deep_value();
@@ -1711,7 +1716,7 @@ mod test {
         let a = LoroDoc::new_auto_commit();
         let update_a = a.export_snapshot();
         let b = LoroDoc::new_auto_commit();
-        b.import_batch(&[update_a]).unwrap();
+        b.import_batch(&[update_a.unwrap()]).unwrap();
         b.get_text("text").insert(0, "hello").unwrap();
         b.commit_then_renew();
         let oplog = b.oplog().try_lock().unwrap();

@@ -54,7 +54,7 @@ fn updates_with_commit_message_can_be_imported_to_016() {
     }
 
     let doc3 = loro::LoroDoc::new();
-    doc3.import(&doc1.export(loro::ExportMode::Snapshot))
+    doc3.import(&doc1.export(loro::ExportMode::Snapshot).unwrap())
         .unwrap();
     let change_from_2 = doc3.get_change(ID::new(doc2.peer_id(), 0)).unwrap();
     assert_eq!(change_from_2.len, 3);

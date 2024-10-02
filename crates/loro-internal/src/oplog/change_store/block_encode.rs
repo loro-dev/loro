@@ -694,11 +694,11 @@ mod test {
         let bytes = doc.export_from(&Default::default());
         println!("Old Update bytes {:?}", dev_utils::ByteSize(bytes.length()));
 
-        let bytes = doc.export(crate::loro::ExportMode::all_updates());
+        let bytes = doc.export(crate::loro::ExportMode::all_updates()).unwrap();
         println!("Update bytes {:?}", dev_utils::ByteSize(bytes.length()));
         // assert!(bytes.len() < 30);
 
-        let bytes = doc.export(crate::loro::ExportMode::Snapshot);
+        let bytes = doc.export(crate::loro::ExportMode::Snapshot).unwrap();
         println!("Snapshot bytes {:?}", dev_utils::ByteSize(bytes.length()));
         // assert!(bytes.len() < 30);
 

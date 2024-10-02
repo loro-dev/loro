@@ -63,7 +63,7 @@ pub(super) fn _decode_snapshot_bytes(bytes: Bytes) -> LoroResult<Snapshot> {
     Ok(Snapshot {
         oplog_bytes,
         state_bytes,
-        trimmed_bytes: trimmed_bytes,
+        trimmed_bytes,
     })
 }
 

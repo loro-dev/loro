@@ -15,7 +15,7 @@ use crate::op::OpWithId;
 use crate::version::Frontiers;
 use crate::LoroDoc;
 use crate::{oplog::OpLog, LoroError, VersionVector};
-use loro_common::{IdLpSpan, IdSpan, LoroResult, PeerID, ID};
+use loro_common::{IdLpSpan, IdSpan, LoroEncodeError, LoroResult, PeerID, ID};
 use num_traits::{FromPrimitive, ToPrimitive};
 use rle::{HasLength, Sliceable};
 use serde::{Deserialize, Serialize};
@@ -346,10 +346,14 @@ pub(crate) fn export_fast_snapshot(doc: &LoroDoc) -> Vec<u8> {
     })
 }
 
-pub(crate) fn export_fast_snapshot_at(doc: &LoroDoc, frontiers: &Frontiers) -> Vec<u8> {
-    encode_with(EncodeMode::FastSnapshot, &mut |ans| {
+pub(crate) fn export_fast_snapshot_at(
+    doc: &LoroDoc,
+    frontiers: &Frontiers,
+) -> Result<Vec<u8>, LoroEncodeError> {
+    check_target_version_reachable(doc, frontiers)?;
+    Ok(encode_with(EncodeMode::FastSnapshot, &mut |ans| {
         outdated_fast_snapshot::encode_snapshot_at(doc, frontiers, ans).unwrap();
-    })
+    }))
 }
 
 pub(crate) fn export_fast_updates(doc: &LoroDoc, vv: &VersionVector) -> Vec<u8> {
@@ -364,16 +368,33 @@ pub(crate) fn export_fast_updates_in_range(oplog: &OpLog, spans: &[IdSpan]) -> V
     })
 }
 
-pub(crate) fn export_trimmed_snapshot(doc: &LoroDoc, f: &Frontiers) -> Vec<u8> {
-    encode_with(EncodeMode::FastSnapshot, &mut |ans| {
+pub(crate) fn export_trimmed_snapshot(
+    doc: &LoroDoc,
+    f: &Frontiers,
+) -> Result<Vec<u8>, LoroEncodeError> {
+    check_target_version_reachable(doc, f)?;
+    Ok(encode_with(EncodeMode::FastSnapshot, &mut |ans| {
         trimmed_snapshot::export_trimmed_snapshot(doc, f, ans).unwrap();
-    })
+    }))
 }
 
-pub(crate) fn export_state_only_snapshot(doc: &LoroDoc, f: &Frontiers) -> Vec<u8> {
-    encode_with(EncodeMode::FastSnapshot, &mut |ans| {
+fn check_target_version_reachable(doc: &LoroDoc, f: &Frontiers) -> Result<(), LoroEncodeError> {
+    let oplog = doc.oplog.try_lock().unwrap();
+    if !oplog.dag.can_export_trimmed_snapshot_on(f) {
+        return Err(LoroEncodeError::FrontiersNotFound(format!("{:?}", f)));
+    }
+
+    Ok(())
+}
+
+pub(crate) fn export_state_only_snapshot(
+    doc: &LoroDoc,
+    f: &Frontiers,
+) -> Result<Vec<u8>, LoroEncodeError> {
+    check_target_version_reachable(doc, f)?;
+    Ok(encode_with(EncodeMode::FastSnapshot, &mut |ans| {
         trimmed_snapshot::export_state_only_snapshot(doc, f, ans).unwrap();
-    })
+    }))
 }
 
 fn encode_with(mode: EncodeMode, f: &mut dyn FnMut(&mut Vec<u8>)) -> Vec<u8> {

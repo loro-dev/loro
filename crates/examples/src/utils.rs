@@ -38,7 +38,7 @@ pub fn bench_fast_snapshot(doc: &LoroDoc) {
     {
         println!("======== New snapshot mode =========");
         let start = Instant::now();
-        let snapshot = doc.export(loro::ExportMode::Snapshot);
+        let snapshot = doc.export(loro::ExportMode::Snapshot).unwrap();
         let elapsed = start.elapsed();
         println!("Fast Snapshot size: {}", ByteSize(snapshot.len()));
         println!("Export fast snapshot time: {:?}", elapsed);
@@ -85,7 +85,9 @@ pub fn bench_fast_snapshot(doc: &LoroDoc) {
     {
         println!("======== New snapshot mode with GC =========");
         let start = Instant::now();
-        let snapshot = doc.export(loro::ExportMode::trimmed_snapshot(&doc.oplog_frontiers()));
+        let snapshot = doc
+            .export(loro::ExportMode::trimmed_snapshot(&doc.oplog_frontiers()))
+            .unwrap();
         let elapsed = start.elapsed();
         println!("Fast Snapshot size: {}", ByteSize(snapshot.len()));
         println!("Export fast snapshot time: {:?}", elapsed);

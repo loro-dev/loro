@@ -114,16 +114,24 @@ pub enum LoroTreeError {
 pub enum LoroEncodeError {
     #[error("The frontiers are not found in this doc: {0}")]
     FrontiersNotFound(String),
+    #[error("Trimmed snapshot incompatible with old snapshot format. Use new snapshot format or avoid trimmed snapshots for storage.")]
+    TrimmedSnapshotIncompatibleWithOldFormat,
 }
 
 #[cfg(feature = "wasm")]
 pub mod wasm {
     use wasm_bindgen::JsValue;
 
-    use crate::LoroError;
+    use crate::{LoroEncodeError, LoroError};
 
     impl From<LoroError> for JsValue {
         fn from(value: LoroError) -> Self {
+            JsValue::from_str(&value.to_string())
+        }
+    }
+
+    impl From<LoroEncodeError> for JsValue {
+        fn from(value: LoroEncodeError) -> Self {
             JsValue::from_str(&value.to_string())
         }
     }

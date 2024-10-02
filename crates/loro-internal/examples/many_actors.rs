@@ -23,7 +23,7 @@ fn import_with_many_actors() {
 
     {
         let start = Instant::now();
-        let bytes = store.export_snapshot();
+        let bytes = store.export_snapshot().unwrap();
         LoroDoc::default().import(&bytes).unwrap();
         println!("{} ms", start.elapsed().as_millis());
     }
