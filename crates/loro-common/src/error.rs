@@ -110,12 +110,15 @@ pub enum LoroTreeError {
     TreeNodeDeletedOrNotExist(TreeID),
 }
 
+#[non_exhaustive]
 #[derive(Error, Debug, PartialEq)]
 pub enum LoroEncodeError {
     #[error("The frontiers are not found in this doc: {0}")]
     FrontiersNotFound(String),
     #[error("Trimmed snapshot incompatible with old snapshot format. Use new snapshot format or avoid trimmed snapshots for storage.")]
     TrimmedSnapshotIncompatibleWithOldFormat,
+    #[error("Cannot export trimmed snapshot with unknown container type. Please upgrade the Loro version.")]
+    UnknownContainer,
 }
 
 #[cfg(feature = "wasm")]

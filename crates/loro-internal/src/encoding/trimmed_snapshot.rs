@@ -1,13 +1,14 @@
+use bytes::Bytes;
 use rle::HasLength;
 use std::collections::BTreeSet;
 
-use loro_common::{ContainerID, LoroResult, ID};
+use loro_common::{ContainerID, ContainerType, LoroEncodeError, ID};
 use tracing::{debug, trace};
 
 use crate::{
     container::list::list_op::InnerListOp,
     dag::{Dag, DagUtils},
-    encoding::outdated_fast_snapshot::{Snapshot, _encode_snapshot},
+    encoding::fast_snapshot::{Snapshot, _encode_snapshot},
     state::container_store::FRONTIERS_KEY,
     version::Frontiers,
     LoroDoc,
@@ -23,7 +24,7 @@ pub(crate) fn export_trimmed_snapshot<W: std::io::Write>(
     doc: &LoroDoc,
     start_from: &Frontiers,
     w: &mut W,
-) -> LoroResult<Frontiers> {
+) -> Result<Frontiers, LoroEncodeError> {
     let oplog = doc.oplog().try_lock().unwrap();
     let start_from = calc_trimmed_doc_start(&oplog, start_from);
     let mut start_vv = oplog.dag().frontiers_to_vv(&start_from).unwrap();
@@ -62,9 +63,12 @@ pub(crate) fn export_trimmed_snapshot<W: std::io::Write>(
     let latest_vv = oplog.vv();
     let ops_num: usize = latest_vv.sub_iter(&start_vv).map(|x| x.atom_len()).sum();
     drop(oplog);
-    doc.checkout_without_emitting(&start_from)?;
+    doc.checkout_without_emitting(&start_from).unwrap();
     let mut state = doc.app_state().try_lock().unwrap();
     let alive_containers = state.ensure_all_alive_containers();
+    if has_unknown_container(alive_containers.iter()) {
+        return Err(LoroEncodeError::UnknownContainer);
+    }
     let mut alive_c_bytes: BTreeSet<Vec<u8>> =
         alive_containers.iter().map(|x| x.to_bytes()).collect();
     state.store.flush();
@@ -119,11 +123,15 @@ pub(crate) fn export_trimmed_snapshot<W: std::io::Write>(
     Ok(start_from)
 }
 
+fn has_unknown_container<'a>(mut cids: impl Iterator<Item = &'a ContainerID>) -> bool {
+    cids.any(|cid| matches!(cid.container_type(), ContainerType::Unknown(_)))
+}
+
 pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
     doc: &LoroDoc,
     start_from: &Frontiers,
     w: &mut W,
-) -> LoroResult<Frontiers> {
+) -> Result<Frontiers, LoroEncodeError> {
     let oplog = doc.oplog().try_lock().unwrap();
     let start_from = calc_trimmed_doc_start(&oplog, start_from);
     let mut start_vv = oplog.dag().frontiers_to_vv(&start_from).unwrap();
@@ -147,14 +155,13 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
     let state_frontiers = doc.state_frontiers();
     let is_attached = !doc.is_detached();
     drop(oplog);
-    doc.checkout_without_emitting(&start_from)?;
+    doc.checkout_without_emitting(&start_from).unwrap();
     let mut state = doc.app_state().try_lock().unwrap();
     let alive_containers = state.ensure_all_alive_containers();
-    let alive_c_bytes: BTreeSet<Vec<u8>> = alive_containers.iter().map(|x| x.to_bytes()).collect();
+    let alive_c_bytes = cids_to_bytes(alive_containers);
     state.store.flush();
     let trimmed_state_kv = state.store.get_kv().clone();
     drop(state);
-    let state_bytes = None;
     trimmed_state_kv.retain_keys(&alive_c_bytes);
     trimmed_state_kv.insert(FRONTIERS_KEY, start_from.encode().into());
     let trimmed_state_bytes = trimmed_state_kv.export();
@@ -162,7 +169,7 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
     // println!("oplog_bytes.len = {:?}", oplog_bytes.len());
     let snapshot = Snapshot {
         oplog_bytes,
-        state_bytes,
+        state_bytes: None,
         trimmed_bytes: trimmed_state_bytes,
     };
     _encode_snapshot(snapshot, w);
@@ -177,6 +184,16 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
 
     doc.drop_pending_events();
     Ok(start_from)
+}
+
+fn cids_to_bytes(
+    alive_containers: std::collections::HashSet<
+        ContainerID,
+        std::hash::BuildHasherDefault<fxhash::FxHasher>,
+    >,
+) -> BTreeSet<Vec<u8>> {
+    let alive_c_bytes: BTreeSet<Vec<u8>> = alive_containers.iter().map(|x| x.to_bytes()).collect();
+    alive_c_bytes
 }
 
 /// Calculates optimal starting version for the trimmed doc
@@ -209,4 +226,59 @@ fn calc_trimmed_doc_start(oplog: &crate::OpLog, frontiers: &Frontiers) -> Fronti
     }
 
     start
+}
+
+pub(crate) fn encode_snapshot_at<W: std::io::Write>(
+    doc: &LoroDoc,
+    frontiers: &Frontiers,
+    w: &mut W,
+) -> Result<(), LoroEncodeError> {
+    let version_before_start = doc.oplog_frontiers();
+    doc.checkout_without_emitting(frontiers).unwrap();
+    {
+        let mut state = doc.app_state().try_lock().unwrap();
+        let oplog = doc.oplog().try_lock().unwrap();
+        let is_trimmed = state.store.trimmed_store().is_some();
+        if is_trimmed {
+            unimplemented!()
+        }
+
+        assert!(!state.is_in_txn());
+        let Some(oplog_bytes) = oplog.fork_changes_up_to(frontiers) else {
+            return Err(LoroEncodeError::FrontiersNotFound(format!(
+                "frontiers: {:?} when export in SnapshotAt mode",
+                frontiers
+            )));
+        };
+
+        if oplog.is_trimmed() {
+            assert_eq!(
+                oplog.trimmed_frontiers(),
+                state.store.trimmed_frontiers().unwrap()
+            );
+        }
+
+        let alive_containers = state.ensure_all_alive_containers();
+        if has_unknown_container(alive_containers.iter()) {
+            return Err(LoroEncodeError::UnknownContainer);
+        }
+
+        let alive_c_bytes = cids_to_bytes(alive_containers);
+        state.store.flush();
+        let state_kv = state.store.get_kv().clone();
+        state_kv.retain_keys(&alive_c_bytes);
+        let bytes = state_kv.export();
+        _encode_snapshot(
+            Snapshot {
+                oplog_bytes,
+                state_bytes: Some(bytes),
+                trimmed_bytes: Bytes::new(),
+            },
+            w,
+        );
+    }
+    doc.checkout_without_emitting(&version_before_start)
+        .unwrap();
+    doc.drop_pending_events();
+    Ok(())
 }

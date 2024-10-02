@@ -1,15 +1,14 @@
 pub(crate) mod arena;
-mod encode_reordered;
+mod fast_snapshot;
+pub(crate) mod json_schema;
+mod outdated_encode_reordered;
+mod trimmed_snapshot;
 pub(crate) mod value;
 pub(crate) mod value_register;
-use std::borrow::Cow;
-
-pub(crate) use encode_reordered::{
+pub(crate) use outdated_encode_reordered::{
     decode_op, encode_op, get_op_prop, EncodedDeleteStartId, IterableEncodedDeleteStartId,
 };
-pub(crate) mod json_schema;
-mod outdated_fast_snapshot;
-mod trimmed_snapshot;
+pub(crate) use value::OwnedValue;
 
 use crate::op::OpWithId;
 use crate::version::Frontiers;
@@ -19,7 +18,7 @@ use loro_common::{IdLpSpan, IdSpan, LoroEncodeError, LoroResult, PeerID, ID};
 use num_traits::{FromPrimitive, ToPrimitive};
 use rle::{HasLength, Sliceable};
 use serde::{Deserialize, Serialize};
-pub(crate) use value::OwnedValue;
+use std::borrow::Cow;
 
 #[non_exhaustive]
 #[derive(Debug, Clone)]
@@ -234,7 +233,7 @@ pub(crate) fn encode_oplog(oplog: &OpLog, vv: &VersionVector, mode: EncodeMode) 
     };
 
     let body = match &mode {
-        EncodeMode::OutdatedRle => encode_reordered::encode_updates(oplog, vv),
+        EncodeMode::OutdatedRle => outdated_encode_reordered::encode_updates(oplog, vv),
         _ => unreachable!(),
     };
 
@@ -248,12 +247,10 @@ pub(crate) fn decode_oplog(
     let ParsedHeaderAndBody { mode, body, .. } = parsed;
     match mode {
         EncodeMode::OutdatedRle | EncodeMode::OutdatedSnapshot => {
-            encode_reordered::decode_updates(oplog, body)
+            outdated_encode_reordered::decode_updates(oplog, body)
         }
-        EncodeMode::FastSnapshot => outdated_fast_snapshot::decode_oplog(oplog, body),
-        EncodeMode::FastUpdates => {
-            outdated_fast_snapshot::decode_updates(oplog, body.to_vec().into())
-        }
+        EncodeMode::FastSnapshot => fast_snapshot::decode_oplog(oplog, body),
+        EncodeMode::FastUpdates => fast_snapshot::decode_updates(oplog, body.to_vec().into()),
         EncodeMode::Auto => unreachable!(),
     }
 }
@@ -331,7 +328,7 @@ fn encode_header_and_body(mode: EncodeMode, body: Vec<u8>) -> Vec<u8> {
 }
 
 pub(crate) fn export_snapshot(doc: &LoroDoc) -> Vec<u8> {
-    let body = encode_reordered::encode_snapshot(
+    let body = outdated_encode_reordered::encode_snapshot(
         &doc.oplog().try_lock().unwrap(),
         &mut doc.app_state().try_lock().unwrap(),
         &Default::default(),
@@ -342,30 +339,36 @@ pub(crate) fn export_snapshot(doc: &LoroDoc) -> Vec<u8> {
 
 pub(crate) fn export_fast_snapshot(doc: &LoroDoc) -> Vec<u8> {
     encode_with(EncodeMode::FastSnapshot, &mut |ans| {
-        outdated_fast_snapshot::encode_snapshot(doc, ans);
+        fast_snapshot::encode_snapshot(doc, ans);
+        Ok(())
     })
+    .unwrap()
 }
 
-pub(crate) fn export_fast_snapshot_at(
+pub(crate) fn export_snapshot_at(
     doc: &LoroDoc,
     frontiers: &Frontiers,
 ) -> Result<Vec<u8>, LoroEncodeError> {
     check_target_version_reachable(doc, frontiers)?;
-    Ok(encode_with(EncodeMode::FastSnapshot, &mut |ans| {
-        outdated_fast_snapshot::encode_snapshot_at(doc, frontiers, ans).unwrap();
-    }))
+    encode_with(EncodeMode::FastSnapshot, &mut |ans| {
+        trimmed_snapshot::encode_snapshot_at(doc, frontiers, ans)
+    })
 }
 
 pub(crate) fn export_fast_updates(doc: &LoroDoc, vv: &VersionVector) -> Vec<u8> {
     encode_with(EncodeMode::FastUpdates, &mut |ans| {
-        outdated_fast_snapshot::encode_updates(doc, vv, ans);
+        fast_snapshot::encode_updates(doc, vv, ans);
+        Ok(())
     })
+    .unwrap()
 }
 
 pub(crate) fn export_fast_updates_in_range(oplog: &OpLog, spans: &[IdSpan]) -> Vec<u8> {
     encode_with(EncodeMode::FastUpdates, &mut |ans| {
-        outdated_fast_snapshot::encode_updates_in_range(oplog, spans, ans);
+        fast_snapshot::encode_updates_in_range(oplog, spans, ans);
+        Ok(())
     })
+    .unwrap()
 }
 
 pub(crate) fn export_trimmed_snapshot(
@@ -373,9 +376,10 @@ pub(crate) fn export_trimmed_snapshot(
     f: &Frontiers,
 ) -> Result<Vec<u8>, LoroEncodeError> {
     check_target_version_reachable(doc, f)?;
-    Ok(encode_with(EncodeMode::FastSnapshot, &mut |ans| {
-        trimmed_snapshot::export_trimmed_snapshot(doc, f, ans).unwrap();
-    }))
+    encode_with(EncodeMode::FastSnapshot, &mut |ans| {
+        trimmed_snapshot::export_trimmed_snapshot(doc, f, ans)?;
+        Ok(())
+    })
 }
 
 fn check_target_version_reachable(doc: &LoroDoc, f: &Frontiers) -> Result<(), LoroEncodeError> {
@@ -392,12 +396,16 @@ pub(crate) fn export_state_only_snapshot(
     f: &Frontiers,
 ) -> Result<Vec<u8>, LoroEncodeError> {
     check_target_version_reachable(doc, f)?;
-    Ok(encode_with(EncodeMode::FastSnapshot, &mut |ans| {
-        trimmed_snapshot::export_state_only_snapshot(doc, f, ans).unwrap();
-    }))
+    encode_with(EncodeMode::FastSnapshot, &mut |ans| {
+        trimmed_snapshot::export_state_only_snapshot(doc, f, ans)?;
+        Ok(())
+    })
 }
 
-fn encode_with(mode: EncodeMode, f: &mut dyn FnMut(&mut Vec<u8>)) -> Vec<u8> {
+fn encode_with(
+    mode: EncodeMode,
+    f: &mut dyn FnMut(&mut Vec<u8>) -> Result<(), LoroEncodeError>,
+) -> Result<Vec<u8>, LoroEncodeError> {
     // HEADER
     let mut ans = Vec::with_capacity(MIN_HEADER_SIZE);
     ans.extend(MAGIC_BYTES);
@@ -406,13 +414,13 @@ fn encode_with(mode: EncodeMode, f: &mut dyn FnMut(&mut Vec<u8>)) -> Vec<u8> {
     ans.extend(mode.to_bytes());
 
     // BODY
-    f(&mut ans);
+    f(&mut ans)?;
 
     // CHECKSUM in HEADER
     let checksum_body = &ans[20..];
     let checksum = xxhash_rust::xxh32::xxh32(checksum_body, XXH_SEED);
     ans[16..20].copy_from_slice(&checksum.to_le_bytes());
-    ans
+    Ok(ans)
 }
 
 pub(crate) fn decode_snapshot(
@@ -421,10 +429,8 @@ pub(crate) fn decode_snapshot(
     body: &[u8],
 ) -> Result<(), LoroError> {
     match mode {
-        EncodeMode::OutdatedSnapshot => encode_reordered::decode_snapshot(doc, body),
-        EncodeMode::FastSnapshot => {
-            outdated_fast_snapshot::decode_snapshot(doc, body.to_vec().into())
-        }
+        EncodeMode::OutdatedSnapshot => outdated_encode_reordered::decode_snapshot(doc, body),
+        EncodeMode::FastSnapshot => fast_snapshot::decode_snapshot(doc, body.to_vec().into()),
         _ => unreachable!(),
     }
 }
@@ -453,7 +459,7 @@ pub struct ImportBlobMetadata {
 impl LoroDoc {
     /// Decodes the metadata for an imported blob from the provided bytes.
     pub fn decode_import_blob_meta(blob: &[u8]) -> LoroResult<ImportBlobMetadata> {
-        encode_reordered::decode_import_blob_meta(blob)
+        outdated_encode_reordered::decode_import_blob_meta(blob)
     }
 }
 

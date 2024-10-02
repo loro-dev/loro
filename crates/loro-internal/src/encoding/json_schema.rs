@@ -22,7 +22,9 @@ use crate::{
     OpLog, VersionVector,
 };
 
-use super::encode_reordered::{import_changes_to_oplog, ImportChangesResult, ValueRegister};
+use super::outdated_encode_reordered::{
+    import_changes_to_oplog, ImportChangesResult, ValueRegister,
+};
 use json::{JsonOpContent, JsonSchema};
 
 const SCHEMA_VERSION: u8 = 1;

@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use crate::{
     change::Lamport, container::tree::tree_op::TreeOp,
-    encoding::encode_reordered::MAX_COLLECTION_SIZE,
+    encoding::outdated_encode_reordered::MAX_COLLECTION_SIZE,
 };
 
 use super::{
