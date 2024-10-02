@@ -42,13 +42,13 @@ impl TextActor {
         );
         let tracker = Arc::new(Mutex::new(ContainerTracker::Map(tracker)));
         let text = tracker.clone();
-
         loro.subscribe(
             &ContainerID::new_root("text", ContainerType::Text),
             Arc::new(move |event| {
                 text.try_lock().unwrap().apply_diff(event);
             }),
-        );
+        )
+        .detach();
         let root = loro.get_text("text");
         TextActor {
             loro,

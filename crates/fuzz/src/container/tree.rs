@@ -113,7 +113,8 @@ impl TreeActor {
                 tree.try_lock().unwrap().apply_diff(event);
                 // println!("after {:?}\n", tree.try_lock().unwrap().as_map().unwrap());
             }),
-        );
+        )
+        .detach();
 
         let root = loro.get_tree("tree");
         root.enable_fractional_index(0);

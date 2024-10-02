@@ -23,7 +23,7 @@ fn allow_editing_on_detached_mode_when_detached_editing_is_enabled() {
     doc.set_peer_id(1).unwrap();
     let string = Arc::new(Mutex::new(String::new()));
     let string_clone = string.clone();
-    doc.subscribe_root(Arc::new(move |batch| {
+    let _g = doc.subscribe_root(Arc::new(move |batch| {
         for e in batch.events {
             match e.diff {
                 loro::event::Diff::Text(vec) => {
@@ -177,7 +177,7 @@ fn allow_editing_on_detached_mode_when_detached_editing_is_enabled_2() {
     doc.set_peer_id(1).unwrap();
     let string = Arc::new(Mutex::new(String::new()));
     let string_clone = string.clone();
-    doc.subscribe_root(Arc::new(move |batch| {
+    let _g = doc.subscribe_root(Arc::new(move |batch| {
         for e in batch.events {
             match e.diff {
                 loro::event::Diff::Text(vec) => {

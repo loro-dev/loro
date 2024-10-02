@@ -94,7 +94,7 @@ fn mark_with_the_same_key_value_should_be_skipped() {
 #[test]
 fn event_from_checkout() {
     let a = LoroDoc::new_auto_commit();
-    let sub_id = a.subscribe_root(Arc::new(|event| {
+    let sub = a.subscribe_root(Arc::new(|event| {
         assert!(matches!(
             event.event_meta.by,
             EventTriggerKind::Checkout | EventTriggerKind::Local
@@ -105,10 +105,10 @@ fn event_from_checkout() {
     let version = a.oplog_frontiers();
     a.get_text("text").insert(0, "hello").unwrap();
     a.commit_then_renew();
-    a.unsubscribe(sub_id);
+    sub.unsubscribe();
     let ran = Arc::new(AtomicBool::new(false));
     let ran_cloned = ran.clone();
-    a.subscribe_root(Arc::new(move |event| {
+    let _g = a.subscribe_root(Arc::new(move |event| {
         assert!(event.event_meta.by.is_checkout());
         ran.store(true, std::sync::atomic::Ordering::Relaxed);
     }));
@@ -119,7 +119,7 @@ fn event_from_checkout() {
 #[test]
 fn handler_in_event() {
     let doc = LoroDoc::new_auto_commit();
-    doc.subscribe_root(Arc::new(|e| {
+    let _g = doc.subscribe_root(Arc::new(|e| {
         dbg!(&e);
         let value = e.events[0]
             .diff
@@ -200,7 +200,7 @@ fn list() {
 #[test]
 fn richtext_mark_event() {
     let a = LoroDoc::new_auto_commit();
-    a.subscribe(
+    let _g = a.subscribe(
         &a.get_text("text").id(),
         Arc::new(|e| {
             let delta = e.events[0].diff.as_text().unwrap();
@@ -221,7 +221,7 @@ fn richtext_mark_event() {
         .unwrap();
     a.commit_then_stop();
     let b = LoroDoc::new_auto_commit();
-    b.subscribe(
+    let _g = b.subscribe(
         &a.get_text("text").id(),
         Arc::new(|e| {
             let delta = e.events[0].diff.as_text().unwrap();
@@ -265,7 +265,7 @@ fn concurrent_richtext_mark_event() {
     );
 
     a.merge(&b).unwrap();
-    a.unsubscribe(sub_id);
+    sub_id.unsubscribe();
 
     let sub_id = a.subscribe(
         &a.get_text("text").id(),
@@ -290,8 +290,8 @@ fn concurrent_richtext_mark_event() {
         .mark(2, 3, "bold", LoroValue::Null)
         .unwrap();
     a.merge(&b).unwrap();
-    a.unsubscribe(sub_id);
-    a.subscribe(
+    sub_id.unsubscribe();
+    let _g = a.subscribe(
         &a.get_text("text").id(),
         Arc::new(|e| {
             for container_diff in e.events {
@@ -322,7 +322,7 @@ fn insert_richtext_event() {
     a.get_text("text").mark(0, 5, "bold", true.into()).unwrap();
     a.commit_then_renew();
     let text = a.get_text("text");
-    a.subscribe(
+    let _g = a.subscribe(
         &text.id(),
         Arc::new(|e| {
             let delta = e.events[0].diff.as_text().unwrap();
@@ -342,7 +342,7 @@ fn insert_richtext_event() {
 #[test]
 fn import_after_init_handlers() {
     let a = LoroDoc::new_auto_commit();
-    a.subscribe(
+    let _g = a.subscribe(
         &ContainerID::new_root("text", ContainerType::Text),
         Arc::new(|event| {
             assert!(matches!(
@@ -351,7 +351,7 @@ fn import_after_init_handlers() {
             ))
         }),
     );
-    a.subscribe(
+    let _g = a.subscribe(
         &ContainerID::new_root("map", ContainerType::Map),
         Arc::new(|event| {
             assert!(matches!(
@@ -360,7 +360,7 @@ fn import_after_init_handlers() {
             ))
         }),
     );
-    a.subscribe(
+    let _g = a.subscribe(
         &ContainerID::new_root("list", ContainerType::List),
         Arc::new(|event| {
             assert!(matches!(
@@ -429,7 +429,7 @@ fn test_checkout() {
 
     let value: Arc<Mutex<LoroValue>> = Arc::new(Mutex::new(LoroValue::Map(Default::default())));
     let root_value = value.clone();
-    doc_0.subscribe_root(Arc::new(move |event| {
+    let _g = doc_0.subscribe_root(Arc::new(move |event| {
         dbg!(&event);
         let mut root_value = root_value.try_lock().unwrap();
         for container_diff in event.events {
@@ -722,7 +722,7 @@ fn map_concurrent_checkout() {
 #[test]
 fn tree_checkout() {
     let doc_a = LoroDoc::new_auto_commit();
-    doc_a.subscribe_root(Arc::new(|_e| {}));
+    let _g = doc_a.subscribe_root(Arc::new(|_e| {}));
     doc_a.set_peer_id(1).unwrap();
     let tree = doc_a.get_tree("root");
     let id1 = tree.create(TreeParentId::Root).unwrap();
@@ -803,7 +803,7 @@ fn state_may_deadlock_when_import() {
     panic_after(Duration::from_millis(100), || {
         let doc = LoroDoc::new_auto_commit();
         let map = doc.get_map("map");
-        doc.subscribe_root(Arc::new(move |_e| {
+        let _g = doc.subscribe_root(Arc::new(move |_e| {
             map.id();
         }));
 
@@ -824,7 +824,7 @@ fn missing_event_when_checkout() {
     doc.checkout(&doc.oplog_frontiers()).unwrap();
     let value = Arc::new(Mutex::new(FxHashMap::default()));
     let map = value.clone();
-    doc.subscribe(
+    let _g = doc.subscribe(
         &ContainerID::new_root("tree", ContainerType::Tree),
         Arc::new(move |e| {
             let mut v = map.try_lock().unwrap();
@@ -875,7 +875,7 @@ fn empty_event() {
     doc.commit_then_renew();
     let fire = Arc::new(AtomicBool::new(false));
     let fire_clone = Arc::clone(&fire);
-    doc.subscribe_root(Arc::new(move |_e| {
+    let _g = doc.subscribe_root(Arc::new(move |_e| {
         fire_clone.store(true, std::sync::atomic::Ordering::Relaxed);
     }));
     doc.import(&doc.export_snapshot().unwrap()).unwrap();

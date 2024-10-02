@@ -44,7 +44,7 @@ use crate::{
     op::InnerContent,
     oplog::{loro_dag::FrontiersNotIncluded, OpLog},
     state::DocState,
-    subscription::{LocalUpdateCallback, Observer, SubID, Subscriber},
+    subscription::{LocalUpdateCallback, Observer, Subscriber},
     txn::Transaction,
     undo::DiffBatch,
     utils::subscription::{SubscriberSet, Subscription},
@@ -960,7 +960,7 @@ impl LoroDoc {
         self.oplog().try_lock().unwrap().cmp_frontiers(a, b)
     }
 
-    pub fn subscribe_root(&self, callback: Subscriber) -> SubID {
+    pub fn subscribe_root(&self, callback: Subscriber) -> Subscription {
         let mut state = self.state.try_lock().unwrap();
         if !state.is_recording() {
             state.start_recording();
@@ -969,18 +969,13 @@ impl LoroDoc {
         self.observer.subscribe_root(callback)
     }
 
-    pub fn subscribe(&self, container_id: &ContainerID, callback: Subscriber) -> SubID {
+    pub fn subscribe(&self, container_id: &ContainerID, callback: Subscriber) -> Subscription {
         let mut state = self.state.try_lock().unwrap();
         if !state.is_recording() {
             state.start_recording();
         }
 
         self.observer.subscribe(container_id, callback)
-    }
-
-    #[inline]
-    pub fn unsubscribe(&self, id: SubID) {
-        self.observer.unsubscribe(id);
     }
 
     pub fn subscribe_local_update(&self, callback: LocalUpdateCallback) -> Subscription {

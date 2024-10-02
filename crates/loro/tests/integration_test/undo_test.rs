@@ -504,7 +504,7 @@ fn test_richtext_checkout() -> LoroResult<()> {
     text.delete(0, 5)?;
     doc.commit();
 
-    doc.subscribe_root(Arc::new(|event| {
+    let _g = doc.subscribe_root(Arc::new(|event| {
         dbg!(&event);
         let t = event.events[0].diff.as_text().unwrap();
         let i = t[0].as_insert().unwrap();

@@ -1,10 +1,9 @@
-use std::sync::Arc;
-
+use super::subscription_to_js_function_callback;
 use loro_internal::{
     handler::{counter::CounterHandler, Handler},
-    subscription::SubID,
     HandlerTrait, LoroDoc,
 };
+use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 
 use crate::{
@@ -56,29 +55,20 @@ impl LoroCounter {
     }
 
     /// Subscribe to the changes of the counter.
-    pub fn subscribe(&self, f: js_sys::Function) -> JsResult<u32> {
+    pub fn subscribe(&self, f: js_sys::Function) -> JsResult<JsValue> {
         let observer = observer::Observer::new(f);
         let doc = self
             .doc
             .clone()
             .ok_or_else(|| JsError::new("Document is not attached"))?;
         let doc_clone = doc.clone();
-        let ans = doc.subscribe(
+        let sub = doc.subscribe(
             &self.handler.id(),
             Arc::new(move |e| {
                 call_after_micro_task(observer.clone(), e, &doc_clone);
             }),
         );
-        Ok(ans.into_u32())
-    }
-
-    /// Unsubscribe by the subscription id.
-    pub fn unsubscribe(&self, subscription: u32) -> JsResult<()> {
-        self.doc
-            .as_ref()
-            .ok_or_else(|| JsError::new("Document is not attached"))?
-            .unsubscribe(SubID::from_u32(subscription));
-        Ok(())
+        Ok(subscription_to_js_function_callback(sub))
     }
 
     /// Get the parent container of the counter container.

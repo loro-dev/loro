@@ -503,7 +503,7 @@ mod test {
     #[test]
     fn test_text_event() {
         let loro = LoroDoc::new();
-        loro.subscribe_root(Arc::new(|event| {
+        let _g = loro.subscribe_root(Arc::new(|event| {
             let mut value = LoroValue::String(Default::default());
             value.apply_diff(&event.events.iter().map(|x| x.diff.clone()).collect_vec());
             assert_eq!(value, "h223ello".into());

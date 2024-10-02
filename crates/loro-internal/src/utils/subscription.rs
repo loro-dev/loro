@@ -226,10 +226,25 @@ Apache License
    END OF TERMS AND CONDITIONS
 
 */
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::error::Error;
+use std::ptr::eq;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::{fmt::Debug, mem, sync::Arc};
+
+use smallvec::SmallVec;
+
+#[derive(Debug)]
+pub enum SubscriptionError {
+    CannotEmitEventDueToRecursiveCall,
+}
+
+impl std::fmt::Display for Subscription {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "SubscriptionError")
+    }
+}
 
 pub(crate) struct SubscriberSet<EmitterKey, Callback>(
     Arc<Mutex<SubscriberSetState<EmitterKey, Callback>>>,
@@ -334,18 +349,30 @@ where
             })
     }
 
+    pub fn is_recursive_calling(&self, emitter: &EmitterKey) -> bool {
+        if let Some(set) = self.0.try_lock().unwrap().subscribers.get(emitter) {
+            set.is_none()
+        } else {
+            false
+        }
+    }
+
     /// Call the given callback for each subscriber to the given emitter.
     /// If the callback returns false, the subscriber is removed.
-    pub fn retain(&self, emitter: &EmitterKey, f: &mut dyn FnMut(&mut Callback) -> bool) {
-        let Some(mut subscribers) = self
-            .0
-            .try_lock()
-            .unwrap()
-            .subscribers
-            .get_mut(emitter)
-            .and_then(|s| s.take())
-        else {
-            return;
+    pub fn retain(
+        &self,
+        emitter: &EmitterKey,
+        f: &mut dyn FnMut(&mut Callback) -> bool,
+    ) -> Result<(), SubscriptionError> {
+        let mut subscribers = {
+            let mut subscriber_set_state = self.0.try_lock().unwrap();
+            let Some(set) = subscriber_set_state.subscribers.get_mut(emitter) else {
+                return Ok(());
+            };
+            let Some(inner) = set.take() else {
+                return Err(SubscriptionError::CannotEmitEventDueToRecursiveCall);
+            };
+            inner
         };
 
         subscribers.retain(|_, subscriber| {
@@ -371,18 +398,16 @@ where
         if !subscribers.is_empty() {
             lock.subscribers.insert(emitter.clone(), Some(subscribers));
         }
+
+        Ok(())
     }
 
     pub fn is_empty(&self) -> bool {
-        self.0
-            .try_lock()
-            .unwrap()
-            .subscribers
-            .iter()
-            .all(|x| match &x.1 {
-                Some(x) => x.is_empty(),
-                None => true,
-            })
+        self.0.try_lock().unwrap().subscribers.is_empty()
+    }
+
+    pub fn may_include(&self, emitter: &EmitterKey) -> bool {
+        self.0.try_lock().unwrap().subscribers.contains_key(emitter)
     }
 }
 
@@ -431,6 +456,59 @@ impl Drop for Subscription {
     fn drop(&mut self) {
         if let Some(unsubscribe) = self.unsubscribe.take() {
             unsubscribe();
+        }
+    }
+}
+
+/// A wrapper around `SubscriberSet` that automatically handles recursive event emission.
+///
+/// This struct differs from `SubscriberSet` in the following ways:
+/// 1. It automatically handles the `CannotEmitEventDueToRecursiveCall` error that can occur in `SubscriberSet`.
+/// 2. When a recursive event emission is detected, it queues the event instead of throwing an error.
+/// 3. After the current event processing is complete, it automatically processes the queued events.
+///
+/// This behavior ensures that all events are processed in the order they were emitted, even in cases
+/// where recursive event emission would normally cause an error.
+pub(crate) struct SubscriberSetWithQueue<EmitterKey, Callback, Payload> {
+    subscriber_set: SubscriberSet<EmitterKey, Callback>,
+    queue: Arc<Mutex<BTreeMap<EmitterKey, Vec<Payload>>>>,
+}
+
+impl<EmitterKey, Callback, Payload> SubscriberSetWithQueue<EmitterKey, Callback, Payload>
+where
+    EmitterKey: 'static + Ord + Clone + Debug + Send + Sync,
+    Callback: 'static + Send + Sync + FnMut(&Payload) -> bool,
+    Payload: Send + Sync,
+{
+    pub fn new() -> Self {
+        Self {
+            subscriber_set: SubscriberSet::new(),
+            queue: Arc::new(Mutex::new(Default::default())),
+        }
+    }
+    pub fn inner(&self) -> &SubscriberSet<EmitterKey, Callback> {
+        &self.subscriber_set
+    }
+
+    pub(crate) fn emit(&self, key: &EmitterKey, payload: Payload) {
+        let mut pending_events: SmallVec<[Payload; 1]> = SmallVec::new();
+        pending_events.push(payload);
+        while let Some(payload) = pending_events.pop() {
+            let result = self
+                .subscriber_set
+                .retain(key, &mut |callback| (callback)(&payload));
+            match result {
+                Ok(_) => {
+                    let mut queue = self.queue.try_lock().unwrap();
+                    if let Some(new_pending_events) = queue.remove(key) {
+                        pending_events.extend(new_pending_events);
+                    }
+                }
+                Err(SubscriptionError::CannotEmitEventDueToRecursiveCall) => {
+                    let mut queue = self.queue.try_lock().unwrap();
+                    queue.entry(key.clone()).or_default().push(payload);
+                }
+            }
         }
     }
 }

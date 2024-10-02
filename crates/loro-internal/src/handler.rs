@@ -4078,7 +4078,7 @@ mod test {
         .unwrap();
 
         let loro2 = LoroDoc::new();
-        loro2.subscribe_root(Arc::new(|e| {
+        let _g = loro2.subscribe_root(Arc::new(|e| {
             println!("{} {:?} ", e.event_meta.by, e.event_meta.diff)
         }));
         loro2.import(&loro.export_from(&loro2.oplog_vv())).unwrap();

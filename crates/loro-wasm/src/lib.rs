@@ -20,12 +20,11 @@ use loro_internal::{
     json::JsonSchema,
     loro::{CommitOptions, ExportMode},
     loro_common::check_root_container_name,
-    subscription::SubID,
     undo::{UndoItemMeta, UndoOrRedo},
     version::Frontiers,
     ContainerType, DiffEvent, FxHashMap, HandlerTrait, LoroDoc as LoroDocInner, LoroValue,
-    MovableListHandler, TreeNodeWithChildren, TreeParentId, UndoManager as InnerUndoManager,
-    VersionVector as InternalVersionVector,
+    MovableListHandler, Subscription, TreeNodeWithChildren, TreeParentId,
+    UndoManager as InnerUndoManager, VersionVector as InternalVersionVector,
 };
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
@@ -1222,35 +1221,14 @@ impl LoroDoc {
     /// doc.commit();
     /// ```
     // TODO: convert event and event sub config
-    pub fn subscribe(&self, f: js_sys::Function) -> u32 {
+    pub fn subscribe(&self, f: js_sys::Function) -> JsValue {
         let observer = observer::Observer::new(f);
         let doc = self.0.clone();
-        self.0
-            .subscribe_root(Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e, &doc)
-                // call_subscriber(observer.clone(), e);
-            }))
-            .into_u32()
-    }
-
-    /// Unsubscribe by the subscription id.
-    ///
-    /// @example
-    /// ```ts
-    /// import { LoroDoc } from "loro-crdt";
-    ///
-    /// const doc = new LoroDoc();
-    /// const text = doc.getText("text");
-    /// const subscription = doc.subscribe((event)=>{
-    ///     console.log(event);
-    /// });
-    /// text.insert(0, "Hello");
-    /// // the events will be emitted when `commit()` is called.
-    /// doc.commit();
-    /// doc.unsubscribe(subscription);
-    /// ```
-    pub fn unsubscribe(&self, subscription: u32) {
-        self.0.unsubscribe(SubID::from_u32(subscription))
+        let sub = self.0.subscribe_root(Arc::new(move |e| {
+            call_after_micro_task(observer.clone(), e, &doc)
+            // call_subscriber(observer.clone(), e);
+        }));
+        subscription_to_js_function_callback(sub)
     }
 
     /// Subscribe the updates from local edits
@@ -1962,7 +1940,7 @@ impl LoroText {
     /// - `doc.checkout(version)` is called.
     ///
     /// returns a subscription id, which can be used to unsubscribe.
-    pub fn subscribe(&self, f: js_sys::Function) -> JsResult<u32> {
+    pub fn subscribe(&self, f: js_sys::Function) -> JsResult<JsValue> {
         let observer = observer::Observer::new(f);
         let doc = self
             .doc
@@ -1976,16 +1954,7 @@ impl LoroText {
             }),
         );
 
-        Ok(ans.into_u32())
-    }
-
-    /// Unsubscribe by the subscription id.
-    pub fn unsubscribe(&self, subscription: u32) -> JsResult<()> {
-        self.doc
-            .as_ref()
-            .ok_or_else(|| JsError::new("Document is not attached"))?
-            .unsubscribe(SubID::from_u32(subscription));
-        Ok(())
+        Ok(subscription_to_js_function_callback(ans))
     }
 
     /// Change the state of this text by delta.
@@ -2329,44 +2298,21 @@ impl LoroMap {
     /// map.set("foo", "bar");
     /// doc.commit();
     /// ```
-    pub fn subscribe(&self, f: js_sys::Function) -> JsResult<u32> {
+    pub fn subscribe(&self, f: js_sys::Function) -> JsResult<JsValue> {
         let observer = observer::Observer::new(f);
         let doc = self
             .doc
             .clone()
             .ok_or_else(|| JsError::new("Document is not attached"))?;
         let doc_clone = doc.clone();
-        let id = doc.subscribe(
+        let sub = doc.subscribe(
             &self.handler.id(),
             Arc::new(move |e| {
                 call_after_micro_task(observer.clone(), e, &doc_clone);
             }),
         );
 
-        Ok(id.into_u32())
-    }
-
-    /// Unsubscribe by the subscription.
-    ///
-    /// @example
-    /// ```ts
-    /// import { LoroDoc } from "loro-crdt";
-    ///
-    /// const doc = new LoroDoc();
-    /// const map = doc.getMap("map");
-    /// const subscription = map.subscribe((event)=>{
-    ///     console.log(event);
-    /// });
-    /// map.set("foo", "bar");
-    /// doc.commit();
-    /// map.unsubscribe(subscription);
-    /// ```
-    pub fn unsubscribe(&self, subscription: u32) -> JsResult<()> {
-        self.doc
-            .as_ref()
-            .ok_or_else(|| JsError::new("Document is not attached"))?
-            .unsubscribe(SubID::from_u32(subscription));
-        Ok(())
+        Ok(subscription_to_js_function_callback(sub))
     }
 
     /// Get the size of the map.
@@ -2629,43 +2575,20 @@ impl LoroList {
     /// list.insert(0, 100);
     /// doc.commit();
     /// ```
-    pub fn subscribe(&self, f: js_sys::Function) -> JsResult<u32> {
+    pub fn subscribe(&self, f: js_sys::Function) -> JsResult<JsValue> {
         let observer = observer::Observer::new(f);
         let doc = self
             .doc
             .clone()
             .ok_or_else(|| JsError::new("Document is not attached"))?;
         let doc_clone = doc.clone();
-        let ans = doc.subscribe(
+        let sub = doc.subscribe(
             &self.handler.id(),
             Arc::new(move |e| {
                 call_after_micro_task(observer.clone(), e, &doc_clone);
             }),
         );
-        Ok(ans.into_u32())
-    }
-
-    /// Unsubscribe by the subscription id.
-    ///
-    /// @example
-    /// ```ts
-    /// import { LoroDoc } from "loro-crdt";
-    ///
-    /// const doc = new LoroDoc();
-    /// const list = doc.getList("list");
-    /// const subscription = list.subscribe((event)=>{
-    ///     console.log(event);
-    /// });
-    /// list.insert(0, 100);
-    /// doc.commit();
-    /// list.unsubscribe(subscription);
-    /// ```
-    pub fn unsubscribe(&self, subscription: u32) -> JsResult<()> {
-        self.doc
-            .as_ref()
-            .ok_or_else(|| JsError::new("Document is not attached"))?
-            .unsubscribe(SubID::from_u32(subscription));
-        Ok(())
+        Ok(subscription_to_js_function_callback(sub))
     }
 
     /// Get the length of list.
@@ -2969,43 +2892,20 @@ impl LoroMovableList {
     /// list.insert(0, 100);
     /// doc.commit();
     /// ```
-    pub fn subscribe(&self, f: js_sys::Function) -> JsResult<u32> {
+    pub fn subscribe(&self, f: js_sys::Function) -> JsResult<JsValue> {
         let observer = observer::Observer::new(f);
         let loro = self
             .doc
             .as_ref()
             .ok_or_else(|| JsError::new("Document is not attached"))?;
         let doc_clone = loro.clone();
-        let ans = loro.subscribe(
+        let sub = loro.subscribe(
             &self.handler.id(),
             Arc::new(move |e| {
                 call_after_micro_task(observer.clone(), e, &doc_clone);
             }),
         );
-        Ok(ans.into_u32())
-    }
-
-    /// Unsubscribe by the subscription id.
-    ///
-    /// @example
-    /// ```ts
-    /// import { LoroDoc } from "loro-crdt";
-    ///
-    /// const doc = new LoroDoc();
-    /// const list = doc.getList("list");
-    /// const subscription = list.subscribe((event)=>{
-    ///     console.log(event);
-    /// });
-    /// list.insert(0, 100);
-    /// doc.commit();
-    /// list.unsubscribe(subscription);
-    /// ```
-    pub fn unsubscribe(&self, subscription: u32) -> JsResult<()> {
-        self.doc
-            .as_ref()
-            .ok_or_else(|| JsError::new("Document is not attached"))?
-            .unsubscribe(SubID::from_u32(subscription));
-        Ok(())
+        Ok(subscription_to_js_function_callback(sub))
     }
 
     /// Get the length of list.
@@ -3683,7 +3583,7 @@ impl LoroTree {
     /// const node = root.createNode();
     /// doc.commit();
     /// ```
-    pub fn subscribe(&self, f: js_sys::Function) -> JsResult<u32> {
+    pub fn subscribe(&self, f: js_sys::Function) -> JsResult<JsValue> {
         let observer = observer::Observer::new(f);
         let doc = self
             .doc
@@ -3696,31 +3596,7 @@ impl LoroTree {
                 call_after_micro_task(observer.clone(), e, &doc_clone);
             }),
         );
-        Ok(ans.into_u32())
-    }
-
-    /// Unsubscribe by the subscription id.
-    ///
-    /// @example
-    /// ```ts
-    /// import { LoroDoc } from "loro-crdt";
-    ///
-    /// const doc = new LoroDoc();
-    /// const tree = doc.getTree("tree");
-    /// const subscription = tree.subscribe((event)=>{
-    ///     console.log(event);
-    /// });
-    /// const root = tree.createNode();
-    /// const node = root.createNode();
-    /// doc.commit();
-    /// tree.unsubscribe(subscription);
-    /// ```
-    pub fn unsubscribe(&self, subscription: u32) -> JsResult<()> {
-        self.doc
-            .as_ref()
-            .ok_or_else(|| JsError::new("Document is not attached"))?
-            .unsubscribe(SubID::from_u32(subscription));
-        Ok(())
+        Ok(subscription_to_js_function_callback(ans))
     }
 
     /// Get the parent container of the tree container.
@@ -4333,6 +4209,17 @@ fn js_to_export_mode(js_mode: JsExportMode) -> JsResult<ExportMode<'static>> {
         }
         _ => Err(JsError::new("Invalid export mode").into()),
     }
+}
+
+fn subscription_to_js_function_callback(sub: Subscription) -> JsValue {
+    let mut sub = Some(sub);
+    let closure = Closure::wrap(Box::new(move || {
+        if let Some(sub) = sub.take() {
+            sub.unsubscribe();
+        }
+    }) as Box<dyn FnMut()>);
+
+    closure.into_js_value()
 }
 
 #[wasm_bindgen(typescript_custom_section)]

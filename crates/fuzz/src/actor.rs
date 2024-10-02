@@ -57,7 +57,8 @@ impl Actor {
                 let mut tracker = cb_tracker.try_lock().unwrap();
                 tracker.apply_diff(e)
             });
-        }));
+        }))
+        .detach();
         let mut default_history = FxHashMap::default();
         default_history.insert(Vec::new(), loro.get_deep_value());
         Actor {

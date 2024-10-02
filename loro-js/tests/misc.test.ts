@@ -13,7 +13,7 @@ describe("transaction", () => {
     let count = 0;
     const sub = loro.subscribe(() => {
       count += 1;
-      loro.unsubscribe(sub);
+      sub();
     });
     expect(count).toBe(0);
     text.insert(0, "hello world");
@@ -31,7 +31,7 @@ describe("transaction", () => {
     let count = 0;
     const sub = loro.subscribe((event: { origin: string }) => {
       count += 1;
-      loro.unsubscribe(sub);
+      sub();
       assertEquals(event.origin, "origin");
     });
 
@@ -72,7 +72,7 @@ describe("subscribe", () => {
     loro.commit();
     await one_ms();
     assertEquals(count, 3);
-    loro.unsubscribe(sub);
+    sub();
     text.insert(0, "hello world");
     loro.commit();
     await one_ms();
@@ -85,7 +85,7 @@ describe("subscribe", () => {
     let count = 0;
     const sub = loro.subscribe(() => {
       count += 1;
-      loro.unsubscribe(sub);
+      sub()
     });
     assertEquals(count, 0);
     text.insert(0, "hello world");
@@ -115,7 +115,7 @@ describe("subscribe", () => {
     loro.commit();
     await one_ms();
     assertEquals(count, 2);
-    loro.unsubscribe(sub);
+    sub();
     text.insert(0, "hello world");
     loro.commit();
     await one_ms();

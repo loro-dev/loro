@@ -1,4 +1,4 @@
-import { assert, describe, expect, it} from "vitest";
+import { assert, describe, expect, it } from "vitest";
 import { LoroDoc, LoroTree, LoroTreeNode, TreeDiff } from "../src";
 
 function assertEquals(a: any, b: any) {
@@ -36,7 +36,7 @@ describe("loro tree", () => {
     tree.move(child2.id, child.id);
     assertEquals(child2.parent()!.id, child.id);
     assertEquals(child.children()![0].id, child2.id);
-    expect(()=>tree.move(child2.id, child.id, 1)).toThrowError();
+    expect(() => tree.move(child2.id, child.id, 1)).toThrowError();
   });
 
   it("delete", () => {
@@ -80,7 +80,7 @@ describe("loro tree", () => {
     assertEquals(root.children()![1].id, child2.id);
   });
 
-  it("toArray", ()=>{
+  it("toArray", () => {
     const loro2 = new LoroDoc();
     const tree2 = loro2.getTree("root");
     const root = tree2.createNode();
@@ -98,18 +98,18 @@ describe("loro tree", () => {
     assert(keys.includes("children"));
   });
 
-  it("getNodes", ()=>{
+  it("getNodes", () => {
     const loro2 = new LoroDoc();
     const tree2 = loro2.getTree("root");
     const root = tree2.createNode();
     const child = root.createNode();
-    const nodes = tree2.getNodes({withDeleted: false});
+    const nodes = tree2.getNodes({ withDeleted: false });
     assertEquals(nodes.length, 2);
-    assertEquals(nodes.map((n)=>{return n.id}), [root.id, child.id])
+    assertEquals(nodes.map((n) => { return n.id }), [root.id, child.id])
     tree2.delete(child.id);
-    const nodesWithDeleted = tree2.getNodes({withDeleted:true});
-    assertEquals(nodesWithDeleted.map((n)=>{return n.id}), [root.id, child.id]);
-    assertEquals(tree2.getNodes({withDeleted: false}).map((n)=>{return n.id}), [root.id]);
+    const nodesWithDeleted = tree2.getNodes({ withDeleted: true });
+    assertEquals(nodesWithDeleted.map((n) => { return n.id }), [root.id, child.id]);
+    assertEquals(tree2.getNodes({ withDeleted: false }).map((n) => { return n.id }), [root.id]);
   });
 
   it("subscribe", async () => {
@@ -125,7 +125,7 @@ describe("loro tree", () => {
     loro.commit();
     await one_ms();
     assertEquals(count, 1);
-    loro.unsubscribe(sub);
+    sub();
     child.data.set("a", 123);
     loro.commit();
     await one_ms();
@@ -139,93 +139,93 @@ describe("loro tree", () => {
   });
 });
 
-describe("loro tree node", ()=>{
-    const loro = new LoroDoc();
-    const tree = loro.getTree("root");
-    tree.enableFractionalIndex(0);
+describe("loro tree node", () => {
+  const loro = new LoroDoc();
+  const tree = loro.getTree("root");
+  tree.enableFractionalIndex(0);
 
-    it("create", () => {
-        const root = tree.createNode();
-        const child = root.createNode();
-        assertEquals(child.parent()!.id, root.id);
-        const child2 = root.createNode();
-        assertEquals(child.index(), 0);
-        assertEquals(child2.index(), 1);
-    });
+  it("create", () => {
+    const root = tree.createNode();
+    const child = root.createNode();
+    assertEquals(child.parent()!.id, root.id);
+    const child2 = root.createNode();
+    assertEquals(child.index(), 0);
+    assertEquals(child2.index(), 1);
+  });
 
-    it("create with index", () => {
-        const root = tree.createNode();
-        const child = root.createNode();
-        assertEquals(child.parent()!.id, root.id);
-        const child2 = root.createNode(0);
-        assertEquals(child.index(), 1);
-        assertEquals(child2.index(), 0);
-    });
+  it("create with index", () => {
+    const root = tree.createNode();
+    const child = root.createNode();
+    assertEquals(child.parent()!.id, root.id);
+    const child2 = root.createNode(0);
+    assertEquals(child.index(), 1);
+    assertEquals(child2.index(), 0);
+  });
 
-    it("moveTo", () => {
-        const root = tree.createNode();
-        const child = root.createNode();
-        const child2 = root.createNode();
-        assertEquals(child2.parent()!.id, root.id);
-        child2.move(child);
-        assertEquals(child2.parent()!.id, child.id);
-        assertEquals(child.children()![0].id, child2.id);
-        expect(()=>child2.move(child, 1)).toThrowError();
-    });
+  it("moveTo", () => {
+    const root = tree.createNode();
+    const child = root.createNode();
+    const child2 = root.createNode();
+    assertEquals(child2.parent()!.id, root.id);
+    child2.move(child);
+    assertEquals(child2.parent()!.id, child.id);
+    assertEquals(child.children()![0].id, child2.id);
+    expect(() => child2.move(child, 1)).toThrowError();
+  });
 
-    it("moveAfter", () => {
-        const root = tree.createNode();
-        const child = root.createNode();
-        const child2 = root.createNode();
-        assertEquals(child2.parent()!.id, root.id);
-        child2.moveAfter(child);
-        assertEquals(child2.parent()!.id, root.id);
-        assertEquals(child.index(), 0);
-        assertEquals(child2.index(), 1);
-    });
+  it("moveAfter", () => {
+    const root = tree.createNode();
+    const child = root.createNode();
+    const child2 = root.createNode();
+    assertEquals(child2.parent()!.id, root.id);
+    child2.moveAfter(child);
+    assertEquals(child2.parent()!.id, root.id);
+    assertEquals(child.index(), 0);
+    assertEquals(child2.index(), 1);
+  });
 
-    it("moveBefore", () => {
-        const root = tree.createNode();
-        const child = root.createNode();
-        const child2 = root.createNode();
-        assertEquals(child2.parent()!.id, root.id);
-        child2.moveBefore(child);
-        assertEquals(child2.parent()!.id, root.id);
-        assertEquals(child.index(), 1);
-        assertEquals(child2.index(), 0);
-    });
+  it("moveBefore", () => {
+    const root = tree.createNode();
+    const child = root.createNode();
+    const child2 = root.createNode();
+    assertEquals(child2.parent()!.id, root.id);
+    child2.moveBefore(child);
+    assertEquals(child2.parent()!.id, root.id);
+    assertEquals(child.index(), 1);
+    assertEquals(child2.index(), 0);
+  });
 
-    it("index", () => {
-        const root = tree.createNode();
-        const child = tree.createNode(root.id);
-        const child2 = tree.createNode(root.id, 0);
-        assertEquals(child.index(), 1);
-        assertEquals(child2.index(), 0);
-    });
+  it("index", () => {
+    const root = tree.createNode();
+    const child = tree.createNode(root.id);
+    const child2 = tree.createNode(root.id, 0);
+    assertEquals(child.index(), 1);
+    assertEquals(child2.index(), 0);
+  });
 
-    it("old parent", () => {
-        const root = tree.createNode();
-        const child = root.createNode();
-        const child2 = root.createNode();
-        loro.commit();
-        const subID = tree.subscribe((e)=>{
-          if(e.events[0].diff.type == "tree"){
-            const diff = e.events[0].diff as TreeDiff;
-            if (diff.diff[0].action == "move"){
-                assertEquals(diff.diff[0].old_parent, root.id);
-                assertEquals(diff.diff[0].old_index, 1);
-            }
-          }
-        });
-        child2.move(child);
-        loro.commit();
-        tree.unsubscribe(subID);
-        assertEquals(child2.parent()!.id, child.id);
+  it("old parent", () => {
+    const root = tree.createNode();
+    const child = root.createNode();
+    const child2 = root.createNode();
+    loro.commit();
+    const unsub = tree.subscribe((e) => {
+      if (e.events[0].diff.type == "tree") {
+        const diff = e.events[0].diff as TreeDiff;
+        if (diff.diff[0].action == "move") {
+          assertEquals(diff.diff[0].old_parent, root.id);
+          assertEquals(diff.diff[0].old_index, 1);
+        }
+      }
     });
+    child2.move(child);
+    loro.commit();
+    unsub()
+    assertEquals(child2.parent()!.id, child.id);
+  });
 });
 
 describe("LoroTree", () => {
-  it ("move", () => {
+  it("move", () => {
     const loro = new LoroDoc();
     const tree = loro.getTree("root");
     const root = tree.createNode();

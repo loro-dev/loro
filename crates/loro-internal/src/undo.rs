@@ -125,6 +125,7 @@ pub struct UndoManager {
     container_remap: Arc<Mutex<FxHashMap<ContainerID, ContainerID>>>,
     inner: Arc<Mutex<UndoManagerInner>>,
     _peer_id_change_sub: Subscription,
+    _undo_sub: Subscription,
 }
 
 impl std::fmt::Debug for UndoManager {
@@ -442,7 +443,7 @@ impl UndoManager {
         let inner_clone2 = inner.clone();
         let remap_containers = Arc::new(Mutex::new(FxHashMap::default()));
         let remap_containers_clone = remap_containers.clone();
-        doc.subscribe_root(Arc::new(move |event| match event.event_meta.by {
+        let undo_sub = doc.subscribe_root(Arc::new(move |event| match event.event_meta.by {
             EventTriggerKind::Local => {
                 // TODO: PERF undo can be significantly faster if we can get
                 // the DiffBatch for undo here
@@ -517,6 +518,7 @@ impl UndoManager {
             container_remap: remap_containers,
             inner,
             _peer_id_change_sub: sub,
+            _undo_sub: undo_sub,
         }
     }
 

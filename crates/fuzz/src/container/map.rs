@@ -36,7 +36,7 @@ impl MapActor {
                 let mut map = map.try_lock().unwrap();
                 map.apply_diff(event);
             }),
-        );
+        ).detach();
 
         let root = loro.get_map("map");
         MapActor {

@@ -40,7 +40,7 @@ impl CounterActor {
                 let mut counter = counter.try_lock().unwrap();
                 counter.apply_diff(event);
             }),
-        );
+        ).detach();
 
         let root = loro.get_counter("counter");
         Self {
