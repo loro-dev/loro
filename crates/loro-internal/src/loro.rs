@@ -33,10 +33,9 @@ use crate::{
     dag::DagUtils,
     diff_calc::DiffCalculator,
     encoding::{
-        decode_snapshot, export_fast_snapshot, export_fast_snapshot_at, export_fast_updates,
-        export_fast_updates_in_range, export_snapshot, export_state_only_snapshot,
-        export_trimmed_snapshot, json_schema::json::JsonSchema, parse_header_and_body, EncodeMode,
-        ParsedHeaderAndBody,
+        decode_snapshot, export_fast_snapshot, export_fast_updates, export_fast_updates_in_range,
+        export_snapshot, export_snapshot_at, export_state_only_snapshot, export_trimmed_snapshot,
+        json_schema::json::JsonSchema, parse_header_and_body, EncodeMode, ParsedHeaderAndBody,
     },
     event::{str_to_path, EventTriggerKind, Index, InternalDocDiff},
     handler::{Handler, MovableListHandler, TextHandler, TreeHandler, ValueOrHandler},
@@ -1484,7 +1483,7 @@ impl LoroDoc {
                 Some(f) => export_state_only_snapshot(self, &f)?,
                 None => export_state_only_snapshot(self, &self.oplog_frontiers())?,
             },
-            ExportMode::SnapshotAt { version } => export_fast_snapshot_at(self, &version)?,
+            ExportMode::SnapshotAt { version } => export_snapshot_at(self, &version)?,
         };
 
         self.renew_txn_if_auto_commit();

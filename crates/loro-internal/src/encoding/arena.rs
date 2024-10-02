@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_columnar::{columnar, ColumnarError};
 
 use super::{
-    encode_reordered::{PeerIdx, MAX_DECODED_SIZE},
+    outdated_encode_reordered::{PeerIdx, MAX_DECODED_SIZE},
     value::{Value, ValueDecodedArenasTrait, ValueEncodeRegister},
     value_register::ValueRegister,
 };
