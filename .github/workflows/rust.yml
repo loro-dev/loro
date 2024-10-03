@@ -40,9 +40,9 @@ jobs:
         with:
           version: "0.2.92"
       - uses: Swatinem/rust-cache@v2
+      - name: Check
+        run: cargo clippy --all-features
       - name: Build
         run: cargo build --verbose
       - name: Run rust tests
-        run: deno task test
-      - name: Run wasm tests
-        run: deno task test-wasm
+        run: deno task test-all

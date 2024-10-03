@@ -46,7 +46,7 @@ use crate::{
     subscription::{LocalUpdateCallback, Observer, Subscriber},
     txn::Transaction,
     undo::DiffBatch,
-    utils::subscription::{SubscriberSet, Subscription},
+    utils::subscription::{SubscriberSetWithQueue, Subscription},
     version::{shrink_frontiers, Frontiers, ImVersionVector},
     ChangeMeta, DocDiff, HandlerTrait, InternalString, ListHandler, LoroError, MapHandler,
     VersionVector,
@@ -90,8 +90,8 @@ impl LoroDoc {
             diff_calculator: Arc::new(Mutex::new(DiffCalculator::new(true))),
             txn: global_txn,
             arena,
-            local_update_subs: SubscriberSet::new(),
-            peer_id_change_subs: SubscriberSet::new(),
+            local_update_subs: SubscriberSetWithQueue::new(),
+            peer_id_change_subs: SubscriberSetWithQueue::new(),
         }
     }
 
@@ -120,9 +120,8 @@ impl LoroDoc {
             txn,
             auto_commit: AtomicBool::new(false),
             detached: AtomicBool::new(self.is_detached()),
-
-            local_update_subs: SubscriberSet::new(),
-            peer_id_change_subs: SubscriberSet::new(),
+            local_update_subs: SubscriberSetWithQueue::new(),
+            peer_id_change_subs: SubscriberSetWithQueue::new(),
         };
 
         if self.auto_commit.load(std::sync::atomic::Ordering::Relaxed) {
@@ -276,11 +275,7 @@ impl LoroDoc {
 
             let new_txn = self.txn().unwrap();
             self.txn.try_lock().unwrap().replace(new_txn);
-
-            self.peer_id_change_subs.retain(&(), &mut |callback| {
-                callback(peer, next_id.counter);
-                true
-            });
+            self.peer_id_change_subs.emit(&(), next_id);
             return Ok(());
         }
 
@@ -297,10 +292,7 @@ impl LoroDoc {
             .peer
             .store(peer, std::sync::atomic::Ordering::Relaxed);
         drop(doc_state);
-        self.peer_id_change_subs.retain(&(), &mut |callback| {
-            callback(peer, next_id.counter);
-            true
-        });
+        self.peer_id_change_subs.emit(&(), next_id);
         Ok(())
     }
 
@@ -978,7 +970,7 @@ impl LoroDoc {
     }
 
     pub fn subscribe_local_update(&self, callback: LocalUpdateCallback) -> Subscription {
-        let (sub, activate) = self.local_update_subs.insert((), callback);
+        let (sub, activate) = self.local_update_subs.inner().insert((), callback);
         activate();
         sub
     }

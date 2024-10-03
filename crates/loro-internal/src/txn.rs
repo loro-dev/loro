@@ -11,7 +11,6 @@ use loro_common::{ContainerType, IdLp, IdSpan, LoroResult};
 use loro_delta::{array_vec::ArrayVec, DeltaRopeBuilder};
 use rle::{HasLength, Mergable, RleVec};
 use smallvec::{smallvec, SmallVec};
-use tracing::trace;
 
 use crate::{
     change::{Change, Lamport, Timestamp},
@@ -70,24 +69,25 @@ impl crate::LoroDoc {
         );
 
         let obs = self.observer.clone();
-        let local_update_subs = self.local_update_subs.clone();
+        let local_update_subs_weak = self.local_update_subs.downgrade();
         txn.set_on_commit(Box::new(move |state, oplog, id_span| {
-            trace!("on_commit!");
             let mut state = state.try_lock().unwrap();
             let events = state.take_events();
             drop(state);
             for event in events {
-                trace!("on_commit! {:#?}", &event);
                 obs.emit(event);
             }
 
-            if !local_update_subs.is_empty() {
-                let bytes =
-                    { export_fast_updates_in_range(&oplog.try_lock().unwrap(), &[id_span]) };
-                local_update_subs.retain(&(), &mut |callback| {
-                    callback(&bytes);
-                    true
-                });
+            if id_span.atom_len() == 0 {
+                return;
+            }
+
+            if let Some(local_update_subs) = local_update_subs_weak.upgrade() {
+                if !local_update_subs.inner().is_empty() {
+                    let bytes =
+                        { export_fast_updates_in_range(&oplog.try_lock().unwrap(), &[id_span]) };
+                    local_update_subs.emit(&(), bytes);
+                }
             }
         }));
 

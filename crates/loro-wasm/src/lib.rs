@@ -2,7 +2,7 @@
 #![allow(non_snake_case)]
 #![allow(clippy::empty_docs)]
 #![allow(clippy::doc_lazy_continuation)]
-#![warn(missing_docs)]
+// #![warn(missing_docs)]
 
 use convert::{js_to_version_vector, resolved_diff_to_js};
 use js_sys::{Array, Object, Promise, Reflect, Uint8Array};
@@ -1241,6 +1241,7 @@ impl LoroDoc {
             if let Err(e) = observer.call1(&arr.into()) {
                 console_error!("Error: {:?}", e);
             }
+            true
         })));
 
         let closure = Closure::wrap(Box::new(move || {
