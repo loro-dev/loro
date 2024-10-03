@@ -10,6 +10,7 @@ use loro_common::{CompactIdLp, ContainerID, IdFull, IdLp, LoroResult, LoroValue,
 
 use crate::{
     arena::SharedArena,
+    configure::Configure,
     container::{idx::ContainerIdx, list::list_op::ListOp},
     delta::DeltaItem,
     diff_calc::DiffMode,
@@ -1493,6 +1494,10 @@ impl ContainerState for MovableListState {
         assert!(item_ids.next().is_none());
         assert!(last_set_op_iter.next().is_none());
         Ok(())
+    }
+
+    fn fork(&self, _config: &Configure) -> Self {
+        self.clone()
     }
 }
 

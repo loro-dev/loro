@@ -729,6 +729,15 @@ impl ContainerState for RichtextState {
         // self.check_consistency_between_content_and_style_ranges();
         Ok(())
     }
+
+    fn fork(&self, config: &crate::configure::Configure) -> Self {
+        Self {
+            idx: self.idx,
+            config: config.text_style_config.clone(),
+            state: self.state.clone(),
+            version_id: 0,
+        }
+    }
 }
 
 impl RichtextState {
