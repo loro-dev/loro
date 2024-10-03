@@ -1,3 +1,5 @@
+use std::error;
+
 use serde_columnar::ColumnarError;
 use thiserror::Error;
 
@@ -90,6 +92,8 @@ pub enum LoroError {
         "The container {container} is deleted. You cannot apply the op on a deleted container."
     )]
     ContainerDeleted { container: Box<ContainerID> },
+    #[error("You cannot set the `PeerID` with `PeerID::MAX`, which is an internal specific value")]
+    InvalidPeerID,
 }
 
 #[derive(Error, Debug, PartialEq)]
