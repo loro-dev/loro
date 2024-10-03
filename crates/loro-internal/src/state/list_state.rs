@@ -7,6 +7,7 @@ use std::{
 use super::{ContainerState, DiffApplyContext, FastStateSnapshot};
 use crate::{
     arena::SharedArena,
+    configure::Configure,
     container::{idx::ContainerIdx, list::list_op::ListOp, ContainerID},
     encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff, ListDiff},
@@ -37,7 +38,7 @@ impl Clone for ListState {
         Self {
             idx: self.idx,
             list: self.list.clone(),
-            child_container_to_leaf: Default::default(),
+            child_container_to_leaf: self.child_container_to_leaf.clone(),
         }
     }
 }
@@ -539,6 +540,10 @@ impl ContainerState for ListState {
             index += len;
         }
         Ok(())
+    }
+
+    fn fork(&self, _config: &Configure) -> Self {
+        self.clone()
     }
 }
 

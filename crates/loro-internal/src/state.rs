@@ -116,7 +116,7 @@ pub(crate) trait FastStateSnapshot {
 }
 
 #[enum_dispatch]
-pub(crate) trait ContainerState: Clone {
+pub(crate) trait ContainerState {
     fn container_idx(&self) -> ContainerIdx;
     fn estimate_size(&self) -> usize;
 
@@ -157,6 +157,7 @@ pub(crate) trait ContainerState: Clone {
 
     /// Restore the state to the state represented by the ops and the blob that exported by `get_snapshot_ops`
     fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) -> LoroResult<()>;
+    fn fork(&self, config: &Configure) -> Self;
 }
 
 impl<T: FastStateSnapshot> FastStateSnapshot for Box<T> {
@@ -247,11 +248,15 @@ impl<T: ContainerState> ContainerState for Box<T> {
     fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) -> LoroResult<()> {
         self.as_mut().import_from_snapshot_ops(ctx)
     }
+
+    fn fork(&self, config: &Configure) -> Self {
+        Box::new(self.as_ref().fork(config))
+    }
 }
 
 #[allow(clippy::enum_variant_names)]
 #[enum_dispatch(ContainerState)]
-#[derive(EnumAsInner, Clone, Debug)]
+#[derive(EnumAsInner, Debug)]
 pub enum State {
     ListState(Box<ListState>),
     MovableListState(Box<MovableListState>),
@@ -333,6 +338,22 @@ impl State {
             State::UnknownState(s) => s.encode_snapshot_fast(&mut w),
         }
     }
+
+    pub fn fork(&self, config: &Configure) -> Self {
+        match self {
+            State::ListState(list_state) => State::ListState(list_state.fork(config)),
+            State::MovableListState(movable_list_state) => {
+                State::MovableListState(movable_list_state.fork(config))
+            }
+            State::MapState(map_state) => State::MapState(map_state.fork(config)),
+            State::RichtextState(richtext_state) => {
+                State::RichtextState(richtext_state.fork(config))
+            }
+            State::TreeState(tree_state) => State::TreeState(tree_state.fork(config)),
+            State::CounterState(counter_state) => State::CounterState(counter_state.fork(config)),
+            State::UnknownState(unknown_state) => State::UnknownState(unknown_state.fork(config)),
+        }
+    }
 }
 
 impl DocState {
@@ -362,7 +383,7 @@ impl DocState {
         })
     }
 
-    pub fn fork(
+    pub fn fork_with_new_peer_id(
         &self,
         arena: SharedArena,
         global_txn: Weak<Mutex<Option<Transaction>>>,

@@ -100,7 +100,7 @@ impl LoroDoc {
         let arena = self.arena.fork();
         let config = self.config.fork();
         let txn = Arc::new(Mutex::new(None));
-        let new_state = self.state.try_lock().unwrap().fork(
+        let new_state = self.state.try_lock().unwrap().fork_with_new_peer_id(
             arena.clone(),
             Arc::downgrade(&txn),
             config.clone(),
@@ -113,9 +113,9 @@ impl LoroDoc {
                 gc,
             ))),
             state: new_state,
+            observer: Arc::new(Observer::new(arena.clone())),
             arena,
             config,
-            observer: Arc::new(Observer::new(self.arena.clone())),
             diff_calculator: Arc::new(Mutex::new(DiffCalculator::new(true))),
             txn,
             auto_commit: AtomicBool::new(false),

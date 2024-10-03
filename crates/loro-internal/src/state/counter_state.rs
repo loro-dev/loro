@@ -4,6 +4,7 @@ use loro_common::{ContainerID, LoroError, LoroResult, LoroValue};
 
 use crate::{
     arena::SharedArena,
+    configure::Configure,
     container::idx::ContainerIdx,
     encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff},
@@ -111,6 +112,10 @@ impl ContainerState for CounterState {
     #[allow(unused)]
     fn contains_child(&self, id: &ContainerID) -> bool {
         false
+    }
+
+    fn fork(&self, _config: &Configure) -> Self {
+        self.clone()
     }
 }
 
