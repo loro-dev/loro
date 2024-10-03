@@ -1,7 +1,7 @@
 use std::sync::{atomic::AtomicBool, Arc, Mutex};
 
 use fxhash::FxHashMap;
-use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue, ID};
+use loro_common::{ContainerID, ContainerType, LoroError, LoroResult, LoroValue, PeerID, ID};
 use loro_internal::{
     delta::ResolvedMapValue,
     event::{Diff, EventTriggerKind},
@@ -1261,4 +1261,13 @@ fn test_map_contains_key() {
     assert!(map.contains_key("bro"));
     map.delete("bro").unwrap();
     assert!(!map.contains_key("bro"));
+}
+
+#[test]
+fn set_max_peer_id() {
+    let doc = LoroDoc::new_auto_commit();
+    assert_eq!(
+        doc.set_peer_id(PeerID::MAX),
+        Result::Err(LoroError::InvalidPeerID)
+    );
 }

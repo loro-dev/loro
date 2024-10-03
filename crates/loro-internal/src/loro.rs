@@ -261,6 +261,9 @@ impl LoroDoc {
 
     #[inline(always)]
     pub fn set_peer_id(&self, peer: PeerID) -> LoroResult<()> {
+        if peer == PeerID::MAX {
+            return Err(LoroError::InvalidPeerID);
+        }
         let next_id = self.oplog.try_lock().unwrap().next_id(peer);
         if self.auto_commit.load(Acquire) {
             let doc_state = self.state.try_lock().unwrap();
