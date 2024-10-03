@@ -149,6 +149,11 @@ impl CounterSpan {
         }
     }
 
+    pub fn extend_include(&mut self, new_start: Counter, new_end: Counter) {
+        self.set_start(new_start);
+        self.set_end(new_end);
+    }
+
     /// if we can merge element on the left, this method return the last atom of it
     fn prev_pos(&self) -> i32 {
         if self.start < self.end {
@@ -506,6 +511,29 @@ impl HasId for (PeerID, CounterSpan) {
 impl From<ID> for IdSpan {
     fn from(value: ID) -> Self {
         Self::new(value.peer, value.counter, value.counter + 1)
+    }
+}
+
+#[cfg(feature = "wasm")]
+mod wasm {
+    use js_sys::Object;
+    use wasm_bindgen::JsValue;
+
+    use super::CounterSpan;
+
+    impl From<CounterSpan> for JsValue {
+        fn from(value: CounterSpan) -> Self {
+            let obj = Object::new();
+            js_sys::Reflect::set(
+                &obj,
+                &JsValue::from_str("start"),
+                &JsValue::from(value.start),
+            )
+            .unwrap();
+            js_sys::Reflect::set(&obj, &JsValue::from_str("end"), &JsValue::from(value.end))
+                .unwrap();
+            obj.into()
+        }
     }
 }
 

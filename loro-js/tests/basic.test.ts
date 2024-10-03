@@ -144,23 +144,31 @@ describe("map", () => {
 });
 
 describe("import", () => {
-  it("pending", () => {
+  it("pending and import status", () => {
     const a = new LoroDoc();
+    a.setPeerId(0);
     a.getText("text").insert(0, "a");
     const b = new LoroDoc();
+    b.setPeerId(1);
     b.import(a.exportFrom());
     b.getText("text").insert(1, "b");
     const c = new LoroDoc();
+    c.setPeerId(2);
     c.import(b.exportFrom());
     c.getText("text").insert(2, "c");
 
     // c export from b's version, which cannot be imported directly to a.
     // This operation is pending.
-    a.import(c.exportFrom(b.version()));
+    const status = a.import(c.exportFrom(b.version()));
+    const pending = new Map();
+    pending.set("2", { start: 0, end: 1 });
+    expect(status).toStrictEqual({ success: new Map(), pending });
     expect(a.getText("text").toString()).toBe("a");
 
     // a import the missing ops from b. It makes the pending operation from c valid.
-    a.import(b.exportFrom(a.version()));
+    const status2 = a.import(b.exportFrom(a.version()));
+    pending.set("1", { start: 0, end: 1 });
+    expect(status2).toStrictEqual({ success: pending, pending: null });
     expect(a.getText("text").toString()).toBe("abc");
   });
 

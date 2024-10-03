@@ -30,6 +30,7 @@ use crate::{
 
 use self::encode::{encode_changes, encode_ops, init_encode, TempOp};
 
+use super::ImportStatus;
 use super::{
     arena::*,
     parse_header_and_body,
@@ -136,7 +137,7 @@ pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
 }
 
 #[instrument(skip_all)]
-pub(crate) fn decode_updates(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> {
+pub(crate) fn decode_updates(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<Vec<Change>> {
     let iter = serde_columnar::iter_from_bytes::<EncodedDoc>(bytes)?;
     let mut arenas = decode_arena(&iter.arenas)?;
     let ops_map = extract_ops(
@@ -163,19 +164,8 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<()> 
         deps,
         ops_map,
     )?;
-    let ImportChangesResult {
-        latest_ids,
-        pending_changes,
-        changes_that_deps_on_trimmed_history,
-    } = import_changes_to_oplog(changes, oplog);
-    // TODO: PERF: should we use hashmap to filter latest_ids with the same peer first?
-    oplog.try_apply_pending(latest_ids);
-    oplog.import_unknown_lamport_pending_changes(pending_changes)?;
-    if !changes_that_deps_on_trimmed_history.is_empty() {
-        return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
-    }
 
-    Ok(())
+    Ok(changes)
 }
 
 pub fn decode_import_blob_meta(bytes: &[u8]) -> LoroResult<ImportBlobMetadata> {
@@ -734,7 +724,11 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
         doc.update_oplog_and_apply_delta_to_state_if_needed(
             |oplog| {
                 oplog.try_apply_pending(latest_ids);
-                Ok(())
+                // ImportStatus is unnecessary
+                Ok(ImportStatus {
+                    success: Default::default(),
+                    pending: None,
+                })
             },
             "".into(),
         )?;

@@ -4,14 +4,14 @@
 #![allow(clippy::doc_lazy_continuation)]
 #![warn(missing_docs)]
 
-use convert::{js_to_version_vector, resolved_diff_to_js};
+use convert::{import_status_to_js_value, js_to_version_vector, resolved_diff_to_js};
 use js_sys::{Array, Object, Promise, Reflect, Uint8Array};
 use loro_internal::{
     change::Lamport,
     configure::{StyleConfig, StyleConfigMap},
     container::{richtext::ExpandType, ContainerID},
     cursor::{self, Side},
-    encoding::ImportBlobMetadata,
+    encoding::{ImportBlobMetadata, ImportStatus},
     event::Index,
     handler::{
         Handler, ListHandler, MapHandler, TextDelta, TextHandler, TreeHandler, ValueOrHandler,
@@ -175,6 +175,8 @@ extern "C" {
     pub type JsExportMode;
     #[wasm_bindgen(typescript_type = "{ origin?: string, timestamp?: number, message?: string }")]
     pub type JsCommitOption;
+    #[wasm_bindgen(typescript_type = "ImportStatus")]
+    pub type JsImportStatus;
 }
 
 mod observer {
@@ -1077,18 +1079,19 @@ impl LoroDoc {
     ///
     /// only supports backward compatibility but not forward compatibility.
     #[wasm_bindgen(js_name = "importJsonUpdates")]
-    pub fn import_json_updates(&self, json: JsJsonSchemaOrString) -> JsResult<()> {
+    pub fn import_json_updates(&self, json: JsJsonSchemaOrString) -> JsResult<JsImportStatus> {
         let json: JsValue = json.into();
         if JsValue::is_string(&json) {
             let json_str = json.as_string().unwrap();
-            return self
+            let status = self
                 .0
                 .import_json_updates(json_str.as_str())
-                .map_err(|e| e.into());
+                .map_err(JsValue::from)?;
+            return Ok(import_status_to_js_value(status).into());
         }
         let json_schema: JsonSchema = serde_wasm_bindgen::from_value(json)?;
-        self.0.import_json_updates(json_schema)?;
-        Ok(())
+        let status = self.0.import_json_updates(json_schema)?;
+        Ok(import_status_to_js_value(status).into())
     }
 
     /// Import a snapshot or a update to current doc.
@@ -1113,9 +1116,9 @@ impl LoroDoc {
     /// // or import updates
     /// doc2.import(updates);
     /// ```
-    pub fn import(&self, update_or_snapshot: &[u8]) -> JsResult<()> {
-        self.0.import(update_or_snapshot)?;
-        Ok(())
+    pub fn import(&self, update_or_snapshot: &[u8]) -> JsResult<JsImportStatus> {
+        let status = self.0.import(update_or_snapshot)?;
+        Ok(import_status_to_js_value(status).into())
     }
 
     /// Import a batch of updates.
@@ -4731,4 +4734,11 @@ export type UnknownOp = {
     data: Uint8Array
   }
 };
+
+export type CounterSpan = { start: number, end: number };
+
+export type ImportStatus = {
+  success: Map<PeerID, CounterSpan>,
+  pending: Map<PeerID, CounterSpan> | null
+}
 "#;

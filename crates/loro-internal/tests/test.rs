@@ -1,11 +1,14 @@
 use std::sync::{atomic::AtomicBool, Arc, Mutex};
 
 use fxhash::FxHashMap;
-use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue, ID};
+use loro_common::{ContainerID, ContainerType, CounterSpan, LoroResult, LoroValue, ID};
 use loro_internal::{
     delta::ResolvedMapValue,
+    encoding::ImportStatus,
     event::{Diff, EventTriggerKind},
+    fx_map,
     handler::{Handler, TextDelta, ValueOrHandler},
+    loro::ExportMode,
     version::Frontiers,
     ApplyDiff, HandlerTrait, ListHandler, LoroDoc, MapHandler, TextHandler, ToJson, TreeHandler,
     TreeParentId,
@@ -472,19 +475,6 @@ fn test_checkout() {
             }
         })
     );
-}
-
-#[test]
-fn import() {
-    let doc = LoroDoc::new();
-    doc.import(&[
-        108, 111, 114, 111, 0, 0, 10, 10, 255, 255, 68, 255, 255, 4, 0, 5, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 255, 255, 108, 111, 114, 111, 255, 255, 0, 255, 207, 207, 255, 255, 255, 255,
-        255,
-    ])
-    .unwrap_or_default();
 }
 
 #[test]
@@ -1261,4 +1251,41 @@ fn test_map_contains_key() {
     assert!(map.contains_key("bro"));
     map.delete("bro").unwrap();
     assert!(!map.contains_key("bro"));
+}
+
+#[test]
+fn import_status() -> LoroResult<()> {
+    let doc = LoroDoc::new_auto_commit();
+    doc.set_peer_id(0)?;
+    let t = doc.get_text("text");
+    t.insert(0, "a")?;
+
+    let doc2 = LoroDoc::new_auto_commit();
+    doc2.set_peer_id(1)?;
+    let t2 = doc2.get_text("text");
+    t2.insert(0, "b")?;
+    doc2.commit_then_renew();
+    let update1 = doc2.export_snapshot().unwrap();
+    let vv1 = doc2.oplog_vv();
+    t2.insert(1, "c")?;
+    let update2 = doc2.export(ExportMode::updates(&vv1)).unwrap();
+
+    let status1 = doc.import(&update2)?;
+    let status2 = doc.import(&update1)?;
+    assert_eq!(
+        status1,
+        ImportStatus {
+            success: Default::default(),
+            pending: Some(fx_map!(1=>CounterSpan::new(1, 2)))
+        }
+    );
+    assert_eq!(
+        status2,
+        ImportStatus {
+            success: fx_map!(1=>CounterSpan::new(0, 2)),
+            pending: None
+        }
+    );
+
+    Ok(())
 }

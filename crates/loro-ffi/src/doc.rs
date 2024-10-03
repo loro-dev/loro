@@ -6,9 +6,9 @@ use std::{
 };
 
 use loro::{
-    cursor::CannotFindRelativePosition, DocAnalysis, FrontiersNotIncluded, IdSpan, JsonPathError,
-    JsonSchema, Lamport, LoroDoc as InnerLoroDoc, LoroEncodeError, LoroError, LoroResult, PeerID,
-    Timestamp, ID,
+    cursor::CannotFindRelativePosition, DocAnalysis, FrontiersNotIncluded, IdSpan, ImportStatus,
+    JsonPathError, JsonSchema, Lamport, LoroDoc as InnerLoroDoc, LoroEncodeError, LoroError,
+    LoroResult, PeerID, Timestamp, ID,
 };
 
 use crate::{
@@ -253,7 +253,7 @@ impl LoroDoc {
 
     /// Import updates/snapshot exported by [`LoroDoc::export_snapshot`] or [`LoroDoc::export_from`].
     #[inline]
-    pub fn import(&self, bytes: &[u8]) -> Result<(), LoroError> {
+    pub fn import(&self, bytes: &[u8]) -> Result<ImportStatus, LoroError> {
         self.doc.import_with(bytes, "")
     }
 
@@ -262,11 +262,11 @@ impl LoroDoc {
     /// It marks the import with a custom `origin` string. It can be used to track the import source
     /// in the generated events.
     #[inline]
-    pub fn import_with(&self, bytes: &[u8], origin: &str) -> Result<(), LoroError> {
+    pub fn import_with(&self, bytes: &[u8], origin: &str) -> Result<ImportStatus, LoroError> {
         self.doc.import_with(bytes, origin)
     }
 
-    pub fn import_json_updates(&self, json: &str) -> Result<(), LoroError> {
+    pub fn import_json_updates(&self, json: &str) -> Result<ImportStatus, LoroError> {
         self.doc.import_json_updates(json)
     }
 

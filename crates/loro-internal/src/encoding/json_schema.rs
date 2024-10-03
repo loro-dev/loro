@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use either::Either;
 use loro_common::{
-    ContainerID, ContainerType, HasCounterSpan, IdLp, LoroError, LoroResult, LoroValue, PeerID,
-    TreeID, ID,
+    ContainerID, ContainerType, CounterSpan, HasCounter, HasCounterSpan, IdLp, IdSpanVector,
+    LoroError, LoroResult, LoroValue, PeerID, TreeID, ID,
 };
 use rle::{HasLength, RleVec, Sliceable};
 
@@ -22,8 +22,9 @@ use crate::{
     OpLog, VersionVector,
 };
 
-use super::outdated_encode_reordered::{
-    import_changes_to_oplog, ImportChangesResult, ValueRegister,
+use super::{
+    outdated_encode_reordered::{import_changes_to_oplog, ImportChangesResult, ValueRegister},
+    ImportStatus,
 };
 use json::{JsonOpContent, JsonSchema};
 
@@ -66,20 +67,34 @@ pub(crate) fn export_json<'a, 'c: 'a>(
     }
 }
 
-pub(crate) fn import_json(oplog: &mut OpLog, json: JsonSchema) -> LoroResult<()> {
+pub(crate) fn import_json(oplog: &mut OpLog, json: JsonSchema) -> LoroResult<ImportStatus> {
+    let before_vv = oplog.vv().clone();
     let changes = decode_changes(json, &oplog.arena)?;
     let ImportChangesResult {
         latest_ids,
         pending_changes,
         changes_that_deps_on_trimmed_history,
     } = import_changes_to_oplog(changes, oplog);
+    let mut pending = IdSpanVector::default();
+    pending_changes.iter().for_each(|c| {
+        let peer = c.id.peer;
+        let start = c.ctr_start();
+        let end = c.ctr_end();
+        pending
+            .entry(peer)
+            .or_insert_with(|| CounterSpan::new(start, end))
+            .extend_include(start, end);
+    });
     oplog.try_apply_pending(latest_ids);
     oplog.import_unknown_lamport_pending_changes(pending_changes)?;
-    if changes_that_deps_on_trimmed_history.is_empty() {
-        Ok(())
-    } else {
-        Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion)
-    }
+    if !changes_that_deps_on_trimmed_history.is_empty() {
+        return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
+    };
+    let after_vv = oplog.vv();
+    Ok(ImportStatus {
+        success: before_vv.diff(after_vv).right,
+        pending: (!pending.is_empty()).then_some(pending),
+    })
 }
 
 fn init_encode<'s, 'a: 's>(
