@@ -457,7 +457,7 @@ impl ChangeStore {
                 mem_parsed_kv: BTreeMap::new(),
             })),
             arena,
-            external_vv: self.external_vv.clone(),
+            external_vv: Arc::new(Mutex::new(self.external_vv.try_lock().unwrap().clone())),
             external_kv: self.external_kv.try_lock().unwrap().clone_store(),
             merge_interval,
         }

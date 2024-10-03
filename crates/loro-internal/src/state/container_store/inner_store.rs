@@ -6,8 +6,8 @@ use loro_common::ContainerID;
 use tracing::trace;
 
 use crate::{
-    arena::SharedArena, container::idx::ContainerIdx, state::container_store::FRONTIERS_KEY,
-    utils::kv_wrapper::KvWrapper, version::Frontiers,
+    arena::SharedArena, configure::Configure, container::idx::ContainerIdx,
+    state::container_store::FRONTIERS_KEY, utils::kv_wrapper::KvWrapper, version::Frontiers,
 };
 
 use super::ContainerWrapper;
@@ -238,10 +238,15 @@ impl InnerStore {
         }
     }
 
-    pub(crate) fn fork(&self, arena: SharedArena) -> InnerStore {
+    pub(crate) fn fork(&self, arena: SharedArena, config: &Configure) -> InnerStore {
+        // PERF: we can try flushing before forking
         InnerStore {
             arena,
-            store: self.store.clone(),
+            store: self
+                .store
+                .iter()
+                .map(|(idx, c)| (*idx, c.fork(&config)))
+                .collect(),
             kv: self.kv.clone(),
             len: self.len,
             all_loaded: self.all_loaded,

@@ -1922,3 +1922,29 @@ fn no_dead_loop_when_subscribe_local_updates_to_each_other() {
 
     assert_eq!(doc1.get_deep_value(), doc2.get_deep_value());
 }
+
+/// https://github.com/loro-dev/loro/issues/490
+#[test]
+fn issue_490() -> anyhow::Result<()> {
+    let fx_loro = loro::LoroDoc::new();
+    fx_loro
+        .get_map("paciente")
+        .insert("nome", "DUMMY NAME V0")?;
+    fx_loro.commit();
+
+    let loro_c1 = fx_loro.fork();
+    loro_c1
+        .get_map("paciente")
+        .insert("nome", "DUMMY NAME V1")?;
+    loro_c1.commit();
+
+    // If I use `fork()` it panics
+    let final_loro = fx_loro.fork();
+
+    // If I create a new loro doc and import the snapshot it works
+    //let final_loro = loro::LoroDoc::new();
+    //final_loro.import(&fx_loro.export(loro::ExportMode::snapshot())?)?;
+
+    final_loro.import(&loro_c1.export(loro::ExportMode::snapshot())?)?;
+    Ok(())
+}

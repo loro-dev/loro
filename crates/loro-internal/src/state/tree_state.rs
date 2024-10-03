@@ -16,6 +16,7 @@ use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex, Weak};
 
 use super::{ContainerState, DiffApplyContext};
+use crate::configure::Configure;
 use crate::container::idx::ContainerIdx;
 use crate::delta::{TreeDiff, TreeDiffItem, TreeExternalDiff};
 use crate::diff_calc::DiffMode;
@@ -1391,6 +1392,10 @@ impl ContainerState for TreeState {
             };
         }
         Ok(())
+    }
+
+    fn fork(&self, _config: &Configure) -> Self {
+        self.clone()
     }
 }
 
