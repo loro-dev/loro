@@ -409,6 +409,7 @@ impl LoroDoc {
         let s = self.doc.subscribe_local_update(Box::new(move |update| {
             // TODO: should it be cloned?
             callback.on_local_update(update.to_vec());
+            true
         }));
         Arc::new(Subscription(Arc::new(Mutex::new(s))))
     }

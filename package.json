@@ -8,7 +8,7 @@
     "check-all": "cargo hack check --each-feature",
     "build": "cargo build",
     "test": "cargo nextest run --features=test_utils,jsonpath --no-fail-fast && cargo test --doc",
-    "test-all": "nr test && nr test-wasm",
+    "test-all": "pnpm test && pnpm test-wasm",
     "test-wasm": "cd crates/loro-wasm && deno task dev && cd ../../loro-js && pnpm i && pnpm run test",
     "coverage": "mkdir -p coverage && cargo llvm-cov nextest --features test_utils,jsonpath --lcov > coverage/lcov-nextest.info && cargo llvm-cov report",
     "release-wasm": "cd crates/loro-wasm && deno task release && cd ../../loro-js && pnpm i && pnpm build && pnpm run test",

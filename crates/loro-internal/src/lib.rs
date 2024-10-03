@@ -33,7 +33,7 @@ pub use state::{TreeNode, TreeNodeWithChildren, TreeParentId};
 use subscription::{LocalUpdateCallback, Observer, PeerIdUpdateCallback};
 use txn::Transaction;
 pub use undo::UndoManager;
-use utils::subscription::SubscriberSet;
+use utils::subscription::SubscriberSetWithQueue;
 pub use utils::subscription::Subscription;
 pub mod allocation;
 pub mod awareness;
@@ -120,7 +120,6 @@ pub struct LoroDoc {
     txn: Arc<Mutex<Option<Transaction>>>,
     auto_commit: AtomicBool,
     detached: AtomicBool,
-
-    local_update_subs: SubscriberSet<(), LocalUpdateCallback>,
-    peer_id_change_subs: SubscriberSet<(), PeerIdUpdateCallback>,
+    local_update_subs: SubscriberSetWithQueue<(), LocalUpdateCallback, Vec<u8>>,
+    peer_id_change_subs: SubscriberSetWithQueue<(), PeerIdUpdateCallback, ID>,
 }

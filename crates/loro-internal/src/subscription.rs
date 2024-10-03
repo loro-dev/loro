@@ -7,7 +7,7 @@ use crate::{
     Subscription,
 };
 use fxhash::FxHashMap;
-use loro_common::{ContainerID, Counter, PeerID};
+use loro_common::{ContainerID, ID};
 use smallvec::SmallVec;
 use std::{
     collections::VecDeque,
@@ -15,15 +15,15 @@ use std::{
 };
 
 /// The callback of the local update.
-pub type LocalUpdateCallback = Box<dyn Fn(&[u8]) + Send + Sync + 'static>;
+pub type LocalUpdateCallback = Box<dyn Fn(&Vec<u8>) -> bool + Send + Sync + 'static>;
 /// The callback of the peer id change. The second argument is the next counter for the peer.
-pub type PeerIdUpdateCallback = Box<dyn Fn(PeerID, Counter) + Send + Sync + 'static>;
+pub type PeerIdUpdateCallback = Box<dyn Fn(&ID) -> bool + Send + Sync + 'static>;
 pub type Subscriber = Arc<dyn (for<'a> Fn(DiffEvent<'a>)) + Send + Sync>;
 
 impl LoroDoc {
     /// Subscribe to the changes of the peer id.
     pub fn subscribe_peer_id_change(&self, callback: PeerIdUpdateCallback) -> Subscription {
-        let (s, enable) = self.peer_id_change_subs.insert((), callback);
+        let (s, enable) = self.peer_id_change_subs.inner().insert((), callback);
         enable();
         s
     }

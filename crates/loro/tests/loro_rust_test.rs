@@ -1238,8 +1238,9 @@ fn test_loro_export_local_updates() {
     let updates = Arc::new(Mutex::new(Vec::new()));
 
     let updates_clone = updates.clone();
-    let subscription = doc.subscribe_local_update(Box::new(move |bytes: &[u8]| {
+    let subscription = doc.subscribe_local_update(Box::new(move |bytes: &Vec<u8>| {
         updates_clone.try_lock().unwrap().push(bytes.to_vec());
+        true
     }));
 
     // Make some changes
@@ -1728,8 +1729,9 @@ fn change_peer_id() {
     let doc = LoroDoc::new();
     let received_peer_id = Arc::new(AtomicU64::new(0));
     let received_peer_id_clone = received_peer_id.clone();
-    let sub = doc.subscribe_peer_id_change(Box::new(move |peer_id, _counter| {
-        received_peer_id_clone.store(peer_id, Ordering::SeqCst);
+    let sub = doc.subscribe_peer_id_change(Box::new(move |id| {
+        received_peer_id_clone.store(id.peer, Ordering::SeqCst);
+        true
     }));
 
     doc.set_peer_id(1).unwrap();
@@ -1787,10 +1789,11 @@ fn travel_change_ancestors() {
     let f = doc.state_frontiers();
     assert_eq!(f.len(), 1);
     let mut changes = vec![];
-    doc.travel_change_ancestors(f[0], &mut |meta| {
+    doc.travel_change_ancestors(&[f[0]], &mut |meta| {
         changes.push(meta.clone());
         ControlFlow::Continue(())
-    });
+    })
+    .unwrap();
 
     let dbg_str = format!("{:#?}", changes);
     assert_eq!(
@@ -1861,10 +1864,11 @@ fn travel_change_ancestors() {
     );
 
     let mut changes = vec![];
-    doc.travel_change_ancestors(ID::new(2, 4), &mut |meta| {
+    doc.travel_change_ancestors(&[ID::new(2, 4)], &mut |meta| {
         changes.push(meta.clone());
         ControlFlow::Continue(())
-    });
+    })
+    .unwrap();
     let dbg_str = format!("{:#?}", changes);
     assert_eq!(
         dbg_str,
@@ -1893,6 +1897,30 @@ fn travel_change_ancestors() {
     },
 ]"#
     );
+}
+
+#[test]
+fn no_dead_loop_when_subscribe_local_updates_to_each_other() {
+    let doc1 = Arc::new(LoroDoc::new());
+    let doc2 = Arc::new(LoroDoc::new());
+
+    let doc1_clone = doc1.clone();
+    let doc2_clone = doc2.clone();
+    let _sub1 = doc1.subscribe_local_update(Box::new(move |updates| {
+        doc2_clone.import(updates).unwrap();
+        true
+    }));
+    let _sub2 = doc2.subscribe_local_update(Box::new(move |updates| {
+        doc1_clone.import(updates).unwrap();
+        true
+    }));
+
+    doc1.get_text("text").insert(0, "Hello").unwrap();
+    doc1.commit();
+    doc2.get_text("text").insert(0, "World").unwrap();
+    doc2.commit();
+
+    assert_eq!(doc1.get_deep_value(), doc2.get_deep_value());
 }
 
 /// https://github.com/loro-dev/loro/issues/490

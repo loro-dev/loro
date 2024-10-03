@@ -505,12 +505,13 @@ impl UndoManager {
             }
         }));
 
-        let sub = doc.subscribe_peer_id_change(Box::new(move |peer_id, counter| {
+        let sub = doc.subscribe_peer_id_change(Box::new(move |id| {
             let mut inner = inner_clone2.try_lock().unwrap();
             inner.undo_stack.clear();
             inner.redo_stack.clear();
-            inner.next_counter = Some(counter);
-            peer_clone2.store(peer_id, std::sync::atomic::Ordering::Relaxed);
+            inner.next_counter = Some(id.counter);
+            peer_clone2.store(id.peer, std::sync::atomic::Ordering::Relaxed);
+            true
         }));
 
         UndoManager {
