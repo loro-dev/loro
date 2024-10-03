@@ -59,7 +59,7 @@ fn fork_doc() -> anyhow::Result<()> {
     let triggered = Arc::new(AtomicBool::new(false));
     let trigger_cloned = triggered.clone();
     doc0.commit();
-    doc0.subscribe_root(Arc::new(move |e| {
+    let _g = doc0.subscribe_root(Arc::new(move |e| {
         for e in e.events {
             let _t = e.diff.as_text().unwrap();
             triggered.store(true, std::sync::atomic::Ordering::Release);
@@ -256,7 +256,7 @@ fn time_travel() {
     let doc2 = LoroDoc::new();
     let text = doc.get_text("text");
     let text2 = doc2.get_text("text");
-    doc.subscribe(
+    let _g = doc.subscribe(
         &text.id(),
         Arc::new(move |x| {
             for event in x.events {
@@ -289,7 +289,7 @@ fn travel_back_should_remove_styles() {
     let doc2 = LoroDoc::new();
     let text = doc.get_text("text");
     let text2 = doc2.get_text("text");
-    doc.subscribe(
+    let _g = doc.subscribe(
         &text.id(),
         Arc::new(move |x| {
             for event in x.events {
@@ -487,7 +487,7 @@ fn subscribe() {
     let ran = Arc::new(AtomicBool::new(false));
     let ran2 = ran.clone();
 
-    doc.subscribe(
+    let _g = doc.subscribe(
         &text.id(),
         Arc::new(move |event| {
             assert!(matches!(

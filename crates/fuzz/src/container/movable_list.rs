@@ -42,7 +42,8 @@ impl MovableListActor {
                 let mut list = list.try_lock().unwrap();
                 list.apply_diff(event);
             }),
-        );
+        )
+        .detach();
 
         let root = loro.get_movable_list("movable_list");
         Self {

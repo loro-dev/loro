@@ -26,7 +26,7 @@ mod event {
             b.iter(|| {
                 let loro = LoroDoc::default();
                 loro.start_auto_commit();
-                loro.subscribe_root(Arc::new(|_e| {}));
+                let _g = loro.subscribe_root(Arc::new(|_e| {}));
                 let mut handlers = vec![loro.get_list("list")];
                 for _ in 0..deep {
                     handlers = handlers

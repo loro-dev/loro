@@ -172,7 +172,7 @@ describe("event", () => {
 
       // unsubscribe
       const oldRan = ran;
-      text.unsubscribe(sub);
+      sub();
       text.insert(0, "789");
       loro.commit();
       await oneMs();
@@ -201,7 +201,7 @@ describe("event", () => {
       expect(times).toBe(3);
 
       // unsubscribe
-      loro.unsubscribe(sub);
+      sub()
       text.insert(0, "123");
       loro.commit();
       await oneMs();
@@ -227,7 +227,7 @@ describe("event", () => {
       expect(times).toBe(2);
 
       // unsubscribe
-      loro.unsubscribe(sub);
+      sub()
       text.insert(0, "123");
       loro.commit();
       await oneMs();

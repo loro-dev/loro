@@ -165,7 +165,7 @@ describe("movable list", () => {
     list.push("c");
     let called = false;
     let calledTimes = 0;
-    const id = list.subscribe((event) => {
+    const unsub = list.subscribe((event) => {
       expect(event.by).toBe("local");
       for (const e of event.events) {
         expect(e.target).toBe(list.id);
@@ -190,7 +190,7 @@ describe("movable list", () => {
     await new Promise((r) => setTimeout(r, 1));
     expect(called).toBeTruthy();
     expect(calledTimes).toBe(1);
-    list.unsubscribe(id);
+    unsub();
     list.push("d");
     doc.commit();
     await new Promise((r) => setTimeout(r, 1));

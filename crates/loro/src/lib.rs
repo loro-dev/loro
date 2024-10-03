@@ -51,7 +51,6 @@ pub use loro_internal::kv_store::{KvStore, MemKvStore};
 pub use loro_internal::loro::CommitOptions;
 pub use loro_internal::loro::DocAnalysis;
 pub use loro_internal::oplog::FrontiersNotIncluded;
-pub use loro_internal::subscription::SubID;
 pub use loro_internal::undo;
 pub use loro_internal::version::{Frontiers, VersionVector, VersionVectorDiff};
 pub use loro_internal::ApplyDiff;
@@ -573,7 +572,7 @@ impl LoroDoc {
     /// let text = doc.get_text("text");
     /// let ran = Arc::new(AtomicBool::new(false));
     /// let ran2 = ran.clone();
-    /// doc.subscribe(
+    /// let sub = doc.subscribe(
     ///     &text.id(),
     ///     Arc::new(move |event| {
     ///         assert!(event.triggered_by.is_local());
@@ -593,7 +592,7 @@ impl LoroDoc {
     /// assert!(ran.load(std::sync::atomic::Ordering::Relaxed));
     /// ```
     #[inline]
-    pub fn subscribe(&self, container_id: &ContainerID, callback: Subscriber) -> SubID {
+    pub fn subscribe(&self, container_id: &ContainerID, callback: Subscriber) -> Subscription {
         self.doc.subscribe(
             container_id,
             Arc::new(move |e| {
@@ -614,16 +613,11 @@ impl LoroDoc {
     /// - `doc.import(data)` is called.
     /// - `doc.checkout(version)` is called.
     #[inline]
-    pub fn subscribe_root(&self, callback: Subscriber) -> SubID {
+    pub fn subscribe_root(&self, callback: Subscriber) -> Subscription {
         // self.doc.subscribe_root(callback)
         self.doc.subscribe_root(Arc::new(move |e| {
             callback(DiffEvent::from(e));
         }))
-    }
-
-    /// Remove a subscription by subscription id.
-    pub fn unsubscribe(&self, id: SubID) {
-        self.doc.unsubscribe(id)
     }
 
     /// Subscribe the local update of the document.

@@ -194,9 +194,10 @@ export function getType<T>(
   return "Json" as any;
 }
 
+export type Subscription = () => void;
 declare module "loro-wasm" {
   interface LoroDoc {
-    subscribe(listener: Listener): number;
+    subscribe(listener: Listener): Subscription;
   }
 
   interface UndoManager {
@@ -362,7 +363,7 @@ declare module "loro-wasm" {
     insert<V extends T>(pos: number, value: Exclude<V, Container>): void;
     delete(pos: number, len: number): void;
     push<V extends T>(value: Exclude<V, Container>): void;
-    subscribe(listener: Listener): number;
+    subscribe(listener: Listener): Subscription;
     getAttached(): undefined | LoroList<T>;
   }
 
@@ -438,7 +439,7 @@ declare module "loro-wasm" {
     insert<V extends T>(pos: number, value: Exclude<V, Container>): void;
     delete(pos: number, len: number): void;
     push<V extends T>(value: Exclude<V, Container>): void;
-    subscribe(listener: Listener): number;
+    subscribe(listener: Listener): Subscription;
     getAttached(): undefined | LoroMovableList<T>;
     /**
      *  Set the value at the given position.
@@ -563,14 +564,14 @@ declare module "loro-wasm" {
       value: Exclude<V, Container>,
     ): void;
     delete(key: string): void;
-    subscribe(listener: Listener): number;
+    subscribe(listener: Listener): Subscription;
   }
 
   interface LoroText {
     new(): LoroText;
     insert(pos: number, text: string): void;
     delete(pos: number, len: number): void;
-    subscribe(listener: Listener): number;
+    subscribe(listener: Listener): Subscription;
   }
 
   interface LoroTree<
@@ -605,7 +606,7 @@ declare module "loro-wasm" {
      * Get LoroTreeNode by the TreeID.
      */
     getNodeByID(target: TreeID): LoroTreeNode<T>;
-    subscribe(listener: Listener): number;
+    subscribe(listener: Listener): Subscription;
   }
 
   interface LoroTreeNode<

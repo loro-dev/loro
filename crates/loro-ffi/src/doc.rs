@@ -8,7 +8,7 @@ use std::{
 use loro::{
     cursor::CannotFindRelativePosition, DocAnalysis, FrontiersNotIncluded, IdSpan, JsonPathError,
     JsonSchema, Lamport, LoroDoc as InnerLoroDoc, LoroEncodeError, LoroError, LoroResult, PeerID,
-    SubID, Timestamp, ID,
+    Timestamp, ID,
 };
 
 use crate::{
@@ -377,25 +377,28 @@ impl LoroDoc {
         self.doc.set_peer_id(peer)
     }
 
-    pub fn subscribe(&self, container_id: &ContainerID, subscriber: Arc<dyn Subscriber>) -> SubID {
-        self.doc.subscribe(
-            &(container_id.into()),
-            Arc::new(move |e| {
-                subscriber.on_diff(DiffEvent::from(e));
-            }),
-        )
+    pub fn subscribe(
+        &self,
+        container_id: &ContainerID,
+        subscriber: Arc<dyn Subscriber>,
+    ) -> Subscription {
+        self.doc
+            .subscribe(
+                &(container_id.into()),
+                Arc::new(move |e| {
+                    subscriber.on_diff(DiffEvent::from(e));
+                }),
+            )
+            .into()
     }
 
-    pub fn subscribe_root(&self, subscriber: Arc<dyn Subscriber>) -> SubID {
+    pub fn subscribe_root(&self, subscriber: Arc<dyn Subscriber>) -> Subscription {
         // self.doc.subscribe_root(callback)
-        self.doc.subscribe_root(Arc::new(move |e| {
-            subscriber.on_diff(DiffEvent::from(e));
-        }))
-    }
-
-    /// Remove a subscription by subscription id.
-    pub fn unsubscribe(&self, id: SubID) {
-        self.doc.unsubscribe(id)
+        self.doc
+            .subscribe_root(Arc::new(move |e| {
+                subscriber.on_diff(DiffEvent::from(e));
+            }))
+            .into()
     }
 
     /// Subscribe the local update of the document.
@@ -699,6 +702,12 @@ unsafe impl Sync for Subscription {}
 impl std::fmt::Debug for Subscription {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Subscription")
+    }
+}
+
+impl From<loro::Subscription> for Subscription {
+    fn from(value: loro::Subscription) -> Self {
+        Self(Arc::new(Mutex::new(value)))
     }
 }
 

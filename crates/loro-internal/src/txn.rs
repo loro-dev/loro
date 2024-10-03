@@ -11,6 +11,7 @@ use loro_common::{ContainerType, IdLp, IdSpan, LoroResult};
 use loro_delta::{array_vec::ArrayVec, DeltaRopeBuilder};
 use rle::{HasLength, Mergable, RleVec};
 use smallvec::{smallvec, SmallVec};
+use tracing::trace;
 
 use crate::{
     change::{Change, Lamport, Timestamp},
@@ -71,10 +72,12 @@ impl crate::LoroDoc {
         let obs = self.observer.clone();
         let local_update_subs = self.local_update_subs.clone();
         txn.set_on_commit(Box::new(move |state, oplog, id_span| {
+            trace!("on_commit!");
             let mut state = state.try_lock().unwrap();
             let events = state.take_events();
             drop(state);
             for event in events {
+                trace!("on_commit! {:#?}", &event);
                 obs.emit(event);
             }
 
