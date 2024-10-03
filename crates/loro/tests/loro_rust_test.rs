@@ -1787,10 +1787,11 @@ fn travel_change_ancestors() {
     let f = doc.state_frontiers();
     assert_eq!(f.len(), 1);
     let mut changes = vec![];
-    doc.travel_change_ancestors(f[0], &mut |meta| {
+    doc.travel_change_ancestors(&[f[0]], &mut |meta| {
         changes.push(meta.clone());
         ControlFlow::Continue(())
-    });
+    })
+    .unwrap();
 
     let dbg_str = format!("{:#?}", changes);
     assert_eq!(
@@ -1861,10 +1862,11 @@ fn travel_change_ancestors() {
     );
 
     let mut changes = vec![];
-    doc.travel_change_ancestors(ID::new(2, 4), &mut |meta| {
+    doc.travel_change_ancestors(&[ID::new(2, 4)], &mut |meta| {
         changes.push(meta.clone());
         ControlFlow::Continue(())
-    });
+    })
+    .unwrap();
     let dbg_str = format!("{:#?}", changes);
     assert_eq!(
         dbg_str,

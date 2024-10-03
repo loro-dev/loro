@@ -1504,24 +1504,36 @@ impl LoroDoc {
             0
         }
     }
+}
 
+#[derive(Debug, thiserror::Error)]
+pub enum ChangeTravelError {
+    #[error("Target id not found {0:?}")]
+    TargetIdNotFound(ID),
+    #[error("History on the target version is trimmed")]
+    TargetVersionTrimmed,
+}
+
+impl LoroDoc {
     pub fn travel_change_ancestors(
         &self,
-        id: ID,
+        ids: &[ID],
         f: &mut dyn FnMut(ChangeMeta) -> ControlFlow<()>,
-    ) {
+    ) -> Result<(), ChangeTravelError> {
         struct PendingNode(ChangeMeta);
         impl PartialEq for PendingNode {
             fn eq(&self, other: &Self) -> bool {
                 self.0.lamport_last() == other.0.lamport_last() && self.0.id.peer == other.0.id.peer
             }
         }
+
         impl Eq for PendingNode {}
         impl PartialOrd for PendingNode {
             fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
                 Some(self.cmp(other))
             }
         }
+
         impl Ord for PendingNode {
             fn cmp(&self, other: &Self) -> Ordering {
                 self.0
@@ -1531,15 +1543,23 @@ impl LoroDoc {
             }
         }
 
-        if !self.oplog().try_lock().unwrap().vv().includes_id(id) {
-            return;
+        for id in ids {
+            let op_log = &self.oplog().try_lock().unwrap();
+            if !op_log.vv().includes_id(*id) {
+                return Err(ChangeTravelError::TargetIdNotFound(*id));
+            }
+            if op_log.dag.trimmed_vv().includes_id(*id) {
+                return Err(ChangeTravelError::TargetVersionTrimmed);
+            }
         }
 
         let mut visited = FxHashSet::default();
         let mut pending: BinaryHeap<PendingNode> = BinaryHeap::new();
-        pending.push(PendingNode(ChangeMeta::from_change(
-            &self.oplog().try_lock().unwrap().get_change_at(id).unwrap(),
-        )));
+        for id in ids {
+            pending.push(PendingNode(ChangeMeta::from_change(
+                &self.oplog().try_lock().unwrap().get_change_at(*id).unwrap(),
+            )));
+        }
         while let Some(PendingNode(node)) = pending.pop() {
             let deps = node.deps.clone();
             if f(node).is_break() {
@@ -1558,6 +1578,8 @@ impl LoroDoc {
                 pending.push(PendingNode(ChangeMeta::from_change(&dep_node)));
             }
         }
+
+        Ok(())
     }
 }
 
