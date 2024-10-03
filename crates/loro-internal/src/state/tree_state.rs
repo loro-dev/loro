@@ -1394,7 +1394,7 @@ impl ContainerState for TreeState {
         Ok(())
     }
 
-    fn fork(&self, config: &Configure) -> Self {
+    fn fork(&self, _config: &Configure) -> Self {
         self.clone()
     }
 }

@@ -542,7 +542,7 @@ impl ContainerState for ListState {
         Ok(())
     }
 
-    fn fork(&self, config: &Configure) -> Self {
+    fn fork(&self, _config: &Configure) -> Self {
         self.clone()
     }
 }
