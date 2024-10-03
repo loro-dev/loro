@@ -226,14 +226,11 @@ Apache License
    END OF TERMS AND CONDITIONS
 
 */
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::error::Error;
-use std::ptr::eq;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
-use std::{fmt::Debug, mem, sync::Arc};
-
 use smallvec::SmallVec;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, Weak};
+use std::{fmt::Debug, mem, sync::Arc};
 
 #[derive(Debug)]
 pub enum SubscriptionError {
@@ -474,11 +471,25 @@ pub(crate) struct SubscriberSetWithQueue<EmitterKey, Callback, Payload> {
     queue: Arc<Mutex<BTreeMap<EmitterKey, Vec<Payload>>>>,
 }
 
+pub(crate) struct WeakSubscriberSetWithQueue<EmitterKey, Callback, Payload> {
+    subscriber_set: Weak<Mutex<SubscriberSetState<EmitterKey, Callback>>>,
+    queue: Weak<Mutex<BTreeMap<EmitterKey, Vec<Payload>>>>,
+}
+
+impl<EmitterKey, Callback, Payload> WeakSubscriberSetWithQueue<EmitterKey, Callback, Payload> {
+    pub fn upgrade(self) -> Option<SubscriberSetWithQueue<EmitterKey, Callback, Payload>> {
+        Some(SubscriberSetWithQueue {
+            subscriber_set: SubscriberSet(self.subscriber_set.upgrade()?),
+            queue: self.queue.upgrade()?,
+        })
+    }
+}
+
 impl<EmitterKey, Callback, Payload> SubscriberSetWithQueue<EmitterKey, Callback, Payload>
 where
     EmitterKey: 'static + Ord + Clone + Debug + Send + Sync,
-    Callback: 'static + Send + Sync + FnMut(&Payload) -> bool,
-    Payload: Send + Sync,
+    Callback: 'static + Send + Sync + for<'a> FnMut(&'a Payload) -> bool,
+    Payload: Send + Sync + Debug,
 {
     pub fn new() -> Self {
         Self {
@@ -486,6 +497,14 @@ where
             queue: Arc::new(Mutex::new(Default::default())),
         }
     }
+
+    pub fn downgrade(&self) -> WeakSubscriberSetWithQueue<EmitterKey, Callback, Payload> {
+        WeakSubscriberSetWithQueue {
+            subscriber_set: Arc::downgrade(&self.subscriber_set.0),
+            queue: Arc::downgrade(&self.queue),
+        }
+    }
+
     pub fn inner(&self) -> &SubscriberSet<EmitterKey, Callback> {
         &self.subscriber_set
     }

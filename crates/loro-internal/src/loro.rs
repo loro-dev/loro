@@ -47,7 +47,7 @@ use crate::{
     subscription::{LocalUpdateCallback, Observer, Subscriber},
     txn::Transaction,
     undo::DiffBatch,
-    utils::subscription::{SubscriberSet, Subscription},
+    utils::subscription::{SubscriberSetWithQueue, Subscription},
     version::{shrink_frontiers, Frontiers, ImVersionVector},
     ChangeMeta, DocDiff, HandlerTrait, InternalString, ListHandler, LoroError, MapHandler,
     VersionVector,
@@ -91,8 +91,8 @@ impl LoroDoc {
             diff_calculator: Arc::new(Mutex::new(DiffCalculator::new(true))),
             txn: global_txn,
             arena,
-            local_update_subs: SubscriberSet::new(),
-            peer_id_change_subs: SubscriberSet::new(),
+            local_update_subs: SubscriberSetWithQueue::new(),
+            peer_id_change_subs: SubscriberSetWithQueue::new(),
         }
     }
 
@@ -101,7 +101,7 @@ impl LoroDoc {
         let arena = self.arena.fork();
         let config = self.config.fork();
         let txn = Arc::new(Mutex::new(None));
-        let new_state = self.state.try_lock().unwrap().fork(
+        let new_state = self.state.try_lock().unwrap().fork_with_new_peer_id(
             arena.clone(),
             Arc::downgrade(&txn),
             config.clone(),
@@ -114,16 +114,15 @@ impl LoroDoc {
                 gc,
             ))),
             state: new_state,
+            observer: Arc::new(Observer::new(arena.clone())),
             arena,
             config,
-            observer: Arc::new(Observer::new(self.arena.clone())),
             diff_calculator: Arc::new(Mutex::new(DiffCalculator::new(true))),
             txn,
             auto_commit: AtomicBool::new(false),
             detached: AtomicBool::new(self.is_detached()),
-
-            local_update_subs: SubscriberSet::new(),
-            peer_id_change_subs: SubscriberSet::new(),
+            local_update_subs: SubscriberSetWithQueue::new(),
+            peer_id_change_subs: SubscriberSetWithQueue::new(),
         };
 
         if self.auto_commit.load(std::sync::atomic::Ordering::Relaxed) {
@@ -262,6 +261,9 @@ impl LoroDoc {
 
     #[inline(always)]
     pub fn set_peer_id(&self, peer: PeerID) -> LoroResult<()> {
+        if peer == PeerID::MAX {
+            return Err(LoroError::InvalidPeerID);
+        }
         let next_id = self.oplog.try_lock().unwrap().next_id(peer);
         if self.auto_commit.load(Acquire) {
             let doc_state = self.state.try_lock().unwrap();
@@ -277,11 +279,7 @@ impl LoroDoc {
 
             let new_txn = self.txn().unwrap();
             self.txn.try_lock().unwrap().replace(new_txn);
-
-            self.peer_id_change_subs.retain(&(), &mut |callback| {
-                callback(peer, next_id.counter);
-                true
-            });
+            self.peer_id_change_subs.emit(&(), next_id);
             return Ok(());
         }
 
@@ -298,10 +296,7 @@ impl LoroDoc {
             .peer
             .store(peer, std::sync::atomic::Ordering::Relaxed);
         drop(doc_state);
-        self.peer_id_change_subs.retain(&(), &mut |callback| {
-            callback(peer, next_id.counter);
-            true
-        });
+        self.peer_id_change_subs.emit(&(), next_id);
         Ok(())
     }
 
@@ -987,7 +982,7 @@ impl LoroDoc {
     }
 
     pub fn subscribe_local_update(&self, callback: LocalUpdateCallback) -> Subscription {
-        let (sub, activate) = self.local_update_subs.insert((), callback);
+        let (sub, activate) = self.local_update_subs.inner().insert((), callback);
         activate();
         sub
     }
@@ -1515,24 +1510,36 @@ impl LoroDoc {
             0
         }
     }
+}
 
+#[derive(Debug, thiserror::Error)]
+pub enum ChangeTravelError {
+    #[error("Target id not found {0:?}")]
+    TargetIdNotFound(ID),
+    #[error("History on the target version is trimmed")]
+    TargetVersionTrimmed,
+}
+
+impl LoroDoc {
     pub fn travel_change_ancestors(
         &self,
-        id: ID,
+        ids: &[ID],
         f: &mut dyn FnMut(ChangeMeta) -> ControlFlow<()>,
-    ) {
+    ) -> Result<(), ChangeTravelError> {
         struct PendingNode(ChangeMeta);
         impl PartialEq for PendingNode {
             fn eq(&self, other: &Self) -> bool {
                 self.0.lamport_last() == other.0.lamport_last() && self.0.id.peer == other.0.id.peer
             }
         }
+
         impl Eq for PendingNode {}
         impl PartialOrd for PendingNode {
             fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
                 Some(self.cmp(other))
             }
         }
+
         impl Ord for PendingNode {
             fn cmp(&self, other: &Self) -> Ordering {
                 self.0
@@ -1542,15 +1549,23 @@ impl LoroDoc {
             }
         }
 
-        if !self.oplog().try_lock().unwrap().vv().includes_id(id) {
-            return;
+        for id in ids {
+            let op_log = &self.oplog().try_lock().unwrap();
+            if !op_log.vv().includes_id(*id) {
+                return Err(ChangeTravelError::TargetIdNotFound(*id));
+            }
+            if op_log.dag.trimmed_vv().includes_id(*id) {
+                return Err(ChangeTravelError::TargetVersionTrimmed);
+            }
         }
 
         let mut visited = FxHashSet::default();
         let mut pending: BinaryHeap<PendingNode> = BinaryHeap::new();
-        pending.push(PendingNode(ChangeMeta::from_change(
-            &self.oplog().try_lock().unwrap().get_change_at(id).unwrap(),
-        )));
+        for id in ids {
+            pending.push(PendingNode(ChangeMeta::from_change(
+                &self.oplog().try_lock().unwrap().get_change_at(*id).unwrap(),
+            )));
+        }
         while let Some(PendingNode(node)) = pending.pop() {
             let deps = node.deps.clone();
             if f(node).is_break() {
@@ -1569,6 +1584,8 @@ impl LoroDoc {
                 pending.push(PendingNode(ChangeMeta::from_change(&dep_node)));
             }
         }
+
+        Ok(())
     }
 }
 

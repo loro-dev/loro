@@ -5,6 +5,7 @@ use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue};
 use crate::state::counter_state::CounterState;
 use crate::{
     arena::SharedArena,
+    configure::Configure,
     container::idx::ContainerIdx,
     state::{
         unknown_state::UnknownState, ContainerCreationContext, ContainerState, FastStateSnapshot,
@@ -12,7 +13,7 @@ use crate::{
     },
 };
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) struct ContainerWrapper {
     depth: usize,
     kind: ContainerType,
@@ -48,6 +49,34 @@ impl ContainerWrapper {
             bytes_offset_for_state: None,
             bytes_offset_for_value: None,
             flushed: false,
+        }
+    }
+
+    pub fn fork(&self, config: &Configure) -> Self {
+        if self.flushed {
+            Self {
+                depth: self.depth,
+                kind: self.kind,
+                parent: self.parent.clone(),
+                bytes: self.bytes.clone(),
+                value: self.value.clone(),
+                bytes_offset_for_value: self.bytes_offset_for_value,
+                bytes_offset_for_state: self.bytes_offset_for_state,
+                state: None,
+                flushed: true,
+            }
+        } else {
+            Self {
+                depth: self.depth,
+                kind: self.kind,
+                parent: self.parent.clone(),
+                bytes: None,
+                value: None,
+                bytes_offset_for_value: None,
+                bytes_offset_for_state: None,
+                state: Some(self.state.as_ref().unwrap().fork(&config)),
+                flushed: false,
+            }
         }
     }
 

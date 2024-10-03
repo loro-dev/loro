@@ -10,6 +10,7 @@ use rle::HasLength;
 
 use crate::{
     arena::SharedArena,
+    configure::Configure,
     container::{idx::ContainerIdx, map::MapSet},
     delta::{MapValue, ResolvedMapDelta, ResolvedMapValue},
     diff_calc::DiffMode,
@@ -217,6 +218,10 @@ impl ContainerState for MapState {
             );
         }
         Ok(())
+    }
+
+    fn fork(&self, _config: &Configure) -> Self {
+        self.clone()
     }
 }
 

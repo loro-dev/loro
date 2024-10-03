@@ -4,6 +4,7 @@ use loro_common::{ContainerID, LoroResult, LoroValue};
 
 use crate::{
     arena::SharedArena,
+    configure::Configure,
     container::idx::ContainerIdx,
     encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff},
@@ -91,6 +92,10 @@ impl ContainerState for UnknownState {
     #[doc = r" Restore the state to the state represented by the ops and the blob that exported by `get_snapshot_ops`"]
     fn import_from_snapshot_ops(&mut self, _ctx: StateSnapshotDecodeContext) -> LoroResult<()> {
         Ok(())
+    }
+
+    fn fork(&self, _config: &Configure) -> Self {
+        self.clone()
     }
 }
 

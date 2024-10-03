@@ -9,6 +9,7 @@ use loro_internal::cursor::Side;
 pub use loro_internal::encoding::ImportStatus;
 use loro_internal::handler::HandlerTrait;
 use loro_internal::handler::ValueOrHandler;
+use loro_internal::loro::ChangeTravelError;
 use loro_internal::undo::{OnPop, OnPush};
 pub use loro_internal::version::ImVersionVector;
 use loro_internal::DocState;
@@ -802,14 +803,14 @@ impl LoroDoc {
     ///
     /// # Arguments
     ///
-    /// * `id` - The ID of the Change to start the traversal from.
+    /// * `ids` - The IDs of the Change to start the traversal from.
     /// * `f` - A mutable function that is called for each ancestor. It can return `ControlFlow::Break(())` to stop the traversal.
     pub fn travel_change_ancestors(
         &self,
-        id: ID,
+        ids: &[ID],
         f: &mut dyn FnMut(ChangeMeta) -> ControlFlow<()>,
-    ) {
-        self.doc.travel_change_ancestors(id, f)
+    ) -> Result<(), ChangeTravelError> {
+        self.doc.travel_change_ancestors(ids, f)
     }
 }
 

@@ -233,7 +233,7 @@ impl ContainerStore {
         config: Configure,
     ) -> ContainerStore {
         ContainerStore {
-            store: self.store.fork(arena.clone()),
+            store: self.store.fork(arena.clone(), &config),
             arena,
             conf: config,
             peer,
