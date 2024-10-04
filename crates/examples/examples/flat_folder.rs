@@ -70,6 +70,9 @@ pub fn main() {
         println!("GetValue duration {:?}", start.elapsed());
         println!("Mem usage after getting value {:?}", get_mem_usage());
         let start = Instant::now();
+        let _trimmed_bytes = doc.export(loro::ExportMode::Snapshot).unwrap();
+        println!("ReExport Snapshot Duration {:?}", start.elapsed());
+        let start = Instant::now();
         let trimmed_bytes = doc
             .export(loro::ExportMode::trimmed_snapshot(&doc.oplog_frontiers()))
             .unwrap();
