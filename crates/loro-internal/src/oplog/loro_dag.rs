@@ -7,6 +7,7 @@ use fxhash::FxHashSet;
 use loro_common::{HasCounter, HasCounterSpan, HasIdSpan, HasLamportSpan, PeerID};
 use once_cell::sync::OnceCell;
 use rle::{HasIndex, HasLength, Mergable, Sliceable};
+use smallvec::SmallVec;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
 use std::fmt::Display;
@@ -541,7 +542,7 @@ impl AppDag {
             // check property 4: VV for each node is correctly calculated
             let map = self.map.try_lock().unwrap().clone();
             'outer: for (_, node) in map.iter() {
-                let actual_vv = self.ensure_vv_for(node.clone());
+                let actual_vv = self.ensure_vv_for(node);
                 let mut expected_vv = ImVersionVector::default();
                 for &dep in node.deps.iter() {
                     if self.trimmed_vv.includes_id(dep) {
@@ -549,7 +550,7 @@ impl AppDag {
                     }
 
                     let (_, dep_node) = map.range(..=dep).next_back().unwrap();
-                    self.ensure_vv_for(dep_node.clone());
+                    self.ensure_vv_for(dep_node);
                     expected_vv.extend_to_include_vv(dep_node.vv.get().unwrap().iter());
                     expected_vv.extend_to_include_last_id(dep);
                 }
@@ -853,16 +854,16 @@ impl AppDag {
     /// It's the version when the op is applied
     pub fn get_vv(&self, id: ID) -> Option<ImVersionVector> {
         self.get(id).map(|x| {
-            let mut vv = self.ensure_vv_for(x);
+            let mut vv = self.ensure_vv_for(&x);
             vv.insert(id.peer, id.counter + 1);
             vv
         })
     }
 
-    pub(crate) fn ensure_vv_for(&self, target_node: AppDagNode) -> ImVersionVector {
+    pub(crate) fn ensure_vv_for(&self, target_node: &AppDagNode) -> ImVersionVector {
         if target_node.vv.get().is_none() {
             // (node, has_processed_children)
-            let mut stack = vec![target_node.clone()];
+            let mut stack: SmallVec<[AppDagNode; 4]> = smallvec::smallvec![target_node.clone()];
             while let Some(top_node) = stack.pop() {
                 let mut ans_vv = ImVersionVector::default();
                 // trace!("node={:?} {:?}", &top_node, has_all_deps_met);
@@ -960,7 +961,7 @@ impl AppDag {
         let mut vv: VersionVector = Default::default();
         for id in frontiers.iter() {
             let x = self.get(*id)?;
-            let target_vv = self.ensure_vv_for(x);
+            let target_vv = self.ensure_vv_for(&x);
             vv.extend_to_include_vv(target_vv.iter());
             vv.extend_to_include_last_id(*id);
         }
@@ -979,7 +980,7 @@ impl AppDag {
             let Some(x) = self.get(id) else {
                 unreachable!()
             };
-            let mut vv = self.ensure_vv_for(x);
+            let mut vv = self.ensure_vv_for(&x);
             vv.extend_to_include_last_id(id);
             vv
         };
@@ -988,7 +989,7 @@ impl AppDag {
             let Some(x) = self.get(*id) else {
                 unreachable!()
             };
-            let x = self.ensure_vv_for(x);
+            let x = self.ensure_vv_for(&x);
             vv.extend_to_include_vv(x.iter());
             vv.extend_to_include_last_id(*id);
         }
