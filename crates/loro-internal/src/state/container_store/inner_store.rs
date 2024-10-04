@@ -245,7 +245,7 @@ impl InnerStore {
             store: self
                 .store
                 .iter()
-                .map(|(idx, c)| (*idx, c.fork(&config)))
+                .map(|(idx, c)| (*idx, c.fork(config)))
                 .collect(),
             kv: self.kv.clone(),
             len: self.len,

@@ -1,5 +1,3 @@
-use std::error;
-
 use serde_columnar::ColumnarError;
 use thiserror::Error;
 

@@ -541,7 +541,7 @@ impl AppDag {
             // check property 4: VV for each node is correctly calculated
             let map = self.map.try_lock().unwrap().clone();
             'outer: for (_, node) in map.iter() {
-                let actual_vv = self.ensure_vv_for(node);
+                let actual_vv = self.ensure_vv_for(node.clone());
                 let mut expected_vv = ImVersionVector::default();
                 for &dep in node.deps.iter() {
                     if self.trimmed_vv.includes_id(dep) {
@@ -549,7 +549,7 @@ impl AppDag {
                     }
 
                     let (_, dep_node) = map.range(..=dep).next_back().unwrap();
-                    self.ensure_vv_for(dep_node);
+                    self.ensure_vv_for(dep_node.clone());
                     expected_vv.extend_to_include_vv(dep_node.vv.get().unwrap().iter());
                     expected_vv.extend_to_include_last_id(dep);
                 }
@@ -853,45 +853,66 @@ impl AppDag {
     /// It's the version when the op is applied
     pub fn get_vv(&self, id: ID) -> Option<ImVersionVector> {
         self.get(id).map(|x| {
-            let mut vv = self.ensure_vv_for(&x);
+            let mut vv = self.ensure_vv_for(x);
             vv.insert(id.peer, id.counter + 1);
             vv
         })
     }
 
-    pub(crate) fn ensure_vv_for(&self, node: &AppDagNode) -> ImVersionVector {
-        if let Some(vv) = node.vv.get() {
-            return vv.clone();
-        }
-
-        let mut ans_vv = ImVersionVector::default();
-        // trace!("deps={:?}", &node.deps);
-        // trace!("this.trimmed_f_deps={:?}", &self.trimmed_frontiers_deps);
-        // trace!("this.vv={:?}", &self.vv);
-        // trace!("this.unparsed_vv={:?}", &self.unparsed_vv);
-        // trace!("this.trimmed_vv={:?}", &self.trimmed_vv);
-        if node.deps == self.trimmed_frontiers_deps {
-            for (&p, &c) in self.trimmed_vv.iter() {
-                ans_vv.insert(p, c);
-            }
-        } else {
-            for id in node.deps.iter() {
-                // trace!("id {}", id);
-                let node = self.get(*id).expect("deps should be in the dag");
-                let dep_vv = self.ensure_vv_for(&node);
-                if ans_vv.is_empty() {
-                    ans_vv = dep_vv;
+    pub(crate) fn ensure_vv_for(&self, target_node: AppDagNode) -> ImVersionVector {
+        if target_node.vv.get().is_none() {
+            // (node, has_processed_children)
+            let mut stack = vec![target_node.clone()];
+            while let Some(top_node) = stack.pop() {
+                let mut ans_vv = ImVersionVector::default();
+                // trace!("node={:?} {:?}", &top_node, has_all_deps_met);
+                // trace!("deps={:?}", &top_node.deps);
+                // trace!("this.trimmed_f_deps={:?}", &self.trimmed_frontiers_deps);
+                // trace!("this.vv={:?}", &self.vv);
+                // trace!("this.unparsed_vv={:?}", &self.unparsed_vv);
+                // trace!("this.trimmed_vv={:?}", &self.trimmed_vv);
+                if top_node.deps == self.trimmed_frontiers_deps {
+                    for (&p, &c) in self.trimmed_vv.iter() {
+                        ans_vv.insert(p, c);
+                    }
                 } else {
-                    ans_vv.extend_to_include_vv(dep_vv.iter());
+                    let mut all_deps_processed = true;
+                    for id in top_node.deps.iter() {
+                        let node = self.get(*id).expect("deps should be in the dag");
+                        if node.vv.get().is_none() {
+                            // assert!(!has_all_deps_met);
+                            if all_deps_processed {
+                                stack.push(top_node.clone());
+                            }
+                            all_deps_processed = false;
+                            stack.push(node);
+                            continue;
+                        };
+                    }
+
+                    if !all_deps_processed {
+                        continue;
+                    }
+
+                    for id in top_node.deps.iter() {
+                        let node = self.get(*id).expect("deps should be in the dag");
+                        let dep_vv = node.vv.get().unwrap();
+                        if ans_vv.is_empty() {
+                            ans_vv = dep_vv.clone();
+                        } else {
+                            ans_vv.extend_to_include_vv(dep_vv.iter());
+                        }
+
+                        ans_vv.insert(node.peer, node.ctr_end());
+                    }
                 }
 
-                ans_vv.insert(node.peer, node.ctr_end());
+                // trace!("ans_vv={:?}", &ans_vv);
+                top_node.vv.set(ans_vv.clone()).unwrap();
             }
         }
 
-        // trace!("ans_vv={:?}", &ans_vv);
-        node.vv.set(ans_vv.clone()).unwrap();
-        ans_vv
+        target_node.vv.get().unwrap().clone()
     }
 
     /// Compare the causal order of two versions.
@@ -939,7 +960,7 @@ impl AppDag {
         let mut vv: VersionVector = Default::default();
         for id in frontiers.iter() {
             let x = self.get(*id)?;
-            let target_vv = self.ensure_vv_for(&x);
+            let target_vv = self.ensure_vv_for(x);
             vv.extend_to_include_vv(target_vv.iter());
             vv.extend_to_include_last_id(*id);
         }
@@ -958,7 +979,7 @@ impl AppDag {
             let Some(x) = self.get(id) else {
                 unreachable!()
             };
-            let mut vv = self.ensure_vv_for(&x);
+            let mut vv = self.ensure_vv_for(x);
             vv.extend_to_include_last_id(id);
             vv
         };
@@ -967,7 +988,7 @@ impl AppDag {
             let Some(x) = self.get(*id) else {
                 unreachable!()
             };
-            let x = self.ensure_vv_for(&x);
+            let x = self.ensure_vv_for(x);
             vv.extend_to_include_vv(x.iter());
             vv.extend_to_include_last_id(*id);
         }

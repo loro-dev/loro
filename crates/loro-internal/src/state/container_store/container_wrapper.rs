@@ -74,7 +74,7 @@ impl ContainerWrapper {
                 value: None,
                 bytes_offset_for_value: None,
                 bytes_offset_for_state: None,
-                state: Some(self.state.as_ref().unwrap().fork(&config)),
+                state: Some(self.state.as_ref().unwrap().fork(config)),
                 flushed: false,
             }
         }
