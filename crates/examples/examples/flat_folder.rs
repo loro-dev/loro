@@ -77,6 +77,7 @@ pub fn main() {
             .export(loro::ExportMode::trimmed_snapshot(&doc.oplog_frontiers()))
             .unwrap();
         println!("Export TrimmedSnapshot Duration {:?}", start.elapsed());
+        println!("TrimmedSnapshot size {:?}", ByteSize(trimmed_bytes.len()));
         trimmed_bytes
     };
 
