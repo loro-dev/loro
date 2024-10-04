@@ -350,6 +350,7 @@ impl State {
                 State::RichtextState(richtext_state.fork(config))
             }
             State::TreeState(tree_state) => State::TreeState(tree_state.fork(config)),
+            #[cfg(feature = "counter")]
             State::CounterState(counter_state) => State::CounterState(counter_state.fork(config)),
             State::UnknownState(unknown_state) => State::UnknownState(unknown_state.fork(config)),
         }
