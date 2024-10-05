@@ -21,9 +21,6 @@ use crate::{
 use bytes::{Buf, Bytes};
 use loro_common::{IdSpan, LoroError, LoroResult};
 use tracing::trace;
-
-use super::outdated_encode_reordered::{import_changes_to_oplog, ImportChangesResult};
-
 pub(crate) const EMPTY_MARK: &[u8] = b"E";
 pub(super) struct Snapshot {
     pub oplog_bytes: Bytes,

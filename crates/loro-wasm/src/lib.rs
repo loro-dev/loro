@@ -11,7 +11,7 @@ use loro_internal::{
     configure::{StyleConfig, StyleConfigMap},
     container::{richtext::ExpandType, ContainerID},
     cursor::{self, Side},
-    encoding::{ImportBlobMetadata, ImportStatus},
+    encoding::ImportBlobMetadata,
     event::Index,
     handler::{
         Handler, ListHandler, MapHandler, TextDelta, TextHandler, TreeHandler, ValueOrHandler,
