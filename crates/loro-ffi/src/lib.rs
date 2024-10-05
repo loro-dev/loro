@@ -5,16 +5,16 @@ pub use loro::{
     cursor::Side, undo::UndoOrRedo, CannotFindRelativePosition, Counter, CounterSpan,
     EventTriggerKind, ExpandType, FractionalIndex, IdLp, IdSpan, JsonChange, JsonFutureOp,
     JsonFutureOpWrapper, JsonListOp, JsonMapOp, JsonMovableListOp, JsonOp, JsonOpContent,
-    JsonPathError, JsonSchema, JsonTextOp, JsonTreeOp, Lamport, LoroError, PeerID, StyleConfig,
-    TreeID, ID,
+    JsonPathError, JsonSchema, JsonTextOp, JsonTreeOp, Lamport, LoroEncodeError, LoroError, PeerID,
+    StyleConfig, TreeID, ID,
 };
 pub use std::cmp::Ordering;
 use std::sync::Arc;
 pub use value::{ContainerID, ContainerType, LoroValue, LoroValueLike};
 mod doc;
 pub use doc::{
-    ChangeMeta, CommitOptions, ContainerPath, ExportMode, ImportBlobMetadata, JsonSchemaLike,
-    LocalUpdateCallback, LoroDoc, PosQueryResult, Subscription, Unsubscriber,
+    ChangeMeta, CommitOptions, ContainerPath, ExportMode, ImportBlobMetadata, ImportStatus,
+    JsonSchemaLike, LocalUpdateCallback, LoroDoc, PosQueryResult, Subscription, Unsubscriber,
 };
 mod container;
 pub use container::{
