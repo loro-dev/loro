@@ -12,7 +12,7 @@ use outdated_encode_reordered::{import_changes_to_oplog, ImportChangesResult};
 pub(crate) use value::OwnedValue;
 
 use crate::op::OpWithId;
-use crate::version::{Frontiers, VersionRange, VersionVectorDiff};
+use crate::version::Frontiers;
 use crate::LoroDoc;
 use crate::{oplog::OpLog, LoroError, VersionVector};
 use loro_common::{
@@ -467,8 +467,8 @@ pub(crate) fn decode_snapshot(
     body: &[u8],
 ) -> Result<ImportStatus, LoroError> {
     match mode {
-        EncodeMode::OutdatedSnapshot => outdated_encode_reordered::decode_snapshot(doc, body),
-        EncodeMode::FastSnapshot => fast_snapshot::decode_snapshot(doc, body.to_vec().into()),
+        EncodeMode::OutdatedSnapshot => outdated_encode_reordered::decode_snapshot(doc, body)?,
+        EncodeMode::FastSnapshot => fast_snapshot::decode_snapshot(doc, body.to_vec().into())?,
         _ => unreachable!(),
     };
     Ok(ImportStatus {

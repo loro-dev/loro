@@ -28,6 +28,7 @@ use super::{ContainerState, DiffApplyContext};
 pub struct MapState {
     idx: ContainerIdx,
     map: BTreeMap<InternalString, MapValue>,
+    child_containers: FxHashMap<ContainerID, InternalString>,
     size: usize,
 }
 
@@ -155,27 +156,11 @@ impl ContainerState for MapState {
     }
 
     fn get_child_index(&self, id: &ContainerID) -> Option<Index> {
-        for (key, value) in self.map.iter() {
-            if let Some(LoroValue::Container(x)) = &value.value {
-                if x == id {
-                    return Some(Index::Key(key.clone()));
-                }
-            }
-        }
-
-        None
+        self.child_containers.get(id).map(|x| Index::Key(x.clone()))
     }
 
     fn contains_child(&self, id: &ContainerID) -> bool {
-        for (_, value) in self.map.iter() {
-            if let Some(LoroValue::Container(x)) = &value.value {
-                if x == id {
-                    return true;
-                }
-            }
-        }
-
-        false
+        self.child_containers.contains_key(id)
     }
 
     fn get_child_containers(&self) -> Vec<ContainerID> {
@@ -230,13 +215,22 @@ impl MapState {
         Self {
             idx,
             map: Default::default(),
+            child_containers: Default::default(),
             size: 0,
         }
     }
 
     pub fn insert(&mut self, key: InternalString, value: MapValue) {
         let value_yes = value.value.is_some();
+        if let Some(LoroValue::Container(id)) = &value.value {
+            self.child_containers.insert(id.clone(), key.clone());
+        }
+
         let result = self.map.insert(key.clone(), value);
+        if let Some(Some(LoroValue::Container(c))) = result.as_ref().map(|x| &x.value) {
+            self.child_containers.remove(c);
+        }
+
         match (result, value_yes) {
             (Some(x), true) => {
                 if x.value.is_none() {
@@ -260,6 +254,9 @@ impl MapState {
         if let Some(x) = result {
             if x.value.is_some() {
                 self.size -= 1;
+            }
+            if let Some(LoroValue::Container(id)) = x.value {
+                self.child_containers.remove(&id);
             }
         };
     }

@@ -41,7 +41,7 @@ jobs:
           version: "0.2.92"
       - uses: Swatinem/rust-cache@v2
       - name: Check
-        run: cargo clippy --all-features
+        run: cargo clippy --all-features -- -Dwarnings
       - name: Build
         run: cargo build --verbose
       - name: Run rust tests
