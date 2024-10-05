@@ -13,6 +13,7 @@ import {
   TreeID,
   Value,
   ContainerType,
+  PeerID,
 } from "loro-wasm";
 
 /**

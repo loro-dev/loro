@@ -18,8 +18,8 @@ use crate::configure::Configure;
 use crate::container::list::list_op;
 use crate::dag::{Dag, DagUtils};
 use crate::diff_calc::DiffMode;
-use crate::encoding::ParsedHeaderAndBody;
 use crate::encoding::{decode_oplog, encode_oplog, EncodeMode};
+use crate::encoding::{ImportStatus, ParsedHeaderAndBody};
 use crate::history_cache::ContainerHistoryCache;
 use crate::id::{Counter, PeerID, ID};
 use crate::op::{FutureInnerContent, ListSlice, RawOpContent, RemoteOp, RichOp};
@@ -395,7 +395,7 @@ impl OpLog {
     }
 
     #[inline(always)]
-    pub(crate) fn decode(&mut self, data: ParsedHeaderAndBody) -> Result<(), LoroError> {
+    pub(crate) fn decode(&mut self, data: ParsedHeaderAndBody) -> Result<ImportStatus, LoroError> {
         decode_oplog(self, data)
     }
 

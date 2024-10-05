@@ -6,6 +6,7 @@ pub use loro_internal::cursor::CannotFindRelativePosition;
 use loro_internal::cursor::Cursor;
 use loro_internal::cursor::PosQueryResult;
 use loro_internal::cursor::Side;
+pub use loro_internal::encoding::ImportStatus;
 use loro_internal::handler::HandlerTrait;
 use loro_internal::handler::ValueOrHandler;
 use loro_internal::loro::ChangeTravelError;
@@ -387,7 +388,7 @@ impl LoroDoc {
 
     /// Import updates/snapshot exported by [`LoroDoc::export_snapshot`] or [`LoroDoc::export_from`].
     #[inline]
-    pub fn import(&self, bytes: &[u8]) -> Result<(), LoroError> {
+    pub fn import(&self, bytes: &[u8]) -> Result<ImportStatus, LoroError> {
         self.doc.import_with(bytes, "".into())
     }
 
@@ -396,7 +397,7 @@ impl LoroDoc {
     /// It marks the import with a custom `origin` string. It can be used to track the import source
     /// in the generated events.
     #[inline]
-    pub fn import_with(&self, bytes: &[u8], origin: &str) -> Result<(), LoroError> {
+    pub fn import_with(&self, bytes: &[u8], origin: &str) -> Result<ImportStatus, LoroError> {
         self.doc.import_with(bytes, origin.into())
     }
 
@@ -404,7 +405,10 @@ impl LoroDoc {
     ///
     /// only supports backward compatibility but not forward compatibility.
     #[inline]
-    pub fn import_json_updates<T: TryInto<JsonSchema>>(&self, json: T) -> Result<(), LoroError> {
+    pub fn import_json_updates<T: TryInto<JsonSchema>>(
+        &self,
+        json: T,
+    ) -> Result<ImportStatus, LoroError> {
         self.doc.import_json_updates(json)
     }
 

@@ -8,13 +8,17 @@ pub(crate) mod value_register;
 pub(crate) use outdated_encode_reordered::{
     decode_op, encode_op, get_op_prop, EncodedDeleteStartId, IterableEncodedDeleteStartId,
 };
+use outdated_encode_reordered::{import_changes_to_oplog, ImportChangesResult};
 pub(crate) use value::OwnedValue;
 
 use crate::op::OpWithId;
-use crate::version::Frontiers;
+use crate::version::{Frontiers, VersionRange, VersionVectorDiff};
 use crate::LoroDoc;
 use crate::{oplog::OpLog, LoroError, VersionVector};
-use loro_common::{IdLpSpan, IdSpan, LoroEncodeError, LoroResult, PeerID, ID};
+use loro_common::{
+    CounterSpan, HasCounter, HasCounterSpan, IdLpSpan, IdSpan, IdSpanVector, LoroEncodeError,
+    LoroResult, PeerID, ID,
+};
 use num_traits::{FromPrimitive, ToPrimitive};
 use rle::{HasLength, Sliceable};
 use serde::{Deserialize, Serialize};
@@ -166,6 +170,12 @@ impl TryFrom<[u8; 2]> for EncodeMode {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ImportStatus {
+    pub success: IdSpanVector,
+    pub pending: Option<IdSpanVector>,
+}
+
 /// The encoder used to encode the container states.
 ///
 /// Each container state can be represented by a sequence of operations.
@@ -243,16 +253,44 @@ pub(crate) fn encode_oplog(oplog: &OpLog, vv: &VersionVector, mode: EncodeMode) 
 pub(crate) fn decode_oplog(
     oplog: &mut OpLog,
     parsed: ParsedHeaderAndBody,
-) -> Result<(), LoroError> {
+) -> Result<ImportStatus, LoroError> {
+    let before_vv = oplog.vv().clone();
     let ParsedHeaderAndBody { mode, body, .. } = parsed;
-    match mode {
+    let changes = match mode {
         EncodeMode::OutdatedRle | EncodeMode::OutdatedSnapshot => {
             outdated_encode_reordered::decode_updates(oplog, body)
         }
         EncodeMode::FastSnapshot => fast_snapshot::decode_oplog(oplog, body),
         EncodeMode::FastUpdates => fast_snapshot::decode_updates(oplog, body.to_vec().into()),
         EncodeMode::Auto => unreachable!(),
+    }?;
+    let ImportChangesResult {
+        latest_ids,
+        pending_changes,
+        changes_that_deps_on_trimmed_history,
+    } = import_changes_to_oplog(changes, oplog);
+
+    let mut pending = IdSpanVector::default();
+    pending_changes.iter().for_each(|c| {
+        let peer = c.id.peer;
+        let start = c.ctr_start();
+        let end = c.ctr_end();
+        pending
+            .entry(peer)
+            .or_insert_with(|| CounterSpan::new(start, end))
+            .extend_include(start, end);
+    });
+    // TODO: PERF: should we use hashmap to filter latest_ids with the same peer first?
+    oplog.try_apply_pending(latest_ids);
+    oplog.import_unknown_lamport_pending_changes(pending_changes)?;
+    let after_vv = oplog.vv();
+    if !changes_that_deps_on_trimmed_history.is_empty() {
+        return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
     }
+    Ok(ImportStatus {
+        success: before_vv.diff(after_vv).right,
+        pending: (!pending.is_empty()).then_some(pending),
+    })
 }
 
 pub(crate) struct ParsedHeaderAndBody<'a> {
@@ -427,12 +465,16 @@ pub(crate) fn decode_snapshot(
     doc: &LoroDoc,
     mode: EncodeMode,
     body: &[u8],
-) -> Result<(), LoroError> {
+) -> Result<ImportStatus, LoroError> {
     match mode {
         EncodeMode::OutdatedSnapshot => outdated_encode_reordered::decode_snapshot(doc, body),
         EncodeMode::FastSnapshot => fast_snapshot::decode_snapshot(doc, body.to_vec().into()),
         _ => unreachable!(),
-    }
+    };
+    Ok(ImportStatus {
+        success: doc.oplog_vv().diff(&Default::default()).left,
+        pending: None,
+    })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

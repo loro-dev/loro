@@ -590,7 +590,8 @@ impl TryFrom<&str> for TreeID {
 
 #[cfg(feature = "wasm")]
 pub mod wasm {
-    use crate::{LoroError, TreeID};
+    use crate::{IdSpanVector, LoroError, TreeID};
+    use js_sys::Map;
     use wasm_bindgen::JsValue;
     impl From<TreeID> for JsValue {
         fn from(value: TreeID) -> Self {

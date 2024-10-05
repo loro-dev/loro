@@ -8,7 +8,7 @@ use std::{
 
 use arbitrary::Arbitrary;
 use fxhash::FxHashSet;
-use loro::{ContainerType, Frontiers, LoroError, LoroResult};
+use loro::{ContainerType, Frontiers, ImportStatus, LoroError, LoroResult};
 use tabled::TableIteratorExt;
 use tracing::{info, info_span, trace};
 
@@ -271,7 +271,7 @@ impl CRDTFuzzer {
     }
 }
 
-fn handle_import_result(e: LoroResult<()>) {
+fn handle_import_result(e: LoroResult<ImportStatus>) {
     match e {
         Ok(_) => {}
         Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion) => {

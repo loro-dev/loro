@@ -15,7 +15,9 @@
 //!
 use std::io::{Read, Write};
 
-use crate::{encoding::trimmed_snapshot, oplog::ChangeStore, LoroDoc, OpLog, VersionVector};
+use crate::{
+    change::Change, encoding::trimmed_snapshot, oplog::ChangeStore, LoroDoc, OpLog, VersionVector,
+};
 use bytes::{Buf, Bytes};
 use loro_common::{IdSpan, LoroError, LoroResult};
 use tracing::trace;
@@ -208,7 +210,7 @@ pub(crate) fn encode_snapshot<W: std::io::Write>(doc: &LoroDoc, w: &mut W) {
     }
 }
 
-pub(crate) fn decode_oplog(oplog: &mut OpLog, bytes: &[u8]) -> Result<(), LoroError> {
+pub(crate) fn decode_oplog(oplog: &mut OpLog, bytes: &[u8]) -> Result<Vec<Change>, LoroError> {
     let oplog_len = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
     let oplog_bytes = &bytes[4..4 + oplog_len as usize];
     let mut changes = ChangeStore::decode_snapshot_for_updates(
@@ -217,18 +219,7 @@ pub(crate) fn decode_oplog(oplog: &mut OpLog, bytes: &[u8]) -> Result<(), LoroEr
         oplog.vv(),
     )?;
     changes.sort_unstable_by_key(|x| x.lamport);
-    let ImportChangesResult {
-        latest_ids,
-        pending_changes,
-        changes_that_deps_on_trimmed_history,
-    } = import_changes_to_oplog(changes, oplog);
-    // TODO: PERF: should we use hashmap to filter latest_ids with the same peer first?
-    oplog.try_apply_pending(latest_ids);
-    oplog.import_unknown_lamport_pending_changes(pending_changes)?;
-    if !changes_that_deps_on_trimmed_history.is_empty() {
-        return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
-    }
-    Ok(())
+    Ok(changes)
 }
 
 pub(crate) fn encode_updates<W: std::io::Write>(doc: &LoroDoc, vv: &VersionVector, w: &mut W) {
@@ -244,7 +235,7 @@ pub(crate) fn encode_updates_in_range<W: std::io::Write>(
     oplog.export_blocks_in_range(spans, w);
 }
 
-pub(crate) fn decode_updates(oplog: &mut OpLog, body: Bytes) -> Result<(), LoroError> {
+pub(crate) fn decode_updates(oplog: &mut OpLog, body: Bytes) -> Result<Vec<Change>, LoroError> {
     let mut reader: &[u8] = body.as_ref();
     let mut index = 0;
     let self_vv = oplog.vv();
@@ -263,16 +254,5 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, body: Bytes) -> Result<(), LoroE
     }
 
     changes.sort_unstable_by_key(|x| x.lamport);
-    let ImportChangesResult {
-        latest_ids,
-        pending_changes,
-        changes_that_deps_on_trimmed_history,
-    } = import_changes_to_oplog(changes, oplog);
-    // TODO: PERF: should we use hashmap to filter latest_ids with the same peer first?
-    oplog.try_apply_pending(latest_ids);
-    oplog.import_unknown_lamport_pending_changes(pending_changes)?;
-    if !changes_that_deps_on_trimmed_history.is_empty() {
-        return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
-    }
-    Ok(())
+    Ok(changes)
 }

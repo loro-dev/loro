@@ -35,7 +35,8 @@ use crate::{
     encoding::{
         decode_snapshot, export_fast_snapshot, export_fast_updates, export_fast_updates_in_range,
         export_snapshot, export_snapshot_at, export_state_only_snapshot, export_trimmed_snapshot,
-        json_schema::json::JsonSchema, parse_header_and_body, EncodeMode, ParsedHeaderAndBody,
+        json_schema::json::JsonSchema, parse_header_and_body, EncodeMode, ImportStatus,
+        ParsedHeaderAndBody,
     },
     event::{str_to_path, EventTriggerKind, Index, InternalDocDiff},
     handler::{Handler, MovableListHandler, TextHandler, TreeHandler, ValueOrHandler},
@@ -419,14 +420,18 @@ impl LoroDoc {
     }
 
     #[inline(always)]
-    pub fn import(&self, bytes: &[u8]) -> Result<(), LoroError> {
+    pub fn import(&self, bytes: &[u8]) -> Result<ImportStatus, LoroError> {
         let s = debug_span!("import", peer = self.peer_id());
         let _e = s.enter();
         self.import_with(bytes, Default::default())
     }
 
     #[inline]
-    pub fn import_with(&self, bytes: &[u8], origin: InternalString) -> Result<(), LoroError> {
+    pub fn import_with(
+        &self,
+        bytes: &[u8],
+        origin: InternalString,
+    ) -> Result<ImportStatus, LoroError> {
         self.commit_then_stop();
         let ans = self._import_with(bytes, origin);
         self.renew_txn_if_auto_commit();
@@ -434,7 +439,11 @@ impl LoroDoc {
     }
 
     #[tracing::instrument(skip_all)]
-    fn _import_with(&self, bytes: &[u8], origin: InternalString) -> Result<(), LoroError> {
+    fn _import_with(
+        &self,
+        bytes: &[u8],
+        origin: InternalString,
+    ) -> Result<ImportStatus, LoroError> {
         ensure_cov::notify_cov("loro_internal::import");
         let parsed = parse_header_and_body(bytes)?;
         info!("Importing with mode={:?}", &parsed.mode);
@@ -499,9 +508,9 @@ impl LoroDoc {
     #[tracing::instrument(skip_all)]
     pub(crate) fn update_oplog_and_apply_delta_to_state_if_needed(
         &self,
-        f: impl FnOnce(&mut OpLog) -> Result<(), LoroError>,
+        f: impl FnOnce(&mut OpLog) -> Result<ImportStatus, LoroError>,
         origin: InternalString,
-    ) -> Result<(), LoroError> {
+    ) -> Result<ImportStatus, LoroError> {
         let mut oplog = self.oplog.try_lock().unwrap();
         let old_vv = oplog.vv().clone();
         let old_frontiers = oplog.frontiers().clone();
@@ -566,7 +575,7 @@ impl LoroDoc {
     ///
     /// only supports backward compatibility but not forward compatibility.
     #[tracing::instrument(skip_all)]
-    pub fn import_json_updates<T: TryInto<JsonSchema>>(&self, json: T) -> LoroResult<()> {
+    pub fn import_json_updates<T: TryInto<JsonSchema>>(&self, json: T) -> LoroResult<ImportStatus> {
         let json = json.try_into().map_err(|_| LoroError::InvalidJsonSchema)?;
         self.commit_then_stop();
         let result = self.update_oplog_and_apply_delta_to_state_if_needed(
@@ -988,7 +997,9 @@ impl LoroDoc {
         let mut err = None;
         for data in bytes.iter() {
             match self.import(data) {
-                Ok(_) => {}
+                Ok(_s) => {
+                    // TODO: merge
+                }
                 Err(e) => {
                     err = Some(e);
                 }
@@ -1145,7 +1156,7 @@ impl LoroDoc {
     /// Import ops from other doc.
     ///
     /// After `a.merge(b)` and `b.merge(a)`, `a` and `b` will have the same content if they are in attached mode.
-    pub fn merge(&self, other: &Self) -> LoroResult<()> {
+    pub fn merge(&self, other: &Self) -> LoroResult<ImportStatus> {
         self.import(&other.export_from(&self.oplog_vv()))
     }
 

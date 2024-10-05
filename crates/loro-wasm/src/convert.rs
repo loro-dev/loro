@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
-use js_sys::{Array, Object, Reflect, Uint8Array};
+use js_sys::{Array, Map, Object, Reflect, Uint8Array};
 use loro_internal::delta::ResolvedMapDelta;
-use loro_internal::encoding::ImportBlobMetadata;
+use loro_internal::encoding::{ImportBlobMetadata, ImportStatus};
 use loro_internal::event::Diff;
 use loro_internal::handler::{Handler, ValueOrHandler};
+use loro_internal::loro_common::IdSpanVector;
 use loro_internal::{ListDiffItem, LoroDoc, LoroValue};
 use wasm_bindgen::JsValue;
 
@@ -374,4 +375,32 @@ pub(crate) fn handler_to_js_value(handler: Handler, doc: Option<Arc<LoroDoc>>) -
         Handler::Counter(c) => LoroCounter { handler: c, doc }.into(),
         Handler::Unknown(_) => unreachable!(),
     }
+}
+
+pub(crate) fn import_status_to_js_value(status: ImportStatus) -> JsValue {
+    let obj = Object::new();
+    js_sys::Reflect::set(
+        &obj,
+        &JsValue::from_str("success"),
+        &id_span_vector_to_js_value(status.success),
+    )
+    .unwrap();
+    js_sys::Reflect::set(
+        &obj,
+        &JsValue::from_str("pending"),
+        &match status.pending {
+            None => JsValue::null(),
+            Some(pending) => id_span_vector_to_js_value(pending),
+        },
+    )
+    .unwrap();
+    obj.into()
+}
+
+fn id_span_vector_to_js_value(v: IdSpanVector) -> JsValue {
+    let map = Map::new();
+    for (k, v) in v.into_iter() {
+        Map::set(&map, &JsValue::from_str(&k.to_string()), &JsValue::from(v));
+    }
+    map.into()
 }
