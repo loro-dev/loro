@@ -399,6 +399,7 @@ impl TreeTracker {
     ) {
         let node = TreeNode::new(target, *parent, position);
         if let Some(parent) = parent {
+            trace!("Parent {:?} target {:?}", parent, target);
             let parent = self.find_node_by_id_mut(*parent).unwrap();
             parent.children.insert(*index, node);
         } else {
