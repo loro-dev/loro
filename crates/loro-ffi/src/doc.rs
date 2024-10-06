@@ -1,12 +1,13 @@
 use std::{
     borrow::Cow,
     cmp::Ordering,
+    collections::HashMap,
     ops::Deref,
     sync::{Arc, Mutex},
 };
 
 use loro::{
-    cursor::CannotFindRelativePosition, DocAnalysis, FrontiersNotIncluded, IdSpan, ImportStatus,
+    cursor::CannotFindRelativePosition, CounterSpan, DocAnalysis, FrontiersNotIncluded, IdSpan,
     JsonPathError, JsonSchema, Lamport, LoroDoc as InnerLoroDoc, LoroEncodeError, LoroError,
     LoroResult, PeerID, Timestamp, ID,
 };
@@ -254,7 +255,8 @@ impl LoroDoc {
     /// Import updates/snapshot exported by [`LoroDoc::export_snapshot`] or [`LoroDoc::export_from`].
     #[inline]
     pub fn import(&self, bytes: &[u8]) -> Result<ImportStatus, LoroError> {
-        self.doc.import_with(bytes, "")
+        let status = self.doc.import_with(bytes, "")?;
+        Ok(status.into())
     }
 
     /// Import updates/snapshot exported by [`LoroDoc::export_snapshot`] or [`LoroDoc::export_from`].
@@ -263,11 +265,13 @@ impl LoroDoc {
     /// in the generated events.
     #[inline]
     pub fn import_with(&self, bytes: &[u8], origin: &str) -> Result<ImportStatus, LoroError> {
-        self.doc.import_with(bytes, origin)
+        let status = self.doc.import_with(bytes, origin)?;
+        Ok(status.into())
     }
 
     pub fn import_json_updates(&self, json: &str) -> Result<ImportStatus, LoroError> {
-        self.doc.import_json_updates(json)
+        let status = self.doc.import_json_updates(json)?;
+        Ok(status.into())
     }
 
     /// Export the current state with json-string format of the document.
@@ -381,24 +385,28 @@ impl LoroDoc {
         &self,
         container_id: &ContainerID,
         subscriber: Arc<dyn Subscriber>,
-    ) -> Subscription {
-        self.doc
-            .subscribe(
-                &(container_id.into()),
-                Arc::new(move |e| {
-                    subscriber.on_diff(DiffEvent::from(e));
-                }),
-            )
-            .into()
+    ) -> Arc<Subscription> {
+        Arc::new(
+            self.doc
+                .subscribe(
+                    &(container_id.into()),
+                    Arc::new(move |e| {
+                        subscriber.on_diff(DiffEvent::from(e));
+                    }),
+                )
+                .into(),
+        )
     }
 
-    pub fn subscribe_root(&self, subscriber: Arc<dyn Subscriber>) -> Subscription {
+    pub fn subscribe_root(&self, subscriber: Arc<dyn Subscriber>) -> Arc<Subscription> {
         // self.doc.subscribe_root(callback)
-        self.doc
-            .subscribe_root(Arc::new(move |e| {
-                subscriber.on_diff(DiffEvent::from(e));
-            }))
-            .into()
+        Arc::new(
+            self.doc
+                .subscribe_root(Arc::new(move |e| {
+                    subscriber.on_diff(DiffEvent::from(e));
+                }))
+                .into(),
+        )
     }
 
     /// Subscribe the local update of the document.
@@ -748,4 +756,18 @@ impl From<ExportMode> for loro::ExportMode<'_> {
 pub struct ContainerPath {
     pub id: ContainerID,
     pub path: Index,
+}
+
+pub struct ImportStatus {
+    pub success: HashMap<u64, CounterSpan>,
+    pub pending: Option<HashMap<u64, CounterSpan>>,
+}
+
+impl From<loro::ImportStatus> for ImportStatus {
+    fn from(value: loro::ImportStatus) -> Self {
+        Self {
+            success: value.success.into_iter().collect(),
+            pending: value.pending.map(|p| p.into_iter().collect()),
+        }
+    }
 }
