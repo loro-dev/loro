@@ -1052,6 +1052,14 @@ impl ContainerState for TreeState {
                     TreeInternalDiff::Create { parent, position } => {
                         self.mov(target, *parent, last_move_op, Some(position.clone()), false)
                             .unwrap();
+
+                        if let TreeParentId::Node(p) = parent {
+                            // reuse diff cache, at this time,it's "move in deleted"
+                            if self.is_node_deleted(p).unwrap() {
+                                continue;
+                            }
+                        }
+
                         let index = self.get_index_by_tree_id(&target).unwrap();
                         ans.push(TreeDiffItem {
                             target,
@@ -1111,6 +1119,13 @@ impl ContainerState for TreeState {
                         } else {
                             self.mov(target, *parent, last_move_op, Some(position.clone()), false)
                                 .unwrap();
+
+                            if let TreeParentId::Node(p) = parent {
+                                // reuse diff cache, at this time,it's "move in deleted"
+                                if self.is_node_deleted(p).unwrap() {
+                                    continue;
+                                }
+                            }
 
                             let index = self.get_index_by_tree_id(&target).unwrap();
                             match was_alive {
