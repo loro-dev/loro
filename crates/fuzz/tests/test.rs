@@ -11621,6 +11621,112 @@ fn trimmed_fuzz_unknown() {
 }
 
 #[test]
+fn tree_event_parent_not_found() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            Handle {
+                site: 7,
+                target: 7,
+                container: 7,
+                action: Generic(GenericAction {
+                    value: I32(117901063),
+                    bool: true,
+                    key: 117901063,
+                    pos: 506381209866536711,
+                    length: 506381209882330885,
+                    prop: 506381209866536711,
+                }),
+            },
+            Handle {
+                site: 7,
+                target: 7,
+                container: 7,
+                action: Generic(GenericAction {
+                    value: I32(-15635199),
+                    bool: false,
+                    key: 4294967057,
+                    pos: 506381209866536849,
+                    length: 506381209866536711,
+                    prop: 506381209866536711,
+                }),
+            },
+            Handle {
+                site: 7,
+                target: 7,
+                container: 7,
+                action: Generic(GenericAction {
+                    value: I32(1633771873),
+                    bool: true,
+                    key: 828465505,
+                    pos: 13382931975044184514,
+                    length: 13382931975044184546,
+                    prop: 13382931975044184546,
+                }),
+            },
+            Sync { from: 97, to: 97 },
+            Handle {
+                site: 248,
+                target: 97,
+                container: 97,
+                action: Generic(GenericAction {
+                    value: I32(1633771873),
+                    bool: true,
+                    key: 1633771873,
+                    pos: 7016996765293437281,
+                    length: 7016996765293437281,
+                    prop: 7016996765293437281,
+                }),
+            },
+            Handle {
+                site: 7,
+                target: 7,
+                container: 7,
+                action: Generic(GenericAction {
+                    value: I32(587663111),
+                    bool: true,
+                    key: 117901063,
+                    pos: 506381209866536711,
+                    length: 7,
+                    prop: 506381209866536708,
+                }),
+            },
+            Handle {
+                site: 7,
+                target: 7,
+                container: 7,
+                action: Generic(GenericAction {
+                    value: I32(117901063),
+                    bool: true,
+                    key: 1799,
+                    pos: 831200004273078272,
+                    length: 18374686478597949846,
+                    prop: 506381209866597582,
+                }),
+            },
+            Handle {
+                site: 7,
+                target: 7,
+                container: 35,
+                action: Generic(GenericAction {
+                    value: I32(117901063),
+                    bool: true,
+                    key: 1633771783,
+                    pos: 7016996765293437281,
+                    length: 281480905449825,
+                    prop: 7016996765293437281,
+                }),
+            },
+            Undo {
+                site: 97,
+                op_len: 1633771873,
+            },
+        ],
+    )
+}
+
+#[test]
 fn minify() {
     minify_error(
         5,

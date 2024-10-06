@@ -789,6 +789,8 @@ pub(crate) fn undo(
                 calc_diff(&this_id_span.id_last().into(), this_deps)
             });
 
+            // println!("event_a_i: {:?}", event_a_i);
+
             // ---------------------------------------
             // 2. Calc event B_i
             // ---------------------------------------
@@ -805,6 +807,8 @@ pub(crate) fn undo(
                 stack_diff_batch = Some(calc_diff(&this_id_span.id_last().into(), &next));
                 stack_diff_batch.as_ref().unwrap()
             };
+
+            // println!("event_b_i: {:?}", event_b_i);
 
             // event_a_prime can undo the ops in the current span and the previous spans
             let mut event_a_prime = if let Some(mut last_ci) = last_ci.take() {
@@ -825,6 +829,8 @@ pub(crate) fn undo(
             // 3. Transform event A'_i based on B_i, call it C_i
             // --------------------------------------------------
             event_a_prime.transform(event_b_i, true);
+
+            // println!("event_a_prime: {:?}", event_a_prime);
 
             let c_i = event_a_prime;
             last_ci = Some(c_i);
