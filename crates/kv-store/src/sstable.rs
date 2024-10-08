@@ -1,11 +1,3 @@
-use std::{fmt::Debug, ops::Bound, sync::Arc};
-
-use bytes::{Buf, BufMut, Bytes};
-use ensure_cov::*;
-use loro_common::{LoroError, LoroResult};
-use lz4_flex::block;
-use tracing::trace;
-
 use super::block::BlockIter;
 use crate::{
     block::{Block, BlockBuilder},
@@ -13,6 +5,10 @@ use crate::{
     iter::KvIterator,
     utils::{get_u16_le, get_u32_le, get_u8_le},
 };
+use bytes::{Buf, BufMut, Bytes};
+use ensure_cov::*;
+use loro_common::{LoroError, LoroResult};
+use std::{fmt::Debug, ops::Bound, sync::Arc};
 
 pub(crate) const XXH_SEED: u32 = u32::from_le_bytes(*b"LORO");
 const MAGIC_BYTES: [u8; 4] = *b"LORO";
