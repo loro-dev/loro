@@ -4195,7 +4195,7 @@ fn js_to_export_mode(js_mode: JsExportMode) -> JsResult<ExportMode<'static>> {
                 .map(|res| res.map(JsID::from))
                 .collect::<Result<_, _>>()?;
             let frontiers = ids_to_frontiers(frontiers)?;
-            Ok(ExportMode::trimmed_snapshot_owned(frontiers))
+            Ok(ExportMode::shallow_snapshot_owned(frontiers))
         }
         "updates-in-range" => {
             let spans = js_sys::Reflect::get(&js_value, &JsValue::from_str("spans"))?;

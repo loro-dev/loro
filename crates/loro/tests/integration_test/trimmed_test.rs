@@ -15,7 +15,7 @@ fn test_gc() -> anyhow::Result<()> {
     let frontiers = doc.oplog_frontiers();
     gen_action(&doc, 123, 10);
     doc.commit();
-    let trimmed_bytes = doc.export(loro::ExportMode::trimmed_snapshot(&frontiers));
+    let trimmed_bytes = doc.export(loro::ExportMode::shallow_snapshot(&frontiers));
 
     let new_doc = LoroDoc::new();
     new_doc.import(&trimmed_bytes.unwrap())?;
@@ -34,7 +34,7 @@ fn test_trimmed_1() -> anyhow::Result<()> {
     let frontiers = doc.oplog_frontiers();
     doc.get_text("text").insert(3, "4")?;
     doc.commit();
-    let trimmed_bytes = doc.export(loro::ExportMode::trimmed_snapshot(&frontiers));
+    let trimmed_bytes = doc.export(loro::ExportMode::shallow_snapshot(&frontiers));
 
     let new_doc = LoroDoc::new();
     new_doc.import(&trimmed_bytes.unwrap())?;
@@ -53,7 +53,7 @@ fn test_checkout_to_text_that_were_created_before_gc() -> anyhow::Result<()> {
     doc.commit();
     let frontiers = doc.oplog_frontiers();
     doc.get_text("text").delete(0, 3)?;
-    let bytes = doc.export(loro::ExportMode::trimmed_snapshot(&frontiers));
+    let bytes = doc.export(loro::ExportMode::shallow_snapshot(&frontiers));
     let new_doc = LoroDoc::new();
     new_doc.import(&bytes.unwrap())?;
     new_doc.checkout(&frontiers)?;
@@ -72,7 +72,7 @@ fn test_checkout_to_list_that_were_created_before_gc() -> anyhow::Result<()> {
     doc.commit();
     let frontiers = doc.oplog_frontiers();
     doc.get_list("list").delete(0, 3)?;
-    let bytes = doc.export(loro::ExportMode::trimmed_snapshot(&frontiers));
+    let bytes = doc.export(loro::ExportMode::shallow_snapshot(&frontiers));
     let new_doc = LoroDoc::new();
     new_doc.import(&bytes.unwrap())?;
     new_doc.checkout(&frontiers)?;
@@ -94,7 +94,7 @@ fn test_checkout_to_movable_list_that_were_created_before_gc() -> anyhow::Result
     doc.commit();
     let frontiers = doc.oplog_frontiers();
     doc.get_movable_list("list").delete(0, 3)?;
-    let bytes = doc.export(loro::ExportMode::trimmed_snapshot(&frontiers));
+    let bytes = doc.export(loro::ExportMode::shallow_snapshot(&frontiers));
     let new_doc = LoroDoc::new();
     new_doc.import(&bytes.unwrap())?;
     new_doc.checkout(&frontiers)?;
@@ -111,7 +111,7 @@ fn trimmed_on_the_given_version_when_feasible() -> anyhow::Result<()> {
     doc.set_peer_id(1)?;
     gen_action(&doc, 123, 64);
     doc.commit();
-    let bytes = doc.export(loro::ExportMode::trimmed_snapshot_from_id(ID::new(1, 31)));
+    let bytes = doc.export(loro::ExportMode::shallow_snapshot_since(ID::new(1, 31)));
     let new_doc = LoroDoc::new();
     new_doc.import(&bytes.unwrap())?;
     assert_eq!(new_doc.trimmed_vv().get(&1).copied().unwrap(), 31);
@@ -132,7 +132,7 @@ fn export_snapshot_on_a_trimmed_doc() -> anyhow::Result<()> {
     doc.commit();
 
     // Export using TrimmedSnapshot mode
-    let bytes = doc.export(loro::ExportMode::trimmed_snapshot(&frontiers));
+    let bytes = doc.export(loro::ExportMode::shallow_snapshot(&frontiers));
 
     // Import into a new document
     let trimmed_doc = LoroDoc::new();
@@ -162,7 +162,7 @@ fn test_richtext_gc() -> anyhow::Result<()> {
     text.mark(0..2, "bold", "value")?; // 3, 4
     doc.commit();
     text.insert(3, "456")?; // 5, 6, 7
-    let bytes = doc.export(loro::ExportMode::trimmed_snapshot_from_id(ID::new(1, 3)));
+    let bytes = doc.export(loro::ExportMode::shallow_snapshot_since(ID::new(1, 3)));
     let new_doc = LoroDoc::new();
     new_doc.import(&bytes.unwrap())?;
     new_doc.checkout(&Frontiers::from(ID::new(1, 4)))?;
@@ -183,7 +183,7 @@ fn import_updates_depend_on_trimmed_history_should_raise_error() -> anyhow::Resu
     doc2.commit();
     gen_action(&doc, 123, 2);
     doc.commit();
-    let trimmed_snapshot = doc.export(loro::ExportMode::trimmed_snapshot(&doc.oplog_frontiers()));
+    let trimmed_snapshot = doc.export(loro::ExportMode::shallow_snapshot(&doc.oplog_frontiers()));
     doc.get_text("hello").insert(0, "world").unwrap();
     doc2.import(
         &doc.export(loro::ExportMode::Updates {
@@ -225,7 +225,7 @@ fn the_vv_on_trimmed_doc() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     gen_action(&doc, 0, 10);
     doc.commit();
-    let snapshot = doc.export(loro::ExportMode::trimmed_snapshot(&doc.oplog_frontiers()));
+    let snapshot = doc.export(loro::ExportMode::shallow_snapshot(&doc.oplog_frontiers()));
     let new_doc = LoroDoc::new();
     new_doc.import(&snapshot.unwrap()).unwrap();
     assert!(!new_doc.trimmed_vv().is_empty());
@@ -257,7 +257,7 @@ fn no_event_when_exporting_trimmed_snapshot() -> anyhow::Result<()> {
     let _id = doc.subscribe_root(Arc::new(|_diff| {
         panic!("should not emit event");
     }));
-    let _snapshot = doc.export(loro::ExportMode::trimmed_snapshot_from_id(ID::new(1, 3)));
+    let _snapshot = doc.export(loro::ExportMode::shallow_snapshot_since(ID::new(1, 3)));
     Ok(())
 }
 
@@ -272,7 +272,7 @@ fn test_cursor_that_cannot_be_found_when_exporting_trimmed_snapshot() -> anyhow:
         .unwrap();
     doc.get_text("text").delete(0, 5)?;
     doc.commit();
-    let snapshot = doc.export(loro::ExportMode::trimmed_snapshot(&doc.oplog_frontiers()));
+    let snapshot = doc.export(loro::ExportMode::shallow_snapshot(&doc.oplog_frontiers()));
     let new_doc = LoroDoc::new();
     new_doc.import(&snapshot.unwrap())?;
     let result = new_doc.get_cursor_pos(&c);
@@ -302,7 +302,7 @@ fn test_cursor_that_can_be_found_when_exporting_trimmed_snapshot() -> anyhow::Re
         .unwrap();
     doc.get_text("text").delete(0, 5)?;
     doc.commit();
-    let snapshot = doc.export(loro::ExportMode::trimmed_snapshot_from_id(ID::new(1, 10)));
+    let snapshot = doc.export(loro::ExportMode::shallow_snapshot_since(ID::new(1, 10)));
     let new_doc = LoroDoc::new();
     new_doc.import(&snapshot.unwrap())?;
     let result = new_doc.get_cursor_pos(&c);
@@ -332,7 +332,7 @@ fn test_export_trimmed_snapshot_from_trimmed_doc() -> anyhow::Result<()> {
     doc.commit();
 
     // Export using TrimmedSnapshot mode
-    let trimmed_bytes = doc.export(loro::ExportMode::trimmed_snapshot(&frontiers))?;
+    let trimmed_bytes = doc.export(loro::ExportMode::shallow_snapshot(&frontiers))?;
 
     // Import into a new document
     let trimmed_doc = LoroDoc::new();
@@ -340,7 +340,7 @@ fn test_export_trimmed_snapshot_from_trimmed_doc() -> anyhow::Result<()> {
 
     // Attempt to export a trimmed snapshot from the trimmed document
     // using frontiers before its trimmed version
-    let result = trimmed_doc.export(loro::ExportMode::trimmed_snapshot_from_id(ID::new(1, 16)));
+    let result = trimmed_doc.export(loro::ExportMode::shallow_snapshot_since(ID::new(1, 16)));
 
     // The export should fail because the requested frontiers are before the trimmed version
     assert!(result.is_err());
@@ -370,7 +370,7 @@ fn test_export_snapshot_from_trimmed_doc() {
 
     // Export using TrimmedSnapshot mode
     let trimmed_bytes = doc
-        .export(loro::ExportMode::trimmed_snapshot(&frontiers))
+        .export(loro::ExportMode::shallow_snapshot(&frontiers))
         .unwrap();
 
     // Import into a new document

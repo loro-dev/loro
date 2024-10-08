@@ -1028,7 +1028,7 @@ fn test_trimmed_sync() {
     let doc = LoroDoc::new();
     doc.set_peer_id(1).unwrap();
     apply_random_ops(&doc, 123, 11);
-    let bytes = doc.export(loro::ExportMode::trimmed_snapshot_from_id(ID::new(
+    let bytes = doc.export(loro::ExportMode::shallow_snapshot_since(ID::new(
         doc.peer_id(),
         10,
     )));
@@ -1055,7 +1055,7 @@ fn test_trimmed_sync() {
 fn test_trimmed_empty() {
     let doc = LoroDoc::new();
     apply_random_ops(&doc, 123, 11);
-    let bytes = doc.export(loro::ExportMode::trimmed_snapshot(&Frontiers::default()));
+    let bytes = doc.export(loro::ExportMode::shallow_snapshot(&Frontiers::default()));
     let new_doc = LoroDoc::new();
     new_doc.import(&bytes.unwrap()).unwrap();
     assert_eq!(doc.get_deep_value(), new_doc.get_deep_value());
@@ -1074,7 +1074,7 @@ fn test_trimmed_empty() {
 fn test_trimmed_import_outdated_updates() {
     let doc = LoroDoc::new();
     apply_random_ops(&doc, 123, 11);
-    let bytes = doc.export(loro::ExportMode::trimmed_snapshot_from_id(ID::new(
+    let bytes = doc.export(loro::ExportMode::shallow_snapshot_since(ID::new(
         doc.peer_id(),
         5,
     )));
@@ -1093,7 +1093,7 @@ fn test_trimmed_import_outdated_updates() {
 fn test_trimmed_import_pending_updates_that_is_outdated() {
     let doc = LoroDoc::new();
     apply_random_ops(&doc, 123, 11);
-    let bytes = doc.export(loro::ExportMode::trimmed_snapshot_from_id(ID::new(
+    let bytes = doc.export(loro::ExportMode::shallow_snapshot_since(ID::new(
         doc.peer_id(),
         5,
     )));
@@ -1116,7 +1116,7 @@ fn test_trimmed_import_pending_updates_that_is_outdated() {
 fn test_calling_exporting_snapshot_on_trimmed_doc() {
     let doc = LoroDoc::new();
     apply_random_ops(&doc, 123, 11);
-    let bytes = doc.export(loro::ExportMode::trimmed_snapshot_from_id(ID::new(
+    let bytes = doc.export(loro::ExportMode::shallow_snapshot_since(ID::new(
         doc.peer_id(),
         5,
     )));
@@ -1134,7 +1134,7 @@ fn sync_two_trimmed_docs() {
     let doc = LoroDoc::new();
     apply_random_ops(&doc, 123, 11);
     let bytes = doc
-        .export(loro::ExportMode::trimmed_snapshot_from_id(ID::new(
+        .export(loro::ExportMode::shallow_snapshot_since(ID::new(
             doc.peer_id(),
             10,
         )))
@@ -1171,7 +1171,7 @@ fn test_map_checkout_on_trimmed_doc() {
     doc.get_map("map").insert("3", 3).unwrap();
     doc.get_map("map").insert("2", 4).unwrap();
 
-    let new_doc_bytes = doc.export(loro::ExportMode::trimmed_snapshot_from_id(ID::new(
+    let new_doc_bytes = doc.export(loro::ExportMode::shallow_snapshot_since(ID::new(
         doc.peer_id(),
         1,
     )));
@@ -1285,7 +1285,7 @@ fn test_movable_list_checkout_on_trimmed_doc() -> LoroResult<()> {
     list.mov(1, 0)?;
     list.delete(0, 1)?;
     list.set(0, 0)?;
-    let new_doc_bytes = doc.export(loro::ExportMode::trimmed_snapshot_from_id(ID::new(
+    let new_doc_bytes = doc.export(loro::ExportMode::shallow_snapshot_since(ID::new(
         doc.peer_id(),
         2,
     )));
@@ -1333,7 +1333,7 @@ fn test_tree_checkout_on_trimmed_doc() -> LoroResult<()> {
     let child2 = tree.create(None).unwrap();
     tree.mov(child2, root)?;
 
-    let new_doc_bytes = doc.export(loro::ExportMode::trimmed_snapshot_from_id(ID::new(
+    let new_doc_bytes = doc.export(loro::ExportMode::shallow_snapshot_since(ID::new(
         doc.peer_id(),
         1,
     )));
@@ -1479,7 +1479,7 @@ fn test_tree_with_other_ops_checkout_on_trimmed_doc() -> LoroResult<()> {
     tree.mov(child2, child1)?;
     tree.delete(child1)?;
 
-    let new_doc_bytes = doc.export(loro::ExportMode::trimmed_snapshot(&trimmed_frontiers));
+    let new_doc_bytes = doc.export(loro::ExportMode::shallow_snapshot(&trimmed_frontiers));
 
     let new_doc = LoroDoc::new();
     new_doc.import(&new_doc_bytes.unwrap()).unwrap();
@@ -1571,7 +1571,7 @@ fn test_trimmed_can_remove_unreachable_states() -> LoroResult<()> {
     doc.checkout_to_latest();
 
     {
-        let snapshot = doc.export(loro::ExportMode::trimmed_snapshot_from_id(ID::new(1, 3)));
+        let snapshot = doc.export(loro::ExportMode::shallow_snapshot_since(ID::new(1, 3)));
         let new_doc = LoroDoc::new();
         new_doc.import(&snapshot.unwrap())?;
         let a = new_doc.analyze();
@@ -1584,7 +1584,7 @@ fn test_trimmed_can_remove_unreachable_states() -> LoroResult<()> {
     }
 
     {
-        let snapshot = doc.export(loro::ExportMode::trimmed_snapshot_from_id(ID::new(1, 4)));
+        let snapshot = doc.export(loro::ExportMode::shallow_snapshot_since(ID::new(1, 4)));
         let new_doc = LoroDoc::new();
         new_doc.import(&snapshot.unwrap())?;
         assert_eq!(new_doc.analyze().dropped_len(), 0);

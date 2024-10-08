@@ -76,7 +76,7 @@ pub fn main() {
         println!("ReExport Snapshot Duration {:?}", start.elapsed());
         let start = Instant::now();
         let trimmed_bytes = doc
-            .export(loro::ExportMode::trimmed_snapshot(&doc.oplog_frontiers()))
+            .export(loro::ExportMode::shallow_snapshot(&doc.oplog_frontiers()))
             .unwrap();
         println!("Export TrimmedSnapshot Duration {:?}", start.elapsed());
         println!("TrimmedSnapshot size {:?}", ByteSize(trimmed_bytes.len()));

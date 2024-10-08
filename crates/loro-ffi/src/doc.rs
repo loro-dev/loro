@@ -506,7 +506,7 @@ impl LoroDoc {
 
     pub fn export_trimmed_snapshot(&self, frontiers: &Frontiers) -> Vec<u8> {
         self.doc
-            .export(loro::ExportMode::TrimmedSnapshot(Cow::Owned(
+            .export(loro::ExportMode::ShallowSnapshot(Cow::Owned(
                 frontiers.into(),
             )))
             .unwrap()
@@ -729,7 +729,7 @@ pub enum ExportMode {
     Snapshot,
     Updates { from: VersionVector },
     UpdatesInRange { spans: Vec<IdSpan> },
-    TrimmedSnapshot { frontiers: Frontiers },
+    ShallowSnapshot { frontiers: Frontiers },
     StateOnly { frontiers: Option<Frontiers> },
 }
 
@@ -743,8 +743,8 @@ impl From<ExportMode> for loro::ExportMode<'_> {
             ExportMode::UpdatesInRange { spans } => loro::ExportMode::UpdatesInRange {
                 spans: Cow::Owned(spans),
             },
-            ExportMode::TrimmedSnapshot { frontiers } => {
-                loro::ExportMode::TrimmedSnapshot(Cow::Owned(frontiers.into()))
+            ExportMode::ShallowSnapshot { frontiers } => {
+                loro::ExportMode::ShallowSnapshot(Cow::Owned(frontiers.into()))
             }
             ExportMode::StateOnly { frontiers } => {
                 loro::ExportMode::StateOnly(frontiers.map(|x| Cow::Owned(x.into())))

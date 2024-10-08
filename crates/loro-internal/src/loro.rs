@@ -1479,7 +1479,7 @@ impl LoroDoc {
             ExportMode::UpdatesInRange { spans } => {
                 export_fast_updates_in_range(&self.oplog.try_lock().unwrap(), spans.as_ref())
             }
-            ExportMode::TrimmedSnapshot(f) => export_trimmed_snapshot(self, &f)?,
+            ExportMode::ShallowSnapshot(f) => export_trimmed_snapshot(self, &f)?,
             ExportMode::StateOnly(f) => match f {
                 Some(f) => export_state_only_snapshot(self, &f)?,
                 None => export_state_only_snapshot(self, &self.oplog_frontiers())?,

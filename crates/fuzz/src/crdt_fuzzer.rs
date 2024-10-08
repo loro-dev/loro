@@ -382,7 +382,7 @@ pub fn test_multi_sites_with_gc(
                     ensure_cov::notify_cov("export_trimmed_snapshot");
                     let bytes = fuzzer.actors[1]
                         .loro
-                        .export(loro::ExportMode::trimmed_snapshot(&f));
+                        .export(loro::ExportMode::shallow_snapshot(&f));
                     fuzzer.actors[0].loro.import(&bytes.unwrap()).unwrap();
                 }
             })

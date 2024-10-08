@@ -24,69 +24,125 @@ use rle::{HasLength, Sliceable};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 
+/// The mode of the export.
+///
+/// Loro CRDT internally consists of two parts: document history and current document state.
+/// The export modes offer various options to meet different requirements.
+///
+/// - CRDT property: Documents maintain consistent states when they receive the same set of updates.
+/// - In real-time collaboration, peers typically only need to synchronize updates
+///   (operations/history) to achieve consistency.
+///
+/// ## Update Export
+///
+/// - Exports only the history part, containing multiple operations.
+/// - Suitable for real-time collaboration scenarios where peers only need to synchronize updates.
+///
+/// ## Snapshot Export
+///
+/// ### Default Snapshot
+///
+/// - Includes complete history and current full state.
+///
+/// ### Shallow Snapshot
+///
+/// - Contains the complete current state.
+/// - Retains partial history starting from a specified version.
+///
+/// ### State-only Snapshot
+///
+/// - Exports the state of the target version.
+/// - Includes a minimal set of operation history.
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum ExportMode<'a> {
+    /// It contains the full history and the current state of the document.
     Snapshot,
+    /// It contains the history since the `from` version vector.
     Updates { from: Cow<'a, VersionVector> },
+    /// This mode exports the history in the specified range.
     UpdatesInRange { spans: Cow<'a, [IdSpan]> },
-    TrimmedSnapshot(Cow<'a, Frontiers>),
+    /// The shallow snapshot only contains the history since the target frontiers
+    ShallowSnapshot(Cow<'a, Frontiers>),
+    /// The state only snapshot exports the state of the target version
+    /// with a minimal set of history (a few ops).
+    ///
+    /// It's a shallow snapshot with depth=1 at the target version.
+    /// If the target version is None, it will use the latest version as the target version.
     StateOnly(Option<Cow<'a, Frontiers>>),
+    /// The snapshot at the specified frontiers. It contains the full history
+    /// till the target frontiers and the state at the target frontiers.
     SnapshotAt { version: Cow<'a, Frontiers> },
 }
 
 impl<'a> ExportMode<'a> {
+    /// It contains the full history and the current state of the document.
     pub fn snapshot() -> Self {
         ExportMode::Snapshot
     }
 
+    /// It contains the history since the `from` version vector.
     pub fn updates(from: &'a VersionVector) -> Self {
         ExportMode::Updates {
             from: Cow::Borrowed(from),
         }
     }
 
+    /// It contains the history since the `from` version vector.
     pub fn updates_owned(from: VersionVector) -> Self {
         ExportMode::Updates {
             from: Cow::Owned(from),
         }
     }
 
+    /// It contains all the history of the document.
     pub fn all_updates() -> Self {
         ExportMode::Updates {
             from: Cow::Owned(Default::default()),
         }
     }
 
+    /// This mode exports the history in the specified range.
     pub fn updates_in_range(spans: impl Into<Cow<'a, [IdSpan]>>) -> Self {
         ExportMode::UpdatesInRange {
             spans: spans.into(),
         }
     }
 
-    pub fn trimmed_snapshot(frontiers: &'a Frontiers) -> Self {
-        ExportMode::TrimmedSnapshot(Cow::Borrowed(frontiers))
+    /// The shallow snapshot only contains the history since the target frontiers.
+    pub fn shallow_snapshot(frontiers: &'a Frontiers) -> Self {
+        ExportMode::ShallowSnapshot(Cow::Borrowed(frontiers))
     }
 
-    pub fn trimmed_snapshot_owned(frontiers: Frontiers) -> Self {
-        ExportMode::TrimmedSnapshot(Cow::Owned(frontiers))
+    /// The shallow snapshot only contains the history since the target frontiers.
+    pub fn shallow_snapshot_owned(frontiers: Frontiers) -> Self {
+        ExportMode::ShallowSnapshot(Cow::Owned(frontiers))
     }
 
-    pub fn trimmed_snapshot_from_id(id: ID) -> Self {
+    /// The shallow snapshot only contains the history since the target frontiers.
+    pub fn shallow_snapshot_since(id: ID) -> Self {
         let frontiers = Frontiers::from_id(id);
-        ExportMode::TrimmedSnapshot(Cow::Owned(frontiers))
+        ExportMode::ShallowSnapshot(Cow::Owned(frontiers))
     }
 
+    /// The state only snapshot exports the state of the target version
+    /// with a minimal set of history (a few ops).
+    ///
+    /// It's a shallow snapshot with depth=1 at the target version.
+    /// If the target version is None, it will use the latest version as the target version.
     pub fn state_only(frontiers: Option<&'a Frontiers>) -> Self {
         ExportMode::StateOnly(frontiers.map(Cow::Borrowed))
     }
 
+    /// The snapshot at the specified frontiers. It contains the full history
+    /// till the target frontiers and the state at the target frontiers.
     pub fn snapshot_at(frontiers: &'a Frontiers) -> Self {
         ExportMode::SnapshotAt {
             version: Cow::Borrowed(frontiers),
         }
     }
 
+    /// This mode exports the history within the specified version vector.
     pub fn updates_till(vv: &VersionVector) -> ExportMode<'static> {
         let mut spans = Vec::with_capacity(vv.len());
         for (peer, counter) in vv.iter() {
