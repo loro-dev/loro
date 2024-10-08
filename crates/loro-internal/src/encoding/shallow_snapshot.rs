@@ -107,7 +107,7 @@ pub(crate) fn export_shallow_snapshot<W: std::io::Write>(
     let snapshot = Snapshot {
         oplog_bytes,
         state_bytes,
-        shallow_root_state_bytes: shallow_root_state_bytes,
+        shallow_root_state_bytes,
     };
 
     _encode_snapshot(snapshot, w);
