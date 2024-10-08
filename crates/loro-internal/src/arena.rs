@@ -37,7 +37,7 @@ struct InnerSharedArena {
     parents: Mutex<FxHashMap<ContainerIdx, Option<ContainerIdx>>>,
     values: Mutex<Vec<LoroValue>>,
     root_c_idx: Mutex<Vec<ContainerIdx>>,
-    str: Mutex<StrArena>,
+    str: Arc<Mutex<StrArena>>,
 }
 
 /// This is shared between [OpLog] and [AppState].
@@ -76,7 +76,7 @@ impl SharedArena {
                 parents: Mutex::new(self.inner.parents.try_lock().unwrap().clone()),
                 values: Mutex::new(self.inner.values.try_lock().unwrap().clone()),
                 root_c_idx: Mutex::new(self.inner.root_c_idx.try_lock().unwrap().clone()),
-                str: Mutex::new(self.inner.str.try_lock().unwrap().clone()),
+                str: self.inner.str.clone(),
             }),
         }
     }
