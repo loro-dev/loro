@@ -124,10 +124,10 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: Bytes) -> LoroResult<()> {
         });
 
         if need_calc {
-            ensure_cov::notify_cov("trimmed_snapshot::need_calc");
+            ensure_cov::notify_cov("shallow_snapshot::need_calc");
             state_frontiers = shallow_root_state_frontiers.unwrap();
         } else {
-            ensure_cov::notify_cov("trimmed_snapshot::dont_need_calc");
+            ensure_cov::notify_cov("shallow_snapshot::dont_need_calc");
             state_frontiers = oplog.frontiers().clone();
         }
     }
