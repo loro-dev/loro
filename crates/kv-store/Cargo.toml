@@ -12,6 +12,9 @@ lz4_flex = { version = "0.11" }
 quick_cache = "0.6.2"
 xxhash-rust = { workspace = true }
 ensure-cov = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
 rand = "0.8.5"
+ctor = "0.2"
+dev-utils = { path = "../dev-utils" }

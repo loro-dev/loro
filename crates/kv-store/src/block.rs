@@ -8,7 +8,7 @@ use crate::{compress::{compress, decompress, CompressionType}, iter::KvIterator,
 use super::sstable::{ SIZE_OF_U16, SIZE_OF_U8};
 
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LargeValueBlock{
     // without checksum
     pub value_bytes: Bytes,
@@ -47,7 +47,7 @@ impl LargeValueBlock{
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct NormalBlock {
     pub data: Bytes,
     pub first_key: Bytes,
@@ -99,7 +99,7 @@ impl NormalBlock {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Block{
     Normal(NormalBlock),
     Large(LargeValueBlock),
@@ -111,15 +111,35 @@ impl Block{
     }
 
     pub fn data(&self)->Bytes{
-        match self{
-            Block::Normal(block)=>block.data.clone(),
-            Block::Large(block)=>block.value_bytes.clone(),
+        match self {
+            Block::Normal(block) => block.data.clone(),
+            Block::Large(block) => block.value_bytes.clone(),
         }
     }
 
-    pub fn first_key(&self)->Bytes{
-        match self{
+    pub fn first_key(&self) -> Bytes{
+        match self { 
             Block::Normal(block)=>block.first_key.clone(),
+            Block::Large(block)=>block.key.clone(),
+        }
+    }
+
+    pub fn last_key(&self) -> Bytes{
+        match self {
+            Block::Normal(block)=>{
+                if block.offsets.len() == 1 {
+                    return block.first_key.clone();
+                }
+
+                let offset = *block.offsets.last().unwrap() as usize;
+                let mut bytes = &block.data[offset..];
+                let common_prefix_len = bytes.get_u8() as usize;
+                let key_suffix_len = bytes.get_u16_le() as usize;
+                let mut last_key = Vec::with_capacity(common_prefix_len + key_suffix_len);
+                last_key.extend_from_slice(&block.first_key[..common_prefix_len]);
+                last_key.extend_from_slice(&bytes[..key_suffix_len]);
+                last_key.into()
+            }
             Block::Large(block)=>block.key.clone(),
         }
     }
@@ -175,7 +195,7 @@ impl BlockBuilder {
         }
     }
 
-    fn estimated_size(&self) -> usize {
+    pub fn estimated_size(&self) -> usize {
         if self.is_large{
             self.data.len()
         }else{
@@ -598,6 +618,17 @@ impl BlockIter {
                 unreachable!()
             }
         }
+    }
+
+    pub fn peek_block(&self) -> &Arc<Block> {
+        &self.block
+    }
+
+    pub fn finish(&mut self){
+        self.next_key.clear();
+        self.next_value_range = 0..0;
+        self.prev_key.clear();
+        self.prev_value_range = 0..0;
     }
 }
 
