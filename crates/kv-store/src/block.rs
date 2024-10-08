@@ -165,8 +165,8 @@ impl Block{
 
     pub fn encode(&self,  w: &mut Vec<u8>, compression_type: CompressionType)->CompressionType{
         match self{
-            Block::Normal(block)=>block.encode(w,compression_type),
-            Block::Large(block)=>block.encode(w,compression_type),
+            Block::Normal(block) => block.encode(w,compression_type),
+            Block::Large(block) => block.encode(w,compression_type),
         }
     }
 

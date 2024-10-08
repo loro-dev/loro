@@ -640,6 +640,7 @@ dependencies = [
  "criterion 0.4.0",
  "ctor 0.2.6",
  "dev-utils",
+ "ensure-cov",
  "flate2",
  "loro 0.16.12",
  "rand",

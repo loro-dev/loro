@@ -3,7 +3,6 @@ use crate::compress::CompressionType;
 use crate::sstable::{SsTable, SsTableBuilder, SsTableIter};
 use crate::{KvIterator, MergeIterator};
 use bytes::Bytes;
-use tracing::trace;
 
 use std::ops::Bound;
 use std::{cmp::Ordering, collections::BTreeMap};
@@ -229,7 +228,6 @@ impl MemKvStore {
             builder.add(k, v);
         }
 
-        builder.finish_current_block();
         if builder.is_empty() {
             return Bytes::new();
         }
@@ -251,7 +249,8 @@ impl MemKvStore {
     }
 
     #[tracing::instrument(level = "debug", skip(self))]
-    fn export_with_encoded_block(&self) -> Bytes {
+    fn export_with_encoded_block(&mut self) -> Bytes {
+        ensure_cov::notify_cov("kv-store::mem_store::export_with_encoded_block");
         let mut mem_iter = self.mem_table.iter().peekable();
         let mut sstable_iter = self.ss_table[0].iter();
         let mut builder = SsTableBuilder::new(
@@ -267,7 +266,6 @@ impl MemKvStore {
                     continue 'outer;
                 };
                 if block.last_key() < next_mem_pair.0 {
-                    builder.finish_current_block();
                     builder.add_new_block(block.clone());
                     sstable_iter.next_block();
                     continue;
@@ -281,7 +279,6 @@ impl MemKvStore {
                 continue;
             }
 
-            trace!("parse block one by one");
             // There are overlap between next_mem_pair and block
             let mut iter = BlockIter::new(block.clone());
             let mut next_mem_pair = mem_iter.peek();
@@ -322,7 +319,6 @@ impl MemKvStore {
             sstable_iter.next_block();
         }
 
-        builder.finish_current_block();
         while let Some(block) = sstable_iter.peek_next_block() {
             builder.add_new_block(block.clone());
             sstable_iter.next_block();
@@ -332,7 +328,12 @@ impl MemKvStore {
             return Bytes::new();
         }
 
-        builder.build().export_all()
+        drop(mem_iter);
+        self.mem_table.clear();
+        let ss = builder.build();
+        let ans = ss.export_all();
+        let _ = std::mem::replace(&mut self.ss_table, vec![ss]);
+        ans
     }
 
     #[allow(unused)]

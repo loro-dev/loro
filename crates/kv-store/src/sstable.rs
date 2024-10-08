@@ -20,6 +20,7 @@ pub const SIZE_OF_U32: usize = std::mem::size_of::<u32>();
 const DEFAULT_CACHE_SIZE: usize = 1 << 20;
 const MAX_BLOCK_NUM: u32 = 10_000_000;
 
+/// ```log
 /// ┌──────────────────────────────────────────────────────────────────────────────────────────┐
 /// │ Block Meta                                                                               │
 /// │┌ ─ ─ ─ ─ ─ ─ ─┌ ─ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ─ ─┌ ─ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ─ ┐ │
@@ -27,6 +28,7 @@ const MAX_BLOCK_NUM: u32 = 10_000_000;
 /// ││     u32      │      u16      │   bytes   │      u8      │  u16(option)  │bytes(option)│ │
 /// │ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─  │
 /// └──────────────────────────────────────────────────────────────────────────────────────────┘
+/// ```
 #[derive(Debug, Clone)]
 pub(crate) struct BlockMeta {
     offset: usize,
@@ -188,7 +190,7 @@ impl SsTableBuilder {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.meta.is_empty()
+        self.meta.is_empty() && self.block_builder.is_empty()
     }
 
     pub(crate) fn finish_current_block(&mut self) {
