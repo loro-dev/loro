@@ -66,15 +66,6 @@ impl HistoryCacheTrait for ForCheckout {
 }
 
 impl ContainerHistoryCache {
-    pub(crate) fn fork(&self, change_store: ChangeStore, gc: Option<Arc<GcStore>>) -> Self {
-        Self {
-            change_store,
-            for_checkout: None,
-            for_importing: None,
-            shallow_root_state: gc,
-        }
-    }
-
     pub(crate) fn new(change_store: ChangeStore, gc: Option<Arc<GcStore>>) -> Self {
         Self {
             change_store,

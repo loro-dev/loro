@@ -25,6 +25,15 @@ pub(crate) fn export_shallow_snapshot<W: std::io::Write>(
     start_from: &Frontiers,
     w: &mut W,
 ) -> Result<Frontiers, LoroEncodeError> {
+    let (snapshot, start_from) = export_shallow_snapshot_inner(doc, start_from)?;
+    _encode_snapshot(snapshot, w);
+    Ok(start_from)
+}
+
+pub(crate) fn export_shallow_snapshot_inner(
+    doc: &LoroDoc,
+    start_from: &Frontiers,
+) -> Result<(Snapshot, Frontiers), LoroEncodeError> {
     let oplog = doc.oplog().try_lock().unwrap();
     let start_from = calc_shallow_doc_start(&oplog, start_from);
     let mut start_vv = oplog.dag().frontiers_to_vv(&start_from).unwrap();
@@ -110,7 +119,6 @@ pub(crate) fn export_shallow_snapshot<W: std::io::Write>(
         shallow_root_state_bytes,
     };
 
-    _encode_snapshot(snapshot, w);
     if state_frontiers != latest_frontiers {
         doc.checkout_without_emitting(&state_frontiers).unwrap();
     }
@@ -120,7 +128,7 @@ pub(crate) fn export_shallow_snapshot<W: std::io::Write>(
     }
 
     doc.drop_pending_events();
-    Ok(start_from)
+    Ok((snapshot, start_from))
 }
 
 fn has_unknown_container<'a>(mut cids: impl Iterator<Item = &'a ContainerID>) -> bool {

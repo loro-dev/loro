@@ -30,3 +30,7 @@ harness = false
 [[bench]]
 name = "bench_text"
 harness = false
+
+[[bench]]
+name = "fork"
+harness = false

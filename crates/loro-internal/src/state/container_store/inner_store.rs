@@ -1,14 +1,11 @@
-use std::ops::Bound;
-
-use bytes::Bytes;
-use fxhash::FxHashMap;
-use loro_common::ContainerID;
-use tracing::trace;
-
 use crate::{
     arena::SharedArena, configure::Configure, container::idx::ContainerIdx,
     state::container_store::FRONTIERS_KEY, utils::kv_wrapper::KvWrapper, version::Frontiers,
 };
+use bytes::Bytes;
+use fxhash::FxHashMap;
+use loro_common::ContainerID;
+use std::ops::Bound;
 
 use super::ContainerWrapper;
 
@@ -145,7 +142,6 @@ impl InnerStore {
                 count += 1;
                 let cid = ContainerID::from_bytes(&k);
                 let parent = ContainerWrapper::decode_parent(&v);
-                trace!("decode register parent {:?} parent = {:?}", &cid, &parent);
                 let idx = self.arena.register_container(&cid);
                 let p = parent.as_ref().map(|p| self.arena.register_container(p));
                 self.arena.set_parent(idx, p);
@@ -238,19 +234,12 @@ impl InnerStore {
         }
     }
 
-    pub(crate) fn fork(&self, arena: SharedArena, config: &Configure) -> InnerStore {
-        // PERF: we can try flushing before forking
-        InnerStore {
-            arena,
-            store: self
-                .store
-                .iter()
-                .map(|(idx, c)| (*idx, c.fork(config)))
-                .collect(),
-            kv: self.kv.clone(),
-            len: self.len,
-            all_loaded: self.all_loaded,
-        }
+    pub(crate) fn fork(&mut self, arena: SharedArena, _config: &Configure) -> InnerStore {
+        // PERF: we can try to reuse
+        let bytes = self.encode();
+        let mut new_store = Self::new(arena);
+        new_store.decode(bytes).unwrap();
+        new_store
     }
 
     pub(crate) fn len(&self) -> usize {

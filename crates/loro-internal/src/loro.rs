@@ -33,10 +33,10 @@ use crate::{
     dag::DagUtils,
     diff_calc::DiffCalculator,
     encoding::{
-        decode_snapshot, export_fast_snapshot, export_fast_updates, export_fast_updates_in_range,
-        export_shallow_snapshot, export_snapshot, export_snapshot_at, export_state_only_snapshot,
-        json_schema::json::JsonSchema, parse_header_and_body, EncodeMode, ImportStatus,
-        ParsedHeaderAndBody,
+        self, decode_snapshot, export_fast_snapshot, export_fast_updates,
+        export_fast_updates_in_range, export_shallow_snapshot, export_snapshot, export_snapshot_at,
+        export_state_only_snapshot, json_schema::json::JsonSchema, parse_header_and_body,
+        EncodeMode, ImportStatus, ParsedHeaderAndBody,
     },
     event::{str_to_path, EventTriggerKind, Index, InternalDocDiff},
     handler::{Handler, MovableListHandler, TextHandler, TreeHandler, ValueOrHandler},
@@ -98,37 +98,13 @@ impl LoroDoc {
 
     pub fn fork(&self) -> Self {
         self.commit_then_stop();
-        let arena = self.arena.fork();
-        let config = self.config.fork();
-        let txn = Arc::new(Mutex::new(None));
-        let new_state = self.state.try_lock().unwrap().fork_with_new_peer_id(
-            arena.clone(),
-            Arc::downgrade(&txn),
-            config.clone(),
-        );
-        let gc = new_state.try_lock().unwrap().shallow_root_store().cloned();
-        let doc = LoroDoc {
-            oplog: Arc::new(Mutex::new(self.oplog().try_lock().unwrap().fork(
-                arena.clone(),
-                config.clone(),
-                gc,
-            ))),
-            state: new_state,
-            observer: Arc::new(Observer::new(arena.clone())),
-            arena,
-            config,
-            diff_calculator: Arc::new(Mutex::new(DiffCalculator::new(true))),
-            txn,
-            auto_commit: AtomicBool::new(false),
-            detached: AtomicBool::new(self.is_detached()),
-            local_update_subs: SubscriberSetWithQueue::new(),
-            peer_id_change_subs: SubscriberSetWithQueue::new(),
-        };
-
+        let snapshot = encoding::fast_snapshot::encode_snapshot_inner(self);
+        let doc = Self::new();
+        encoding::fast_snapshot::decode_snapshot_inner(snapshot, &doc).unwrap();
+        doc.set_config(&self.config);
         if self.auto_commit.load(std::sync::atomic::Ordering::Relaxed) {
             doc.start_auto_commit();
         }
-
         self.renew_txn_if_auto_commit();
         doc
     }

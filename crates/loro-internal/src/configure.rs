@@ -1,4 +1,5 @@
 pub use crate::container::richtext::config::{StyleConfig, StyleConfigMap};
+use crate::LoroDoc;
 
 #[derive(Clone, Debug)]
 pub struct Configure {
@@ -6,6 +7,15 @@ pub struct Configure {
     record_timestamp: Arc<AtomicBool>,
     pub(crate) merge_interval: Arc<AtomicI64>,
     pub(crate) editable_detached_mode: Arc<AtomicBool>,
+}
+
+impl LoroDoc {
+    pub(crate) fn set_config(&self, config: &Configure) {
+        self.config_text_style(config.text_style_config.read().unwrap().clone());
+        self.set_record_timestamp(config.record_timestamp());
+        self.set_change_merge_interval(config.merge_interval());
+        self.set_detached_editing(config.detached_editing());
+    }
 }
 
 impl Default for Configure {
