@@ -888,14 +888,32 @@ impl LoroDoc {
         VersionVector(self.0.state_vv())
     }
 
-    /// Get the version vector of the trimmed history
+    /// The doc only contains the history since this version
     ///
-    /// All the ops in the trimmed history are removed from this doc.
-    #[wasm_bindgen(js_name = "trimmedVV")]
-    pub fn trimmed_vv(&self) -> VersionVector {
+    /// This is empty if the doc is not shallow.
+    ///
+    /// The ops included by the shallow history start version vector are not in the doc.
+    #[wasm_bindgen(js_name = "shallowSinceVV")]
+    pub fn shallow_since_vv(&self) -> VersionVector {
         VersionVector(InternalVersionVector::from_im_vv(
-            &self.0.shallow_history_start_vv(),
+            &self.0.shallow_since_vv(),
         ))
+    }
+
+    /// Check if the doc contains the full history.
+    #[wasm_bindgen(js_name = "isShallow")]
+    pub fn is_shallow(&self) -> bool {
+        self.0.is_shallow()
+    }
+
+    /// The doc only contains the history since this version
+    ///
+    /// This is empty if the doc is not shallow.
+    ///
+    /// The ops included by the shallow history start frontiers are not in the doc.
+    #[wasm_bindgen(js_name = "shallowSinceFrontiers")]
+    pub fn shallow_since_frontiers(&self) -> JsIDs {
+        frontiers_to_ids(&self.0.shallow_since_frontiers())
     }
 
     /// Get the encoded version vector of the latest version in OpLog.
@@ -1021,7 +1039,7 @@ impl LoroDoc {
     ///   - `{ mode: "snapshot" }`: Export a full snapshot of the document.
     ///   - `{ mode: "update", start_vv: VersionVector }`: Export updates from the given version vector.
     ///   - `{ mode: "updates-in-range", spans: { id: ID, len: number }[] }`: Export updates within the specified ID spans.
-    ///   - `{ mode: "trimmed-snapshot", frontiers: Frontiers }`: Export a garbage-collected snapshot up to the given frontiers.
+    ///   - `{ mode: "shallow-snapshot", frontiers: Frontiers }`: Export a garbage-collected snapshot up to the given frontiers.
     ///
     /// @returns A byte array containing the exported data.
     ///
@@ -1041,7 +1059,7 @@ impl LoroDoc {
     /// const updateBytes = doc.export({ mode: "update", start_vv: vv });
     ///
     /// // Export a garbage-collected snapshot
-    /// const gcBytes = doc.export({ mode: "trimmed-snapshot", frontiers: doc.oplogFrontiers() });
+    /// const gcBytes = doc.export({ mode: "shallow-snapshot", frontiers: doc.oplogFrontiers() });
     ///
     /// // Export updates within specific ID spans
     /// const spanBytes = doc.export({
@@ -4189,7 +4207,7 @@ fn js_to_export_mode(js_mode: JsExportMode) -> JsResult<ExportMode<'static>> {
             Ok(ExportMode::updates_owned(start_vv.0.clone()))
         }
         "snapshot" => Ok(ExportMode::Snapshot),
-        "trimmed-snapshot" => {
+        "shallow-snapshot" => {
             let frontiers: JsValue =
                 js_sys::Reflect::get(&js_value, &JsValue::from_str("frontiers"))?;
             let frontiers: Vec<JsID> = js_sys::try_iter(&frontiers)?
@@ -4637,7 +4655,7 @@ export type ExportMode = {
 } | {
     mode: "snapshot",
 } | {
-    mode: "trimmed-snapshot",
+    mode: "shallow-snapshot",
     frontiers: Frontiers,
 } | {
     mode: "updates-in-range",

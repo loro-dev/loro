@@ -82,10 +82,12 @@ pub enum LoroError {
     EndIndexLessThanStartIndex { start: usize, end: usize },
     #[error("Invalid root container name! Don't include '/' or '\\0'")]
     InvalidRootContainerName,
-    #[error("Import Failed: The dependencies of the importing updates are trimmed from the doc.")]
+    #[error("Import Failed: The dependencies of the importing updates are not included in the shallow history of the doc.")]
     ImportUpdatesThatDependsOnOutdatedVersion,
-    #[error("You cannot switch a document to a version before the trimmed version.")]
-    SwitchToTrimmedVersion,
+    #[error(
+        "You cannot switch a document to a version before the shallow history's start version."
+    )]
+    SwitchToVersionBeforeShallowRoot,
     #[error(
         "The container {container} is deleted. You cannot apply the op on a deleted container."
     )]
@@ -117,9 +119,9 @@ pub enum LoroTreeError {
 pub enum LoroEncodeError {
     #[error("The frontiers are not found in this doc: {0}")]
     FrontiersNotFound(String),
-    #[error("Trimmed snapshot incompatible with old snapshot format. Use new snapshot format or avoid trimmed snapshots for storage.")]
-    TrimmedSnapshotIncompatibleWithOldFormat,
-    #[error("Cannot export trimmed snapshot with unknown container type. Please upgrade the Loro version.")]
+    #[error("Shallow snapshot incompatible with old snapshot format. Use new snapshot format or avoid shallow snapshots for storage.")]
+    ShallowSnapshotIncompatibleWithOldFormat,
+    #[error("Cannot export shallow snapshot with unknown container type. Please upgrade the Loro version.")]
     UnknownContainer,
 }
 

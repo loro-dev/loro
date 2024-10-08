@@ -484,24 +484,24 @@ impl LoroDoc {
         self.doc.state_vv()
     }
 
-    /// The doc only contains the history since the shallow history start version vector.
+    /// The doc only contains the history since this version
     ///
     /// This is empty if the doc is not shallow.
     ///
     /// The ops included by the shallow history start version vector are not in the doc.
     #[inline]
-    pub fn shallow_history_start_vv(&self) -> ImVersionVector {
-        self.doc.shallow_history_start_vv()
+    pub fn shallow_since_vv(&self) -> ImVersionVector {
+        self.doc.shallow_since_vv()
     }
 
-    /// The doc only contains the history since the shallow history start frontiers.
+    /// The doc only contains the history since this version
     ///
     /// This is empty if the doc is not shallow.
     ///
     /// The ops included by the shallow history start frontiers are not in the doc.
     #[inline]
-    pub fn shallow_history_start_frontiers(&self) -> Frontiers {
-        self.doc.shallow_history_start_frontiers()
+    pub fn shallow_since_frontiers(&self) -> Frontiers {
+        self.doc.shallow_since_frontiers()
     }
 
     /// Get the total number of operations in the `OpLog`

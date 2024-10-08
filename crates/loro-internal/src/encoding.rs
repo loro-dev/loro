@@ -2,7 +2,7 @@ pub(crate) mod arena;
 mod fast_snapshot;
 pub(crate) mod json_schema;
 mod outdated_encode_reordered;
-mod trimmed_snapshot;
+mod shallow_snapshot;
 pub(crate) mod value;
 pub(crate) mod value_register;
 pub(crate) use outdated_encode_reordered::{
@@ -323,7 +323,7 @@ pub(crate) fn decode_oplog(
     let ImportChangesResult {
         latest_ids,
         pending_changes,
-        changes_that_deps_on_trimmed_history,
+        changes_that_have_deps_before_shallow_root,
     } = import_changes_to_oplog(changes, oplog);
 
     let mut pending = IdSpanVector::default();
@@ -340,7 +340,7 @@ pub(crate) fn decode_oplog(
     oplog.try_apply_pending(latest_ids);
     oplog.import_unknown_lamport_pending_changes(pending_changes)?;
     let after_vv = oplog.vv();
-    if !changes_that_deps_on_trimmed_history.is_empty() {
+    if !changes_that_have_deps_before_shallow_root.is_empty() {
         return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
     }
     Ok(ImportStatus {
@@ -445,7 +445,7 @@ pub(crate) fn export_snapshot_at(
 ) -> Result<Vec<u8>, LoroEncodeError> {
     check_target_version_reachable(doc, frontiers)?;
     encode_with(EncodeMode::FastSnapshot, &mut |ans| {
-        trimmed_snapshot::encode_snapshot_at(doc, frontiers, ans)
+        shallow_snapshot::encode_snapshot_at(doc, frontiers, ans)
     })
 }
 
@@ -465,20 +465,20 @@ pub(crate) fn export_fast_updates_in_range(oplog: &OpLog, spans: &[IdSpan]) -> V
     .unwrap()
 }
 
-pub(crate) fn export_trimmed_snapshot(
+pub(crate) fn export_shallow_snapshot(
     doc: &LoroDoc,
     f: &Frontiers,
 ) -> Result<Vec<u8>, LoroEncodeError> {
     check_target_version_reachable(doc, f)?;
     encode_with(EncodeMode::FastSnapshot, &mut |ans| {
-        trimmed_snapshot::export_trimmed_snapshot(doc, f, ans)?;
+        shallow_snapshot::export_shallow_snapshot(doc, f, ans)?;
         Ok(())
     })
 }
 
 fn check_target_version_reachable(doc: &LoroDoc, f: &Frontiers) -> Result<(), LoroEncodeError> {
     let oplog = doc.oplog.try_lock().unwrap();
-    if !oplog.dag.can_export_trimmed_snapshot_on(f) {
+    if !oplog.dag.can_export_shallow_snapshot_on(f) {
         return Err(LoroEncodeError::FrontiersNotFound(format!("{:?}", f)));
     }
 
@@ -491,7 +491,7 @@ pub(crate) fn export_state_only_snapshot(
 ) -> Result<Vec<u8>, LoroEncodeError> {
     check_target_version_reachable(doc, f)?;
     encode_with(EncodeMode::FastSnapshot, &mut |ans| {
-        trimmed_snapshot::export_state_only_snapshot(doc, f, ans)?;
+        shallow_snapshot::export_state_only_snapshot(doc, f, ans)?;
         Ok(())
     })
 }

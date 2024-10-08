@@ -73,7 +73,7 @@ pub(crate) fn import_json(oplog: &mut OpLog, json: JsonSchema) -> LoroResult<Imp
     let ImportChangesResult {
         latest_ids,
         pending_changes,
-        changes_that_deps_on_trimmed_history,
+        changes_that_have_deps_before_shallow_root,
     } = import_changes_to_oplog(changes, oplog);
     let mut pending = IdSpanVector::default();
     pending_changes.iter().for_each(|c| {
@@ -87,7 +87,7 @@ pub(crate) fn import_json(oplog: &mut OpLog, json: JsonSchema) -> LoroResult<Imp
     });
     oplog.try_apply_pending(latest_ids);
     oplog.import_unknown_lamport_pending_changes(pending_changes)?;
-    if !changes_that_deps_on_trimmed_history.is_empty() {
+    if !changes_that_have_deps_before_shallow_root.is_empty() {
         return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
     };
     let after_vv = oplog.vv();

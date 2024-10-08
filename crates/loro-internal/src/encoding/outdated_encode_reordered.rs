@@ -227,7 +227,7 @@ pub fn decode_import_blob_meta(bytes: &[u8]) -> LoroResult<ImportBlobMetadata> {
 pub(crate) struct ImportChangesResult {
     pub latest_ids: Vec<ID>,
     pub pending_changes: Vec<Change>,
-    pub changes_that_deps_on_trimmed_history: Vec<Change>,
+    pub changes_that_have_deps_before_shallow_root: Vec<Change>,
 }
 
 /// NOTE: This method expects that the remote_changes are already sorted by lamport value
@@ -237,15 +237,15 @@ pub(crate) fn import_changes_to_oplog(
 ) -> ImportChangesResult {
     let mut pending_changes = Vec::new();
     let mut latest_ids = Vec::new();
-    let mut changes_that_deps_on_trimmed_history = Vec::new();
+    let mut changes_before_shallow_root = Vec::new();
     for mut change in changes {
         if change.ctr_end() <= oplog.vv().get(&change.id.peer).copied().unwrap_or(0) {
             // skip included changes
             continue;
         }
 
-        if oplog.dag.is_on_trimmed_history(&change.deps) {
-            changes_that_deps_on_trimmed_history.push(change);
+        if oplog.dag.is_before_shallow_root(&change.deps) {
+            changes_before_shallow_root.push(change);
             continue;
         }
 
@@ -269,7 +269,7 @@ pub(crate) fn import_changes_to_oplog(
     ImportChangesResult {
         latest_ids,
         pending_changes,
-        changes_that_deps_on_trimmed_history,
+        changes_that_have_deps_before_shallow_root: changes_before_shallow_root,
     }
 }
 
@@ -694,9 +694,9 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
     let ImportChangesResult {
         latest_ids,
         pending_changes,
-        changes_that_deps_on_trimmed_history,
+        changes_that_have_deps_before_shallow_root,
     } = import_changes_to_oplog(changes, &mut oplog);
-    assert!(changes_that_deps_on_trimmed_history.is_empty());
+    assert!(changes_that_have_deps_before_shallow_root.is_empty());
     for op in ops.iter_mut() {
         // update op's lamport
         op.lamport = oplog.get_lamport_at(op.id());
@@ -1115,7 +1115,7 @@ mod encode {
         peer_register: &mut ValueRegister<PeerID>,
     ) -> (Vec<i32>, Vec<Either<Change, BlockChangeRef>>) {
         let mut start_vv = vv.trim(oplog.vv());
-        for (p, c) in oplog.trimmed_vv().iter() {
+        for (p, c) in oplog.shallow_since_vv().iter() {
             let start_c = start_vv.entry(*p).or_default();
             *start_c = (*start_c).max(*c);
         }

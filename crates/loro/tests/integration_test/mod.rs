@@ -3,9 +3,9 @@ use loro::LoroDoc;
 mod detached_editing_test;
 #[cfg(feature = "jsonpath")]
 mod jsonpath_test;
+mod shallow_snapshot_test;
 mod snapshot_at_test;
 mod text_update_test;
-mod trimmed_test;
 mod undo_test;
 
 fn gen_action(doc: &LoroDoc, seed: u64, mut ops_len: usize) {

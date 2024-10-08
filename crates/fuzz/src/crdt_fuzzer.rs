@@ -140,7 +140,7 @@ impl CRDTFuzzer {
                 let f = Frontiers::from(f);
                 match actor.loro.checkout(&f) {
                     Ok(_) => {}
-                    Err(LoroError::SwitchToTrimmedVersion) => {}
+                    Err(LoroError::SwitchToVersionBeforeShallowRoot) => {}
                     Err(e) => panic!("{}", e),
                 }
             }
@@ -379,7 +379,7 @@ pub fn test_multi_sites_with_gc(
                 fuzzer.actors[1].loro.attach();
                 let f = fuzzer.actors[1].loro.oplog_frontiers();
                 if !f.is_empty() {
-                    ensure_cov::notify_cov("export_trimmed_snapshot");
+                    ensure_cov::notify_cov("export_shallow_snapshot");
                     let bytes = fuzzer.actors[1]
                         .loro
                         .export(loro::ExportMode::shallow_snapshot(&f));
@@ -510,7 +510,7 @@ pub fn test_multi_sites_with_gc(
     if COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 1_000 == 0 {
         let must_meet = [
             "fuzz_gc",
-            "export_trimmed_snapshot",
+            "export_shallow_snapshot",
             "shallow_snapshot::need_calc",
             "shallow_snapshot::dont_need_calc",
             "loro_internal::history_cache::find_text_chunks_in",

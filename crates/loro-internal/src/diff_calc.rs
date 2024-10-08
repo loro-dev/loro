@@ -681,10 +681,14 @@ impl DiffCalculatorTrait for ListDiffCalculator {
             assert_ne!(id.peer, PeerID::MAX);
             let mut acc_len = 0;
             let end = id.counter + len as Counter;
-            let trimmed_start = oplog.trimmed_vv().get(&id.peer).copied().unwrap_or(0);
-            if id.counter < trimmed_start {
+            let shallow_root = oplog
+                .shallow_since_vv()
+                .get(&id.peer)
+                .copied()
+                .unwrap_or(0);
+            if id.counter < shallow_root {
                 // need to find the content between id.counter ~ target_end in gc state
-                let target_end = trimmed_start.min(end);
+                let target_end = shallow_root.min(end);
                 delta = oplog.with_history_cache(|h| {
                     let chunks =
                         h.find_list_chunks_in(idx, IdSpan::new(id.peer, id.counter, target_end));
@@ -703,7 +707,7 @@ impl DiffCalculatorTrait for ListDiffCalculator {
 
                     delta
                 });
-                id.counter = trimmed_start;
+                id.counter = shallow_root;
             }
 
             if id.counter < end {
@@ -1112,11 +1116,14 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                                 let mut id = id;
                                 let mut acc_len = 0;
                                 let end = id.counter + len as Counter;
-                                let trimmed_start =
-                                    oplog.trimmed_vv().get(&id.peer).copied().unwrap_or(0);
-                                if id.counter < trimmed_start {
+                                let shallow_root = oplog
+                                    .shallow_since_vv()
+                                    .get(&id.peer)
+                                    .copied()
+                                    .unwrap_or(0);
+                                if id.counter < shallow_root {
                                     // need to find the content between id.counter ~ target_end in gc state
-                                    let target_end = trimmed_start.min(end);
+                                    let target_end = shallow_root.min(end);
                                     oplog.with_history_cache(|h| {
                                         let chunks = h.find_text_chunks_in(
                                             idx,
@@ -1127,7 +1134,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                                             delta.push_insert(c, ());
                                         }
                                     });
-                                    id.counter = trimmed_start;
+                                    id.counter = shallow_root;
                                 }
 
                                 if id.counter < end {

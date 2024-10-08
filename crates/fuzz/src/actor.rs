@@ -194,7 +194,7 @@ impl Actor {
             tracing::info_span!("FuzzCheckout", ?from, ?to, ?peer).in_scope(|| {
                 match self.loro.checkout(&f) {
                     Ok(_) => {}
-                    Err(LoroError::SwitchToTrimmedVersion) => {
+                    Err(LoroError::SwitchToVersionBeforeShallowRoot) => {
                         return;
                     }
                     Err(e) => {
@@ -242,7 +242,7 @@ impl Actor {
                     new_doc.check_state_correctness_slow();
                 });
             }
-            Err(LoroError::SwitchToTrimmedVersion) => {}
+            Err(LoroError::SwitchToVersionBeforeShallowRoot) => {}
             Err(e) => panic!("{}", e),
         }
     }

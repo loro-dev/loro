@@ -5,7 +5,7 @@
 The header has 22 bytes.
 
 - (0-4 bytes) Magic Bytes: The encoding starts with `loro` as magic bytes.
-- (4-20 bytes) Checksum: MD5 checksum of the encoded data, including the header starting from 20th bytes. The checksum is encoded as a 16-byte array. The `checksum` and `magic bytes` fields are trimmed when calculating the checksum.
+- (4-20 bytes) Checksum: MD5/xxhash checksum of the encoded data, including the header starting from 20th bytes. The checksum is encoded as a 16-byte array (for xxhash, the first 12 bytes are padded with 0). The `checksum` and `magic bytes` fields are trimmed when calculating the checksum. 
 - (20-21 bytes) Encoding Method (2 bytes, big endian): Multiple encoding methods are available for a specific encoding version.
 
 ## Encode Mode: Updates

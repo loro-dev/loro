@@ -1024,7 +1024,7 @@ fn apply_random_ops(doc: &LoroDoc, seed: u64, mut op_len: usize) {
 }
 
 #[test]
-fn test_trimmed_sync() {
+fn test_shallow_sync() {
     let doc = LoroDoc::new();
     doc.set_peer_id(1).unwrap();
     apply_random_ops(&doc, 123, 11);
@@ -1037,7 +1037,11 @@ fn test_trimmed_sync() {
     new_doc.set_peer_id(2).unwrap();
     new_doc.import(&bytes.unwrap()).unwrap();
     assert_eq!(doc.get_deep_value(), new_doc.get_deep_value());
-    let trim_end = new_doc.shallow_history_start_vv().get(&doc.peer_id()).copied().unwrap();
+    let trim_end = new_doc
+        .shallow_since_vv()
+        .get(&doc.peer_id())
+        .copied()
+        .unwrap();
     assert_eq!(trim_end, 10);
 
     apply_random_ops(&new_doc, 1234, 5);
@@ -1052,7 +1056,7 @@ fn test_trimmed_sync() {
 }
 
 #[test]
-fn test_trimmed_empty() {
+fn test_shallow_empty() {
     let doc = LoroDoc::new();
     apply_random_ops(&doc, 123, 11);
     let bytes = doc.export(loro::ExportMode::shallow_snapshot(&Frontiers::default()));
@@ -1071,7 +1075,7 @@ fn test_trimmed_empty() {
 }
 
 #[test]
-fn test_trimmed_import_outdated_updates() {
+fn test_shallow_import_outdated_updates() {
     let doc = LoroDoc::new();
     apply_random_ops(&doc, 123, 11);
     let bytes = doc.export(loro::ExportMode::shallow_snapshot_since(ID::new(
@@ -1090,7 +1094,7 @@ fn test_trimmed_import_outdated_updates() {
 }
 
 #[test]
-fn test_trimmed_import_pending_updates_that_is_outdated() {
+fn test_shallow_import_pending_updates_that_is_outdated() {
     let doc = LoroDoc::new();
     apply_random_ops(&doc, 123, 11);
     let bytes = doc.export(loro::ExportMode::shallow_snapshot_since(ID::new(
@@ -1113,7 +1117,7 @@ fn test_trimmed_import_pending_updates_that_is_outdated() {
 }
 
 #[test]
-fn test_calling_exporting_snapshot_on_trimmed_doc() {
+fn test_calling_exporting_snapshot_on_shallow_doc() {
     let doc = LoroDoc::new();
     apply_random_ops(&doc, 123, 11);
     let bytes = doc.export(loro::ExportMode::shallow_snapshot_since(ID::new(
@@ -1126,11 +1130,11 @@ fn test_calling_exporting_snapshot_on_trimmed_doc() {
     let doc_c = LoroDoc::new();
     doc_c.import(&snapshot.unwrap()).unwrap();
     assert_eq!(doc_c.get_deep_value(), new_doc.get_deep_value());
-    assert_eq!(new_doc.shallow_history_start_vv(), doc_c.shallow_history_start_vv());
+    assert_eq!(new_doc.shallow_since_vv(), doc_c.shallow_since_vv());
 }
 
 #[test]
-fn sync_two_trimmed_docs() {
+fn sync_two_shallow_docs() {
     let doc = LoroDoc::new();
     apply_random_ops(&doc, 123, 11);
     let bytes = doc
@@ -1159,11 +1163,11 @@ fn sync_two_trimmed_docs() {
     assert_eq!(doc_a.oplog_vv(), doc_b.oplog_vv());
     assert_eq!(doc_a.oplog_frontiers(), doc_b.oplog_frontiers());
     assert_eq!(doc_a.state_vv(), doc_b.state_vv());
-    assert_eq!(doc_a.shallow_history_start_vv(), doc_b.shallow_history_start_vv());
+    assert_eq!(doc_a.shallow_since_vv(), doc_b.shallow_since_vv());
 }
 
 #[test]
-fn test_map_checkout_on_trimmed_doc() {
+fn test_map_checkout_on_shallow_doc() {
     let doc = LoroDoc::new();
     doc.get_map("map").insert("0", 0).unwrap();
     doc.get_map("map").insert("1", 1).unwrap();
@@ -1226,7 +1230,7 @@ fn test_map_checkout_on_trimmed_doc() {
     let err = new_doc
         .checkout(&ID::new(doc.peer_id(), 0).into())
         .unwrap_err();
-    assert_eq!(err, LoroError::SwitchToTrimmedVersion);
+    assert_eq!(err, LoroError::SwitchToVersionBeforeShallowRoot);
 }
 
 #[test]
@@ -1275,7 +1279,7 @@ fn test_loro_export_local_updates() {
 }
 
 #[test]
-fn test_movable_list_checkout_on_trimmed_doc() -> LoroResult<()> {
+fn test_movable_list_checkout_on_shallow_doc() -> LoroResult<()> {
     let doc = LoroDoc::new();
     let list = doc.get_movable_list("list");
     list.insert(0, 0)?;
@@ -1317,12 +1321,12 @@ fn test_movable_list_checkout_on_trimmed_doc() -> LoroResult<()> {
     let err = new_doc
         .checkout(&ID::new(doc.peer_id(), 1).into())
         .unwrap_err();
-    assert_eq!(err, LoroError::SwitchToTrimmedVersion);
+    assert_eq!(err, LoroError::SwitchToVersionBeforeShallowRoot);
     Ok(())
 }
 
 #[test]
-fn test_tree_checkout_on_trimmed_doc() -> LoroResult<()> {
+fn test_tree_checkout_on_shallow_doc() -> LoroResult<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(0)?;
     let tree = doc.get_tree("tree");
@@ -1455,12 +1459,12 @@ fn test_tree_checkout_on_trimmed_doc() -> LoroResult<()> {
     let err = new_doc
         .checkout(&ID::new(doc.peer_id(), 0).into())
         .unwrap_err();
-    assert_eq!(err, LoroError::SwitchToTrimmedVersion);
+    assert_eq!(err, LoroError::SwitchToVersionBeforeShallowRoot);
     Ok(())
 }
 
 #[test]
-fn test_tree_with_other_ops_checkout_on_trimmed_doc() -> LoroResult<()> {
+fn test_tree_with_other_ops_checkout_on_shallow_doc() -> LoroResult<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(0)?;
     let tree = doc.get_tree("tree");
@@ -1474,17 +1478,17 @@ fn test_tree_with_other_ops_checkout_on_trimmed_doc() -> LoroResult<()> {
     map.insert("0", 0)?;
     map.insert("1", 1)?;
     doc.commit();
-    let trimmed_frontiers = doc.oplog_frontiers();
+    let shallow_frontiers = doc.oplog_frontiers();
     map.insert("2", 2)?;
     tree.mov(child2, child1)?;
     tree.delete(child1)?;
 
-    let new_doc_bytes = doc.export(loro::ExportMode::shallow_snapshot(&trimmed_frontiers));
+    let new_doc_bytes = doc.export(loro::ExportMode::shallow_snapshot(&shallow_frontiers));
 
     let new_doc = LoroDoc::new();
     new_doc.import(&new_doc_bytes.unwrap()).unwrap();
 
-    new_doc.checkout(&trimmed_frontiers)?;
+    new_doc.checkout(&shallow_frontiers)?;
     let value = new_doc.get_deep_value();
     assert_eq!(
         value,
@@ -1527,12 +1531,12 @@ fn test_tree_with_other_ops_checkout_on_trimmed_doc() -> LoroResult<()> {
     let err = new_doc
         .checkout(&ID::new(doc.peer_id(), 0).into())
         .unwrap_err();
-    assert_eq!(err, LoroError::SwitchToTrimmedVersion);
+    assert_eq!(err, LoroError::SwitchToVersionBeforeShallowRoot);
     Ok(())
 }
 
 #[test]
-fn test_trimmed_can_remove_unreachable_states() -> LoroResult<()> {
+fn test_shallow_can_remove_unreachable_states() -> LoroResult<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(1)?;
     let map = doc.get_map("map");

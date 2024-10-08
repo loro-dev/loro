@@ -323,12 +323,12 @@ impl LoroDoc {
         Arc::new(self.doc.state_vv().into())
     }
 
-    /// Get the `VersionVector` of trimmed history
+    /// Get the `VersionVector` of the start of the shallow history
     ///
-    /// The ops included by the trimmed history are not in the doc.
+    /// The ops included by the shallow history are not in the doc.
     #[inline]
-    pub fn trimmed_vv(&self) -> Arc<VersionVector> {
-        Arc::new(loro::VersionVector::from_im_vv(&self.doc.shallow_history_start_vv()).into())
+    pub fn shallow_since_vv(&self) -> Arc<VersionVector> {
+        Arc::new(loro::VersionVector::from_im_vv(&self.doc.shallow_since_vv()).into())
     }
 
     /// Get the total number of operations in the `OpLog`
@@ -504,7 +504,7 @@ impl LoroDoc {
             .unwrap()
     }
 
-    pub fn export_trimmed_snapshot(&self, frontiers: &Frontiers) -> Vec<u8> {
+    pub fn export_shallow_snapshot(&self, frontiers: &Frontiers) -> Vec<u8> {
         self.doc
             .export(loro::ExportMode::ShallowSnapshot(Cow::Owned(
                 frontiers.into(),

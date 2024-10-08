@@ -53,8 +53,8 @@ const MAX_BLOCK_SIZE: usize = 128;
 /// |:--                          |:----             |
 /// |b"vv"                        |VersionVector     |
 /// |b"fr"                        |Frontiers         |
-/// |b"sv"                        |Trimmed VV        |
-/// |b"sf"                        |Trimmed Frontiers |
+/// |b"sv"                        |Shallow VV        |
+/// |b"sf"                        |Shallow Frontiers |
 /// |12 bytes PeerID + Counter    |Encoded Block     |
 #[derive(Debug, Clone)]
 pub struct ChangeStore {
@@ -75,7 +75,7 @@ struct ChangeStoreInner {
     /// The start version vector of the first block for each peer.
     /// It allows us to trim the history
     start_vv: ImVersionVector,
-    /// The last version of the trimmed history.
+    /// The last version of the shallow history.
     start_frontiers: Frontiers,
     /// It's more like a parsed cache for binary_kv.
     mem_parsed_kv: BTreeMap<ID, Arc<ChangesBlock>>,
@@ -475,13 +475,13 @@ impl ChangeStore {
     pub(crate) fn export_blocks_from<W: std::io::Write>(
         &self,
         start_vv: &VersionVector,
-        trimmed_vv: &ImVersionVector,
+        shallow_since_vv: &ImVersionVector,
         latest_vv: &VersionVector,
         w: &mut W,
     ) {
         let new_store = ChangeStore::new_mem(&self.arena, self.merge_interval.clone());
         for mut span in latest_vv.sub_iter(start_vv) {
-            let counter_lower_bound = trimmed_vv.get(&span.peer).copied().unwrap_or(0);
+            let counter_lower_bound = shallow_since_vv.get(&span.peer).copied().unwrap_or(0);
             span.counter.start = span.counter.start.max(counter_lower_bound);
             span.counter.end = span.counter.end.max(counter_lower_bound);
             if span.counter.start >= span.counter.end {

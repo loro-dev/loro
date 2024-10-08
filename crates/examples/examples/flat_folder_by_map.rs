@@ -78,8 +78,8 @@ pub fn main() {
         let shallow_bytes = doc
             .export(loro::ExportMode::shallow_snapshot(&doc.oplog_frontiers()))
             .unwrap();
-        println!("Export TrimmedSnapshot Duration {:?}", start.elapsed());
-        println!("TrimmedSnapshot size {:?}", ByteSize(shallow_bytes.len()));
+        println!("Export ShallowSnapshot Duration {:?}", start.elapsed());
+        println!("ShallowSnapshot size {:?}", ByteSize(shallow_bytes.len()));
         shallow_bytes
     };
 
