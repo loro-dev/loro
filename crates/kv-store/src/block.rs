@@ -2,6 +2,7 @@ use std::{fmt::Debug, io::Write, ops::{Bound, Range}, sync::Arc};
 
 use bytes::{Buf,  Bytes};
 use loro_common::LoroResult;
+use once_cell::sync::OnceCell;
 
 use crate::{compress::{compress, decompress, CompressionType}, iter::KvIterator, sstable::{get_common_prefix_len_and_strip,  SIZE_OF_U32, XXH_SEED}};
 
@@ -12,6 +13,7 @@ use super::sstable::{ SIZE_OF_U16, SIZE_OF_U8};
 pub struct LargeValueBlock{
     // without checksum
     pub value_bytes: Bytes,
+    pub encoded_bytes: OnceCell<(Bytes, CompressionType)>,
     pub key: Bytes,
 }
 
@@ -23,7 +25,14 @@ impl LargeValueBlock{
     /// ││ bytes │      u32        │
     /// │ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘│
     /// └──────────────────────────┘
-    fn encode(&self,  w: &mut Vec<u8>, mut compression_type: CompressionType)->CompressionType{
+    fn encode(&self, w: &mut Vec<u8>, mut compression_type: CompressionType) -> CompressionType {
+        if let Some((bytes, encoded_compression_type)) = self.encoded_bytes.get() {
+            if encoded_compression_type == &compression_type {
+                w.extend_from_slice(bytes);
+                return compression_type;
+            }
+        }
+
         let origin_len = w.len();
         compress(w, &self.value_bytes, compression_type);
         if !compression_type.is_none() && w.len() - origin_len > self.value_bytes.len(){
@@ -37,11 +46,12 @@ impl LargeValueBlock{
         compression_type
     }
 
-    fn decode(bytes:Bytes, key: Bytes, compression_type: CompressionType)->LoroResult<Self>{
+    fn decode(bytes: Bytes, key: Bytes, compression_type: CompressionType)->LoroResult<Self>{
         let mut value_bytes = vec![];
         decompress(&mut value_bytes, bytes.slice(..bytes.len() - SIZE_OF_U32), compression_type)?;
         Ok(LargeValueBlock{
             value_bytes: Bytes::from(value_bytes),
+            encoded_bytes: OnceCell::with_value((bytes, compression_type)),
             key,
         })
     }
@@ -50,6 +60,7 @@ impl LargeValueBlock{
 #[derive(Debug, Clone)]
 pub struct NormalBlock {
     pub data: Bytes,
+    pub encoded_data: OnceCell<(Bytes, CompressionType)>,
     pub first_key: Bytes,
     pub offsets: Vec<u16>,
 }
@@ -64,7 +75,14 @@ impl NormalBlock {
     /// └────────────────────────────────────────────────────────────────────────────────────────┘
     /// 
     /// The block body may be compressed then we calculate its checksum (the checksum is not compressed).
-    fn encode(&self, w: &mut Vec<u8>, mut compression_type: CompressionType)->CompressionType  {
+    fn encode(&self, w: &mut Vec<u8>, mut compression_type: CompressionType) -> CompressionType  {
+        if let Some((encoded_data, encoded_compression_type)) = self.encoded_data.get() {
+            if encoded_compression_type == &compression_type {
+                w.extend_from_slice(encoded_data);
+                return compression_type;
+            }
+        }
+
         let origin_len = w.len();
         let mut buf = self.data.to_vec();
         for offset in &self.offsets {
@@ -86,13 +104,14 @@ impl NormalBlock {
     fn decode(raw_block_and_check: Bytes, first_key: Bytes, compression_type: CompressionType)-> LoroResult<NormalBlock>{
         let buf = raw_block_and_check.slice(..raw_block_and_check.len() - SIZE_OF_U32);
         let mut data = vec![];
-        decompress(&mut data, buf,compression_type)?;
-        let offsets_len = (&data[data.len()-SIZE_OF_U16..]).get_u16_le() as usize;
+        decompress(&mut data, buf, compression_type)?;
+        let offsets_len = (&data[data.len() - SIZE_OF_U16..]).get_u16_le() as usize;
         let data_end = data.len() - SIZE_OF_U16 * (offsets_len + 1);
-        let offsets = &data[data_end..data.len()-SIZE_OF_U16];
+        let offsets = &data[data_end..data.len() - SIZE_OF_U16];
         let offsets = offsets.chunks(SIZE_OF_U16).map(|mut chunk| chunk.get_u16_le()).collect();
         Ok(NormalBlock{
             data: Bytes::copy_from_slice(&data[..data_end]),
+            encoded_data: OnceCell::with_value((raw_block_and_check, compression_type)),
             offsets,
             first_key,
         })
@@ -261,6 +280,7 @@ impl BlockBuilder {
             return Block::Large(LargeValueBlock{
                 value_bytes: Bytes::from(self.data),
                 key: self.first_key,
+                encoded_bytes: OnceCell::new(),
             });
         }
         debug_assert!(!self.offsets.is_empty(), "block is empty");
@@ -268,6 +288,7 @@ impl BlockBuilder {
             data: Bytes::from(self.data),
             offsets: self.offsets,
             first_key: self.first_key,
+            encoded_data: OnceCell::new(),
         })
     }
 }
