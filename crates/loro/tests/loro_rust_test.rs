@@ -1768,7 +1768,7 @@ fn test_encode_snapshot_when_checkout() {
 }
 
 #[test]
-fn travel_change_ancestors() {
+fn test_travel_change_ancestors() {
     let doc = LoroDoc::new();
     doc.set_peer_id(1).unwrap();
     doc.get_text("text").insert(0, "Hello").unwrap();

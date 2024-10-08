@@ -22,7 +22,7 @@ use bytes::{Buf, Bytes};
 use loro_common::{IdSpan, LoroError, LoroResult};
 use tracing::trace;
 pub(crate) const EMPTY_MARK: &[u8] = b"E";
-pub(super) struct Snapshot {
+pub(crate) struct Snapshot {
     pub oplog_bytes: Bytes,
     pub state_bytes: Option<Bytes>,
     pub shallow_root_state_bytes: Bytes,
@@ -70,6 +70,16 @@ fn read_u32_le(r: &mut bytes::buf::Reader<Bytes>) -> u32 {
 }
 
 pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: Bytes) -> LoroResult<()> {
+    let snapshot = _decode_snapshot_bytes(bytes)?;
+    decode_snapshot_inner(snapshot, doc)
+}
+
+pub(crate) fn decode_snapshot_inner(snapshot: Snapshot, doc: &LoroDoc) -> Result<(), LoroError> {
+    let Snapshot {
+        oplog_bytes,
+        state_bytes,
+        shallow_root_state_bytes,
+    } = snapshot;
     ensure_cov::notify_cov("loro_internal::import::fast_snapshot::decode_snapshot");
     let mut state = doc.app_state().try_lock().map_err(|_| {
         LoroError::DecodeError(
@@ -94,11 +104,6 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: Bytes) -> LoroResult<()> {
 
     assert!(state.frontiers.is_empty());
     assert!(oplog.frontiers().is_empty());
-    let Snapshot {
-        oplog_bytes,
-        state_bytes,
-        shallow_root_state_bytes,
-    } = _decode_snapshot_bytes(bytes)?;
     oplog.decode_change_store(oplog_bytes)?;
     let need_calc = state_bytes.is_none();
     let state_frontiers;
@@ -157,7 +162,11 @@ impl OpLog {
 }
 
 pub(crate) fn encode_snapshot<W: std::io::Write>(doc: &LoroDoc, w: &mut W) {
-    // events should be emitted before encode snapshot
+    let snapshot = encode_snapshot_inner(doc);
+    _encode_snapshot(snapshot, w);
+}
+
+pub(crate) fn encode_snapshot_inner(doc: &LoroDoc) -> Snapshot {
     assert!(doc.drop_pending_events().is_empty());
     let old_state_frontiers = doc.state_frontiers();
     let was_detached = doc.is_detached();
@@ -169,9 +178,10 @@ pub(crate) fn encode_snapshot<W: std::io::Write>(doc: &LoroDoc, w: &mut W) {
         let f = oplog.shallow_since_frontiers().clone();
         drop(oplog);
         drop(state);
-        shallow_snapshot::export_shallow_snapshot(doc, &f, w).unwrap();
-        return;
+        let (snapshot, _) = shallow_snapshot::export_shallow_snapshot_inner(doc, &f).unwrap();
+        return snapshot;
     }
+
     assert!(!state.is_in_txn());
     let oplog_bytes = oplog.encode_change_store();
     if oplog.is_shallow() {
@@ -180,7 +190,6 @@ pub(crate) fn encode_snapshot<W: std::io::Write>(doc: &LoroDoc, w: &mut W) {
             state.store.shallow_root_frontiers().unwrap()
         );
     }
-
     if was_detached {
         let latest = oplog.frontiers().clone();
         drop(oplog);
@@ -188,23 +197,20 @@ pub(crate) fn encode_snapshot<W: std::io::Write>(doc: &LoroDoc, w: &mut W) {
         doc.checkout_without_emitting(&latest).unwrap();
         state = doc.app_state().try_lock().unwrap();
     }
-
     state.ensure_all_alive_containers();
     let state_bytes = state.store.encode();
-    _encode_snapshot(
-        Snapshot {
-            oplog_bytes,
-            state_bytes: Some(state_bytes),
-            shallow_root_state_bytes: Bytes::new(),
-        },
-        w,
-    );
-
+    let snapshot = Snapshot {
+        oplog_bytes,
+        state_bytes: Some(state_bytes),
+        shallow_root_state_bytes: Bytes::new(),
+    };
     if was_detached {
         drop(state);
         doc.checkout_without_emitting(&old_state_frontiers).unwrap();
         doc.drop_pending_events();
     }
+
+    snapshot
 }
 
 pub(crate) fn decode_oplog(oplog: &mut OpLog, bytes: &[u8]) -> Result<Vec<Change>, LoroError> {

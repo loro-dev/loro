@@ -229,7 +229,7 @@ impl ContainerStore {
     }
 
     pub(crate) fn fork(
-        &self,
+        &mut self,
         arena: SharedArena,
         peer: Arc<AtomicU64>,
         config: Configure,

@@ -385,17 +385,18 @@ impl DocState {
     }
 
     pub fn fork_with_new_peer_id(
-        &self,
+        &mut self,
         arena: SharedArena,
         global_txn: Weak<Mutex<Option<Transaction>>>,
         config: Configure,
     ) -> Arc<Mutex<Self>> {
-        Arc::new_cyclic(|weak| {
-            let peer = Arc::new(AtomicU64::new(DefaultRandom.next_u64()));
+        let peer = Arc::new(AtomicU64::new(DefaultRandom.next_u64()));
+        let store = self.store.fork(arena.clone(), peer.clone(), config.clone());
+        Arc::new_cyclic(move |weak| {
             Mutex::new(Self {
-                peer: peer.clone(),
+                peer,
                 frontiers: self.frontiers.clone(),
-                store: self.store.fork(arena.clone(), peer, config.clone()),
+                store,
                 arena,
                 config,
                 weak_state: weak.clone(),

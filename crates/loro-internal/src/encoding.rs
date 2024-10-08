@@ -1,5 +1,5 @@
 pub(crate) mod arena;
-mod fast_snapshot;
+pub(crate) mod fast_snapshot;
 pub(crate) mod json_schema;
 mod outdated_encode_reordered;
 mod shallow_snapshot;
@@ -213,7 +213,10 @@ impl EncodeMode {
     }
 
     pub fn is_snapshot(self) -> bool {
-        matches!(self, EncodeMode::OutdatedSnapshot)
+        matches!(
+            self,
+            EncodeMode::OutdatedSnapshot | EncodeMode::FastSnapshot
+        )
     }
 }
 

@@ -7,7 +7,7 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use tracing::{debug, trace, trace_span};
 
 use self::change_store::iter::MergedChangeIter;
@@ -24,7 +24,6 @@ use crate::history_cache::ContainerHistoryCache;
 use crate::id::{Counter, PeerID, ID};
 use crate::op::{FutureInnerContent, ListSlice, RawOpContent, RemoteOp, RichOp};
 use crate::span::{HasCounterSpan, HasLamportSpan};
-use crate::state::GcStore;
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
 use change_store::BlockOpRef;
@@ -80,34 +79,6 @@ impl OpLog {
             pending_changes: Default::default(),
             batch_importing: false,
             configure: cfg,
-        }
-    }
-
-    pub(crate) fn fork(
-        &self,
-        arena: SharedArena,
-        configure: Configure,
-        gc: Option<Arc<GcStore>>,
-    ) -> Self {
-        let change_store = self.change_store.fork(
-            arena.clone(),
-            configure.merge_interval.clone(),
-            self.vv(),
-            self.frontiers(),
-        );
-        Self {
-            history_cache: Mutex::new(
-                self.history_cache
-                    .try_lock()
-                    .unwrap()
-                    .fork(change_store.clone(), gc),
-            ),
-            change_store: change_store.clone(),
-            dag: self.dag.fork(change_store),
-            arena,
-            pending_changes: Default::default(),
-            batch_importing: false,
-            configure,
         }
     }
 

@@ -429,21 +429,6 @@ impl AppDag {
         }
     }
 
-    pub(super) fn fork(&self, change_store: ChangeStore) -> AppDag {
-        AppDag {
-            change_store: change_store.clone(),
-            map: Mutex::new(self.map.try_lock().unwrap().clone()),
-            frontiers: self.frontiers.clone(),
-            vv: self.vv.clone(),
-            unparsed_vv: Mutex::new(self.unparsed_vv.try_lock().unwrap().clone()),
-            unhandled_dep_points: Mutex::new(self.unhandled_dep_points.try_lock().unwrap().clone()),
-            shallow_since_frontiers: self.shallow_since_frontiers.clone(),
-            shallow_since_vv: self.shallow_since_vv.clone(),
-            shallow_root_frontiers_deps: self.shallow_root_frontiers_deps.clone(),
-            pending_txn_node: self.pending_txn_node.clone(),
-        }
-    }
-
     pub fn total_parsed_dag_node(&self) -> usize {
         self.map.try_lock().unwrap().len()
     }
