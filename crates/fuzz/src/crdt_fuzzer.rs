@@ -511,8 +511,8 @@ pub fn test_multi_sites_with_gc(
         let must_meet = [
             "fuzz_gc",
             "export_trimmed_snapshot",
-            "trimmed_snapshot::need_calc",
-            "trimmed_snapshot::dont_need_calc",
+            "shallow_snapshot::need_calc",
+            "shallow_snapshot::dont_need_calc",
             "loro_internal::history_cache::find_text_chunks_in",
             "loro_internal::history_cache::find_list_chunks_in",
             "loro_internal::import",

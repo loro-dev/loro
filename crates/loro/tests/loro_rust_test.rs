@@ -1037,7 +1037,7 @@ fn test_trimmed_sync() {
     new_doc.set_peer_id(2).unwrap();
     new_doc.import(&bytes.unwrap()).unwrap();
     assert_eq!(doc.get_deep_value(), new_doc.get_deep_value());
-    let trim_end = new_doc.trimmed_vv().get(&doc.peer_id()).copied().unwrap();
+    let trim_end = new_doc.shallow_history_start_vv().get(&doc.peer_id()).copied().unwrap();
     assert_eq!(trim_end, 10);
 
     apply_random_ops(&new_doc, 1234, 5);
@@ -1126,7 +1126,7 @@ fn test_calling_exporting_snapshot_on_trimmed_doc() {
     let doc_c = LoroDoc::new();
     doc_c.import(&snapshot.unwrap()).unwrap();
     assert_eq!(doc_c.get_deep_value(), new_doc.get_deep_value());
-    assert_eq!(new_doc.trimmed_vv(), doc_c.trimmed_vv());
+    assert_eq!(new_doc.shallow_history_start_vv(), doc_c.shallow_history_start_vv());
 }
 
 #[test]
@@ -1159,7 +1159,7 @@ fn sync_two_trimmed_docs() {
     assert_eq!(doc_a.oplog_vv(), doc_b.oplog_vv());
     assert_eq!(doc_a.oplog_frontiers(), doc_b.oplog_frontiers());
     assert_eq!(doc_a.state_vv(), doc_b.state_vv());
-    assert_eq!(doc_a.trimmed_vv(), doc_b.trimmed_vv());
+    assert_eq!(doc_a.shallow_history_start_vv(), doc_b.shallow_history_start_vv());
 }
 
 #[test]

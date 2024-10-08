@@ -328,7 +328,7 @@ impl LoroDoc {
     /// The ops included by the trimmed history are not in the doc.
     #[inline]
     pub fn trimmed_vv(&self) -> Arc<VersionVector> {
-        Arc::new(loro::VersionVector::from_im_vv(&self.doc.trimmed_vv()).into())
+        Arc::new(loro::VersionVector::from_im_vv(&self.doc.shallow_history_start_vv()).into())
     }
 
     /// Get the total number of operations in the `OpLog`

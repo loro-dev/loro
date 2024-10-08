@@ -484,12 +484,24 @@ impl LoroDoc {
         self.doc.state_vv()
     }
 
-    /// Get the `VersionVector` of trimmed history
+    /// The doc only contains the history since the shallow history start version vector.
     ///
-    /// The ops included by the trimmed history are not in the doc.
+    /// This is empty if the doc is not shallow.
+    ///
+    /// The ops included by the shallow history start version vector are not in the doc.
     #[inline]
-    pub fn trimmed_vv(&self) -> ImVersionVector {
-        self.doc.trimmed_vv()
+    pub fn shallow_history_start_vv(&self) -> ImVersionVector {
+        self.doc.shallow_history_start_vv()
+    }
+
+    /// The doc only contains the history since the shallow history start frontiers.
+    ///
+    /// This is empty if the doc is not shallow.
+    ///
+    /// The ops included by the shallow history start frontiers are not in the doc.
+    #[inline]
+    pub fn shallow_history_start_frontiers(&self) -> Frontiers {
+        self.doc.shallow_history_start_frontiers()
     }
 
     /// Get the total number of operations in the `OpLog`
@@ -811,6 +823,11 @@ impl LoroDoc {
         f: &mut dyn FnMut(ChangeMeta) -> ControlFlow<()>,
     ) -> Result<(), ChangeTravelError> {
         self.doc.travel_change_ancestors(ids, f)
+    }
+
+    /// Check if the doc contains the full history.
+    pub fn is_shallow(&self) -> bool {
+        self.doc.is_shallow()
     }
 }
 

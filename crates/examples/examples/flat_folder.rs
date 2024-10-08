@@ -60,7 +60,7 @@ pub fn main() {
         snapshot
     };
 
-    let trimmed_snapshot = {
+    let shallow_snapshot = {
         println!("Snapshot size {:?}", ByteSize(bytes.len()));
         let doc = LoroDoc::new();
         doc.import(&bytes).unwrap();
@@ -73,18 +73,18 @@ pub fn main() {
         let _trimmed_bytes = doc.export(loro::ExportMode::Snapshot).unwrap();
         println!("ReExport Snapshot Duration {:?}", start.elapsed());
         let start = Instant::now();
-        let trimmed_bytes = doc
+        let shallow_bytes = doc
             .export(loro::ExportMode::shallow_snapshot(&doc.oplog_frontiers()))
             .unwrap();
         println!("Export TrimmedSnapshot Duration {:?}", start.elapsed());
-        println!("TrimmedSnapshot size {:?}", ByteSize(trimmed_bytes.len()));
-        trimmed_bytes
+        println!("TrimmedSnapshot size {:?}", ByteSize(shallow_bytes.len()));
+        shallow_bytes
     };
 
     {
         let start = Instant::now();
         let doc = LoroDoc::new();
-        doc.import(&trimmed_snapshot).unwrap();
+        doc.import(&shallow_snapshot).unwrap();
         println!("Import gc snapshot time: {:?}", start.elapsed());
         println!("Mem usage {:?}", get_mem_usage());
         let start = Instant::now();

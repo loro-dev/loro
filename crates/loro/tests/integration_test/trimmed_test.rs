@@ -114,7 +114,10 @@ fn trimmed_on_the_given_version_when_feasible() -> anyhow::Result<()> {
     let bytes = doc.export(loro::ExportMode::shallow_snapshot_since(ID::new(1, 31)));
     let new_doc = LoroDoc::new();
     new_doc.import(&bytes.unwrap())?;
-    assert_eq!(new_doc.trimmed_vv().get(&1).copied().unwrap(), 31);
+    assert_eq!(
+        new_doc.shallow_history_start_vv().get(&1).copied().unwrap(),
+        31
+    );
     Ok(())
 }
 
@@ -137,12 +140,22 @@ fn export_snapshot_on_a_trimmed_doc() -> anyhow::Result<()> {
     // Import into a new document
     let trimmed_doc = LoroDoc::new();
     trimmed_doc.import(&bytes.unwrap())?;
-    assert_eq!(trimmed_doc.trimmed_vv().get(&1).copied().unwrap(), 31);
+    assert_eq!(
+        trimmed_doc
+            .shallow_history_start_vv()
+            .get(&1)
+            .copied()
+            .unwrap(),
+        31
+    );
     let new_snapshot = trimmed_doc.export(loro::ExportMode::Snapshot);
 
     let new_doc = LoroDoc::new();
     new_doc.import(&new_snapshot.unwrap())?;
-    assert_eq!(new_doc.trimmed_vv().get(&1).copied().unwrap(), 31);
+    assert_eq!(
+        new_doc.shallow_history_start_vv().get(&1).copied().unwrap(),
+        31
+    );
     assert_eq!(new_doc.get_deep_value(), doc.get_deep_value());
     new_doc.checkout(&frontiers)?;
     assert_eq!(new_doc.get_deep_value(), old_value);
@@ -228,7 +241,7 @@ fn the_vv_on_trimmed_doc() -> anyhow::Result<()> {
     let snapshot = doc.export(loro::ExportMode::shallow_snapshot(&doc.oplog_frontiers()));
     let new_doc = LoroDoc::new();
     new_doc.import(&snapshot.unwrap()).unwrap();
-    assert!(!new_doc.trimmed_vv().is_empty());
+    assert!(!new_doc.shallow_history_start_vv().is_empty());
     assert_eq!(new_doc.oplog_vv(), new_doc.state_vv());
     assert_eq!(new_doc.oplog_vv(), doc.state_vv());
     assert_eq!(new_doc.oplog_frontiers(), doc.oplog_frontiers());

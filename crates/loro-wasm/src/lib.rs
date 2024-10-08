@@ -893,7 +893,9 @@ impl LoroDoc {
     /// All the ops in the trimmed history are removed from this doc.
     #[wasm_bindgen(js_name = "trimmedVV")]
     pub fn trimmed_vv(&self) -> VersionVector {
-        VersionVector(InternalVersionVector::from_im_vv(&self.0.trimmed_vv()))
+        VersionVector(InternalVersionVector::from_im_vv(
+            &self.0.shallow_history_start_vv(),
+        ))
     }
 
     /// Get the encoded version vector of the latest version in OpLog.

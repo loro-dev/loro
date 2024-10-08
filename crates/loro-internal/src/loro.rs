@@ -562,7 +562,7 @@ impl LoroDoc {
 
     #[instrument(skip_all)]
     pub fn export_snapshot(&self) -> Result<Vec<u8>, LoroEncodeError> {
-        if self.is_trimmed() {
+        if self.is_shallow() {
             return Err(LoroEncodeError::TrimmedSnapshotIncompatibleWithOldFormat);
         }
         self.commit_then_stop();
@@ -1198,7 +1198,7 @@ impl LoroDoc {
             let _g = s.enter();
             self.commit_then_stop();
             self.oplog.try_lock().unwrap().check_dag_correctness();
-            if self.is_trimmed() {
+            if self.is_shallow() {
                 // For documents that have been garbage collected (trimmed),
                 // we cannot replay from the beginning as the history is not complete.
                 // Instead, we:
@@ -1210,13 +1210,16 @@ impl LoroDoc {
 
                 // Step 1: Export the initial state from the GC snapshot.
                 let initial_snapshot = self
-                    .export(ExportMode::state_only(Some(&self.trimmed_frontiers())))
+                    .export(ExportMode::state_only(Some(
+                        &self.shallow_history_start_frontiers(),
+                    )))
                     .unwrap();
 
                 // Step 2: Create a new document and import the initial snapshot.
                 let doc = LoroDoc::new();
                 doc.import(&initial_snapshot).unwrap();
-                self.checkout(&self.trimmed_frontiers()).unwrap();
+                self.checkout(&self.shallow_history_start_frontiers())
+                    .unwrap();
                 assert_eq!(self.get_deep_value(), doc.get_deep_value());
 
                 // Step 3: Export updates from the trimmed version vector to the current version.
@@ -1491,18 +1494,23 @@ impl LoroDoc {
         Ok(ans)
     }
 
-    pub fn trimmed_vv(&self) -> ImVersionVector {
+    pub fn shallow_history_start_vv(&self) -> ImVersionVector {
         self.oplog().try_lock().unwrap().trimmed_vv().clone()
     }
 
-    pub fn trimmed_frontiers(&self) -> Frontiers {
+    pub fn shallow_history_start_frontiers(&self) -> Frontiers {
         self.oplog().try_lock().unwrap().trimmed_frontiers().clone()
     }
 
-    pub fn is_trimmed(&self) -> bool {
+    /// Check if the doc contains the full history.
+    pub fn is_shallow(&self) -> bool {
         !self.oplog().try_lock().unwrap().trimmed_vv().is_empty()
     }
 
+    /// Get the number of operations in the pending transaction.
+    ///
+    /// The pending transaction is the one that is not committed yet. It will be committed
+    /// after calling `doc.commit()`, `doc.export(mode)` or `doc.checkout(version)`.
     pub fn get_pending_txn_len(&self) -> usize {
         if let Some(txn) = self.txn.try_lock().unwrap().as_ref() {
             txn.len()
