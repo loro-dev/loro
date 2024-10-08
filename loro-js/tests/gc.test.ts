@@ -17,7 +17,7 @@ describe("gc", () => {
         doc.getList("list").insert(0, "A");
         doc.getList("list").insert(1, "B");
         doc.getList("list").insert(2, "C");
-        const bytes = doc.export({ mode: "trimmed-snapshot", frontiers: doc.oplogFrontiers() });
+        const bytes = doc.export({ mode: "shallow-snapshot", frontiers: doc.oplogFrontiers() });
         const newDoc = new LoroDoc();
         newDoc.import(bytes);
         expect(newDoc.toJSON()).toEqual(doc.toJSON());
@@ -43,7 +43,7 @@ describe("gc", () => {
         doc.getList("list").insert(1, "B");
         doc.getList("list").insert(2, "C");
         doc.commit();
-        const bytes = doc.export({ mode: "trimmed-snapshot", frontiers: doc.oplogFrontiers() });
+        const bytes = doc.export({ mode: "shallow-snapshot", frontiers: doc.oplogFrontiers() });
         const gcDoc = new LoroDoc();
         gcDoc.import(bytes);
 

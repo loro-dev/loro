@@ -378,7 +378,7 @@ impl OpLog {
     #[inline(always)]
     pub(crate) fn export_blocks_from<W: std::io::Write>(&self, vv: &VersionVector, w: &mut W) {
         self.change_store
-            .export_blocks_from(vv, self.trimmed_vv(), self.vv(), w)
+            .export_blocks_from(vv, self.shallow_since_vv(), self.vv(), w)
     }
 
     #[inline(always)]
@@ -390,7 +390,7 @@ impl OpLog {
         let vv = self.dag.frontiers_to_vv(frontiers)?;
         Some(
             self.change_store
-                .fork_changes_up_to(self.dag.trimmed_vv(), frontiers, &vv),
+                .fork_changes_up_to(self.dag.shallow_since_vv(), frontiers, &vv),
         )
     }
 
@@ -429,7 +429,6 @@ impl OpLog {
         let mut merged_vv = from.clone();
         merged_vv.merge(to);
         debug!("to_frontiers={:?} vv={:?}", &to_frontiers, to);
-        trace!("trimmed vv = {:?}", self.dag.trimmed_vv());
         let (common_ancestors, mut diff_mode) =
             self.dag.find_common_ancestor(from_frontiers, to_frontiers);
         if diff_mode == DiffMode::Checkout && to > from {
@@ -610,16 +609,16 @@ impl OpLog {
         self.dag.check_dag_correctness();
     }
 
-    pub fn trimmed_vv(&self) -> &ImVersionVector {
-        self.dag.trimmed_vv()
+    pub fn shallow_since_vv(&self) -> &ImVersionVector {
+        self.dag.shallow_since_vv()
     }
 
-    pub fn trimmed_frontiers(&self) -> &Frontiers {
-        self.dag.trimmed_frontiers()
+    pub fn shallow_since_frontiers(&self) -> &Frontiers {
+        self.dag.shallow_since_frontiers()
     }
 
-    pub fn is_trimmed(&self) -> bool {
-        !self.dag.trimmed_vv().is_empty()
+    pub fn is_shallow(&self) -> bool {
+        !self.dag.shallow_since_vv().is_empty()
     }
 
     pub fn get_greatest_timestamp(&self, frontiers: &Frontiers) -> Timestamp {

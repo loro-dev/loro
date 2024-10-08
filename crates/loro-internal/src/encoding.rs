@@ -2,7 +2,7 @@ pub(crate) mod arena;
 mod fast_snapshot;
 pub(crate) mod json_schema;
 mod outdated_encode_reordered;
-mod trimmed_snapshot;
+mod shallow_snapshot;
 pub(crate) mod value;
 pub(crate) mod value_register;
 pub(crate) use outdated_encode_reordered::{
@@ -24,69 +24,125 @@ use rle::{HasLength, Sliceable};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 
+/// The mode of the export.
+///
+/// Loro CRDT internally consists of two parts: document history and current document state.
+/// The export modes offer various options to meet different requirements.
+///
+/// - CRDT property: Documents maintain consistent states when they receive the same set of updates.
+/// - In real-time collaboration, peers typically only need to synchronize updates
+///   (operations/history) to achieve consistency.
+///
+/// ## Update Export
+///
+/// - Exports only the history part, containing multiple operations.
+/// - Suitable for real-time collaboration scenarios where peers only need to synchronize updates.
+///
+/// ## Snapshot Export
+///
+/// ### Default Snapshot
+///
+/// - Includes complete history and current full state.
+///
+/// ### Shallow Snapshot
+///
+/// - Contains the complete current state.
+/// - Retains partial history starting from a specified version.
+///
+/// ### State-only Snapshot
+///
+/// - Exports the state of the target version.
+/// - Includes a minimal set of operation history.
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum ExportMode<'a> {
+    /// It contains the full history and the current state of the document.
     Snapshot,
+    /// It contains the history since the `from` version vector.
     Updates { from: Cow<'a, VersionVector> },
+    /// This mode exports the history in the specified range.
     UpdatesInRange { spans: Cow<'a, [IdSpan]> },
-    TrimmedSnapshot(Cow<'a, Frontiers>),
+    /// The shallow snapshot only contains the history since the target frontiers
+    ShallowSnapshot(Cow<'a, Frontiers>),
+    /// The state only snapshot exports the state of the target version
+    /// with a minimal set of history (a few ops).
+    ///
+    /// It's a shallow snapshot with depth=1 at the target version.
+    /// If the target version is None, it will use the latest version as the target version.
     StateOnly(Option<Cow<'a, Frontiers>>),
+    /// The snapshot at the specified frontiers. It contains the full history
+    /// till the target frontiers and the state at the target frontiers.
     SnapshotAt { version: Cow<'a, Frontiers> },
 }
 
 impl<'a> ExportMode<'a> {
+    /// It contains the full history and the current state of the document.
     pub fn snapshot() -> Self {
         ExportMode::Snapshot
     }
 
+    /// It contains the history since the `from` version vector.
     pub fn updates(from: &'a VersionVector) -> Self {
         ExportMode::Updates {
             from: Cow::Borrowed(from),
         }
     }
 
+    /// It contains the history since the `from` version vector.
     pub fn updates_owned(from: VersionVector) -> Self {
         ExportMode::Updates {
             from: Cow::Owned(from),
         }
     }
 
+    /// It contains all the history of the document.
     pub fn all_updates() -> Self {
         ExportMode::Updates {
             from: Cow::Owned(Default::default()),
         }
     }
 
+    /// This mode exports the history in the specified range.
     pub fn updates_in_range(spans: impl Into<Cow<'a, [IdSpan]>>) -> Self {
         ExportMode::UpdatesInRange {
             spans: spans.into(),
         }
     }
 
-    pub fn trimmed_snapshot(frontiers: &'a Frontiers) -> Self {
-        ExportMode::TrimmedSnapshot(Cow::Borrowed(frontiers))
+    /// The shallow snapshot only contains the history since the target frontiers.
+    pub fn shallow_snapshot(frontiers: &'a Frontiers) -> Self {
+        ExportMode::ShallowSnapshot(Cow::Borrowed(frontiers))
     }
 
-    pub fn trimmed_snapshot_owned(frontiers: Frontiers) -> Self {
-        ExportMode::TrimmedSnapshot(Cow::Owned(frontiers))
+    /// The shallow snapshot only contains the history since the target frontiers.
+    pub fn shallow_snapshot_owned(frontiers: Frontiers) -> Self {
+        ExportMode::ShallowSnapshot(Cow::Owned(frontiers))
     }
 
-    pub fn trimmed_snapshot_from_id(id: ID) -> Self {
+    /// The shallow snapshot only contains the history since the target frontiers.
+    pub fn shallow_snapshot_since(id: ID) -> Self {
         let frontiers = Frontiers::from_id(id);
-        ExportMode::TrimmedSnapshot(Cow::Owned(frontiers))
+        ExportMode::ShallowSnapshot(Cow::Owned(frontiers))
     }
 
+    /// The state only snapshot exports the state of the target version
+    /// with a minimal set of history (a few ops).
+    ///
+    /// It's a shallow snapshot with depth=1 at the target version.
+    /// If the target version is None, it will use the latest version as the target version.
     pub fn state_only(frontiers: Option<&'a Frontiers>) -> Self {
         ExportMode::StateOnly(frontiers.map(Cow::Borrowed))
     }
 
+    /// The snapshot at the specified frontiers. It contains the full history
+    /// till the target frontiers and the state at the target frontiers.
     pub fn snapshot_at(frontiers: &'a Frontiers) -> Self {
         ExportMode::SnapshotAt {
             version: Cow::Borrowed(frontiers),
         }
     }
 
+    /// This mode exports the history within the specified version vector.
     pub fn updates_till(vv: &VersionVector) -> ExportMode<'static> {
         let mut spans = Vec::with_capacity(vv.len());
         for (peer, counter) in vv.iter() {
@@ -267,7 +323,7 @@ pub(crate) fn decode_oplog(
     let ImportChangesResult {
         latest_ids,
         pending_changes,
-        changes_that_deps_on_trimmed_history,
+        changes_that_have_deps_before_shallow_root,
     } = import_changes_to_oplog(changes, oplog);
 
     let mut pending = IdSpanVector::default();
@@ -284,7 +340,7 @@ pub(crate) fn decode_oplog(
     oplog.try_apply_pending(latest_ids);
     oplog.import_unknown_lamport_pending_changes(pending_changes)?;
     let after_vv = oplog.vv();
-    if !changes_that_deps_on_trimmed_history.is_empty() {
+    if !changes_that_have_deps_before_shallow_root.is_empty() {
         return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
     }
     Ok(ImportStatus {
@@ -389,7 +445,7 @@ pub(crate) fn export_snapshot_at(
 ) -> Result<Vec<u8>, LoroEncodeError> {
     check_target_version_reachable(doc, frontiers)?;
     encode_with(EncodeMode::FastSnapshot, &mut |ans| {
-        trimmed_snapshot::encode_snapshot_at(doc, frontiers, ans)
+        shallow_snapshot::encode_snapshot_at(doc, frontiers, ans)
     })
 }
 
@@ -409,20 +465,20 @@ pub(crate) fn export_fast_updates_in_range(oplog: &OpLog, spans: &[IdSpan]) -> V
     .unwrap()
 }
 
-pub(crate) fn export_trimmed_snapshot(
+pub(crate) fn export_shallow_snapshot(
     doc: &LoroDoc,
     f: &Frontiers,
 ) -> Result<Vec<u8>, LoroEncodeError> {
     check_target_version_reachable(doc, f)?;
     encode_with(EncodeMode::FastSnapshot, &mut |ans| {
-        trimmed_snapshot::export_trimmed_snapshot(doc, f, ans)?;
+        shallow_snapshot::export_shallow_snapshot(doc, f, ans)?;
         Ok(())
     })
 }
 
 fn check_target_version_reachable(doc: &LoroDoc, f: &Frontiers) -> Result<(), LoroEncodeError> {
     let oplog = doc.oplog.try_lock().unwrap();
-    if !oplog.dag.can_export_trimmed_snapshot_on(f) {
+    if !oplog.dag.can_export_shallow_snapshot_on(f) {
         return Err(LoroEncodeError::FrontiersNotFound(format!("{:?}", f)));
     }
 
@@ -435,7 +491,7 @@ pub(crate) fn export_state_only_snapshot(
 ) -> Result<Vec<u8>, LoroEncodeError> {
     check_target_version_reachable(doc, f)?;
     encode_with(EncodeMode::FastSnapshot, &mut |ans| {
-        trimmed_snapshot::export_state_only_snapshot(doc, f, ans)?;
+        shallow_snapshot::export_state_only_snapshot(doc, f, ans)?;
         Ok(())
     })
 }

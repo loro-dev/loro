@@ -38,7 +38,7 @@ mod inner_store;
 pub(crate) struct ContainerStore {
     arena: SharedArena,
     store: InnerStore,
-    trimmed_store: Option<Arc<GcStore>>,
+    shallow_root_store: Option<Arc<GcStore>>,
     conf: Configure,
     peer: Arc<AtomicU64>,
 }
@@ -54,7 +54,7 @@ impl std::fmt::Debug for ContainerStore {
 
 #[derive(Debug)]
 pub(crate) struct GcStore {
-    pub trimmed_frontiers: Frontiers,
+    pub shallow_root_frontiers: Frontiers,
     pub store: Mutex<InnerStore>,
 }
 
@@ -73,13 +73,13 @@ impl ContainerStore {
             store: InnerStore::new(arena.clone()),
             arena,
             conf,
-            trimmed_store: None,
+            shallow_root_store: None,
             peer,
         }
     }
 
     pub fn can_import_snapshot(&self) -> bool {
-        if self.trimmed_store.is_some() {
+        if self.shallow_root_store.is_some() {
             return false;
         }
 
@@ -99,8 +99,8 @@ impl ContainerStore {
             .map(|x| x.get_state(idx, ctx!(self)))
     }
 
-    pub fn trimmed_store(&self) -> Option<&Arc<GcStore>> {
-        self.trimmed_store.as_ref()
+    pub fn shallow_root_store(&self) -> Option<&Arc<GcStore>> {
+        self.shallow_root_store.as_ref()
     }
 
     pub fn get_value(&mut self, idx: ContainerIdx) -> Option<LoroValue> {
@@ -117,8 +117,10 @@ impl ContainerStore {
         self.store.flush()
     }
 
-    pub fn trimmed_frontiers(&self) -> Option<&Frontiers> {
-        self.trimmed_store.as_ref().map(|x| &x.trimmed_frontiers)
+    pub fn shallow_root_frontiers(&self) -> Option<&Frontiers> {
+        self.shallow_root_store
+            .as_ref()
+            .map(|x| &x.shallow_root_frontiers)
     }
 
     pub(crate) fn decode(&mut self, bytes: Bytes) -> LoroResult<Option<Frontiers>> {
@@ -127,14 +129,14 @@ impl ContainerStore {
 
     pub(crate) fn decode_gc(
         &mut self,
-        trimmed_bytes: Bytes,
+        shallow_bytes: Bytes,
         start_frontiers: Frontiers,
     ) -> LoroResult<Option<Frontiers>> {
-        assert!(self.trimmed_store.is_none());
+        assert!(self.shallow_root_store.is_none());
         let mut inner = InnerStore::new(self.arena.clone());
-        let f = inner.decode(trimmed_bytes)?;
-        self.trimmed_store = Some(Arc::new(GcStore {
-            trimmed_frontiers: start_frontiers,
+        let f = inner.decode(shallow_bytes)?;
+        self.shallow_root_store = Some(Arc::new(GcStore {
+            shallow_root_frontiers: start_frontiers,
             store: Mutex::new(inner),
         }));
         Ok(f)
@@ -142,11 +144,11 @@ impl ContainerStore {
 
     pub(crate) fn decode_state_by_two_bytes(
         &mut self,
-        trimmed_bytes: Bytes,
+        shallow_bytes: Bytes,
         state_bytes: Bytes,
     ) -> LoroResult<()> {
         self.store
-            .decode_twice(trimmed_bytes.clone(), state_bytes)?;
+            .decode_twice(shallow_bytes.clone(), state_bytes)?;
         Ok(())
     }
 
@@ -237,7 +239,7 @@ impl ContainerStore {
             arena,
             conf: config,
             peer,
-            trimmed_store: None,
+            shallow_root_store: None,
         }
     }
 

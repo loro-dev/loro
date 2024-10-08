@@ -57,7 +57,7 @@
 
   ### 🧪 Testing
 
-  - Check state correctness on trimmed doc
+  - Check state correctness on shallow doc
 
 ## 1.0.0-alpha.0
 

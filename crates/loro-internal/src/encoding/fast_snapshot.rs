@@ -16,7 +16,7 @@
 use std::io::{Read, Write};
 
 use crate::{
-    change::Change, encoding::trimmed_snapshot, oplog::ChangeStore, LoroDoc, OpLog, VersionVector,
+    change::Change, encoding::shallow_snapshot, oplog::ChangeStore, LoroDoc, OpLog, VersionVector,
 };
 use bytes::{Buf, Bytes};
 use loro_common::{IdSpan, LoroError, LoroResult};
@@ -25,7 +25,7 @@ pub(crate) const EMPTY_MARK: &[u8] = b"E";
 pub(super) struct Snapshot {
     pub oplog_bytes: Bytes,
     pub state_bytes: Option<Bytes>,
-    pub trimmed_bytes: Bytes,
+    pub shallow_root_state_bytes: Bytes,
 }
 
 pub(super) fn _encode_snapshot<W: Write>(s: Snapshot, w: &mut W) {
@@ -38,9 +38,9 @@ pub(super) fn _encode_snapshot<W: Write>(s: Snapshot, w: &mut W) {
     w.write_all(&(state_bytes.len() as u32).to_le_bytes())
         .unwrap();
     w.write_all(&state_bytes).unwrap();
-    w.write_all(&(s.trimmed_bytes.len() as u32).to_le_bytes())
+    w.write_all(&(s.shallow_root_state_bytes.len() as u32).to_le_bytes())
         .unwrap();
-    w.write_all(&s.trimmed_bytes).unwrap();
+    w.write_all(&s.shallow_root_state_bytes).unwrap();
 }
 
 pub(super) fn _decode_snapshot_bytes(bytes: Bytes) -> LoroResult<Snapshot> {
@@ -54,12 +54,12 @@ pub(super) fn _decode_snapshot_bytes(bytes: Bytes) -> LoroResult<Snapshot> {
     } else {
         Some(state_bytes)
     };
-    let trimmed_bytes_len = read_u32_le(&mut r) as usize;
-    let trimmed_bytes = r.get_mut().copy_to_bytes(trimmed_bytes_len);
+    let shallow_bytes_len = read_u32_le(&mut r) as usize;
+    let shallow_root_state_bytes = r.get_mut().copy_to_bytes(shallow_bytes_len);
     Ok(Snapshot {
         oplog_bytes,
         state_bytes,
-        trimmed_bytes,
+        shallow_root_state_bytes,
     })
 }
 
@@ -97,12 +97,12 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: Bytes) -> LoroResult<()> {
     let Snapshot {
         oplog_bytes,
         state_bytes,
-        trimmed_bytes,
+        shallow_root_state_bytes,
     } = _decode_snapshot_bytes(bytes)?;
     oplog.decode_change_store(oplog_bytes)?;
     let need_calc = state_bytes.is_none();
     let state_frontiers;
-    if trimmed_bytes.is_empty() {
+    if shallow_root_state_bytes.is_empty() {
         ensure_cov::notify_cov("loro_internal::import::snapshot::normal");
         if let Some(bytes) = state_bytes {
             state.store.decode(bytes)?;
@@ -110,24 +110,24 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: Bytes) -> LoroResult<()> {
         state_frontiers = oplog.frontiers().clone();
     } else {
         ensure_cov::notify_cov("loro_internal::import::snapshot::gc");
-        let trimmed_state_frontiers = state.store.decode_gc(
-            trimmed_bytes.clone(),
-            oplog.dag().trimmed_frontiers().clone(),
+        let shallow_root_state_frontiers = state.store.decode_gc(
+            shallow_root_state_bytes.clone(),
+            oplog.dag().shallow_since_frontiers().clone(),
         )?;
         state
             .store
-            .decode_state_by_two_bytes(trimmed_bytes, state_bytes.unwrap_or_default())?;
+            .decode_state_by_two_bytes(shallow_root_state_bytes, state_bytes.unwrap_or_default())?;
 
-        let trimmed_store = state.trimmed_store().cloned();
+        let shallow_root_store = state.shallow_root_store().cloned();
         oplog.with_history_cache(|h| {
-            h.set_trimmed_store(trimmed_store);
+            h.set_shallow_root_store(shallow_root_store);
         });
 
         if need_calc {
-            ensure_cov::notify_cov("trimmed_snapshot::need_calc");
-            state_frontiers = trimmed_state_frontiers.unwrap();
+            ensure_cov::notify_cov("shallow_snapshot::need_calc");
+            state_frontiers = shallow_root_state_frontiers.unwrap();
         } else {
-            ensure_cov::notify_cov("trimmed_snapshot::dont_need_calc");
+            ensure_cov::notify_cov("shallow_snapshot::dont_need_calc");
             state_frontiers = oplog.frontiers().clone();
         }
     }
@@ -163,21 +163,21 @@ pub(crate) fn encode_snapshot<W: std::io::Write>(doc: &LoroDoc, w: &mut W) {
     let was_detached = doc.is_detached();
     let mut state = doc.app_state().try_lock().unwrap();
     let oplog = doc.oplog().try_lock().unwrap();
-    let is_gc = state.store.trimmed_store().is_some();
+    let is_gc = state.store.shallow_root_store().is_some();
     if is_gc {
         // TODO: PERF: this can be optimized by reusing the bytes of gc store
-        let f = oplog.trimmed_frontiers().clone();
+        let f = oplog.shallow_since_frontiers().clone();
         drop(oplog);
         drop(state);
-        trimmed_snapshot::export_trimmed_snapshot(doc, &f, w).unwrap();
+        shallow_snapshot::export_shallow_snapshot(doc, &f, w).unwrap();
         return;
     }
     assert!(!state.is_in_txn());
     let oplog_bytes = oplog.encode_change_store();
-    if oplog.is_trimmed() {
+    if oplog.is_shallow() {
         assert_eq!(
-            oplog.trimmed_frontiers(),
-            state.store.trimmed_frontiers().unwrap()
+            oplog.shallow_since_frontiers(),
+            state.store.shallow_root_frontiers().unwrap()
         );
     }
 
@@ -195,7 +195,7 @@ pub(crate) fn encode_snapshot<W: std::io::Write>(doc: &LoroDoc, w: &mut W) {
         Snapshot {
             oplog_bytes,
             state_bytes: Some(state_bytes),
-            trimmed_bytes: Bytes::new(),
+            shallow_root_state_bytes: Bytes::new(),
         },
         w,
     );

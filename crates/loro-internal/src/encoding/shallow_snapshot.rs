@@ -20,13 +20,13 @@ const MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE: usize = 16;
 const MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE: usize = 256;
 
 #[tracing::instrument(skip_all)]
-pub(crate) fn export_trimmed_snapshot<W: std::io::Write>(
+pub(crate) fn export_shallow_snapshot<W: std::io::Write>(
     doc: &LoroDoc,
     start_from: &Frontiers,
     w: &mut W,
 ) -> Result<Frontiers, LoroEncodeError> {
     let oplog = doc.oplog().try_lock().unwrap();
-    let start_from = calc_trimmed_doc_start(&oplog, start_from);
+    let start_from = calc_shallow_doc_start(&oplog, start_from);
     let mut start_vv = oplog.dag().frontiers_to_vv(&start_from).unwrap();
     for id in start_from.iter() {
         // we need to include the ops in start_from, this can make things easier
@@ -72,7 +72,7 @@ pub(crate) fn export_trimmed_snapshot<W: std::io::Write>(
     let mut alive_c_bytes: BTreeSet<Vec<u8>> =
         alive_containers.iter().map(|x| x.to_bytes()).collect();
     state.store.flush();
-    let trimmed_state_kv = state.store.get_kv().clone();
+    let shallow_root_state_kv = state.store.get_kv().clone();
     drop(state);
     doc.checkout_without_emitting(&latest_frontiers).unwrap();
     let state_bytes = if ops_num > MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE {
@@ -93,21 +93,21 @@ pub(crate) fn export_trimmed_snapshot<W: std::io::Write>(
         }
 
         let new_kv = state.store.get_kv().clone();
-        new_kv.remove_same(&trimmed_state_kv);
+        new_kv.remove_same(&shallow_root_state_kv);
         new_kv.retain_keys(&alive_c_bytes);
         Some(new_kv.export())
     } else {
         None
     };
 
-    trimmed_state_kv.retain_keys(&alive_c_bytes);
-    trimmed_state_kv.insert(FRONTIERS_KEY, start_from.encode().into());
-    let trimmed_state_bytes = trimmed_state_kv.export();
+    shallow_root_state_kv.retain_keys(&alive_c_bytes);
+    shallow_root_state_kv.insert(FRONTIERS_KEY, start_from.encode().into());
+    let shallow_root_state_bytes = shallow_root_state_kv.export();
 
     let snapshot = Snapshot {
         oplog_bytes,
         state_bytes,
-        trimmed_bytes: trimmed_state_bytes,
+        shallow_root_state_bytes,
     };
 
     _encode_snapshot(snapshot, w);
@@ -133,7 +133,7 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
     w: &mut W,
 ) -> Result<Frontiers, LoroEncodeError> {
     let oplog = doc.oplog().try_lock().unwrap();
-    let start_from = calc_trimmed_doc_start(&oplog, start_from);
+    let start_from = calc_shallow_doc_start(&oplog, start_from);
     let mut start_vv = oplog.dag().frontiers_to_vv(&start_from).unwrap();
     for id in start_from.iter() {
         // we need to include the ops in start_from, this can make things easier
@@ -160,17 +160,17 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
     let alive_containers = state.ensure_all_alive_containers();
     let alive_c_bytes = cids_to_bytes(alive_containers);
     state.store.flush();
-    let trimmed_state_kv = state.store.get_kv().clone();
+    let shallow_state_kv = state.store.get_kv().clone();
     drop(state);
-    trimmed_state_kv.retain_keys(&alive_c_bytes);
-    trimmed_state_kv.insert(FRONTIERS_KEY, start_from.encode().into());
-    let trimmed_state_bytes = trimmed_state_kv.export();
-    // println!("trimmed_state_bytes.len = {:?}", trimmed_state_bytes.len());
+    shallow_state_kv.retain_keys(&alive_c_bytes);
+    shallow_state_kv.insert(FRONTIERS_KEY, start_from.encode().into());
+    let shallow_state_bytes = shallow_state_kv.export();
+    // println!("shallow_state_bytes.len = {:?}", shallow_state_bytes.len());
     // println!("oplog_bytes.len = {:?}", oplog_bytes.len());
     let snapshot = Snapshot {
         oplog_bytes,
         state_bytes: None,
-        trimmed_bytes: trimmed_state_bytes,
+        shallow_root_state_bytes: shallow_state_bytes,
     };
     _encode_snapshot(snapshot, w);
 
@@ -196,11 +196,11 @@ fn cids_to_bytes(
     alive_c_bytes
 }
 
-/// Calculates optimal starting version for the trimmed doc
+/// Calculates optimal starting version for the shallow doc
 ///
 /// It should be the LCA of the user given version and the latest version.
 /// Otherwise, users cannot replay the history from the initial version till the latest version.
-fn calc_trimmed_doc_start(oplog: &crate::OpLog, frontiers: &Frontiers) -> Frontiers {
+fn calc_shallow_doc_start(oplog: &crate::OpLog, frontiers: &Frontiers) -> Frontiers {
     // start is the real start frontiers
     let (mut start, _) = oplog
         .dag()
@@ -238,8 +238,8 @@ pub(crate) fn encode_snapshot_at<W: std::io::Write>(
     {
         let mut state = doc.app_state().try_lock().unwrap();
         let oplog = doc.oplog().try_lock().unwrap();
-        let is_trimmed = state.store.trimmed_store().is_some();
-        if is_trimmed {
+        let is_shallow = state.store.shallow_root_store().is_some();
+        if is_shallow {
             unimplemented!()
         }
 
@@ -251,10 +251,10 @@ pub(crate) fn encode_snapshot_at<W: std::io::Write>(
             )));
         };
 
-        if oplog.is_trimmed() {
+        if oplog.is_shallow() {
             assert_eq!(
-                oplog.trimmed_frontiers(),
-                state.store.trimmed_frontiers().unwrap()
+                oplog.shallow_since_frontiers(),
+                state.store.shallow_root_frontiers().unwrap()
             );
         }
 
@@ -272,7 +272,7 @@ pub(crate) fn encode_snapshot_at<W: std::io::Write>(
             Snapshot {
                 oplog_bytes,
                 state_bytes: Some(bytes),
-                trimmed_bytes: Bytes::new(),
+                shallow_root_state_bytes: Bytes::new(),
             },
             w,
         );

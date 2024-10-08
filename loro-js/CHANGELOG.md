@@ -63,7 +63,7 @@
 
   ### 🧪 Testing
 
-  - Check state correctness on trimmed doc
+  - Check state correctness on shallow doc
 
 - Updated dependencies
   - loro-wasm@1.0.0-alpha.1

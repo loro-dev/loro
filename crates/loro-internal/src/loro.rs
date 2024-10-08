@@ -34,7 +34,7 @@ use crate::{
     diff_calc::DiffCalculator,
     encoding::{
         decode_snapshot, export_fast_snapshot, export_fast_updates, export_fast_updates_in_range,
-        export_snapshot, export_snapshot_at, export_state_only_snapshot, export_trimmed_snapshot,
+        export_shallow_snapshot, export_snapshot, export_snapshot_at, export_state_only_snapshot,
         json_schema::json::JsonSchema, parse_header_and_body, EncodeMode, ImportStatus,
         ParsedHeaderAndBody,
     },
@@ -106,7 +106,7 @@ impl LoroDoc {
             Arc::downgrade(&txn),
             config.clone(),
         );
-        let gc = new_state.try_lock().unwrap().trimmed_store().cloned();
+        let gc = new_state.try_lock().unwrap().shallow_root_store().cloned();
         let doc = LoroDoc {
             oplog: Arc::new(Mutex::new(self.oplog().try_lock().unwrap().fork(
                 arena.clone(),
@@ -562,8 +562,8 @@ impl LoroDoc {
 
     #[instrument(skip_all)]
     pub fn export_snapshot(&self) -> Result<Vec<u8>, LoroEncodeError> {
-        if self.is_trimmed() {
-            return Err(LoroEncodeError::TrimmedSnapshotIncompatibleWithOldFormat);
+        if self.is_shallow() {
+            return Err(LoroEncodeError::ShallowSnapshotIncompatibleWithOldFormat);
         }
         self.commit_then_stop();
         let ans = export_snapshot(self);
@@ -1086,10 +1086,10 @@ impl LoroDoc {
         }
 
         let oplog = self.oplog.try_lock().unwrap();
-        if oplog.dag.is_on_trimmed_history(frontiers) {
+        if oplog.dag.is_before_shallow_root(frontiers) {
             drop(oplog);
             self.renew_txn_if_auto_commit();
-            return Err(LoroError::SwitchToTrimmedVersion);
+            return Err(LoroError::SwitchToVersionBeforeShallowRoot);
         }
 
         let frontiers = shrink_frontiers(frontiers, &oplog.dag);
@@ -1198,28 +1198,30 @@ impl LoroDoc {
             let _g = s.enter();
             self.commit_then_stop();
             self.oplog.try_lock().unwrap().check_dag_correctness();
-            if self.is_trimmed() {
-                // For documents that have been garbage collected (trimmed),
-                // we cannot replay from the beginning as the history is not complete.
+            if self.is_shallow() {
+                // For shallow documents, we cannot replay from the beginning as the history is not complete.
+                //
                 // Instead, we:
                 // 1. Export the initial state from the GC snapshot.
                 // 2. Create a new document and import the initial snapshot.
-                // 3. Export updates from the trimmed version vector to the current version.
+                // 3. Export updates from the shallow start version vector to the current version.
                 // 4. Import these updates into the new document.
                 // 5. Compare the states of the new document and the current document.
 
                 // Step 1: Export the initial state from the GC snapshot.
                 let initial_snapshot = self
-                    .export(ExportMode::state_only(Some(&self.trimmed_frontiers())))
+                    .export(ExportMode::state_only(Some(
+                        &self.shallow_since_frontiers(),
+                    )))
                     .unwrap();
 
                 // Step 2: Create a new document and import the initial snapshot.
                 let doc = LoroDoc::new();
                 doc.import(&initial_snapshot).unwrap();
-                self.checkout(&self.trimmed_frontiers()).unwrap();
+                self.checkout(&self.shallow_since_frontiers()).unwrap();
                 assert_eq!(self.get_deep_value(), doc.get_deep_value());
 
-                // Step 3: Export updates from the trimmed version vector to the current version.
+                // Step 3: Export updates since the shallow start version vector to the current version.
                 let updates = self.export(ExportMode::all_updates()).unwrap();
 
                 // Step 4: Import these updates into the new document.
@@ -1302,7 +1304,7 @@ impl LoroDoc {
                     .ok_or(CannotFindRelativePosition::ContainerDeleted)?;
                 // We know where the target id is when we trace back to the delete_op_id.
                 let Some(delete_op_id) = find_last_delete_op(&oplog, id, idx) else {
-                    if oplog.trimmed_vv().includes_id(id) {
+                    if oplog.shallow_since_vv().includes_id(id) {
                         return Err(CannotFindRelativePosition::HistoryCleared);
                     }
 
@@ -1479,7 +1481,7 @@ impl LoroDoc {
             ExportMode::UpdatesInRange { spans } => {
                 export_fast_updates_in_range(&self.oplog.try_lock().unwrap(), spans.as_ref())
             }
-            ExportMode::TrimmedSnapshot(f) => export_trimmed_snapshot(self, &f)?,
+            ExportMode::ShallowSnapshot(f) => export_shallow_snapshot(self, &f)?,
             ExportMode::StateOnly(f) => match f {
                 Some(f) => export_state_only_snapshot(self, &f)?,
                 None => export_state_only_snapshot(self, &self.oplog_frontiers())?,
@@ -1491,18 +1493,37 @@ impl LoroDoc {
         Ok(ans)
     }
 
-    pub fn trimmed_vv(&self) -> ImVersionVector {
-        self.oplog().try_lock().unwrap().trimmed_vv().clone()
+    /// The doc only contains the history since the shallow history start version vector.
+    ///
+    /// This is empty if the doc is not shallow.
+    ///
+    /// The ops included by the shallow history start version vector are not in the doc.
+    pub fn shallow_since_vv(&self) -> ImVersionVector {
+        self.oplog().try_lock().unwrap().shallow_since_vv().clone()
     }
 
-    pub fn trimmed_frontiers(&self) -> Frontiers {
-        self.oplog().try_lock().unwrap().trimmed_frontiers().clone()
+    pub fn shallow_since_frontiers(&self) -> Frontiers {
+        self.oplog()
+            .try_lock()
+            .unwrap()
+            .shallow_since_frontiers()
+            .clone()
     }
 
-    pub fn is_trimmed(&self) -> bool {
-        !self.oplog().try_lock().unwrap().trimmed_vv().is_empty()
+    /// Check if the doc contains the full history.
+    pub fn is_shallow(&self) -> bool {
+        !self
+            .oplog()
+            .try_lock()
+            .unwrap()
+            .shallow_since_vv()
+            .is_empty()
     }
 
+    /// Get the number of operations in the pending transaction.
+    ///
+    /// The pending transaction is the one that is not committed yet. It will be committed
+    /// after calling `doc.commit()`, `doc.export(mode)` or `doc.checkout(version)`.
     pub fn get_pending_txn_len(&self) -> usize {
         if let Some(txn) = self.txn.try_lock().unwrap().as_ref() {
             txn.len()
@@ -1516,8 +1537,8 @@ impl LoroDoc {
 pub enum ChangeTravelError {
     #[error("Target id not found {0:?}")]
     TargetIdNotFound(ID),
-    #[error("History on the target version is trimmed")]
-    TargetVersionTrimmed,
+    #[error("The shallow history of the doc doesn't include the target version")]
+    TargetVersionNotIncluded,
 }
 
 impl LoroDoc {
@@ -1554,8 +1575,8 @@ impl LoroDoc {
             if !op_log.vv().includes_id(*id) {
                 return Err(ChangeTravelError::TargetIdNotFound(*id));
             }
-            if op_log.dag.trimmed_vv().includes_id(*id) {
-                return Err(ChangeTravelError::TargetVersionTrimmed);
+            if op_log.dag.shallow_since_vv().includes_id(*id) {
+                return Err(ChangeTravelError::TargetVersionNotIncluded);
             }
         }
 
@@ -1594,7 +1615,7 @@ fn find_last_delete_op(oplog: &OpLog, id: ID, idx: ContainerIdx) -> Option<ID> {
     let start_vv = oplog
         .dag
         .frontiers_to_vv(&id.into())
-        .unwrap_or_else(|| oplog.trimmed_vv().to_vv());
+        .unwrap_or_else(|| oplog.shallow_since_vv().to_vv());
     for change in oplog.iter_changes_causally_rev(&start_vv, oplog.vv()) {
         for op in change.ops.iter().rev() {
             if op.container != idx {

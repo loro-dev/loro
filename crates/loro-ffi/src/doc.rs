@@ -323,12 +323,12 @@ impl LoroDoc {
         Arc::new(self.doc.state_vv().into())
     }
 
-    /// Get the `VersionVector` of trimmed history
+    /// Get the `VersionVector` of the start of the shallow history
     ///
-    /// The ops included by the trimmed history are not in the doc.
+    /// The ops included by the shallow history are not in the doc.
     #[inline]
-    pub fn trimmed_vv(&self) -> Arc<VersionVector> {
-        Arc::new(loro::VersionVector::from_im_vv(&self.doc.trimmed_vv()).into())
+    pub fn shallow_since_vv(&self) -> Arc<VersionVector> {
+        Arc::new(loro::VersionVector::from_im_vv(&self.doc.shallow_since_vv()).into())
     }
 
     /// Get the total number of operations in the `OpLog`
@@ -504,9 +504,9 @@ impl LoroDoc {
             .unwrap()
     }
 
-    pub fn export_trimmed_snapshot(&self, frontiers: &Frontiers) -> Vec<u8> {
+    pub fn export_shallow_snapshot(&self, frontiers: &Frontiers) -> Vec<u8> {
         self.doc
-            .export(loro::ExportMode::TrimmedSnapshot(Cow::Owned(
+            .export(loro::ExportMode::ShallowSnapshot(Cow::Owned(
                 frontiers.into(),
             )))
             .unwrap()
@@ -729,7 +729,7 @@ pub enum ExportMode {
     Snapshot,
     Updates { from: VersionVector },
     UpdatesInRange { spans: Vec<IdSpan> },
-    TrimmedSnapshot { frontiers: Frontiers },
+    ShallowSnapshot { frontiers: Frontiers },
     StateOnly { frontiers: Option<Frontiers> },
 }
 
@@ -743,8 +743,8 @@ impl From<ExportMode> for loro::ExportMode<'_> {
             ExportMode::UpdatesInRange { spans } => loro::ExportMode::UpdatesInRange {
                 spans: Cow::Owned(spans),
             },
-            ExportMode::TrimmedSnapshot { frontiers } => {
-                loro::ExportMode::TrimmedSnapshot(Cow::Owned(frontiers.into()))
+            ExportMode::ShallowSnapshot { frontiers } => {
+                loro::ExportMode::ShallowSnapshot(Cow::Owned(frontiers.into()))
             }
             ExportMode::StateOnly { frontiers } => {
                 loro::ExportMode::StateOnly(frontiers.map(|x| Cow::Owned(x.into())))

@@ -9410,7 +9410,7 @@ fn fast_snapshot_5() {
 }
 
 #[test]
-fn trimmed_fuzz() {
+fn shallow_fuzz() {
     test_multi_sites_with_gc(
         5,
         vec![FuzzTarget::All],
@@ -9431,7 +9431,7 @@ fn trimmed_fuzz() {
 }
 
 #[test]
-fn trimmed_fuzz_1() {
+fn shallow_fuzz_1() {
     test_multi_sites_with_gc(
         5,
         vec![FuzzTarget::All],
@@ -9455,7 +9455,7 @@ fn trimmed_fuzz_1() {
 }
 
 #[test]
-fn trimmed_fuzz_2() {
+fn shallow_fuzz_2() {
     test_multi_sites_with_gc(
         5,
         vec![FuzzTarget::All],
@@ -9479,7 +9479,7 @@ fn trimmed_fuzz_2() {
 }
 
 #[test]
-fn trimmed_fuzz_3() {
+fn shallow_fuzz_3() {
     test_multi_sites_with_gc(
         5,
         vec![FuzzTarget::All],
@@ -9492,7 +9492,7 @@ fn trimmed_fuzz_3() {
 }
 
 #[test]
-fn trimmed_fuzz_4() {
+fn shallow_fuzz_4() {
     test_multi_sites_with_gc(
         5,
         vec![FuzzTarget::All],
@@ -9531,7 +9531,7 @@ fn trimmed_fuzz_4() {
 }
 
 #[test]
-fn trimmed_fuzz_5() {
+fn shallow_fuzz_5() {
     test_multi_sites_with_gc(
         5,
         vec![FuzzTarget::All],
@@ -9556,7 +9556,7 @@ fn trimmed_fuzz_5() {
 }
 
 #[test]
-fn trimmed_fuzz_6() {
+fn shallow_fuzz_6() {
     test_multi_sites_with_gc(
         5,
         vec![FuzzTarget::All],
@@ -9606,7 +9606,7 @@ fn trimmed_fuzz_6() {
 }
 
 #[test]
-fn trimmed_fuzz_8() {
+fn shallow_fuzz_8() {
     test_multi_sites_with_gc(
         5,
         vec![FuzzTarget::All],
@@ -9656,7 +9656,7 @@ fn trimmed_fuzz_8() {
 }
 
 #[test]
-fn trimmed_fuzz_7() {
+fn shallow_fuzz_7() {
     test_multi_sites_with_gc(
         5,
         vec![FuzzTarget::All],
@@ -9680,7 +9680,7 @@ fn trimmed_fuzz_7() {
 }
 
 #[test]
-fn trimmed_fuzz_9() {
+fn shallow_fuzz_9() {
     test_multi_sites_with_gc(
         5,
         vec![FuzzTarget::All],
@@ -9738,7 +9738,7 @@ fn trimmed_fuzz_9() {
 }
 
 #[test]
-fn trimmed_fuzz_10() {
+fn shallow_fuzz_10() {
     test_multi_sites_with_gc(
         5,
         vec![FuzzTarget::All],
@@ -9792,7 +9792,7 @@ fn trimmed_fuzz_10() {
 }
 
 #[test]
-fn trimmed_arb_test() {
+fn shallow_arb_test() {
     fn prop(u: &mut Unstructured<'_>, site_num: u8) -> arbitrary::Result<()> {
         let xs = u.arbitrary::<Vec<Action>>()?;
         if let Err(e) = std::panic::catch_unwind(|| {
@@ -9810,7 +9810,7 @@ fn trimmed_arb_test() {
 }
 
 #[test]
-fn trimmed_fuzz_11() {
+fn shallow_fuzz_11() {
     test_multi_sites_with_gc(
         5,
         vec![FuzzTarget::All],
@@ -9878,7 +9878,7 @@ fn trimmed_fuzz_11() {
 }
 
 #[test]
-fn trimmed_fuzz_12() {
+fn shallow_fuzz_12() {
     test_multi_sites_with_gc(
         5,
         vec![FuzzTarget::All],
@@ -9945,7 +9945,7 @@ fn trimmed_fuzz_12() {
 }
 
 #[test]
-fn trimmed_fuzz_13() {
+fn shallow_fuzz_13() {
     test_multi_sites_with_gc(
         5,
         vec![FuzzTarget::All],
@@ -10004,7 +10004,7 @@ fn trimmed_fuzz_13() {
 }
 
 #[test]
-fn trimmed_fuzz_14() {
+fn shallow_fuzz_14() {
     test_multi_sites_with_gc(
         5,
         vec![FuzzTarget::All],
@@ -10053,7 +10053,7 @@ fn trimmed_fuzz_14() {
 }
 
 #[test]
-fn trimmed_fuzz_15() {
+fn shallow_fuzz_15() {
     test_multi_sites_with_gc(
         5,
         vec![FuzzTarget::All],
@@ -10130,7 +10130,7 @@ fn trimmed_fuzz_15() {
 }
 
 #[test]
-fn trimmed_fuzz_16() {
+fn shallow_fuzz_16() {
     test_multi_sites_with_gc(
         5,
         vec![FuzzTarget::All],
@@ -10193,7 +10193,7 @@ fn trimmed_fuzz_16() {
 }
 
 #[test]
-fn trimmed_fuzz_17() {
+fn shallow_fuzz_17() {
     test_multi_sites_with_gc(
         5,
         vec![FuzzTarget::All],
@@ -10273,7 +10273,7 @@ fn trimmed_fuzz_17() {
 }
 
 #[test]
-fn trimmed_fuzz_18() {
+fn shallow_fuzz_18() {
     test_multi_sites_with_gc(
         5,
         vec![FuzzTarget::All],
@@ -10367,7 +10367,7 @@ fn trimmed_fuzz_18() {
 }
 
 #[test]
-fn trimmed_fuzz_19() {
+fn shallow_fuzz_19() {
     test_multi_sites_with_gc(
         5,
         vec![FuzzTarget::All],
@@ -10568,7 +10568,7 @@ fn trimmed_fuzz_19() {
 }
 
 #[test]
-fn trimmed_fuzz_20() {
+fn shallow_fuzz_20() {
     test_multi_sites_with_gc(
         5,
         vec![FuzzTarget::All],
@@ -10791,7 +10791,7 @@ fn trimmed_fuzz_20() {
 }
 
 #[test]
-fn trimmed_fuzz_21() {
+fn shallow_fuzz_21() {
     test_multi_sites_with_gc(
         5,
         vec![FuzzTarget::All],
@@ -10955,7 +10955,7 @@ fn trimmed_fuzz_21() {
 }
 
 #[test]
-fn trimmed_fuzz_22() {
+fn shallow_fuzz_22() {
     test_multi_sites_with_gc(
         5,
         vec![FuzzTarget::All],
@@ -11049,7 +11049,7 @@ fn trimmed_fuzz_22() {
 }
 
 #[test]
-fn trimmed_fuzz_24() {
+fn shallow_fuzz_24() {
     test_multi_sites_with_gc(
         5,
         vec![FuzzTarget::All],
@@ -11255,7 +11255,7 @@ fn detached_editing_failed_case_0() {
 }
 
 #[test]
-fn trimmed_fuzz_23() {
+fn shallow_fuzz_23() {
     test_multi_sites_with_gc(
         5,
         vec![FuzzTarget::All],
@@ -11373,7 +11373,7 @@ fn trimmed_fuzz_23() {
 }
 
 #[test]
-fn trimmed_fuzz_25() {
+fn shallow_fuzz_25() {
     test_multi_sites_with_gc(
         5,
         vec![FuzzTarget::All],
@@ -11409,7 +11409,7 @@ fn trimmed_fuzz_25() {
 }
 
 #[test]
-fn trimmed_fuzz_unknown() {
+fn shallow_fuzz_unknown() {
     test_multi_sites(
         5,
         vec![FuzzTarget::All],

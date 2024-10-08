@@ -39,7 +39,7 @@ use crate::{
 #[derive(Debug)]
 pub(crate) struct ContainerHistoryCache {
     change_store: ChangeStore,
-    gc: Option<Arc<GcStore>>,
+    shallow_root_state: Option<Arc<GcStore>>,
     for_checkout: Option<ForCheckout>,
     for_importing: Option<FxHashMap<ContainerIdx, HistoryCacheForImporting>>,
 }
@@ -71,7 +71,7 @@ impl ContainerHistoryCache {
             change_store,
             for_checkout: None,
             for_importing: None,
-            gc,
+            shallow_root_state: gc,
         }
     }
 
@@ -80,7 +80,7 @@ impl ContainerHistoryCache {
             change_store,
             for_checkout: Default::default(),
             for_importing: Default::default(),
-            gc,
+            shallow_root_state: gc,
         }
     }
 
@@ -207,7 +207,7 @@ impl ContainerHistoryCache {
         };
 
         trace!("init_cache_by_visit_all_change_slow");
-        if let Some(state) = self.gc.as_ref() {
+        if let Some(state) = self.shallow_root_state.as_ref() {
             trace!("init_cache_by_visit_all_change_slow with gc");
             ensure_cov::notify_cov(
                 "loro_internal::history_cache::init_cache_by_visit_all_change_slow::visit_gc",
@@ -232,7 +232,7 @@ impl ContainerHistoryCache {
                         if for_checkout {
                             let c = self.for_checkout.as_mut().unwrap();
                             for (k, v) in m.iter() {
-                                c.map.record_trimmed_state_entry(*idx, k, v);
+                                c.map.record_shallow_root_state_entry(*idx, k, v);
                             }
                         }
                     }
@@ -241,7 +241,7 @@ impl ContainerHistoryCache {
                             if for_checkout {
                                 let c = self.for_checkout.as_mut().unwrap();
                                 let item = l.get_list_item(elem.pos).unwrap();
-                                c.movable_list.record_trimmed_state(
+                                c.movable_list.record_shallow_root_state(
                                     item.id,
                                     idlp.peer,
                                     idlp.lamport.into(),
@@ -256,7 +256,7 @@ impl ContainerHistoryCache {
                             let tree = c.entry(*idx).or_insert_with(|| {
                                 HistoryCacheForImporting::Tree(Default::default())
                             });
-                            tree.as_tree_mut().unwrap().record_trimmed_state(
+                            tree.as_tree_mut().unwrap().record_shallow_root_state(
                                 t.tree_nodes()
                                     .into_iter()
                                     .map(|node| MoveLamportAndID {
@@ -308,8 +308,8 @@ impl ContainerHistoryCache {
         self.for_checkout = None;
     }
 
-    pub(crate) fn set_trimmed_store(&mut self, trimmed_store: Option<Arc<GcStore>>) {
-        self.gc = trimmed_store;
+    pub(crate) fn set_shallow_root_store(&mut self, shallow_root_store: Option<Arc<GcStore>>) {
+        self.shallow_root_state = shallow_root_store;
     }
 
     pub(crate) fn find_text_chunks_in(
@@ -318,7 +318,7 @@ impl ContainerHistoryCache {
         target_span: loro_common::IdSpan,
     ) -> Vec<RichtextStateChunk> {
         ensure_cov::notify_cov("loro_internal::history_cache::find_text_chunks_in");
-        let Some(state) = self.gc.as_ref() else {
+        let Some(state) = self.shallow_root_state.as_ref() else {
             return Vec::new();
         };
 
@@ -358,7 +358,7 @@ impl ContainerHistoryCache {
         target_span: loro_common::IdSpan,
     ) -> Vec<SliceWithId> {
         ensure_cov::notify_cov("loro_internal::history_cache::find_list_chunks_in");
-        let Some(state) = self.gc.as_ref() else {
+        let Some(state) = self.shallow_root_state.as_ref() else {
             return Vec::new();
         };
 
@@ -517,7 +517,12 @@ impl HistoryCacheTrait for MapHistoryCache {
 }
 
 impl MapHistoryCache {
-    fn record_trimmed_state_entry(&mut self, idx: ContainerIdx, k: &InternalString, v: &MapValue) {
+    fn record_shallow_root_state_entry(
+        &mut self,
+        idx: ContainerIdx,
+        k: &InternalString,
+        v: &MapValue,
+    ) {
         let key_idx = self.keys.register(k);
         self.map.insert(MapHistoryCacheEntry {
             container: idx,
@@ -638,7 +643,7 @@ impl TreeOpGroup {
         &self.tree_for_diff
     }
 
-    pub(crate) fn record_trimmed_state(&mut self, nodes: Vec<MoveLamportAndID>) {
+    pub(crate) fn record_shallow_root_state(&mut self, nodes: Vec<MoveLamportAndID>) {
         let mut tree = self.tree_for_diff.try_lock().unwrap();
         for node in nodes.iter() {
             self.ops.insert(
@@ -649,7 +654,7 @@ impl TreeOpGroup {
                 },
             );
         }
-        tree.init_tree_with_trimmed_version(nodes);
+        tree.init_tree_with_shallow_root_version(nodes);
     }
 }
 
@@ -740,7 +745,7 @@ impl HistoryCacheTrait for MovableListHistoryCache {
 }
 
 impl MovableListHistoryCache {
-    pub(crate) fn record_trimmed_state(
+    pub(crate) fn record_shallow_root_state(
         &mut self,
         id: IdFull,
         elem_peer: PeerID,

@@ -567,7 +567,7 @@ impl DocState {
         let len = diffs.len();
         for mut diff in std::mem::replace(&mut diffs, Vec::with_capacity(len)) {
             let Some(depth) = self.arena.get_depth(diff.idx) else {
-                warn!("{:?} is not in arena. It could be a dangling container that was deleted before the trimmed version.", self.arena.idx_to_id(diff.idx));
+                warn!("{:?} is not in arena. It could be a dangling container that was deleted before the shallow start version.", self.arena.idx_to_id(diff.idx));
                 continue;
             };
             let this_depth = depth.get();
@@ -1570,8 +1570,8 @@ impl DocState {
         Some(value)
     }
 
-    pub(crate) fn trimmed_store(&self) -> Option<&Arc<GcStore>> {
-        self.store.trimmed_store()
+    pub(crate) fn shallow_root_store(&self) -> Option<&Arc<GcStore>> {
+        self.store.shallow_root_store()
     }
 }
 

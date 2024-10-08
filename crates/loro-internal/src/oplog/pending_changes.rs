@@ -42,7 +42,7 @@ impl OpLog {
     ) -> LoroResult<()> {
         for change in remote_changes {
             let local_change = PendingChange::Unknown(change);
-            match remote_change_apply_state(self.vv(), self.trimmed_vv(), &local_change) {
+            match remote_change_apply_state(self.vv(), self.shallow_since_vv(), &local_change) {
                 ChangeState::AwaitingMissingDependency(miss_dep) => self
                     .pending_changes
                     .changes
@@ -88,7 +88,7 @@ impl OpLog {
                 for pending_change in pending_changes {
                     match remote_change_apply_state(
                         self.dag.vv(),
-                        self.dag.trimmed_vv(),
+                        self.dag.shallow_since_vv(),
                         &pending_change,
                     ) {
                         ChangeState::CanApplyDirectly => {
@@ -139,7 +139,7 @@ enum ChangeState {
 
 fn remote_change_apply_state(
     vv: &VersionVector,
-    _trimmed_vv: &ImVersionVector,
+    _shallow_vv: &ImVersionVector,
     change: &Change,
 ) -> ChangeState {
     let peer = change.id.peer;
