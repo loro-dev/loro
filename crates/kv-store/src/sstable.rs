@@ -1,9 +1,3 @@
-use std::{fmt::Debug, ops::Bound, sync::Arc};
-
-use bytes::{Buf, BufMut, Bytes};
-use ensure_cov::*;
-use loro_common::{LoroError, LoroResult};
-
 use super::block::BlockIter;
 use crate::{
     block::{Block, BlockBuilder},
@@ -11,6 +5,10 @@ use crate::{
     iter::KvIterator,
     utils::{get_u16_le, get_u32_le, get_u8_le},
 };
+use bytes::{Buf, BufMut, Bytes};
+use ensure_cov::*;
+use loro_common::{LoroError, LoroResult};
+use std::{fmt::Debug, ops::Bound, sync::Arc};
 
 pub(crate) const XXH_SEED: u32 = u32::from_le_bytes(*b"LORO");
 const MAGIC_BYTES: [u8; 4] = *b"LORO";
@@ -22,6 +20,7 @@ pub const SIZE_OF_U32: usize = std::mem::size_of::<u32>();
 const DEFAULT_CACHE_SIZE: usize = 1 << 20;
 const MAX_BLOCK_NUM: u32 = 10_000_000;
 
+/// ```log
 /// ┌──────────────────────────────────────────────────────────────────────────────────────────┐
 /// │ Block Meta                                                                               │
 /// │┌ ─ ─ ─ ─ ─ ─ ─┌ ─ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ─ ─┌ ─ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ─ ┐ │
@@ -29,6 +28,7 @@ const MAX_BLOCK_NUM: u32 = 10_000_000;
 /// ││     u32      │      u16      │   bytes   │      u8      │  u16(option)  │bytes(option)│ │
 /// │ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─  │
 /// └──────────────────────────────────────────────────────────────────────────────────────────┘
+/// ```
 #[derive(Debug, Clone)]
 pub(crate) struct BlockMeta {
     offset: usize,
@@ -149,11 +149,11 @@ pub(crate) struct SsTableBuilder {
     meta: Vec<BlockMeta>,
     block_size: usize,
     compression_type: CompressionType,
-    // TODO: bloom filter
+    include_none: bool, // TODO: bloom filter
 }
 
 impl SsTableBuilder {
-    pub fn new(block_size: usize, compression_type: CompressionType) -> Self {
+    pub fn new(block_size: usize, compression_type: CompressionType, include_none: bool) -> Self {
         let mut data = Vec::with_capacity(5);
         data.put_u32_le(u32::from_le_bytes(MAGIC_BYTES));
         data.put_u8(CURRENT_SCHEMA_VERSION);
@@ -165,36 +165,75 @@ impl SsTableBuilder {
             meta: Vec::new(),
             block_size,
             compression_type,
+            include_none,
         }
     }
 
     pub fn add(&mut self, key: Bytes, value: Bytes) {
+        if !self.include_none && value.is_empty() {
+            return;
+        }
+
         if self.first_key.is_empty() {
             self.first_key = key.clone();
         }
+
         if self.block_builder.add(&key, &value) {
             self.last_key = key;
             return;
         }
 
-        self.finish_block();
-
+        self.finish_current_block();
         assert!(self.block_builder.add(&key, &value));
         self.first_key = key.clone();
         self.last_key = key;
     }
 
     pub fn is_empty(&self) -> bool {
-        self.meta.is_empty()
+        self.meta.is_empty() && self.block_builder.is_empty()
     }
 
-    pub(crate) fn finish_block(&mut self) {
+    pub(crate) fn finish_current_block(&mut self) {
         if self.block_builder.is_empty() {
             return;
         }
         let builder =
             std::mem::replace(&mut self.block_builder, BlockBuilder::new(self.block_size));
         let block = builder.build();
+        self.add_new_block_inner(&block);
+    }
+
+    pub(crate) fn add_new_block(&mut self, block: Arc<Block>) {
+        let mut should_push_one_by_one =
+            self.block_builder.estimated_size() + block.data().len() + block.len() * 8
+                < self.block_size;
+        if !should_push_one_by_one && !self.include_none {
+            for (_, v) in BlockIter::new(block.clone()) {
+                if v.is_empty() {
+                    should_push_one_by_one = true;
+                }
+            }
+        }
+
+        if should_push_one_by_one {
+            // data is small, push one by one
+            for (k, v) in BlockIter::new(block) {
+                self.add(k, v);
+            }
+        } else {
+            self.finish_current_block();
+            if self.first_key.is_empty() {
+                self.first_key = block.first_key();
+            }
+
+            self.first_key = block.first_key();
+            self.last_key = block.last_key();
+            self.add_new_block_inner(&block);
+        }
+    }
+
+    fn add_new_block_inner(&mut self, block: &Block) {
+        assert!(self.block_builder.is_empty());
         let offset = self.data.len();
         let real_compression_type = block.encode(&mut self.data, self.compression_type);
         let is_large = block.is_large();
@@ -212,6 +251,7 @@ impl SsTableBuilder {
         self.meta.push(meta);
     }
 
+    /// ```log
     /// ┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
     /// │ SsTable                                                                                         │
     /// │┌ ─ ─ ─ ─ ─ ─ ─┌ ─ ─ ─ ─ ─ ─ ─ ─┌ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─┌ ─ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ─┌ ─ ─ ─ ─ ─ ─ ┐│
@@ -219,8 +259,9 @@ impl SsTableBuilder {
     /// ││     u32      │       u8       │    bytes    │      │     bytes     │   bytes    │     u32     ││
     /// │ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ │
     /// └─────────────────────────────────────────────────────────────────────────────────────────────────┘
+    /// ```
     pub fn build(mut self) -> SsTable {
-        self.finish_block();
+        self.finish_current_block();
         let mut buf = self.data;
         let meta_offset = buf.len() as u32;
         BlockMeta::encode_meta(&self.meta, &mut buf);
@@ -631,17 +672,40 @@ impl<'a> SsTableIter<'a> {
     pub fn next(&mut self) {
         self.iter.front_iter_mut().next();
         if !self.iter.front_iter().has_next() {
-            self.next_block_idx += 1;
-            if self.next_block_idx > self.back_block_idx as usize {
+            let this = &mut *self;
+            this.next_block_idx += 1;
+            if this.next_block_idx > this.back_block_idx as usize {
                 return;
             }
-            if self.next_block_idx == self.back_block_idx as usize && !self.iter.is_same() {
-                self.iter.convert_back_as_same();
-            } else if self.next_block_idx < self.table.meta.len() {
-                let block = self.table.read_block_cached(self.next_block_idx);
-                self.iter.reset_front(BlockIter::new(block));
-                self.skip_next_empty();
+            if this.next_block_idx == this.back_block_idx as usize && !this.iter.is_same() {
+                this.iter.convert_back_as_same();
+            } else if this.next_block_idx < this.table.meta.len() {
+                let block = this.table.read_block_cached(this.next_block_idx);
+                this.iter.reset_front(BlockIter::new(block));
+                this.skip_next_empty();
+            } else {
+                unreachable!()
             }
+        }
+    }
+
+    pub fn next_block(&mut self) {
+        self.next_block_idx += 1;
+        if self.next_block_idx > self.back_block_idx as usize {
+            match &mut self.iter {
+                SsTableIterInner::Same(block_iter) => block_iter.finish(),
+                SsTableIterInner::Double { .. } => unreachable!(),
+            }
+            return;
+        }
+        if self.next_block_idx == self.back_block_idx as usize && !self.iter.is_same() {
+            self.iter.convert_back_as_same();
+        } else if self.next_block_idx < self.table.meta.len() {
+            let block = self.table.read_block_cached(self.next_block_idx);
+            self.iter.reset_front(BlockIter::new(block));
+            self.skip_next_empty();
+        } else {
+            unreachable!()
         }
     }
 
@@ -660,6 +724,14 @@ impl<'a> SsTableIter<'a> {
                 self.iter.reset_back(BlockIter::new(block));
                 self.skip_next_back_empty();
             }
+        }
+    }
+
+    pub fn peek_next_block(&self) -> Option<&Arc<Block>> {
+        if self.has_next() {
+            Some(self.iter.front_iter().peek_block())
+        } else {
+            None
         }
     }
 }
@@ -970,7 +1042,7 @@ mod test {
 
     #[test]
     fn sstable_iter() {
-        let mut builder = SsTableBuilder::new(10, CompressionType::LZ4);
+        let mut builder = SsTableBuilder::new(10, CompressionType::LZ4, true);
         builder.add(Bytes::from_static(b"key1"), Bytes::from_static(b"value1"));
         builder.add(Bytes::from_static(b"key2"), Bytes::from_static(b"value2"));
         builder.add(Bytes::from_static(b"key3"), Bytes::from_static(b"value3"));
@@ -991,7 +1063,7 @@ mod test {
 
     #[test]
     fn sstable_iter_with_delete() {
-        let mut builder = SsTableBuilder::new(10, CompressionType::LZ4);
+        let mut builder = SsTableBuilder::new(10, CompressionType::LZ4, true);
         builder.add(Bytes::from_static(b"key1"), Bytes::from_static(b"value1"));
         builder.add(Bytes::from_static(b"key4"), Bytes::new());
         builder.add(Bytes::from_static(b"key2"), Bytes::from_static(b"value2"));
@@ -1020,7 +1092,7 @@ mod test {
 
     #[test]
     fn sstable_scan() {
-        let mut builder = SsTableBuilder::new(10, CompressionType::LZ4);
+        let mut builder = SsTableBuilder::new(10, CompressionType::LZ4, true);
         builder.add(Bytes::from_static(b"key1"), Bytes::from_static(b"value1"));
         builder.add(Bytes::from_static(b"key4"), Bytes::new());
         builder.add(Bytes::from_static(b"key2"), Bytes::from_static(b"value2"));
@@ -1048,7 +1120,7 @@ mod test {
     #[test]
     fn sstable_import_checksum() {
         // Create an SSTable in memory
-        let mut builder = SsTableBuilder::new(10, CompressionType::LZ4);
+        let mut builder = SsTableBuilder::new(10, CompressionType::LZ4, true);
         builder.add(Bytes::from_static(b"key1"), Bytes::from_static(b"value1"));
         builder.add(Bytes::from_static(b"key2"), Bytes::from_static(b"value2"));
         builder.add(Bytes::from_static(b"key3"), Bytes::from_static(b"value3"));

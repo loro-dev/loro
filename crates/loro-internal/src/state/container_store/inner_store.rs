@@ -141,11 +141,12 @@ impl InnerStore {
             for (k, v) in iter {
                 count += 1;
                 let cid = ContainerID::from_bytes(&k);
-                let parent = ContainerWrapper::decode_parent(&v);
+                let c = ContainerWrapper::new_from_bytes(v);
+                let parent = c.parent();
                 let idx = self.arena.register_container(&cid);
                 let p = parent.as_ref().map(|p| self.arena.register_container(p));
                 self.arena.set_parent(idx, p);
-                if self.store.remove(&idx).is_some() {
+                if self.store.insert(idx, c).is_some() {
                     count -= 1;
                 }
             }
@@ -153,7 +154,7 @@ impl InnerStore {
             self.len = count;
         });
 
-        self.all_loaded = false;
+        self.all_loaded = true;
         Ok(fr)
     }
 
@@ -174,11 +175,12 @@ impl InnerStore {
             for (k, v) in iter {
                 count += 1;
                 let cid = ContainerID::from_bytes(&k);
-                let parent = ContainerWrapper::decode_parent(&v);
+                let c = ContainerWrapper::new_from_bytes(v);
+                let parent = c.parent();
                 let idx = self.arena.register_container(&cid);
                 let p = parent.as_ref().map(|p| self.arena.register_container(p));
                 self.arena.set_parent(idx, p);
-                if self.store.remove(&idx).is_some() {
+                if self.store.insert(idx, c).is_some() {
                     count -= 1;
                 }
             }
@@ -186,7 +188,7 @@ impl InnerStore {
             self.len = count;
         });
 
-        self.all_loaded = false;
+        self.all_loaded = true;
         Ok(())
     }
 

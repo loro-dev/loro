@@ -640,6 +640,7 @@ dependencies = [
  "criterion 0.4.0",
  "ctor 0.2.6",
  "dev-utils",
+ "ensure-cov",
  "flate2",
  "loro 0.16.12",
  "rand",
@@ -1295,6 +1296,8 @@ name = "loro-kv-store"
 version = "0.16.2"
 dependencies = [
  "bytes",
+ "ctor 0.2.6",
+ "dev-utils",
  "ensure-cov",
  "fxhash",
  "loro-common 0.16.12",
@@ -1302,6 +1305,7 @@ dependencies = [
  "once_cell",
  "quick_cache",
  "rand",
+ "tracing",
  "xxhash-rust",
 ]
 

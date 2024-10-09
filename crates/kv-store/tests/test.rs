@@ -1,6 +1,11 @@
 use bytes::Bytes;
 use loro_kv_store::{mem_store::MemKvConfig, MemKvStore};
 
+#[ctor::ctor]
+fn init() {
+    dev_utils::setup_test_log();
+}
+
 #[test]
 fn add_and_remove() {
     let key = &[0];
@@ -97,4 +102,31 @@ fn large_value() {
     let mut iter = imported_store.scan(std::ops::Bound::Unbounded, std::ops::Bound::Unbounded);
     assert_eq!(iter.next(), Some((Bytes::from_static(key), large_value)));
     assert_eq!(iter.next(), None);
+}
+
+#[test]
+fn export_import_edit_export() {
+    let mut store = MemKvStore::new(MemKvConfig::default());
+    store.set(b"a", Bytes::from_static(b"1"));
+    for i in 0..3000 {
+        let s = format!("b{}", i);
+        store.set(s.as_bytes(), Bytes::from_static(b"2"));
+    }
+
+    let bytes = store.export_all();
+    let mut new_store = MemKvStore::new(MemKvConfig::default());
+    new_store.import_all(bytes).unwrap();
+    new_store.set(b"a", Bytes::from_static(b"2"));
+    assert_eq!(new_store.get(b"b0"), Some(Bytes::from_static(b"2")));
+    assert_eq!(new_store.get(b"b1001"), Some(Bytes::from_static(b"2")));
+    assert_eq!(new_store.get(b"b2999"), Some(Bytes::from_static(b"2")));
+
+    let bytes = new_store.export_all();
+    let mut new_new_store = MemKvStore::new(MemKvConfig::default());
+    new_new_store.import_all(bytes).unwrap();
+    assert_eq!(new_new_store.get(b"b0"), Some(Bytes::from_static(b"2")));
+    assert_eq!(new_new_store.get(b"b1001"), Some(Bytes::from_static(b"2")));
+    assert_eq!(new_new_store.get(b"b2999"), Some(Bytes::from_static(b"2")));
+    assert_eq!(new_new_store.get(b"b99"), Some(Bytes::from_static(b"2")));
+    assert_eq!(new_new_store.get(b"a"), Some(Bytes::from_static(b"2")));
 }

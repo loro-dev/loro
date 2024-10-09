@@ -115,6 +115,7 @@ impl ContainerWrapper {
         ans
     }
 
+    #[allow(unused)]
     pub fn decode_parent(b: &[u8]) -> Option<ContainerID> {
         let mut bytes = &b[1..];
         let _depth = leb128::read::unsigned(&mut bytes).unwrap();

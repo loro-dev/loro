@@ -1,7 +1,7 @@
 use crate::block::BlockIter;
 use crate::compress::CompressionType;
 use crate::sstable::{SsTable, SsTableBuilder, SsTableIter};
-use crate::MergeIterator;
+use crate::{KvIterator, MergeIterator};
 use bytes::Bytes;
 
 use std::ops::Bound;
@@ -200,9 +200,17 @@ impl MemKvStore {
             return self.ss_table[0].export_all();
         }
 
-        let mut builder = SsTableBuilder::new(self.block_size, self.compression_type);
+        if self.ss_table.len() == 1 {
+            return self.export_with_encoded_block();
+        }
+
+        let mut builder = SsTableBuilder::new(
+            self.block_size,
+            self.compression_type,
+            self.should_encode_none,
+        );
         // we could use scan() here, we should keep the empty value
-        for (k, v) in MemStoreIterator::new(
+        let iter = MemStoreIterator::new(
             self.mem_table
                 .range::<[u8], _>((Bound::Unbounded, Bound::Unbounded))
                 .map(|(k, v)| (k.clone(), v.clone())),
@@ -214,13 +222,12 @@ impl MemKvStore {
                     .collect(),
             ),
             false,
-        ) {
-            if !v.is_empty() || self.should_encode_none {
-                builder.add(k, v);
-            }
+        );
+
+        for (k, v) in iter {
+            builder.add(k, v);
         }
 
-        builder.finish_block();
         if builder.is_empty() {
             return Bytes::new();
         }
@@ -239,6 +246,105 @@ impl MemKvStore {
         let ss_table = SsTable::import_all(bytes).map_err(|e| e.to_string())?;
         self.ss_table.push(ss_table);
         Ok(())
+    }
+
+    #[tracing::instrument(level = "debug", skip(self))]
+    fn export_with_encoded_block(&mut self) -> Bytes {
+        ensure_cov::notify_cov("kv-store::mem_store::export_with_encoded_block");
+        let mut mem_iter = self.mem_table.iter().peekable();
+        let mut sstable_iter = self.ss_table[0].iter();
+        let mut builder = SsTableBuilder::new(
+            self.block_size,
+            self.compression_type,
+            self.should_encode_none,
+        );
+        'outer: while let Some(next_mem_pair) = mem_iter.peek() {
+            let block = loop {
+                let Some(block) = sstable_iter.peek_next_block() else {
+                    builder.add(next_mem_pair.0.clone(), next_mem_pair.1.clone());
+                    mem_iter.next();
+                    continue 'outer;
+                };
+                if block.last_key() < next_mem_pair.0 {
+                    builder.add_new_block(block.clone());
+                    sstable_iter.next_block();
+                    continue;
+                }
+                break block;
+            };
+
+            if block.first_key() > next_mem_pair.0 {
+                builder.add(next_mem_pair.0.clone(), next_mem_pair.1.clone());
+                mem_iter.next();
+                continue;
+            }
+
+            // There are overlap between next_mem_pair and block
+            let mut iter = BlockIter::new(block.clone());
+            let mut next_mem_pair = mem_iter.peek();
+            while let Some(k) = iter.peek_next_key() {
+                loop {
+                    match next_mem_pair {
+                        Some(next_mem_pair_inner) => {
+                            if k > next_mem_pair_inner.0 {
+                                builder.add(
+                                    next_mem_pair_inner.0.clone(),
+                                    next_mem_pair_inner.1.clone(),
+                                );
+                                mem_iter.next();
+                                next_mem_pair = mem_iter.peek();
+                                continue;
+                            }
+                            if k == next_mem_pair_inner.0 {
+                                builder.add(k, next_mem_pair_inner.1.clone());
+                                mem_iter.next();
+                                next_mem_pair = mem_iter.peek();
+                                iter.next();
+                                break;
+                            }
+                            // k < next_mem_pair_inner.0
+                            builder.add(k, iter.peek_next_value().unwrap());
+                            iter.next();
+                            break;
+                        }
+                        None => {
+                            builder.add(k, iter.peek_next_value().unwrap());
+                            iter.next();
+                            break;
+                        }
+                    }
+                }
+            }
+
+            sstable_iter.next_block();
+        }
+
+        while let Some(block) = sstable_iter.peek_next_block() {
+            builder.add_new_block(block.clone());
+            sstable_iter.next_block();
+        }
+
+        if builder.is_empty() {
+            return Bytes::new();
+        }
+
+        drop(mem_iter);
+        self.mem_table.clear();
+        let ss = builder.build();
+        let ans = ss.export_all();
+        let _ = std::mem::replace(&mut self.ss_table, vec![ss]);
+        ans
+    }
+
+    #[allow(unused)]
+    fn check_encode_data_correctness(&self, bytes: &Bytes) {
+        let this_data: BTreeMap<Bytes, Bytes> =
+            self.scan(Bound::Unbounded, Bound::Unbounded).collect();
+        let mut other_kv = MemKvStore::new(Default::default());
+        other_kv.import_all(bytes.clone()).unwrap();
+        let other_data: BTreeMap<Bytes, Bytes> =
+            other_kv.scan(Bound::Unbounded, Bound::Unbounded).collect();
+        assert_eq!(this_data, other_data);
     }
 }
 
@@ -498,6 +604,7 @@ mod tests {
 
     #[test]
     fn import_several_times() {
+        dev_utils::setup_test_log();
         let a = Bytes::from_static(b"a");
         let b = Bytes::from_static(b"b");
         let c = Bytes::from_static(b"c");
@@ -516,10 +623,12 @@ mod tests {
         let mut store3 = new_store();
         store3.set(&d, d.clone());
         store3.set(&a, Bytes::new());
-        store3.export_all();
+        tracing::info_span!("export da").in_scope(|| {
+            store3.export_all();
+        });
         store3.set(&e, e.clone());
         store3.set(&c, c.clone());
-        let encode3 = store3.export_all();
+        let encode3 = tracing::info_span!("export ec").in_scope(|| store3.export_all());
 
         let mut store = new_store();
         store.import_all(encode1).unwrap();

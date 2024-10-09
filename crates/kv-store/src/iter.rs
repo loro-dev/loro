@@ -129,13 +129,13 @@ mod tests {
         let c = Bytes::from("c");
         let d = Bytes::from("d");
 
-        let mut sstable1 = sstable::SsTableBuilder::new(10, CompressionType::LZ4);
+        let mut sstable1 = sstable::SsTableBuilder::new(10, CompressionType::LZ4, true);
         sstable1.add(a.clone(), a.clone());
         sstable1.add(c.clone(), c.clone());
         let sstable1 = sstable1.build();
         let iter1 = sstable::SsTableIter::new_scan(&sstable1, Bound::Unbounded, Bound::Unbounded);
 
-        let mut sstable2 = sstable::SsTableBuilder::new(10, CompressionType::LZ4);
+        let mut sstable2 = sstable::SsTableBuilder::new(10, CompressionType::LZ4, true);
         sstable2.add(b.clone(), b.clone());
         sstable2.add(d.clone(), d.clone());
         let sstable2 = sstable2.build();
@@ -165,13 +165,13 @@ mod tests {
         let c = Bytes::from("c");
         let d = Bytes::from("d");
 
-        let mut sstable1 = sstable::SsTableBuilder::new(10, CompressionType::LZ4);
+        let mut sstable1 = sstable::SsTableBuilder::new(10, CompressionType::LZ4, true);
         sstable1.add(a.clone(), a.clone());
         sstable1.add(c.clone(), c.clone());
         let sstable1 = sstable1.build();
         let iter1 = sstable::SsTableIter::new_scan(&sstable1, Bound::Unbounded, Bound::Unbounded);
 
-        let mut sstable2 = sstable::SsTableBuilder::new(10, CompressionType::LZ4);
+        let mut sstable2 = sstable::SsTableBuilder::new(10, CompressionType::LZ4, true);
         sstable2.add(a.clone(), a2.clone());
         sstable2.add(d.clone(), d.clone());
         let sstable2 = sstable2.build();

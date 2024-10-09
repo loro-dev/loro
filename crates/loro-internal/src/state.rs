@@ -789,6 +789,8 @@ impl DocState {
 
     /// Ensure all alive containers are created in DocState and will be encoded in the next `encode` call
     pub(crate) fn ensure_all_alive_containers(&mut self) -> FxHashSet<ContainerID> {
+        // TODO: PERF This can be optimized because we shouldn't need to call get_value for
+        // all the containers every time we export
         let ans = self.get_all_alive_containers();
         for id in ans.iter() {
             self.ensure_container(id);
