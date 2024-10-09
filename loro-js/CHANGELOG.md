@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.0.0-alpha.5
+
+### Patch Changes
+
+- ## Fix
+
+  - Use release build
+
+  ## Test
+
+  - Add compatibility tests (#503)
+
+- Updated dependencies
+  - loro-wasm@1.0.0
+
 ## 1.0.0-alpha.4
 
 ### Patch Changes
