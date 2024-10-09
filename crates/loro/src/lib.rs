@@ -2,6 +2,7 @@
 #![warn(missing_docs)]
 #![warn(missing_debug_implementations)]
 use event::{DiffEvent, Subscriber};
+use loro_common::InternalString;
 pub use loro_internal::cursor::CannotFindRelativePosition;
 use loro_internal::cursor::Cursor;
 use loro_internal::cursor::PosQueryResult;
@@ -1281,6 +1282,19 @@ impl LoroMap {
     pub fn clear(&self) -> LoroResult<()> {
         self.handler.clear()
     }
+
+    /// Get the keys of the map.
+    pub fn keys(&self) -> impl Iterator<Item = InternalString> + '_ {
+        self.handler.keys()
+    }
+
+    /// Get the values of the map.
+    pub fn values(&self) -> impl Iterator<Item = ValueOrContainer> + '_ {
+        self.handler.values().map(|v| match v {
+            ValueOrHandler::Value(v) => ValueOrContainer::Value(v),
+            ValueOrHandler::Handler(c) => ValueOrContainer::Container(Container::from_handler(c)),
+        })
+    }
 }
 
 impl Default for LoroMap {
@@ -1919,6 +1933,13 @@ impl LoroTree {
     #[inline]
     pub fn disable_fractional_index(&self) {
         self.handler.disable_fractional_index();
+    }
+
+    /// Whether the tree is empty.
+    ///
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.handler.is_empty()
     }
 }
 

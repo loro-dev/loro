@@ -505,7 +505,7 @@ impl TreeCacheForDiff {
                 self.is_ancestor_of(maybe_ancestor, parent)
             }
             TreeParentId::Deleted | TreeParentId::Root => false,
-            TreeParentId::Unexist => unreachable!(),
+            TreeParentId::Unexist => false,
         }
     }
 

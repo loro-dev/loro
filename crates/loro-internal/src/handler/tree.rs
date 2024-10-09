@@ -288,6 +288,12 @@ impl TreeHandler {
 
     pub(crate) fn delete_with_txn(&self, txn: &mut Transaction, target: TreeID) -> LoroResult<()> {
         let inner = self.inner.try_attached_state()?;
+        let index = match self.get_index_by_tree_id(&target) {
+            Some(i) => i,
+            None => {
+                return Err(LoroTreeError::TreeNodeDeletedOrNotExist(target).into());
+            }
+        };
         txn.apply_local_op(
             inner.container_idx,
             crate::op::RawOpContent::Tree(Arc::new(TreeOp::Delete { target })),
@@ -295,7 +301,7 @@ impl TreeHandler {
                 target,
                 action: TreeExternalDiff::Delete {
                     old_parent: self.get_node_parent(&target).unwrap(),
-                    old_index: self.get_index_by_tree_id(&target).unwrap(),
+                    old_index: index
                 },
             }]),
             &inner.state,
@@ -991,6 +997,19 @@ impl TreeHandler {
         match &self.inner {
             MaybeDetached::Detached(_) => false,
             MaybeDetached::Attached(a) => a.is_deleted(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        match &self.inner {
+            MaybeDetached::Detached(t) => {
+                let t = t.try_lock().unwrap();
+                t.value.map.is_empty()
+            }
+            MaybeDetached::Attached(a) => a.with_state(|state| {
+                let a = state.as_tree_state().unwrap();
+                a.is_empty()
+            }),
         }
     }
 }

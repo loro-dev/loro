@@ -1013,6 +1013,13 @@ impl TreeState {
             }
         }
     }
+
+    pub fn is_empty(&self) -> bool {
+        match self.children.get(&TreeParentId::Root) {
+            Some(c) => c.len() == 0,
+            None => true,
+        }
+    }
 }
 
 pub(crate) enum FractionalIndexGenResult {

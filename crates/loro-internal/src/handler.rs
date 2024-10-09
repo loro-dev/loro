@@ -3702,6 +3702,51 @@ impl MapHandler {
 
         Ok(())
     }
+
+    pub fn keys(&self) -> impl Iterator<Item = InternalString> + '_ {
+        let mut keys: Vec<InternalString> = Vec::with_capacity(self.len());
+        match &self.inner {
+            MaybeDetached::Detached(m) => {
+                let m = m.try_lock().unwrap();
+                keys = m.value.keys().map(|x| x.as_str().into()).collect();
+            }
+            MaybeDetached::Attached(a) => {
+                a.with_state(|state| {
+                    for (k, _) in state.as_map_state().unwrap().iter() {
+                        keys.push(k.clone());
+                    }
+                });
+            }
+        }
+
+        keys.into_iter()
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = ValueOrHandler> + '_ {
+        let mut values: Vec<ValueOrHandler> = Vec::with_capacity(self.len());
+        match &self.inner {
+            MaybeDetached::Detached(m) => {
+                let m = m.try_lock().unwrap();
+                values = m.value.values().cloned().collect();
+            }
+            MaybeDetached::Attached(a) => {
+                a.with_state(|state| {
+                    for (_, v) in state.as_map_state().unwrap().iter() {
+                        let value = match &v.value {
+                            Some(LoroValue::Container(container_id)) => {
+                                ValueOrHandler::Handler(create_handler(a, container_id.clone()))
+                            }
+                            Some(value) => ValueOrHandler::Value(value.clone()),
+                            None => continue,
+                        };
+                        values.push(value);
+                    }
+                });
+            }
+        }
+
+        values.into_iter()
+    }
 }
 
 #[inline(always)]
