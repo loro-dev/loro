@@ -700,6 +700,7 @@ dependencies = [
  "fxhash",
  "itertools 0.12.1",
  "loro 0.16.12",
+ "loro 0.16.12 (git+https://github.com/loro-dev/loro.git?tag=loro-crdt@1.0.0-alpha.4)",
  "loro 0.16.2 (git+https://github.com/loro-dev/loro.git?tag=loro-crdt@0.16.7)",
  "loro 0.16.2 (git+https://github.com/loro-dev/loro.git?rev=90470658435ec4c62b5af59ebb82fe9e1f5aa761)",
  "num_cpus",
@@ -1058,10 +1059,24 @@ dependencies = [
  "loro-common 0.16.12",
  "loro-delta 0.16.12",
  "loro-internal 0.16.12",
- "loro-kv-store",
+ "loro-kv-store 0.16.2",
  "pretty_assertions",
  "rand",
  "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "loro"
+version = "0.16.12"
+source = "git+https://github.com/loro-dev/loro.git?tag=loro-crdt@1.0.0-alpha.4#9bfe97bce4912c6dc8439817497d18423a0e8cb7"
+dependencies = [
+ "enum-as-inner 0.6.0",
+ "generic-btree",
+ "loro-common 0.16.12 (git+https://github.com/loro-dev/loro.git?tag=loro-crdt@1.0.0-alpha.4)",
+ "loro-delta 0.16.12 (git+https://github.com/loro-dev/loro.git?tag=loro-crdt@1.0.0-alpha.4)",
+ "loro-internal 0.16.12 (git+https://github.com/loro-dev/loro.git?tag=loro-crdt@1.0.0-alpha.4)",
+ "loro-kv-store 0.16.2 (git+https://github.com/loro-dev/loro.git?tag=loro-crdt@1.0.0-alpha.4)",
  "tracing",
 ]
 
@@ -1117,6 +1132,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "loro-common"
+version = "0.16.12"
+source = "git+https://github.com/loro-dev/loro.git?tag=loro-crdt@1.0.0-alpha.4#9bfe97bce4912c6dc8439817497d18423a0e8cb7"
+dependencies = [
+ "arbitrary",
+ "enum-as-inner 0.6.0",
+ "fxhash",
+ "leb128",
+ "loro-rle 0.16.12 (git+https://github.com/loro-dev/loro.git?tag=loro-crdt@1.0.0-alpha.4)",
+ "nonmax",
+ "serde",
+ "serde_columnar",
+ "serde_json",
+ "string_cache",
+ "thiserror",
+]
+
+[[package]]
 name = "loro-delta"
 version = "0.16.2"
 source = "git+https://github.com/loro-dev/loro.git?tag=loro-crdt@0.16.7#d2b0520f8633f96146a49ec205bd5e7056880f1a"
@@ -1154,6 +1187,18 @@ dependencies = [
  "rand",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "loro-delta"
+version = "0.16.12"
+source = "git+https://github.com/loro-dev/loro.git?tag=loro-crdt@1.0.0-alpha.4#9bfe97bce4912c6dc8439817497d18423a0e8cb7"
+dependencies = [
+ "arrayvec",
+ "enum-as-inner 0.5.1",
+ "generic-btree",
+ "heapless 0.8.0",
+ "tracing",
 ]
 
 [[package]]
@@ -1262,7 +1307,7 @@ dependencies = [
  "leb128",
  "loro-common 0.16.12",
  "loro-delta 0.16.12",
- "loro-kv-store",
+ "loro-kv-store 0.16.2",
  "loro-rle 0.16.12",
  "loro_fractional_index 0.16.12",
  "md5",
@@ -1292,6 +1337,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "loro-internal"
+version = "0.16.12"
+source = "git+https://github.com/loro-dev/loro.git?tag=loro-crdt@1.0.0-alpha.4#9bfe97bce4912c6dc8439817497d18423a0e8cb7"
+dependencies = [
+ "append-only-bytes",
+ "arref",
+ "bytes",
+ "either",
+ "ensure-cov",
+ "enum-as-inner 0.6.0",
+ "enum_dispatch",
+ "fxhash",
+ "generic-btree",
+ "getrandom",
+ "im",
+ "itertools 0.12.1",
+ "leb128",
+ "loro-common 0.16.12 (git+https://github.com/loro-dev/loro.git?tag=loro-crdt@1.0.0-alpha.4)",
+ "loro-delta 0.16.12 (git+https://github.com/loro-dev/loro.git?tag=loro-crdt@1.0.0-alpha.4)",
+ "loro-kv-store 0.16.2 (git+https://github.com/loro-dev/loro.git?tag=loro-crdt@1.0.0-alpha.4)",
+ "loro-rle 0.16.12 (git+https://github.com/loro-dev/loro.git?tag=loro-crdt@1.0.0-alpha.4)",
+ "loro_fractional_index 0.16.12 (git+https://github.com/loro-dev/loro.git?tag=loro-crdt@1.0.0-alpha.4)",
+ "md5",
+ "nonmax",
+ "num",
+ "num-derive",
+ "num-traits",
+ "once_cell",
+ "postcard",
+ "pretty_assertions",
+ "rand",
+ "serde",
+ "serde_columnar",
+ "serde_json",
+ "smallvec",
+ "thiserror",
+ "tracing",
+ "xxhash-rust",
+]
+
+[[package]]
 name = "loro-kv-store"
 version = "0.16.2"
 dependencies = [
@@ -1305,6 +1391,22 @@ dependencies = [
  "once_cell",
  "quick_cache",
  "rand",
+ "tracing",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "loro-kv-store"
+version = "0.16.2"
+source = "git+https://github.com/loro-dev/loro.git?tag=loro-crdt@1.0.0-alpha.4#9bfe97bce4912c6dc8439817497d18423a0e8cb7"
+dependencies = [
+ "bytes",
+ "ensure-cov",
+ "fxhash",
+ "loro-common 0.16.12 (git+https://github.com/loro-dev/loro.git?tag=loro-crdt@1.0.0-alpha.4)",
+ "lz4_flex",
+ "once_cell",
+ "quick_cache",
  "tracing",
  "xxhash-rust",
 ]
@@ -1350,6 +1452,19 @@ dependencies = [
  "smallvec",
  "smartstring",
  "static_assertions",
+]
+
+[[package]]
+name = "loro-rle"
+version = "0.16.12"
+source = "git+https://github.com/loro-dev/loro.git?tag=loro-crdt@1.0.0-alpha.4#9bfe97bce4912c6dc8439817497d18423a0e8cb7"
+dependencies = [
+ "append-only-bytes",
+ "arref",
+ "enum-as-inner 0.6.0",
+ "fxhash",
+ "num",
+ "smallvec",
 ]
 
 [[package]]
@@ -1404,6 +1519,18 @@ version = "0.16.12"
 dependencies = [
  "criterion 0.5.1",
  "fractional_index",
+ "imbl",
+ "once_cell",
+ "rand",
+ "serde",
+ "smallvec",
+]
+
+[[package]]
+name = "loro_fractional_index"
+version = "0.16.12"
+source = "git+https://github.com/loro-dev/loro.git?tag=loro-crdt@1.0.0-alpha.4#9bfe97bce4912c6dc8439817497d18423a0e8cb7"
+dependencies = [
  "imbl",
  "once_cell",
  "rand",

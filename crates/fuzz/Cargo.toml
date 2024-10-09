@@ -24,6 +24,7 @@ rayon = "1.10.0"
 bytes = "1"
 ensure-cov = { workspace = true }
 pretty_assertions = "1.4.0"
+loro-alpha-4 = { git = "https://github.com/loro-dev/loro.git", tag = "loro-crdt@1.0.0-alpha.4", package = "loro" }
 
 [dev-dependencies]
 ctor = "0.2"
