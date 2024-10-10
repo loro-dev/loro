@@ -30,7 +30,7 @@ fn to_str(output: Output) -> String {
     indent_level += 1;
     new_line!();
     for (client_id, spans) in output.clients.iter() {
-        s += format!("subgraph client{}", client_id).as_str();
+        s += format!("subgraph peer{}", client_id).as_str();
         new_line!();
         let mut is_first = true;
         for id_span in spans.iter().rev() {
@@ -45,7 +45,7 @@ fn to_str(output: Output) -> String {
                 id_span.counter.start,
                 id_span.peer,
                 id_span.counter.start,
-                id_span.counter.end
+                id_span.counter.end,
             )
             .as_str();
         }

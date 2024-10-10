@@ -54,7 +54,7 @@ impl Tracker {
             origin_left: None,
             origin_right: None,
         });
-        this.id_to_cursor.insert(
+        this.id_to_cursor.insert_without_split(
             ID::new(UNKNOWN_PEER_ID, 0),
             id_to_cursor::Cursor::new_insert(result.leaf, u32::MAX as usize / 4),
         );
@@ -82,6 +82,12 @@ impl Tracker {
     }
 
     pub(crate) fn insert(&mut self, mut op_id: IdFull, mut pos: usize, mut content: RichtextChunk) {
+        // trace!(
+        //     "TrackerInsert op_id = {:#?}, pos = {:#?}, content = {:#?}",
+        //     op_id,
+        //     &pos,
+        //     &content
+        // );
         // tracing::span!(tracing::Level::INFO, "TrackerInsert");
         if let ControlFlow::Break(_) =
             self.skip_applied(op_id.id(), content.len(), |applied_counter_end| {
@@ -150,7 +156,7 @@ impl Tracker {
     pub(crate) fn delete(
         &mut self,
         mut op_id: ID,
-        target_start_id: ID,
+        mut target_start_id: ID,
         pos: usize,
         mut len: usize,
         reverse: bool,
@@ -159,6 +165,7 @@ impl Tracker {
             // the op is partially included, need to slice the op
             let start = (applied_counter_end - op_id.counter) as usize;
             op_id.counter = applied_counter_end;
+            target_start_id = target_start_id.inc(start as i32);
             len -= start;
             // If reverse, don't need to change the pos, because it's deleting backwards.
             // If not reverse, we don't need to change the pos either, because the `start` chars after it are already deleted
@@ -589,6 +596,7 @@ impl Tracker {
         None
     }
 
+    // #[tracing::instrument(skip(self), level = "info")]
     pub(crate) fn diff(
         &mut self,
         from: &VersionVector,
@@ -598,6 +606,7 @@ impl Tracker {
         self._checkout(from, false);
         self._checkout(to, true);
         // self.id_to_cursor.diagnose();
+        // tracing::trace!("Trace::diff {:#?}, ", &self);
 
         self.rope.get_diff()
     }

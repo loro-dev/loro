@@ -1,9 +1,9 @@
-import { Cursor, Loro, UndoManager } from "../src";
+import { Cursor, LoroDoc, UndoManager } from "../src";
 import { describe, expect, test } from "vitest";
 
 describe("undo", () => {
   test("basic text undo", () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     doc.setPeerId(1);
     const undo = new UndoManager(doc, { maxUndoSteps: 100, mergeInterval: 0 });
     expect(undo.canRedo()).toBeFalsy();
@@ -41,7 +41,7 @@ describe("undo", () => {
   });
 
   test("merge", async () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const undo = new UndoManager(doc, { maxUndoSteps: 100, mergeInterval: 50 });
     for (let i = 0; i < 10; i++) {
       doc.getText("text").insert(i, i.toString());
@@ -66,7 +66,7 @@ describe("undo", () => {
   });
 
   test("max undo steps", () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const undo = new UndoManager(doc, { maxUndoSteps: 100, mergeInterval: 0 });
     for (let i = 0; i < 200; i++) {
       doc.getText("text").insert(0, "0");
@@ -80,7 +80,7 @@ describe("undo", () => {
   });
 
   test("Skip chosen events", () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     const undo = new UndoManager(doc, {
       maxUndoSteps: 100,
       mergeInterval: 0,
@@ -89,11 +89,11 @@ describe("undo", () => {
     doc.getText("text").insert(0, "hello");
     doc.commit();
     doc.getText("text").insert(0, "1");
-    doc.commit("sys:test");
+    doc.commit({ origin: "sys:test" });
     doc.getText("text").insert(2, "2");
-    doc.commit("sys:test");
+    doc.commit({ origin: "sys:test" });
     doc.getText("text").insert(4, "3");
-    doc.commit("sys:test");
+    doc.commit({ origin: "sys:test" });
     doc.getText("text").insert(8, " world!");
     doc.commit();
     doc.getText("text").insert(0, "Alice ");
@@ -130,7 +130,7 @@ describe("undo", () => {
   });
 
   test("undo event's origin", async () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     let undoing = false;
     let ran = false;
     doc.subscribe((e) => {
@@ -151,7 +151,7 @@ describe("undo", () => {
   });
 
   test("undo event listener", async () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     let pushReturn: null | number = null;
     let expectedValue: null | number = null;
 
@@ -199,10 +199,10 @@ describe("undo", () => {
   });
 
   test("undo cursor transform", async () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     let cursors: Cursor[] = [];
     let poppedCursors: Cursor[] = [];
-    const undo = new UndoManager(doc , {
+    const undo = new UndoManager(doc, {
       mergeInterval: 0,
       onPop: (isUndo, value, counterRange) => {
         poppedCursors = value.cursors

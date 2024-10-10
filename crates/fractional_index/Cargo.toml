@@ -16,6 +16,7 @@ imbl = "^3.0"
 smallvec = { workspace = true }
 serde = { workspace = true, features = ["derive", "rc"], optional = true }
 rand = { version = "^0.8" }
+once_cell = { workspace = true }
 
 [dev-dependencies]
 fraction_index = { version = "^2.0", package = "fractional_index" }

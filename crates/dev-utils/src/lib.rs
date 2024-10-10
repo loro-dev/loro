@@ -1,3 +1,5 @@
+use std::fmt::{Debug, Display};
+use std::ops::{Add, Sub};
 use std::path::Path;
 
 use tracing_subscriber::fmt::format::FmtSpan;
@@ -31,7 +33,7 @@ pub fn setup_test_log() {
                 // )
                 .with(
                     tracing_subscriber::fmt::Layer::default()
-                        .with_span_events(FmtSpan::NEW)
+                        .with_span_events(FmtSpan::NEW | FmtSpan::EXIT)
                         .without_time()
                         .with_line_number(true)
                         .with_target(false)
@@ -41,4 +43,76 @@ pub fn setup_test_log() {
         )
         .unwrap();
     }
+}
+
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+
+struct Counter;
+
+static ALLOCATED: AtomicUsize = AtomicUsize::new(0);
+
+unsafe impl GlobalAlloc for Counter {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let ret = System.alloc(layout);
+        if !ret.is_null() {
+            ALLOCATED.fetch_add(layout.size(), Relaxed);
+        }
+        ret
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        System.dealloc(ptr, layout);
+        ALLOCATED.fetch_sub(layout.size(), Relaxed);
+    }
+}
+
+#[global_allocator]
+static A: Counter = Counter;
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ByteSize(pub usize);
+
+impl Debug for ByteSize {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (size, unit) = match self.0 {
+            bytes if bytes < 1024 => (bytes as f64, "B"),
+            bytes if bytes < 1024 * 1024 => (bytes as f64 / 1024.0, "KB"),
+            bytes if bytes < 1024 * 1024 * 1024 => (bytes as f64 / (1024.0 * 1024.0), "MB"),
+            bytes => (bytes as f64 / (1024.0 * 1024.0 * 1024.0), "GB"),
+        };
+        write!(f, "{:.2} {}", size, unit)
+    }
+}
+
+impl Display for ByteSize {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (size, unit) = match self.0 {
+            bytes if bytes < 1024 => (bytes as f64, "B"),
+            bytes if bytes < 1024 * 1024 => (bytes as f64 / 1024.0, "KB"),
+            bytes if bytes < 1024 * 1024 * 1024 => (bytes as f64 / (1024.0 * 1024.0), "MB"),
+            bytes => (bytes as f64 / (1024.0 * 1024.0 * 1024.0), "GB"),
+        };
+        write!(f, "{:.2} {}", size, unit)
+    }
+}
+
+impl Add for ByteSize {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        ByteSize(self.0 + rhs.0)
+    }
+}
+
+impl Sub for ByteSize {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        ByteSize(self.0 - rhs.0)
+    }
+}
+
+pub fn get_mem_usage() -> ByteSize {
+    ByteSize(ALLOCATED.load(Relaxed))
 }

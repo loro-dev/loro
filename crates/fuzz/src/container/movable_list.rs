@@ -25,25 +25,25 @@ pub struct MovableListActor {
 
 impl MovableListActor {
     pub fn new(loro: Arc<LoroDoc>) -> Self {
-        let mut tracker =
-            MapTracker::empty(ContainerID::new_root("sys:root", ContainerType::Map).unwrap());
+        let mut tracker = MapTracker::empty(ContainerID::new_root("sys:root", ContainerType::Map));
         tracker.insert(
             "movable_list".to_string(),
             Value::empty_container(
                 ContainerType::MovableList,
-                ContainerID::new_root("movable_list", ContainerType::MovableList).unwrap(),
+                ContainerID::new_root("movable_list", ContainerType::MovableList),
             ),
         );
         let tracker = Arc::new(Mutex::new(ContainerTracker::Map(tracker)));
         let list = tracker.clone();
 
         loro.subscribe(
-            &ContainerID::new_root("movable_list", ContainerType::MovableList).unwrap(),
+            &ContainerID::new_root("movable_list", ContainerType::MovableList),
             Arc::new(move |event| {
-                let mut list = list.lock().unwrap();
+                let mut list = list.try_lock().unwrap();
                 list.apply_diff(event);
             }),
-        );
+        )
+        .detach();
 
         let root = loro.get_movable_list("movable_list");
         Self {
@@ -72,7 +72,7 @@ impl ActorTrait for MovableListActor {
     fn check_tracker(&self) {
         let list = self.loro.get_movable_list("movable_list");
         let value = list.get_deep_value();
-        let tracker = self.tracker.lock().unwrap().to_value();
+        let tracker = self.tracker.try_lock().unwrap().to_value();
         assert_eq!(
             &value,
             tracker.into_map().unwrap().get("movable_list").unwrap()
@@ -136,11 +136,10 @@ impl Actionable for MovableListAction {
                 let pos = *pos as usize;
                 match value {
                     FuzzValue::Container(c) => {
-                        let container = list.insert_container(pos, Container::new(*c)).unwrap();
-                        Some(container)
+                        super::unwrap(list.insert_container(pos, Container::new(*c)))
                     }
                     FuzzValue::I32(v) => {
-                        list.insert(pos, *v).unwrap();
+                        super::unwrap(list.insert(pos, *v));
                         None
                     }
                 }
@@ -148,24 +147,23 @@ impl Actionable for MovableListAction {
             MovableListAction::Delete { pos, len } => {
                 let pos = *pos as usize;
                 let len = *len as usize;
-                list.delete(pos, len).unwrap();
+                super::unwrap(list.delete(pos, len));
                 None
             }
             MovableListAction::Move { from, to } => {
                 let from = *from as usize;
                 let to = *to as usize;
-                list.mov(from, to).unwrap();
+                super::unwrap(list.mov(from, to));
                 None
             }
             MovableListAction::Set { pos, value } => {
                 let pos = *pos as usize;
                 match value {
                     FuzzValue::Container(c) => {
-                        let container = list.set_container(pos, Container::new(*c)).unwrap();
-                        Some(container)
+                        super::unwrap(list.set_container(pos, Container::new(*c)))
                     }
                     FuzzValue::I32(v) => {
-                        list.set(pos, *v).unwrap();
+                        super::unwrap(list.set(pos, *v));
                         None
                     }
                 }

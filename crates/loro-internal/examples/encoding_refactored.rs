@@ -1,6 +1,6 @@
 use bench_utils::TextAction;
 use criterion::black_box;
-use loro_internal::loro::LoroDoc;
+use loro_internal::LoroDoc;
 
 fn main() {
     log_size();
@@ -21,7 +21,7 @@ fn log_size() {
             text.insert_with_txn(&mut txn, *pos, ins);
         }
         txn.commit().unwrap();
-        let snapshot = loro.export_snapshot();
+        let snapshot = loro.export_snapshot().unwrap();
         let updates = loro.export_from(&Default::default());
         let json_updates =
             serde_json::to_string(&loro.export_json_updates(&Default::default(), &loro.oplog_vv()))
@@ -47,7 +47,7 @@ fn log_size() {
             text.insert_with_txn(&mut txn, *pos, ins);
             txn.commit().unwrap();
         }
-        let snapshot = loro.export_snapshot();
+        let snapshot = loro.export_snapshot().unwrap();
         let updates = loro.export_from(&Default::default());
         println!("\n");
         println!("Snapshot size={}", snapshot.len());
@@ -72,7 +72,7 @@ fn bench_decode() {
                 text.insert(*pos, ins);
             }
         }
-        let snapshot = loro.export_snapshot();
+        let snapshot = loro.export_snapshot().unwrap();
         // for _ in 0..100 {
         //     black_box(loro.export_snapshot());
         // }
