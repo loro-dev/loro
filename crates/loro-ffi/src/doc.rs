@@ -419,7 +419,7 @@ impl LoroDoc {
             callback.on_local_update(update.to_vec());
             true
         }));
-        Arc::new(Subscription(Arc::new(Mutex::new(s))))
+        Arc::new(Subscription(Mutex::new(Some(s))))
     }
 
     /// Estimate the size of the document states in memory.
@@ -684,29 +684,25 @@ pub trait Unsubscriber: Sync + Send {
 
 /// A handle to a subscription created by GPUI. When dropped, the subscription
 /// is cancelled and the callback will no longer be invoked.
-pub struct Subscription(Arc<Mutex<loro::Subscription>>);
+pub struct Subscription(Mutex<Option<loro::Subscription>>);
 
 impl Subscription {
     pub fn new(unsubscribe: Arc<dyn Unsubscriber>) -> Self {
-        Self(Arc::new(Mutex::new(loro::Subscription::new(move || {
+        Self(Mutex::new(Some(loro::Subscription::new(move || {
             unsubscribe.on_unsubscribe()
         }))))
     }
 
     pub fn detach(self: Arc<Self>) {
-        let s = Arc::try_unwrap(self)
-            .map_err(|_| "Arc::try_unwrap Subscription failed")
-            .unwrap()
-            .0;
-        let s = Arc::try_unwrap(s)
-            .map_err(|_| "Arc::try_unwrap Subscription failed")
-            .unwrap();
-        s.into_inner().unwrap().detach();
+        let s = self.0.try_lock().unwrap().take().unwrap();
+        // let s = Arc::try_unwrap(self)
+        //     .map_err(|_| "Arc::try_unwrap Subscription failed")
+        //     .unwrap()
+        //     .0;
+
+        s.detach();
     }
 }
-
-unsafe impl Send for Subscription {}
-unsafe impl Sync for Subscription {}
 
 impl std::fmt::Debug for Subscription {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -716,7 +712,7 @@ impl std::fmt::Debug for Subscription {
 
 impl From<loro::Subscription> for Subscription {
     fn from(value: loro::Subscription) -> Self {
-        Self(Arc::new(Mutex::new(value)))
+        Self(Mutex::new(Some(value)))
     }
 }
 
