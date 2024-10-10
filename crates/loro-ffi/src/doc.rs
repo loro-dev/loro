@@ -98,7 +98,7 @@ impl LoroDoc {
     /// beginning or end of the style.
     #[inline]
     pub fn config_text_style(&self, text_style: Arc<StyleConfigMap>) {
-        self.doc.config_text_style(text_style.as_ref().into_loro())
+        self.doc.config_text_style(text_style.as_ref().to_loro())
     }
 
     /// Attach the document state to the latest known version.
