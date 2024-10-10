@@ -54,7 +54,7 @@ impl StyleConfigMap {
         )))
     }
 
-    pub(crate) fn into_loro(self) -> loro::StyleConfigMap {
+    pub(crate) fn into_loro(&self) -> loro::StyleConfigMap {
         self.0.read().unwrap().clone()
     }
 }
