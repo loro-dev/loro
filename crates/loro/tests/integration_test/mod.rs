@@ -3,6 +3,7 @@ use loro::LoroDoc;
 mod detached_editing_test;
 #[cfg(feature = "jsonpath")]
 mod jsonpath_test;
+mod redact_test;
 mod shallow_snapshot_test;
 mod snapshot_at_test;
 mod text_update_test;

@@ -73,6 +73,23 @@ impl VersionRange {
         true
     }
 
+    pub fn has_overlap_with(&self, mut span: IdSpan) -> bool {
+        span.normalize_();
+        if let Some((start, end)) = self.get(&span.peer) {
+            start < &span.counter.end && end > &span.counter.start
+        } else {
+            false
+        }
+    }
+
+    pub fn contains_id(&self, id: ID) -> bool {
+        if let Some((start, end)) = self.get(&id.peer) {
+            start <= &id.counter && end > &id.counter
+        } else {
+            false
+        }
+    }
+
     pub fn contains_id_span(&self, mut span: IdSpan) -> bool {
         span.normalize_();
         if let Some((start, end)) = self.get(&span.peer) {
