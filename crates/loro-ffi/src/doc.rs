@@ -98,8 +98,7 @@ impl LoroDoc {
     /// beginning or end of the style.
     #[inline]
     pub fn config_text_style(&self, text_style: Arc<StyleConfigMap>) {
-        self.doc
-            .config_text_style(Arc::try_unwrap(text_style).unwrap().into_loro())
+        self.doc.config_text_style(text_style.as_ref().to_loro())
     }
 
     /// Attach the document state to the latest known version.
@@ -518,7 +517,7 @@ impl LoroDoc {
     ) -> Result<Vec<u8>, LoroEncodeError> {
         self.doc
             .export(loro::ExportMode::StateOnly(frontiers.map(|x| {
-                let a = Arc::try_unwrap(x).unwrap();
+                let a = x.as_ref();
                 Cow::Owned(loro::Frontiers::from(a))
             })))
     }
@@ -695,11 +694,6 @@ impl Subscription {
 
     pub fn detach(self: Arc<Self>) {
         let s = self.0.try_lock().unwrap().take().unwrap();
-        // let s = Arc::try_unwrap(self)
-        //     .map_err(|_| "Arc::try_unwrap Subscription failed")
-        //     .unwrap()
-        //     .0;
-
         s.detach();
     }
 }
