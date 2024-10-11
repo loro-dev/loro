@@ -42,7 +42,5 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Check
         run: cargo clippy --all-features -- -Dwarnings
-      - name: Build
-        run: cargo build --verbose
       - name: Run rust tests
         run: deno task test-all
