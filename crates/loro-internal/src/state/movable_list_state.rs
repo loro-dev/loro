@@ -1008,6 +1008,7 @@ impl ContainerState for MovableListState {
             unreachable!()
         };
 
+        // let start_value = self.get_value();
         if cfg!(debug_assertions) {
             self.inner.check_consistency();
         }
@@ -1248,19 +1249,18 @@ impl ContainerState for MovableListState {
             }
         }
 
-        if cfg!(debug_assertions) {
-            // self.inner.check_consistency();
-            // let start_value = start_value.unwrap();
-            // let mut end_value = start_value.clone();
-            // end_value.apply_diff_shallow(&[Diff::List(event.clone())]);
-            // let cur_value = self.get_value();
-            // assert_eq!(
-            //     end_value, cur_value,
-            //     "start_value={:#?} event={:#?} new_state={:#?} but the end_value={:#?}",
-            //     start_value, event, cur_value, end_value
-            // );
-            // self.check_get_child_index_correctly();
-        }
+        // if cfg!(debug_assertions) {
+        //     self.inner.check_consistency();
+        //     let mut end_value = start_value.clone();
+        //     end_value.apply_diff_shallow(&[Diff::List(event.clone())]);
+        //     let cur_value = self.get_value();
+        //     assert_eq!(
+        //         end_value, cur_value,
+        //         "start_value={:#?} event={:#?} new_state={:#?} but the end_value={:#?}",
+        //         start_value, event, cur_value, end_value
+        //     );
+        //     self.check_get_child_index_correctly();
+        // }
 
         Diff::List(event)
     }
