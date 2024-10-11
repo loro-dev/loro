@@ -398,6 +398,7 @@ impl Transaction {
         self._commit()
     }
 
+    #[tracing::instrument(level = "debug", skip(self))]
     fn _commit(&mut self) -> Result<(), LoroError> {
         if self.finished {
             return Ok(());
@@ -645,6 +646,7 @@ impl Transaction {
 }
 
 impl Drop for Transaction {
+    #[tracing::instrument(level = "debug", skip(self))]
     fn drop(&mut self) {
         if !self.finished {
             // TODO: should we abort here or commit here?

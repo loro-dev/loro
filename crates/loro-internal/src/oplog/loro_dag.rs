@@ -815,20 +815,22 @@ impl Dag for AppDag {
     fn get(&self, id: ID) -> Option<Self::Node> {
         self.ensure_lazy_load_node(id);
         let binding = self.map.try_lock().unwrap();
-        let x = binding.range(..=id).next_back()?;
-        if x.1.contains_id(id) {
-            // PERF: do we need to optimize clone like this?
-            // by adding another layer of Arc?
-            Some(x.1.clone())
-        } else {
-            if let Some(node) = &self.pending_txn_node {
-                if node.peer == id.peer && node.cnt <= id.counter {
-                    assert!(node.cnt + node.len as Counter > id.counter);
-                    return Some(node.clone());
-                }
+        if let Some(x) = binding.range(..=id).next_back() {
+            if x.1.contains_id(id) {
+                // PERF: do we need to optimize clone like this?
+                // by adding another layer of Arc?
+                return Some(x.1.clone());
             }
-            None
         }
+
+        if let Some(node) = &self.pending_txn_node {
+            if node.peer == id.peer && node.cnt <= id.counter {
+                assert!(node.cnt + node.len as Counter > id.counter);
+                return Some(node.clone());
+            }
+        }
+
+        None
     }
 
     fn vv(&self) -> VersionVector {
@@ -1013,7 +1015,7 @@ impl AppDag {
             return self.shallow_since_frontiers.clone();
         }
 
-        shrink_frontiers(&last_ids, self)
+        shrink_frontiers(&last_ids, self).unwrap()
     }
 
     pub fn vv_to_frontiers(&self, vv: &VersionVector) -> Frontiers {
@@ -1044,7 +1046,7 @@ impl AppDag {
             return self.shallow_since_frontiers.clone();
         }
 
-        shrink_frontiers(&last_ids, self)
+        shrink_frontiers(&last_ids, self).unwrap()
     }
 
     pub(crate) fn frontiers_to_next_lamport(&self, frontiers: &Frontiers) -> Lamport {

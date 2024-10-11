@@ -1,4 +1,3 @@
-use itertools::Itertools;
 use loro_common::{HasCounter, HasCounterSpan, HasIdSpan, HasLamportSpan, IdFull, IdSpanVector};
 use smallvec::smallvec;
 use std::{
@@ -1017,26 +1016,35 @@ impl VersionVector {
 }
 
 /// Use minimal set of ids to represent the frontiers
-pub fn shrink_frontiers(last_ids: &[ID], dag: &AppDag) -> Frontiers {
+#[tracing::instrument(skip(dag))]
+pub fn shrink_frontiers(last_ids: &[ID], dag: &AppDag) -> Result<Frontiers, ID> {
     // it only keep the ids of ops that are concurrent to each other
     let mut frontiers = Frontiers::default();
     if last_ids.is_empty() {
-        return frontiers;
+        return Ok(frontiers);
     }
 
     if last_ids.len() == 1 {
         frontiers.push(last_ids[0]);
-        return frontiers;
+        return Ok(frontiers);
     }
 
-    let mut last_ids = filter_duplicated_peer_id(last_ids)
-        .into_iter()
-        .map(|x| IdFull::new(x.peer, x.counter, dag.get_lamport(&x).unwrap()))
-        .collect_vec();
+    let mut last_ids = {
+        let ids = filter_duplicated_peer_id(last_ids);
+        let mut last_ids = Vec::with_capacity(ids.len());
+        for id in ids {
+            let Some(lamport) = dag.get_lamport(&id) else {
+                return Err(id);
+            };
+            last_ids.push(IdFull::new(id.peer, id.counter, lamport))
+        }
+
+        last_ids
+    };
 
     if last_ids.len() == 1 {
         frontiers.push(last_ids[0].id());
-        return frontiers;
+        return Ok(frontiers);
     }
 
     // Iterate from the greatest lamport to the smallest
@@ -1065,7 +1073,7 @@ pub fn shrink_frontiers(last_ids: &[ID], dag: &AppDag) -> Frontiers {
         }
     }
 
-    frontiers
+    Ok(frontiers)
 }
 
 fn filter_duplicated_peer_id(last_ids: &[ID]) -> Vec<ID> {

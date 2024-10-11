@@ -1068,7 +1068,8 @@ impl LoroDoc {
             return Err(LoroError::SwitchToVersionBeforeShallowRoot);
         }
 
-        let frontiers = shrink_frontiers(frontiers, &oplog.dag);
+        let frontiers = shrink_frontiers(frontiers, &oplog.dag)
+            .map_err(|_| LoroError::SwitchToVersionBeforeShallowRoot)?;
         if from_frontiers == frontiers {
             drop(oplog);
             self.renew_txn_if_auto_commit();
