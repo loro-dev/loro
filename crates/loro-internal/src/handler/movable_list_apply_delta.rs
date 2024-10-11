@@ -38,11 +38,11 @@ impl MovableListHandler {
                 unimplemented!();
             }
             MaybeDetached::Attached(_) => {
-                debug!(
-                    "Movable list value before apply_delta: {:#?}",
-                    self.get_deep_value_with_id()
-                );
-                debug!("Applying delta: {:#?}", &delta);
+                // debug!(
+                //     "Movable list value before apply_delta: {:#?}",
+                //     self.get_deep_value_with_id()
+                // );
+                // debug!("Applying delta: {:#?}", &delta);
 
                 // Preprocess deletions to build a map of containers to delete.
                 let mut to_delete = self.preprocess_deletions(&delta);
@@ -86,18 +86,10 @@ impl MovableListHandler {
                     }
                 }
 
-                debug!(
-                    "Movable list value after apply_delta before del: {:#?}",
-                    self.get_deep_value_with_id()
-                );
                 // Apply any remaining deletions.
                 self.apply_remaining_deletions(&delta, &mut deleted_indices)
                     .unwrap();
 
-                debug!(
-                    "Movable list value after apply_delta: {:#?}",
-                    self.get_deep_value_with_id()
-                );
                 Ok(())
             }
         }
