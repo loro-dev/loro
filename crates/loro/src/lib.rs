@@ -12,6 +12,7 @@ use loro_internal::handler::HandlerTrait;
 use loro_internal::handler::ValueOrHandler;
 use loro_internal::loro::ChangeTravelError;
 use loro_internal::undo::{OnPop, OnPush};
+use loro_internal::version::shrink_frontiers;
 pub use loro_internal::version::ImVersionVector;
 use loro_internal::DocState;
 use loro_internal::LoroDoc as InnerLoroDoc;
@@ -447,6 +448,11 @@ impl LoroDoc {
     #[inline]
     pub fn frontiers_to_vv(&self, frontiers: &Frontiers) -> Option<VersionVector> {
         self.doc.frontiers_to_vv(frontiers)
+    }
+
+    /// Minimize the frontiers by removing the unnecessary entries.
+    pub fn minimize_frontiers(&self, frontiers: &[ID]) -> Frontiers {
+        self.with_oplog(|oplog| shrink_frontiers(frontiers, oplog.dag()))
     }
 
     /// Convert `VersionVector` into `Frontiers`
