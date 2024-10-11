@@ -32,7 +32,7 @@ use std::{
     ops::Deref,
     sync::{Arc, Mutex, Weak},
 };
-use tracing::{debug, error, info, instrument, trace};
+use tracing::{error, info, instrument, trace};
 
 pub use tree::TreeHandler;
 mod movable_list_apply_delta;

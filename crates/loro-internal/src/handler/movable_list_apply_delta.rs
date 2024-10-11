@@ -38,15 +38,14 @@ impl MovableListHandler {
                 unimplemented!();
             }
             MaybeDetached::Attached(_) => {
-                debug!(
-                    "Movable list value before apply_delta: {:#?}",
-                    self.get_deep_value_with_id()
-                );
-                debug!("Applying delta: {:#?}", &delta);
+                // debug!(
+                //     "Movable list value before apply_delta: {:#?}",
+                //     self.get_deep_value_with_id()
+                // );
+                // debug!("Applying delta: {:#?}", &delta);
 
                 // Preprocess deletions to build a map of containers to delete.
-                let mut to_delete = self.preprocess_deletions(&delta)?;
-
+                let mut to_delete = self.preprocess_deletions(&delta);
                 // Process insertions and moves.
                 let mut index = 0;
                 let mut index_shift = 0;
@@ -81,13 +80,15 @@ impl MovableListHandler {
                                 next_deleted: &mut next_deleted,
                             };
 
-                            self.process_replacements(value, attr, &mut context)?;
+                            self.process_replacements(value, attr, &mut context)
+                                .unwrap();
                         }
                     }
                 }
 
                 // Apply any remaining deletions.
-                self.apply_remaining_deletions(&delta, &mut deleted_indices)?;
+                self.apply_remaining_deletions(&delta, &mut deleted_indices)
+                    .unwrap();
 
                 Ok(())
             }
@@ -109,7 +110,7 @@ impl MovableListHandler {
             loro_delta::array_vec::ArrayVec<ValueOrHandler, 8>,
             crate::event::ListDeltaMeta,
         >,
-    ) -> LoroResult<FxHashMap<ContainerID, usize>> {
+    ) -> FxHashMap<ContainerID, usize> {
         let mut index = 0;
         let mut to_delete = FxHashMap::default();
 
@@ -131,7 +132,7 @@ impl MovableListHandler {
             }
         }
 
-        Ok(to_delete)
+        to_delete
     }
 
     /// Handles deletions within a replace operation.
@@ -190,8 +191,13 @@ impl MovableListHandler {
                 }
                 ValueOrHandler::Handler(handler) => {
                     let mut old_id = handler.id();
-                    while let Some(new_id) = context.container_remap.get(&old_id) {
-                        old_id = new_id.clone();
+                    if !context.to_delete.contains_key(&old_id) {
+                        while let Some(new_id) = context.container_remap.get(&old_id) {
+                            old_id = new_id.clone();
+                            if context.to_delete.contains_key(&old_id) {
+                                break;
+                            }
+                        }
                     }
 
                     if let Some(old_index) = context.to_delete.remove(&old_id) {
