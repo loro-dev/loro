@@ -11727,7 +11727,7 @@ fn tree_event_parent_not_found() {
 }
 
 #[test]
-fn unknown() {
+fn movable_list_undo() {
     test_multi_sites(
         5,
         vec![FuzzTarget::All],
@@ -12579,6 +12579,32 @@ fn unknown() {
                     prop: 82188550010830847,
                 }),
             },
+        ],
+    )
+}
+
+#[test]
+fn one_doc_checkout_err() {
+    test_multi_sites_on_one_doc(
+        5,
+        &mut [
+            Handle {
+                site: 80,
+                target: 244,
+                container: 230,
+                action: Generic(GenericAction {
+                    value: Container(Text),
+                    bool: false,
+                    key: 1495330430,
+                    pos: 8708481874743882534,
+                    length: 12040763259495246688,
+                    prop: 503168992986692129,
+                }),
+            },
+            SyncAll,
+            Sync { from: 132, to: 248 },
+            SyncAll,
+            SyncAll,
         ],
     )
 }
