@@ -12783,6 +12783,132 @@ fn movable_list_undo_impl() {
 }
 
 #[test]
+fn movable_list_undo_impl_1() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            Handle {
+                site: 29,
+                target: 29,
+                container: 6,
+                action: Generic(GenericAction {
+                    value: Container(Text),
+                    bool: false,
+                    key: 4292569563,
+                    pos: 15492342490870120406,
+                    length: 18446519864200508159,
+                    prop: 10161246657334578573,
+                }),
+            },
+            Handle {
+                site: 167,
+                target: 129,
+                container: 4,
+                action: Generic(GenericAction {
+                    value: Container(Map),
+                    bool: true,
+                    key: 123736320,
+                    pos: 12898264252198542080,
+                    length: 15789862182697904091,
+                    prop: 18446618237837639456,
+                }),
+            },
+            SyncAll,
+            SyncAll,
+            Handle {
+                site: 0,
+                target: 24,
+                container: 24,
+                action: Generic(GenericAction {
+                    value: I32(-65536),
+                    bool: true,
+                    key: 4009754624,
+                    pos: 17221764975752642560,
+                    length: 7421932185895899375,
+                    prop: 18446744073709551474,
+                }),
+            },
+            Handle {
+                site: 128,
+                target: 81,
+                container: 43,
+                action: Generic(GenericAction {
+                    value: Container(Text),
+                    bool: true,
+                    key: 757935366,
+                    pos: 7627690425558565057,
+                    length: 15810408764199600091,
+                    prop: 3752949689037608703,
+                }),
+            },
+            SyncAllUndo {
+                site: 108,
+                op_len: 2365849344,
+            },
+            Handle {
+                site: 167,
+                target: 129,
+                container: 4,
+                action: Generic(GenericAction {
+                    value: Container(Map),
+                    bool: true,
+                    key: 123736320,
+                    pos: 12838591557135883008,
+                    length: 15789862182697904091,
+                    prop: 18446618237837639456,
+                }),
+            },
+            SyncAll,
+            SyncAll,
+            Handle {
+                site: 0,
+                target: 24,
+                container: 24,
+                action: Generic(GenericAction {
+                    value: I32(-65536),
+                    bool: true,
+                    key: 4009754624,
+                    pos: 17221764975752642560,
+                    length: 7421932185895899375,
+                    prop: 18446744073709551474,
+                }),
+            },
+            Handle {
+                site: 128,
+                target: 79,
+                container: 43,
+                action: Generic(GenericAction {
+                    value: Container(Text),
+                    bool: false,
+                    key: 4612,
+                    pos: 6293508899878207488,
+                    length: 185600485263537,
+                    prop: 8169935443840729235,
+                }),
+            },
+            Checkout {
+                site: 147,
+                to: 2067994371,
+            },
+            SyncAllUndo {
+                site: 0,
+                op_len: 3318087425,
+            },
+            Sync { from: 197, to: 35 },
+            SyncAllUndo {
+                site: 151,
+                op_len: 2543294359,
+            },
+            Undo {
+                site: 1,
+                op_len: 4250350213,
+            },
+        ],
+    )
+}
+
+#[test]
 fn minify() {
     minify_error(
         5,

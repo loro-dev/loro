@@ -78,11 +78,15 @@ impl MovableListHandler {
                 let mut index_shift = 0;
                 let mut deleted_indices = Vec::new();
                 let mut next_deleted = BinaryHeap::new();
+                // - positive values are retain
+                // - negative values are deletions
+                let mut delta_change: Vec<isize> = Vec::new();
 
                 for delta_item in delta.iter() {
                     match delta_item {
                         loro_delta::DeltaItem::Retain { len, .. } => {
                             index += len;
+                            delta_change.push(*len as isize);
                         }
                         loro_delta::DeltaItem::Replace {
                             value,
@@ -90,13 +94,16 @@ impl MovableListHandler {
                             attr,
                         } => {
                             // Handle deletions in the current replace operation.
+                            let old_index = index;
                             self.handle_deletions_in_replace(
                                 *delete,
                                 &mut index,
                                 index_shift,
                                 &mut next_deleted,
                             );
+                            delta_change.push(-((index - old_index) as isize));
 
+                            let old_index = index;
                             // Process the insertions and moves.
                             let mut context = ReplacementContext {
                                 index: &mut index,
@@ -109,12 +116,13 @@ impl MovableListHandler {
 
                             self.process_replacements(value, attr, &mut context)
                                 .unwrap();
+                            delta_change.push((index - old_index) as isize);
                         }
                     }
                 }
 
                 // Apply any remaining deletions.
-                self.apply_remaining_deletions(&delta, &mut deleted_indices)
+                self.apply_remaining_deletions(delta_change, &mut deleted_indices)
                     .unwrap();
 
                 Ok(())
@@ -162,7 +170,8 @@ impl MovableListHandler {
         to_delete
     }
 
-    /// Handles deletions within a replace operation.
+    /// Handles deletions' effect on the index within a replace operation.
+    /// It will not perform the deletions.
     ///
     /// # Arguments
     ///
@@ -268,37 +277,36 @@ impl MovableListHandler {
     /// * `deleted_indices` - A list of indices that have been deleted.
     fn apply_remaining_deletions(
         &self,
-        delta: &loro_delta::DeltaRope<
-            loro_delta::array_vec::ArrayVec<ValueOrHandler, 8>,
-            crate::event::ListDeltaMeta,
-        >,
+        delta: Vec<isize>,
         deleted_indices: &mut Vec<usize>,
     ) -> LoroResult<()> {
         // Sort deleted indices from largest to smallest.
         deleted_indices.sort_by_key(|&x| std::cmp::Reverse(x));
 
-        let mut index = 0;
+        let mut index: usize = 0;
         for delta_item in delta.iter() {
-            match delta_item {
-                loro_delta::DeltaItem::Retain { len, .. } => {
-                    index += len;
+            match *delta_item {
+                x if x > 0 => {
+                    index += x as usize;
                 }
-                loro_delta::DeltaItem::Replace { delete, value, .. } => {
-                    if *delete > 0 {
-                        let mut remaining_deletes = *delete;
-                        while let Some(&last) = deleted_indices.last() {
-                            if last < index + remaining_deletes {
-                                deleted_indices.pop();
-                                remaining_deletes -= 1;
-                            } else {
-                                break;
-                            }
+                neg_delete => {
+                    let delete = neg_delete.unsigned_abs();
+                    let mut remaining_deletes = delete;
+                    while let Some(&last) = deleted_indices.last() {
+                        if last < index {
+                            deleted_indices.pop();
+                            continue;
                         }
 
-                        self.delete(index, remaining_deletes)?;
+                        if last < index + remaining_deletes {
+                            deleted_indices.pop();
+                            remaining_deletes -= 1;
+                        } else {
+                            break;
+                        }
                     }
 
-                    index += value.len();
+                    self.delete(index, remaining_deletes)?;
                 }
             }
         }
