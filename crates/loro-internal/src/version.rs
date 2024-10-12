@@ -1031,6 +1031,11 @@ pub fn shrink_frontiers(last_ids: &[ID], dag: &AppDag) -> Result<Frontiers, ID> 
 
     let mut last_ids = {
         let ids = filter_duplicated_peer_id(last_ids);
+        if last_ids.len() == 1 {
+            frontiers.push(last_ids[0]);
+            return Ok(frontiers);
+        }
+
         let mut last_ids = Vec::with_capacity(ids.len());
         for id in ids {
             let Some(lamport) = dag.get_lamport(&id) else {
@@ -1041,11 +1046,6 @@ pub fn shrink_frontiers(last_ids: &[ID], dag: &AppDag) -> Result<Frontiers, ID> 
 
         last_ids
     };
-
-    if last_ids.len() == 1 {
-        frontiers.push(last_ids[0].id());
-        return Ok(frontiers);
-    }
 
     // Iterate from the greatest lamport to the smallest
     last_ids.sort_by_key(|x| x.lamport);
