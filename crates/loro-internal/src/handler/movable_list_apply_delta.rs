@@ -1,5 +1,6 @@
 use super::*;
 
+#[derive(Debug)]
 struct ReplacementContext<'a> {
     index: &'a mut usize,
     index_shift: &'a mut usize,
@@ -25,6 +26,7 @@ impl MovableListHandler {
     /// # Returns
     ///
     /// * `LoroResult<()>` - Returns `Ok(())` if successful, or an error if something goes wrong.
+    #[tracing::instrument(level = "debug", skip_all)]
     pub fn apply_delta(
         &self,
         delta: loro_delta::DeltaRope<
@@ -33,11 +35,36 @@ impl MovableListHandler {
         >,
         container_remap: &mut FxHashMap<ContainerID, ContainerID>,
     ) -> LoroResult<()> {
+        {
+            // Test whether the delta is valid
+            let len = self.len();
+            let mut index = 0;
+            for delta_item in delta.iter() {
+                match delta_item {
+                    loro_delta::DeltaItem::Retain { len, .. } => {
+                        index += *len;
+                    }
+                    loro_delta::DeltaItem::Replace { delete, .. } => {
+                        index += *delete;
+                    }
+                }
+
+                if index > len {
+                    return Err(LoroError::OutOfBound {
+                        pos: index,
+                        len,
+                        info: "apply_delta".into(),
+                    });
+                }
+            }
+        }
+
         match &self.inner {
             MaybeDetached::Detached(_) => {
                 unimplemented!();
             }
             MaybeDetached::Attached(_) => {
+                // use tracing::debug;
                 // debug!(
                 //     "Movable list value before apply_delta: {:#?}",
                 //     self.get_deep_value_with_id()
@@ -208,7 +235,6 @@ impl MovableListHandler {
                             *context.index += 1;
                             *context.index_shift += 1;
                         } else {
-                            // Adjust the index since old_index < *index.
                             ensure_cov::notify_cov("loro_internal::handler::movable_list_apply_delta::process_replacements::mov_1");
                             self.mov(old_index, *context.index - 1)?;
                         }
