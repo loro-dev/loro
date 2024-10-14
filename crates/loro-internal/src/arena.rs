@@ -55,6 +55,52 @@ pub struct StrAllocResult {
     pub end: usize,
 }
 
+pub(crate) struct ArenaGuards<'a> {
+    container_id_to_idx: MutexGuard<'a, FxHashMap<ContainerID, ContainerIdx>>,
+    container_idx_to_id: MutexGuard<'a, Vec<ContainerID>>,
+    depth: MutexGuard<'a, Vec<Option<NonZeroU16>>>,
+    parents: MutexGuard<'a, FxHashMap<ContainerIdx, Option<ContainerIdx>>>,
+    root_c_idx: MutexGuard<'a, Vec<ContainerIdx>>,
+}
+
+impl<'a> ArenaGuards<'a> {
+    pub fn register_container(&mut self, id: &ContainerID) -> ContainerIdx {
+        if let Some(&idx) = self.container_id_to_idx.get(id) {
+            return idx;
+        }
+
+        let idx = self.container_idx_to_id.len();
+        self.container_idx_to_id.push(id.clone());
+        let idx = ContainerIdx::from_index_and_type(idx as u32, id.container_type());
+        self.container_id_to_idx.insert(id.clone(), idx);
+        if id.is_root() {
+            self.root_c_idx.push(idx);
+            self.parents.insert(idx, None);
+            self.depth.push(NonZeroU16::new(1));
+        } else {
+            self.depth.push(None);
+        }
+        idx
+    }
+
+    pub fn set_parent(&mut self, child: ContainerIdx, parent: Option<ContainerIdx>) {
+        self.parents.insert(child, parent);
+
+        match parent {
+            Some(p) => {
+                if let Some(d) = get_depth(p, &mut self.depth, &self.parents) {
+                    self.depth[child.to_index() as usize] = NonZeroU16::new(d.get() + 1);
+                } else {
+                    self.depth[child.to_index() as usize] = None;
+                }
+            }
+            None => {
+                self.depth[child.to_index() as usize] = NonZeroU16::new(1);
+            }
+        }
+    }
+}
+
 impl SharedArena {
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
@@ -78,6 +124,21 @@ impl SharedArena {
                 root_c_idx: Mutex::new(self.inner.root_c_idx.try_lock().unwrap().clone()),
                 str: self.inner.str.clone(),
             }),
+        }
+    }
+
+    pub(crate) fn with_guards(&self, f: impl FnOnce(&mut ArenaGuards)) {
+        let mut guards = self.get_arena_guards();
+        f(&mut guards);
+    }
+
+    fn get_arena_guards(&self) -> ArenaGuards {
+        ArenaGuards {
+            container_id_to_idx: self.inner.container_id_to_idx.try_lock().unwrap(),
+            container_idx_to_id: self.inner.container_idx_to_id.try_lock().unwrap(),
+            depth: self.inner.depth.try_lock().unwrap(),
+            parents: self.inner.parents.try_lock().unwrap(),
+            root_c_idx: self.inner.root_c_idx.try_lock().unwrap(),
         }
     }
 

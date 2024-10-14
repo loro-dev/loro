@@ -1367,6 +1367,7 @@ pub mod json {
                 // Creation of child container won't be changed
             }
             JsonOpContent::Future(future_op_wrapper) => match &mut future_op_wrapper.value {
+                #[cfg(feature = "counter")]
                 FutureOp::Counter(owned_value) => {
                     *owned_value = OwnedValue::I64(0);
                 }
