@@ -662,6 +662,7 @@ impl AppDag {
         len: usize,
     ) {
         let last_id = start_id.inc(len as Counter - 1);
+        // PERF: we can cache this last_id - this is a hot path
         self.vv.set_last(last_id);
         self.frontiers.update_frontiers_on_new_change(last_id, deps);
         match &mut self.pending_txn_node {

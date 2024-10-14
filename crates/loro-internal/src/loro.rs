@@ -511,7 +511,7 @@ impl LoroDoc {
                         by: EventTriggerKind::Import,
                         new_version: Cow::Owned(oplog.frontiers().clone()),
                     },
-                    false,
+                    true,
                 );
             }
         } else {

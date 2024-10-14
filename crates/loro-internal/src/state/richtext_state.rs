@@ -799,7 +799,10 @@ impl RichtextState {
 
     #[inline]
     pub(crate) fn get_event_index_by_cursor(&mut self, cursor: Cursor) -> usize {
-        self.state.get_mut().get_event_index_by_cursor(cursor)
+        self.state
+            .get_mut()
+            .get_index_from_cursor(cursor, PosType::Event)
+            .unwrap()
     }
 
     pub(crate) fn get_entity_range_and_styles_at_range(
