@@ -36,25 +36,20 @@ impl InnerStore {
         idx: ContainerIdx,
         f: impl FnOnce() -> ContainerWrapper,
     ) -> &mut ContainerWrapper {
-        if self.store.contains_key(&idx) {
-            return self.store.get_mut(&idx).unwrap();
-        } else {
-            if let std::collections::hash_map::Entry::Vacant(e) = self.store.entry(idx) {
+        match self.store.entry(idx) {
+            std::collections::hash_map::Entry::Vacant(e) => {
                 let id = self.arena.get_container_id(idx).unwrap();
                 let key = id.to_bytes();
                 if !self.all_loaded {
                     if let Some(v) = self.kv.get(&key) {
                         let c = ContainerWrapper::new_from_bytes(v);
-                        e.insert(c);
-                        return self.store.get_mut(&idx).unwrap();
+                        return e.insert(c);
                     }
                 }
                 let c = f();
-                e.insert(c);
-                self.len += 1;
+                e.insert(c)
             }
-
-            self.store.get_mut(&idx).unwrap()
+            std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
         }
     }
 
