@@ -47,6 +47,7 @@ impl InnerStore {
                     }
                 }
                 let c = f();
+                self.len += 1;
                 e.insert(c)
             }
             std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
