@@ -559,6 +559,7 @@ where
     #[allow(clippy::redundant_clone)]
     let mut actions_clone = actions.clone();
     let action_ref: usize = (&mut actions_clone) as *mut _ as usize;
+    eprintln!("Initializing");
     #[allow(clippy::blocks_in_conditions)]
     if std::panic::catch_unwind(|| {
         // SAFETY: test
@@ -573,6 +574,7 @@ where
         return;
     }
 
+    eprintln!("Started!");
     let minified = Arc::new(Mutex::new(actions.clone()));
     let candidates = Arc::new(Mutex::new(VecDeque::new()));
     println!("Setup candidates...");
@@ -644,7 +646,7 @@ where
     }
 
     for thread in threads.into_iter() {
-        thread.join().unwrap();
+        thread.join().unwrap_or_default();
     }
 
     let minified = normalize(site_num, &mut minified.try_lock().unwrap());
