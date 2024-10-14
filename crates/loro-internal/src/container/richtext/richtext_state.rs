@@ -1430,7 +1430,7 @@ impl RichtextState {
                 let p = self.tree.prefer_left(c).unwrap_or(c);
                 self.tree.insert_by_path(p, elem).0
             } else {
-                let result = match self.tree.query::<EntityQuery>(q) {
+                match self.tree.query::<EntityQuery>(q) {
                     Some(result) => {
                         let p = self
                             .tree
@@ -1439,8 +1439,7 @@ impl RichtextState {
                         self.tree.insert_by_path(p, elem).0
                     }
                     None => self.tree.push(elem),
-                };
-                result
+                }
             }
         };
         self.record_cache(
