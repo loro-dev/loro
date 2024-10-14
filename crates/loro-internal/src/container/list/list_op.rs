@@ -135,6 +135,7 @@ impl HasLength for DeleteSpan {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeleteSpanWithId {
     /// This is the target id with the smallest counter no matter whether the span is reversed.
+    /// So it's always the id of the leftmost element of the target span.
     pub id_start: ID,
     /// The deleted position span
     pub span: DeleteSpan,
