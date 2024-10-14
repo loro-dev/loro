@@ -137,19 +137,21 @@ impl InnerStore {
 
         self.kv.with_kv(|kv| {
             let mut count = self.len;
-            let iter = kv.scan(Bound::Unbounded, Bound::Unbounded);
-            for (k, v) in iter {
-                count += 1;
-                let cid = ContainerID::from_bytes(&k);
-                let c = ContainerWrapper::new_from_bytes(v);
-                let parent = c.parent();
-                let idx = self.arena.register_container(&cid);
-                let p = parent.as_ref().map(|p| self.arena.register_container(p));
-                self.arena.set_parent(idx, p);
-                if self.store.insert(idx, c).is_some() {
-                    count -= 1;
+            self.arena.with_guards(|guards| {
+                let iter = kv.scan(Bound::Unbounded, Bound::Unbounded);
+                for (k, v) in iter {
+                    count += 1;
+                    let cid = ContainerID::from_bytes(&k);
+                    let c = ContainerWrapper::new_from_bytes(v);
+                    let parent = c.parent();
+                    let idx = guards.register_container(&cid);
+                    let p = parent.as_ref().map(|p| guards.register_container(p));
+                    guards.set_parent(idx, p);
+                    if self.store.insert(idx, c).is_some() {
+                        count -= 1;
+                    }
                 }
-            }
+            });
 
             self.len = count;
         });
@@ -171,19 +173,21 @@ impl InnerStore {
         self.kv.remove(FRONTIERS_KEY);
         self.kv.with_kv(|kv| {
             let mut count = self.len;
-            let iter = kv.scan(Bound::Unbounded, Bound::Unbounded);
-            for (k, v) in iter {
-                count += 1;
-                let cid = ContainerID::from_bytes(&k);
-                let c = ContainerWrapper::new_from_bytes(v);
-                let parent = c.parent();
-                let idx = self.arena.register_container(&cid);
-                let p = parent.as_ref().map(|p| self.arena.register_container(p));
-                self.arena.set_parent(idx, p);
-                if self.store.insert(idx, c).is_some() {
-                    count -= 1;
+            self.arena.with_guards(|guards| {
+                let iter = kv.scan(Bound::Unbounded, Bound::Unbounded);
+                for (k, v) in iter {
+                    count += 1;
+                    let cid = ContainerID::from_bytes(&k);
+                    let c = ContainerWrapper::new_from_bytes(v);
+                    let parent = c.parent();
+                    let idx = guards.register_container(&cid);
+                    let p = parent.as_ref().map(|p| guards.register_container(p));
+                    guards.set_parent(idx, p);
+                    if self.store.insert(idx, c).is_some() {
+                        count -= 1;
+                    }
                 }
-            }
+            });
 
             self.len = count;
         });
@@ -199,18 +203,20 @@ impl InnerStore {
 
         self.kv.with_kv(|kv| {
             let iter = kv.scan(Bound::Unbounded, Bound::Unbounded);
-            for (k, v) in iter {
-                let cid = ContainerID::from_bytes(&k);
-                let idx = self.arena.register_container(&cid);
-                if self.store.contains_key(&idx) {
-                    // the container is already loaded
-                    // the content in `store` is guaranteed to be newer than the content in `kv`
-                    continue;
-                }
+            self.arena.with_guards(|guards| {
+                for (k, v) in iter {
+                    let cid = ContainerID::from_bytes(&k);
+                    let idx = guards.register_container(&cid);
+                    if self.store.contains_key(&idx) {
+                        // the container is already loaded
+                        // the content in `store` is guaranteed to be newer than the content in `kv`
+                        continue;
+                    }
 
-                let container = ContainerWrapper::new_from_bytes(v);
-                self.store.insert(idx, container);
-            }
+                    let container = ContainerWrapper::new_from_bytes(v);
+                    self.store.insert(idx, container);
+                }
+            });
         });
 
         self.all_loaded = true;
