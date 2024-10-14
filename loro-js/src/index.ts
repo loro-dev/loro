@@ -1,4 +1,5 @@
 export * from "loro-wasm";
+export type * from "loro-wasm";
 import {
   Container,
   ContainerID,
@@ -13,7 +14,6 @@ import {
   TreeID,
   Value,
   ContainerType,
-  PeerID,
 } from "loro-wasm";
 
 /**

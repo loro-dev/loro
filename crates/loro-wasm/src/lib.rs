@@ -1001,7 +1001,7 @@ impl LoroDoc {
     /// Export the snapshot of current version, it's include all content of
     /// operations and states
     ///
-    /// @deprecated Use `export` instead
+    /// @deprecated Use `export({mode: "snapshot"})` instead
     #[wasm_bindgen(js_name = "exportSnapshot")]
     pub fn export_snapshot(&self) -> JsResult<Vec<u8>> {
         Ok(self.0.export_snapshot()?)
@@ -4202,9 +4202,13 @@ fn js_to_export_mode(js_mode: JsExportMode) -> JsResult<ExportMode<'static>> {
     match mode.as_str() {
         "update" => {
             let start_vv = js_sys::Reflect::get(&js_value, &JsValue::from_str("start_vv"))?;
-            let start_vv = js_to_version_vector(start_vv)?;
-            // TODO: PERF: avoid this clone
-            Ok(ExportMode::updates_owned(start_vv.0.clone()))
+            if start_vv.is_undefined() {
+                Ok(ExportMode::all_updates())
+            } else {
+                let start_vv = js_to_version_vector(start_vv)?;
+                // TODO: PERF: avoid this clone
+                Ok(ExportMode::updates_owned(start_vv.0.clone()))
+            }
         }
         "snapshot" => Ok(ExportMode::Snapshot),
         "shallow-snapshot" => {
@@ -4291,7 +4295,7 @@ interface LoroDoc {
     /**
      * Export updates from the specific version to the current version
      *
-     * @deprecated Use `export` instead
+     * @deprecated Use `export({mode: "update", start_vv: version})` instead
      *
      *  @example
      *  ```ts
@@ -4651,7 +4655,7 @@ export type JsonChange = {
 
 export type ExportMode = {
     mode: "update",
-    start_vv: VersionVector,
+    start_vv?: VersionVector,
 } | {
     mode: "snapshot",
 } | {
