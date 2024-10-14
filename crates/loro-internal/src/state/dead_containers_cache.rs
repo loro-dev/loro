@@ -1,22 +1,22 @@
 use super::{ContainerState, DocState};
 use crate::container::idx::ContainerIdx;
-use fxhash::FxHashSet;
+use fxhash::FxHashMap;
 
 #[derive(Default, Debug, Clone)]
 pub(super) struct DeadContainersCache {
-    deleted_containers: FxHashSet<ContainerIdx>,
+    cache: FxHashMap<ContainerIdx, bool>,
 }
 
 impl DeadContainersCache {
     pub fn clear(&mut self) {
-        self.deleted_containers.clear();
+        self.cache.clear();
     }
 }
 
 impl DocState {
     pub(crate) fn is_deleted(&mut self, idx: ContainerIdx) -> bool {
-        if self.dead_containers_cache.deleted_containers.contains(&idx) {
-            return true;
+        if let Some(is_deleted) = self.dead_containers_cache.cache.get(&idx) {
+            return *is_deleted;
         }
 
         let mut visited = vec![idx];
@@ -38,10 +38,8 @@ impl DocState {
             }
         };
 
-        if is_deleted {
-            for idx in visited {
-                self.dead_containers_cache.deleted_containers.insert(idx);
-            }
+        for idx in visited {
+            self.dead_containers_cache.cache.insert(idx, is_deleted);
         }
 
         is_deleted
