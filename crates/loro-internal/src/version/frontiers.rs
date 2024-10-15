@@ -282,9 +282,39 @@ impl Frontiers {
     /// Merges another Frontiers into this one.
     ///
     /// Id from other will override the id with the same peer from self.
-    pub fn merge(&mut self, other: &Frontiers) {
+    pub fn merge_with_greater(&mut self, other: &Frontiers) {
+        if self.is_empty() {
+            *self = other.clone();
+            return;
+        }
+
+        if let Some(id) = self.as_single() {
+            match other {
+                Frontiers::None => {}
+                Frontiers::ID(other_id) => {
+                    self.push(*other_id);
+                }
+                Frontiers::Map(internal_map) => {
+                    let mut map = internal_map.clone();
+                    map.0
+                        .entry(id.peer)
+                        .and_modify(|c| *c = (*c).max(id.counter))
+                        .or_insert(id.counter);
+                    *self = Frontiers::Map(map);
+                }
+            }
+
+            return;
+        }
+
+        let Frontiers::Map(map) = self else {
+            unreachable!()
+        };
         for id in other.iter() {
-            self.push(id);
+            map.0
+                .entry(id.peer)
+                .and_modify(|c| *c = (*c).max(id.counter))
+                .or_insert(id.counter);
         }
     }
 }
