@@ -1,3 +1,4 @@
+use pretty_assertions::assert_eq;
 use std::sync::{Arc, Mutex};
 
 use loro::{Frontiers, LoroDoc, LoroError, UndoManager, ID};
@@ -148,8 +149,8 @@ fn allow_editing_on_detached_mode_when_detached_editing_is_enabled() {
             id: 12@0,
             timestamp: 0,
             deps: [
-                6@1,
                 11@0,
+                6@1,
             ],
             lamport: 12,
             msg: None,

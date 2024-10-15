@@ -6,7 +6,8 @@ use loro_internal::encoding::{ImportBlobMetadata, ImportStatus};
 use loro_internal::event::Diff;
 use loro_internal::handler::{Handler, ValueOrHandler};
 use loro_internal::loro_common::IdSpanVector;
-use loro_internal::{ListDiffItem, LoroDoc, LoroValue};
+use loro_internal::version::VersionRange;
+use loro_internal::{CounterSpan, ListDiffItem, LoroDoc, LoroValue};
 use wasm_bindgen::JsValue;
 
 use crate::{
@@ -397,10 +398,17 @@ pub(crate) fn import_status_to_js_value(status: ImportStatus) -> JsValue {
     obj.into()
 }
 
-fn id_span_vector_to_js_value(v: IdSpanVector) -> JsValue {
+fn id_span_vector_to_js_value(v: VersionRange) -> JsValue {
     let map = Map::new();
-    for (k, v) in v.into_iter() {
-        Map::set(&map, &JsValue::from_str(&k.to_string()), &JsValue::from(v));
+    for (k, v) in v.iter() {
+        Map::set(
+            &map,
+            &JsValue::from_str(&k.to_string()),
+            &JsValue::from(CounterSpan {
+                start: v.0,
+                end: v.1,
+            }),
+        );
     }
     map.into()
 }

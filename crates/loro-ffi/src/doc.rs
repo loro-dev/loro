@@ -7,9 +7,9 @@ use std::{
 };
 
 use loro::{
-    cursor::CannotFindRelativePosition, CounterSpan, DocAnalysis, FrontiersNotIncluded, IdSpan,
-    JsonPathError, JsonSchema, Lamport, LoroDoc as InnerLoroDoc, LoroEncodeError, LoroError,
-    LoroResult, PeerID, Timestamp, ID,
+    cursor::CannotFindRelativePosition, Counter, CounterSpan, DocAnalysis, FrontiersNotIncluded,
+    IdSpan, JsonPathError, JsonSchema, Lamport, LoroDoc as InnerLoroDoc, LoroEncodeError,
+    LoroError, LoroResult, PeerID, Timestamp, VersionRange, ID,
 };
 
 use crate::{
@@ -755,9 +755,24 @@ pub struct ImportStatus {
 
 impl From<loro::ImportStatus> for ImportStatus {
     fn from(value: loro::ImportStatus) -> Self {
+        let a = &value.success;
         Self {
-            success: value.success.into_iter().collect(),
-            pending: value.pending.map(|p| p.into_iter().collect()),
+            success: vr_to_map(a),
+            pending: value.pending.as_ref().map(vr_to_map),
         }
     }
+}
+
+fn vr_to_map(a: &VersionRange) -> HashMap<u64, CounterSpan> {
+    a.iter()
+        .map(|x| {
+            (
+                *x.0,
+                CounterSpan {
+                    start: x.1 .0,
+                    end: x.1 .1,
+                },
+            )
+        })
+        .collect()
 }

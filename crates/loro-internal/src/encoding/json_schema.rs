@@ -13,14 +13,14 @@ use crate::{
     },
     op::{FutureInnerContent, InnerContent, Op, SliceRange},
     oplog::BlockChangeRef,
-    version::Frontiers,
+    version::{Frontiers, VersionRange},
     OpLog, VersionVector,
 };
 use either::Either;
 use json::{JsonOpContent, JsonSchema};
 use loro_common::{
-    ContainerID, ContainerType, CounterSpan, HasCounter, HasCounterSpan, IdLp, IdSpanVector,
-    LoroError, LoroResult, LoroValue, PeerID, TreeID, ID,
+    ContainerID, ContainerType, CounterSpan, HasCounter, HasCounterSpan, HasIdSpan, IdLp,
+    IdSpanVector, LoroError, LoroResult, LoroValue, PeerID, TreeID, ID,
 };
 use rle::{HasLength, RleVec, Sliceable};
 use std::sync::Arc;
@@ -70,26 +70,24 @@ pub(crate) fn import_json(oplog: &mut OpLog, json: JsonSchema) -> LoroResult<Imp
         latest_ids,
         pending_changes,
         changes_that_have_deps_before_shallow_root,
-        imported,
+        mut imported,
     } = import_changes_to_oplog(changes, oplog);
-    let mut pending = IdSpanVector::default();
+    let mut pending = VersionRange::default();
     pending_changes.iter().for_each(|c| {
-        let peer = c.id.peer;
-        let start = c.ctr_start();
-        let end = c.ctr_end();
-        pending
-            .entry(peer)
-            .or_insert_with(|| CounterSpan::new(start, end))
-            .extend_include(start, end);
+        pending.extends_to_include_id_span(c.id_span());
     });
-    oplog.try_apply_pending(latest_ids);
+    oplog.try_apply_pending(latest_ids, Some(&mut imported));
     oplog.import_unknown_lamport_pending_changes(pending_changes)?;
     if !changes_that_have_deps_before_shallow_root.is_empty() {
         return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
     };
     Ok(ImportStatus {
         success: imported,
-        pending: (!pending.is_empty()).then_some(pending),
+        pending: if pending.is_empty() {
+            None
+        } else {
+            Some(pending)
+        },
     })
 }
 

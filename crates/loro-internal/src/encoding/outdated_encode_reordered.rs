@@ -5,16 +5,16 @@ use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::rle::Sliceable;
 use itertools::Itertools;
 use loro_common::{
-    ContainerID, ContainerType, Counter, CounterSpan, HasCounterSpan, HasId, HasIdSpan, IdLp,
-    IdSpanVector, LoroError, LoroResult, PeerID, TreeID, ID,
+    ContainerID, ContainerType, Counter, HasCounterSpan, HasId, HasIdSpan, IdLp, LoroError,
+    LoroResult, PeerID, TreeID, ID,
 };
 use rle::HasLength;
 use serde_columnar::{columnar, ColumnarError};
-use std::collections::hash_map::Entry;
 use std::sync::Arc;
 use std::{borrow::Cow, cell::RefCell, cmp::Ordering, rc::Rc};
 use tracing::instrument;
 
+use crate::version::VersionRange;
 use crate::{
     arena::SharedArena,
     change::{Change, Lamport, Timestamp},
@@ -229,7 +229,7 @@ pub(crate) struct ImportChangesResult {
     pub latest_ids: Vec<ID>,
     pub pending_changes: Vec<Change>,
     pub changes_that_have_deps_before_shallow_root: Vec<Change>,
-    pub imported: IdSpanVector,
+    pub imported: VersionRange,
 }
 
 /// NOTE: This method expects that the remote_changes are already sorted by lamport value
@@ -240,7 +240,7 @@ pub(crate) fn import_changes_to_oplog(
     let mut pending_changes = Vec::new();
     let mut latest_ids = Vec::new();
     let mut changes_before_shallow_root = Vec::new();
-    let mut imported = IdSpanVector::default();
+    let mut imported = VersionRange::default();
     for mut change in changes {
         if change.ctr_end() <= oplog.vv().get(&change.id.peer).copied().unwrap_or(0) {
             // skip included changes
@@ -266,18 +266,7 @@ pub(crate) fn import_changes_to_oplog(
             continue;
         };
 
-        match imported.entry(change.peer()) {
-            Entry::Occupied(mut x) => {
-                let x = x.get_mut();
-                x.end = change.ctr_end();
-            }
-            Entry::Vacant(x) => {
-                x.insert(CounterSpan {
-                    start: change.id.counter,
-                    end: change.ctr_end(),
-                });
-            }
-        }
+        imported.extends_to_include_id_span(change.id_span());
         oplog.insert_new_change(change, false);
     }
 
@@ -740,7 +729,7 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
         // TODO: Fix this origin value
         doc.update_oplog_and_apply_delta_to_state_if_needed(
             |oplog| {
-                oplog.try_apply_pending(latest_ids);
+                oplog.try_apply_pending(latest_ids, None);
                 // ImportStatus is unnecessary
                 Ok(ImportStatus {
                     success: Default::default(),

@@ -11,7 +11,7 @@ use loro_internal::{
     fx_map,
     handler::{Handler, TextDelta, ValueOrHandler},
     loro::ExportMode,
-    version::Frontiers,
+    version::{Frontiers, VersionRange},
     ApplyDiff, HandlerTrait, ListHandler, LoroDoc, MapHandler, TextHandler, ToJson, TreeHandler,
     TreeParentId,
 };
@@ -1287,13 +1287,13 @@ fn import_status() -> LoroResult<()> {
         status1,
         ImportStatus {
             success: Default::default(),
-            pending: Some(fx_map!(1=>CounterSpan::new(1, 2)))
+            pending: Some(VersionRange::from_map(fx_map!(1=>(1, 2))))
         }
     );
     assert_eq!(
         status2,
         ImportStatus {
-            success: fx_map!(1=>CounterSpan::new(0, 2)),
+            success: VersionRange::from_map(fx_map!(1=>(0, 2))),
             pending: None
         }
     );
