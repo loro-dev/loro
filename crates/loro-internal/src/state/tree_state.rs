@@ -15,7 +15,7 @@ use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex, Weak};
 
-use super::{ContainerState, DiffApplyContext};
+use super::{ApplyLocalOpReturn, ContainerState, DiffApplyContext};
 use crate::configure::Configure;
 use crate::container::idx::ContainerIdx;
 use crate::delta::{TreeDiff, TreeDiffItem, TreeExternalDiff};
@@ -1263,7 +1263,7 @@ impl ContainerState for TreeState {
         // self.check_tree_integrity();
     }
 
-    fn apply_local_op(&mut self, raw_op: &RawOp, _op: &Op) -> LoroResult<()> {
+    fn apply_local_op(&mut self, raw_op: &RawOp, _op: &Op) -> LoroResult<ApplyLocalOpReturn> {
         match &raw_op.content {
             crate::op::RawOpContent::Tree(tree) => match &**tree {
                 TreeOp::Create {
@@ -1293,7 +1293,7 @@ impl ContainerState for TreeState {
             _ => unreachable!(),
         }
         // self.check_tree_integrity();
-        Ok(())
+        Ok(Default::default())
     }
 
     fn to_diff(

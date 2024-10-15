@@ -115,6 +115,11 @@ pub(crate) trait FastStateSnapshot {
         Self: Sized;
 }
 
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ApplyLocalOpReturn {
+    pub deleted_containers: Vec<ContainerID>,
+}
+
 #[enum_dispatch]
 pub(crate) trait ContainerState {
     fn container_idx(&self) -> ContainerIdx;
@@ -127,7 +132,7 @@ pub(crate) trait ContainerState {
 
     fn apply_diff(&mut self, diff: InternalDiff, ctx: DiffApplyContext);
 
-    fn apply_local_op(&mut self, raw_op: &RawOp, op: &Op) -> LoroResult<()>;
+    fn apply_local_op(&mut self, raw_op: &RawOp, op: &Op) -> LoroResult<ApplyLocalOpReturn>;
     /// Convert a state to a diff, such that an empty state will be transformed into the same as this state when it's applied.
     fn to_diff(
         &mut self,
@@ -202,7 +207,7 @@ impl<T: ContainerState> ContainerState for Box<T> {
         self.as_mut().apply_diff(diff, ctx)
     }
 
-    fn apply_local_op(&mut self, raw_op: &RawOp, op: &Op) -> LoroResult<()> {
+    fn apply_local_op(&mut self, raw_op: &RawOp, op: &Op) -> LoroResult<ApplyLocalOpReturn> {
         self.as_mut().apply_local_op(raw_op, op)
     }
 
@@ -516,17 +521,18 @@ impl DocState {
     /// It's expected that diff only contains [`InternalDiff`]
     ///
     #[instrument(skip_all)]
-    pub(crate) fn apply_diff(
-        &mut self,
-        mut diff: InternalDocDiff<'static>,
-        need_clear_dead_container_cache: bool,
-    ) {
+    pub(crate) fn apply_diff(&mut self, mut diff: InternalDocDiff<'static>, diff_mode: DiffMode) {
         if self.in_txn {
             panic!("apply_diff should not be called in a transaction");
         }
 
-        if need_clear_dead_container_cache {
-            self.dead_containers_cache.clear();
+        match diff_mode {
+            DiffMode::Checkout => {
+                self.dead_containers_cache.clear();
+            }
+            _ => {
+                self.dead_containers_cache.clear_alive();
+            }
         }
 
         let is_recording = self.is_recording();
@@ -731,7 +737,12 @@ impl DocState {
         if self.in_txn {
             self.changed_idx_in_txn.insert(op.container);
         }
-        state.apply_local_op(raw_op, op)
+        let ret = state.apply_local_op(raw_op, op)?;
+        if !ret.deleted_containers.is_empty() {
+            self.dead_containers_cache.clear_alive();
+        }
+
+        Ok(())
     }
 
     pub(crate) fn start_txn(&mut self, origin: InternalString, trigger: EventTriggerKind) {
@@ -840,7 +851,7 @@ impl DocState {
                 stack_vv.as_ref().unwrap()
             };
 
-            let unknown_diffs = diff_calc.calc_diff_internal(
+            let (unknown_diffs, _diff_mode) = diff_calc.calc_diff_internal(
                 oplog,
                 &Default::default(),
                 &Default::default(),
@@ -855,7 +866,7 @@ impl DocState {
                     diff: unknown_diffs.into(),
                     new_version: Cow::Owned(frontiers.clone()),
                 },
-                false,
+                DiffMode::Checkout,
             )
         }
 

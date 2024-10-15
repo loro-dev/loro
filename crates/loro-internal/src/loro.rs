@@ -495,7 +495,7 @@ impl LoroDoc {
             debug!("checkout from {:?} to {:?}", old_vv, oplog.vv());
             let mut diff = DiffCalculator::new(false);
             if &old_vv != oplog.vv() {
-                let diff = diff.calc_diff_internal(
+                let (diff, diff_mode) = diff.calc_diff_internal(
                     &oplog,
                     &old_vv,
                     &old_frontiers,
@@ -511,7 +511,7 @@ impl LoroDoc {
                         by: EventTriggerKind::Import,
                         new_version: Cow::Owned(oplog.frontiers().clone()),
                     },
-                    true,
+                    diff_mode,
                 );
             }
         } else {
@@ -1099,7 +1099,7 @@ impl LoroDoc {
         };
 
         self.set_detached(true);
-        let diff =
+        let (diff, diff_mode) =
             calc.calc_diff_internal(&oplog, before, &state.frontiers, after, &frontiers, None);
         state.apply_diff(
             InternalDocDiff {
@@ -1108,7 +1108,7 @@ impl LoroDoc {
                 by: EventTriggerKind::Checkout,
                 new_version: Cow::Owned(frontiers.clone()),
             },
-            true,
+            diff_mode,
         );
 
         drop(state);

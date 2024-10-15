@@ -31,7 +31,7 @@ use crate::{
     DocState,
 };
 
-use super::{ContainerState, DiffApplyContext};
+use super::{ApplyLocalOpReturn, ContainerState, DiffApplyContext};
 
 #[derive(Debug)]
 pub struct RichtextState {
@@ -566,7 +566,7 @@ impl ContainerState for RichtextState {
         // self.check_consistency_between_content_and_style_ranges()
     }
 
-    fn apply_local_op(&mut self, r_op: &RawOp, op: &Op) -> LoroResult<()> {
+    fn apply_local_op(&mut self, r_op: &RawOp, op: &Op) -> LoroResult<ApplyLocalOpReturn> {
         self.update_version();
         match &op.content {
             crate::op::InnerContent::List(l) => match l {
@@ -628,7 +628,7 @@ impl ContainerState for RichtextState {
         }
 
         // self.check_consistency_between_content_and_style_ranges();
-        Ok(())
+        Ok(Default::default())
     }
 
     fn to_diff(

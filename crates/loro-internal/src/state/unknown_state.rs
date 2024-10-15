@@ -13,7 +13,7 @@ use crate::{
     DocState,
 };
 
-use super::{ContainerState, DiffApplyContext};
+use super::{ApplyLocalOpReturn, ContainerState, DiffApplyContext};
 
 #[derive(Debug, Clone)]
 pub struct UnknownState {
@@ -47,7 +47,7 @@ impl ContainerState for UnknownState {
         unreachable!()
     }
 
-    fn apply_local_op(&mut self, _raw_op: &RawOp, _op: &Op) -> LoroResult<()> {
+    fn apply_local_op(&mut self, _raw_op: &RawOp, _op: &Op) -> LoroResult<ApplyLocalOpReturn> {
         unreachable!()
     }
 
