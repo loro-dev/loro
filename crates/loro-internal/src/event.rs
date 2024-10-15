@@ -1,5 +1,4 @@
 use enum_as_inner::EnumAsInner;
-use fxhash::FxHasher64;
 use itertools::Itertools;
 use loro_delta::{array_vec::ArrayVec, delta_trait::DeltaAttr, DeltaItem, DeltaRope};
 use serde::{Deserialize, Serialize};
@@ -18,10 +17,7 @@ use crate::{
     InternalString,
 };
 
-use std::{
-    borrow::Cow,
-    hash::{Hash, Hasher},
-};
+use std::{borrow::Cow, hash::Hash};
 
 use loro_common::{ContainerID, TreeID};
 

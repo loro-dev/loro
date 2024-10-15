@@ -15,7 +15,7 @@ use std::{
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::IdSpanVector;
 use rle::{HasLength, Sliceable};
-use smallvec::{smallvec, SmallVec};
+use smallvec::SmallVec;
 use tracing::trace;
 mod iter;
 mod mermaid;

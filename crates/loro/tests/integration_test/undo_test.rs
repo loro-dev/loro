@@ -81,7 +81,7 @@ fn basic_list_undo_deletion() -> Result<(), LoroError> {
         })
     );
 
-    assert_eq!(doc.oplog_frontiers()[0].counter, 4);
+    assert_eq!(doc.oplog_frontiers().as_single().unwrap().counter, 4);
 
     Ok(())
 }
@@ -310,7 +310,7 @@ fn undo_id_span_that_contains_remote_deps_inside() -> Result<(), LoroError> {
             "text": "B"
         })
     );
-    assert_eq!(doc_a.oplog_frontiers()[0].counter, 14);
+    assert_eq!(doc_a.oplog_frontiers().as_single().unwrap().counter, 14);
     Ok(())
 }
 

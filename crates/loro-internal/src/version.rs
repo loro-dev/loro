@@ -8,10 +8,9 @@ use crate::{
     span::{CounterSpan, IdSpan},
     LoroError, PeerID,
 };
-use fxhash::{FxHashMap, FxHashSet};
+use fxhash::FxHashMap;
 use loro_common::{HasCounter, HasCounterSpan, HasIdSpan, HasLamportSpan, IdFull, IdSpanVector};
 use serde::{Deserialize, Serialize};
-use smallvec::smallvec;
 use smallvec::SmallVec;
 use std::{
     cmp::Ordering,

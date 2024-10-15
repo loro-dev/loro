@@ -17,7 +17,7 @@ pub enum Frontiers {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct InternalMap(FxHashMap<PeerID, Counter>);
+pub struct InternalMap(FxHashMap<PeerID, Counter>);
 
 impl InternalMap {
     fn new() -> Self {
@@ -118,7 +118,7 @@ impl Frontiers {
                 }
             }
             Frontiers::Map(map) => {
-                map.retain(|id| f(&id));
+                map.retain(|id| f(id));
                 match map.len() {
                     0 => *self = Frontiers::None,
                     1 => {
@@ -251,26 +251,6 @@ impl Frontiers {
     pub fn merge(&mut self, other: &Frontiers) {
         for id in other.iter() {
             self.push(id);
-        }
-    }
-}
-
-pub enum FrontiersIntoIterator {
-    None,
-    ID(Option<ID>),
-    Map(std::collections::hash_map::IntoIter<PeerID, Counter>),
-}
-
-impl Iterator for FrontiersIntoIterator {
-    type Item = ID;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            FrontiersIntoIterator::None => None,
-            FrontiersIntoIterator::ID(id) => id.take(),
-            FrontiersIntoIterator::Map(iter) => {
-                iter.next().map(|(peer, counter)| ID::new(peer, counter))
-            }
         }
     }
 }

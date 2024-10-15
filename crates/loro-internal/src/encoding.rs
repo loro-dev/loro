@@ -21,7 +21,6 @@ use loro_common::{
 };
 use num_traits::{FromPrimitive, ToPrimitive};
 use rle::{HasLength, Sliceable};
-use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 
 /// The mode of the export.
