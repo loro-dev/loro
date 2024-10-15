@@ -246,7 +246,7 @@ struct OrdIdSpan<'a> {
     id: ID,
     lamport: Lamport,
     len: usize,
-    deps: Cow<'a, [ID]>,
+    deps: Cow<'a, Frontiers>,
 }
 
 impl<'a> HasLength for OrdIdSpan<'a> {
@@ -300,7 +300,7 @@ impl<'a> OrdIdSpan<'a> {
         Some(OrdIdSpan {
             id: span_id,
             lamport: span.lamport(),
-            deps: Cow::Owned(span.deps().to_vec()),
+            deps: Cow::Owned(span.deps().clone()),
             len: (id.counter - span_id.counter) as usize + 1,
         })
     }
@@ -310,7 +310,7 @@ impl<'a> OrdIdSpan<'a> {
         OrdIdSpan {
             id: self.id,
             lamport: self.lamport,
-            deps: Cow::Borrowed(&[]),
+            deps: Cow::Owned(Default::default()),
             len: 1,
         }
     }
@@ -350,10 +350,10 @@ where
     let mut ans: FxHashMap<PeerID, Counter> = Default::default();
     let mut queue: BinaryHeap<(OrdIdSpan, NodeType)> = BinaryHeap::new();
     for id in a_ids {
-        queue.push((OrdIdSpan::from_dag_node(*id, get).unwrap(), NodeType::A));
+        queue.push((OrdIdSpan::from_dag_node(id, get).unwrap(), NodeType::A));
     }
     for id in b_ids {
-        queue.push((OrdIdSpan::from_dag_node(*id, get).unwrap(), NodeType::B));
+        queue.push((OrdIdSpan::from_dag_node(id, get).unwrap(), NodeType::B));
     }
     let mut visited: HashMap<PeerID, (Counter, NodeType), _> = FxHashMap::default();
     // invariants in this method:
@@ -450,7 +450,7 @@ where
             break;
         }
 
-        for &dep_id in node.deps.as_ref() {
+        for dep_id in node.deps.as_ref().iter() {
             queue.push((OrdIdSpan::from_dag_node(dep_id, get).unwrap(), node_type));
         }
 
@@ -473,7 +473,7 @@ where
 
                 queue.push((
                     OrdIdSpan {
-                        deps: Cow::Borrowed(&[]),
+                        deps: Cow::Owned(Default::default()),
                         id: node.id,
                         len: 1,
                         lamport: node.lamport,
@@ -552,12 +552,12 @@ where
     let mut queue: BinaryHeap<(SmallVec<[OrdIdSpan; 1]>, NodeType)> = BinaryHeap::new();
 
     fn ids_to_ord_id_spans<'a, D: DagNode + 'a, F: Fn(ID) -> Option<D>>(
-        ids: &[ID],
+        ids: &Frontiers,
         get: &'a F,
     ) -> Option<SmallVec<[OrdIdSpan<'a>; 1]>> {
         trace!("ids_to_ord_id_spans {:?}", ids);
         let mut ans: SmallVec<[OrdIdSpan<'a>; 1]> = SmallVec::with_capacity(ids.len());
-        for &id in ids {
+        for id in ids.iter() {
             if let Some(node) = OrdIdSpan::from_dag_node(id, get) {
                 ans.push(node);
             } else {
@@ -657,7 +657,7 @@ where
 
     let mode = if is_right_greater {
         if ans.len() <= 1 {
-            debug_assert_eq!(ans.as_slice(), left);
+            debug_assert_eq!(&ans, left);
         }
 
         if is_linear {

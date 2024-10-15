@@ -283,7 +283,7 @@ impl<const N: usize> From<[ID; N]> for Frontiers {
             1 => Frontiers::ID(value[0]),
             _ => {
                 let map = value.into_iter().map(|id| (id.peer, id.counter)).collect();
-                Frontiers::Map(map)
+                Frontiers::Map(InternalMap(map))
             }
         }
     }
@@ -318,6 +318,16 @@ impl Iterator for FrontiersIntoIterator {
             FrontiersIntoIterator::Map(iter) => {
                 iter.next().map(|(peer, counter)| ID::new(peer, counter))
             }
+        }
+    }
+}
+
+impl Frontiers {
+    pub fn to_vec(&self) -> Vec<ID> {
+        match self {
+            Frontiers::None => Vec::new(),
+            Frontiers::ID(id) => vec![*id],
+            Frontiers::Map(map) => map.iter().collect(),
         }
     }
 }

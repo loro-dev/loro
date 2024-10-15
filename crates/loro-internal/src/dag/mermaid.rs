@@ -133,7 +133,7 @@ fn get_dag_break_points<T: DagNode>(dag: &impl Dag<Node = T>) -> BreakPoints {
                 .entry(dep.peer)
                 .or_default()
                 .insert(dep.counter);
-            break_points.links.entry(id).or_default().push(*dep);
+            break_points.links.entry(id).or_default().push(dep);
         }
     }
 

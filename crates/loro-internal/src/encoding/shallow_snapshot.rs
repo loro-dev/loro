@@ -46,14 +46,15 @@ pub(crate) fn export_shallow_snapshot_inner(
     {
         if !start_from.is_empty() {
             assert!(start_from.len() == 1);
-            let node = oplog.dag.get(start_from[0]).unwrap();
-            if start_from[0].counter == node.cnt {
+            let id = start_from.as_single().unwrap();
+            let node = oplog.dag.get(id).unwrap();
+            if id.counter == node.cnt {
                 let vv = oplog.dag().frontiers_to_vv(&node.deps).unwrap();
                 assert_eq!(vv, start_vv);
             } else {
                 let vv = oplog
                     .dag()
-                    .frontiers_to_vv(&Frontiers::from(start_from[0].inc(-1)))
+                    .frontiers_to_vv(&Frontiers::from(id.inc(-1)))
                     .unwrap();
                 assert_eq!(vv, start_vv);
             }
@@ -213,7 +214,7 @@ fn cids_to_bytes(
 /// Otherwise, users cannot replay the history from the initial version till the latest version.
 fn calc_shallow_doc_start(oplog: &crate::OpLog, frontiers: &Frontiers) -> Frontiers {
     // start is the real start frontiers
-    let (mut start, _) = oplog
+    let (start, _) = oplog
         .dag()
         .find_common_ancestor(frontiers, oplog.frontiers());
     while start.len() > 1 {

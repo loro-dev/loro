@@ -210,7 +210,7 @@ impl AppDag {
     /// If the lamport of change can be calculated, return Ok, otherwise, Err
     pub(crate) fn calc_unknown_lamport_change(&self, change: &mut Change) -> Result<(), ()> {
         for dep in change.deps.iter() {
-            match self.get_lamport(dep) {
+            match self.get_lamport(&dep) {
                 Some(lamport) => {
                     change.lamport = change.lamport.max(lamport + 1);
                 }
@@ -357,7 +357,7 @@ impl AppDag {
 
     fn handle_deps_break_points(
         &self,
-        ids: &[ID],
+        ids: &Frontiers,
         skip_peer: PeerID,
         map: Option<&mut BTreeMap<ID, AppDagNode>>,
     ) {
@@ -366,7 +366,7 @@ impl AppDag {
             map_guard = Some(self.map.try_lock().unwrap());
             map_guard.as_mut().unwrap()
         });
-        for &id in ids.iter() {
+        for id in ids.iter() {
             if id.peer == skip_peer {
                 continue;
             }
@@ -553,18 +553,18 @@ impl AppDag {
 
             for (_, node) in map.iter() {
                 for dep in node.deps.iter() {
-                    maybe_frontiers.remove(dep);
+                    maybe_frontiers.remove(&dep);
                 }
             }
 
-            let frontiers = self.frontiers.iter().copied().collect::<FxHashSet<_>>();
+            let frontiers = self.frontiers.iter().collect::<FxHashSet<_>>();
             assert_eq!(maybe_frontiers, frontiers);
         }
     }
 
     pub(crate) fn can_export_shallow_snapshot_on(&self, deps: &Frontiers) -> bool {
         for id in deps.iter() {
-            if !self.vv.includes_id(*id) {
+            if !self.vv.includes_id(id) {
                 return false;
             }
         }
@@ -589,13 +589,13 @@ impl AppDag {
             return true;
         }
 
-        if deps.iter().any(|x| self.shallow_since_vv.includes_id(*x)) {
+        if deps.iter().any(|x| self.shallow_since_vv.includes_id(x)) {
             return true;
         }
 
         if deps
             .iter()
-            .any(|x| self.shallow_since_frontiers.contains(x))
+            .any(|x| self.shallow_since_frontiers.contains(&x))
         {
             return deps != &self.shallow_since_frontiers;
         }
@@ -640,7 +640,7 @@ impl AppDag {
                 break;
             }
 
-            for &dep in node.deps.iter() {
+            for dep in node.deps.iter() {
                 let Some(dep_node) = self.get(dep) else {
                     continue;
                 };
@@ -671,7 +671,7 @@ impl AppDag {
                     node.peer == start_id.peer
                         && node.cnt + node.len as Counter == start_id.counter
                         && deps.len() == 1
-                        && deps[0].peer == start_id.peer
+                        && deps.as_single().unwrap().peer == start_id.peer
                 );
                 let inner = Arc::make_mut(&mut node.inner);
                 inner.len += len;
@@ -696,7 +696,7 @@ impl AppDag {
 
 fn check_always_dep_on_last_id(map: &BTreeMap<ID, AppDagNode>) {
     for (_, node) in map.iter() {
-        for &dep in node.deps.iter() {
+        for dep in node.deps.iter() {
             let Some((&dep_id, dep_node)) = map.range(..=dep).next_back() else {
                 // It's shallow
                 continue;
@@ -787,7 +787,10 @@ impl Mergable for AppDagNode {
     where
         Self: Sized,
     {
-        assert_eq!(other.deps[0].counter, self.cnt + self.len as Counter - 1);
+        assert_eq!(
+            other.deps.as_single().unwrap().counter,
+            self.cnt + self.len as Counter - 1
+        );
         let this = Arc::make_mut(&mut self.inner);
         this.len += other.len;
         this.has_succ = other.has_succ;
@@ -801,7 +804,7 @@ impl HasLamport for AppDagNode {
 }
 
 impl DagNode for AppDagNode {
-    fn deps(&self) -> &[ID] {
+    fn deps(&self) -> &Frontiers {
         &self.deps
     }
 }
@@ -930,10 +933,10 @@ impl AppDag {
         })
     }
 
-    pub fn get_change_lamport_from_deps(&self, deps: &[ID]) -> Option<Lamport> {
+    pub fn get_change_lamport_from_deps(&self, deps: &Frontiers) -> Option<Lamport> {
         let mut lamport = 0;
         for id in deps.iter() {
-            let x = self.get_lamport(id)?;
+            let x = self.get_lamport(&id)?;
             lamport = lamport.max(x + 1);
         }
 
@@ -951,10 +954,10 @@ impl AppDag {
 
         let mut vv: VersionVector = Default::default();
         for id in frontiers.iter() {
-            let x = self.get(*id)?;
+            let x = self.get(id)?;
             let target_vv = self.ensure_vv_for(&x);
             vv.extend_to_include_vv(target_vv.iter());
-            vv.extend_to_include_last_id(*id);
+            vv.extend_to_include_last_id(id);
         }
 
         Some(vv)
@@ -966,8 +969,9 @@ impl AppDag {
             return Default::default();
         }
 
+        let mut iter = frontiers.iter();
         let mut vv = {
-            let id = frontiers[0];
+            let id = iter.next().unwrap();
             let Some(x) = self.get(id) else {
                 unreachable!()
             };
@@ -976,7 +980,7 @@ impl AppDag {
             vv
         };
 
-        for id in frontiers[1..].iter() {
+        for id in iter {
             let Some(x) = self.get(*id) else {
                 unreachable!()
             };
@@ -1055,8 +1059,9 @@ impl AppDag {
             return 0;
         }
 
+        let mut iter = frontiers.iter();
         let mut lamport = {
-            let id = frontiers[0];
+            let id = iter.next().unwrap();
             let Some(x) = self.get(id) else {
                 unreachable!()
             };
@@ -1064,8 +1069,8 @@ impl AppDag {
             (id.counter - x.cnt) as Lamport + x.lamport + 1
         };
 
-        for id in frontiers[1..].iter() {
-            let Some(x) = self.get(*id) else {
+        for id in iter {
+            let Some(x) = self.get(id) else {
                 unreachable!()
             };
             assert!(id.counter >= x.cnt);
@@ -1085,7 +1090,7 @@ impl AppDag {
     pub fn cmp_with_frontiers(&self, other: &Frontiers) -> Ordering {
         if &self.frontiers == other {
             Ordering::Equal
-        } else if other.iter().all(|id| self.vv.includes_id(*id)) {
+        } else if other.iter().all(|id| self.vv.includes_id(id)) {
             Ordering::Greater
         } else {
             Ordering::Less

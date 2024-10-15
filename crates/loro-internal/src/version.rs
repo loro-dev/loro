@@ -824,12 +824,13 @@ impl VersionVector {
 #[tracing::instrument(skip(dag))]
 pub fn shrink_frontiers(last_ids: &[ID], dag: &AppDag) -> Result<Frontiers, ID> {
     // it only keep the ids of ops that are concurrent to each other
-    let mut frontiers = Frontiers::default();
     if last_ids.is_empty() {
+        let mut frontiers = Frontiers::default();
         return Ok(frontiers);
     }
 
     if last_ids.len() == 1 {
+        let mut frontiers = Frontiers::default();
         frontiers.push(last_ids[0]);
         return Ok(frontiers);
     }
@@ -837,6 +838,7 @@ pub fn shrink_frontiers(last_ids: &[ID], dag: &AppDag) -> Result<Frontiers, ID> 
     let mut last_ids = {
         let ids = filter_duplicated_peer_id(last_ids);
         if last_ids.len() == 1 {
+            let mut frontiers = Frontiers::default();
             frontiers.push(last_ids[0]);
             return Ok(frontiers);
         }
@@ -852,6 +854,7 @@ pub fn shrink_frontiers(last_ids: &[ID], dag: &AppDag) -> Result<Frontiers, ID> 
         last_ids
     };
 
+    let mut frontiers = Vec::new();
     // Iterate from the greatest lamport to the smallest
     last_ids.sort_by_key(|x| x.lamport);
     for id in last_ids.iter().rev() {
@@ -878,7 +881,7 @@ pub fn shrink_frontiers(last_ids: &[ID], dag: &AppDag) -> Result<Frontiers, ID> 
         }
     }
 
-    Ok(frontiers)
+    Ok(frontiers.into())
 }
 
 fn filter_duplicated_peer_id(last_ids: &[ID]) -> Vec<ID> {
