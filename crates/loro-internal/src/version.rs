@@ -851,15 +851,9 @@ impl VersionVector {
 #[tracing::instrument(skip(dag))]
 pub fn shrink_frontiers(last_ids: &Frontiers, dag: &AppDag) -> Result<Frontiers, ID> {
     // it only keep the ids of ops that are concurrent to each other
-    if last_ids.is_empty() {
-        let frontiers = Frontiers::default();
-        return Ok(frontiers);
-    }
 
-    if last_ids.len() == 1 {
-        let mut frontiers = Frontiers::default();
-        frontiers.push(last_ids.as_single().unwrap());
-        return Ok(frontiers);
+    if last_ids.len() <= 1 {
+        return Ok(last_ids.clone());
     }
 
     let mut last_ids = {

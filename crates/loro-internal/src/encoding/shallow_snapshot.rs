@@ -248,7 +248,7 @@ fn calc_shallow_doc_start(oplog: &crate::OpLog, frontiers: &Frontiers) -> Fronti
         }
     }
 
-    start
+    ans
 }
 
 pub(crate) fn encode_snapshot_at<W: std::io::Write>(

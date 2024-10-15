@@ -859,6 +859,7 @@ impl AppDag {
         if target_node.vv.get().is_none() {
             // (node, has_processed_children)
             let mut stack: SmallVec<[AppDagNode; 4]> = smallvec::smallvec![target_node.clone()];
+            // FIXME: cache pushed app dag node
             while let Some(top_node) = stack.pop() {
                 let mut ans_vv = ImVersionVector::default();
                 // trace!("node={:?} {:?}", &top_node, has_all_deps_met);
