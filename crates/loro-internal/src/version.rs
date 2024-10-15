@@ -822,16 +822,16 @@ impl VersionVector {
 
 /// Use minimal set of ids to represent the frontiers
 #[tracing::instrument(skip(dag))]
-pub fn shrink_frontiers(last_ids: &[ID], dag: &AppDag) -> Result<Frontiers, ID> {
+pub fn shrink_frontiers(last_ids: &Frontiers, dag: &AppDag) -> Result<Frontiers, ID> {
     // it only keep the ids of ops that are concurrent to each other
     if last_ids.is_empty() {
-        let mut frontiers = Frontiers::default();
+        let frontiers = Frontiers::default();
         return Ok(frontiers);
     }
 
     if last_ids.len() == 1 {
         let mut frontiers = Frontiers::default();
-        frontiers.push(last_ids[0]);
+        frontiers.push(last_ids.as_single().unwrap());
         return Ok(frontiers);
     }
 
@@ -839,7 +839,7 @@ pub fn shrink_frontiers(last_ids: &[ID], dag: &AppDag) -> Result<Frontiers, ID> 
         let ids = filter_duplicated_peer_id(last_ids);
         if last_ids.len() == 1 {
             let mut frontiers = Frontiers::default();
-            frontiers.push(last_ids[0]);
+            frontiers.push(last_ids.as_single().unwrap());
             return Ok(frontiers);
         }
 
@@ -884,9 +884,9 @@ pub fn shrink_frontiers(last_ids: &[ID], dag: &AppDag) -> Result<Frontiers, ID> 
     Ok(frontiers.into())
 }
 
-fn filter_duplicated_peer_id(last_ids: &[ID]) -> Vec<ID> {
+fn filter_duplicated_peer_id(last_ids: &Frontiers) -> Vec<ID> {
     let mut peer_max_counters = FxHashMap::default();
-    for &id in last_ids {
+    for id in last_ids.iter() {
         let counter = peer_max_counters.entry(id.peer).or_insert(id.counter);
         if id.counter > *counter {
             *counter = id.counter;

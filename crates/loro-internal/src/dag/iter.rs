@@ -136,7 +136,7 @@ impl<'a, T: DagNode> Iterator for DagIteratorVV<'a, T> {
             let mut vv = {
                 // calculate vv
                 let mut vv: Option<VersionVector> = None;
-                for dep_id in node.deps() {
+                for dep_id in node.deps().iter() {
                     let dep = self.dag.get(dep_id).unwrap();
                     let dep_vv = self.vv_map.get(&dep.id_start()).unwrap();
                     if let Some(vv) = vv.as_mut() {

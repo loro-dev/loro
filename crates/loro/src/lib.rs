@@ -451,7 +451,7 @@ impl LoroDoc {
     }
 
     /// Minimize the frontiers by removing the unnecessary entries.
-    pub fn minimize_frontiers(&self, frontiers: &[ID]) -> Result<Frontiers, ID> {
+    pub fn minimize_frontiers(&self, frontiers: &Frontiers) -> Result<Frontiers, ID> {
         self.with_oplog(|oplog| shrink_frontiers(frontiers, oplog.dag()))
     }
 

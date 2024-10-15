@@ -56,7 +56,7 @@ pub(crate) trait Dag: Debug {
 
     fn get(&self, id: ID) -> Option<Self::Node>;
     #[allow(unused)]
-    fn frontier(&self) -> &[ID];
+    fn frontier(&self) -> &Frontiers;
     fn vv(&self) -> VersionVector;
 }
 
@@ -219,7 +219,7 @@ where
     }
 
     let mut stack = Vec::with_capacity(node.deps().len());
-    for dep in node.deps() {
+    for dep in node.deps().iter() {
         stack.push(dep);
     }
 
@@ -228,7 +228,7 @@ where
         let node_id_start = node.id_start();
         if !visited.contains(&node_id_start) {
             vv.try_update_last(node_id);
-            for dep in node.deps() {
+            for dep in node.deps().iter() {
                 if !visited.contains(&dep) {
                     stack.push(dep);
                 }
@@ -349,10 +349,10 @@ where
     trace!("a {:?} b {:?}", a_ids, b_ids);
     let mut ans: FxHashMap<PeerID, Counter> = Default::default();
     let mut queue: BinaryHeap<(OrdIdSpan, NodeType)> = BinaryHeap::new();
-    for id in a_ids {
+    for id in a_ids.iter() {
         queue.push((OrdIdSpan::from_dag_node(id, get).unwrap(), NodeType::A));
     }
-    for id in b_ids {
+    for id in b_ids.iter() {
         queue.push((OrdIdSpan::from_dag_node(id, get).unwrap(), NodeType::B));
     }
     let mut visited: HashMap<PeerID, (Counter, NodeType), _> = FxHashMap::default();

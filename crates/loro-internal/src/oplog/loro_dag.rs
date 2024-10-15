@@ -297,7 +297,7 @@ impl AppDag {
         let mut unparsed_vv = self.unparsed_vv.try_lock().unwrap();
         let end_counter = unparsed_vv[&peer];
         assert!(end_counter <= nodes_cnt_end);
-        let mut deps_on_others = vec![];
+        let mut deps_on_others = Frontiers::default();
         let mut break_point_set = self.unhandled_dep_points.try_lock().unwrap();
         for mut node in nodes {
             if node.cnt >= end_counter {
@@ -312,7 +312,7 @@ impl AppDag {
 
             for dep in node.deps.iter() {
                 if dep.peer != peer {
-                    deps_on_others.push(*dep);
+                    deps_on_others.push(dep);
                 }
             }
 
@@ -441,8 +441,9 @@ impl AppDag {
         if let Some((vv, f)) = v.start_version {
             if !f.is_empty() {
                 assert!(f.len() == 1);
-                let node = self.get(f[0]).unwrap();
-                assert!(node.cnt == f[0].counter);
+                let id = f.as_single().unwrap();
+                let node = self.get(id).unwrap();
+                assert!(node.cnt == id.counter);
                 self.shallow_root_frontiers_deps = node.deps.clone();
             }
             self.shallow_since_frontiers = f;
@@ -511,7 +512,7 @@ impl AppDag {
             let map = self.map.try_lock().unwrap();
             'outer: for (_, node) in map.iter() {
                 let mut this_lamport = 0;
-                for &dep in node.deps.iter() {
+                for dep in node.deps.iter() {
                     if self.shallow_since_vv.includes_id(dep) {
                         continue 'outer;
                     }
@@ -529,7 +530,7 @@ impl AppDag {
             'outer: for (_, node) in map.iter() {
                 let actual_vv = self.ensure_vv_for(node);
                 let mut expected_vv = ImVersionVector::default();
-                for &dep in node.deps.iter() {
+                for dep in node.deps.iter() {
                     if self.shallow_since_vv.includes_id(dep) {
                         continue 'outer;
                     }
@@ -780,7 +781,7 @@ impl Mergable for AppDagNode {
             && self.cnt + self.len as Counter == other.cnt
             && other.deps.len() == 1
             && self.lamport + self.len as Lamport == other.lamport
-            && other.deps[0].peer == self.peer
+            && other.deps.as_single().unwrap().peer == self.peer
     }
 
     fn merge(&mut self, other: &Self, _conf: &())
@@ -812,7 +813,7 @@ impl DagNode for AppDagNode {
 impl Dag for AppDag {
     type Node = AppDagNode;
 
-    fn frontier(&self) -> &[ID] {
+    fn frontier(&self) -> &Frontiers {
         &self.frontiers
     }
 
@@ -873,7 +874,7 @@ impl AppDag {
                 } else {
                     let mut all_deps_processed = true;
                     for id in top_node.deps.iter() {
-                        let node = self.get(*id).expect("deps should be in the dag");
+                        let node = self.get(id).expect("deps should be in the dag");
                         if node.vv.get().is_none() {
                             // assert!(!has_all_deps_met);
                             if all_deps_processed {
@@ -890,7 +891,7 @@ impl AppDag {
                     }
 
                     for id in top_node.deps.iter() {
-                        let node = self.get(*id).expect("deps should be in the dag");
+                        let node = self.get(id).expect("deps should be in the dag");
                         let dep_vv = node.vv.get().unwrap();
                         if ans_vv.is_empty() {
                             ans_vv = dep_vv.clone();
@@ -981,12 +982,12 @@ impl AppDag {
         };
 
         for id in iter {
-            let Some(x) = self.get(*id) else {
+            let Some(x) = self.get(id) else {
                 unreachable!()
             };
             let x = self.ensure_vv_for(&x);
             vv.extend_to_include_vv(x.iter());
-            vv.extend_to_include_last_id(*id);
+            vv.extend_to_include_last_id(id);
         }
 
         vv
@@ -998,7 +999,7 @@ impl AppDag {
         }
 
         let this = vv;
-        let last_ids: Vec<ID> = this
+        let last_ids: Frontiers = this
             .iter()
             .filter_map(|(client_id, cnt)| {
                 if *cnt == 0 {
@@ -1029,7 +1030,7 @@ impl AppDag {
         }
 
         let this = vv;
-        let last_ids: Vec<ID> = this
+        let last_ids: Frontiers = this
             .iter()
             .filter_map(|(client_id, cnt)| {
                 if *cnt == 0 {

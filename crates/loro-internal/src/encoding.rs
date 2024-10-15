@@ -535,7 +535,7 @@ pub(crate) fn decode_snapshot(
     })
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ImportBlobMetadata {
     /// The partial start version vector.
     ///

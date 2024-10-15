@@ -97,16 +97,6 @@ pub struct DocDiff {
     pub diff: Vec<ContainerDiff>,
 }
 
-impl DocDiff {
-    /// Get the unique id of the diff.
-    pub fn id(&self) -> u64 {
-        let mut hasher = FxHasher64::default();
-        self.from.hash(&mut hasher);
-        self.to.hash(&mut hasher);
-        hasher.finish()
-    }
-}
-
 #[derive(Debug, Clone)]
 pub(crate) struct InternalContainerDiff {
     pub(crate) idx: ContainerIdx,

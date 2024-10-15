@@ -819,12 +819,12 @@ impl LoroDoc {
         {
             // check whether a and b are valid
             let oplog = self.oplog.try_lock().unwrap();
-            for &id in a.iter() {
+            for id in a.iter() {
                 if !oplog.dag.contains(id) {
                     return Err(LoroError::FrontiersNotFound(id));
                 }
             }
-            for &id in b.iter() {
+            for id in b.iter() {
                 if !oplog.dag.contains(id) {
                     return Err(LoroError::FrontiersNotFound(id));
                 }
@@ -1096,7 +1096,7 @@ impl LoroDoc {
 
         let mut state = self.state.try_lock().unwrap();
         let mut calc = self.diff_calculator.try_lock().unwrap();
-        for &i in frontiers.iter() {
+        for i in frontiers.iter() {
             if !oplog.dag.contains(i) {
                 drop(oplog);
                 drop(state);
@@ -1588,7 +1588,7 @@ impl LoroDoc {
                 break;
             }
 
-            for &dep in deps.iter() {
+            for dep in deps.iter() {
                 let Some(dep_node) = self.oplog().try_lock().unwrap().get_change_at(dep) else {
                     continue;
                 };

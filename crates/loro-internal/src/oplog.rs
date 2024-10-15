@@ -595,7 +595,7 @@ impl OpLog {
     pub fn get_greatest_timestamp(&self, frontiers: &Frontiers) -> Timestamp {
         let mut max_timestamp = Timestamp::default();
         for id in frontiers.iter() {
-            let change = self.get_change_at(*id).unwrap();
+            let change = self.get_change_at(id).unwrap();
             if change.timestamp > max_timestamp {
                 max_timestamp = change.timestamp;
             }

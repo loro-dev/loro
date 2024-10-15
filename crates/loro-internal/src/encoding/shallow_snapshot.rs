@@ -214,17 +214,23 @@ fn cids_to_bytes(
 /// Otherwise, users cannot replay the history from the initial version till the latest version.
 fn calc_shallow_doc_start(oplog: &crate::OpLog, frontiers: &Frontiers) -> Frontiers {
     // start is the real start frontiers
-    let (start, _) = oplog
+    let (mut start, _) = oplog
         .dag()
         .find_common_ancestor(frontiers, oplog.frontiers());
+    if start.len() <= 1 {
+        return start;
+    }
+
     while start.len() > 1 {
-        start.drain(1..);
+        start.keep_one();
         let (new_start, _) = oplog.dag().find_common_ancestor(&start, oplog.frontiers());
         start = new_start;
     }
 
-    for id in start.iter_mut() {
-        if let Some(op) = oplog.get_op_that_includes(*id) {
+    let mut ans = Frontiers::new();
+    for id in start.iter() {
+        let mut processed = false;
+        if let Some(op) = oplog.get_op_that_includes(id) {
             if let crate::op::InnerContent::List(InnerListOp::StyleStart { .. }) = &op.content {
                 // StyleStart and StyleEnd operations must be kept together in the GC snapshot.
                 // Splitting them could lead to an weird document state that cannot be
@@ -232,8 +238,13 @@ fn calc_shallow_doc_start(oplog: &crate::OpLog, frontiers: &Frontiers) -> Fronti
                 // one step to include both operations.
 
                 // > Id.counter + 1 is guaranteed to be the StyleEnd Op
-                id.counter += 1;
+                ans.push(id.inc(1));
+                processed = true;
             }
+        }
+
+        if !processed {
+            ans.push(id);
         }
     }
 

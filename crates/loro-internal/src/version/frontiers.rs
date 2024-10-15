@@ -173,6 +173,10 @@ impl PartialEq for Frontiers {
 impl Eq for Frontiers {}
 
 impl Frontiers {
+    pub fn new() -> Self {
+        Self::None
+    }
+
     #[inline]
     pub fn from_id(id: ID) -> Self {
         Self::ID(id)
@@ -240,15 +244,87 @@ impl Frontiers {
             _ => None,
         }
     }
+
+    /// Merges another Frontiers into this one.
+    ///
+    /// Id from other will override the id with the same peer from self.
+    pub fn merge(&mut self, other: &Frontiers) {
+        for id in other.iter() {
+            self.push(id);
+        }
+    }
+}
+
+pub enum FrontiersIntoIterator {
+    None,
+    ID(Option<ID>),
+    Map(std::collections::hash_map::IntoIter<PeerID, Counter>),
+}
+
+impl Iterator for FrontiersIntoIterator {
+    type Item = ID;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            FrontiersIntoIterator::None => None,
+            FrontiersIntoIterator::ID(id) => id.take(),
+            FrontiersIntoIterator::Map(iter) => {
+                iter.next().map(|(peer, counter)| ID::new(peer, counter))
+            }
+        }
+    }
+}
+
+impl Frontiers {
+    pub fn to_vec(&self) -> Vec<ID> {
+        match self {
+            Frontiers::None => Vec::new(),
+            Frontiers::ID(id) => vec![*id],
+            Frontiers::Map(map) => map.iter().collect(),
+        }
+    }
+
+    /// Keeps only one element in the Frontiers, deleting all others.
+    /// If the Frontiers is empty, it remains empty.
+    /// If it contains multiple elements, it keeps the first one encountered.
+    pub fn keep_one(&mut self) {
+        match self {
+            Frontiers::None => {}
+            Frontiers::ID(_) => {}
+            Frontiers::Map(map) => {
+                if let Some((&peer, &counter)) = map.0.iter().next() {
+                    *self = Frontiers::ID(ID::new(peer, counter));
+                }
+            }
+        }
+    }
+}
+impl From<&[ID]> for Frontiers {
+    fn from(ids: &[ID]) -> Self {
+        match ids.len() {
+            0 => Frontiers::None,
+            1 => Frontiers::ID(ids[0]),
+            _ => {
+                let mut map = InternalMap::new();
+                for &id in ids {
+                    map.insert(id);
+                }
+                Frontiers::Map(map)
+            }
+        }
+    }
 }
 
 impl From<Vec<ID>> for Frontiers {
-    fn from(value: Vec<ID>) -> Self {
-        match value.len() {
+    fn from(ids: Vec<ID>) -> Self {
+        match ids.len() {
             0 => Frontiers::None,
-            1 => Frontiers::ID(value[0]),
+            1 => Frontiers::ID(ids[0]),
             _ => {
-                let map = value.into_iter().map(|id| (id.peer, id.counter)).collect();
+                let mut map = InternalMap::new();
+                for id in ids {
+                    map.insert(id);
+                }
                 Frontiers::Map(map)
             }
         }
@@ -289,45 +365,18 @@ impl<const N: usize> From<[ID; N]> for Frontiers {
     }
 }
 
-impl IntoIterator for &Frontiers {
-    type Item = ID;
-    type IntoIter = FrontiersIntoIterator;
-
-    fn into_iter(self) -> Self::IntoIter {
-        match self {
-            Frontiers::None => FrontiersIntoIterator::None,
-            Frontiers::ID(id) => FrontiersIntoIterator::ID(Some(id)),
-            Frontiers::Map(map) => FrontiersIntoIterator::Map(map.0.into_iter()),
-        }
-    }
-}
-
-pub enum FrontiersIntoIterator {
-    None,
-    ID(Option<ID>),
-    Map(std::collections::hash_map::IntoIter<PeerID, Counter>),
-}
-
-impl Iterator for FrontiersIntoIterator {
-    type Item = ID;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            FrontiersIntoIterator::None => None,
-            FrontiersIntoIterator::ID(id) => id.take(),
-            FrontiersIntoIterator::Map(iter) => {
-                iter.next().map(|(peer, counter)| ID::new(peer, counter))
+impl From<&Vec<ID>> for Frontiers {
+    fn from(ids: &Vec<ID>) -> Self {
+        match ids.len() {
+            0 => Frontiers::None,
+            1 => Frontiers::ID(ids[0]),
+            _ => {
+                let mut map = InternalMap::new();
+                for id in ids {
+                    map.insert(*id);
+                }
+                Frontiers::Map(map)
             }
-        }
-    }
-}
-
-impl Frontiers {
-    pub fn to_vec(&self) -> Vec<ID> {
-        match self {
-            Frontiers::None => Vec::new(),
-            Frontiers::ID(id) => vec![*id],
-            Frontiers::Map(map) => map.iter().collect(),
         }
     }
 }
