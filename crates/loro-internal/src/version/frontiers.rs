@@ -46,7 +46,7 @@ impl<'a> fmt::Debug for FrontiersDebugHelper<'a> {
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InternalMap(FxHashMap<PeerID, Counter>);
 
 impl InternalMap {
@@ -262,6 +262,10 @@ impl Frontiers {
     pub fn as_single(&self) -> Option<ID> {
         match self {
             Frontiers::ID(id) => Some(*id),
+            Frontiers::Map(m) if m.len() == 1 => {
+                let (p, c) = m.0.iter().next().unwrap();
+                Some(ID::new(*p, *c))
+            }
             _ => None,
         }
     }
