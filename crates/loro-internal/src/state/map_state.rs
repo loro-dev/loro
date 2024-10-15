@@ -22,7 +22,7 @@ use crate::{
     DocState, InternalString, LoroValue,
 };
 
-use super::{ContainerState, DiffApplyContext};
+use super::{ApplyLocalOpReturn, ContainerState, DiffApplyContext};
 
 #[derive(Debug, Clone)]
 pub struct MapState {
@@ -103,33 +103,31 @@ impl ContainerState for MapState {
         let _ = self.apply_diff_and_convert(diff, ctx);
     }
 
-    fn apply_local_op(&mut self, op: &RawOp, _: &Op) -> LoroResult<()> {
+    fn apply_local_op(&mut self, op: &RawOp, _: &Op) -> LoroResult<ApplyLocalOpReturn> {
+        let mut ans: ApplyLocalOpReturn = Default::default();
         match &op.content {
             RawOpContent::Map(MapSet { key, value }) => {
-                if value.is_none() {
-                    self.insert(
-                        key.clone(),
-                        MapValue {
-                            lamp: op.lamport,
-                            peer: op.id.peer,
-                            value: None,
-                        },
-                    );
-                    return Ok(());
-                }
-
-                self.insert(
+                let prev = self.insert(
                     key.clone(),
                     MapValue {
                         lamp: op.lamport,
                         peer: op.id.peer,
-                        value: Some(value.clone().unwrap()),
+                        value: value.clone(),
                     },
                 );
-                Ok(())
+
+                if let Some(MapValue {
+                    value: Some(LoroValue::Container(c)),
+                    ..
+                }) = prev
+                {
+                    ans.deleted_containers.push(c);
+                }
             }
             _ => unreachable!(),
         }
+
+        Ok(ans)
     }
 
     #[doc = " Convert a state to a diff that when apply this diff on a empty state,"]
@@ -220,7 +218,7 @@ impl MapState {
         }
     }
 
-    pub fn insert(&mut self, key: InternalString, value: MapValue) {
+    pub fn insert(&mut self, key: InternalString, value: MapValue) -> Option<MapValue> {
         let value_yes = value.value.is_some();
         if let Some(LoroValue::Container(id)) = &value.value {
             self.child_containers.insert(id.clone(), key.clone());
@@ -231,7 +229,7 @@ impl MapState {
             self.child_containers.remove(c);
         }
 
-        match (result, value_yes) {
+        match (&result, value_yes) {
             (Some(x), true) => {
                 if x.value.is_none() {
                     self.size += 1;
@@ -247,6 +245,8 @@ impl MapState {
             }
             _ => {}
         };
+
+        result
     }
 
     pub fn remove(&mut self, key: &InternalString) {

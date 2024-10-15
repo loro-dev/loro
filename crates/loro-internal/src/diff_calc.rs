@@ -132,6 +132,11 @@ impl DiffCalculator {
         self.calculators.get(&container).map(|(_, c)| c)
     }
 
+    /// Calculate the diff between two versions.
+    ///
+    /// Return the diff and the origin diff mode (it's not the diff mode used by the diff calculator.
+    /// It's the expected diff mode inferred from the two version, which can reflect the direction of the
+    /// change).
     pub(crate) fn calc_diff_internal(
         &mut self,
         oplog: &super::oplog::OpLog,
@@ -140,9 +145,9 @@ impl DiffCalculator {
         after: &crate::VersionVector,
         after_frontiers: &Frontiers,
         container_filter: Option<&dyn Fn(ContainerIdx) -> bool>,
-    ) -> Vec<InternalContainerDiff> {
+    ) -> (Vec<InternalContainerDiff>, DiffMode) {
         if before == after {
-            return Vec::new();
+            return (Vec::new(), DiffMode::Linear);
         }
 
         let s = tracing::span!(tracing::Level::INFO, "DiffCalc", ?before, ?after,);
@@ -150,8 +155,9 @@ impl DiffCalculator {
 
         let mut merged = before.clone();
         merged.merge(after);
-        let (lca, mut diff_mode, iter) =
+        let (lca, origin_diff_mode, iter) =
             oplog.iter_from_lca_causally(before, before_frontiers, after, after_frontiers);
+        let mut diff_mode = origin_diff_mode;
         match &mut self.retain_mode {
             DiffCalculatorRetainMode::Once { used } => {
                 if *used {
@@ -329,7 +335,10 @@ impl DiffCalculator {
             }
         }
 
-        ans.into_values().map(|x| x.1).collect_vec()
+        (
+            ans.into_values().map(|x| x.1).collect_vec(),
+            origin_diff_mode,
+        )
     }
 
     // TODO: we may remove depth info
@@ -681,11 +690,7 @@ impl DiffCalculatorTrait for ListDiffCalculator {
             assert_ne!(id.peer, PeerID::MAX);
             let mut acc_len = 0;
             let end = id.counter + len as Counter;
-            let shallow_root = oplog
-                .shallow_since_vv()
-                .get(&id.peer)
-                .copied()
-                .unwrap_or(0);
+            let shallow_root = oplog.shallow_since_vv().get(&id.peer).copied().unwrap_or(0);
             if id.counter < shallow_root {
                 // need to find the content between id.counter ~ target_end in gc state
                 let target_end = shallow_root.min(end);
@@ -1116,11 +1121,8 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                                 let mut id = id;
                                 let mut acc_len = 0;
                                 let end = id.counter + len as Counter;
-                                let shallow_root = oplog
-                                    .shallow_since_vv()
-                                    .get(&id.peer)
-                                    .copied()
-                                    .unwrap_or(0);
+                                let shallow_root =
+                                    oplog.shallow_since_vv().get(&id.peer).copied().unwrap_or(0);
                                 if id.counter < shallow_root {
                                     // need to find the content between id.counter ~ target_end in gc state
                                     let target_end = shallow_root.min(end);

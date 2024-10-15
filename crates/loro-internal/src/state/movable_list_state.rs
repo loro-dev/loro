@@ -28,7 +28,7 @@ use self::{
     list_item_tree::{MovableListTreeTrait, OpLenQuery, UserLenQuery},
 };
 
-use super::{ContainerState, DiffApplyContext};
+use super::{ApplyLocalOpReturn, ContainerState, DiffApplyContext};
 
 #[derive(Debug, Clone)]
 pub struct MovableListState {
@@ -664,7 +664,12 @@ mod inner {
             }
         }
 
-        pub fn update_value(&mut self, elem_id: CompactIdLp, new_value: LoroValue, value_id: IdLp) {
+        pub fn update_value(
+            &mut self,
+            elem_id: CompactIdLp,
+            new_value: LoroValue,
+            value_id: IdLp,
+        ) -> Option<LoroValue> {
             debug_assert!(elem_id.peer != PeerID::MAX);
             debug_assert!(!value_id.is_none());
             if let LoroValue::Container(c) = &new_value {
@@ -677,8 +682,9 @@ mod inner {
                         self.child_container_to_elem.remove(c);
                     }
                 }
-                element.value = new_value;
+                let old_value = std::mem::replace(&mut element.value, new_value);
                 element.value_id = value_id;
+                Some(old_value)
             } else {
                 self.elements.insert(
                     elem_id,
@@ -688,6 +694,7 @@ mod inner {
                         pos: IdLp::NONE_ID,
                     },
                 );
+                None
             }
         }
 
@@ -1272,7 +1279,8 @@ impl ContainerState for MovableListState {
     }
 
     #[instrument(skip_all)]
-    fn apply_local_op(&mut self, op: &RawOp, _: &Op) -> LoroResult<()> {
+    fn apply_local_op(&mut self, op: &RawOp, _: &Op) -> LoroResult<ApplyLocalOpReturn> {
+        let mut ans: ApplyLocalOpReturn = Default::default();
         match op.content.as_list().unwrap() {
             ListOp::Insert { slice, pos } => match slice {
                 ListSlice::RawData(list) => {
@@ -1292,7 +1300,11 @@ impl ContainerState for MovableListState {
             },
             ListOp::Delete(span) => {
                 self.inner
-                    .list_drain(span.start() as usize..span.end() as usize, |_, _| {});
+                    .list_drain(span.start() as usize..span.end() as usize, |_, elem| {
+                        if let Some(c) = elem.value.as_container() {
+                            ans.deleted_containers.push(c.clone());
+                        }
+                    });
             }
             ListOp::Move { from, to, elem_id } => {
                 self.mov(
@@ -1304,13 +1316,17 @@ impl ContainerState for MovableListState {
                 );
             }
             ListOp::Set { elem_id, value } => {
-                self.inner
-                    .update_value(elem_id.compact(), value.clone(), op.idlp());
+                let old_value =
+                    self.inner
+                        .update_value(elem_id.compact(), value.clone(), op.idlp());
+                if let Some(LoroValue::Container(c)) = old_value {
+                    ans.deleted_containers.push(c);
+                }
             }
             ListOp::StyleStart { .. } | ListOp::StyleEnd => unreachable!(),
         }
 
-        Ok(())
+        Ok(ans)
     }
 
     fn to_diff(

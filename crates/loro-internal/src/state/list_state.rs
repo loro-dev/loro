@@ -4,7 +4,7 @@ use std::{
     sync::{Arc, Mutex, Weak},
 };
 
-use super::{ContainerState, DiffApplyContext, FastStateSnapshot};
+use super::{ApplyLocalOpReturn, ContainerState, DiffApplyContext, FastStateSnapshot};
 use crate::{
     arena::SharedArena,
     configure::Configure,
@@ -241,16 +241,21 @@ impl ListState {
         }
     }
 
-    pub fn delete(&mut self, index: usize) {
+    pub fn delete(&mut self, index: usize) -> LoroValue {
         let leaf = self.list.query::<LengthFinder>(&index);
         let leaf = self.list.remove_leaf(leaf.unwrap().cursor).unwrap();
         if leaf.v.is_container() {
             self.child_container_to_leaf
                 .remove(leaf.v.as_container().unwrap());
         }
+        leaf.v
     }
 
-    pub fn delete_range(&mut self, range: impl RangeBounds<usize>) {
+    pub fn delete_range(
+        &mut self,
+        range: impl RangeBounds<usize>,
+        mut notify_deletion: Option<&mut Vec<ContainerID>>,
+    ) {
         let start: usize = match range.start_bound() {
             std::ops::Bound::Included(x) => *x,
             std::ops::Bound::Excluded(x) => *x + 1,
@@ -262,7 +267,11 @@ impl ListState {
             std::ops::Bound::Unbounded => self.len(),
         };
         if end - start == 1 {
-            self.delete(start);
+            if let LoroValue::Container(c) = self.delete(start) {
+                if let Some(notify_deletion) = &mut notify_deletion {
+                    notify_deletion.push(c);
+                }
+            }
             return;
         }
 
@@ -274,6 +283,9 @@ impl ListState {
             if v.v.is_container() {
                 self.child_container_to_leaf
                     .remove(v.v.as_container().unwrap());
+                if let Some(notify_deletion) = &mut notify_deletion {
+                    notify_deletion.push(v.v.into_container().unwrap());
+                }
             }
         }
     }
@@ -402,7 +414,7 @@ impl ContainerState for ListState {
                     index += len;
                 }
                 crate::delta::DeltaItem::Delete { delete: len, .. } => {
-                    self.delete_range(index..index + len);
+                    self.delete_range(index..index + len, None);
                     ans.push_delete(*len);
                 }
             }
@@ -437,7 +449,7 @@ impl ContainerState for ListState {
                             index += len;
                         }
                         crate::delta::DeltaItem::Delete { delete: len, .. } => {
-                            self.delete_range(index..index + len);
+                            self.delete_range(index..index + len, None);
                         }
                     }
                 }
@@ -446,7 +458,8 @@ impl ContainerState for ListState {
         }
     }
 
-    fn apply_local_op(&mut self, op: &RawOp, _: &Op) -> LoroResult<()> {
+    fn apply_local_op(&mut self, op: &RawOp, _: &Op) -> LoroResult<ApplyLocalOpReturn> {
+        let mut ans: ApplyLocalOpReturn = Default::default();
         match &op.content {
             RawOpContent::List(list) => match list {
                 ListOp::Insert { slice, pos } => match slice {
@@ -461,10 +474,10 @@ impl ContainerState for ListState {
                     _ => unreachable!(),
                 },
                 ListOp::Delete(del) => {
-                    self.delete_range(del.span.to_urange());
+                    self.delete_range(del.span.to_urange(), Some(&mut ans.deleted_containers));
                 }
                 ListOp::Move { .. } => {
-                    todo!("invoke move")
+                    unreachable!()
                 }
                 ListOp::StyleStart { .. } => unreachable!(),
                 ListOp::StyleEnd { .. } => unreachable!(),
@@ -474,7 +487,7 @@ impl ContainerState for ListState {
             },
             _ => unreachable!(),
         }
-        Ok(())
+        Ok(ans)
     }
 
     #[doc = " Convert a state to a diff that when apply this diff on a empty state,"]

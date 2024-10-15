@@ -13,7 +13,7 @@ use crate::{
     DocState,
 };
 
-use super::{ContainerState, DiffApplyContext};
+use super::{ApplyLocalOpReturn, ContainerState, DiffApplyContext};
 
 #[derive(Debug, Clone)]
 pub struct CounterState {
@@ -54,10 +54,10 @@ impl ContainerState for CounterState {
         let _ = self.apply_diff_and_convert(diff, ctx);
     }
 
-    fn apply_local_op(&mut self, raw_op: &RawOp, _op: &Op) -> LoroResult<()> {
+    fn apply_local_op(&mut self, raw_op: &RawOp, _op: &Op) -> LoroResult<ApplyLocalOpReturn> {
         if let RawOpContent::Counter(diff) = raw_op.content {
             self.value += diff;
-            Ok(())
+            Ok(Default::default())
         } else {
             unreachable!()
         }
