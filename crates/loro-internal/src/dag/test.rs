@@ -17,7 +17,7 @@ struct TestNode {
     id: ID,
     lamport: Lamport,
     len: usize,
-    deps: Arc<Vec<ID>>,
+    deps: Arc<Frontiers>,
 }
 
 impl TestNode {
@@ -32,7 +32,7 @@ impl TestNode {
 }
 
 impl DagNode for TestNode {
-    fn deps(&self) -> &[ID] {
+    fn deps(&self) -> &Frontiers {
         &self.deps
     }
 }

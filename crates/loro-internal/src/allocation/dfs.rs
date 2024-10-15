@@ -7,8 +7,8 @@ use crate::{
 
 fn get_all_points<T: DagNode, D: Dag<Node = T>>(graph: &D, points: &mut HashSet<ID>, current: &ID) {
     points.insert(*current);
-    for to_id in graph.get(*current).unwrap().deps() {
-        get_all_points(graph, points, to_id);
+    for to_id in graph.get(*current).unwrap().deps().iter() {
+        get_all_points(graph, points, &to_id);
     }
 }
 
@@ -26,8 +26,8 @@ fn end_dfs<T: DagNode, D: Dag<Node = T>>(graph: &D, current: &ID, end_set: &mut 
     if deps.is_empty() {
         end_set.insert(*current);
     }
-    for to_id in deps {
-        end_dfs(graph, to_id, end_set);
+    for to_id in deps.iter() {
+        end_dfs(graph, &to_id, end_set);
     }
 }
 
@@ -73,8 +73,8 @@ fn dfs<T: DagNode, D: Dag<Node = T>>(
     if end_list_set.contains(current) {
         return true;
     }
-    for to_id in graph.get(*current).unwrap().deps() {
-        if dfs(graph, to_id, escape, end_list_set) {
+    for to_id in graph.get(*current).unwrap().deps().iter() {
+        if dfs(graph, &to_id, escape, end_list_set) {
             return true;
         }
     }

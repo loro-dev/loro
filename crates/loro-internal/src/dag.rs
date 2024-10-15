@@ -38,7 +38,7 @@ use self::{
 };
 
 pub(crate) trait DagNode: HasLamport + HasId + HasLength + Debug + Sliceable {
-    fn deps(&self) -> &[ID];
+    fn deps(&self) -> &Frontiers;
 
     #[allow(unused)]
     #[inline]
@@ -61,14 +61,14 @@ pub(crate) trait Dag: Debug {
 }
 
 pub(crate) trait DagUtils: Dag {
-    fn find_common_ancestor(&self, a_id: &[ID], b_id: &[ID]) -> (Frontiers, DiffMode);
+    fn find_common_ancestor(&self, a_id: &Frontiers, b_id: &Frontiers) -> (Frontiers, DiffMode);
     /// Slow, should probably only use on dev
     #[allow(unused)]
     fn get_vv(&self, id: ID) -> VersionVector;
     #[allow(unused)]
-    fn find_path(&self, from: &[ID], to: &[ID]) -> VersionVectorDiff;
+    fn find_path(&self, from: &Frontiers, to: &Frontiers) -> VersionVectorDiff;
     fn contains(&self, id: ID) -> bool;
-    fn iter_causal(&self, from: &[ID], target: IdSpanVector) -> DagCausalIter<'_, Self>
+    fn iter_causal(&self, from: Frontiers, target: IdSpanVector) -> DagCausalIter<'_, Self>
     where
         Self: Sized;
     #[allow(unused)]
@@ -87,7 +87,7 @@ pub(crate) trait DagUtils: Dag {
 
 impl<T: Dag + ?Sized> DagUtils for T {
     #[inline]
-    fn find_common_ancestor(&self, a_id: &[ID], b_id: &[ID]) -> (Frontiers, DiffMode) {
+    fn find_common_ancestor(&self, a_id: &Frontiers, b_id: &Frontiers) -> (Frontiers, DiffMode) {
         // TODO: perf: make it also return the spans to reach common_ancestors
         find_common_ancestor(&|id| self.get(id), a_id, b_id)
     }
@@ -102,7 +102,7 @@ impl<T: Dag + ?Sized> DagUtils for T {
         get_version_vector(&|id| self.get(id), id)
     }
 
-    fn find_path(&self, from: &[ID], to: &[ID]) -> VersionVectorDiff {
+    fn find_path(&self, from: &Frontiers, to: &Frontiers) -> VersionVectorDiff {
         let mut ans = VersionVectorDiff::default();
         trace!("find_path from={:?} to={:?}", from, to);
         if from == to {
@@ -110,8 +110,8 @@ impl<T: Dag + ?Sized> DagUtils for T {
         }
 
         if from.len() == 1 && to.len() == 1 {
-            let from = from[0];
-            let to = to[0];
+            let from = from.as_single().unwrap();
+            let to = to.as_single().unwrap();
             if from.peer == to.peer {
                 let from_span = self.get(from).unwrap();
                 let to_span = self.get(to).unwrap();
@@ -130,7 +130,9 @@ impl<T: Dag + ?Sized> DagUtils for T {
                     return ans;
                 }
 
-                if from_span.deps().len() == 1 && to_span.contains_id(from_span.deps()[0]) {
+                if from_span.deps().len() == 1
+                    && to_span.contains_id(from_span.deps().as_single().unwrap())
+                {
                     ans.left.insert(
                         from.peer,
                         CounterSpan::new(to.counter + 1, from.counter + 1),
@@ -138,7 +140,9 @@ impl<T: Dag + ?Sized> DagUtils for T {
                     return ans;
                 }
 
-                if to_span.deps().len() == 1 && from_span.contains_id(to_span.deps()[0]) {
+                if to_span.deps().len() == 1
+                    && from_span.contains_id(to_span.deps().as_single().unwrap())
+                {
                     ans.right.insert(
                         from.peer,
                         CounterSpan::new(from.counter + 1, to.counter + 1),
@@ -175,11 +179,11 @@ impl<T: Dag + ?Sized> DagUtils for T {
     }
 
     #[inline(always)]
-    fn iter_causal(&self, from: &[ID], target: IdSpanVector) -> DagCausalIter<'_, Self>
+    fn iter_causal(&self, from: Frontiers, target: IdSpanVector) -> DagCausalIter<'_, Self>
     where
         Self: Sized,
     {
-        DagCausalIter::new(self, from.into(), target)
+        DagCausalIter::new(self, from, target)
     }
 
     #[inline(always)]
@@ -216,7 +220,7 @@ where
 
     let mut stack = Vec::with_capacity(node.deps().len());
     for dep in node.deps() {
-        stack.push(*dep);
+        stack.push(dep);
     }
 
     while let Some(node_id) = stack.pop() {
@@ -225,8 +229,8 @@ where
         if !visited.contains(&node_id_start) {
             vv.try_update_last(node_id);
             for dep in node.deps() {
-                if !visited.contains(dep) {
-                    stack.push(*dep);
+                if !visited.contains(&dep) {
+                    stack.push(dep);
                 }
             }
 
@@ -313,7 +317,11 @@ impl<'a> OrdIdSpan<'a> {
 }
 
 #[inline(always)]
-fn find_common_ancestor<'a, F, D>(get: &'a F, a_id: &[ID], b_id: &[ID]) -> (Frontiers, DiffMode)
+fn find_common_ancestor<'a, F, D>(
+    get: &'a F,
+    a_id: &Frontiers,
+    b_id: &Frontiers,
+) -> (Frontiers, DiffMode)
 where
     D: DagNode + 'a,
     F: Fn(ID) -> Option<D>,
@@ -328,8 +336,8 @@ where
 /// - deep whether keep searching until the min of non-shared node is found
 fn _find_common_ancestor<'a, F, D, G>(
     get: &'a F,
-    a_ids: &[ID],
-    b_ids: &[ID],
+    a_ids: &Frontiers,
+    b_ids: &Frontiers,
     notify: &mut G,
     find_path: bool,
 ) -> FxHashMap<PeerID, Counter>
@@ -481,8 +489,8 @@ where
 
 fn _find_common_ancestor_new<'a, F, D>(
     get: &'a F,
-    left: &[ID],
-    right: &[ID],
+    left: &Frontiers,
+    right: &Frontiers,
 ) -> (Frontiers, DiffMode)
 where
     D: DagNode + 'a,
@@ -495,10 +503,10 @@ where
 
     if left.is_empty() {
         if right.len() == 1 {
-            let mut node_id = right[0];
+            let mut node_id = right.as_single().unwrap();
             let mut node = get(node_id).unwrap();
             while node.deps().len() == 1 {
-                node_id = node.deps()[0];
+                node_id = node.deps().as_single().unwrap();
                 node = get(node_id).unwrap();
             }
 
@@ -511,25 +519,29 @@ where
     }
 
     if left.len() == 1 && right.len() == 1 {
-        let left = left[0];
-        let right = right[0];
+        let left = left.as_single().unwrap();
+        let right = right.as_single().unwrap();
         if left.peer == right.peer {
             let left_span = get(left).unwrap();
             let right_span = get(right).unwrap();
             if left_span.id_start() == right_span.id_start() {
                 if left.counter < right.counter {
-                    return (smallvec![left].into(), DiffMode::Linear);
+                    return (left.into(), DiffMode::Linear);
                 } else {
-                    return (smallvec![right].into(), DiffMode::Checkout);
+                    return (right.into(), DiffMode::Checkout);
                 }
             }
 
-            if left_span.deps().len() == 1 && right_span.contains_id(left_span.deps()[0]) {
-                return (smallvec![right].into(), DiffMode::Checkout);
+            if left_span.deps().len() == 1
+                && right_span.contains_id(left_span.deps().as_single().unwrap())
+            {
+                return (right.into(), DiffMode::Checkout);
             }
 
-            if right_span.deps().len() == 1 && left_span.contains_id(right_span.deps()[0]) {
-                return (smallvec![left].into(), DiffMode::Linear);
+            if right_span.deps().len() == 1
+                && left_span.contains_id(right_span.deps().as_single().unwrap())
+            {
+                return (left.into(), DiffMode::Linear);
             }
         }
     }

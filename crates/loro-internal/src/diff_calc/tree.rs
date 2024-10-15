@@ -411,7 +411,7 @@ impl TreeDiffCalculator {
     fn get_min_lamport_by_frontiers(&self, frontiers: &Frontiers, oplog: &OpLog) -> Lamport {
         frontiers
             .iter()
-            .map(|id| oplog.get_min_lamport_at(*id))
+            .map(|id| oplog.get_min_lamport_at(id))
             .min()
             .unwrap_or(0)
     }
@@ -419,7 +419,7 @@ impl TreeDiffCalculator {
     fn get_max_lamport_by_frontiers(&self, frontiers: &Frontiers, oplog: &OpLog) -> Lamport {
         frontiers
             .iter()
-            .map(|id| oplog.get_max_lamport_at(*id))
+            .map(|id| oplog.get_max_lamport_at(id))
             .max()
             .unwrap_or(Lamport::MAX)
     }

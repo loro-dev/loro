@@ -1,88 +1,129 @@
 use super::*;
 use either::Either;
 
-#[derive(Debug, Clone, Default)]
-pub struct Frontiers(Inner);
-
-/// Inner representation of Frontiers.
+/// Frontiers representation.
 /// Invariants:
 /// - If it contains 0 elements, it's None
 /// - If it contains 1 element, it's ID
 /// - If it contains 2 or more elements, it's Map
 #[derive(Debug, Clone, Default)]
-enum Inner {
+pub enum Frontiers {
     #[default]
     None,
     ID(ID),
-    Map(FxHashMap<PeerID, Counter>),
+    // We use internal map to avoid the module outside accidentally create or modify the map
+    // to make it empty or only contain 1 element
+    Map(InternalMap),
 }
 
-impl Inner {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct InternalMap(FxHashMap<PeerID, Counter>);
+
+impl InternalMap {
+    fn new() -> Self {
+        Self(FxHashMap::default())
+    }
+
     fn len(&self) -> usize {
-        match self {
-            Inner::None => 0,
-            Inner::ID(_) => 1,
-            Inner::Map(map) => map.len(),
-        }
+        self.0.len()
     }
 
     fn iter(&self) -> impl Iterator<Item = ID> + '_ {
-        match self {
-            Inner::None => Either::Left(Either::Left(std::iter::empty())),
-            Inner::ID(id) => Either::Left(Either::Right(std::iter::once(*id))),
-            Inner::Map(map) => {
-                Either::Right(map.iter().map(|(&peer, &counter)| ID::new(peer, counter)))
-            }
-        }
+        self.0
+            .iter()
+            .map(|(&peer, &counter)| ID::new(peer, counter))
     }
 
     fn contains(&self, id: &ID) -> bool {
-        match self {
-            Inner::None => false,
-            Inner::ID(inner_id) => inner_id == id,
-            Inner::Map(map) => map
-                .get(&id.peer)
-                .map_or(false, |&counter| counter == id.counter),
-        }
+        self.0
+            .get(&id.peer)
+            .map_or(false, |&counter| counter == id.counter)
     }
 
-    fn push(&mut self, id: ID) {
-        match self {
-            Inner::None => *self = Inner::ID(id),
-            Inner::ID(existing_id) => {
-                if *existing_id != id {
-                    let mut map = FxHashMap::default();
-                    map.insert(existing_id.peer, existing_id.counter);
-                    map.insert(id.peer, id.counter);
-                    *self = Inner::Map(map);
-                }
-            }
-            Inner::Map(map) => {
-                map.entry(id.peer)
-                    .and_modify(|counter| *counter = (*counter).max(id.counter))
-                    .or_insert(id.counter);
+    fn insert(&mut self, id: ID) {
+        self.0
+            .entry(id.peer)
+            .and_modify(|counter| *counter = (*counter).max(id.counter))
+            .or_insert(id.counter);
+    }
+
+    fn remove(&mut self, id: &ID) -> bool {
+        if let Some(counter) = self.0.get_mut(&id.peer) {
+            if *counter == id.counter {
+                self.0.remove(&id.peer);
+                return true;
             }
         }
+        false
     }
 
     fn retain<F>(&mut self, mut f: F)
     where
         F: FnMut(&ID) -> bool,
     {
+        self.0
+            .retain(|&peer, &mut counter| f(&ID::new(peer, counter)));
+    }
+}
+
+impl Frontiers {
+    pub fn len(&self) -> usize {
         match self {
-            Inner::None => {}
-            Inner::ID(id) => {
-                if !f(id) {
-                    *self = Inner::None;
+            Frontiers::None => 0,
+            Frontiers::ID(_) => 1,
+            Frontiers::Map(map) => map.len(),
+        }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = ID> + '_ {
+        match self {
+            Frontiers::None => Either::Left(Either::Left(std::iter::empty())),
+            Frontiers::ID(id) => Either::Left(Either::Right(std::iter::once(*id))),
+            Frontiers::Map(map) => Either::Right(map.iter()),
+        }
+    }
+
+    pub fn contains(&self, id: &ID) -> bool {
+        match self {
+            Frontiers::None => false,
+            Frontiers::ID(inner_id) => inner_id == id,
+            Frontiers::Map(map) => map.contains(id),
+        }
+    }
+
+    pub fn push(&mut self, id: ID) {
+        match self {
+            Frontiers::None => *self = Frontiers::ID(id),
+            Frontiers::ID(existing_id) => {
+                if *existing_id != id {
+                    let mut map = InternalMap::new();
+                    map.insert(*existing_id);
+                    map.insert(id);
+                    *self = Frontiers::Map(map);
                 }
             }
-            Inner::Map(map) => {
-                map.retain(|&peer, &mut counter| f(&ID::new(peer, counter)));
+            Frontiers::Map(map) => map.insert(id),
+        }
+    }
+
+    pub fn retain<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&ID) -> bool,
+    {
+        match self {
+            Frontiers::None => {}
+            Frontiers::ID(id) => {
+                if !f(id) {
+                    *self = Frontiers::None;
+                }
+            }
+            Frontiers::Map(map) => {
+                map.retain(|id| f(&id));
                 match map.len() {
-                    0 => *self = Inner::None,
+                    0 => *self = Frontiers::None,
                     1 => {
-                        let (&peer, &counter) = map.iter().next().unwrap();
-                        *self = Inner::ID(ID::new(peer, counter));
+                        let id = map.iter().next().unwrap();
+                        *self = Frontiers::ID(id);
                     }
                     _ => {}
                 }
@@ -90,26 +131,23 @@ impl Inner {
         }
     }
 
-    fn remove(&mut self, id: &ID) {
+    pub fn remove(&mut self, id: &ID) {
         match self {
-            Inner::None => {}
-            Inner::ID(existing_id) => {
+            Frontiers::None => {}
+            Frontiers::ID(existing_id) => {
                 if existing_id == id {
-                    *self = Inner::None;
+                    *self = Frontiers::None;
                 }
             }
-            Inner::Map(map) => {
-                if let Some(counter) = map.get_mut(&id.peer) {
-                    if *counter == id.counter {
-                        map.remove(&id.peer);
-                        match map.len() {
-                            0 => *self = Inner::None,
-                            1 => {
-                                let (&peer, &counter) = map.iter().next().unwrap();
-                                *self = Inner::ID(ID::new(peer, counter));
-                            }
-                            _ => {}
+            Frontiers::Map(map) => {
+                if map.remove(id) {
+                    match map.len() {
+                        0 => *self = Frontiers::None,
+                        1 => {
+                            let id = map.iter().next().unwrap();
+                            *self = Frontiers::ID(id);
                         }
+                        _ => {}
                     }
                 }
             }
@@ -119,28 +157,30 @@ impl Inner {
 
 impl PartialEq for Frontiers {
     fn eq(&self, other: &Self) -> bool {
-        if self.0.len() != other.0.len() {
+        if self.len() != other.len() {
             return false;
         }
 
-        match (&self.0, &other.0) {
-            (Inner::None, Inner::None) => true,
-            (Inner::ID(id1), Inner::ID(id2)) => id1 == id2,
-            (Inner::Map(map1), Inner::Map(map2)) => map1 == map2,
-            _ => unreachable!(),
+        match (self, other) {
+            (Frontiers::None, Frontiers::None) => true,
+            (Frontiers::ID(id1), Frontiers::ID(id2)) => id1 == id2,
+            (Frontiers::Map(map1), Frontiers::Map(map2)) => map1 == map2,
+            _ => false,
         }
     }
 }
 
+impl Eq for Frontiers {}
+
 impl Frontiers {
     #[inline]
     pub fn from_id(id: ID) -> Self {
-        Self(Inner::ID(id))
+        Self::ID(id)
     }
 
     #[inline]
     pub fn encode(&self) -> Vec<u8> {
-        let vec: Vec<ID> = self.0.iter().collect();
+        let vec: Vec<ID> = self.iter().collect();
         postcard::to_allocvec(&vec).unwrap()
     }
 
@@ -153,72 +193,71 @@ impl Frontiers {
     }
 
     pub fn retain_non_included(&mut self, other: &Frontiers) {
-        self.0.retain(|id| !other.0.contains(id));
+        self.retain(|id| !other.contains(id));
     }
 
     pub fn update_frontiers_on_new_change(&mut self, id: ID, deps: &Frontiers) {
-        if self.0.len() <= 8 && self == deps {
+        if self.len() <= 8 && self == deps {
             *self = Frontiers::from_id(id);
             return;
         }
 
         // Remove all IDs in deps from self
-        for dep in deps.0.iter() {
-            self.0.remove(&dep);
+        for dep in deps.iter() {
+            self.remove(&dep);
         }
 
         // Add the new ID
-        self.0.push(id);
+        self.push(id);
     }
 
     pub fn filter_peer(&mut self, peer: PeerID) {
-        self.0.retain(|id| id.peer != peer);
+        self.retain(|id| id.peer != peer);
     }
 
     #[inline]
     pub(crate) fn with_capacity(_cap: usize) -> Frontiers {
-        Self(Inner::default())
-    }
-
-    pub fn len(&self) -> usize {
-        self.0.len()
+        Self::None
     }
 
     pub fn is_empty(&self) -> bool {
-        matches!(self.0, Inner::None)
+        matches!(self, Frontiers::None)
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = ID> + '_ {
-        self.0.iter()
+    /// Returns the single ID if the Frontiers contains exactly one ID, otherwise returns None.
+    pub fn as_single(&self) -> Option<ID> {
+        match self {
+            Frontiers::ID(id) => Some(*id),
+            _ => None,
+        }
     }
 
-    pub fn contains(&self, id: &ID) -> bool {
-        self.0.contains(id)
-    }
-
-    pub fn push(&mut self, id: ID) {
-        self.0.push(id);
-    }
-
-    pub fn retain<F>(&mut self, f: F)
-    where
-        F: FnMut(&ID) -> bool,
-    {
-        self.0.retain(f);
+    /// Returns a reference to the internal map if the Frontiers contains multiple IDs,
+    /// otherwise returns None.
+    pub fn as_map(&self) -> Option<&InternalMap> {
+        match self {
+            Frontiers::Map(map) => Some(map),
+            _ => None,
+        }
     }
 }
 
 impl From<Vec<ID>> for Frontiers {
     fn from(value: Vec<ID>) -> Self {
-        let inner = match value.len() {
-            0 => Inner::None,
-            1 => Inner::ID(value[0]),
+        match value.len() {
+            0 => Frontiers::None,
+            1 => Frontiers::ID(value[0]),
             _ => {
                 let map = value.into_iter().map(|id| (id.peer, id.counter)).collect();
-                Inner::Map(map)
+                Frontiers::Map(map)
             }
-        };
-        Self(inner)
+        }
+    }
+}
+
+impl From<ID> for Frontiers {
+    fn from(value: ID) -> Self {
+        Self::ID(value)
     }
 }
 
@@ -228,4 +267,57 @@ impl FromIterator<ID> for Frontiers {
     }
 }
 
-// Implement other From traits as needed
+impl From<Option<ID>> for Frontiers {
+    fn from(value: Option<ID>) -> Self {
+        match value {
+            Some(id) => Frontiers::ID(id),
+            None => Frontiers::None,
+        }
+    }
+}
+
+impl<const N: usize> From<[ID; N]> for Frontiers {
+    fn from(value: [ID; N]) -> Self {
+        match N {
+            0 => Frontiers::None,
+            1 => Frontiers::ID(value[0]),
+            _ => {
+                let map = value.into_iter().map(|id| (id.peer, id.counter)).collect();
+                Frontiers::Map(map)
+            }
+        }
+    }
+}
+
+impl IntoIterator for &Frontiers {
+    type Item = ID;
+    type IntoIter = FrontiersIntoIterator;
+
+    fn into_iter(self) -> Self::IntoIter {
+        match self {
+            Frontiers::None => FrontiersIntoIterator::None,
+            Frontiers::ID(id) => FrontiersIntoIterator::ID(Some(id)),
+            Frontiers::Map(map) => FrontiersIntoIterator::Map(map.0.into_iter()),
+        }
+    }
+}
+
+pub enum FrontiersIntoIterator {
+    None,
+    ID(Option<ID>),
+    Map(std::collections::hash_map::IntoIter<PeerID, Counter>),
+}
+
+impl Iterator for FrontiersIntoIterator {
+    type Item = ID;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            FrontiersIntoIterator::None => None,
+            FrontiersIntoIterator::ID(id) => id.take(),
+            FrontiersIntoIterator::Map(iter) => {
+                iter.next().map(|(peer, counter)| ID::new(peer, counter))
+            }
+        }
+    }
+}

@@ -63,14 +63,14 @@ impl BfsBody {
             if node.deps().is_empty() {
                 start_end_set.insert(id);
             } else {
-                for to_id in node.deps() {
-                    if self.visited.contains(to_id) {
+                for to_id in node.deps().iter() {
+                    if self.visited.contains(&to_id) {
                         continue;
                     }
-                    self.visited.insert(*to_id);
+                    self.visited.insert(to_id);
                     self.queue.push(SortBase {
-                        id: *to_id,
-                        lamport: graph.get(*to_id).unwrap().lamport(),
+                        id: to_id,
+                        lamport: graph.get(to_id).unwrap().lamport(),
                     });
                 }
             }

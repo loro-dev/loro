@@ -437,7 +437,7 @@ fn encode_changes(
             deps: change
                 .deps
                 .iter()
-                .map(|id| register_id(id, peer_register))
+                .map(|id| register_id(&id, peer_register))
                 .collect(),
             lamport: change.lamport,
             timestamp: change.timestamp,
