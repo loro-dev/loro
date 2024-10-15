@@ -6,7 +6,7 @@ use either::Either;
 /// - If it contains 0 elements, it's None
 /// - If it contains 1 element, it's ID
 /// - If it contains 2 or more elements, it's Map
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub enum Frontiers {
     #[default]
     None,
@@ -16,7 +16,37 @@ pub enum Frontiers {
     Map(InternalMap),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+use std::fmt;
+
+impl fmt::Debug for Frontiers {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Frontiers")
+            .field(&FrontiersDebugHelper(self))
+            .finish()
+    }
+}
+
+struct FrontiersDebugHelper<'a>(&'a Frontiers);
+
+impl<'a> fmt::Debug for FrontiersDebugHelper<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut list = f.debug_list();
+        match self.0 {
+            Frontiers::None => {}
+            Frontiers::ID(id) => {
+                list.entry(id);
+            }
+            Frontiers::Map(map) => {
+                for id in map.iter() {
+                    list.entry(&id);
+                }
+            }
+        }
+        list.finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
 pub struct InternalMap(FxHashMap<PeerID, Counter>);
 
 impl InternalMap {

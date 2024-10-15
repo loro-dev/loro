@@ -1800,7 +1800,7 @@ fn test_travel_change_ancestors() {
     .unwrap();
 
     let dbg_str = format!("{:#?}", changes);
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         dbg_str,
         r#"[
     ChangeMeta {
@@ -1823,8 +1823,8 @@ fn test_travel_change_ancestors() {
         message: None,
         deps: Frontiers(
             [
-                5@2,
                 10@1,
+                5@2,
             ],
         ),
         len: 1,
