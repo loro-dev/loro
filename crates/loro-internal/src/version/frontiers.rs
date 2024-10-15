@@ -429,3 +429,119 @@ impl From<&Vec<ID>> for Frontiers {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_frontiers_push_insert_remove() {
+        let mut frontiers = Frontiers::None;
+
+        // Test push
+        frontiers.push(ID::new(1, 1));
+        assert_eq!(frontiers, Frontiers::ID(ID::new(1, 1)));
+
+        frontiers.push(ID::new(2, 1));
+        assert!(matches!(frontiers, Frontiers::Map(_)));
+        assert_eq!(frontiers.len(), 2);
+
+        frontiers.push(ID::new(1, 2));
+        assert_eq!(frontiers.len(), 2);
+        assert!(frontiers.contains(&ID::new(1, 2)));
+        assert!(!frontiers.contains(&ID::new(1, 1)));
+
+        // Test insert (via InternalMap)
+        if let Frontiers::Map(ref mut map) = frontiers {
+            map.insert(ID::new(3, 1));
+        }
+        assert_eq!(frontiers.len(), 3);
+        assert!(frontiers.contains(&ID::new(3, 1)));
+
+        // Test remove
+        frontiers.remove(&ID::new(2, 1));
+        assert_eq!(frontiers.len(), 2);
+        assert!(!frontiers.contains(&ID::new(2, 1)));
+
+        frontiers.remove(&ID::new(1, 2));
+        assert_eq!(frontiers, Frontiers::ID(ID::new(3, 1)));
+
+        frontiers.remove(&ID::new(3, 1));
+        assert_eq!(frontiers, Frontiers::None);
+    }
+
+    #[test]
+    fn test_frontiers_edge_cases() {
+        let mut frontiers = Frontiers::None;
+
+        // Push to empty
+        frontiers.push(ID::new(1, 1));
+        assert_eq!(frontiers, Frontiers::ID(ID::new(1, 1)));
+
+        // Push same peer, higher counter
+        frontiers.push(ID::new(1, 2));
+        assert_eq!(frontiers, Frontiers::ID(ID::new(1, 2)));
+
+        // Push same peer, lower counter (should not change)
+        frontiers.push(ID::new(1, 1));
+        assert_eq!(frontiers, Frontiers::ID(ID::new(1, 2)));
+
+        // Push different peer
+        frontiers.push(ID::new(2, 1));
+        assert!(matches!(frontiers, Frontiers::Map(_)));
+        assert_eq!(frontiers.len(), 2);
+
+        // Remove non-existent
+        frontiers.remove(&ID::new(3, 1));
+        assert_eq!(frontiers.len(), 2);
+
+        // Remove until only one left
+        frontiers.remove(&ID::new(2, 1));
+        assert_eq!(frontiers, Frontiers::ID(ID::new(1, 2)));
+
+        // Remove last
+        frontiers.remove(&ID::new(1, 2));
+        assert_eq!(frontiers, Frontiers::None);
+    }
+
+    #[test]
+    fn test_frontiers_retain() {
+        let mut frontiers = Frontiers::None;
+
+        // Test retain on empty frontiers
+        frontiers.retain(|_| true);
+        assert_eq!(frontiers, Frontiers::None);
+
+        // Test retain on single ID
+        frontiers.push(ID::new(1, 1));
+        frontiers.retain(|id| id.peer == 1);
+        assert_eq!(frontiers, Frontiers::ID(ID::new(1, 1)));
+
+        frontiers.retain(|id| id.peer == 2);
+        assert_eq!(frontiers, Frontiers::None);
+
+        // Test retain on multiple IDs
+        frontiers.push(ID::new(1, 1));
+        frontiers.push(ID::new(2, 2));
+        frontiers.push(ID::new(3, 3));
+
+        // Retain only even peer IDs
+        frontiers.retain(|id| id.peer % 2 == 0);
+        assert_eq!(frontiers, Frontiers::ID(ID::new(2, 2)));
+
+        // Add more IDs and test retaining multiple
+        frontiers.push(ID::new(1, 1));
+        frontiers.push(ID::new(3, 3));
+        frontiers.push(ID::new(4, 4));
+
+        frontiers.retain(|id| id.peer > 2);
+        assert!(matches!(frontiers, Frontiers::Map(_)));
+        assert_eq!(frontiers.len(), 2);
+        assert!(frontiers.contains(&ID::new(3, 3)));
+        assert!(frontiers.contains(&ID::new(4, 4)));
+
+        // Retain none
+        frontiers.retain(|_| false);
+        assert_eq!(frontiers, Frontiers::None);
+    }
+}
