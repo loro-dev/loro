@@ -27,12 +27,24 @@ use std::{
 pub struct VersionVector(FxHashMap<PeerID, Counter>);
 
 #[repr(transparent)]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct VersionRange(pub(crate) FxHashMap<PeerID, (Counter, Counter)>);
 
 impl VersionRange {
     pub fn new() -> Self {
         Self(Default::default())
+    }
+
+    pub fn from_map(map: FxHashMap<PeerID, (Counter, Counter)>) -> Self {
+        Self(map)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&PeerID, &(Counter, Counter))> + '_ {
+        self.0.iter()
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&PeerID, &mut (Counter, Counter))> + '_ {
+        self.0.iter_mut()
     }
 
     pub fn clear(&mut self) {
@@ -45,6 +57,14 @@ impl VersionRange {
 
     pub fn insert(&mut self, peer: PeerID, start: Counter, end: Counter) {
         self.0.insert(peer, (start, end));
+    }
+
+    pub fn from_vv(vv: &VersionVector) -> Self {
+        let mut ans = Self::new();
+        for (peer, counter) in vv.iter() {
+            ans.insert(*peer, 0, *counter);
+        }
+        ans
     }
 
     pub fn contains_ops_between(&self, vv_a: &VersionVector, vv_b: &VersionVector) -> bool {
@@ -105,6 +125,14 @@ impl VersionRange {
         } else {
             self.insert(span.peer, span.counter.start, span.counter.end);
         }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn inner(&self) -> &FxHashMap<PeerID, (Counter, Counter)> {
+        &self.0
     }
 }
 

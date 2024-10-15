@@ -56,7 +56,7 @@ pub use loro_internal::loro::CommitOptions;
 pub use loro_internal::loro::DocAnalysis;
 pub use loro_internal::oplog::FrontiersNotIncluded;
 pub use loro_internal::undo;
-pub use loro_internal::version::{Frontiers, VersionVector, VersionVectorDiff};
+pub use loro_internal::version::{Frontiers, VersionRange, VersionVector, VersionVectorDiff};
 pub use loro_internal::ApplyDiff;
 pub use loro_internal::Subscription;
 pub use loro_internal::UndoManager as InnerUndoManager;

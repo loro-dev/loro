@@ -12,12 +12,12 @@ use outdated_encode_reordered::{import_changes_to_oplog, ImportChangesResult};
 pub(crate) use value::OwnedValue;
 
 use crate::op::OpWithId;
-use crate::version::Frontiers;
+use crate::version::{Frontiers, VersionRange};
 use crate::LoroDoc;
 use crate::{oplog::OpLog, LoroError, VersionVector};
 use loro_common::{
-    CounterSpan, HasCounter, HasCounterSpan, IdLpSpan, IdSpan, IdSpanVector, LoroEncodeError,
-    LoroResult, PeerID, ID,
+    CounterSpan, HasCounter, HasCounterSpan, HasIdSpan, IdLpSpan, IdSpan, IdSpanVector,
+    LoroEncodeError, LoroResult, PeerID, ID,
 };
 use num_traits::{FromPrimitive, ToPrimitive};
 use rle::{HasLength, Sliceable};
@@ -230,8 +230,8 @@ impl TryFrom<[u8; 2]> for EncodeMode {
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ImportStatus {
-    pub success: IdSpanVector,
-    pub pending: Option<IdSpanVector>,
+    pub success: VersionRange,
+    pub pending: Option<VersionRange>,
 }
 
 /// The encoder used to encode the container states.
@@ -322,24 +322,18 @@ pub(crate) fn decode_oplog(
         EncodeMode::Auto => unreachable!(),
     }?;
     let ImportChangesResult {
-        imported,
+        mut imported,
         latest_ids,
         pending_changes,
         changes_that_have_deps_before_shallow_root,
     } = import_changes_to_oplog(changes, oplog);
 
-    let mut pending = IdSpanVector::default();
+    let mut pending = VersionRange::default();
     pending_changes.iter().for_each(|c| {
-        let peer = c.id.peer;
-        let start = c.ctr_start();
-        let end = c.ctr_end();
-        pending
-            .entry(peer)
-            .or_insert_with(|| CounterSpan::new(start, end))
-            .extend_include(start, end);
+        pending.extends_to_include_id_span(c.id_span());
     });
     // TODO: PERF: should we use hashmap to filter latest_ids with the same peer first?
-    oplog.try_apply_pending(latest_ids);
+    oplog.try_apply_pending(latest_ids, Some(&mut imported));
     oplog.import_unknown_lamport_pending_changes(pending_changes)?;
     if !changes_that_have_deps_before_shallow_root.is_empty() {
         return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
@@ -529,7 +523,7 @@ pub(crate) fn decode_snapshot(
         _ => unreachable!(),
     };
     Ok(ImportStatus {
-        success: doc.oplog_vv().diff(&Default::default()).left,
+        success: VersionRange::from_vv(&doc.oplog_vv()),
         pending: None,
     })
 }

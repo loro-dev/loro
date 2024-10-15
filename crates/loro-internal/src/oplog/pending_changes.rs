@@ -1,8 +1,14 @@
 use std::{collections::BTreeMap, ops::Deref};
 
-use crate::{change::Change, version::ImVersionVector, OpLog, VersionVector};
+use crate::{
+    change::Change,
+    version::{ImVersionVector, VersionRange},
+    OpLog, VersionVector,
+};
 use fxhash::FxHashMap;
-use loro_common::{Counter, CounterSpan, HasCounterSpan, HasIdSpan, LoroResult, PeerID, ID};
+use loro_common::{
+    Counter, CounterSpan, HasCounterSpan, HasIdSpan, IdSpanVector, LoroResult, PeerID, ID,
+};
 
 #[derive(Debug)]
 pub enum PendingChange {
@@ -64,7 +70,11 @@ impl OpLog {
     /// Try to apply pending changes.
     ///
     /// `new_ids` are the ID of the op that is just applied.
-    pub(crate) fn try_apply_pending(&mut self, mut new_ids: Vec<ID>) {
+    pub(crate) fn try_apply_pending(
+        &mut self,
+        mut new_ids: Vec<ID>,
+        mut would_affect: Option<&mut VersionRange>,
+    ) {
         while let Some(id) = new_ids.pop() {
             let Some(tree) = self.pending_changes.changes.get_mut(&id.peer) else {
                 continue;
@@ -93,7 +103,10 @@ impl OpLog {
                     ) {
                         ChangeState::CanApplyDirectly => {
                             new_ids.push(pending_change.id_last());
-                            self.apply_change_from_remote(pending_change);
+                            self.apply_change_from_remote(
+                                pending_change,
+                                would_affect.as_deref_mut(),
+                            );
                         }
                         ChangeState::Applied => {}
                         ChangeState::AwaitingMissingDependency(miss_dep) => self
@@ -110,7 +123,11 @@ impl OpLog {
         }
     }
 
-    pub(super) fn apply_change_from_remote(&mut self, change: PendingChange) {
+    pub(super) fn apply_change_from_remote(
+        &mut self,
+        change: PendingChange,
+        would_affect: Option<&mut VersionRange>,
+    ) {
         let change = match change {
             PendingChange::Known(mut c) => {
                 self.dag.calc_unknown_lamport_change(&mut c).unwrap();
@@ -126,6 +143,9 @@ impl OpLog {
             return;
         };
 
+        if let Some(w) = would_affect {
+            w.extends_to_include_id_span(change.id_span());
+        }
         self.insert_new_change(change, false);
     }
 }
