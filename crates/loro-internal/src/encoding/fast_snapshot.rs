@@ -194,7 +194,7 @@ pub(crate) fn encode_snapshot_inner(doc: &LoroDoc) -> Snapshot {
         let latest = oplog.frontiers().clone();
         drop(oplog);
         drop(state);
-        doc.checkout_without_emitting(&latest).unwrap();
+        doc.checkout_without_emitting(&latest, false).unwrap();
         state = doc.app_state().try_lock().unwrap();
     }
     state.ensure_all_alive_containers();
@@ -206,7 +206,8 @@ pub(crate) fn encode_snapshot_inner(doc: &LoroDoc) -> Snapshot {
     };
     if was_detached {
         drop(state);
-        doc.checkout_without_emitting(&old_state_frontiers).unwrap();
+        doc.checkout_without_emitting(&old_state_frontiers, false)
+            .unwrap();
         doc.drop_pending_events();
     }
 

@@ -313,7 +313,6 @@ pub(crate) fn decode_oplog(
     oplog: &mut OpLog,
     parsed: ParsedHeaderAndBody,
 ) -> Result<ImportStatus, LoroError> {
-    let before_vv = oplog.vv().clone();
     let ParsedHeaderAndBody { mode, body, .. } = parsed;
     let changes = match mode {
         EncodeMode::OutdatedRle | EncodeMode::OutdatedSnapshot => {
@@ -324,6 +323,7 @@ pub(crate) fn decode_oplog(
         EncodeMode::Auto => unreachable!(),
     }?;
     let ImportChangesResult {
+        imported,
         latest_ids,
         pending_changes,
         changes_that_have_deps_before_shallow_root,
@@ -342,12 +342,11 @@ pub(crate) fn decode_oplog(
     // TODO: PERF: should we use hashmap to filter latest_ids with the same peer first?
     oplog.try_apply_pending(latest_ids);
     oplog.import_unknown_lamport_pending_changes(pending_changes)?;
-    let after_vv = oplog.vv();
     if !changes_that_have_deps_before_shallow_root.is_empty() {
         return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
     }
     Ok(ImportStatus {
-        success: before_vv.diff(after_vv).right,
+        success: imported,
         pending: (!pending.is_empty()).then_some(pending),
     })
 }

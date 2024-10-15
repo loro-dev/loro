@@ -65,12 +65,12 @@ pub(crate) fn export_json<'a, 'c: 'a>(
 }
 
 pub(crate) fn import_json(oplog: &mut OpLog, json: JsonSchema) -> LoroResult<ImportStatus> {
-    let before_vv = oplog.vv().clone();
     let changes = decode_changes(json, &oplog.arena)?;
     let ImportChangesResult {
         latest_ids,
         pending_changes,
         changes_that_have_deps_before_shallow_root,
+        imported,
     } = import_changes_to_oplog(changes, oplog);
     let mut pending = IdSpanVector::default();
     pending_changes.iter().for_each(|c| {
@@ -87,9 +87,8 @@ pub(crate) fn import_json(oplog: &mut OpLog, json: JsonSchema) -> LoroResult<Imp
     if !changes_that_have_deps_before_shallow_root.is_empty() {
         return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
     };
-    let after_vv = oplog.vv();
     Ok(ImportStatus {
-        success: before_vv.diff(after_vv).right,
+        success: imported,
         pending: (!pending.is_empty()).then_some(pending),
     })
 }

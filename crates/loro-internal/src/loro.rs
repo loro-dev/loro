@@ -771,9 +771,9 @@ impl LoroDoc {
                 None => Either::Left(&latest_frontiers),
             },
             |from, to| {
-                self.checkout_without_emitting(from).unwrap();
+                self.checkout_without_emitting(from, false).unwrap();
                 self.state.try_lock().unwrap().start_recording();
-                self.checkout_without_emitting(to).unwrap();
+                self.checkout_without_emitting(to, false).unwrap();
                 let mut state = self.state.try_lock().unwrap();
                 let e = state.take_events();
                 state.stop_and_clear_recording();
@@ -785,7 +785,7 @@ impl LoroDoc {
         // println!("\nundo_internal: diff: {:?}", diff);
         // println!("container remap: {:?}", container_remap);
 
-        self.checkout_without_emitting(&latest_frontiers)?;
+        self.checkout_without_emitting(&latest_frontiers, false)?;
         self.set_detached(false);
         if was_recording {
             self.state.try_lock().unwrap().start_recording();
@@ -837,13 +837,14 @@ impl LoroDoc {
             let was_detached = self.is_detached();
             let old_frontiers = self.state_frontiers();
             self.state.try_lock().unwrap().stop_and_clear_recording();
-            self.checkout_without_emitting(a).unwrap();
+            self.checkout_without_emitting(a, true).unwrap();
             self.state.try_lock().unwrap().start_recording();
-            self.checkout_without_emitting(b).unwrap();
+            self.checkout_without_emitting(b, true).unwrap();
             let mut state = self.state.try_lock().unwrap();
             let e = state.take_events();
             state.stop_and_clear_recording();
-            self.checkout_without_emitting(&old_frontiers).unwrap();
+            self.checkout_without_emitting(&old_frontiers, false)
+                .unwrap();
             if !was_detached {
                 self.set_detached(false);
             }
@@ -1024,7 +1025,16 @@ impl LoroDoc {
 
         tracing::info_span!("CheckoutToLatest", peer = self.peer_id()).in_scope(|| {
             let f = self.oplog_frontiers();
-            self.checkout(&f).unwrap();
+            let this = &self;
+            let frontiers = &f;
+            this.checkout_without_emitting(frontiers, false).unwrap(); // we don't need to shrink frontiers
+                                                                       // because oplog's frontiers are already shrinked
+            this.emit_events();
+            if this.config.detached_editing() {
+                this.renew_peer_id();
+                this.renew_txn_if_auto_commit();
+            }
+
             self.set_detached(false);
             self.renew_txn_if_auto_commit();
         });
@@ -1035,7 +1045,7 @@ impl LoroDoc {
     /// This will make the current [DocState] detached from the latest version of [OpLog].
     /// Any further import will not be reflected on the [DocState], until user call [LoroDoc::attach()]
     pub fn checkout(&self, frontiers: &Frontiers) -> LoroResult<()> {
-        self.checkout_without_emitting(frontiers)?;
+        self.checkout_without_emitting(frontiers, true)?;
         self.emit_events();
         if self.config.detached_editing() {
             self.renew_peer_id();
@@ -1046,7 +1056,11 @@ impl LoroDoc {
     }
 
     #[instrument(level = "info", skip(self))]
-    pub(crate) fn checkout_without_emitting(&self, frontiers: &Frontiers) -> Result<(), LoroError> {
+    pub(crate) fn checkout_without_emitting(
+        &self,
+        frontiers: &Frontiers,
+        to_shrink_frontiers: bool,
+    ) -> Result<(), LoroError> {
         self.commit_then_stop();
         let from_frontiers = self.state_frontiers();
         info!(
@@ -1068,8 +1082,12 @@ impl LoroDoc {
             return Err(LoroError::SwitchToVersionBeforeShallowRoot);
         }
 
-        let frontiers = shrink_frontiers(frontiers, &oplog.dag)
-            .map_err(|_| LoroError::SwitchToVersionBeforeShallowRoot)?;
+        let frontiers = if to_shrink_frontiers {
+            shrink_frontiers(frontiers, &oplog.dag)
+                .map_err(|_| LoroError::SwitchToVersionBeforeShallowRoot)?
+        } else {
+            frontiers.clone()
+        };
         if from_frontiers == frontiers {
             drop(oplog);
             self.renew_txn_if_auto_commit();

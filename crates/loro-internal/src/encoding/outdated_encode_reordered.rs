@@ -5,11 +5,12 @@ use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::rle::Sliceable;
 use itertools::Itertools;
 use loro_common::{
-    ContainerID, ContainerType, Counter, HasCounterSpan, HasId, HasIdSpan, IdLp, LoroError,
-    LoroResult, PeerID, TreeID, ID,
+    ContainerID, ContainerType, Counter, CounterSpan, HasCounterSpan, HasId, HasIdSpan, IdLp,
+    IdSpanVector, LoroError, LoroResult, PeerID, TreeID, ID,
 };
 use rle::HasLength;
 use serde_columnar::{columnar, ColumnarError};
+use std::collections::hash_map::Entry;
 use std::sync::Arc;
 use std::{borrow::Cow, cell::RefCell, cmp::Ordering, rc::Rc};
 use tracing::instrument;
@@ -228,6 +229,7 @@ pub(crate) struct ImportChangesResult {
     pub latest_ids: Vec<ID>,
     pub pending_changes: Vec<Change>,
     pub changes_that_have_deps_before_shallow_root: Vec<Change>,
+    pub imported: IdSpanVector,
 }
 
 /// NOTE: This method expects that the remote_changes are already sorted by lamport value
@@ -238,6 +240,7 @@ pub(crate) fn import_changes_to_oplog(
     let mut pending_changes = Vec::new();
     let mut latest_ids = Vec::new();
     let mut changes_before_shallow_root = Vec::new();
+    let mut imported = IdSpanVector::default();
     for mut change in changes {
         if change.ctr_end() <= oplog.vv().get(&change.id.peer).copied().unwrap_or(0) {
             // skip included changes
@@ -263,6 +266,18 @@ pub(crate) fn import_changes_to_oplog(
             continue;
         };
 
+        match imported.entry(change.peer()) {
+            Entry::Occupied(mut x) => {
+                let x = x.get_mut();
+                x.end = change.ctr_end();
+            }
+            Entry::Vacant(x) => {
+                x.insert(CounterSpan {
+                    start: change.id.counter,
+                    end: change.ctr_end(),
+                });
+            }
+        }
         oplog.insert_new_change(change, false);
     }
 
@@ -270,6 +285,7 @@ pub(crate) fn import_changes_to_oplog(
         latest_ids,
         pending_changes,
         changes_that_have_deps_before_shallow_root: changes_before_shallow_root,
+        imported,
     }
 }
 
@@ -695,6 +711,7 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
         latest_ids,
         pending_changes,
         changes_that_have_deps_before_shallow_root,
+        imported: _,
     } = import_changes_to_oplog(changes, &mut oplog);
     assert!(changes_that_have_deps_before_shallow_root.is_empty());
     for op in ops.iter_mut() {
