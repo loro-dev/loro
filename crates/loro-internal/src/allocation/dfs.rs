@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use crate::{
     dag::{Dag, DagNode},
     id::ID,
+    version::Frontiers,
 };
 
 fn get_all_points<T: DagNode, D: Dag<Node = T>>(graph: &D, points: &mut HashSet<ID>, current: &ID) {
@@ -12,10 +13,10 @@ fn get_all_points<T: DagNode, D: Dag<Node = T>>(graph: &D, points: &mut HashSet<
     }
 }
 
-pub fn get_end_list<T: DagNode, D: Dag<Node = T>>(graph: &D, start_list: &[ID]) -> Vec<ID> {
+pub fn get_end_list<T: DagNode, D: Dag<Node = T>>(graph: &D, start_list: &Frontiers) -> Frontiers {
     let mut end_set: HashSet<ID> = HashSet::new();
-    for start_id in start_list {
-        end_dfs(graph, start_id, &mut end_set);
+    for start_id in start_list.iter() {
+        end_dfs(graph, &start_id, &mut end_set);
     }
     end_set.into_iter().collect()
 }
@@ -33,20 +34,20 @@ fn end_dfs<T: DagNode, D: Dag<Node = T>>(graph: &D, current: &ID, end_set: &mut 
 
 pub fn calc_critical_version_dfs<T: DagNode, D: Dag<Node = T>>(
     graph: &D,
-    start_list: &[ID],
-    end_list: &[ID],
+    start_list: &Frontiers,
+    end_list: &Frontiers,
 ) -> Vec<ID> {
     let mut result: Vec<ID> = vec![];
     let mut points: HashSet<ID> = HashSet::new();
-    let start_list_set: HashSet<ID> = HashSet::from_iter(start_list.iter().cloned());
-    let end_list_set: HashSet<ID> = HashSet::from_iter(end_list.iter().cloned());
-    for start_id in start_list {
-        get_all_points(graph, &mut points, start_id);
+    let start_list_set: HashSet<ID> = HashSet::from_iter(start_list.iter());
+    let end_list_set: HashSet<ID> = HashSet::from_iter(end_list.iter());
+    for start_id in start_list.iter() {
+        get_all_points(graph, &mut points, &start_id);
     }
     for escape in points {
         let mut flag = false;
-        for start_id in start_list {
-            if dfs(graph, start_id, &escape, &end_list_set) {
+        for start_id in start_list.iter() {
+            if dfs(graph, &start_id, &escape, &end_list_set) {
                 flag = true;
                 break;
             }

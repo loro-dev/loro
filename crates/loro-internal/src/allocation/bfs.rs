@@ -2,6 +2,7 @@
 use crate::{
     dag::{Dag, DagNode},
     id::ID,
+    version::Frontiers,
 };
 
 use fxhash::FxHashSet;
@@ -32,7 +33,7 @@ pub struct BfsBody {
 
 pub fn calc_critical_version_bfs<T: DagNode, D: Dag<Node = T>>(
     graph: &D,
-    start_list: &[ID],
+    start_list: &Frontiers,
 ) -> Vec<ID> {
     let mut runner = BfsBody::new();
     runner.run(graph, start_list)
@@ -46,12 +47,12 @@ impl BfsBody {
         }
     }
 
-    fn run<T: DagNode, D: Dag<Node = T>>(&mut self, graph: &D, start_list: &[ID]) -> Vec<ID> {
-        let mut start_end_set: FxHashSet<ID> = start_list.iter().cloned().collect();
-        for start in start_list {
+    fn run<T: DagNode, D: Dag<Node = T>>(&mut self, graph: &D, start_list: &Frontiers) -> Vec<ID> {
+        let mut start_end_set: FxHashSet<ID> = start_list.iter().collect();
+        for start in start_list.iter() {
             self.queue.push(SortBase {
-                id: *start,
-                lamport: graph.get(*start).unwrap().lamport(),
+                id: start,
+                lamport: graph.get(start).unwrap().lamport(),
             });
         }
         let mut result: Vec<ID> = Vec::new();

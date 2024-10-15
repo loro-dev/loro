@@ -21,7 +21,7 @@ struct TestNode {
 }
 
 impl TestNode {
-    fn new(id: ID, lamport: Lamport, deps: Vec<ID>, len: usize) -> Self {
+    fn new(id: ID, lamport: Lamport, deps: Frontiers, len: usize) -> Self {
         Self {
             id,
             lamport,
@@ -44,7 +44,7 @@ impl Sliceable for TestNode {
             lamport: self.lamport + from as Lamport,
             len: to - from,
             deps: if from > 0 {
-                Arc::new(vec![self.id.inc(from as Counter - 1)])
+                Arc::new(self.id.inc(from as Counter - 1).into())
             } else {
                 self.deps.clone()
             },
@@ -79,7 +79,7 @@ impl HasLength for TestNode {
 #[derive(Debug, PartialEq, Eq)]
 struct TestDag {
     nodes: FxHashMap<PeerID, Vec<TestNode>>,
-    frontier: Vec<ID>,
+    frontier: Frontiers,
     version_vec: VersionVector,
     next_lamport: Lamport,
     client_id: PeerID,
@@ -102,7 +102,7 @@ impl Dag for TestDag {
         .map_or(None, |x| Some(arr[x].clone()))
     }
 
-    fn frontier(&self) -> &[ID] {
+    fn frontier(&self) -> &Frontiers {
         &self.frontier
     }
 
@@ -115,7 +115,7 @@ impl TestDag {
     pub fn new(client_id: PeerID) -> Self {
         Self {
             nodes: FxHashMap::default(),
-            frontier: Vec::new(),
+            frontier: Frontiers::new(),
             version_vec: VersionVector::new(),
             next_lamport: 0,
             client_id,
@@ -135,7 +135,7 @@ impl TestDag {
         let counter = self.version_vec.entry(client_id).or_insert(0);
         let id = ID::new(client_id, *counter);
         *counter += len as Counter;
-        let deps = std::mem::replace(&mut self.frontier, vec![id.inc(len as Counter - 1)]);
+        let deps = std::mem::replace(&mut self.frontier, id.inc(len as Counter - 1).into());
         self.nodes.entry(client_id).or_default().push(TestNode::new(
             id,
             self.next_lamport,
@@ -174,7 +174,7 @@ impl TestDag {
         }
     }
 
-    fn update_frontier(frontier: &mut Vec<ID>, new_node_id: ID, new_node_deps: &[ID]) {
+    fn update_frontier(frontier: &mut Frontiers, new_node_id: ID, new_node_deps: &Frontiers) {
         frontier.retain(|x| {
             if x.peer == new_node_id.peer && x.counter <= new_node_id.counter {
                 return false;
@@ -202,7 +202,7 @@ impl TestDag {
         if self.contains(node.id_last()) {
             return false;
         }
-        if node.deps.iter().any(|dep| !self.contains(*dep)) {
+        if node.deps.iter().any(|dep| !self.contains(dep)) {
             pending.push((client_id, i));
             return true;
         }
@@ -238,7 +238,7 @@ fn test_dag() {
     let mut b = TestDag::new(1);
     a.push(1);
     assert_eq!(a.frontier().len(), 1);
-    assert_eq!(a.frontier()[0].counter, 0);
+    assert_eq!(a.frontier().as_single().unwrap().counter, 0);
     b.push(1);
     a.merge(&b);
     assert_eq!(a.frontier().len(), 2);
@@ -249,7 +249,7 @@ fn test_dag() {
     //            |
     // b:   0 ----
     assert_eq!(
-        a.frontier()[0],
+        a.frontier().iter().next().unwrap(),
         ID {
             peer: 0,
             counter: 1
@@ -267,11 +267,10 @@ fn test_dag() {
     assert_eq!(b.frontier().len(), 2);
     // println!("{}", b.mermaid());
     assert_eq!(
-        b.find_common_ancestor(&[ID::new(0, 2)], &[ID::new(1, 1)])
+        b.find_common_ancestor(&[ID::new(0, 2)].into(), &[ID::new(1, 1)].into())
             .0
-            .first()
-            .copied(),
-        None,
+            .len(),
+        0
     );
 }
 
@@ -404,11 +403,13 @@ mod dfs {
                 &[ID {
                     peer: 0,
                     counter: 13,
-                }],
+                }]
+                .into(),
                 &[ID {
                     peer: 0,
                     counter: 9,
-                }],
+                }]
+                .into(),
             )
             .length(),
             0
@@ -437,7 +438,8 @@ mod dfs {
                 peer: 4,
                 counter: 6,
             },
-        ];
+        ]
+        .into();
         assert_eq!(
             calc_critical_version_dfs(&dags[0], start, &ends).length(),
             0
@@ -479,7 +481,8 @@ mod bfs {
                 &[ID {
                     peer: 0,
                     counter: 13,
-                }],
+                }]
+                .into(),
             )
             .length(),
             0
