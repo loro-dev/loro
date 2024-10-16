@@ -171,10 +171,10 @@ fn remote_change_apply_state(
         return ChangeState::AwaitingMissingDependency(change.id.inc(-1));
     }
 
-    for dep in change.deps.as_ref().iter() {
+    for dep in change.deps.iter() {
         let dep_vv_latest_ctr = vv.get(&dep.peer).copied().unwrap_or(0);
         if dep_vv_latest_ctr - 1 < dep.counter {
-            return ChangeState::AwaitingMissingDependency(*dep);
+            return ChangeState::AwaitingMissingDependency(dep);
         }
     }
 

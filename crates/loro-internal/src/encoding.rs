@@ -18,7 +18,6 @@ use crate::{oplog::OpLog, LoroError, VersionVector};
 use loro_common::{HasIdSpan, IdLpSpan, IdSpan, LoroEncodeError, LoroResult, PeerID, ID};
 use num_traits::{FromPrimitive, ToPrimitive};
 use rle::{HasLength, Sliceable};
-use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 
 /// The mode of the export.
@@ -526,7 +525,7 @@ pub(crate) fn decode_snapshot(
     })
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ImportBlobMetadata {
     /// The partial start version vector.
     ///

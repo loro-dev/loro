@@ -367,7 +367,7 @@ impl OneDocFuzzer {
             Action::Sync { from, to } => {
                 trace!("vv={:?}", self.doc.oplog_vv());
                 let mut f = self.branches[*from as usize].frontiers.clone();
-                f.extend_from_slice(&self.branches[*to as usize].frontiers);
+                f.merge_with_greater(&self.branches[*to as usize].frontiers);
                 self.branches[*to as usize].frontiers = self.doc.minimize_frontiers(&f).unwrap();
             }
             Action::SyncAll => {

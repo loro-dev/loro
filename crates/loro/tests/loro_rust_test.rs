@@ -306,14 +306,14 @@ fn travel_back_should_remove_styles() {
     text.insert(0, "Hello world!").unwrap();
     doc.commit();
     let f = doc.state_frontiers();
-    let mut f1 = f.clone();
+    let mut f1 = f.to_vec();
     f1[0].counter += 1;
     text.mark(0..5, "bold", true).unwrap();
     doc.commit();
     let f2 = doc.state_frontiers();
     assert_eq!(text.to_delta(), text2.to_delta());
     trace_span!("CheckoutToMiddle").in_scope(|| {
-        doc.checkout(&f1).unwrap(); // checkout to the middle of the start anchor op and the end anchor op
+        doc.checkout(&f1.into()).unwrap(); // checkout to the middle of the start anchor op and the end anchor op
     });
     doc.checkout(&f).unwrap();
     assert_eq!(
@@ -1793,14 +1793,14 @@ fn test_travel_change_ancestors() {
     let f = doc.state_frontiers();
     assert_eq!(f.len(), 1);
     let mut changes = vec![];
-    doc.travel_change_ancestors(&[f[0]], &mut |meta| {
+    doc.travel_change_ancestors(&[f.iter().next().unwrap()], &mut |meta| {
         changes.push(meta.clone());
         ControlFlow::Continue(())
     })
     .unwrap();
 
     let dbg_str = format!("{:#?}", changes);
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         dbg_str,
         r#"[
     ChangeMeta {
@@ -1823,8 +1823,8 @@ fn test_travel_change_ancestors() {
         message: None,
         deps: Frontiers(
             [
-                5@2,
                 10@1,
+                5@2,
             ],
         ),
         len: 1,
@@ -1951,4 +1951,11 @@ fn issue_490() -> anyhow::Result<()> {
 
     final_loro.import(&loro_c1.export(loro::ExportMode::snapshot())?)?;
     Ok(())
+}
+
+#[test]
+fn test_loro_doc() {
+    let doc = LoroDoc::new();
+    doc.get_text("text").insert(0, "Hello").unwrap();
+    doc.state_vv();
 }

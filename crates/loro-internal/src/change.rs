@@ -88,7 +88,11 @@ impl<O> Change<O> {
 
     #[inline]
     pub fn deps_on_self(&self) -> bool {
-        self.deps.len() == 1 && self.deps[0].peer == self.id.peer
+        if let Some(id) = self.deps.as_single() {
+            id.peer == self.id.peer
+        } else {
+            false
+        }
     }
 
     pub fn message(&self) -> Option<&Arc<str>> {
@@ -233,7 +237,7 @@ impl<O: Mergable + HasLength + HasIndex + Sliceable + HasCounter + Debug> Slicea
 }
 
 impl DagNode for Change {
-    fn deps(&self) -> &[ID] {
+    fn deps(&self) -> &Frontiers {
         &self.deps
     }
 }
@@ -243,7 +247,7 @@ impl Change {
         if other.id.peer == self.id.peer
             && other.id.counter == self.id.counter + self.content_len() as Counter
             && other.deps.len() == 1
-            && other.deps[0].peer == self.id.peer
+            && other.deps.as_single().unwrap().peer == self.id.peer
             && other.timestamp - self.timestamp < merge_interval
             && self.commit_msg == other.commit_msg
         {

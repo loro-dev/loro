@@ -278,7 +278,7 @@ impl Actor {
         self.loro.attach();
         let f = self.loro.oplog_frontiers();
         let value = self.loro.get_deep_value();
-        let mut ids: Vec<ID> = f.iter().cloned().collect();
+        let mut ids: Vec<ID> = f.iter().collect();
         ids.sort_by_key(|x| x.peer);
         self.history.insert(ids, value);
     }

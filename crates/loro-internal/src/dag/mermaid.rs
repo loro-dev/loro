@@ -123,7 +123,7 @@ fn get_dag_break_points<T: DagNode>(dag: &impl Dag<Node = T>) -> BreakPoints {
         let set = break_points.break_points.entry(id.peer).or_default();
         set.insert(id.counter);
         set.insert(id.counter + node.content_len() as Counter);
-        for dep in node.deps() {
+        for dep in node.deps().iter() {
             if dep.peer == id.peer {
                 continue;
             }
@@ -133,7 +133,7 @@ fn get_dag_break_points<T: DagNode>(dag: &impl Dag<Node = T>) -> BreakPoints {
                 .entry(dep.peer)
                 .or_default()
                 .insert(dep.counter);
-            break_points.links.entry(id).or_default().push(*dep);
+            break_points.links.entry(id).or_default().push(dep);
         }
     }
 

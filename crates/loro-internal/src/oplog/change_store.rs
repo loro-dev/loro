@@ -606,7 +606,7 @@ mod mut_external_kv {
             let mut max_timestamp = 0;
             drop(kv_store);
             for id in frontiers.iter() {
-                let c = self.get_change(*id).unwrap();
+                let c = self.get_change(id).unwrap();
                 debug_assert_ne!(c.atom_len(), 0);
                 let l = c.lamport_last();
                 if let Some(x) = max_lamport {

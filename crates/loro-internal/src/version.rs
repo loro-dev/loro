@@ -1,14 +1,5 @@
-use loro_common::{HasCounter, HasCounterSpan, HasIdSpan, HasLamportSpan, IdFull, IdSpanVector};
-use smallvec::smallvec;
-use std::{
-    cmp::Ordering,
-    ops::{ControlFlow, Deref, DerefMut},
-};
-
-use fxhash::{FxHashMap, FxHashSet};
-
-use serde::{Deserialize, Serialize};
-use smallvec::SmallVec;
+mod frontiers;
+pub use frontiers::Frontiers;
 
 use crate::{
     change::Lamport,
@@ -16,6 +7,14 @@ use crate::{
     oplog::AppDag,
     span::{CounterSpan, IdSpan},
     LoroError, PeerID,
+};
+use fxhash::FxHashMap;
+use loro_common::{HasCounter, HasCounterSpan, HasIdSpan, HasLamportSpan, IdFull, IdSpanVector};
+use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
+use std::{
+    cmp::Ordering,
+    ops::{ControlFlow, Deref, DerefMut},
 };
 
 /// [VersionVector](https://en.wikipedia.org/wiki/Version_vector)
@@ -251,201 +250,6 @@ impl ImVersionVector {
         }
 
         self.get(&x.peer).copied().unwrap_or(0) > x.counter
-    }
-}
-
-// TODO: use a better data structure that is Array when small
-// and hashmap when it's big
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct Frontiers(SmallVec<[ID; 1]>);
-
-impl PartialEq for Frontiers {
-    fn eq(&self, other: &Self) -> bool {
-        if self.len() != other.len() {
-            return false;
-        }
-
-        if self.len() <= 1 {
-            self.0 == other.0
-        } else if self.len() <= 10 {
-            self.0.iter().all(|id| other.0.contains(id))
-        } else {
-            let set = self.0.iter().collect::<FxHashSet<_>>();
-            other.iter().all(|x| set.contains(x))
-        }
-    }
-}
-
-impl Frontiers {
-    #[inline]
-    pub fn from_id(id: ID) -> Self {
-        Self(smallvec![id])
-    }
-
-    #[inline]
-    pub fn encode(&self) -> Vec<u8> {
-        postcard::to_allocvec(&self).unwrap()
-    }
-
-    #[inline]
-    pub fn decode(bytes: &[u8]) -> Result<Self, LoroError> {
-        postcard::from_bytes(bytes).map_err(|_| {
-            LoroError::DecodeError("Decode Frontiers error".to_string().into_boxed_str())
-        })
-    }
-
-    pub fn retain_non_included(&mut self, other: &Frontiers) {
-        self.retain(|id| !other.contains(id));
-    }
-
-    pub fn update_frontiers_on_new_change(&mut self, id: ID, deps: &Frontiers) {
-        if self.len() <= 8 && self == deps {
-            *self = Frontiers::from_id(id);
-            return;
-        }
-
-        self.retain(|existing_id| {
-            if existing_id.peer == id.peer {
-                assert!(id.counter > existing_id.counter);
-                return false;
-            }
-
-            let any_same = deps.iter().any(|dep| {
-                if dep.peer == existing_id.peer {
-                    assert!(
-                        dep.counter <= existing_id.counter,
-                        "Causal dependency violated"
-                    );
-
-                    dep.counter == existing_id.counter
-                } else {
-                    false
-                }
-            });
-
-            !any_same
-        });
-
-        self.push(id);
-    }
-
-    pub fn filter_peer(&mut self, peer: PeerID) {
-        self.retain(|id| id.peer != peer);
-    }
-
-    #[inline]
-    pub(crate) fn with_capacity(cap: usize) -> Frontiers {
-        Self(SmallVec::with_capacity(cap))
-    }
-
-    #[allow(unused)]
-    pub(crate) fn merge_frontiers(&mut self, new_frontiers: &Frontiers) {
-        if self.len() <= 1 {
-            if self == new_frontiers {
-                return;
-            }
-
-            if new_frontiers.len() == 0 {
-                return;
-            }
-
-            if self.len() == 0 {
-                *self = new_frontiers.clone();
-                return;
-            }
-
-            if new_frontiers.len() == 1 {
-                let new_id = new_frontiers[0];
-                if self[0].peer == new_id.peer {
-                    if self[0].counter < new_id.counter {
-                        self[0].counter = new_id.counter;
-                    } else {
-                        return;
-                    }
-                } else {
-                    self.push(new_id);
-                    return;
-                }
-            }
-        }
-
-        let mut map = self
-            .0
-            .iter()
-            .map(|id| (id.peer, id.counter))
-            .collect::<FxHashMap<_, _>>();
-
-        for id in new_frontiers.0.iter() {
-            if let Some(counter) = map.get_mut(&id.peer) {
-                if *counter < id.counter {
-                    *counter = id.counter;
-                }
-            } else {
-                self.0.push(*id);
-            }
-        }
-
-        self.0 = map
-            .into_iter()
-            .map(|(peer, counter)| ID::new(peer, counter))
-            .collect();
-    }
-}
-
-impl Deref for Frontiers {
-    type Target = SmallVec<[ID; 1]>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for Frontiers {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-impl From<SmallVec<[ID; 1]>> for Frontiers {
-    fn from(value: SmallVec<[ID; 1]>) -> Self {
-        Self(value)
-    }
-}
-
-impl From<&[ID]> for Frontiers {
-    fn from(value: &[ID]) -> Self {
-        Self(value.into())
-    }
-}
-
-impl<const N: usize> From<[ID; N]> for Frontiers {
-    fn from(value: [ID; N]) -> Self {
-        Self(value.as_slice().into())
-    }
-}
-
-impl From<ID> for Frontiers {
-    fn from(value: ID) -> Self {
-        Self([value].into())
-    }
-}
-
-impl From<&Vec<ID>> for Frontiers {
-    fn from(value: &Vec<ID>) -> Self {
-        let ids: &[ID] = value;
-        Self(ids.into())
-    }
-}
-
-impl From<Vec<ID>> for Frontiers {
-    fn from(value: Vec<ID>) -> Self {
-        Self(value.into())
-    }
-}
-
-impl FromIterator<ID> for Frontiers {
-    fn from_iter<I: IntoIterator<Item = ID>>(iter: I) -> Self {
-        Self(iter.into_iter().collect())
     }
 }
 
@@ -1045,22 +849,18 @@ impl VersionVector {
 
 /// Use minimal set of ids to represent the frontiers
 #[tracing::instrument(skip(dag))]
-pub fn shrink_frontiers(last_ids: &[ID], dag: &AppDag) -> Result<Frontiers, ID> {
+pub fn shrink_frontiers(last_ids: &Frontiers, dag: &AppDag) -> Result<Frontiers, ID> {
     // it only keep the ids of ops that are concurrent to each other
-    let mut frontiers = Frontiers::default();
-    if last_ids.is_empty() {
-        return Ok(frontiers);
-    }
 
-    if last_ids.len() == 1 {
-        frontiers.push(last_ids[0]);
-        return Ok(frontiers);
+    if last_ids.len() <= 1 {
+        return Ok(last_ids.clone());
     }
 
     let mut last_ids = {
         let ids = filter_duplicated_peer_id(last_ids);
         if last_ids.len() == 1 {
-            frontiers.push(last_ids[0]);
+            let mut frontiers = Frontiers::default();
+            frontiers.push(last_ids.as_single().unwrap());
             return Ok(frontiers);
         }
 
@@ -1075,6 +875,7 @@ pub fn shrink_frontiers(last_ids: &[ID], dag: &AppDag) -> Result<Frontiers, ID> 
         last_ids
     };
 
+    let mut frontiers = Vec::new();
     // Iterate from the greatest lamport to the smallest
     last_ids.sort_by_key(|x| x.lamport);
     for id in last_ids.iter().rev() {
@@ -1101,12 +902,12 @@ pub fn shrink_frontiers(last_ids: &[ID], dag: &AppDag) -> Result<Frontiers, ID> 
         }
     }
 
-    Ok(frontiers)
+    Ok(frontiers.into())
 }
 
-fn filter_duplicated_peer_id(last_ids: &[ID]) -> Vec<ID> {
+fn filter_duplicated_peer_id(last_ids: &Frontiers) -> Vec<ID> {
     let mut peer_max_counters = FxHashMap::default();
-    for &id in last_ids {
+    for id in last_ids.iter() {
         let counter = peer_max_counters.entry(id.peer).or_insert(id.counter);
         if id.counter > *counter {
             *counter = id.counter;

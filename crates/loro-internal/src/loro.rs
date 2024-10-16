@@ -19,7 +19,7 @@ use std::{
         Arc, Mutex, Weak,
     },
 };
-use tracing::{debug, debug_span, info, info_span, instrument, trace, warn};
+use tracing::{debug_span, info, info_span, instrument, trace, warn};
 
 use crate::{
     arena::SharedArena,
@@ -30,7 +30,7 @@ use crate::{
         IntoContainerId,
     },
     cursor::{AbsolutePosition, CannotFindRelativePosition, Cursor, PosQueryResult},
-    dag::DagUtils,
+    dag::Dag,
     diff_calc::DiffCalculator,
     encoding::{
         self, decode_snapshot, export_fast_snapshot, export_fast_updates,
@@ -320,7 +320,6 @@ impl LoroDoc {
             return;
         }
 
-        // TODO: FIXME: Should we detect detached here?
         let mut txn_guard = self.txn.try_lock().unwrap();
         let txn = txn_guard.take();
         drop(txn_guard);
@@ -488,13 +487,12 @@ impl LoroDoc {
         origin: InternalString,
     ) -> Result<ImportStatus, LoroError> {
         let mut oplog = self.oplog.try_lock().unwrap();
-        let old_vv = oplog.vv().clone();
-        let old_frontiers = oplog.frontiers().clone();
-        let result = f(&mut oplog);
         if !self.is_detached() {
-            debug!("checkout from {:?} to {:?}", old_vv, oplog.vv());
-            let mut diff = DiffCalculator::new(false);
+            let old_vv = oplog.vv().clone();
+            let old_frontiers = oplog.frontiers().clone();
+            let result = f(&mut oplog);
             if &old_vv != oplog.vv() {
+                let mut diff = DiffCalculator::new(false);
                 let (diff, diff_mode) = diff.calc_diff_internal(
                     &oplog,
                     &old_vv,
@@ -514,10 +512,10 @@ impl LoroDoc {
                     diff_mode,
                 );
             }
+            result
         } else {
-            tracing::info!("Detached");
+            f(&mut oplog)
         }
-        result
     }
 
     fn emit_events(&self) {
@@ -819,12 +817,12 @@ impl LoroDoc {
         {
             // check whether a and b are valid
             let oplog = self.oplog.try_lock().unwrap();
-            for &id in a.iter() {
+            for id in a.iter() {
                 if !oplog.dag.contains(id) {
                     return Err(LoroError::FrontiersNotFound(id));
                 }
             }
-            for &id in b.iter() {
+            for id in b.iter() {
                 if !oplog.dag.contains(id) {
                     return Err(LoroError::FrontiersNotFound(id));
                 }
@@ -1096,7 +1094,7 @@ impl LoroDoc {
 
         let mut state = self.state.try_lock().unwrap();
         let mut calc = self.diff_calculator.try_lock().unwrap();
-        for &i in frontiers.iter() {
+        for i in frontiers.iter() {
             if !oplog.dag.contains(i) {
                 drop(oplog);
                 drop(state);
@@ -1588,7 +1586,7 @@ impl LoroDoc {
                 break;
             }
 
-            for &dep in deps.iter() {
+            for dep in deps.iter() {
                 let Some(dep_node) = self.oplog().try_lock().unwrap().get_change_at(dep) else {
                     continue;
                 };

@@ -259,7 +259,7 @@ fn js_id_to_id(id: JsID) -> Result<ID, JsValue> {
 fn frontiers_to_ids(frontiers: &Frontiers) -> JsIDs {
     let js_arr = Array::new();
     for id in frontiers.iter() {
-        let value = id_to_js(id);
+        let value = id_to_js(&id);
         js_arr.push(&value);
     }
 

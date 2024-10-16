@@ -1,5 +1,4 @@
 use enum_as_inner::EnumAsInner;
-use fxhash::FxHasher64;
 use itertools::Itertools;
 use loro_delta::{array_vec::ArrayVec, delta_trait::DeltaAttr, DeltaItem, DeltaRope};
 use serde::{Deserialize, Serialize};
@@ -18,10 +17,7 @@ use crate::{
     InternalString,
 };
 
-use std::{
-    borrow::Cow,
-    hash::{Hash, Hasher},
-};
+use std::{borrow::Cow, hash::Hash};
 
 use loro_common::{ContainerID, TreeID};
 
@@ -95,16 +91,6 @@ pub struct DocDiff {
     pub origin: InternalString,
     pub by: EventTriggerKind,
     pub diff: Vec<ContainerDiff>,
-}
-
-impl DocDiff {
-    /// Get the unique id of the diff.
-    pub fn id(&self) -> u64 {
-        let mut hasher = FxHasher64::default();
-        self.from.hash(&mut hasher);
-        self.to.hash(&mut hasher);
-        hasher.finish()
-    }
 }
 
 #[derive(Debug, Clone)]

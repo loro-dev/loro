@@ -155,7 +155,6 @@ pub(crate) fn decode_snapshot_inner(snapshot: Snapshot, doc: &LoroDoc) -> Result
 impl OpLog {
     pub(super) fn decode_change_store(&mut self, bytes: bytes::Bytes) -> LoroResult<()> {
         let v = self.change_store().import_all(bytes)?;
-        // FIXME: handle start vv and start frontiers
         self.dag.set_version_by_fast_snapshot_import(v);
         Ok(())
     }

@@ -109,7 +109,7 @@ impl OpLog {
     pub fn get_timestamp_of_version(&self, f: &Frontiers) -> Timestamp {
         let mut timestamp = Timestamp::default();
         for id in f.iter() {
-            if let Some(change) = self.lookup_change(*id) {
+            if let Some(change) = self.lookup_change(id) {
                 timestamp = timestamp.max(change.timestamp);
             }
         }
@@ -221,7 +221,7 @@ impl OpLog {
 
         let mut max_last_counter = -1;
         for dep in deps.iter() {
-            let dep_vv = self.dag.get_vv(*dep).unwrap();
+            let dep_vv = self.dag.get_vv(dep).unwrap();
             max_last_counter = max_last_counter.max(dep_vv.get(&peer).cloned().unwrap_or(0) - 1);
         }
 
@@ -409,7 +409,7 @@ impl OpLog {
         let common_ancestors_vv = self.dag.frontiers_to_vv(&common_ancestors).unwrap();
         // go from lca to merged_vv
         let diff = common_ancestors_vv.diff(&merged_vv).right;
-        let mut iter = self.dag.iter_causal(&common_ancestors, diff);
+        let mut iter = self.dag.iter_causal(common_ancestors, diff);
         let mut node = iter.next();
         let mut cur_cnt = 0;
         let vv = Rc::new(RefCell::new(VersionVector::default()));
@@ -595,7 +595,7 @@ impl OpLog {
     pub fn get_greatest_timestamp(&self, frontiers: &Frontiers) -> Timestamp {
         let mut max_timestamp = Timestamp::default();
         for id in frontiers.iter() {
-            let change = self.get_change_at(*id).unwrap();
+            let change = self.get_change_at(id).unwrap();
             if change.timestamp > max_timestamp {
                 max_timestamp = change.timestamp;
             }

@@ -277,7 +277,6 @@ impl ApplyDiff for LoroValue {
                                     )
                                 } else {
                                     (
-                                        // FIXME: maybe by default we shuold use utf8
                                         unicode_to_utf8_index(&s, index).unwrap(),
                                         unicode_to_utf8_index(&s, index + *delete).unwrap(),
                                     )

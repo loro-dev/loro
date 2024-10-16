@@ -46,14 +46,15 @@ pub(crate) fn export_shallow_snapshot_inner(
     {
         if !start_from.is_empty() {
             assert!(start_from.len() == 1);
-            let node = oplog.dag.get(start_from[0]).unwrap();
-            if start_from[0].counter == node.cnt {
+            let id = start_from.as_single().unwrap();
+            let node = oplog.dag.get(id).unwrap();
+            if id.counter == node.cnt {
                 let vv = oplog.dag().frontiers_to_vv(&node.deps).unwrap();
                 assert_eq!(vv, start_vv);
             } else {
                 let vv = oplog
                     .dag()
-                    .frontiers_to_vv(&Frontiers::from(start_from[0].inc(-1)))
+                    .frontiers_to_vv(&Frontiers::from(id.inc(-1)))
                     .unwrap();
                 assert_eq!(vv, start_vv);
             }
@@ -216,14 +217,17 @@ fn calc_shallow_doc_start(oplog: &crate::OpLog, frontiers: &Frontiers) -> Fronti
     let (mut start, _) = oplog
         .dag()
         .find_common_ancestor(frontiers, oplog.frontiers());
+
     while start.len() > 1 {
-        start.drain(1..);
+        start.keep_one();
         let (new_start, _) = oplog.dag().find_common_ancestor(&start, oplog.frontiers());
         start = new_start;
     }
 
-    for id in start.iter_mut() {
-        if let Some(op) = oplog.get_op_that_includes(*id) {
+    let mut ans = Frontiers::new();
+    for id in start.iter() {
+        let mut processed = false;
+        if let Some(op) = oplog.get_op_that_includes(id) {
             if let crate::op::InnerContent::List(InnerListOp::StyleStart { .. }) = &op.content {
                 // StyleStart and StyleEnd operations must be kept together in the GC snapshot.
                 // Splitting them could lead to an weird document state that cannot be
@@ -231,12 +235,17 @@ fn calc_shallow_doc_start(oplog: &crate::OpLog, frontiers: &Frontiers) -> Fronti
                 // one step to include both operations.
 
                 // > Id.counter + 1 is guaranteed to be the StyleEnd Op
-                id.counter += 1;
+                ans.push(id.inc(1));
+                processed = true;
             }
+        }
+
+        if !processed {
+            ans.push(id);
         }
     }
 
-    start
+    ans
 }
 
 pub(crate) fn encode_snapshot_at<W: std::io::Write>(
