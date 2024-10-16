@@ -262,6 +262,8 @@ struct SubscriberSetState<EmitterKey, Callback> {
 struct Subscriber<Callback> {
     active: Arc<AtomicBool>,
     callback: Callback,
+    /// This field is used to drop the subscription when the subscriber is dropped.
+    _sub: InnerSubscription,
 }
 
 impl<EmitterKey, Callback> SubscriberSet<EmitterKey, Callback>
@@ -289,21 +291,14 @@ where
         let active = Arc::new(AtomicBool::new(false));
         let mut lock = self.0.try_lock().unwrap();
         let subscriber_id = post_inc(&mut lock.next_subscriber_id);
-        lock.subscribers
-            .entry(emitter_key.clone())
-            .or_default()
-            .get_or_insert_with(Default::default)
-            .insert(
-                subscriber_id,
-                Subscriber {
-                    active: active.clone(),
-                    callback,
-                },
-            );
-        let this = self.0.clone();
+        let this = Arc::downgrade(&self.0);
+        let emitter_key_1 = emitter_key.clone();
+        let inner_sub = InnerSubscription {
+            unsubscribe: Arc::new(Mutex::new(Some(Box::new(move || {
+                let Some(this) = this.upgrade() else {
+                    return;
+                };
 
-        let subscription = Subscription {
-            unsubscribe: Some(Box::new(move || {
                 let mut lock = this.try_lock().unwrap();
                 let Some(subscribers) = lock.subscribers.get_mut(&emitter_key) else {
                     // remove was called with this emitter_key
@@ -323,8 +318,24 @@ where
                 // later.
                 lock.dropped_subscribers
                     .insert((emitter_key, subscriber_id));
-            })),
+            })))),
         };
+        let subscription = Subscription {
+            unsubscribe: Arc::downgrade(&inner_sub.unsubscribe),
+        };
+
+        lock.subscribers
+            .entry(emitter_key_1)
+            .or_default()
+            .get_or_insert_with(Default::default)
+            .insert(
+                subscriber_id,
+                Subscriber {
+                    active: active.clone(),
+                    callback,
+                    _sub: inner_sub,
+                },
+            );
         (subscription, move || active.store(true, Ordering::Relaxed))
     }
 
@@ -413,12 +424,13 @@ fn post_inc(next_subscriber_id: &mut usize) -> usize {
     *next_subscriber_id += 1;
     ans
 }
+type Callback = Box<dyn FnOnce() + 'static + Send + Sync>;
 
 /// A handle to a subscription created by GPUI. When dropped, the subscription
 /// is cancelled and the callback will no longer be invoked.
 #[must_use]
 pub struct Subscription {
-    unsubscribe: Option<Box<dyn FnOnce() + 'static + Send + Sync>>,
+    unsubscribe: Weak<Mutex<Option<Callback>>>,
 }
 
 impl std::fmt::Debug for Subscription {
@@ -428,21 +440,16 @@ impl std::fmt::Debug for Subscription {
 }
 
 impl Subscription {
-    /// Creates a new subscription with a callback that gets invoked when
-    /// this subscription is dropped.
-    pub fn new(unsubscribe: impl 'static + Send + Sync + FnOnce()) -> Self {
-        Self {
-            unsubscribe: Some(Box::new(unsubscribe)),
-        }
-    }
-
     /// Detaches the subscription from this handle. The callback will
     /// continue to be invoked until the doc has been subscribed to
     /// are dropped
-    pub fn detach(mut self) {
-        self.unsubscribe.take();
+    pub fn detach(self) {
+        if let Some(unsubscribe) = self.unsubscribe.upgrade() {
+            unsubscribe.lock().unwrap().take();
+        }
     }
 
+    /// Unsubscribes the subscription.
     #[inline]
     pub fn unsubscribe(self) {
         drop(self)
@@ -451,9 +458,22 @@ impl Subscription {
 
 impl Drop for Subscription {
     fn drop(&mut self) {
-        if let Some(unsubscribe) = self.unsubscribe.take() {
-            unsubscribe();
+        if let Some(unsubscribe) = self.unsubscribe.upgrade() {
+            let unsubscribe = unsubscribe.lock().unwrap().take();
+            if let Some(unsubscribe) = unsubscribe {
+                unsubscribe();
+            }
         }
+    }
+}
+
+struct InnerSubscription {
+    unsubscribe: Arc<Mutex<Option<Callback>>>,
+}
+
+impl Drop for InnerSubscription {
+    fn drop(&mut self) {
+        self.unsubscribe.lock().unwrap().take();
     }
 }
 
@@ -529,5 +549,30 @@ where
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_inner_subscription_drop() {
+        let subscriber_set = SubscriberSet::<i32, Box<dyn Fn(&i32) -> bool + Send + Sync>>::new();
+        let (subscription, activate) = subscriber_set.insert(1, Box::new(move |_: &i32| true));
+        activate();
+        drop(subscriber_set);
+        assert!(subscription.unsubscribe.upgrade().is_none());
+    }
+
+    #[test]
+    fn test_inner_subscription_drop_2() {
+        let subscriber_set = SubscriberSet::<i32, Box<dyn Fn(&i32) -> bool + Send + Sync>>::new();
+        let (subscription, activate) = subscriber_set.insert(1, Box::new(move |_: &i32| false));
+        activate();
+        subscriber_set
+            .retain(&1, &mut |callback| callback(&1))
+            .unwrap();
+        assert!(subscription.unsubscribe.upgrade().is_none());
     }
 }
