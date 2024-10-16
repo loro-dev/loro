@@ -320,7 +320,6 @@ impl LoroDoc {
             return;
         }
 
-        // TODO: FIXME: Should we detect detached here?
         let mut txn_guard = self.txn.try_lock().unwrap();
         let txn = txn_guard.take();
         drop(txn_guard);

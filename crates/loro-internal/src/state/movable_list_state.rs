@@ -1549,8 +1549,6 @@ struct EncodedItemForFastSnapshot {
     invisible_list_item: usize,
     #[columnar(strategy = "BoolRle")]
     pos_id_eq_elem_id: bool,
-    // TODO: FIXME: I kinda hate this... We don't need to encode last_set_id if
-    // we remove the other snapshot mode.
     #[columnar(strategy = "BoolRle")]
     elem_id_eq_last_set_id: bool,
 }
