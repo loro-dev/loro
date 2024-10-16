@@ -28,7 +28,7 @@ use loro_internal::{
 };
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
-use std::{cell::RefCell, cmp::Ordering, rc::Rc, sync::Arc};
+use std::{cell::RefCell, cmp::Ordering, mem::ManuallyDrop, rc::Rc, sync::Arc};
 use wasm_bindgen::{__rt::IntoJsResult, prelude::*, throw_val};
 use wasm_bindgen_derive::TryFromJsValue;
 
@@ -4240,9 +4240,23 @@ fn js_to_export_mode(js_mode: JsExportMode) -> JsResult<ExportMode<'static>> {
 }
 
 fn subscription_to_js_function_callback(sub: Subscription) -> JsValue {
-    let mut sub = Some(sub);
+    use once_cell::sync::Lazy;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    static SUBSCRIPTION_MAP: Lazy<Mutex<HashMap<usize, Subscription>>> =
+        Lazy::new(|| Mutex::new(HashMap::new()));
+    static NEXT_ID: Lazy<Mutex<usize>> = Lazy::new(|| Mutex::new(0));
+
+    let id = {
+        let mut id = NEXT_ID.lock().unwrap();
+        *id += 1;
+        *id
+    };
+
+    SUBSCRIPTION_MAP.lock().unwrap().insert(id, sub);
     let closure = Closure::wrap(Box::new(move || {
-        if let Some(sub) = sub.take() {
+        if let Some(sub) = SUBSCRIPTION_MAP.lock().unwrap().remove(&id) {
             sub.unsubscribe();
         }
     }) as Box<dyn FnMut()>);

@@ -21,6 +21,7 @@ rle = { path = "../rle", package = "loro-rle" }
 tracing-wasm = "0.2.1"
 tracing = { version = "0.1", features = ["release_max_level_warn"] }
 serde_json = "1"
+once_cell.workspace = true
 
 [features]
 default = []

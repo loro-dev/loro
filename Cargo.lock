@@ -1482,6 +1482,7 @@ dependencies = [
  "js-sys",
  "loro-internal 0.16.12",
  "loro-rle 0.16.12",
+ "once_cell",
  "serde",
  "serde-wasm-bindgen 0.6.5",
  "serde_json",
