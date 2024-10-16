@@ -72,7 +72,7 @@ pub(crate) fn export_shallow_snapshot_inner(
     let latest_vv = oplog.vv();
     let ops_num: usize = latest_vv.sub_iter(&start_vv).map(|x| x.atom_len()).sum();
     drop(oplog);
-    doc.checkout_without_emitting(&start_from).unwrap();
+    doc.checkout_without_emitting(&start_from, false).unwrap();
     let mut state = doc.app_state().try_lock().unwrap();
     let alive_containers = state.ensure_all_alive_containers();
     if has_unknown_container(alive_containers.iter()) {
@@ -83,7 +83,8 @@ pub(crate) fn export_shallow_snapshot_inner(
     state.store.flush();
     let shallow_root_state_kv = state.store.get_kv().clone();
     drop(state);
-    doc.checkout_without_emitting(&latest_frontiers).unwrap();
+    doc.checkout_without_emitting(&latest_frontiers, false)
+        .unwrap();
     let state_bytes = if ops_num > MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE {
         let mut state = doc.app_state().try_lock().unwrap();
         state.ensure_all_alive_containers();
@@ -120,7 +121,8 @@ pub(crate) fn export_shallow_snapshot_inner(
     };
 
     if state_frontiers != latest_frontiers {
-        doc.checkout_without_emitting(&state_frontiers).unwrap();
+        doc.checkout_without_emitting(&state_frontiers, false)
+            .unwrap();
     }
 
     if is_attached {
@@ -163,7 +165,7 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
     let state_frontiers = doc.state_frontiers();
     let is_attached = !doc.is_detached();
     drop(oplog);
-    doc.checkout_without_emitting(&start_from).unwrap();
+    doc.checkout_without_emitting(&start_from, false).unwrap();
     let mut state = doc.app_state().try_lock().unwrap();
     let alive_containers = state.ensure_all_alive_containers();
     let alive_c_bytes = cids_to_bytes(alive_containers);
@@ -183,7 +185,8 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
     _encode_snapshot(snapshot, w);
 
     if state_frontiers != start_from {
-        doc.checkout_without_emitting(&state_frontiers).unwrap();
+        doc.checkout_without_emitting(&state_frontiers, false)
+            .unwrap();
     }
 
     if is_attached {
@@ -242,7 +245,7 @@ pub(crate) fn encode_snapshot_at<W: std::io::Write>(
     w: &mut W,
 ) -> Result<(), LoroEncodeError> {
     let version_before_start = doc.oplog_frontiers();
-    doc.checkout_without_emitting(frontiers).unwrap();
+    doc.checkout_without_emitting(frontiers, true).unwrap();
     {
         let mut state = doc.app_state().try_lock().unwrap();
         let oplog = doc.oplog().try_lock().unwrap();
@@ -285,7 +288,7 @@ pub(crate) fn encode_snapshot_at<W: std::io::Write>(
             w,
         );
     }
-    doc.checkout_without_emitting(&version_before_start)
+    doc.checkout_without_emitting(&version_before_start, false)
         .unwrap();
     doc.drop_pending_events();
     Ok(())
