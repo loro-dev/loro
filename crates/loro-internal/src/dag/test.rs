@@ -106,8 +106,12 @@ impl Dag for TestDag {
         &self.frontier
     }
 
-    fn vv(&self) -> VersionVector {
-        self.version_vec.clone()
+    fn vv(&self) -> &VersionVector {
+        &self.version_vec
+    }
+
+    fn contains(&self, id: ID) -> bool {
+        self.version_vec.includes_id(id)
     }
 }
 

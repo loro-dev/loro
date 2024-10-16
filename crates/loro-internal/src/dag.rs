@@ -57,7 +57,8 @@ pub(crate) trait Dag: Debug {
     fn get(&self, id: ID) -> Option<Self::Node>;
     #[allow(unused)]
     fn frontier(&self) -> &Frontiers;
-    fn vv(&self) -> VersionVector;
+    fn vv(&self) -> &VersionVector;
+    fn contains(&self, id: ID) -> bool;
 }
 
 pub(crate) trait DagUtils: Dag {
@@ -67,7 +68,6 @@ pub(crate) trait DagUtils: Dag {
     fn get_vv(&self, id: ID) -> VersionVector;
     #[allow(unused)]
     fn find_path(&self, from: &Frontiers, to: &Frontiers) -> VersionVectorDiff;
-    fn contains(&self, id: ID) -> bool;
     fn iter_causal(&self, from: Frontiers, target: IdSpanVector) -> DagCausalIter<'_, Self>
     where
         Self: Sized;
@@ -90,11 +90,6 @@ impl<T: Dag + ?Sized> DagUtils for T {
     fn find_common_ancestor(&self, a_id: &Frontiers, b_id: &Frontiers) -> (Frontiers, DiffMode) {
         // TODO: perf: make it also return the spans to reach common_ancestors
         find_common_ancestor(&|id| self.get(id), a_id, b_id)
-    }
-
-    #[inline]
-    fn contains(&self, id: ID) -> bool {
-        self.vv().includes_id(id)
     }
 
     #[inline]

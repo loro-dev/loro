@@ -19,7 +19,7 @@ use std::{
         Arc, Mutex, Weak,
     },
 };
-use tracing::{debug, debug_span, info, info_span, instrument, trace, warn};
+use tracing::{debug_span, info, info_span, instrument, trace, warn};
 
 use crate::{
     arena::SharedArena,
@@ -30,7 +30,7 @@ use crate::{
         IntoContainerId,
     },
     cursor::{AbsolutePosition, CannotFindRelativePosition, Cursor, PosQueryResult},
-    dag::DagUtils,
+    dag::Dag,
     diff_calc::DiffCalculator,
     encoding::{
         self, decode_snapshot, export_fast_snapshot, export_fast_updates,
@@ -488,13 +488,12 @@ impl LoroDoc {
         origin: InternalString,
     ) -> Result<ImportStatus, LoroError> {
         let mut oplog = self.oplog.try_lock().unwrap();
-        let old_vv = oplog.vv().clone();
-        let old_frontiers = oplog.frontiers().clone();
-        let result = f(&mut oplog);
         if !self.is_detached() {
-            debug!("checkout from {:?} to {:?}", old_vv, oplog.vv());
-            let mut diff = DiffCalculator::new(false);
+            let old_vv = oplog.vv().clone();
+            let old_frontiers = oplog.frontiers().clone();
+            let result = f(&mut oplog);
             if &old_vv != oplog.vv() {
+                let mut diff = DiffCalculator::new(false);
                 let (diff, diff_mode) = diff.calc_diff_internal(
                     &oplog,
                     &old_vv,
@@ -514,10 +513,10 @@ impl LoroDoc {
                     diff_mode,
                 );
             }
+            result
         } else {
-            tracing::info!("Detached");
+            f(&mut oplog)
         }
-        result
     }
 
     fn emit_events(&self) {

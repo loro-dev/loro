@@ -12,7 +12,7 @@ pub enum Frontiers {
     Map(InternalMap),
 }
 
-use std::fmt;
+use std::{fmt, sync::Arc};
 
 impl fmt::Debug for Frontiers {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -43,11 +43,11 @@ impl<'a> fmt::Debug for FrontiersDebugHelper<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InternalMap(FxHashMap<PeerID, Counter>);
+pub struct InternalMap(Arc<FxHashMap<PeerID, Counter>>);
 
 impl InternalMap {
     fn new() -> Self {
-        Self(FxHashMap::default())
+        Self(Arc::new(FxHashMap::default()))
     }
 
     fn len(&self) -> usize {
@@ -67,16 +67,17 @@ impl InternalMap {
     }
 
     fn insert(&mut self, id: ID) {
-        self.0
+        Arc::make_mut(&mut self.0)
             .entry(id.peer)
             .and_modify(|e| *e = (*e).max(id.counter))
             .or_insert(id.counter);
     }
 
     fn remove(&mut self, id: &ID) -> bool {
-        if let Some(counter) = self.0.get_mut(&id.peer) {
+        let map = Arc::make_mut(&mut self.0);
+        if let Some(counter) = map.get_mut(&id.peer) {
             if *counter == id.counter {
-                self.0.remove(&id.peer);
+                map.remove(&id.peer);
                 return true;
             }
         }
@@ -87,8 +88,8 @@ impl InternalMap {
     where
         F: FnMut(&ID) -> bool,
     {
-        self.0
-            .retain(|&peer, &mut counter| f(&ID::new(peer, counter)));
+        let map = Arc::make_mut(&mut self.0);
+        map.retain(|&peer, &mut counter| f(&ID::new(peer, counter)));
     }
 }
 
@@ -296,7 +297,7 @@ impl Frontiers {
                 }
                 Frontiers::Map(internal_map) => {
                     let mut map = internal_map.clone();
-                    map.0
+                    Arc::make_mut(&mut map.0)
                         .entry(id.peer)
                         .and_modify(|c| *c = (*c).max(id.counter))
                         .or_insert(id.counter);
@@ -310,9 +311,9 @@ impl Frontiers {
         let Frontiers::Map(map) = self else {
             unreachable!()
         };
+        let map = Arc::make_mut(&mut map.0);
         for id in other.iter() {
-            map.0
-                .entry(id.peer)
+            map.entry(id.peer)
                 .and_modify(|c| *c = (*c).max(id.counter))
                 .or_insert(id.counter);
         }

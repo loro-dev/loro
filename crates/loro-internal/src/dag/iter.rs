@@ -1,4 +1,3 @@
-use super::DagUtils;
 use crate::version::Frontiers;
 use num::Zero;
 use std::{collections::BTreeMap, ops::Range};

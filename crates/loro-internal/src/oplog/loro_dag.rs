@@ -838,8 +838,12 @@ impl Dag for AppDag {
         None
     }
 
-    fn vv(&self) -> VersionVector {
-        self.vv.clone()
+    fn vv(&self) -> &VersionVector {
+        &self.vv
+    }
+
+    fn contains(&self, id: ID) -> bool {
+        self.vv.includes_id(id)
     }
 }
 
