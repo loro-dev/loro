@@ -187,8 +187,6 @@ impl AppDag {
             map.insert(node.id_start(), node);
             self.handle_deps_break_points(change.deps.iter(), change.id.peer, Some(&mut map));
         }
-
-        self.check_dag_correctness();
     }
 
     fn try_with_node_mut<R>(
