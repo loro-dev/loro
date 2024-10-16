@@ -2,6 +2,9 @@ use super::*;
 use either::Either;
 
 /// Frontiers representation.
+//
+// Internal Invariance:
+// - Frontiers::Map(map) always have at least 2 elements.
 #[derive(Clone, Default)]
 pub enum Frontiers {
     #[default]
@@ -195,10 +198,7 @@ impl PartialEq for Frontiers {
             (Frontiers::None, Frontiers::None) => true,
             (Frontiers::ID(id1), Frontiers::ID(id2)) => id1 == id2,
             (Frontiers::Map(map1), Frontiers::Map(map2)) => map1 == map2,
-            (Frontiers::ID(id), Frontiers::Map(map)) | (Frontiers::Map(map), Frontiers::ID(id)) => {
-                map.contains(id)
-            }
-            _ => false,
+            _ => unreachable!(),
         }
     }
 }
@@ -258,10 +258,6 @@ impl Frontiers {
     pub fn as_single(&self) -> Option<ID> {
         match self {
             Frontiers::ID(id) => Some(*id),
-            Frontiers::Map(m) if m.len() == 1 => {
-                let (p, c) = m.0.iter().next().unwrap();
-                Some(ID::new(*p, *c))
-            }
             _ => None,
         }
     }
