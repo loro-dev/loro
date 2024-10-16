@@ -4243,7 +4243,7 @@ fn subscription_to_js_function_callback(sub: Subscription) -> JsValue {
     let mut sub: Option<ManuallyDrop<Subscription>> = Some(ManuallyDrop::new(sub));
     let closure = Closure::wrap(Box::new(move || {
         if let Some(sub) = sub.take() {
-            ManuallyDrop::into_inner(sub).detach();
+            ManuallyDrop::into_inner(sub).unsubscribe();
         }
     }) as Box<dyn FnMut()>);
 
