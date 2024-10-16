@@ -1,9 +1,7 @@
 use std::sync::{atomic::AtomicBool, Arc, Mutex};
 
 use fxhash::FxHashMap;
-use loro_common::{
-    ContainerID, ContainerType, CounterSpan, LoroError, LoroResult, LoroValue, PeerID, ID,
-};
+use loro_common::{ContainerID, ContainerType, LoroError, LoroResult, LoroValue, PeerID, ID};
 use loro_internal::{
     delta::ResolvedMapValue,
     encoding::ImportStatus,

@@ -15,10 +15,7 @@ use crate::op::OpWithId;
 use crate::version::{Frontiers, VersionRange};
 use crate::LoroDoc;
 use crate::{oplog::OpLog, LoroError, VersionVector};
-use loro_common::{
-    CounterSpan, HasCounter, HasCounterSpan, HasIdSpan, IdLpSpan, IdSpan, IdSpanVector,
-    LoroEncodeError, LoroResult, PeerID, ID,
-};
+use loro_common::{HasIdSpan, IdLpSpan, IdSpan, LoroEncodeError, LoroResult, PeerID, ID};
 use num_traits::{FromPrimitive, ToPrimitive};
 use rle::{HasLength, Sliceable};
 use serde::{Deserialize, Serialize};
