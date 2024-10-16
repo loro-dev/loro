@@ -1,5 +1,41 @@
 # Changelog
 
+## 1.0.0-beta.1
+
+### Patch Changes
+
+- Performance improvement and bug fixes
+
+  ### 🚀 Features
+
+  - Redact (#504)
+
+  ### 🐛 Bug Fixes
+
+  - Ffi Subscription (#505)
+  - Ffi remove try unwrap (#506)
+  - Movable list undo impl (#509)
+  - Tracker skip applied deletion error (#512)
+  - IsContainerDeleted cache err (#513)
+
+  ### 📚 Documentation
+
+  - Refine wasm docs
+
+  ### ⚡ Performance
+
+  - Optimize shrink frontiers
+  - Optimize batch container registrations on arena (#510)
+  - Optimize high concurrency performance (#514)
+  - Use better data structure for frontiers (#515)
+
+  ### Perf
+
+  - Commit speed & text insert cache (#511)
+
+- Updated dependencies
+  - loro-wasm@1.0.0-beta.1
+
 ## 1.0.0-alpha.5
 
 ### Patch Changes
