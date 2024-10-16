@@ -11,6 +11,8 @@ fn main() -> LoroResult<()> {
     }
 
     println!("Applied. Start exporting.");
+    println!("Apply set map");
+
     for (i, doc) in docs.iter().enumerate() {
         doc.get_map("map").insert("v", i as i32)?;
         updates.push(doc.export(loro::ExportMode::all_updates()).unwrap());
@@ -18,14 +20,10 @@ fn main() -> LoroResult<()> {
     // for update in updates.iter() {
     //     docs[0].import(update)?;
     // }
-    println!("Exported. Start import other updates");
+    println!("Start import other updates");
     let s = Instant::now();
     docs[0].import_batch(&updates).unwrap();
-    println!(
-        "Concurrently Set Map with {} docs {} ms",
-        N,
-        s.elapsed().as_millis()
-    );
+    println!("Concurrently set Map {} ms", s.elapsed().as_millis());
 
     Ok(())
 }
