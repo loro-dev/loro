@@ -19,8 +19,8 @@ use crate::{
 use either::Either;
 use json::{JsonOpContent, JsonSchema};
 use loro_common::{
-    ContainerID, ContainerType, CounterSpan, HasCounter, HasCounterSpan, HasIdSpan, IdLp,
-    IdSpanVector, LoroError, LoroResult, LoroValue, PeerID, TreeID, ID,
+    ContainerID, ContainerType, HasCounterSpan, HasIdSpan, IdLp,
+    LoroError, LoroResult, LoroValue, PeerID, TreeID, ID,
 };
 use rle::{HasLength, RleVec, Sliceable};
 use std::sync::Arc;

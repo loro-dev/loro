@@ -7,9 +7,9 @@ use std::{
 };
 
 use loro::{
-    cursor::CannotFindRelativePosition, Counter, CounterSpan, DocAnalysis, FrontiersNotIncluded,
-    IdSpan, JsonPathError, JsonSchema, Lamport, LoroDoc as InnerLoroDoc, LoroEncodeError,
-    LoroError, LoroResult, PeerID, Timestamp, VersionRange, ID,
+    cursor::CannotFindRelativePosition, CounterSpan, DocAnalysis, FrontiersNotIncluded, IdSpan,
+    JsonPathError, JsonSchema, Lamport, LoroDoc as InnerLoroDoc, LoroEncodeError, LoroError,
+    LoroResult, PeerID, Timestamp, VersionRange, ID,
 };
 
 use crate::{

@@ -6,9 +6,7 @@ use crate::{
     OpLog, VersionVector,
 };
 use fxhash::FxHashMap;
-use loro_common::{
-    Counter, CounterSpan, HasCounterSpan, HasIdSpan, IdSpanVector, LoroResult, PeerID, ID,
-};
+use loro_common::{Counter, CounterSpan, HasCounterSpan, HasIdSpan, LoroResult, PeerID, ID};
 
 #[derive(Debug)]
 pub enum PendingChange {
