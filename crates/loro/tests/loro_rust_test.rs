@@ -1952,3 +1952,10 @@ fn issue_490() -> anyhow::Result<()> {
     final_loro.import(&loro_c1.export(loro::ExportMode::snapshot())?)?;
     Ok(())
 }
+
+#[test]
+fn test_loro_doc() {
+    let doc = LoroDoc::new();
+    doc.get_text("text").insert(0, "Hello").unwrap();
+    doc.state_vv();
+}

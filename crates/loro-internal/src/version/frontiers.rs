@@ -544,4 +544,39 @@ mod tests {
         frontiers.retain(|_| false);
         assert_eq!(frontiers, Frontiers::None);
     }
+
+    #[test]
+    fn test_frontiers_encode_decode() {
+        let mut frontiers = Frontiers::None;
+
+        // Test encode/decode for empty frontiers
+        let encoded = frontiers.encode();
+        let decoded = Frontiers::decode(&encoded).unwrap();
+        assert_eq!(frontiers, decoded);
+
+        // Test encode/decode for single ID
+        frontiers.push(ID::new(1, 100));
+        let encoded = frontiers.encode();
+        let decoded = Frontiers::decode(&encoded).unwrap();
+        assert_eq!(frontiers, decoded);
+
+        // Test encode/decode for multiple IDs
+        frontiers.push(ID::new(2, 200));
+        frontiers.push(ID::new(3, 300));
+        let encoded = frontiers.encode();
+        let decoded = Frontiers::decode(&encoded).unwrap();
+        assert_eq!(frontiers, decoded);
+
+        // Test encode/decode for many IDs
+        for i in 4..20 {
+            frontiers.push(ID::new(i, i as Counter * 100));
+        }
+        let encoded = frontiers.encode();
+        let decoded = Frontiers::decode(&encoded).unwrap();
+        assert_eq!(frontiers, decoded);
+
+        // Test decode with invalid input
+        assert!(Frontiers::decode(&[0xFF]).is_err());
+        assert!(Frontiers::decode(&[]).is_err());
+    }
 }

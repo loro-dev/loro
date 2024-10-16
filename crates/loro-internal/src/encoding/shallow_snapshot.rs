@@ -217,9 +217,6 @@ fn calc_shallow_doc_start(oplog: &crate::OpLog, frontiers: &Frontiers) -> Fronti
     let (mut start, _) = oplog
         .dag()
         .find_common_ancestor(frontiers, oplog.frontiers());
-    if start.len() <= 1 {
-        return start;
-    }
 
     while start.len() > 1 {
         start.keep_one();

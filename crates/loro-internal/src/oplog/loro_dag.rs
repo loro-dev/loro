@@ -185,8 +185,10 @@ impl AppDag {
 
             let mut map = self.map.try_lock().unwrap();
             map.insert(node.id_start(), node);
-            self.handle_deps_break_points(&change.deps, change.id.peer, Some(&mut map));
+            self.handle_deps_break_points(change.deps.iter(), change.id.peer, Some(&mut map));
         }
+
+        self.check_dag_correctness();
     }
 
     fn try_with_node_mut<R>(
@@ -297,7 +299,7 @@ impl AppDag {
         let mut unparsed_vv = self.unparsed_vv.try_lock().unwrap();
         let end_counter = unparsed_vv[&peer];
         assert!(end_counter <= nodes_cnt_end);
-        let mut deps_on_others = Frontiers::default();
+        let mut deps_on_others = Vec::new();
         let mut break_point_set = self.unhandled_dep_points.try_lock().unwrap();
         for mut node in nodes {
             if node.cnt >= end_counter {
@@ -352,12 +354,12 @@ impl AppDag {
         }
         drop(unparsed_vv);
         drop(break_point_set);
-        self.handle_deps_break_points(&deps_on_others, peer, Some(map));
+        self.handle_deps_break_points(deps_on_others.iter().copied(), peer, Some(map));
     }
 
     fn handle_deps_break_points(
         &self,
-        ids: &Frontiers,
+        ids: impl IntoIterator<Item = ID>,
         skip_peer: PeerID,
         map: Option<&mut BTreeMap<ID, AppDagNode>>,
     ) {
@@ -366,7 +368,7 @@ impl AppDag {
             map_guard = Some(self.map.try_lock().unwrap());
             map_guard.as_mut().unwrap()
         });
-        for id in ids.iter() {
+        for id in ids {
             if id.peer == skip_peer {
                 continue;
             }
