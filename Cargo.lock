@@ -1314,7 +1314,6 @@ dependencies = [
  "miniz_oxide 0.7.1",
  "nonmax",
  "num",
- "num-derive",
  "num-traits",
  "once_cell",
  "postcard",
@@ -1323,7 +1322,6 @@ dependencies = [
  "proptest-derive",
  "rand",
  "serde",
- "serde-wasm-bindgen 0.5.0",
  "serde_columnar",
  "serde_json",
  "smallvec",
@@ -1442,10 +1440,7 @@ name = "loro-rle"
 version = "0.16.12"
 dependencies = [
  "append-only-bytes",
- "arref",
  "ctor 0.1.26",
- "enum-as-inner 0.6.0",
- "fxhash",
  "num",
  "proptest",
  "rand",
@@ -1483,7 +1478,7 @@ dependencies = [
  "loro-internal 0.16.12",
  "loro-rle 0.16.12",
  "serde",
- "serde-wasm-bindgen 0.6.5",
+ "serde-wasm-bindgen",
  "serde_json",
  "tracing",
  "tracing-wasm",
@@ -1519,11 +1514,9 @@ version = "0.16.12"
 dependencies = [
  "criterion 0.5.1",
  "fractional_index",
- "imbl",
  "once_cell",
  "rand",
  "serde",
- "smallvec",
 ]
 
 [[package]]
@@ -2168,17 +2161,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b114498256798c94a0689e1a15fec6005dee8ac1f41de56404b67afc2a4b773"
 dependencies = [
  "serde_derive",
-]
-
-[[package]]
-name = "serde-wasm-bindgen"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3b143e2833c57ab9ad3ea280d21fd34e285a42837aeb0ee301f4f41890fa00e"
-dependencies = [
- "js-sys",
- "serde",
- "wasm-bindgen",
 ]
 
 [[package]]
