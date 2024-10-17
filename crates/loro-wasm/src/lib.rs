@@ -48,6 +48,20 @@ fn run() {
     console_error_panic_hook::set_once();
 }
 
+#[wasm_bindgen]
+pub fn encodeFrontiers(frontiers: Vec<JsID>) -> JsResult<Vec<u8>> {
+    let frontiers = ids_to_frontiers(frontiers)?;
+    let encoded = frontiers.encode();
+    Ok(encoded)
+}
+
+#[wasm_bindgen]
+pub fn decodeFrontiers(bytes: &[u8]) -> JsResult<JsIDs> {
+    let frontiers =
+        Frontiers::decode(bytes).map_err(|_| JsError::new("Invalid frontiers binary data"))?;
+    Ok(frontiers_to_ids(&frontiers))
+}
+
 /// Enable debug info of Loro
 #[wasm_bindgen(js_name = setDebug)]
 pub fn set_debug() {
