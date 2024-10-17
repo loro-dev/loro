@@ -686,12 +686,6 @@ pub trait Unsubscriber: Sync + Send {
 pub struct Subscription(Mutex<Option<loro::Subscription>>);
 
 impl Subscription {
-    pub fn new(unsubscribe: Arc<dyn Unsubscriber>) -> Self {
-        Self(Mutex::new(Some(loro::Subscription::new(move || {
-            unsubscribe.on_unsubscribe()
-        }))))
-    }
-
     pub fn detach(self: Arc<Self>) {
         let s = self.0.try_lock().unwrap().take().unwrap();
         s.detach();

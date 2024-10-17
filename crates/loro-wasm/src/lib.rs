@@ -28,7 +28,7 @@ use loro_internal::{
 };
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
-use std::{cell::RefCell, cmp::Ordering, rc::Rc, sync::Arc};
+use std::{cell::RefCell, cmp::Ordering, mem::ManuallyDrop, rc::Rc, sync::Arc};
 use wasm_bindgen::{__rt::IntoJsResult, prelude::*, throw_val};
 use wasm_bindgen_derive::TryFromJsValue;
 
@@ -4240,10 +4240,10 @@ fn js_to_export_mode(js_mode: JsExportMode) -> JsResult<ExportMode<'static>> {
 }
 
 fn subscription_to_js_function_callback(sub: Subscription) -> JsValue {
-    let mut sub = Some(sub);
+    let mut sub: Option<ManuallyDrop<Subscription>> = Some(ManuallyDrop::new(sub));
     let closure = Closure::wrap(Box::new(move || {
         if let Some(sub) = sub.take() {
-            sub.unsubscribe();
+            ManuallyDrop::into_inner(sub).unsubscribe();
         }
     }) as Box<dyn FnMut()>);
 
