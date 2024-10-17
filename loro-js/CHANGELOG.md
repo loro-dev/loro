@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.0-beta.2
+
+### Patch Changes
+
+- - _(wasm)_ Add methods to encode and decode Frontiers (#517)
+  - Avoid auto unsubscribe (due to gc) in js env (#516)
+- Updated dependencies
+  - loro-wasm@1.0.0-beta.2
+
 ## 1.0.0-beta.1
 
 ### Patch Changes
