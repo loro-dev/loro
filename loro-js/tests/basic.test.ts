@@ -12,6 +12,9 @@ import {
   VersionVector,
   MapDiff,
   TextDiff,
+  Frontiers,
+  encodeFrontiers,
+  decodeFrontiers,
 } from "../src";
 
 it("basic example", () => {
@@ -607,4 +610,12 @@ it("can query pending txn length", () => {
   expect(doc.getPendingTxnLength()).toBe(3);
   doc.commit();
   expect(doc.getPendingTxnLength()).toBe(0);
+})
+
+
+it("can encode/decode frontiers", () => {
+  const frontiers = [{ peer: "1123", counter: 1 }, { peer: "222", counter: 2 }] as Frontiers;
+  const encoded = encodeFrontiers(frontiers);
+  const decoded = decodeFrontiers(encoded);
+  expect(decoded).toStrictEqual(frontiers);
 })
