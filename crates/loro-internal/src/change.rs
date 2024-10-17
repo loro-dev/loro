@@ -6,6 +6,7 @@
 
 use crate::{
     dag::DagNode,
+    estimated_size::EstimatedSize,
     id::{Counter, ID},
     op::Op,
     span::{HasId, HasLamport},
@@ -23,19 +24,18 @@ pub type Lamport = u32;
 ///
 /// When undo/redo we should always undo/redo a whole [Change].
 // PERF change slice and getting length is kinda slow I guess
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Change<O = Op> {
-    pub(crate) ops: RleVec<[O; 1]>,
-    pub(crate) deps: Frontiers,
     /// id of the first op in the change
     pub(crate) id: ID,
     /// Lamport timestamp of the change. It can be calculated from deps
     pub(crate) lamport: Lamport,
+    pub(crate) deps: Frontiers,
     /// [Unix time](https://en.wikipedia.org/wiki/Unix_time)
     /// It is the number of seconds that have elapsed since 00:00:00 UTC on 1 January 1970.
     pub(crate) timestamp: Timestamp,
-    /// if it has dependents, it cannot merge with new changes
-    pub(crate) has_dependents: bool,
+    pub(crate) commit_msg: Option<Arc<str>>,
+    pub(crate) ops: RleVec<[O; 1]>,
 }
 
 impl<O> Change<O> {
@@ -52,7 +52,7 @@ impl<O> Change<O> {
             id,
             lamport,
             timestamp,
-            has_dependents: false,
+            commit_msg: None,
         }
     }
 
@@ -88,7 +88,32 @@ impl<O> Change<O> {
 
     #[inline]
     pub fn deps_on_self(&self) -> bool {
-        self.deps.len() == 1 && self.deps[0].peer == self.id.peer
+        if let Some(id) = self.deps.as_single() {
+            id.peer == self.id.peer
+        } else {
+            false
+        }
+    }
+
+    pub fn message(&self) -> Option<&Arc<str>> {
+        self.commit_msg.as_ref()
+    }
+}
+
+impl<O: EstimatedSize> EstimatedSize for Change<O> {
+    /// Estimate the storage size of the change in bytes
+    #[inline]
+    fn estimate_storage_size(&self) -> usize {
+        let id_size = 2;
+        let lamport_size = 1;
+        let timestamp_size = 1;
+        let deps_size = (self.deps.len().max(1) - 1) * 4;
+        let ops_size = self
+            .ops
+            .iter()
+            .map(|op| op.estimate_storage_size())
+            .sum::<usize>();
+        id_size + lamport_size + timestamp_size + ops_size + deps_size
     }
 }
 
@@ -103,6 +128,12 @@ impl<O: Mergable + HasLength + HasIndex + Debug> HasIndex for Change<O> {
 impl<O> HasId for Change<O> {
     fn id_start(&self) -> ID {
         self.id
+    }
+}
+
+impl<O> HasCounter for Change<O> {
+    fn ctr_start(&self) -> Counter {
+        self.id.counter
     }
 }
 
@@ -128,7 +159,17 @@ impl<O> Mergable for Change<O> {
     }
 }
 
-use std::fmt::Debug;
+impl<O: Mergable + HasLength + HasIndex + Debug> Change<O> {
+    pub fn len(&self) -> usize {
+        self.ops.span().as_()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.ops.is_empty()
+    }
+}
+
+use std::{fmt::Debug, sync::Arc};
 impl<O: Mergable + HasLength + HasIndex + Debug> HasLength for Change<O> {
     fn content_len(&self) -> usize {
         self.ops.span().as_()
@@ -190,26 +231,37 @@ impl<O: Mergable + HasLength + HasIndex + Sliceable + HasCounter + Debug> Slicea
             id: self.id.inc(from as Counter),
             lamport: self.lamport + from as Lamport,
             timestamp: self.timestamp,
-            has_dependents: self.has_dependents,
+            commit_msg: self.commit_msg.clone(),
         }
     }
 }
 
 impl DagNode for Change {
-    fn deps(&self) -> &[ID] {
+    fn deps(&self) -> &Frontiers {
         &self.deps
     }
 }
 
 impl Change {
-    pub fn can_merge_right(&self, other: &Self) -> bool {
-        other.id.peer == self.id.peer
+    pub fn can_merge_right(&self, other: &Self, merge_interval: i64) -> bool {
+        if other.id.peer == self.id.peer
             && other.id.counter == self.id.counter + self.content_len() as Counter
             && other.deps.len() == 1
-            && other.deps[0].peer == self.id.peer
+            && other.deps.as_single().unwrap().peer == self.id.peer
+            && other.timestamp - self.timestamp < merge_interval
+            && self.commit_msg == other.commit_msg
+        {
+            debug_assert!(other.timestamp >= self.timestamp);
+            debug_assert!(other.lamport == self.lamport + self.len() as Lamport);
+            true
+        } else {
+            false
+        }
     }
 }
 
+/// [Unix time](https://en.wikipedia.org/wiki/Unix_time)
+/// It is the number of milliseconds that have elapsed since 00:00:00 UTC on 1 January 1970.
 #[cfg(not(all(feature = "wasm", target_arch = "wasm32")))]
 pub(crate) fn get_sys_timestamp() -> Timestamp {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -220,6 +272,8 @@ pub(crate) fn get_sys_timestamp() -> Timestamp {
         .as_()
 }
 
+/// [Unix time](https://en.wikipedia.org/wiki/Unix_time)
+/// It is the number of seconds that have elapsed since 00:00:00 UTC on 1 January 1970.
 #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
 pub fn get_sys_timestamp() -> Timestamp {
     use wasm_bindgen::prelude::wasm_bindgen;

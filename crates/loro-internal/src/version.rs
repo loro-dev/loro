@@ -1,14 +1,5 @@
-use loro_common::{HasCounter, HasCounterSpan, IdSpanVector};
-use smallvec::smallvec;
-use std::{
-    cmp::Ordering,
-    ops::{Deref, DerefMut},
-};
-
-use fxhash::{FxHashMap, FxHashSet};
-
-use serde::{Deserialize, Serialize};
-use smallvec::SmallVec;
+mod frontiers;
+pub use frontiers::Frontiers;
 
 use crate::{
     change::Lamport,
@@ -16,6 +7,14 @@ use crate::{
     oplog::AppDag,
     span::{CounterSpan, IdSpan},
     LoroError, PeerID,
+};
+use fxhash::FxHashMap;
+use loro_common::{HasCounter, HasCounterSpan, HasIdSpan, HasLamportSpan, IdFull, IdSpanVector};
+use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
+use std::{
+    cmp::Ordering,
+    ops::{ControlFlow, Deref, DerefMut},
 };
 
 /// [VersionVector](https://en.wikipedia.org/wiki/Version_vector)
@@ -27,6 +26,116 @@ use crate::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VersionVector(FxHashMap<PeerID, Counter>);
 
+#[repr(transparent)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct VersionRange(pub(crate) FxHashMap<PeerID, (Counter, Counter)>);
+
+impl VersionRange {
+    pub fn new() -> Self {
+        Self(Default::default())
+    }
+
+    pub fn from_map(map: FxHashMap<PeerID, (Counter, Counter)>) -> Self {
+        Self(map)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&PeerID, &(Counter, Counter))> + '_ {
+        self.0.iter()
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&PeerID, &mut (Counter, Counter))> + '_ {
+        self.0.iter_mut()
+    }
+
+    pub fn clear(&mut self) {
+        self.0.clear()
+    }
+
+    pub fn get(&self, peer: &PeerID) -> Option<&(Counter, Counter)> {
+        self.0.get(peer)
+    }
+
+    pub fn insert(&mut self, peer: PeerID, start: Counter, end: Counter) {
+        self.0.insert(peer, (start, end));
+    }
+
+    pub fn from_vv(vv: &VersionVector) -> Self {
+        let mut ans = Self::new();
+        for (peer, counter) in vv.iter() {
+            ans.insert(*peer, 0, *counter);
+        }
+        ans
+    }
+
+    pub fn contains_ops_between(&self, vv_a: &VersionVector, vv_b: &VersionVector) -> bool {
+        for span in vv_a.sub_iter(vv_b) {
+            if !self.contains_id_span(IdSpan::new(
+                span.peer,
+                span.counter.start.saturating_sub(1),
+                span.counter.end,
+            )) {
+                return false;
+            }
+        }
+
+        for span in vv_b.sub_iter(vv_a) {
+            if !self.contains_id_span(IdSpan::new(
+                span.peer,
+                span.counter.start.saturating_sub(1),
+                span.counter.end,
+            )) {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    pub fn has_overlap_with(&self, mut span: IdSpan) -> bool {
+        span.normalize_();
+        if let Some((start, end)) = self.get(&span.peer) {
+            start < &span.counter.end && end > &span.counter.start
+        } else {
+            false
+        }
+    }
+
+    pub fn contains_id(&self, id: ID) -> bool {
+        if let Some((start, end)) = self.get(&id.peer) {
+            start <= &id.counter && end > &id.counter
+        } else {
+            false
+        }
+    }
+
+    pub fn contains_id_span(&self, mut span: IdSpan) -> bool {
+        span.normalize_();
+        if let Some((start, end)) = self.get(&span.peer) {
+            start <= &span.counter.start && end >= &span.counter.end
+        } else {
+            false
+        }
+    }
+
+    pub fn extends_to_include_id_span(&mut self, mut span: IdSpan) {
+        span.normalize_();
+        if let Some((start, end)) = self.0.get_mut(&span.peer) {
+            *start = (*start).min(span.counter.start);
+            *end = (*end).max(span.counter.end);
+        } else {
+            self.insert(span.peer, span.counter.start, span.counter.end);
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn inner(&self) -> &FxHashMap<PeerID, (Counter, Counter)> {
+        &self.0
+    }
+}
+
 /// Immutable version vector
 ///
 /// It has O(1) clone time and O(logN) insert/delete/lookup time.
@@ -34,16 +143,24 @@ pub struct VersionVector(FxHashMap<PeerID, Counter>);
 /// It's more memory efficient than [VersionVector] when the version vector
 /// can be created from cloning and modifying other similar version vectors.
 #[repr(transparent)]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ImVersionVector(im::HashMap<PeerID, Counter, fxhash::FxBuildHasher>);
 
 impl ImVersionVector {
+    pub fn new() -> Self {
+        Self(Default::default())
+    }
+
     pub fn clear(&mut self) {
         self.0.clear()
     }
 
     pub fn get(&self, key: &PeerID) -> Option<&Counter> {
         self.0.get(key)
+    }
+
+    pub fn get_mut(&mut self, key: &PeerID) -> Option<&mut Counter> {
+        self.0.get_mut(key)
     }
 
     pub fn insert(&mut self, k: PeerID, v: Counter) {
@@ -70,130 +187,69 @@ impl ImVersionVector {
         self.0.contains_key(k)
     }
 
-    /// Convert to a [Frontiers]
-    ///
-    /// # Panic
-    ///
-    /// When self is greater than dag.vv
-    pub fn to_frontiers(&self, dag: &AppDag) -> Frontiers {
-        let last_ids: Vec<ID> = self
-            .iter()
-            .filter_map(|(client_id, cnt)| {
-                if *cnt == 0 {
-                    return None;
-                }
-                Some(ID::new(*client_id, cnt - 1))
-            })
-            .collect();
-
-        shrink_frontiers(last_ids, dag)
+    pub fn encode(&self) -> Vec<u8> {
+        postcard::to_allocvec(self).unwrap()
     }
-}
 
-// TODO: use a better data structure that is Array when small
-// and hashmap when it's big
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct Frontiers(SmallVec<[ID; 1]>);
+    pub fn decode(bytes: &[u8]) -> Result<Self, LoroError> {
+        let vv = VersionVector::decode(bytes)?;
+        Ok(Self::from_vv(&vv))
+    }
 
-impl PartialEq for Frontiers {
-    fn eq(&self, other: &Self) -> bool {
-        if self.len() <= 1 {
-            self.0 == other.0
-        } else if self.len() <= 10 {
-            self.0.iter().all(|id| other.0.contains(id))
-        } else {
-            let set = self.0.iter().collect::<FxHashSet<_>>();
-            other.iter().all(|x| set.contains(x))
+    pub fn to_vv(&self) -> VersionVector {
+        VersionVector(self.0.iter().map(|(&k, &v)| (k, v)).collect())
+    }
+
+    pub fn from_vv(vv: &VersionVector) -> Self {
+        ImVersionVector(vv.0.iter().map(|(&k, &v)| (k, v)).collect())
+    }
+
+    pub fn extend_to_include_vv<'a>(
+        &mut self,
+        vv: impl Iterator<Item = (&'a PeerID, &'a Counter)>,
+    ) {
+        for (&client_id, &counter) in vv {
+            if let Some(my_counter) = self.0.get_mut(&client_id) {
+                if *my_counter < counter {
+                    *my_counter = counter;
+                }
+            } else {
+                self.0.insert(client_id, counter);
+            }
         }
     }
-}
 
-impl Frontiers {
     #[inline]
-    pub(crate) fn from_id(id: ID) -> Self {
-        Self(smallvec![id])
+    pub fn merge(&mut self, other: &Self) {
+        self.extend_to_include_vv(other.0.iter());
     }
 
     #[inline]
-    pub fn encode(&self) -> Vec<u8> {
-        postcard::to_allocvec(&self).unwrap()
+    pub fn merge_vv(&mut self, other: &VersionVector) {
+        self.extend_to_include_vv(other.0.iter());
     }
 
     #[inline]
-    pub fn decode(bytes: &[u8]) -> Result<Self, LoroError> {
-        postcard::from_bytes(bytes).map_err(|_| {
-            LoroError::DecodeError("Decode Frontiers error".to_string().into_boxed_str())
-        })
+    pub fn set_last(&mut self, id: ID) {
+        self.0.insert(id.peer, id.counter + 1);
     }
 
-    pub fn retain_non_included(&mut self, other: &Frontiers) {
-        self.retain(|id| !other.contains(id));
+    pub fn extend_to_include_last_id(&mut self, id: ID) {
+        if let Some(counter) = self.0.get_mut(&id.peer) {
+            if *counter <= id.counter {
+                *counter = id.counter + 1;
+            }
+        } else {
+            self.set_last(id)
+        }
     }
 
-    pub fn filter_peer(&mut self, peer: PeerID) {
-        self.retain(|id| id.peer != peer);
-    }
+    pub(crate) fn includes_id(&self, x: ID) -> bool {
+        if self.is_empty() {
+            return false;
+        }
 
-    #[inline]
-    pub(crate) fn with_capacity(cap: usize) -> Frontiers {
-        Self(SmallVec::with_capacity(cap))
-    }
-}
-
-impl Deref for Frontiers {
-    type Target = SmallVec<[ID; 1]>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for Frontiers {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-impl From<SmallVec<[ID; 1]>> for Frontiers {
-    fn from(value: SmallVec<[ID; 1]>) -> Self {
-        Self(value)
-    }
-}
-
-impl From<&[ID]> for Frontiers {
-    fn from(value: &[ID]) -> Self {
-        Self(value.into())
-    }
-}
-
-impl<const N: usize> From<[ID; N]> for Frontiers {
-    fn from(value: [ID; N]) -> Self {
-        Self(value.as_slice().into())
-    }
-}
-
-impl From<ID> for Frontiers {
-    fn from(value: ID) -> Self {
-        Self([value].into())
-    }
-}
-
-impl From<&Vec<ID>> for Frontiers {
-    fn from(value: &Vec<ID>) -> Self {
-        let ids: &[ID] = value;
-        Self(ids.into())
-    }
-}
-
-impl From<Vec<ID>> for Frontiers {
-    fn from(value: Vec<ID>) -> Self {
-        Self(value.into())
-    }
-}
-
-impl FromIterator<ID> for Frontiers {
-    fn from_iter<I: IntoIterator<Item = ID>>(iter: I) -> Self {
-        Self(iter.into_iter().collect())
+        self.get(&x.peer).copied().unwrap_or(0) > x.counter
     }
 }
 
@@ -477,18 +533,60 @@ impl VersionVector {
         })
     }
 
+    /// Returns the spans that are in `self` but not in `rhs`
+    pub fn sub_iter_im<'a>(
+        &'a self,
+        rhs: &'a ImVersionVector,
+    ) -> impl Iterator<Item = IdSpan> + 'a {
+        self.iter().filter_map(move |(peer, &counter)| {
+            if let Some(&rhs_counter) = rhs.get(peer) {
+                if counter > rhs_counter {
+                    Some(IdSpan {
+                        peer: *peer,
+                        counter: CounterSpan {
+                            start: rhs_counter,
+                            end: counter,
+                        },
+                    })
+                } else {
+                    None
+                }
+            } else if counter > 0 {
+                Some(IdSpan {
+                    peer: *peer,
+                    counter: CounterSpan {
+                        start: 0,
+                        end: counter,
+                    },
+                })
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Iter all span from a -> b and b -> a
+    pub fn iter_between<'a>(&'a self, other: &'a Self) -> impl Iterator<Item = IdSpan> + 'a {
+        // PERF: can be optimized a little
+        self.sub_iter(other).chain(other.sub_iter(self))
+    }
+
     pub fn sub_vec(&self, rhs: &Self) -> IdSpanVector {
         self.sub_iter(rhs).map(|x| (x.peer, x.counter)).collect()
     }
 
-    pub fn distance_to(&self, other: &Self) -> usize {
+    pub fn distance_between(&self, other: &Self) -> usize {
         let mut ans = 0;
         for (client_id, &counter) in self.iter() {
             if let Some(&other_counter) = other.get(client_id) {
-                if counter > other_counter {
-                    ans += counter - other_counter;
-                }
+                ans += (counter - other_counter).abs();
             } else if counter > 0 {
+                ans += counter;
+            }
+        }
+
+        for (client_id, &counter) in other.iter() {
+            if !self.contains_key(client_id) {
                 ans += counter;
             }
         }
@@ -730,25 +828,6 @@ impl VersionVector {
         postcard::from_bytes(bytes).map_err(|_| LoroError::DecodeVersionVectorError)
     }
 
-    /// Convert to a [Frontiers]
-    ///
-    /// # Panic
-    ///
-    /// When self is greater than dag.vv
-    pub fn to_frontiers(&self, dag: &AppDag) -> Frontiers {
-        let last_ids: Vec<ID> = self
-            .iter()
-            .filter_map(|(client_id, cnt)| {
-                if *cnt == 0 {
-                    return None;
-                }
-                Some(ID::new(*client_id, cnt - 1))
-            })
-            .collect();
-
-        shrink_frontiers(last_ids, dag)
-    }
-
     pub(crate) fn trim(&self, vv: &VersionVector) -> VersionVector {
         let mut ans = VersionVector::new();
         for (client_id, &counter) in self.iter() {
@@ -758,77 +837,87 @@ impl VersionVector {
         }
         ans
     }
-}
 
-impl ImVersionVector {
-    pub fn extend_to_include_vv<'a>(
-        &mut self,
-        vv: impl Iterator<Item = (&'a PeerID, &'a Counter)>,
-    ) {
-        for (&client_id, &counter) in vv {
-            if let Some(my_counter) = self.0.get_mut(&client_id) {
-                if *my_counter < counter {
-                    *my_counter = counter;
-                }
-            } else {
-                self.0.insert(client_id, counter);
-            }
-        }
+    pub fn to_im_vv(&self) -> ImVersionVector {
+        ImVersionVector(self.0.iter().map(|(&k, &v)| (k, v)).collect())
     }
 
-    #[inline]
-    pub fn set_last(&mut self, id: ID) {
-        self.0.insert(id.peer, id.counter + 1);
-    }
-
-    pub fn extend_to_include_last_id(&mut self, id: ID) {
-        if let Some(counter) = self.0.get_mut(&id.peer) {
-            if *counter <= id.counter {
-                *counter = id.counter + 1;
-            }
-        } else {
-            self.set_last(id)
-        }
+    pub fn from_im_vv(im_vv: &ImVersionVector) -> Self {
+        VersionVector(im_vv.0.iter().map(|(&k, &v)| (k, v)).collect())
     }
 }
 
 /// Use minimal set of ids to represent the frontiers
-fn shrink_frontiers(mut last_ids: Vec<ID>, dag: &AppDag) -> Frontiers {
+#[tracing::instrument(skip(dag))]
+pub fn shrink_frontiers(last_ids: &Frontiers, dag: &AppDag) -> Result<Frontiers, ID> {
     // it only keep the ids of ops that are concurrent to each other
 
-    let mut frontiers = Frontiers::default();
-    let mut frontiers_vv = Vec::new();
-
-    if last_ids.is_empty() {
-        return frontiers;
+    if last_ids.len() <= 1 {
+        return Ok(last_ids.clone());
     }
 
-    if last_ids.len() == 1 {
-        frontiers.push(last_ids[0]);
-        return frontiers;
-    }
+    let mut last_ids = {
+        let ids = filter_duplicated_peer_id(last_ids);
+        if last_ids.len() == 1 {
+            let mut frontiers = Frontiers::default();
+            frontiers.push(last_ids.as_single().unwrap());
+            return Ok(frontiers);
+        }
 
-    // sort by lamport, ascending
-    last_ids.sort_by_cached_key(|x| ((dag.get_lamport(x).unwrap() as isize), x.peer));
+        let mut last_ids = Vec::with_capacity(ids.len());
+        for id in ids {
+            let Some(lamport) = dag.get_lamport(&id) else {
+                return Err(id);
+            };
+            last_ids.push(IdFull::new(id.peer, id.counter, lamport))
+        }
 
+        last_ids
+    };
+
+    let mut frontiers = Vec::new();
+    // Iterate from the greatest lamport to the smallest
+    last_ids.sort_by_key(|x| x.lamport);
     for id in last_ids.iter().rev() {
-        let vv = dag.get_vv(*id).unwrap();
         let mut should_insert = true;
-        for f_vv in frontiers_vv.iter() {
-            if vv.partial_cmp(f_vv).is_some() {
-                // This is not concurrent op, should be ignored in frontiers
-                should_insert = false;
-                break;
-            }
+        let mut len = 0;
+        // travel backward because they have more similar lamport
+        for f_id in frontiers.iter().rev() {
+            dag.travel_ancestors(*f_id, &mut |x| {
+                len += 1;
+                if x.contains_id(id.id()) {
+                    should_insert = false;
+                    ControlFlow::Break(())
+                } else if x.lamport_last() < id.lamport {
+                    // Already travel to a node with smaller lamport, no need to continue, we are sure two ops are concurrent now
+                    ControlFlow::Break(())
+                } else {
+                    ControlFlow::Continue(())
+                }
+            });
         }
 
         if should_insert {
-            frontiers.push(*id);
-            frontiers_vv.push(vv);
+            frontiers.push(id.id());
         }
     }
 
-    frontiers
+    Ok(frontiers.into())
+}
+
+fn filter_duplicated_peer_id(last_ids: &Frontiers) -> Vec<ID> {
+    let mut peer_max_counters = FxHashMap::default();
+    for id in last_ids.iter() {
+        let counter = peer_max_counters.entry(id.peer).or_insert(id.counter);
+        if id.counter > *counter {
+            *counter = id.counter;
+        }
+    }
+
+    peer_max_counters
+        .into_iter()
+        .map(|(peer, counter)| ID::new(peer, counter))
+        .collect()
 }
 
 impl Default for VersionVector {
@@ -957,5 +1046,37 @@ mod tests {
         };
         let buf = vec![0, 1];
         assert_eq!(postcard::from_bytes::<TotalOrderStamp>(&buf).unwrap(), tos);
+    }
+
+    #[test]
+    fn test_encode_decode_im_version_vector() {
+        let vv = VersionVector::from_iter([(1, 1), (2, 2), (3, 3)]);
+        let im_vv = vv.to_im_vv();
+        let decoded_vv = VersionVector::from_im_vv(&im_vv);
+        assert_eq!(vv, decoded_vv);
+    }
+
+    #[test]
+    fn test_version_vector_encoding_decoding() {
+        let mut vv = VersionVector::new();
+        vv.insert(1, 10);
+        vv.insert(2, 20);
+        vv.insert(3, 30);
+
+        // Encode VersionVector
+        let encoded = vv.encode();
+
+        // Decode to ImVersionVector
+        let decoded_im_vv = ImVersionVector::decode(&encoded).unwrap();
+
+        // Convert VersionVector to ImVersionVector for comparison
+        let im_vv = vv.to_im_vv();
+
+        // Compare the original ImVersionVector with the decoded one
+        assert_eq!(im_vv, decoded_im_vv);
+
+        // Convert back to VersionVector and compare
+        let decoded_vv = VersionVector::from_im_vv(&decoded_im_vv);
+        assert_eq!(vv, decoded_vv);
     }
 }

@@ -10,7 +10,7 @@ fn main() {
     let doc = LoroDoc::new();
     doc.start_auto_commit();
     let list = doc.get_list("list");
-    doc.subscribe_root(Arc::new(|e| {
+    let _g = doc.subscribe_root(Arc::new(|e| {
         for container_diff in e.events {
             match &container_diff.diff {
                 Diff::List(list) => {

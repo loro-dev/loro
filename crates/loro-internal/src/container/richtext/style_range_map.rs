@@ -5,7 +5,6 @@ use std::{
     collections::BTreeSet,
     ops::{ControlFlow, Deref, DerefMut, Range, RangeBounds},
     sync::Arc,
-    usize,
 };
 
 use fxhash::FxHashMap;

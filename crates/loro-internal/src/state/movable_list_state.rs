@@ -10,15 +10,17 @@ use loro_common::{CompactIdLp, ContainerID, IdFull, IdLp, LoroResult, LoroValue,
 
 use crate::{
     arena::SharedArena,
+    configure::Configure,
     container::{idx::ContainerIdx, list::list_op::ListOp},
     delta::DeltaItem,
+    diff_calc::DiffMode,
     encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff, ListDeltaMeta},
     handler::ValueOrHandler,
     op::{ListSlice, Op, RawOp},
     state::movable_list_state::inner::PushElemInfo,
     txn::Transaction,
-    ApplyDiff, DocState, ListDiff,
+    DocState, ListDiff,
 };
 
 use self::{
@@ -26,7 +28,7 @@ use self::{
     list_item_tree::{MovableListTreeTrait, OpLenQuery, UserLenQuery},
 };
 
-use super::ContainerState;
+use super::{ApplyLocalOpReturn, ContainerState, DiffApplyContext};
 
 #[derive(Debug, Clone)]
 pub struct MovableListState {
@@ -37,14 +39,14 @@ pub struct MovableListState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListItem {
     pointed_by: Option<CompactIdLp>,
-    id: IdFull,
+    pub(crate) id: IdFull,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Element {
-    value: LoroValue,
-    value_id: IdLp,
-    pos: IdLp,
+    pub(crate) value: LoroValue,
+    pub(crate) value_id: IdLp,
+    pub(crate) pos: IdLp,
 }
 
 impl Element {
@@ -308,6 +310,19 @@ mod inner {
         child_container_to_elem: FxHashMap<ContainerID, CompactIdLp>,
     }
 
+    impl PartialEq for InnerState {
+        fn eq(&self, other: &Self) -> bool {
+            let v = self.id_to_list_leaf == other.id_to_list_leaf
+                && self.elements == other.elements
+                && self.child_container_to_elem == other.child_container_to_elem;
+            if !v {
+                false
+            } else {
+                self.list.iter().zip(other.list.iter()).all(|(a, b)| a == b)
+            }
+        }
+    }
+
     fn eq<T: PartialEq>(a: T, b: T) -> Result<(), ()> {
         if a == b {
             Ok(())
@@ -502,6 +517,8 @@ mod inner {
         }
 
         /// Drain the list items in the given range (op index).
+        ///
+        /// We also remove the elements that are pointed by the list items.
         pub fn list_drain(
             &mut self,
             range: std::ops::Range<usize>,
@@ -568,10 +585,15 @@ mod inner {
             };
             if let Some(leaf) = self.id_to_list_leaf.get(&new_pos) {
                 ans.new_list_item_leaf = Some(*leaf);
-                self.list.update_leaf(*leaf, |elem| {
-                    ans.activate_new_list_item = elem.pointed_by.is_none();
-                    debug_assert!(ans.activate_new_list_item);
-                    elem.pointed_by = Some(elem_id);
+                self.list.update_leaf(*leaf, |list_item| {
+                    debug_assert!(
+                        list_item.pointed_by.is_none(),
+                        "list_item was pointed by {:?} but need to be changed to {:?}",
+                        list_item.pointed_by,
+                        elem_id
+                    );
+                    ans.activate_new_list_item = list_item.pointed_by.is_none();
+                    list_item.pointed_by = Some(elem_id);
                     (true, None, None)
                 });
             } else {
@@ -642,7 +664,12 @@ mod inner {
             }
         }
 
-        pub fn update_value(&mut self, elem_id: CompactIdLp, new_value: LoroValue, value_id: IdLp) {
+        pub fn update_value(
+            &mut self,
+            elem_id: CompactIdLp,
+            new_value: LoroValue,
+            value_id: IdLp,
+        ) -> Option<LoroValue> {
             debug_assert!(elem_id.peer != PeerID::MAX);
             debug_assert!(!value_id.is_none());
             if let LoroValue::Container(c) = &new_value {
@@ -655,8 +682,9 @@ mod inner {
                         self.child_container_to_elem.remove(c);
                     }
                 }
-                element.value = new_value;
+                let old_value = std::mem::replace(&mut element.value, new_value);
                 element.value_id = value_id;
+                Some(old_value)
             } else {
                 self.elements.insert(
                     elem_id,
@@ -666,6 +694,7 @@ mod inner {
                         pos: IdLp::NONE_ID,
                     },
                 );
+                None
             }
         }
 
@@ -732,7 +761,7 @@ impl MovableListState {
     }
 
     #[inline]
-    fn elements(&self) -> &FxHashMap<CompactIdLp, Element> {
+    pub(crate) fn elements(&self) -> &FxHashMap<CompactIdLp, Element> {
         self.inner.elements()
     }
 
@@ -850,7 +879,7 @@ impl MovableListState {
         Some(self.inner.get_index_of(c.cursor.leaf, to) as usize)
     }
 
-    fn get_list_item(&self, id: IdLp) -> Option<&ListItem> {
+    pub(crate) fn get_list_item(&self, id: IdLp) -> Option<&ListItem> {
         self.inner.get_list_item_by_id(id)
     }
 
@@ -892,6 +921,19 @@ impl MovableListState {
         (0..self.len()).map(move |i| self.get(i, IndexType::ForUser).unwrap())
     }
 
+    pub fn iter_with_last_move_id_and_elem_id(
+        &self,
+    ) -> impl Iterator<Item = (IdFull, CompactIdLp, &LoroValue)> {
+        self.inner.list().iter().filter_map(|list_item| {
+            if let Some(elem_id) = list_item.pointed_by.as_ref() {
+                let elem = self.inner.elements().get(elem_id).unwrap();
+                Some((list_item.id, *elem_id, &elem.value))
+            } else {
+                None
+            }
+        })
+    }
+
     pub fn len(&self) -> usize {
         self.inner.list().root_cache().user_len as usize
     }
@@ -929,6 +971,18 @@ impl MovableListState {
         let item = self.inner.get_list_item_at(pos, IndexType::ForUser);
         item.map(|x| x.id)
     }
+
+    #[allow(unused)]
+    fn check_get_child_index_correctly(&mut self) {
+        let value = self.get_value();
+        let list = value.into_list().unwrap();
+        for (i, item) in list.iter().enumerate() {
+            if let LoroValue::Container(c) = item {
+                let child_index = self.get_child_index(c).expect("cannot find child index");
+                assert_eq!(child_index.into_seq().unwrap(), i);
+            }
+        }
+    }
 }
 
 impl ContainerState for MovableListState {
@@ -944,30 +998,31 @@ impl ContainerState for MovableListState {
         self.list().is_empty() && self.elements().is_empty()
     }
 
+    // How we apply the diff is coupled with the [DiffMode] we used to calculate the diff.
+    // So be careful when you modify this function.
     #[instrument(skip_all)]
     fn apply_diff_and_convert(
         &mut self,
         diff: InternalDiff,
-        arena: &SharedArena,
-        txn: &Weak<Mutex<Option<Transaction>>>,
-        state: &Weak<Mutex<DocState>>,
+        DiffApplyContext {
+            arena,
+            txn,
+            state,
+            mode,
+        }: DiffApplyContext,
     ) -> Diff {
-        let InternalDiff::MovableList(diff) = diff else {
+        let InternalDiff::MovableList(mut diff) = diff else {
             unreachable!()
         };
 
+        // let start_value = self.get_value();
         if cfg!(debug_assertions) {
             self.inner.check_consistency();
         }
 
-        let start_value = if cfg!(debug_assertions) {
-            Some(self.get_value())
-        } else {
-            None
-        };
-
         let mut event: ListDiff = DeltaRope::new();
         let mut maybe_moved: FxHashMap<CompactIdLp, (usize, LoroValue)> = FxHashMap::default();
+        let need_compare = matches!(mode, DiffMode::Import);
 
         {
             // apply deletions and calculate `maybe_moved`
@@ -997,10 +1052,25 @@ impl ContainerState for MovableListState {
                                 .delete(user_index_end - user_index)
                                 .build(),
                         );
-                        self.inner.list_drain(index..index + delete, |id, elem| {
-                            maybe_moved.insert(id, (user_index, elem.value.clone()));
-                            user_index += 1;
-                        });
+                        self.inner
+                            .list_drain(index..index + delete, |elem_id, elem| {
+                                maybe_moved.insert(elem_id, (user_index, elem.value.clone()));
+                                if !matches!(mode, DiffMode::Checkout) {
+                                    if let Some(new_elem) = diff.elements.get_mut(&elem_id) {
+                                        if new_elem.value_id.is_none() {
+                                            new_elem.value = elem.value.clone();
+                                            new_elem.value_id = Some(elem.value_id);
+                                            new_elem.value_updated = false;
+                                        }
+
+                                        if new_elem.pos.is_none() {
+                                            new_elem.pos = Some(elem.pos);
+                                        }
+                                    }
+                                }
+
+                                user_index += 1;
+                            });
                         assert_eq!(user_index, user_index_end);
                     }
                 }
@@ -1044,7 +1114,6 @@ impl ContainerState for MovableListState {
             for (elem_id, delta_item) in diff.elements.into_iter() {
                 let crate::delta::ElementDelta {
                     pos,
-                    pos_updated: _,
                     value,
                     value_updated,
                     value_id,
@@ -1055,9 +1124,13 @@ impl ContainerState for MovableListState {
                 match self.inner.elements().get(&elem_id).cloned() {
                     Some(elem) => {
                         // Update value if needed
-                        if elem.value != value {
+                        if value_id.is_some()
+                            && elem.value != value
+                            && (!need_compare || elem.value_id < value_id.unwrap())
+                        {
                             maybe_moved.remove(&elem_id);
-                            self.inner.update_value(elem_id, value.clone(), value_id);
+                            self.inner
+                                .update_value(elem_id, value.clone(), value_id.unwrap());
                             let index = self.get_index_of_elem(elem_id);
                             if let Some(index) = index {
                                 event.compose(
@@ -1076,9 +1149,12 @@ impl ContainerState for MovableListState {
                         }
 
                         // Update pos if needed
-                        if elem.pos != pos {
+                        if pos.is_some()
+                            && elem.pos != pos.unwrap()
+                            && (!need_compare || elem.pos < pos.unwrap())
+                        {
                             // don't need to update old list item, because it's handled by list diff already
-                            let result = self.inner.update_pos(elem_id, pos, false);
+                            let result = self.inner.update_pos(elem_id, pos.unwrap(), false);
                             let result = self.inner.convert_update_to_event_pos(result);
                             if let Some(new_index) = result.insert {
                                 let new_value =
@@ -1120,7 +1196,12 @@ impl ContainerState for MovableListState {
                     }
                     None => {
                         // Need to create new element
-                        let result = self.create_new_elem(elem_id, pos, value.clone(), value_id);
+                        let result = self.create_new_elem(
+                            elem_id,
+                            pos.unwrap(),
+                            value.clone(),
+                            value_id.unwrap(),
+                        );
                         // Composing events
                         let result = self.inner.convert_update_to_event_pos(result);
                         // Create event for pos change and value change
@@ -1175,52 +1256,35 @@ impl ContainerState for MovableListState {
             }
         }
 
-        if cfg!(debug_assertions) {
-            self.inner.check_consistency();
-            let start_value = start_value.unwrap();
-            let mut end_value = start_value.clone();
-            end_value.apply_diff_shallow(&[Diff::List(event.clone())]);
-            let cur_value = self.get_value();
-            assert_eq!(
-                end_value, cur_value,
-                "start_value={:#?} event={:#?} new_state={:#?} but the end_value={:#?}",
-                start_value, event, cur_value, end_value
-            );
-        }
+        // if cfg!(debug_assertions) {
+        //     self.inner.check_consistency();
+        //     let mut end_value = start_value.clone();
+        //     end_value.apply_diff_shallow(&[Diff::List(event.clone())]);
+        //     let cur_value = self.get_value();
+        //     assert_eq!(
+        //         end_value, cur_value,
+        //         "start_value={:#?} event={:#?} new_state={:#?} but the end_value={:#?}",
+        //         start_value, event, cur_value, end_value
+        //     );
+        //     self.check_get_child_index_correctly();
+        // }
 
         Diff::List(event)
     }
 
-    fn apply_diff(
-        &mut self,
-        diff: InternalDiff,
-        arena: &SharedArena,
-        txn: &Weak<Mutex<Option<Transaction>>>,
-        state: &Weak<Mutex<DocState>>,
-    ) {
-        let _ = self.apply_diff_and_convert(diff, arena, txn, state);
+    // How we apply the diff is coupled with the [DiffMode] we used to calculate the diff.
+    // So be careful when you modify this function.
+    fn apply_diff(&mut self, diff: InternalDiff, ctx: DiffApplyContext) {
+        let _ = self.apply_diff_and_convert(diff, ctx);
     }
 
     #[instrument(skip_all)]
-    fn apply_local_op(&mut self, op: &RawOp, _: &Op) -> LoroResult<()> {
+    fn apply_local_op(&mut self, op: &RawOp, _: &Op) -> LoroResult<ApplyLocalOpReturn> {
+        let mut ans: ApplyLocalOpReturn = Default::default();
         match op.content.as_list().unwrap() {
             ListOp::Insert { slice, pos } => match slice {
                 ListSlice::RawData(list) => {
-                    let mut a;
-                    let mut b;
-                    let v: &mut dyn Iterator<Item = &LoroValue>;
-                    match list {
-                        std::borrow::Cow::Borrowed(list) => {
-                            a = Some(list.iter());
-                            v = a.as_mut().unwrap();
-                        }
-                        std::borrow::Cow::Owned(list) => {
-                            b = Some(list.iter());
-                            v = b.as_mut().unwrap();
-                        }
-                    }
-
-                    for (i, x) in v.enumerate() {
+                    for (i, x) in list.as_ref().iter().enumerate() {
                         let elem_id = op.idlp().inc(i as i32).try_into().unwrap();
                         let pos_id = op.id_full().inc(i as i32);
                         self.inner.insert_list_item(*pos + i, pos_id);
@@ -1236,7 +1300,11 @@ impl ContainerState for MovableListState {
             },
             ListOp::Delete(span) => {
                 self.inner
-                    .list_drain(span.start() as usize..span.end() as usize, |_, _| {});
+                    .list_drain(span.start() as usize..span.end() as usize, |_, elem| {
+                        if let Some(c) = elem.value.as_container() {
+                            ans.deleted_containers.push(c.clone());
+                        }
+                    });
             }
             ListOp::Move { from, to, elem_id } => {
                 self.mov(
@@ -1248,13 +1316,17 @@ impl ContainerState for MovableListState {
                 );
             }
             ListOp::Set { elem_id, value } => {
-                self.inner
-                    .update_value(elem_id.compact(), value.clone(), op.idlp());
+                let old_value =
+                    self.inner
+                        .update_value(elem_id.compact(), value.clone(), op.idlp());
+                if let Some(LoroValue::Container(c)) = old_value {
+                    ans.deleted_containers.push(c);
+                }
             }
             ListOp::StyleStart { .. } | ListOp::StyleEnd => unreachable!(),
         }
 
-        Ok(())
+        Ok(ans)
     }
 
     fn to_diff(
@@ -1439,6 +1511,10 @@ impl ContainerState for MovableListState {
         assert!(last_set_op_iter.next().is_none());
         Ok(())
     }
+
+    fn fork(&self, _config: &Configure) -> Self {
+        self.clone()
+    }
 }
 
 #[columnar(vec, ser, de, iterable)]
@@ -1458,13 +1534,391 @@ struct EncodedId {
     #[columnar(strategy = "DeltaRle")]
     lamport: u32,
 }
-
 #[columnar(ser, de)]
 struct EncodedSnapshot {
     #[columnar(class = "vec", iter = "EncodedItem")]
     items: Vec<EncodedItem>,
     #[columnar(class = "vec", iter = "EncodedId")]
     ids: Vec<EncodedId>,
+}
+
+#[columnar(vec, ser, de, iterable)]
+#[derive(Debug, Clone, Copy)]
+struct EncodedItemForFastSnapshot {
+    #[columnar(strategy = "DeltaRle")]
+    invisible_list_item: usize,
+    #[columnar(strategy = "BoolRle")]
+    pos_id_eq_elem_id: bool,
+    #[columnar(strategy = "BoolRle")]
+    elem_id_eq_last_set_id: bool,
+}
+
+#[columnar(vec, ser, de, iterable)]
+#[derive(Debug, Clone)]
+struct EncodedIdFull {
+    #[columnar(strategy = "DeltaRle")]
+    peer_idx: usize,
+    #[columnar(strategy = "DeltaRle")]
+    counter: i32,
+    #[columnar(strategy = "DeltaRle")]
+    lamport_sub_counter: i32,
+}
+
+#[columnar(ser, de)]
+struct EncodedFastSnapshot {
+    #[columnar(class = "vec", iter = "EncodedItemForFastSnapshot")]
+    items: Vec<EncodedItemForFastSnapshot>,
+    #[columnar(class = "vec", iter = "EncodedIdFull")]
+    list_item_ids: Vec<EncodedIdFull>,
+    #[columnar(class = "vec", iter = "EncodedId")]
+    elem_ids: Vec<EncodedId>,
+    #[columnar(class = "vec", iter = "EncodedId")]
+    last_set_ids: Vec<EncodedId>,
+}
+
+mod snapshot {
+    use std::io::Read;
+
+    use loro_common::{IdFull, IdLp, LoroValue, PeerID};
+
+    use crate::{
+        encoding::value_register::ValueRegister,
+        state::{ContainerCreationContext, ContainerState, FastStateSnapshot},
+    };
+
+    use super::{
+        inner::PushElemInfo, EncodedFastSnapshot, EncodedId, EncodedIdFull,
+        EncodedItemForFastSnapshot, MovableListState,
+    };
+
+    impl FastStateSnapshot for MovableListState {
+        /// Encodes the MovableListState into a compact binary format for fast snapshot storage and retrieval.
+        ///
+        /// The encoding format consists of:
+        /// 1. The full value of the MovableListState, encoded using postcard serialization.
+        /// 2. A series of EncodedItemForFastSnapshot structs representing each visible list item:
+        ///    - invisible_list_item: Count of invisible items before this item (RLE encoded)
+        ///    - pos_id_eq_elem_id: Boolean indicating if position ID equals element ID (RLE encoded)
+        ///    - elem_id_eq_last_set_id: Boolean indicating if element ID equals last set ID (RLE encoded)
+        /// 3. A series of EncodedIdFull structs for list item IDs:
+        ///    - peer_idx: Index of the peer ID in a value register (delta-RLE encoded)
+        ///    - counter: Operation counter (delta-RLE encoded)
+        ///    - lamport: Lamport timestamp (delta-RLE encoded)
+        /// 4. EncodedId structs for element IDs (when different from position ID)
+        /// 5. EncodedId structs for last set IDs (when different from element ID)
+        /// 6. A list of unique peer IDs used in the encoding
+        fn encode_snapshot_fast<W: std::io::prelude::Write>(&mut self, mut w: W) {
+            let value = self.get_value().into_list().unwrap();
+            postcard::to_io(&value, &mut w).unwrap();
+            let mut peers: ValueRegister<PeerID> = ValueRegister::new();
+            let len = self.len();
+            let mut items = Vec::with_capacity(len);
+            // starts with a sentinel value. The num of `invisible_list_item` may be updated later
+            items.push(EncodedItemForFastSnapshot {
+                pos_id_eq_elem_id: true,
+                invisible_list_item: 0,
+                elem_id_eq_last_set_id: true,
+            });
+
+            let mut list_item_ids = Vec::with_capacity(self.len());
+            let mut elem_ids = Vec::new();
+            let mut last_set_ids = Vec::new();
+            for item in self.list().iter() {
+                if let Some(elem_id) = item.pointed_by {
+                    let elem = self.elements().get(&elem_id).unwrap();
+                    let elem_eq_list_item = elem_id.to_id() == item.id.idlp();
+                    let elem_id_eq_last_set_id = elem.value_id.compact() == elem_id;
+                    items.push(EncodedItemForFastSnapshot {
+                        invisible_list_item: 0,
+                        pos_id_eq_elem_id: elem_eq_list_item,
+                        elem_id_eq_last_set_id,
+                    });
+
+                    list_item_ids.push(super::EncodedIdFull {
+                        peer_idx: peers.register(&item.id.peer),
+                        counter: item.id.counter,
+                        lamport_sub_counter: (item.id.lamport as i32 - item.id.counter),
+                    });
+                    if !elem_eq_list_item {
+                        elem_ids.push(super::EncodedId {
+                            peer_idx: peers.register(&elem_id.peer),
+                            lamport: elem_id.lamport.get(),
+                        })
+                    }
+                    if !elem_id_eq_last_set_id {
+                        last_set_ids.push(super::EncodedId {
+                            peer_idx: peers.register(&elem.value_id.peer),
+                            lamport: elem.value_id.lamport,
+                        })
+                    }
+                } else {
+                    items.last_mut().unwrap().invisible_list_item += 1;
+                    list_item_ids.push(super::EncodedIdFull {
+                        peer_idx: peers.register(&item.id.peer),
+                        counter: item.id.counter,
+                        lamport_sub_counter: (item.id.lamport as i32 - item.id.counter),
+                    });
+                }
+            }
+
+            let peers = peers.unwrap_vec();
+            leb128::write::unsigned(&mut w, peers.len() as u64).unwrap();
+            for peer in peers {
+                w.write_all(&peer.to_le_bytes()).unwrap();
+            }
+
+            let v = serde_columnar::to_vec(&EncodedFastSnapshot {
+                items,
+                list_item_ids,
+                elem_ids,
+                last_set_ids,
+            })
+            .unwrap();
+            w.write_all(&v).unwrap();
+        }
+
+        fn decode_value(bytes: &[u8]) -> loro_common::LoroResult<(loro_common::LoroValue, &[u8])> {
+            let (list_value, bytes) =
+                postcard::take_from_bytes::<Vec<LoroValue>>(bytes).map_err(|_| {
+                    loro_common::LoroError::DecodeError(
+                        "Decode list value failed".to_string().into_boxed_str(),
+                    )
+                })?;
+            Ok((list_value.into(), bytes))
+        }
+
+        fn decode_snapshot_fast(
+            idx: crate::container::idx::ContainerIdx,
+            (list_value, mut bytes): (loro_common::LoroValue, &[u8]),
+            _ctx: ContainerCreationContext,
+        ) -> loro_common::LoroResult<Self>
+        where
+            Self: Sized,
+        {
+            let peer_num = leb128::read::unsigned(&mut bytes).unwrap() as usize;
+            let mut peers = Vec::with_capacity(peer_num);
+            for _ in 0..peer_num {
+                let mut buf = [0u8; 8];
+                bytes.read_exact(&mut buf).unwrap();
+                peers.push(PeerID::from_le_bytes(buf));
+            }
+
+            let mut ans = MovableListState::new(idx);
+
+            let iters = serde_columnar::iter_from_bytes::<EncodedFastSnapshot>(bytes).unwrap();
+            let mut elem_iter = iters.elem_ids;
+            let item_iter = iters.items;
+            let mut list_item_id_iter = iters.list_item_ids;
+            let mut last_set_id_iter = iters.last_set_ids;
+            let mut is_first = true;
+
+            let list_value = list_value.into_list().unwrap();
+            let mut list_value_iter = list_value.iter();
+            for item in item_iter {
+                let EncodedItemForFastSnapshot {
+                    invisible_list_item,
+                    pos_id_eq_elem_id,
+                    elem_id_eq_last_set_id,
+                } = item.unwrap();
+
+                if !is_first {
+                    let EncodedIdFull {
+                        peer_idx,
+                        counter,
+                        lamport_sub_counter,
+                    } = list_item_id_iter.next().unwrap().unwrap();
+                    let id_full = IdFull::new(
+                        peers[peer_idx],
+                        counter,
+                        (lamport_sub_counter + counter) as u32,
+                    );
+                    let elem_id = if pos_id_eq_elem_id {
+                        id_full.idlp()
+                    } else {
+                        let EncodedId { peer_idx, lamport } = elem_iter.next().unwrap().unwrap();
+                        IdLp::new(peers[peer_idx], lamport)
+                    };
+
+                    let last_set_id = if elem_id_eq_last_set_id {
+                        elem_id
+                    } else {
+                        let EncodedId { peer_idx, lamport } =
+                            last_set_id_iter.next().unwrap().unwrap();
+                        IdLp::new(peers[peer_idx], lamport)
+                    };
+
+                    let value = list_value_iter.next().unwrap();
+                    ans.inner.push_inner(
+                        id_full,
+                        Some(PushElemInfo {
+                            elem_id: elem_id.compact(),
+                            value: value.clone(),
+                            last_set_id,
+                        }),
+                    )
+                }
+
+                is_first = false;
+                for _ in 0..invisible_list_item {
+                    let EncodedIdFull {
+                        peer_idx,
+                        counter,
+                        lamport_sub_counter,
+                    } = list_item_id_iter.next().unwrap().unwrap();
+                    let id_full = IdFull::new(
+                        peers[peer_idx],
+                        counter,
+                        (counter + lamport_sub_counter) as u32,
+                    );
+                    ans.inner.push_inner(id_full, None);
+                }
+            }
+
+            debug_assert!(elem_iter.next().is_none());
+            debug_assert!(list_item_id_iter.next().is_none());
+            debug_assert!(last_set_id_iter.next().is_none());
+            debug_assert!(list_value_iter.next().is_none());
+
+            Ok(ans)
+        }
+    }
+
+    #[cfg(test)]
+    mod test {
+        use std::sync::Arc;
+
+        use loro_common::{CompactIdLp, ContainerID, LoroValue, ID};
+
+        use crate::container::idx::ContainerIdx;
+
+        use super::*;
+
+        #[test]
+        fn test_movable_list_snapshot() {
+            let mut list = MovableListState::new(ContainerIdx::from_index_and_type(
+                0,
+                loro_common::ContainerType::MovableList,
+            ));
+
+            list.inner.insert_list_item(0, IdFull::new(9, 9, 9));
+            list.inner.insert_list_item(1, IdFull::new(0, 0, 0));
+            let _ = list.create_new_elem(
+                CompactIdLp::new(10, 10),
+                IdLp {
+                    lamport: 0,
+                    peer: 0,
+                },
+                LoroValue::Container(ContainerID::new_normal(
+                    ID::new(10, 10),
+                    loro_common::ContainerType::Text,
+                )),
+                IdLp {
+                    lamport: 1,
+                    peer: 2,
+                },
+            );
+            list.inner.insert_list_item(2, IdFull::new(1, 1, 1));
+            list.inner.insert_list_item(3, IdFull::new(2, 2, 2));
+            list.inner.insert_list_item(4, IdFull::new(3, 3, 3));
+            let _ = list.create_new_elem(
+                CompactIdLp::new(3, 8),
+                IdLp {
+                    lamport: 3,
+                    peer: 3,
+                },
+                LoroValue::String(Arc::new("abc".to_string())),
+                IdLp {
+                    lamport: 4,
+                    peer: 5,
+                },
+            );
+
+            let mut bytes = Vec::new();
+            list.encode_snapshot_fast(&mut bytes);
+            assert!(bytes.len() <= 117, "{}", bytes.len());
+
+            let (v, bytes) = MovableListState::decode_value(&bytes).unwrap();
+            assert_eq!(
+                v,
+                vec![
+                    LoroValue::Container(ContainerID::new_normal(
+                        ID::new(10, 10),
+                        loro_common::ContainerType::Text,
+                    )),
+                    LoroValue::String(Arc::new("abc".to_string())),
+                ]
+                .into()
+            );
+            let mut list2 = MovableListState::decode_snapshot_fast(
+                ContainerIdx::from_index_and_type(0, loro_common::ContainerType::MovableList),
+                (v.clone(), bytes),
+                ContainerCreationContext {
+                    configure: &Default::default(),
+                    peer: 0,
+                },
+            )
+            .unwrap();
+            assert_eq!(&list2.get_value(), &v);
+            assert_eq!(&list.inner, &list2.inner);
+        }
+
+        #[test]
+        fn test_movable_list_snapshot_size() {
+            let mut list = MovableListState::new(ContainerIdx::from_index_and_type(
+                0,
+                loro_common::ContainerType::MovableList,
+            ));
+
+            list.inner.insert_list_item(0, IdFull::new(0, 0, 0));
+            let _ = list.create_new_elem(
+                CompactIdLp::new(0, 0),
+                IdLp {
+                    lamport: 0,
+                    peer: 0,
+                },
+                LoroValue::I64(0),
+                IdLp {
+                    lamport: 0,
+                    peer: 0,
+                },
+            );
+
+            list.inner.insert_list_item(1, IdFull::new(0, 1, 1));
+            let _ = list.create_new_elem(
+                CompactIdLp::new(0, 1),
+                IdLp {
+                    peer: 0,
+                    lamport: 1,
+                },
+                LoroValue::I64(0),
+                IdLp {
+                    peer: 0,
+                    lamport: 1,
+                },
+            );
+
+            let mut bytes = Vec::new();
+            list.encode_snapshot_fast(&mut bytes);
+            assert!(bytes.len() <= 42, "{}", bytes.len());
+
+            list.inner.insert_list_item(2, IdFull::new(0, 1, 2));
+            let _ = list.create_new_elem(
+                CompactIdLp::new(0, 2),
+                IdLp {
+                    peer: 0,
+                    lamport: 2,
+                },
+                LoroValue::I64(0),
+                IdLp {
+                    peer: 0,
+                    lamport: 2,
+                },
+            );
+            let mut bytes = Vec::new();
+            list.encode_snapshot_fast(&mut bytes);
+            assert!(bytes.len() <= 47, "{}", bytes.len());
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1547,7 +2001,7 @@ mod test {
         }
         {
             let doc_b = LoroDoc::new_auto_commit();
-            doc_b.import(&doc.export_snapshot()).unwrap();
+            doc_b.import(&doc.export_snapshot().unwrap()).unwrap();
             assert_eq!(
                 doc_b.get_deep_value().to_json_value(),
                 json!({

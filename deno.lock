@@ -1,5 +1,5 @@
 {
-  "version": "3",
+  "version": "4",
   "redirects": {
     "https://deno.land/std/fmt/printf.ts": "https://deno.land/std@0.105.0/fmt/printf.ts",
     "https://deno.land/std/path/mod.ts": "https://deno.land/std@0.105.0/path/mod.ts",
@@ -95,5 +95,13 @@
     "https://lra6z45nakk5lnu3yjchp7tftsdnwwikwr65ocha5eojfnlgu4sa.arweave.net/XEHs860CldW2m8JEd_5lnIbbWQq0fdcI4OkckrVmpyQ/path/posix.ts": "7c2539b5d9e22b47f02ccc5b6ef11e3975a5c60f49d2241271eaa5936e6082a0",
     "https://lra6z45nakk5lnu3yjchp7tftsdnwwikwr65ocha5eojfnlgu4sa.arweave.net/XEHs860CldW2m8JEd_5lnIbbWQq0fdcI4OkckrVmpyQ/path/separator.ts": "9dd15d46ff84a16e13554f56af7fee1f85f8d0f379efbbe60ac066a60561f036",
     "https://lra6z45nakk5lnu3yjchp7tftsdnwwikwr65ocha5eojfnlgu4sa.arweave.net/XEHs860CldW2m8JEd_5lnIbbWQq0fdcI4OkckrVmpyQ/path/win32.ts": "47114c941681ecbabab4ec355cb41d525fb5a14175cc47a5c76fdc5eaee2685a"
+  },
+  "workspace": {
+    "packageJson": {
+      "dependencies": [
+        "npm:@changesets/changelog-git@0.2",
+        "npm:@changesets/cli@^2.27.1"
+      ]
+    }
   }
 }

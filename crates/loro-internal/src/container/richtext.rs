@@ -13,14 +13,15 @@
 pub(crate) mod config;
 mod fugue_span;
 pub(crate) mod richtext_state;
+pub(crate) mod str_slice;
 mod style_range_map;
 mod tracker;
 
 use crate::{change::Lamport, delta::StyleMeta, utils::string_slice::StringSlice, InternalString};
 use fugue_span::*;
-use loro_common::{Counter, IdLp, LoroValue, PeerID, ID};
+use loro_common::{Counter, IdFull, IdLp, LoroValue, PeerID, ID};
 use serde::{Deserialize, Serialize};
-use std::{fmt::Debug};
+use std::fmt::Debug;
 
 pub(crate) use fugue_span::{RichtextChunk, RichtextChunkValue};
 pub(crate) use richtext_state::RichtextState;
@@ -101,6 +102,10 @@ impl StyleOp {
 
     pub fn idlp(&self) -> IdLp {
         IdLp::new(self.peer, self.lamport)
+    }
+
+    pub fn id_full(&self) -> IdFull {
+        IdFull::new(self.peer, self.cnt, self.lamport)
     }
 }
 

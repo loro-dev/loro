@@ -4,6 +4,7 @@ use loro_common::{ContainerID, LoroResult, LoroValue};
 
 use crate::{
     arena::SharedArena,
+    configure::Configure,
     container::idx::ContainerIdx,
     encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff},
@@ -12,7 +13,7 @@ use crate::{
     DocState,
 };
 
-use super::ContainerState;
+use super::{ApplyLocalOpReturn, ContainerState, DiffApplyContext};
 
 #[derive(Debug, Clone)]
 pub struct UnknownState {
@@ -38,27 +39,15 @@ impl ContainerState for UnknownState {
         false
     }
 
-    fn apply_diff_and_convert(
-        &mut self,
-        _diff: InternalDiff,
-        _arena: &SharedArena,
-        _txn: &Weak<Mutex<Option<Transaction>>>,
-        _state: &Weak<Mutex<DocState>>,
-    ) -> Diff {
+    fn apply_diff_and_convert(&mut self, _diff: InternalDiff, _ctx: DiffApplyContext) -> Diff {
         unreachable!()
     }
 
-    fn apply_diff(
-        &mut self,
-        _diff: InternalDiff,
-        _arena: &SharedArena,
-        _txn: &Weak<Mutex<Option<Transaction>>>,
-        _state: &Weak<Mutex<DocState>>,
-    ) {
+    fn apply_diff(&mut self, _diff: InternalDiff, _ctx: DiffApplyContext) {
         unreachable!()
     }
 
-    fn apply_local_op(&mut self, _raw_op: &RawOp, _op: &Op) -> LoroResult<()> {
+    fn apply_local_op(&mut self, _raw_op: &RawOp, _op: &Op) -> LoroResult<ApplyLocalOpReturn> {
         unreachable!()
     }
 
@@ -103,5 +92,36 @@ impl ContainerState for UnknownState {
     #[doc = r" Restore the state to the state represented by the ops and the blob that exported by `get_snapshot_ops`"]
     fn import_from_snapshot_ops(&mut self, _ctx: StateSnapshotDecodeContext) -> LoroResult<()> {
         Ok(())
+    }
+
+    fn fork(&self, _config: &Configure) -> Self {
+        self.clone()
+    }
+}
+
+mod snapshot {
+    use loro_common::LoroValue;
+
+    use crate::state::FastStateSnapshot;
+
+    use super::UnknownState;
+
+    impl FastStateSnapshot for UnknownState {
+        fn encode_snapshot_fast<W: std::io::prelude::Write>(&mut self, _w: W) {}
+
+        fn decode_value(bytes: &[u8]) -> loro_common::LoroResult<(loro_common::LoroValue, &[u8])> {
+            Ok((LoroValue::Null, bytes))
+        }
+
+        fn decode_snapshot_fast(
+            idx: crate::container::idx::ContainerIdx,
+            _v: (loro_common::LoroValue, &[u8]),
+            _ctx: crate::state::ContainerCreationContext,
+        ) -> loro_common::LoroResult<Self>
+        where
+            Self: Sized,
+        {
+            Ok(UnknownState::new(idx))
+        }
     }
 }

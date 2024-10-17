@@ -36,21 +36,21 @@ impl MovableListInnerDelta {
 
 #[derive(Clone, Debug)]
 pub struct ElementDelta {
-    pub pos: IdLp,
-    pub pos_updated: bool,
+    /// This must be Some if it's in checkout mode (not fast-forward mode)
+    pub pos: Option<IdLp>,
     pub value: LoroValue,
     pub value_updated: bool,
-    pub value_id: IdLp,
+    /// This must be Some if it's in checkout mode (not fast-forward mode)
+    pub value_id: Option<IdLp>,
 }
 
 impl ElementDelta {
     pub fn placeholder() -> Self {
         Self {
-            pos: IdLp::NONE_ID,
-            pos_updated: false,
+            pos: None,
             value: LoroValue::Null,
             value_updated: false,
-            value_id: IdLp::NONE_ID,
+            value_id: None,
         }
     }
 }

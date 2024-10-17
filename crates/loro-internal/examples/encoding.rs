@@ -40,7 +40,7 @@ fn main() {
     }
 
     let start = Instant::now();
-    let snapshot = loro.export_snapshot();
+    let snapshot = loro.export_snapshot().unwrap();
     println!("Snapshot time {}ms", start.elapsed().as_millis());
     let output = miniz_oxide::deflate::compress_to_vec(&snapshot, 6);
     println!(
@@ -75,25 +75,33 @@ fn main() {
     // {
     //     // Delta encoding
 
-    //     // let start = Instant::now();
-    //     // for _ in 0..10 {
-    //     //     loro.export_from(&Default::default());
-    //     // }
+    {
+        // Delta encoding
 
-    //     // println!("Avg encode {}ms", start.elapsed().as_millis() as f64 / 10.0);
+        let start = Instant::now();
+        for _ in 0..10 {
+            loro.export_from(&Default::default());
+        }
 
-    //     let data = loro.export_from(&Default::default());
-    //     let start = Instant::now();
-    //     for _ in 0..5 {
-    //         let b = LoroDoc::default();
-    //         b.import(&data).unwrap();
-    //     }
+        println!("Avg encode {}ms", start.elapsed().as_millis() as f64 / 10.0);
 
-    //     println!("Avg decode {}ms", start.elapsed().as_millis() as f64 / 10.0);
-    //     println!("size len={}", data.len());
-    //     let d = miniz_oxide::deflate::compress_to_vec(&data, 10);
-    //     println!("size after compress len={}", d.len());
-    // }
+        let data = loro.export_from(&Default::default());
+        let start = Instant::now();
+        let n = 5;
+        for _ in 0..n {
+            let b = LoroDoc::default();
+            b.detach();
+            b.import(&data).unwrap();
+        }
+
+        println!(
+            "Avg normal decode {}ms (without applying)",
+            start.elapsed().as_millis() as f64 / (n as f64)
+        );
+        println!("size len={}", data.len());
+        let d = miniz_oxide::deflate::compress_to_vec(&data, 10);
+        println!("size after compress len={}", d.len());
+    }
 
     // {
     //     // Snapshot encoding

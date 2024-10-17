@@ -1,20 +1,12 @@
 [package]
 name = "loro-ffi"
-version = "0.1.0"
+version = "0.16.2"
 edition = "2021"
-build = "build.rs"
 license = "MIT"
 publish = false
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-loro-internal = { path = "../loro-internal" }
-
-[lib]
-crate-type = ["staticlib", "cdylib"]
-name = "loro"
-
-
-[build-dependencies]
-cbindgen = "0.24.3"
+loro = { path = "../loro", features = ["counter","jsonpath"] }
+serde_json = {workspace = true}

@@ -5,6 +5,11 @@ use serde::{Deserialize, Serialize};
 #[repr(transparent)]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct InternalString(string_cache::DefaultAtom);
+impl InternalString {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
 
 impl<T: Into<string_cache::DefaultAtom>> From<T> for InternalString {
     #[inline(always)]

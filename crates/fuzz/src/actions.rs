@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use crate::container::CounterAction;
 pub use crate::container::MovableListAction;
 
-use super::{
+pub use super::{
     actor::ActionExecutor,
     container::{ListAction, MapAction, TextAction, TreeAction},
     crdt_fuzzer::FuzzValue,

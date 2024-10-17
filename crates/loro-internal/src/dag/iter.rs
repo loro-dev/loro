@@ -1,4 +1,3 @@
-use super::DagUtils;
 use crate::version::Frontiers;
 use num::Zero;
 use std::{collections::BTreeMap, ops::Range};
@@ -51,7 +50,7 @@ pub struct DagIterator<'a, T> {
 
 /// Should only use it on debug, because it's slow and likely to use lots of mem
 impl<'a, T: DagNode> Iterator for DagIterator<'a, T> {
-    type Item = &'a T;
+    type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.visited.is_empty() {
@@ -105,7 +104,7 @@ pub(crate) struct DagIteratorVV<'a, T> {
 
 /// Should only use it on debug, because it's slow and likely to use lots of mem
 impl<'a, T: DagNode> Iterator for DagIteratorVV<'a, T> {
-    type Item = (&'a T, VersionVector);
+    type Item = (T, VersionVector);
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.vv_map.is_empty() {
@@ -136,7 +135,7 @@ impl<'a, T: DagNode> Iterator for DagIteratorVV<'a, T> {
             let mut vv = {
                 // calculate vv
                 let mut vv: Option<VersionVector> = None;
-                for &dep_id in node.deps() {
+                for dep_id in node.deps().iter() {
                     let dep = self.dag.get(dep_id).unwrap();
                     let dep_vv = self.vv_map.get(&dep.id_start()).unwrap();
                     if let Some(vv) = vv.as_mut() {
@@ -187,13 +186,9 @@ pub(crate) struct DagCausalIter<'a, Dag> {
 }
 
 #[derive(Debug)]
-pub(crate) struct IterReturn<'a, T> {
-    #[allow(unused)]
-    pub retreat: IdSpanVector,
-    #[allow(unused)]
-    pub forward: IdSpanVector,
+pub(crate) struct IterReturn<T> {
     /// data is a reference, it need to be sliced by the counter_range to get the underlying data
-    pub data: &'a T,
+    pub data: T,
     /// data[slice] is the data we want to return
     #[allow(unused)]
     pub slice: Range<i32>,
@@ -201,6 +196,8 @@ pub(crate) struct IterReturn<'a, T> {
 
 impl<'a, T: DagNode, D: Dag<Node = T> + Debug> DagCausalIter<'a, D> {
     pub fn new(dag: &'a D, from: Frontiers, target: IdSpanVector) -> Self {
+        trace!("from: {:?}", &from);
+        trace!("target: {:?}", &target);
         let mut out_degrees: FxHashMap<ID, usize> = FxHashMap::default();
         let mut succ: BTreeMap<ID, Vec<ID>> = BTreeMap::default();
         let mut stack = Vec::new();
@@ -226,7 +223,7 @@ impl<'a, T: DagNode, D: Dag<Node = T> + Debug> DagCausalIter<'a, D> {
                             let included_in_target =
                                 dep.counter >= span.min() && dep.counter <= span.max();
                             if included_in_target {
-                                succ.entry(*dep).or_default().push(id);
+                                succ.entry(dep).or_default().push(id);
                             }
                             included_in_target
                         } else {
@@ -261,8 +258,8 @@ impl<'a, T: DagNode, D: Dag<Node = T> + Debug> DagCausalIter<'a, D> {
     }
 }
 
-impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
-    type Item = IterReturn<'a, T>;
+impl<'a, T: DagNode, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
+    type Item = IterReturn<T>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.stack.is_empty() {
@@ -304,14 +301,6 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
         let last_counter = node.id_last().counter;
         target_span.set_start(last_counter + 1);
 
-        let deps: SmallVec<[_; 2]> = if slice_from == 0 {
-            node.deps().iter().copied().collect()
-        } else {
-            smallvec::smallvec![node.id_start().inc(slice_from - 1)]
-        };
-
-        let path = self.dag.find_path(&self.frontier, &deps);
-
         // tracing::span!(tracing::Level::INFO, "Dag Causal");
 
         //
@@ -344,8 +333,6 @@ impl<'a, T: DagNode + 'a, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
         }
 
         Some(IterReturn {
-            retreat: path.left,
-            forward: path.right,
             data: node,
             slice: slice_from..slice_end,
         })
