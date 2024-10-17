@@ -42,9 +42,9 @@ async function build() {
         // const snip = `wasm-snip ./${target}/loro_wasm_bg.wasm -o ./${target}/loro_wasm_bg.wasm`;
         // console.log(">", snip);
         // await Deno.run({ cmd: snip.split(" "), cwd: LoroWasmDir }).status();
-        const cmd = `wasm-opt -Os ./${target}/loro_wasm_bg.wasm -o ./${target}/loro_wasm_bg.wasm`;
-        console.log(">", cmd);
-        await Deno.run({ cmd: cmd.split(" "), cwd: LoroWasmDir }).status();
+        // const cmd = `wasm-opt -O4 ./${target}/loro_wasm_bg.wasm -o ./${target}/loro_wasm_bg.wasm`;
+        // console.log(">", cmd);
+        // await Deno.run({ cmd: cmd.split(" "), cwd: LoroWasmDir }).status();
       }),
     );
   }
