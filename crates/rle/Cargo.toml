@@ -16,9 +16,6 @@ keywords = ["crdt", "local-first"]
 [dependencies]
 smallvec = {workspace=true}
 num = "0.4.0"
-enum-as-inner = "0.6.0"
-arref = "0.1.0"
-fxhash = "0.2.1"
 append-only-bytes = { version = "0.1.11", features = ["u32_range"] }
 
 [dev-dependencies]

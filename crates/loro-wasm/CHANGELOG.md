@@ -1,5 +1,177 @@
 # Changelog
 
+## 1.0.0-beta.2
+
+### Patch Changes
+
+- _(wasm)_ Add methods to encode and decode Frontiers (#517)
+- Avoid auto unsubscribe (due to gc) in js env (#516)
+
+## 1.0.0-beta.1
+
+### Patch Changes
+
+- Performance improvement and bug fixes
+
+  ### 🚀 Features
+
+  - Redact (#504)
+
+  ### 🐛 Bug Fixes
+
+  - Ffi Subscription (#505)
+  - Ffi remove try unwrap (#506)
+  - Movable list undo impl (#509)
+  - Tracker skip applied deletion error (#512)
+  - IsContainerDeleted cache err (#513)
+
+  ### 📚 Documentation
+
+  - Refine wasm docs
+
+  ### ⚡ Performance
+
+  - Optimize shrink frontiers
+  - Optimize batch container registrations on arena (#510)
+  - Optimize high concurrency performance (#514)
+  - Use better data structure for frontiers (#515)
+
+  ### Perf
+
+  - Commit speed & text insert cache (#511)
+
+## 1.0.0-alpha.5
+
+### Patch Changes
+
+- ## Fix
+
+  - Use release build
+
+  ## Test
+
+  - Add compatibility tests (#503)
+
+## 1.0.0-alpha.4
+
+### Patch Changes
+
+- ### 🚀 Features
+
+  - _(wasm)_ Commit message & get pending ops length (#477)
+  - Update text by line (#480)
+  - Add clear methods (#478)
+  - Travel change's ancestors (#483)
+  - Compact state store
+  - Add FFI for Loro (#420)
+  - Add dag allocation tree algorithm (#415)
+  - Add import status (#494)
+
+  ### 🐛 Bug Fixes
+
+  - Get correct tree_cache current vv when retreating (#476)
+  - Gc snapshot error (#481)
+  - Checkout into middle of marks
+  - Checkout diff-calc cache issue
+  - Return err if snapshot container has unknown container (#488)
+  - Do not set peer id with max (#491)
+  - Fork error (#493)
+  - FFI new sub import status (#497)
+  - Create event cannot find parent (#498)
+
+  ### 🚜 Refactor
+
+  - [**breaking**] Don't wait for `commit` to update version info
+  - Avoid footgun of impl ord for cid
+  - Loro import function should return LoroEncodeError (#487)
+  - [**breaking**] Better event api (#489)
+  - Change the first param of travel change from id to ids (#492)
+  - [**breaking**] List state snapshot schema for v1.0 (#485)
+
+  ### ⚡ Performance
+
+  - Make shrink frontiers faster when the peer num is large (#482)
+  - Optimize tree cache find children speed
+  - Avoid memory leak when forking repeatedly (#500)
+  - Optimize kv export_all by reusing encoded block (#501)
+  - Optimize speed of large maps (#496)
+  - Optimize diff calc cache use (#475)
+
+  ### 🧪 Testing
+
+  - Make awareness more robust
+  - Bench large folder with 1M files & 100M ops (#495)
+
+  ### ⚙️ Miscellaneous Tasks
+
+  - Use cached diff calc
+
+## 1.0.0-alpha.3
+
+### Patch Changes
+
+- ### 🐛 Bug Fixes
+
+  - Cursor behavior when using gc-snapshot (#472)
+  - _(wasm)_ Type err
+
+  ### ⚙️ Miscellaneous Tasks
+
+  - Make tree parent id pub on loro crate
+
+  ### Feat
+
+  - Allow editing on detached mode (#473)
+
+  ### Fix
+
+  - Get tree's alive children correctly (#474)
+  - Should not emit event when exporting gc-snapshot (#471)
+
+## 1.0.0-alpha.2
+
+### Patch Changes
+
+- ### 🚀 Features
+
+  - Fork doc at the target version (#469)
+
+  ### 🚜 Refactor
+
+  - BREAKING CHANGE: Use hierarchy value for tree value (#470)
+
+## 1.0.0-alpha.1
+
+### Patch Changes
+
+- ### 🚀 Features
+
+  - Get shallow value of doc (#463)
+  - Add state only snapshot & refine check slow test
+  - Add new cid method to js binding
+  - Jsonpath experimental support (#466)
+
+  ### 🐛 Bug Fixes
+
+  - Raise error if perform action on a deleted container (#465)
+  - Raise error if moving a deleted node
+  - Export snapshot error on a gc doc
+
+  ### 🚜 Refactor
+
+  - Tree contains & isDeleted (#467)
+
+  ### 🧪 Testing
+
+  - Check state correctness on shallow doc
+
+## 1.0.0-alpha.0
+
+- Better encode schema that can be 100x faster
+- Less memory usage
+- You can trim needless history in snapshot now
+- Better architecture and extensibility
+
 ## 0.16.12
 
 ### Patch Changes

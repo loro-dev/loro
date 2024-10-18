@@ -101,7 +101,7 @@ mod run {
         });
         b.bench_function("B4_decode_snapshot", |b| {
             ensure_ran();
-            let buf = loro.export_snapshot();
+            let buf = loro.export_snapshot().unwrap();
             b.iter(|| {
                 let store2 = LoroDoc::default();
                 store2.import(&buf).unwrap();

@@ -277,7 +277,6 @@ impl ApplyDiff for LoroValue {
                                     )
                                 } else {
                                     (
-                                        // FIXME: maybe by default we shuold use utf8
                                         unicode_to_utf8_index(&s, index).unwrap(),
                                         unicode_to_utf8_index(&s, index + *delete).unwrap(),
                                     )
@@ -558,8 +557,12 @@ pub mod wasm {
                         position,
                     } => {
                         js_sys::Reflect::set(&obj, &"action".into(), &"create".into()).unwrap();
-                        js_sys::Reflect::set(&obj, &"parent".into(), &JsValue::from(*parent))
-                            .unwrap();
+                        js_sys::Reflect::set(
+                            &obj,
+                            &"parent".into(),
+                            &JsValue::from(parent.tree_id()),
+                        )
+                        .unwrap();
                         js_sys::Reflect::set(&obj, &"index".into(), &(*index).into()).unwrap();
                         js_sys::Reflect::set(
                             &obj,
@@ -568,18 +571,34 @@ pub mod wasm {
                         )
                         .unwrap();
                     }
-                    TreeExternalDiff::Delete { .. } => {
+                    TreeExternalDiff::Delete {
+                        old_parent,
+                        old_index,
+                    } => {
                         js_sys::Reflect::set(&obj, &"action".into(), &"delete".into()).unwrap();
+                        js_sys::Reflect::set(
+                            &obj,
+                            &"old_parent".into(),
+                            &JsValue::from(old_parent.tree_id()),
+                        )
+                        .unwrap();
+                        js_sys::Reflect::set(&obj, &"old_index".into(), &(*old_index).into())
+                            .unwrap();
                     }
                     TreeExternalDiff::Move {
                         parent,
                         index,
                         position,
-                        ..
+                        old_parent,
+                        old_index,
                     } => {
                         js_sys::Reflect::set(&obj, &"action".into(), &"move".into()).unwrap();
-                        js_sys::Reflect::set(&obj, &"parent".into(), &JsValue::from(*parent))
-                            .unwrap();
+                        js_sys::Reflect::set(
+                            &obj,
+                            &"parent".into(),
+                            &JsValue::from(parent.tree_id()),
+                        )
+                        .unwrap();
                         js_sys::Reflect::set(&obj, &"index".into(), &(*index).into()).unwrap();
                         js_sys::Reflect::set(
                             &obj,
@@ -587,6 +606,14 @@ pub mod wasm {
                             &position.to_string().into(),
                         )
                         .unwrap();
+                        js_sys::Reflect::set(
+                            &obj,
+                            &"old_parent".into(),
+                            &JsValue::from(old_parent.tree_id()),
+                        )
+                        .unwrap();
+                        js_sys::Reflect::set(&obj, &"old_index".into(), &(*old_index).into())
+                            .unwrap();
                     }
                 }
                 array.push(&obj);

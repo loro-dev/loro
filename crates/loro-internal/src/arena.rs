@@ -37,7 +37,7 @@ struct InnerSharedArena {
     parents: Mutex<FxHashMap<ContainerIdx, Option<ContainerIdx>>>,
     values: Mutex<Vec<LoroValue>>,
     root_c_idx: Mutex<Vec<ContainerIdx>>,
-    str: Mutex<StrArena>,
+    str: Arc<Mutex<StrArena>>,
 }
 
 /// This is shared between [OpLog] and [AppState].
@@ -55,6 +55,52 @@ pub struct StrAllocResult {
     pub end: usize,
 }
 
+pub(crate) struct ArenaGuards<'a> {
+    container_id_to_idx: MutexGuard<'a, FxHashMap<ContainerID, ContainerIdx>>,
+    container_idx_to_id: MutexGuard<'a, Vec<ContainerID>>,
+    depth: MutexGuard<'a, Vec<Option<NonZeroU16>>>,
+    parents: MutexGuard<'a, FxHashMap<ContainerIdx, Option<ContainerIdx>>>,
+    root_c_idx: MutexGuard<'a, Vec<ContainerIdx>>,
+}
+
+impl<'a> ArenaGuards<'a> {
+    pub fn register_container(&mut self, id: &ContainerID) -> ContainerIdx {
+        if let Some(&idx) = self.container_id_to_idx.get(id) {
+            return idx;
+        }
+
+        let idx = self.container_idx_to_id.len();
+        self.container_idx_to_id.push(id.clone());
+        let idx = ContainerIdx::from_index_and_type(idx as u32, id.container_type());
+        self.container_id_to_idx.insert(id.clone(), idx);
+        if id.is_root() {
+            self.root_c_idx.push(idx);
+            self.parents.insert(idx, None);
+            self.depth.push(NonZeroU16::new(1));
+        } else {
+            self.depth.push(None);
+        }
+        idx
+    }
+
+    pub fn set_parent(&mut self, child: ContainerIdx, parent: Option<ContainerIdx>) {
+        self.parents.insert(child, parent);
+
+        match parent {
+            Some(p) => {
+                if let Some(d) = get_depth(p, &mut self.depth, &self.parents) {
+                    self.depth[child.to_index() as usize] = NonZeroU16::new(d.get() + 1);
+                } else {
+                    self.depth[child.to_index() as usize] = None;
+                }
+            }
+            None => {
+                self.depth[child.to_index() as usize] = NonZeroU16::new(1);
+            }
+        }
+    }
+}
+
 impl SharedArena {
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
@@ -67,50 +113,69 @@ impl SharedArena {
         Self {
             inner: Arc::new(InnerSharedArena {
                 container_idx_to_id: Mutex::new(
-                    self.inner.container_idx_to_id.lock().unwrap().clone(),
+                    self.inner.container_idx_to_id.try_lock().unwrap().clone(),
                 ),
-                depth: Mutex::new(self.inner.depth.lock().unwrap().clone()),
+                depth: Mutex::new(self.inner.depth.try_lock().unwrap().clone()),
                 container_id_to_idx: Mutex::new(
-                    self.inner.container_id_to_idx.lock().unwrap().clone(),
+                    self.inner.container_id_to_idx.try_lock().unwrap().clone(),
                 ),
-                parents: Mutex::new(self.inner.parents.lock().unwrap().clone()),
-                values: Mutex::new(self.inner.values.lock().unwrap().clone()),
-                root_c_idx: Mutex::new(self.inner.root_c_idx.lock().unwrap().clone()),
-                str: Mutex::new(self.inner.str.lock().unwrap().clone()),
+                parents: Mutex::new(self.inner.parents.try_lock().unwrap().clone()),
+                values: Mutex::new(self.inner.values.try_lock().unwrap().clone()),
+                root_c_idx: Mutex::new(self.inner.root_c_idx.try_lock().unwrap().clone()),
+                str: self.inner.str.clone(),
             }),
         }
     }
 
+    pub(crate) fn with_guards(&self, f: impl FnOnce(&mut ArenaGuards)) {
+        let mut guards = self.get_arena_guards();
+        f(&mut guards);
+    }
+
+    fn get_arena_guards(&self) -> ArenaGuards {
+        ArenaGuards {
+            container_id_to_idx: self.inner.container_id_to_idx.try_lock().unwrap(),
+            container_idx_to_id: self.inner.container_idx_to_id.try_lock().unwrap(),
+            depth: self.inner.depth.try_lock().unwrap(),
+            parents: self.inner.parents.try_lock().unwrap(),
+            root_c_idx: self.inner.root_c_idx.try_lock().unwrap(),
+        }
+    }
+
     pub fn register_container(&self, id: &ContainerID) -> ContainerIdx {
-        let mut container_id_to_idx = self.inner.container_id_to_idx.lock().unwrap();
+        let mut container_id_to_idx = self.inner.container_id_to_idx.try_lock().unwrap();
         if let Some(&idx) = container_id_to_idx.get(id) {
             return idx;
         }
 
-        let mut container_idx_to_id = self.inner.container_idx_to_id.lock().unwrap();
+        let mut container_idx_to_id = self.inner.container_idx_to_id.try_lock().unwrap();
         let idx = container_idx_to_id.len();
         container_idx_to_id.push(id.clone());
         let idx = ContainerIdx::from_index_and_type(idx as u32, id.container_type());
         container_id_to_idx.insert(id.clone(), idx);
         if id.is_root() {
-            self.inner.root_c_idx.lock().unwrap().push(idx);
-            self.inner.parents.lock().unwrap().insert(idx, None);
-            self.inner.depth.lock().unwrap().push(NonZeroU16::new(1));
+            self.inner.root_c_idx.try_lock().unwrap().push(idx);
+            self.inner.parents.try_lock().unwrap().insert(idx, None);
+            self.inner
+                .depth
+                .try_lock()
+                .unwrap()
+                .push(NonZeroU16::new(1));
         } else {
-            self.inner.depth.lock().unwrap().push(None);
+            self.inner.depth.try_lock().unwrap().push(None);
         }
         idx
     }
 
     pub fn get_container_id(&self, idx: ContainerIdx) -> Option<ContainerID> {
-        let lock = self.inner.container_idx_to_id.lock().unwrap();
+        let lock = self.inner.container_idx_to_id.try_lock().unwrap();
         lock.get(idx.to_index() as usize).cloned()
     }
 
     pub fn id_to_idx(&self, id: &ContainerID) -> Option<ContainerIdx> {
         self.inner
             .container_id_to_idx
-            .lock()
+            .try_lock()
             .unwrap()
             .get(id)
             .copied()
@@ -118,55 +183,55 @@ impl SharedArena {
 
     #[inline]
     pub fn idx_to_id(&self, id: ContainerIdx) -> Option<ContainerID> {
-        let lock = self.inner.container_idx_to_id.lock().unwrap();
+        let lock = self.inner.container_idx_to_id.try_lock().unwrap();
         lock.get(id.to_index() as usize).cloned()
     }
 
     #[inline]
     pub fn with_idx_to_id<R>(&self, f: impl FnOnce(&Vec<ContainerID>) -> R) -> R {
-        let lock = self.inner.container_idx_to_id.lock().unwrap();
+        let lock = self.inner.container_idx_to_id.try_lock().unwrap();
         f(&lock)
     }
 
     pub fn alloc_str(&self, str: &str) -> StrAllocResult {
-        let mut text_lock = self.inner.str.lock().unwrap();
+        let mut text_lock = self.inner.str.try_lock().unwrap();
         _alloc_str(&mut text_lock, str)
     }
 
     /// return slice and unicode index
     pub fn alloc_str_with_slice(&self, str: &str) -> (BytesSlice, StrAllocResult) {
-        let mut text_lock = self.inner.str.lock().unwrap();
+        let mut text_lock = self.inner.str.try_lock().unwrap();
         _alloc_str_with_slice(&mut text_lock, str)
     }
 
     /// alloc str without extra info
     pub fn alloc_str_fast(&self, bytes: &[u8]) {
-        let mut text_lock = self.inner.str.lock().unwrap();
+        let mut text_lock = self.inner.str.try_lock().unwrap();
         text_lock.alloc(std::str::from_utf8(bytes).unwrap());
     }
 
     #[inline]
     pub fn utf16_len(&self) -> usize {
-        self.inner.str.lock().unwrap().len_utf16()
+        self.inner.str.try_lock().unwrap().len_utf16()
     }
 
     #[inline]
     pub fn alloc_value(&self, value: LoroValue) -> usize {
-        let mut values_lock = self.inner.values.lock().unwrap();
+        let mut values_lock = self.inner.values.try_lock().unwrap();
         _alloc_value(&mut values_lock, value)
     }
 
     #[inline]
     pub fn alloc_values(&self, values: impl Iterator<Item = LoroValue>) -> std::ops::Range<usize> {
-        let mut values_lock = self.inner.values.lock().unwrap();
+        let mut values_lock = self.inner.values.try_lock().unwrap();
         _alloc_values(&mut values_lock, values)
     }
 
     #[inline]
     pub fn set_parent(&self, child: ContainerIdx, parent: Option<ContainerIdx>) {
-        let parents = &mut self.inner.parents.lock().unwrap();
+        let parents = &mut self.inner.parents.try_lock().unwrap();
         parents.insert(child, parent);
-        let mut depth = self.inner.depth.lock().unwrap();
+        let mut depth = self.inner.depth.try_lock().unwrap();
 
         match parent {
             Some(p) => {
@@ -184,7 +249,7 @@ impl SharedArena {
 
     pub fn log_hierarchy(&self) {
         if cfg!(debug_assertions) {
-            for (c, p) in self.inner.parents.lock().unwrap().iter() {
+            for (c, p) in self.inner.parents.try_lock().unwrap().iter() {
                 tracing::info!(
                     "container {:?} {:?} {:?}",
                     c,
@@ -195,10 +260,10 @@ impl SharedArena {
         }
     }
 
-    pub fn log_all_container(&self) {
+    pub fn log_all_containers(&self) {
         self.inner
             .container_id_to_idx
-            .lock()
+            .try_lock()
             .unwrap()
             .iter()
             .for_each(|(id, idx)| {
@@ -206,7 +271,7 @@ impl SharedArena {
             });
         self.inner
             .container_idx_to_id
-            .lock()
+            .try_lock()
             .unwrap()
             .iter()
             .enumerate()
@@ -216,13 +281,19 @@ impl SharedArena {
     }
 
     pub fn get_parent(&self, child: ContainerIdx) -> Option<ContainerIdx> {
+        if self.get_container_id(child).unwrap().is_root() {
+            // TODO: PERF: we can speed this up by use a special bit in ContainerIdx to indicate
+            // whether the target is a root container
+            return None;
+        }
+
         self.inner
             .parents
-            .lock()
+            .try_lock()
             .unwrap()
             .get(&child)
             .copied()
-            .flatten()
+            .expect("InternalError: Parent is not registered")
     }
 
     /// Call `f` on each ancestor of `container`, including `container` itself.
@@ -234,23 +305,23 @@ impl SharedArena {
         while let Some(c) = container {
             f(c, is_first);
             is_first = false;
-            container = self.get_parent(c);
+            container = self.get_parent(c)
         }
     }
 
     #[inline]
     pub fn slice_by_unicode(&self, range: impl RangeBounds<usize>) -> BytesSlice {
-        self.inner.str.lock().unwrap().slice_by_unicode(range)
+        self.inner.str.try_lock().unwrap().slice_by_unicode(range)
     }
 
     #[inline]
     pub fn slice_by_utf8(&self, range: impl RangeBounds<usize>) -> BytesSlice {
-        self.inner.str.lock().unwrap().slice_bytes(range)
+        self.inner.str.try_lock().unwrap().slice_bytes(range)
     }
 
     #[inline]
     pub fn slice_str_by_unicode_range(&self, range: Range<usize>) -> String {
-        let mut s = self.inner.str.lock().unwrap();
+        let mut s = self.inner.str.try_lock().unwrap();
         let s: &mut StrArena = &mut s;
         let mut ans = String::with_capacity(range.len());
         ans.push_str(s.slice_str_by_unicode(range));
@@ -259,17 +330,22 @@ impl SharedArena {
 
     #[inline]
     pub fn with_text_slice(&self, range: Range<usize>, mut f: impl FnMut(&str)) {
-        f(self.inner.str.lock().unwrap().slice_str_by_unicode(range))
+        f(self
+            .inner
+            .str
+            .try_lock()
+            .unwrap()
+            .slice_str_by_unicode(range))
     }
 
     #[inline]
     pub fn get_value(&self, idx: usize) -> Option<LoroValue> {
-        self.inner.values.lock().unwrap().get(idx).cloned()
+        self.inner.values.try_lock().unwrap().get(idx).cloned()
     }
 
     #[inline]
     pub fn get_values(&self, range: Range<usize>) -> Vec<LoroValue> {
-        (self.inner.values.lock().unwrap()[range]).to_vec()
+        (self.inner.values.try_lock().unwrap()[range]).to_vec()
     }
 
     pub fn convert_single_op(
@@ -285,7 +361,8 @@ impl SharedArena {
     }
 
     pub fn can_import_snapshot(&self) -> bool {
-        self.inner.str.lock().unwrap().is_empty() && self.inner.values.lock().unwrap().is_empty()
+        self.inner.str.try_lock().unwrap().is_empty()
+            && self.inner.values.try_lock().unwrap().is_empty()
     }
 
     fn inner_convert_op(
@@ -363,7 +440,11 @@ impl SharedArena {
                 } => Op {
                     counter,
                     container,
-                    content: InnerContent::List(InnerListOp::Move { from, to, from_id }),
+                    content: InnerContent::List(InnerListOp::Move {
+                        from,
+                        to,
+                        elem_id: from_id,
+                    }),
                 },
                 ListOp::Set { elem_id, value } => Op {
                     counter,
@@ -374,7 +455,7 @@ impl SharedArena {
             crate::op::RawOpContent::Tree(tree) => Op {
                 counter,
                 container,
-                content: crate::op::InnerContent::Tree(tree),
+                content: crate::op::InnerContent::Tree(tree.clone()),
             },
             #[cfg(feature = "counter")]
             crate::op::RawOpContent::Counter(c) => Op {
@@ -387,7 +468,7 @@ impl SharedArena {
                 container,
                 content: crate::op::InnerContent::Future(crate::op::FutureInnerContent::Unknown {
                     prop,
-                    value,
+                    value: Box::new(value),
                 }),
             },
         }
@@ -406,12 +487,12 @@ impl SharedArena {
 
     #[inline]
     pub fn export_containers(&self) -> Vec<ContainerID> {
-        self.inner.container_idx_to_id.lock().unwrap().clone()
+        self.inner.container_idx_to_id.try_lock().unwrap().clone()
     }
 
     pub fn export_parents(&self) -> Vec<Option<ContainerIdx>> {
-        let parents = self.inner.parents.lock().unwrap();
-        let containers = self.inner.container_idx_to_id.lock().unwrap();
+        let parents = self.inner.parents.try_lock().unwrap();
+        let containers = self.inner.container_idx_to_id.try_lock().unwrap();
         containers
             .iter()
             .enumerate()
@@ -425,15 +506,15 @@ impl SharedArena {
 
     #[inline]
     pub fn root_containers(&self) -> Vec<ContainerIdx> {
-        self.inner.root_c_idx.lock().unwrap().clone()
+        self.inner.root_c_idx.try_lock().unwrap().clone()
     }
 
     // TODO: this can return a u16 directly now, since the depths are always valid
     pub(crate) fn get_depth(&self, container: ContainerIdx) -> Option<NonZeroU16> {
         get_depth(
             container,
-            &mut self.inner.depth.lock().unwrap(),
-            &self.inner.parents.lock().unwrap(),
+            &mut self.inner.depth.try_lock().unwrap(),
+            &self.inner.parents.try_lock().unwrap(),
         )
     }
 
@@ -441,7 +522,7 @@ impl SharedArena {
         &self,
         range: Range<usize>,
     ) -> impl Iterator<Item = LoroValue> + '_ {
-        let values = self.inner.values.lock().unwrap();
+        let values = self.inner.values.try_lock().unwrap();
         range
             .into_iter()
             .map(move |i| values.get(i).unwrap().clone())
@@ -451,7 +532,7 @@ impl SharedArena {
         &self,
         root_index: &loro_common::InternalString,
     ) -> Option<ContainerIdx> {
-        let inner = self.inner.container_id_to_idx.lock().unwrap();
+        let inner = self.inner.container_id_to_idx.try_lock().unwrap();
         for t in loro_common::ContainerType::ALL_TYPES.iter() {
             let cid = ContainerID::Root {
                 name: root_index.clone(),
@@ -462,6 +543,14 @@ impl SharedArena {
             }
         }
         None
+    }
+
+    #[allow(unused)]
+    pub(crate) fn log_all_values(&self) {
+        let values = self.inner.values.try_lock().unwrap();
+        for (i, v) in values.iter().enumerate() {
+            tracing::trace!("value {} {:?}", i, v);
+        }
     }
 }
 

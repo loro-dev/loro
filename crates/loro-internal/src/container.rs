@@ -21,9 +21,12 @@ pub mod idx {
     ///
     /// TODO: make this type private in this crate only
     ///
+    ///
     // During a transaction, we may create some containers which are deleted later. And these containers also need a unique ContainerIdx.
     // So when we encode snapshot, we need to sort the containers by ContainerIdx and change the `container` of ops to the index of containers.
     // An empty store decodes the snapshot, it will create these containers in a sequence of natural numbers so that containers and ops can correspond one-to-one
+    //
+    // TODO: PERF: use NonZeroU32 to save memory
     #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash)]
     pub struct ContainerIdx(u32);
 
@@ -212,13 +215,13 @@ mod test {
         let actual = ContainerID::try_from(s.as_str()).unwrap();
         assert_eq!(actual, container_id);
 
-        let container_id = ContainerID::new_root("123", ContainerType::Map).unwrap();
+        let container_id = ContainerID::new_root("123", ContainerType::Map);
         let s = container_id.to_string();
         assert_eq!(s, "cid:root-123:Map");
         let actual = ContainerID::try_from(s.as_str()).unwrap();
         assert_eq!(actual, container_id);
 
-        let container_id = ContainerID::new_root("kkk", ContainerType::Text).unwrap();
+        let container_id = ContainerID::new_root("kkk", ContainerType::Text);
         let s = container_id.to_string();
         assert_eq!(s, "cid:root-kkk:Text");
         let actual = ContainerID::try_from(s.as_str()).unwrap();

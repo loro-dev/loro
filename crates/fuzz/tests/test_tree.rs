@@ -16,15 +16,8 @@ fn test_actions(mut actions: Vec<Action>) {
 }
 
 #[ctor::ctor]
-fn init_color_backtrace() {
-    color_backtrace::install();
-    use tracing_subscriber::{prelude::*, registry::Registry};
-    if option_env!("DEBUG").is_some() {
-        tracing::subscriber::set_global_default(
-            Registry::default().with(tracing_subscriber::fmt::Layer::default()),
-        )
-        .unwrap();
-    }
+fn init() {
+    dev_utils::setup_test_log();
 }
 
 #[test]

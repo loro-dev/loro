@@ -1,15 +1,17 @@
 use crate::{
     change::{Change, Lamport, Timestamp},
     container::{idx::ContainerIdx, ContainerID},
+    estimated_size::EstimatedSize,
     id::{Counter, PeerID, ID},
+    oplog::BlockChangeRef,
     span::{HasCounter, HasId, HasLamport},
 };
 use crate::{delta::DeltaValue, LoroValue};
+use either::Either;
 use enum_as_inner::EnumAsInner;
-use loro_common::{CounterSpan, IdFull, IdLp, IdSpan};
+use loro_common::{CompactIdLp, ContainerType, CounterSpan, IdFull, IdLp, IdSpan};
 use rle::{HasIndex, HasLength, Mergable, Sliceable};
-use serde::{ser::SerializeSeq, Deserialize, Serialize};
-use smallvec::SmallVec;
+use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, ops::Range};
 
 mod content;
@@ -23,6 +25,14 @@ pub struct Op {
     pub(crate) counter: Counter,
     pub(crate) container: ContainerIdx,
     pub(crate) content: InnerContent,
+}
+
+impl EstimatedSize for Op {
+    fn estimate_storage_size(&self) -> usize {
+        // TODO: use benchmark to get the optimal estimated size for each container type
+        self.content
+            .estimate_storage_size(self.container.get_type())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -58,7 +68,7 @@ impl OpWithId {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "wasm", derive(Serialize, Deserialize))]
 pub struct RemoteOp<'a> {
     pub(crate) counter: Counter,
@@ -89,7 +99,7 @@ impl RawOp<'_> {
 /// RichOp includes lamport and timestamp info, which is used for conflict resolution.
 #[derive(Debug, Clone)]
 pub struct RichOp<'a> {
-    op: &'a Op,
+    op: Cow<'a, Op>,
     pub peer: PeerID,
     lamport: Lamport,
     pub timestamp: Timestamp,
@@ -105,6 +115,32 @@ impl Op {
             counter: id.counter,
             content,
             container,
+        }
+    }
+
+    /// If the estimated storage size of the content is greater than the given size,
+    /// return the length of the content that makes the estimated storage size equal to the given size.
+    /// Otherwise, return None.
+    pub(crate) fn check_whether_slice_content_to_fit_in_size(&self, size: usize) -> Option<usize> {
+        if self.estimate_storage_size() <= size {
+            return None;
+        }
+
+        match &self.content {
+            InnerContent::List(l) => match l {
+                crate::container::list::list_op::InnerListOp::Insert { .. } => {
+                    if matches!(self.container.get_type(), ContainerType::Text) {
+                        Some(size.min(self.atom_len()))
+                    } else {
+                        Some((size / 4).min(self.atom_len()))
+                    }
+                }
+                crate::container::list::list_op::InnerListOp::InsertText { .. } => {
+                    Some(size.min(self.atom_len()))
+                }
+                _ => unreachable!(),
+            },
+            _ => unreachable!(),
         }
     }
 }
@@ -141,6 +177,7 @@ impl HasLength for Op {
 impl Sliceable for Op {
     fn slice(&self, from: usize, to: usize) -> Self {
         assert!(to > from, "{to} should be greater than {from}");
+        assert!(to <= self.atom_len());
         let content: InnerContent = self.content.slice(from, to);
         Op {
             counter: (self.counter + from as Counter),
@@ -220,7 +257,7 @@ impl<'a> RichOp<'a> {
     pub fn new_by_change(change: &Change<Op>, op: &'a Op) -> Self {
         let diff = op.counter - change.id.counter;
         RichOp {
-            op,
+            op: Cow::Borrowed(op),
             peer: change.id.peer,
             lamport: change.lamport + diff as Lamport,
             timestamp: change.timestamp,
@@ -238,7 +275,7 @@ impl<'a> RichOp<'a> {
         let op_slice_start = (start - op_index_in_change).clamp(0, op.atom_len() as i32);
         let op_slice_end = (end - op_index_in_change).clamp(0, op.atom_len() as i32);
         RichOp {
-            op,
+            op: Cow::Borrowed(op),
             peer: change.id.peer,
             lamport: change.lamport + op_index_in_change as Lamport,
             timestamp: change.timestamp,
@@ -255,7 +292,7 @@ impl<'a> RichOp<'a> {
             return None;
         }
         Some(RichOp {
-            op,
+            op: Cow::Borrowed(op),
             peer: change.id.peer,
             lamport: change.lamport + op_index_in_change as Lamport,
             timestamp: change.timestamp,
@@ -264,16 +301,27 @@ impl<'a> RichOp<'a> {
         })
     }
 
+    pub(crate) fn new_iter_by_cnt_range(
+        change: BlockChangeRef,
+        span: CounterSpan,
+    ) -> RichOpBlockIter {
+        RichOpBlockIter {
+            change,
+            span,
+            op_index: 0,
+        }
+    }
+
     pub fn op(&self) -> Cow<'_, Op> {
         if self.start == 0 && self.end == self.op.content_len() {
-            Cow::Borrowed(self.op)
+            self.op.clone()
         } else {
             Cow::Owned(self.op.slice(self.start, self.end))
         }
     }
 
     pub fn raw_op(&self) -> &Op {
-        self.op
+        &self.op
     }
 
     pub fn client_id(&self) -> u64 {
@@ -292,6 +340,10 @@ impl<'a> RichOp<'a> {
         self.end
     }
 
+    pub fn counter(&self) -> Counter {
+        self.op.counter + self.start as Counter
+    }
+
     #[allow(unused)]
     pub(crate) fn id(&self) -> ID {
         ID {
@@ -301,7 +353,48 @@ impl<'a> RichOp<'a> {
     }
 
     pub(crate) fn id_full(&self) -> IdFull {
-        IdFull::new(self.peer, self.op.counter, self.lamport)
+        IdFull::new(
+            self.peer,
+            self.op.counter + self.start as Counter,
+            self.lamport + self.start as Lamport,
+        )
+    }
+
+    pub fn idlp(&self) -> IdLp {
+        IdLp {
+            lamport: self.lamport + self.start as Lamport,
+            peer: self.peer,
+        }
+    }
+}
+
+pub(crate) struct RichOpBlockIter {
+    change: BlockChangeRef,
+    span: CounterSpan,
+    op_index: usize,
+}
+
+impl Iterator for RichOpBlockIter {
+    type Item = RichOp<'static>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let op = self.change.ops.get(self.op_index)?.clone();
+        let op_offset_in_change = op.counter - self.change.id.counter;
+        let op_slice_start = (self.span.start - op.counter).clamp(0, op.atom_len() as i32);
+        let op_slice_end = (self.span.end - op.counter).clamp(0, op.atom_len() as i32);
+        self.op_index += 1;
+        if op_slice_start == op_slice_end {
+            return self.next();
+        }
+
+        Some(RichOp {
+            op: Cow::Owned(op),
+            peer: self.change.id.peer,
+            lamport: self.change.lamport + op_offset_in_change as Lamport,
+            timestamp: self.change.timestamp,
+            start: op_slice_start as usize,
+            end: op_slice_end as usize,
+        })
     }
 }
 
@@ -451,25 +544,14 @@ impl<'a> Mergable for ListSlice<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub struct SliceRanges {
-    pub ranges: SmallVec<[SliceRange; 2]>,
+pub struct SliceWithId {
+    pub values: Either<SliceRange, LoroValue>,
+    /// This field is no-none when diff calculating movable list that need to handle_unknown
+    pub elem_id: Option<CompactIdLp>,
     pub id: IdFull,
 }
 
-impl Serialize for SliceRanges {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let mut s = serializer.serialize_seq(Some(self.ranges.len()))?;
-        for item in self.ranges.iter() {
-            s.serialize_element(item)?;
-        }
-        s.end()
-    }
-}
-
-impl DeltaValue for SliceRanges {
+impl DeltaValue for SliceWithId {
     fn value_extend(&mut self, other: Self) -> Result<(), Self> {
         if self.id.peer != other.id.peer {
             return Err(other);
@@ -483,41 +565,43 @@ impl DeltaValue for SliceRanges {
             return Err(other);
         }
 
-        self.ranges.extend(other.ranges);
-        Ok(())
+        match (&mut self.values, &other.values) {
+            (Either::Left(left_range), Either::Left(right_range))
+                if left_range.0.end == right_range.0.start =>
+            {
+                left_range.0.end = right_range.0.end;
+                Ok(())
+            }
+            _ => {
+                // If one is SliceRange and the other is LoroValue, we can't merge
+                Err(other)
+            }
+        }
     }
 
     fn take(&mut self, target_len: usize) -> Self {
-        let mut right = Self {
-            ranges: Default::default(),
-            id: self.id.inc(target_len as i32),
-        };
-
-        let right_target_len = self.length() - target_len;
-        let mut right_len = 0;
-        while right_len < right_target_len {
-            let range = self.ranges.pop().unwrap();
-            let range_len = range.content_len();
-            if right_len + range_len <= target_len {
-                right.ranges.push(range);
-                right_len += range_len;
-            } else {
-                let new_range = range.slice(right_len * 2 - right_target_len, range_len);
-                right.ranges.push(new_range);
-                self.ranges
-                    .push(range.slice(0, right_len * 2 - right_target_len));
-                right_len = right_target_len;
+        match &mut self.values {
+            Either::Left(range) => {
+                let ans = range.slice(0, target_len);
+                let this = range.slice(target_len, range.atom_len());
+                *range = this;
+                let old_id = self.id;
+                self.id = self.id.inc(target_len as i32);
+                Self {
+                    id: old_id,
+                    values: Either::Left(ans),
+                    elem_id: None,
+                }
             }
+            Either::Right(_) => unimplemented!(),
         }
-
-        std::mem::swap(self, &mut right);
-        let left = right;
-        #[allow(clippy::let_and_return)]
-        left
     }
 
     fn length(&self) -> usize {
-        self.ranges.iter().fold(0, |acc, x| acc + x.atom_len())
+        match &self.values {
+            Either::Left(r) => r.atom_len(),
+            Either::Right(_) => 1,
+        }
     }
 }
 

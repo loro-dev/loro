@@ -1,13 +1,12 @@
 use std::{
     collections::VecDeque,
-    sync::{Arc, Mutex},
+    sync::{atomic::AtomicU64, Arc, Mutex},
 };
 
 use either::Either;
 use fxhash::FxHashMap;
 use loro_common::{
-    ContainerID, Counter, CounterSpan, HasCounterSpan, HasIdSpan, IdSpan, LoroError, LoroResult,
-    LoroValue, PeerID,
+    ContainerID, Counter, CounterSpan, HasIdSpan, IdSpan, LoroError, LoroResult, LoroValue, PeerID,
 };
 use tracing::{debug_span, info_span, instrument};
 
@@ -17,7 +16,7 @@ use crate::{
     delta::TreeExternalDiff,
     event::{Diff, EventTriggerKind},
     version::Frontiers,
-    ContainerDiff, DocDiff, LoroDoc,
+    ContainerDiff, DocDiff, LoroDoc, Subscription,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -121,11 +120,22 @@ fn transform_cursor(
 /// If you want to undo changes made by other peers, you may need to use the time travel feature.
 ///
 /// PeerID cannot be changed during the lifetime of the UndoManager
-#[derive(Debug)]
 pub struct UndoManager {
-    peer: PeerID,
+    peer: Arc<AtomicU64>,
     container_remap: Arc<Mutex<FxHashMap<ContainerID, ContainerID>>>,
     inner: Arc<Mutex<UndoManagerInner>>,
+    _peer_id_change_sub: Subscription,
+    _undo_sub: Subscription,
+}
+
+impl std::fmt::Debug for UndoManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UndoManager")
+            .field("peer", &self.peer)
+            .field("container_remap", &self.container_remap)
+            .field("inner", &self.inner)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -149,7 +159,7 @@ pub type OnPush = Box<dyn Fn(UndoOrRedo, CounterSpan) -> UndoItemMeta + Send + S
 pub type OnPop = Box<dyn Fn(UndoOrRedo, CounterSpan, UndoItemMeta) + Send + Sync>;
 
 struct UndoManagerInner {
-    latest_counter: Option<Counter>,
+    next_counter: Option<Counter>,
     undo_stack: Stack,
     redo_stack: Stack,
     processing_undo: bool,
@@ -165,7 +175,7 @@ struct UndoManagerInner {
 impl std::fmt::Debug for UndoManagerInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("UndoManagerInner")
-            .field("latest_counter", &self.latest_counter)
+            .field("latest_counter", &self.next_counter)
             .field("undo_stack", &self.undo_stack)
             .field("redo_stack", &self.redo_stack)
             .field("processing_undo", &self.processing_undo)
@@ -362,7 +372,7 @@ impl Default for Stack {
 impl UndoManagerInner {
     fn new(last_counter: Counter) -> Self {
         Self {
-            latest_counter: Some(last_counter),
+            next_counter: Some(last_counter),
             undo_stack: Default::default(),
             redo_stack: Default::default(),
             processing_undo: false,
@@ -377,18 +387,18 @@ impl UndoManagerInner {
     }
 
     fn record_checkpoint(&mut self, latest_counter: Counter) {
-        if Some(latest_counter) == self.latest_counter {
+        if Some(latest_counter) == self.next_counter {
             return;
         }
 
-        if self.latest_counter.is_none() {
-            self.latest_counter = Some(latest_counter);
+        if self.next_counter.is_none() {
+            self.next_counter = Some(latest_counter);
             return;
         }
 
-        assert!(self.latest_counter.unwrap() < latest_counter);
+        assert!(self.next_counter.unwrap() < latest_counter);
         let now = get_sys_timestamp();
-        let span = CounterSpan::new(self.latest_counter.unwrap(), latest_counter);
+        let span = CounterSpan::new(self.next_counter.unwrap(), latest_counter);
         let meta = self
             .on_push
             .as_ref()
@@ -402,7 +412,7 @@ impl UndoManagerInner {
             self.undo_stack.push(span, meta);
         }
 
-        self.latest_counter = Some(latest_counter);
+        self.next_counter = Some(latest_counter);
         self.redo_stack.clear();
         while self.undo_stack.len() > self.max_stack_size {
             self.undo_stack.pop_front();
@@ -412,23 +422,28 @@ impl UndoManagerInner {
 
 fn get_counter_end(doc: &LoroDoc, peer: PeerID) -> Counter {
     doc.oplog()
-        .lock()
+        .try_lock()
         .unwrap()
-        .get_peer_changes(peer)
-        .and_then(|x| x.last().map(|x| x.ctr_end()))
+        .vv()
+        .get(&peer)
+        .cloned()
         .unwrap_or(0)
 }
 
 impl UndoManager {
     pub fn new(doc: &LoroDoc) -> Self {
-        let peer = doc.peer_id();
+        let peer = Arc::new(AtomicU64::new(doc.peer_id()));
+        let peer_clone = peer.clone();
+        let peer_clone2 = peer.clone();
         let inner = Arc::new(Mutex::new(UndoManagerInner::new(get_counter_end(
-            doc, peer,
+            doc,
+            doc.peer_id(),
         ))));
         let inner_clone = inner.clone();
+        let inner_clone2 = inner.clone();
         let remap_containers = Arc::new(Mutex::new(FxHashMap::default()));
         let remap_containers_clone = remap_containers.clone();
-        doc.subscribe_root(Arc::new(move |event| match event.event_meta.by {
+        let undo_sub = doc.subscribe_root(Arc::new(move |event| match event.event_meta.by {
             EventTriggerKind::Local => {
                 // TODO: PERF undo can be significantly faster if we can get
                 // the DiffBatch for undo here
@@ -438,7 +453,12 @@ impl UndoManager {
                 if inner.processing_undo {
                     return;
                 }
-                if let Some(id) = event.event_meta.to.iter().find(|x| x.peer == peer) {
+                if let Some(id) = event
+                    .event_meta
+                    .to
+                    .iter()
+                    .find(|x| x.peer == peer_clone.load(std::sync::atomic::Ordering::Relaxed))
+                {
                     if inner
                         .exclude_origin_prefixes
                         .iter()
@@ -449,7 +469,7 @@ impl UndoManager {
                         // a remote event.
                         inner.undo_stack.compose_remote_event(event.events);
                         inner.redo_stack.compose_remote_event(event.events);
-                        inner.latest_counter = Some(id.counter + 1);
+                        inner.next_counter = Some(id.counter + 1);
                     } else {
                         inner.record_checkpoint(id.counter + 1);
                     }
@@ -466,7 +486,7 @@ impl UndoManager {
                                 // If the concurrent event is a create event, it may bring the deleted tree node back,
                                 // so we need to remove it from the remap of the container.
                                 remap_containers_clone
-                                    .lock()
+                                    .try_lock()
                                     .unwrap()
                                     .remove(&target.associated_meta_container());
                             }
@@ -481,19 +501,30 @@ impl UndoManager {
                 let mut inner = inner_clone.try_lock().unwrap();
                 inner.undo_stack.clear();
                 inner.redo_stack.clear();
-                inner.latest_counter = None;
+                inner.next_counter = None;
             }
+        }));
+
+        let sub = doc.subscribe_peer_id_change(Box::new(move |id| {
+            let mut inner = inner_clone2.try_lock().unwrap();
+            inner.undo_stack.clear();
+            inner.redo_stack.clear();
+            inner.next_counter = Some(id.counter);
+            peer_clone2.store(id.peer, std::sync::atomic::Ordering::Relaxed);
+            true
         }));
 
         UndoManager {
             peer,
             container_remap: remap_containers,
             inner,
+            _peer_id_change_sub: sub,
+            _undo_sub: undo_sub,
         }
     }
 
     pub fn peer(&self) -> PeerID {
-        self.peer
+        self.peer.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     pub fn set_merge_interval(&mut self, interval: i64) {
@@ -513,15 +544,15 @@ impl UndoManager {
     }
 
     pub fn record_new_checkpoint(&mut self, doc: &LoroDoc) -> LoroResult<()> {
-        if doc.peer_id() != self.peer {
+        if doc.peer_id() != self.peer() {
             return Err(LoroError::UndoWithDifferentPeerId {
-                expected: self.peer,
+                expected: self.peer(),
                 actual: doc.peer_id(),
             });
         }
 
         doc.commit_then_renew();
-        let counter = get_counter_end(doc, self.peer);
+        let counter = get_counter_end(doc, self.peer());
         self.inner.try_lock().unwrap().record_checkpoint(counter);
         Ok(())
     }
@@ -608,7 +639,7 @@ impl UndoManager {
         // rather than using the current selection directly.
 
         self.record_new_checkpoint(doc)?;
-        let end_counter = get_counter_end(doc, self.peer);
+        let end_counter = get_counter_end(doc, self.peer());
         let mut top = {
             let mut inner = self.inner.try_lock().unwrap();
             inner.processing_undo = true;
@@ -624,10 +655,10 @@ impl UndoManager {
                 let remote_change_clone = remote_diff.try_lock().unwrap().clone();
                 let commit = doc.undo_internal(
                     IdSpan {
-                        peer: self.peer,
+                        peer: self.peer(),
                         counter: span.span,
                     },
-                    &mut self.container_remap.lock().unwrap(),
+                    &mut self.container_remap.try_lock().unwrap(),
                     Some(&remote_change_clone),
                     &mut |diff| {
                         info_span!("transform remote diff").in_scope(|| {
@@ -648,7 +679,7 @@ impl UndoManager {
                             cursor,
                             &remote_diff.try_lock().unwrap(),
                             doc,
-                            &self.container_remap.lock().unwrap(),
+                            &self.container_remap.try_lock().unwrap(),
                         );
                     }
 
@@ -658,7 +689,7 @@ impl UndoManager {
                     inner.last_popped_selection = Some(span.meta.cursors);
                 }
             }
-            let new_counter = get_counter_end(doc, self.peer);
+            let new_counter = get_counter_end(doc, self.peer());
             if end_counter != new_counter {
                 let mut inner = self.inner.try_lock().unwrap();
                 let mut meta = inner
@@ -674,7 +705,7 @@ impl UndoManager {
                 }
 
                 get_opposite(&mut inner).push(CounterSpan::new(end_counter, new_counter), meta);
-                inner.latest_counter = Some(new_counter);
+                inner.next_counter = Some(new_counter);
                 executed = true;
                 break;
             } else {
@@ -702,6 +733,11 @@ impl UndoManager {
 
     pub fn set_on_pop(&self, on_pop: Option<OnPop>) {
         self.inner.try_lock().unwrap().on_pop = on_pop;
+    }
+
+    pub fn clear(&self) {
+        self.inner.try_lock().unwrap().undo_stack.clear();
+        self.inner.try_lock().unwrap().redo_stack.clear();
     }
 }
 
@@ -753,6 +789,8 @@ pub(crate) fn undo(
                 calc_diff(&this_id_span.id_last().into(), this_deps)
             });
 
+            // println!("event_a_i: {:?}", event_a_i);
+
             // ---------------------------------------
             // 2. Calc event B_i
             // ---------------------------------------
@@ -769,6 +807,8 @@ pub(crate) fn undo(
                 stack_diff_batch = Some(calc_diff(&this_id_span.id_last().into(), &next));
                 stack_diff_batch.as_ref().unwrap()
             };
+
+            // println!("event_b_i: {:?}", event_b_i);
 
             // event_a_prime can undo the ops in the current span and the previous spans
             let mut event_a_prime = if let Some(mut last_ci) = last_ci.take() {
@@ -789,6 +829,8 @@ pub(crate) fn undo(
             // 3. Transform event A'_i based on B_i, call it C_i
             // --------------------------------------------------
             event_a_prime.transform(event_b_i, true);
+
+            // println!("event_a_prime: {:?}", event_a_prime);
 
             let c_i = event_a_prime;
             last_ci = Some(c_i);

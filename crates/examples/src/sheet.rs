@@ -1,16 +1,19 @@
-use loro::{LoroDoc, LoroMap};
+use loro::{LoroDoc, LoroMap, LoroValue};
 
-pub fn init_large_sheet() -> LoroDoc {
+pub fn init_large_sheet(size: usize) -> LoroDoc {
+    assert!(size >= 100);
     let doc = LoroDoc::new();
     doc.set_peer_id(0).unwrap();
-    let cols = doc.get_list("cols");
     let rows = doc.get_list("rows");
-    for _ in 0..bench_utils::sheet::SheetAction::MAX_ROW {
-        rows.push_container(LoroMap::new()).unwrap();
-    }
-
-    for i in 0..bench_utils::sheet::SheetAction::MAX_COL {
-        cols.push(i as i32).unwrap();
+    for _ in 0..size / 100 {
+        let map = rows.push_container(LoroMap::new()).unwrap();
+        for i in 0..100 {
+            let sub_map = map
+                .insert_container(&i.to_string(), LoroMap::new())
+                .unwrap();
+            sub_map.insert("value", i).unwrap();
+            sub_map.insert("meta", LoroValue::Null).unwrap();
+        }
     }
 
     doc

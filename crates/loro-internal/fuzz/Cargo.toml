@@ -24,3 +24,9 @@ name = "import"
 path = "fuzz_targets/import.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "alloc_tree"
+path = "fuzz_targets/alloc_tree.rs"
+test = false
+doc = false

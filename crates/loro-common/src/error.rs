@@ -1,11 +1,11 @@
 use serde_columnar::ColumnarError;
 use thiserror::Error;
 
-use crate::{InternalString, PeerID, TreeID, ID};
+use crate::{ContainerID, InternalString, PeerID, TreeID, ID};
 
 pub type LoroResult<T> = Result<T, LoroError>;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, PartialEq)]
 pub enum LoroError {
     #[error("Context's client_id({found:?}) does not match Container's client_id({expected:?})")]
     UnmatchedContext { expected: PeerID, found: PeerID },
@@ -40,11 +40,17 @@ pub enum LoroError {
     },
     #[error("Every op id should be unique. ID {id} has been used. You should use a new PeerID to edit the content. ")]
     UsedOpID { id: ID },
+    #[error("Concurrent ops with the same peer id is not allowed. PeerID: {peer}, LastCounter: {last_counter}, CurrentCounter: {current}")]
+    ConcurrentOpsWithSamePeerID {
+        peer: PeerID,
+        last_counter: i32,
+        current: i32,
+    },
     #[error("Movable Tree Error: {0}")]
     TreeError(#[from] LoroTreeError),
     #[error("Invalid argument ({0})")]
     ArgErr(Box<str>),
-    #[error("Auto commit has not started. The doc is readonly when detached. You should ensure autocommit is on and the doc and the state is attached.")]
+    #[error("Auto commit has not started. The doc is readonly when detached and detached editing is not enabled.")]
     AutoCommitNotStarted,
     #[error("Style configuration missing for \"({0:?})\". Please provide the style configuration using `configTextStyle` on your Loro doc.")]
     StyleConfigMissing(InternalString),
@@ -76,28 +82,63 @@ pub enum LoroError {
     EndIndexLessThanStartIndex { start: usize, end: usize },
     #[error("Invalid root container name! Don't include '/' or '\\0'")]
     InvalidRootContainerName,
+    #[error("Import Failed: The dependencies of the importing updates are not included in the shallow history of the doc.")]
+    ImportUpdatesThatDependsOnOutdatedVersion,
+    #[error(
+        "You cannot switch a document to a version before the shallow history's start version."
+    )]
+    SwitchToVersionBeforeShallowRoot,
+    #[error(
+        "The container {container} is deleted. You cannot apply the op on a deleted container."
+    )]
+    ContainerDeleted { container: Box<ContainerID> },
+    #[error("You cannot set the `PeerID` with `PeerID::MAX`, which is an internal specific value")]
+    InvalidPeerID,
 }
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, PartialEq)]
 pub enum LoroTreeError {
     #[error("`Cycle move` occurs when moving tree nodes.")]
     CyclicMoveError,
+    #[error("The provided parent id is invalid")]
+    InvalidParent,
     #[error("The parent of tree node is not found {0:?}")]
     TreeNodeParentNotFound(TreeID),
     #[error("TreeID {0:?} doesn't exist")]
     TreeNodeNotExist(TreeID),
     #[error("The index({index}) should be <= the length of children ({len})")]
     IndexOutOfBound { len: usize, index: usize },
+    #[error("Fractional index is not enabled, you should enable it first by `LoroTree::set_enable_fractional_index`")]
+    FractionalIndexNotEnabled,
+    #[error("TreeID {0:?} is deleted or does not exist")]
+    TreeNodeDeletedOrNotExist(TreeID),
+}
+
+#[non_exhaustive]
+#[derive(Error, Debug, PartialEq)]
+pub enum LoroEncodeError {
+    #[error("The frontiers are not found in this doc: {0}")]
+    FrontiersNotFound(String),
+    #[error("Shallow snapshot incompatible with old snapshot format. Use new snapshot format or avoid shallow snapshots for storage.")]
+    ShallowSnapshotIncompatibleWithOldFormat,
+    #[error("Cannot export shallow snapshot with unknown container type. Please upgrade the Loro version.")]
+    UnknownContainer,
 }
 
 #[cfg(feature = "wasm")]
 pub mod wasm {
     use wasm_bindgen::JsValue;
 
-    use crate::LoroError;
+    use crate::{LoroEncodeError, LoroError};
 
     impl From<LoroError> for JsValue {
         fn from(value: LoroError) -> Self {
+            JsValue::from_str(&value.to_string())
+        }
+    }
+
+    impl From<LoroEncodeError> for JsValue {
+        fn from(value: LoroEncodeError) -> Self {
             JsValue::from_str(&value.to_string())
         }
     }

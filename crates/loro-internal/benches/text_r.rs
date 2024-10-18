@@ -8,7 +8,7 @@ mod run {
     use bench_utils::TextAction;
     use criterion::black_box;
     use loro_common::LoroValue;
-    use loro_internal::loro::LoroDoc;
+    use loro_internal::LoroDoc;
 
     pub fn b4(c: &mut Criterion) {
         let actions = bench_utils::get_automerge_actions();
@@ -38,7 +38,7 @@ mod run {
                 txn.commit().unwrap();
             }
 
-            let update = store.export_snapshot();
+            let update = store.export_snapshot().unwrap();
             drop(store);
             b.iter_batched(
                 || {
@@ -63,7 +63,7 @@ mod run {
             b.iter(|| {
                 let loro = LoroDoc::default();
                 let text = loro.get_text("text");
-                loro.subscribe_root(Arc::new(move |event| {
+                let _g = loro.subscribe_root(Arc::new(move |event| {
                     black_box(event);
                 }));
                 let mut txn = loro.txn().unwrap();
@@ -93,7 +93,7 @@ mod run {
             txn.commit().unwrap();
 
             b.iter(|| {
-                loro.export_snapshot();
+                loro.export_snapshot().unwrap();
             });
         });
 
@@ -137,7 +137,7 @@ mod run {
             }
             txn.commit().unwrap();
 
-            let data = loro.export_snapshot();
+            let data = loro.export_snapshot().unwrap();
             b.iter(|| {
                 let l = LoroDoc::new();
                 l.import(&data).unwrap();
@@ -220,7 +220,7 @@ mod run {
             b.iter(|| {
                 let loro = LoroDoc::default();
                 let text = loro.get_text("text");
-                loro.subscribe_root(Arc::new(move |event| {
+                let _g = loro.subscribe_root(Arc::new(move |event| {
                     black_box(event);
                 }));
                 {
@@ -344,7 +344,7 @@ mod run {
                     .unwrap();
                 loro.import(&loro_b.export_from(&loro.oplog_vv())).unwrap();
             }
-            let data = loro.export_snapshot();
+            let data = loro.export_snapshot().unwrap();
             b.iter(|| {
                 let loro = LoroDoc::default();
                 loro.import(&data).unwrap();

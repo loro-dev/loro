@@ -1,4 +1,4 @@
-use std::time::Instant;
+#![allow(deprecated)]
 
 use bench_utils::SyncKind;
 use examples::{draw::DrawActor, run_async_workflow, run_realtime_collab_workflow};
@@ -6,6 +6,7 @@ use flate2::write::GzEncoder;
 use flate2::Compression;
 use loro::{LoroDoc, ToJson};
 use std::io::prelude::*;
+use std::time::Instant;
 use tabled::{settings::Style, Table, Tabled};
 
 #[derive(Tabled)]

@@ -162,7 +162,7 @@ impl ID {
     pub fn inc(&self, inc: i32) -> Self {
         ID {
             peer: self.peer,
-            counter: self.counter + inc,
+            counter: self.counter.saturating_add(inc),
         }
     }
 
