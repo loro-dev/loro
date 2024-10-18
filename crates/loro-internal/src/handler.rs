@@ -3544,14 +3544,13 @@ impl MapHandler {
                 inner.with_state(|state| {
                     let a = state.as_map_state().unwrap();
                     for (k, v) in a.iter() {
-                        match &v.value {
-                            Some(v) => match v {
+                        if let Some(v) = &v.value {
+                            match v {
                                 LoroValue::Container(c) => {
                                     f(k, ValueOrHandler::Handler(create_handler(inner, c.clone())))
                                 }
                                 value => f(k, ValueOrHandler::Value(value.clone())),
-                            },
-                            None => {}
+                            }
                         }
                     }
                 });
