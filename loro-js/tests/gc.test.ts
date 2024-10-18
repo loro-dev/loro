@@ -25,7 +25,7 @@ describe("gc", () => {
         doc.getList("list").delete(1, 1); // Delete "B"
         doc.getMap("map").set("key", "value"); // Add a new key-value pair to a map
 
-        const updatedBytes = doc.export({ mode: "update", start_vv: newDoc.version() });
+        const updatedBytes = doc.export({ mode: "update", from: newDoc.version() });
         newDoc.import(updatedBytes);
         expect(newDoc.toJSON()).toEqual(doc.toJSON());
     });
@@ -38,7 +38,7 @@ describe("gc", () => {
         const docB = doc.fork();
         const v = docB.version();
         docB.getList("list").insert(1, "C");
-        const updates = docB.export({ mode: "update", start_vv: v });
+        const updates = docB.export({ mode: "update", from: v });
 
         doc.getList("list").insert(1, "B");
         doc.getList("list").insert(2, "C");

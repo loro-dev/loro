@@ -497,7 +497,7 @@ describe("export", () => {
     const doc = new LoroDoc();
     doc.getText("text").insert(0, "123");
     doc.commit();
-    const updates = doc.export({ mode: "update", start_vv: new VersionVector(null) });
+    const updates = doc.export({ mode: "update", from: new VersionVector(null) });
     const doc2 = new LoroDoc();
     doc2.import(updates);
     expect(doc2.toJSON()).toStrictEqual({ text: "123" });

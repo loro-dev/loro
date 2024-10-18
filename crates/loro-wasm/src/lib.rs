@@ -1051,7 +1051,7 @@ impl LoroDoc {
     ///
     /// @param mode - The export mode to use. Can be one of:
     ///   - `{ mode: "snapshot" }`: Export a full snapshot of the document.
-    ///   - `{ mode: "update", start_vv: VersionVector }`: Export updates from the given version vector.
+    ///   - `{ mode: "update", from: VersionVector }`: Export updates from the given version vector.
     ///   - `{ mode: "updates-in-range", spans: { id: ID, len: number }[] }`: Export updates within the specified ID spans.
     ///   - `{ mode: "shallow-snapshot", frontiers: Frontiers }`: Export a garbage-collected snapshot up to the given frontiers.
     ///
@@ -1070,7 +1070,7 @@ impl LoroDoc {
     /// // Export updates from a specific version
     /// const vv = doc.oplogVersion();
     /// doc.setText("text", "Hello Loro");
-    /// const updateBytes = doc.export({ mode: "update", start_vv: vv });
+    /// const updateBytes = doc.export({ mode: "update", from: vv });
     ///
     /// // Export a garbage-collected snapshot
     /// const gcBytes = doc.export({ mode: "shallow-snapshot", frontiers: doc.oplogFrontiers() });
@@ -4215,13 +4215,13 @@ fn js_to_export_mode(js_mode: JsExportMode) -> JsResult<ExportMode<'static>> {
 
     match mode.as_str() {
         "update" => {
-            let start_vv = js_sys::Reflect::get(&js_value, &JsValue::from_str("start_vv"))?;
-            if start_vv.is_undefined() {
+            let from = js_sys::Reflect::get(&js_value, &JsValue::from_str("from"))?;
+            if from.is_undefined() {
                 Ok(ExportMode::all_updates())
             } else {
-                let start_vv = js_to_version_vector(start_vv)?;
+                let from = js_to_version_vector(from)?;
                 // TODO: PERF: avoid this clone
-                Ok(ExportMode::updates_owned(start_vv.0.clone()))
+                Ok(ExportMode::updates_owned(from.0.clone()))
             }
         }
         "snapshot" => Ok(ExportMode::Snapshot),
@@ -4309,7 +4309,7 @@ interface LoroDoc {
     /**
      * Export updates from the specific version to the current version
      *
-     * @deprecated Use `export({mode: "update", start_vv: version})` instead
+     * @deprecated Use `export({mode: "update", from: version})` instead
      *
      *  @example
      *  ```ts
@@ -4669,7 +4669,7 @@ export type JsonChange = {
 
 export type ExportMode = {
     mode: "update",
-    start_vv?: VersionVector,
+    from?: VersionVector,
 } | {
     mode: "snapshot",
 } | {
