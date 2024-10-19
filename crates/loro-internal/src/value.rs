@@ -566,7 +566,7 @@ pub mod wasm {
                         js_sys::Reflect::set(&obj, &"index".into(), &(*index).into()).unwrap();
                         js_sys::Reflect::set(
                             &obj,
-                            &"fractional_index".into(),
+                            &"fractionalIndex".into(),
                             &position.to_string().into(),
                         )
                         .unwrap();
@@ -578,11 +578,11 @@ pub mod wasm {
                         js_sys::Reflect::set(&obj, &"action".into(), &"delete".into()).unwrap();
                         js_sys::Reflect::set(
                             &obj,
-                            &"old_parent".into(),
+                            &"oldParent".into(),
                             &JsValue::from(old_parent.tree_id()),
                         )
                         .unwrap();
-                        js_sys::Reflect::set(&obj, &"old_index".into(), &(*old_index).into())
+                        js_sys::Reflect::set(&obj, &"oldIndex".into(), &(*old_index).into())
                             .unwrap();
                     }
                     TreeExternalDiff::Move {
@@ -602,17 +602,17 @@ pub mod wasm {
                         js_sys::Reflect::set(&obj, &"index".into(), &(*index).into()).unwrap();
                         js_sys::Reflect::set(
                             &obj,
-                            &"fractional_index".into(),
+                            &"fractionalIndex".into(),
                             &position.to_string().into(),
                         )
                         .unwrap();
                         js_sys::Reflect::set(
                             &obj,
-                            &"old_parent".into(),
+                            &"oldParent".into(),
                             &JsValue::from(old_parent.tree_id()),
                         )
                         .unwrap();
-                        js_sys::Reflect::set(&obj, &"old_index".into(), &(*old_index).into())
+                        js_sys::Reflect::set(&obj, &"oldIndex".into(), &(*old_index).into())
                             .unwrap();
                     }
                 }

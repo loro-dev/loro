@@ -246,6 +246,7 @@ describe("type", () => {
 describe("list stable position", () => {
   it("basic tests", () => {
     const loro = new LoroDoc();
+    loro.oplogFrontiers
     const list = loro.getList("list");
     list.insert(0, "a");
     const pos0 = list.getCursor(0);

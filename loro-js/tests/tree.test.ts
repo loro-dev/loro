@@ -93,7 +93,7 @@ describe("loro tree", () => {
     assert(keys.includes("id"));
     assert(keys.includes("parent"));
     assert(keys.includes("index"));
-    assert(keys.includes("fractional_index"));
+    assert(keys.includes("fractionalIndex"));
     assert(keys.includes("meta"));
     assert(keys.includes("children"));
   });
@@ -212,8 +212,8 @@ describe("loro tree node", () => {
       if (e.events[0].diff.type == "tree") {
         const diff = e.events[0].diff as TreeDiff;
         if (diff.diff[0].action == "move") {
-          assertEquals(diff.diff[0].old_parent, root.id);
-          assertEquals(diff.diff[0].old_index, 1);
+          assertEquals(diff.diff[0].oldParent, root.id);
+          assertEquals(diff.diff[0].oldIndex, 1);
         }
       }
     });

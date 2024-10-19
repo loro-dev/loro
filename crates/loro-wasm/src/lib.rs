@@ -3525,7 +3525,7 @@ impl LoroTree {
             js_sys::Reflect::set(&obj, &"index".into(), &JsValue::from(index))?;
             js_sys::Reflect::set(
                 &obj,
-                &"fractional_index".into(),
+                &"fractionalIndex".into(),
                 &JsValue::from_str(&position),
             )?;
             js_sys::Reflect::set(&obj, &"meta".into(), &map.into())?;
