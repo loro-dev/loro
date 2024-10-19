@@ -11,6 +11,7 @@ use loro_common::{ContainerType, IdLp, IdSpan, LoroResult};
 use loro_delta::{array_vec::ArrayVec, DeltaRopeBuilder};
 use rle::{HasLength, Mergable, RleVec};
 use smallvec::{smallvec, SmallVec};
+use tracing::trace;
 
 use crate::{
     change::{Change, Lamport, Timestamp},
@@ -440,6 +441,7 @@ impl Transaction {
 
         let last_id = change.id_last();
         if let Err(err) = oplog.import_local_change(change) {
+            state.abort_txn();
             drop(state);
             drop(oplog);
             return Err(err);

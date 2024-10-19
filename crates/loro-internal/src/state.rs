@@ -15,7 +15,7 @@ use fxhash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
 use loro_common::{ContainerID, LoroError, LoroResult};
 use loro_delta::DeltaItem;
-use tracing::{info_span, instrument, trace, warn};
+use tracing::{info_span, instrument, warn};
 
 use crate::{
     configure::{Configure, DefaultRandom, SecureRandomGenerator},
@@ -972,10 +972,6 @@ impl DocState {
     }
 
     pub fn can_import_snapshot(&self) -> bool {
-        trace!("in_txn: {:?}", self.in_txn);
-        trace!("store: {:?}", self.store.is_empty());
-        trace!("arena: {:?}", self.arena.can_import_snapshot());
-
         !self.in_txn && self.arena.can_import_snapshot() && self.store.can_import_snapshot()
     }
 

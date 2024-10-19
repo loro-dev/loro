@@ -95,7 +95,6 @@ pub(crate) fn export_shallow_snapshot_inner(
             if let ContainerID::Normal { peer, counter, .. } = cid {
                 let temp_id = ID::new(peer, counter);
                 if !start_from.contains(&temp_id) {
-                    trace!("Retain Container {:?}", temp_id);
                     alive_c_bytes.insert(cid.to_bytes());
                 }
             } else {
