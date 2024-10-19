@@ -440,6 +440,7 @@ impl Transaction {
 
         let last_id = change.id_last();
         if let Err(err) = oplog.import_local_change(change) {
+            state.abort_txn();
             drop(state);
             drop(oplog);
             return Err(err);

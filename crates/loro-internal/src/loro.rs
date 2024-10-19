@@ -19,7 +19,7 @@ use std::{
         Arc, Mutex, Weak,
     },
 };
-use tracing::{debug_span, info, info_span, instrument, trace, warn};
+use tracing::{debug_span, info, info_span, instrument, warn};
 
 use crate::{
     arena::SharedArena,
@@ -1059,7 +1059,10 @@ impl LoroDoc {
         frontiers: &Frontiers,
         to_shrink_frontiers: bool,
     ) -> Result<(), LoroError> {
-        self.commit_then_stop();
+        let had_txn = self.txn.try_lock().unwrap().is_some();
+        if had_txn {
+            self.commit_then_stop();
+        }
         let from_frontiers = self.state_frontiers();
         info!(
             "checkout from={:?} to={:?} cur_vv={:?}",
@@ -1069,14 +1072,18 @@ impl LoroDoc {
         );
 
         if &from_frontiers == frontiers {
-            self.renew_txn_if_auto_commit();
+            if had_txn {
+                self.renew_txn_if_auto_commit();
+            }
             return Ok(());
         }
 
         let oplog = self.oplog.try_lock().unwrap();
         if oplog.dag.is_before_shallow_root(frontiers) {
             drop(oplog);
-            self.renew_txn_if_auto_commit();
+            if had_txn {
+                self.renew_txn_if_auto_commit();
+            }
             return Err(LoroError::SwitchToVersionBeforeShallowRoot);
         }
 
@@ -1088,7 +1095,9 @@ impl LoroDoc {
         };
         if from_frontiers == frontiers {
             drop(oplog);
-            self.renew_txn_if_auto_commit();
+            if had_txn {
+                self.renew_txn_if_auto_commit();
+            }
             return Ok(());
         }
 
@@ -1098,17 +1107,20 @@ impl LoroDoc {
             if !oplog.dag.contains(i) {
                 drop(oplog);
                 drop(state);
-                self.renew_txn_if_auto_commit();
+                if had_txn {
+                    self.renew_txn_if_auto_commit();
+                }
                 return Err(LoroError::FrontiersNotFound(i));
             }
         }
 
-        trace!("state.frontiers={:?}", &state.frontiers);
         let before = &oplog.dag.frontiers_to_vv(&state.frontiers).unwrap();
         let Some(after) = &oplog.dag.frontiers_to_vv(&frontiers) else {
             drop(oplog);
             drop(state);
-            self.renew_txn_if_auto_commit();
+            if had_txn {
+                self.renew_txn_if_auto_commit();
+            }
             return Err(LoroError::NotFoundError(
                 format!("Cannot find the specified version {:?}", frontiers).into_boxed_str(),
             ));
