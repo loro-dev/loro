@@ -959,11 +959,10 @@ impl LoroDoc {
     #[wasm_bindgen(js_name = "getPathToContainer")]
     pub fn get_path_to_container(&self, id: JsContainerID) -> JsResult<Option<Array>> {
         let id: ContainerID = id.to_owned().try_into()?;
-        let ans = self.0.get_path_to_container(&id).map(|p| {
-            let s = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
-            let v = p.serialize(&s).unwrap();
-            v.into()
-        });
+        let ans = self
+            .0
+            .get_path_to_container(&id)
+            .map(|p| convert_container_path_to_js_value(&p));
         Ok(ans)
     }
 
@@ -1725,13 +1724,12 @@ fn container_diff_to_js_value(
     obj.into()
 }
 
-fn convert_container_path_to_js_value(path: &[(ContainerID, Index)]) -> JsValue {
+fn convert_container_path_to_js_value(path: &[(ContainerID, Index)]) -> Array {
     let arr = Array::new_with_length(path.len() as u32);
     for (i, p) in path.iter().enumerate() {
         arr.set(i as u32, p.1.clone().into());
     }
-    let path: JsValue = arr.into_js_result().unwrap();
-    path
+    arr
 }
 
 /// The handler of a text container. It supports rich text CRDT.
