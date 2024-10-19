@@ -41,6 +41,10 @@ impl LoroDoc {
             })
             .unwrap();
         let doc = LoroDoc::new();
+        doc.set_config(&self.config);
+        if self.auto_commit.load(std::sync::atomic::Ordering::Relaxed) {
+            doc.start_auto_commit();
+        }
         doc.import(&bytes).unwrap();
         doc
     }
