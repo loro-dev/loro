@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.0-beta.3
+
+### Patch Changes
+
+- - Wasm api 1.0 (#521)
+  - Rename wasm export from (#519)
+  - Rename tree event (#520)
+
 ## 1.0.0-beta.2
 
 ### Patch Changes
