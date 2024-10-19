@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 #[ctor::ctor]
 fn init() {
     dev_utils::setup_test_log();
@@ -7,14 +5,7 @@ fn init() {
 
 use crate::{op::ListSlice, LoroValue};
 
-#[cfg(proptest)]
-pub const PROPTEST_FACTOR_10: usize = 10;
-#[cfg(not(proptest))]
 pub const PROPTEST_FACTOR_10: usize = 1;
-
-#[cfg(proptest)]
-pub const PROPTEST_FACTOR_1: usize = 1;
-#[cfg(not(proptest))]
 pub const PROPTEST_FACTOR_1: usize = 0;
 
 #[test]

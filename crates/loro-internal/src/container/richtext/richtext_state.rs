@@ -2,7 +2,7 @@ use append_only_bytes::BytesSlice;
 use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::{
     rle::{CanRemove, HasLength, Mergeable, Sliceable, TryInsert},
-    BTree, BTreeTrait, Cursor,
+    BTree, BTreeTrait, Cursor, LeafIndex,
 };
 use loro_common::{
     Counter, IdFull, IdLpSpan, IdSpan, Lamport, LoroError, LoroResult, LoroValue, ID,
@@ -26,12 +26,9 @@ use crate::{
     utils::query_by_len::{EntityIndexQueryWithEventIndex, IndexQueryWithEntityIndex, QueryByLen},
 };
 
-use self::{
-    cursor_cache::CursorCache,
-    query::{
-        EntityQuery, EntityQueryT, EventIndexQuery, EventIndexQueryT, UnicodeQuery, UnicodeQueryT,
-        Utf16Query, Utf16QueryT,
-    },
+use self::query::{
+    EntityQuery, EntityQueryT, EventIndexQuery, EventIndexQueryT, UnicodeQuery, UnicodeQueryT,
+    Utf16Query, Utf16QueryT,
 };
 
 use super::{
@@ -45,6 +42,7 @@ pub(crate) use query::PosType;
 pub(crate) struct RichtextState {
     tree: BTree<RichtextTreeTrait>,
     style_ranges: Option<Box<StyleRangeMap>>,
+    cached_cursor: Option<CachedCursor>,
 }
 
 impl Display for RichtextState {
@@ -62,6 +60,209 @@ impl Display for RichtextState {
     }
 }
 
+use cache::CachedCursor;
+
+mod cache {
+    use tracing::trace;
+
+    use super::*;
+
+    #[derive(Clone, Debug)]
+    pub(super) struct CachedCursor {
+        leaf: LeafIndex,
+        index: FxHashMap<PosType, usize>,
+    }
+
+    impl RichtextState {
+        pub(super) fn clear_cache(&mut self) {
+            self.cached_cursor = None;
+        }
+
+        pub(super) fn record_cache(
+            &mut self,
+            leaf: LeafIndex,
+            pos: usize,
+            pos_type: PosType,
+            entity_offset: usize,
+            entity_index: Option<usize>,
+        ) {
+            let offset = if entity_offset != 0 {
+                let elem = self.tree.get_elem(leaf).unwrap();
+                entity_offset_to_pos_type_offset(pos_type, elem, entity_offset)
+            } else {
+                0
+            };
+
+            let pos = pos - offset;
+            match &mut self.cached_cursor {
+                Some(c) => {
+                    if c.leaf == leaf {
+                        c.index.insert(pos_type, pos);
+                    } else {
+                        c.leaf = leaf;
+                        c.index.clear();
+                        c.index.insert(pos_type, pos);
+                    }
+                }
+                None => {
+                    self.cached_cursor = Some(CachedCursor {
+                        leaf,
+                        index: FxHashMap::default(),
+                    });
+                    self.cached_cursor
+                        .as_mut()
+                        .unwrap()
+                        .index
+                        .insert(pos_type, pos);
+                }
+            }
+            if let Some(entity_index) = entity_index {
+                self.cached_cursor
+                    .as_mut()
+                    .unwrap()
+                    .index
+                    .insert(PosType::Entity, entity_index - entity_offset);
+            }
+        }
+
+        pub(super) fn try_get_cache_or_clean(
+            &mut self,
+            index: usize,
+            pos_type: PosType,
+        ) -> Option<Cursor> {
+            let mut cursor = self.cached_cursor.take();
+            let ans = 'block: {
+                match &mut cursor {
+                    Some(c) => {
+                        let cache_index = c.index.get(&pos_type);
+                        if let Some(cache_index) = cache_index {
+                            if index < *cache_index {
+                                return None;
+                            }
+                        }
+
+                        let cached_index = match c.index.entry(pos_type) {
+                            std::collections::hash_map::Entry::Vacant(vacant_entry) => {
+                                trace!("new cache");
+                                let index = self.get_index_from_cursor(
+                                    Cursor {
+                                        leaf: c.leaf,
+                                        offset: 0,
+                                    },
+                                    pos_type,
+                                )?;
+                                vacant_entry.insert(index);
+                                index
+                            }
+                            std::collections::hash_map::Entry::Occupied(occupied_entry) => {
+                                *occupied_entry.get()
+                            }
+                        };
+
+                        if index < cached_index {
+                            return None;
+                        }
+
+                        if cached_index == index {
+                            trace!("eq");
+                            break 'block Some(Cursor {
+                                leaf: c.leaf,
+                                offset: 0,
+                            });
+                        }
+
+                        let elem = self.tree.get_elem(c.leaf)?;
+                        let elem_len = elem.len_with(pos_type);
+                        if cached_index + elem_len == index {
+                            let offset = elem.len_with(PosType::Entity);
+                            trace!(
+                                "end cached_index={} index={} elem.len_with(pos_type) = {} offset={}",
+                                cached_index,
+                                index,
+                                elem_len,
+                                offset
+                            );
+
+                            break 'block Some(Cursor {
+                                leaf: c.leaf,
+                                offset,
+                            });
+                        }
+
+                        if index > cached_index + elem_len {
+                            return None;
+                        }
+
+                        let offset =
+                            pos_type_offset_to_entity_offset(pos_type, elem, index - cached_index)?;
+                        trace!(
+                            "offset convert from {} to {:?}",
+                            index - cached_index,
+                            offset
+                        );
+                        Some(Cursor {
+                            leaf: c.leaf,
+                            offset,
+                        })
+                    }
+                    None => None,
+                }
+            };
+
+            self.cached_cursor = cursor;
+            #[cfg(debug_assertions)]
+            {
+                if let Some(c) = ans.as_ref() {
+                    let actual = self.get_index_from_cursor(*c, pos_type);
+                    trace!("actual={} index={}", actual.unwrap(), index);
+                    assert_eq!(actual.unwrap(), index);
+                }
+            }
+            ans
+        }
+
+        pub(super) fn get_cache_entity_index(&mut self) -> Option<usize> {
+            let mut cursor = self.cached_cursor.take()?;
+            let ans = {
+                let leaf = cursor.leaf;
+                match cursor.index.entry(PosType::Entity) {
+                    std::collections::hash_map::Entry::Vacant(vacant_entry) => {
+                        let index = self
+                            .get_index_from_cursor(Cursor { leaf, offset: 0 }, PosType::Entity)?;
+                        vacant_entry.insert(index);
+                        index
+                    }
+                    std::collections::hash_map::Entry::Occupied(occupied_entry) => {
+                        *occupied_entry.get()
+                    }
+                }
+            };
+
+            self.cached_cursor = Some(cursor);
+            Some(ans)
+        }
+
+        pub(crate) fn check_cache(&self) {
+            #[cfg(debug_assertions)]
+            {
+                if let Some(c) = &self.cached_cursor {
+                    for (pos_type, index) in &c.index {
+                        let actual = self.get_index_from_cursor(
+                            Cursor {
+                                leaf: c.leaf,
+                                offset: 0,
+                            },
+                            *pos_type,
+                        );
+
+                        assert_eq!(actual.unwrap(), *index);
+                    }
+                }
+            }
+        }
+    }
+}
+
 pub(crate) use text_chunk::TextChunk;
 mod text_chunk {
     use std::ops::Range;
@@ -69,12 +270,23 @@ mod text_chunk {
     use append_only_bytes::BytesSlice;
     use loro_common::{IdFull, IdLp, ID};
 
-    #[derive(Clone, Debug, PartialEq)]
+    #[derive(Clone, PartialEq)]
     pub(crate) struct TextChunk {
         bytes: BytesSlice,
         unicode_len: i32,
         utf16_len: i32,
         id: IdFull,
+    }
+
+    impl std::fmt::Debug for TextChunk {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("TextChunk")
+                .field("text", &self.as_str())
+                .field("unicode_len", &self.unicode_len)
+                .field("utf16_len", &self.utf16_len)
+                .field("id", &self.id)
+                .finish()
+        }
     }
 
     impl TextChunk {
@@ -102,6 +314,12 @@ mod text_chunk {
         #[inline]
         pub fn id(&self) -> ID {
             self.id.id()
+        }
+
+        #[inline]
+        #[allow(unused)]
+        pub fn id_full(&self) -> IdFull {
+            self.id
         }
 
         #[inline]
@@ -390,9 +608,19 @@ pub(crate) enum RichtextStateChunk {
     },
 }
 
+impl Default for RichtextStateChunk {
+    fn default() -> Self {
+        Self::new_empty()
+    }
+}
+
 impl RichtextStateChunk {
     pub fn new_text(s: BytesSlice, id: IdFull) -> Self {
         Self::Text(TextChunk::new(s, id))
+    }
+
+    pub fn new_empty() -> Self {
+        Self::Text(TextChunk::new_empty())
     }
 
     pub fn new_style(style: Arc<StyleOp>, anchor_type: AnchorType) -> Self {
@@ -431,6 +659,19 @@ impl RichtextStateChunk {
         }
     }
 
+    pub(crate) fn counter(&self) -> Counter {
+        match self {
+            RichtextStateChunk::Text(t) => t.id().counter,
+            RichtextStateChunk::Style { style, anchor_type } => match anchor_type {
+                AnchorType::Start => style.id().counter,
+                AnchorType::End => {
+                    let id = style.id();
+                    id.counter + 1
+                }
+            },
+        }
+    }
+
     pub fn entity_range_to_event_range(&self, range: Range<usize>) -> Range<usize> {
         match self {
             RichtextStateChunk::Text(t) => t.entity_range_to_event_range(range),
@@ -441,7 +682,28 @@ impl RichtextStateChunk {
             }
         }
     }
+
+    pub fn len_with(&self, pos_type: PosType) -> usize {
+        match self {
+            RichtextStateChunk::Text(t) => match pos_type {
+                PosType::Bytes => t.utf8_len() as usize,
+                PosType::Utf16 => t.utf16_len() as usize,
+                PosType::Event => t.unicode_len() as usize,
+                PosType::Entity => t.unicode_len() as usize,
+                PosType::Unicode => t.unicode_len() as usize,
+            },
+            RichtextStateChunk::Style { .. } => {
+                if let PosType::Entity = pos_type {
+                    1
+                } else {
+                    0
+                }
+            }
+        }
+    }
 }
+
+impl loro_delta::delta_trait::DeltaValue for RichtextStateChunk {}
 
 impl DeltaValue for RichtextStateChunk {
     fn value_extend(&mut self, other: Self) -> Result<(), Self> {
@@ -698,22 +960,6 @@ pub(crate) fn utf8_to_unicode_index(s: &str, utf8_index: usize) -> Result<usize,
     }
 }
 
-fn pos_to_unicode_index(s: &str, pos: usize, kind: PosType) -> Option<usize> {
-    match kind {
-        PosType::Bytes => utf8_to_unicode_index(s, pos).ok(),
-        PosType::Unicode => Some(pos),
-        PosType::Utf16 => utf16_to_unicode_index(s, pos).ok(),
-        PosType::Entity => Some(pos),
-        PosType::Event => {
-            if cfg!(feature = "wasm") {
-                utf16_to_unicode_index(s, pos).ok()
-            } else {
-                Some(pos)
-            }
-        }
-    }
-}
-
 #[derive(Clone, Debug, Copy, PartialEq, Eq, Default)]
 pub(crate) struct PosCache {
     pub(super) unicode_len: i32,
@@ -871,7 +1117,7 @@ mod query {
 
     use super::*;
 
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub(crate) enum PosType {
         #[allow(unused)]
         Bytes,
@@ -879,6 +1125,7 @@ mod query {
         Unicode,
         #[allow(unused)]
         Utf16,
+        #[allow(unused)]
         Entity,
         Event,
     }
@@ -1050,277 +1297,12 @@ mod query {
     }
 }
 
-mod cursor_cache {
-    use std::sync::atomic::AtomicUsize;
-
-    use super::{
-        pos_to_unicode_index, unicode_to_utf16_index, unicode_to_utf8_index, PosType,
-        RichtextTreeTrait,
-    };
-    use generic_btree::{rle::HasLength, BTree, Cursor, LeafIndex};
-
-    #[derive(Debug, Clone)]
-    struct CursorCacheItem {
-        pos: usize,
-        pos_type: PosType,
-        leaf: LeafIndex,
-    }
-
-    #[derive(Debug, Clone)]
-    struct EntityIndexCacheItem {
-        pos: usize,
-        pos_type: PosType,
-        entity_index: usize,
-        leaf: LeafIndex,
-    }
-
-    #[derive(Debug, Clone, Default)]
-    pub(super) struct CursorCache {
-        cursor: Option<CursorCacheItem>,
-        entity: Option<EntityIndexCacheItem>,
-    }
-
-    static CACHE_HIT: AtomicUsize = AtomicUsize::new(0);
-    static CACHE_MISS: AtomicUsize = AtomicUsize::new(0);
-
-    impl CursorCache {
-        // TODO: some of the invalidation can be changed into shifting pos
-        pub fn invalidate(&mut self) {
-            self.cursor.take();
-            self.entity.take();
-        }
-
-        pub fn invalidate_entity_cache_after(&mut self, entity_index: usize) {
-            if let Some(c) = self.entity.as_mut() {
-                if entity_index < c.entity_index {
-                    self.entity = None;
-                }
-            }
-        }
-
-        pub fn record_cursor(
-            &mut self,
-            pos: usize,
-            kind: PosType,
-            cursor: Cursor,
-            _tree: &BTree<RichtextTreeTrait>,
-        ) {
-            match kind {
-                PosType::Unicode | PosType::Entity => {
-                    self.cursor = Some(CursorCacheItem {
-                        pos: pos - cursor.offset,
-                        pos_type: kind,
-                        leaf: cursor.leaf,
-                    });
-                }
-                PosType::Utf16 => todo!(),
-                PosType::Event => todo!(),
-                PosType::Bytes => todo!(),
-            }
-        }
-
-        pub fn record_entity_index(
-            &mut self,
-            pos: usize,
-            kind: PosType,
-            entity_index: usize,
-            cursor: Cursor,
-            tree: &BTree<RichtextTreeTrait>,
-        ) -> Result<(), usize> {
-            match kind {
-                PosType::Bytes => {
-                    if cursor.offset == 0 {
-                        self.entity = Some(EntityIndexCacheItem {
-                            pos,
-                            pos_type: kind,
-                            entity_index,
-                            leaf: cursor.leaf,
-                        });
-                    } else {
-                        let elem = tree.get_elem(cursor.leaf).unwrap();
-                        let Some(s) = elem.as_str() else {
-                            return Ok(());
-                        };
-                        let utf8offset = unicode_to_utf8_index(s, cursor.offset).unwrap();
-                        if pos < utf8offset {
-                            return Err(pos);
-                        }
-                        self.entity = Some(EntityIndexCacheItem {
-                            pos: pos - utf8offset,
-                            pos_type: kind,
-                            entity_index: entity_index - cursor.offset,
-                            leaf: cursor.leaf,
-                        });
-                    }
-                    Ok(())
-                }
-                PosType::Unicode | PosType::Entity => {
-                    self.entity = Some(EntityIndexCacheItem {
-                        pos: pos - cursor.offset,
-                        pos_type: kind,
-                        entity_index: entity_index - cursor.offset,
-                        leaf: cursor.leaf,
-                    });
-                    Ok(())
-                }
-                PosType::Event if cfg!(not(feature = "wasm")) => {
-                    self.entity = Some(EntityIndexCacheItem {
-                        pos: pos - cursor.offset,
-                        pos_type: kind,
-                        entity_index: entity_index - cursor.offset,
-                        leaf: cursor.leaf,
-                    });
-                    Ok(())
-                }
-                _ => {
-                    // utf16
-                    if cursor.offset == 0 {
-                        self.entity = Some(EntityIndexCacheItem {
-                            pos,
-                            pos_type: kind,
-                            entity_index,
-                            leaf: cursor.leaf,
-                        });
-                    } else {
-                        let elem = tree.get_elem(cursor.leaf).unwrap();
-                        let Some(s) = elem.as_str() else {
-                            return Ok(());
-                        };
-                        let utf16offset = unicode_to_utf16_index(s, cursor.offset).unwrap();
-                        if pos < utf16offset {
-                            return Err(pos);
-                        }
-                        self.entity = Some(EntityIndexCacheItem {
-                            pos: pos - utf16offset,
-                            pos_type: kind,
-                            entity_index: entity_index - cursor.offset,
-                            leaf: cursor.leaf,
-                        });
-                    }
-                    Ok(())
-                }
-            }
-        }
-
-        pub fn get_cursor(
-            &self,
-            pos: usize,
-            pos_type: PosType,
-            tree: &BTree<RichtextTreeTrait>,
-        ) -> Option<Cursor> {
-            for c in self.cursor.iter() {
-                if c.pos_type != pos_type {
-                    continue;
-                }
-
-                let elem = tree.get_elem(c.leaf).unwrap();
-                let Some(s) = elem.as_str() else { continue };
-                if pos < c.pos {
-                    continue;
-                }
-
-                let offset = pos - c.pos;
-                let Some(offset) = pos_to_unicode_index(s, offset, pos_type) else {
-                    continue;
-                };
-
-                if offset <= elem.rle_len() {
-                    cache_hit();
-                    return Some(Cursor {
-                        leaf: c.leaf,
-                        offset,
-                    });
-                }
-            }
-
-            cache_miss();
-            None
-        }
-
-        pub fn get_entity_index(
-            &self,
-            pos: usize,
-            pos_type: PosType,
-            tree: &BTree<RichtextTreeTrait>,
-            has_style: bool,
-        ) -> Option<(usize, Cursor)> {
-            if has_style {
-                return None;
-            }
-
-            for c in self.entity.iter() {
-                if c.pos_type != pos_type {
-                    continue;
-                }
-                if pos < c.pos {
-                    continue;
-                }
-
-                let offset = pos - c.pos;
-                let leaf = tree.get_leaf(c.leaf.into());
-                let s = leaf.elem().as_str()?;
-                let Some(offset) = pos_to_unicode_index(s, offset, pos_type) else {
-                    continue;
-                };
-
-                if offset < leaf.elem().rle_len() {
-                    cache_hit();
-                    return Some((
-                        offset + c.entity_index,
-                        Cursor {
-                            leaf: c.leaf,
-                            offset,
-                        },
-                    ));
-                }
-
-                cache_hit();
-                return Some((
-                    offset + c.entity_index,
-                    Cursor {
-                        leaf: c.leaf,
-                        offset,
-                    },
-                ));
-            }
-
-            cache_miss();
-            None
-        }
-
-        #[allow(unused)]
-        pub fn diagnose() {
-            let hit = CACHE_HIT.load(std::sync::atomic::Ordering::Relaxed);
-            let miss = CACHE_MISS.load(std::sync::atomic::Ordering::Relaxed);
-            println!(
-                "hit: {}, miss: {}, hit rate: {}",
-                hit,
-                miss,
-                hit as f64 / (hit + miss) as f64
-            );
-        }
-    }
-
-    fn cache_hit() {
-        #[cfg(debug_assertions)]
-        {
-            CACHE_HIT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        }
-    }
-
-    fn cache_miss() {
-        #[cfg(debug_assertions)]
-        {
-            CACHE_MISS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        }
-    }
-}
-
 impl RichtextState {
     pub(crate) fn from_chunks<I: Iterator<Item = impl Into<RichtextStateChunk>>>(i: I) -> Self {
         Self {
             tree: i.collect(),
             style_ranges: Default::default(),
+            cached_cursor: None,
         }
     }
 
@@ -1329,19 +1311,42 @@ impl RichtextState {
         pos: usize,
         pos_type: PosType,
     ) -> Result<(usize, Option<Cursor>), LoroError> {
-        if self.tree.is_empty() {
-            return Ok((0, None));
-        }
+        self.check_cache();
+        let result = {
+            if self.tree.is_empty() {
+                return Ok((0, None));
+            }
 
-        let (c, entity_index) = match pos_type {
-            PosType::Bytes => self.find_best_insert_pos::<ByteQueryT>(pos),
-            PosType::Unicode => self.find_best_insert_pos::<UnicodeQueryT>(pos),
-            PosType::Utf16 => self.find_best_insert_pos::<Utf16QueryT>(pos),
-            PosType::Entity => self.find_best_insert_pos::<EntityQueryT>(pos),
-            PosType::Event => self.find_best_insert_pos::<EventIndexQueryT>(pos),
+            if let Some(c) = self.try_get_cache_or_clean(pos, pos_type) {
+                let entity_index = self.get_cache_entity_index().unwrap();
+                Ok((entity_index + c.offset, Some(c)))
+            } else {
+                let (c, entity_index) = match pos_type {
+                    PosType::Bytes => self.find_best_insert_pos::<ByteQueryT>(pos),
+                    PosType::Unicode => self.find_best_insert_pos::<UnicodeQueryT>(pos),
+                    PosType::Utf16 => self.find_best_insert_pos::<Utf16QueryT>(pos),
+                    PosType::Entity => self.find_best_insert_pos::<EntityQueryT>(pos),
+                    PosType::Event => self.find_best_insert_pos::<EventIndexQueryT>(pos),
+                };
+
+                if let Some(c) = c {
+                    debug_assert_eq!(
+                        self.get_index_from_cursor(c, PosType::Entity).unwrap(),
+                        entity_index
+                    );
+                    self.record_cache(
+                        c.leaf,
+                        entity_index,
+                        PosType::Entity,
+                        c.offset,
+                        Some(entity_index),
+                    );
+                }
+                Ok((entity_index, c))
+            }
         };
-
-        Ok((entity_index, c))
+        self.check_cache();
+        result
     }
 
     fn has_styles(&self) -> bool {
@@ -1356,27 +1361,32 @@ impl RichtextState {
         range: Range<usize>,
         pos_type: PosType,
     ) -> (Range<usize>, Option<&Styles>) {
-        if self.tree.is_empty() {
-            return (0..0, None);
-        }
+        self.check_cache();
+        let result = {
+            if self.tree.is_empty() {
+                return (0..0, None);
+            }
 
-        let (start, _) = self
-            .get_entity_index_for_text_insert(range.start, pos_type)
-            .unwrap();
-        let (end, _) = self
-            .get_entity_index_for_text_insert(range.end, pos_type)
-            .unwrap();
-        if self.has_styles() {
-            (
-                start..end,
-                self.style_ranges
-                    .as_ref()
-                    .unwrap()
-                    .get_styles_of_range(start..end),
-            )
-        } else {
-            (start..end, None)
-        }
+            let (start, _) = self
+                .get_entity_index_for_text_insert(range.start, pos_type)
+                .unwrap();
+            let (end, _) = self
+                .get_entity_index_for_text_insert(range.end, pos_type)
+                .unwrap();
+            if self.has_styles() {
+                (
+                    start..end,
+                    self.style_ranges
+                        .as_ref()
+                        .unwrap()
+                        .get_styles_of_range(start..end),
+                )
+            } else {
+                (start..end, None)
+            }
+        };
+        self.check_cache();
+        result
     }
 
     /// Get the insert text styles at the given entity index if we insert text at that position
@@ -1387,14 +1397,19 @@ impl RichtextState {
         &mut self,
         entity_index: usize,
     ) -> StyleMeta {
-        if !self.has_styles() {
-            return Default::default();
-        }
+        self.check_cache();
+        let result = {
+            if !self.has_styles() {
+                return Default::default();
+            }
 
-        self.style_ranges
-            .as_mut()
-            .unwrap()
-            .get_styles_for_insert(entity_index)
+            self.style_ranges
+                .as_mut()
+                .unwrap()
+                .get_styles_for_insert(entity_index)
+        };
+        self.check_cache();
+        result
     }
 
     /// This is used to accept changes from DiffCalculator
@@ -1404,21 +1419,38 @@ impl RichtextState {
         text: BytesSlice,
         id: IdFull,
     ) -> Cursor {
-        let elem = RichtextStateChunk::try_new(text, id).unwrap();
-        self.style_ranges
-            .as_mut()
-            .map(|x| x.insert(entity_index, elem.rle_len()));
-        let q = &entity_index;
-        match self.tree.query::<EntityQuery>(q) {
-            Some(result) => {
-                let p = self
-                    .tree
-                    .prefer_left(result.cursor)
-                    .unwrap_or(result.cursor);
+        self.check_cache();
+        let result = {
+            let elem = RichtextStateChunk::try_new(text, id).unwrap();
+            self.style_ranges
+                .as_mut()
+                .map(|x| x.insert(entity_index, elem.rle_len()));
+            let q = &entity_index;
+            if let Some(c) = self.try_get_cache_or_clean(entity_index, PosType::Entity) {
+                let p = self.tree.prefer_left(c).unwrap_or(c);
                 self.tree.insert_by_path(p, elem).0
+            } else {
+                match self.tree.query::<EntityQuery>(q) {
+                    Some(result) => {
+                        let p = self
+                            .tree
+                            .prefer_left(result.cursor)
+                            .unwrap_or(result.cursor);
+                        self.tree.insert_by_path(p, elem).0
+                    }
+                    None => self.tree.push(elem),
+                }
             }
-            None => self.tree.push(elem),
-        }
+        };
+        self.record_cache(
+            result.leaf,
+            entity_index,
+            PosType::Entity,
+            result.offset,
+            None,
+        );
+        self.check_cache();
+        result
     }
 
     /// This is used to accept changes from DiffCalculator.
@@ -1429,40 +1461,45 @@ impl RichtextState {
         entity_index: usize,
         elem: RichtextStateChunk,
     ) -> (usize, &Styles) {
-        debug_assert!(
-            entity_index <= self.len_entity(),
-            "entity_index={} len={} self={:#?}",
-            entity_index,
-            self.len_entity(),
-            &self
-        );
+        self.clear_cache();
+        let result = {
+            debug_assert!(
+                entity_index <= self.len_entity(),
+                "entity_index={} len={} self={:#?}",
+                entity_index,
+                self.len_entity(),
+                &self
+            );
 
-        let (c, f) = self
-            .tree
-            .query_with_finder_return::<EntityIndexQueryWithEventIndex>(&entity_index);
-        let cursor = c.map(|x| x.cursor);
-        let event_index = f.event_index;
+            let (c, f) = self
+                .tree
+                .query_with_finder_return::<EntityIndexQueryWithEventIndex>(&entity_index);
+            let cursor = c.map(|x| x.cursor);
+            let event_index = f.event_index;
+            self.clear_cache();
 
-        match cursor {
-            Some(cursor) => {
-                let styles = self
-                    .style_ranges
-                    .as_mut()
-                    .map(|x| x.insert(entity_index, elem.rle_len()))
-                    .unwrap_or(&EMPTY_STYLES);
-                self.tree.insert_by_path(cursor, elem);
-                (event_index, styles)
+            match cursor {
+                Some(cursor) => {
+                    let styles = self
+                        .style_ranges
+                        .as_mut()
+                        .map(|x| x.insert(entity_index, elem.rle_len()))
+                        .unwrap_or(&EMPTY_STYLES);
+                    self.tree.insert_by_path(cursor, elem);
+                    (event_index, styles)
+                }
+                None => {
+                    let styles = self
+                        .style_ranges
+                        .as_mut()
+                        .map(|x| x.insert(entity_index, elem.rle_len()))
+                        .unwrap_or(&EMPTY_STYLES);
+                    self.tree.push(elem);
+                    (0, styles)
+                }
             }
-            None => {
-                let styles = self
-                    .style_ranges
-                    .as_mut()
-                    .map(|x| x.insert(entity_index, elem.rle_len()))
-                    .unwrap_or(&EMPTY_STYLES);
-                self.tree.push(elem);
-                (0, styles)
-            }
-        }
+        };
+        result
     }
 
     /// Convert cursor position to event index:
@@ -1470,62 +1507,28 @@ impl RichtextState {
     /// - If feature="wasm", index is utf16 index,
     /// - If feature!="wasm", index is unicode index,
     pub(crate) fn cursor_to_event_index(&self, cursor: Cursor) -> usize {
-        if cfg!(feature = "wasm") {
-            let mut ans = 0;
-            self.tree
-                .visit_previous_caches(cursor, |cache| match cache {
-                    generic_btree::PreviousCache::NodeCache(c) => {
-                        ans += c.utf16_len as usize;
-                    }
-                    generic_btree::PreviousCache::PrevSiblingElem(c) => match c {
-                        RichtextStateChunk::Text(s) => {
-                            ans += s.utf16_len() as usize;
-                        }
-                        RichtextStateChunk::Style { .. } => {}
-                    },
-                    generic_btree::PreviousCache::ThisElemAndOffset { elem, offset } => {
-                        match elem {
-                            RichtextStateChunk::Text(s) => {
-                                ans += s.convert_unicode_offset_to_event_offset(offset);
-                            }
-                            RichtextStateChunk::Style { .. } => {}
-                        }
-                    }
-                });
-
-            ans
-        } else {
-            self.cursor_to_unicode_index(cursor)
-        }
+        self.check_cache();
+        let result = self.get_index_from_cursor(cursor, PosType::Event).unwrap();
+        self.check_cache();
+        result
     }
 
     pub(crate) fn cursor_to_unicode_index(&self, cursor: Cursor) -> usize {
-        let mut ans = 0;
-        self.tree
-            .visit_previous_caches(cursor, |cache| match cache {
-                generic_btree::PreviousCache::NodeCache(c) => {
-                    ans += c.unicode_len;
-                }
-                generic_btree::PreviousCache::PrevSiblingElem(c) => match c {
-                    RichtextStateChunk::Text(s) => {
-                        ans += s.unicode_len();
-                    }
-                    RichtextStateChunk::Style { .. } => {}
-                },
-                generic_btree::PreviousCache::ThisElemAndOffset { elem, offset } => match elem {
-                    RichtextStateChunk::Text { .. } => {
-                        ans += offset as i32;
-                    }
-                    RichtextStateChunk::Style { .. } => {}
-                },
-            });
-        ans as usize
+        self.check_cache();
+        let result = self
+            .get_index_from_cursor(cursor, PosType::Unicode)
+            .unwrap();
+        self.check_cache();
+        result
     }
 
     /// This method only updates `style_ranges`.
     /// When this method is called, the style start anchor and the style end anchor should already have been inserted.
     pub(crate) fn annotate_style_range(&mut self, range: Range<usize>, style: Arc<StyleOp>) {
-        self.ensure_style_ranges_mut().annotate(range, style, None)
+        self.check_cache();
+        self.clear_cache();
+        self.ensure_style_ranges_mut().annotate(range, style, None);
+        self.check_cache();
     }
 
     /// This method only updates `style_ranges`.
@@ -1537,6 +1540,8 @@ impl RichtextState {
         range: Range<usize>,
         style: Arc<StyleOp>,
     ) -> impl Iterator<Item = (StyleMeta, usize)> + '_ {
+        self.check_cache();
+        self.clear_cache();
         let mut ranges_in_entity_index: Vec<(StyleMeta, Range<usize>)> = Vec::new();
         let mut start = range.start;
         let end = range.end;
@@ -1552,7 +1557,7 @@ impl RichtextState {
 
         assert_eq!(ranges_in_entity_index.last().unwrap().1.end, end);
         let mut converter = ContinuousIndexConverter::new(self);
-        ranges_in_entity_index
+        let result = ranges_in_entity_index
             .into_iter()
             .filter_map(move |(meta, range)| {
                 let start = converter.convert_entity_index_to_event_index(range.start);
@@ -1562,37 +1567,48 @@ impl RichtextState {
                 }
 
                 Some((meta, end - start))
-            })
+            });
+        self.check_cache();
+        result
     }
 
     /// init style ranges if not initialized
     fn ensure_style_ranges_mut(&mut self) -> &mut StyleRangeMap {
-        if self.style_ranges.is_none() {
-            self.style_ranges = Some(Box::default());
-        }
+        self.clear_cache();
+        let result = {
+            if self.style_ranges.is_none() {
+                self.style_ranges = Some(Box::default());
+            }
 
-        self.style_ranges.as_mut().unwrap()
+            self.style_ranges.as_mut().unwrap()
+        };
+        result
     }
 
     pub(crate) fn get_char_by_event_index(&self, pos: usize) -> Result<char, ()> {
-        let cursor = self.tree.query::<EventIndexQuery>(&pos).unwrap().cursor;
-        let Some(str) = &self.tree.get_elem(cursor.leaf) else {
-            return Err(());
+        self.check_cache();
+        let result = {
+            let cursor = self.tree.query::<EventIndexQuery>(&pos).unwrap().cursor;
+            let Some(str) = &self.tree.get_elem(cursor.leaf) else {
+                return Err(());
+            };
+            if cfg!(not(feature = "wasm")) {
+                let mut char_iter = str.as_str().unwrap().chars();
+                match &mut char_iter.nth(cursor.offset) {
+                    Some(c) => Ok(*c),
+                    None => Err(()),
+                }
+            } else {
+                let s = str.as_str().unwrap();
+                let utf16offset = unicode_to_utf16_index(s, cursor.offset).unwrap();
+                match s.encode_utf16().nth(utf16offset) {
+                    Some(c) => Ok(std::char::from_u32(c as u32).unwrap()),
+                    None => Err(()),
+                }
+            }
         };
-        if cfg!(not(feature = "wasm")) {
-            let mut char_iter = str.as_str().unwrap().chars();
-            match &mut char_iter.nth(cursor.offset) {
-                Some(c) => Ok(*c),
-                None => Err(()),
-            }
-        } else {
-            let s = str.as_str().unwrap();
-            let utf16offset = unicode_to_utf16_index(s, cursor.offset).unwrap();
-            match s.encode_utf16().nth(utf16offset) {
-                Some(c) => Ok(std::char::from_u32(c as u32).unwrap()),
-                None => Err(()),
-            }
-        }
+        self.check_cache();
+        result
     }
 
     /// Find the best insert position based on algorithm similar to Peritext.
@@ -1738,19 +1754,32 @@ impl RichtextState {
     }
 
     fn get_entity_index_from_path(&self, right: generic_btree::Cursor) -> usize {
-        let mut entity_index = 0;
-        self.tree.visit_previous_caches(right, |cache| match cache {
-            generic_btree::PreviousCache::NodeCache(cache) => {
-                entity_index += EntityQueryT::get_cache_len(cache);
-            }
-            generic_btree::PreviousCache::PrevSiblingElem(elem) => {
-                entity_index += EntityQueryT::get_elem_len(elem);
-            }
-            generic_btree::PreviousCache::ThisElemAndOffset { elem: _, offset } => {
-                entity_index += offset;
-            }
-        });
-        entity_index
+        self.get_index_from_cursor(right, PosType::Entity).unwrap()
+    }
+
+    #[tracing::instrument(level = "trace", skip(self))]
+    pub fn get_index_from_cursor(
+        &self,
+        cursor: generic_btree::Cursor,
+        pos_type: PosType,
+    ) -> Option<usize> {
+        let mut index = 0;
+        self.tree
+            .visit_previous_caches(cursor, |cache| match cache {
+                generic_btree::PreviousCache::NodeCache(c) => {
+                    index += c.get_len(pos_type) as usize;
+                }
+                generic_btree::PreviousCache::PrevSiblingElem(c) => {
+                    index += c.len_with(pos_type);
+                }
+                generic_btree::PreviousCache::ThisElemAndOffset { elem, offset } => {
+                    if offset != 0 {
+                        index += entity_offset_to_pos_type_offset(pos_type, elem, offset)
+                    }
+                }
+            });
+
+        Some(index)
     }
 
     pub(crate) fn get_text_entity_ranges(
@@ -1759,88 +1788,93 @@ impl RichtextState {
         len: usize,
         pos_type: PosType,
     ) -> LoroResult<Vec<EntityRangeInfo>> {
-        if self.tree.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        if len == 0 {
-            return Ok(Vec::new());
-        }
-
-        if pos + len > self.len(pos_type) {
-            return Ok(Vec::new());
-        }
-
-        let mut ans: Vec<EntityRangeInfo> = Vec::new();
-        let (start, end) = match pos_type {
-            PosType::Bytes => (
-                self.tree.query::<ByteQuery>(&pos).unwrap().cursor,
-                self.tree.query::<ByteQuery>(&(pos + len)).unwrap().cursor,
-            ),
-            PosType::Unicode => (
-                self.tree.query::<UnicodeQuery>(&pos).unwrap().cursor,
-                self.tree
-                    .query::<UnicodeQuery>(&(pos + len))
-                    .unwrap()
-                    .cursor,
-            ),
-            PosType::Utf16 => (
-                self.tree.query::<Utf16Query>(&pos).unwrap().cursor,
-                self.tree.query::<Utf16Query>(&(pos + len)).unwrap().cursor,
-            ),
-            PosType::Entity => (
-                self.tree.query::<EntityQuery>(&pos).unwrap().cursor,
-                self.tree.query::<EntityQuery>(&(pos + len)).unwrap().cursor,
-            ),
-            PosType::Event => (
-                self.tree.query::<EventIndexQuery>(&pos).unwrap().cursor,
-                self.tree
-                    .query::<EventIndexQuery>(&(pos + len))
-                    .unwrap()
-                    .cursor,
-            ),
-        };
-
-        // TODO: assert end cursor is valid
-        let mut entity_index = self.get_entity_index_from_path(start);
-        for span in self.tree.iter_range(start..end) {
-            let start = span.start.unwrap_or(0);
-            let end = span.end.unwrap_or(span.elem.rle_len());
-            if end == 0 {
-                break;
+        self.check_cache();
+        let result = {
+            if self.tree.is_empty() {
+                return Ok(Vec::new());
             }
 
-            let len = end - start;
-            match span.elem {
-                RichtextStateChunk::Text(s) => {
-                    let event_len = s.entity_range_to_event_range(start..end).len();
-                    let id = s.id().inc(start as i32);
-                    match ans.last_mut() {
-                        Some(last)
-                            if last.entity_end == entity_index
-                                && last.id_start.inc(last.event_len as i32) == id =>
-                        {
-                            last.entity_end += len;
-                            last.event_len += event_len;
+            if len == 0 {
+                return Ok(Vec::new());
+            }
+
+            if pos + len > self.len(pos_type) {
+                return Ok(Vec::new());
+            }
+
+            let mut ans: Vec<EntityRangeInfo> = Vec::new();
+            let (start, end) = match pos_type {
+                PosType::Bytes => (
+                    self.tree.query::<ByteQuery>(&pos).unwrap().cursor,
+                    self.tree.query::<ByteQuery>(&(pos + len)).unwrap().cursor,
+                ),
+                PosType::Unicode => (
+                    self.tree.query::<UnicodeQuery>(&pos).unwrap().cursor,
+                    self.tree
+                        .query::<UnicodeQuery>(&(pos + len))
+                        .unwrap()
+                        .cursor,
+                ),
+                PosType::Utf16 => (
+                    self.tree.query::<Utf16Query>(&pos).unwrap().cursor,
+                    self.tree.query::<Utf16Query>(&(pos + len)).unwrap().cursor,
+                ),
+                PosType::Entity => (
+                    self.tree.query::<EntityQuery>(&pos).unwrap().cursor,
+                    self.tree.query::<EntityQuery>(&(pos + len)).unwrap().cursor,
+                ),
+                PosType::Event => (
+                    self.tree.query::<EventIndexQuery>(&pos).unwrap().cursor,
+                    self.tree
+                        .query::<EventIndexQuery>(&(pos + len))
+                        .unwrap()
+                        .cursor,
+                ),
+            };
+
+            // TODO: assert end cursor is valid
+            let mut entity_index = self.get_entity_index_from_path(start);
+            for span in self.tree.iter_range(start..end) {
+                let start = span.start.unwrap_or(0);
+                let end = span.end.unwrap_or(span.elem.rle_len());
+                if end == 0 {
+                    break;
+                }
+
+                let len = end - start;
+                match span.elem {
+                    RichtextStateChunk::Text(s) => {
+                        let event_len = s.entity_range_to_event_range(start..end).len();
+                        let id = s.id().inc(start as i32);
+                        match ans.last_mut() {
+                            Some(last)
+                                if last.entity_end == entity_index
+                                    && last.id_start.inc(last.event_len as i32) == id =>
+                            {
+                                last.entity_end += len;
+                                last.event_len += event_len;
+                            }
+                            _ => {
+                                ans.push(EntityRangeInfo {
+                                    id_start: id,
+                                    entity_start: entity_index,
+                                    entity_end: entity_index + len,
+                                    event_len,
+                                });
+                            }
                         }
-                        _ => {
-                            ans.push(EntityRangeInfo {
-                                id_start: id,
-                                entity_start: entity_index,
-                                entity_end: entity_index + len,
-                                event_len,
-                            });
-                        }
+                        entity_index += len;
                     }
-                    entity_index += len;
-                }
-                RichtextStateChunk::Style { .. } => {
-                    entity_index += 1;
+                    RichtextStateChunk::Style { .. } => {
+                        entity_index += 1;
+                    }
                 }
             }
-        }
 
-        Ok(ans)
+            Ok(ans)
+        };
+        self.check_cache();
+        result
     }
 
     pub(crate) fn get_text_slice_by_event_index(
@@ -1848,47 +1882,54 @@ impl RichtextState {
         pos: usize,
         len: usize,
     ) -> LoroResult<String> {
-        if self.tree.is_empty() {
-            return Ok(String::new());
-        }
-
-        if len == 0 {
-            return Ok(String::new());
-        }
-
-        if pos + len > self.len_event() {
-            return Err(LoroError::OutOfBound {
-                pos: pos + len,
-                len: self.len_event(),
-                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-            });
-        }
-
-        let mut ans = String::new();
-        let (start, end) = (
-            self.tree.query::<EventIndexQuery>(&pos).unwrap().cursor,
-            self.tree
-                .query::<EventIndexQuery>(&(pos + len))
-                .unwrap()
-                .cursor,
-        );
-
-        for span in self.tree.iter_range(start..end) {
-            let start = span.start.unwrap_or(0);
-            let end = span.end.unwrap_or(span.elem.rle_len());
-            if end == 0 {
-                break;
+        self.check_cache();
+        let result = {
+            if self.tree.is_empty() {
+                return Ok(String::new());
             }
 
-            if let RichtextStateChunk::Text(s) = span.elem {
-                match unicode_slice(s.as_str(), start, end) {
-                    Ok(x) => ans.push_str(x),
-                    Err(()) => return Err(LoroError::UTF16InUnicodeCodePoint { pos: pos + len }),
+            if len == 0 {
+                return Ok(String::new());
+            }
+
+            if pos + len > self.len_event() {
+                return Err(LoroError::OutOfBound {
+                    pos: pos + len,
+                    len: self.len_event(),
+                    info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                });
+            }
+
+            let mut ans = String::new();
+            let (start, end) = (
+                self.tree.query::<EventIndexQuery>(&pos).unwrap().cursor,
+                self.tree
+                    .query::<EventIndexQuery>(&(pos + len))
+                    .unwrap()
+                    .cursor,
+            );
+
+            for span in self.tree.iter_range(start..end) {
+                let start = span.start.unwrap_or(0);
+                let end = span.end.unwrap_or(span.elem.rle_len());
+                if end == 0 {
+                    break;
+                }
+
+                if let RichtextStateChunk::Text(s) = span.elem {
+                    match unicode_slice(s.as_str(), start, end) {
+                        Ok(x) => ans.push_str(x),
+                        Err(()) => {
+                            return Err(LoroError::UTF16InUnicodeCodePoint { pos: pos + len })
+                        }
+                    }
                 }
             }
-        }
 
-        Ok(ans)
+            Ok(ans)
+        };
+        self.check_cache();
+        result
     }
 
     // PERF: can be splitted into two methods. One is without cursor_to_event_index
@@ -1901,152 +1942,160 @@ impl RichtextState {
         len: usize,
         mut f: Option<&mut dyn FnMut(RichtextStateChunk)>,
     ) -> DrainInfo {
-        assert!(
-            pos + len <= self.len_entity(),
-            "pos: {}, len: {}, self.len(): {}",
-            pos,
-            len,
-            &self.len_entity(),
-        );
+        let result = {
+            assert!(
+                pos + len <= self.len_entity(),
+                "pos: {}, len: {}, self.len(): {}",
+                pos,
+                len,
+                &self.len_entity(),
+            );
 
-        // PERF: may use cache to speed up
-        let range = pos..pos + len;
-        let (start, start_f) = self
-            .tree
-            .query_with_finder_return::<EntityIndexQueryWithEventIndex>(&range.start);
-        let start_cursor = start.unwrap().cursor();
-        let elem = self.tree.get_elem(start_cursor.leaf).unwrap();
+            self.clear_cache();
+            // PERF: may use cache to speed up
+            let range = pos..pos + len;
+            let (start, start_f) = self
+                .tree
+                .query_with_finder_return::<EntityIndexQueryWithEventIndex>(&range.start);
+            let start_cursor = start.unwrap().cursor();
+            let elem = self.tree.get_elem(start_cursor.leaf).unwrap();
 
-        /// This struct remove the corresponding style ranges if the start style anchor is removed
-        struct StyleRangeUpdater<'a> {
-            style_ranges: Option<&'a mut StyleRangeMap>,
-            current_index: usize,
-            start: usize,
-            end: usize,
-        }
+            /// This struct remove the corresponding style ranges if the start style anchor is removed
+            struct StyleRangeUpdater<'a> {
+                style_ranges: Option<&'a mut StyleRangeMap>,
+                current_index: usize,
+                start: usize,
+                end: usize,
+            }
 
-        impl<'a> StyleRangeUpdater<'a> {
-            fn update(&mut self, elem: &RichtextStateChunk) {
-                match &elem {
-                    RichtextStateChunk::Text(t) => {
-                        self.current_index += t.unicode_len() as usize;
-                    }
-                    RichtextStateChunk::Style { style, anchor_type } => {
-                        if matches!(anchor_type, AnchorType::End) {
-                            self.end = self.end.max(self.current_index);
-                            if let Some(s) = self.style_ranges.as_mut() {
-                                let start =
-                                    s.remove_style_scanning_backward(style, self.current_index);
-                                self.start = self.start.min(start);
-                            }
+            impl<'a> StyleRangeUpdater<'a> {
+                fn update(&mut self, elem: &RichtextStateChunk) {
+                    match &elem {
+                        RichtextStateChunk::Text(t) => {
+                            self.current_index += t.unicode_len() as usize;
                         }
+                        RichtextStateChunk::Style { style, anchor_type } => {
+                            if matches!(anchor_type, AnchorType::End) {
+                                self.end = self.end.max(self.current_index);
+                                if let Some(s) = self.style_ranges.as_mut() {
+                                    let start =
+                                        s.remove_style_scanning_backward(style, self.current_index);
+                                    self.start = self.start.min(start);
+                                }
+                            }
 
-                        self.current_index += 1;
+                            self.current_index += 1;
+                        }
                     }
                 }
-            }
 
-            fn new(style_ranges: Option<&'a mut Box<StyleRangeMap>>, start_index: usize) -> Self {
-                Self {
-                    style_ranges: style_ranges.map(|x| &mut **x),
-                    current_index: start_index,
-                    end: 0,
-                    start: usize::MAX,
+                fn new(
+                    style_ranges: Option<&'a mut Box<StyleRangeMap>>,
+                    start_index: usize,
+                ) -> Self {
+                    Self {
+                        style_ranges: style_ranges.map(|x| &mut **x),
+                        current_index: start_index,
+                        end: 0,
+                        start: usize::MAX,
+                    }
                 }
-            }
 
-            fn get_affected_range(&self, pos: usize) -> Option<Range<usize>> {
-                if self.start == usize::MAX {
-                    None
-                } else {
-                    let start = self.start.min(pos);
-                    let end = self.end.min(pos);
-                    if start == end {
+                fn get_affected_range(&self, pos: usize) -> Option<Range<usize>> {
+                    if self.start == usize::MAX {
                         None
                     } else {
-                        Some(start..end)
-                    }
-                }
-            }
-        }
-
-        if elem.rle_len() >= start_cursor.offset + len {
-            // drop in place
-            let mut event_len = 0;
-            let mut updater = StyleRangeUpdater::new(self.style_ranges.as_mut(), pos);
-            self.tree.update_leaf(start_cursor.leaf, |elem| {
-                updater.update(&*elem);
-                match elem {
-                    RichtextStateChunk::Text(text) => {
-                        if let Some(f) = f {
-                            let span = text.slice(start_cursor.offset..start_cursor.offset + len);
-                            f(RichtextStateChunk::Text(span));
-                        }
-                        let (next, event_len_) =
-                            text.delete_by_entity_index(start_cursor.offset, len);
-                        event_len = event_len_;
-                        (true, next.map(RichtextStateChunk::Text), None)
-                    }
-                    RichtextStateChunk::Style { .. } => {
-                        if let Some(f) = f {
-                            let v = std::mem::replace(
-                                elem,
-                                RichtextStateChunk::Text(TextChunk::new_empty()),
-                            );
-                            f(v);
+                        let start = self.start.min(pos);
+                        let end = self.end.min(pos);
+                        if start == end {
+                            None
                         } else {
-                            *elem = RichtextStateChunk::Text(TextChunk::new_empty());
+                            Some(start..end)
                         }
-                        (true, None, None)
                     }
                 }
-            });
-
-            let affected_range = updater.get_affected_range(pos);
-            if let Some(s) = self.style_ranges.as_mut() {
-                s.delete(pos..pos + len);
             }
 
-            DrainInfo {
-                start_event_index: start_f.event_index,
-                end_event_index: (start_f.event_index + event_len),
-                affected_style_range: affected_range.map(|entity_range| {
-                    (
-                        entity_range.clone(),
-                        self.entity_index_to_event_index(entity_range.start)
-                            ..self.entity_index_to_event_index(entity_range.end),
-                    )
-                }),
-            }
-        } else {
-            let (end, end_f) = self
-                .tree
-                .query_with_finder_return::<EntityIndexQueryWithEventIndex>(&range.end);
-            let mut updater = StyleRangeUpdater::new(self.style_ranges.as_mut(), pos);
-            for iter in generic_btree::iter::Drain::new(&mut self.tree, start, end) {
-                updater.update(&iter);
-                if let Some(f) = f.as_mut() {
-                    f(iter)
+            if elem.rle_len() >= start_cursor.offset + len {
+                // drop in place
+                let mut event_len = 0;
+                let mut updater = StyleRangeUpdater::new(self.style_ranges.as_mut(), pos);
+                self.tree.update_leaf(start_cursor.leaf, |elem| {
+                    updater.update(&*elem);
+                    match elem {
+                        RichtextStateChunk::Text(text) => {
+                            if let Some(f) = f {
+                                let span =
+                                    text.slice(start_cursor.offset..start_cursor.offset + len);
+                                f(RichtextStateChunk::Text(span));
+                            }
+                            let (next, event_len_) =
+                                text.delete_by_entity_index(start_cursor.offset, len);
+                            event_len = event_len_;
+                            (true, next.map(RichtextStateChunk::Text), None)
+                        }
+                        RichtextStateChunk::Style { .. } => {
+                            if let Some(f) = f {
+                                let v = std::mem::replace(
+                                    elem,
+                                    RichtextStateChunk::Text(TextChunk::new_empty()),
+                                );
+                                f(v);
+                            } else {
+                                *elem = RichtextStateChunk::Text(TextChunk::new_empty());
+                            }
+                            (true, None, None)
+                        }
+                    }
+                });
+
+                let affected_range = updater.get_affected_range(pos);
+                if let Some(s) = self.style_ranges.as_mut() {
+                    s.delete(pos..pos + len);
+                }
+
+                DrainInfo {
+                    start_event_index: start_f.event_index,
+                    end_event_index: (start_f.event_index + event_len),
+                    affected_style_range: affected_range.map(|entity_range| {
+                        (
+                            entity_range.clone(),
+                            self.entity_index_to_event_index(entity_range.start)
+                                ..self.entity_index_to_event_index(entity_range.end),
+                        )
+                    }),
+                }
+            } else {
+                let (end, end_f) = self
+                    .tree
+                    .query_with_finder_return::<EntityIndexQueryWithEventIndex>(&range.end);
+                let mut updater = StyleRangeUpdater::new(self.style_ranges.as_mut(), pos);
+                for iter in generic_btree::iter::Drain::new(&mut self.tree, start, end) {
+                    updater.update(&iter);
+                    if let Some(f) = f.as_mut() {
+                        f(iter)
+                    }
+                }
+
+                let affected_range = updater.get_affected_range(pos);
+                if let Some(s) = self.style_ranges.as_mut() {
+                    s.delete(pos..pos + len);
+                }
+
+                DrainInfo {
+                    start_event_index: start_f.event_index,
+                    end_event_index: end_f.event_index,
+                    affected_style_range: affected_range.map(|entity_range| {
+                        (
+                            entity_range.clone(),
+                            self.entity_index_to_event_index(entity_range.start)
+                                ..self.entity_index_to_event_index(entity_range.end),
+                        )
+                    }),
                 }
             }
-
-            let affected_range = updater.get_affected_range(pos);
-            if let Some(s) = self.style_ranges.as_mut() {
-                s.delete(pos..pos + len);
-            }
-
-            DrainInfo {
-                start_event_index: start_f.event_index,
-                end_event_index: end_f.event_index,
-                affected_style_range: affected_range.map(|entity_range| {
-                    (
-                        entity_range.clone(),
-                        self.entity_index_to_event_index(entity_range.start)
-                            ..self.entity_index_to_event_index(entity_range.end),
-                    )
-                }),
-            }
-        }
+        };
+        result
     }
 
     pub fn entity_index_to_event_index(&self, index: usize) -> usize {
@@ -2094,6 +2143,8 @@ impl RichtextState {
     }
 
     pub(crate) fn mark_with_entity_index(&mut self, range: Range<usize>, style: Arc<StyleOp>) {
+        self.check_cache();
+        self.clear_cache();
         if self.tree.is_empty() {
             panic!("Cannot mark an empty tree");
         }
@@ -2111,6 +2162,7 @@ impl RichtextState {
         // 2. We need to include the end anchor in the range, so we need to +1
         self.ensure_style_ranges_mut()
             .annotate(range.start..range.end + 2, style, None);
+        self.check_cache();
     }
 
     pub fn iter(&self) -> impl Iterator<Item = RichtextSpan> + '_ {
@@ -2160,38 +2212,43 @@ impl RichtextState {
     }
 
     pub fn get_richtext_value(&self) -> LoroValue {
-        let mut ans: Vec<LoroValue> = Vec::new();
-        let mut last_attributes: Option<LoroValue> = None;
-        for span in self.iter() {
-            let attributes: LoroValue = span.attributes.to_value();
-            if let Some(last) = last_attributes.as_ref() {
-                if &attributes == last {
-                    let hash_map = ans.last_mut().unwrap().as_map_mut().unwrap();
-                    let s = Arc::make_mut(hash_map)
-                        .get_mut("insert")
-                        .unwrap()
-                        .as_string_mut()
-                        .unwrap();
-                    Arc::make_mut(s).push_str(span.text.as_str());
-                    continue;
+        self.check_cache();
+        let result = {
+            let mut ans: Vec<LoroValue> = Vec::new();
+            let mut last_attributes: Option<LoroValue> = None;
+            for span in self.iter() {
+                let attributes: LoroValue = span.attributes.to_value();
+                if let Some(last) = last_attributes.as_ref() {
+                    if &attributes == last {
+                        let hash_map = ans.last_mut().unwrap().as_map_mut().unwrap();
+                        let s = Arc::make_mut(hash_map)
+                            .get_mut("insert")
+                            .unwrap()
+                            .as_string_mut()
+                            .unwrap();
+                        Arc::make_mut(s).push_str(span.text.as_str());
+                        continue;
+                    }
                 }
+
+                let mut value = FxHashMap::default();
+                value.insert(
+                    "insert".into(),
+                    LoroValue::String(Arc::new(span.text.as_str().into())),
+                );
+
+                if !attributes.as_map().unwrap().is_empty() {
+                    value.insert("attributes".into(), attributes.clone());
+                }
+
+                ans.push(LoroValue::Map(Arc::new(value)));
+                last_attributes = Some(attributes);
             }
 
-            let mut value = FxHashMap::default();
-            value.insert(
-                "insert".into(),
-                LoroValue::String(Arc::new(span.text.as_str().into())),
-            );
-
-            if !attributes.as_map().unwrap().is_empty() {
-                value.insert("attributes".into(), attributes.clone());
-            }
-
-            ans.push(LoroValue::Map(Arc::new(value)));
-            last_attributes = Some(attributes);
-        }
-
-        LoroValue::List(Arc::new(ans))
+            LoroValue::List(Arc::new(ans))
+        };
+        self.check_cache();
+        result
     }
 
     #[allow(unused)]
@@ -2232,7 +2289,6 @@ impl RichtextState {
     }
 
     pub fn diagnose(&self) {
-        CursorCache::diagnose();
         println!(
             "rope_nodes: {}, style_nodes: {}, text_len: {}",
             self.tree.node_len(),
@@ -2340,99 +2396,104 @@ impl RichtextState {
         &self,
         range: impl RangeBounds<usize>,
     ) -> impl Iterator<Item = IterRangeItem<'_>> + '_ {
-        let start = match range.start_bound() {
-            Bound::Included(x) => *x,
-            Bound::Excluded(x) => x + 1,
-            Bound::Unbounded => 0,
+        self.check_cache();
+        let result = {
+            let start = match range.start_bound() {
+                Bound::Included(x) => *x,
+                Bound::Excluded(x) => x + 1,
+                Bound::Unbounded => 0,
+            };
+            let end = match range.end_bound() {
+                Bound::Included(x) => x + 1,
+                Bound::Excluded(x) => *x,
+                Bound::Unbounded => self.len_entity(),
+            };
+            assert!(end > start);
+            assert!(end <= self.len_entity());
+
+            let mut style_iter = self
+                .style_ranges
+                .as_ref()
+                .map(|x| x.iter_range(range))
+                .into_iter()
+                .flatten();
+
+            let start = self.tree.query::<EntityQuery>(&start).unwrap();
+            let end = self.tree.query::<EntityQuery>(&end).unwrap();
+            let mut content_iter = self.tree.iter_range(start.cursor..end.cursor);
+            let mut style_left_len = usize::MAX;
+            let mut cur_style = style_iter
+                .next()
+                .map(|x| {
+                    style_left_len = x.elem.len - x.start.unwrap_or(0);
+                    &x.elem.styles
+                })
+                .unwrap_or(&*EMPTY_STYLES);
+            let mut chunk = content_iter.next();
+            let mut offset = 0;
+            let mut chunk_left_len = chunk
+                .as_ref()
+                .map(|x| {
+                    let len = x.elem.rle_len();
+                    offset = x.start.unwrap_or(0);
+                    x.end.map(|v| v.min(len)).unwrap_or(len) - offset
+                })
+                .unwrap_or(0);
+            std::iter::from_fn(move || {
+                if chunk_left_len == 0 {
+                    chunk = content_iter.next();
+                    chunk_left_len = chunk
+                        .as_ref()
+                        .map(|x| {
+                            let len = x.elem.rle_len();
+                            x.end.map(|v| v.min(len)).unwrap_or(len)
+                        })
+                        .unwrap_or(0);
+                    offset = 0;
+                }
+
+                let iter_chunk = chunk.as_ref()?;
+
+                let styles = cur_style;
+                let iter_len;
+                let event_range;
+                if chunk_left_len >= style_left_len {
+                    iter_len = style_left_len;
+                    event_range = iter_chunk
+                        .elem
+                        .entity_range_to_event_range(offset..offset + iter_len);
+                    chunk_left_len -= style_left_len;
+                    offset += style_left_len;
+                    style_left_len = 0;
+                } else {
+                    iter_len = chunk_left_len;
+                    event_range = iter_chunk
+                        .elem
+                        .entity_range_to_event_range(offset..offset + iter_len);
+                    style_left_len -= chunk_left_len;
+                    chunk_left_len = 0;
+                }
+
+                if style_left_len == 0 {
+                    cur_style = style_iter
+                        .next()
+                        .map(|x| {
+                            style_left_len = x.elem.len;
+                            &x.elem.styles
+                        })
+                        .unwrap_or(&*EMPTY_STYLES);
+                }
+
+                Some(IterRangeItem {
+                    chunk: iter_chunk.elem,
+                    styles,
+                    entity_len: iter_len,
+                    event_len: event_range.len(),
+                })
+            })
         };
-        let end = match range.end_bound() {
-            Bound::Included(x) => x + 1,
-            Bound::Excluded(x) => *x,
-            Bound::Unbounded => self.len_entity(),
-        };
-        assert!(end > start);
-        assert!(end <= self.len_entity());
-
-        let mut style_iter = self
-            .style_ranges
-            .as_ref()
-            .map(|x| x.iter_range(range))
-            .into_iter()
-            .flatten();
-
-        let start = self.tree.query::<EntityQuery>(&start).unwrap();
-        let end = self.tree.query::<EntityQuery>(&end).unwrap();
-        let mut content_iter = self.tree.iter_range(start.cursor..end.cursor);
-        let mut style_left_len = usize::MAX;
-        let mut cur_style = style_iter
-            .next()
-            .map(|x| {
-                style_left_len = x.elem.len - x.start.unwrap_or(0);
-                &x.elem.styles
-            })
-            .unwrap_or(&*EMPTY_STYLES);
-        let mut chunk = content_iter.next();
-        let mut offset = 0;
-        let mut chunk_left_len = chunk
-            .as_ref()
-            .map(|x| {
-                let len = x.elem.rle_len();
-                offset = x.start.unwrap_or(0);
-                x.end.map(|v| v.min(len)).unwrap_or(len) - offset
-            })
-            .unwrap_or(0);
-        std::iter::from_fn(move || {
-            if chunk_left_len == 0 {
-                chunk = content_iter.next();
-                chunk_left_len = chunk
-                    .as_ref()
-                    .map(|x| {
-                        let len = x.elem.rle_len();
-                        x.end.map(|v| v.min(len)).unwrap_or(len)
-                    })
-                    .unwrap_or(0);
-                offset = 0;
-            }
-
-            let iter_chunk = chunk.as_ref()?;
-
-            let styles = cur_style;
-            let iter_len;
-            let event_range;
-            if chunk_left_len >= style_left_len {
-                iter_len = style_left_len;
-                event_range = iter_chunk
-                    .elem
-                    .entity_range_to_event_range(offset..offset + iter_len);
-                chunk_left_len -= style_left_len;
-                offset += style_left_len;
-                style_left_len = 0;
-            } else {
-                iter_len = chunk_left_len;
-                event_range = iter_chunk
-                    .elem
-                    .entity_range_to_event_range(offset..offset + iter_len);
-                style_left_len -= chunk_left_len;
-                chunk_left_len = 0;
-            }
-
-            if style_left_len == 0 {
-                cur_style = style_iter
-                    .next()
-                    .map(|x| {
-                        style_left_len = x.elem.len;
-                        &x.elem.styles
-                    })
-                    .unwrap_or(&*EMPTY_STYLES);
-            }
-
-            Some(IterRangeItem {
-                chunk: iter_chunk.elem,
-                styles,
-                entity_len: iter_len,
-                event_len: event_range.len(),
-            })
-        })
+        self.check_cache();
+        result
     }
 
     pub(crate) fn get_stable_position_at_event_index(
@@ -2440,51 +2501,127 @@ impl RichtextState {
         pos: usize,
         kind: PosType,
     ) -> Option<ID> {
-        let v = &self.get_text_entity_ranges(pos, 1, kind).unwrap();
-        let a = v.first()?;
-        Some(a.id_start)
+        self.check_cache();
+        let result = {
+            let v = &self.get_text_entity_ranges(pos, 1, kind).unwrap();
+            let a = v.first()?;
+            Some(a.id_start)
+        };
+        self.check_cache();
+        result
     }
 
     pub(crate) fn len_event(&self) -> usize {
-        if cfg!(feature = "wasm") {
-            self.len_utf16()
-        } else {
-            self.len_unicode()
-        }
+        self.check_cache();
+        let result = {
+            if cfg!(feature = "wasm") {
+                self.len_utf16()
+            } else {
+                self.len_unicode()
+            }
+        };
+        self.check_cache();
+        result
     }
 
     fn len(&self, pos_type: PosType) -> usize {
-        match pos_type {
-            PosType::Unicode => self.len_unicode(),
-            PosType::Utf16 => self.len_utf16(),
-            PosType::Entity => self.len_entity(),
-            PosType::Event => self.len_event(),
-            PosType::Bytes => self.len_utf8(),
-        }
+        self.check_cache();
+        let result = {
+            match pos_type {
+                PosType::Unicode => self.len_unicode(),
+                PosType::Utf16 => self.len_utf16(),
+                PosType::Entity => self.len_entity(),
+                PosType::Event => self.len_event(),
+                PosType::Bytes => self.len_utf8(),
+            }
+        };
+        self.check_cache();
+        result
     }
+}
 
-    pub(crate) fn get_event_index_by_cursor(&self, cursor: Cursor) -> usize {
-        let mut event_index = 0;
-        self.tree
-            .visit_previous_caches(cursor, |cache| match cache {
-                generic_btree::PreviousCache::NodeCache(cache) => {
-                    event_index += EventIndexQueryT::get_cache_len(cache);
+fn entity_offset_to_pos_type_offset(
+    pos_type: PosType,
+    elem: &RichtextStateChunk,
+    offset: usize,
+) -> usize {
+    match pos_type {
+        PosType::Bytes => match elem {
+            RichtextStateChunk::Text(t) => unicode_to_utf8_index(t.as_str(), offset).unwrap(),
+            RichtextStateChunk::Style { .. } => 0,
+        },
+        PosType::Unicode => offset,
+        PosType::Utf16 => match elem {
+            RichtextStateChunk::Text(t) => unicode_to_utf16_index(t.as_str(), offset).unwrap(),
+            RichtextStateChunk::Style { .. } => 0,
+        },
+        PosType::Entity => offset,
+        PosType::Event => match elem {
+            RichtextStateChunk::Text(t) => {
+                if cfg!(feature = "wasm") {
+                    unicode_to_utf16_index(t.as_str(), offset).unwrap()
+                } else {
+                    offset
                 }
-                generic_btree::PreviousCache::PrevSiblingElem(elem) => {
-                    event_index += EventIndexQueryT::get_elem_len(elem);
+            }
+            RichtextStateChunk::Style { .. } => 0,
+        },
+    }
+}
+
+#[tracing::instrument(level = "trace")]
+fn pos_type_offset_to_entity_offset(
+    pos_type: PosType,
+    elem: &RichtextStateChunk,
+    offset: usize,
+) -> Option<usize> {
+    match pos_type {
+        PosType::Bytes => match elem {
+            RichtextStateChunk::Text(t) => utf8_to_unicode_index(t.as_str(), offset).ok(),
+            RichtextStateChunk::Style { .. } => {
+                if offset > 0 {
+                    None
+                } else {
+                    Some(0)
                 }
-                generic_btree::PreviousCache::ThisElemAndOffset { elem, offset } => match elem {
-                    RichtextStateChunk::Text(t) => {
-                        if cfg!(feature = "wasm") {
-                            event_index += unicode_to_utf16_index(t.as_str(), offset).unwrap();
-                        } else {
-                            event_index += offset;
-                        }
-                    }
-                    RichtextStateChunk::Style { .. } => {}
-                },
-            });
-        event_index
+            }
+        },
+        PosType::Unicode => Some(offset),
+        PosType::Utf16 => match elem {
+            RichtextStateChunk::Text(t) => utf16_to_unicode_index(t.as_str(), offset).ok(),
+            RichtextStateChunk::Style { .. } => {
+                if offset > 0 {
+                    None
+                } else {
+                    Some(0)
+                }
+            }
+        },
+        PosType::Entity => {
+            if offset > elem.rle_len() {
+                None
+            } else {
+                Some(offset)
+            }
+        }
+        PosType::Event => match elem {
+            RichtextStateChunk::Text(t) => {
+                if cfg!(feature = "wasm") {
+                    utf16_to_unicode_index(t.as_str(), offset).ok()
+                } else if offset < t.unicode_len() as usize {
+                    Some(offset)
+                } else {
+                    None
+                }
+            }
+            RichtextStateChunk::Style { .. } => {
+                if offset > 0 {
+                    None
+                } else {
+                    Some(0)
+                }
+            }
+        },
     }
 }
 
@@ -2531,36 +2668,42 @@ mod converter {
         }
 
         pub fn convert_entity_index_to_event_index(&mut self, entity_index: usize) -> usize {
-            if let Some(last) = self.last_entity_index_cache.as_ref() {
-                if last.entity_index == entity_index {
-                    return last.event_index;
+            self.state.check_cache();
+            let result = {
+                if let Some(last) = self.last_entity_index_cache.as_ref() {
+                    if last.entity_index == entity_index {
+                        return last.event_index;
+                    }
+
+                    assert!(entity_index > last.entity_index);
+                    if last.cursor.offset + entity_index - last.entity_index < last.cursor_elem_len
+                    {
+                        // in the same cursor
+                        return self.state.cursor_to_event_index(Cursor {
+                            leaf: last.cursor.leaf,
+                            offset: last.cursor.offset + entity_index - last.entity_index,
+                        });
+                    }
                 }
 
-                assert!(entity_index > last.entity_index);
-                if last.cursor.offset + entity_index - last.entity_index < last.cursor_elem_len {
-                    // in the same cursor
-                    return self.state.cursor_to_event_index(Cursor {
-                        leaf: last.cursor.leaf,
-                        offset: last.cursor.offset + entity_index - last.entity_index,
-                    });
-                }
-            }
-
-            let cursor = self
-                .state
-                .tree
-                .query::<EntityQuery>(&entity_index)
-                .unwrap()
-                .cursor;
-            let ans = self.state.cursor_to_event_index(cursor);
-            let len = self.state.tree.get_elem(cursor.leaf).unwrap().rle_len();
-            self.last_entity_index_cache = Some(ConverterCache {
-                entity_index,
-                cursor,
-                event_index: ans,
-                cursor_elem_len: len,
-            });
-            ans
+                let cursor = self
+                    .state
+                    .tree
+                    .query::<EntityQuery>(&entity_index)
+                    .unwrap()
+                    .cursor;
+                let ans = self.state.cursor_to_event_index(cursor);
+                let len = self.state.tree.get_elem(cursor.leaf).unwrap().rle_len();
+                self.last_entity_index_cache = Some(ConverterCache {
+                    entity_index,
+                    cursor,
+                    event_index: ans,
+                    cursor_elem_len: len,
+                });
+                ans
+            };
+            self.state.check_cache();
+            result
         }
     }
 }

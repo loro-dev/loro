@@ -1,20 +1,39 @@
-use std::sync::Arc;
-
 use enum_as_inner::EnumAsInner;
 use fractional_index::FractionalIndex;
 use fxhash::FxHashMap;
 use loro_common::{
-    ContainerID, ContainerType, Counter, InternalString, LoroError, LoroResult, LoroValue, TreeID,
-    ID,
+    ContainerID, ContainerType, Counter, InternalString, LoroError, LoroResult, LoroValue, PeerID,
+    TreeID, ID,
 };
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 use crate::{
     change::Lamport, container::tree::tree_op::TreeOp,
-    encoding::encode_reordered::MAX_COLLECTION_SIZE,
+    encoding::outdated_encode_reordered::MAX_COLLECTION_SIZE,
 };
 
-use super::arena::{DecodedArenas, EncodedRegisters, EncodedTreeID};
+use super::{
+    arena::{EncodedRegisters, EncodedTreeID},
+    value_register::ValueRegister,
+};
+
+pub trait ValueDecodedArenasTrait {
+    fn keys(&self) -> &[InternalString];
+    fn peers(&self) -> &[PeerID];
+    fn decode_tree_op(
+        &self,
+        positions: &[Vec<u8>],
+        op: super::value::EncodedTreeMove,
+        id: ID,
+    ) -> LoroResult<crate::container::tree::tree_op::TreeOp>;
+}
+
+pub trait ValueEncodeRegister {
+    fn key_mut(&mut self) -> &mut ValueRegister<InternalString>;
+    fn peer_mut(&mut self) -> &mut ValueRegister<PeerID>;
+    fn encode_tree_op(&mut self, op: &TreeOp) -> Value<'static>;
+}
 
 #[derive(Debug)]
 pub enum ValueKind {
@@ -35,6 +54,8 @@ pub enum ValueKind {
     ListMove,      // 14
     ListSet,       // 15
     Future(FutureValueKind),
+    // 16 Counter
+    RawTreeMove, // 17
 }
 
 #[derive(Debug)]
@@ -89,7 +110,7 @@ pub enum FutureValueKind {
 }
 
 impl ValueKind {
-    pub(super) fn to_u8(&self) -> u8 {
+    pub(crate) fn to_u8(&self) -> u8 {
         match self {
             ValueKind::Null => 0,
             ValueKind::True => 1,
@@ -110,10 +131,11 @@ impl ValueKind {
             ValueKind::Future(future_value_kind) => match future_value_kind {
                 FutureValueKind::Unknown(u8) => *u8 | 0x80,
             },
+            ValueKind::RawTreeMove => 16,
         }
     }
 
-    pub(super) fn from_u8(mut kind: u8) -> Self {
+    pub(crate) fn from_u8(mut kind: u8) -> Self {
         kind &= 0x7F;
         match kind {
             0 => ValueKind::Null,
@@ -132,6 +154,7 @@ impl ValueKind {
             13 => ValueKind::TreeMove,
             14 => ValueKind::ListMove,
             15 => ValueKind::ListSet,
+            16 => ValueKind::RawTreeMove,
             _ => ValueKind::Future(FutureValueKind::Unknown(kind)),
         }
     }
@@ -154,6 +177,7 @@ pub enum Value<'a> {
     LoroValue(LoroValue),
     MarkStart(MarkStart),
     TreeMove(EncodedTreeMove),
+    RawTreeMove(RawTreeMove),
     ListMove {
         from: usize,
         from_idx: usize,
@@ -190,6 +214,7 @@ pub enum OwnedValue {
     LoroValue(LoroValue),
     MarkStart(MarkStart),
     TreeMove(EncodedTreeMove),
+    RawTreeMove(RawTreeMove),
     ListMove {
         from: usize,
         from_idx: usize,
@@ -252,6 +277,7 @@ impl<'a> Value<'a> {
                     data: data.as_slice(),
                 }),
             },
+            OwnedValue::RawTreeMove(t) => Value::RawTreeMove(t.clone()),
         }
     }
 
@@ -297,6 +323,7 @@ impl<'a> Value<'a> {
                     })
                 }
             },
+            Value::RawTreeMove(t) => OwnedValue::RawTreeMove(t),
         }
     }
 
@@ -313,10 +340,10 @@ impl<'a> Value<'a> {
         Ok(value)
     }
 
-    pub(super) fn decode<'r: 'a>(
+    pub(crate) fn decode<'r: 'a>(
         kind: ValueKind,
         value_reader: &'r mut ValueReader,
-        arenas: &'a DecodedArenas<'a>,
+        arenas: &'a dyn ValueDecodedArenasTrait,
         id: ID,
     ) -> LoroResult<Self> {
         Ok(match kind {
@@ -332,12 +359,11 @@ impl<'a> Value<'a> {
             ValueKind::DeleteSeq => Value::DeleteSeq,
             ValueKind::DeltaInt => Value::DeltaInt(value_reader.read_i32()?),
             ValueKind::LoroValue => {
-                Value::LoroValue(value_reader.read_value_type_and_content(&arenas.keys, id)?)
+                Value::LoroValue(value_reader.read_value_type_and_content(arenas.keys(), id)?)
             }
-            ValueKind::MarkStart => {
-                Value::MarkStart(value_reader.read_mark(&arenas.keys.keys, id)?)
-            }
+            ValueKind::MarkStart => Value::MarkStart(value_reader.read_mark(arenas.keys(), id)?),
             ValueKind::TreeMove => Value::TreeMove(value_reader.read_tree_move()?),
+            ValueKind::RawTreeMove => Value::RawTreeMove(value_reader.read_raw_tree_move()?),
             ValueKind::ListMove => {
                 let from = value_reader.read_usize()?;
                 let from_idx = value_reader.read_usize()?;
@@ -351,7 +377,7 @@ impl<'a> Value<'a> {
             ValueKind::ListSet => {
                 let peer_idx = value_reader.read_usize()?;
                 let lamport = value_reader.read_usize()? as u32;
-                let value = value_reader.read_value_type_and_content(&arenas.keys.keys, id)?;
+                let value = value_reader.read_value_type_and_content(arenas.keys(), id)?;
                 Value::ListSet {
                     peer_idx,
                     lamport,
@@ -383,7 +409,7 @@ impl<'a> Value<'a> {
     pub(super) fn encode(
         self,
         value_writer: &mut ValueWriter,
-        registers: &mut EncodedRegisters,
+        registers: &mut dyn ValueEncodeRegister,
     ) -> (ValueKind, usize) {
         match self {
             Value::Null => (ValueKind::Null, 0),
@@ -427,6 +453,7 @@ impl<'a> Value<'a> {
                 let (k, i) = Self::encode_without_registers(value, value_writer);
                 (ValueKind::Future(k), i)
             }
+            Value::RawTreeMove(x) => (ValueKind::RawTreeMove, value_writer.write_raw_tree_move(x)),
         }
     }
 }
@@ -437,6 +464,16 @@ pub struct MarkStart {
     pub key: InternalString,
     pub value: LoroValue,
     pub info: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RawTreeMove {
+    pub subject_peer_idx: usize,
+    pub subject_cnt: Counter,
+    pub is_parent_null: bool,
+    pub parent_peer_idx: usize,
+    pub parent_cnt: Counter,
+    pub position_idx: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -861,6 +898,17 @@ impl<'a> ValueReader<'a> {
         Ok(ans)
     }
 
+    #[allow(unused)]
+    fn read_binary_vec(&mut self) -> LoroResult<Vec<u8>> {
+        let len = self.read_usize()?;
+        if self.raw.len() < len {
+            return Err(LoroError::DecodeDataCorruptionError);
+        }
+        let ans = &self.raw[..len];
+        self.raw = &self.raw[len..];
+        Ok(ans.to_vec())
+    }
+
     fn read_u8(&mut self) -> LoroResult<u8> {
         if self.raw.is_empty() {
             return Err(LoroError::DecodeDataCorruptionError);
@@ -917,6 +965,28 @@ impl<'a> ValueReader<'a> {
             position,
         })
     }
+
+    fn read_raw_tree_move(&mut self) -> LoroResult<RawTreeMove> {
+        let subject_peer_idx = self.read_usize()?;
+        let subject_cnt = self.read_usize()?;
+        let position_idx = self.read_usize()?;
+        let is_parent_null = self.read_u8()? != 0;
+        let mut parent_peer_idx = 0;
+        let mut parent_cnt = 0;
+        if !is_parent_null {
+            parent_peer_idx = self.read_usize()?;
+            parent_cnt = self.read_usize()?;
+        }
+
+        Ok(RawTreeMove {
+            subject_peer_idx,
+            subject_cnt: subject_cnt as i32,
+            position_idx,
+            is_parent_null,
+            parent_peer_idx,
+            parent_cnt: parent_cnt as i32,
+        })
+    }
 }
 
 impl ValueWriter {
@@ -927,7 +997,7 @@ impl ValueWriter {
     pub fn write_value_type_and_content(
         &mut self,
         value: &LoroValue,
-        registers: &mut EncodedRegisters,
+        registers: &mut dyn ValueEncodeRegister,
     ) -> usize {
         let len = self.write_u8(get_loro_value_kind(value).to_u8());
         let (_, l) = self.write_value_content(value, registers);
@@ -937,7 +1007,7 @@ impl ValueWriter {
     pub fn write_value_content(
         &mut self,
         value: &LoroValue,
-        registers: &mut EncodedRegisters,
+        registers: &mut dyn ValueEncodeRegister,
     ) -> (LoroValueKind, usize) {
         match value {
             LoroValue::Null => (LoroValueKind::Null, 0),
@@ -957,7 +1027,7 @@ impl ValueWriter {
             LoroValue::Map(value) => {
                 let mut len = self.write_usize(value.len());
                 for (key, value) in value.iter() {
-                    let key_idx = registers.key.register(&key.as_str().into());
+                    let key_idx = registers.key_mut().register(&key.as_str().into());
                     len += self.write_usize(key_idx);
                     let l = self.write_value_type_and_content(value, registers);
                     len += l;
@@ -1023,8 +1093,8 @@ impl ValueWriter {
         self.buffer.len() - len
     }
 
-    fn write_mark(&mut self, mark: MarkStart, registers: &mut EncodedRegisters) -> usize {
-        let key_idx = registers.key.register(&mark.key);
+    fn write_mark(&mut self, mark: MarkStart, registers: &mut dyn ValueEncodeRegister) -> usize {
+        let key_idx = registers.key_mut().register(&mark.key);
         let len = self.buffer.len();
         self.write_u8(mark.info);
         self.write_usize(mark.len as usize);
@@ -1047,6 +1117,20 @@ impl ValueWriter {
 
     pub(crate) fn finish(self) -> Vec<u8> {
         self.buffer
+    }
+
+    fn write_raw_tree_move(&mut self, op: RawTreeMove) -> usize {
+        let len = self.buffer.len();
+        self.write_usize(op.subject_peer_idx);
+        self.write_usize(op.subject_cnt as usize);
+        self.write_usize(op.position_idx);
+        self.write_u8(op.is_parent_null as u8);
+        if op.is_parent_null {
+            return self.buffer.len() - len;
+        }
+        self.write_usize(op.parent_peer_idx);
+        self.write_usize(op.parent_cnt as usize);
+        self.buffer.len() - len
     }
 }
 

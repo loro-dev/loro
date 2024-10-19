@@ -1,5 +1,7 @@
+use std::sync::Arc;
+
 use enum_as_inner::EnumAsInner;
-use loro_common::{ContainerID, LoroValue};
+use loro_common::{ContainerID, ContainerType, LoroValue};
 use rle::{HasLength, Mergable, Sliceable};
 #[cfg(feature = "wasm")]
 use serde::{Deserialize, Serialize};
@@ -18,7 +20,7 @@ use crate::{
 pub enum InnerContent {
     List(InnerListOp),
     Map(MapSet),
-    Tree(TreeOp),
+    Tree(Arc<TreeOp>),
     // The future content should not use any encoded arena context.
     Future(FutureInnerContent),
 }
@@ -64,14 +66,34 @@ impl InnerContent {
     }
 }
 
+impl InnerContent {
+    pub fn estimate_storage_size(&self, kind: ContainerType) -> usize {
+        match self {
+            InnerContent::List(l) => l.estimate_storage_size(kind),
+            InnerContent::Map(_) => 3,
+            InnerContent::Tree(_) => 8,
+            InnerContent::Future(f) => f.estimate_storage_size(),
+        }
+    }
+}
+
 #[derive(EnumAsInner, Debug, Clone)]
 pub enum FutureInnerContent {
     #[cfg(feature = "counter")]
     Counter(f64),
     Unknown {
         prop: i32,
-        value: OwnedValue,
+        value: Box<OwnedValue>,
     },
+}
+impl FutureInnerContent {
+    fn estimate_storage_size(&self) -> usize {
+        match self {
+            #[cfg(feature = "counter")]
+            FutureInnerContent::Counter(_) => 4,
+            FutureInnerContent::Unknown { .. } => 6,
+        }
+    }
 }
 
 // Note: It will be encoded into binary format, so the order of its fields should not be changed.
@@ -80,7 +102,7 @@ pub enum FutureInnerContent {
 pub enum RawOpContent<'a> {
     Map(MapSet),
     List(ListOp<'a>),
-    Tree(TreeOp),
+    Tree(Arc<TreeOp>),
     #[cfg(feature = "counter")]
     Counter(f64),
     Unknown {
@@ -207,10 +229,19 @@ impl HasLength for InnerContent {
 impl Sliceable for InnerContent {
     fn slice(&self, from: usize, to: usize) -> Self {
         match self {
-            a @ InnerContent::Map(_) => a.clone(),
-            a @ InnerContent::Tree(_) => a.clone(),
+            a @ InnerContent::Map(_) => {
+                assert!(from == 0 && to == 1);
+                a.clone()
+            }
+            a @ InnerContent::Tree(_) => {
+                assert!(from == 0 && to == 1);
+                a.clone()
+            }
             InnerContent::List(x) => InnerContent::List(x.slice(from, to)),
-            InnerContent::Future(f) => InnerContent::Future(f.clone()),
+            InnerContent::Future(f) => {
+                assert!(from == 0 && to == 1);
+                InnerContent::Future(f.clone())
+            }
         }
     }
 }

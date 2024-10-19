@@ -1,16 +1,17 @@
 use std::sync::Arc;
 
-use js_sys::{Array, Object, Reflect, Uint8Array};
+use js_sys::{Array, Map, Object, Reflect, Uint8Array};
 use loro_internal::delta::ResolvedMapDelta;
-use loro_internal::encoding::ImportBlobMetadata;
+use loro_internal::encoding::{ImportBlobMetadata, ImportStatus};
 use loro_internal::event::Diff;
 use loro_internal::handler::{Handler, ValueOrHandler};
-use loro_internal::{ListDiffItem, LoroDoc, LoroValue};
+use loro_internal::version::VersionRange;
+use loro_internal::{CounterSpan, ListDiffItem, LoroDoc, LoroValue};
 use wasm_bindgen::JsValue;
 
 use crate::{
     frontiers_to_ids, Container, Cursor, JsContainer, JsImportBlobMetadata, LoroCounter, LoroList,
-    LoroMap, LoroMovableList, LoroText, LoroTree,
+    LoroMap, LoroMovableList, LoroText, LoroTree, VersionVector,
 };
 use wasm_bindgen::__rt::IntoJsResult;
 use wasm_bindgen::convert::RefFromWasmAbi;
@@ -76,6 +77,36 @@ pub(crate) fn js_to_container(js: JsContainer) -> Result<Container, JsValue> {
     };
 
     Ok(container)
+}
+
+pub(crate) fn js_to_version_vector(
+    js: JsValue,
+) -> Result<wasm_bindgen::__rt::Ref<'static, VersionVector>, JsValue> {
+    if !js.is_object() {
+        return Err(JsValue::from_str(&format!(
+            "Value supplied is not an object, but {:?}",
+            js
+        )));
+    }
+
+    if js.is_null() || js.is_undefined() {
+        return Err(JsValue::from_str(&format!(
+            "Value supplied is not an object, but {:?}",
+            js
+        )));
+    }
+
+    if !js.is_object() {
+        return Err(JsValue::from_str("Expected an object or Uint8Array"));
+    }
+
+    let Ok(ptr) = Reflect::get(&js, &JsValue::from_str("__wbg_ptr")) else {
+        return Err(JsValue::from_str("Cannot find pointer field"));
+    };
+
+    let ptr_u32: u32 = ptr.as_f64().unwrap() as u32;
+    let vv = unsafe { VersionVector::ref_from_abi(ptr_u32) };
+    Ok(vv)
 }
 
 pub(crate) fn resolved_diff_to_js(value: &Diff, doc: &Arc<LoroDoc>) -> JsValue {
@@ -344,4 +375,39 @@ pub(crate) fn handler_to_js_value(handler: Handler, doc: Option<Arc<LoroDoc>>) -
         Handler::Counter(c) => LoroCounter { handler: c, doc }.into(),
         Handler::Unknown(_) => unreachable!(),
     }
+}
+
+pub(crate) fn import_status_to_js_value(status: ImportStatus) -> JsValue {
+    let obj = Object::new();
+    js_sys::Reflect::set(
+        &obj,
+        &JsValue::from_str("success"),
+        &id_span_vector_to_js_value(status.success),
+    )
+    .unwrap();
+    js_sys::Reflect::set(
+        &obj,
+        &JsValue::from_str("pending"),
+        &match status.pending {
+            None => JsValue::null(),
+            Some(pending) => id_span_vector_to_js_value(pending),
+        },
+    )
+    .unwrap();
+    obj.into()
+}
+
+fn id_span_vector_to_js_value(v: VersionRange) -> JsValue {
+    let map = Map::new();
+    for (k, v) in v.iter() {
+        Map::set(
+            &map,
+            &JsValue::from_str(&k.to_string()),
+            &JsValue::from(CounterSpan {
+                start: v.0,
+                end: v.1,
+            }),
+        );
+    }
+    map.into()
 }

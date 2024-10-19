@@ -54,7 +54,7 @@ impl Tracker {
             origin_left: None,
             origin_right: None,
         });
-        this.id_to_cursor.insert(
+        this.id_to_cursor.insert_without_split(
             ID::new(UNKNOWN_PEER_ID, 0),
             id_to_cursor::Cursor::new_insert(result.leaf, u32::MAX as usize / 4),
         );
@@ -82,6 +82,12 @@ impl Tracker {
     }
 
     pub(crate) fn insert(&mut self, mut op_id: IdFull, mut pos: usize, mut content: RichtextChunk) {
+        // trace!(
+        //     "TrackerInsert op_id = {:#?}, pos = {:#?}, content = {:#?}",
+        //     op_id,
+        //     &pos,
+        //     &content
+        // );
         // tracing::span!(tracing::Level::INFO, "TrackerInsert");
         if let ControlFlow::Break(_) =
             self.skip_applied(op_id.id(), content.len(), |applied_counter_end| {
@@ -147,10 +153,16 @@ impl Tracker {
     /// If `reverse` is true, the deletion happens from the end of the range to the start.
     /// So the first op is the one that deletes element at `pos+len-1`, the last op
     /// is the one that deletes element at `pos`.
+    ///
+    /// - op_id: the first op that perform the deletion
+    /// - target_start_id: in the target deleted span, it's the first id of the span
+    /// - pos: the start pos of the deletion in the target span
+    /// - len: the length of the deletion span
+    /// - reverse: if true, the kth op delete the last kth element of the span
     pub(crate) fn delete(
         &mut self,
         mut op_id: ID,
-        target_start_id: ID,
+        mut target_start_id: ID,
         pos: usize,
         mut len: usize,
         reverse: bool,
@@ -159,6 +171,13 @@ impl Tracker {
             // the op is partially included, need to slice the op
             let start = (applied_counter_end - op_id.counter) as usize;
             op_id.counter = applied_counter_end;
+            if !reverse {
+                target_start_id = target_start_id.inc(start as i32);
+            }
+            // Okay, this looks pretty weird, but it's correct.
+            // If it's reverse, we don't need to change the target_start_id, because target_start_id always pointing towards the
+            // leftmost element of the span. After applying the initial part of the deletion, which starts from the right side,
+            // the target_start_id will be still pointing towards the same leftmost element, thus no need to change.
             len -= start;
             // If reverse, don't need to change the pos, because it's deleting backwards.
             // If not reverse, we don't need to change the pos either, because the `start` chars after it are already deleted
@@ -589,6 +608,7 @@ impl Tracker {
         None
     }
 
+    // #[tracing::instrument(skip(self), level = "info")]
     pub(crate) fn diff(
         &mut self,
         from: &VersionVector,
@@ -598,6 +618,7 @@ impl Tracker {
         self._checkout(from, false);
         self._checkout(to, true);
         // self.id_to_cursor.diagnose();
+        // tracing::trace!("Trace::diff {:#?}, ", &self);
 
         self.rope.get_diff()
     }

@@ -433,6 +433,31 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
             .insert_many_by_cursor(Some(pos.cursor), values.into_iter());
     }
 
+    pub fn insert_value(&mut self, pos: usize, value: V, attr: Attr) {
+        if self.len() < pos {
+            self.push_retain(pos - self.len(), Default::default());
+        }
+
+        if pos == self.len() {
+            self.tree.push(DeltaItem::Replace {
+                value,
+                attr,
+                delete: 0,
+            });
+            return;
+        }
+
+        let pos = self.tree.query::<LengthFinder>(&pos).unwrap();
+        self.tree.insert_by_path(
+            pos.cursor,
+            DeltaItem::Replace {
+                value,
+                attr,
+                delete: 0,
+            },
+        );
+    }
+
     fn update_attr_in_range(&mut self, range: Range<usize>, attr: &Attr) {
         if range.start == range.end || self.is_empty() {
             return;

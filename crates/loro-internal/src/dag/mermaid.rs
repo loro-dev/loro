@@ -30,7 +30,7 @@ fn to_str(output: Output) -> String {
     indent_level += 1;
     new_line!();
     for (client_id, spans) in output.clients.iter() {
-        s += format!("subgraph client{}", client_id).as_str();
+        s += format!("subgraph peer{}", client_id).as_str();
         new_line!();
         let mut is_first = true;
         for id_span in spans.iter().rev() {
@@ -45,7 +45,7 @@ fn to_str(output: Output) -> String {
                 id_span.counter.start,
                 id_span.peer,
                 id_span.counter.start,
-                id_span.counter.end
+                id_span.counter.end,
             )
             .as_str();
         }
@@ -123,7 +123,7 @@ fn get_dag_break_points<T: DagNode>(dag: &impl Dag<Node = T>) -> BreakPoints {
         let set = break_points.break_points.entry(id.peer).or_default();
         set.insert(id.counter);
         set.insert(id.counter + node.content_len() as Counter);
-        for dep in node.deps() {
+        for dep in node.deps().iter() {
             if dep.peer == id.peer {
                 continue;
             }
@@ -133,7 +133,7 @@ fn get_dag_break_points<T: DagNode>(dag: &impl Dag<Node = T>) -> BreakPoints {
                 .entry(dep.peer)
                 .or_default()
                 .insert(dep.counter);
-            break_points.links.entry(id).or_default().push(*dep);
+            break_points.links.entry(id).or_default().push(dep);
         }
     }
 

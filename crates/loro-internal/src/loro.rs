@@ -1,6 +1,16 @@
+use either::Either;
+use fxhash::{FxHashMap, FxHashSet};
+use itertools::Itertools;
+use loro_common::{
+    ContainerID, ContainerType, HasIdSpan, HasLamportSpan, IdSpan, LoroEncodeError, LoroResult,
+    LoroValue, ID,
+};
+use rle::HasLength;
 use std::{
     borrow::Cow,
     cmp::Ordering,
+    collections::BinaryHeap,
+    ops::ControlFlow,
     sync::{
         atomic::{
             AtomicBool,
@@ -9,77 +19,43 @@ use std::{
         Arc, Mutex, Weak,
     },
 };
-
-use either::Either;
-use fxhash::FxHashMap;
-use itertools::Itertools;
-use loro_common::{ContainerID, ContainerType, HasIdSpan, IdSpan, LoroResult, LoroValue, ID};
-use rle::HasLength;
-use tracing::{info_span, instrument};
+use tracing::{debug_span, info, info_span, instrument, trace, warn};
 
 use crate::{
     arena::SharedArena,
     change::Timestamp,
-    configure::Configure,
+    configure::{Configure, DefaultRandom, SecureRandomGenerator},
     container::{
         idx::ContainerIdx, list::list_op::InnerListOp, richtext::config::StyleConfigMap,
         IntoContainerId,
     },
     cursor::{AbsolutePosition, CannotFindRelativePosition, Cursor, PosQueryResult},
-    dag::DagUtils,
+    dag::Dag,
+    diff_calc::DiffCalculator,
     encoding::{
-        decode_snapshot, export_snapshot, json_schema::op::JsonSchema, parse_header_and_body,
-        EncodeMode, ParsedHeaderAndBody,
+        self, decode_snapshot, export_fast_snapshot, export_fast_updates,
+        export_fast_updates_in_range, export_shallow_snapshot, export_snapshot, export_snapshot_at,
+        export_state_only_snapshot, json_schema::json::JsonSchema, parse_header_and_body,
+        EncodeMode, ImportStatus, ParsedHeaderAndBody,
     },
-    event::{str_to_path, EventTriggerKind, Index},
+    event::{str_to_path, EventTriggerKind, Index, InternalDocDiff},
     handler::{Handler, MovableListHandler, TextHandler, TreeHandler, ValueOrHandler},
     id::PeerID,
     op::InnerContent,
-    oplog::dag::FrontiersNotIncluded,
-    undo::DiffBatch,
-    version::Frontiers,
-    HandlerTrait, InternalString, LoroError, VersionVector,
-};
-
-use super::{
-    diff_calc::DiffCalculator,
-    event::InternalDocDiff,
-    obs::{Observer, SubID, Subscriber},
-    oplog::OpLog,
+    oplog::{loro_dag::FrontiersNotIncluded, OpLog},
     state::DocState,
+    subscription::{LocalUpdateCallback, Observer, Subscriber},
     txn::Transaction,
-    ListHandler, MapHandler,
+    undo::DiffBatch,
+    utils::subscription::{SubscriberSetWithQueue, Subscription},
+    version::{shrink_frontiers, Frontiers, ImVersionVector},
+    ChangeMeta, DocDiff, HandlerTrait, InternalString, ListHandler, LoroError, MapHandler,
+    VersionVector,
 };
 
-/// `LoroApp` serves as the library's primary entry point.
-/// It's constituted by an [OpLog] and an [AppState].
-///
-/// - [OpLog] encompasses all operations, signifying the document history.
-/// - [AppState] signifies the current document state.
-///
-/// They will share a [super::arena::SharedArena]
-///
-/// # Detached Mode
-///
-/// This mode enables separate usage of [OpLog] and [AppState].
-/// It facilitates temporal navigation. [AppState] can be reverted to
-/// any version contained within the [OpLog].
-///
-/// `LoroApp::detach()` separates [AppState] from [OpLog]. In this mode,
-/// updates to [OpLog] won't affect [AppState], while updates to [AppState]
-/// will continue to affect [OpLog].
-pub struct LoroDoc {
-    oplog: Arc<Mutex<OpLog>>,
-    state: Arc<Mutex<DocState>>,
-    arena: SharedArena,
-    config: Configure,
-    observer: Arc<Observer>,
-    diff_calculator: Arc<Mutex<DiffCalculator>>,
-    // when dropping the doc, the txn will be committed
-    txn: Arc<Mutex<Option<Transaction>>>,
-    auto_commit: AtomicBool,
-    detached: AtomicBool,
-}
+pub use crate::encoding::ExportMode;
+pub use crate::state::analyzer::{ContainerAnalysisInfo, DocAnalysis};
+pub(crate) use crate::LoroDoc;
 
 impl Default for LoroDoc {
     fn default() -> Self {
@@ -112,43 +88,23 @@ impl LoroDoc {
             detached: AtomicBool::new(false),
             auto_commit: AtomicBool::new(false),
             observer: Arc::new(Observer::new(arena.clone())),
-            diff_calculator: Arc::new(Mutex::new(DiffCalculator::new())),
+            diff_calculator: Arc::new(Mutex::new(DiffCalculator::new(true))),
             txn: global_txn,
             arena,
+            local_update_subs: SubscriberSetWithQueue::new(),
+            peer_id_change_subs: SubscriberSetWithQueue::new(),
         }
     }
 
     pub fn fork(&self) -> Self {
         self.commit_then_stop();
-        let arena = self.arena.fork();
-        let config = self.config.fork();
-        let txn = Arc::new(Mutex::new(None));
-        let new_state =
-            self.state
-                .lock()
-                .unwrap()
-                .fork(arena.clone(), Arc::downgrade(&txn), config.clone());
-        let doc = LoroDoc {
-            oplog: Arc::new(Mutex::new(
-                self.oplog()
-                    .lock()
-                    .unwrap()
-                    .fork(arena.clone(), config.clone()),
-            )),
-            state: new_state,
-            arena,
-            config,
-            observer: Arc::new(Observer::new(self.arena.clone())),
-            diff_calculator: Arc::new(Mutex::new(DiffCalculator::new())),
-            txn,
-            auto_commit: AtomicBool::new(false),
-            detached: AtomicBool::new(self.detached.load(std::sync::atomic::Ordering::Relaxed)),
-        };
-
+        let snapshot = encoding::fast_snapshot::encode_snapshot_inner(self);
+        let doc = Self::new();
+        encoding::fast_snapshot::decode_snapshot_inner(snapshot, &doc).unwrap();
+        doc.set_config(&self.config);
         if self.auto_commit.load(std::sync::atomic::Ordering::Relaxed) {
             doc.start_auto_commit();
         }
-
         self.renew_txn_if_auto_commit();
         doc
     }
@@ -177,14 +133,42 @@ impl LoroDoc {
         self.config.set_merge_interval(interval);
     }
 
-    /// Set the jitter of the tree position(Fractional Index).
+    /// Enables editing of the document in detached mode.
     ///
-    /// The jitter is used to avoid conflicts when multiple users are creating the node at the same position.
-    /// value 0 is default, which means no jitter, any value larger than 0 will enable jitter.
-    /// Generally speaking, jitter will affect the growth rate of document size.
-    #[inline]
-    pub fn set_fractional_index_jitter(&self, jitter: u8) {
-        self.config.set_fractional_index_jitter(jitter);
+    /// By default, the document cannot be edited in detached mode (after calling
+    /// `detach` or checking out a version other than the latest). This method
+    /// allows editing in detached mode.
+    ///
+    /// # Important Notes:
+    ///
+    /// - After enabling this mode, the document will use a different PeerID. Each
+    ///   time you call checkout, a new PeerID will be used.
+    /// - If you set a custom PeerID while this mode is enabled, ensure that
+    ///   concurrent operations with the same PeerID are not possible.
+    /// - On detached mode, importing will not change the state of the document.
+    ///   It also doesn't change the version of the [DocState]. The changes will be
+    ///   recorded into [OpLog] only. You need to call `checkout` to make it take effect.
+    pub fn set_detached_editing(&self, enable: bool) {
+        self.config.set_detached_editing(enable);
+        if enable && self.is_detached() {
+            self.commit_then_stop();
+            self.renew_peer_id();
+            self.renew_txn_if_auto_commit();
+        }
+    }
+
+    /// Renews the PeerID for the document.
+    pub(crate) fn renew_peer_id(&self) {
+        let peer_id = DefaultRandom.next_u64();
+        self.set_peer_id(peer_id).unwrap();
+    }
+
+    pub fn can_edit(&self) -> bool {
+        !self.is_detached() || self.config.detached_editing()
+    }
+
+    pub fn is_detached_editing_enabled(&self) -> bool {
+        self.config.detached_editing()
     }
 
     #[inline]
@@ -216,59 +200,66 @@ impl LoroDoc {
     /// Is the document empty? (no ops)
     #[inline(always)]
     pub fn can_reset_with_snapshot(&self) -> bool {
-        let oplog = self.oplog.lock().unwrap();
+        let oplog = self.oplog.try_lock().unwrap();
         if oplog.batch_importing {
             return false;
         }
 
-        oplog.is_empty() && self.state.lock().unwrap().is_empty()
+        if self.is_detached() {
+            return false;
+        }
+
+        oplog.is_empty() && self.state.try_lock().unwrap().can_import_snapshot()
     }
 
     /// Whether [OpLog] and [DocState] are detached.
+    ///
+    /// If so, the document is in readonly mode by default and importing will not change the state of the document.
+    /// It also doesn't change the version of the [DocState]. The changes will be recorded into [OpLog] only.
+    /// You need to call `checkout` to make it take effect.
     #[inline(always)]
     pub fn is_detached(&self) -> bool {
         self.detached.load(Acquire)
     }
 
-    #[allow(unused)]
-    pub(super) fn from_existing(oplog: OpLog, state: DocState) -> Self {
-        let obs = Observer::new(oplog.arena.clone());
-        Self {
-            arena: oplog.arena.clone(),
-            observer: Arc::new(obs),
-            config: Default::default(),
-            auto_commit: AtomicBool::new(false),
-            oplog: Arc::new(Mutex::new(oplog)),
-            state: Arc::new(Mutex::new(state)),
-            diff_calculator: Arc::new(Mutex::new(DiffCalculator::new())),
-            txn: Arc::new(Mutex::new(None)),
-            detached: AtomicBool::new(false),
-        }
+    pub(crate) fn set_detached(&self, detached: bool) {
+        self.detached.store(detached, Release);
     }
 
     #[inline(always)]
     pub fn peer_id(&self) -> PeerID {
-        self.state.lock().unwrap().peer
+        self.state
+            .try_lock()
+            .unwrap()
+            .peer
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     #[inline(always)]
     pub fn set_peer_id(&self, peer: PeerID) -> LoroResult<()> {
+        if peer == PeerID::MAX {
+            return Err(LoroError::InvalidPeerID);
+        }
+        let next_id = self.oplog.try_lock().unwrap().next_id(peer);
         if self.auto_commit.load(Acquire) {
-            let mut doc_state = self.state.lock().unwrap();
-            doc_state.peer = peer;
+            let doc_state = self.state.try_lock().unwrap();
+            doc_state
+                .peer
+                .store(peer, std::sync::atomic::Ordering::Relaxed);
             drop(doc_state);
 
-            let txn = self.txn.lock().unwrap().take();
+            let txn = self.txn.try_lock().unwrap().take();
             if let Some(txn) = txn {
                 txn.commit().unwrap();
             }
 
             let new_txn = self.txn().unwrap();
-            self.txn.lock().unwrap().replace(new_txn);
+            self.txn.try_lock().unwrap().replace(new_txn);
+            self.peer_id_change_subs.emit(&(), next_id);
             return Ok(());
         }
 
-        let mut doc_state = self.state.lock().unwrap();
+        let doc_state = self.state.try_lock().unwrap();
         if doc_state.is_in_txn() {
             return Err(LoroError::TransactionError(
                 "Cannot change peer id during transaction"
@@ -277,13 +268,17 @@ impl LoroDoc {
             ));
         }
 
-        doc_state.peer = peer;
+        doc_state
+            .peer
+            .store(peer, std::sync::atomic::Ordering::Relaxed);
+        drop(doc_state);
+        self.peer_id_change_subs.emit(&(), next_id);
         Ok(())
     }
 
     #[inline(always)]
     pub fn detach(&self) {
-        self.detached.store(true, Release);
+        self.set_detached(true);
     }
 
     #[inline(always)]
@@ -294,40 +289,8 @@ impl LoroDoc {
     /// Get the timestamp of the current state.
     /// It's the last edit time of the [DocState].
     pub fn state_timestamp(&self) -> Timestamp {
-        let f = &self.state.lock().unwrap().frontiers;
-        self.oplog.lock().unwrap().get_timestamp_of_version(f)
-    }
-
-    /// Create a new transaction.
-    /// Every ops created inside one transaction will be packed into a single
-    /// [Change].
-    ///
-    /// There can only be one active transaction at a time for a [LoroDoc].
-    #[inline(always)]
-    pub fn txn(&self) -> Result<Transaction, LoroError> {
-        self.txn_with_origin("")
-    }
-
-    #[inline(always)]
-    pub fn with_txn<F, R>(&self, f: F) -> LoroResult<R>
-    where
-        F: FnOnce(&mut Transaction) -> LoroResult<R>,
-    {
-        let mut txn = self.txn().unwrap();
-        let v = f(&mut txn)?;
-        txn.commit()?;
-        Ok(v)
-    }
-
-    pub fn start_auto_commit(&self) {
-        self.auto_commit.store(true, Release);
-        let mut self_txn = self.txn.try_lock().unwrap();
-        if self_txn.is_some() || self.detached.load(Acquire) {
-            return;
-        }
-
-        let txn = self.txn().unwrap();
-        self_txn.replace(txn);
+        let f = &self.state.try_lock().unwrap().frontiers;
+        self.oplog.try_lock().unwrap().get_timestamp_of_version(f)
     }
 
     /// Commit the cumulative auto commit transaction.
@@ -373,65 +336,40 @@ impl LoroDoc {
             txn.set_timestamp(timestamp);
         }
 
+        if let Some(msg) = config.commit_msg.as_ref() {
+            txn.set_msg(Some(msg.clone()));
+        }
+
+        let id_span = txn.id_span();
         txn.commit().unwrap();
         if config.immediate_renew {
             let mut txn_guard = self.txn.try_lock().unwrap();
-            assert!(!self.detached.load(std::sync::atomic::Ordering::Acquire));
+            assert!(self.can_edit());
             *txn_guard = Some(self.txn().unwrap());
         }
 
         if let Some(on_commit) = on_commit {
-            on_commit(&self.state);
+            on_commit(&self.state, &self.oplog, id_span);
         }
     }
 
-    #[inline]
-    pub fn renew_txn_if_auto_commit(&self) {
-        if self.auto_commit.load(Acquire) && !self.detached.load(Acquire) {
-            let mut self_txn = self.txn.try_lock().unwrap();
-            if self_txn.is_some() {
-                return;
-            }
+    /// Set the commit message of the next commit
+    pub fn set_next_commit_message(&self, message: &str) {
+        let mut binding = self.txn.try_lock().unwrap();
+        let Some(txn) = binding.as_mut() else {
+            return;
+        };
 
-            let txn = self.txn().unwrap();
-            self_txn.replace(txn);
+        if message.is_empty() {
+            txn.set_msg(None)
+        } else {
+            txn.set_msg(Some(message.into()))
         }
     }
 
     #[inline]
     pub(crate) fn get_global_txn(&self) -> Weak<Mutex<Option<Transaction>>> {
         Arc::downgrade(&self.txn)
-    }
-
-    /// Create a new transaction with specified origin.
-    ///
-    /// The origin will be propagated to the events.
-    /// There can only be one active transaction at a time for a [LoroDoc].
-    pub fn txn_with_origin(&self, origin: &str) -> Result<Transaction, LoroError> {
-        if self.is_detached() {
-            return Err(LoroError::TransactionError(
-                String::from("LoroDoc is in detached mode. OpLog and AppState are using different version. So it's readonly.").into_boxed_str(),
-            ));
-        }
-
-        let mut txn = Transaction::new_with_origin(
-            self.state.clone(),
-            self.oplog.clone(),
-            origin.into(),
-            self.get_global_txn(),
-        );
-
-        let obs = self.observer.clone();
-        txn.set_on_commit(Box::new(move |state| {
-            let mut state = state.try_lock().unwrap();
-            let events = state.take_events();
-            drop(state);
-            for event in events {
-                obs.emit(event);
-            }
-        }));
-
-        Ok(txn)
     }
 
     #[inline(always)]
@@ -441,7 +379,7 @@ impl LoroDoc {
 
     #[inline]
     pub fn get_state_deep_value(&self) -> LoroValue {
-        self.state.lock().unwrap().get_deep_value()
+        self.state.try_lock().unwrap().get_deep_value()
     }
 
     #[inline(always)]
@@ -451,30 +389,42 @@ impl LoroDoc {
 
     pub fn export_from(&self, vv: &VersionVector) -> Vec<u8> {
         self.commit_then_stop();
-        let ans = self.oplog.lock().unwrap().export_from(vv);
+        let ans = self.oplog.try_lock().unwrap().export_from(vv);
         self.renew_txn_if_auto_commit();
         ans
     }
 
     #[inline(always)]
-    #[instrument(skip_all)]
-    pub fn import(&self, bytes: &[u8]) -> Result<(), LoroError> {
+    pub fn import(&self, bytes: &[u8]) -> Result<ImportStatus, LoroError> {
+        let s = debug_span!("import", peer = self.peer_id());
+        let _e = s.enter();
         self.import_with(bytes, Default::default())
     }
 
     #[inline]
-    pub fn import_with(&self, bytes: &[u8], origin: InternalString) -> Result<(), LoroError> {
+    pub fn import_with(
+        &self,
+        bytes: &[u8],
+        origin: InternalString,
+    ) -> Result<ImportStatus, LoroError> {
         self.commit_then_stop();
         let ans = self._import_with(bytes, origin);
         self.renew_txn_if_auto_commit();
         ans
     }
 
-    fn _import_with(&self, bytes: &[u8], origin: InternalString) -> Result<(), LoroError> {
+    #[tracing::instrument(skip_all)]
+    fn _import_with(
+        &self,
+        bytes: &[u8],
+        origin: InternalString,
+    ) -> Result<ImportStatus, LoroError> {
+        ensure_cov::notify_cov("loro_internal::import");
         let parsed = parse_header_and_body(bytes)?;
-        match parsed.mode.is_snapshot() {
-            false => {
-                if self.state.lock().unwrap().is_in_txn() {
+        info!("Importing with mode={:?}", &parsed.mode);
+        let result = match parsed.mode {
+            EncodeMode::OutdatedRle => {
+                if self.state.try_lock().unwrap().is_in_txn() {
                     return Err(LoroError::ImportWhenInTxn);
                 }
 
@@ -487,115 +437,91 @@ impl LoroDoc {
                 self.update_oplog_and_apply_delta_to_state_if_needed(
                     |oplog| oplog.decode(parsed),
                     origin,
-                )?;
+                )
             }
-            true => {
+            EncodeMode::OutdatedSnapshot => {
                 if self.can_reset_with_snapshot() {
                     tracing::info!("Init by snapshot {}", self.peer_id());
-                    decode_snapshot(self, parsed.mode, parsed.body)?;
-                } else if parsed.mode == EncodeMode::Snapshot {
+                    decode_snapshot(self, parsed.mode, parsed.body)
+                } else {
                     self.update_oplog_and_apply_delta_to_state_if_needed(
                         |oplog| oplog.decode(parsed),
                         origin,
-                    )?;
-                } else {
-                    tracing::info!("Import from new doc");
-                    let app = LoroDoc::new();
-                    decode_snapshot(&app, parsed.mode, parsed.body)?;
-                    let oplog = self.oplog.lock().unwrap();
-                    // TODO: PERF: the ser and de can be optimized out
-                    let updates = app.export_from(oplog.vv());
-                    drop(oplog);
-
-                    return self.import_with(&updates, origin);
+                    )
                 }
+            }
+            EncodeMode::FastSnapshot => {
+                if self.can_reset_with_snapshot() {
+                    ensure_cov::notify_cov("loro_internal::import::snapshot");
+                    tracing::info!("Init by fast snapshot {}", self.peer_id());
+                    decode_snapshot(self, parsed.mode, parsed.body)
+                } else {
+                    self.update_oplog_and_apply_delta_to_state_if_needed(
+                        |oplog| oplog.decode(parsed),
+                        origin,
+                    )
+
+                    // let new_doc = LoroDoc::new();
+                    // new_doc.import(bytes)?;
+                    // let updates = new_doc.export_from(&self.oplog_vv());
+                    // return self.import_with(updates.as_slice(), origin);
+                }
+            }
+            EncodeMode::FastUpdates => self.update_oplog_and_apply_delta_to_state_if_needed(
+                |oplog| oplog.decode(parsed),
+                origin,
+            ),
+            EncodeMode::Auto => {
+                unreachable!()
             }
         };
 
         self.emit_events();
-        Ok(())
+        result
     }
 
+    #[tracing::instrument(skip_all)]
     pub(crate) fn update_oplog_and_apply_delta_to_state_if_needed(
         &self,
-        f: impl FnOnce(&mut OpLog) -> Result<(), LoroError>,
+        f: impl FnOnce(&mut OpLog) -> Result<ImportStatus, LoroError>,
         origin: InternalString,
-    ) -> Result<(), LoroError> {
-        let mut oplog = self.oplog.lock().unwrap();
-        let old_vv = oplog.vv().clone();
-        let old_frontiers = oplog.frontiers().clone();
-        f(&mut oplog)?;
-        if !self.detached.load(Acquire) {
-            let mut diff = DiffCalculator::default();
-            let diff = diff.calc_diff_internal(
-                &oplog,
-                &old_vv,
-                Some(&old_frontiers),
-                oplog.vv(),
-                Some(oplog.dag.get_frontiers()),
-                None,
-            );
-            let mut state = self.state.lock().unwrap();
-            state.apply_diff(InternalDocDiff {
-                origin,
-                diff: (diff).into(),
-                by: EventTriggerKind::Import,
-                new_version: Cow::Owned(oplog.frontiers().clone()),
-            });
+    ) -> Result<ImportStatus, LoroError> {
+        let mut oplog = self.oplog.try_lock().unwrap();
+        if !self.is_detached() {
+            let old_vv = oplog.vv().clone();
+            let old_frontiers = oplog.frontiers().clone();
+            let result = f(&mut oplog);
+            if &old_vv != oplog.vv() {
+                let mut diff = DiffCalculator::new(false);
+                let (diff, diff_mode) = diff.calc_diff_internal(
+                    &oplog,
+                    &old_vv,
+                    &old_frontiers,
+                    oplog.vv(),
+                    oplog.dag.get_frontiers(),
+                    None,
+                );
+                let mut state = self.state.try_lock().unwrap();
+                state.apply_diff(
+                    InternalDocDiff {
+                        origin,
+                        diff: (diff).into(),
+                        by: EventTriggerKind::Import,
+                        new_version: Cow::Owned(oplog.frontiers().clone()),
+                    },
+                    diff_mode,
+                );
+            }
+            result
         } else {
-            tracing::info!("Detached");
+            f(&mut oplog)
         }
-        Ok(())
-    }
-
-    /// For fuzzing tests
-    #[cfg(feature = "test_utils")]
-    pub fn import_delta_updates_unchecked(&self, body: &[u8]) -> LoroResult<()> {
-        self.commit_then_stop();
-        let mut oplog = self.oplog.lock().unwrap();
-        let old_vv = oplog.vv().clone();
-        let old_frontiers = oplog.frontiers().clone();
-        let ans = oplog.decode(ParsedHeaderAndBody {
-            checksum: [0; 16],
-            checksum_body: body,
-            mode: EncodeMode::Rle,
-            body,
-        });
-        if ans.is_ok() && !self.detached.load(Acquire) {
-            let mut diff = DiffCalculator::default();
-            let diff = diff.calc_diff_internal(
-                &oplog,
-                &old_vv,
-                Some(&old_frontiers),
-                oplog.vv(),
-                Some(oplog.dag.get_frontiers()),
-                None,
-            );
-            let mut state = self.state.lock().unwrap();
-            state.apply_diff(InternalDocDiff {
-                origin: "".into(),
-                diff: (diff).into(),
-                by: EventTriggerKind::Import,
-                new_version: Cow::Owned(oplog.frontiers().clone()),
-            });
-        }
-        self.renew_txn_if_auto_commit();
-        ans
-    }
-
-    /// For fuzzing tests
-    #[cfg(feature = "test_utils")]
-    pub fn import_snapshot_unchecked(&self, bytes: &[u8]) -> LoroResult<()> {
-        self.commit_then_stop();
-        let ans = decode_snapshot(self, EncodeMode::Snapshot, bytes);
-        self.renew_txn_if_auto_commit();
-        ans
     }
 
     fn emit_events(&self) {
         // we should not hold the lock when emitting events
         let events = {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self.state.try_lock().unwrap();
             state.take_events()
         };
         for event in events {
@@ -603,27 +529,36 @@ impl LoroDoc {
         }
     }
 
+    pub(crate) fn drop_pending_events(&self) -> Vec<DocDiff> {
+        let mut state = self.state.try_lock().unwrap();
+        state.take_events()
+    }
+
     #[instrument(skip_all)]
-    pub fn export_snapshot(&self) -> Vec<u8> {
+    pub fn export_snapshot(&self) -> Result<Vec<u8>, LoroEncodeError> {
+        if self.is_shallow() {
+            return Err(LoroEncodeError::ShallowSnapshotIncompatibleWithOldFormat);
+        }
         self.commit_then_stop();
         let ans = export_snapshot(self);
         self.renew_txn_if_auto_commit();
-        ans
+        Ok(ans)
     }
 
     /// Import the json schema updates.
     ///
     /// only supports backward compatibility but not forward compatibility.
-    pub fn import_json_updates<T: TryInto<JsonSchema>>(&self, json: T) -> LoroResult<()> {
+    #[tracing::instrument(skip_all)]
+    pub fn import_json_updates<T: TryInto<JsonSchema>>(&self, json: T) -> LoroResult<ImportStatus> {
         let json = json.try_into().map_err(|_| LoroError::InvalidJsonSchema)?;
         self.commit_then_stop();
-        self.update_oplog_and_apply_delta_to_state_if_needed(
+        let result = self.update_oplog_and_apply_delta_to_state_if_needed(
             |oplog| crate::encoding::json_schema::import_json(oplog, json),
             Default::default(),
-        )?;
+        );
         self.emit_events();
         self.renew_txn_if_auto_commit();
-        Ok(())
+        result
     }
 
     pub fn export_json_updates(
@@ -632,7 +567,7 @@ impl LoroDoc {
         end_vv: &VersionVector,
     ) -> JsonSchema {
         self.commit_then_stop();
-        let oplog = self.oplog.lock().unwrap();
+        let oplog = self.oplog.try_lock().unwrap();
         let json = crate::encoding::json_schema::export_json(&oplog, start_vv, end_vv);
         drop(oplog);
         self.renew_txn_if_auto_commit();
@@ -642,18 +577,23 @@ impl LoroDoc {
     /// Get the version vector of the current OpLog
     #[inline]
     pub fn oplog_vv(&self) -> VersionVector {
-        self.oplog.lock().unwrap().vv().clone()
+        self.oplog.try_lock().unwrap().vv().clone()
     }
 
     /// Get the version vector of the current [DocState]
     #[inline]
     pub fn state_vv(&self) -> VersionVector {
-        let f = &self.state.lock().unwrap().frontiers;
-        self.oplog.lock().unwrap().dag.frontiers_to_vv(f).unwrap()
+        let f = &self.state.try_lock().unwrap().frontiers;
+        self.oplog
+            .try_lock()
+            .unwrap()
+            .dag
+            .frontiers_to_vv(f)
+            .unwrap()
     }
 
     pub fn get_by_path(&self, path: &[Index]) -> Option<ValueOrHandler> {
-        let value: LoroValue = self.state.lock().unwrap().get_value_by_path(path)?;
+        let value: LoroValue = self.state.try_lock().unwrap().get_value_by_path(path)?;
         if let LoroValue::Container(c) = value {
             Some(ValueOrHandler::Handler(Handler::new_attached(
                 c.clone(),
@@ -794,14 +734,14 @@ impl LoroDoc {
         post_transform_base: Option<&DiffBatch>,
         before_diff: &mut dyn FnMut(&DiffBatch),
     ) -> LoroResult<CommitWhenDrop> {
-        if self.is_detached() {
+        if !self.can_edit() {
             return Err(LoroError::EditWhenDetached);
         }
 
         self.commit_then_stop();
         if !self
             .oplog()
-            .lock()
+            .try_lock()
             .unwrap()
             .vv()
             .includes_id(id_span.id_last())
@@ -811,13 +751,17 @@ impl LoroDoc {
         }
 
         let (was_recording, latest_frontiers) = {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self.state.try_lock().unwrap();
             let was_recording = state.is_recording();
             state.stop_and_clear_recording();
             (was_recording, state.frontiers.clone())
         };
 
-        let spans = self.oplog.lock().unwrap().split_span_based_on_deps(id_span);
+        let spans = self
+            .oplog
+            .try_lock()
+            .unwrap()
+            .split_span_based_on_deps(id_span);
         let diff = crate::undo::undo(
             spans,
             match post_transform_base {
@@ -825,10 +769,10 @@ impl LoroDoc {
                 None => Either::Left(&latest_frontiers),
             },
             |from, to| {
-                self.checkout_without_emitting(from).unwrap();
-                self.state.lock().unwrap().start_recording();
-                self.checkout_without_emitting(to).unwrap();
-                let mut state = self.state.lock().unwrap();
+                self.checkout_without_emitting(from, false).unwrap();
+                self.state.try_lock().unwrap().start_recording();
+                self.checkout_without_emitting(to, false).unwrap();
+                let mut state = self.state.try_lock().unwrap();
                 let e = state.take_events();
                 state.stop_and_clear_recording();
                 DiffBatch::new(e)
@@ -839,13 +783,19 @@ impl LoroDoc {
         // println!("\nundo_internal: diff: {:?}", diff);
         // println!("container remap: {:?}", container_remap);
 
-        self.checkout_without_emitting(&latest_frontiers)?;
-        self.detached.store(false, Release);
+        self.checkout_without_emitting(&latest_frontiers, false)?;
+        self.set_detached(false);
         if was_recording {
-            self.state.lock().unwrap().start_recording();
+            self.state.try_lock().unwrap().start_recording();
         }
         self.start_auto_commit();
-        self.apply_diff(diff, container_remap, true).unwrap();
+        // Try applying the diff, but ignore the error if it happens.
+        // MovableList's undo behavior is too tricky to handle in a collaborative env
+        // so in edge cases this may be an Error
+        if let Err(e) = self.apply_diff(diff, container_remap, true) {
+            warn!("Undo Failed {:?}", e);
+        }
+
         Ok(CommitWhenDrop {
             doc: self,
             options: CommitOptions::new().origin("undo"),
@@ -862,16 +812,17 @@ impl LoroDoc {
     /// Calculate the diff between two versions so that apply diff on a will make the state same as b.
     ///
     /// NOTE: This method will make the doc enter the **detached mode**.
+    // FIXME: This method needs testing (no event should be emitted during processing this)
     pub fn diff(&self, a: &Frontiers, b: &Frontiers) -> LoroResult<DiffBatch> {
         {
             // check whether a and b are valid
-            let oplog = self.oplog.lock().unwrap();
-            for &id in a.iter() {
+            let oplog = self.oplog.try_lock().unwrap();
+            for id in a.iter() {
                 if !oplog.dag.contains(id) {
                     return Err(LoroError::FrontiersNotFound(id));
                 }
             }
-            for &id in b.iter() {
+            for id in b.iter() {
                 if !oplog.dag.contains(id) {
                     return Err(LoroError::FrontiersNotFound(id));
                 }
@@ -881,13 +832,20 @@ impl LoroDoc {
         self.commit_then_stop();
 
         let ans = {
-            self.state.lock().unwrap().stop_and_clear_recording();
-            self.checkout_without_emitting(a).unwrap();
-            self.state.lock().unwrap().start_recording();
-            self.checkout_without_emitting(b).unwrap();
-            let mut state = self.state.lock().unwrap();
+            let was_detached = self.is_detached();
+            let old_frontiers = self.state_frontiers();
+            self.state.try_lock().unwrap().stop_and_clear_recording();
+            self.checkout_without_emitting(a, true).unwrap();
+            self.state.try_lock().unwrap().start_recording();
+            self.checkout_without_emitting(b, true).unwrap();
+            let mut state = self.state.try_lock().unwrap();
             let e = state.take_events();
             state.stop_and_clear_recording();
+            self.checkout_without_emitting(&old_frontiers, false)
+                .unwrap();
+            if !was_detached {
+                self.set_detached(false);
+            }
             DiffBatch::new(e)
         };
 
@@ -911,7 +869,7 @@ impl LoroDoc {
         container_remap: &mut FxHashMap<ContainerID, ContainerID>,
         skip_unreachable: bool,
     ) -> LoroResult<()> {
-        if self.is_detached() {
+        if !self.can_edit() {
             return Err(LoroError::EditWhenDetached);
         }
 
@@ -921,6 +879,7 @@ impl LoroDoc {
             self.arena.get_depth(idx).unwrap().get()
         });
 
+        let mut ans: LoroResult<()> = Ok(());
         for mut id in containers {
             let mut remapped = false;
             let diff = diff.0.remove(&id).unwrap();
@@ -930,31 +889,33 @@ impl LoroDoc {
                 id = rid.clone();
             }
 
-            if skip_unreachable && !remapped && !self.state.lock().unwrap().get_reachable(&id) {
+            if skip_unreachable && !remapped && !self.state.try_lock().unwrap().get_reachable(&id) {
                 continue;
             }
 
             let h = self.get_handler(id);
-            h.apply_diff(diff, container_remap).unwrap();
+            if let Err(e) = h.apply_diff(diff, container_remap) {
+                ans = Err(e);
+            }
         }
 
-        Ok(())
+        ans
     }
 
     /// This is for debugging purpose. It will travel the whole oplog
     #[inline]
     pub fn diagnose_size(&self) {
-        self.oplog().lock().unwrap().diagnose_size();
+        self.oplog().try_lock().unwrap().diagnose_size();
     }
 
     #[inline]
     pub fn oplog_frontiers(&self) -> Frontiers {
-        self.oplog().lock().unwrap().frontiers().clone()
+        self.oplog().try_lock().unwrap().frontiers().clone()
     }
 
     #[inline]
     pub fn state_frontiers(&self) -> Frontiers {
-        self.state.lock().unwrap().frontiers.clone()
+        self.state.try_lock().unwrap().frontiers.clone()
     }
 
     /// - Ordering::Less means self is less than target or parallel
@@ -962,7 +923,7 @@ impl LoroDoc {
     /// - Ordering::Greater means self's version is greater than target
     #[inline]
     pub fn cmp_with_frontiers(&self, other: &Frontiers) -> Ordering {
-        self.oplog().lock().unwrap().cmp_with_frontiers(other)
+        self.oplog().try_lock().unwrap().cmp_with_frontiers(other)
     }
 
     /// Compare two [Frontiers] causally.
@@ -974,11 +935,11 @@ impl LoroDoc {
         a: &Frontiers,
         b: &Frontiers,
     ) -> Result<Option<Ordering>, FrontiersNotIncluded> {
-        self.oplog().lock().unwrap().cmp_frontiers(a, b)
+        self.oplog().try_lock().unwrap().cmp_frontiers(a, b)
     }
 
-    pub fn subscribe_root(&self, callback: Subscriber) -> SubID {
-        let mut state = self.state.lock().unwrap();
+    pub fn subscribe_root(&self, callback: Subscriber) -> Subscription {
+        let mut state = self.state.try_lock().unwrap();
         if !state.is_recording() {
             state.start_recording();
         }
@@ -986,8 +947,8 @@ impl LoroDoc {
         self.observer.subscribe_root(callback)
     }
 
-    pub fn subscribe(&self, container_id: &ContainerID, callback: Subscriber) -> SubID {
-        let mut state = self.state.lock().unwrap();
+    pub fn subscribe(&self, container_id: &ContainerID, callback: Subscriber) -> Subscription {
+        let mut state = self.state.try_lock().unwrap();
         if !state.is_recording() {
             state.start_recording();
         }
@@ -995,30 +956,33 @@ impl LoroDoc {
         self.observer.subscribe(container_id, callback)
     }
 
-    #[inline]
-    pub fn unsubscribe(&self, id: SubID) {
-        self.observer.unsubscribe(id);
+    pub fn subscribe_local_update(&self, callback: LocalUpdateCallback) -> Subscription {
+        let (sub, activate) = self.local_update_subs.inner().insert((), callback);
+        activate();
+        sub
     }
 
     // PERF: opt
+    #[tracing::instrument(skip_all)]
     pub fn import_batch(&self, bytes: &[Vec<u8>]) -> LoroResult<()> {
         self.commit_then_stop();
         let is_detached = self.is_detached();
         self.detach();
-        self.oplog.lock().unwrap().batch_importing = true;
+        self.oplog.try_lock().unwrap().batch_importing = true;
         let mut err = None;
         for data in bytes.iter() {
             match self.import(data) {
-                Ok(_) => {}
+                Ok(_s) => {
+                    // TODO: merge
+                }
                 Err(e) => {
                     err = Some(e);
                 }
             }
         }
 
-        let mut oplog = self.oplog.lock().unwrap();
+        let mut oplog = self.oplog.try_lock().unwrap();
         oplog.batch_importing = false;
-        oplog.dag.refresh_frontiers();
         drop(oplog);
 
         if !is_detached {
@@ -1033,28 +997,43 @@ impl LoroDoc {
         Ok(())
     }
 
+    /// Get shallow value of the document.
+    #[inline]
+    pub fn get_value(&self) -> LoroValue {
+        self.state.try_lock().unwrap().get_value()
+    }
+
     /// Get deep value of the document.
     #[inline]
     pub fn get_deep_value(&self) -> LoroValue {
-        self.state.lock().unwrap().get_deep_value()
+        self.state.try_lock().unwrap().get_deep_value()
     }
 
     /// Get deep value of the document with container id
     #[inline]
     pub fn get_deep_value_with_id(&self) -> LoroValue {
-        self.state.lock().unwrap().get_deep_value_with_id()
+        self.state.try_lock().unwrap().get_deep_value_with_id()
     }
 
     pub fn checkout_to_latest(&self) {
+        self.commit_then_renew();
         if !self.is_detached() {
-            self.commit_then_renew();
             return;
         }
 
         tracing::info_span!("CheckoutToLatest", peer = self.peer_id()).in_scope(|| {
             let f = self.oplog_frontiers();
-            self.checkout(&f).unwrap();
-            self.detached.store(false, Release);
+            let this = &self;
+            let frontiers = &f;
+            this.checkout_without_emitting(frontiers, false).unwrap(); // we don't need to shrink frontiers
+                                                                       // because oplog's frontiers are already shrinked
+            this.emit_events();
+            if this.config.detached_editing() {
+                this.renew_peer_id();
+                this.renew_txn_if_auto_commit();
+            }
+
+            self.set_detached(false);
             self.renew_txn_if_auto_commit();
         });
     }
@@ -1064,79 +1043,129 @@ impl LoroDoc {
     /// This will make the current [DocState] detached from the latest version of [OpLog].
     /// Any further import will not be reflected on the [DocState], until user call [LoroDoc::attach()]
     pub fn checkout(&self, frontiers: &Frontiers) -> LoroResult<()> {
-        self.checkout_without_emitting(frontiers)?;
+        self.checkout_without_emitting(frontiers, true)?;
         self.emit_events();
+        if self.config.detached_editing() {
+            self.renew_peer_id();
+            self.renew_txn_if_auto_commit();
+        }
+
         Ok(())
     }
 
     #[instrument(level = "info", skip(self))]
-    fn checkout_without_emitting(&self, frontiers: &Frontiers) -> Result<(), LoroError> {
+    pub(crate) fn checkout_without_emitting(
+        &self,
+        frontiers: &Frontiers,
+        to_shrink_frontiers: bool,
+    ) -> Result<(), LoroError> {
         self.commit_then_stop();
-        let oplog = self.oplog.lock().unwrap();
-        let mut state = self.state.lock().unwrap();
-        self.detached.store(true, Release);
-        let mut calc = self.diff_calculator.lock().unwrap();
-        for &i in frontiers.iter() {
+        let from_frontiers = self.state_frontiers();
+        info!(
+            "checkout from={:?} to={:?} cur_vv={:?}",
+            from_frontiers,
+            frontiers,
+            self.oplog_vv()
+        );
+
+        if &from_frontiers == frontiers {
+            self.renew_txn_if_auto_commit();
+            return Ok(());
+        }
+
+        let oplog = self.oplog.try_lock().unwrap();
+        if oplog.dag.is_before_shallow_root(frontiers) {
+            drop(oplog);
+            self.renew_txn_if_auto_commit();
+            return Err(LoroError::SwitchToVersionBeforeShallowRoot);
+        }
+
+        let frontiers = if to_shrink_frontiers {
+            shrink_frontiers(frontiers, &oplog.dag)
+                .map_err(|_| LoroError::SwitchToVersionBeforeShallowRoot)?
+        } else {
+            frontiers.clone()
+        };
+        if from_frontiers == frontiers {
+            drop(oplog);
+            self.renew_txn_if_auto_commit();
+            return Ok(());
+        }
+
+        let mut state = self.state.try_lock().unwrap();
+        let mut calc = self.diff_calculator.try_lock().unwrap();
+        for i in frontiers.iter() {
             if !oplog.dag.contains(i) {
+                drop(oplog);
+                drop(state);
+                self.renew_txn_if_auto_commit();
                 return Err(LoroError::FrontiersNotFound(i));
             }
         }
 
+        trace!("state.frontiers={:?}", &state.frontiers);
         let before = &oplog.dag.frontiers_to_vv(&state.frontiers).unwrap();
-        let Some(after) = &oplog.dag.frontiers_to_vv(frontiers) else {
+        let Some(after) = &oplog.dag.frontiers_to_vv(&frontiers) else {
+            drop(oplog);
+            drop(state);
+            self.renew_txn_if_auto_commit();
             return Err(LoroError::NotFoundError(
                 format!("Cannot find the specified version {:?}", frontiers).into_boxed_str(),
             ));
         };
-        let diff = calc.calc_diff_internal(
-            &oplog,
-            before,
-            Some(&state.frontiers),
-            after,
-            Some(frontiers),
-            None,
+
+        self.set_detached(true);
+        let (diff, diff_mode) =
+            calc.calc_diff_internal(&oplog, before, &state.frontiers, after, &frontiers, None);
+        state.apply_diff(
+            InternalDocDiff {
+                origin: "checkout".into(),
+                diff: Cow::Owned(diff),
+                by: EventTriggerKind::Checkout,
+                new_version: Cow::Owned(frontiers.clone()),
+            },
+            diff_mode,
         );
-        state.apply_diff(InternalDocDiff {
-            origin: "checkout".into(),
-            diff: Cow::Owned(diff),
-            by: EventTriggerKind::Checkout,
-            new_version: Cow::Owned(frontiers.clone()),
-        });
+
+        drop(state);
+        drop(oplog);
         Ok(())
     }
 
     #[inline]
     pub fn vv_to_frontiers(&self, vv: &VersionVector) -> Frontiers {
-        self.oplog.lock().unwrap().dag.vv_to_frontiers(vv)
+        self.oplog.try_lock().unwrap().dag.vv_to_frontiers(vv)
     }
 
     #[inline]
     pub fn frontiers_to_vv(&self, frontiers: &Frontiers) -> Option<VersionVector> {
-        self.oplog.lock().unwrap().dag.frontiers_to_vv(frontiers)
+        self.oplog
+            .try_lock()
+            .unwrap()
+            .dag
+            .frontiers_to_vv(frontiers)
     }
 
     /// Import ops from other doc.
     ///
     /// After `a.merge(b)` and `b.merge(a)`, `a` and `b` will have the same content if they are in attached mode.
-    pub fn merge(&self, other: &Self) -> LoroResult<()> {
+    pub fn merge(&self, other: &Self) -> LoroResult<ImportStatus> {
         self.import(&other.export_from(&self.oplog_vv()))
     }
 
-    #[cfg(feature = "test_utils")]
-    #[allow(unused)]
     pub(crate) fn arena(&self) -> &SharedArena {
         &self.arena
     }
 
     #[inline]
     pub fn len_ops(&self) -> usize {
-        let oplog = self.oplog.lock().unwrap();
+        let oplog = self.oplog.try_lock().unwrap();
         oplog.vv().iter().map(|(_, ops)| *ops).sum::<i32>() as usize
     }
 
     #[inline]
     pub fn len_changes(&self) -> usize {
-        let oplog = self.oplog.lock().unwrap();
+        let oplog = self.oplog.try_lock().unwrap();
         oplog.len_changes()
     }
 
@@ -1149,7 +1178,7 @@ impl LoroDoc {
     ///
     /// Panic when it's not consistent
     pub fn check_state_diff_calc_consistency_slow(&self) {
-        #[cfg(any(test, debug_assertions))]
+        // #[cfg(any(test, debug_assertions, feature = "test_utils"))]
         {
             static IS_CHECKING: AtomicBool = AtomicBool::new(false);
             if IS_CHECKING.load(std::sync::atomic::Ordering::Acquire) {
@@ -1161,14 +1190,60 @@ impl LoroDoc {
             let s = info_span!("CheckStateDiffCalcConsistencySlow", ?peer_id);
             let _g = s.enter();
             self.commit_then_stop();
-            let bytes = self.export_from(&Default::default());
-            let doc = Self::new();
-            doc.detach();
-            doc.import(&bytes).unwrap();
-            doc.checkout(&self.state_frontiers()).unwrap();
-            let mut calculated_state = doc.app_state().try_lock().unwrap();
-            let mut current_state = self.app_state().try_lock().unwrap();
-            current_state.check_is_the_same(&mut calculated_state);
+            self.oplog.try_lock().unwrap().check_dag_correctness();
+            if self.is_shallow() {
+                // For shallow documents, we cannot replay from the beginning as the history is not complete.
+                //
+                // Instead, we:
+                // 1. Export the initial state from the GC snapshot.
+                // 2. Create a new document and import the initial snapshot.
+                // 3. Export updates from the shallow start version vector to the current version.
+                // 4. Import these updates into the new document.
+                // 5. Compare the states of the new document and the current document.
+
+                // Step 1: Export the initial state from the GC snapshot.
+                let initial_snapshot = self
+                    .export(ExportMode::state_only(Some(
+                        &self.shallow_since_frontiers(),
+                    )))
+                    .unwrap();
+
+                // Step 2: Create a new document and import the initial snapshot.
+                let doc = LoroDoc::new();
+                doc.import(&initial_snapshot).unwrap();
+                self.checkout(&self.shallow_since_frontiers()).unwrap();
+                assert_eq!(self.get_deep_value(), doc.get_deep_value());
+
+                // Step 3: Export updates since the shallow start version vector to the current version.
+                let updates = self.export(ExportMode::all_updates()).unwrap();
+
+                // Step 4: Import these updates into the new document.
+                doc.import(&updates).unwrap();
+                self.checkout_to_latest();
+
+                // Step 5: Checkout to the current state's frontiers and compare the states.
+                // doc.checkout(&self.state_frontiers()).unwrap();
+                assert_eq!(doc.get_deep_value(), self.get_deep_value());
+                let mut calculated_state = doc.app_state().try_lock().unwrap();
+                let mut current_state = self.app_state().try_lock().unwrap();
+                current_state.check_is_the_same(&mut calculated_state);
+            } else {
+                let f = self.state_frontiers();
+                let vv = self
+                    .oplog()
+                    .try_lock()
+                    .unwrap()
+                    .dag
+                    .frontiers_to_vv(&f)
+                    .unwrap();
+                let bytes = self.export(ExportMode::updates_till(&vv)).unwrap();
+                let doc = Self::new();
+                doc.import(&bytes).unwrap();
+                let mut calculated_state = doc.app_state().try_lock().unwrap();
+                let mut current_state = self.app_state().try_lock().unwrap();
+                current_state.check_is_the_same(&mut calculated_state);
+            }
+
             self.renew_txn_if_auto_commit();
             IS_CHECKING.store(false, std::sync::atomic::Ordering::Release);
         }
@@ -1190,7 +1265,7 @@ impl LoroDoc {
         pos: &Cursor,
         ret_event_index: bool,
     ) -> Result<PosQueryResult, CannotFindRelativePosition> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.try_lock().unwrap();
         if let Some(ans) = state.get_relative_position(pos, ret_event_index) {
             Ok(PosQueryResult {
                 update: None,
@@ -1213,7 +1288,7 @@ impl LoroDoc {
             // commit the txn to make sure we can query the history correctly
             drop(state);
             self.commit_then_renew();
-            let oplog = self.oplog().lock().unwrap();
+            let oplog = self.oplog().try_lock().unwrap();
             // TODO: assert pos.id is not unknown
             if let Some(id) = pos.id {
                 let idx = oplog
@@ -1222,19 +1297,24 @@ impl LoroDoc {
                     .ok_or(CannotFindRelativePosition::ContainerDeleted)?;
                 // We know where the target id is when we trace back to the delete_op_id.
                 let Some(delete_op_id) = find_last_delete_op(&oplog, id, idx) else {
+                    if oplog.shallow_since_vv().includes_id(id) {
+                        return Err(CannotFindRelativePosition::HistoryCleared);
+                    }
+
                     tracing::error!("Cannot find id {}", id);
                     return Err(CannotFindRelativePosition::IdNotFound);
                 };
-                let mut diff_calc = DiffCalculator::new();
+                // Should use persist mode so that it will force all the diff calculators to use the `checkout` mode
+                let mut diff_calc = DiffCalculator::new(true);
                 let before_frontiers: Frontiers = oplog.dag.find_deps_of_id(delete_op_id);
                 let before = &oplog.dag.frontiers_to_vv(&before_frontiers).unwrap();
                 // TODO: PERF: it doesn't need to calc the effects here
                 diff_calc.calc_diff_internal(
                     &oplog,
                     before,
-                    Some(&before_frontiers),
-                    &oplog.dag.vv,
-                    Some(&oplog.dag.frontiers),
+                    &before_frontiers,
+                    oplog.vv(),
+                    oplog.frontiers(),
                     Some(&|target| idx == target),
                 );
                 // TODO: remove depth info
@@ -1341,11 +1421,195 @@ impl LoroDoc {
             }
         }
     }
+
+    /// Free the history cache that is used for making checkout faster.
+    ///
+    /// If you use checkout that switching to an old/concurrent version, the history cache will be built.
+    /// You can free it by calling this method.
+    pub fn free_history_cache(&self) {
+        self.oplog.try_lock().unwrap().free_history_cache();
+    }
+
+    /// Free the cached diff calculator that is used for checkout.
+    pub fn free_diff_calculator(&self) {
+        *self.diff_calculator.try_lock().unwrap() = DiffCalculator::new(true);
+    }
+
+    /// If you use checkout that switching to an old/concurrent version, the history cache will be built.
+    /// You can free it by calling `free_history_cache`.
+    pub fn has_history_cache(&self) -> bool {
+        self.oplog.try_lock().unwrap().has_history_cache()
+    }
+
+    /// Encoded all ops and history cache to bytes and store them in the kv store.
+    ///
+    /// The parsed ops will be dropped
+    #[inline]
+    pub fn compact_change_store(&self) {
+        self.commit_then_renew();
+        self.oplog.try_lock().unwrap().compact_change_store();
+    }
+
+    /// Analyze the container info of the doc
+    ///
+    /// This is used for development and debugging
+    #[inline]
+    pub fn analyze(&self) -> DocAnalysis {
+        DocAnalysis::analyze(self)
+    }
+
+    /// Get the path from the root to the container
+    pub fn get_path_to_container(&self, id: &ContainerID) -> Option<Vec<(ContainerID, Index)>> {
+        let mut state = self.state.try_lock().unwrap();
+        let idx = state.arena.id_to_idx(id)?;
+        state.get_path(idx)
+    }
+
+    #[instrument(skip(self))]
+    pub fn export(&self, mode: ExportMode) -> Result<Vec<u8>, LoroEncodeError> {
+        self.commit_then_stop();
+        let ans = match mode {
+            ExportMode::Snapshot => export_fast_snapshot(self),
+            ExportMode::Updates { from } => export_fast_updates(self, &from),
+            ExportMode::UpdatesInRange { spans } => {
+                export_fast_updates_in_range(&self.oplog.try_lock().unwrap(), spans.as_ref())
+            }
+            ExportMode::ShallowSnapshot(f) => export_shallow_snapshot(self, &f)?,
+            ExportMode::StateOnly(f) => match f {
+                Some(f) => export_state_only_snapshot(self, &f)?,
+                None => export_state_only_snapshot(self, &self.oplog_frontiers())?,
+            },
+            ExportMode::SnapshotAt { version } => export_snapshot_at(self, &version)?,
+        };
+
+        self.renew_txn_if_auto_commit();
+        Ok(ans)
+    }
+
+    /// The doc only contains the history since the shallow history start version vector.
+    ///
+    /// This is empty if the doc is not shallow.
+    ///
+    /// The ops included by the shallow history start version vector are not in the doc.
+    pub fn shallow_since_vv(&self) -> ImVersionVector {
+        self.oplog().try_lock().unwrap().shallow_since_vv().clone()
+    }
+
+    pub fn shallow_since_frontiers(&self) -> Frontiers {
+        self.oplog()
+            .try_lock()
+            .unwrap()
+            .shallow_since_frontiers()
+            .clone()
+    }
+
+    /// Check if the doc contains the full history.
+    pub fn is_shallow(&self) -> bool {
+        !self
+            .oplog()
+            .try_lock()
+            .unwrap()
+            .shallow_since_vv()
+            .is_empty()
+    }
+
+    /// Get the number of operations in the pending transaction.
+    ///
+    /// The pending transaction is the one that is not committed yet. It will be committed
+    /// after calling `doc.commit()`, `doc.export(mode)` or `doc.checkout(version)`.
+    pub fn get_pending_txn_len(&self) -> usize {
+        if let Some(txn) = self.txn.try_lock().unwrap().as_ref() {
+            txn.len()
+        } else {
+            0
+        }
+    }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum ChangeTravelError {
+    #[error("Target id not found {0:?}")]
+    TargetIdNotFound(ID),
+    #[error("The shallow history of the doc doesn't include the target version")]
+    TargetVersionNotIncluded,
+}
+
+impl LoroDoc {
+    pub fn travel_change_ancestors(
+        &self,
+        ids: &[ID],
+        f: &mut dyn FnMut(ChangeMeta) -> ControlFlow<()>,
+    ) -> Result<(), ChangeTravelError> {
+        struct PendingNode(ChangeMeta);
+        impl PartialEq for PendingNode {
+            fn eq(&self, other: &Self) -> bool {
+                self.0.lamport_last() == other.0.lamport_last() && self.0.id.peer == other.0.id.peer
+            }
+        }
+
+        impl Eq for PendingNode {}
+        impl PartialOrd for PendingNode {
+            fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+                Some(self.cmp(other))
+            }
+        }
+
+        impl Ord for PendingNode {
+            fn cmp(&self, other: &Self) -> Ordering {
+                self.0
+                    .lamport_last()
+                    .cmp(&other.0.lamport_last())
+                    .then_with(|| self.0.id.peer.cmp(&other.0.id.peer))
+            }
+        }
+
+        for id in ids {
+            let op_log = &self.oplog().try_lock().unwrap();
+            if !op_log.vv().includes_id(*id) {
+                return Err(ChangeTravelError::TargetIdNotFound(*id));
+            }
+            if op_log.dag.shallow_since_vv().includes_id(*id) {
+                return Err(ChangeTravelError::TargetVersionNotIncluded);
+            }
+        }
+
+        let mut visited = FxHashSet::default();
+        let mut pending: BinaryHeap<PendingNode> = BinaryHeap::new();
+        for id in ids {
+            pending.push(PendingNode(ChangeMeta::from_change(
+                &self.oplog().try_lock().unwrap().get_change_at(*id).unwrap(),
+            )));
+        }
+        while let Some(PendingNode(node)) = pending.pop() {
+            let deps = node.deps.clone();
+            if f(node).is_break() {
+                break;
+            }
+
+            for dep in deps.iter() {
+                let Some(dep_node) = self.oplog().try_lock().unwrap().get_change_at(dep) else {
+                    continue;
+                };
+                if visited.contains(&dep_node.id) {
+                    continue;
+                }
+
+                visited.insert(dep_node.id);
+                pending.push(PendingNode(ChangeMeta::from_change(&dep_node)));
+            }
+        }
+
+        Ok(())
+    }
+}
+
+// FIXME: PERF: This method is quite slow because it iterates all the changes
 fn find_last_delete_op(oplog: &OpLog, id: ID, idx: ContainerIdx) -> Option<ID> {
-    let start_vv = oplog.dag.frontiers_to_vv(&id.into())?;
-    for change in oplog.iter_changes_causally_rev(&start_vv, &oplog.dag.vv) {
+    let start_vv = oplog
+        .dag
+        .frontiers_to_vv(&id.into())
+        .unwrap_or_else(|| oplog.shallow_since_vv().to_vv());
+    for change in oplog.iter_changes_causally_rev(&start_vv, oplog.vv()) {
         for op in change.ops.iter().rev() {
             if op.container != idx {
                 continue;
@@ -1375,10 +1639,10 @@ impl<'a> Drop for CommitWhenDrop<'a> {
 
 #[derive(Debug, Clone)]
 pub struct CommitOptions {
-    origin: Option<InternalString>,
-    immediate_renew: bool,
-    timestamp: Option<Timestamp>,
-    commit_msg: Option<Box<str>>,
+    pub origin: Option<InternalString>,
+    pub immediate_renew: bool,
+    pub timestamp: Option<Timestamp>,
+    pub commit_msg: Option<Arc<str>>,
 }
 
 impl CommitOptions {
@@ -1454,7 +1718,7 @@ mod test {
         }
         txn.commit().unwrap();
         let b = LoroDoc::new();
-        b.import(&loro.export_snapshot()).unwrap();
+        b.import(&loro.export_snapshot().unwrap()).unwrap();
         loro.checkout(&Frontiers::default()).unwrap();
         {
             let json = &loro.get_deep_value();
@@ -1488,11 +1752,10 @@ mod test {
         let a = LoroDoc::new_auto_commit();
         let update_a = a.export_snapshot();
         let b = LoroDoc::new_auto_commit();
-        b.import_batch(&[update_a]).unwrap();
+        b.import_batch(&[update_a.unwrap()]).unwrap();
         b.get_text("text").insert(0, "hello").unwrap();
         b.commit_then_renew();
-        let oplog = b.oplog().lock().unwrap();
-        dbg!(&oplog.arena);
+        let oplog = b.oplog().try_lock().unwrap();
         drop(oplog);
         b.export_from(&Default::default());
     }

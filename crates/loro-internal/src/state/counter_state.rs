@@ -4,6 +4,7 @@ use loro_common::{ContainerID, LoroError, LoroResult, LoroValue};
 
 use crate::{
     arena::SharedArena,
+    configure::Configure,
     container::idx::ContainerIdx,
     encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff},
@@ -12,7 +13,7 @@ use crate::{
     DocState,
 };
 
-use super::ContainerState;
+use super::{ApplyLocalOpReturn, ContainerState, DiffApplyContext};
 
 #[derive(Debug, Clone)]
 pub struct CounterState {
@@ -40,13 +41,7 @@ impl ContainerState for CounterState {
     }
 
     #[must_use]
-    fn apply_diff_and_convert(
-        &mut self,
-        diff: InternalDiff,
-        _arena: &SharedArena,
-        _txn: &Weak<Mutex<Option<Transaction>>>,
-        _state: &Weak<Mutex<DocState>>,
-    ) -> Diff {
+    fn apply_diff_and_convert(&mut self, diff: InternalDiff, _ctx: DiffApplyContext) -> Diff {
         if let InternalDiff::Counter(diff) = diff {
             self.value += diff;
             Diff::Counter(diff)
@@ -55,20 +50,14 @@ impl ContainerState for CounterState {
         }
     }
 
-    fn apply_diff(
-        &mut self,
-        diff: InternalDiff,
-        arena: &SharedArena,
-        txn: &Weak<Mutex<Option<Transaction>>>,
-        state: &Weak<Mutex<DocState>>,
-    ) {
-        let _ = self.apply_diff_and_convert(diff, arena, txn, state);
+    fn apply_diff(&mut self, diff: InternalDiff, ctx: DiffApplyContext) {
+        let _ = self.apply_diff_and_convert(diff, ctx);
     }
 
-    fn apply_local_op(&mut self, raw_op: &RawOp, _op: &Op) -> LoroResult<()> {
+    fn apply_local_op(&mut self, raw_op: &RawOp, _op: &Op) -> LoroResult<ApplyLocalOpReturn> {
         if let RawOpContent::Counter(diff) = raw_op.content {
             self.value += diff;
-            Ok(())
+            Ok(Default::default())
         } else {
             unreachable!()
         }
@@ -123,5 +112,42 @@ impl ContainerState for CounterState {
     #[allow(unused)]
     fn contains_child(&self, id: &ContainerID) -> bool {
         false
+    }
+
+    fn fork(&self, _config: &Configure) -> Self {
+        self.clone()
+    }
+}
+
+mod snapshot {
+    use crate::state::FastStateSnapshot;
+
+    use super::*;
+
+    impl FastStateSnapshot for CounterState {
+        fn encode_snapshot_fast<W: std::io::Write>(&mut self, mut w: W) {
+            let bytes = self.value.to_le_bytes();
+            w.write_all(&bytes).unwrap();
+        }
+
+        fn decode_value(bytes: &[u8]) -> LoroResult<(LoroValue, &[u8])> {
+            Ok((
+                LoroValue::Double(f64::from_le_bytes(bytes.try_into().unwrap())),
+                bytes,
+            ))
+        }
+
+        fn decode_snapshot_fast(
+            idx: ContainerIdx,
+            v: (LoroValue, &[u8]),
+            _ctx: crate::state::ContainerCreationContext,
+        ) -> LoroResult<Self>
+        where
+            Self: Sized,
+        {
+            let mut counter = CounterState::new(idx);
+            counter.value = *v.0.as_double().unwrap();
+            Ok(counter)
+        }
     }
 }

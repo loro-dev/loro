@@ -1,13 +1,17 @@
 use std::sync::{atomic::AtomicBool, Arc, Mutex};
 
 use fxhash::FxHashMap;
-use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue, ID};
+use loro_common::{ContainerID, ContainerType, LoroError, LoroResult, LoroValue, PeerID, ID};
 use loro_internal::{
     delta::ResolvedMapValue,
+    encoding::ImportStatus,
     event::{Diff, EventTriggerKind},
+    fx_map,
     handler::{Handler, TextDelta, ValueOrHandler},
-    version::Frontiers,
+    loro::ExportMode,
+    version::{Frontiers, VersionRange},
     ApplyDiff, HandlerTrait, ListHandler, LoroDoc, MapHandler, TextHandler, ToJson, TreeHandler,
+    TreeParentId,
 };
 use serde_json::json;
 
@@ -93,7 +97,7 @@ fn mark_with_the_same_key_value_should_be_skipped() {
 #[test]
 fn event_from_checkout() {
     let a = LoroDoc::new_auto_commit();
-    let sub_id = a.subscribe_root(Arc::new(|event| {
+    let sub = a.subscribe_root(Arc::new(|event| {
         assert!(matches!(
             event.event_meta.by,
             EventTriggerKind::Checkout | EventTriggerKind::Local
@@ -104,10 +108,10 @@ fn event_from_checkout() {
     let version = a.oplog_frontiers();
     a.get_text("text").insert(0, "hello").unwrap();
     a.commit_then_renew();
-    a.unsubscribe(sub_id);
+    sub.unsubscribe();
     let ran = Arc::new(AtomicBool::new(false));
     let ran_cloned = ran.clone();
-    a.subscribe_root(Arc::new(move |event| {
+    let _g = a.subscribe_root(Arc::new(move |event| {
         assert!(event.event_meta.by.is_checkout());
         ran.store(true, std::sync::atomic::Ordering::Relaxed);
     }));
@@ -118,7 +122,7 @@ fn event_from_checkout() {
 #[test]
 fn handler_in_event() {
     let doc = LoroDoc::new_auto_commit();
-    doc.subscribe_root(Arc::new(|e| {
+    let _g = doc.subscribe_root(Arc::new(|e| {
         dbg!(&e);
         let value = e.events[0]
             .diff
@@ -199,7 +203,7 @@ fn list() {
 #[test]
 fn richtext_mark_event() {
     let a = LoroDoc::new_auto_commit();
-    a.subscribe(
+    let _g = a.subscribe(
         &a.get_text("text").id(),
         Arc::new(|e| {
             let delta = e.events[0].diff.as_text().unwrap();
@@ -220,7 +224,7 @@ fn richtext_mark_event() {
         .unwrap();
     a.commit_then_stop();
     let b = LoroDoc::new_auto_commit();
-    b.subscribe(
+    let _g = b.subscribe(
         &a.get_text("text").id(),
         Arc::new(|e| {
             let delta = e.events[0].diff.as_text().unwrap();
@@ -264,7 +268,7 @@ fn concurrent_richtext_mark_event() {
     );
 
     a.merge(&b).unwrap();
-    a.unsubscribe(sub_id);
+    sub_id.unsubscribe();
 
     let sub_id = a.subscribe(
         &a.get_text("text").id(),
@@ -289,8 +293,8 @@ fn concurrent_richtext_mark_event() {
         .mark(2, 3, "bold", LoroValue::Null)
         .unwrap();
     a.merge(&b).unwrap();
-    a.unsubscribe(sub_id);
-    a.subscribe(
+    sub_id.unsubscribe();
+    let _g = a.subscribe(
         &a.get_text("text").id(),
         Arc::new(|e| {
             for container_diff in e.events {
@@ -321,7 +325,7 @@ fn insert_richtext_event() {
     a.get_text("text").mark(0, 5, "bold", true.into()).unwrap();
     a.commit_then_renew();
     let text = a.get_text("text");
-    a.subscribe(
+    let _g = a.subscribe(
         &text.id(),
         Arc::new(|e| {
             let delta = e.events[0].diff.as_text().unwrap();
@@ -341,8 +345,8 @@ fn insert_richtext_event() {
 #[test]
 fn import_after_init_handlers() {
     let a = LoroDoc::new_auto_commit();
-    a.subscribe(
-        &ContainerID::new_root("text", ContainerType::Text).unwrap(),
+    let _g = a.subscribe(
+        &ContainerID::new_root("text", ContainerType::Text),
         Arc::new(|event| {
             assert!(matches!(
                 event.events[0].diff,
@@ -350,8 +354,8 @@ fn import_after_init_handlers() {
             ))
         }),
     );
-    a.subscribe(
-        &ContainerID::new_root("map", ContainerType::Map).unwrap(),
+    let _g = a.subscribe(
+        &ContainerID::new_root("map", ContainerType::Map),
         Arc::new(|event| {
             assert!(matches!(
                 event.events[0].diff,
@@ -359,8 +363,8 @@ fn import_after_init_handlers() {
             ))
         }),
     );
-    a.subscribe(
-        &ContainerID::new_root("list", ContainerType::List).unwrap(),
+    let _g = a.subscribe(
+        &ContainerID::new_root("list", ContainerType::List),
         Arc::new(|event| {
             assert!(matches!(
                 event.events[0].diff,
@@ -374,7 +378,7 @@ fn import_after_init_handlers() {
     b.get_list("list_a").insert(0, "list_a").unwrap();
     b.get_text("text").insert(0, "text").unwrap();
     b.get_map("map").insert("m", "map").unwrap();
-    a.import(&b.export_snapshot()).unwrap();
+    a.import(&b.export_snapshot().unwrap()).unwrap();
     a.commit_then_renew();
 }
 
@@ -382,7 +386,7 @@ fn import_after_init_handlers() {
 fn test_from_snapshot() {
     let a = LoroDoc::new_auto_commit();
     a.get_text("text").insert(0, "0").unwrap();
-    let snapshot = a.export_snapshot();
+    let snapshot = a.export_snapshot().unwrap();
     let c = LoroDoc::from_snapshot(&snapshot).unwrap();
     assert_eq!(a.get_deep_value(), c.get_deep_value());
     assert_eq!(a.oplog_frontiers(), c.oplog_frontiers());
@@ -415,7 +419,7 @@ fn test_pending() {
 
     // b does not has c's change
     a.import(&b.export_from(&a.oplog_vv())).unwrap();
-    dbg!(&a.oplog().lock().unwrap());
+    dbg!(&a.oplog().try_lock().unwrap());
     assert_eq!(a.get_deep_value().to_json_value(), json!({"text": "210"}));
 }
 
@@ -428,9 +432,9 @@ fn test_checkout() {
 
     let value: Arc<Mutex<LoroValue>> = Arc::new(Mutex::new(LoroValue::Map(Default::default())));
     let root_value = value.clone();
-    doc_0.subscribe_root(Arc::new(move |event| {
+    let _g = doc_0.subscribe_root(Arc::new(move |event| {
         dbg!(&event);
-        let mut root_value = root_value.lock().unwrap();
+        let mut root_value = root_value.try_lock().unwrap();
         for container_diff in event.events {
             root_value.apply(
                 &container_diff.path.iter().map(|x| x.1.clone()).collect(),
@@ -462,28 +466,15 @@ fn test_checkout() {
         .checkout(&Frontiers::from(vec![ID::new(0, 2)]))
         .unwrap();
 
-    assert_eq!(&doc_0.get_deep_value(), &*value.lock().unwrap());
+    assert_eq!(&doc_0.get_deep_value(), &*value.try_lock().unwrap());
     assert_eq!(
-        value.lock().unwrap().to_json_value(),
+        value.try_lock().unwrap().to_json_value(),
         json!({
             "map": {
                 "text": "12"
             }
         })
     );
-}
-
-#[test]
-fn import() {
-    let doc = LoroDoc::new();
-    doc.import(&[
-        108, 111, 114, 111, 0, 0, 10, 10, 255, 255, 68, 255, 255, 4, 0, 5, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 255, 255, 108, 111, 114, 111, 255, 255, 0, 255, 207, 207, 255, 255, 255, 255,
-        255,
-    ])
-    .unwrap_or_default();
 }
 
 #[test]
@@ -494,7 +485,7 @@ fn test_timestamp() {
     let mut txn = doc.txn().unwrap();
     text.insert_with_txn(&mut txn, 0, "123").unwrap();
     txn.commit().unwrap();
-    let op_log = &doc.oplog().lock().unwrap();
+    let op_log = &doc.oplog().try_lock().unwrap();
     let change = op_log.get_change_at(ID::new(doc.peer_id(), 0)).unwrap();
     assert!(change.timestamp() > 1690966970);
 }
@@ -698,7 +689,7 @@ fn map_concurrent_checkout() {
         })
         .unwrap();
     let vb_1 = doc_b.oplog_frontiers();
-    doc_a.import(&doc_b.export_snapshot()).unwrap();
+    doc_a.import(&doc_b.export_snapshot().unwrap()).unwrap();
     doc_a
         .with_txn(|txn| {
             meta_a.insert_with_txn(txn, "key", 2.into()).unwrap();
@@ -721,14 +712,14 @@ fn map_concurrent_checkout() {
 #[test]
 fn tree_checkout() {
     let doc_a = LoroDoc::new_auto_commit();
-    doc_a.subscribe_root(Arc::new(|_e| {}));
+    let _g = doc_a.subscribe_root(Arc::new(|_e| {}));
     doc_a.set_peer_id(1).unwrap();
     let tree = doc_a.get_tree("root");
-    let id1 = tree.create(None).unwrap();
-    let id2 = tree.create(id1).unwrap();
+    let id1 = tree.create(TreeParentId::Root).unwrap();
+    let id2 = tree.create(TreeParentId::Node(id1)).unwrap();
     let v1_state = tree.get_deep_value();
     let v1 = doc_a.oplog_frontiers();
-    let _id3 = tree.create(id2).unwrap();
+    let _id3 = tree.create(TreeParentId::Node(id2)).unwrap();
     let v2_state = tree.get_deep_value();
     let v2 = doc_a.oplog_frontiers();
     tree.delete(id2).unwrap();
@@ -757,7 +748,7 @@ fn tree_checkout() {
     );
 
     doc_a.attach();
-    tree.create(None).unwrap();
+    tree.create(TreeParentId::Root).unwrap();
 }
 
 #[test]
@@ -769,8 +760,8 @@ fn issue_batch_import_snapshot() {
     doc.get_map("map").insert("s", "hello world!").unwrap();
     doc2.get_map("map").insert("s", "hello?").unwrap();
 
-    let data1 = doc.export_snapshot();
-    let data2 = doc2.export_snapshot();
+    let data1 = doc.export_snapshot().unwrap();
+    let data2 = doc2.export_snapshot().unwrap();
     let doc3 = LoroDoc::new();
     doc3.import_batch(&[data1, data2]).unwrap();
 }
@@ -802,13 +793,13 @@ fn state_may_deadlock_when_import() {
     panic_after(Duration::from_millis(100), || {
         let doc = LoroDoc::new_auto_commit();
         let map = doc.get_map("map");
-        doc.subscribe_root(Arc::new(move |_e| {
+        let _g = doc.subscribe_root(Arc::new(move |_e| {
             map.id();
         }));
 
         let doc2 = LoroDoc::new_auto_commit();
         doc2.get_map("map").insert("foo", 123).unwrap();
-        doc.import(&doc.export_snapshot()).unwrap();
+        doc.import(&doc.export_snapshot().unwrap()).unwrap();
     })
 }
 
@@ -823,13 +814,13 @@ fn missing_event_when_checkout() {
     doc.checkout(&doc.oplog_frontiers()).unwrap();
     let value = Arc::new(Mutex::new(FxHashMap::default()));
     let map = value.clone();
-    doc.subscribe(
-        &ContainerID::new_root("tree", ContainerType::Tree).unwrap(),
+    let _g = doc.subscribe(
+        &ContainerID::new_root("tree", ContainerType::Tree),
         Arc::new(move |e| {
-            let mut v = map.lock().unwrap();
+            let mut v = map.try_lock().unwrap();
             for container_diff in e.events.iter() {
-                let from_children = container_diff.id
-                    != ContainerID::new_root("tree", ContainerType::Tree).unwrap();
+                let from_children =
+                    container_diff.id != ContainerID::new_root("tree", ContainerType::Tree);
                 if from_children {
                     if let Diff::Map(map) = &container_diff.diff {
                         for (k, ResolvedMapValue { value, .. }) in map.updated.iter() {
@@ -853,8 +844,8 @@ fn missing_event_when_checkout() {
 
     let doc2 = LoroDoc::new_auto_commit();
     let tree = doc2.get_tree("tree");
-    let node = tree.create_at(None, 0).unwrap();
-    let _ = tree.create_at(None, 0).unwrap();
+    let node = tree.create_at(TreeParentId::Root, 0).unwrap();
+    let _ = tree.create_at(TreeParentId::Root, 0).unwrap();
     let meta = tree.get_meta(node).unwrap();
     meta.insert("a", 0).unwrap();
     doc.import(&doc2.export_from(&doc.oplog_vv())).unwrap();
@@ -864,7 +855,7 @@ fn missing_event_when_checkout() {
     doc.import(&doc2.export_from(&doc.oplog_vv())).unwrap();
     // checkout use the same diff_calculator, the depth of calculator is not updated
     doc.attach();
-    assert!(value.lock().unwrap().contains_key("b"));
+    assert!(value.try_lock().unwrap().contains_key("b"));
 }
 
 #[test]
@@ -874,10 +865,10 @@ fn empty_event() {
     doc.commit_then_renew();
     let fire = Arc::new(AtomicBool::new(false));
     let fire_clone = Arc::clone(&fire);
-    doc.subscribe_root(Arc::new(move |_e| {
+    let _g = doc.subscribe_root(Arc::new(move |_e| {
         fire_clone.store(true, std::sync::atomic::Ordering::Relaxed);
     }));
-    doc.import(&doc.export_snapshot()).unwrap();
+    doc.import(&doc.export_snapshot().unwrap()).unwrap();
     assert!(!fire.load(std::sync::atomic::Ordering::Relaxed));
 }
 
@@ -930,7 +921,7 @@ fn insert_attach_container() -> LoroResult<()> {
 #[test]
 fn tree_attach() {
     let tree = TreeHandler::new_detached();
-    let id = tree.create(None).unwrap();
+    let id = tree.create(TreeParentId::Root).unwrap();
     tree.get_meta(id).unwrap().insert("key", "value").unwrap();
     let doc = LoroDoc::new_auto_commit();
     doc.get_list("list").insert_container(0, tree).unwrap();
@@ -1213,7 +1204,7 @@ fn test_text_iter() {
     text.insert(1, "Hello").unwrap();
     text.iter(|s| {
         str.push_str(s);
-        return true;
+        true
     });
     assert_eq!(str, "HHelloello");
     str = String::new();
@@ -1223,8 +1214,8 @@ fn test_text_iter() {
             return false;
         }
         str.push_str(s);
-        i = i + 1;
-        return true;
+        i += 1;
+        true
     });
     assert_eq!(str, "H");
 }
@@ -1237,7 +1228,7 @@ fn test_text_iter_detached() {
     text.insert(1, "Hello").unwrap();
     text.iter(|s| {
         str.push_str(s);
-        return true;
+        true
     });
     assert_eq!(str, "HHelloello");
 }
@@ -1255,9 +1246,55 @@ fn test_text_update() {
 fn test_map_contains_key() {
     let doc = LoroDoc::new_auto_commit();
     let map = doc.get_map("m");
-    assert_eq!(map.contains_key("bro"), false);
+    assert!(!map.contains_key("bro"));
     map.insert("bro", 114514).unwrap();
-    assert_eq!(map.contains_key("bro"), true);
+    assert!(map.contains_key("bro"));
     map.delete("bro").unwrap();
-    assert_eq!(map.contains_key("bro"), false);
+    assert!(!map.contains_key("bro"));
+}
+
+#[test]
+fn set_max_peer_id() {
+    let doc = LoroDoc::new_auto_commit();
+    assert_eq!(
+        doc.set_peer_id(PeerID::MAX),
+        Result::Err(LoroError::InvalidPeerID)
+    );
+}
+
+#[test]
+fn import_status() -> LoroResult<()> {
+    let doc = LoroDoc::new_auto_commit();
+    doc.set_peer_id(0)?;
+    let t = doc.get_text("text");
+    t.insert(0, "a")?;
+
+    let doc2 = LoroDoc::new_auto_commit();
+    doc2.set_peer_id(1)?;
+    let t2 = doc2.get_text("text");
+    t2.insert(0, "b")?;
+    doc2.commit_then_renew();
+    let update1 = doc2.export_snapshot().unwrap();
+    let vv1 = doc2.oplog_vv();
+    t2.insert(1, "c")?;
+    let update2 = doc2.export(ExportMode::updates(&vv1)).unwrap();
+
+    let status1 = doc.import(&update2)?;
+    let status2 = doc.import(&update1)?;
+    assert_eq!(
+        status1,
+        ImportStatus {
+            success: Default::default(),
+            pending: Some(VersionRange::from_map(fx_map!(1=>(1, 2))))
+        }
+    );
+    assert_eq!(
+        status2,
+        ImportStatus {
+            success: VersionRange::from_map(fx_map!(1=>(0, 2))),
+            pending: None
+        }
+    );
+
+    Ok(())
 }

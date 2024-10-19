@@ -7,7 +7,7 @@ use loro::{Container, ContainerID, ContainerType, LoroDoc, LoroMap, LoroValue};
 
 use crate::{
     actions::{Actionable, FromGenericAction, GenericAction},
-    actor::{ActionExecutor, ActorTrait},
+    actor::{assert_value_eq, ActionExecutor, ActorTrait},
     crdt_fuzzer::FuzzValue,
     value::{ApplyDiff, ContainerTracker, MapTracker, Value},
 };
@@ -20,24 +20,23 @@ pub struct MapActor {
 
 impl MapActor {
     pub fn new(loro: Arc<LoroDoc>) -> Self {
-        let mut tracker =
-            MapTracker::empty(ContainerID::new_root("sys:root", ContainerType::Map).unwrap());
+        let mut tracker = MapTracker::empty(ContainerID::new_root("sys:root", ContainerType::Map));
         tracker.insert(
             "map".to_string(),
             Value::empty_container(
                 ContainerType::Map,
-                ContainerID::new_root("map", ContainerType::Map).unwrap(),
+                ContainerID::new_root("map", ContainerType::Map),
             ),
         );
         let tracker = Arc::new(Mutex::new(ContainerTracker::Map(tracker)));
         let map = tracker.clone();
         loro.subscribe(
-            &ContainerID::new_root("map", ContainerType::Map).unwrap(),
+            &ContainerID::new_root("map", ContainerType::Map),
             Arc::new(move |event| {
-                let mut map = map.lock().unwrap();
+                let mut map = map.try_lock().unwrap();
                 map.apply_diff(event);
             }),
-        );
+        ).detach();
 
         let root = loro.get_map("map");
         MapActor {
@@ -66,8 +65,12 @@ impl ActorTrait for MapActor {
     fn check_tracker(&self) {
         let map = self.loro.get_map("map");
         let value_a = map.get_deep_value();
-        let value_b = self.tracker.lock().unwrap().to_value();
-        assert_eq!(&value_a, value_b.into_map().unwrap().get("map").unwrap());
+        let value_b = self.tracker.try_lock().unwrap().to_value();
+        assert_value_eq(
+            &value_a,
+            value_b.into_map().unwrap().get("map").unwrap(),
+            None,
+        );
     }
 
     fn container_len(&self) -> u8 {
@@ -132,22 +135,22 @@ impl Actionable for MapAction {
     fn apply(&self, actor: &mut ActionExecutor, container: usize) -> Option<Container> {
         let actor = actor.as_map_actor_mut().unwrap();
         let handler = actor.get_create_container_mut(container);
+        use super::unwrap;
         match self {
             MapAction::Insert { key, value, .. } => {
                 let key = &key.to_string();
                 match value {
                     FuzzValue::I32(v) => {
-                        handler.insert(key, LoroValue::from(*v)).unwrap();
+                        unwrap(handler.insert(key, LoroValue::from(*v)));
                         None
                     }
                     FuzzValue::Container(c) => {
-                        let container = handler.insert_container(key, Container::new(*c)).unwrap();
-                        Some(container)
+                        unwrap(handler.insert_container(key, Container::new(*c)))
                     }
                 }
             }
             MapAction::Delete { key, .. } => {
-                handler.delete(&key.to_string()).unwrap();
+                unwrap(handler.delete(&key.to_string()));
                 None
             }
         }

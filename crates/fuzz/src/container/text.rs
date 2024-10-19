@@ -32,24 +32,23 @@ pub struct TextActor {
 
 impl TextActor {
     pub fn new(loro: Arc<LoroDoc>) -> Self {
-        let mut tracker =
-            MapTracker::empty(ContainerID::new_root("sys:root", ContainerType::Map).unwrap());
+        let mut tracker = MapTracker::empty(ContainerID::new_root("sys:root", ContainerType::Map));
         tracker.insert(
             "text".to_string(),
             Value::empty_container(
                 ContainerType::Text,
-                ContainerID::new_root("text", ContainerType::Text).unwrap(),
+                ContainerID::new_root("text", ContainerType::Text),
             ),
         );
         let tracker = Arc::new(Mutex::new(ContainerTracker::Map(tracker)));
         let text = tracker.clone();
-
         loro.subscribe(
-            &ContainerID::new_root("text", ContainerType::Text).unwrap(),
+            &ContainerID::new_root("text", ContainerType::Text),
             Arc::new(move |event| {
-                text.lock().unwrap().apply_diff(event);
+                text.try_lock().unwrap().apply_diff(event);
             }),
-        );
+        )
+        .detach();
         let root = loro.get_text("text");
         TextActor {
             loro,
@@ -69,7 +68,7 @@ impl ActorTrait for TextActor {
         let text = loro.get_text("text");
         // check delta
         let value = text.to_delta();
-        let tracker = self.tracker.lock().unwrap();
+        let tracker = self.tracker.try_lock().unwrap();
         let text = tracker.as_map().unwrap().get("text").unwrap();
         let text_h = text
             .as_container()
@@ -122,14 +121,16 @@ impl Actionable for TextAction {
         let actor = actor.as_text_actor_mut().unwrap();
         let text = actor.containers.get(container).unwrap();
         let TextAction { pos, len, action } = self;
+        use super::unwrap;
         match action {
-            TextActionInner::Insert => text.insert(*pos, &format!("[{}]", len)).unwrap(),
+            TextActionInner::Insert => {
+                unwrap(text.insert(*pos, &format!("[{}]", len)));
+            }
             TextActionInner::Delete => {
-                text.delete(*pos, *len).unwrap();
+                unwrap(text.delete(*pos, *len));
             }
             TextActionInner::Mark(i) => {
-                text.mark(*pos..*pos + *len, STYLES_NAME[*i], *pos as i32)
-                    .unwrap();
+                unwrap(text.mark(*pos..*pos + *len, STYLES_NAME[*i], *pos as i32));
             }
         }
         None

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   decodeImportBlobMeta,
-  Loro,
+  LoroDoc,
   LoroMap,
   OpId,
   VersionVector,
@@ -9,14 +9,14 @@ import {
 
 describe("Frontiers", () => {
   it("two clients", () => {
-    const doc = new Loro();
+    const doc = new LoroDoc();
     doc.setPeerId(0);
     const text = doc.getText("text");
     text.insert(0, "0");
     doc.commit();
 
     const v0 = doc.frontiers();
-    const docB = new Loro();
+    const docB = new LoroDoc();
     docB.setPeerId(1);
     docB.import(doc.exportFrom());
     expect(docB.cmpWithFrontiers(v0)).toBe(0);
@@ -34,9 +34,9 @@ describe("Frontiers", () => {
   });
 
   it("cmp frontiers", () => {
-    const doc1 = new Loro();
+    const doc1 = new LoroDoc();
     doc1.setPeerId(1);
-    const doc2 = new Loro();
+    const doc2 = new LoroDoc();
     doc2.setPeerId(2n);
 
     doc1.getText("text").insert(0, "01234");
@@ -85,7 +85,7 @@ describe("Frontiers", () => {
 });
 
 it("peer id repr should be consistent", () => {
-  const doc = new Loro();
+  const doc = new LoroDoc();
   const id = doc.peerIdStr;
   doc.getText("text").insert(0, "hello");
   doc.commit();
@@ -105,9 +105,9 @@ it("peer id repr should be consistent", () => {
 });
 
 describe("Version", () => {
-  const a = new Loro();
+  const a = new LoroDoc();
   a.setPeerId(0n);
-  const b = new Loro();
+  const b = new LoroDoc();
   b.setPeerId(1n);
   a.getText("text").insert(0, "ha");
   b.getText("text").insert(0, "yo");
@@ -155,7 +155,7 @@ describe("Version", () => {
 });
 
 it("get import blob metadata", () => {
-  const doc0 = new Loro();
+  const doc0 = new LoroDoc();
   doc0.setPeerId(0n);
   const text = doc0.getText("text");
   text.insert(0, "0");
@@ -172,7 +172,7 @@ it("get import blob metadata", () => {
     expect(meta.startFrontiers.length).toBe(0);
   }
 
-  const doc1 = new Loro();
+  const doc1 = new LoroDoc();
   doc1.setPeerId(1);
   doc1.getText("text").insert(0, "123");
   doc1.import(doc0.exportFrom());

@@ -1,6 +1,6 @@
 {
   "name": "loro-crdt",
-  "version": "0.16.12",
+  "version": "1.0.0-beta.3",
   "description": "Loro CRDTs is a high-performance CRDT framework that makes your app state synchronized, collaborative and maintainable effortlessly.",
   "keywords": [
     "crdt",
@@ -36,6 +36,7 @@
     "esbuild": "^0.18.20",
     "eslint": "^8.46.0",
     "loro-crdt-old": "npm:loro-crdt@=0.16.0",
+    "loro-crdt-alpha-4": "npm:loro-crdt@=1.0.0-alpha.4",
     "prettier": "^3.0.0",
     "rollup": "^3.20.1",
     "rollup-plugin-dts": "^5.3.0",

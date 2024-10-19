@@ -81,7 +81,7 @@ fn basic_list_undo_deletion() -> Result<(), LoroError> {
         })
     );
 
-    assert_eq!(doc.oplog_frontiers()[0].counter, 4);
+    assert_eq!(doc.oplog_frontiers().as_single().unwrap().counter, 4);
 
     Ok(())
 }
@@ -310,7 +310,7 @@ fn undo_id_span_that_contains_remote_deps_inside() -> Result<(), LoroError> {
             "text": "B"
         })
     );
-    assert_eq!(doc_a.oplog_frontiers()[0].counter, 14);
+    assert_eq!(doc_a.oplog_frontiers().as_single().unwrap().counter, 14);
     Ok(())
 }
 
@@ -504,7 +504,7 @@ fn test_richtext_checkout() -> LoroResult<()> {
     text.delete(0, 5)?;
     doc.commit();
 
-    doc.subscribe_root(Arc::new(|event| {
+    let _g = doc.subscribe_root(Arc::new(|event| {
         dbg!(&event);
         let t = event.events[0].diff.as_text().unwrap();
         let i = t[0].as_insert().unwrap();
@@ -1215,6 +1215,7 @@ fn undo_tree_concurrent_delete2() -> LoroResult<()> {
     Ok(())
 }
 
+/// ```text
 ///                    ┌ ─ ─ ─ ─            ┌ ─ ─ ─ ─
 ///                      Peer 1 │             Peer 2 │
 ///                    └ ─ ─ ─ ─            └ ─ ─ ─ ─
@@ -1259,6 +1260,7 @@ fn undo_tree_concurrent_delete2() -> LoroResult<()> {
 ///                      Cannot │
 ///                    │  Redo
 ///                     ─ ─ ─ ─ ┘
+/// ```
 #[test]
 fn undo_redo_when_collab() -> anyhow::Result<()> {
     let doc_a = LoroDoc::new();
@@ -1543,7 +1545,7 @@ fn undo_manager_events() -> anyhow::Result<()> {
     })));
     undo.set_on_pop(Some(Box::new(move |_source, _span, v| {
         pop_count_clone.fetch_add(1, atomic::Ordering::SeqCst);
-        *popped_value_clone.lock().unwrap() = v.value;
+        *popped_value_clone.try_lock().unwrap() = v.value;
     })));
     text.insert(0, "Hello")?;
     assert_eq!(push_count.load(atomic::Ordering::SeqCst), 0);
@@ -1557,11 +1559,11 @@ fn undo_manager_events() -> anyhow::Result<()> {
     assert_eq!(push_count.load(atomic::Ordering::SeqCst), 2);
 
     undo.undo(&doc)?;
-    assert_eq!(&*popped_value.lock().unwrap(), &LoroValue::I64(5));
+    assert_eq!(&*popped_value.try_lock().unwrap(), &LoroValue::I64(5));
     assert_eq!(pop_count.load(atomic::Ordering::SeqCst), 1);
     assert_eq!(push_count.load(atomic::Ordering::SeqCst), 3);
     undo.undo(&doc)?;
-    assert_eq!(&*popped_value.lock().unwrap(), &LoroValue::I64(0));
+    assert_eq!(&*popped_value.try_lock().unwrap(), &LoroValue::I64(0));
     assert_eq!(pop_count.load(atomic::Ordering::SeqCst), 2);
     assert_eq!(push_count.load(atomic::Ordering::SeqCst), 4);
     undo.redo(&doc)?;
@@ -1583,7 +1585,7 @@ fn undo_transform_cursor_position() -> anyhow::Result<()> {
     let cursors_clone = cursors.clone();
     undo.set_on_push(Some(Box::new(move |_, _| {
         let mut ans = UndoItemMeta::new();
-        let cursors = cursors_clone.lock().unwrap();
+        let cursors = cursors_clone.try_lock().unwrap();
         for c in cursors.iter() {
             ans.add_cursor(c)
         }
@@ -1592,16 +1594,16 @@ fn undo_transform_cursor_position() -> anyhow::Result<()> {
     let popped_cursors = Arc::new(Mutex::new(Vec::new()));
     let popped_cursors_clone = popped_cursors.clone();
     undo.set_on_pop(Some(Box::new(move |_, _, meta| {
-        *popped_cursors_clone.lock().unwrap() = meta.cursors;
+        *popped_cursors_clone.try_lock().unwrap() = meta.cursors;
     })));
     text.insert(0, "Hello world!")?;
     doc.commit();
     cursors
-        .lock()
+        .try_lock()
         .unwrap()
         .push(text.get_cursor(1, loro::cursor::Side::Left).unwrap());
     cursors
-        .lock()
+        .try_lock()
         .unwrap()
         .push(text.get_cursor(4, loro::cursor::Side::Right).unwrap());
     text.delete(1, 4)?;
@@ -1614,17 +1616,17 @@ fn undo_transform_cursor_position() -> anyhow::Result<()> {
         doc.import(&doc_b.export_snapshot())?;
         assert_eq!(text.to_string(), "Hi Hii world!");
     }
-    assert_eq!(popped_cursors.lock().unwrap().len(), 0);
+    assert_eq!(popped_cursors.try_lock().unwrap().len(), 0);
     undo.undo(&doc)?;
 
     // Undo will create new "Hello". They have different IDs than the original ones.
-    // But the original cursors are binded on the original deleted text.
+    // But the original cursors are bound on the original deleted text.
     // So internally, the cursor positions are transformed.
 
     // The transformation should also consider the effect of the remote changes.
     assert_eq!(text.to_string(), "Hi Helloii world!");
     {
-        let cursors = popped_cursors.lock().unwrap();
+        let cursors = popped_cursors.try_lock().unwrap();
         assert_eq!(cursors.len(), 2);
         assert_eq!(cursors[0].pos.pos, 4);
         assert_eq!(cursors[1].pos.pos, 7);

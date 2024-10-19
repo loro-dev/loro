@@ -93,9 +93,27 @@ impl ActorTrait for DrawActor {
                 };
 
                 let map = self.doc.get_map(id);
-                let pos_map = map.get("pos").unwrap().unwrap_right().into_map().unwrap();
-                let x = pos_map.get("x").unwrap().unwrap_left().into_i64().unwrap();
-                let y = pos_map.get("y").unwrap().unwrap_left().into_i64().unwrap();
+                let pos_map = map
+                    .get("pos")
+                    .unwrap()
+                    .into_container()
+                    .unwrap()
+                    .into_map()
+                    .unwrap();
+                let x = pos_map
+                    .get("x")
+                    .unwrap()
+                    .into_value()
+                    .unwrap()
+                    .into_i64()
+                    .unwrap();
+                let y = pos_map
+                    .get("y")
+                    .unwrap()
+                    .into_value()
+                    .unwrap()
+                    .into_i64()
+                    .unwrap();
                 pos_map
                     .insert("x", x.overflowing_add(relative_to.x as i64).0)
                     .unwrap();
