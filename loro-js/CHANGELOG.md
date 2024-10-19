@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.0-beta.4
+
+### Patch Changes
+
+- Fix: ForkAt should inherit the config and auto commit from the original doc
+- Updated dependencies
+  - loro-wasm@1.0.0-beta.4
+
 ## 1.0.0-beta.3
 
 ### Patch Changes

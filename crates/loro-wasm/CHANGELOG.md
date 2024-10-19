@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.0-beta.4
+
+### Patch Changes
+
+- Fix: ForkAt should inherit the config and auto commit from the original doc
+
 ## 1.0.0-beta.3
 
 ### Patch Changes
