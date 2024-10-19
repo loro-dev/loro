@@ -16,6 +16,7 @@ import {
   encodeFrontiers,
   decodeFrontiers,
 } from "../src";
+import { m } from "vitest/dist/reporters-yx5ZTtEV";
 
 it("basic example", () => {
   const doc = new LoroDoc();
@@ -618,4 +619,39 @@ it("can encode/decode frontiers", () => {
   const encoded = encodeFrontiers(frontiers);
   const decoded = decodeFrontiers(encoded);
   expect(decoded).toStrictEqual(frontiers);
+})
+
+it("travel changes", () => {
+  let doc = new LoroDoc();
+  doc.setPeerId(1);
+  doc.getText("text").insert(0, "abc");
+  doc.commit();
+  let n = 0;
+  doc.travelChangeAncestors([{ peer: "1", counter: 0 }], (meta: any) => {
+    n += 1;
+    return true
+  })
+  expect(n).toBe(1);
+})
+
+it("get path to container", () => {
+  const doc = new LoroDoc();
+  const map = doc.getMap("map");
+  const list = map.setContainer("list", new LoroList());
+  const path = doc.getPathToContainer(list.id);
+  expect(path).toStrictEqual(["map", "list"])
+})
+
+it("json path", () => {
+  const doc = new LoroDoc();
+  const map = doc.getMap("map");
+  map.set("key", "value");
+  const books = map.setContainer("books", new LoroList());
+  const book = books.insertContainer(0, new LoroMap());
+  book.set("title", "1984");
+  book.set("author", "George Orwell");
+  const path = "$['map'].books[0].title";
+  const result = doc.JSONPath(path);
+  expect(result.length).toBe(1);
+  expect(result).toStrictEqual(["1984"])
 })

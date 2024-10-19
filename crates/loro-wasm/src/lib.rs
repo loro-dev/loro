@@ -28,7 +28,7 @@ use loro_internal::{
 };
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
-use std::{cell::RefCell, cmp::Ordering, mem::ManuallyDrop, rc::Rc, sync::Arc};
+use std::{cell::RefCell, cmp::Ordering, mem::ManuallyDrop, ops::ControlFlow, rc::Rc, sync::Arc};
 use wasm_bindgen::{__rt::IntoJsResult, prelude::*, throw_val};
 use wasm_bindgen_derive::TryFromJsValue;
 
@@ -556,6 +556,14 @@ impl LoroDoc {
         Self(Arc::new(self.0.fork()))
     }
 
+    /// Creates a new LoroDoc at a specified version (Frontiers)
+    #[wasm_bindgen(js_name = "forkAt")]
+    pub fn fork_at(&self, frontiers: Vec<JsID>) -> JsResult<LoroDoc> {
+        Ok(Self(Arc::new(
+            self.0.fork_at(&ids_to_frontiers(frontiers)?),
+        )))
+    }
+
     /// Checkout the `DocState` to the latest version of `OpLog`.
     ///
     /// > The document becomes detached during a `checkout` operation.
@@ -582,6 +590,47 @@ impl LoroDoc {
     pub fn checkout_to_latest(&mut self) -> JsResult<()> {
         self.0.checkout_to_latest();
         Ok(())
+    }
+
+    ///
+    #[wasm_bindgen(js_name = "travelChangeAncestors")]
+    pub fn travel_change_ancestors(&self, ids: Vec<JsID>, f: js_sys::Function) -> JsResult<()> {
+        let observer = observer::Observer::new(f);
+        self.0
+            .travel_change_ancestors(
+                &ids.into_iter()
+                    .map(|id| js_id_to_id(id).unwrap())
+                    .collect::<Vec<_>>(),
+                &mut |meta| {
+                    let res = observer
+                        .call1(
+                            &ChangeMeta {
+                                lamport: meta.lamport,
+                                length: meta.len as u32,
+                                peer: meta.id.peer.to_string(),
+                                counter: meta.id.counter,
+                                deps: meta
+                                    .deps
+                                    .iter()
+                                    .map(|id| StringID {
+                                        peer: id.peer.to_string(),
+                                        counter: id.counter,
+                                    })
+                                    .collect(),
+                                timestamp: meta.timestamp as f64,
+                                message: meta.message,
+                            }
+                            .to_js(),
+                        )
+                        .unwrap();
+                    if res.as_bool().unwrap() {
+                        ControlFlow::Continue(())
+                    } else {
+                        ControlFlow::Break(())
+                    }
+                },
+            )
+            .map_err(|e| JsValue::from(e.to_string()))
     }
 
     /// Checkout the `DocState` to a specific version.
@@ -892,6 +941,47 @@ impl LoroDoc {
                 ));
             }
         })
+    }
+
+    /// Set the commit message of the next commit
+    #[wasm_bindgen(js_name = "setNextCommitMessage")]
+    pub fn set_next_commit_message(&self, msg: &str) {
+        self.0.set_next_commit_message(msg);
+    }
+
+    /// Get deep value of the document with container id
+    #[wasm_bindgen(js_name = "getDeepValueWithID")]
+    pub fn get_deep_value_with_id(&self) -> JsValue {
+        self.0.get_deep_value_with_id().into()
+    }
+
+    /// Get the path from the root to the container
+    #[wasm_bindgen(js_name = "getPathToContainer")]
+    pub fn get_path_to_container(&self, id: JsContainerID) -> JsResult<Option<Array>> {
+        let id: ContainerID = id.to_owned().try_into()?;
+        let ans = self
+            .0
+            .get_path_to_container(&id)
+            .map(|p| convert_container_path_to_js_value(&p));
+        Ok(ans)
+    }
+
+    /// Evaluate JSONPath against a LoroDoc
+    #[wasm_bindgen(js_name = "JSONPath")]
+    pub fn json_path(&self, jsonpath: &str) -> JsResult<Array> {
+        let ans = Array::new();
+        for v in self
+            .0
+            .jsonpath(jsonpath)
+            .map_err(|e| JsValue::from(e.to_string()))?
+            .into_iter()
+        {
+            ans.push(&match v {
+                ValueOrHandler::Handler(h) => handler_to_js_value(h, Some(self.0.clone())),
+                ValueOrHandler::Value(v) => v.into(),
+            });
+        }
+        Ok(ans)
     }
 
     /// Get the encoded version vector of the current document.
@@ -1634,13 +1724,12 @@ fn container_diff_to_js_value(
     obj.into()
 }
 
-fn convert_container_path_to_js_value(path: &[(ContainerID, Index)]) -> JsValue {
+fn convert_container_path_to_js_value(path: &[(ContainerID, Index)]) -> Array {
     let arr = Array::new_with_length(path.len() as u32);
     for (i, p) in path.iter().enumerate() {
         arr.set(i as u32, p.1.clone().into());
     }
-    let path: JsValue = arr.into_js_result().unwrap();
-    path
+    arr
 }
 
 /// The handler of a text container. It supports rich text CRDT.
@@ -1743,6 +1832,12 @@ impl LoroText {
     /// ```
     pub fn update(&self, text: &str) {
         self.handler.update(text);
+    }
+
+    /// Update the current text based on the provided text line by line.
+    #[wasm_bindgen(js_name = "updateByLine")]
+    pub fn update_by_line(&self, text: &str) {
+        self.handler.update_by_line(text);
     }
 
     /// Insert some string at index.
@@ -3693,6 +3788,12 @@ impl LoroTree {
     pub fn disable_fractional_index(&self) {
         self.handler.disable_fractional_index();
     }
+
+    /// Whether the tree enables the fractional index generation.
+    #[wasm_bindgen(js_name = "isFractionalIndexEnabled")]
+    pub fn is_fractional_index_enabled(&self) -> bool {
+        self.handler.is_fractional_index_enabled()
+    }
 }
 
 impl Default for LoroTree {
@@ -4034,6 +4135,10 @@ impl UndoManager {
         } else {
             self.undo.set_on_pop(None);
         }
+    }
+
+    pub fn clear(&self) {
+        self.undo.clear();
     }
 }
 
