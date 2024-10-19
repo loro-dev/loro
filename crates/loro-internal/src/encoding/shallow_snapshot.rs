@@ -253,9 +253,10 @@ pub(crate) fn encode_snapshot_at<W: std::io::Write>(
     frontiers: &Frontiers,
     w: &mut W,
 ) -> Result<(), LoroEncodeError> {
+    let was_detached = doc.is_detached();
     let version_before_start = doc.oplog_frontiers();
     doc.checkout_without_emitting(frontiers, true).unwrap();
-    {
+    let result = 'block: {
         let mut state = doc.app_state().try_lock().unwrap();
         let oplog = doc.oplog().try_lock().unwrap();
         let is_shallow = state.store.shallow_root_store().is_some();
@@ -265,7 +266,7 @@ pub(crate) fn encode_snapshot_at<W: std::io::Write>(
 
         assert!(!state.is_in_txn());
         let Some(oplog_bytes) = oplog.fork_changes_up_to(frontiers) else {
-            return Err(LoroEncodeError::FrontiersNotFound(format!(
+            break 'block Err(LoroEncodeError::FrontiersNotFound(format!(
                 "frontiers: {:?} when export in SnapshotAt mode",
                 frontiers
             )));
@@ -280,7 +281,7 @@ pub(crate) fn encode_snapshot_at<W: std::io::Write>(
 
         let alive_containers = state.ensure_all_alive_containers();
         if has_unknown_container(alive_containers.iter()) {
-            return Err(LoroEncodeError::UnknownContainer);
+            break 'block Err(LoroEncodeError::UnknownContainer);
         }
 
         let alive_c_bytes = cids_to_bytes(alive_containers);
@@ -296,9 +297,14 @@ pub(crate) fn encode_snapshot_at<W: std::io::Write>(
             },
             w,
         );
-    }
+
+        Ok(())
+    };
     doc.checkout_without_emitting(&version_before_start, false)
         .unwrap();
+    if !was_detached {
+        doc.set_detached(false);
+    }
     doc.drop_pending_events();
-    Ok(())
+    result
 }

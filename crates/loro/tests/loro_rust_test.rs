@@ -1959,3 +1959,15 @@ fn test_loro_doc() {
     doc.get_text("text").insert(0, "Hello").unwrap();
     doc.state_vv();
 }
+
+#[test]
+fn test_fork_at_should_restore_attached_state() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(0).unwrap();
+    doc.get_text("text").insert(0, "Hello").unwrap();
+    doc.fork_at(&[ID::new(0, 0)].into());
+    assert!(!doc.is_detached());
+    doc.detach();
+    doc.fork_at(&[ID::new(0, 0)].into());
+    assert!(doc.is_detached());
+}

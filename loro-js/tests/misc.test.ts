@@ -294,8 +294,7 @@ it("fork at", () => {
   const doc = new LoroDoc();
   doc.setPeerId("0");
   doc.getText("text").insert(0, "Hello, world!");
-  console.log("0");
-  const newDoc = doc.forkAt([{ peer: "0", counter: 6 }]);
+  const newDoc = doc.forkAt([{ peer: "0", counter: 5 }]);
   newDoc.setPeerId("1");
   newDoc.getText("text").insert(6, " Alice!");
   // ┌───────────────┐     ┌───────────────┐
@@ -305,8 +304,10 @@ it("fork at", () => {
   //                    │  ┌───────────────┐
   //                    └──│     Alice!    │
   //                       └───────────────┘
-  doc.import(newDoc.export({ mode: "update" }));
-  console.log(doc.getText("text").toString()); // "Hello, world! Alice!"
+  const updates = newDoc.export({ mode: "update" });
+  doc.checkoutToLatest();
+  doc.import(updates);
+  expect(doc.getText("text").toString()).toEqual("Hello, world! Alice!");
 });
 
 function one_ms(): Promise<void> {
