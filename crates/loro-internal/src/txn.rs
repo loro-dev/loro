@@ -11,7 +11,6 @@ use loro_common::{ContainerType, IdLp, IdSpan, LoroResult};
 use loro_delta::{array_vec::ArrayVec, DeltaRopeBuilder};
 use rle::{HasLength, Mergable, RleVec};
 use smallvec::{smallvec, SmallVec};
-use tracing::trace;
 
 use crate::{
     change::{Change, Lamport, Timestamp},

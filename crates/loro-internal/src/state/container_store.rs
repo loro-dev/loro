@@ -168,6 +168,7 @@ impl ContainerStore {
         self.store.get_kv()
     }
 
+    #[allow(unused)]
     pub fn is_empty(&self) -> bool {
         self.store.is_empty()
     }

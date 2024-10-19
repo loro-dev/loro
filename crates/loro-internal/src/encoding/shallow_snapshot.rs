@@ -3,7 +3,7 @@ use rle::HasLength;
 use std::collections::BTreeSet;
 
 use loro_common::{ContainerID, ContainerType, LoroEncodeError, ID};
-use tracing::{debug, trace};
+use tracing::debug;
 
 use crate::{
     container::list::list_op::InnerListOp,
