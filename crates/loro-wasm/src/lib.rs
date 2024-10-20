@@ -28,7 +28,7 @@ use loro_internal::{
 };
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
-use std::{cell::RefCell, cmp::Ordering, mem::ManuallyDrop, ops::ControlFlow, rc::Rc, sync::Arc};
+use std::{cell::RefCell, cmp::Ordering, ops::ControlFlow, rc::Rc, sync::Arc};
 use wasm_bindgen::{__rt::IntoJsResult, prelude::*, throw_val};
 use wasm_bindgen_derive::TryFromJsValue;
 
@@ -1362,20 +1362,16 @@ impl LoroDoc {
     #[wasm_bindgen(js_name = "subscribeLocalUpdates", skip_typescript)]
     pub fn subscribe_local_updates(&self, f: js_sys::Function) -> JsValue {
         let observer = observer::Observer::new(f);
-        let mut sub = Some(self.0.subscribe_local_update(Box::new(move |e| {
+        let sub = self.0.subscribe_local_update(Box::new(move |e| {
             let arr = js_sys::Uint8Array::new_with_length(e.len() as u32);
             arr.copy_from(e);
             if let Err(e) = observer.call1(&arr.into()) {
                 console_error!("Error: {:?}", e);
             }
             true
-        })));
+        }));
 
-        let closure = Closure::wrap(Box::new(move || {
-            drop(sub.take());
-        }) as Box<dyn FnMut()>);
-
-        closure.into_js_value()
+        subscription_to_js_function_callback(sub)
     }
 
     /// Debug the size of the history
@@ -4359,10 +4355,22 @@ fn js_to_export_mode(js_mode: JsExportMode) -> JsResult<ExportMode<'static>> {
 }
 
 fn subscription_to_js_function_callback(sub: Subscription) -> JsValue {
-    let mut sub: Option<ManuallyDrop<Subscription>> = Some(ManuallyDrop::new(sub));
+    struct JsSubscription {
+        sub: Option<Subscription>,
+    }
+
+    impl Drop for JsSubscription {
+        fn drop(&mut self) {
+            if let Some(sub) = self.sub.take() {
+                sub.detach();
+            }
+        }
+    }
+
+    let mut sub: JsSubscription = JsSubscription { sub: Some(sub) };
     let closure = Closure::wrap(Box::new(move || {
-        if let Some(sub) = sub.take() {
-            ManuallyDrop::into_inner(sub).unsubscribe();
+        if let Some(sub) = sub.sub.take() {
+            sub.unsubscribe()
         }
     }) as Box<dyn FnMut()>);
 
