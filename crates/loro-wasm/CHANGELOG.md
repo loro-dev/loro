@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.0-beta.5
+
+### Patch Changes
+
+- - Fork at should restore detached state (#523)
+  - Subscription convert error (#525)
+
 ## 1.0.0-beta.4
 
 ### Patch Changes
