@@ -20,7 +20,7 @@
   "scripts": {
     "build": "rollup -c",
     "watch": "rollup -c -w",
-    "test": "vitest run && npx tsc --noEmit",
+    "test": "node --expose-gc ./node_modules/vitest/vitest.mjs run && npx tsc --noEmit",
     "prepublish": "pnpm run build"
   },
   "author": "Loro",

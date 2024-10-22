@@ -201,7 +201,7 @@ describe("event", () => {
       expect(times).toBe(3);
 
       // unsubscribe
-      sub()
+      sub();
       text.insert(0, "123");
       loro.commit();
       await oneMs();
@@ -227,7 +227,7 @@ describe("event", () => {
       expect(times).toBe(2);
 
       // unsubscribe
-      sub()
+      sub();
       text.insert(0, "123");
       loro.commit();
       await oneMs();
@@ -448,13 +448,13 @@ describe("event", () => {
       map.set("key", "value");
       loro.commit();
 
-      expect(updates).toBe(1);  // All changes are bundled in one update
+      expect(updates).toBe(1); // All changes are bundled in one update
 
       text.insert(5, "!");
       loro.commit();
 
       expect(updates).toBe(2);
-    })
+    });
 
     it("can be used to sync", () => {
       const loro1 = new Loro();
@@ -489,8 +489,53 @@ describe("event", () => {
       // Both documents should converge to the same state
       expect(text1.toString()).toBe("1. Hello World!");
       expect(text2.toString()).toBe("1. Hello World!");
-    })
-  })
+    });
+  });
+});
+
+it("subscription works after timeout", async () => {
+  const doc = new LoroDoc();
+  let times = 0;
+  doc.subscribe(() => {
+    times += 1;
+  });
+
+  for (let i = 0; i < 3; i++) {
+    if ((globalThis as any).gc) {
+      (globalThis as any).gc();
+    } else {
+      throw new Error("No GC");
+    }
+    const s = i.toString();
+    doc.getText("text").insert(0, s);
+    doc.commit();
+    await oneMs();
+    expect(times).toBe(1);
+    times = 0;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+});
+
+it("subscription for local updates works after timeout", async () => {
+  const doc = new LoroDoc();
+  let times = 0;
+  doc.subscribeLocalUpdates(() => {
+    times += 1;
+  });
+
+  for (let i = 0; i < 3; i++) {
+    if ((globalThis as any).gc) {
+      (globalThis as any).gc();
+    } else {
+      throw new Error("No GC");
+    }
+    doc.getText("text").insert(0, "h");
+    doc.commit();
+    await oneMs();
+    expect(times).toBe(1);
+    times = 0;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 });
 
 function oneMs(): Promise<void> {
