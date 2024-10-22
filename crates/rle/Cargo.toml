@@ -1,6 +1,6 @@
 [package]
 name = "loro-rle"
-version = "0.16.12"
+version = "1.0.0-beta.5"
 edition = "2021"
 license = "MIT"
 description = "A internal library of loro for storing and manipulating run-length encoded data. Do not use it directly."

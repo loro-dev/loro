@@ -7,6 +7,7 @@ const CRATES = {
     "loro-common": "loro-common",
     "rle": "loro-rle",
     "delta": "loro-delta",
+    "kv-store": "loro-kv-store",
     "fractional_index": "loro_fractional_index",
 };
 
@@ -22,8 +23,7 @@ async function updateCargoToml(filePath: string, targetVersion: string) {
 
     // Update dependencies
     const depRegex = new RegExp(
-        `^(\\s*)(${
-            crates.join("|")
+        `^(\\s*)(${crates.join("|")
         })\\s*=\\s*(?:("\\S+"|\\{[^}]*version\\s*=\\s*)("[^"]*"))`,
         "gm",
     );

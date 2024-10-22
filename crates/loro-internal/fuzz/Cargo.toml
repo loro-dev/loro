@@ -1,6 +1,6 @@
 [package]
 name = "loro-internal-fuzz"
-version = "0.0.0"
+version = "1.0.0-beta.5"
 authors = ["Automatically generated"]
 publish = false
 edition = "2018"

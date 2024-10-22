@@ -1,6 +1,6 @@
 [package]
 name = "loro-internal"
-version = "0.16.12"
+version = "1.0.0-beta.5"
 edition = "2021"
 license = "MIT"
 description = "Loro internal library. Do not use it directly as it's not stable."
@@ -16,13 +16,13 @@ keywords = ["crdt", "local-first"]
 [dependencies]
 generic-btree = { version = "^0.10.5" }
 smallvec = { workspace = true }
-loro-delta = { path = "../delta", version = "0.16.12", package = "loro-delta" }
-rle = { path = "../rle", version = "0.16.12", package = "loro-rle" }
-loro-common = { path = "../loro-common", version = "0.16.12" }
+loro-delta = { path = "../delta", version = "1.0.0-beta.5", package = "loro-delta" }
+rle = { path = "../rle", version = "1.0.0-beta.5", package = "loro-rle" }
+loro-common = { path = "../loro-common", version = "1.0.0-beta.5" }
 fractional_index = { path = "../fractional_index", features = [
     "serde",
-], version = "0.16.2", package = "loro_fractional_index" }
-loro-kv-store = { path = "../kv-store", version = "0.16.2" }
+], version = "1.0.0-beta.5", package = "loro_fractional_index" }
+loro-kv-store = { path = "../kv-store", version = "1.0.0-beta.5" }
 fxhash = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }

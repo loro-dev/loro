@@ -1,10 +1,10 @@
 [package]
 name = "loro-kv-store"
-version = "0.16.2"
+version = "1.0.0-beta.5"
 edition = "2021"
 
 [dependencies]
-loro-common = { path = "../loro-common", version = "0.16.2" }
+loro-common = { path = "../loro-common", version = "1.0.0-beta.5" }
 bytes = { workspace = true }
 fxhash = { workspace = true }
 once_cell = { workspace = true }
