@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.0
+
+### Patch Changes
+
+- dd3bd92: Release v1.0
+- Updated dependencies [dd3bd92]
+  - loro-wasm@1.0.0
+
 ## 1.0.0-beta.5
 
 ### Patch Changes
