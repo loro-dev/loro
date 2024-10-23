@@ -69,7 +69,7 @@ Explore our vision in our blog: [**✨ Reimagine State Management with CRDTs**](
 - 🏛️ [Version Control with Real-Time Collaboration](https://loro.dev/blog/v1.0#version-control)
 - 📦 [Shallow Snapshot](https://loro.dev/docs/advanced/shallow_snapshot) that Works like Git Shallow Clone 
 
-https://github.com/loro-dev/loro/assets/18425020/ec2d20a3-3d8c-4483-a601-b200243c9792
+https://github.com/user-attachments/assets/68e0017a-4987-4f71-b2cf-4ed28a210987
 
 # Example
 
