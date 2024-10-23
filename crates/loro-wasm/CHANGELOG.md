@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.7
+
+### Patch Changes
+
+- Skip published version
+
 ## 1.0.1
 
 ### Patch Changes

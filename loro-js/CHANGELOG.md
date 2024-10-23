@@ -1,20 +1,13 @@
 # Changelog
 
-## 1.0.1
+## 1.0.7
 
 ### Patch Changes
 
-- Release v1.0.1
+- Skip published version
 - Updated dependencies
-  - loro-wasm@1.0.1
+  - loro-wasm@1.0.2
 
-## 1.0.0
-
-### Patch Changes
-
-- dd3bd92: Release v1.0
-- Updated dependencies [dd3bd92]
-  - loro-wasm@1.0.0
 
 ## 1.0.0-beta.5
 
