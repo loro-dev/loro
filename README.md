@@ -72,6 +72,9 @@ Loro is a [CRDTs(Conflict-free Replicated Data Types)](https://crdt.tech/) libra
 
 https://github.com/user-attachments/assets/68e0017a-4987-4f71-b2cf-4ed28a210987
 
+> In this example, we demonstrate importing an entire Loro codebase into a Loro-powered 
+> version controller, preserving the complete Git DAG history while enabling fast version switching.
+
 # Example
 
 [![Open in StackBlitz](https://developer.stackblitz.com/img/open_in_stackblitz.svg)](https://stackblitz.com/edit/loro-basic-test?file=test%2Floro-sync.test.ts)
