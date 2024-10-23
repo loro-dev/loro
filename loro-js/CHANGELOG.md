@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.1
+
+### Patch Changes
+
+- Release v1.0.1
+- Updated dependencies
+  - loro-wasm@1.0.1
+
 ## 1.0.0
 
 ### Patch Changes
