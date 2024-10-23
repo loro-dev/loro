@@ -65,8 +65,9 @@ Explore our vision in our blog: [**✨ Reimagine State Management with CRDTs**](
 
 **Advanced Features in Loro**
 
-- 📖 Preserve Editing History in a [Replayable Event Graph](https://loro.dev/docs/advanced/replayable_event_graph)
 - ⏱️ Fast [Time Travel](https://loro.dev/docs/tutorial/time_travel) Through History
+- 🏛️ [Version Control with Real-Time Collaboration](https://loro.dev/blog/v1.0#version-control)
+- 📦 [Shallow Snapshot](https://loro.dev/docs/advanced/shallow_snapshot) that Works like Git Shallow Clone 
 
 https://github.com/loro-dev/loro/assets/18425020/ec2d20a3-3d8c-4483-a601-b200243c9792
 
@@ -76,48 +77,50 @@ https://github.com/loro-dev/loro/assets/18425020/ec2d20a3-3d8c-4483-a601-b200243
 
 ```ts
 import { expect, test } from 'vitest';
-import { Loro, LoroList } from 'loro-crdt';
+import { LoroDoc, LoroList } from 'loro-crdt';
 
-/**
- * Demonstrates synchronization of two documents with two rounds of exchanges.
- */
-// Initialize document A
-const docA = new Loro();
-const listA: LoroList = docA.getList('list');
-listA.insert(0, 'A');
-listA.insert(1, 'B');
-listA.insert(2, 'C');
+test('sync example', () => {
+  /**
+   * Demonstrates synchronization of two documents with two rounds of exchanges.
+   */
+  // Initialize document A
+  const docA = new LoroDoc();
+  const listA: LoroList = docA.getList('list');
+  listA.insert(0, 'A');
+  listA.insert(1, 'B');
+  listA.insert(2, 'C');
 
-// Export the state of document A as a byte array
-const bytes: Uint8Array = docA.exportFrom();
+  // Export the state of document A as a byte array
+  const bytes: Uint8Array = docA.export({ mode: 'update' });
 
-// Simulate sending `bytes` across the network to another peer, B
-const docB = new Loro();
-// Peer B imports the updates from A
-docB.import(bytes);
+  // Simulate sending `bytes` across the network to another peer, B
+  const docB = new LoroDoc();
+  // Peer B imports the updates from A
+  docB.import(bytes);
 
-// Verify that B's state matches A's state
-expect(docB.toJSON()).toStrictEqual({
-  list: ['A', 'B', 'C'],
-});
+  // Verify that B's state matches A's state
+  expect(docB.toJSON()).toStrictEqual({
+    list: ['A', 'B', 'C'],
+  });
 
-// Get the current operation log version of document B
-const version = docB.oplogVersion();
+  // Get the current operation log version of document B
+  const version = docB.oplogVersion();
 
-// Simulate editing at B: delete item 'B'
-const listB: LoroList = docB.getList('list');
-listB.delete(1, 1);
+  // Simulate editing at B: delete item 'B'
+  const listB: LoroList = docB.getList('list');
+  listB.delete(1, 1);
 
-// Export the updates from B since the last synchronization point
-const bytesB: Uint8Array = docB.exportFrom(version);
+  // Export the updates from B since the last synchronization point
+  const bytesB: Uint8Array = docB.export({ mode: 'update', from: version });
 
-// Simulate sending `bytesB` back across the network to A
-// A imports the updates from B
-docA.import(bytesB);
+  // Simulate sending `bytesB` back across the network to A
+  // A imports the updates from B
+  docA.import(bytesB);
 
-// Verify that the list at A now matches the list at B after merging
-expect(docA.toJSON()).toStrictEqual({
-  list: ['A', 'C'],
+  // Verify that the list at A now matches the list at B after merging
+  expect(docA.toJSON()).toStrictEqual({
+    list: ['A', 'C'],
+  });
 });
 ```
 
@@ -126,7 +129,7 @@ expect(docA.toJSON()).toStrictEqual({
 Loro draws inspiration from the innovative work of the following projects and individuals:
 
 - [Ink & Switch](https://inkandswitch.com/): The principles of Local-first Software have greatly influenced this project. The [Peritext](https://www.inkandswitch.com/peritext/) project has also shaped our approach to rich text CRDTs.
-- [Diamond-types](https://github.com/josephg/diamond-types): The [Replayable Event Graph (REG)](https://loro.dev/docs/advanced/replayable_event_graph) algorithm from @josephg has been adapted to reduce the computation and space usage of CRDTs.
+- [Diamond-types](https://github.com/josephg/diamond-types): The [Event Graph Walker (Eg-walker)](https://loro.dev/docs/advanced/event_graph_walker) algorithm from @josephg has been adapted to reduce the computation and space usage of CRDTs.
 - [Automerge](https://github.com/automerge/automerge): Their use of columnar encoding for CRDTs has informed our strategies for efficient data encoding.
 - [Yjs](https://github.com/yjs/yjs): We have incorporated a similar algorithm for effectively merging collaborative editing operations, thanks to their pioneering works.
 - [Matthew Weidner](https://mattweidner.com/): His work on the [Fugue](https://arxiv.org/abs/2305.00583) algorithm has been invaluable, enhancing our text editing capabilities.
