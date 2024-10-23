@@ -37,12 +37,13 @@
   </a>
 </p>
 
-
 https://github.com/loro-dev/loro/assets/18425020/fe246c47-a120-44b3-91d4-1e7232a5b4ac
 
-Loro is a [CRDTs(Conflict-free Replicated Data Types)](https://crdt.tech/) library that makes building [local-first apps][local-first] easier. It is currently available for JavaScript (via WASM) and Rust developers. 
+<h4 align="center">
+  ✨ Loro 1.0 is out! Read the <a href="https://loro.dev/blog/v1.0">announcement</a>.
+</h4>
 
-Explore our vision in our blog: [**✨ Reimagine State Management with CRDTs**](https://loro.dev/blog/loro-now-open-source).
+Loro is a [CRDTs(Conflict-free Replicated Data Types)](https://crdt.tech/) library that makes building [local-first apps][local-first] easier. It is currently available for JavaScript (via WASM) and Rust developers.
 
 # Features
 
@@ -131,7 +132,7 @@ Loro draws inspiration from the innovative work of the following projects and in
 - [Ink & Switch](https://inkandswitch.com/): The principles of Local-first Software have greatly influenced this project. The [Peritext](https://www.inkandswitch.com/peritext/) project has also shaped our approach to rich text CRDTs.
 - [Diamond-types](https://github.com/josephg/diamond-types): The [Event Graph Walker (Eg-walker)](https://loro.dev/docs/advanced/event_graph_walker) algorithm from @josephg has been adapted to reduce the computation and space usage of CRDTs.
 - [Automerge](https://github.com/automerge/automerge): Their use of columnar encoding for CRDTs has informed our strategies for efficient data encoding.
-- [Yjs](https://github.com/yjs/yjs): We have incorporated a similar algorithm for effectively merging collaborative editing operations, thanks to their pioneering works.
+- [Yjs](https://github.com/yjs/yjs): We have incorporated a similar algorithm for effectively merging collaborative editing operations, thanks to their pioneering work.
 - [Matthew Weidner](https://mattweidner.com/): His work on the [Fugue](https://arxiv.org/abs/2305.00583) algorithm has been invaluable, enhancing our text editing capabilities.
 - [Martin Kleppmann](https://martin.kleppmann.com/): His work on CRDTs has significantly influenced our comprehension of the field.
  
