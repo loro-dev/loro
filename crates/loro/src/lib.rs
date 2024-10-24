@@ -195,7 +195,7 @@ impl LoroDoc {
         self.doc.is_detached_editing_enabled()
     }
 
-    /// Set the interval of mergeable changes, in milliseconds.
+    /// Set the interval of mergeable changes, in seconds.
     ///
     /// If two continuous local changes are within the interval, they will be merged into one change.
     /// The default value is 1000 seconds.
@@ -229,10 +229,10 @@ impl LoroDoc {
 
     /// Checkout the `DocState` to a specific version.
     ///
-    /// > The document becomes detached during a `checkout` operation.
-    /// > Being `detached` implies that the `DocState` is not synchronized with the latest version of the `OpLog`.
-    /// > In a detached state, the document is not editable, and any `import` operations will be
-    /// > recorded in the `OpLog` without being applied to the `DocState`.
+    /// The document becomes detached during a `checkout` operation.
+    /// Being `detached` implies that the `DocState` is not synchronized with the latest version of the `OpLog`.
+    /// In a detached state, the document is not editable, and any `import` operations will be
+    /// recorded in the `OpLog` without being applied to the `DocState`.
     ///
     /// You should call `attach` to attach the `DocState` to the latest version of `OpLog`.
     #[inline]
@@ -358,7 +358,7 @@ impl LoroDoc {
     /// The events will be emitted after a transaction is committed. A transaction is committed when:
     ///
     /// - `doc.commit()` is called.
-    /// - `doc.exportFrom(version)` is called.
+    /// - `doc.export(mode)` is called.
     /// - `doc.import(data)` is called.
     /// - `doc.checkout(version)` is called.
     #[inline]
@@ -485,7 +485,7 @@ impl LoroDoc {
         self.doc.oplog_vv()
     }
 
-    /// Get the `VersionVector` version of `OpLog`
+    /// Get the `VersionVector` version of `DocState`
     #[inline]
     pub fn state_vv(&self) -> VersionVector {
         self.doc.state_vv()
@@ -529,13 +529,13 @@ impl LoroDoc {
         self.doc.get_value()
     }
 
-    /// Get the current state of the document.
+    /// Get the entire state of the current DocState
     #[inline]
     pub fn get_deep_value(&self) -> LoroValue {
         self.doc.get_deep_value()
     }
 
-    /// Get the current state with container id of the doc
+    /// Get the entire state of the current DocState with container id
     pub fn get_deep_value_with_id(&self) -> LoroValue {
         self.doc
             .app_state()
@@ -552,7 +552,7 @@ impl LoroDoc {
 
     /// Get the `Frontiers` version of `DocState`
     ///
-    /// [Learn more about `Frontiers`]()
+    /// Learn more about [`Frontiers`](https://loro.dev/docs/advanced/version_deep_dive)
     #[inline]
     pub fn state_frontiers(&self) -> Frontiers {
         self.doc.state_frontiers()
@@ -566,7 +566,7 @@ impl LoroDoc {
 
     /// Change the PeerID
     ///
-    /// NOTE: You need ot make sure there is no chance two peer have the same PeerID.
+    /// NOTE: You need to make sure there is no chance two peer have the same PeerID.
     /// If it happens, the document will be corrupted.
     #[inline]
     pub fn set_peer_id(&self, peer: PeerID) -> LoroResult<()> {
@@ -576,12 +576,12 @@ impl LoroDoc {
     /// Subscribe the events of a container.
     ///
     /// The callback will be invoked after a transaction that change the container.
-    /// Returns a subscription id that can be used to unsubscribe.
+    /// Returns a subscription that can be used to unsubscribe.
     ///
     /// The events will be emitted after a transaction is committed. A transaction is committed when:
     ///
     /// - `doc.commit()` is called.
-    /// - `doc.exportFrom(version)` is called.
+    /// - `doc.export(mode)` is called.
     /// - `doc.import(data)` is called.
     /// - `doc.checkout(version)` is called.
     ///
@@ -614,6 +614,8 @@ impl LoroDoc {
     /// text.insert(0, "123").unwrap();
     /// doc.commit();
     /// assert!(ran.load(std::sync::atomic::Ordering::Relaxed));
+    /// // unsubscribe
+    /// sub.unsubscribe();
     /// ```
     #[inline]
     pub fn subscribe(&self, container_id: &ContainerID, callback: Subscriber) -> Subscription {
@@ -628,12 +630,12 @@ impl LoroDoc {
     /// Subscribe all the events.
     ///
     /// The callback will be invoked when any part of the [loro_internal::DocState] is changed.
-    /// Returns a subscription id that can be used to unsubscribe.
+    /// Returns a subscription that can be used to unsubscribe.
     ///
     /// The events will be emitted after a transaction is committed. A transaction is committed when:
     ///
     /// - `doc.commit()` is called.
-    /// - `doc.exportFrom(version)` is called.
+    /// - `doc.export(mode)` is called.
     /// - `doc.import(data)` is called.
     /// - `doc.checkout(version)` is called.
     #[inline]
@@ -2266,7 +2268,7 @@ impl ContainerTrait for LoroUnknown {
 
 use enum_as_inner::EnumAsInner;
 
-/// All the CRDT containers supported by loro.
+/// All the CRDT containers supported by Loro.
 #[derive(Clone, Debug, EnumAsInner)]
 pub enum Container {
     /// [LoroList container](https://loro.dev/docs/tutorial/list)
