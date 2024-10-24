@@ -84,8 +84,6 @@ type JsResult<T> = Result<T, JsValue>;
 /// const map = loro.getMap("Map");
 /// const tree = loro.getTree("tree");
 /// ```
-///
-// When FinalizationRegistry is unavailable, it's the users' responsibility to free the document.
 #[wasm_bindgen]
 pub struct LoroDoc(Arc<LoroDocInner>);
 
@@ -332,7 +330,7 @@ impl ChangeMeta {
 impl LoroDoc {
     /// Create a new loro document.
     ///
-    /// New document will have random peer id.
+    /// New document will have a random peer id.
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
         let doc = LoroDocInner::new();
@@ -372,12 +370,12 @@ impl LoroDoc {
 
     /// Set whether to record the timestamp of each change. Default is `false`.
     ///
-    /// If enabled, the Unix timestamp will be recorded for each change automatically.
+    /// If enabled, the Unix timestamp (in seconds) will be recorded for each change automatically.
     ///
     /// You can also set each timestamp manually when you commit a change.
     /// The timestamp manually set will override the automatic one.
     ///
-    /// NOTE: Timestamps are forced to be in ascending order.
+    /// NOTE: Timestamps are forced to be in ascending order in the OpLog's history.
     /// If you commit a new change with a timestamp that is less than the existing one,
     /// the largest existing timestamp will be used instead.
     #[wasm_bindgen(js_name = "setRecordTimestamp")]
@@ -387,7 +385,7 @@ impl LoroDoc {
 
     /// If two continuous local changes are within the interval, they will be merged into one change.
     ///
-    /// The default value is 1_000_000, the default unit is milliseconds.
+    /// The default value is 1_000_000, the default unit is seconds.
     #[wasm_bindgen(js_name = "setChangeMergeInterval")]
     pub fn set_change_merge_interval(&self, interval: f64) {
         self.0.set_change_merge_interval(interval as i64);
@@ -458,9 +456,9 @@ impl LoroDoc {
         Ok(())
     }
 
-    /// Get a loro document from the snapshot.
+    /// Create a loro document from the snapshot.
     ///
-    /// @see You can check out what is the snapshot [here](#).
+    /// @see You can learn more [here](https://loro.dev/docs/tutorial/encoding).
     ///
     /// @example
     /// ```ts
@@ -484,7 +482,7 @@ impl LoroDoc {
     /// > In a detached state, the document is not editable, and any `import` operations will be
     /// > recorded in the `OpLog` without being applied to the `DocState`.
     ///
-    /// This method has the same effect as invoking `checkout_to_latest`.
+    /// This method has the same effect as invoking `checkoutToLatest`.
     ///
     /// @example
     /// ```ts
@@ -507,10 +505,8 @@ impl LoroDoc {
     ///
     /// > The document becomes detached during a `checkout` operation.
     /// > Being `detached` implies that the `DocState` is not synchronized with the latest version of the `OpLog`.
-    /// > In a detached state, the document is not editable, and any `import` operations will be
+    /// > In a detached state, the document is not editable by default, and any `import` operations will be
     /// > recorded in the `OpLog` without being applied to the `DocState`.
-    ///
-    /// When `detached`, the document is not editable.
     ///
     /// @example
     /// ```ts
@@ -520,11 +516,11 @@ impl LoroDoc {
     /// const text = doc.getText("text");
     /// const frontiers = doc.frontiers();
     /// text.insert(0, "Hello World!");
-    /// console.log(doc.is_detached());  // false
+    /// console.log(doc.isDetached());  // false
     /// loro.checkout(frontiers);
-    /// console.log(doc.is_detached());  // true
+    /// console.log(doc.isDetached());  // true
     /// loro.attach();
-    /// console.log(doc.is_detached());  // false
+    /// console.log(doc.isDetached());  // false
     /// ```
     ///
     #[wasm_bindgen(js_name = "isDetached")]
@@ -543,7 +539,7 @@ impl LoroDoc {
     ///
     /// const doc = new LoroDoc();
     /// doc.detach();
-    /// console.log(doc.is_detached());  // true
+    /// console.log(doc.isDetached());  // true
     /// ```
     pub fn detach(&self) {
         self.0.detach()
@@ -568,7 +564,7 @@ impl LoroDoc {
     ///
     /// > The document becomes detached during a `checkout` operation.
     /// > Being `detached` implies that the `DocState` is not synchronized with the latest version of the `OpLog`.
-    /// > In a detached state, the document is not editable, and any `import` operations will be
+    /// > In a detached state, the document is not editable by default, and any `import` operations will be
     /// > recorded in the `OpLog` without being applied to the `DocState`.
     ///
     /// This has the same effect as `attach`.
@@ -592,7 +588,10 @@ impl LoroDoc {
         Ok(())
     }
 
+    /// Visit all the ancestors of the changes in causal order.
     ///
+    /// @param ids - the changes to visit
+    /// @param f - the callback function, return `true` to continue visiting, return `false` to stop
     #[wasm_bindgen(js_name = "travelChangeAncestors")]
     pub fn travel_change_ancestors(&self, ids: Vec<JsID>, f: js_sys::Function) -> JsResult<()> {
         let observer = observer::Observer::new(f);
@@ -690,7 +689,8 @@ impl LoroDoc {
     ///
     /// You can specify the `origin`, `timestamp`, and `message` of the commit.
     ///
-    /// The `origin` is used to mark the event, and the `message` works like a git commit message.
+    /// - The `origin` is used to mark the event
+    /// - The `message` works like a git commit message, which will be recorded and synced to peers
     ///
     /// The events will be emitted after a transaction is committed. A transaction is committed when:
     ///
@@ -984,7 +984,7 @@ impl LoroDoc {
         Ok(ans)
     }
 
-    /// Get the encoded version vector of the current document.
+    /// Get the version vector of the current document state.
     ///
     /// If you checkout to a specific version, the version vector will change.
     #[inline(always)]
@@ -1020,15 +1020,15 @@ impl LoroDoc {
         frontiers_to_ids(&self.0.shallow_since_frontiers())
     }
 
-    /// Get the encoded version vector of the latest version in OpLog.
+    /// Get the version vector of the latest known version in OpLog.
     ///
-    /// If you checkout to a specific version, the version vector will not change.
+    /// If you checkout to a specific version, this version vector will not change.
     #[wasm_bindgen(js_name = "oplogVersion")]
     pub fn oplog_version(&self) -> VersionVector {
         VersionVector(self.0.oplog_vv())
     }
 
-    /// Get the frontiers of the current document.
+    /// Get the [frontiers](https://loro.dev/docs/advanced/version_deep_dive) of the current document state.
     ///
     /// If you checkout to a specific version, this value will change.
     #[inline]
@@ -1036,7 +1036,7 @@ impl LoroDoc {
         frontiers_to_ids(&self.0.state_frontiers())
     }
 
-    /// Get the frontiers of the latest version in OpLog.
+    /// Get the [frontiers](https://loro.dev/docs/advanced/version_deep_dive) of the latest version in OpLog.
     ///
     /// If you checkout to a specific version, this value will not change.
     #[inline(always)]
@@ -1102,8 +1102,8 @@ impl LoroDoc {
         }
     }
 
-    /// Export the snapshot of current version, it's include all content of
-    /// operations and states
+    /// Export the snapshot of current version.
+    /// It includes all the history and the document state
     ///
     /// @deprecated Use `export({mode: "snapshot"})` instead
     #[wasm_bindgen(js_name = "exportSnapshot")]
@@ -1141,7 +1141,7 @@ impl LoroDoc {
     ///
     /// @param mode - The export mode to use. Can be one of:
     ///   - `{ mode: "snapshot" }`: Export a full snapshot of the document.
-    ///   - `{ mode: "update", from: VersionVector }`: Export updates from the given version vector.
+    ///   - `{ mode: "update", from?: VersionVector }`: Export updates from the given version vector.
     ///   - `{ mode: "updates-in-range", spans: { id: ID, len: number }[] }`: Export updates within the specified ID spans.
     ///   - `{ mode: "shallow-snapshot", frontiers: Frontiers }`: Export a garbage-collected snapshot up to the given frontiers.
     ///
@@ -1162,7 +1162,7 @@ impl LoroDoc {
     /// doc.setText("text", "Hello Loro");
     /// const updateBytes = doc.export({ mode: "update", from: vv });
     ///
-    /// // Export a garbage-collected snapshot
+    /// // Export a shallow snapshot that only includes the history since the frontiers
     /// const gcBytes = doc.export({ mode: "shallow-snapshot", frontiers: doc.oplogFrontiers() });
     ///
     /// // Export updates within specific ID spans
@@ -1176,7 +1176,7 @@ impl LoroDoc {
         Ok(self.0.export(export_mode)?)
     }
 
-    /// Export updates from the specific version to the current version with JSON format.
+    /// Export updates in the given range in JSON format.
     #[wasm_bindgen(js_name = "exportJsonUpdates")]
     pub fn export_json_updates(
         &self,
@@ -1218,7 +1218,7 @@ impl LoroDoc {
         Ok(import_status_to_js_value(status).into())
     }
 
-    /// Import a snapshot or a update to current doc.
+    /// Import snapshot or updates into current doc.
     ///
     /// Note:
     /// - Updates within the current version will be ignored
@@ -1232,8 +1232,8 @@ impl LoroDoc {
     /// const text = doc.getText("text");
     /// text.insert(0, "Hello");
     /// // get all updates of the doc
-    /// const updates = doc.exportFrom();
-    /// const snapshot = doc.exportSnapshot();
+    /// const updates = doc.export({ mode: "update" });
+    /// const snapshot = doc.export({ mode: "snapshot" });
     /// const doc2 = new LoroDoc();
     /// // import snapshot
     /// doc2.import(snapshot);
@@ -1256,8 +1256,8 @@ impl LoroDoc {
     /// const doc = new LoroDoc();
     /// const text = doc.getText("text");
     /// text.insert(0, "Hello");
-    /// const updates = doc.exportFrom();
-    /// const snapshot = doc.exportSnapshot();
+    /// const updates = doc.export({ mode: "update" });
+    /// const snapshot = doc.export({ mode: "snapshot" });
     /// const doc2 = new LoroDoc();
     /// doc2.importUpdateBatch([snapshot, updates]);
     /// ```
@@ -1298,7 +1298,7 @@ impl LoroDoc {
         Ok(json.into())
     }
 
-    /// Get the json format of the document state.
+    /// Get the json format of the entire document state.
     ///
     /// @example
     /// ```ts
@@ -1323,14 +1323,14 @@ impl LoroDoc {
     }
 
     /// Subscribe to the changes of the loro document. The function will be called when the
-    /// transaction is committed or updates from remote are imported.
+    /// transaction is committed and after importing updates/snapshot from remote.
     ///
-    /// Returns a subscription ID, which can be used to unsubscribe.
+    /// Returns a subscription callback, which can be used to unsubscribe.
     ///
     /// The events will be emitted after a transaction is committed. A transaction is committed when:
     ///
     /// - `doc.commit()` is called.
-    /// - `doc.exportFrom(version)` is called.
+    /// - `doc.export(mode)` is called.
     /// - `doc.import(data)` is called.
     /// - `doc.checkout(version)` is called.
     ///
@@ -1340,12 +1340,14 @@ impl LoroDoc {
     ///
     /// const doc = new LoroDoc();
     /// const text = doc.getText("text");
-    /// doc.subscribe((event)=>{
+    /// const sub = doc.subscribe((event)=>{
     ///     console.log(event);
     /// });
     /// text.insert(0, "Hello");
     /// // the events will be emitted when `commit()` is called.
     /// doc.commit();
+    /// // unsubscribe
+    /// sub();
     /// ```
     // TODO: convert event and event sub config
     pub fn subscribe(&self, f: js_sys::Function) -> JsValue {
@@ -1382,7 +1384,9 @@ impl LoroDoc {
         console_log!("{:#?}", oplog.diagnose_size());
     }
 
-    /// Get all of changes in the oplog
+    /// Get all of changes in the oplog.
+    ///
+    /// Note: this method is expensive when the oplog is large. O(n)
     ///
     /// @example
     /// ```ts
@@ -1438,7 +1442,7 @@ impl LoroDoc {
         value.into()
     }
 
-    /// Get the change of a specific ID
+    /// Get the change that contains the specific ID
     #[wasm_bindgen(js_name = "getChangeAt")]
     pub fn get_change_at(&self, id: JsID) -> JsResult<JsChange> {
         let id = js_id_to_id(id)?;
@@ -1500,7 +1504,7 @@ impl LoroDoc {
         Ok(change.to_js().into())
     }
 
-    /// Get all ops of the change of a specific ID
+    /// Get all ops of the change that contains the specific ID
     #[wasm_bindgen(js_name = "getOpsInChange")]
     pub fn get_ops_in_change(&self, id: JsID) -> JsResult<Vec<JsValue>> {
         let id = js_id_to_id(id)?;
@@ -1517,7 +1521,9 @@ impl LoroDoc {
         Ok(ops)
     }
 
-    /// Convert frontiers to a readable version vector
+    /// Convert frontiers to a version vector
+    ///
+    /// Learn more about frontiers and version vector [here](https://loro.dev/docs/advanced/version_deep_dive)
     ///
     /// @example
     /// ```ts
@@ -1730,34 +1736,6 @@ fn convert_container_path_to_js_value(path: &[(ContainerID, Index)]) -> Array {
 
 /// The handler of a text container. It supports rich text CRDT.
 ///
-/// ## Updating Text Content Using a Diff Algorithm
-///
-/// A common requirement is to update the current text to a target text.
-/// You can implement this using a text diff algorithm of your choice.
-/// Below is a sample you can directly copy into your code, which uses the
-/// [fast-diff](https://www.npmjs.com/package/fast-diff) package.
-///
-/// ```ts
-/// import { diff } from "fast-diff";
-/// import { LoroText } from "loro-crdt";
-///
-/// function updateText(text: LoroText, newText: string) {
-///   const src = text.toString();
-///   const delta = diff(src, newText);
-///   let index = 0;
-///   for (const [op, text] of delta) {
-///     if (op === 0) {
-///     index += text.length;
-///   } else if (op === 1) {
-///     text.insert(index, text);
-///     index += text.length;
-///   } else {
-///     text.delete(index, text.length);
-///   }
-/// }
-/// ```
-///
-///
 /// Learn more at https://loro.dev/docs/tutorial/text
 #[derive(Clone)]
 #[wasm_bindgen]
@@ -1775,7 +1753,7 @@ struct MarkRange {
 
 #[wasm_bindgen]
 impl LoroText {
-    /// Create a new detached LoroText.
+    /// Create a new detached LoroText (not attached to any LoroDoc).
     ///
     /// The edits on a detached container will not be persisted.
     /// To attach the container to the document, please insert it into an attached container.
@@ -1815,7 +1793,13 @@ impl LoroText {
         })
     }
 
-    /// Update the current text based on the provided text.
+    /// Update the current text to the target text.
+    ///
+    /// It will calculate the minimal difference and apply it to the current text.
+    /// It uses Myers' diff algorithm to compute the optimal difference.
+    ///
+    /// This could take a long time for large texts (e.g. > 50_000 characters).
+    /// In that case, you should use `updateByLine` instead.
     ///
     /// @example
     /// ```ts
@@ -1825,18 +1809,21 @@ impl LoroText {
     /// const text = doc.getText("text");
     /// text.insert(0, "Hello");
     /// text.update("Hello World");
+    /// console.log(text.toString()); // "Hello World"
     /// ```
     pub fn update(&self, text: &str) {
         self.handler.update(text);
     }
 
-    /// Update the current text based on the provided text line by line.
+    /// Update the current text to the target text, the difference is calculated line by line.
+    ///
+    /// It uses Myers' diff algorithm to compute the optimal difference.
     #[wasm_bindgen(js_name = "updateByLine")]
     pub fn update_by_line(&self, text: &str) {
         self.handler.update_by_line(text);
     }
 
-    /// Insert some string at index.
+    /// Insert the string at the given index (utf-16 index).
     ///
     /// @example
     /// ```ts
@@ -1851,7 +1838,7 @@ impl LoroText {
         Ok(())
     }
 
-    /// Get a string slice.
+    /// Get a string slice (utf-16 index).
     ///
     /// @example
     /// ```ts
@@ -1869,7 +1856,7 @@ impl LoroText {
         }
     }
 
-    /// Get the character at the given position.
+    /// Get the character at the given position (utf-16 index).
     ///
     /// @example
     /// ```ts
@@ -1888,7 +1875,7 @@ impl LoroText {
         }
     }
 
-    /// Delete and return the string at the given range and insert a string at the same position.
+    /// Delete and return the string at the given range and insert a string at the same position (utf-16 index).
     ///
     /// @example
     /// ```ts
@@ -1922,7 +1909,7 @@ impl LoroText {
         Ok(())
     }
 
-    /// Delete elements from index to index + len
+    /// Delete elements from index to index + len (utf-16 index).
     ///
     /// @example
     /// ```ts
@@ -1959,7 +1946,7 @@ impl LoroText {
         Ok(())
     }
 
-    /// Mark a range of text with a key and a value.
+    /// Mark a range of text with a key and a value (utf-16 index).
     ///
     /// > You should call `configTextStyle` before using `mark` and `unmark`.
     ///
@@ -1984,7 +1971,7 @@ impl LoroText {
         Ok(())
     }
 
-    /// Unmark a range of text with a key and a value.
+    /// Unmark a range of text with a key and a value (utf-16 index).
     ///
     /// > You should call `configTextStyle` before using `mark` and `unmark`.
     ///
@@ -2008,7 +1995,7 @@ impl LoroText {
         Ok(())
     }
 
-    /// Convert the state to string
+    /// Convert the text to a string
     #[allow(clippy::inherent_to_string)]
     #[wasm_bindgen(js_name = "toString")]
     pub fn to_string(&self) -> String {
@@ -2053,7 +2040,7 @@ impl LoroText {
         value.into()
     }
 
-    /// Get the length of text
+    /// Get the length of text (utf-16 length).
     #[wasm_bindgen(js_name = "length", method, getter)]
     pub fn length(&self) -> usize {
         self.handler.len_utf16()
@@ -2064,11 +2051,11 @@ impl LoroText {
     /// The events will be emitted after a transaction is committed. A transaction is committed when:
     ///
     /// - `doc.commit()` is called.
-    /// - `doc.exportFrom(version)` is called.
+    /// - `doc.export(mode)` is called.
     /// - `doc.import(data)` is called.
     /// - `doc.checkout(version)` is called.
     ///
-    /// returns a subscription id, which can be used to unsubscribe.
+    /// returns a subscription callback, which can be used to unsubscribe.
     pub fn subscribe(&self, f: js_sys::Function) -> JsResult<JsValue> {
         let observer = observer::Observer::new(f);
         let doc = self
@@ -2121,7 +2108,7 @@ impl LoroText {
 
     /// Get the parent container.
     ///
-    /// - The parent container of the root tree is `undefined`.
+    /// - The parent of the root is `undefined`.
     /// - The object returned is a new js object each time because it need to cross
     ///   the WASM boundary.
     pub fn parent(&self) -> JsContainerOrUndefined {
@@ -2132,7 +2119,7 @@ impl LoroText {
         }
     }
 
-    /// Whether the container is attached to a document.
+    /// Whether the container is attached to a LoroDoc.
     ///
     /// If it's detached, the operations on the container will not be persisted.
     #[wasm_bindgen(js_name = "isAttached")]
@@ -2142,7 +2129,7 @@ impl LoroText {
 
     /// Get the attached container associated with this.
     ///
-    /// Returns an attached `Container` that equals to this or created by this, otherwise `undefined`.
+    /// Returns an attached `Container` that is equal to this or created by this; otherwise, it returns `undefined`.
     #[wasm_bindgen(js_name = "getAttached")]
     pub fn get_attached(&self) -> JsLoroTextOrUndefined {
         if self.is_attached() {
@@ -2157,7 +2144,10 @@ impl LoroText {
         }
     }
 
-    /// get the cursor at the given position.
+    /// Get the cursor at the given position.
+    ///
+    /// - The first argument is the position (utf16-index).
+    /// - The second argument is the side: `-1` for left, `0` for middle, `1` for right.
     #[wasm_bindgen(skip_typescript)]
     pub fn getCursor(&self, pos: usize, side: JsSide) -> Option<Cursor> {
         let mut side_value = Side::Middle;
@@ -2189,7 +2179,7 @@ pub struct LoroMap {
 
 #[wasm_bindgen]
 impl LoroMap {
-    /// Create a new detached LoroMap.
+    /// Create a new detached LoroMap (not attached to any LoroDoc).
     ///
     /// The edits on a detached container will not be persisted.
     /// To attach the container to the document, please insert it into an attached container.
@@ -2404,12 +2394,12 @@ impl LoroMap {
 
     /// Subscribe to the changes of the map.
     ///
-    /// Returns a subscription id, which can be used to unsubscribe.
+    /// Returns a subscription callback, which can be used to unsubscribe.
     ///
     /// The events will be emitted after a transaction is committed. A transaction is committed when:
     ///
     /// - `doc.commit()` is called.
-    /// - `doc.exportFrom(version)` is called.
+    /// - `doc.export(mode)` is called.
     /// - `doc.import(data)` is called.
     /// - `doc.checkout(version)` is called.
     ///
@@ -2522,7 +2512,7 @@ pub struct LoroList {
 
 #[wasm_bindgen]
 impl LoroList {
-    /// Create a new detached LoroList.
+    /// Create a new detached LoroList (not attached to any LoroDoc).
     ///
     /// The edits on a detached container will not be persisted.
     /// To attach the container to the document, please insert it into an attached container.
@@ -2683,12 +2673,12 @@ impl LoroList {
 
     /// Subscribe to the changes of the list.
     ///
-    /// Returns a subscription id, which can be used to unsubscribe.
+    /// Returns a subscription callback, which can be used to unsubscribe.
     ///
     /// The events will be emitted after a transaction is committed. A transaction is committed when:
     ///
     /// - `doc.commit()` is called.
-    /// - `doc.exportFrom(version)` is called.
+    /// - `doc.export(mode)` is called.
     /// - `doc.import(data)` is called.
     /// - `doc.checkout(version)` is called.
     ///
@@ -2777,6 +2767,9 @@ impl LoroList {
     }
 
     /// Get the cursor at the position.
+    ///
+    /// - The first argument is the position .
+    /// - The second argument is the side: `-1` for left, `0` for middle, `1` for right.
     #[wasm_bindgen(skip_typescript)]
     pub fn getCursor(&self, pos: usize, side: JsSide) -> Option<Cursor> {
         let mut side_value = Side::Middle;
@@ -2839,7 +2832,7 @@ impl Default for LoroMovableList {
 
 #[wasm_bindgen]
 impl LoroMovableList {
-    /// Create a new detached LoroList.
+    /// Create a new detached LoroMovableList (not attached to any LoroDoc).
     ///
     /// The edits on a detached container will not be persisted.
     /// To attach the container to the document, please insert it into an attached container.
@@ -3000,12 +2993,12 @@ impl LoroMovableList {
 
     /// Subscribe to the changes of the list.
     ///
-    /// Returns a subscription id, which can be used to unsubscribe.
+    /// Returns a subscription callback, which can be used to unsubscribe.
     ///
     /// The events will be emitted after a transaction is committed. A transaction is committed when:
     ///
     /// - `doc.commit()` is called.
-    /// - `doc.exportFrom(version)` is called.
+    /// - `doc.export(mode)` is called.
     /// - `doc.import(data)` is called.
     /// - `doc.checkout(version)` is called.
     ///
@@ -3416,7 +3409,7 @@ impl LoroTreeNode {
 
 #[wasm_bindgen]
 impl LoroTree {
-    /// Create a new detached LoroTree.
+    /// Create a new detached LoroTree (not attached to any LoroDoc).
     ///
     /// The edits on a detached container will not be persisted.
     /// To attach the container to the document, please insert it into an attached container.
@@ -3677,7 +3670,7 @@ impl LoroTree {
 
     /// Subscribe to the changes of the tree.
     ///
-    /// Returns a subscription id, which can be used to unsubscribe.
+    /// Returns a subscription callback, which can be used to unsubscribe.
     ///
     /// Trees have three types of events: `create`, `delete`, and `move`.
     /// - `create`: Creates a new node with its `target` TreeID. If `parent` is undefined,
@@ -3695,7 +3688,7 @@ impl LoroTree {
     /// The events will be emitted after a transaction is committed. A transaction is committed when:
     ///
     /// - `doc.commit()` is called.
-    /// - `doc.exportFrom(version)` is called.
+    /// - `doc.export(mode)` is called.
     /// - `doc.import(data)` is called.
     /// - `doc.checkout(version)` is called.
     ///
@@ -3766,12 +3759,14 @@ impl LoroTree {
         }
     }
 
-    /// Set whether to generate fractional index for Tree Position.
+    /// Set whether to generate a fractional index for moving and creating.
     ///
-    /// The jitter is used to avoid conflicts when multiple users are creating the node at the same position.
-    /// value 0 is default, which means no jitter, any value larger than 0 will enable jitter.
+    /// A fractional index can be used to determine the position of tree nodes among their siblings.
     ///
-    /// Generally speaking, jitter will affect the growth rate of document size.
+    /// The jitter is used to avoid conflicts when multiple users are creating a node at the same position.
+    /// A value of 0 is the default, which means no jitter; any value larger than 0 will enable jitter.
+    ///
+    /// Generally speaking, higher jitter value will increase the size of the operation
     /// [Read more about it](https://www.loro.dev/blog/movable-tree#implementation-and-encoding-size)
     #[wasm_bindgen(js_name = "enableFractionalIndex")]
     pub fn enable_fractional_index(&self, jitter: u8) {
@@ -3779,7 +3774,7 @@ impl LoroTree {
     }
 
     /// Disable the fractional index generation for Tree Position when
-    /// you don't need the Tree's siblings to be sorted. The fractional index will be always default.
+    /// you don't need the Tree's siblings to be sorted. The fractional index will always be set to default.
     #[wasm_bindgen(js_name = "disableFractionalIndex")]
     pub fn disable_fractional_index(&self) {
         self.handler.disable_fractional_index();
