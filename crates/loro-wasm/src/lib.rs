@@ -76,7 +76,7 @@ type JsResult<T> = Result<T, JsValue>;
 ///
 /// @example
 /// ```ts
-/// import { LoroDoc } import "loro-crdt"
+/// import { LoroDoc } from "loro-crdt"
 ///
 /// const loro = new LoroDoc();
 /// const text = loro.getText("text");
@@ -462,9 +462,11 @@ impl LoroDoc {
     ///
     /// @example
     /// ```ts
-    /// import { LoroDoc } import "loro-crdt"
+    /// import { LoroDoc } from "loro-crdt"
     ///
-    /// const bytes = /* The bytes encoded from other loro document *\/;
+    /// const doc = new LoroDoc();
+    /// // ...
+    /// const bytes = doc.export({ mode: "snapshot" });
     /// const loro = LoroDoc.fromSnapshot(bytes);
     /// ```
     ///
@@ -492,9 +494,9 @@ impl LoroDoc {
     /// const text = doc.getText("text");
     /// const frontiers = doc.frontiers();
     /// text.insert(0, "Hello World!");
-    /// loro.checkout(frontiers);
+    /// doc.checkout(frontiers);
     /// // you need call `attach()` or `checkoutToLatest()` before changing the doc.
-    /// loro.attach();
+    /// doc.attach();
     /// text.insert(0, "Hi");
     /// ```
     pub fn attach(&mut self) {
@@ -517,9 +519,9 @@ impl LoroDoc {
     /// const frontiers = doc.frontiers();
     /// text.insert(0, "Hello World!");
     /// console.log(doc.isDetached());  // false
-    /// loro.checkout(frontiers);
+    /// doc.checkout(frontiers);
     /// console.log(doc.isDetached());  // true
-    /// loro.attach();
+    /// doc.attach();
     /// console.log(doc.isDetached());  // false
     /// ```
     ///
@@ -577,9 +579,9 @@ impl LoroDoc {
     /// const text = doc.getText("text");
     /// const frontiers = doc.frontiers();
     /// text.insert(0, "Hello World!");
-    /// loro.checkout(frontiers);
+    /// doc.checkout(frontiers);
     /// // you need call `checkoutToLatest()` or `attach()` before changing the doc.
-    /// loro.checkoutToLatest();
+    /// doc.checkoutToLatest();
     /// text.insert(0, "Hi");
     /// ```
     #[wasm_bindgen(js_name = "checkoutToLatest")]
@@ -651,7 +653,7 @@ impl LoroDoc {
     /// const text = doc.getText("text");
     /// const frontiers = doc.frontiers();
     /// text.insert(0, "Hello World!");
-    /// loro.checkout(frontiers);
+    /// doc.checkout(frontiers);
     /// console.log(doc.toJSON()); // {"text": ""}
     /// ```
     pub fn checkout(&mut self, frontiers: Vec<JsID>) -> JsResult<()> {
@@ -1149,30 +1151,32 @@ impl LoroDoc {
     ///
     /// @example
     /// ```ts
-    /// import { LoroDoc } from "loro-crdt";
+    /// import { LoroDoc, LoroText } from "loro-crdt";
     ///
     /// const doc = new LoroDoc();
-    /// doc.setText("text", "Hello World");
+    /// doc.setPeerId("1");
+    /// doc.getText("text").update("Hello World");
     ///
     /// // Export a full snapshot
     /// const snapshotBytes = doc.export({ mode: "snapshot" });
     ///
     /// // Export updates from a specific version
     /// const vv = doc.oplogVersion();
-    /// doc.setText("text", "Hello Loro");
+    /// doc.getText("text").update("Hello Loro");
     /// const updateBytes = doc.export({ mode: "update", from: vv });
     ///
     /// // Export a shallow snapshot that only includes the history since the frontiers
-    /// const gcBytes = doc.export({ mode: "shallow-snapshot", frontiers: doc.oplogFrontiers() });
+    /// const shallowBytes = doc.export({ mode: "shallow-snapshot", frontiers: doc.oplogFrontiers() });
     ///
     /// // Export updates within specific ID spans
     /// const spanBytes = doc.export({
     ///   mode: "updates-in-range",
-    ///   spans: [{ id: "1", len: 10 }, { id: "2", len: 5 }]
+    ///   spans: [{ id: { peer: "1", counter: 0 }, len: 10 }]
     /// });
     /// ```
     pub fn export(&self, mode: JsExportMode) -> JsResult<Vec<u8>> {
-        let export_mode = js_to_export_mode(mode)?;
+        let export_mode = js_to_export_mode(mode)
+            .map_err(|e| JsValue::from_str(&format!("Invalid export mode. Error: {:?}", e)))?;
         Ok(self.0.export(export_mode)?)
     }
 
@@ -1286,7 +1290,7 @@ impl LoroDoc {
     /// const list = doc.getList("list");
     /// const tree = doc.getTree("tree");
     /// const map = doc.getMap("map");
-    /// const shallowValue = doc.toShallowJSON();
+    /// const shallowValue = doc.getShallowValue();
     /// /*
     /// {"list": ..., "tree": ..., "map": ...}
     ///  *\/
@@ -1302,7 +1306,7 @@ impl LoroDoc {
     ///
     /// @example
     /// ```ts
-    /// import { LoroDoc } from "loro-crdt";
+    /// import { LoroDoc, LoroText, LoroMap } from "loro-crdt";
     ///
     /// const doc = new LoroDoc();
     /// const list = doc.getList("list");
@@ -1390,16 +1394,16 @@ impl LoroDoc {
     ///
     /// @example
     /// ```ts
-    /// import { LoroDoc } from "loro-crdt";
+    /// import { LoroDoc, LoroText } from "loro-crdt";
     ///
     /// const doc = new LoroDoc();
     /// const text = doc.getText("text");
     /// text.insert(0, "Hello");
     /// const changes = doc.getAllChanges();
     ///
-    /// for (let [peer, changes] of changes.entries()){
+    /// for (let [peer, c] of changes.entries()){
     ///     console.log("peer: ", peer);
-    ///     for (let change in changes){
+    ///     for (let change of c){
     ///         console.log("change: ", change);
     ///     }
     /// }
@@ -2087,8 +2091,6 @@ impl LoroText {
     ///
     /// @example
     /// ```ts
-    /// import { LoroDoc } from "loro-crdt";
-    ///
     /// const doc = new LoroDoc();
     /// const text = doc.getText("text");
     /// doc.configTextStyle({bold: {expand: "after"}});
@@ -2359,14 +2361,14 @@ impl LoroMap {
     ///
     /// @example
     /// ```ts
-    /// import { LoroDoc } from "loro-crdt";
+    /// import { LoroDoc, LoroText } from "loro-crdt";
     ///
     /// const doc = new LoroDoc();
     /// const map = doc.getMap("map");
     /// map.set("foo", "bar");
     /// const text = map.setContainer("text", new LoroText());
     /// text.insert(0, "Hello");
-    /// console.log(map.getDeepValue());  // {"foo": "bar", "text": "Hello"}
+    /// console.log(map.toJSON());  // {"foo": "bar", "text": "Hello"}
     /// ```
     #[wasm_bindgen(js_name = "toJSON")]
     pub fn to_json(&self) -> JsValue {
@@ -2377,7 +2379,7 @@ impl LoroMap {
     ///
     /// @example
     /// ```ts
-    /// import { LoroDoc } from "loro-crdt";
+    /// import { LoroDoc, LoroText } from "loro-crdt";
     ///
     /// const doc = new LoroDoc();
     /// const map = doc.getMap("map");
@@ -2603,7 +2605,7 @@ impl LoroList {
     ///
     /// @example
     /// ```ts
-    /// import { LoroDoc } from "loro-crdt";
+    /// import { LoroDoc, LoroText } from "loro-crdt";
     ///
     /// const doc = new LoroDoc();
     /// const list = doc.getList("list");
@@ -2636,14 +2638,14 @@ impl LoroList {
     ///
     /// @example
     /// ```ts
-    /// import { LoroDoc } from "loro-crdt";
+    /// import { LoroDoc, LoroText } from "loro-crdt";
     ///
     /// const doc = new LoroDoc();
     /// const list = doc.getList("list");
     /// list.insert(0, 100);
     /// const text = list.insertContainer(1, new LoroText());
     /// text.insert(0, "Hello");
-    /// console.log(list.getDeepValue());  // [100, "Hello"];
+    /// console.log(list.toJSON());  // [100, "Hello"];
     /// ```
     #[wasm_bindgen(js_name = "toJSON")]
     pub fn to_json(&self) -> JsValue {
@@ -2655,14 +2657,14 @@ impl LoroList {
     ///
     /// @example
     /// ```ts
-    /// import { LoroDoc } from "loro-crdt";
+    /// import { LoroDoc, LoroText } from "loro-crdt";
     ///
     /// const doc = new LoroDoc();
     /// const list = doc.getList("list");
     /// list.insert(0, 100);
     /// const text = list.insertContainer(1, new LoroText());
     /// text.insert(0, "Hello");
-    /// console.log(list.getDeepValue());  // [100, "Hello"];
+    /// console.log(list.toJSON());  // [100, "Hello"];
     /// ```
     #[wasm_bindgen(js_name = "insertContainer", skip_typescript)]
     pub fn insert_container(&mut self, index: usize, child: JsContainer) -> JsResult<JsContainer> {
@@ -2923,7 +2925,7 @@ impl LoroMovableList {
     ///
     /// @example
     /// ```ts
-    /// import { LoroDoc } from "loro-crdt";
+    /// import { LoroDoc, LoroText } from "loro-crdt";
     ///
     /// const doc = new LoroDoc();
     /// const list = doc.getList("list");
@@ -2956,14 +2958,14 @@ impl LoroMovableList {
     ///
     /// @example
     /// ```ts
-    /// import { LoroDoc } from "loro-crdt";
+    /// import { LoroDoc, LoroText } from "loro-crdt";
     ///
     /// const doc = new LoroDoc();
     /// const list = doc.getList("list");
     /// list.insert(0, 100);
     /// const text = list.insertContainer(1, new LoroText());
     /// text.insert(0, "Hello");
-    /// console.log(list.getDeepValue());  // [100, "Hello"];
+    /// console.log(list.toJSON());  // [100, "Hello"];
     /// ```
     #[wasm_bindgen(js_name = "toJSON")]
     pub fn to_json(&self) -> JsValue {
@@ -2975,14 +2977,14 @@ impl LoroMovableList {
     ///
     /// @example
     /// ```ts
-    /// import { LoroDoc } from "loro-crdt";
+    /// import { LoroDoc, LoroText } from "loro-crdt";
     ///
     /// const doc = new LoroDoc();
     /// const list = doc.getList("list");
     /// list.insert(0, 100);
     /// const text = list.insertContainer(1, new LoroText());
     /// text.insert(0, "Hello");
-    /// console.log(list.getDeepValue());  // [100, "Hello"];
+    /// console.log(list.toJSON());  // [100, "Hello"];
     /// ```
     #[wasm_bindgen(js_name = "insertContainer", skip_typescript)]
     pub fn insert_container(&mut self, index: usize, child: JsContainer) -> JsResult<JsContainer> {
@@ -3264,10 +3266,10 @@ impl LoroTreeNode {
     /// ```ts
     /// const doc = new LoroDoc();
     /// const tree = doc.getTree("tree");
-    /// const root = tree.createChildNode();
-    /// const node = root.createChildNode();
-    /// const node2 = node.createChildNode();
-    /// node2.moveTo(undefined, 0);
+    /// const root = tree.createNode();
+    /// const node = root.createNode();
+    /// const node2 = node.createNode();
+    /// node2.move(undefined, 0);
     /// // node2   root
     /// //          |
     /// //         node
@@ -3473,9 +3475,9 @@ impl LoroTree {
     /// const root = tree.createNode();
     /// const node = root.createNode();
     /// const node2 = node.createNode();
-    /// tree.move(node2, root);
+    /// tree.move(node2.id, root.id);
     /// // Error will be thrown if move operation creates a cycle
-    /// tree.move(root, node);
+    /// // tree.move(root.id, node.id);
     /// ```
     #[wasm_bindgen(js_name = "move")]
     pub fn mov(
@@ -4380,13 +4382,12 @@ const TYPES: &'static str = r#"
 * It is most commonly used to specify the type of sub-container to be created.
 * @example
 * ```ts
-* import { LoroDoc } from "loro-crdt";
+* import { LoroDoc, LoroText } from "loro-crdt";
 *
 * const doc = new LoroDoc();
 * const list = doc.getList("list");
 * list.insert(0, 100);
-* const containerType = "Text";
-* const text = list.insertContainer(1, containerType);
+* const text = list.insertContainer(1, new LoroText());
 * ```
 */
 export type ContainerType = "Text" | "Map" | "List"| "Tree" | "MovableList";

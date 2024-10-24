@@ -3,23 +3,23 @@ export type * from "loro-wasm";
 import {
   Container,
   ContainerID,
+  ContainerType,
   Delta,
+  LoroCounter,
   LoroDoc,
   LoroList,
   LoroMap,
   LoroText,
   LoroTree,
-  LoroCounter,
   OpId,
   TreeID,
   Value,
-  ContainerType,
 } from "loro-wasm";
 
 /**
  * @deprecated Please use LoroDoc
  */
-export class Loro extends LoroDoc { }
+export class Loro extends LoroDoc {}
 export { Awareness } from "./awareness";
 
 export type Frontiers = OpId[];
@@ -97,7 +97,12 @@ export type TreeDiffItem =
     index: number;
     fractionalIndex: string;
   }
-  | { target: TreeID; action: "delete"; oldParent: TreeID | undefined; oldIndex: number }
+  | {
+    target: TreeID;
+    action: "delete";
+    oldParent: TreeID | undefined;
+    oldIndex: number;
+  }
   | {
     target: TreeID;
     action: "move";
@@ -116,7 +121,7 @@ export type TreeDiff = {
 export type CounterDiff = {
   type: "counter";
   increment: number;
-}
+};
 
 export type Diff = ListDiff | TextDiff | MapDiff | TreeDiff | CounterDiff;
 
@@ -124,7 +129,14 @@ interface Listener {
   (event: LoroEventBatch): void;
 }
 
-const CONTAINER_TYPES = ["Map", "Text", "List", "Tree", "MovableList", "Counter"];
+const CONTAINER_TYPES = [
+  "Map",
+  "Text",
+  "List",
+  "Tree",
+  "MovableList",
+  "Counter",
+];
 
 export function isContainerId(s: string): s is ContainerID {
   return s.startsWith("cid:");
@@ -145,6 +157,7 @@ export function isContainerId(s: string): s is ContainerID {
  * isContainer(123); // false
  * isContainer("123"); // false
  * isContainer({}); // false
+ * ```
  */
 export function isContainer(value: any): value is Container {
   if (typeof value !== "object" || value == null) {
@@ -178,14 +191,10 @@ export function isContainer(value: any): value is Container {
  */
 export function getType<T>(
   value: T,
-): T extends LoroText
-  ? "Text"
-  : T extends LoroMap<any>
-  ? "Map"
-  : T extends LoroTree<any>
-  ? "Tree"
-  : T extends LoroList<any>
-  ? "List"
+): T extends LoroText ? "Text"
+  : T extends LoroMap<any> ? "Map"
+  : T extends LoroTree<any> ? "Tree"
+  : T extends LoroList<any> ? "List"
   : T extends LoroCounter ? "Counter"
   : "Json" {
   if (isContainer(value)) {
@@ -293,14 +302,14 @@ declare module "loro-wasm" {
   }
 
   interface LoroList<T = unknown> {
-    new(): LoroList<T>;
+    new (): LoroList<T>;
     /**
      *  Get elements of the list. If the value is a child container, the corresponding
      *  `Container` will be returned.
      *
      *  @example
      *  ```ts
-     *  import { LoroDoc } from "loro-crdt";
+     *  import { LoroDoc, LoroText } from "loro-crdt";
      *
      *  const doc = new LoroDoc();
      *  const list = doc.getList("list");
@@ -369,7 +378,7 @@ declare module "loro-wasm" {
   }
 
   interface LoroMovableList<T = unknown> {
-    new(): LoroMovableList<T>;
+    new (): LoroMovableList<T>;
     /**
      *  Get elements of the list. If the value is a child container, the corresponding
      *  `Container` will be returned.
@@ -393,7 +402,7 @@ declare module "loro-wasm" {
      *
      *  @example
      *  ```ts
-     *  import { LoroDoc } from "loro-crdt";
+     *  import { LoroDoc, LoroText } from "loro-crdt";
      *
      *  const doc = new LoroDoc();
      *  const list = doc.getMovableList("list");
@@ -458,7 +467,7 @@ declare module "loro-wasm" {
      *  import { LoroDoc } from "loro-crdt";
      *
      *  const doc = new LoroDoc();
-     *  const list = doc.getList("list");
+     *  const list = doc.getMovableList("list");
      *  list.insert(0, 100);
      *  list.insert(1, "foo");
      *  list.insert(2, true);
@@ -472,7 +481,7 @@ declare module "loro-wasm" {
      *
      *  @example
      *  ```ts
-     *  import { LoroDoc } from "loro-crdt";
+     *  import { LoroDoc, LoroText } from "loro-crdt";
      *
      *  const doc = new LoroDoc();
      *  const list = doc.getMovableList("list");
@@ -491,7 +500,7 @@ declare module "loro-wasm" {
   interface LoroMap<
     T extends Record<string, unknown> = Record<string, unknown>,
   > {
-    new(): LoroMap<T>;
+    new (): LoroMap<T>;
     /**
      *  Get the value of the key. If the value is a child container, the corresponding
      *  `Container` will be returned.
@@ -514,13 +523,13 @@ declare module "loro-wasm" {
      *
      *  @example
      *  ```ts
-     *  import { LoroDoc } from "loro-crdt";
+     *  import { LoroDoc, LoroText, LoroList } from "loro-crdt";
      *
      *  const doc = new LoroDoc();
      *  const map = doc.getMap("map");
      *  map.set("foo", "bar");
      *  const text = map.setContainer("text", new LoroText());
-     *  const list = map.setContainer("list", new LoroText());
+     *  const list = map.setContainer("list", new LoroList());
      *  ```
      */
     setContainer<C extends Container, Key extends keyof T>(
@@ -569,7 +578,7 @@ declare module "loro-wasm" {
   }
 
   interface LoroText {
-    new(): LoroText;
+    new (): LoroText;
     insert(pos: number, text: string): void;
     delete(pos: number, len: number): void;
     subscribe(listener: Listener): Subscription;
@@ -578,7 +587,7 @@ declare module "loro-wasm" {
   interface LoroTree<
     T extends Record<string, unknown> = Record<string, unknown>,
   > {
-    new(): LoroTree<T>;
+    new (): LoroTree<T>;
     /**
      * Create a new tree node as the child of parent and return a `LoroTreeNode` instance.
      * If the parent is undefined, the tree node will be a root node.
@@ -617,7 +626,7 @@ declare module "loro-wasm" {
      * Get the associated metadata map container of a tree node.
      */
     readonly data: LoroMap<T>;
-    /** 
+    /**
      * Create a new node as the child of the current node and
      * return an instance of `LoroTreeNode`.
      *
@@ -664,6 +673,9 @@ export function newContainerID(id: OpId, type: ContainerType): ContainerID {
   return `cid:${id.counter}@${id.peer}:${type}`;
 }
 
-export function newRootContainerID(name: string, type: ContainerType): ContainerID {
+export function newRootContainerID(
+  name: string,
+  type: ContainerType,
+): ContainerID {
   return `cid:root-${name}:${type}`;
 }
