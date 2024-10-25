@@ -1,0 +1,113 @@
+/* tslint:disable */
+/* eslint-disable */
+/** */
+export function run(): void;
+/**
+ * @param {({ peer: PeerID, counter: number })[]} frontiers
+ * @returns {Uint8Array}
+ */
+export function encodeFrontiers(
+    frontiers: ({ peer: PeerID; counter: number })[],
+): Uint8Array;
+/**
+ * @param {Uint8Array} bytes
+ * @returns {{ peer: PeerID, counter: number }[]}
+ */
+export function decodeFrontiers(
+    bytes: Uint8Array,
+): { peer: PeerID; counter: number }[];
+/**
+ * Enable debug info of Loro
+ */
+export function setDebug(): void;
+/**
+ * Decode the metadata of the import blob.
+ *
+ * This method is useful to get the following metadata of the import blob:
+ *
+ * - startVersionVector
+ * - endVersionVector
+ * - startTimestamp
+ * - endTimestamp
+ * - isSnapshot
+ * - changeNum
+ * @param {Uint8Array} blob
+ * @returns {ImportBlobMetadata}
+ */
+export function decodeImportBlobMeta(blob: Uint8Array): ImportBlobMetadata;
+
+/**
+ * Container types supported by loro.
+ *
+ * It is most commonly used to specify the type of sub-container to be created.
+ * @example
+ * ```ts
+ * import { LoroDoc, LoroText } from "loro-crdt";
+ *
+ * const doc = new LoroDoc();
+ * const list = doc.getList("list");
+ * list.insert(0, 100);
+ * const text = list.insertContainer(1, new LoroText());
+ * ```
+ */
+export type ContainerType = "Text" | "Map" | "List" | "Tree" | "MovableList";
+
+export type PeerID = `${number}`;
+/**
+ * The unique id of each container.
+ *
+ * @example
+ * ```ts
+ * import { LoroDoc } from "loro-crdt";
+ *
+ * const doc = new LoroDoc();
+ * const list = doc.getList("list");
+ * const containerId = list.id;
+ * ```
+ */
+export type ContainerID =
+    | `cid:root-${string}:${ContainerType}`
+    | `cid:${number}@${PeerID}:${ContainerType}`;
+
+/**
+ * The unique id of each tree node.
+ */
+export type TreeID = `${number}@${PeerID}`;
+
+interface LoroDoc {
+    /**
+     * Export updates from the specific version to the current version
+     *
+     * @deprecated Use `export({mode: "update", from: version})` instead
+     *
+     *  @example
+     *  ```ts
+     *  import { LoroDoc } from "loro-crdt";
+     *
+     *  const doc = new LoroDoc();
+     *  const text = doc.getText("text");
+     *  text.insert(0, "Hello");
+     *  // get all updates of the doc
+     *  const updates = doc.exportFrom();
+     *  const version = doc.oplogVersion();
+     *  text.insert(5, " World");
+     *  // get updates from specific version to the latest version
+     *  const updates2 = doc.exportFrom(version);
+     *  ```
+     */
+    exportFrom(version?: VersionVector): Uint8Array;
+    /// 
+    /// Get the container corresponding to the container id
+    ///
+    /// @example
+    /// ```ts
+    /// import { LoroDoc } from "loro-crdt";
+    /// 
+    /// const doc = new LoroDoc();
+    /// let text = doc.getText("text");
+    /// const textId = text.id;
+    /// text = doc.getContainerById(textId);
+    /// ```
+    ///
+    getContainerById(id: ContainerID): Container;
+}
