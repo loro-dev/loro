@@ -97,7 +97,7 @@ impl Debug for TreeDelta {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("TreeDelta{ diff: [\n")?;
         for item in self.diff.iter() {
-            f.write_fmt(format_args!("\t{:?}, \n", item))?;
+            f.write_fmt(format_args!("\t{item:?}, \n"))?;
         }
         f.write_str("]}")
     }

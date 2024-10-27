@@ -78,7 +78,7 @@ fn main() {
             .unwrap();
         count += 1;
         if count % 1000 == 0 {
-            println!("{}", count);
+            println!("{count}");
         }
     }
 }

@@ -23,8 +23,7 @@ pub(crate) fn js_to_container(js: JsContainer) -> Result<Container, JsValue> {
     let js: JsValue = js.into();
     if !js.is_object() {
         return Err(JsValue::from_str(&format!(
-            "Value supplied is not an object, but {:?}",
-            js
+            "Value supplied is not an object, but {js:?}"
         )));
     }
 
@@ -68,8 +67,7 @@ pub(crate) fn js_to_container(js: JsContainer) -> Result<Container, JsValue> {
         _ => {
             return Err(JsValue::from_str(
                 format!(
-                    "Value kind is {} but the valid container name is Map, List, Text or Tree",
-                    kind
+                    "Value kind is {kind} but the valid container name is Map, List, Text or Tree"
                 )
                 .as_str(),
             ));
@@ -84,15 +82,13 @@ pub(crate) fn js_to_version_vector(
 ) -> Result<wasm_bindgen::__rt::Ref<'static, VersionVector>, JsValue> {
     if !js.is_object() {
         return Err(JsValue::from_str(&format!(
-            "Value supplied is not an object, but {:?}",
-            js
+            "Value supplied is not an object, but {js:?}"
         )));
     }
 
     if js.is_null() || js.is_undefined() {
         return Err(JsValue::from_str(&format!(
-            "Value supplied is not an object, but {:?}",
-            js
+            "Value supplied is not an object, but {js:?}"
         )));
     }
 
@@ -247,8 +243,7 @@ fn delta_item_to_js(item: ListDiffItem, doc: &Arc<LoroDoc>) -> (JsValue, Option<
 pub(crate) fn js_to_cursor(js: JsValue) -> Result<Cursor, JsValue> {
     if !js.is_object() {
         return Err(JsValue::from_str(&format!(
-            "Value supplied is not an object, but {:?}",
-            js
+            "Value supplied is not an object, but {js:?}"
         )));
     }
 

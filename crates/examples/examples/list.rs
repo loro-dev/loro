@@ -225,7 +225,7 @@ pub fn main() {
     let mut table = Table::new(results);
     let style = Style::markdown();
     table.with(style);
-    println!("{}", table);
+    println!("{table}");
 }
 
 fn run(name: &'static str, apply_task: impl FnOnce() -> LoroDoc) -> BenchResult {

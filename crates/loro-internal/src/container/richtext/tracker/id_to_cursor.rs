@@ -249,8 +249,7 @@ impl IdToCursor {
             .max()
             .unwrap_or(0);
         println!(
-            "fragments:{}, insert_pieces:{}, max_insert_len:{}",
-            fragment_num, insert_pieces, max_insert_len
+            "fragments:{fragment_num}, insert_pieces:{insert_pieces}, max_insert_len:{max_insert_len}"
         );
     }
 }

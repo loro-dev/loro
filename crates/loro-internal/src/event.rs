@@ -154,9 +154,9 @@ pub enum Index {
 impl std::fmt::Debug for Index {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Key(arg0) => write!(f, "Index::Key(\"{}\")", arg0),
-            Self::Seq(arg0) => write!(f, "Index::Seq({})", arg0),
-            Self::Node(arg0) => write!(f, "Index::Node({})", arg0),
+            Self::Key(arg0) => write!(f, "Index::Key(\"{arg0}\")"),
+            Self::Seq(arg0) => write!(f, "Index::Seq({arg0})"),
+            Self::Node(arg0) => write!(f, "Index::Node({arg0})"),
         }
     }
 }
@@ -164,8 +164,8 @@ impl std::fmt::Debug for Index {
 impl std::fmt::Display for Index {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Index::Key(key) => write!(f, "{}", key),
-            Index::Seq(s) => write!(f, "{}", s),
+            Index::Key(key) => write!(f, "{key}"),
+            Index::Seq(s) => write!(f, "{s}"),
             Index::Node(id) => write!(f, "{}@{}", id.peer, id.counter),
         }
     }

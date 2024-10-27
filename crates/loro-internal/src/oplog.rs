@@ -466,10 +466,10 @@ impl OpLog {
             total_atom_ops += change.atom_len();
         });
 
-        println!("total changes: {}", total_changes);
-        println!("total ops: {}", total_ops);
-        println!("total atom ops: {}", total_atom_ops);
-        println!("total dag node: {}", total_dag_node);
+        println!("total changes: {total_changes}");
+        println!("total ops: {total_ops}");
+        println!("total atom ops: {total_atom_ops}");
+        println!("total dag node: {total_dag_node}");
         SizeInfo {
             total_changes,
             total_ops,

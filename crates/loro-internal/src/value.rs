@@ -110,7 +110,7 @@ impl ToJson for DeltaItem<StringSlice, StyleMeta> {
                 attributes: Default::default(),
             }
         } else {
-            panic!("Invalid delta item: {}", s);
+            panic!("Invalid delta item: {s}");
         }
     }
 }
@@ -161,7 +161,7 @@ fn diff_item_to_json_value(item: &TextDiffItem) -> (serde_json::Value, Option<se
 
 fn diff_item_from_json(v: serde_json::Value) -> TextDiffItem {
     let serde_json::Value::Object(map) = v else {
-        panic!("Invalid delta item: {:?}", v);
+        panic!("Invalid delta item: {v:?}");
     };
     if map.contains_key("retain") {
         let len = map["retain"].as_u64().unwrap();
@@ -190,7 +190,7 @@ fn diff_item_from_json(v: serde_json::Value) -> TextDiffItem {
         let len = map["delete"].as_u64().unwrap();
         TextDiffItem::new_delete(len as usize)
     } else {
-        panic!("Invalid delta item: {:?}", map);
+        panic!("Invalid delta item: {map:?}");
     }
 }
 

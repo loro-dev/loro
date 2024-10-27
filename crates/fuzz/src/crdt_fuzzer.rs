@@ -26,8 +26,8 @@ pub enum FuzzValue {
 impl Display for FuzzValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FuzzValue::I32(i) => write!(f, "{}", i),
-            FuzzValue::Container(c) => write!(f, "{}", c),
+            FuzzValue::I32(i) => write!(f, "{i}"),
+            FuzzValue::Container(c) => write!(f, "{c}"),
         }
     }
 }
@@ -534,9 +534,9 @@ pub fn test_multi_sites_with_gc(
         for v in must_meet {
             let count = ensure_cov::get_cov_for(v);
             if count == 0 {
-                println!("[COV] FAILED {}", v)
+                println!("[COV] FAILED {v}")
             } else {
-                println!("[COV] HIT    {} - {}", v, count)
+                println!("[COV] HIT    {v} - {count}")
             }
         }
     }
@@ -589,7 +589,7 @@ where
     // Get the number of logical cores available on the system
     let num_cores = num_cpus::get() / 2;
     let f = Arc::new(f);
-    println!("start with {} threads", num_cores);
+    println!("start with {num_cores} threads");
     let mut threads = Vec::new();
     for _i in 0..num_cores {
         let candidates = candidates.clone();

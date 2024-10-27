@@ -624,9 +624,9 @@ impl Debug for TreeChildrenCache {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "TreeChildrenCache {{")?;
         for (parent, children) in self.0.iter() {
-            writeln!(f, "  {:?}:{{", parent)?;
+            writeln!(f, "  {parent:?}:{{")?;
             for (position, id) in children.iter() {
-                writeln!(f, "      {:?} -> {:?}", position, id)?;
+                writeln!(f, "      {position:?} -> {id:?}")?;
             }
             writeln!(f, "  }}")?;
         }
@@ -1007,8 +1007,7 @@ impl TreeState {
             let cached_children = cached_children.collect::<FxHashSet<_>>();
             if &cached_children != children {
                 panic!(
-                    "tree integrity broken: children set of node {:?} is not consistent",
-                    parent
+                    "tree integrity broken: children set of node {parent:?} is not consistent"
                 );
             }
         }

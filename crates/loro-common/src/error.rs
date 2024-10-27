@@ -161,7 +161,7 @@ impl From<ColumnarError> for LoroError {
             | ColumnarError::RleEncodeError(_)
             | ColumnarError::RleDecodeError(_)
             | ColumnarError::OverflowError => {
-                LoroError::DecodeError(format!("Failed to decode Columnar: {}", e).into_boxed_str())
+                LoroError::DecodeError(format!("Failed to decode Columnar: {e}").into_boxed_str())
             }
             e => LoroError::Unknown(e.to_string().into_boxed_str()),
         }

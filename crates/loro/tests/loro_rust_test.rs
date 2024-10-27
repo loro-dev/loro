@@ -690,9 +690,9 @@ fn get_container_by_str_path() {
     let node = tree.create(None).unwrap();
     tree.get_meta(node).unwrap().insert("key", "value").unwrap();
 
-    let node_value = doc.get_by_str_path(&format!("tree/{}", node)).unwrap();
+    let node_value = doc.get_by_str_path(&format!("tree/{node}")).unwrap();
     assert!(node_value.into_container().unwrap().is_map());
-    let node_map = doc.get_by_str_path(&format!("tree/{}/key", node)).unwrap();
+    let node_map = doc.get_by_str_path(&format!("tree/{node}/key")).unwrap();
     assert_eq!(
         node_map
             .into_value()
@@ -865,7 +865,7 @@ fn awareness() {
 fn len_and_is_empty_inconsistency() {
     let doc = LoroDoc::new();
     let map = doc.get_map("map");
-    println!("{:#?}", map);
+    println!("{map:#?}");
     assert!(map.is_empty());
     map.insert("leaf", 42i64).unwrap();
     println!("{:#?}", map.get("leaf"));
@@ -1799,7 +1799,7 @@ fn test_travel_change_ancestors() {
     })
     .unwrap();
 
-    let dbg_str = format!("{:#?}", changes);
+    let dbg_str = format!("{changes:#?}");
     pretty_assertions::assert_eq!(
         dbg_str,
         r#"[
@@ -1873,7 +1873,7 @@ fn test_travel_change_ancestors() {
         ControlFlow::Continue(())
     })
     .unwrap();
-    let dbg_str = format!("{:#?}", changes);
+    let dbg_str = format!("{changes:#?}");
     assert_eq!(
         dbg_str,
         r#"[

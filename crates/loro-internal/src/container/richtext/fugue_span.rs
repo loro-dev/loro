@@ -164,9 +164,7 @@ impl Sliceable for RichtextChunk {
             RichtextChunkKind::Text => {
                 assert!(
                     range.len() <= self.len(),
-                    "range: {:?}, self: {:?}",
-                    range,
-                    self
+                    "range: {range:?}, self: {self:?}"
                 );
                 Self {
                     start: self.start + range.start as u32,

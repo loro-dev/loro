@@ -51,28 +51,25 @@ impl Debug for TreeActionInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TreeActionInner::Create { index } => {
-                write!(f, "TreeActionInner::Create{{index:{}}}", index)
+                write!(f, "TreeActionInner::Create{{index:{index}}}")
             }
             TreeActionInner::Delete => write!(f, "TreeActionInner::Delete"),
             TreeActionInner::Move { parent, index } => {
                 write!(
                     f,
-                    "TreeActionInner::Move{{parent:{:?}, index:{}}}",
-                    parent, index
+                    "TreeActionInner::Move{{parent:{parent:?}, index:{index}}}"
                 )
             }
             TreeActionInner::MoveBefore { target, before } => {
                 write!(
                     f,
-                    "TreeActionInner::MoveBefore{{target:{:?}, before:{:?}}}",
-                    target, before
+                    "TreeActionInner::MoveBefore{{target:{target:?}, before:{before:?}}}"
                 )
             }
             TreeActionInner::MoveAfter { target, after } => {
                 write!(
                     f,
-                    "TreeActionInner::MoveAfter{{target:{:?}, after:{:?}}}",
-                    target, after
+                    "TreeActionInner::MoveAfter{{target:{target:?}, after:{after:?}}}"
                 )
             }
             TreeActionInner::Meta { meta } => write!(
@@ -324,7 +321,7 @@ impl Actionable for TreeAction {
                 target: (ti, tc),
                 after: (ai, ac),
             } => [format!("move {tc}@{ti} after {ac}@{ai}").into(), target],
-            TreeActionInner::Meta { meta } => [format!("meta\n {:?}", meta).into(), target],
+            TreeActionInner::Meta { meta } => [format!("meta\n {meta:?}").into(), target],
         }
     }
 
@@ -404,7 +401,7 @@ impl TreeTracker {
             parent.children.insert(*index, node);
         } else {
             if self.find_node_by_id_mut(target).is_some() {
-                panic!("{:?} node already exists", target);
+                panic!("{target:?} node already exists");
             }
 
             self.tree.insert(*index, node);
@@ -434,7 +431,7 @@ impl ApplyDiff for TreeTracker {
                     position,
                 } => {
                     if self.find_node_by_id(target).is_some() {
-                        panic!("{:?} node already exists", target);
+                        panic!("{target:?} node already exists");
                     }
 
                     self.create_node(target, &parent.tree_id(), position.to_string(), index);
@@ -477,7 +474,7 @@ impl ApplyDiff for TreeTracker {
                         parent.children.insert(*index, node);
                     } else {
                         if self.find_node_by_id_mut(target).is_some() {
-                            panic!("{:?} node already exists", target);
+                            panic!("{target:?} node already exists");
                         }
 
                         self.tree.insert(*index, node);

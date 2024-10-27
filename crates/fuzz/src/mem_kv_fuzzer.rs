@@ -29,12 +29,11 @@ impl std::fmt::Debug for Action {
             Action::Add { key, value } => {
                 write!(
                     f,
-                    "Add{{\n\tkey: vec!{:?}, \n\tvalue: vec!{:?}\n}}",
-                    key, value
+                    "Add{{\n\tkey: vec!{key:?}, \n\tvalue: vec!{value:?}\n}}"
                 )
             }
-            Action::Get(index) => write!(f, "Get({})", index),
-            Action::Remove(index) => write!(f, "Remove({})", index),
+            Action::Get(index) => write!(f, "Get({index})"),
+            Action::Remove(index) => write!(f, "Remove({index})"),
             Action::Scan {
                 start,
                 end,
@@ -42,8 +41,7 @@ impl std::fmt::Debug for Action {
                 end_include,
             } => write!(
                 f,
-                "Scan{{\n\tstart: {:?}, \n\tend: {:?}, \n\tstart_include: {:?}, \n\tend_include: {:?}\n}}",
-                start, end, start_include, end_include
+                "Scan{{\n\tstart: {start:?}, \n\tend: {end:?}, \n\tstart_include: {start_include:?}, \n\tend_include: {end_include:?}\n}}"
             ),
             Action::ExportAndImport => write!(f, "ExportAndImport"),
             Action::Flush => write!(f, "Flush"),
@@ -186,8 +184,7 @@ impl MemKvFuzzer {
                     assert_eq!(
                         self.merged_kv.get(key),
                         Some(value.clone()),
-                        "export and import failed key: {:?}",
-                        key
+                        "export and import failed key: {key:?}"
                     );
                 }
                 self.all_keys.clear();

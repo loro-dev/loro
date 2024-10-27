@@ -277,9 +277,7 @@ impl<'a, T: DagNode, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
         debug_assert_eq!(
             node_id.counter,
             target_span.min(),
-            "{} {:?}",
-            node_id,
-            target_span
+            "{node_id} {target_span:?}"
         );
 
         // // node_id may points into the middle of the node, we need to slice

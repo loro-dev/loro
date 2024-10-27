@@ -28,12 +28,12 @@ pub enum ActionInner {
 impl Debug for ActionInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ActionInner::Map(m) => write!(f, "ActionInner::Map({:?})", m),
-            ActionInner::List(l) => write!(f, "ActionInner::List({:?})", l),
-            ActionInner::Text(t) => write!(f, "ActionInner::Text({:?})", t),
-            ActionInner::Tree(t) => write!(f, "ActionInner::Tree({:?})", t),
-            ActionInner::MovableList(m) => write!(f, "ActionInner::MovableList({:?})", m),
-            ActionInner::Counter(c) => write!(f, "ActionInner::Counter({:?})", c),
+            ActionInner::Map(m) => write!(f, "ActionInner::Map({m:?})"),
+            ActionInner::List(l) => write!(f, "ActionInner::List({l:?})"),
+            ActionInner::Text(t) => write!(f, "ActionInner::Text({t:?})"),
+            ActionInner::Tree(t) => write!(f, "ActionInner::Tree({t:?})"),
+            ActionInner::MovableList(m) => write!(f, "ActionInner::MovableList({m:?})"),
+            ActionInner::Counter(c) => write!(f, "ActionInner::Counter({c:?})"),
         }
     }
 }
@@ -135,15 +135,15 @@ impl Tabled for Action {
         match self {
             Action::Sync { from, to } => vec![
                 "sync".into(),
-                format!("{} with {}", from, to).into(),
+                format!("{from} with {to}").into(),
                 "".into(),
                 "".into(),
             ],
             Action::SyncAll => vec!["sync all".into(), "".into(), "".into()],
             Action::Checkout { site, to } => vec![
                 "checkout".into(),
-                format!("{}", site).into(),
-                format!("to {}", to).into(),
+                format!("{site}").into(),
+                format!("to {to}").into(),
                 "".into(),
             ],
             Action::Handle {
@@ -154,22 +154,22 @@ impl Tabled for Action {
             } => {
                 let mut fields = vec![
                     action.as_action().unwrap().type_name().into(),
-                    format!("{}", site).into(),
-                    format!("{}", container).into(),
+                    format!("{site}").into(),
+                    format!("{container}").into(),
                 ];
                 fields.extend(action.as_action().unwrap().table_fields());
                 fields
             }
             Action::Undo { site, op_len } => vec![
                 "undo".into(),
-                format!("{}", site).into(),
-                format!("{} op len", op_len).into(),
+                format!("{site}").into(),
+                format!("{op_len} op len").into(),
                 "".into(),
             ],
             Action::SyncAllUndo { site, op_len } => vec![
                 "sync all undo".into(),
-                format!("{}", site).into(),
-                format!("{} op len", op_len).into(),
+                format!("{site}").into(),
+                format!("{op_len} op len").into(),
                 "".into(),
             ],
         }

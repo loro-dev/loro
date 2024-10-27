@@ -10,7 +10,7 @@ pub fn bench_fast_snapshot(doc: &LoroDoc) {
         let snapshot = doc.export_snapshot();
         let elapsed = start.elapsed();
         println!("Snapshot size: {}", ByteSize(snapshot.len()));
-        println!("Export snapshot time: {:?}", elapsed);
+        println!("Export snapshot time: {elapsed:?}");
         let start = Instant::now();
         let compressed = zstd::encode_all(snapshot.as_slice(), 0).unwrap();
         println!(
@@ -24,7 +24,7 @@ pub fn bench_fast_snapshot(doc: &LoroDoc) {
         let doc = LoroDoc::new();
         doc.import(&snapshot).unwrap();
         let elapsed = start.elapsed();
-        println!("Import snapshot time: {:?}", elapsed);
+        println!("Import snapshot time: {elapsed:?}");
         println!(
             "Memory usage for new doc: {}",
             dev_utils::get_mem_usage() - mem
@@ -41,7 +41,7 @@ pub fn bench_fast_snapshot(doc: &LoroDoc) {
         let snapshot = doc.export(loro::ExportMode::Snapshot).unwrap();
         let elapsed = start.elapsed();
         println!("Fast Snapshot size: {}", ByteSize(snapshot.len()));
-        println!("Export fast snapshot time: {:?}", elapsed);
+        println!("Export fast snapshot time: {elapsed:?}");
         let start = Instant::now();
         let compressed = zstd::encode_all(snapshot.as_slice(), 0).unwrap();
         println!(
@@ -55,7 +55,7 @@ pub fn bench_fast_snapshot(doc: &LoroDoc) {
         let start = Instant::now();
         new_doc.import(&snapshot).unwrap();
         let elapsed = start.elapsed();
-        println!("Import fast snapshot time: {:?}", elapsed);
+        println!("Import fast snapshot time: {elapsed:?}");
         println!(
             "Memory usage for new doc: {}",
             dev_utils::get_mem_usage() - mem
@@ -73,8 +73,7 @@ pub fn bench_fast_snapshot(doc: &LoroDoc) {
         let _snapshot = new_doc.export(loro::ExportMode::Snapshot);
         let elapsed = start.elapsed();
         println!(
-            "Export fast snapshot time (from doc created by fast snapshot): {:?}",
-            elapsed
+            "Export fast snapshot time (from doc created by fast snapshot): {elapsed:?}"
         );
 
         // let start = Instant::now();
@@ -90,7 +89,7 @@ pub fn bench_fast_snapshot(doc: &LoroDoc) {
             .unwrap();
         let elapsed = start.elapsed();
         println!("Fast Snapshot size: {}", ByteSize(snapshot.len()));
-        println!("Export fast snapshot time: {:?}", elapsed);
+        println!("Export fast snapshot time: {elapsed:?}");
         let start = Instant::now();
         let compressed = zstd::encode_all(snapshot.as_slice(), 0).unwrap();
         println!(
@@ -104,7 +103,7 @@ pub fn bench_fast_snapshot(doc: &LoroDoc) {
         let start = Instant::now();
         new_doc.import(&snapshot).unwrap();
         let elapsed = start.elapsed();
-        println!("Import fast snapshot with GC time: {:?}", elapsed);
+        println!("Import fast snapshot with GC time: {elapsed:?}");
         println!(
             "Memory usage for new doc: {}",
             dev_utils::get_mem_usage() - mem
@@ -123,8 +122,7 @@ pub fn bench_fast_snapshot(doc: &LoroDoc) {
         let _snapshot = new_doc.export(loro::ExportMode::Snapshot);
         let elapsed = start.elapsed();
         println!(
-            "Export fast snapshot time (from doc created by fast snapshot): {:?}",
-            elapsed
+            "Export fast snapshot time (from doc created by fast snapshot): {elapsed:?}"
         );
 
         // let start = Instant::now();

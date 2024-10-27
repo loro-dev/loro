@@ -474,7 +474,7 @@ impl std::fmt::Debug for TreeCacheForDiff {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "TreeCacheForDiff {{ tree: ")?;
         for (id, ops) in self.tree.iter() {
-            writeln!(f, "  {} -> {:?}", id, ops)?;
+            writeln!(f, "  {id} -> {ops:?}")?;
         }
         writeln!(f, "  current_vv: {:?}", self.current_vv)?;
         Ok(())
@@ -594,7 +594,7 @@ impl TreeCacheForDiff {
         let mut ans = Vec::with_capacity(children_ids.len());
         for child in children_ids.iter() {
             let Some(op) = self.get_last_effective_move(*child) else {
-                panic!("child {:?} has no last effective move", child);
+                panic!("child {child:?} has no last effective move");
             };
 
             assert_eq!(op.op.parent_id(), parent);

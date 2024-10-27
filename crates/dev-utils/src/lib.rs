@@ -19,7 +19,7 @@ pub fn setup_test_log() {
             .include_args(true)
             .include_locations(true)
             .file(Path::new(
-                format!("./log/trace-{}.json", time_suffix).as_str(),
+                format!("./log/trace-{time_suffix}.json").as_str(),
             ))
             .build();
         // SAFETY: Test
@@ -81,7 +81,7 @@ impl Debug for ByteSize {
             bytes if bytes < 1024 * 1024 * 1024 => (bytes as f64 / (1024.0 * 1024.0), "MB"),
             bytes => (bytes as f64 / (1024.0 * 1024.0 * 1024.0), "GB"),
         };
-        write!(f, "{:.2} {}", size, unit)
+        write!(f, "{size:.2} {unit}")
     }
 }
 
@@ -93,7 +93,7 @@ impl Display for ByteSize {
             bytes if bytes < 1024 * 1024 * 1024 => (bytes as f64 / (1024.0 * 1024.0), "MB"),
             bytes => (bytes as f64 / (1024.0 * 1024.0 * 1024.0), "GB"),
         };
-        write!(f, "{:.2} {}", size, unit)
+        write!(f, "{size:.2} {unit}")
     }
 }
 

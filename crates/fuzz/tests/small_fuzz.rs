@@ -7,7 +7,7 @@ fn prop(u: &mut Unstructured<'_>, site_num: u8) -> arbitrary::Result<()> {
         test_multi_sites(site_num, vec![FuzzTarget::All], &mut xs.clone());
     }) {
         dbg!(xs);
-        println!("{:?}", e);
+        println!("{e:?}");
         panic!()
     } else {
         Ok(())

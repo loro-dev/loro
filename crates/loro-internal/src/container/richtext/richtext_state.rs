@@ -2776,7 +2776,7 @@ mod test {
     fn comment(n: isize) -> Arc<StyleOp> {
         Arc::new(StyleOp::new_for_test(
             n,
-            &format!("comment:{}", n),
+            &format!("comment:{n}"),
             "comment".into(),
             TextStyleInfoFlag::COMMENT,
         ))

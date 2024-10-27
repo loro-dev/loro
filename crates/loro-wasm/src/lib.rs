@@ -1176,7 +1176,7 @@ impl LoroDoc {
     /// ```
     pub fn export(&self, mode: JsExportMode) -> JsResult<Vec<u8>> {
         let export_mode = js_to_export_mode(mode)
-            .map_err(|e| JsValue::from_str(&format!("Invalid export mode. Error: {:?}", e)))?;
+            .map_err(|e| JsValue::from_str(&format!("Invalid export mode. Error: {e:?}")))?;
         Ok(self.0.export(export_mode)?)
     }
 
@@ -1454,7 +1454,7 @@ impl LoroDoc {
         let oplog = borrow_mut.oplog().try_lock().unwrap();
         let change = oplog
             .get_change_at(id)
-            .ok_or_else(|| JsError::new(&format!("Change {:?} not found", id)))?;
+            .ok_or_else(|| JsError::new(&format!("Change {id:?} not found")))?;
         let change = ChangeMeta {
             lamport: change.lamport(),
             length: change.atom_len() as u32,
@@ -1516,7 +1516,7 @@ impl LoroDoc {
         let oplog = borrow_mut.oplog().try_lock().unwrap();
         let change = oplog
             .get_remote_change_at(id)
-            .ok_or_else(|| JsError::new(&format!("Change {:?} not found", id)))?;
+            .ok_or_else(|| JsError::new(&format!("Change {id:?} not found")))?;
         let ops = change
             .ops()
             .iter()
@@ -4195,7 +4195,7 @@ impl VersionVector {
             vv.insert(
                 peer_id
                     .parse()
-                    .expect_throw(&format!("{} cannot be parsed as u64", peer_id)),
+                    .expect_throw(&format!("{peer_id} cannot be parsed as u64")),
                 counter,
             );
         }

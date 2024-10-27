@@ -23,7 +23,7 @@ impl TryFrom<u8> for CompressionType {
             0 => Ok(CompressionType::None),
             1 => Ok(CompressionType::LZ4),
             _ => Err(LoroError::DecodeError(
-                format!("Invalid compression type: {}", value).into(),
+                format!("Invalid compression type: {value}").into(),
             )),
         }
     }

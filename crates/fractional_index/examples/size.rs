@@ -20,8 +20,7 @@ fn main() {
             n = new;
         }
         println!(
-            "size = {} compress {} with jitter {}",
-            size, compress_size, jitter
+            "size = {size} compress {compress_size} with jitter {jitter}"
         );
     }
 }

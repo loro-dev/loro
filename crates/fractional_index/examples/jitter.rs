@@ -15,6 +15,6 @@ fn main() {
             }
             k += 1;
         }
-        println!("k = {}, jitter = {}", k, jitter);
+        println!("k = {k}, jitter = {jitter}");
     }
 }

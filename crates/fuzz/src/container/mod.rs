@@ -17,6 +17,6 @@ fn unwrap<T>(r: LoroResult<T>) -> Option<T> {
     match r {
         Ok(v) => Some(v),
         Err(LoroError::ContainerDeleted { .. }) => None,
-        Err(e) => panic!("Error: {}", e),
+        Err(e) => panic!("Error: {e}"),
     }
 }

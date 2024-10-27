@@ -109,7 +109,7 @@ fn export_import_edit_export() {
     let mut store = MemKvStore::new(MemKvConfig::default());
     store.set(b"a", Bytes::from_static(b"1"));
     for i in 0..3000 {
-        let s = format!("b{}", i);
+        let s = format!("b{i}");
         store.set(s.as_bytes(), Bytes::from_static(b"2"));
     }
 

@@ -880,7 +880,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                         info,
                         value,
                     } => {
-                        debug_assert!(start < end, "start: {}, end: {}", start, end);
+                        debug_assert!(start < end, "start: {start}, end: {end}");
                         let style_op = Arc::new(StyleOp {
                             lamport: op.lamport(),
                             peer: op.peer,
@@ -982,7 +982,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                             info,
                             value,
                         } => {
-                            debug_assert!(start < end, "start: {}, end: {}", start, end);
+                            debug_assert!(start < end, "start: {start}, end: {end}");
                             let style_id = styles.len();
                             styles.push((
                                 StyleOp {
@@ -1526,14 +1526,14 @@ impl MovableListDiffCalculator {
 fn test_size() {
     let text = RichtextDiffCalculator::new();
     let size = std::mem::size_of_val(&text);
-    assert!(size < 50, "RichtextDiffCalculator size: {}", size);
+    assert!(size < 50, "RichtextDiffCalculator size: {size}");
     let list = MovableListDiffCalculator::new(ContainerIdx::from_index_and_type(
         0,
         loro_common::ContainerType::MovableList,
     ));
     let size = std::mem::size_of_val(&list);
-    assert!(size < 50, "MovableListDiffCalculator size: {}", size);
+    assert!(size < 50, "MovableListDiffCalculator size: {size}");
     let calc = ContainerDiffCalculator::Richtext(text);
     let size = std::mem::size_of_val(&calc);
-    assert!(size < 50, "ContainerDiffCalculator size: {}", size);
+    assert!(size < 50, "ContainerDiffCalculator size: {size}");
 }

@@ -90,11 +90,10 @@ impl Debug for MapAction {
             MapAction::Insert { key, value } => {
                 write!(
                     f,
-                    "MapAction::Insert {{ key: {}, value: {:?} }}",
-                    key, value
+                    "MapAction::Insert {{ key: {key}, value: {value:?} }}"
                 )
             }
-            MapAction::Delete { key } => write!(f, "MapAction::Delete {{ key: {} }}", key),
+            MapAction::Delete { key } => write!(f, "MapAction::Delete {{ key: {key} }}"),
         }
     }
 }

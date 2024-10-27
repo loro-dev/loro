@@ -124,7 +124,7 @@ impl Actionable for TextAction {
         use super::unwrap;
         match action {
             TextActionInner::Insert => {
-                unwrap(text.insert(*pos, &format!("[{}]", len)));
+                unwrap(text.insert(*pos, &format!("[{len}]")));
             }
             TextActionInner::Delete => {
                 unwrap(text.delete(*pos, *len));
@@ -144,7 +144,7 @@ impl Actionable for TextAction {
         let pos = self.pos;
         let len = self.len;
         match self.action {
-            TextActionInner::Insert => [format!("insert {}", pos).into(), len.to_string().into()],
+            TextActionInner::Insert => [format!("insert {pos}").into(), len.to_string().into()],
             TextActionInner::Delete => ["delete".into(), format!("{} ~ {}", pos, pos + len).into()],
             TextActionInner::Mark(i) => [
                 format!("mark {} ", STYLES_NAME[i]).into(),

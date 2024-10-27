@@ -1122,7 +1122,7 @@ impl LoroDoc {
                 self.renew_txn_if_auto_commit();
             }
             return Err(LoroError::NotFoundError(
-                format!("Cannot find the specified version {:?}", frontiers).into_boxed_str(),
+                format!("Cannot find the specified version {frontiers:?}").into_boxed_str(),
             ));
         };
 

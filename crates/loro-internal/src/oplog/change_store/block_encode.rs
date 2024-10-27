@@ -384,7 +384,7 @@ pub(crate) struct ChangesBlockHeader {
 
 pub fn decode_header(m_bytes: &[u8]) -> LoroResult<ChangesBlockHeader> {
     let doc = postcard::from_bytes(m_bytes).map_err(|e| {
-        LoroError::DecodeError(format!("Decode block error {}", e).into_boxed_str())
+        LoroError::DecodeError(format!("Decode block error {e}").into_boxed_str())
     })?;
 
     decode_header_from_doc(&doc)
@@ -465,7 +465,7 @@ pub fn decode_block_range(
     mut bytes: &[u8],
 ) -> LoroResult<((Counter, Counter), (Lamport, Lamport))> {
     let version = leb128::read::unsigned(&mut bytes).map_err(|e| {
-        LoroError::DecodeError(format!("Failed to read version: {}", e).into_boxed_str())
+        LoroError::DecodeError(format!("Failed to read version: {e}").into_boxed_str())
     })?;
 
     if version as u16 != VERSION {
@@ -491,13 +491,13 @@ pub fn decode_cids(
     header: Option<ChangesBlockHeader>,
 ) -> LoroResult<ChangesBlockHeader> {
     let doc = postcard::from_bytes(bytes).map_err(|e| {
-        LoroError::DecodeError(format!("Decode block error {}", e).into_boxed_str())
+        LoroError::DecodeError(format!("Decode block error {e}").into_boxed_str())
     })?;
     let header = if let Some(h) = header {
         h
     } else {
         let doc = postcard::from_bytes(bytes).map_err(|e| {
-            LoroError::DecodeError(format!("Decode block error {}", e).into_boxed_str())
+            LoroError::DecodeError(format!("Decode block error {e}").into_boxed_str())
         })?;
         decode_header_from_doc(&doc)?
     };
@@ -534,7 +534,7 @@ pub fn decode_block(
     header: Option<&ChangesBlockHeader>,
 ) -> LoroResult<Vec<Change>> {
     let doc = postcard::from_bytes(m_bytes).map_err(|e| {
-        LoroError::DecodeError(format!("Decode block error {}", e).into_boxed_str())
+        LoroError::DecodeError(format!("Decode block error {e}").into_boxed_str())
     })?;
     let mut header_on_stack = None;
     let header = header.unwrap_or_else(|| {

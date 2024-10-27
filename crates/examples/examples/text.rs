@@ -6,8 +6,7 @@ pub fn main() {
     const N: usize = 100_000;
     let text = doc.get_text("text");
     println!(
-        "Task: Insert {} random strings (length 10) at random positions into text",
-        N
+        "Task: Insert {N} random strings (length 10) at random positions into text"
     );
 
     for _ in 0..N {

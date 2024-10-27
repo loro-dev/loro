@@ -294,6 +294,6 @@ mod test {
     #[test]
     fn size_of_change() {
         let size = std::mem::size_of::<Change>();
-        println!("{}", size);
+        println!("{size}");
     }
 }

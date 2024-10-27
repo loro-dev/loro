@@ -42,15 +42,15 @@ impl fmt::Debug for JSONPathToken {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             JSONPathToken::Root => write!(f, "Root"),
-            JSONPathToken::Child(s) => write!(f, "Child({})", s),
+            JSONPathToken::Child(s) => write!(f, "Child({s})"),
             JSONPathToken::RecursiveDescend => write!(f, "RecursiveDescend"),
             JSONPathToken::Wildcard => write!(f, "Wildcard"),
-            JSONPathToken::Index(i) => write!(f, "Index({})", i),
+            JSONPathToken::Index(i) => write!(f, "Index({i})"),
             JSONPathToken::Slice(start, end, step) => {
-                write!(f, "Slice({:?}, {:?}, {:?})", start, end, step)
+                write!(f, "Slice({start:?}, {end:?}, {step:?})")
             }
-            JSONPathToken::UnionIndex(indices) => write!(f, "UnionIndex({:?})", indices),
-            JSONPathToken::UnionKey(keys) => write!(f, "UnionKey({:?})", keys),
+            JSONPathToken::UnionIndex(indices) => write!(f, "UnionIndex({indices:?})"),
+            JSONPathToken::UnionKey(keys) => write!(f, "UnionKey({keys:?})"),
             JSONPathToken::Filter(_) => write!(f, "Filter(<function>)"),
         }
     }
@@ -147,8 +147,7 @@ fn parse_jsonpath(path: &str) -> Result<Vec<JSONPathToken>, JsonPathError> {
                     tokens.push(JSONPathToken::UnionKey(ans));
                 } else {
                     return Err(JsonPathError::InvalidJsonPath(format!(
-                        "Invalid array accessor: [{}]",
-                        content
+                        "Invalid array accessor: [{content}]"
                     )));
                 }
             }
@@ -171,8 +170,7 @@ fn parse_jsonpath(path: &str) -> Result<Vec<JSONPathToken>, JsonPathError> {
             }
             _ => {
                 return Err(JsonPathError::InvalidJsonPath(format!(
-                    "Unexpected character '{}' in JSONPath: {}",
-                    c, path
+                    "Unexpected character '{c}' in JSONPath: {path}"
                 )))
             }
         }

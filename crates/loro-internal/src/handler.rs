@@ -2486,8 +2486,7 @@ impl ListHandler {
                     ValueOrHandler::Handler(h) => Ok(h.clone()),
                     _ => Err(LoroError::ArgErr(
                         format!(
-                            "Expected container at index {}, but found {:?}",
-                            index, value
+                            "Expected container at index {index}, but found {value:?}"
                         )
                         .into_boxed_str(),
                     )),
@@ -2507,8 +2506,7 @@ impl ListHandler {
                     LoroValue::Container(id) => Ok(create_handler(a, id)),
                     _ => Err(LoroError::ArgErr(
                         format!(
-                            "Expected container at index {}, but found {:?}",
-                            index, value
+                            "Expected container at index {index}, but found {value:?}"
                         )
                         .into_boxed_str(),
                     )),
@@ -3141,8 +3139,7 @@ impl MovableListHandler {
                     ValueOrHandler::Handler(h) => Ok(h.clone()),
                     _ => Err(LoroError::ArgErr(
                         format!(
-                            "Expected container at index {}, but found {:?}",
-                            index, value
+                            "Expected container at index {index}, but found {value:?}"
                         )
                         .into_boxed_str(),
                     )),
@@ -3167,8 +3164,7 @@ impl MovableListHandler {
                     LoroValue::Container(id) => Ok(create_handler(a, id)),
                     _ => Err(LoroError::ArgErr(
                         format!(
-                            "Expected container at index {}, but found {:?}",
-                            index, value
+                            "Expected container at index {index}, but found {value:?}"
                         )
                         .into_boxed_str(),
                     )),
@@ -3275,7 +3271,7 @@ impl MovableListHandler {
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
                 let a = state.as_movable_list_state().unwrap();
-                format!("{:#?}", a)
+                format!("{a:#?}")
             }),
         }
     }
@@ -3565,7 +3561,7 @@ impl MapHandler {
                 let value = m.value.get(key).unwrap();
                 match value {
                     ValueOrHandler::Value(v) => Err(LoroError::ArgErr(
-                        format!("Expected Handler but found {:?}", v).into_boxed_str(),
+                        format!("Expected Handler but found {v:?}").into_boxed_str(),
                     )),
                     ValueOrHandler::Handler(h) => Ok(h.clone()),
                 }

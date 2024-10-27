@@ -231,7 +231,7 @@ pub fn minify_failed_tests_in_async_mode<T: ActorTrait>(
 
     if let Some(minimal_failed_actions) = min_actions {
         println!("Min action size {:?}", minimal_failed_actions.len());
-        println!("{:#?}", minimal_failed_actions);
+        println!("{minimal_failed_actions:#?}");
         std::panic::set_hook(hook);
         run_actions_fuzz_in_async_mode::<T>(peer_num, sync_all_interval, &minimal_failed_actions);
     } else {

@@ -471,7 +471,7 @@ pub(crate) fn export_shallow_snapshot(
 fn check_target_version_reachable(doc: &LoroDoc, f: &Frontiers) -> Result<(), LoroEncodeError> {
     let oplog = doc.oplog.try_lock().unwrap();
     if !oplog.dag.can_export_shallow_snapshot_on(f) {
-        return Err(LoroEncodeError::FrontiersNotFound(format!("{:?}", f)));
+        return Err(LoroEncodeError::FrontiersNotFound(format!("{f:?}")));
     }
 
     Ok(())
@@ -565,10 +565,7 @@ mod test {
             let size = postcard::to_allocvec(&value).unwrap().len();
             assert!(
                 size <= max_size,
-                "value: {:?}, size: {}, max_size: {}",
-                value,
-                size,
-                max_size
+                "value: {value:?}, size: {size}, max_size: {max_size}"
             );
         }
 

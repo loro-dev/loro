@@ -260,8 +260,7 @@ impl ContainerStore {
             let other_id = other.arena.get_container_id(other_idx).unwrap();
             assert_eq!(
                 id, other_id,
-                "container id mismatch {:?} {:?}",
-                id, other_id
+                "container id mismatch {id:?} {other_id:?}"
             );
             assert_eq!(
                 container.get_value(*idx, ctx!(self)),

@@ -150,5 +150,5 @@ impl AwarenessWasm {
 }
 
 fn peer_to_str_js(peer: PeerID) -> JsValue {
-    format!("{}", peer).into()
+    format!("{peer}").into()
 }

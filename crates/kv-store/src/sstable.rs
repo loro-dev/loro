@@ -351,9 +351,8 @@ impl SsTable {
             _ => {
                 return Err(LoroError::DecodeError(
                     format!(
-                        "Invalid schema version {}, 
-            current support max version is {}",
-                        schema_version, CURRENT_SCHEMA_VERSION
+                        "Invalid schema version {schema_version}, 
+            current support max version is {CURRENT_SCHEMA_VERSION}"
                     )
                     .into(),
                 ))
@@ -897,7 +896,7 @@ mod test {
         builder.add(b"key3", b"value3");
         let block = builder.build();
         let mut iter = BlockIter::new(Arc::new(block));
-        println!("{:?}", iter);
+        println!("{iter:?}");
         let (k1, v1) = Iterator::next(&mut iter).unwrap();
         let (k3, v3) = DoubleEndedIterator::next_back(&mut iter).unwrap();
         let (k2, v2) = Iterator::next(&mut iter).unwrap();

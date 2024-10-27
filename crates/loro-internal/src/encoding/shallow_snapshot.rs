@@ -266,8 +266,7 @@ pub(crate) fn encode_snapshot_at<W: std::io::Write>(
         assert!(!state.is_in_txn());
         let Some(oplog_bytes) = oplog.fork_changes_up_to(frontiers) else {
             break 'block Err(LoroEncodeError::FrontiersNotFound(format!(
-                "frontiers: {:?} when export in SnapshotAt mode",
-                frontiers
+                "frontiers: {frontiers:?} when export in SnapshotAt mode"
             )));
         };
 
