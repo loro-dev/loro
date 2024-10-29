@@ -8,17 +8,20 @@ async function replaceInFile(filePath: string) {
         let content = await Deno.readTextFile(filePath);
 
         // Replace various import/require patterns for 'loro-wasm'
+        const isWebIndexJs = filePath.includes("web") && filePath.endsWith("index.js");
+        const target = isWebIndexJs ? "./loro_wasm.js" : "./loro_wasm";
+
         content = content.replace(
             /from ["']loro-wasm["']/g,
-            'from "./loro_wasm"'
+            `from "${target}"`
         );
         content = content.replace(
             /require\(["']loro-wasm["']\)/g,
-            'require("./loro_wasm")'
+            `require("${target}")`
         );
         content = content.replace(
             /import\(["']loro-wasm["']\)/g,
-            'import("./loro_wasm")'
+            `import("${target}")`
         );
 
         await Deno.writeTextFile(filePath, content);

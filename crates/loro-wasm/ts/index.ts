@@ -1,6 +1,6 @@
 export * from "loro-wasm";
 export type * from "loro-wasm";
-import {
+import init, {
     AwarenessWasm,
     PeerID,
     Container,
@@ -17,6 +17,7 @@ import {
     Value,
     AwarenessListener,
 } from "loro-wasm";
+export default init;
 
 /**
  * @deprecated Please use LoroDoc
