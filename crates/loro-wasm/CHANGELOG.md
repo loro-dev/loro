@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.8-alpha.0
+
+### Patch Changes
+
+- Refactor simplify js binding
+
 ## 1.0.7
 
 ### Patch Changes

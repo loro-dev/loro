@@ -1,6 +1,6 @@
 {
   "name": "loro-crdt",
-  "version": "1.0.7",
+  "version": "1.0.8-alpha.0",
   "description": "Loro CRDTs is a high-performance CRDT framework that makes your app state synchronized, collaborative and maintainable effortlessly.",
   "keywords": [
     "crdt",
@@ -18,8 +18,6 @@
   "module": "bundler/index.js",
   "types": "bundler/index.d.ts",
   "scripts": {
-    "release": "deno run -A ./scripts/build.ts release",
-    "dev": "deno run -A ./scripts/build.ts dev",
     "build-dev": "deno run -A ./scripts/build.ts dev && rollup -c && deno run -A ./scripts/post-rollup.ts && npm run test",
     "build-release": "deno run -A ./scripts/build.ts release && rollup -c && deno run -A ./scripts/post-rollup.ts && npm run test",
     "test": "cd ./deno_tests && deno test -A"
