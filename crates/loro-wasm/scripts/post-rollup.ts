@@ -24,6 +24,10 @@ async function replaceInFile(filePath: string) {
             `import("${target}")`
         );
 
+        if (isWebIndexJs) {
+            content = `export { default } from "./loro_wasm.js";\n${content}`;
+        }
+
         await Deno.writeTextFile(filePath, content);
         console.log(`✓ Processed: ${filePath}`);
     } catch (error) {
