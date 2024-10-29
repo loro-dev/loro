@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.8-alpha.2
+
+### Patch Changes
+
+- Fix build script for web target
+
 ## 1.0.8-alpha.1
 
 ### Patch Changes
