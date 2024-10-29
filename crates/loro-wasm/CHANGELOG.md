@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.8-alpha.1
+
+### Patch Changes
+
+- Include the build for web
+
 ## 1.0.8-alpha.0
 
 ### Patch Changes
