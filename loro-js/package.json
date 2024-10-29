@@ -1,5 +1,5 @@
 {
-  "name": "loro-crdt",
+  "name": "loro-crdt-test",
   "version": "1.0.7",
   "description": "Loro CRDTs is a high-performance CRDT framework that makes your app state synchronized, collaborative and maintainable effortlessly.",
   "keywords": [
@@ -10,6 +10,7 @@
     "sync",
     "p2p"
   ],
+  "private": true,
   "repository": {
     "type": "git",
     "url": "git+https://github.com/loro-dev/loro.git"

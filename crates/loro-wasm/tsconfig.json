@@ -110,6 +110,7 @@
         "node_modules",
         "dist",
         "deno",
-        "scripts"
+        "scripts",
+        "deno_tests"
     ]
 }

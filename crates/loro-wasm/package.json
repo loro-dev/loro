@@ -1,5 +1,5 @@
 {
-  "name": "loro-wasm",
+  "name": "loro-crdt",
   "version": "1.0.7",
   "description": "Loro CRDTs is a high-performance CRDT framework that makes your app state synchronized, collaborative and maintainable effortlessly.",
   "keywords": [
@@ -20,8 +20,9 @@
   "scripts": {
     "release": "deno run -A ./scripts/build.ts release",
     "dev": "deno run -A ./scripts/build.ts dev",
-    "build-dev": "deno run -A ./scripts/build.ts dev && rollup -c && deno run -A ./scripts/post-rollup.ts",
-    "build-release": "deno run -A ./scripts/build.ts release && rollup -c && deno run -A ./scripts/post-rollup.ts"
+    "build-dev": "deno run -A ./scripts/build.ts dev && rollup -c && deno run -A ./scripts/post-rollup.ts && npm run test",
+    "build-release": "deno run -A ./scripts/build.ts release && rollup -c && deno run -A ./scripts/post-rollup.ts && npm run test",
+    "test": "cd ./deno_tests && deno test -A"
   },
   "homepage": "https://loro.dev",
   "author": "",
