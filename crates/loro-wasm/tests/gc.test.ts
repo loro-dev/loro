@@ -8,7 +8,7 @@ import {
     LoroMap,
     LoroText,
     LoroTree,
-} from "../src";
+} from "../bundler/index";
 
 describe("gc", () => {
     it("should export gc snapshot", () => {

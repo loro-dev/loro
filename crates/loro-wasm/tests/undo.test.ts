@@ -1,4 +1,4 @@
-import { Cursor, LoroDoc, UndoManager } from "../src";
+import { Cursor, LoroDoc, UndoManager } from "../bundler/index";
 import { describe, expect, test } from "vitest";
 
 describe("undo", () => {

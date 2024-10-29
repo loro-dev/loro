@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Delta, LoroDoc, TextDiff } from "../src";
-import { Cursor, OpId, PeerID, setDebug } from "loro-wasm";
+import { Delta, LoroDoc, TextDiff, Cursor, OpId } from "../bundler/index";
 
 describe("richtext", () => {
   it("mark", () => {
@@ -298,7 +297,7 @@ describe("richtext", () => {
     ]);
     text.deleteUtf8(3, 4);
     expect(text.toDelta()).toStrictEqual([
-      { insert: "你b"},
+      { insert: "你b" },
     ]);
   });
 
@@ -336,7 +335,7 @@ describe("richtext", () => {
     const text = doc.getText('t');
     text.insert(0, "你好");
     let str = "";
-    text.iter((s : string)=>{
+    text.iter((s: string) => {
       str = str + s;
       return true;
     });

@@ -1,7 +1,6 @@
-import { describe, expect, expectTypeOf, it } from "vitest";
-import { LoroDoc } from "../src";
-import { Container, LoroText, OpId } from "../src";
-import { setDebug } from "loro-wasm";
+import { it } from "vitest";
+import { LoroDoc } from "../bundler/index";
+import { LoroText, OpId } from "../bundler/index";
 
 it("#211", () => {
   const loro1 = new LoroDoc();

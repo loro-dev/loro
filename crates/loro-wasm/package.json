@@ -29,7 +29,7 @@
   "scripts": {
     "build-dev": "deno run -A ./scripts/build.ts dev && rollup -c && deno run -A ./scripts/post-rollup.ts && npm run test",
     "build-release": "deno run -A ./scripts/build.ts release && rollup -c && deno run -A ./scripts/post-rollup.ts && npm run test",
-    "test": "cd ./deno_tests && deno test -A"
+    "test": "node --expose-gc ./node_modules/vitest/vitest.mjs run && npx tsc --noEmit && cd ./deno_tests && deno test -A"
   },
   "homepage": "https://loro.dev",
   "author": "",
@@ -42,6 +42,17 @@
     "tslib": "^2.8.0",
     "typescript": "^5.6.3",
     "vite-plugin-top-level-await": "^1.2.2",
-    "vite-plugin-wasm": "^3.1.0"
+    "vite-plugin-wasm": "^3.1.0",
+    "@typescript-eslint/parser": "^6.2.0",
+    "@vitest/ui": "^1.0.4",
+    "esbuild": "^0.18.20",
+    "eslint": "^8.46.0",
+    "loro-crdt-old": "npm:loro-crdt@=0.16.0",
+    "loro-crdt-alpha-4": "npm:loro-crdt@=1.0.0-alpha.4",
+    "prettier": "^3.0.0",
+    "rollup-plugin-dts": "^5.3.0",
+    "rollup-plugin-esbuild": "^5.0.0",
+    "vite": "^4.2.1",
+    "vitest": "^1.4.0"
   }
 }

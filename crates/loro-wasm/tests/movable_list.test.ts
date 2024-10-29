@@ -8,7 +8,7 @@ import {
   LoroMovableList,
   LoroText,
   TextDiff,
-} from "../src";
+} from "../bundler/index";
 
 describe("movable list", () => {
   it("should work like list", () => {

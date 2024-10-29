@@ -12,7 +12,7 @@ import {
     MapDiff,
     TextDiff,
     UndoManager,
-} from "../src";
+} from "../bundler/index";
 
 describe("detached editing", () => {
     it("basic tests", async () => {

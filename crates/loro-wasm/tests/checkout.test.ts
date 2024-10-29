@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LoroDoc } from "../src";
+import { LoroDoc } from "../bundler/index";
 
 describe("Checkout", () => {
   it("simple checkout", async () => {

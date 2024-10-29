@@ -6,7 +6,8 @@ export default defineConfig({
   test: {
     exclude: [
       ...configDefaults.exclude,
-      "deno/*"
+      "deno/*",
+      "deno_tests/*"
     ]
   },
 });

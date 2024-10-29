@@ -11,7 +11,7 @@ import {
   LoroText,
   MapDiff,
   TextDiff,
-} from "../src";
+} from "../bundler/index";
 
 describe("event", () => {
   it("target", async () => {

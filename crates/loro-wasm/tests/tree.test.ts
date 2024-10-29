@@ -1,5 +1,5 @@
 import { assert, describe, expect, it } from "vitest";
-import { LoroDoc, LoroTree, LoroTreeNode, TreeDiff } from "../src";
+import { LoroDoc, LoroTree, LoroTreeNode, TreeDiff } from "../bundler/index";
 
 function assertEquals(a: any, b: any) {
   expect(a).toStrictEqual(b);

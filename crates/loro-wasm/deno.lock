@@ -213,11 +213,22 @@
         "npm:@rollup/plugin-alias@^5.1.1",
         "npm:@rollup/plugin-node-resolve@^15.0.1",
         "npm:@rollup/plugin-typescript@^12.1.1",
+        "npm:@typescript-eslint/parser@^6.2.0",
+        "npm:@vitest/ui@^1.0.4",
+        "npm:esbuild@~0.18.20",
+        "npm:eslint@^8.46.0",
+        "npm:loro-crdt@0.16.0",
+        "npm:loro-crdt@1.0.0-alpha.4",
+        "npm:prettier@3",
+        "npm:rollup-plugin-dts@^5.3.0",
+        "npm:rollup-plugin-esbuild@5",
         "npm:rollup@^3.20.1",
         "npm:tslib@^2.8.0",
         "npm:typescript@^5.6.3",
         "npm:vite-plugin-top-level-await@^1.2.2",
-        "npm:vite-plugin-wasm@^3.1.0"
+        "npm:vite-plugin-wasm@^3.1.0",
+        "npm:vite@^4.2.1",
+        "npm:vitest@^1.4.0"
       ]
     }
   }

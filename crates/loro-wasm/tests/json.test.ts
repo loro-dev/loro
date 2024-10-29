@@ -3,7 +3,7 @@ import {
   LoroDoc,
   LoroMap,
   TextOp,
-} from "../src";
+} from "../bundler/index";
 
 it("json encoding", () => {
   const doc = new LoroDoc();

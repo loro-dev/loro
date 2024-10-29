@@ -1,9 +1,8 @@
 import typescript from '@rollup/plugin-typescript';
 import { nodeResolve } from '@rollup/plugin-node-resolve';
-
 const createConfig = (format, tsTarget, outputDir) => ({
   input: {
-    'index': 'ts/index.ts',
+    'index': 'index.ts',
   },
   output: {
     dir: outputDir,
@@ -16,9 +15,10 @@ const createConfig = (format, tsTarget, outputDir) => ({
       tsconfig: 'tsconfig.json',
       compilerOptions: {
         target: tsTarget,
-        declaration: format === 'es', // Only generate .d.ts for ES modules
+        declaration: true,
         outDir: outputDir,
-      }
+      },
+      exclude: ['tests/**/*']
     }),
     nodeResolve()
   ],

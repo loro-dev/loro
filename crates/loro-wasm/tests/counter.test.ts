@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CounterDiff, LoroDoc } from "../src";
+import { CounterDiff, LoroDoc } from "../bundler/index";
 
 function oneMs(): Promise<void> {
   return new Promise((r) => setTimeout(r));
@@ -15,13 +15,13 @@ describe("counter", () => {
     expect(counter.value).toBe(2);
   });
 
-   it("encode", async () => {
+  it("encode", async () => {
     const doc = new LoroDoc();
     const counter = doc.getCounter("counter");
     counter.increment(1);
     counter.increment(2);
     counter.decrement(4);
-    
+
     const updates = doc.exportFrom();
     const snapshot = doc.exportSnapshot();
     const json = doc.exportJsonUpdates();

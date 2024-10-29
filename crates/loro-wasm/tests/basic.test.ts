@@ -15,8 +15,7 @@ import {
   Frontiers,
   encodeFrontiers,
   decodeFrontiers,
-} from "../src";
-import { m } from "vitest/dist/reporters-yx5ZTtEV";
+} from "../bundler/index";
 
 it("basic example", () => {
   const doc = new LoroDoc();

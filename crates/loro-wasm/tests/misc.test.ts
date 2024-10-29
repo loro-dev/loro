@@ -1,5 +1,5 @@
 import { assert, describe, expect, it } from "vitest";
-import { LoroDoc, LoroList, LoroMap, LoroText, VersionVector } from "../src";
+import { LoroDoc, LoroList, LoroMap, LoroText, VersionVector } from "../bundler/index";
 import { expectTypeOf } from "vitest";
 
 function assertEquals(a: any, b: any) {

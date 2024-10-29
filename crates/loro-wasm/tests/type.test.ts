@@ -7,7 +7,7 @@ import {
   LoroTree,
   PeerID,
   Value,
-} from "../src";
+} from "../bundler/index";
 import { expect, expectTypeOf, test } from "vitest";
 
 test("Container should not match Value", () => {

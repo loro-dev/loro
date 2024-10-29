@@ -5,7 +5,7 @@ import {
   LoroMap,
   OpId,
   VersionVector,
-} from "../src";
+} from "../bundler/index";
 
 describe("Frontiers", () => {
   it("two clients", () => {

@@ -5,8 +5,8 @@ import {
   Cursor,
   PeerID,
   setDebug,
-} from "../src/index";
-import { AwarenessListener } from "../src";
+} from "../bundler/index";
+import { AwarenessListener } from "../bundler/index";
 
 describe("Awareness", () => {
   it("setLocalRecord", () => {

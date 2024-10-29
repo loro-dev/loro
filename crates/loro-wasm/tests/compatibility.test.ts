@@ -10,7 +10,7 @@ import {
   LoroText,
   MapDiff,
   TextDiff,
-} from "../src";
+} from "../bundler/index";
 
 import * as OLD from "loro-crdt-old";
 
@@ -29,12 +29,14 @@ describe("compatibility", () => {
     // t.createNode(node.id, 0);
     const bytes = docA.exportFrom();
 
+    // @ts-ignore
     const docB = new OLD.Loro();
     docB.import(bytes);
     expect(docA.toJSON()).toStrictEqual(docB.toJSON());
   });
 
   it("basic forward compatibility on exportSnapshot", () => {
+    // @ts-ignore
     const docA = new Loro();
     docA.getText("text").insert(0, "123");
     docA.getMap("map").set("key", 123);
@@ -46,12 +48,14 @@ describe("compatibility", () => {
     // t.createNode(node.id, 0);
     const bytes = docA.exportSnapshot();
 
+    // @ts-ignore
     const docB = new OLD.Loro();
     docB.import(bytes);
     expect(docA.toJSON()).toStrictEqual(docB.toJSON());
   });
 
   it("basic backward compatibility on exportSnapshot", () => {
+    // @ts-ignore
     const docA = new OLD.Loro();
     docA.getText("text").insert(0, "123");
     docA.getMap("map").set("key", 123);
@@ -69,13 +73,14 @@ describe("compatibility", () => {
   });
 
   it("basic backward compatibility on exportSnapshot", () => {
+    // @ts-ignore
     const docA = new OLD.Loro();
     docA.getText("text").insert(0, "123");
     docA.getMap("map").set("key", 123);
     docA.getMap("map").set("key", "123");
     docA.getList("list").insert(0, 1);
     docA.getList("list").insert(0, "1");
-    
+
     // const t = docA.getTree("tree");
     // const node = t.createNode();
     // t.createNode(node.id);
