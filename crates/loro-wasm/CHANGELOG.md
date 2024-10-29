@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.0.8-alpha.3
+
+### Patch Changes
+
+- Fix build for bundler
+
+## 1.0.8-alpha.2
+
+### Patch Changes
+
+- Fix build script for web target
+
+## 1.0.8-alpha.1
+
+### Patch Changes
+
+- Include the build for web
+
+## 1.0.8-alpha.0
+
+### Patch Changes
+
+- Refactor simplify js binding
+
 ## 1.0.7
 
 ### Patch Changes

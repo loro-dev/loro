@@ -11,9 +11,9 @@ src/
 wasm-size/
 web-test/
 pkg/
-web/
 scripts/
 .cargo/
-CHANGELOG.md
 Cargo.toml
 deno.lock
+rollup.config.mjs
+tsconfig.json
