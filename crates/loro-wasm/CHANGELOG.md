@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.8-alpha.3
+
+### Patch Changes
+
+- Fix build for bundler
+
 ## 1.0.8-alpha.2
 
 ### Patch Changes

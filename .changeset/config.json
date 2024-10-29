@@ -8,7 +8,6 @@
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
   "ignore": [
-    "loro-quill",
-    "loro-crdt-test"
+    "loro-quill"
   ]
 }
