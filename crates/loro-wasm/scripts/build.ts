@@ -12,7 +12,7 @@ if (Deno.args[0] == "release") {
   profile = "release";
   profileDir = "release";
 }
-const TARGETS = ["bundler", "nodejs"];
+const TARGETS = ["bundler", "nodejs", "web"];
 const startTime = performance.now();
 const LoroWasmDir = path.resolve(__dirname, "..");
 

@@ -14,6 +14,7 @@ pkg/
 web/
 scripts/
 .cargo/
-CHANGELOG.md
 Cargo.toml
 deno.lock
+rollup.config.mjs
+tsconfig.json

@@ -14,16 +14,25 @@
     "type": "git",
     "url": "git+https://github.com/loro-dev/loro.git"
   },
-  "main": "nodejs/loro_wasm.js",
-  "module": "bundler/loro_wasm.js",
+  "main": "nodejs/index.js",
+  "module": "bundler/index.js",
+  "types": "bundler/index.d.ts",
   "scripts": {
     "release": "deno run -A ./scripts/build.ts release",
-    "dev": "deno run -A ./scripts/build.ts dev"
+    "dev": "deno run -A ./scripts/build.ts dev",
+    "build-dev": "deno run -A ./scripts/build.ts dev && rollup -c && deno run -A ./scripts/post-rollup.ts",
+    "build-release": "deno run -A ./scripts/build.ts release && rollup -c && deno run -A ./scripts/post-rollup.ts"
   },
   "homepage": "https://loro.dev",
   "author": "",
   "license": "MIT",
   "devDependencies": {
+    "@rollup/plugin-alias": "^5.1.1",
+    "@rollup/plugin-node-resolve": "^15.0.1",
+    "@rollup/plugin-typescript": "^12.1.1",
+    "rollup": "^3.20.1",
+    "tslib": "^2.8.0",
+    "typescript": "^5.6.3",
     "vite-plugin-top-level-await": "^1.2.2",
     "vite-plugin-wasm": "^3.1.0"
   }

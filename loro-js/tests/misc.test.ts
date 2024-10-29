@@ -29,7 +29,7 @@ describe("transaction", () => {
     const loro = new LoroDoc();
     const text = loro.getText("text");
     let count = 0;
-    const sub = loro.subscribe((event: { origin: string }) => {
+    const sub = loro.subscribe((event) => {
       count += 1;
       sub();
       assertEquals(event.origin, "origin");

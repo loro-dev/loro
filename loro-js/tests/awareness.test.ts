@@ -6,7 +6,7 @@ import {
   PeerID,
   setDebug,
 } from "../src/index";
-import { AwarenessListener } from "../src/awareness";
+import { AwarenessListener } from "../src";
 
 describe("Awareness", () => {
   it("setLocalRecord", () => {
