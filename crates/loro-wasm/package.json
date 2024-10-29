@@ -17,6 +17,15 @@
   "main": "nodejs/index.js",
   "module": "bundler/index.js",
   "types": "bundler/index.d.ts",
+  "files": [
+    "./bundler",
+    "./nodejs",
+    "./web",
+    "CHANGELOG.md",
+    "README.md",
+    "LICENSE",
+    "package.json"
+  ],
   "scripts": {
     "build-dev": "deno run -A ./scripts/build.ts dev && rollup -c && deno run -A ./scripts/post-rollup.ts && npm run test",
     "build-release": "deno run -A ./scripts/build.ts release && rollup -c && deno run -A ./scripts/post-rollup.ts && npm run test",
