@@ -223,22 +223,22 @@ macro_rules! value_internal {
     };
 
     ([]) => {
-        $crate::LoroValue::List(std::sync::Arc::new(json_internal_vec![]))
+        $crate::LoroValue::List(json_internal_vec![].into())
     };
 
     ([ $($tt:tt)+ ]) => {
-        $crate::LoroValue::List(std::sync::Arc::new(value_internal!(@array [] $($tt)+)))
+        $crate::LoroValue::List(value_internal!(@array [] $($tt)+).into())
     };
 
     ({}) => {
-        $crate::LoroValue::Map(std::sync::Arc::new(Default::default()))
+        $crate::LoroValue::Map(Default::default())
     };
 
     ({ $($tt:tt)+ }) => {
         ({
             let mut object = $crate::FxHashMap::default();
             value_internal!(@object object () ($($tt)+) ($($tt)+));
-            $crate::LoroValue::Map(std::sync::Arc::new(object))
+            $crate::LoroValue::Map(object.into())
         })
     };
 

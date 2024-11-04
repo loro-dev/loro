@@ -647,7 +647,7 @@ impl ContainerState for RichtextState {
 
     // value is a list
     fn get_value(&mut self) -> LoroValue {
-        LoroValue::String(Arc::new(self.state.get_mut().to_string()))
+        self.state.get_mut().to_string().into()
     }
 
     #[doc = r" Get the index of the child container"]
@@ -992,7 +992,7 @@ mod snapshot {
         ///    - info: Additional style information as a byte
         fn encode_snapshot_fast<W: std::io::prelude::Write>(&mut self, mut w: W) {
             let value = self.get_value().into_string().unwrap();
-            postcard::to_io(&value, &mut w).unwrap();
+            postcard::to_io(&*value, &mut w).unwrap();
             let mut spans = Vec::new();
             let mut marks = Vec::new();
 
@@ -1074,7 +1074,8 @@ mod snapshot {
                     "Decode list value failed".to_string().into_boxed_str(),
                 )
             })?;
-            Ok((LoroValue::String(value), bytes))
+            let s: String = value;
+            Ok((LoroValue::String(s.into()), bytes))
         }
 
         fn decode_snapshot_fast(

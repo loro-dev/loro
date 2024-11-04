@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use crate::{
     container::richtext::richtext_state::{unicode_to_utf8_index, utf16_to_utf8_index},
     delta::{Delta, DeltaItem, Meta, StyleMeta},
@@ -287,12 +285,12 @@ impl ApplyDiff for LoroValue {
                         }
                     }
                 }
-                *value = Arc::new(s);
+                *value = s.into()
             }
             LoroValue::List(seq) => {
                 let is_tree = matches!(diff.first(), Some(Diff::Tree(_)));
                 if !is_tree {
-                    let seq = Arc::make_mut(seq);
+                    let seq = seq.make_mut();
                     for item in diff.iter() {
                         let delta = item.as_list().unwrap();
                         let mut index = 0;
@@ -334,7 +332,7 @@ impl ApplyDiff for LoroValue {
                 for item in diff.iter() {
                     match item {
                         Diff::Map(diff) => {
-                            let map = Arc::make_mut(map);
+                            let map = map.make_mut();
                             for (key, value) in diff.updated.iter() {
                                 match &value.value {
                                     Some(value) => {
@@ -377,12 +375,12 @@ impl ApplyDiff for LoroValue {
                         }
                     }
                 }
-                *value = Arc::new(s);
+                *value = s.into();
             }
             LoroValue::List(seq) => {
                 let is_tree = matches!(diff.first(), Some(Diff::Tree(_)));
                 if !is_tree {
-                    let seq = Arc::make_mut(seq);
+                    let seq = seq.make_mut();
                     for item in diff.iter() {
                         let delta = item.as_list().unwrap();
                         let mut index = 0;
@@ -421,7 +419,7 @@ impl ApplyDiff for LoroValue {
                 for item in diff.iter() {
                     match item {
                         Diff::Map(diff) => {
-                            let map = Arc::make_mut(map);
+                            let map = map.make_mut();
                             for (key, value) in diff.updated.iter() {
                                 match &value.value {
                                     Some(value) => {
@@ -474,7 +472,7 @@ impl ApplyDiff for LoroValue {
                 match item {
                     Index::Key(key) => {
                         let m = value.as_map_mut().unwrap();
-                        let map = Arc::make_mut(m);
+                        let map = m.make_mut();
                         value = map.entry(key.to_string()).or_insert_with(|| match hint {
                             TypeHint::Map => LoroValue::Map(Default::default()),
                             TypeHint::Text => LoroValue::String(Default::default()),
@@ -486,20 +484,20 @@ impl ApplyDiff for LoroValue {
                     }
                     Index::Seq(index) => {
                         let l = value.as_list_mut().unwrap();
-                        let list = Arc::make_mut(l);
+                        let list = l.make_mut();
                         value = list.get_mut(*index).unwrap();
                     }
                     Index::Node(tree_id) => {
                         let l = value.as_list_mut().unwrap();
-                        let list = Arc::make_mut(l);
+                        let list = l.make_mut();
                         let Some(map) = list.iter_mut().find(|x| {
                             let id = x.as_map().unwrap().get("id").unwrap().as_string().unwrap();
-                            id.as_ref() == &tree_id.to_string()
+                            id.as_ref() == tree_id.to_string()
                         }) else {
                             // delete node first
                             return;
                         };
-                        let map_mut = Arc::make_mut(map.as_map_mut().unwrap());
+                        let map_mut = map.as_map_mut().unwrap().make_mut();
                         let meta = map_mut.get_mut("meta").unwrap();
                         if meta.is_container() {
                             *meta = ContainerType::Map.default_value();

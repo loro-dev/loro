@@ -317,7 +317,7 @@ impl HandlerTrait for TextHandler {
         match &self.inner {
             MaybeDetached::Detached(t) => {
                 let t = t.try_lock().unwrap();
-                LoroValue::String(Arc::new(t.value.to_string()))
+                LoroValue::String((t.value.to_string()).into())
             }
             MaybeDetached::Attached(a) => a.get_value(),
         }
@@ -458,7 +458,7 @@ impl HandlerTrait for MapHandler {
                 for (k, v) in m.value.iter() {
                     map.insert(k.to_string(), v.to_value());
                 }
-                LoroValue::Map(Arc::new(map))
+                LoroValue::Map(map.into())
             }
             MaybeDetached::Attached(a) => a.get_value(),
         }
@@ -472,7 +472,7 @@ impl HandlerTrait for MapHandler {
                 for (k, v) in m.value.iter() {
                     map.insert(k.to_string(), v.to_deep_value());
                 }
-                LoroValue::Map(Arc::new(map))
+                LoroValue::Map(map.into())
             }
             MaybeDetached::Attached(a) => a.get_deep_value(),
         }
@@ -580,7 +580,7 @@ impl HandlerTrait for MovableListHandler {
         match &self.inner {
             MaybeDetached::Detached(a) => {
                 let a = a.try_lock().unwrap();
-                LoroValue::List(Arc::new(a.value.iter().map(|v| v.to_value()).collect()))
+                LoroValue::List(a.value.iter().map(|v| v.to_value()).collect())
             }
             MaybeDetached::Attached(a) => a.get_value(),
         }
@@ -590,9 +590,7 @@ impl HandlerTrait for MovableListHandler {
         match &self.inner {
             MaybeDetached::Detached(a) => {
                 let a = a.try_lock().unwrap();
-                LoroValue::List(Arc::new(
-                    a.value.iter().map(|v| v.to_deep_value()).collect(),
-                ))
+                LoroValue::List(a.value.iter().map(|v| v.to_deep_value()).collect())
             }
             MaybeDetached::Attached(a) => a.get_deep_value(),
         }
@@ -693,7 +691,7 @@ impl HandlerTrait for ListHandler {
         match &self.inner {
             MaybeDetached::Detached(a) => {
                 let a = a.try_lock().unwrap();
-                LoroValue::List(Arc::new(a.value.iter().map(|v| v.to_value()).collect()))
+                LoroValue::List(a.value.iter().map(|v| v.to_value()).collect())
             }
             MaybeDetached::Attached(a) => a.get_value(),
         }
@@ -703,9 +701,7 @@ impl HandlerTrait for ListHandler {
         match &self.inner {
             MaybeDetached::Detached(a) => {
                 let a = a.try_lock().unwrap();
-                LoroValue::List(Arc::new(
-                    a.value.iter().map(|v| v.to_deep_value()).collect(),
-                ))
+                LoroValue::List(a.value.iter().map(|v| v.to_deep_value()).collect())
             }
             MaybeDetached::Attached(a) => a.get_deep_value(),
         }
@@ -2174,9 +2170,7 @@ impl TextHandler {
     pub fn to_string(&self) -> String {
         match &self.inner {
             MaybeDetached::Detached(t) => t.try_lock().unwrap().value.to_string(),
-            MaybeDetached::Attached(a) => {
-                Arc::unwrap_or_clone(a.get_value().into_string().unwrap())
-            }
+            MaybeDetached::Attached(a) => a.get_value().into_string().unwrap().unwrap(),
         }
     }
 

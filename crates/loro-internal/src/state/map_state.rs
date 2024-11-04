@@ -1,7 +1,7 @@
 use std::{
     collections::BTreeMap,
     mem,
-    sync::{Arc, Mutex, Weak},
+    sync::{Mutex, Weak},
 };
 
 use fxhash::FxHashMap;
@@ -150,7 +150,7 @@ impl ContainerState for MapState {
 
     fn get_value(&mut self) -> LoroValue {
         let ans = self.to_map();
-        LoroValue::Map(Arc::new(ans))
+        LoroValue::Map(ans.into())
     }
 
     fn get_child_index(&self, id: &ContainerID) -> Option<Index> {
@@ -294,7 +294,7 @@ impl MapState {
 }
 
 mod snapshot {
-    use std::sync::Arc;
+    
 
     use fxhash::{FxHashMap, FxHashSet};
     use loro_common::{InternalString, LoroValue};
@@ -316,7 +316,7 @@ mod snapshot {
             // 3. Groups of (leb128 peer_idx, leb128 lamport), each has a respective map entry
             //    from either 1 or 2 when they all sorted by the key strings
             let value = self.get_value().into_map().unwrap();
-            postcard::to_io(&value, &mut w).unwrap();
+            postcard::to_io(&*value, &mut w).unwrap();
 
             let keys_with_none_value = self
                 .map
@@ -350,7 +350,7 @@ mod snapshot {
                     "Decode map value failed".to_string().into_boxed_str(),
                 )
             })?;
-            Ok((LoroValue::Map(Arc::new(value)), bytes))
+            Ok((LoroValue::Map(value.into()), bytes))
         }
 
         fn decode_snapshot_fast(

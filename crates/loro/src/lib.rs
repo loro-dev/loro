@@ -1105,7 +1105,7 @@ impl LoroList {
     /// let vec = list.to_vec();
     /// ```
     pub fn to_vec(&self) -> Vec<LoroValue> {
-        Arc::unwrap_or_clone(self.get_value().into_list().unwrap())
+        self.get_value().into_list().unwrap().unwrap()
     }
 
     /// Delete all elements in the list.
@@ -2200,7 +2200,7 @@ impl LoroMovableList {
     /// assert_eq!(vec[2], true.into());
     /// ```
     pub fn to_vec(&self) -> Vec<LoroValue> {
-        Arc::unwrap_or_clone(self.get_value().into_list().unwrap())
+        self.get_value().into_list().unwrap().unwrap()
     }
 
     /// Delete all elements in the list.

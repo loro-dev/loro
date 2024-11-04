@@ -87,6 +87,7 @@ pub use loro_common::{
     Counter, CounterSpan, IdLp, IdSpan, Lamport, LoroEncodeError, LoroError, LoroResult,
     LoroTreeError, PeerID, TreeID, ID,
 };
+pub use loro_common::{LoroBinaryValue, LoroListValue, LoroMapValue, LoroStringValue};
 #[cfg(feature = "wasm")]
 pub use value::wasm;
 pub use value::{ApplyDiff, LoroValue, ToJson};
