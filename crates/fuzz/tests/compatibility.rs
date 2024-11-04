@@ -132,7 +132,7 @@ fn snapshot_from_016_can_be_imported_in_cur_version() {
             .unwrap()
             .into_value()
             .unwrap(),
-        loro::LoroValue::String(Arc::new("new_value".into()))
+        loro::LoroValue::String("new_value".into())
     );
     assert_eq!(doc_current.get_list("list").len(), 4);
 

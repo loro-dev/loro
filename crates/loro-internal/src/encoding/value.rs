@@ -626,7 +626,7 @@ impl<'a> ValueReader<'a> {
             LoroValueKind::False => LoroValue::Bool(false),
             LoroValueKind::I64 => LoroValue::I64(self.read_i64()?),
             LoroValueKind::F64 => LoroValue::Double(self.read_f64()?),
-            LoroValueKind::Str => LoroValue::String(Arc::new(self.read_str()?.to_owned())),
+            LoroValueKind::Str => LoroValue::String((self.read_str()?.to_owned()).into()),
             LoroValueKind::List => {
                 let len = self.read_usize()?;
                 if len > MAX_COLLECTION_SIZE {
@@ -655,7 +655,7 @@ impl<'a> ValueReader<'a> {
                 }
                 ans.into()
             }
-            LoroValueKind::Binary => LoroValue::Binary(Arc::new(self.read_binary()?.to_owned())),
+            LoroValueKind::Binary => LoroValue::Binary(self.read_binary()?.to_owned().into()),
             LoroValueKind::ContainerType => {
                 let u8 = self.read_u8()?;
                 let container_id = ContainerID::new_normal(
@@ -735,7 +735,7 @@ impl<'a> ValueReader<'a> {
                     LoroValueKind::False => LoroValue::Bool(false),
                     LoroValueKind::I64 => LoroValue::I64(self.read_i64()?),
                     LoroValueKind::F64 => LoroValue::Double(self.read_f64()?),
-                    LoroValueKind::Str => LoroValue::String(Arc::new(self.read_str()?.to_owned())),
+                    LoroValueKind::Str => LoroValue::String((self.read_str()?.to_owned()).into()),
                     LoroValueKind::List => {
                         let len = self.read_usize()?;
                         if len > MAX_COLLECTION_SIZE {
@@ -766,7 +766,7 @@ impl<'a> ValueReader<'a> {
                         continue;
                     }
                     LoroValueKind::Binary => {
-                        LoroValue::Binary(Arc::new(self.read_binary()?.to_owned()))
+                        LoroValue::Binary(self.read_binary()?.to_owned().into())
                     }
                     LoroValueKind::ContainerType => {
                         let u8 = self.read_u8()?;

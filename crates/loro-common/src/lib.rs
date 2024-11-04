@@ -1,4 +1,4 @@
-use std::{fmt::Display, io::Write, sync::Arc};
+use std::{fmt::Display, io::Write};
 
 use arbitrary::Arbitrary;
 use enum_as_inner::EnumAsInner;
@@ -18,7 +18,9 @@ pub use error::{LoroEncodeError, LoroError, LoroResult, LoroTreeError};
 pub use fxhash::FxHashMap;
 pub use internal_string::InternalString;
 pub use span::*;
-pub use value::{to_value, LoroValue};
+pub use value::{
+    to_value, LoroBinaryValue, LoroListValue, LoroMapValue, LoroStringValue, LoroValue,
+};
 
 /// Unique id for each peer. It's a random u64 by default.
 pub type PeerID = u64;
@@ -307,11 +309,11 @@ impl ContainerType {
 
     pub fn default_value(&self) -> LoroValue {
         match self {
-            ContainerType::Map => LoroValue::Map(Arc::new(Default::default())),
-            ContainerType::List => LoroValue::List(Arc::new(Default::default())),
-            ContainerType::Text => LoroValue::String(Arc::new(Default::default())),
-            ContainerType::Tree => LoroValue::List(Arc::new(Default::default())),
-            ContainerType::MovableList => LoroValue::List(Arc::new(Default::default())),
+            ContainerType::Map => LoroValue::Map(Default::default()),
+            ContainerType::List => LoroValue::List(Default::default()),
+            ContainerType::Text => LoroValue::String(Default::default()),
+            ContainerType::Tree => LoroValue::List(Default::default()),
+            ContainerType::MovableList => LoroValue::List(Default::default()),
             #[cfg(feature = "counter")]
             ContainerType::Counter => LoroValue::Double(0.),
             ContainerType::Unknown(_) => unreachable!(),

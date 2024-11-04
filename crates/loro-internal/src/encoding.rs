@@ -576,8 +576,8 @@ mod test {
         assert_size(LoroValue::I64(1), 2);
         assert_size(LoroValue::Double(1.), 9);
         assert_size(LoroValue::Bool(true), 2);
-        assert_size(LoroValue::String(Arc::new("123".to_string())), 5);
-        assert_size(LoroValue::Binary(Arc::new(vec![1, 2, 3])), 5);
+        assert_size(LoroValue::String("123".to_string().into()), 5);
+        assert_size(LoroValue::Binary(vec![1, 2, 3].into()), 5);
         assert_size(
             loro_value!({
                 "a": 1,

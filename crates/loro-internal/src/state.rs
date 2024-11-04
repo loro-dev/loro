@@ -977,7 +977,7 @@ impl DocState {
 
     pub fn get_value(&self) -> LoroValue {
         let roots = self.arena.root_containers();
-        let ans = roots
+        let ans: loro_common::LoroMapValue = roots
             .into_iter()
             .map(|idx| {
                 let id = self.arena.idx_to_id(idx).unwrap();
@@ -991,7 +991,7 @@ impl DocState {
                 (name.to_string(), LoroValue::Container(id))
             })
             .collect();
-        LoroValue::Map(Arc::new(ans))
+        LoroValue::Map(ans)
     }
 
     pub fn get_deep_value(&mut self) -> LoroValue {
@@ -1009,7 +1009,7 @@ impl DocState {
             }
         }
 
-        LoroValue::Map(Arc::new(ans))
+        LoroValue::Map((ans.into()))
     }
 
     pub fn get_deep_value_with_id(&mut self) -> LoroValue {
@@ -1030,7 +1030,7 @@ impl DocState {
             }
         }
 
-        LoroValue::Map(Arc::new(ans))
+        LoroValue::Map((ans.into()))
     }
 
     pub fn get_all_container_value_flat(&mut self) -> LoroValue {
@@ -1041,7 +1041,7 @@ impl DocState {
             map.insert(cid, value);
         });
 
-        LoroValue::Map(Arc::new(map))
+        LoroValue::Map((map.into()))
     }
 
     pub(crate) fn get_container_deep_value_with_id(
@@ -1054,22 +1054,24 @@ impl DocState {
             return container.get_type().default_value();
         };
         let value = state.get_value();
-        let cid_str =
-            LoroValue::String(Arc::new(format!("idx:{}, id:{}", container.to_index(), id)));
+        let cid_str = LoroValue::String(format!("idx:{}, id:{}", container.to_index(), id).into());
         match value {
             LoroValue::Container(_) => unreachable!(),
             LoroValue::List(mut list) => {
                 if container.get_type() == ContainerType::Tree {
-                    get_meta_value(Arc::make_mut(&mut list), self);
+                    get_meta_value(list.make_mut(), self);
                 } else {
                     if list.iter().all(|x| !x.is_container()) {
-                        return LoroValue::Map(Arc::new(fx_map!(
-                            "cid".into() => cid_str,
-                            "value".into() =>  LoroValue::List(list)
-                        )));
+                        return LoroValue::Map(
+                            (fx_map!(
+                                "cid".into() => cid_str,
+                                "value".into() =>  LoroValue::List(list)
+                            ))
+                            .into(),
+                        );
                     }
 
-                    let list_mut = Arc::make_mut(&mut list);
+                    let list_mut = list.make_mut();
                     for item in list_mut.iter_mut() {
                         if item.is_container() {
                             let container = item.as_container().unwrap();
@@ -1082,13 +1084,16 @@ impl DocState {
                         }
                     }
                 }
-                LoroValue::Map(Arc::new(fx_map!(
-                    "cid".into() => cid_str,
-                    "value".into() => LoroValue::List(list)
-                )))
+                LoroValue::Map(
+                    (fx_map!(
+                        "cid".into() => cid_str,
+                        "value".into() => LoroValue::List(list)
+                    ))
+                    .into(),
+                )
             }
             LoroValue::Map(mut map) => {
-                let map_mut = Arc::make_mut(&mut map);
+                let map_mut = map.make_mut();
                 for (_key, value) in map_mut.iter_mut() {
                     if value.is_container() {
                         let container = value.as_container().unwrap();
@@ -1101,15 +1106,21 @@ impl DocState {
                     }
                 }
 
-                LoroValue::Map(Arc::new(fx_map!(
-                    "cid".into() => cid_str,
-                    "value".into() => LoroValue::Map(map)
-                )))
+                LoroValue::Map(
+                    (fx_map!(
+                        "cid".into() => cid_str,
+                        "value".into() => LoroValue::Map(map)
+                    ))
+                    .into(),
+                )
             }
-            _ => LoroValue::Map(Arc::new(fx_map!(
-                "cid".into() => cid_str,
-                "value".into() => value
-            ))),
+            _ => LoroValue::Map(
+                (fx_map!(
+                    "cid".into() => cid_str,
+                    "value".into() => value
+                ))
+                .into(),
+            ),
         }
     }
 
@@ -1125,13 +1136,13 @@ impl DocState {
                     // the metadata of this node. When the user get the deep value,
                     // we need to add a field named `meta` to the tree node,
                     // whose value is deep value of map container.
-                    get_meta_value(Arc::make_mut(&mut list), self);
+                    get_meta_value(list.make_mut(), self);
                 } else {
                     if list.iter().all(|x| !x.is_container()) {
                         return LoroValue::List(list);
                     }
 
-                    let list_mut = Arc::make_mut(&mut list);
+                    let list_mut = list.make_mut();
                     for item in list_mut.iter_mut() {
                         if item.is_container() {
                             let container = item.as_container().unwrap();
@@ -1148,7 +1159,7 @@ impl DocState {
                     return LoroValue::Map(map);
                 }
 
-                let map_mut = Arc::make_mut(&mut map);
+                let map_mut = map.make_mut();
                 for (_key, value) in map_mut.iter_mut() {
                     if value.is_container() {
                         let container = value.as_container().unwrap();
@@ -1194,7 +1205,7 @@ impl DocState {
                     // the metadata of this node. When the user get the deep value,
                     // we need to add a field named `meta` to the tree node,
                     // whose value is deep value of map container.
-                    let mut list = Arc::unwrap_or_clone(list);
+                    let mut list = list.unwrap();
                     while let Some(node) = list.pop() {
                         let map = node.as_map().unwrap();
                         let meta = map.get("meta").unwrap();

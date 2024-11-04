@@ -284,7 +284,7 @@ pub fn convert(value: LoroValue) -> JsValue {
         LoroValue::I64(i) => JsValue::from_f64(i as f64),
         LoroValue::String(s) => JsValue::from_str(&s),
         LoroValue::List(list) => {
-            let list = Arc::try_unwrap(list).unwrap_or_else(|m| (*m).clone());
+            let list = list.unwrap();
             let arr = Array::new_with_length(list.len() as u32);
             for (i, v) in list.into_iter().enumerate() {
                 arr.set(i as u32, convert(v));
@@ -292,7 +292,7 @@ pub fn convert(value: LoroValue) -> JsValue {
             arr.into_js_result().unwrap()
         }
         LoroValue::Map(m) => {
-            let m = Arc::try_unwrap(m).unwrap_or_else(|m| (*m).clone());
+            let m = m.unwrap();
             let map = Object::new();
             for (k, v) in m.into_iter() {
                 let str: &str = &k;
@@ -303,7 +303,7 @@ pub fn convert(value: LoroValue) -> JsValue {
         }
         LoroValue::Container(container_id) => JsValue::from(&container_id),
         LoroValue::Binary(binary) => {
-            let binary = Arc::try_unwrap(binary).unwrap_or_else(|m| (*m).clone());
+            let binary = binary.unwrap();
             let arr = Uint8Array::new_with_length(binary.len() as u32);
             for (i, v) in binary.into_iter().enumerate() {
                 arr.set_index(i as u32, v);

@@ -1425,12 +1425,12 @@ impl ContainerState for TreeState {
 #[allow(clippy::ptr_arg)]
 pub(crate) fn get_meta_value(nodes: &mut Vec<LoroValue>, state: &mut DocState) {
     for node in nodes.iter_mut() {
-        let map = Arc::make_mut(node.as_map_mut().unwrap());
+        let map = node.as_map_mut().unwrap().make_mut();
         let meta = map.get_mut("meta").unwrap();
         let id = meta.as_container().unwrap();
         *meta = state.get_container_deep_value(state.arena.register_container(id));
         let children = map.get_mut("children").unwrap().as_list_mut().unwrap();
-        get_meta_value(Arc::make_mut(children), state);
+        get_meta_value(children.make_mut(), state);
     }
 }
 

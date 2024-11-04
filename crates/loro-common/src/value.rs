@@ -1,5 +1,6 @@
 use std::{collections::HashMap, hash::Hash, ops::Index, sync::Arc};
 
+use arbitrary::Arbitrary;
 use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 use serde::{de::VariantAccess, Deserialize, Serialize};
@@ -17,12 +18,182 @@ pub enum LoroValue {
     Double(f64),
     I64(i64),
     // i64?
-    Binary(Arc<Vec<u8>>),
-    String(Arc<String>),
-    List(Arc<Vec<LoroValue>>),
+    Binary(LoroBinaryValue),
+    String(LoroStringValue),
+    List(LoroListValue),
     // PERF We can use InternalString as key
-    Map(Arc<FxHashMap<String, LoroValue>>),
+    Map(LoroMapValue),
     Container(ContainerID),
+}
+
+#[derive(Default, Debug, PartialEq, Clone, Arbitrary)]
+pub struct LoroBinaryValue(Arc<Vec<u8>>);
+#[derive(Default, Debug, PartialEq, Clone, Arbitrary)]
+pub struct LoroStringValue(Arc<String>);
+#[derive(Default, Debug, PartialEq, Clone, Arbitrary)]
+pub struct LoroListValue(Arc<Vec<LoroValue>>);
+#[derive(Default, Debug, PartialEq, Clone, Arbitrary)]
+pub struct LoroMapValue(Arc<FxHashMap<String, LoroValue>>);
+
+impl From<Vec<u8>> for LoroBinaryValue {
+    fn from(value: Vec<u8>) -> Self {
+        LoroBinaryValue(Arc::new(value))
+    }
+}
+
+impl From<String> for LoroStringValue {
+    fn from(value: String) -> Self {
+        LoroStringValue(Arc::new(value))
+    }
+}
+
+impl From<&str> for LoroStringValue {
+    fn from(value: &str) -> Self {
+        LoroStringValue(Arc::new(value.to_string()))
+    }
+}
+
+impl From<Vec<LoroValue>> for LoroListValue {
+    fn from(value: Vec<LoroValue>) -> Self {
+        LoroListValue(Arc::new(value))
+    }
+}
+
+impl From<FxHashMap<String, LoroValue>> for LoroMapValue {
+    fn from(value: FxHashMap<String, LoroValue>) -> Self {
+        LoroMapValue(Arc::new(value))
+    }
+}
+
+impl From<HashMap<String, LoroValue>> for LoroMapValue {
+    fn from(value: HashMap<String, LoroValue>) -> Self {
+        LoroMapValue(Arc::new(FxHashMap::from_iter(value)))
+    }
+}
+
+impl From<Vec<(String, LoroValue)>> for LoroMapValue {
+    fn from(value: Vec<(String, LoroValue)>) -> Self {
+        LoroMapValue(Arc::new(FxHashMap::from_iter(value)))
+    }
+}
+
+impl std::ops::Deref for LoroBinaryValue {
+    type Target = Vec<u8>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::Deref for LoroStringValue {
+    type Target = String;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::Deref for LoroListValue {
+    type Target = Vec<LoroValue>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::Deref for LoroMapValue {
+    type Target = FxHashMap<String, LoroValue>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl LoroBinaryValue {
+    pub fn make_mut(&mut self) -> &mut Vec<u8> {
+        Arc::make_mut(&mut self.0)
+    }
+}
+
+impl LoroStringValue {
+    pub fn make_mut(&mut self) -> &mut String {
+        Arc::make_mut(&mut self.0)
+    }
+}
+
+impl LoroListValue {
+    pub fn make_mut(&mut self) -> &mut Vec<LoroValue> {
+        Arc::make_mut(&mut self.0)
+    }
+}
+
+impl LoroMapValue {
+    pub fn make_mut(&mut self) -> &mut FxHashMap<String, LoroValue> {
+        Arc::make_mut(&mut self.0)
+    }
+}
+
+impl LoroBinaryValue {
+    pub fn unwrap(self) -> Vec<u8> {
+        match Arc::try_unwrap(self.0) {
+            Ok(v) => v,
+            Err(arc) => (*arc).clone(),
+        }
+    }
+}
+
+impl LoroStringValue {
+    pub fn unwrap(self) -> String {
+        match Arc::try_unwrap(self.0) {
+            Ok(v) => v,
+            Err(arc) => (*arc).clone(),
+        }
+    }
+}
+
+impl LoroListValue {
+    pub fn unwrap(self) -> Vec<LoroValue> {
+        match Arc::try_unwrap(self.0) {
+            Ok(v) => v,
+            Err(arc) => (*arc).clone(),
+        }
+    }
+}
+
+impl LoroMapValue {
+    pub fn unwrap(self) -> FxHashMap<String, LoroValue> {
+        match Arc::try_unwrap(self.0) {
+            Ok(v) => v,
+            Err(arc) => (*arc).clone(),
+        }
+    }
+}
+
+impl FromIterator<LoroValue> for LoroListValue {
+    fn from_iter<T: IntoIterator<Item = LoroValue>>(iter: T) -> Self {
+        LoroListValue(Arc::new(iter.into_iter().collect()))
+    }
+}
+
+impl FromIterator<(String, LoroValue)> for LoroMapValue {
+    fn from_iter<T: IntoIterator<Item = (String, LoroValue)>>(iter: T) -> Self {
+        let map: FxHashMap<_, _> = iter.into_iter().collect();
+        LoroMapValue(Arc::new(map))
+    }
+}
+
+impl AsRef<str> for LoroStringValue {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl AsRef<[LoroValue]> for LoroListValue {
+    fn as_ref(&self) -> &[LoroValue] {
+        &self.0
+    }
+}
+
+impl AsRef<FxHashMap<String, LoroValue>> for LoroMapValue {
+    fn as_ref(&self) -> &FxHashMap<String, LoroValue> {
+        &self.0
+    }
 }
 
 const MAX_DEPTH: usize = 128;
@@ -33,10 +204,10 @@ impl<'a> arbitrary::Arbitrary<'a> for LoroValue {
             1 => LoroValue::Bool(u.arbitrary()?),
             2 => LoroValue::Double(u.arbitrary()?),
             3 => LoroValue::I64(u.arbitrary()?),
-            4 => LoroValue::Binary(Arc::new(u.arbitrary()?)),
-            5 => LoroValue::String(Arc::new(u.arbitrary()?)),
-            6 => LoroValue::List(Arc::new(u.arbitrary()?)),
-            7 => LoroValue::Map(Arc::new(u.arbitrary()?)),
+            4 => LoroValue::Binary(LoroBinaryValue::arbitrary(u)?),
+            5 => LoroValue::String(LoroStringValue::arbitrary(u)?),
+            6 => LoroValue::List(LoroListValue::arbitrary(u)?),
+            7 => LoroValue::Map(LoroMapValue::arbitrary(u)?),
             _ => unreachable!(),
         };
 
@@ -185,7 +356,7 @@ impl TryFrom<LoroValue> for Arc<Vec<u8>> {
 
     fn try_from(value: LoroValue) -> Result<Self, Self::Error> {
         match value {
-            LoroValue::Binary(v) => Ok(v),
+            LoroValue::Binary(v) => Ok(Arc::clone(&v.0)),
             _ => Err("not a binary"),
         }
     }
@@ -196,7 +367,7 @@ impl TryFrom<LoroValue> for Arc<String> {
 
     fn try_from(value: LoroValue) -> Result<Self, Self::Error> {
         match value {
-            LoroValue::String(v) => Ok(v),
+            LoroValue::String(v) => Ok(Arc::clone(&v.0)),
             _ => Err("not a string"),
         }
     }
@@ -207,7 +378,7 @@ impl TryFrom<LoroValue> for Arc<Vec<LoroValue>> {
 
     fn try_from(value: LoroValue) -> Result<Self, Self::Error> {
         match value {
-            LoroValue::List(v) => Ok(v),
+            LoroValue::List(v) => Ok(Arc::clone(&v.0)),
             _ => Err("not a list"),
         }
     }
@@ -218,7 +389,7 @@ impl TryFrom<LoroValue> for Arc<FxHashMap<String, LoroValue>> {
 
     fn try_from(value: LoroValue) -> Result<Self, Self::Error> {
         match value {
-            LoroValue::Map(v) => Ok(v),
+            LoroValue::Map(v) => Ok(Arc::clone(&v.0)),
             _ => Err("not a map"),
         }
     }
@@ -281,25 +452,25 @@ impl<S: Into<String>, M> From<HashMap<S, LoroValue, M>> for LoroValue {
             new_map.insert(k.into(), v);
         }
 
-        LoroValue::Map(Arc::new(new_map))
+        LoroValue::Map(new_map.into())
     }
 }
 
 impl From<Vec<u8>> for LoroValue {
     fn from(vec: Vec<u8>) -> Self {
-        LoroValue::Binary(Arc::new(vec))
+        LoroValue::Binary(vec.into())
     }
 }
 
 impl From<&'_ [u8]> for LoroValue {
     fn from(vec: &[u8]) -> Self {
-        LoroValue::Binary(Arc::new(vec.to_vec()))
+        LoroValue::Binary(vec.to_vec().into())
     }
 }
 
 impl<const N: usize> From<&'_ [u8; N]> for LoroValue {
     fn from(vec: &[u8; N]) -> Self {
-        LoroValue::Binary(Arc::new(vec.to_vec()))
+        LoroValue::Binary(vec.to_vec().into())
     }
 }
 
@@ -348,13 +519,13 @@ impl From<bool> for LoroValue {
 impl<T: Into<LoroValue>> From<Vec<T>> for LoroValue {
     fn from(value: Vec<T>) -> Self {
         let vec: Vec<LoroValue> = value.into_iter().map(|x| x.into()).collect();
-        Self::List(Arc::new(vec))
+        LoroValue::List(vec.into())
     }
 }
 
 impl From<&str> for LoroValue {
     fn from(v: &str) -> Self {
-        LoroValue::String(Arc::new(v.to_string()))
+        LoroValue::String(v.to_string().into())
     }
 }
 
@@ -366,7 +537,7 @@ impl From<String> for LoroValue {
 
 impl<'a> From<&'a [LoroValue]> for LoroValue {
     fn from(v: &'a [LoroValue]) -> Self {
-        LoroValue::List(Arc::new(v.to_vec()))
+        LoroValue::List(v.to_vec().into())
     }
 }
 
@@ -378,8 +549,6 @@ impl From<ContainerID> for LoroValue {
 
 #[cfg(feature = "wasm")]
 pub mod wasm {
-    use std::sync::Arc;
-
     use fxhash::FxHashMap;
     use js_sys::{Array, Object, Uint8Array};
     use wasm_bindgen::{JsCast, JsValue, __rt::IntoJsResult};
@@ -394,7 +563,7 @@ pub mod wasm {
             LoroValue::I64(i) => JsValue::from_f64(i as f64),
             LoroValue::String(s) => JsValue::from_str(&s),
             LoroValue::Binary(binary) => {
-                let binary = Arc::try_unwrap(binary).unwrap_or_else(|m| (*m).clone());
+                let binary = binary.unwrap();
                 let arr = Uint8Array::new_with_length(binary.len() as u32);
                 for (i, v) in binary.into_iter().enumerate() {
                     arr.set_index(i as u32, v);
@@ -402,7 +571,7 @@ pub mod wasm {
                 arr.into_js_result().unwrap()
             }
             LoroValue::List(list) => {
-                let list = Arc::try_unwrap(list).unwrap_or_else(|m| (*m).clone());
+                let list = list.unwrap();
                 let arr = Array::new_with_length(list.len() as u32);
                 for (i, v) in list.into_iter().enumerate() {
                     arr.set(i as u32, convert(v));
@@ -410,7 +579,7 @@ pub mod wasm {
                 arr.into_js_result().unwrap()
             }
             LoroValue::Map(m) => {
-                let m = Arc::try_unwrap(m).unwrap_or_else(|m| (*m).clone());
+                let m = m.unwrap();
                 let map = Object::new();
                 for (k, v) in m.into_iter() {
                     let str: &str = &k;
@@ -443,7 +612,7 @@ pub mod wasm {
                     LoroValue::Double(num)
                 }
             } else if js_value.is_string() {
-                LoroValue::String(Arc::new(js_value.as_string().unwrap()))
+                LoroValue::String(js_value.as_string().unwrap().into())
             } else if js_value.has_type::<Array>() {
                 let array = js_value.unchecked_into::<Array>();
                 let mut list = Vec::new();
@@ -451,7 +620,7 @@ pub mod wasm {
                     list.push(LoroValue::from(array.get(i)));
                 }
 
-                LoroValue::List(Arc::new(list))
+                LoroValue::List(list.into())
             } else if js_value.is_instance_of::<Uint8Array>() {
                 let array = js_value.unchecked_into::<Uint8Array>();
                 let mut binary = Vec::new();
@@ -459,7 +628,7 @@ pub mod wasm {
                     binary.push(array.get_index(i));
                 }
 
-                LoroValue::Binary(Arc::new(binary))
+                LoroValue::Binary(binary.into())
             } else if js_value.is_object() {
                 let object = js_value.unchecked_into::<Object>();
                 let mut map = FxHashMap::default();
@@ -471,7 +640,7 @@ pub mod wasm {
                     );
                 }
 
-                LoroValue::Map(Arc::new(map))
+                LoroValue::Map(map.into())
             } else {
                 panic!("Fail to convert JsValue {:?} to LoroValue ", js_value)
             }
@@ -639,7 +808,7 @@ impl<'de> serde::de::Visitor<'de> for LoroValueVisitor {
                     .map_err(|_| serde::de::Error::custom("Invalid container id"))?,
             ));
         }
-        Ok(LoroValue::String(Arc::new(v.to_owned())))
+        Ok(LoroValue::String(v.to_owned().into()))
     }
 
     fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
@@ -728,15 +897,19 @@ impl<'de> serde::de::Visitor<'de> for LoroValueEnumVisitor {
             (LoroValueFields::Bool, v) => v.newtype_variant().map(LoroValue::Bool),
             (LoroValueFields::Double, v) => v.newtype_variant().map(LoroValue::Double),
             (LoroValueFields::I32, v) => v.newtype_variant().map(LoroValue::I64),
-            (LoroValueFields::String, v) => {
-                v.newtype_variant().map(|x| LoroValue::String(Arc::new(x)))
-            }
-            (LoroValueFields::List, v) => v.newtype_variant().map(|x| LoroValue::List(Arc::new(x))),
-            (LoroValueFields::Map, v) => v.newtype_variant().map(|x| LoroValue::Map(Arc::new(x))),
+            (LoroValueFields::String, v) => v
+                .newtype_variant()
+                .map(|x: String| LoroValue::String(x.into())),
+            (LoroValueFields::List, v) => v
+                .newtype_variant()
+                .map(|x: Vec<LoroValue>| LoroValue::List(x.into())),
+            (LoroValueFields::Map, v) => v
+                .newtype_variant()
+                .map(|x: FxHashMap<String, LoroValue>| LoroValue::Map(x.into())),
             (LoroValueFields::Container, v) => v.newtype_variant().map(LoroValue::Container),
-            (LoroValueFields::Binary, v) => {
-                v.newtype_variant().map(|x| LoroValue::Binary(Arc::new(x)))
-            }
+            (LoroValueFields::Binary, v) => v
+                .newtype_variant()
+                .map(|x: Vec<u8>| LoroValue::Binary(x.into())),
         }
     }
 }
@@ -747,8 +920,6 @@ pub fn to_value<T: Into<LoroValue>>(value: T) -> LoroValue {
 
 #[cfg(feature = "serde_json")]
 mod serde_json_impl {
-    use std::sync::Arc;
-
     use serde_json::{Number, Value};
 
     use super::LoroValue;
@@ -765,15 +936,15 @@ mod serde_json_impl {
                         LoroValue::Double(n.as_f64().unwrap())
                     }
                 }
-                Value::String(s) => LoroValue::String(Arc::new(s)),
+                Value::String(s) => LoroValue::String(s.into()),
                 Value::Array(arr) => {
-                    LoroValue::List(Arc::new(arr.into_iter().map(LoroValue::from).collect()))
+                    LoroValue::List(arr.into_iter().map(LoroValue::from).collect())
                 }
-                Value::Object(obj) => LoroValue::Map(Arc::new(
+                Value::Object(obj) => LoroValue::Map(
                     obj.into_iter()
                         .map(|(k, v)| (k, LoroValue::from(v)))
                         .collect(),
-                )),
+                ),
             }
         }
     }

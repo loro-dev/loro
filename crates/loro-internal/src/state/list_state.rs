@@ -507,7 +507,7 @@ impl ContainerState for ListState {
 
     fn get_value(&mut self) -> LoroValue {
         let ans = self.to_vec();
-        LoroValue::List(Arc::new(ans))
+        LoroValue::List(ans.into())
     }
 
     fn get_child_index(&self, id: &ContainerID) -> Option<Index> {
@@ -596,7 +596,7 @@ mod snapshot {
         ///    - Lamport timestamp (LEB128)
         fn encode_snapshot_fast<W: Write>(&mut self, mut w: W) {
             let value = self.get_value().into_list().unwrap();
-            postcard::to_io(&value, &mut w).unwrap();
+            postcard::to_io(&*value, &mut w).unwrap();
             let mut peers: ValueRegister<PeerID> = ValueRegister::new();
             let mut ids = Vec::with_capacity(self.len());
             for elem in self.iter_with_id() {
@@ -624,7 +624,8 @@ mod snapshot {
                     "Decode list value failed".to_string().into_boxed_str(),
                 )
             })?;
-            Ok((LoroValue::List(Arc::new(value)), bytes))
+            let value: Vec<LoroValue> = value;
+            Ok((LoroValue::List(value.into()), bytes))
         }
 
         fn decode_snapshot_fast(

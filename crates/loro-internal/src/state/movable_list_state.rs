@@ -1349,7 +1349,7 @@ impl ContainerState for MovableListState {
 
     fn get_value(&mut self) -> LoroValue {
         let list = self.get_value_inner();
-        LoroValue::List(Arc::new(list))
+        LoroValue::List((list.into()))
     }
 
     /// Get the index of the child container
@@ -1609,7 +1609,7 @@ mod snapshot {
         /// 6. A list of unique peer IDs used in the encoding
         fn encode_snapshot_fast<W: std::io::prelude::Write>(&mut self, mut w: W) {
             let value = self.get_value().into_list().unwrap();
-            postcard::to_io(&value, &mut w).unwrap();
+            postcard::to_io(&*value, &mut w).unwrap();
             let mut peers: ValueRegister<PeerID> = ValueRegister::new();
             let len = self.len();
             let mut items = Vec::with_capacity(len);
@@ -1826,7 +1826,7 @@ mod snapshot {
                     lamport: 3,
                     peer: 3,
                 },
-                LoroValue::String(Arc::new("abc".to_string())),
+                LoroValue::String(("abc".into())),
                 IdLp {
                     lamport: 4,
                     peer: 5,
@@ -1845,7 +1845,7 @@ mod snapshot {
                         ID::new(10, 10),
                         loro_common::ContainerType::Text,
                     )),
-                    LoroValue::String(Arc::new("abc".to_string())),
+                    LoroValue::String(("abc".into())),
                 ]
                 .into()
             );

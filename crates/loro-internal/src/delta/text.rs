@@ -107,7 +107,7 @@ impl StyleMeta {
     }
 
     pub(crate) fn to_value(&self) -> LoroValue {
-        LoroValue::Map(Arc::new(self.to_map_without_null_value()))
+        LoroValue::Map(self.to_map_without_null_value().into())
     }
 
     fn to_map_without_null_value(&self) -> FxHashMap<String, LoroValue> {

@@ -2221,12 +2221,13 @@ impl RichtextState {
                 if let Some(last) = last_attributes.as_ref() {
                     if &attributes == last {
                         let hash_map = ans.last_mut().unwrap().as_map_mut().unwrap();
-                        let s = Arc::make_mut(hash_map)
+                        let s = hash_map
+                            .make_mut()
                             .get_mut("insert")
                             .unwrap()
                             .as_string_mut()
                             .unwrap();
-                        Arc::make_mut(s).push_str(span.text.as_str());
+                        s.make_mut().push_str(span.text.as_str());
                         continue;
                     }
                 }
@@ -2234,18 +2235,18 @@ impl RichtextState {
                 let mut value = FxHashMap::default();
                 value.insert(
                     "insert".into(),
-                    LoroValue::String(Arc::new(span.text.as_str().into())),
+                    LoroValue::String(span.text.as_str().into()),
                 );
 
                 if !attributes.as_map().unwrap().is_empty() {
                     value.insert("attributes".into(), attributes.clone());
                 }
 
-                ans.push(LoroValue::Map(Arc::new(value)));
+                ans.push(LoroValue::Map(value.into()));
                 last_attributes = Some(attributes);
             }
 
-            LoroValue::List(Arc::new(ans))
+            LoroValue::List(ans.into())
         };
         self.check_cache();
         result
