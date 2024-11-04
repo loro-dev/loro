@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use loro::{Counter, PeerID};
 
@@ -51,9 +51,9 @@ impl From<LoroValue> for loro::LoroValue {
             LoroValue::Double { value } => loro::LoroValue::Double(value),
             LoroValue::I64 { value } => loro::LoroValue::I64(value),
             LoroValue::Binary { value } => loro::LoroValue::Binary(value.into()),
-            LoroValue::String { value } => loro::LoroValue::String((value.into())),
+            LoroValue::String { value } => loro::LoroValue::String(value.into()),
             LoroValue::List { value } => {
-                loro::LoroValue::List((value.into_iter().map(Into::into).collect()))
+                loro::LoroValue::List(value.into_iter().map(Into::into).collect())
             }
             LoroValue::Map { value } => {
                 loro::LoroValue::Map(value.into_iter().map(|(k, v)| (k, v.into())).collect())
@@ -70,10 +70,10 @@ impl<'a> From<&'a LoroValue> for loro::LoroValue {
             LoroValue::Bool { value } => loro::LoroValue::Bool(*value),
             LoroValue::Double { value } => loro::LoroValue::Double(*value),
             LoroValue::I64 { value } => loro::LoroValue::I64(*value),
-            LoroValue::Binary { value } => loro::LoroValue::Binary((value.clone().into())),
-            LoroValue::String { value } => loro::LoroValue::String((value.clone().into())),
+            LoroValue::Binary { value } => loro::LoroValue::Binary(value.clone().into()),
+            LoroValue::String { value } => loro::LoroValue::String(value.clone().into()),
             LoroValue::List { value } => {
-                loro::LoroValue::List((value.iter().map(Into::into).collect()))
+                loro::LoroValue::List(value.iter().map(Into::into).collect())
             }
             LoroValue::Map { value } => {
                 loro::LoroValue::Map(value.iter().map(|(k, v)| (k.clone(), v.into())).collect())

@@ -1,4 +1,3 @@
-use std::sync::Arc;
 
 use crate::{
     container::richtext::richtext_state::{unicode_to_utf8_index, utf16_to_utf8_index},

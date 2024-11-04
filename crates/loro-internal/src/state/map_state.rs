@@ -1,7 +1,7 @@
 use std::{
     collections::BTreeMap,
     mem,
-    sync::{Arc, Mutex, Weak},
+    sync::{Mutex, Weak},
 };
 
 use fxhash::FxHashMap;
@@ -294,7 +294,7 @@ impl MapState {
 }
 
 mod snapshot {
-    use std::sync::Arc;
+    
 
     use fxhash::{FxHashMap, FxHashSet};
     use loro_common::{InternalString, LoroValue};
@@ -350,7 +350,7 @@ mod snapshot {
                     "Decode map value failed".to_string().into_boxed_str(),
                 )
             })?;
-            Ok((LoroValue::Map((value.into())), bytes))
+            Ok((LoroValue::Map(value.into()), bytes))
         }
 
         fn decode_snapshot_fast(

@@ -555,7 +555,7 @@ impl LoroDoc {
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
+    
 
     use loro_common::{loro_value, ContainerID, ContainerType, LoroValue, ID};
 

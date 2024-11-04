@@ -1009,7 +1009,7 @@ impl DocState {
             }
         }
 
-        LoroValue::Map((ans.into()))
+        LoroValue::Map(ans.into())
     }
 
     pub fn get_deep_value_with_id(&mut self) -> LoroValue {
@@ -1030,7 +1030,7 @@ impl DocState {
             }
         }
 
-        LoroValue::Map((ans.into()))
+        LoroValue::Map(ans.into())
     }
 
     pub fn get_all_container_value_flat(&mut self) -> LoroValue {
@@ -1041,7 +1041,7 @@ impl DocState {
             map.insert(cid, value);
         });
 
-        LoroValue::Map((map.into()))
+        LoroValue::Map(map.into())
     }
 
     pub(crate) fn get_container_deep_value_with_id(

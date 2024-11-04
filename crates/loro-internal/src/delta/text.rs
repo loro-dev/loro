@@ -1,4 +1,3 @@
-use std::sync::Arc;
 
 use fxhash::FxHashMap;
 use loro_common::{InternalString, LoroValue, PeerID};

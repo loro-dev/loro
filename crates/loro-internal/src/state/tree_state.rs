@@ -13,7 +13,7 @@ use serde::Serialize;
 use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Mutex, Weak};
 
 use super::{ApplyLocalOpReturn, ContainerState, DiffApplyContext};
 use crate::configure::Configure;

@@ -1666,7 +1666,7 @@ struct EncodedStateInfo {
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
+    
 
     use loro_common::LoroValue;
 

@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use loro_delta::{array_vec::ArrayVec, DeltaRope, DeltaRopeBuilder};
 use serde_columnar::columnar;
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Mutex, Weak};
 use tracing::{instrument, warn};
 
 use fxhash::FxHashMap;
@@ -1349,7 +1349,7 @@ impl ContainerState for MovableListState {
 
     fn get_value(&mut self) -> LoroValue {
         let list = self.get_value_inner();
-        LoroValue::List((list.into()))
+        LoroValue::List(list.into())
     }
 
     /// Get the index of the child container
@@ -1785,7 +1785,7 @@ mod snapshot {
 
     #[cfg(test)]
     mod test {
-        use std::sync::Arc;
+        
 
         use loro_common::{CompactIdLp, ContainerID, LoroValue, ID};
 
@@ -1826,7 +1826,7 @@ mod snapshot {
                     lamport: 3,
                     peer: 3,
                 },
-                LoroValue::String(("abc".into())),
+                LoroValue::String("abc".into()),
                 IdLp {
                     lamport: 4,
                     peer: 5,
@@ -1845,7 +1845,7 @@ mod snapshot {
                         ID::new(10, 10),
                         loro_common::ContainerType::Text,
                     )),
-                    LoroValue::String(("abc".into())),
+                    LoroValue::String("abc".into()),
                 ]
                 .into()
             );

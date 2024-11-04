@@ -1,7 +1,7 @@
 use std::{
     io::Write,
     ops::RangeBounds,
-    sync::{Arc, Mutex, Weak},
+    sync::{Mutex, Weak},
 };
 
 use super::{ApplyLocalOpReturn, ContainerState, DiffApplyContext, FastStateSnapshot};
