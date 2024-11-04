@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.9
+
+### Patch Changes
+
+- 7bf6db7: Add `push` to LoroText and `pushContainer` to LoroList LoroMovableList
+- 9b60d01: Define the behavior of `doc.fork()` when the doc is detached
+
+  It will fork at the current state_frontiers, which is equivalent to calling `doc.fork_at(&doc.state_frontiers())`
+
 ## 1.0.8
 
 ### Patch Changes
