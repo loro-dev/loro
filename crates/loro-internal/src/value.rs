@@ -1,4 +1,3 @@
-
 use crate::{
     container::richtext::richtext_state::{unicode_to_utf8_index, utf16_to_utf8_index},
     delta::{Delta, DeltaItem, Meta, StyleMeta},
@@ -493,7 +492,7 @@ impl ApplyDiff for LoroValue {
                         let list = l.make_mut();
                         let Some(map) = list.iter_mut().find(|x| {
                             let id = x.as_map().unwrap().get("id").unwrap().as_string().unwrap();
-                            id.as_ref() == &tree_id.to_string()
+                            id.as_ref() == tree_id.to_string()
                         }) else {
                             // delete node first
                             return;
