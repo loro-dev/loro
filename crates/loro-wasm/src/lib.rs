@@ -2163,6 +2163,12 @@ impl LoroText {
             .get_cursor(pos, side_value)
             .map(|pos| Cursor { pos })
     }
+
+    /// Push a string to the end of the text.
+    pub fn push(&mut self, s: &str) -> JsResult<()> {
+        self.handler.push_str(s)?;
+        Ok(())
+    }
 }
 
 impl Default for LoroText {
@@ -2676,6 +2682,11 @@ impl LoroList {
         Ok(handler_to_js_value(c, self.doc.clone()).into())
     }
 
+    #[wasm_bindgen(js_name = "pushContainer", skip_typescript)]
+    pub fn push_container(&mut self, child: JsContainer) -> JsResult<JsContainer> {
+        self.insert_container(self.length(), child)
+    }
+
     /// Subscribe to the changes of the list.
     ///
     /// Returns a subscription callback, which can be used to unsubscribe.
@@ -2995,6 +3006,12 @@ impl LoroMovableList {
         let child = js_to_container(child)?;
         let c = self.handler.insert_container(index, child.to_handler())?;
         Ok(handler_to_js_value(c, self.doc.clone()).into())
+    }
+
+    /// Push a container to the end of the list.
+    #[wasm_bindgen(js_name = "pushContainer", skip_typescript)]
+    pub fn push_container(&mut self, child: JsContainer) -> JsResult<JsContainer> {
+        self.insert_container(self.length(), child)
     }
 
     /// Subscribe to the changes of the list.
@@ -5130,6 +5147,10 @@ interface LoroList<T = unknown> {
      */
     insertContainer<C extends Container>(pos: number, child: C): T extends C ? T : C;
     /**
+     * Push a container to the end of the list.
+     */
+    pushContainer<C extends Container>(child: C): T extends C ? T : C;
+    /**
      * Get the value at the index. If the value is a container, the corresponding handler will be returned.
      *
      *  @example
@@ -5201,6 +5222,10 @@ interface LoroMovableList<T = unknown> {
      *  ```
      */
     insertContainer<C extends Container>(pos: number, child: C): T extends C ? T : C;
+    /**
+     * Push a container to the end of the list.
+     */
+    pushContainer<C extends Container>(child: C): T extends C ? T : C;
     /**
      * Get the value at the index. If the value is a container, the corresponding handler will be returned.
      *

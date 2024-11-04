@@ -1566,6 +1566,11 @@ impl LoroText {
     pub fn is_deleted(&self) -> bool {
         self.handler.is_deleted()
     }
+
+    /// Push a string to the end of the text container.
+    pub fn push_str(&self, s: &str) -> LoroResult<()> {
+        self.handler.push_str(s)
+    }
 }
 
 impl Default for LoroText {

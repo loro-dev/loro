@@ -654,3 +654,24 @@ it("json path", () => {
   expect(result.length).toBe(1);
   expect(result).toStrictEqual(["1984"])
 })
+
+it("can push string to text", () => {
+  const doc = new LoroDoc();
+  const text = doc.getText("text");
+  text.push("123");
+  expect(text.toString()).toBe("123");
+})
+
+it("can push container to list", () => {
+  const doc = new LoroDoc();
+  const list = doc.getList("list");
+  const map = list.pushContainer(new LoroMap());
+  expect(list.toJSON()).toStrictEqual([{}]);
+})
+
+it("can push container to movable list", () => {
+  const doc = new LoroDoc();
+  const list = doc.getMovableList("list");
+  const map = list.pushContainer(new LoroMap());
+  expect(list.toJSON()).toStrictEqual([{}]);
+})
