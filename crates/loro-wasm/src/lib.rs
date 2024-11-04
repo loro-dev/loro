@@ -550,11 +550,16 @@ impl LoroDoc {
     /// Duplicate the document with a different PeerID
     ///
     /// The time complexity and space complexity of this operation are both O(n),
+    ///
+    /// When called in detached mode, it will fork at the current state frontiers.
+    /// It will have the same effect as `forkAt(&self.frontiers())`.
     pub fn fork(&self) -> Self {
         Self(Arc::new(self.0.fork()))
     }
 
     /// Creates a new LoroDoc at a specified version (Frontiers)
+    ///
+    /// The created doc will only contain the history before the specified frontiers.
     #[wasm_bindgen(js_name = "forkAt")]
     pub fn fork_at(&self, frontiers: Vec<JsID>) -> JsResult<LoroDoc> {
         Ok(Self(Arc::new(

@@ -114,10 +114,22 @@ impl LoroDoc {
     /// Duplicate the document with a different PeerID
     ///
     /// The time complexity and space complexity of this operation are both O(n),
+    ///
+    /// When called in detached mode, it will fork at the current state frontiers.
+    /// It will have the same effect as `fork_at(&self.state_frontiers())`.
     #[inline]
     pub fn fork(&self) -> Self {
         let doc = self.doc.fork();
         LoroDoc::_new(doc)
+    }
+
+    /// Fork the document at the given frontiers.
+    ///
+    /// The created doc will only contain the history before the specified frontiers.
+    pub fn fork_at(&self, frontiers: &Frontiers) -> LoroDoc {
+        let new_doc = self.doc.fork_at(frontiers);
+        new_doc.start_auto_commit();
+        LoroDoc::_new(new_doc)
     }
 
     /// Get the configurations of the document.
@@ -800,13 +812,6 @@ impl LoroDoc {
                 })
                 .collect()
         })
-    }
-
-    /// Fork the document at the given frontiers.
-    pub fn fork_at(&self, frontiers: &Frontiers) -> LoroDoc {
-        let new_doc = self.doc.fork_at(frontiers);
-        new_doc.start_auto_commit();
-        LoroDoc::_new(new_doc)
     }
 
     /// Get the number of operations in the pending transaction.
