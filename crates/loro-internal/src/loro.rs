@@ -97,6 +97,10 @@ impl LoroDoc {
     }
 
     pub fn fork(&self) -> Self {
+        if self.is_detached() {
+            return self.fork_at(&self.state_frontiers());
+        }
+
         self.commit_then_stop();
         let snapshot = encoding::fast_snapshot::encode_snapshot_inner(self);
         let doc = Self::new();

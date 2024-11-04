@@ -1971,3 +1971,25 @@ fn test_fork_at_should_restore_attached_state() {
     doc.fork_at(&[ID::new(0, 0)].into());
     assert!(doc.is_detached());
 }
+
+#[test]
+fn test_fork_when_detached() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(0).unwrap();
+    doc.get_text("text").insert(0, "Hello, world!").unwrap();
+    doc.checkout(&[ID::new(0, 5)].into()).unwrap();
+    let new_doc = doc.fork();
+    new_doc.set_peer_id(1).unwrap();
+    new_doc.get_text("text").insert(6, " Alice!").unwrap();
+    // ┌───────────────┐     ┌───────────────┐
+    // │    Hello,     │◀─┬──│     world!    │
+    // └───────────────┘  │  └───────────────┘
+    //                    │
+    //                    │  ┌───────────────┐
+    //                    └──│     Alice!    │
+    //                       └───────────────┘
+    doc.import(&new_doc.export(loro::ExportMode::all_updates()).unwrap())
+        .unwrap();
+    doc.checkout_to_latest();
+    assert_eq!(doc.get_text("text").to_string(), "Hello, world! Alice!");
+}
