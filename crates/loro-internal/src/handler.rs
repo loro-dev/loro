@@ -2270,6 +2270,10 @@ impl TextHandler {
             MaybeDetached::Attached(a) => a.is_deleted(),
         }
     }
+
+    pub fn push_str(&self, s: &str) -> LoroResult<()> {
+        self.insert_utf8(self.len_utf8(), s)
+    }
 }
 
 fn event_len(s: &str) -> usize {
@@ -2386,6 +2390,10 @@ impl ListHandler {
                 a.with_txn(|txn| self.insert_container_with_txn(txn, pos, child))
             }
         }
+    }
+
+    pub fn push_container<H: HandlerTrait>(&self, child: H) -> LoroResult<H> {
+        self.insert_container(self.len(), child)
     }
 
     pub fn insert_container_with_txn<H: HandlerTrait>(
@@ -2923,6 +2931,10 @@ impl MovableListHandler {
                 a.with_txn(|txn| self.insert_container_with_txn(txn, pos, child))
             }
         }
+    }
+
+    pub fn push_container<H: HandlerTrait>(&self, child: H) -> LoroResult<H> {
+        self.insert_container(self.len(), child)
     }
 
     pub fn insert_container_with_txn<H: HandlerTrait>(
