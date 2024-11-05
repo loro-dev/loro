@@ -1,0 +1,59 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`loro tree > toArray 1`] = `
+[
+  {
+    "children": [
+      {
+        "children": [],
+        "fractionalIndex": "80",
+        "id": "1@1",
+        "index": 0,
+        "meta": {},
+        "parent": "0@1",
+      },
+      {
+        "children": [],
+        "fractionalIndex": "80",
+        "id": "2@1",
+        "index": 1,
+        "meta": {},
+        "parent": "0@1",
+      },
+    ],
+    "fractionalIndex": "80",
+    "id": "0@1",
+    "index": 0,
+    "meta": {},
+    "parent": undefined,
+  },
+]
+`;
+
+exports[`loro tree node > toJSON 1`] = `
+{
+  "children": [
+    {
+      "children": [],
+      "fractionalIndex": "80",
+      "id": "1@1",
+      "index": 0,
+      "meta": {},
+      "parent": "0@1",
+    },
+    {
+      "children": [],
+      "fractionalIndex": "8180",
+      "id": "2@1",
+      "index": 1,
+      "meta": {},
+      "parent": "0@1",
+    },
+  ],
+  "fractionalIndex": "80",
+  "id": "0@1",
+  "index": 0,
+  "meta": {},
+  "parent": undefined,
+}
+`;

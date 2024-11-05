@@ -82,11 +82,13 @@ describe("loro tree", () => {
 
   it("toArray", () => {
     const loro2 = new LoroDoc();
+    loro2.setPeerId(1);
     const tree2 = loro2.getTree("root");
     const root = tree2.createNode();
     tree2.createNode(root.id);
     tree2.createNode(root.id);
     const arr = tree2.toArray();
+    expect(arr).toMatchSnapshot();
     assertEquals(arr.length, 1);
     assertEquals(arr[0].children.length, 2)
     const keys = Object.keys(arr[0]);
@@ -141,6 +143,7 @@ describe("loro tree", () => {
 
 describe("loro tree node", () => {
   const loro = new LoroDoc();
+  loro.setPeerId(1);
   const tree = loro.getTree("root");
   tree.enableFractionalIndex(0);
 
@@ -224,10 +227,15 @@ describe("loro tree node", () => {
   });
 
   it("toJSON", () => {
+    const loro = new LoroDoc();
+    loro.setPeerId(1);
+    const tree = loro.getTree("root");
+    tree.enableFractionalIndex(0);
     const root = tree.createNode();
-    const _c1 = root.createNode();
-    const _c2 = root.createNode();
+    root.createNode();
+    root.createNode();
     const json = root.toJSON();
+    expect(json).toMatchSnapshot();
     assertEquals(json.children.length, 2);
     const keys = Object.keys(json);
     assert(keys.includes("id"));
@@ -245,16 +253,6 @@ describe("loro tree node", () => {
     assert(childrenKeys.includes("children"));
   })
 });
-
-describe("LoroTree", () => {
-  it("move", () => {
-    const loro = new LoroDoc();
-    const tree = loro.getTree("root");
-    const root = tree.createNode();
-    const child = tree.createNode(root.id);
-    tree.move(child.id, root.id);
-  })
-})
 
 function one_ms(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 1));
