@@ -222,6 +222,28 @@ describe("loro tree node", () => {
     unsub()
     assertEquals(child2.parent()!.id, child.id);
   });
+
+  it("toJSON", () => {
+    const root = tree.createNode();
+    const _c1 = root.createNode();
+    const _c2 = root.createNode();
+    const json = root.toJSON();
+    assertEquals(json.children.length, 2);
+    const keys = Object.keys(json);
+    assert(keys.includes("id"));
+    assert(keys.includes("parent"));
+    assert(keys.includes("index"));
+    assert(keys.includes("fractionalIndex"));
+    assert(keys.includes("meta"));
+    assert(keys.includes("children"));
+    const childrenKeys = Object.keys(json.children[0]);
+    assert(childrenKeys.includes("id"));
+    assert(childrenKeys.includes("parent"));
+    assert(childrenKeys.includes("index"));
+    assert(childrenKeys.includes("fractionalIndex"));
+    assert(childrenKeys.includes("meta"));
+    assert(childrenKeys.includes("children"));
+  })
 });
 
 describe("LoroTree", () => {

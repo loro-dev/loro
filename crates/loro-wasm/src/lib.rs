@@ -3395,6 +3395,25 @@ impl LoroTreeNode {
         Ok(map)
     }
 
+    #[wasm_bindgen(js_name = "toJSON", skip_typescript)]
+    pub fn get_deep_value(&self) -> JsResult<JsValue> {
+        let value = self
+            .tree
+            .get_all_hierarchy_nodes_under(TreeParentId::Node(self.id));
+        let node = TreeNodeWithChildren {
+            id: self.id,
+            parent: self.tree.get_node_parent(&self.id).unwrap(),
+            fractional_index: self.tree.get_position_by_tree_id(&self.id).unwrap(),
+            index: self.tree.get_index_by_tree_id(&self.id).unwrap(),
+            children: value,
+        };
+        LoroTree {
+            handler: self.tree.clone(),
+            doc: self.doc.clone(),
+        }
+        .tree_node_to_js_obj(node, true)
+    }
+
     /// Get the parent node of this node.
     ///
     /// - The parent of the root node is `undefined`.
@@ -3592,7 +3611,7 @@ impl LoroTree {
         let value = self
             .handler
             .get_all_hierarchy_nodes_under(TreeParentId::Root);
-        self.get_node_with_children(value)
+        self.get_node_with_children(value, false)
     }
 
     /// Get the flat array of the forest. If `with_deleted` is true, the deleted nodes will be included.
@@ -3619,34 +3638,49 @@ impl LoroTree {
         Ok(nodes)
     }
 
-    fn get_node_with_children(&self, value: Vec<TreeNodeWithChildren>) -> JsResult<Array> {
+    fn get_node_with_children(
+        &self,
+        value: Vec<TreeNodeWithChildren>,
+        resolve_meta: bool,
+    ) -> JsResult<Array> {
         let ans = Array::new();
         for v in value {
-            let id: JsValue = v.id.into();
-            let id: JsTreeID = id.into();
-            let parent = v.parent.tree_id();
-            let parent: JsParentTreeID = parent
-                .map(|x| LoroTreeNode::from_tree(x, self.handler.clone(), self.doc.clone()).into())
-                .unwrap_or(JsValue::undefined())
-                .into();
-            let index = v.index;
-            let position = v.fractional_index.to_string();
-            let map: LoroMap = self.get_node_by_id(&id).unwrap().data()?;
-            let obj = Object::new();
-            js_sys::Reflect::set(&obj, &"id".into(), &id)?;
-            js_sys::Reflect::set(&obj, &"parent".into(), &parent)?;
-            js_sys::Reflect::set(&obj, &"index".into(), &JsValue::from(index))?;
-            js_sys::Reflect::set(
-                &obj,
-                &"fractionalIndex".into(),
-                &JsValue::from_str(&position),
-            )?;
-            js_sys::Reflect::set(&obj, &"meta".into(), &map.into())?;
-            let children = self.get_node_with_children(v.children)?;
-            js_sys::Reflect::set(&obj, &"children".into(), &children)?;
-            ans.push(&obj);
+            ans.push(&self.tree_node_to_js_obj(v, resolve_meta)?);
         }
         Ok(ans)
+    }
+
+    fn tree_node_to_js_obj(
+        &self,
+        v: TreeNodeWithChildren,
+        resolve_meta: bool,
+    ) -> JsResult<JsValue> {
+        let id: JsValue = v.id.into();
+        let id: JsTreeID = id.into();
+        let parent = v.parent.tree_id();
+        let parent = parent
+            .map(|x| JsValue::from_str(&x.to_string()))
+            .unwrap_or(JsValue::undefined());
+        let index = v.index;
+        let position = v.fractional_index.to_string();
+        let map: LoroMap = self.get_node_by_id(&id).unwrap().data()?;
+        let obj = Object::new();
+        js_sys::Reflect::set(&obj, &"id".into(), &id)?;
+        js_sys::Reflect::set(&obj, &"parent".into(), &parent)?;
+        js_sys::Reflect::set(&obj, &"index".into(), &JsValue::from(index))?;
+        js_sys::Reflect::set(
+            &obj,
+            &"fractionalIndex".into(),
+            &JsValue::from_str(&position),
+        )?;
+        if resolve_meta {
+            js_sys::Reflect::set(&obj, &"meta".into(), &map.to_json())?;
+        } else {
+            js_sys::Reflect::set(&obj, &"meta".into(), &map.into())?;
+        }
+        let children = self.get_node_with_children(v.children, resolve_meta)?;
+        js_sys::Reflect::set(&obj, &"children".into(), &children)?;
+        Ok(obj.into())
     }
 
     /// Get the hierarchy array with metadata of the forest.
@@ -4722,6 +4756,11 @@ export type TreeNodeValue = {
     children: TreeNodeValue[],
 }
 
+export type TreeNodeJSON<T> = Omit<TreeNodeValue, 'meta' | 'children'> & {
+    meta: T,
+    children: TreeNodeJSON<T>[],
+}
+
 interface LoroTree{
     toArray(): TreeNodeValue[];
     getNodes(options?: { withDeleted: boolean = false }): LoroTreeNode[];
@@ -5452,6 +5491,7 @@ interface LoroTreeNode<T extends Record<string, unknown> = Record<string, unknow
      * the WASM boundary.
      */
     children(): Array<LoroTreeNode<T>> | undefined;
+    toJSON(): TreeNodeJSON<T>;
 }
 interface AwarenessWasm<T extends Value = Value> {
     getState(peer: PeerID): T | undefined;
