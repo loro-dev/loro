@@ -36,7 +36,7 @@
     <img alt="" src="https://img.shields.io/badge/Discord-black?style=for-the-badge&logo=discord">
   </a>
   <a aria-label="Gurubase" href="https://gurubase.io/g/loro" target="_blank">
-    <img alt="" src="https://img.shields.io/badge/Gurubase-Ask%20Loro%20Guru-006BFF?style=for-the-badge">
+    <img alt="" src="https://img.shields.io/badge/Ask%20Loro%20Guru-000000?style=for-the-badge">
   </a>
 </p>
 
