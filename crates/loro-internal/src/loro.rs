@@ -618,6 +618,7 @@ impl LoroDoc {
 
     #[inline]
     pub fn get_handler(&self, id: ContainerID) -> Handler {
+        self.assert_container_exists(&id);
         Handler::new_attached(
             id,
             self.arena.clone(),
@@ -631,6 +632,7 @@ impl LoroDoc {
     #[inline]
     pub fn get_text<I: IntoContainerId>(&self, id: I) -> TextHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Text);
+        self.assert_container_exists(&id);
         Handler::new_attached(
             id,
             self.arena.clone(),
@@ -646,6 +648,7 @@ impl LoroDoc {
     #[inline]
     pub fn get_list<I: IntoContainerId>(&self, id: I) -> ListHandler {
         let id = id.into_container_id(&self.arena, ContainerType::List);
+        self.assert_container_exists(&id);
         Handler::new_attached(
             id,
             self.arena.clone(),
@@ -661,6 +664,7 @@ impl LoroDoc {
     #[inline]
     pub fn get_movable_list<I: IntoContainerId>(&self, id: I) -> MovableListHandler {
         let id = id.into_container_id(&self.arena, ContainerType::MovableList);
+        self.assert_container_exists(&id);
         Handler::new_attached(
             id,
             self.arena.clone(),
@@ -676,6 +680,7 @@ impl LoroDoc {
     #[inline]
     pub fn get_map<I: IntoContainerId>(&self, id: I) -> MapHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Map);
+        self.assert_container_exists(&id);
         Handler::new_attached(
             id,
             self.arena.clone(),
@@ -691,6 +696,7 @@ impl LoroDoc {
     #[inline]
     pub fn get_tree<I: IntoContainerId>(&self, id: I) -> TreeHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Tree);
+        self.assert_container_exists(&id);
         Handler::new_attached(
             id,
             self.arena.clone(),
@@ -707,6 +713,7 @@ impl LoroDoc {
         id: I,
     ) -> crate::handler::counter::CounterHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Counter);
+        self.assert_container_exists(&id);
         Handler::new_attached(
             id,
             self.arena.clone(),
@@ -715,6 +722,17 @@ impl LoroDoc {
         )
         .into_counter()
         .unwrap()
+    }
+
+    fn assert_container_exists(&self, id: &ContainerID) {
+        if id.is_root() {
+            return;
+        }
+
+        let exist = self.state.try_lock().unwrap().does_container_exist(id);
+        if !exist {
+            panic!("Target container does not exist: {:?}", id);
+        }
     }
 
     /// Undo the operations between the given id_span. It can be used even in a collaborative environment.
