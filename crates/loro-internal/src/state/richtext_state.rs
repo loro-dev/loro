@@ -109,9 +109,14 @@ impl RichtextState {
     }
 
     pub(crate) fn iter(&mut self, mut callback: impl FnMut(&str) -> bool) {
-        for span in self.state.get_mut().iter() {
-            if !callback(span.text.as_str()) {
-                return;
+        for span in self.state.get_mut().iter_chunk() {
+            match span {
+                RichtextStateChunk::Text(text_chunk) => {
+                    if !callback(text_chunk.as_str()) {
+                        return;
+                    }
+                }
+                RichtextStateChunk::Style { .. } => {}
             }
         }
     }

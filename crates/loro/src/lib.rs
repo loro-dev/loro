@@ -1010,10 +1010,10 @@ impl LoroList {
     /// Iterate over the elements of the list.
     pub fn for_each<I>(&self, mut f: I)
     where
-        I: FnMut((usize, ValueOrContainer)),
+        I: FnMut(ValueOrContainer),
     {
-        self.handler.for_each(&mut |(index, v)| {
-            f((index, ValueOrContainer::from(v)));
+        self.handler.for_each(&mut |v| {
+            f(ValueOrContainer::from(v));
         })
     }
 
@@ -1379,6 +1379,9 @@ impl LoroText {
     ///
     /// The callback function will be called for each character in the text.
     /// If the callback returns `false`, the iteration will stop.
+    ///
+    /// Limitation: you cannot access or alter the doc state when iterating.
+    /// If you need to access or alter the doc state, please use `to_string` instead.
     pub fn iter(&self, callback: impl FnMut(&str) -> bool) {
         self.handler.iter(callback);
     }
@@ -2216,6 +2219,16 @@ impl LoroMovableList {
     /// Delete all elements in the list.
     pub fn clear(&self) -> LoroResult<()> {
         self.handler.clear()
+    }
+
+    /// Iterate over the elements of the list.
+    pub fn for_each<I>(&self, mut f: I)
+    where
+        I: FnMut(ValueOrContainer),
+    {
+        self.handler.for_each(&mut |v| {
+            f(ValueOrContainer::from(v));
+        })
     }
 }
 

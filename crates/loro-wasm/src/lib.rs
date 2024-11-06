@@ -1781,10 +1781,13 @@ impl LoroText {
         JsValue::from_str("Text").into()
     }
 
-    /// Iterate each span(internal storage unit) of the text.
+    /// Iterate each text span(internal storage unit)
     ///
     /// The callback function will be called for each span in the text.
     /// If the callback returns `false`, the iteration will stop.
+    ///
+    /// Limitation: you cannot access or alter the doc state when iterating (this is for performance consideration).
+    /// If you need to access or alter the doc state, please use `toString` instead.
     ///
     /// @example
     /// ```ts
@@ -2632,7 +2635,7 @@ impl LoroList {
     #[wasm_bindgen(js_name = "toArray", method, skip_typescript)]
     pub fn to_array(&mut self) -> Vec<JsValueOrContainer> {
         let mut arr: Vec<JsValueOrContainer> = Vec::with_capacity(self.length());
-        self.handler.for_each(|(_, x)| {
+        self.handler.for_each(|x| {
             arr.push(match x {
                 ValueOrHandler::Value(v) => {
                     let v: JsValue = v.into();

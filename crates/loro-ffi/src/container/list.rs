@@ -90,7 +90,7 @@ impl LoroList {
     // TODO: wrap it in ffi side
     pub fn for_each<I>(&self, f: I)
     where
-        I: FnMut((usize, loro::ValueOrContainer)),
+        I: FnMut(loro::ValueOrContainer),
     {
         self.list.for_each(f)
     }

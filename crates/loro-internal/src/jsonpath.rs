@@ -482,15 +482,16 @@ impl PathValue for MapHandler {
     }
 
     fn for_each_for_path(&self, f: &mut dyn FnMut(ValueOrHandler) -> ControlFlow<()>) {
-        let mut all = vec![];
+        let mut done = false;
         self.for_each(|_, v| {
-            all.push(v);
-        });
-        for v in all {
-            if let ControlFlow::Break(_) = f(v) {
-                break;
+            if done {
+                return;
             }
-        }
+
+            if let ControlFlow::Break(_) = f(v) {
+                done = true;
+            }
+        });
     }
 
     fn length_for_path(&self) -> usize {
@@ -520,15 +521,16 @@ impl PathValue for ListHandler {
     }
 
     fn for_each_for_path(&self, f: &mut dyn FnMut(ValueOrHandler) -> ControlFlow<()>) {
-        let mut all = vec![];
+        let mut done = false;
         self.for_each(|v| {
-            all.push(v.1);
-        });
-        for v in all {
-            if let ControlFlow::Break(_) = f(v) {
-                break;
+            if done {
+                return;
             }
-        }
+
+            if let ControlFlow::Break(_) = f(v) {
+                done = true;
+            }
+        });
     }
 
     fn length_for_path(&self) -> usize {
@@ -562,15 +564,16 @@ impl PathValue for MovableListHandler {
     }
 
     fn for_each_for_path(&self, f: &mut dyn FnMut(ValueOrHandler) -> ControlFlow<()>) {
-        let mut all = vec![];
+        let mut done = false;
         self.for_each(|v| {
-            all.push(v);
-        });
-        for v in all {
-            if let ControlFlow::Break(_) = f(v) {
-                break;
+            if done {
+                return;
             }
-        }
+
+            if let ControlFlow::Break(_) = f(v) {
+                done = true;
+            }
+        })
     }
 
     fn length_for_path(&self) -> usize {

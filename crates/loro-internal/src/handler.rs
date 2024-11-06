@@ -2574,29 +2574,36 @@ impl ListHandler {
 
     pub fn for_each<I>(&self, mut f: I)
     where
-        I: FnMut((usize, ValueOrHandler)),
+        I: FnMut(ValueOrHandler),
     {
         match &self.inner {
             MaybeDetached::Detached(l) => {
                 let l = l.try_lock().unwrap();
-                for (i, v) in l.value.iter().enumerate() {
-                    f((i, v.clone()))
+                for v in l.value.iter() {
+                    f(v.clone())
                 }
             }
             MaybeDetached::Attached(inner) => {
+                let mut temp = vec![];
                 inner.with_state(|state| {
                     let a = state.as_list_state().unwrap();
-                    for (i, v) in a.iter().enumerate() {
+                    for v in a.iter() {
                         match v {
                             LoroValue::Container(c) => {
-                                f((i, ValueOrHandler::Handler(create_handler(inner, c.clone()))));
+                                temp.push(ValueOrHandler::Handler(create_handler(
+                                    inner,
+                                    c.clone(),
+                                )));
                             }
                             value => {
-                                f((i, ValueOrHandler::Value(value.clone())));
+                                temp.push(ValueOrHandler::Value(value.clone()));
                             }
                         }
                     }
                 });
+                for v in temp.into_iter() {
+                    f(v);
+                }
             }
         }
     }
@@ -3257,19 +3264,26 @@ impl MovableListHandler {
                     f(v.clone());
                 }
             }
-            MaybeDetached::Attached(m) => m.with_state(|state| {
-                let a = state.as_movable_list_state().unwrap();
-                for v in a.iter() {
-                    match v {
-                        LoroValue::Container(c) => {
-                            f(ValueOrHandler::Handler(create_handler(m, c.clone())));
-                        }
-                        value => {
-                            f(ValueOrHandler::Value(value.clone()));
+            MaybeDetached::Attached(m) => {
+                let mut temp = vec![];
+                m.with_state(|state| {
+                    let a = state.as_movable_list_state().unwrap();
+                    for v in a.iter() {
+                        match v {
+                            LoroValue::Container(c) => {
+                                temp.push(ValueOrHandler::Handler(create_handler(m, c.clone())));
+                            }
+                            value => {
+                                temp.push(ValueOrHandler::Value(value.clone()));
+                            }
                         }
                     }
+                });
+
+                for v in temp.into_iter() {
+                    f(v);
                 }
-            }),
+            }
         }
     }
 
@@ -3547,19 +3561,29 @@ impl MapHandler {
                 }
             }
             MaybeDetached::Attached(inner) => {
+                let mut temp = vec![];
                 inner.with_state(|state| {
                     let a = state.as_map_state().unwrap();
                     for (k, v) in a.iter() {
                         if let Some(v) = &v.value {
                             match v {
                                 LoroValue::Container(c) => {
-                                    f(k, ValueOrHandler::Handler(create_handler(inner, c.clone())))
+                                    temp.push((
+                                        k.to_string(),
+                                        ValueOrHandler::Handler(create_handler(inner, c.clone())),
+                                    ));
                                 }
-                                value => f(k, ValueOrHandler::Value(value.clone())),
+                                value => {
+                                    temp.push((k.to_string(), ValueOrHandler::Value(value.clone())))
+                                }
                             }
                         }
                     }
                 });
+
+                for (k, v) in temp.into_iter() {
+                    f(&k, v.clone());
+                }
             }
         }
     }
