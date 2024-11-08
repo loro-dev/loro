@@ -423,7 +423,7 @@ pub(crate) fn dj_diff<D: DiffHandler>(
 
     impl PartialOrd for QueueItem {
         fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-            Some(self.cmp(&other))
+            Some(self.cmp(other))
         }
     }
 
@@ -459,7 +459,7 @@ pub(crate) fn dj_diff<D: DiffHandler>(
             return false;
         }
 
-        if point.x + 1 <= old.len() as u16 {
+        if point.x < old.len() as u16 {
             let next_point = Point {
                 x: point.x + 1,
                 y: point.y,
@@ -479,7 +479,7 @@ pub(crate) fn dj_diff<D: DiffHandler>(
             }
         }
 
-        if point.y + 1 <= new.len() as u16 {
+        if point.y < new.len() as u16 {
             let next_point = Point {
                 x: point.x,
                 y: point.y + 1,
@@ -500,8 +500,8 @@ pub(crate) fn dj_diff<D: DiffHandler>(
             }
         }
 
-        if point.x + 1 <= old.len() as u16
-            && point.y + 1 <= new.len() as u16
+        if point.x < old.len() as u16
+            && point.y < new.len() as u16
             && old[point.x as usize] == new[point.y as usize]
         {
             let next_point = Point {

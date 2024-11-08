@@ -153,7 +153,7 @@ fn bench_update_text(c: &mut Criterion) {
                     let mut rng: rand::rngs::StdRng = rand::SeedableRng::seed_from_u64(seed);
                     let mut s = String::new();
                     for _ in 0..len {
-                        s.push(rng.gen_range(b'a'..b'z') as char);
+                        s.push(rng.gen_range(b'a'..=b'z') as char);
                     }
                     s
                 }

@@ -1836,10 +1836,10 @@ impl LoroText {
                 None => return Err(JsError::new("Invalid options").into()),
             };
             UpdateOptions {
-                timeout_ms: js_sys::Reflect::get(&opts, &"timeoutMs".into())
+                timeout_ms: js_sys::Reflect::get(opts, &"timeoutMs".into())
                     .ok()
                     .and_then(|v| v.as_f64()),
-                use_refined_diff: js_sys::Reflect::get(&opts, &"useRefinedDiff".into())
+                use_refined_diff: js_sys::Reflect::get(opts, &"useRefinedDiff".into())
                     .ok()
                     .and_then(|v| v.as_bool())
                     .unwrap_or(true),
@@ -1866,10 +1866,10 @@ impl LoroText {
                 None => return Err(JsError::new("Invalid options").into()),
             };
             UpdateOptions {
-                timeout_ms: js_sys::Reflect::get(&opts, &"timeoutMs".into())
+                timeout_ms: js_sys::Reflect::get(opts, &"timeoutMs".into())
                     .ok()
                     .and_then(|v| v.as_f64()),
-                use_refined_diff: js_sys::Reflect::get(&opts, &"useRefinedDiff".into())
+                use_refined_diff: js_sys::Reflect::get(opts, &"useRefinedDiff".into())
                     .ok()
                     .and_then(|v| v.as_bool())
                     .unwrap_or(true),
