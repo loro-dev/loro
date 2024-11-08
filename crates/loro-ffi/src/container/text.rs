@@ -1,6 +1,6 @@
 use std::{fmt::Display, sync::Arc};
 
-use loro::{cursor::Side, LoroResult, TextDelta};
+use loro::{cursor::Side, LoroResult, TextDelta, UpdateTimeoutError};
 
 use crate::{ContainerID, LoroValue, LoroValueLike};
 
@@ -101,8 +101,8 @@ impl LoroText {
     }
 
     /// Update the current text based on the provided text.
-    pub fn update(&self, text: &str) {
-        self.text.update(text);
+    pub fn update(&self, text: &str, timeout_in_ms: Option<f64>) -> Result<(), UpdateTimeoutError> {
+        self.text.update(text, timeout_in_ms)
     }
 
     /// Apply a [delta](https://quilljs.com/docs/delta/) to the text container.

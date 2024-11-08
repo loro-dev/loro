@@ -1821,8 +1821,10 @@ impl LoroText {
     /// text.update("Hello World");
     /// console.log(text.toString()); // "Hello World"
     /// ```
-    pub fn update(&self, text: &str) {
-        self.handler.update(text);
+    pub fn update(&self, text: &str, timeout_in_ms: Option<f64>) -> JsResult<()> {
+        self.handler
+            .update(text, timeout_in_ms)
+            .map_err(|_| JsError::new("Update timeout").into())
     }
 
     /// Update the current text to the target text, the difference is calculated line by line.

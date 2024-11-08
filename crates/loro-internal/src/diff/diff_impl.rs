@@ -14,12 +14,19 @@
 //!
 //! The implementation of this algorithm is based on the implementation by
 //! Brandon Williams.
+use fxhash::FxHashMap;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::iter::zip;
 use std::ops::{Index, IndexMut};
 
-use fxhash::FxHashMap;
+use crate::change::get_sys_timestamp;
+
+#[derive(thiserror::Error, Debug, PartialEq)]
+pub enum UpdateTimeoutError {
+    #[error("Timeout")]
+    Timeout,
+}
 
 /// Utility function to check if a range is empty that works on older rust versions
 #[inline(always)]
@@ -84,17 +91,33 @@ impl<D: DiffHandler> OperateProxy<D> {
         self.handler.insert(old_index, new_index, new_len);
     }
 
+    #[allow(unused)]
     fn unwrap(self) -> D {
         self.handler
     }
 }
 
-pub(crate) fn myers_diff<D: DiffHandler>(proxy: &mut OperateProxy<D>, old: &[u32], new: &[u32]) {
+pub(crate) fn myers_diff<D: DiffHandler>(
+    proxy: &mut OperateProxy<D>,
+    should_use_dj: bool,
+    timeout_ms: Option<f64>,
+    old: &[u32],
+    new: &[u32],
+) -> Result<(), UpdateTimeoutError> {
     let max_d = (old.len() + new.len() + 1) / 2 + 1;
     let mut vb = OffsetVec::new(max_d);
     let mut vf = OffsetVec::new(max_d);
+    let start_time = if timeout_ms.is_some() {
+        get_sys_timestamp()
+    } else {
+        0.
+    };
+
     conquer(
         proxy,
+        should_use_dj,
+        timeout_ms,
+        start_time,
         old,
         0,
         old.len(),
@@ -103,7 +126,7 @@ pub(crate) fn myers_diff<D: DiffHandler>(proxy: &mut OperateProxy<D>, old: &[u32
         new.len(),
         &mut vf,
         &mut vb,
-    );
+    )
 }
 
 struct OffsetVec(isize, Vec<usize>);
@@ -131,8 +154,16 @@ impl IndexMut<isize> for OffsetVec {
     }
 }
 
+struct MiddleSnakeResult {
+    d: usize,
+    x_start: usize,
+    y_start: usize,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn find_middle_snake(
+    timeout_ms: Option<f64>,
+    start_time: f64,
     old: &[u32],
     old_start: usize,
     old_end: usize,
@@ -141,7 +172,7 @@ fn find_middle_snake(
     new_end: usize,
     vf: &mut OffsetVec,
     vb: &mut OffsetVec,
-) -> Option<(usize, usize)> {
+) -> Result<Option<MiddleSnakeResult>, UpdateTimeoutError> {
     let n = old_end - old_start;
     let m = new_end - new_start;
     let delta = n as isize - m as isize;
@@ -168,9 +199,20 @@ fn find_middle_snake(
             }
             vf[k] = x;
             if odd && (k - delta).abs() <= (d - 1) && vf[k] + vb[delta - k] >= n {
-                return Some((x0 + old_start, y0 + new_start));
+                return Ok(Some(MiddleSnakeResult {
+                    d: d as usize,
+                    x_start: x0 + old_start,
+                    y_start: y0 + new_start,
+                }));
+            }
+
+            if let Some(timeout_ms) = timeout_ms {
+                if get_sys_timestamp() - start_time > timeout_ms {
+                    return Err(UpdateTimeoutError::Timeout);
+                }
             }
         }
+
         for k in (-d..=d).rev().step_by(2) {
             let mut x = if k == -d || (k != d && vb[k - 1] < vb[k + 1]) {
                 vb[k + 1]
@@ -188,16 +230,30 @@ fn find_middle_snake(
             }
             vb[k] = x;
             if !odd && (k - delta).abs() <= d && vb[k] + vf[delta - k] >= n {
-                return Some((n - x + old_start, m - y + new_start));
+                return Ok(Some(MiddleSnakeResult {
+                    d: d as usize,
+                    x_start: n - x + old_start,
+                    y_start: m - y + new_start,
+                }));
+            }
+
+            if let Some(timeout_ms) = timeout_ms {
+                if get_sys_timestamp() - start_time > timeout_ms {
+                    return Err(UpdateTimeoutError::Timeout);
+                }
             }
         }
     }
-    None
+
+    Ok(None)
 }
 
 #[allow(clippy::too_many_arguments)]
 fn conquer<D: DiffHandler>(
     proxy: &mut OperateProxy<D>,
+    should_use_dj: bool,
+    timeout_ms: Option<f64>,
+    start_time: f64,
     old: &[u32],
     mut old_start: usize,
     mut old_end: usize,
@@ -206,7 +262,7 @@ fn conquer<D: DiffHandler>(
     mut new_end: usize,
     vf: &mut OffsetVec,
     vb: &mut OffsetVec,
-) {
+) -> Result<(), UpdateTimeoutError> {
     let common_prefix_len = common_prefix(&old[old_start..old_end], &new[new_start..new_end]);
     if common_prefix_len > 0 {
         old_start += common_prefix_len;
@@ -216,40 +272,116 @@ fn conquer<D: DiffHandler>(
     let common_suffix_len = common_suffix_len(&old[old_start..old_end], &new[new_start..new_end]);
     old_end -= common_suffix_len;
     new_end -= common_suffix_len;
+
     if is_not_empty_range(old_start, old_end) || is_not_empty_range(new_start, new_end) {
+        let len_old = old_end - old_start;
+        let len_new = new_end - new_start;
+        if len_old <= 8 || len_new <= 8 {
+            proxy.delete(old_start, old_end - old_start);
+            proxy.insert(old_start, new_start, new_end - new_start);
+            return Ok(());
+        }
+
+        if should_use_dj && (len_old < 128 && len_new < 128) {
+            let ok = dj_diff(
+                proxy,
+                &old[old_start..old_end],
+                &new[new_start..new_end],
+                old_start,
+                new_start,
+                10_000,
+            );
+            if ok {
+                return Ok(());
+            }
+        }
+
         if is_empty_range(new_start, new_end) {
             proxy.delete(old_start, old_end - old_start);
         } else if is_empty_range(old_start, old_end) {
             proxy.insert(old_start, new_start, new_end - new_start);
-        } else if let Some((x_start, y_start)) =
-            find_middle_snake(old, old_start, old_end, new, new_start, new_end, vf, vb)
-        {
+        } else if let Some(MiddleSnakeResult {
+            d,
+            x_start,
+            y_start,
+        }) = find_middle_snake(
+            timeout_ms, start_time, old, old_start, old_end, new, new_start, new_end, vf, vb,
+        )? {
             conquer(
-                proxy, old, old_start, x_start, new, new_start, y_start, vf, vb,
-            );
-            conquer(proxy, old, x_start, old_end, new, y_start, new_end, vf, vb);
+                proxy,
+                should_use_dj,
+                timeout_ms,
+                start_time,
+                old,
+                old_start,
+                x_start,
+                new,
+                new_start,
+                y_start,
+                vf,
+                vb,
+            )?;
+            conquer(
+                proxy,
+                should_use_dj,
+                timeout_ms,
+                start_time,
+                old,
+                x_start,
+                old_end,
+                new,
+                y_start,
+                new_end,
+                vf,
+                vb,
+            )?;
         } else {
             proxy.delete(old_start, old_end - old_start);
             proxy.insert(old_start, new_start, new_end - new_start);
         }
     }
+
+    Ok(())
 }
 
-pub fn dj_diff<D: DiffHandler>(proxy: &mut OperateProxy<D>, old: &[u32], new: &[u32]) {
+/// Return false if this method gives up early
+#[must_use]
+pub(crate) fn dj_diff<D: DiffHandler>(
+    proxy: &mut OperateProxy<D>,
+    old: &[u32],
+    new: &[u32],
+    old_offset: usize,
+    new_offset: usize,
+    max_try_count: usize,
+) -> bool {
+    let common_prefix_len = common_prefix(old, new);
+    let common_suffix_len = common_suffix_len(&old[common_prefix_len..], &new[common_prefix_len..]);
+    let old = &old[common_prefix_len..old.len() - common_suffix_len];
+    let new = &new[common_prefix_len..new.len() - common_suffix_len];
+    assert!(old.len() <= u16::MAX as usize);
+    assert!(new.len() <= u16::MAX as usize);
     if old.is_empty() {
-        proxy.insert(0, 0, new.len());
-        return;
+        if new.is_empty() {
+            return true;
+        }
+
+        proxy.insert(
+            old_offset + common_prefix_len,
+            new_offset + common_prefix_len,
+            new.len(),
+        );
+        return true;
     }
 
     if new.is_empty() {
-        proxy.delete(0, old.len());
-        return;
+        proxy.delete(old_offset + common_prefix_len, old.len());
+        return true;
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     struct Point {
-        x: u32,
-        y: u32,
+        x: u16,
+        y: u16,
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -261,7 +393,7 @@ pub fn dj_diff<D: DiffHandler>(proxy: &mut OperateProxy<D>, old: &[u32], new: &[
 
     struct QueueItem {
         point: Point,
-        cost: isize,
+        cost: u32,
         from: Direction,
     }
 
@@ -294,22 +426,31 @@ pub fn dj_diff<D: DiffHandler>(proxy: &mut OperateProxy<D>, old: &[u32], new: &[
     });
 
     while let Some(QueueItem { point, cost, from }) = q.pop() {
-        // dbg!(&point, &cost, &from);
-        if point.x == old.len() as u32 && point.y == new.len() as u32 {
+        if visited.contains_key(&point) {
+            continue;
+        }
+
+        visited.insert(point, from);
+        if point.x == old.len() as u16 && point.y == new.len() as u16 {
             break;
         }
 
-        if point.x + 1 <= old.len() as u32 {
+        if visited.len() + q.len() > max_try_count {
+            // println!("give up on: visited len: {}", visited.len());
+            // println!("queue len: {}", q.len());
+            return false;
+        }
+
+        if point.x + 1 <= old.len() as u16 {
             let next_point = Point {
                 x: point.x + 1,
                 y: point.y,
             };
 
-            if let std::collections::hash_map::Entry::Vacant(e) = visited.entry(next_point) {
-                e.insert(Direction::Left);
+            if !visited.contains_key(&next_point) {
                 let mut next_cost = cost + 1;
                 if from != Direction::Left {
-                    next_cost += 1;
+                    next_cost += 8;
                 }
 
                 q.push(QueueItem {
@@ -320,20 +461,19 @@ pub fn dj_diff<D: DiffHandler>(proxy: &mut OperateProxy<D>, old: &[u32], new: &[
             }
         }
 
-        if point.y + 1 <= new.len() as u32 {
+        if point.y + 1 <= new.len() as u16 {
             let next_point = Point {
                 x: point.x,
                 y: point.y + 1,
             };
 
-            if let std::collections::hash_map::Entry::Vacant(e) = visited.entry(next_point) {
+            if !visited.contains_key(&next_point) {
                 let direction = Direction::Up;
                 let mut next_cost = cost + 1;
                 if from != direction {
-                    next_cost += 1;
+                    next_cost += 8;
                 }
 
-                e.insert(direction);
                 q.push(QueueItem {
                     point: next_point,
                     cost: next_cost,
@@ -342,8 +482,8 @@ pub fn dj_diff<D: DiffHandler>(proxy: &mut OperateProxy<D>, old: &[u32], new: &[
             }
         }
 
-        if point.x + 1 <= old.len() as u32
-            && point.y + 1 <= new.len() as u32
+        if point.x + 1 <= old.len() as u16
+            && point.y + 1 <= new.len() as u16
             && old[point.x as usize] == new[point.y as usize]
         {
             let next_point = Point {
@@ -351,14 +491,13 @@ pub fn dj_diff<D: DiffHandler>(proxy: &mut OperateProxy<D>, old: &[u32], new: &[
                 y: point.y + 1,
             };
 
-            if let std::collections::hash_map::Entry::Vacant(e) = visited.entry(next_point) {
+            if !visited.contains_key(&next_point) {
                 let next_cost = if from == Direction::UpLeft {
                     cost
                 } else {
                     cost + 1
                 };
 
-                e.insert(Direction::UpLeft);
                 q.push(QueueItem {
                     point: next_point,
                     cost: next_cost,
@@ -368,10 +507,13 @@ pub fn dj_diff<D: DiffHandler>(proxy: &mut OperateProxy<D>, old: &[u32], new: &[
         }
     }
 
+    // println!("visited len: {}", visited.len());
+    // println!("queue len: {}", q.len());
+
     // Backtrack from end point to construct diff operations
     let mut current = Point {
-        x: old.len() as u32,
-        y: new.len() as u32,
+        x: old.len() as u16,
+        y: new.len() as u16,
     };
 
     let mut path: Vec<(Direction, usize)> = Vec::new();
@@ -402,17 +544,17 @@ pub fn dj_diff<D: DiffHandler>(proxy: &mut OperateProxy<D>, old: &[u32], new: &[
 
     path.reverse();
 
-    let mut old_index = 0;
-    let mut new_index = 0;
+    let mut old_index = common_prefix_len;
+    let mut new_index = common_prefix_len;
 
     for (direction, count) in path {
         match direction {
             Direction::Left => {
-                proxy.delete(old_index, count);
+                proxy.delete(old_offset + old_index, count);
                 old_index += count;
             }
             Direction::Up => {
-                proxy.insert(old_index, new_index, count);
+                proxy.insert(old_offset + old_index, new_index + new_offset, count);
                 new_index += count;
             }
             Direction::UpLeft => {
@@ -421,6 +563,8 @@ pub fn dj_diff<D: DiffHandler>(proxy: &mut OperateProxy<D>, old: &[u32], new: &[
             }
         }
     }
+
+    true
 }
 
 #[cfg(test)]
@@ -469,7 +613,7 @@ mod tests {
         let old = vec![1, 2, 3];
         let new = vec![1, 4, 3];
 
-        dj_diff(&mut proxy, &old, &new);
+        let _ = dj_diff(&mut proxy, &old, &new, 0, 0, 100_000);
         let handler = proxy.unwrap();
         assert_eq!(
             handler.ops,
@@ -493,7 +637,7 @@ mod tests {
         let mut proxy = OperateProxy::new(handler);
         let old = vec![1, 2, 3];
         let new = vec![1, 2, 3];
-        dj_diff(&mut proxy, &old, &new);
+        let _ = dj_diff(&mut proxy, &old, &new, 0, 0, 100_000);
         let handler = proxy.unwrap();
         assert_eq!(handler.ops, vec![]);
     }
@@ -504,7 +648,7 @@ mod tests {
         let mut proxy = OperateProxy::new(handler);
         let old = vec![1];
         let new = vec![0, 1, 2];
-        dj_diff(&mut proxy, &old, &new);
+        let _ = dj_diff(&mut proxy, &old, &new, 0, 0, 100_000);
         let handler = proxy.unwrap();
         assert_eq!(
             handler.ops,
@@ -529,7 +673,7 @@ mod tests {
         let mut proxy = OperateProxy::new(handler);
         let old = vec![1, 2, 3, 4, 5];
         let new = vec![99, 1, 2, 3, 4, 5, 98, 97, 96, 3, 95, 4, 93, 92, 5, 91];
-        dj_diff(&mut proxy, &old, &new);
+        let _ = dj_diff(&mut proxy, &old, &new, 0, 0, 100_000);
         let handler = proxy.unwrap();
         assert_eq!(
             handler.ops,
@@ -554,7 +698,7 @@ mod tests {
         let mut proxy = OperateProxy::new(handler);
         let old = vec![1, 2, 3, 4, 5];
         let new = vec![99, 1, 2, 98, 97, 96, 3, 95, 4, 93, 92, 5, 1, 2, 3, 4, 5, 91];
-        dj_diff(&mut proxy, &old, &new);
+        let _ = dj_diff(&mut proxy, &old, &new, 0, 0, 100_000);
         let handler = proxy.unwrap();
         assert_eq!(
             handler.ops,
@@ -571,5 +715,75 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn test_dj_diff_100_differences() {
+        let handler = RecordingDiffHandler::default();
+        let mut proxy = OperateProxy::new(handler);
+        let old = vec![1; 100];
+        let new = vec![2; 100];
+        let _ = dj_diff(&mut proxy, &old, &new, 0, 0, 100_000);
+        let handler = proxy.unwrap();
+        assert_eq!(
+            handler.ops,
+            vec![
+                DiffOperation::Delete {
+                    old_index: 0,
+                    length: 100
+                },
+                DiffOperation::Insert {
+                    old_index: 100,
+                    new_index: 0,
+                    length: 100
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_dj_diff_insert() {
+        let handler = RecordingDiffHandler::default();
+        let mut proxy = OperateProxy::new(handler);
+        let old = vec![1; 100];
+        let mut new = old.clone();
+        new.splice(50..50, [1, 2, 3, 4, 1, 2, 3, 4]);
+        new.splice(0..0, [0, 1, 2, 3, 4, 5, 6, 7]);
+        let _ = dj_diff(&mut proxy, &old, &new, 0, 0, 100_000);
+        let handler = proxy.unwrap();
+        assert_eq!(
+            handler.ops,
+            vec![
+                DiffOperation::Insert {
+                    old_index: 0,
+                    new_index: 0,
+                    length: 9
+                },
+                DiffOperation::Insert {
+                    old_index: 50,
+                    new_index: 59,
+                    length: 7
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn test_diff() {
+        let handler = RecordingDiffHandler::default();
+        let mut proxy = OperateProxy::new(handler);
+        let old = vec![1; 100];
+        let new = vec![2; 100];
+        myers_diff(&mut proxy, false, None, &old, &new).unwrap();
+    }
+
+    #[test]
+    fn test_timeout() {
+        let handler = RecordingDiffHandler::default();
+        let mut proxy = OperateProxy::new(handler);
+        let old = vec![1; 10000];
+        let new = vec![2; 10000];
+        let result = myers_diff(&mut proxy, false, Some(0.1), &old, &new);
+        assert!(result.is_err());
     }
 }

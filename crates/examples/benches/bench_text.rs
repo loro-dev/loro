@@ -8,6 +8,7 @@ use bench_utils::TextAction;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use dev_utils::ByteSize;
 use loro::LoroDoc;
+use rand::Rng;
 
 fn bench_text(c: &mut Criterion) {
     use bench_utils::TextAction;
@@ -125,6 +126,77 @@ fn bench_text(c: &mut Criterion) {
     });
 }
 
+fn bench_update_text(c: &mut Criterion) {
+    let mut g = c.benchmark_group("update_text");
+    g.bench_function("Update 1024x1024 total different text", |b| {
+        b.iter_batched(
+            || {
+                let from = "a".repeat(1024);
+                let to = "b".repeat(1024);
+                (from, to)
+            },
+            |(from, to)| {
+                let doc = LoroDoc::new();
+                let text = doc.get_text("text");
+                text.update(&from, None).unwrap();
+                text.update(&to, None).unwrap();
+                assert_eq!(&text.to_string(), &to);
+            },
+            criterion::BatchSize::SmallInput,
+        );
+    });
+
+    g.bench_function("Update 1024x1024 random diff", |b| {
+        b.iter_batched(
+            || {
+                fn rand_str(len: usize, seed: u64) -> String {
+                    let mut rng: rand::rngs::StdRng = rand::SeedableRng::seed_from_u64(seed);
+                    let mut s = String::new();
+                    for _ in 0..len {
+                        s.push(rng.gen_range(b'a'..b'z') as char);
+                    }
+                    s
+                }
+
+                let from = rand_str(1024, 42);
+                let mut to = from.clone();
+                to.insert_str(0, &rand_str(100, 43));
+                to.replace_range(100..200, &rand_str(100, 44)); // Make some differences
+                to.replace_range(500..504, &rand_str(4, 45));
+                to.replace_range(600..700, &rand_str(5, 46));
+                (from, to)
+            },
+            |(from, to)| {
+                let doc = LoroDoc::new();
+                let text = doc.get_text("text");
+                text.update(&from, None).unwrap();
+                text.update(&to, None).unwrap();
+                assert_eq!(&text.to_string(), &to);
+            },
+            criterion::BatchSize::SmallInput,
+        );
+    });
+
+    g.bench_function("Update 1024x1024 text with 16 inserted chars", |b| {
+        b.iter_batched(
+            || {
+                let from = "a".repeat(1024);
+                let mut to = from.clone();
+                to.insert_str(504, "b".repeat(16).as_str());
+                (from, to)
+            },
+            |(from, to)| {
+                let doc = LoroDoc::new();
+                let text = doc.get_text("text");
+                text.update(&from, None).unwrap();
+                text.update(&to, None).unwrap();
+                assert_eq!(&text.to_string(), &to);
+            },
+            criterion::BatchSize::SmallInput,
+        );
+    });
+}
+
 fn apply_text_actions(actions: &[bench_utils::TextAction], n: usize) -> LoroDoc {
     let loro = LoroDoc::new();
     let text = loro.get_text("text");
@@ -137,5 +209,5 @@ fn apply_text_actions(actions: &[bench_utils::TextAction], n: usize) -> LoroDoc 
     loro
 }
 
-criterion_group!(benches, bench_text);
+criterion_group!(benches, bench_text, bench_update_text);
 criterion_main!(benches);

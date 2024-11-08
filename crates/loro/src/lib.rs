@@ -29,6 +29,7 @@ use std::ops::Range;
 use std::sync::Arc;
 use tracing::info;
 
+pub use loro_internal::diff::diff_impl::UpdateTimeoutError;
 pub use loro_internal::subscription::LocalUpdateCallback;
 pub use loro_internal::subscription::PeerIdUpdateCallback;
 pub use loro_internal::ChangeMeta;
@@ -1439,8 +1440,8 @@ impl LoroText {
     }
 
     /// Update the current text based on the provided text.
-    pub fn update(&self, text: &str) {
-        self.handler.update(text);
+    pub fn update(&self, text: &str, timeout_in_ms: Option<f64>) -> Result<(), UpdateTimeoutError> {
+        self.handler.update(text, timeout_in_ms)
     }
 
     /// Update the current text based on the provided text by line.

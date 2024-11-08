@@ -11,7 +11,7 @@ use loro_common::{
 use tracing::{debug_span, info_span, instrument};
 
 use crate::{
-    change::get_sys_timestamp,
+    change::{get_sys_timestamp, Timestamp},
     cursor::{AbsolutePosition, Cursor},
     delta::TreeExternalDiff,
     event::{Diff, EventTriggerKind},
@@ -397,7 +397,7 @@ impl UndoManagerInner {
         }
 
         assert!(self.next_counter.unwrap() < latest_counter);
-        let now = get_sys_timestamp();
+        let now = get_sys_timestamp() as Timestamp;
         let span = CounterSpan::new(self.next_counter.unwrap(), latest_counter);
         let meta = self
             .on_push
