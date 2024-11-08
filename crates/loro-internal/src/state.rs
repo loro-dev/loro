@@ -764,6 +764,11 @@ impl DocState {
         self.store.iter_all_containers()
     }
 
+    pub fn does_container_exist(&self, id: &ContainerID) -> bool {
+        // TODO: we may need a better way to handle this in the future when we need to enable fully lazy loading on state
+        self.arena.id_to_idx(id).is_some()
+    }
+
     pub(crate) fn init_container(
         &mut self,
         cid: ContainerID,
