@@ -138,8 +138,8 @@ fn bench_update_text(c: &mut Criterion) {
             |(from, to)| {
                 let doc = LoroDoc::new();
                 let text = doc.get_text("text");
-                text.update(&from, None).unwrap();
-                text.update(&to, None).unwrap();
+                text.update(&from, Default::default()).unwrap();
+                text.update(&to, Default::default()).unwrap();
                 assert_eq!(&text.to_string(), &to);
             },
             criterion::BatchSize::SmallInput,
@@ -169,8 +169,8 @@ fn bench_update_text(c: &mut Criterion) {
             |(from, to)| {
                 let doc = LoroDoc::new();
                 let text = doc.get_text("text");
-                text.update(&from, None).unwrap();
-                text.update(&to, None).unwrap();
+                text.update(&from, Default::default()).unwrap();
+                text.update(&to, Default::default()).unwrap();
                 assert_eq!(&text.to_string(), &to);
             },
             criterion::BatchSize::SmallInput,
@@ -188,8 +188,8 @@ fn bench_update_text(c: &mut Criterion) {
             |(from, to)| {
                 let doc = LoroDoc::new();
                 let text = doc.get_text("text");
-                text.update(&from, None).unwrap();
-                text.update(&to, None).unwrap();
+                text.update(&from, Default::default()).unwrap();
+                text.update(&to, Default::default()).unwrap();
                 assert_eq!(&text.to_string(), &to);
             },
             criterion::BatchSize::SmallInput,

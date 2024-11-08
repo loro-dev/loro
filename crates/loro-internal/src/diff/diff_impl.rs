@@ -14,13 +14,31 @@
 //!
 //! The implementation of this algorithm is based on the implementation by
 //! Brandon Williams.
+use crate::change::get_sys_timestamp;
 use fxhash::FxHashMap;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::iter::zip;
 use std::ops::{Index, IndexMut};
 
-use crate::change::get_sys_timestamp;
+/// Options for controlling the text update behavior.
+///
+/// - `timeout_ms`: Optional timeout in milliseconds for the diff computation
+/// - `use_refined_diff`: Whether to use a more refined but slower diff algorithm. Defaults to true.
+#[derive(Clone, Debug)]
+pub struct UpdateOptions {
+    pub timeout_ms: Option<f64>,
+    pub use_refined_diff: bool,
+}
+
+impl Default for UpdateOptions {
+    fn default() -> Self {
+        Self {
+            timeout_ms: None,
+            use_refined_diff: true,
+        }
+    }
+}
 
 #[derive(thiserror::Error, Debug, PartialEq)]
 pub enum UpdateTimeoutError {
@@ -97,17 +115,16 @@ impl<D: DiffHandler> OperateProxy<D> {
     }
 }
 
-pub(crate) fn myers_diff<D: DiffHandler>(
+pub(crate) fn diff<D: DiffHandler>(
     proxy: &mut OperateProxy<D>,
-    should_use_dj: bool,
-    timeout_ms: Option<f64>,
+    options: UpdateOptions,
     old: &[u32],
     new: &[u32],
 ) -> Result<(), UpdateTimeoutError> {
     let max_d = (old.len() + new.len() + 1) / 2 + 1;
     let mut vb = OffsetVec::new(max_d);
     let mut vf = OffsetVec::new(max_d);
-    let start_time = if timeout_ms.is_some() {
+    let start_time = if options.timeout_ms.is_some() {
         get_sys_timestamp()
     } else {
         0.
@@ -115,8 +132,8 @@ pub(crate) fn myers_diff<D: DiffHandler>(
 
     conquer(
         proxy,
-        should_use_dj,
-        timeout_ms,
+        options.use_refined_diff,
+        options.timeout_ms,
         start_time,
         old,
         0,
@@ -155,6 +172,7 @@ impl IndexMut<isize> for OffsetVec {
 }
 
 struct MiddleSnakeResult {
+    #[allow(unused)]
     d: usize,
     x_start: usize,
     y_start: usize,
@@ -301,7 +319,7 @@ fn conquer<D: DiffHandler>(
         } else if is_empty_range(old_start, old_end) {
             proxy.insert(old_start, new_start, new_end - new_start);
         } else if let Some(MiddleSnakeResult {
-            d,
+            d: _,
             x_start,
             y_start,
         }) = find_middle_snake(
@@ -774,7 +792,7 @@ mod tests {
         let mut proxy = OperateProxy::new(handler);
         let old = vec![1; 100];
         let new = vec![2; 100];
-        myers_diff(&mut proxy, false, None, &old, &new).unwrap();
+        diff(&mut proxy, Default::default(), &old, &new).unwrap();
     }
 
     #[test]
@@ -783,7 +801,11 @@ mod tests {
         let mut proxy = OperateProxy::new(handler);
         let old = vec![1; 10000];
         let new = vec![2; 10000];
-        let result = myers_diff(&mut proxy, false, Some(0.1), &old, &new);
+        let options = UpdateOptions {
+            timeout_ms: Some(0.1),
+            ..Default::default()
+        };
+        let result = diff(&mut proxy, options, &old, &new);
         assert!(result.is_err());
     }
 }

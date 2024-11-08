@@ -29,6 +29,7 @@ use std::ops::Range;
 use std::sync::Arc;
 use tracing::info;
 
+pub use loro_internal::diff::diff_impl::UpdateOptions;
 pub use loro_internal::diff::diff_impl::UpdateTimeoutError;
 pub use loro_internal::subscription::LocalUpdateCallback;
 pub use loro_internal::subscription::PeerIdUpdateCallback;
@@ -1440,13 +1441,17 @@ impl LoroText {
     }
 
     /// Update the current text based on the provided text.
-    pub fn update(&self, text: &str, timeout_in_ms: Option<f64>) -> Result<(), UpdateTimeoutError> {
-        self.handler.update(text, timeout_in_ms)
+    pub fn update(&self, text: &str, options: UpdateOptions) -> Result<(), UpdateTimeoutError> {
+        self.handler.update(text, options)
     }
 
     /// Update the current text based on the provided text by line.
-    pub fn update_by_line(&self, text: &str) {
-        self.handler.update_by_line(text);
+    pub fn update_by_line(
+        &self,
+        text: &str,
+        options: UpdateOptions,
+    ) -> Result<(), UpdateTimeoutError> {
+        self.handler.update_by_line(text, options)
     }
 
     /// Apply a [delta](https://quilljs.com/docs/delta/) to the text container.
