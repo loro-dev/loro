@@ -9,8 +9,8 @@ use std::{
 };
 
 use loro::{
-    awareness::Awareness, loro_value, Frontiers, FrontiersNotIncluded, LoroDoc, LoroError,
-    LoroList, LoroMap, LoroText, ToJson,
+    awareness::Awareness, loro_value, ContainerID, ContainerType, Frontiers, FrontiersNotIncluded,
+    LoroDoc, LoroError, LoroList, LoroMap, LoroText, ToJson,
 };
 use loro_internal::{handler::TextDelta, id::ID, vv, LoroResult};
 use rand::{Rng, SeedableRng};
@@ -2034,4 +2034,12 @@ fn test_for_each_list() {
         vec.push(v.into_value().unwrap());
     });
     assert_eq!(vec, vec![0.into(), 1.into(), 2.into()]);
+}
+
+#[test]
+#[should_panic]
+fn should_avoid_initialize_new_container_accidentally() {
+    let doc = LoroDoc::new();
+    let id = ContainerID::new_normal(ID::new(0, 0), ContainerType::Text);
+    let _text = doc.get_text(id);
 }
