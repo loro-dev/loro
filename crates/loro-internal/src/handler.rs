@@ -8,7 +8,7 @@ use crate::{
     },
     cursor::{Cursor, Side},
     delta::{DeltaItem, Meta, StyleMeta, TreeExternalDiff},
-    diff::{myers_diff, OperateProxy},
+    diff::{diff_impl::dj_diff, myers_diff, OperateProxy},
     event::{Diff, TextDiffItem},
     op::ListSlice,
     state::{IndexType, State, TreeParentId},
@@ -2149,9 +2149,10 @@ impl TextHandler {
     pub fn update(&self, text: &str) {
         let old_str = self.to_string();
         let new = text.chars().map(|x| x as u32).collect::<Vec<u32>>();
-        myers_diff(
+        let old = old_str.chars().map(|x| x as u32).collect::<Vec<u32>>();
+        dj_diff(
             &mut OperateProxy::new(text_update::DiffHook::new(self, &new)),
-            &old_str.chars().map(|x| x as u32).collect::<Vec<u32>>(),
+            &old,
             &new,
         );
     }
@@ -2161,8 +2162,6 @@ impl TextHandler {
         let hook = text_update::DiffHookForLine::new(self, text);
         let old_lines = hook.get_old_arr().to_vec();
         let new_lines = hook.get_new_arr().to_vec();
-        trace!("old_lines: {:?}", old_lines);
-        trace!("new_lines: {:?}", new_lines);
         myers_diff(&mut OperateProxy::new(hook), &old_lines, &new_lines);
     }
 

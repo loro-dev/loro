@@ -14,8 +14,12 @@
 //!
 //! The implementation of this algorithm is based on the implementation by
 //! Brandon Williams.
+use std::cmp::Ordering;
+use std::collections::BinaryHeap;
 use std::iter::zip;
 use std::ops::{Index, IndexMut};
+
+use fxhash::FxHashMap;
 
 /// Utility function to check if a range is empty that works on older rust versions
 #[inline(always)]
@@ -78,6 +82,10 @@ impl<D: DiffHandler> OperateProxy<D> {
 
     pub fn insert(&mut self, old_index: usize, new_index: usize, new_len: usize) {
         self.handler.insert(old_index, new_index, new_len);
+    }
+
+    fn unwrap(self) -> D {
+        self.handler
     }
 }
 
@@ -224,5 +232,344 @@ fn conquer<D: DiffHandler>(
             proxy.delete(old_start, old_end - old_start);
             proxy.insert(old_start, new_start, new_end - new_start);
         }
+    }
+}
+
+pub fn dj_diff<D: DiffHandler>(proxy: &mut OperateProxy<D>, old: &[u32], new: &[u32]) {
+    if old.is_empty() {
+        proxy.insert(0, 0, new.len());
+        return;
+    }
+
+    if new.is_empty() {
+        proxy.delete(0, old.len());
+        return;
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    struct Point {
+        x: u32,
+        y: u32,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Direction {
+        Up,
+        Left,
+        UpLeft,
+    }
+
+    struct QueueItem {
+        point: Point,
+        cost: isize,
+        from: Direction,
+    }
+
+    impl PartialEq for QueueItem {
+        fn eq(&self, other: &Self) -> bool {
+            self.cost == other.cost
+        }
+    }
+
+    impl PartialOrd for QueueItem {
+        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+            Some(self.cmp(&other))
+        }
+    }
+
+    impl Ord for QueueItem {
+        fn cmp(&self, other: &Self) -> Ordering {
+            other.cost.cmp(&self.cost)
+        }
+    }
+
+    impl Eq for QueueItem {}
+
+    let mut visited: FxHashMap<Point, Direction> = FxHashMap::default();
+    let mut q: BinaryHeap<QueueItem> = BinaryHeap::new();
+    q.push(QueueItem {
+        point: Point { x: 0, y: 0 },
+        cost: 0,
+        from: Direction::UpLeft,
+    });
+
+    while let Some(QueueItem { point, cost, from }) = q.pop() {
+        // dbg!(&point, &cost, &from);
+        if point.x == old.len() as u32 && point.y == new.len() as u32 {
+            break;
+        }
+
+        if point.x + 1 <= old.len() as u32 {
+            let next_point = Point {
+                x: point.x + 1,
+                y: point.y,
+            };
+
+            if let std::collections::hash_map::Entry::Vacant(e) = visited.entry(next_point) {
+                e.insert(Direction::Left);
+                let mut next_cost = cost + 1;
+                if from != Direction::Left {
+                    next_cost += 1;
+                }
+
+                q.push(QueueItem {
+                    point: next_point,
+                    cost: next_cost,
+                    from: Direction::Left,
+                });
+            }
+        }
+
+        if point.y + 1 <= new.len() as u32 {
+            let next_point = Point {
+                x: point.x,
+                y: point.y + 1,
+            };
+
+            if let std::collections::hash_map::Entry::Vacant(e) = visited.entry(next_point) {
+                let direction = Direction::Up;
+                let mut next_cost = cost + 1;
+                if from != direction {
+                    next_cost += 1;
+                }
+
+                e.insert(direction);
+                q.push(QueueItem {
+                    point: next_point,
+                    cost: next_cost,
+                    from: Direction::Up,
+                });
+            }
+        }
+
+        if point.x + 1 <= old.len() as u32
+            && point.y + 1 <= new.len() as u32
+            && old[point.x as usize] == new[point.y as usize]
+        {
+            let next_point = Point {
+                x: point.x + 1,
+                y: point.y + 1,
+            };
+
+            if let std::collections::hash_map::Entry::Vacant(e) = visited.entry(next_point) {
+                let next_cost = if from == Direction::UpLeft {
+                    cost
+                } else {
+                    cost + 1
+                };
+
+                e.insert(Direction::UpLeft);
+                q.push(QueueItem {
+                    point: next_point,
+                    cost: next_cost,
+                    from: Direction::UpLeft,
+                });
+            }
+        }
+    }
+
+    // Backtrack from end point to construct diff operations
+    let mut current = Point {
+        x: old.len() as u32,
+        y: new.len() as u32,
+    };
+
+    let mut path: Vec<(Direction, usize)> = Vec::new();
+    while current.x > 0 || current.y > 0 {
+        let direction = visited.get(&current).unwrap();
+        if let Some((last_dir, count)) = path.last_mut() {
+            if last_dir == direction {
+                *count += 1;
+            } else {
+                path.push((*direction, 1));
+            }
+        } else {
+            path.push((*direction, 1));
+        }
+        match direction {
+            Direction::Left => {
+                current.x -= 1;
+            }
+            Direction::Up => {
+                current.y -= 1;
+            }
+            Direction::UpLeft => {
+                current.x -= 1;
+                current.y -= 1;
+            }
+        }
+    }
+
+    path.reverse();
+
+    let mut old_index = 0;
+    let mut new_index = 0;
+
+    for (direction, count) in path {
+        match direction {
+            Direction::Left => {
+                proxy.delete(old_index, count);
+                old_index += count;
+            }
+            Direction::Up => {
+                proxy.insert(old_index, new_index, count);
+                new_index += count;
+            }
+            Direction::UpLeft => {
+                old_index += count;
+                new_index += count;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Debug, Default)]
+    struct RecordingDiffHandler {
+        ops: Vec<DiffOperation>,
+    }
+
+    #[derive(Debug, PartialEq)]
+    enum DiffOperation {
+        Insert {
+            old_index: usize,
+            new_index: usize,
+            length: usize,
+        },
+        Delete {
+            old_index: usize,
+            length: usize,
+        },
+    }
+
+    impl DiffHandler for RecordingDiffHandler {
+        fn insert(&mut self, pos: usize, start: usize, len: usize) {
+            self.ops.push(DiffOperation::Insert {
+                old_index: pos,
+                new_index: start,
+                length: len,
+            });
+        }
+
+        fn delete(&mut self, pos: usize, len: usize) {
+            self.ops.push(DiffOperation::Delete {
+                old_index: pos,
+                length: len,
+            });
+        }
+    }
+
+    #[test]
+    fn test_recording_diff_handler() {
+        let handler = RecordingDiffHandler::default();
+        let mut proxy = OperateProxy::new(handler);
+        let old = vec![1, 2, 3];
+        let new = vec![1, 4, 3];
+
+        dj_diff(&mut proxy, &old, &new);
+        let handler = proxy.unwrap();
+        assert_eq!(
+            handler.ops,
+            vec![
+                DiffOperation::Delete {
+                    old_index: 1,
+                    length: 1
+                },
+                DiffOperation::Insert {
+                    old_index: 2,
+                    new_index: 1,
+                    length: 1
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_dj_diff_same() {
+        let handler = RecordingDiffHandler::default();
+        let mut proxy = OperateProxy::new(handler);
+        let old = vec![1, 2, 3];
+        let new = vec![1, 2, 3];
+        dj_diff(&mut proxy, &old, &new);
+        let handler = proxy.unwrap();
+        assert_eq!(handler.ops, vec![]);
+    }
+
+    #[test]
+    fn test_dj_diff_1() {
+        let handler = RecordingDiffHandler::default();
+        let mut proxy = OperateProxy::new(handler);
+        let old = vec![1];
+        let new = vec![0, 1, 2];
+        dj_diff(&mut proxy, &old, &new);
+        let handler = proxy.unwrap();
+        assert_eq!(
+            handler.ops,
+            vec![
+                DiffOperation::Insert {
+                    old_index: 0,
+                    new_index: 0,
+                    length: 1
+                },
+                DiffOperation::Insert {
+                    old_index: 1,
+                    new_index: 2,
+                    length: 1
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_dj_diff_may_scatter() {
+        let handler = RecordingDiffHandler::default();
+        let mut proxy = OperateProxy::new(handler);
+        let old = vec![1, 2, 3, 4, 5];
+        let new = vec![99, 1, 2, 3, 4, 5, 98, 97, 96, 3, 95, 4, 93, 92, 5, 91];
+        dj_diff(&mut proxy, &old, &new);
+        let handler = proxy.unwrap();
+        assert_eq!(
+            handler.ops,
+            vec![
+                DiffOperation::Insert {
+                    old_index: 0,
+                    new_index: 0,
+                    length: 1
+                },
+                DiffOperation::Insert {
+                    old_index: 5,
+                    new_index: 6,
+                    length: 10
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_dj_diff_may_scatter_1() {
+        let handler = RecordingDiffHandler::default();
+        let mut proxy = OperateProxy::new(handler);
+        let old = vec![1, 2, 3, 4, 5];
+        let new = vec![99, 1, 2, 98, 97, 96, 3, 95, 4, 93, 92, 5, 1, 2, 3, 4, 5, 91];
+        dj_diff(&mut proxy, &old, &new);
+        let handler = proxy.unwrap();
+        assert_eq!(
+            handler.ops,
+            vec![
+                DiffOperation::Insert {
+                    old_index: 0,
+                    new_index: 0,
+                    length: 12
+                },
+                DiffOperation::Insert {
+                    old_index: 5,
+                    new_index: 17,
+                    length: 1
+                },
+            ]
+        );
     }
 }
