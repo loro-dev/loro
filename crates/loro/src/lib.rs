@@ -1441,11 +1441,31 @@ impl LoroText {
     }
 
     /// Update the current text based on the provided text.
+    ///
+    /// It will calculate the minimal difference and apply it to the current text.
+    /// It uses Myers' diff algorithm to compute the optimal difference.
+    ///
+    /// This could take a long time for large texts (e.g. > 50_000 characters).
+    /// In that case, you should use `updateByLine` instead.
+    ///
+    /// # Example
+    /// ```rust
+    /// use loro::LoroDoc;
+    ///
+    /// let doc = LoroDoc::new();
+    /// let text = doc.get_text("text");
+    /// text.insert(0, "Hello").unwrap();
+    /// text.update("Hello World", Default::default()).unwrap();
+    /// assert_eq!(text.to_string(), "Hello World");
+    /// ```
+    ///
     pub fn update(&self, text: &str, options: UpdateOptions) -> Result<(), UpdateTimeoutError> {
         self.handler.update(text, options)
     }
 
-    /// Update the current text based on the provided text by line.
+    /// Update the current text based on the provided text.
+    ///
+    /// This update calculation is line-based, which will be more efficient but less precise.
     pub fn update_by_line(
         &self,
         text: &str,

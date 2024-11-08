@@ -5475,7 +5475,31 @@ interface LoroText {
     insert(pos: number, text: string): void;
     delete(pos: number, len: number): void;
     subscribe(listener: Listener): Subscription;
+    /**
+     * Update the current text to the target text.
+     *
+     * It will calculate the minimal difference and apply it to the current text.
+     * It uses Myers' diff algorithm to compute the optimal difference.
+     *
+     * This could take a long time for large texts (e.g. > 50_000 characters).
+     * In that case, you should use `updateByLine` instead.
+     *
+     * @example
+     * ```ts
+     * import { LoroDoc } from "loro-crdt";
+     *
+     * const doc = new LoroDoc();
+     * const text = doc.getText("text");
+     * text.insert(0, "Hello");
+     * text.update("Hello World");
+     * console.log(text.toString()); // "Hello World"
+     * ```
+     */
     update(text: string, options?: TextUpdateOptions): void;
+    /**
+     * Update the current text based on the provided text.
+     * This update calculation is line-based, which will be more efficient but less precise.
+     */
     updateByLine(text: string, options?: TextUpdateOptions): void;
 }
 interface LoroTree<T extends Record<string, unknown> = Record<string, unknown>> {
