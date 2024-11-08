@@ -1995,6 +1995,48 @@ fn test_fork_when_detached() {
 }
 
 #[test]
+fn test_for_each_movable_list() {
+    let doc = LoroDoc::new();
+    let list = doc.get_movable_list("list");
+    list.insert(0, 1).unwrap();
+    list.insert(1, "hello").unwrap();
+    list.insert(2, true).unwrap();
+    let mut vec = vec![];
+    list.for_each(|v| {
+        vec.push(v.into_value().unwrap());
+    });
+    assert_eq!(vec, vec![1.into(), "hello".into(), true.into()]);
+}
+
+#[test]
+fn test_for_each_map() {
+    let doc = LoroDoc::new();
+    let map = doc.get_map("map");
+    map.insert("0", 0).unwrap();
+    map.insert("1", 1).unwrap();
+    map.insert("2", 2).unwrap();
+    let mut vec = vec![];
+    map.for_each(|_, v| {
+        vec.push(v.into_value().unwrap());
+    });
+    assert_eq!(vec, vec![0.into(), 1.into(), 2.into()]);
+}
+
+#[test]
+fn test_for_each_list() {
+    let doc = LoroDoc::new();
+    let list = doc.get_list("list");
+    list.insert(0, 0).unwrap();
+    list.insert(1, 1).unwrap();
+    list.insert(2, 2).unwrap();
+    let mut vec = vec![];
+    list.for_each(|v| {
+        vec.push(v.into_value().unwrap());
+    });
+    assert_eq!(vec, vec![0.into(), 1.into(), 2.into()]);
+}
+
+#[test]
 #[should_panic]
 fn should_avoid_initialize_new_container_accidentally() {
     let doc = LoroDoc::new();
