@@ -3219,21 +3219,21 @@ impl LoroMovableList {
 
     /// Get the creator of the list item at the given position.
     pub fn getCreatorAt(&self, pos: usize) -> Option<JsStrPeerID> {
-        self.handler.get_creator_at(pos).map(|x| peer_id_to_js(x))
+        self.handler.get_creator_at(pos).map(peer_id_to_js)
     }
 
     /// Get the last mover of the list item at the given position.
     pub fn getLastMoverAt(&self, pos: usize) -> Option<JsStrPeerID> {
         self.handler
             .get_last_mover_at(pos)
-            .map(|x| peer_id_to_js(x))
+            .map(peer_id_to_js)
     }
 
     /// Get the last editor of the list item at the given position.
     pub fn getLastEditorAt(&self, pos: usize) -> Option<JsStrPeerID> {
         self.handler
             .get_last_editor_at(pos)
-            .map(|x| peer_id_to_js(x))
+            .map(peer_id_to_js)
     }
 }
 
@@ -3513,7 +3513,7 @@ impl LoroTreeNode {
 
     /// Get the creator of this node.
     pub fn creator(&self) -> JsStrPeerID {
-        peer_id_to_js(self.id.peer).into()
+        peer_id_to_js(self.id.peer)
     }
 }
 
