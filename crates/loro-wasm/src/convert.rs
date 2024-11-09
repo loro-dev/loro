@@ -321,7 +321,7 @@ impl From<ImportBlobMetadata> for JsImportBlobMetadata {
         let end_vv: JsValue = end_vv.into();
         let start_timestamp: JsValue = JsValue::from_f64(meta.start_timestamp as f64);
         let end_timestamp: JsValue = JsValue::from_f64(meta.end_timestamp as f64);
-        let is_snapshot: JsValue = JsValue::from_bool(meta.is_snapshot);
+        let mode: JsValue = JsValue::from_str(&meta.mode.to_string());
         let change_num: JsValue = JsValue::from_f64(meta.change_num as f64);
         let ans = Object::new();
         js_sys::Reflect::set(
@@ -335,7 +335,7 @@ impl From<ImportBlobMetadata> for JsImportBlobMetadata {
         js_sys::Reflect::set(&ans, &JsValue::from_str("startFrontiers"), &js_frontiers).unwrap();
         js_sys::Reflect::set(&ans, &JsValue::from_str("startTimestamp"), &start_timestamp).unwrap();
         js_sys::Reflect::set(&ans, &JsValue::from_str("endTimestamp"), &end_timestamp).unwrap();
-        js_sys::Reflect::set(&ans, &JsValue::from_str("isSnapshot"), &is_snapshot).unwrap();
+        js_sys::Reflect::set(&ans, &JsValue::from_str("mode"), &mode).unwrap();
         js_sys::Reflect::set(&ans, &JsValue::from_str("changeNum"), &change_num).unwrap();
         let ans: JsValue = ans.into();
         ans.into()
