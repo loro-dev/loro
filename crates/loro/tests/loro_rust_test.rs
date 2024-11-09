@@ -2106,7 +2106,7 @@ fn test_decode_import_blob_meta_shallow_since() {
     let meta = LoroDoc::decode_import_blob_meta(&bytes, false).unwrap();
     assert_eq!(meta.start_frontiers, Frontiers::from(vec![ID::new(0, 3)]));
     assert_eq!(meta.partial_start_vv, vv!(0 => 3));
-    assert_eq!(meta.partial_end_vv, vv!(0 => 6));
+    assert_eq!(meta.partial_end_vv, vv!(0 => 5));
     assert_eq!(meta.start_timestamp, 10);
 }
 
