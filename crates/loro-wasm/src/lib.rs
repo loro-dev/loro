@@ -4673,7 +4673,7 @@ export interface ImportBlobMetadata {
     startFrontiers: OpId[],
     startTimestamp: number;
     endTimestamp: number;
-    exportMode: "outdated-snapshot" | "outdated-update" | "snapshot" | "shallow-snapshot" | "update";
+    mode: "outdated-snapshot" | "outdated-update" | "snapshot" | "shallow-snapshot" | "update";
     changeNum: number;
 }
 
