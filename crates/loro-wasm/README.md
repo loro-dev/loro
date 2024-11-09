@@ -9,8 +9,7 @@
 <a href="https://loro.dev" alt="loro-site">Loro</a>
 </h1>
 <p align="center">
-  <b>Reimagine state management with CRDTs 🦜</b><br/>
-  Make your app state synchronized and collaborative effortlessly.
+  <b>Make your JSON data collaborative and version-controlled 🦜</b>
 </p>
 <p align="center">
   <a href="https://trendshift.io/repositories/4964" target="_blank"><img src="https://trendshift.io/api/badge/repositories/4964" alt="loro-dev%2Floro | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>

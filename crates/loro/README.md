@@ -1,10 +1,10 @@
 # Loro 
 
-Loro is a high-performance CRDTs framework offering Rust and JavaScript APIs. 
+> Make your JSON data collaborative and version-controlled
+
+Loro is a high-performance CRDTs framework offering Rust, JavaScript and Swift APIs. 
 
 Designed for local-first software, it enables effortless collaboration in app states. 
-
-PS: Version control is forthcoming. Time travel functionality is already accessible at [https://loro.dev/docs/tutorial/time_travel](https://loro.dev/docs/tutorial/time_travel).
 
 # Examples
 
