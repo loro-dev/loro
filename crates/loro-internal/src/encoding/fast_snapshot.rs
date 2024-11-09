@@ -19,8 +19,10 @@ use crate::{
     change::Change, encoding::shallow_snapshot, oplog::ChangeStore, LoroDoc, OpLog, VersionVector,
 };
 use bytes::{Buf, Bytes};
-use loro_common::{IdSpan, LoroError, LoroResult};
+use loro_common::{HasCounterSpan, IdSpan, LoroError, LoroResult};
 use tracing::trace;
+
+use super::{EncodedBlobMode, ImportBlobMetadata, ParsedHeaderAndBody};
 pub(crate) const EMPTY_MARK: &[u8] = b"E";
 pub(crate) struct Snapshot {
     pub oplog_bytes: Bytes,
@@ -61,6 +63,23 @@ pub(super) fn _decode_snapshot_bytes(bytes: Bytes) -> LoroResult<Snapshot> {
         state_bytes,
         shallow_root_state_bytes,
     })
+}
+
+pub(super) fn _decode_snapshot_meta_partial(bytes: &[u8]) -> (&[u8], bool) {
+    let mut r = bytes;
+    let oplog_bytes_len = read_u32_le_slice(&mut r) as usize;
+    let oplog_bytes = &r[..oplog_bytes_len];
+    r = &r[oplog_bytes_len..];
+    let state_bytes_len = read_u32_le_slice(&mut r) as usize;
+    r = &r[state_bytes_len..];
+    let shallow_bytes_len = read_u32_le_slice(&mut r) as usize;
+    (oplog_bytes, shallow_bytes_len > 0)
+}
+
+fn read_u32_le_slice(r: &mut &[u8]) -> u32 {
+    let mut buf = [0; 4];
+    r.read_exact(&mut buf).unwrap();
+    u32::from_le_bytes(buf)
 }
 
 fn read_u32_le(r: &mut bytes::buf::Reader<Bytes>) -> u32 {
@@ -247,7 +266,6 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, body: Bytes) -> Result<Vec<Chang
         let old_reader_len = reader.len();
         let len = leb128::read::unsigned(&mut reader).unwrap() as usize;
         index += old_reader_len - reader.len();
-        trace!("index={}", index);
         let block_bytes = body.slice(index..index + len);
         trace!("decoded block_bytes = {:?}", &block_bytes);
         let new_changes = ChangeStore::decode_block_bytes(block_bytes, &oplog.arena, self_vv)?;
@@ -258,4 +276,57 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, body: Bytes) -> Result<Vec<Chang
 
     changes.sort_unstable_by_key(|x| x.lamport);
     Ok(changes)
+}
+
+pub(crate) fn decode_snapshot_blob_meta(
+    parsed: ParsedHeaderAndBody,
+) -> LoroResult<ImportBlobMetadata> {
+    let (oplog_bytes, is_shallow) = _decode_snapshot_meta_partial(parsed.body);
+    let mode = if is_shallow {
+        EncodedBlobMode::ShallowSnapshot
+    } else {
+        EncodedBlobMode::Snapshot
+    };
+
+    let doc = LoroDoc::new();
+    let mut oplog = doc.oplog.try_lock().unwrap();
+    oplog.decode_change_store(oplog_bytes.to_vec().into())?;
+    let timestamp = oplog.get_greatest_timestamp(oplog.dag.frontiers());
+    let f = oplog.dag.shallow_since_frontiers().clone();
+    let start_timestamp = oplog.get_timestamp_of_version(&f);
+    let change_num = oplog.change_store().change_num() as u32;
+
+    Ok(ImportBlobMetadata {
+        mode,
+        partial_start_vv: oplog.dag.shallow_since_vv().to_vv(),
+        partial_end_vv: oplog.vv().clone(),
+        start_timestamp,
+        start_frontiers: f,
+        end_timestamp: timestamp,
+        change_num,
+    })
+}
+
+pub(crate) fn decode_updates_blob_meta(
+    parsed: ParsedHeaderAndBody,
+) -> LoroResult<ImportBlobMetadata> {
+    let doc = LoroDoc::new();
+    let mut oplog = doc.oplog.try_lock().unwrap();
+    let changes = decode_updates(&mut oplog, parsed.body.to_vec().into())?;
+    let mut start_vv = VersionVector::new();
+    let mut end_vv = VersionVector::new();
+    for c in changes.iter() {
+        start_vv.insert(c.id.peer, c.id.counter);
+        end_vv.insert(c.id.peer, c.ctr_end());
+    }
+
+    Ok(ImportBlobMetadata {
+        mode: EncodedBlobMode::Updates,
+        partial_start_vv: start_vv,
+        partial_end_vv: end_vv,
+        start_timestamp: changes.first().map(|x| x.timestamp).unwrap_or(0),
+        start_frontiers: Default::default(),
+        end_timestamp: changes.last().map(|x| x.timestamp).unwrap_or(0),
+        change_num: changes.len() as u32,
+    })
 }

@@ -9,10 +9,10 @@ use std::{
 };
 
 use loro::{
-    awareness::Awareness, loro_value, ContainerID, ContainerType, Frontiers, FrontiersNotIncluded,
-    LoroDoc, LoroError, LoroList, LoroMap, LoroText, ToJson,
+    awareness::Awareness, loro_value, CommitOptions, ContainerID, ContainerType, ExportMode,
+    Frontiers, FrontiersNotIncluded, LoroDoc, LoroError, LoroList, LoroMap, LoroText, ToJson,
 };
-use loro_internal::{handler::TextDelta, id::ID, vv, LoroResult};
+use loro_internal::{encoding::EncodedBlobMode, handler::TextDelta, id::ID, vv, LoroResult};
 use rand::{Rng, SeedableRng};
 use serde_json::json;
 use tracing::trace_span;
@@ -563,22 +563,22 @@ fn decode_import_blob_meta() -> LoroResult<()> {
     doc_1.get_text("text").insert(0, "123")?;
     {
         let bytes = doc_1.export_from(&Default::default());
-        let meta = LoroDoc::decode_import_blob_meta(&bytes).unwrap();
+        let meta = LoroDoc::decode_import_blob_meta(&bytes, false).unwrap();
         assert!(meta.partial_start_vv.is_empty());
         assert_eq!(meta.partial_end_vv, vv!(1 => 3));
         assert_eq!(meta.start_timestamp, 0);
         assert_eq!(meta.end_timestamp, 0);
-        assert!(!meta.is_snapshot);
+        assert!(!meta.mode.is_snapshot());
         assert!(meta.start_frontiers.is_empty());
         assert_eq!(meta.change_num, 1);
 
         let bytes = doc_1.export_snapshot();
-        let meta = LoroDoc::decode_import_blob_meta(&bytes).unwrap();
+        let meta = LoroDoc::decode_import_blob_meta(&bytes, false).unwrap();
         assert!(meta.partial_start_vv.is_empty());
         assert_eq!(meta.partial_end_vv, vv!(1 => 3));
         assert_eq!(meta.start_timestamp, 0);
         assert_eq!(meta.end_timestamp, 0);
-        assert!(meta.is_snapshot);
+        assert!(meta.mode.is_snapshot());
         assert!(meta.start_frontiers.is_empty());
         assert_eq!(meta.change_num, 1);
     }
@@ -590,32 +590,32 @@ fn decode_import_blob_meta() -> LoroResult<()> {
     doc_2.get_text("text").insert(0, "123")?;
     {
         let bytes = doc_2.export_from(&doc_1.oplog_vv());
-        let meta = LoroDoc::decode_import_blob_meta(&bytes).unwrap();
+        let meta = LoroDoc::decode_import_blob_meta(&bytes, false).unwrap();
         assert_eq!(meta.partial_start_vv, vv!());
         assert_eq!(meta.partial_end_vv, vv!(2 => 6));
         assert_eq!(meta.start_timestamp, 0);
         assert_eq!(meta.end_timestamp, 0);
-        assert!(!meta.is_snapshot);
+        assert!(!meta.mode.is_snapshot());
         assert_eq!(meta.start_frontiers, vec![ID::new(1, 2)].into());
         assert_eq!(meta.change_num, 1);
 
         let bytes = doc_2.export_from(&vv!(1 => 1));
-        let meta = LoroDoc::decode_import_blob_meta(&bytes).unwrap();
+        let meta = LoroDoc::decode_import_blob_meta(&bytes, false).unwrap();
         assert_eq!(meta.partial_start_vv, vv!(1 => 1));
         assert_eq!(meta.partial_end_vv, vv!(1 => 3, 2 => 6));
         assert_eq!(meta.start_timestamp, 0);
         assert_eq!(meta.end_timestamp, 0);
-        assert!(!meta.is_snapshot);
+        assert!(!meta.mode.is_snapshot());
         assert_eq!(meta.start_frontiers, vec![ID::new(1, 0)].into());
         assert_eq!(meta.change_num, 2);
 
         let bytes = doc_2.export_snapshot();
-        let meta = LoroDoc::decode_import_blob_meta(&bytes).unwrap();
+        let meta = LoroDoc::decode_import_blob_meta(&bytes, false).unwrap();
         assert_eq!(meta.partial_start_vv, vv!());
         assert_eq!(meta.partial_end_vv, vv!(1 => 3, 2 => 6));
         assert_eq!(meta.start_timestamp, 0);
         assert_eq!(meta.end_timestamp, 0);
-        assert!(meta.is_snapshot);
+        assert!(meta.mode.is_snapshot());
         assert!(meta.start_frontiers.is_empty());
         assert_eq!(meta.change_num, 2);
     }
@@ -2042,4 +2042,86 @@ fn should_avoid_initialize_new_container_accidentally() {
     let doc = LoroDoc::new();
     let id = ContainerID::new_normal(ID::new(0, 0), ContainerType::Text);
     let _text = doc.get_text(id);
+}
+
+#[test]
+fn test_decode_import_blob_meta_mode() {
+    let doc0 = LoroDoc::new();
+    doc0.set_peer_id(0).unwrap();
+    doc0.get_text("text").insert(0, "Hello").unwrap();
+    doc0.commit_with(CommitOptions::default().timestamp(100));
+    let blob = doc0.export(loro::ExportMode::snapshot()).unwrap();
+    let meta = LoroDoc::decode_import_blob_meta(&blob, false).unwrap();
+    assert_eq!(meta.mode, EncodedBlobMode::Snapshot);
+    assert_eq!(meta.end_timestamp, 100);
+    assert_eq!(meta.change_num, 1);
+    assert_eq!(meta.start_frontiers.len(), 0);
+    assert_eq!(meta.partial_start_vv.len(), 0);
+
+    // Check Updates mode
+    let doc1 = LoroDoc::new();
+    doc1.set_peer_id(1).unwrap();
+    doc1.get_text("text").insert(0, "World").unwrap();
+    let blob = doc1
+        .export(loro::ExportMode::Updates {
+            from: Default::default(),
+        })
+        .unwrap();
+    let meta = LoroDoc::decode_import_blob_meta(&blob, false).unwrap();
+    assert_eq!(meta.mode, EncodedBlobMode::Updates);
+
+    // Check ShallowSnapshot mode
+    let blob = doc0
+        .export(loro::ExportMode::ShallowSnapshot(std::borrow::Cow::Owned(
+            doc0.state_frontiers(),
+        )))
+        .unwrap();
+    let meta = LoroDoc::decode_import_blob_meta(&blob, false).unwrap();
+    assert_eq!(meta.mode, EncodedBlobMode::ShallowSnapshot);
+
+    // Check StateOnly mode
+    let blob = doc0.export(loro::ExportMode::StateOnly(None)).unwrap();
+    let meta = LoroDoc::decode_import_blob_meta(&blob, false).unwrap();
+    assert_eq!(meta.mode, EncodedBlobMode::ShallowSnapshot);
+
+    // Check SnapshotAt mode
+    let blob = doc0
+        .export(loro::ExportMode::SnapshotAt {
+            version: std::borrow::Cow::Owned(doc0.state_frontiers()),
+        })
+        .unwrap();
+    let meta = LoroDoc::decode_import_blob_meta(&blob, false).unwrap();
+    assert_eq!(meta.mode, EncodedBlobMode::Snapshot);
+}
+
+#[test]
+fn test_decode_import_blob_meta_shallow_since() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(0).unwrap();
+    doc.get_text("t").insert(0, "12345").unwrap();
+    doc.commit_with(CommitOptions::default().timestamp(10));
+    let bytes = doc
+        .export(ExportMode::shallow_snapshot(&ID::new(0, 3).into()))
+        .unwrap();
+    let meta = LoroDoc::decode_import_blob_meta(&bytes, false).unwrap();
+    assert_eq!(meta.start_frontiers, Frontiers::from(vec![ID::new(0, 3)]));
+    assert_eq!(meta.partial_start_vv, vv!(0 => 3));
+    assert_eq!(meta.partial_end_vv, vv!(0 => 5));
+    assert_eq!(meta.start_timestamp, 10);
+}
+
+#[test]
+fn test_decode_import_blob_meta_updates_range() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(0).unwrap();
+    doc.get_text("t").insert(0, "12345").unwrap();
+    doc.set_peer_id(1).unwrap();
+    doc.get_text("t").insert(0, "67890").unwrap();
+    let bytes = doc
+        .export(ExportMode::updates(&vv!(0 => 1, 1 => 1)))
+        .unwrap();
+    let meta = LoroDoc::decode_import_blob_meta(&bytes, false).unwrap();
+    assert_eq!(meta.mode, EncodedBlobMode::Updates);
+    assert_eq!(meta.partial_start_vv, vv!(0 => 1, 1 => 1));
+    assert_eq!(meta.partial_end_vv, vv!(0 => 5, 1 => 5));
 }

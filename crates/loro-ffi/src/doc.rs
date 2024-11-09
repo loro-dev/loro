@@ -61,8 +61,11 @@ impl LoroDoc {
 
     /// Decodes the metadata for an imported blob from the provided bytes.
     #[inline]
-    pub fn decode_import_blob_meta(&self, bytes: &[u8]) -> LoroResult<ImportBlobMetadata> {
-        let s = InnerLoroDoc::decode_import_blob_meta(bytes)?;
+    pub fn decode_import_blob_meta(
+        bytes: &[u8],
+        check_checksum: bool,
+    ) -> LoroResult<ImportBlobMetadata> {
+        let s = InnerLoroDoc::decode_import_blob_meta(bytes, check_checksum)?;
         Ok(s.into())
     }
 
@@ -626,7 +629,7 @@ pub struct ImportBlobMetadata {
     pub start_frontiers: Arc<Frontiers>,
     pub end_timestamp: i64,
     pub change_num: u32,
-    pub is_snapshot: bool,
+    pub mode: String,
 }
 
 impl From<loro::ImportBlobMetadata> for ImportBlobMetadata {
@@ -638,7 +641,7 @@ impl From<loro::ImportBlobMetadata> for ImportBlobMetadata {
             start_frontiers: Arc::new(value.start_frontiers.into()),
             end_timestamp: value.end_timestamp,
             change_num: value.change_num,
-            is_snapshot: value.is_snapshot,
+            mode: value.mode.to_string(),
         }
     }
 }

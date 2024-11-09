@@ -372,7 +372,10 @@ impl ParsedHeaderAndBody<'_> {
 }
 
 const MIN_HEADER_SIZE: usize = 22;
-pub(crate) fn parse_header_and_body(bytes: &[u8]) -> Result<ParsedHeaderAndBody, LoroError> {
+pub(crate) fn parse_header_and_body(
+    bytes: &[u8],
+    check_checksum: bool,
+) -> Result<ParsedHeaderAndBody, LoroError> {
     let reader = &bytes;
     if bytes.len() < MIN_HEADER_SIZE {
         return Err(LoroError::DecodeError("Invalid import data".into()));
@@ -396,7 +399,9 @@ pub(crate) fn parse_header_and_body(bytes: &[u8]) -> Result<ParsedHeaderAndBody,
         body: reader,
     };
 
-    ans.check_checksum()?;
+    if check_checksum {
+        ans.check_checksum()?;
+    }
     Ok(ans)
 }
 
@@ -525,6 +530,38 @@ pub(crate) fn decode_snapshot(
     })
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EncodedBlobMode {
+    OutdatedRle,
+    OutdatedSnapshot,
+    Snapshot,
+    ShallowSnapshot,
+    Updates,
+}
+
+impl std::fmt::Display for EncodedBlobMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            EncodedBlobMode::OutdatedRle => "outdated-update",
+            EncodedBlobMode::OutdatedSnapshot => "outdated-snapshot",
+            EncodedBlobMode::Snapshot => "snapshot",
+            EncodedBlobMode::ShallowSnapshot => "shallow-snapshot",
+            EncodedBlobMode::Updates => "update",
+        })
+    }
+}
+
+impl EncodedBlobMode {
+    pub fn is_snapshot(&self) -> bool {
+        matches!(
+            self,
+            EncodedBlobMode::Snapshot
+                | EncodedBlobMode::ShallowSnapshot
+                | EncodedBlobMode::OutdatedSnapshot
+        )
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ImportBlobMetadata {
     /// The partial start version vector.
@@ -543,19 +580,29 @@ pub struct ImportBlobMetadata {
     pub start_frontiers: Frontiers,
     pub end_timestamp: i64,
     pub change_num: u32,
-    pub is_snapshot: bool,
+    pub mode: EncodedBlobMode,
 }
 
 impl LoroDoc {
     /// Decodes the metadata for an imported blob from the provided bytes.
-    pub fn decode_import_blob_meta(blob: &[u8]) -> LoroResult<ImportBlobMetadata> {
-        outdated_encode_reordered::decode_import_blob_meta(blob)
+    pub fn decode_import_blob_meta(
+        blob: &[u8],
+        check_checksum: bool,
+    ) -> LoroResult<ImportBlobMetadata> {
+        let parsed = parse_header_and_body(blob, check_checksum)?;
+        match parsed.mode {
+            EncodeMode::Auto => unreachable!(),
+            EncodeMode::OutdatedRle | EncodeMode::OutdatedSnapshot => {
+                outdated_encode_reordered::decode_import_blob_meta(parsed)
+            }
+            EncodeMode::FastSnapshot => fast_snapshot::decode_snapshot_blob_meta(parsed),
+            EncodeMode::FastUpdates => fast_snapshot::decode_updates_blob_meta(parsed),
+        }
     }
 }
 
 #[cfg(test)]
 mod test {
-    
 
     use loro_common::{loro_value, ContainerID, ContainerType, LoroValue, ID};
 

@@ -4362,11 +4362,14 @@ impl Container {
 /// - endVersionVector
 /// - startTimestamp
 /// - endTimestamp
-/// - isSnapshot
+/// - mode
 /// - changeNum
 #[wasm_bindgen(js_name = "decodeImportBlobMeta")]
-pub fn decode_import_blob_meta(blob: &[u8]) -> JsResult<JsImportBlobMetadata> {
-    let meta: ImportBlobMetadata = LoroDocInner::decode_import_blob_meta(blob)?;
+pub fn decode_import_blob_meta(
+    blob: &[u8],
+    check_checksum: bool,
+) -> JsResult<JsImportBlobMetadata> {
+    let meta: ImportBlobMetadata = LoroDocInner::decode_import_blob_meta(blob, check_checksum)?;
     Ok(meta.into())
 }
 
@@ -4670,7 +4673,7 @@ export interface ImportBlobMetadata {
     startFrontiers: OpId[],
     startTimestamp: number;
     endTimestamp: number;
-    isSnapshot: boolean;
+    mode: "outdated-snapshot" | "outdated-update" | "snapshot" | "shallow-snapshot" | "update";
     changeNum: number;
 }
 

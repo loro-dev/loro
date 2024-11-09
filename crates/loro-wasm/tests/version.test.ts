@@ -154,7 +154,7 @@ describe("Version", () => {
   });
 });
 
-it("get import blob metadata", () => {
+it("get import blob metadata on outdated-format", () => {
   const doc0 = new LoroDoc();
   doc0.setPeerId(0n);
   const text = doc0.getText("text");
@@ -162,13 +162,13 @@ it("get import blob metadata", () => {
   doc0.commit();
   {
     const bytes = doc0.exportFrom();
-    const meta = decodeImportBlobMeta(bytes);
+    const meta = decodeImportBlobMeta(bytes, false);
     expect(meta.changeNum).toBe(1);
     expect(meta.partialStartVersionVector.get("0")).toBeFalsy();
     expect(meta.partialEndVersionVector.get("0")).toBe(1);
     expect(meta.startTimestamp).toBe(0);
     expect(meta.endTimestamp).toBe(0);
-    expect(meta.isSnapshot).toBeFalsy();
+    expect(meta.mode).toBe("outdated-update");
     expect(meta.startFrontiers.length).toBe(0);
   }
 
@@ -178,31 +178,31 @@ it("get import blob metadata", () => {
   doc1.import(doc0.exportFrom());
   {
     const bytes = doc1.exportFrom();
-    const meta = decodeImportBlobMeta(bytes);
+    const meta = decodeImportBlobMeta(bytes, false);
     expect(meta.changeNum).toBe(2);
     expect(meta.partialStartVersionVector.get("0")).toBeFalsy();
     expect(meta.partialEndVersionVector.get("0")).toBe(1);
     expect(meta.partialEndVersionVector.get("1")).toBe(3);
     expect(meta.startTimestamp).toBe(0);
     expect(meta.endTimestamp).toBe(0);
-    expect(meta.isSnapshot).toBeFalsy();
+    expect(meta.mode).toBe("outdated-update");
     expect(meta.startFrontiers.length).toBe(0);
   }
   {
     const bytes = doc1.exportSnapshot();
-    const meta = decodeImportBlobMeta(bytes);
+    const meta = decodeImportBlobMeta(bytes, false);
     expect(meta.changeNum).toBe(2);
     expect(meta.partialStartVersionVector.get("0")).toBeFalsy();
     expect(meta.partialEndVersionVector.get("0")).toBe(1);
     expect(meta.partialEndVersionVector.get("1")).toBe(3);
     expect(meta.startTimestamp).toBe(0);
     expect(meta.endTimestamp).toBe(0);
-    expect(meta.isSnapshot).toBeTruthy();
+    expect(meta.mode).toBe("outdated-snapshot");
     expect(meta.startFrontiers.length).toBe(0);
   }
   {
     const bytes = doc1.exportFrom(doc0.oplogVersion());
-    const meta = decodeImportBlobMeta(bytes);
+    const meta = decodeImportBlobMeta(bytes, false);
     expect(meta.changeNum).toBe(1);
     expect(meta.partialStartVersionVector.get("0")).toBeUndefined();
     expect(meta.partialStartVersionVector.get("1")).toBeFalsy();
@@ -210,7 +210,30 @@ it("get import blob metadata", () => {
     expect(meta.partialEndVersionVector.get("1")).toBe(3);
     expect(meta.startTimestamp).toBe(0);
     expect(meta.endTimestamp).toBe(0);
-    expect(meta.isSnapshot).toBeFalsy();
+    expect(meta.mode).toBe("outdated-update");
     expect(meta.startFrontiers).toStrictEqual([{ peer: "0", counter: 0 }]);
+  }
+});
+
+it("get import blob metadata on new format", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId(0n);
+  const text = doc.getText("text");
+  text.insert(0, "01234");
+  doc.commit();
+  {
+
+    const bytes = doc.export({ mode: "snapshot" });
+    const meta = decodeImportBlobMeta(bytes, false);
+    expect(meta.mode).toBe("snapshot");
+    expect(meta.partialStartVersionVector.get("0")).toBeFalsy();
+    expect(meta.partialEndVersionVector.get("0")).toBe(5);
+    expect(meta.startTimestamp).toBe(0);
+  }
+
+  {
+    const bytes = doc.export({ mode: "update" });
+    const meta = decodeImportBlobMeta(bytes, false);
+    expect(meta.mode).toBe("update");
   }
 });

@@ -158,8 +158,11 @@ impl LoroDoc {
 
     /// Decodes the metadata for an imported blob from the provided bytes.
     #[inline]
-    pub fn decode_import_blob_meta(bytes: &[u8]) -> LoroResult<ImportBlobMetadata> {
-        InnerLoroDoc::decode_import_blob_meta(bytes)
+    pub fn decode_import_blob_meta(
+        bytes: &[u8],
+        check_checksum: bool,
+    ) -> LoroResult<ImportBlobMetadata> {
+        InnerLoroDoc::decode_import_blob_meta(bytes, check_checksum)
     }
 
     /// Set whether to record the timestamp of each change. Default is `false`.

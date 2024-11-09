@@ -31,13 +31,12 @@ use crate::{
 
 use self::encode::{encode_changes, encode_ops, init_encode, TempOp};
 
-use super::ImportStatus;
 use super::{
     arena::*,
-    parse_header_and_body,
     value::{Value, ValueDecodedArenasTrait, ValueKind, ValueReader, ValueWriter},
     ImportBlobMetadata,
 };
+use super::{ImportStatus, ParsedHeaderAndBody};
 
 pub(crate) use crate::encoding::value_register::ValueRegister;
 
@@ -169,9 +168,7 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<Vec<
     Ok(changes)
 }
 
-pub fn decode_import_blob_meta(bytes: &[u8]) -> LoroResult<ImportBlobMetadata> {
-    let parsed = parse_header_and_body(bytes)?;
-    let is_snapshot = parsed.mode.is_snapshot();
+pub fn decode_import_blob_meta(parsed: ParsedHeaderAndBody) -> LoroResult<ImportBlobMetadata> {
     let iterators = serde_columnar::iter_from_bytes::<EncodedDoc>(parsed.body)?;
     let DecodedArenas { peer_ids, .. } = decode_arena(&iterators.arenas)?;
     let start_vv: VersionVector = iterators
@@ -210,7 +207,13 @@ pub fn decode_import_blob_meta(bytes: &[u8]) -> LoroResult<ImportBlobMetadata> {
     }
 
     Ok(ImportBlobMetadata {
-        is_snapshot,
+        mode: match parsed.mode {
+            super::EncodeMode::OutdatedRle => super::EncodedBlobMode::OutdatedRle,
+            super::EncodeMode::OutdatedSnapshot => super::EncodedBlobMode::OutdatedSnapshot,
+            super::EncodeMode::FastSnapshot => super::EncodedBlobMode::Snapshot,
+            super::EncodeMode::FastUpdates => super::EncodedBlobMode::Updates,
+            super::EncodeMode::Auto => unreachable!(),
+        },
         start_frontiers: frontiers,
         partial_start_vv: start_vv,
         partial_end_vv: VersionVector::from_iter(
@@ -1666,7 +1669,6 @@ struct EncodedStateInfo {
 
 #[cfg(test)]
 mod test {
-    
 
     use loro_common::LoroValue;
 

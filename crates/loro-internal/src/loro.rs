@@ -190,7 +190,7 @@ impl LoroDoc {
 
     pub fn from_snapshot(bytes: &[u8]) -> LoroResult<Self> {
         let doc = Self::new();
-        let ParsedHeaderAndBody { mode, body, .. } = parse_header_and_body(bytes)?;
+        let ParsedHeaderAndBody { mode, body, .. } = parse_header_and_body(bytes, true)?;
         if mode.is_snapshot() {
             decode_snapshot(&doc, mode, body)?;
             Ok(doc)
@@ -424,7 +424,7 @@ impl LoroDoc {
         origin: InternalString,
     ) -> Result<ImportStatus, LoroError> {
         ensure_cov::notify_cov("loro_internal::import");
-        let parsed = parse_header_and_body(bytes)?;
+        let parsed = parse_header_and_body(bytes, true)?;
         info!("Importing with mode={:?}", &parsed.mode);
         let result = match parsed.mode {
             EncodeMode::OutdatedRle => {
