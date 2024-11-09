@@ -36,7 +36,7 @@ use crate::{
         self, decode_snapshot, export_fast_snapshot, export_fast_updates,
         export_fast_updates_in_range, export_shallow_snapshot, export_snapshot, export_snapshot_at,
         export_state_only_snapshot, json_schema::json::JsonSchema, parse_header_and_body,
-        EncodeMode, ImportStatus, ParsedHeaderAndBody,
+        EncodeMode, ImportBlobMetadata, ImportStatus, ParsedHeaderAndBody,
     },
     event::{str_to_path, EventTriggerKind, Index, InternalDocDiff},
     handler::{Handler, MovableListHandler, TextHandler, TreeHandler, ValueOrHandler},
@@ -987,12 +987,30 @@ impl LoroDoc {
     // PERF: opt
     #[tracing::instrument(skip_all)]
     pub fn import_batch(&self, bytes: &[Vec<u8>]) -> LoroResult<()> {
+        if bytes.is_empty() {
+            return Ok(());
+        }
+
+        if bytes.len() == 1 {
+            return self.import(&bytes[0]).map(|_| ());
+        }
+
+        let mut meta_arr = bytes
+            .iter()
+            .map(|b| Ok((LoroDoc::decode_import_blob_meta(b, false)?, b)))
+            .collect::<LoroResult<Vec<(ImportBlobMetadata, &Vec<u8>)>>>()?;
+        meta_arr.sort_by(|a, b| {
+            a.0.mode
+                .cmp(&b.0.mode)
+                .then(b.0.change_num.cmp(&a.0.change_num))
+        });
+
         self.commit_then_stop();
         let is_detached = self.is_detached();
         self.detach();
         self.oplog.try_lock().unwrap().batch_importing = true;
         let mut err = None;
-        for data in bytes.iter() {
+        for (_meta, data) in meta_arr {
             match self.import(data) {
                 Ok(_s) => {
                     // TODO: merge
