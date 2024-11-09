@@ -35,6 +35,9 @@
   <a aria-label="Discord-Link" href="https://discord.gg/tUsBSVfqzf" target="_blank">
     <img alt="" src="https://img.shields.io/badge/Discord-black?style=for-the-badge&logo=discord">
   </a>
+  <a aria-label="Gurubase" href="https://gurubase.io/g/loro" target="_blank">
+    <img alt="" src="https://img.shields.io/badge/Ask%20Loro%20Guru-000000?style=for-the-badge">
+  </a>
 </p>
 
 https://github.com/loro-dev/loro/assets/18425020/fe246c47-a120-44b3-91d4-1e7232a5b4ac
