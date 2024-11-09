@@ -1,6 +1,6 @@
 [package]
 name = "loro-kv-store"
-version = "1.0.0-beta.5"
+version = "1.1.0"
 edition = "2021"
 license = "MIT"
 description = "Key-value store component for Loro, a high-performance CRDTs framework"
@@ -10,7 +10,7 @@ authors = ["Liang Zhao", "Zixuan Chen"]
 
 
 [dependencies]
-loro-common = { path = "../loro-common", version = "1.0.0-beta.5" }
+loro-common = { path = "../loro-common", version = "1.1.0" }
 bytes = { workspace = true }
 fxhash = { workspace = true }
 once_cell = { workspace = true }
