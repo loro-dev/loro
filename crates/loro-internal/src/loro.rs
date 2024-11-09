@@ -1655,6 +1655,7 @@ impl LoroDoc {
     }
 
     pub fn get_changed_containers_in(&self, id: ID, len: usize) -> FxHashSet<ContainerID> {
+        self.commit_then_renew();
         let mut set = FxHashSet::default();
         let oplog = &self.oplog().try_lock().unwrap();
         for op in oplog.iter_ops(id.to_span(len)) {

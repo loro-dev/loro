@@ -1663,7 +1663,9 @@ impl LoroDoc {
         Ok(JsValue::from(obj).into())
     }
 
-    /// Returns a set of container IDs that were modified within the specified ID range.
+    /// Gets container IDs modified in the given ID range.
+    ///
+    /// **NOTE:** This method will implicitly commit.
     ///
     /// This method identifies which containers were affected by changes in a given range of operations.
     /// It can be used together with `doc.travelChangeAncestors()` to analyze the history of changes

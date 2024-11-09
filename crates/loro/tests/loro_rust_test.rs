@@ -2190,3 +2190,35 @@ fn get_editor() {
     let mov_id = tree.get_last_move_id(&node_0).unwrap();
     assert_eq!(mov_id.peer, 2);
 }
+
+#[test]
+fn get_changed_containers_in() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(0).unwrap();
+    let text = doc.get_text("text");
+    text.insert(0, "H").unwrap();
+    let map = doc.get_map("map");
+    map.insert("key", "value").unwrap();
+    let changed_set = doc.get_changed_containers_in(ID::new(0, 0), 2);
+    assert_eq!(
+        changed_set,
+        vec![
+            ContainerID::new_root("text", ContainerType::Text),
+            ContainerID::new_root("map", ContainerType::Map),
+        ]
+        .into_iter()
+        .collect()
+    );
+
+    map.insert("key1", "value1").unwrap();
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({
+            "text": "H",
+            "map": {
+                "key": "value",
+                "key1": "value1"
+            }
+        })
+    )
+}
