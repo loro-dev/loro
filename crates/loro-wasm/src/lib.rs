@@ -262,6 +262,11 @@ fn id_to_js(id: &ID) -> JsValue {
     value
 }
 
+fn peer_id_to_js(peer: PeerID) -> JsStrPeerID {
+    let v: JsValue = peer.to_string().into();
+    v.into()
+}
+
 fn js_id_to_id(id: JsID) -> Result<ID, JsValue> {
     let peer = js_peer_to_peer(Reflect::get(&id, &"peer".into())?)?;
     let counter = Reflect::get(&id, &"counter".into())?.as_f64().unwrap() as Counter;
@@ -2224,6 +2229,13 @@ impl LoroText {
         self.handler.push_str(s)?;
         Ok(())
     }
+
+    /// Get the editor of the text at the given position.
+    pub fn getEditorOf(&self, pos: usize) -> Option<JsStrPeerID> {
+        self.handler
+            .get_cursor(pos, Side::Middle)
+            .map(|x| peer_id_to_js(x.id.unwrap().peer))
+    }
 }
 
 impl Default for LoroText {
@@ -2558,6 +2570,13 @@ impl LoroMap {
         self.handler.clear()?;
         Ok(())
     }
+
+    /// Get the peer id of the last editor on the given entry
+    pub fn getLastEditor(&self, key: &str) -> Option<JsStrPeerID> {
+        self.handler
+            .get_last_editor(key)
+            .map(|x| JsValue::from_str(&x.to_string()).into())
+    }
 }
 
 impl Default for LoroMap {
@@ -2877,6 +2896,10 @@ impl LoroList {
     pub fn clear(&self) -> JsResult<()> {
         self.handler.clear()?;
         Ok(())
+    }
+
+    pub fn getIdAt(&self, pos: usize) -> Option<JsID> {
+        self.handler.get_id_at(pos).map(|x| id_to_js(&x).into())
     }
 }
 
@@ -3240,6 +3263,25 @@ impl LoroMovableList {
         self.handler.clear()?;
         Ok(())
     }
+
+    /// Get the creator of the list item at the given position.
+    pub fn getCreatorAt(&self, pos: usize) -> Option<JsStrPeerID> {
+        self.handler.get_creator_at(pos).map(peer_id_to_js)
+    }
+
+    /// Get the last mover of the list item at the given position.
+    pub fn getLastMoverAt(&self, pos: usize) -> Option<JsStrPeerID> {
+        self.handler
+            .get_last_mover_at(pos)
+            .map(peer_id_to_js)
+    }
+
+    /// Get the last editor of the list item at the given position.
+    pub fn getLastEditorAt(&self, pos: usize) -> Option<JsStrPeerID> {
+        self.handler
+            .get_last_editor_at(pos)
+            .map(peer_id_to_js)
+    }
 }
 
 /// The handler of a tree(forest) container.
@@ -3502,6 +3544,23 @@ impl LoroTreeNode {
     pub fn is_deleted(&self) -> JsResult<bool> {
         let ans = self.tree.is_node_deleted(&self.id)?;
         Ok(ans)
+    }
+
+    /// Get the last mover of this node.
+    pub fn getLastMoveId(&self) -> Option<JsID> {
+        self.tree
+            .get_last_move_id(&self.id)
+            .map(|x| id_to_js(&x).into())
+    }
+
+    /// Get the creation id of this node.
+    pub fn creationId(&self) -> JsID {
+        id_to_js(&self.id.id()).into()
+    }
+
+    /// Get the creator of this node.
+    pub fn creator(&self) -> JsStrPeerID {
+        peer_id_to_js(self.id.peer)
     }
 }
 

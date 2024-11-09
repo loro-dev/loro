@@ -1122,6 +1122,11 @@ impl LoroList {
     pub fn clear(&self) -> LoroResult<()> {
         self.handler.clear()
     }
+
+    /// Get the ID of the list item at the given position.
+    pub fn get_id_at(&self, pos: usize) -> Option<ID> {
+        self.handler.get_id_at(pos)
+    }
 }
 
 impl Default for LoroList {
@@ -1312,6 +1317,11 @@ impl LoroMap {
             ValueOrHandler::Value(v) => ValueOrContainer::Value(v),
             ValueOrHandler::Handler(c) => ValueOrContainer::Container(Container::from_handler(c)),
         })
+    }
+
+    /// Get the peer id of the last editor on the given entry
+    pub fn get_last_editor(&self, key: &str) -> Option<PeerID> {
+        self.handler.get_last_editor(key)
     }
 }
 
@@ -1565,7 +1575,7 @@ impl LoroText {
         self.handler.to_string()
     }
 
-    /// Get the cursor at the given position.
+    /// Get the cursor at the given position in the given Unicode position.
     ///
     /// Using "index" to denote cursor positions can be unstable, as positions may
     /// shift with document edits. To reliably represent a position or range within
@@ -1607,6 +1617,13 @@ impl LoroText {
     /// Push a string to the end of the text container.
     pub fn push_str(&self, s: &str) -> LoroResult<()> {
         self.handler.push_str(s)
+    }
+
+    /// Get the editor of the text at the given position.
+    pub fn get_editor_at_unicode_pos(&self, pos: usize) -> Option<PeerID> {
+        self.handler
+            .get_cursor(pos, Side::Middle)
+            .map(|x| x.id.unwrap().peer)
     }
 }
 
@@ -1991,6 +2008,11 @@ impl LoroTree {
     pub fn is_empty(&self) -> bool {
         self.handler.is_empty()
     }
+
+    /// Get the last move id of the target node.
+    pub fn get_last_move_id(&self, target: &TreeID) -> Option<ID> {
+        self.handler.get_last_move_id(target)
+    }
 }
 
 impl Default for LoroTree {
@@ -2258,6 +2280,21 @@ impl LoroMovableList {
         self.handler.for_each(&mut |v| {
             f(ValueOrContainer::from(v));
         })
+    }
+
+    /// Get the creator of the list item at the given position.
+    pub fn get_creator_at(&self, pos: usize) -> Option<PeerID> {
+        self.handler.get_creator_at(pos)
+    }
+
+    /// Get the last mover of the list item at the given position.
+    pub fn get_last_mover_at(&self, pos: usize) -> Option<PeerID> {
+        self.handler.get_last_mover_at(pos)
+    }
+
+    /// Get the last editor of the list item at the given position.
+    pub fn get_last_editor_at(&self, pos: usize) -> Option<PeerID> {
+        self.handler.get_last_editor_at(pos)
     }
 }
 

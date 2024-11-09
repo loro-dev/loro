@@ -5,7 +5,7 @@ use std::{
 };
 
 use fxhash::FxHashMap;
-use loro_common::{ContainerID, IdLp, LoroResult};
+use loro_common::{ContainerID, IdLp, LoroResult, PeerID};
 use rle::HasLength;
 
 use crate::{
@@ -291,10 +291,13 @@ impl MapState {
     pub fn len(&self) -> usize {
         self.size
     }
+
+    pub fn get_last_edit_peer(&self, key: &str) -> Option<PeerID> {
+        self.map.get(&key.into()).map(|v| v.peer)
+    }
 }
 
 mod snapshot {
-    
 
     use fxhash::{FxHashMap, FxHashSet};
     use loro_common::{InternalString, LoroValue};

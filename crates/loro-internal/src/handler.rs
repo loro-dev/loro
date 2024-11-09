@@ -20,8 +20,8 @@ use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 use generic_btree::rle::HasLength;
 use loro_common::{
-    ContainerID, ContainerType, IdFull, InternalString, LoroError, LoroResult, LoroValue, TreeID,
-    ID,
+    ContainerID, ContainerType, IdFull, InternalString, LoroError, LoroResult, LoroValue, PeerID,
+    TreeID, ID,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -2729,6 +2729,19 @@ impl ListHandler {
     pub fn clear_with_txn(&self, txn: &mut Transaction) -> LoroResult<()> {
         self.delete_with_txn(txn, 0, self.len())
     }
+
+    pub fn get_id_at(&self, pos: usize) -> Option<ID> {
+        match &self.inner {
+            MaybeDetached::Detached(_) => None,
+            MaybeDetached::Attached(a) => a.with_state(|state| {
+                state
+                    .as_list_state()
+                    .unwrap()
+                    .get_id_at(pos)
+                    .map(|x| x.id())
+            }),
+        }
+    }
 }
 
 impl MovableListHandler {
@@ -3394,6 +3407,39 @@ impl MovableListHandler {
     pub fn clear_with_txn(&self, txn: &mut Transaction) -> LoroResult<()> {
         self.delete_with_txn(txn, 0, self.len())
     }
+
+    pub fn get_creator_at(&self, pos: usize) -> Option<PeerID> {
+        match &self.inner {
+            MaybeDetached::Detached(_) => None,
+            MaybeDetached::Attached(a) => {
+                a.with_state(|state| state.as_movable_list_state().unwrap().get_creator_at(pos))
+            }
+        }
+    }
+
+    pub fn get_last_mover_at(&self, pos: usize) -> Option<PeerID> {
+        match &self.inner {
+            MaybeDetached::Detached(_) => None,
+            MaybeDetached::Attached(a) => a.with_state(|state| {
+                state
+                    .as_movable_list_state()
+                    .unwrap()
+                    .get_last_mover_at(pos)
+            }),
+        }
+    }
+
+    pub fn get_last_editor_at(&self, pos: usize) -> Option<PeerID> {
+        match &self.inner {
+            MaybeDetached::Detached(_) => None,
+            MaybeDetached::Attached(a) => a.with_state(|state| {
+                state
+                    .as_movable_list_state()
+                    .unwrap()
+                    .get_last_editor_at(pos)
+            }),
+        }
+    }
 }
 
 impl MapHandler {
@@ -3784,6 +3830,16 @@ impl MapHandler {
         }
 
         values.into_iter()
+    }
+
+    pub fn get_last_editor(&self, key: &str) -> Option<PeerID> {
+        match &self.inner {
+            MaybeDetached::Detached(_) => None,
+            MaybeDetached::Attached(a) => a.with_state(|state| {
+                let m = state.as_map_state().unwrap();
+                m.get_last_edit_peer(key)
+            }),
+        }
     }
 }
 

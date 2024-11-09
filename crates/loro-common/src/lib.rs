@@ -272,7 +272,7 @@ impl std::fmt::Debug for ContainerID {
     }
 }
 
-// TODO: add non_exausted
+// TODO: add non_exhausted
 // Note: It will be encoded into binary format, so the order of its fields should not be changed.
 #[derive(
     Arbitrary, Debug, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord, Serialize, Deserialize,
