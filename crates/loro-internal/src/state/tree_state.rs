@@ -5,7 +5,7 @@ use fxhash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
 use loro_common::{
     ContainerID, IdFull, IdLp, LoroError, LoroResult, LoroTreeError, LoroValue, PeerID, TreeID,
-    DELETED_TREE_ROOT,
+    DELETED_TREE_ROOT, ID,
 };
 use rand::SeedableRng;
 use rle::HasLength;
@@ -1019,6 +1019,10 @@ impl TreeState {
             Some(c) => c.len() == 0,
             None => true,
         }
+    }
+
+    pub fn get_last_move_id(&self, id: &TreeID) -> Option<ID> {
+        self.trees.get(id).map(|x| x.last_move_op.id())
     }
 }
 

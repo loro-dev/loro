@@ -6,7 +6,7 @@ use tracing::{instrument, warn};
 
 use fxhash::FxHashMap;
 use generic_btree::BTree;
-use loro_common::{CompactIdLp, ContainerID, IdFull, IdLp, LoroResult, LoroValue, ID};
+use loro_common::{CompactIdLp, ContainerID, IdFull, IdLp, LoroResult, LoroValue, PeerID, ID};
 
 use crate::{
     arena::SharedArena,
@@ -983,6 +983,27 @@ impl MovableListState {
             }
         }
     }
+
+    pub fn get_creator_at(&self, pos: usize) -> Option<PeerID> {
+        self.inner
+            .get_list_item_at(pos, IndexType::ForUser)
+            .and_then(|x| x.pointed_by.map(|x| x.peer))
+    }
+
+    pub fn get_last_mover_at(&self, pos: usize) -> Option<PeerID> {
+        self.inner
+            .get_list_item_at(pos, IndexType::ForUser)
+            .map(|x| x.id.peer)
+    }
+
+    pub fn get_last_editor_at(&self, pos: usize) -> Option<PeerID> {
+        self.inner
+            .get_list_item_at(pos, IndexType::ForUser)
+            .and_then(|x| {
+                x.pointed_by
+                    .and_then(|x| self.inner.elements().get(&x).map(|x| x.value_id.peer))
+            })
+    }
 }
 
 impl ContainerState for MovableListState {
@@ -1785,7 +1806,6 @@ mod snapshot {
 
     #[cfg(test)]
     mod test {
-        
 
         use loro_common::{CompactIdLp, ContainerID, LoroValue, ID};
 

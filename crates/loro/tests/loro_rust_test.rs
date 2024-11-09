@@ -2158,3 +2158,35 @@ fn get_last_editor_on_map() {
     assert_eq!(map.get_last_editor("key2"), Some(1));
     assert_eq!(map.get_last_editor("nonexistent"), None);
 }
+
+#[test]
+fn get_editor() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(0).unwrap();
+    let text = doc.get_text("text");
+    text.insert(0, "01234").unwrap();
+    assert_eq!(text.get_editor_at_unicode_pos(3), Some(0));
+    let list = doc.get_list("list");
+    list.insert(0, 0).unwrap();
+    assert_eq!(list.get_id_at(0).unwrap().peer, 0);
+    let mov_list = doc.get_movable_list("mov_list");
+    mov_list.insert(0, 0).unwrap();
+    mov_list.insert(1, 0).unwrap();
+    mov_list.set(0, 1).unwrap();
+    doc.set_peer_id(1).unwrap();
+    mov_list.mov(0, 1).unwrap();
+    assert_eq!(mov_list.get_creator_at(0), Some(0));
+    assert_eq!(mov_list.get_last_mover_at(0), Some(0));
+    assert_eq!(mov_list.get_last_mover_at(1), Some(1));
+    assert_eq!(mov_list.get_last_editor_at(1), Some(0));
+
+    let tree = doc.get_tree("tree");
+    let node_0 = tree.create(None).unwrap();
+    let node_1 = tree.create(None).unwrap();
+    let mov_id = tree.get_last_move_id(&node_0).unwrap();
+    assert_eq!(mov_id.peer, 1);
+    doc.set_peer_id(2).unwrap();
+    tree.mov(node_0, node_1).unwrap();
+    let mov_id = tree.get_last_move_id(&node_0).unwrap();
+    assert_eq!(mov_id.peer, 2);
+}

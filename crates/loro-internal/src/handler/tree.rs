@@ -4,7 +4,7 @@ use fractional_index::FractionalIndex;
 use fxhash::FxHashMap;
 use loro_common::{
     ContainerID, ContainerType, Counter, IdLp, LoroError, LoroResult, LoroTreeError, LoroValue,
-    PeerID, TreeID,
+    PeerID, TreeID, ID,
 };
 use smallvec::smallvec;
 
@@ -1009,6 +1009,16 @@ impl TreeHandler {
             MaybeDetached::Attached(a) => a.with_state(|state| {
                 let a = state.as_tree_state().unwrap();
                 a.is_empty()
+            }),
+        }
+    }
+
+    pub fn get_last_move_id(&self, target: &TreeID) -> Option<ID> {
+        match &self.inner {
+            MaybeDetached::Detached(_) => None,
+            MaybeDetached::Attached(a) => a.with_state(|state| {
+                let a = state.as_tree_state().unwrap();
+                a.get_last_move_id(target)
             }),
         }
     }
