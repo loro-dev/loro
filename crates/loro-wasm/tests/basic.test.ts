@@ -16,6 +16,7 @@ import {
   encodeFrontiers,
   decodeFrontiers,
 } from "../bundler/index";
+import { ContainerID } from "loro-wasm";
 
 it("basic example", () => {
   const doc = new LoroDoc();
@@ -674,4 +675,17 @@ it("can push container to movable list", () => {
   const list = doc.getMovableList("list");
   const map = list.pushContainer(new LoroMap());
   expect(list.toJSON()).toStrictEqual([{}]);
+})
+
+it("can query the history for changed containers", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId("0");
+  doc.getText("text").insert(0, "H");
+  doc.getMap("map").set("key", "H");
+  const changed = doc.getChangedContainersIn({ peer: "0", counter: 0 }, 2)
+  const changedSet = new Set(changed);
+  expect(changedSet).toEqual(new Set([
+    "cid:root-text:Text" as ContainerID,
+    "cid:root-map:Map" as ContainerID,
+  ]))
 })

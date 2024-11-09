@@ -2,6 +2,7 @@
 #![warn(missing_docs)]
 #![warn(missing_debug_implementations)]
 use event::{DiffEvent, Subscriber};
+use fxhash::FxHashSet;
 use loro_common::InternalString;
 pub use loro_internal::cursor::CannotFindRelativePosition;
 use loro_internal::cursor::Cursor;
@@ -847,6 +848,21 @@ impl LoroDoc {
     /// Check if the doc contains the full history.
     pub fn is_shallow(&self) -> bool {
         self.doc.is_shallow()
+    }
+
+    /// Gets container IDs modified in the given ID range.
+    ///
+    /// **NOTE:** This method will implicitly commit.
+    ///
+    /// This method can be used in conjunction with `doc.travel_change_ancestors()` to traverse
+    /// the history and identify all changes that affected specific containers.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The starting ID of the change range
+    /// * `len` - The length of the change range to check
+    pub fn get_changed_containers_in(&self, id: ID, len: usize) -> FxHashSet<ContainerID> {
+        self.doc.get_changed_containers_in(id, len)
     }
 }
 
