@@ -530,12 +530,12 @@ pub(crate) fn decode_snapshot(
     })
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum EncodedBlobMode {
-    OutdatedRle,
-    OutdatedSnapshot,
     Snapshot,
+    OutdatedSnapshot,
     ShallowSnapshot,
+    OutdatedRle,
     Updates,
 }
 

@@ -2125,3 +2125,20 @@ fn test_decode_import_blob_meta_updates_range() {
     assert_eq!(meta.partial_start_vv, vv!(0 => 1, 1 => 1));
     assert_eq!(meta.partial_end_vv, vv!(0 => 5, 1 => 5));
 }
+
+#[test]
+fn should_import_snapshot_before_shallow_snapshot() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(0).unwrap();
+    doc.get_text("text").insert(0, "Hello").unwrap();
+    doc.commit();
+    let snapshot = doc.export(ExportMode::Snapshot).unwrap();
+    let shallow = doc
+        .export(ExportMode::shallow_snapshot(&ID::new(0, 4).into()))
+        .unwrap();
+
+    let doc2 = LoroDoc::new();
+    let blobs = vec![shallow, snapshot];
+    doc2.import_batch(&blobs).unwrap();
+    assert!(!doc2.is_shallow());
+}
