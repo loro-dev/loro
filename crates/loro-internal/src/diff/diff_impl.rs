@@ -294,13 +294,7 @@ fn conquer<D: DiffHandler>(
     if is_not_empty_range(old_start, old_end) || is_not_empty_range(new_start, new_end) {
         let len_old = old_end - old_start;
         let len_new = new_end - new_start;
-        if len_old <= 8 || len_new <= 8 {
-            proxy.delete(old_start, old_end - old_start);
-            proxy.insert(old_start, new_start, new_end - new_start);
-            return Ok(());
-        }
-
-        if should_use_dj && (len_old < 128 && len_new < 128) {
+        if should_use_dj && (len_old * len_new < 128 * 128) {
             let ok = dj_diff(
                 proxy,
                 &old[old_start..old_end],
@@ -679,6 +673,56 @@ mod tests {
                 DiffOperation::Insert {
                     old_index: 1,
                     new_index: 2,
+                    length: 1
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_diff_may_scatter() {
+        let handler = RecordingDiffHandler::default();
+        let mut proxy = OperateProxy::new(handler);
+        let old = vec![1, 2, 3, 4, 5];
+        let new = vec![99, 1, 2, 3, 4, 5, 98, 97, 96, 3, 95, 4, 93, 92, 5, 91];
+        diff(&mut proxy, UpdateOptions::default(), &old, &new).unwrap();
+        let handler = proxy.unwrap();
+        assert_eq!(
+            handler.ops,
+            vec![
+                DiffOperation::Insert {
+                    old_index: 0,
+                    new_index: 0,
+                    length: 1
+                },
+                DiffOperation::Insert {
+                    old_index: 5,
+                    new_index: 6,
+                    length: 10
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_diff_may_scatter_1() {
+        let handler = RecordingDiffHandler::default();
+        let mut proxy = OperateProxy::new(handler);
+        let old = vec![1, 2, 3, 4, 5];
+        let new = vec![99, 1, 2, 98, 97, 96, 3, 95, 4, 93, 92, 5, 1, 2, 3, 4, 5, 91];
+        diff(&mut proxy, UpdateOptions::default(), &old, &new).unwrap();
+        let handler = proxy.unwrap();
+        assert_eq!(
+            handler.ops,
+            vec![
+                DiffOperation::Insert {
+                    old_index: 0,
+                    new_index: 0,
+                    length: 12
+                },
+                DiffOperation::Insert {
+                    old_index: 5,
+                    new_index: 17,
                     length: 1
                 },
             ]
