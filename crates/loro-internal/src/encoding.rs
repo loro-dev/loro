@@ -539,18 +539,19 @@ pub enum EncodedBlobMode {
     Updates,
 }
 
-impl EncodedBlobMode {
-    pub fn to_string(&self) -> String {
-        match self {
+impl std::fmt::Display for EncodedBlobMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
             EncodedBlobMode::OutdatedRle => "outdated-update",
             EncodedBlobMode::OutdatedSnapshot => "outdated-snapshot",
             EncodedBlobMode::Snapshot => "snapshot",
             EncodedBlobMode::ShallowSnapshot => "shallow-snapshot",
             EncodedBlobMode::Updates => "update",
-        }
-        .to_string()
+        })
     }
+}
 
+impl EncodedBlobMode {
     pub fn is_snapshot(&self) -> bool {
         matches!(
             self,
