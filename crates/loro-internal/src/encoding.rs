@@ -554,7 +554,9 @@ impl EncodedBlobMode {
     pub fn is_snapshot(&self) -> bool {
         matches!(
             self,
-            EncodedBlobMode::Snapshot | EncodedBlobMode::ShallowSnapshot
+            EncodedBlobMode::Snapshot
+                | EncodedBlobMode::ShallowSnapshot
+                | EncodedBlobMode::OutdatedSnapshot
         )
     }
 }
