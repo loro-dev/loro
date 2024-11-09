@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.1.0
+
+### Minor Changes
+
+- 6e878d2: Feat add API to query creators, the last editors/movers
+- 778ca54: Feat: allow users to query the changed containers in the target id range
+
+### Patch Changes
+
+- 6616101: Perf: optimize importBatch
+
+  When using importBatch to import a series of snapshots and updates, we should import the snapshot with the greatest version first.
+
+- 6e878d2: Feat: getLastEditor on LoroMap
+- 8486234: Fix get encoded blob meta
+
 ## 1.0.9
 
 ### Patch Changes
