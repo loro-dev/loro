@@ -328,6 +328,10 @@ impl<'a> RichOp<'a> {
         self.peer
     }
 
+    pub fn container(&self) -> ContainerIdx {
+        self.op.container
+    }
+
     pub fn timestamp(&self) -> i64 {
         self.timestamp
     }

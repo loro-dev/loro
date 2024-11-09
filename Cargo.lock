@@ -1069,6 +1069,7 @@ dependencies = [
  "ctor 0.2.6",
  "dev-utils",
  "enum-as-inner 0.6.0",
+ "fxhash",
  "generic-btree",
  "loro-common 1.0.0-beta.5",
  "loro-delta 1.0.0-beta.5",

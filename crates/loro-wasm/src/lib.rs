@@ -190,6 +190,8 @@ extern "C" {
     pub type JsCommitOption;
     #[wasm_bindgen(typescript_type = "ImportStatus")]
     pub type JsImportStatus;
+    #[wasm_bindgen(typescript_type = "(change: ChangeMeta) => boolean")]
+    pub type JsTravelChangeFunction;
 }
 
 mod observer {
@@ -606,7 +608,15 @@ impl LoroDoc {
     /// @param ids - the changes to visit
     /// @param f - the callback function, return `true` to continue visiting, return `false` to stop
     #[wasm_bindgen(js_name = "travelChangeAncestors")]
-    pub fn travel_change_ancestors(&self, ids: Vec<JsID>, f: js_sys::Function) -> JsResult<()> {
+    pub fn travel_change_ancestors(
+        &self,
+        ids: Vec<JsID>,
+        f: JsTravelChangeFunction,
+    ) -> JsResult<()> {
+        let f: js_sys::Function = match f.dyn_into::<js_sys::Function>() {
+            Ok(f) => f,
+            Err(_) => return Err(JsValue::from_str("Expected a function")),
+        };
         let observer = observer::Observer::new(f);
         self.0
             .travel_change_ancestors(
@@ -1651,6 +1661,28 @@ impl LoroDoc {
             &JsValue::from(ans.current.side.to_i32()),
         )?;
         Ok(JsValue::from(obj).into())
+    }
+
+    /// Returns a set of container IDs that were modified within the specified ID range.
+    ///
+    /// This method identifies which containers were affected by changes in a given range of operations.
+    /// It can be used together with `doc.travelChangeAncestors()` to analyze the history of changes
+    /// and determine which containers were modified by each change.
+    ///
+    /// @param id - The starting ID of the change range
+    /// @param len - The length of the change range to check
+    /// @returns An array of container IDs that were modified in the given range
+    pub fn getChangedContainersIn(&self, id: JsID, len: usize) -> JsResult<Vec<JsContainerID>> {
+        let id = js_id_to_id(id)?;
+        Ok(self
+            .0
+            .get_changed_containers_in(id, len)
+            .into_iter()
+            .map(|cid| {
+                let v: JsValue = (&cid).into();
+                v.into()
+            })
+            .collect())
     }
 }
 
@@ -3271,16 +3303,12 @@ impl LoroMovableList {
 
     /// Get the last mover of the list item at the given position.
     pub fn getLastMoverAt(&self, pos: usize) -> Option<JsStrPeerID> {
-        self.handler
-            .get_last_mover_at(pos)
-            .map(peer_id_to_js)
+        self.handler.get_last_mover_at(pos).map(peer_id_to_js)
     }
 
     /// Get the last editor of the list item at the given position.
     pub fn getLastEditorAt(&self, pos: usize) -> Option<JsStrPeerID> {
-        self.handler
-            .get_last_editor_at(pos)
-            .map(peer_id_to_js)
+        self.handler.get_last_editor_at(pos).map(peer_id_to_js)
     }
 }
 
