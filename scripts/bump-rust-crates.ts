@@ -4,10 +4,10 @@ import { walk } from "@std/fs/";
 const CRATES = {
     "loro": "loro",
     "loro-internal": "loro-internal",
+    "kv-store": "loro-kv-store",
     "loro-common": "loro-common",
     "rle": "loro-rle",
     "delta": "loro-delta",
-    "kv-store": "loro-kv-store",
     "fractional_index": "loro_fractional_index",
 };
 
