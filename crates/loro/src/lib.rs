@@ -1311,6 +1311,11 @@ impl LoroMap {
             ValueOrHandler::Handler(c) => ValueOrContainer::Container(Container::from_handler(c)),
         })
     }
+
+    /// Get the peer id of the last editor on the given entry
+    pub fn get_last_editor(&self, key: &str) -> Option<PeerID> {
+        self.handler.get_last_editor(key)
+    }
 }
 
 impl Default for LoroMap {

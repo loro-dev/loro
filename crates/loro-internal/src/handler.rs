@@ -20,8 +20,8 @@ use enum_as_inner::EnumAsInner;
 use fxhash::FxHashMap;
 use generic_btree::rle::HasLength;
 use loro_common::{
-    ContainerID, ContainerType, IdFull, InternalString, LoroError, LoroResult, LoroValue, TreeID,
-    ID,
+    ContainerID, ContainerType, IdFull, InternalString, LoroError, LoroResult, LoroValue, PeerID,
+    TreeID, ID,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -3775,6 +3775,16 @@ impl MapHandler {
         }
 
         values.into_iter()
+    }
+
+    pub fn get_last_editor(&self, key: &str) -> Option<PeerID> {
+        match &self.inner {
+            MaybeDetached::Detached(_) => None,
+            MaybeDetached::Attached(a) => a.with_state(|state| {
+                let m = state.as_map_state().unwrap();
+                m.get_last_edit_peer(key)
+            }),
+        }
     }
 }
 

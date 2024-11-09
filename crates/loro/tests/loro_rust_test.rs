@@ -2142,3 +2142,19 @@ fn should_import_snapshot_before_shallow_snapshot() {
     doc2.import_batch(&blobs).unwrap();
     assert!(!doc2.is_shallow());
 }
+
+#[test]
+fn get_last_editor_on_map() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(0).unwrap();
+    let map = doc.get_map("map");
+    map.insert("key1", "value1").unwrap();
+    assert_eq!(map.get_last_editor("key1"), Some(0));
+    doc.set_peer_id(1).unwrap();
+    map.insert("key1", "value2").unwrap();
+    map.insert("key2", "value3").unwrap();
+
+    assert_eq!(map.get_last_editor("key1"), Some(1));
+    assert_eq!(map.get_last_editor("key2"), Some(1));
+    assert_eq!(map.get_last_editor("nonexistent"), None);
+}

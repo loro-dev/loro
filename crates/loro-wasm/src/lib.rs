@@ -2511,6 +2511,13 @@ impl LoroMap {
         self.handler.clear()?;
         Ok(())
     }
+
+    /// Get the peer id of the last editor on the given entry
+    pub fn getLastEditor(&self, key: &str) -> Option<JsStrPeerID> {
+        self.handler
+            .get_last_editor(key)
+            .map(|x| JsValue::from_str(&x.to_string()).into())
+    }
 }
 
 impl Default for LoroMap {
