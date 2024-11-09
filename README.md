@@ -46,11 +46,11 @@ https://github.com/loro-dev/loro/assets/18425020/fe246c47-a120-44b3-91d4-1e7232a
   ✨ Loro 1.0 is out! Read the <a href="https://loro.dev/blog/v1.0">announcement</a>.
 </h4>
 
-Loro is a [CRDTs(Conflict-free Replicated Data Types)](https://crdt.tech/) library that makes building [local-first apps][local-first] easier. It is currently available for JavaScript (via WASM) and Rust developers.
+Loro is a [CRDTs(Conflict-free Replicated Data Types)](https://crdt.tech/) library that makes building [local-first][local-first] and collaborative apps easier. You can now use it in Rust, JS (via WASM), and Swift.
 
 # Features
 
-**Basic Features Provided by CRDTs**
+**Features Provided by CRDTs**
 
 - P2P Synchronization
 - Automatic Merging
@@ -65,10 +65,10 @@ Loro is a [CRDTs(Conflict-free Replicated Data Types)](https://crdt.tech/) libra
 - 🌲 [Moveable Tree](https://loro.dev/docs/tutorial/tree)
 - 🚗 [Moveable List](https://loro.dev/docs/tutorial/list)
 - 🗺️ [Last-Write-Wins Map](https://loro.dev/docs/tutorial/map)
-- 🔄 [Replayable Event Graph](https://loro.dev/docs/advanced/replayable_event_graph)
 
 **Advanced Features in Loro**
 
+- 🚀 [Fast Document Loading](https://loro.dev/blog/v1.0)
 - ⏱️ Fast [Time Travel](https://loro.dev/docs/tutorial/time_travel) Through History
 - 🏛️ [Version Control with Real-Time Collaboration](https://loro.dev/blog/v1.0#version-control)
 - 📦 [Shallow Snapshot](https://loro.dev/docs/advanced/shallow_snapshot) that Works like Git Shallow Clone 
@@ -87,9 +87,8 @@ import { expect, test } from 'vitest';
 import { LoroDoc, LoroList } from 'loro-crdt';
 
 test('sync example', () => {
-  /**
-   * Demonstrates synchronization of two documents with two rounds of exchanges.
-   */
+  // Sync two docs with two rounds of exchanges
+
   // Initialize document A
   const docA = new LoroDoc();
   const listA: LoroList = docA.getList('list');
@@ -97,34 +96,36 @@ test('sync example', () => {
   listA.insert(1, 'B');
   listA.insert(2, 'C');
 
-  // Export the state of document A as a byte array
+  // Export all updates from docA
   const bytes: Uint8Array = docA.export({ mode: 'update' });
 
   // Simulate sending `bytes` across the network to another peer, B
+
   const docB = new LoroDoc();
   // Peer B imports the updates from A
   docB.import(bytes);
 
-  // Verify that B's state matches A's state
+  // B's state matches A's state
   expect(docB.toJSON()).toStrictEqual({
     list: ['A', 'B', 'C'],
   });
 
-  // Get the current operation log version of document B
+  // Get the current version of docB
   const version = docB.oplogVersion();
 
   // Simulate editing at B: delete item 'B'
   const listB: LoroList = docB.getList('list');
   listB.delete(1, 1);
 
-  // Export the updates from B since the last synchronization point
+  // Export the updates from B since the last sync point
   const bytesB: Uint8Array = docB.export({ mode: 'update', from: version });
 
   // Simulate sending `bytesB` back across the network to A
+
   // A imports the updates from B
   docA.import(bytesB);
 
-  // Verify that the list at A now matches the list at B after merging
+  // A has the same state as B
   expect(docA.toJSON()).toStrictEqual({
     list: ['A', 'C'],
   });
