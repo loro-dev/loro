@@ -29,6 +29,8 @@ use std::ops::Range;
 use std::sync::Arc;
 use tracing::info;
 
+pub use loro_internal::diff::diff_impl::UpdateOptions;
+pub use loro_internal::diff::diff_impl::UpdateTimeoutError;
 pub use loro_internal::subscription::LocalUpdateCallback;
 pub use loro_internal::subscription::PeerIdUpdateCallback;
 pub use loro_internal::ChangeMeta;
@@ -1445,13 +1447,37 @@ impl LoroText {
     }
 
     /// Update the current text based on the provided text.
-    pub fn update(&self, text: &str) {
-        self.handler.update(text);
+    ///
+    /// It will calculate the minimal difference and apply it to the current text.
+    /// It uses Myers' diff algorithm to compute the optimal difference.
+    ///
+    /// This could take a long time for large texts (e.g. > 50_000 characters).
+    /// In that case, you should use `updateByLine` instead.
+    ///
+    /// # Example
+    /// ```rust
+    /// use loro::LoroDoc;
+    ///
+    /// let doc = LoroDoc::new();
+    /// let text = doc.get_text("text");
+    /// text.insert(0, "Hello").unwrap();
+    /// text.update("Hello World", Default::default()).unwrap();
+    /// assert_eq!(text.to_string(), "Hello World");
+    /// ```
+    ///
+    pub fn update(&self, text: &str, options: UpdateOptions) -> Result<(), UpdateTimeoutError> {
+        self.handler.update(text, options)
     }
 
-    /// Update the current text based on the provided text by line.
-    pub fn update_by_line(&self, text: &str) {
-        self.handler.update_by_line(text);
+    /// Update the current text based on the provided text.
+    ///
+    /// This update calculation is line-based, which will be more efficient but less precise.
+    pub fn update_by_line(
+        &self,
+        text: &str,
+        options: UpdateOptions,
+    ) -> Result<(), UpdateTimeoutError> {
+        self.handler.update_by_line(text, options)
     }
 
     /// Apply a [delta](https://quilljs.com/docs/delta/) to the text container.

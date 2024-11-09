@@ -4,7 +4,7 @@ use loro::LoroDoc;
 fn update_text() {
     let doc = LoroDoc::new();
     let text = doc.get_text("text");
-    text.update("ϼCCC");
-    text.update("2");
+    text.update("ϼCCC", Default::default()).unwrap();
+    text.update("2", Default::default()).unwrap();
     assert_eq!(&text.to_string(), "2");
 }

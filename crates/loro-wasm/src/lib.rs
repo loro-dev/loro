@@ -13,6 +13,7 @@ use loro_internal::{
     cursor::{self, Side},
     encoding::ImportBlobMetadata,
     event::Index,
+    handler::UpdateOptions,
     handler::{
         Handler, ListHandler, MapHandler, TextDelta, TextHandler, TreeHandler, ValueOrHandler,
     },
@@ -1824,16 +1825,62 @@ impl LoroText {
     /// text.update("Hello World");
     /// console.log(text.toString()); // "Hello World"
     /// ```
-    pub fn update(&self, text: &str) {
-        self.handler.update(text);
+    ///
+    #[wasm_bindgen(skip_typescript)]
+    pub fn update(&self, text: &str, options: JsValue) -> JsResult<()> {
+        let options = if options.is_null() || options.is_undefined() {
+            UpdateOptions {
+                timeout_ms: None,
+                use_refined_diff: true,
+            }
+        } else {
+            let opts = match js_sys::Object::try_from(&options) {
+                Some(o) => o,
+                None => return Err(JsError::new("Invalid options").into()),
+            };
+            UpdateOptions {
+                timeout_ms: js_sys::Reflect::get(opts, &"timeoutMs".into())
+                    .ok()
+                    .and_then(|v| v.as_f64()),
+                use_refined_diff: js_sys::Reflect::get(opts, &"useRefinedDiff".into())
+                    .ok()
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true),
+            }
+        };
+        self.handler
+            .update(text, options)
+            .map_err(|_| JsError::new("Update timeout").into())
     }
 
     /// Update the current text to the target text, the difference is calculated line by line.
     ///
     /// It uses Myers' diff algorithm to compute the optimal difference.
-    #[wasm_bindgen(js_name = "updateByLine")]
-    pub fn update_by_line(&self, text: &str) {
-        self.handler.update_by_line(text);
+    #[wasm_bindgen(js_name = "updateByLine", skip_typescript)]
+    pub fn update_by_line(&self, text: &str, options: JsValue) -> JsResult<()> {
+        let options = if options.is_null() || options.is_undefined() {
+            UpdateOptions {
+                timeout_ms: None,
+                use_refined_diff: true,
+            }
+        } else {
+            let opts = match js_sys::Object::try_from(&options) {
+                Some(o) => o,
+                None => return Err(JsError::new("Invalid options").into()),
+            };
+            UpdateOptions {
+                timeout_ms: js_sys::Reflect::get(opts, &"timeoutMs".into())
+                    .ok()
+                    .and_then(|v| v.as_f64()),
+                use_refined_diff: js_sys::Reflect::get(opts, &"useRefinedDiff".into())
+                    .ok()
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true),
+            }
+        };
+        self.handler
+            .update_by_line(text, options)
+            .map_err(|_| JsError::new("Update timeout").into())
     }
 
     /// Insert the string at the given index (utf-16 index).
@@ -4849,6 +4896,11 @@ export type JsonChange = {
   ops: JsonOp[]
 }
 
+export interface TextUpdateOptions {
+    timeoutMs?: number,
+    useRefinedDiff?: boolean,
+}
+
 export type ExportMode = {
     mode: "update",
     from?: VersionVector,
@@ -5429,6 +5481,32 @@ interface LoroText {
     insert(pos: number, text: string): void;
     delete(pos: number, len: number): void;
     subscribe(listener: Listener): Subscription;
+    /**
+     * Update the current text to the target text.
+     *
+     * It will calculate the minimal difference and apply it to the current text.
+     * It uses Myers' diff algorithm to compute the optimal difference.
+     *
+     * This could take a long time for large texts (e.g. > 50_000 characters).
+     * In that case, you should use `updateByLine` instead.
+     *
+     * @example
+     * ```ts
+     * import { LoroDoc } from "loro-crdt";
+     *
+     * const doc = new LoroDoc();
+     * const text = doc.getText("text");
+     * text.insert(0, "Hello");
+     * text.update("Hello World");
+     * console.log(text.toString()); // "Hello World"
+     * ```
+     */
+    update(text: string, options?: TextUpdateOptions): void;
+    /**
+     * Update the current text based on the provided text.
+     * This update calculation is line-based, which will be more efficient but less precise.
+     */
+    updateByLine(text: string, options?: TextUpdateOptions): void;
 }
 interface LoroTree<T extends Record<string, unknown> = Record<string, unknown>> {
     new(): LoroTree<T>;

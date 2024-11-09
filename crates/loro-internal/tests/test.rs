@@ -1238,7 +1238,8 @@ fn test_text_update() {
     let doc = LoroDoc::new_auto_commit();
     let text = doc.get_text("text");
     text.insert(0, "Hello 😊Bro").unwrap();
-    text.update("Hello World Bro😊");
+    text.update("Hello World Bro😊", Default::default())
+        .unwrap();
     assert_eq!(text.to_string(), "Hello World Bro😊");
 }
 

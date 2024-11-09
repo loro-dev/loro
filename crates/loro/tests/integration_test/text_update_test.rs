@@ -5,11 +5,11 @@ fn test_text_update() -> anyhow::Result<()> {
     let (old, new, new1) = (")+++", "%", "");
     let doc = LoroDoc::new();
     let text = doc.get_text("text");
-    text.update(old);
+    text.update(old, Default::default()).unwrap();
     assert_eq!(&text.to_string(), old);
-    text.update(new);
+    text.update(new, Default::default()).unwrap();
     assert_eq!(&text.to_string(), new);
-    text.update(new1);
+    text.update(new1, Default::default()).unwrap();
     assert_eq!(&text.to_string(), new1);
     Ok(())
 }
@@ -23,11 +23,11 @@ fn test_text_update_by_line() -> anyhow::Result<()> {
     );
     let doc = LoroDoc::new();
     let text = doc.get_text("text");
-    text.update_by_line(old);
+    text.update_by_line(old, Default::default()).unwrap();
     assert_eq!(&text.to_string(), old);
-    text.update_by_line(new);
+    text.update_by_line(new, Default::default()).unwrap();
     assert_eq!(&text.to_string(), new);
-    text.update_by_line(new1);
+    text.update_by_line(new1, Default::default()).unwrap();
     assert_eq!(&text.to_string(), new1);
     Ok(())
 }
@@ -36,9 +36,9 @@ fn test_text_update_by_line() -> anyhow::Result<()> {
 fn test_text_update_empty_to_nonempty() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     let text = doc.get_text("text");
-    text.update("");
+    text.update("", Default::default()).unwrap();
     assert_eq!(&text.to_string(), "");
-    text.update("Hello, Loro!");
+    text.update("Hello, Loro!", Default::default()).unwrap();
     assert_eq!(&text.to_string(), "Hello, Loro!");
     Ok(())
 }
@@ -47,9 +47,9 @@ fn test_text_update_empty_to_nonempty() -> anyhow::Result<()> {
 fn test_text_update_nonempty_to_empty() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     let text = doc.get_text("text");
-    text.update("Initial content");
+    text.update("Initial content", Default::default()).unwrap();
     assert_eq!(&text.to_string(), "Initial content");
-    text.update("");
+    text.update("", Default::default()).unwrap();
     assert_eq!(&text.to_string(), "");
     Ok(())
 }
@@ -58,9 +58,11 @@ fn test_text_update_nonempty_to_empty() -> anyhow::Result<()> {
 fn test_text_update_with_special_characters() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     let text = doc.get_text("text");
-    text.update("Special chars: !@#$%^&*()");
+    text.update("Special chars: !@#$%^&*()", Default::default())
+        .unwrap();
     assert_eq!(&text.to_string(), "Special chars: !@#$%^&*()");
-    text.update("New special chars: ñáéíóú");
+    text.update("New special chars: ñáéíóú", Default::default())
+        .unwrap();
     assert_eq!(&text.to_string(), "New special chars: ñáéíóú");
     Ok(())
 }
@@ -69,9 +71,11 @@ fn test_text_update_with_special_characters() -> anyhow::Result<()> {
 fn test_text_update_by_line_with_empty_lines() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     let text = doc.get_text("text");
-    text.update_by_line("Line 1\n\nLine 3\n");
+    text.update_by_line("Line 1\n\nLine 3\n", Default::default())
+        .unwrap();
     assert_eq!(&text.to_string(), "Line 1\n\nLine 3\n");
-    text.update_by_line("Line 1\nLine 2\n\nLine 4\n");
+    text.update_by_line("Line 1\nLine 2\n\nLine 4\n", Default::default())
+        .unwrap();
     assert_eq!(&text.to_string(), "Line 1\nLine 2\n\nLine 4\n");
     Ok(())
 }
@@ -80,9 +84,11 @@ fn test_text_update_by_line_with_empty_lines() -> anyhow::Result<()> {
 fn test_text_update_by_line_with_different_line_endings() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     let text = doc.get_text("text");
-    text.update_by_line("Line 1\nLine 2\r\nLine 3\n");
+    text.update_by_line("Line 1\nLine 2\r\nLine 3\n", Default::default())
+        .unwrap();
     assert_eq!(&text.to_string(), "Line 1\nLine 2\r\nLine 3\n");
-    text.update_by_line("Line 1\r\nLine 2\nLine 3\r\n");
+    text.update_by_line("Line 1\r\nLine 2\nLine 3\r\n", Default::default())
+        .unwrap();
     assert_eq!(&text.to_string(), "Line 1\r\nLine 2\nLine 3\r\n");
     Ok(())
 }
@@ -91,9 +97,11 @@ fn test_text_update_by_line_with_different_line_endings() -> anyhow::Result<()> 
 fn test_text_update_by_line_with_no_trailing_newline() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     let text = doc.get_text("text");
-    text.update_by_line("Line 1\nLine 2\nLine 3");
+    text.update_by_line("Line 1\nLine 2\nLine 3", Default::default())
+        .unwrap();
     assert_eq!(&text.to_string(), "Line 1\nLine 2\nLine 3");
-    text.update_by_line("Line 1\nLine 2\nLine 3\nLine 4");
+    text.update_by_line("Line 1\nLine 2\nLine 3\nLine 4", Default::default())
+        .unwrap();
     assert_eq!(&text.to_string(), "Line 1\nLine 2\nLine 3\nLine 4");
     Ok(())
 }
@@ -114,10 +122,10 @@ fn test_failed_case_0() -> anyhow::Result<()> {
     let (old, new, new1) = (input[0], input[1], input[2]);
     let doc = LoroDoc::new();
     let text = doc.get_text("text");
-    text.update(old);
-    text.update(new);
+    text.update(old, Default::default()).unwrap();
+    text.update(new, Default::default()).unwrap();
     assert_eq!(&text.to_string(), new);
-    text.update_by_line(new1);
+    text.update_by_line(new1, Default::default()).unwrap();
     assert_eq!(&text.to_string(), new1);
     Ok(())
 }
@@ -128,10 +136,10 @@ fn test_failed_case_1() -> anyhow::Result<()> {
     let (old, new, new1) = (input[0], input[1], input[2]);
     let doc = LoroDoc::new();
     let text = doc.get_text("text");
-    text.update(old);
-    text.update(new);
+    text.update(old, Default::default()).unwrap();
+    text.update(new, Default::default()).unwrap();
     assert_eq!(&text.to_string(), new);
-    text.update_by_line(new1);
+    text.update_by_line(new1, Default::default()).unwrap();
     assert_eq!(&text.to_string(), new1);
     Ok(())
 }
@@ -142,10 +150,10 @@ fn test_failed_case_2() -> anyhow::Result<()> {
     let (old, new, new1) = (input[0], input[1], input[2]);
     let doc = LoroDoc::new();
     let text = doc.get_text("text");
-    text.update(old);
-    text.update(new);
+    text.update(old, Default::default()).unwrap();
+    text.update(new, Default::default()).unwrap();
     assert_eq!(&text.to_string(), new);
-    text.update_by_line(new1);
+    text.update_by_line(new1, Default::default()).unwrap();
     assert_eq!(&text.to_string(), new1);
     Ok(())
 }

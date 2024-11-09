@@ -2,7 +2,7 @@ use fxhash::FxHashMap;
 use loro_common::{LoroValue, PeerID};
 use serde::{Deserialize, Serialize};
 
-use crate::change::get_sys_timestamp;
+use crate::change::{get_sys_timestamp, Timestamp};
 
 /// `Awareness` is a structure that tracks the ephemeral state of peers.
 ///
@@ -43,7 +43,7 @@ impl Awareness {
 
     pub fn encode(&self, peers: &[PeerID]) -> Vec<u8> {
         let mut peers_info = Vec::new();
-        let now = get_sys_timestamp();
+        let now = get_sys_timestamp() as Timestamp;
         for peer in peers {
             if let Some(peer_info) = self.peers.get(peer) {
                 if now - peer_info.timestamp > self.timeout {
@@ -64,7 +64,7 @@ impl Awareness {
 
     pub fn encode_all(&self) -> Vec<u8> {
         let mut peers_info = Vec::new();
-        let now = get_sys_timestamp();
+        let now = get_sys_timestamp() as Timestamp;
         for (peer, peer_info) in self.peers.iter() {
             if now - peer_info.timestamp > self.timeout {
                 continue;
@@ -86,7 +86,7 @@ impl Awareness {
         let peers_info: Vec<EncodedPeerInfo> = postcard::from_bytes(encoded_peers_info).unwrap();
         let mut changed_peers = Vec::new();
         let mut added_peers = Vec::new();
-        let now = get_sys_timestamp();
+        let now = get_sys_timestamp() as Timestamp;
         for peer_info in peers_info {
             match self.peers.get(&peer_info.peer) {
                 Some(x) if x.counter >= peer_info.counter || peer_info.peer == self.peer => {
@@ -126,7 +126,7 @@ impl Awareness {
 
         peer.state = value;
         peer.counter += 1;
-        peer.timestamp = get_sys_timestamp();
+        peer.timestamp = get_sys_timestamp() as Timestamp;
     }
 
     pub fn get_local_state(&self) -> Option<LoroValue> {
@@ -134,7 +134,7 @@ impl Awareness {
     }
 
     pub fn remove_outdated(&mut self) -> Vec<PeerID> {
-        let now = get_sys_timestamp();
+        let now = get_sys_timestamp() as Timestamp;
         let mut removed = Vec::new();
         self.peers.retain(|id, v| {
             if now - v.timestamp > self.timeout {

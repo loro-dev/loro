@@ -8,7 +8,7 @@ use crate::{
     },
     cursor::{Cursor, Side},
     delta::{DeltaItem, Meta, StyleMeta, TreeExternalDiff},
-    diff::{myers_diff, OperateProxy},
+    diff::{diff, diff_impl::UpdateTimeoutError, OperateProxy},
     event::{Diff, TextDiffItem},
     op::ListSlice,
     state::{IndexType, State, TreeParentId},
@@ -34,6 +34,7 @@ use std::{
 };
 use tracing::{error, info, instrument, trace};
 
+pub use crate::diff::diff_impl::UpdateOptions;
 pub use tree::TreeHandler;
 mod movable_list_apply_delta;
 mod tree;
@@ -2145,25 +2146,33 @@ impl TextHandler {
         Ok(())
     }
 
-    #[instrument(level = "trace", skip(self))]
-    pub fn update(&self, text: &str) {
+    pub fn update(&self, text: &str, options: UpdateOptions) -> Result<(), UpdateTimeoutError> {
         let old_str = self.to_string();
         let new = text.chars().map(|x| x as u32).collect::<Vec<u32>>();
-        myers_diff(
+        let old = old_str.chars().map(|x| x as u32).collect::<Vec<u32>>();
+        diff(
             &mut OperateProxy::new(text_update::DiffHook::new(self, &new)),
-            &old_str.chars().map(|x| x as u32).collect::<Vec<u32>>(),
+            options,
+            &old,
             &new,
-        );
+        )?;
+        Ok(())
     }
 
-    #[instrument(level = "trace", skip(self))]
-    pub fn update_by_line(&self, text: &str) {
+    pub fn update_by_line(
+        &self,
+        text: &str,
+        options: UpdateOptions,
+    ) -> Result<(), UpdateTimeoutError> {
         let hook = text_update::DiffHookForLine::new(self, text);
         let old_lines = hook.get_old_arr().to_vec();
         let new_lines = hook.get_new_arr().to_vec();
-        trace!("old_lines: {:?}", old_lines);
-        trace!("new_lines: {:?}", new_lines);
-        myers_diff(&mut OperateProxy::new(hook), &old_lines, &new_lines);
+        diff(
+            &mut OperateProxy::new(hook),
+            options,
+            &old_lines,
+            &new_lines,
+        )
     }
 
     #[allow(clippy::inherent_to_string)]
