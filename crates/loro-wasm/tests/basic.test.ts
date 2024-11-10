@@ -638,8 +638,9 @@ it("get path to container", () => {
   const doc = new LoroDoc();
   const map = doc.getMap("map");
   const list = map.setContainer("list", new LoroList());
-  const path = doc.getPathToContainer(list.id);
-  expect(path).toStrictEqual(["map", "list"])
+  const sub = list.insertContainer(0, new LoroMap());
+  const path = doc.getPathToContainer(sub.id);
+  expect(path).toStrictEqual(["map", "list", 0])
 })
 
 it("json path", () => {
