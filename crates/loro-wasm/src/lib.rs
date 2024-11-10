@@ -192,6 +192,8 @@ extern "C" {
     pub type JsImportStatus;
     #[wasm_bindgen(typescript_type = "(change: ChangeMeta) => boolean")]
     pub type JsTravelChangeFunction;
+    #[wasm_bindgen(typescript_type = "(string|number)[]")]
+    pub type JsContainerPath;
 }
 
 mod observer {
@@ -980,7 +982,7 @@ impl LoroDoc {
 
     /// Get the path from the root to the container
     #[wasm_bindgen(js_name = "getPathToContainer")]
-    pub fn get_path_to_container(&self, id: JsContainerID) -> JsResult<Option<Array>> {
+    pub fn get_path_to_container(&self, id: JsContainerID) -> JsResult<Option<JsContainerPath>> {
         let id: ContainerID = id.to_owned().try_into()?;
         let ans = self
             .0
@@ -1776,12 +1778,13 @@ fn container_diff_to_js_value(
     obj.into()
 }
 
-fn convert_container_path_to_js_value(path: &[(ContainerID, Index)]) -> Array {
-    let arr = Array::new_with_length(path.len() as u32);
-    for (i, p) in path.iter().enumerate() {
-        arr.set(i as u32, p.1.clone().into());
+fn convert_container_path_to_js_value(path: &[(ContainerID, Index)]) -> JsContainerPath {
+    let arr = Array::new();
+    for p in path.iter() {
+        arr.push(&p.1.clone().into());
     }
-    arr
+    let v: JsValue = arr.into();
+    v.into()
 }
 
 /// The handler of a text container. It supports rich text CRDT.
