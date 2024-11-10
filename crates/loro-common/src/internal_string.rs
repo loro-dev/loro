@@ -169,19 +169,6 @@ impl From<&str> for InternalString {
     }
 }
 
-impl Drop for InternalString {
-    fn drop(&mut self) {
-        unsafe {
-            if (self.unsafe_data.inline.get() & TAG_MASK) as u8 == DYNAMIC_TAG {
-                let ptr = self.unsafe_data.dynamic;
-                // SAFETY: ptr is a valid Arc
-                let arc: Arc<Box<str>> = Arc::from_raw(ptr);
-                drop(arc);
-            }
-        }
-    }
-}
-
 #[inline(always)]
 fn inline_atom_slice(x: &NonZeroU64) -> &[u8] {
     unsafe {
@@ -237,18 +224,19 @@ impl Deref for InternalString {
     }
 }
 
-fn get_or_init_internalized_string(s: &str) -> Arc<Box<str>> {
-    #[derive(Hash, PartialEq, Eq)]
-    struct ArcWrapper(Arc<Box<str>>);
+#[derive(Hash, PartialEq, Eq)]
+struct ArcWrapper(Arc<Box<str>>);
 
-    impl Borrow<str> for ArcWrapper {
-        fn borrow(&self) -> &str {
-            &self.0
-        }
+impl Borrow<str> for ArcWrapper {
+    fn borrow(&self) -> &str {
+        &self.0
     }
+}
 
-    static STRING_SET: LazyLock<Mutex<FxHashSet<ArcWrapper>>> =
-        LazyLock::new(|| Mutex::new(FxHashSet::default()));
+static STRING_SET: LazyLock<Mutex<FxHashSet<ArcWrapper>>> =
+    LazyLock::new(|| Mutex::new(FxHashSet::default()));
+
+fn get_or_init_internalized_string(s: &str) -> Arc<Box<str>> {
     static MAX_MET_CACHE_SIZE: AtomicUsize = AtomicUsize::new(1 << 16);
 
     let mut set = STRING_SET.lock().unwrap();
@@ -270,6 +258,31 @@ fn get_or_init_internalized_string(s: &str) -> Arc<Box<str>> {
         }
 
         ans
+    }
+}
+
+fn drop_cache(s: Arc<Box<str>>) {
+    let mut set = STRING_SET.lock().unwrap();
+    set.remove(&ArcWrapper(s));
+    if set.len() < set.capacity() / 2 && set.capacity() > 128 {
+        set.shrink_to_fit();
+    }
+}
+
+impl Drop for InternalString {
+    fn drop(&mut self) {
+        unsafe {
+            if (self.unsafe_data.inline.get() & TAG_MASK) as u8 == DYNAMIC_TAG {
+                let ptr = self.unsafe_data.dynamic;
+                // SAFETY: ptr is a valid Arc
+                let arc: Arc<Box<str>> = Arc::from_raw(ptr);
+                if Arc::strong_count(&arc) == 2 {
+                    drop_cache(arc);
+                } else {
+                    drop(arc)
+                }
+            }
+        }
     }
 }
 

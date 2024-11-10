@@ -3,7 +3,7 @@
 #![warn(missing_debug_implementations)]
 use event::{DiffEvent, Subscriber};
 use fxhash::FxHashSet;
-use loro_common::InternalString;
+pub use loro_common::InternalString;
 pub use loro_internal::cursor::CannotFindRelativePosition;
 use loro_internal::cursor::Cursor;
 use loro_internal::cursor::PosQueryResult;
