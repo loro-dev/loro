@@ -1145,7 +1145,6 @@ dependencies = [
  "serde",
  "serde_columnar",
  "serde_json",
- "string_cache",
  "thiserror",
  "wasm-bindgen",
 ]
