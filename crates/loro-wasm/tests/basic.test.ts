@@ -689,3 +689,13 @@ it("can query the history for changed containers", () => {
     "cid:root-map:Map" as ContainerID,
   ]))
 })
+
+it("update VV", () => {
+  const vv = new VersionVector(null);
+  vv.setEnd({ peer: "1", counter: 1 });
+  vv.setLast({ peer: "2", counter: 1 });
+  vv.setLast({ peer: "3", counter: 4 });
+  vv.remove("3");
+  const map = vv.toJSON();
+  expect(map).toStrictEqual(new Map([["1", 1], ["2", 2]]))
+})
