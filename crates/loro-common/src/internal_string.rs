@@ -2,10 +2,63 @@ use serde::{Deserialize, Serialize};
 use std::{fmt::Display, ops::Deref, sync::Arc};
 
 #[repr(transparent)]
-#[derive(Clone, Debug, Serialize, Deserialize, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone)]
 pub struct InternalString(InternalStringInner);
 
-#[derive(Clone, Debug, Serialize, Deserialize, Hash, PartialEq, Eq, PartialOrd, Ord)]
+impl std::fmt::Debug for InternalString {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("InternalString(")?;
+        std::fmt::Debug::fmt(self.as_str(), f)?;
+        f.write_str(")")
+    }
+}
+
+impl std::hash::Hash for InternalString {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.as_str().hash(state);
+    }
+}
+
+impl PartialEq for InternalString {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl Eq for InternalString {}
+
+impl PartialOrd for InternalString {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for InternalString {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.as_str().cmp(other.as_str())
+    }
+}
+
+impl Serialize for InternalString {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for InternalString {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Ok(InternalString::from(s.as_str()))
+    }
+}
+
+#[derive(Clone)]
 enum InternalStringInner {
     Small { len: u8, data: [u8; 7] },
     Large(Arc<str>),
