@@ -131,7 +131,7 @@ impl InternalString {
                 DYNAMIC_TAG => {
                     let ptr = self.unsafe_data.dynamic;
                     // SAFETY: ptr is valid
-                    (&*ptr).deref()
+                    (*ptr).deref()
                 }
                 _ => unreachable!(),
             }
