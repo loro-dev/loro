@@ -36,7 +36,7 @@ impl<T> MapDiff<T> {
 
     pub fn delete(mut self, key: &InternalString, value: T) -> Self {
         self.added.remove(key);
-        self.deleted.insert(key.into(), value);
+        self.deleted.insert(key.clone(), value);
         self
     }
 
