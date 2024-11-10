@@ -645,7 +645,11 @@ impl VersionVector {
     /// set the exclusive ending point. target id will NOT be included by self
     #[inline]
     pub fn set_end(&mut self, id: ID) {
-        self.0.insert(id.peer, id.counter);
+        if id.counter <= 0 {
+            self.0.remove(&id.peer);
+        } else {
+            self.0.insert(id.peer, id.counter);
+        }
     }
 
     /// Update the end counter of the given client if the end is greater.

@@ -13,9 +13,9 @@ use loro_internal::{
     cursor::{self, Side},
     encoding::ImportBlobMetadata,
     event::Index,
-    handler::UpdateOptions,
     handler::{
-        Handler, ListHandler, MapHandler, TextDelta, TextHandler, TreeHandler, ValueOrHandler,
+        Handler, ListHandler, MapHandler, TextDelta, TextHandler, TreeHandler, UpdateOptions,
+        ValueOrHandler,
     },
     id::{Counter, PeerID, TreeID, ID},
     json::JsonSchema,
@@ -23,8 +23,8 @@ use loro_internal::{
     loro_common::check_root_container_name,
     undo::{UndoItemMeta, UndoOrRedo},
     version::Frontiers,
-    ContainerType, DiffEvent, FxHashMap, HandlerTrait, LoroDoc as LoroDocInner, LoroValue,
-    MovableListHandler, Subscription, TreeNodeWithChildren, TreeParentId,
+    ContainerType, DiffEvent, FxHashMap, HandlerTrait, LoroDoc as LoroDocInner, LoroResult,
+    LoroValue, MovableListHandler, Subscription, TreeNodeWithChildren, TreeParentId,
     UndoManager as InnerUndoManager, VersionVector as InternalVersionVector,
 };
 use rle::HasLength;
@@ -4445,6 +4445,30 @@ impl VersionVector {
             std::cmp::Ordering::Equal => 0,
             std::cmp::Ordering::Greater => 1,
         })
+    }
+
+    /// set the exclusive ending point. target id will NOT be included by self
+    pub fn setEnd(&mut self, id: JsID) -> JsResult<()> {
+        let id = js_id_to_id(id)?;
+        self.0.set_end(id);
+        Ok(())
+    }
+
+    /// set the inclusive ending point. target id will be included
+    pub fn setLast(&mut self, id: JsID) -> JsResult<()> {
+        let id = js_id_to_id(id)?;
+        self.0.set_last(id);
+        Ok(())
+    }
+
+    pub fn remove(&mut self, peer: JsStrPeerID) -> LoroResult<()> {
+        let peer = js_peer_to_peer(peer.into())?;
+        self.0.remove(&peer);
+        Ok(())
+    }
+
+    pub fn length(&self) -> usize {
+        self.0.len()
     }
 }
 
