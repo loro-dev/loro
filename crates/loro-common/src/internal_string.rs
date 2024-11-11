@@ -44,11 +44,12 @@ impl Clone for UnsafeData {
                 inline: unsafe { self.inline },
             }
         } else {
-            let arc = unsafe { Arc::from_raw(self.dynamic) };
-            let clone = arc.clone();
-            let new = Arc::into_raw(clone);
-            std::mem::forget(arc);
-            Self { dynamic: new }
+            unsafe {
+                Arc::increment_strong_count(self.dynamic);
+                Self {
+                    dynamic: self.dynamic,
+                }
+            }
         }
     }
 }
@@ -324,5 +325,20 @@ mod tests {
         // Internal pointers should be same for equal strings
         assert!(std::ptr::eq(s1.as_str().as_ptr(), s2.as_str().as_ptr()));
         assert!(!std::ptr::eq(s1.as_str().as_ptr(), s3.as_str().as_ptr()));
+    }
+
+    #[test]
+    fn test_long_string_cache_drop() {
+        {
+            let set = STRING_SET.lock().unwrap();
+            assert_eq!(set.len(), 0);
+        }
+        {
+            let s1 = InternalString::from("hello".repeat(10));
+            let s2 = InternalString::from("hello".repeat(10));
+            assert!(std::ptr::eq(s1.as_str().as_ptr(), s2.as_str().as_ptr()));
+        }
+        let set = STRING_SET.lock().unwrap();
+        assert_eq!(set.len(), 0);
     }
 }
