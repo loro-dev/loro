@@ -700,3 +700,54 @@ it("update VV", () => {
   const map = vv.toJSON();
   expect(map).toStrictEqual(new Map([["1", 1], ["2", 2]]))
 })
+
+describe("isDeleted", () => {
+  it("test text container deletion", () => {
+    const doc = new LoroDoc();
+    const list = doc.getList("list");
+    expect(list.isDeleted()).toBe(false);
+    const tree = doc.getTree("root");
+    const node = tree.createNode();
+    const containerBefore = node.data.setContainer("container", new LoroMap());
+    containerBefore.set("A", "B");
+    tree.delete(node.id);
+    const containerAfter = node.data;
+    expect(containerAfter.isDeleted()).toBe(true);
+  })
+
+  it("movable list setContainer", () => {
+    const doc = new LoroDoc();
+    const list = doc.getMovableList("list1");
+    const map = list.insertContainer(0, new LoroMap());
+    expect(map.isDeleted()).toBe(false);
+    list.set(0, 1);
+    expect(map.isDeleted()).toBe(true);
+  })
+
+  it("map set", () => {
+    const doc = new LoroDoc();
+    const map = doc.getMap("map");
+    const sub = map.setContainer("sub", new LoroMap());
+    expect(sub.isDeleted()).toBe(false);
+    map.set("sub", "value");
+    expect(sub.isDeleted()).toBe(true);
+  })
+
+  it("remote map set", () => {
+    const doc = new LoroDoc();
+    const map = doc.getMap("map");
+    const sub = map.setContainer("sub", new LoroMap());
+
+    const docB = new LoroDoc();
+    docB.import(doc.export({ mode: "snapshot" }));
+    const subB = docB.getByPath("map/sub") as LoroMap;
+    expect(sub.isDeleted()).toBe(false);
+    expect(subB.isDeleted()).toBe(false);
+
+    map.set("sub", "value");
+    docB.import(doc.export({ mode: "snapshot" }));
+
+    expect(sub.isDeleted()).toBe(true);
+    expect(subB.isDeleted()).toBe(true);
+  })
+})

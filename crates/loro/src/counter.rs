@@ -77,4 +77,8 @@ impl ContainerTrait for LoroCounter {
     fn try_from_container(container: Container) -> Option<Self> {
         container.into_counter().ok()
     }
+
+    fn is_deleted(&self) -> bool {
+        self.handler.is_deleted()
+    }
 }

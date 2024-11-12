@@ -2273,6 +2273,11 @@ impl LoroText {
             .get_cursor(pos, Side::Middle)
             .map(|x| peer_id_to_js(x.id.unwrap().peer))
     }
+
+    /// Check if the container is deleted
+    pub fn isDeleted(&self) -> bool {
+        self.handler.is_deleted()
+    }
 }
 
 impl Default for LoroText {
@@ -2614,6 +2619,11 @@ impl LoroMap {
             .get_last_editor(key)
             .map(|x| JsValue::from_str(&x.to_string()).into())
     }
+
+    /// Check if the container is deleted
+    pub fn isDeleted(&self) -> bool {
+        self.handler.is_deleted()
+    }
 }
 
 impl Default for LoroMap {
@@ -2937,6 +2947,11 @@ impl LoroList {
 
     pub fn getIdAt(&self, pos: usize) -> Option<JsID> {
         self.handler.get_id_at(pos).map(|x| id_to_js(&x).into())
+    }
+
+    /// Check if the container is deleted
+    pub fn isDeleted(&self) -> bool {
+        self.handler.is_deleted()
     }
 }
 
@@ -3314,6 +3329,11 @@ impl LoroMovableList {
     /// Get the last editor of the list item at the given position.
     pub fn getLastEditorAt(&self, pos: usize) -> Option<JsStrPeerID> {
         self.handler.get_last_editor_at(pos).map(peer_id_to_js)
+    }
+
+    /// Check if the container is deleted
+    pub fn isDeleted(&self) -> bool {
+        self.handler.is_deleted()
     }
 }
 
@@ -3990,6 +4010,11 @@ impl LoroTree {
     #[wasm_bindgen(js_name = "isFractionalIndexEnabled")]
     pub fn is_fractional_index_enabled(&self) -> bool {
         self.handler.is_fractional_index_enabled()
+    }
+
+    /// Check if the container is deleted
+    pub fn isDeleted(&self) -> bool {
+        self.handler.is_deleted()
     }
 }
 
