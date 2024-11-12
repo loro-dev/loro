@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.1
+
+### Patch Changes
+
+- 9abeb81: Add methods to modify VV
+- ee26952: Add isDeleted() method to each container
+
 ## 1.1.0
 
 ### Minor Changes
