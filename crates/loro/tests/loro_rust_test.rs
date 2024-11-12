@@ -9,8 +9,9 @@ use std::{
 };
 
 use loro::{
-    awareness::Awareness, loro_value, CommitOptions, ContainerID, ContainerType, ExportMode,
-    Frontiers, FrontiersNotIncluded, LoroDoc, LoroError, LoroList, LoroMap, LoroText, ToJson,
+    awareness::Awareness, loro_value, CommitOptions, ContainerID, ContainerTrait, ContainerType,
+    ExportMode, Frontiers, FrontiersNotIncluded, LoroDoc, LoroError, LoroList, LoroMap, LoroText,
+    ToJson,
 };
 use loro_internal::{encoding::EncodedBlobMode, handler::TextDelta, id::ID, vv, LoroResult};
 use rand::{Rng, SeedableRng};
@@ -2221,4 +2222,19 @@ fn get_changed_containers_in() {
             }
         })
     )
+}
+
+#[test]
+fn is_deleted() {
+    let doc = LoroDoc::new();
+    let list = doc.get_list("list");
+    assert!(!list.is_deleted());
+    let tree = doc.get_tree("root");
+    let node = tree.create(None).unwrap();
+    let map = tree.get_meta(node).unwrap();
+    let container_before = map.insert_container("container", LoroMap::new()).unwrap();
+    container_before.insert("A", "B").unwrap();
+    tree.delete(node).unwrap();
+    let container_after = doc.get_map(&container_before.id());
+    assert!(container_after.is_deleted());
 }

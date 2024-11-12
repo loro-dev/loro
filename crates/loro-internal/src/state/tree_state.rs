@@ -1268,6 +1268,7 @@ impl ContainerState for TreeState {
     }
 
     fn apply_local_op(&mut self, raw_op: &RawOp, _op: &Op) -> LoroResult<ApplyLocalOpReturn> {
+        let mut deleted_containers = vec![];
         match &raw_op.content {
             crate::op::RawOpContent::Tree(tree) => match &**tree {
                 TreeOp::Create {
@@ -1291,13 +1292,17 @@ impl ContainerState for TreeState {
                 }
                 TreeOp::Delete { target } => {
                     let parent = TreeParentId::Deleted;
+                    deleted_containers.push(ContainerID::new_normal(
+                        target.id(),
+                        loro_common::ContainerType::Map,
+                    ));
                     self.mov(*target, parent, raw_op.id_full(), None, true)?;
                 }
             },
             _ => unreachable!(),
         }
         // self.check_tree_integrity();
-        Ok(Default::default())
+        Ok(ApplyLocalOpReturn { deleted_containers })
     }
 
     fn to_diff(

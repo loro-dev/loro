@@ -892,6 +892,8 @@ pub trait ContainerTrait: SealedTrait {
     fn get_attached(&self) -> Option<Self>
     where
         Self: Sized;
+    /// Whether the container is deleted.
+    fn is_deleted(&self) -> bool;
 }
 
 /// LoroList container. It's used to model array.
@@ -942,6 +944,10 @@ impl ContainerTrait for LoroList {
 
     fn try_from_container(container: Container) -> Option<Self> {
         container.into_list().ok()
+    }
+
+    fn is_deleted(&self) -> bool {
+        self.handler.is_deleted()
     }
 }
 
@@ -1213,6 +1219,10 @@ impl ContainerTrait for LoroMap {
     fn try_from_container(container: Container) -> Option<Self> {
         container.into_map().ok()
     }
+
+    fn is_deleted(&self) -> bool {
+        self.handler.is_deleted()
+    }
 }
 
 impl LoroMap {
@@ -1379,6 +1389,10 @@ impl ContainerTrait for LoroText {
 
     fn try_from_container(container: Container) -> Option<Self> {
         container.into_text().ok()
+    }
+
+    fn is_deleted(&self) -> bool {
+        self.handler.is_deleted()
     }
 }
 
@@ -1685,6 +1699,10 @@ impl ContainerTrait for LoroTree {
 
     fn try_from_container(container: Container) -> Option<Self> {
         container.into_tree().ok()
+    }
+
+    fn is_deleted(&self) -> bool {
+        self.handler.is_deleted()
     }
 }
 
@@ -2087,6 +2105,10 @@ impl ContainerTrait for LoroMovableList {
     {
         self.handler.get_attached().map(Self::from_handler)
     }
+
+    fn is_deleted(&self) -> bool {
+        self.handler.is_deleted()
+    }
 }
 
 impl LoroMovableList {
@@ -2369,6 +2391,10 @@ impl ContainerTrait for LoroUnknown {
     {
         self.handler.get_attached().map(Self::from_handler)
     }
+
+    fn is_deleted(&self) -> bool {
+        self.handler.is_deleted()
+    }
 }
 
 use enum_as_inner::EnumAsInner;
@@ -2458,6 +2484,19 @@ impl ContainerTrait for Container {
         Self: Sized,
     {
         Some(container)
+    }
+
+    fn is_deleted(&self) -> bool {
+        match self {
+            Container::List(x) => x.is_deleted(),
+            Container::Map(x) => x.is_deleted(),
+            Container::Text(x) => x.is_deleted(),
+            Container::Tree(x) => x.is_deleted(),
+            Container::MovableList(x) => x.is_deleted(),
+            #[cfg(feature = "counter")]
+            Container::Counter(x) => x.is_deleted(),
+            Container::Unknown(x) => x.is_deleted(),
+        }
     }
 }
 
