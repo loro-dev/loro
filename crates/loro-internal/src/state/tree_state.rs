@@ -1302,9 +1302,7 @@ impl ContainerState for TreeState {
             _ => unreachable!(),
         }
         // self.check_tree_integrity();
-        Ok(ApplyLocalOpReturn {
-            deleted_containers: deleted_containers,
-        })
+        Ok(ApplyLocalOpReturn { deleted_containers })
     }
 
     fn to_diff(
