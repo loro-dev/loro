@@ -1212,7 +1212,17 @@ impl LoroDoc {
     #[inline]
     pub fn len_ops(&self) -> usize {
         let oplog = self.oplog.try_lock().unwrap();
-        oplog.vv().iter().map(|(_, ops)| *ops).sum::<i32>() as usize
+        let ans = oplog.vv().iter().map(|(_, ops)| *ops).sum::<i32>() as usize;
+        if oplog.is_shallow() {
+            let sub = oplog
+                .shallow_since_vv()
+                .iter()
+                .map(|(_, ops)| *ops)
+                .sum::<i32>() as usize;
+            ans - sub
+        } else {
+            ans
+        }
     }
 
     #[inline]
