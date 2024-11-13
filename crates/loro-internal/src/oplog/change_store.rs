@@ -433,6 +433,7 @@ impl ChangeStore {
     }
 
     pub fn change_num(&self) -> usize {
+        self.ensure_block_loaded_in_range(Bound::Unbounded, Bound::Unbounded);
         let mut inner = self.inner.try_lock().unwrap();
         inner
             .mem_parsed_kv

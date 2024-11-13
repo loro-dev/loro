@@ -2238,3 +2238,21 @@ fn is_deleted() {
     let container_after = doc.get_map(&container_before.id());
     assert!(container_after.is_deleted());
 }
+
+#[test]
+fn change_count() {
+    let doc = LoroDoc::new();
+    let n = 1024 * 5;
+    for i in 0..n {
+        doc.get_text("text").insert(0, "H").unwrap();
+        doc.set_next_commit_message(&format!("{}", i));
+        doc.commit();
+    }
+
+    doc.compact_change_store();
+    assert_eq!(doc.len_changes(), n);
+    let bytes = doc.export(loro::ExportMode::Snapshot);
+    let new_doc = LoroDoc::new();
+    new_doc.import(&bytes.unwrap()).unwrap();
+    assert_eq!(new_doc.len_changes(), n);
+}
