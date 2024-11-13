@@ -67,7 +67,10 @@ pub use loro_internal::{loro_value, to_value};
 pub use loro_internal::{
     Counter, CounterSpan, FractionalIndex, IdLp, IdSpan, Lamport, PeerID, TreeID, TreeParentId, ID,
 };
-pub use loro_internal::{LoroEncodeError, LoroError, LoroResult, LoroTreeError, LoroValue, ToJson};
+pub use loro_internal::{
+    LoroBinaryValue, LoroEncodeError, LoroError, LoroListValue, LoroMapValue, LoroResult,
+    LoroStringValue, LoroTreeError, LoroValue, ToJson,
+};
 pub use loro_kv_store as kv_store;
 
 #[cfg(feature = "jsonpath")]
