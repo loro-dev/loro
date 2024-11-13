@@ -1757,7 +1757,6 @@ impl RichtextState {
         self.get_index_from_cursor(right, PosType::Entity).unwrap()
     }
 
-    #[tracing::instrument(level = "trace", skip(self))]
     pub fn get_index_from_cursor(
         &self,
         cursor: generic_btree::Cursor,

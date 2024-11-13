@@ -1412,6 +1412,18 @@ impl LoroDoc {
         console_log!("{:#?}", oplog.diagnose_size());
     }
 
+    /// Get the number of changes in the oplog.
+    pub fn changeCount(&self) -> usize {
+        let borrow_mut = &self.0;
+        let oplog = borrow_mut.oplog().try_lock().unwrap();
+        oplog.len_changes()
+    }
+
+    /// Get the number of ops in the oplog.
+    pub fn opCount(&self) -> usize {
+        self.0.len_ops()
+    }
+
     /// Get all of changes in the oplog.
     ///
     /// Note: this method is expensive when the oplog is large. O(n)
