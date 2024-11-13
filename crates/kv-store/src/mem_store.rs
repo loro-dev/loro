@@ -386,43 +386,46 @@ where
 {
     type Item = (Bytes, Bytes);
     fn next(&mut self) -> Option<Self::Item> {
-        if self.current_sstable.is_none() {
-            if let Some((k, v)) = self.sst.next() {
-                self.current_sstable = Some((k, v));
+        loop {
+            if self.current_sstable.is_none() {
+                if let Some((k, v)) = self.sst.next() {
+                    self.current_sstable = Some((k, v));
+                }
             }
-        }
 
-        if self.current_mem.is_none() && self.back_mem.is_some() {
-            std::mem::swap(&mut self.back_mem, &mut self.current_mem);
-        }
-        let ans = match (&self.current_mem, &self.current_sstable) {
-            (Some((mem_key, _)), Some((iter_key, _))) => match mem_key.cmp(iter_key) {
-                Ordering::Less => self.current_mem.take().inspect(|_kv| {
+            if self.current_mem.is_none() && self.back_mem.is_some() {
+                std::mem::swap(&mut self.back_mem, &mut self.current_mem);
+            }
+            let ans = match (&self.current_mem, &self.current_sstable) {
+                (Some((mem_key, _)), Some((iter_key, _))) => match mem_key.cmp(iter_key) {
+                    Ordering::Less => self.current_mem.take().inspect(|_kv| {
+                        self.current_mem = self.mem.next();
+                    }),
+                    Ordering::Equal => {
+                        self.current_sstable.take();
+                        self.current_mem.take().inspect(|_kv| {
+                            self.current_mem = self.mem.next();
+                        })
+                    }
+                    Ordering::Greater => self.current_sstable.take(),
+                },
+                (Some(_), None) => self.current_mem.take().inspect(|_kv| {
                     self.current_mem = self.mem.next();
                 }),
-                Ordering::Equal => {
-                    self.current_sstable.take();
-                    self.current_mem.take().inspect(|_kv| {
-                        self.current_mem = self.mem.next();
-                    })
-                }
-                Ordering::Greater => self.current_sstable.take(),
-            },
-            (Some(_), None) => self.current_mem.take().inspect(|_kv| {
-                self.current_mem = self.mem.next();
-            }),
-            (None, Some(_)) => self.current_sstable.take(),
-            (None, None) => None,
-        };
+                (None, Some(_)) => self.current_sstable.take(),
+                (None, None) => None,
+            };
 
-        if self.filter_empty {
-            if let Some((_k, v)) = &ans {
-                if v.is_empty() {
-                    return self.next();
+            if self.filter_empty {
+                if let Some((_k, v)) = &ans {
+                    if v.is_empty() {
+                        continue;
+                    }
                 }
             }
+
+            return ans;
         }
-        ans
     }
 }
 
