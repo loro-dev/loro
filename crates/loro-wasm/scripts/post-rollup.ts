@@ -71,15 +71,10 @@ async function rollupBase64() {
         console.error("Failed to execute rollup command:", error);
     }
 
-    const toReplaceFrom = `{
-    const wkmod = await import('./loro_wasm_bg-b2849b85.js');
-    const instance = new WebAssembly.Instance(wkmod.default, {
-        "./loro_wasm_bg.js": imports,
-    });
-    __wbg_set_wasm(instance.exports);
-}`;
+    const toReplaceFrom =
+        /\{\s*const wkmod = await import\('\.\/loro_wasm_bg-([^']+)\.js'\);\s*const instance = new WebAssembly\.Instance\(wkmod\.default, \{\s*"\.\/loro_wasm_bg\.js": imports,\s*\}\);\s*__wbg_set_wasm\(instance\.exports\);\s*\}/;
     const toReplaceTarget = `
-import loro_wasm_bg_js from './loro_wasm_bg-b2849b85.js';
+import loro_wasm_bg_js from './loro_wasm_bg-$1.js';
 const instance = new WebAssembly.Instance(loro_wasm_bg_js(), {
     "./loro_wasm_bg.js": imports,
 });
@@ -87,7 +82,7 @@ __wbg_set_wasm(instance.exports);
     `;
     const base64IndexPath = "./base64/index.js";
     const content = await Deno.readTextFile(base64IndexPath);
-    if (!content.includes(toReplaceFrom)) {
+    if (!content.match(toReplaceFrom)) {
         throw new Error(
             `Could not find string to replace in ${base64IndexPath}`,
         );
