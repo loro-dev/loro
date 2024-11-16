@@ -75,10 +75,15 @@ async function rollupBase64() {
         /\{\s*const wkmod = await import\('\.\/loro_wasm_bg-([^']+)\.js'\);\s*const instance = new WebAssembly\.Instance\(wkmod\.default, \{\s*"\.\/loro_wasm_bg\.js": imports,\s*\}\);\s*__wbg_set_wasm\(instance\.exports\);\s*\}/;
     const toReplaceTarget = `
 import loro_wasm_bg_js from './loro_wasm_bg-$1.js';
-const instance = new WebAssembly.Instance(loro_wasm_bg_js(), {
-    "./loro_wasm_bg.js": imports,
-});
-__wbg_set_wasm(instance.exports);
+if (wasm.__wbindgen_start) {
+    imports.__wbg_set_wasm(loro_wasm_bg_js());
+    wasm.__wbindgen_start();
+} else {
+    const instance = new WebAssembly.Instance(loro_wasm_bg_js(), {
+        "./loro_wasm_bg.js": imports,
+    });
+    __wbg_set_wasm(instance.exports);
+}
     `;
     const base64IndexPath = "./base64/index.js";
     const content = await Deno.readTextFile(base64IndexPath);

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.3-alpha.0
+
+### Patch Changes
+
+- Chore fix base64 built target in cloudflare worker
+
 ## 1.1.2
 
 ### Patch Changes
