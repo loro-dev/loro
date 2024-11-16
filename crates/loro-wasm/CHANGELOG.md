@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.2
+
+### Patch Changes
+
+- 70c4942: Add base64 build target
+- 35e7ea5: Add changeCount and opCount methods
+
 ## 1.1.1
 
 ### Patch Changes
