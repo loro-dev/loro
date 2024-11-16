@@ -1,5 +1,6 @@
 import typescript from '@rollup/plugin-typescript';
 import { nodeResolve } from '@rollup/plugin-node-resolve';
+
 const createConfig = (format, tsTarget, outputDir) => ({
   input: {
     'index': 'index.ts',
@@ -18,7 +19,7 @@ const createConfig = (format, tsTarget, outputDir) => ({
         declaration: true,
         outDir: outputDir,
       },
-      exclude: ['tests/**/*']
+      exclude: ['tests/**/*', 'vite.config.*']
     }),
     nodeResolve()
   ],

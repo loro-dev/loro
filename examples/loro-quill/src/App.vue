@@ -5,21 +5,21 @@
   import "quill/dist/quill.bubble.css";
   import "quill/dist/quill.snow.css";
   import { QuillBinding } from "./binding";
-  import { Loro } from "loro-crdt";
+  import { LoroDoc } from "loro-crdt/base64";
 
   const editor1 = ref<null | HTMLDivElement>(null);
   const editor2 = ref<null | HTMLDivElement>(null);
   const editor3 = ref<null | HTMLDivElement>(null);
   const editor4 = ref<null | HTMLDivElement>(null);
   const binds: QuillBinding[] = [];
-  const texts: Loro[] = [];
+  const texts: LoroDoc[] = [];
   const editors = [editor1, editor2, editor3, editor4];
   const editorVersions = reactive(["", "", "", ""]);
   const online = reactive([true, true, true, true]);
   onMounted(() => {
     let index = 0;
     for (const editor of editors) {
-      const text = new Loro();
+      const text = new LoroDoc();
       text.setPeerId(BigInt(index));
       texts.push(text);
       const quill = new Quill(editor.value!, {

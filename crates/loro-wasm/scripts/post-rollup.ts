@@ -1,4 +1,4 @@
-import { walk } from "https://deno.land/std/fs/mod.ts";
+import { walk } from "https://deno.land/std@0.224.0/fs/mod.ts";
 
 const DIRS_TO_SCAN = ["./nodejs", "./bundler", "./web"];
 const FILES_TO_PROCESS = ["index.js", "index.d.ts"];
@@ -8,20 +8,21 @@ async function replaceInFile(filePath: string) {
         let content = await Deno.readTextFile(filePath);
 
         // Replace various import/require patterns for 'loro-wasm'
-        const isWebIndexJs = filePath.includes("web") && filePath.endsWith("index.js");
+        const isWebIndexJs = filePath.includes("web") &&
+            filePath.endsWith("index.js");
         const target = isWebIndexJs ? "./loro_wasm.js" : "./loro_wasm";
 
         content = content.replace(
             /from ["']loro-wasm["']/g,
-            `from "${target}"`
+            `from "${target}"`,
         );
         content = content.replace(
             /require\(["']loro-wasm["']\)/g,
-            `require("${target}")`
+            `require("${target}")`,
         );
         content = content.replace(
             /import\(["']loro-wasm["']\)/g,
-            `import("${target}")`
+            `import("${target}")`,
         );
 
         if (isWebIndexJs) {
@@ -35,21 +36,77 @@ async function replaceInFile(filePath: string) {
     }
 }
 
-async function main() {
-    for (const dir of DIRS_TO_SCAN) {
-        try {
-            for await (const entry of walk(dir, {
+async function transform(dir: string) {
+    try {
+        for await (
+            const entry of walk(dir, {
                 includeDirs: false,
                 match: [/index\.(js|d\.ts)$/],
-            })) {
-                if (FILES_TO_PROCESS.includes(entry.name)) {
-                    await replaceInFile(entry.path);
-                }
+            })
+        ) {
+            if (FILES_TO_PROCESS.includes(entry.name)) {
+                await replaceInFile(entry.path);
             }
-        } catch (error) {
-            console.error(`Error scanning directory ${dir}:`, error);
         }
+    } catch (error) {
+        console.error(`Error scanning directory ${dir}:`, error);
     }
+}
+
+async function rollupBase64() {
+    const command = new Deno.Command("rollup", {
+        args: ["--config", "./rollup.base64.config.mjs"],
+    });
+
+    try {
+        const { code, stdout, stderr } = await command.output();
+        if (code === 0) {
+            console.log("✓ Rollup base64 build completed successfully");
+        } else {
+            console.error("Error running rollup base64 build:");
+            console.error(new TextDecoder().decode(stdout));
+            console.error(new TextDecoder().decode(stderr));
+        }
+    } catch (error) {
+        console.error("Failed to execute rollup command:", error);
+    }
+
+    const toReplaceFrom = `{
+    const wkmod = await import('./loro_wasm_bg-b2849b85.js');
+    const instance = new WebAssembly.Instance(wkmod.default, {
+        "./loro_wasm_bg.js": imports,
+    });
+    __wbg_set_wasm(instance.exports);
+}`;
+    const toReplaceTarget = `
+import loro_wasm_bg_js from './loro_wasm_bg-b2849b85.js';
+const instance = new WebAssembly.Instance(loro_wasm_bg_js(), {
+    "./loro_wasm_bg.js": imports,
+});
+__wbg_set_wasm(instance.exports);
+    `;
+    const base64IndexPath = "./base64/index.js";
+    const content = await Deno.readTextFile(base64IndexPath);
+    if (!content.includes(toReplaceFrom)) {
+        throw new Error(
+            `Could not find string to replace in ${base64IndexPath}`,
+        );
+    }
+    await Deno.writeTextFile(
+        base64IndexPath,
+        content.replace(toReplaceFrom, toReplaceTarget),
+    );
+
+    await Deno.copyFile("./bundler/loro_wasm.d.ts", "./base64/loro_wasm.d.ts");
+}
+
+async function main() {
+    for (const dir of DIRS_TO_SCAN) {
+        await transform(dir);
+    }
+
+    await rollupBase64();
+    transform("./base64");
 }
 
 if (import.meta.main) {

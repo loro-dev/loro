@@ -213,6 +213,7 @@
         "npm:@rollup/plugin-alias@^5.1.1",
         "npm:@rollup/plugin-node-resolve@^15.0.1",
         "npm:@rollup/plugin-typescript@^12.1.1",
+        "npm:@rollup/plugin-wasm@^6.2.2",
         "npm:@typescript-eslint/parser@^6.2.0",
         "npm:@vitest/ui@^1.0.4",
         "npm:esbuild@~0.18.20",
