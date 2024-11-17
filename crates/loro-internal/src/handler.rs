@@ -4176,7 +4176,14 @@ mod test {
         loro.set_peer_id(1).unwrap();
         let tree = loro.get_tree("root");
         let id = loro
-            .with_txn(|txn| tree.create_with_txn(txn, TreeParentId::Root, 0))
+            .with_txn(|txn| {
+                tree.create_with_txn(
+                    txn,
+                    TreeParentId::Root,
+                    0,
+                    crate::state::FiIfNotConfigured::UseJitterZero,
+                )
+            })
             .unwrap();
         loro.with_txn(|txn| {
             let meta = tree.get_meta(id)?;
@@ -4206,11 +4213,21 @@ mod test {
         let tree = loro.get_tree("root");
         let text = loro.get_text("text");
         loro.with_txn(|txn| {
-            let id = tree.create_with_txn(txn, TreeParentId::Root, 0)?;
+            let id = tree.create_with_txn(
+                txn,
+                TreeParentId::Root,
+                0,
+                crate::state::FiIfNotConfigured::UseJitterZero,
+            )?;
             let meta = tree.get_meta(id)?;
             meta.insert_with_txn(txn, "a", 1.into())?;
             text.insert_with_txn(txn, 0, "abc")?;
-            let _id2 = tree.create_with_txn(txn, TreeParentId::Root, 0)?;
+            let _id2 = tree.create_with_txn(
+                txn,
+                TreeParentId::Root,
+                0,
+                crate::state::FiIfNotConfigured::UseJitterZero,
+            )?;
             meta.insert_with_txn(txn, "b", 2.into())?;
             Ok(id)
         })

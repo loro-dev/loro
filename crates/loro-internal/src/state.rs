@@ -51,6 +51,7 @@ pub(crate) use container_store::GcStore;
 pub(crate) use list_state::ListState;
 pub(crate) use map_state::MapState;
 pub(crate) use richtext_state::RichtextState;
+pub(crate) use tree_state::FiIfNotConfigured;
 pub(crate) use tree_state::{get_meta_value, FractionalIndexGenResult, NodePosition, TreeState};
 pub use tree_state::{TreeNode, TreeNodeWithChildren, TreeParentId};
 

@@ -11,7 +11,10 @@ use smallvec::smallvec;
 use crate::{
     container::tree::tree_op::TreeOp,
     delta::{TreeDiffItem, TreeExternalDiff},
-    state::{FractionalIndexGenResult, NodePosition, TreeNode, TreeNodeWithChildren, TreeParentId},
+    state::{
+        FiIfNotConfigured, FractionalIndexGenResult, NodePosition, TreeNode, TreeNodeWithChildren,
+        TreeParentId,
+    },
     txn::{EventHint, Transaction},
     BasicHandler, HandlerTrait, MapHandler,
 };
@@ -172,7 +175,8 @@ impl HandlerTrait for TreeHandler {
                     })
                     .unwrap_or_default();
                 while let Some(((idx, target), parent)) = q.pop_front() {
-                    let real_id = tree.create_with_txn(txn, parent, idx)?;
+                    let real_id =
+                        tree.create_with_txn(txn, parent, idx, FiIfNotConfigured::UseJitterZero)?;
                     let map = t.value.map.get(target).unwrap();
                     map.attach(
                         txn,
@@ -196,7 +200,8 @@ impl HandlerTrait for TreeHandler {
                     let parent = node.parent;
                     let index = node.index;
                     let target = node.id;
-                    let real_id = ans.create_with_txn(txn, parent, index)?;
+                    let real_id =
+                        ans.create_with_txn(txn, parent, index, FiIfNotConfigured::UseJitterZero)?;
                     ans.get_meta(target)?
                         .attach(txn, a, real_id.associated_meta_container())?;
                 }
@@ -325,9 +330,9 @@ impl TreeHandler {
                 let t = &mut t.try_lock().unwrap().value;
                 Ok(t.create(parent.tree_id(), index))
             }
-            MaybeDetached::Attached(a) => {
-                a.with_txn(|txn| self.create_with_txn(txn, parent, index))
-            }
+            MaybeDetached::Attached(a) => a.with_txn(|txn| {
+                self.create_with_txn(txn, parent, index, FiIfNotConfigured::UseJitterZero)
+            }),
         }
     }
 
@@ -490,11 +495,12 @@ impl TreeHandler {
         txn: &mut Transaction,
         parent: TreeParentId,
         index: usize,
+        cfg: FiIfNotConfigured,
     ) -> LoroResult<TreeID> {
         let inner = self.inner.try_attached_state()?;
         let target = TreeID::from_id(txn.next_id());
 
-        match self.generate_position_at(&target, &parent, index) {
+        match self.generate_position_at(&target, &parent, index, cfg) {
             FractionalIndexGenResult::Ok(position) => {
                 self.create_with_position(inner, txn, target, parent, index, position)
             }
@@ -507,6 +513,9 @@ impl TreeHandler {
                     self.mov_with_position(inner, txn, id, parent, index + i, position, index + i)?;
                 }
                 Ok(target)
+            }
+            FractionalIndexGenResult::NotConfigured => {
+                Err(LoroTreeError::FractionalIndexNotEnabled.into())
             }
         }
     }
@@ -525,7 +534,9 @@ impl TreeHandler {
                 if self.is_parent(&target, &parent) {
                     index -= 1;
                 }
-                a.with_txn(|txn| self.mov_with_txn(txn, target, parent, index))
+                a.with_txn(|txn| {
+                    self.mov_with_txn(txn, target, parent, index, FiIfNotConfigured::UseJitterZero)
+                })
             }
         }
     }
@@ -561,9 +572,9 @@ impl TreeHandler {
                 let mut t = t.try_lock().unwrap();
                 t.value.mov(target, parent.tree_id(), index)
             }
-            MaybeDetached::Attached(a) => {
-                a.with_txn(|txn| self.mov_with_txn(txn, target, parent, index))
-            }
+            MaybeDetached::Attached(a) => a.with_txn(|txn| {
+                self.mov_with_txn(txn, target, parent, index, FiIfNotConfigured::UseJitterZero)
+            }),
         }
     }
 
@@ -573,6 +584,7 @@ impl TreeHandler {
         target: TreeID,
         parent: TreeParentId,
         index: usize,
+        cfg: FiIfNotConfigured,
     ) -> LoroResult<()> {
         let inner = self.inner.try_attached_state()?;
         let mut children_len = self.children_num(&parent).unwrap_or(0);
@@ -606,7 +618,7 @@ impl TreeHandler {
             self.delete_position(&parent, &target);
         }
 
-        match self.generate_position_at(&target, &parent, index) {
+        match self.generate_position_at(&target, &parent, index, cfg) {
             FractionalIndexGenResult::Ok(position) => {
                 self.mov_with_position(inner, txn, target, parent, index, position, old_index)
             }
@@ -615,6 +627,9 @@ impl TreeHandler {
                     self.mov_with_position(inner, txn, id, parent, index + i, position, old_index)?;
                 }
                 Ok(())
+            }
+            FractionalIndexGenResult::NotConfigured => {
+                Err(LoroTreeError::FractionalIndexNotEnabled.into())
             }
         }
     }
@@ -874,13 +889,14 @@ impl TreeHandler {
         target: &TreeID,
         parent: &TreeParentId,
         index: usize,
+        cfg: FiIfNotConfigured,
     ) -> FractionalIndexGenResult {
         let MaybeDetached::Attached(a) = &self.inner else {
             unreachable!()
         };
         a.with_state(|state| {
             let a = state.as_tree_state_mut().unwrap();
-            a.generate_position_at(target, parent, index)
+            a.generate_position_at(target, parent, index, cfg)
         })
     }
 
