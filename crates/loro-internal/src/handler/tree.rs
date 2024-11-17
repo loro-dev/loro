@@ -321,7 +321,15 @@ impl TreeHandler {
             _ => {}
         }
         let index: usize = self.children_num(&parent).unwrap_or(0);
-        self.create_at(parent, index)
+        match &self.inner {
+            MaybeDetached::Detached(t) => {
+                let t = &mut t.try_lock().unwrap().value;
+                Ok(t.create(parent.tree_id(), index))
+            }
+            MaybeDetached::Attached(a) => {
+                a.with_txn(|txn| self.create_with_txn(txn, parent, index, FiIfNotConfigured::Zero))
+            }
+        }
     }
 
     pub fn create_at(&self, parent: TreeParentId, index: usize) -> LoroResult<TreeID> {
@@ -330,9 +338,9 @@ impl TreeHandler {
                 let t = &mut t.try_lock().unwrap().value;
                 Ok(t.create(parent.tree_id(), index))
             }
-            MaybeDetached::Attached(a) => a.with_txn(|txn| {
-                self.create_with_txn(txn, parent, index, FiIfNotConfigured::UseJitterZero)
-            }),
+            MaybeDetached::Attached(a) => {
+                a.with_txn(|txn| self.create_with_txn(txn, parent, index, FiIfNotConfigured::Throw))
+            }
         }
     }
 
@@ -530,12 +538,9 @@ impl TreeHandler {
                 self.move_to(target, parent, index)
             }
             MaybeDetached::Attached(a) => {
-                let mut index = self.children_num(&parent).unwrap_or(0);
-                if self.is_parent(&target, &parent) {
-                    index -= 1;
-                }
+                let index: usize = self.children_num(&parent).unwrap_or(0);
                 a.with_txn(|txn| {
-                    self.mov_with_txn(txn, target, parent, index, FiIfNotConfigured::UseJitterZero)
+                    self.mov_with_txn(txn, target, parent, index, FiIfNotConfigured::Zero)
                 })
             }
         }
@@ -573,7 +578,7 @@ impl TreeHandler {
                 t.value.mov(target, parent.tree_id(), index)
             }
             MaybeDetached::Attached(a) => a.with_txn(|txn| {
-                self.mov_with_txn(txn, target, parent, index, FiIfNotConfigured::UseJitterZero)
+                self.mov_with_txn(txn, target, parent, index, FiIfNotConfigured::Throw)
             }),
         }
     }
@@ -974,7 +979,7 @@ impl TreeHandler {
         }
     }
 
-    /// Set whether to generate fractional index for Tree Position. The LoroDoc is set to disable fractional index by default.
+    /// Set whether to generate fractional index for Tree Position. The LoroDoc is set to use jitter 0 by default.
     ///
     /// The jitter is used to avoid conflicts when multiple users are creating the node at the same position.
     /// value 0 is default, which means no jitter, any value larger than 0 will enable jitter.

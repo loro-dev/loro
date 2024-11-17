@@ -33,14 +33,13 @@ use crate::{
     op::RawOp,
 };
 
-#[derive(Clone, Debug, Default, EnumAsInner)]
+#[derive(Clone, Debug, EnumAsInner)]
 pub enum TreeFractionalIndexConfigInner {
     GenerateFractionalIndex {
         jitter: u8,
         rng: Box<rand::rngs::StdRng>,
     },
-    #[default]
-    Default,
+    MoveDisabled,
 }
 
 /// The state of movable tree.
@@ -668,7 +667,10 @@ impl TreeState {
             idx,
             trees: FxHashMap::default(),
             children: Default::default(),
-            fractional_index_config: TreeFractionalIndexConfigInner::default(),
+            fractional_index_config: TreeFractionalIndexConfigInner::GenerateFractionalIndex {
+                jitter: 0,
+                rng: Box::new(rand::rngs::StdRng::seed_from_u64(0)),
+            },
             peer_id,
         }
     }
@@ -934,7 +936,7 @@ impl TreeState {
                         .generate_fi_at_jitter(index, target, rng.as_mut(), *jitter)
                 }
             }
-            TreeFractionalIndexConfigInner::Default => match cfg {
+            TreeFractionalIndexConfigInner::MoveDisabled => match cfg {
                 FiIfNotConfigured::Throw => FractionalIndexGenResult::NotConfigured,
                 FiIfNotConfigured::UseJitterZero => self
                     .children
@@ -949,7 +951,7 @@ impl TreeState {
     pub(crate) fn is_fractional_index_enabled(&self) -> bool {
         !matches!(
             self.fractional_index_config,
-            TreeFractionalIndexConfigInner::Default
+            TreeFractionalIndexConfigInner::MoveDisabled
         )
     }
 
@@ -968,7 +970,7 @@ impl TreeState {
     }
 
     pub(crate) fn disable_generate_fractional_index(&mut self) {
-        self.fractional_index_config = TreeFractionalIndexConfigInner::Default;
+        self.fractional_index_config = TreeFractionalIndexConfigInner::MoveDisabled;
     }
 
     pub(crate) fn get_position(&self, target: &TreeID) -> Option<FractionalIndex> {

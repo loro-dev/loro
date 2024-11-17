@@ -1,4 +1,5 @@
 #![allow(deprecated)]
+use pretty_assertions::assert_eq;
 use std::{
     cmp::Ordering,
     ops::ControlFlow,
