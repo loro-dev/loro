@@ -4011,8 +4011,11 @@ impl LoroTree {
         self.handler.enable_fractional_index(jitter);
     }
 
-    /// Disable the fractional index generation for Tree Position when
-    /// you don't need the Tree's siblings to be sorted. The fractional index will always be set to default.
+    /// Disable the fractional index generation when you don't need the Tree's siblings to be sorted.
+    /// The fractional index will always be set to the same default value 0.
+    ///
+    /// After calling this, you cannot use `tree.moveTo()`, `tree.moveBefore()`, `tree.moveAfter()`,
+    /// and `tree.createAt()`.
     #[wasm_bindgen(js_name = "disableFractionalIndex")]
     pub fn disable_fractional_index(&self) {
         self.handler.disable_fractional_index();

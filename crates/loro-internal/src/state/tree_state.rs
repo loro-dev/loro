@@ -33,14 +33,13 @@ use crate::{
     op::RawOp,
 };
 
-#[derive(Clone, Debug, Default, EnumAsInner)]
+#[derive(Clone, Debug, EnumAsInner)]
 pub enum TreeFractionalIndexConfigInner {
     GenerateFractionalIndex {
         jitter: u8,
         rng: Box<rand::rngs::StdRng>,
     },
-    #[default]
-    AlwaysDefault,
+    MoveDisabled,
 }
 
 /// The state of movable tree.
@@ -654,13 +653,24 @@ impl NodePosition {
     }
 }
 
+pub(crate) enum FiIfNotConfigured {
+    UseJitterZero,
+    #[allow(unused)]
+    Throw,
+    #[allow(unused)]
+    Zero,
+}
+
 impl TreeState {
     pub fn new(idx: ContainerIdx, peer_id: PeerID) -> Self {
         Self {
             idx,
             trees: FxHashMap::default(),
             children: Default::default(),
-            fractional_index_config: TreeFractionalIndexConfigInner::default(),
+            fractional_index_config: TreeFractionalIndexConfigInner::GenerateFractionalIndex {
+                jitter: 0,
+                rng: Box::new(rand::rngs::StdRng::seed_from_u64(0)),
+            },
             peer_id,
         }
     }
@@ -910,6 +920,7 @@ impl TreeState {
         target: &TreeID,
         parent: &TreeParentId,
         index: usize,
+        cfg: FiIfNotConfigured,
     ) -> FractionalIndexGenResult {
         match &mut self.fractional_index_config {
             TreeFractionalIndexConfigInner::GenerateFractionalIndex { jitter, rng } => {
@@ -925,16 +936,22 @@ impl TreeState {
                         .generate_fi_at_jitter(index, target, rng.as_mut(), *jitter)
                 }
             }
-            TreeFractionalIndexConfigInner::AlwaysDefault => {
-                FractionalIndexGenResult::Ok(FractionalIndex::default())
-            }
+            TreeFractionalIndexConfigInner::MoveDisabled => match cfg {
+                FiIfNotConfigured::Throw => FractionalIndexGenResult::NotConfigured,
+                FiIfNotConfigured::UseJitterZero => self
+                    .children
+                    .entry(*parent)
+                    .or_default()
+                    .generate_fi_at(index, target),
+                FiIfNotConfigured::Zero => FractionalIndexGenResult::Ok(FractionalIndex::default()),
+            },
         }
     }
 
     pub(crate) fn is_fractional_index_enabled(&self) -> bool {
         !matches!(
             self.fractional_index_config,
-            TreeFractionalIndexConfigInner::AlwaysDefault
+            TreeFractionalIndexConfigInner::MoveDisabled
         )
     }
 
@@ -953,7 +970,7 @@ impl TreeState {
     }
 
     pub(crate) fn disable_generate_fractional_index(&mut self) {
-        self.fractional_index_config = TreeFractionalIndexConfigInner::AlwaysDefault;
+        self.fractional_index_config = TreeFractionalIndexConfigInner::MoveDisabled;
     }
 
     pub(crate) fn get_position(&self, target: &TreeID) -> Option<FractionalIndex> {
@@ -1029,6 +1046,7 @@ impl TreeState {
 pub(crate) enum FractionalIndexGenResult {
     Ok(FractionalIndex),
     Rearrange(Vec<(TreeID, FractionalIndex)>),
+    NotConfigured,
 }
 
 impl ContainerState for TreeState {

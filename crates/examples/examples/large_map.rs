@@ -4,7 +4,7 @@ use dev_utils::get_mem_usage;
 use loro::LoroDoc;
 
 fn main() {
-    let mut init = Instant::now();
+    let init;
     {
         let start = Instant::now();
         let doc = LoroDoc::new();
