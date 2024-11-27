@@ -11,7 +11,7 @@ use loro_internal::cursor::Side;
 pub use loro_internal::encoding::ImportStatus;
 use loro_internal::handler::HandlerTrait;
 use loro_internal::handler::ValueOrHandler;
-use loro_internal::loro::ChangeTravelError;
+pub use loro_internal::loro::ChangeTravelError;
 use loro_internal::undo::{OnPop, OnPush};
 use loro_internal::version::shrink_frontiers;
 pub use loro_internal::version::ImVersionVector;

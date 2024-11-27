@@ -2,14 +2,14 @@ use std::{
     borrow::Cow,
     cmp::Ordering,
     collections::HashMap,
-    ops::Deref,
+    ops::{ControlFlow, Deref},
     sync::{Arc, Mutex},
 };
 
 use loro::{
-    cursor::CannotFindRelativePosition, CounterSpan, DocAnalysis, FrontiersNotIncluded, IdSpan,
-    JsonPathError, JsonSchema, Lamport, LoroDoc as InnerLoroDoc, LoroEncodeError, LoroError,
-    LoroResult, PeerID, Timestamp, VersionRange, ID,
+    cursor::CannotFindRelativePosition, ChangeTravelError, CounterSpan, DocAnalysis,
+    FrontiersNotIncluded, IdSpan, JsonPathError, JsonSchema, Lamport, LoroDoc as InnerLoroDoc,
+    LoroEncodeError, LoroError, LoroResult, PeerID, Timestamp, VersionRange, ID,
 };
 
 use crate::{
@@ -18,6 +18,16 @@ use crate::{
     LoroCounter, LoroList, LoroMap, LoroMovableList, LoroText, LoroTree, LoroValue, StyleConfigMap,
     ValueOrContainer, VersionVector,
 };
+
+/// Decodes the metadata for an imported blob from the provided bytes.
+#[inline]
+pub fn decode_import_blob_meta(
+    bytes: &[u8],
+    check_checksum: bool,
+) -> LoroResult<ImportBlobMetadata> {
+    let s = InnerLoroDoc::decode_import_blob_meta(bytes, check_checksum)?;
+    Ok(s.into())
+}
 
 pub struct LoroDoc {
     doc: InnerLoroDoc,
@@ -32,6 +42,11 @@ impl LoroDoc {
 
     pub fn fork(&self) -> Arc<Self> {
         let doc = self.doc.fork();
+        Arc::new(LoroDoc { doc })
+    }
+
+    pub fn fork_at(&self, frontiers: &Frontiers) -> Arc<Self> {
+        let doc = self.doc.fork_at(&frontiers.into());
         Arc::new(LoroDoc { doc })
     }
 
@@ -57,16 +72,6 @@ impl LoroDoc {
     #[inline]
     pub fn get_change(&self, id: ID) -> Option<ChangeMeta> {
         self.doc.get_change(id).map(|x| x.into())
-    }
-
-    /// Decodes the metadata for an imported blob from the provided bytes.
-    #[inline]
-    pub fn decode_import_blob_meta(
-        bytes: &[u8],
-        check_checksum: bool,
-    ) -> LoroResult<ImportBlobMetadata> {
-        let s = InnerLoroDoc::decode_import_blob_meta(bytes, check_checksum)?;
-        Ok(s.into())
     }
 
     /// Set whether to record the timestamp of each change. Default is `false`.
@@ -308,6 +313,19 @@ impl LoroDoc {
         self.doc
             .frontiers_to_vv(&frontiers.into())
             .map(|v| Arc::new(v.into()))
+    }
+
+    pub fn minimize_frontiers(&self, frontiers: &Frontiers) -> FrontiersOrID {
+        match self.doc.minimize_frontiers(&frontiers.into()) {
+            Ok(f) => FrontiersOrID {
+                frontiers: Some(Arc::new(f.into())),
+                id: None,
+            },
+            Err(id) => FrontiersOrID {
+                frontiers: None,
+                id: Some(id),
+            },
+        }
     }
 
     pub fn vv_to_frontiers(&self, vv: &VersionVector) -> Arc<Frontiers> {
@@ -568,6 +586,38 @@ impl LoroDoc {
                 .collect()
         })
     }
+
+    pub fn travel_change_ancestors(
+        &self,
+        ids: &[ID],
+        f: Arc<dyn ChangeAncestorsTraveler>,
+    ) -> Result<(), ChangeTravelError> {
+        self.doc
+            .travel_change_ancestors(ids, &mut |change| match f.travel(change.into()) {
+                true => ControlFlow::Continue(()),
+                false => ControlFlow::Break(()),
+            })
+    }
+
+    pub fn get_changed_containers_in(&self, id: ID, len: u32) -> Vec<ContainerID> {
+        self.doc
+            .get_changed_containers_in(id, len as usize)
+            .into_iter()
+            .map(|x| x.into())
+            .collect()
+    }
+
+    pub fn is_shallow(&self) -> bool {
+        self.doc.is_shallow()
+    }
+
+    pub fn get_pending_txn_len(&self) -> u32 {
+        self.doc.get_pending_txn_len() as u32
+    }
+}
+
+pub trait ChangeAncestorsTraveler: Sync + Send {
+    fn travel(&self, change: ChangeMeta) -> bool;
 }
 
 impl Default for LoroDoc {
@@ -772,4 +822,9 @@ fn vr_to_map(a: &VersionRange) -> HashMap<u64, CounterSpan> {
             )
         })
         .collect()
+}
+
+pub struct FrontiersOrID {
+    pub frontiers: Option<Arc<Frontiers>>,
+    pub id: Option<ID>,
 }

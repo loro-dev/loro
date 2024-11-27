@@ -1,6 +1,6 @@
 use std::{ops::Deref, sync::Arc};
 
-use loro::{cursor::Side, LoroList as InnerLoroList, LoroResult, ID};
+use loro::{cursor::Side, ContainerTrait, LoroList as InnerLoroList, LoroResult, ID};
 
 use crate::{ContainerID, LoroValue, LoroValueLike, ValueOrContainer};
 
@@ -175,6 +175,22 @@ impl LoroList {
         self.list
             .get_cursor(pos as usize, side)
             .map(|v| Arc::new(v.into()))
+    }
+
+    pub fn is_deleted(&self) -> bool {
+        self.list.is_deleted()
+    }
+
+    pub fn to_vec(&self) -> Vec<LoroValue> {
+        self.list.to_vec().into_iter().map(|v| v.into()).collect()
+    }
+
+    pub fn clear(&self) -> LoroResult<()> {
+        self.list.clear()
+    }
+
+    pub fn get_id_at(&self, index: u32) -> Option<ID> {
+        self.list.get_id_at(index as usize)
     }
 }
 

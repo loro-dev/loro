@@ -1,6 +1,6 @@
 use std::{fmt::Display, sync::Arc};
 
-use loro::{cursor::Side, LoroResult, TextDelta, UpdateOptions, UpdateTimeoutError};
+use loro::{cursor::Side, LoroResult, PeerID, TextDelta, UpdateOptions, UpdateTimeoutError};
 
 use crate::{ContainerID, LoroValue, LoroValueLike};
 
@@ -221,6 +221,26 @@ impl LoroText {
         self.text
             .get_cursor(pos as usize, side)
             .map(|v| Arc::new(v.into()))
+    }
+
+    pub fn update_by_line(
+        &self,
+        text: &str,
+        options: UpdateOptions,
+    ) -> Result<(), UpdateTimeoutError> {
+        self.text.update_by_line(text, options)
+    }
+
+    pub fn is_deleted(&self) -> bool {
+        self.text.is_deleted()
+    }
+
+    pub fn push_str(&self, s: &str) -> LoroResult<()> {
+        self.text.push_str(s)
+    }
+
+    pub fn get_editor_at_unicode_pos(&self, pos: u32) -> Option<PeerID> {
+        self.text.get_editor_at_unicode_pos(pos as usize)
     }
 }
 

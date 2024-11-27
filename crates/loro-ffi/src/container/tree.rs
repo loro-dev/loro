@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use loro::{LoroError, LoroResult, LoroTreeError, TreeID};
+use loro::{ContainerTrait, LoroError, LoroResult, LoroTreeError, TreeID, ID};
 
 use crate::{ContainerID, LoroValue};
 
@@ -229,6 +229,14 @@ impl LoroTree {
     #[inline]
     pub fn disable_fractional_index(&self) {
         self.tree.disable_fractional_index();
+    }
+
+    pub fn is_deleted(&self) -> bool {
+        self.tree.is_deleted()
+    }
+
+    pub fn get_last_move_id(&self, target: &TreeID) -> Option<ID> {
+        self.tree.get_last_move_id(target)
     }
 }
 

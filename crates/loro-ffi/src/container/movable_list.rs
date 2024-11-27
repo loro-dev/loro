@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use loro::{cursor::Side, LoroResult};
+use loro::{cursor::Side, ContainerTrait, LoroResult, PeerID};
 
 use crate::{ContainerID, LoroValue, LoroValueLike, ValueOrContainer};
 
@@ -247,6 +247,30 @@ impl LoroMovableList {
         self.list
             .get_cursor(pos as usize, side)
             .map(|v| Arc::new(v.into()))
+    }
+
+    pub fn to_vec(&self) -> Vec<LoroValue> {
+        self.list.to_vec().into_iter().map(|v| v.into()).collect()
+    }
+
+    pub fn clear(&self) -> LoroResult<()> {
+        self.list.clear()
+    }
+
+    pub fn is_deleted(&self) -> bool {
+        self.list.is_deleted()
+    }
+
+    pub fn get_creator_at(&self, index: u32) -> Option<PeerID> {
+        self.list.get_creator_at(index as usize)
+    }
+
+    pub fn get_last_mover_at(&self, index: u32) -> Option<PeerID> {
+        self.list.get_last_mover_at(index as usize)
+    }
+
+    pub fn get_last_editor_at(&self, index: u32) -> Option<PeerID> {
+        self.list.get_last_editor_at(index as usize)
     }
 }
 
