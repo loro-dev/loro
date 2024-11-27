@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use loro::LoroResult;
+use loro::{ContainerTrait, LoroResult, PeerID};
 
 use crate::{ContainerID, LoroValue, LoroValueLike, ValueOrContainer};
 
@@ -140,6 +140,29 @@ impl LoroMap {
     /// It will convert the state of sub-containers into a nested JSON value.
     pub fn get_deep_value(&self) -> LoroValue {
         self.map.get_deep_value().into()
+    }
+
+    pub fn is_deleted(&self) -> bool {
+        self.map.is_deleted()
+    }
+
+    pub fn get_last_editor(&self, key: &str) -> Option<PeerID> {
+        self.map.get_last_editor(key)
+    }
+
+    pub fn clear(&self) -> LoroResult<()> {
+        self.map.clear()
+    }
+
+    pub fn keys(&self) -> Vec<String> {
+        self.map.keys().map(|k| k.to_string()).collect()
+    }
+
+    pub fn values(&self) -> Vec<Arc<dyn ValueOrContainer>> {
+        self.map
+            .values()
+            .map(|v| Arc::new(v) as Arc<dyn ValueOrContainer>)
+            .collect()
     }
 }
 

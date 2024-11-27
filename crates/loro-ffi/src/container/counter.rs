@@ -1,4 +1,4 @@
-use loro::LoroResult;
+use loro::{ContainerTrait, LoroResult};
 
 use crate::ContainerID;
 
@@ -32,6 +32,10 @@ impl LoroCounter {
     /// Get the current value of the counter.
     pub fn get_value(&self) -> f64 {
         self.counter.get_value()
+    }
+
+    pub fn is_deleted(&self) -> bool {
+        self.counter.is_deleted()
     }
 }
 
