@@ -7,7 +7,7 @@ use std::{
 };
 
 use loro::{
-    cursor::CannotFindRelativePosition, ChangeTravelError, CounterSpan, DocAnalysis,
+    cursor::CannotFindRelativePosition, ChangeTravelError, CounterSpan, DocAnalysis, ExportMode,
     FrontiersNotIncluded, IdSpan, JsonPathError, JsonSchema, Lamport, LoroDoc as InnerLoroDoc,
     LoroEncodeError, LoroError, LoroResult, PeerID, Timestamp, VersionRange, ID,
 };
@@ -293,20 +293,16 @@ impl LoroDoc {
     // TODO: add export method
     /// Export all the ops not included in the given `VersionVector`
     #[inline]
-    #[allow(deprecated)]
-    #[deprecated(
-        since = "1.0.0",
-        note = "Use `export` with `ExportMode::Updates` instead"
-    )]
-    pub fn export_from(&self, vv: &VersionVector) -> Vec<u8> {
-        self.doc.export_from(&vv.into())
+    pub fn export_updates(&self, vv: &VersionVector) -> Result<Vec<u8>, LoroEncodeError> {
+        self.doc.export(loro::ExportMode::Updates {
+            from: Cow::Owned(vv.into()),
+        })
     }
 
     /// Export the current state and history of the document.
     #[inline]
-    pub fn export_snapshot(&self) -> Vec<u8> {
-        #[allow(deprecated)]
-        self.doc.export_snapshot()
+    pub fn export_snapshot(&self) -> Result<Vec<u8>, LoroEncodeError> {
+        self.doc.export(loro::ExportMode::Snapshot)
     }
 
     pub fn frontiers_to_vv(&self, frontiers: &Frontiers) -> Option<Arc<VersionVector>> {
@@ -516,20 +512,20 @@ impl LoroDoc {
     //     self.doc.export(mode.into())
     // }
 
-    pub fn export_updates_in_range(&self, spans: &[IdSpan]) -> Vec<u8> {
-        self.doc
-            .export(loro::ExportMode::UpdatesInRange {
-                spans: Cow::Borrowed(spans),
-            })
-            .unwrap()
+    pub fn export_updates_in_range(&self, spans: &[IdSpan]) -> Result<Vec<u8>, LoroEncodeError> {
+        self.doc.export(loro::ExportMode::UpdatesInRange {
+            spans: Cow::Borrowed(spans),
+        })
     }
 
-    pub fn export_shallow_snapshot(&self, frontiers: &Frontiers) -> Vec<u8> {
+    pub fn export_shallow_snapshot(
+        &self,
+        frontiers: &Frontiers,
+    ) -> Result<Vec<u8>, LoroEncodeError> {
         self.doc
             .export(loro::ExportMode::ShallowSnapshot(Cow::Owned(
                 frontiers.into(),
             )))
-            .unwrap()
     }
 
     pub fn export_state_only(
@@ -762,33 +758,33 @@ pub struct PosQueryResult {
     pub current: AbsolutePosition,
 }
 
-pub enum ExportMode {
-    Snapshot,
-    Updates { from: VersionVector },
-    UpdatesInRange { spans: Vec<IdSpan> },
-    ShallowSnapshot { frontiers: Frontiers },
-    StateOnly { frontiers: Option<Frontiers> },
-}
+// pub enum ExportMode {
+//     Snapshot,
+//     Updates { from: VersionVector },
+//     UpdatesInRange { spans: Vec<IdSpan> },
+//     ShallowSnapshot { frontiers: Frontiers },
+//     StateOnly { frontiers: Option<Frontiers> },
+// }
 
-impl From<ExportMode> for loro::ExportMode<'_> {
-    fn from(value: ExportMode) -> Self {
-        match value {
-            ExportMode::Snapshot => loro::ExportMode::Snapshot,
-            ExportMode::Updates { from } => loro::ExportMode::Updates {
-                from: Cow::Owned(from.into()),
-            },
-            ExportMode::UpdatesInRange { spans } => loro::ExportMode::UpdatesInRange {
-                spans: Cow::Owned(spans),
-            },
-            ExportMode::ShallowSnapshot { frontiers } => {
-                loro::ExportMode::ShallowSnapshot(Cow::Owned(frontiers.into()))
-            }
-            ExportMode::StateOnly { frontiers } => {
-                loro::ExportMode::StateOnly(frontiers.map(|x| Cow::Owned(x.into())))
-            }
-        }
-    }
-}
+// impl From<ExportMode> for loro::ExportMode<'_> {
+//     fn from(value: ExportMode) -> Self {
+//         match value {
+//             ExportMode::Snapshot => loro::ExportMode::Snapshot,
+//             ExportMode::Updates { from } => loro::ExportMode::Updates {
+//                 from: Cow::Owned(from.into()),
+//             },
+//             ExportMode::UpdatesInRange { spans } => loro::ExportMode::UpdatesInRange {
+//                 spans: Cow::Owned(spans),
+//             },
+//             ExportMode::ShallowSnapshot { frontiers } => {
+//                 loro::ExportMode::ShallowSnapshot(Cow::Owned(frontiers.into()))
+//             }
+//             ExportMode::StateOnly { frontiers } => {
+//                 loro::ExportMode::StateOnly(frontiers.map(|x| Cow::Owned(x.into())))
+//             }
+//         }
+//     }
+// }
 
 pub struct ContainerPath {
     pub id: ContainerID,

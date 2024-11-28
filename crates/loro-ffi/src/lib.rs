@@ -14,8 +14,8 @@ pub use value::{ContainerID, ContainerType, LoroValue, LoroValueLike};
 mod doc;
 pub use doc::{
     decode_import_blob_meta, ChangeAncestorsTraveler, ChangeMeta, CommitOptions, ContainerPath,
-    ExportMode, FrontiersOrID, ImportBlobMetadata, ImportStatus, JsonSchemaLike,
-    LocalUpdateCallback, LoroDoc, PosQueryResult, Subscription, Unsubscriber,
+    FrontiersOrID, ImportBlobMetadata, ImportStatus, JsonSchemaLike, LocalUpdateCallback, LoroDoc,
+    PosQueryResult, Subscription, Unsubscriber,
 };
 mod container;
 pub use container::{
