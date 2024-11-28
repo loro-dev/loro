@@ -190,7 +190,7 @@ extern "C" {
     pub type JsCommitOption;
     #[wasm_bindgen(typescript_type = "ImportStatus")]
     pub type JsImportStatus;
-    #[wasm_bindgen(typescript_type = "(change: ChangeMeta) => boolean")]
+    #[wasm_bindgen(typescript_type = "(change: Change) => boolean")]
     pub type JsTravelChangeFunction;
     #[wasm_bindgen(typescript_type = "(string|number)[]")]
     pub type JsContainerPath;
@@ -4972,7 +4972,7 @@ export type TreeNodeJSON<T> = Omit<TreeNodeValue, 'meta' | 'children'> & {
 
 interface LoroTree{
     toArray(): TreeNodeValue[];
-    getNodes(options?: { withDeleted: boolean = false }): LoroTreeNode[];
+    getNodes(options?: { withDeleted?: boolean } ): LoroTreeNode[];
 }
 
 interface LoroMovableList {
@@ -5068,7 +5068,7 @@ export type ExportMode = {
 } | {
     mode: "updates-in-range",
     spans: {
-        id: ID,
+        id: JsonOpID,
         len: number,
     }[],
 };
