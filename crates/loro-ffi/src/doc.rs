@@ -7,7 +7,7 @@ use std::{
 };
 
 use loro::{
-    cursor::CannotFindRelativePosition, ChangeTravelError, CounterSpan, DocAnalysis, ExportMode,
+    cursor::CannotFindRelativePosition, ChangeTravelError, CounterSpan, DocAnalysis,
     FrontiersNotIncluded, IdSpan, JsonPathError, JsonSchema, Lamport, LoroDoc as InnerLoroDoc,
     LoroEncodeError, LoroError, LoroResult, PeerID, Timestamp, VersionRange, ID,
 };
