@@ -305,6 +305,12 @@ impl LoroDoc {
         self.doc.export(loro::ExportMode::Snapshot)
     }
 
+    pub fn export_snapshot_at(&self, frontiers: &Frontiers) -> Result<Vec<u8>, LoroEncodeError> {
+        self.doc.export(loro::ExportMode::SnapshotAt {
+            version: Cow::Owned(frontiers.into()),
+        })
+    }
+
     pub fn frontiers_to_vv(&self, frontiers: &Frontiers) -> Option<Arc<VersionVector>> {
         self.doc
             .frontiers_to_vv(&frontiers.into())
