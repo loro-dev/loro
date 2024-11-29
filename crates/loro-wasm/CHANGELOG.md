@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.4
+
+### Patch Changes
+
+- 0325061: Fix a deadloop case when importing updates (#570)
+
 ## 1.1.3
 
 ### Patch Changes
