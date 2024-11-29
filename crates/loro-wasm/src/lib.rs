@@ -5068,7 +5068,7 @@ export type ExportMode = {
 } | {
     mode: "updates-in-range",
     spans: {
-        id: JsonOpID,
+        id: OpId,
         len: number,
     }[],
 };
