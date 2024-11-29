@@ -244,31 +244,31 @@ struct OrdIdSpan<'a> {
     deps: Cow<'a, Frontiers>,
 }
 
-impl<'a> HasLength for OrdIdSpan<'a> {
+impl HasLength for OrdIdSpan<'_> {
     fn content_len(&self) -> usize {
         self.len
     }
 }
 
-impl<'a> HasId for OrdIdSpan<'a> {
+impl HasId for OrdIdSpan<'_> {
     fn id_start(&self) -> ID {
         self.id
     }
 }
 
-impl<'a> HasLamport for OrdIdSpan<'a> {
+impl HasLamport for OrdIdSpan<'_> {
     fn lamport(&self) -> Lamport {
         self.lamport
     }
 }
 
-impl<'a> PartialOrd for OrdIdSpan<'a> {
+impl PartialOrd for OrdIdSpan<'_> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<'a> Ord for OrdIdSpan<'a> {
+impl Ord for OrdIdSpan<'_> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.lamport_last()
             .cmp(&other.lamport_last())
@@ -290,7 +290,7 @@ enum NodeType {
 
 impl<'a> OrdIdSpan<'a> {
     #[inline]
-    fn from_dag_node<D, F>(id: ID, get: &'a F) -> Option<OrdIdSpan>
+    fn from_dag_node<D, F>(id: ID, get: &'a F) -> Option<OrdIdSpan<'a>>
     where
         D: DagNode + 'a,
         F: Fn(ID) -> Option<D>,

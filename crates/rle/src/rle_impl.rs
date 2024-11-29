@@ -68,7 +68,7 @@ impl<T: HasLength + Sliceable, A: Array<Item = T>> Sliceable for SmallVec<A> {
 
         for item in self.iter() {
             if index < to && from < index + item.atom_len() {
-                let start = if index < from { from - index } else { 0 };
+                let start = from.saturating_sub(index);
                 ans.push(item.slice(start, item.atom_len().min(to - index)));
             }
 

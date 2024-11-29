@@ -100,7 +100,7 @@ impl PartialEq for ActionWrapper {
 
 impl Eq for ActionWrapper {}
 
-impl<'a> Arbitrary<'a> for ActionWrapper {
+impl Arbitrary<'_> for ActionWrapper {
     fn arbitrary(u: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Self> {
         Ok(ActionWrapper::Generic(GenericAction::arbitrary(u)?))
     }

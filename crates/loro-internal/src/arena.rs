@@ -63,7 +63,7 @@ pub(crate) struct ArenaGuards<'a> {
     root_c_idx: MutexGuard<'a, Vec<ContainerIdx>>,
 }
 
-impl<'a> ArenaGuards<'a> {
+impl ArenaGuards<'_> {
     pub fn register_container(&mut self, id: &ContainerID) -> ContainerIdx {
         if let Some(&idx) = self.container_id_to_idx.get(id) {
             return idx;

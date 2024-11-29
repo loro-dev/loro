@@ -45,7 +45,7 @@ pub struct SliceIterator<'a, T> {
     end_offset: Option<usize>,
 }
 
-impl<'a, T> SliceIterator<'a, T> {
+impl<T> SliceIterator<'_, T> {
     fn new_empty() -> Self {
         Self {
             vec: &[],

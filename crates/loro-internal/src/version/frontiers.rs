@@ -27,7 +27,7 @@ impl fmt::Debug for Frontiers {
 
 struct FrontiersDebugHelper<'a>(&'a Frontiers);
 
-impl<'a> fmt::Debug for FrontiersDebugHelper<'a> {
+impl fmt::Debug for FrontiersDebugHelper<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut list = f.debug_list();
         match self.0 {

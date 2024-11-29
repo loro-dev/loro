@@ -80,7 +80,7 @@ pub enum InnerListOp {
     StyleEnd,
 }
 
-impl<'a> ListOp<'a> {
+impl ListOp<'_> {
     pub fn new_del(id_start: ID, pos: usize, len: usize) -> Self {
         assert!(len != 0);
         Self::Delete(DeleteSpanWithId::new(id_start, pos as isize, len as isize))
@@ -433,7 +433,7 @@ impl Sliceable for DeleteSpan {
     }
 }
 
-impl<'a> Mergable for ListOp<'a> {
+impl Mergable for ListOp<'_> {
     fn is_mergable(&self, _other: &Self, _conf: &()) -> bool
     where
         Self: Sized,
@@ -484,7 +484,7 @@ impl<'a> Mergable for ListOp<'a> {
     }
 }
 
-impl<'a> HasLength for ListOp<'a> {
+impl HasLength for ListOp<'_> {
     fn content_len(&self) -> usize {
         match self {
             ListOp::Insert { slice, .. } => slice.content_len(),
@@ -497,7 +497,7 @@ impl<'a> HasLength for ListOp<'a> {
     }
 }
 
-impl<'a> Sliceable for ListOp<'a> {
+impl Sliceable for ListOp<'_> {
     fn slice(&self, from: usize, to: usize) -> Self {
         match self {
             ListOp::Insert { slice, pos } => ListOp::Insert {

@@ -19,7 +19,7 @@ pub struct DiffEvent {
     pub events: Vec<ContainerDiff>,
 }
 
-impl<'a> From<loro::event::DiffEvent<'a>> for DiffEvent {
+impl From<loro::event::DiffEvent<'_>> for DiffEvent {
     fn from(diff_event: loro::event::DiffEvent) -> Self {
         Self {
             triggered_by: diff_event.triggered_by,
@@ -138,7 +138,7 @@ pub enum TreeExternalDiff {
     },
 }
 
-impl<'a, 'b> From<&'b loro::event::ContainerDiff<'a>> for ContainerDiff {
+impl<'a> From<&loro::event::ContainerDiff<'a>> for ContainerDiff {
     fn from(value: &loro::event::ContainerDiff<'a>) -> Self {
         Self {
             target: value.target.into(),
@@ -156,7 +156,7 @@ impl<'a, 'b> From<&'b loro::event::ContainerDiff<'a>> for ContainerDiff {
     }
 }
 
-impl<'a> From<&'a loro::Index> for Index {
+impl From<&loro::Index> for Index {
     fn from(value: &loro::Index) -> Self {
         match value {
             loro::Index::Key(key) => Index::Key {
@@ -180,7 +180,7 @@ impl From<Index> for loro::Index {
     }
 }
 
-impl<'a, 'b> From<&'b loro::event::Diff<'a>> for Diff {
+impl From<&loro::event::Diff<'_>> for Diff {
     fn from(value: &loro::event::Diff) -> Self {
         match value {
             loro::event::Diff::List(l) => {

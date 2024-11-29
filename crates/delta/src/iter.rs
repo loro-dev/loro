@@ -138,7 +138,7 @@ impl<'a, V: DeltaValue, Attr: DeltaAttr> Iter<'a, V, Attr> {
     }
 }
 
-impl<'a, V: DeltaValue, Attr: DeltaAttr> Iterator for Iter<'a, V, Attr> {
+impl<V: DeltaValue, Attr: DeltaAttr> Iterator for Iter<'_, V, Attr> {
     type Item = DeltaItem<V, Attr>;
 
     fn next(&mut self) -> Option<Self::Item> {
