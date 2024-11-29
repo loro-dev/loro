@@ -34,7 +34,6 @@ impl LoroMap {
     // {
     //     self.map.for_each(f)
     // }
-
     /// Insert a key-value pair into the map.
     pub fn insert(&self, key: &str, value: Arc<dyn LoroValueLike>) -> LoroResult<()> {
         self.map.insert(key, value.as_loro_value())

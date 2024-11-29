@@ -517,7 +517,6 @@ impl LoroDoc {
     // pub fn export(&self, mode: ExportMode) -> Vec<u8> {
     //     self.doc.export(mode.into())
     // }
-
     pub fn export_updates_in_range(&self, spans: &[IdSpan]) -> Result<Vec<u8>, LoroEncodeError> {
         self.doc.export(loro::ExportMode::UpdatesInRange {
             spans: Cow::Borrowed(spans),

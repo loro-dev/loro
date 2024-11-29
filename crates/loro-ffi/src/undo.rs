@@ -116,7 +116,7 @@ impl From<loro::undo::UndoItemMeta> for UndoItemMeta {
     }
 }
 
-impl<'a> From<&'a UndoItemMeta> for loro::undo::UndoItemMeta {
+impl From<&UndoItemMeta> for loro::undo::UndoItemMeta {
     fn from(meta: &UndoItemMeta) -> Self {
         loro::undo::UndoItemMeta {
             value: (&meta.value).into(),

@@ -88,14 +88,6 @@ impl LoroMovableList {
         self.list.push(v.as_loro_value())
     }
 
-    /// Push a container to the end of the list.
-    // pub fn push_container<C: ContainerTrait>(&self, child: C) -> LoroResult<C> {
-    //     let pos = self.list.len();
-    //     Ok(C::from_list(
-    //         self.list.insert_container(pos, child.to_list())?,
-    //     ))
-    // }
-
     #[inline]
     pub fn insert_list_container(
         &self,

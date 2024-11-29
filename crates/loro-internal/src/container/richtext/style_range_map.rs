@@ -247,7 +247,7 @@ impl StyleRangeMap {
         });
 
         let (target, _) = self.tree.insert_by_path(right, Elem { len, styles });
-        return &self.tree.get_elem(target.leaf).unwrap().styles;
+        &self.tree.get_elem(target.leaf).unwrap().styles
     }
 
     /// Return the style sets beside `index` and get the intersection of them.

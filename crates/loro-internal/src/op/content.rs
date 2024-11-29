@@ -111,7 +111,7 @@ pub enum RawOpContent<'a> {
     },
 }
 
-impl<'a> Clone for RawOpContent<'a> {
+impl Clone for RawOpContent<'_> {
     fn clone(&self) -> Self {
         match self {
             Self::Map(arg0) => Self::Map(arg0.clone()),
@@ -127,7 +127,7 @@ impl<'a> Clone for RawOpContent<'a> {
     }
 }
 
-impl<'a> RawOpContent<'a> {
+impl RawOpContent<'_> {
     pub fn to_static(&self) -> RawOpContent<'static> {
         match self {
             Self::Map(arg0) => RawOpContent::Map(arg0.clone()),
@@ -176,7 +176,7 @@ impl<'a> RawOpContent<'a> {
     }
 }
 
-impl<'a> HasLength for RawOpContent<'a> {
+impl HasLength for RawOpContent<'_> {
     fn content_len(&self) -> usize {
         match self {
             RawOpContent::Map(x) => x.content_len(),
@@ -189,7 +189,7 @@ impl<'a> HasLength for RawOpContent<'a> {
     }
 }
 
-impl<'a> Mergable for RawOpContent<'a> {
+impl Mergable for RawOpContent<'_> {
     fn is_mergable(&self, other: &Self, _conf: &()) -> bool
     where
         Self: Sized,

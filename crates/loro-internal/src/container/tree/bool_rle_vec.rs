@@ -164,7 +164,7 @@ pub(crate) struct BoolRleVecIter<'a> {
     offset: u32,
 }
 
-impl<'a> Iterator for BoolRleVecIter<'a> {
+impl Iterator for BoolRleVecIter<'_> {
     type Item = bool;
 
     fn next(&mut self) -> Option<Self::Item> {

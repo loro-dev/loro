@@ -118,7 +118,7 @@ impl IntoContainerId for String {
     }
 }
 
-impl<'a> IntoContainerId for &'a str {
+impl IntoContainerId for &str {
     fn into_container_id(self, _arena: &SharedArena, kind: ContainerType) -> ContainerID {
         ContainerID::Root {
             name: InternalString::from(self),

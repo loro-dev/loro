@@ -1705,7 +1705,7 @@ pub struct CommitWhenDrop<'a> {
     options: CommitOptions,
 }
 
-impl<'a> Drop for CommitWhenDrop<'a> {
+impl Drop for CommitWhenDrop<'_> {
     fn drop(&mut self) {
         self.doc.commit_with(std::mem::take(&mut self.options));
     }

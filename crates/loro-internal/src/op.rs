@@ -145,7 +145,7 @@ impl Op {
     }
 }
 
-impl<'a> RemoteOp<'a> {
+impl RemoteOp<'_> {
     #[allow(unused)]
     pub(crate) fn into_static(self) -> RemoteOp<'static> {
         RemoteOp {
@@ -187,7 +187,7 @@ impl Sliceable for Op {
     }
 }
 
-impl<'a> Mergable for RemoteOp<'a> {
+impl Mergable for RemoteOp<'_> {
     fn is_mergable(&self, _other: &Self, _cfg: &()) -> bool {
         // don't merge remote op, because it's already merged.
         false
@@ -198,7 +198,7 @@ impl<'a> Mergable for RemoteOp<'a> {
     }
 }
 
-impl<'a> HasLength for RemoteOp<'a> {
+impl HasLength for RemoteOp<'_> {
     fn content_len(&self) -> usize {
         self.content.atom_len()
     }
@@ -212,7 +212,7 @@ impl HasIndex for Op {
     }
 }
 
-impl<'a> HasIndex for RemoteOp<'a> {
+impl HasIndex for RemoteOp<'_> {
     type Int = Counter;
 
     fn get_start_index(&self) -> Self::Int {
@@ -226,13 +226,13 @@ impl HasCounter for Op {
     }
 }
 
-impl<'a> HasCounter for RemoteOp<'a> {
+impl HasCounter for RemoteOp<'_> {
     fn ctr_start(&self) -> Counter {
         self.counter
     }
 }
 
-impl<'a> HasId for RichOp<'a> {
+impl HasId for RichOp<'_> {
     fn id_start(&self) -> ID {
         ID {
             peer: self.peer,
@@ -241,13 +241,13 @@ impl<'a> HasId for RichOp<'a> {
     }
 }
 
-impl<'a> HasLength for RichOp<'a> {
+impl HasLength for RichOp<'_> {
     fn content_len(&self) -> usize {
         self.end - self.start
     }
 }
 
-impl<'a> HasLamport for RichOp<'a> {
+impl HasLamport for RichOp<'_> {
     fn lamport(&self) -> Lamport {
         self.lamport + self.start as Lamport
     }
@@ -487,7 +487,7 @@ impl Mergable for SliceRange {
     }
 }
 
-impl<'a> ListSlice<'a> {
+impl ListSlice<'_> {
     #[inline(always)]
     pub fn unknown_range(len: usize) -> SliceRange {
         let start = UNKNOWN_START;
@@ -511,7 +511,7 @@ impl<'a> ListSlice<'a> {
     }
 }
 
-impl<'a> HasLength for ListSlice<'a> {
+impl HasLength for ListSlice<'_> {
     fn content_len(&self) -> usize {
         match self {
             ListSlice::RawStr { unicode_len, .. } => *unicode_len,
@@ -520,7 +520,7 @@ impl<'a> HasLength for ListSlice<'a> {
     }
 }
 
-impl<'a> Sliceable for ListSlice<'a> {
+impl Sliceable for ListSlice<'_> {
     fn slice(&self, from: usize, to: usize) -> Self {
         match self {
             ListSlice::RawStr {
@@ -541,7 +541,7 @@ impl<'a> Sliceable for ListSlice<'a> {
     }
 }
 
-impl<'a> Mergable for ListSlice<'a> {
+impl Mergable for ListSlice<'_> {
     fn is_mergable(&self, _other: &Self, _: &()) -> bool {
         false
     }

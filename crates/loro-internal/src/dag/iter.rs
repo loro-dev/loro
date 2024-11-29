@@ -49,7 +49,7 @@ pub struct DagIterator<'a, T> {
 }
 
 /// Should only use it on debug, because it's slow and likely to use lots of mem
-impl<'a, T: DagNode> Iterator for DagIterator<'a, T> {
+impl<T: DagNode> Iterator for DagIterator<'_, T> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -103,7 +103,7 @@ pub(crate) struct DagIteratorVV<'a, T> {
 }
 
 /// Should only use it on debug, because it's slow and likely to use lots of mem
-impl<'a, T: DagNode> Iterator for DagIteratorVV<'a, T> {
+impl<T: DagNode> Iterator for DagIteratorVV<'_, T> {
     type Item = (T, VersionVector);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -258,7 +258,7 @@ impl<'a, T: DagNode, D: Dag<Node = T> + Debug> DagCausalIter<'a, D> {
     }
 }
 
-impl<'a, T: DagNode, D: Dag<Node = T>> Iterator for DagCausalIter<'a, D> {
+impl<T: DagNode, D: Dag<Node = T>> Iterator for DagCausalIter<'_, D> {
     type Item = IterReturn<T>;
 
     fn next(&mut self) -> Option<Self::Item> {

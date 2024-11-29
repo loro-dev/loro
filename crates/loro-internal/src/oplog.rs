@@ -380,6 +380,7 @@ impl OpLog {
     /// You can trim it by the provided counter value. It should start with the counter.
     ///
     /// If frontiers are provided, it will be faster (because we don't need to calculate it from version vector
+    #[allow(clippy::type_complexity)]
     pub(crate) fn iter_from_lca_causally(
         &self,
         from: &VersionVector,

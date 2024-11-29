@@ -102,7 +102,6 @@ impl LoroList {
     //     self.list.push_container(c)?;
     //     Ok(())
     // }
-
     #[inline]
     pub fn insert_list_container(
         &self,

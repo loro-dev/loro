@@ -127,7 +127,7 @@ pub(crate) struct InternalDocDiff<'a> {
     pub(crate) new_version: Cow<'a, Frontiers>,
 }
 
-impl<'a> InternalDocDiff<'a> {
+impl InternalDocDiff<'_> {
     pub fn into_owned(self) -> InternalDocDiff<'static> {
         InternalDocDiff {
             origin: self.origin,

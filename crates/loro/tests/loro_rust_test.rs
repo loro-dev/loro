@@ -2236,7 +2236,7 @@ fn is_deleted() {
     let container_before = map.insert_container("container", LoroMap::new()).unwrap();
     container_before.insert("A", "B").unwrap();
     tree.delete(node).unwrap();
-    let container_after = doc.get_map(&container_before.id());
+    let container_after = doc.get_map(container_before.id());
     assert!(container_after.is_deleted());
 }
 
