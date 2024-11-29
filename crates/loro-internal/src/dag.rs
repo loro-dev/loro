@@ -273,6 +273,11 @@ impl<'a> Ord for OrdIdSpan<'a> {
         self.lamport_last()
             .cmp(&other.lamport_last())
             .then(self.id.peer.cmp(&other.id.peer))
+            // If they have the same last id, we want the shorter one to be greater;
+            // Otherwise, find_common_ancestor won't work correctly. Because we may
+            // lazily load the dag node, so sometimes the longer one should be broken
+            // into smaller pieces but it's already pushed to the queue.
+            .then(other.len.cmp(&self.len))
     }
 }
 
@@ -577,7 +582,11 @@ where
         );
         while let Some((other_node, other_type)) = queue.peek() {
             trace!("find_common_ancestor_new queue peek {:?}", other_node);
-            if node == *other_node {
+            if node == *other_node
+                || (node.len() == 1
+                    && other_node.len() == 1
+                    && node[0].id_last() == other_node[0].id_last())
+            {
                 if node_type != *other_type {
                     node_type = NodeType::Shared;
                 }
