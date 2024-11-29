@@ -66,7 +66,7 @@ pub struct EncodedRegisters<'a> {
     pub(super) position: either::Either<FxHashSet<&'a [u8]>, ValueRegister<&'a [u8]>>,
 }
 
-impl<'a> ValueEncodeRegister for EncodedRegisters<'a> {
+impl ValueEncodeRegister for EncodedRegisters<'_> {
     fn key_mut(&mut self) -> &mut ValueRegister<InternalString> {
         &mut self.key
     }
@@ -83,7 +83,7 @@ impl<'a> ValueEncodeRegister for EncodedRegisters<'a> {
     }
 }
 
-impl<'a> EncodedRegisters<'a> {
+impl EncodedRegisters<'_> {
     pub(crate) fn sort_fractional_index(&mut self) {
         let position_register =
             std::mem::replace(&mut self.position, either::Left(Default::default()))
@@ -105,7 +105,7 @@ pub struct DecodedArenas<'a> {
     pub state_blob_arena: &'a [u8],
 }
 
-impl<'a> ValueDecodedArenasTrait for DecodedArenas<'a> {
+impl ValueDecodedArenasTrait for DecodedArenas<'_> {
     fn keys(&self) -> &[InternalString] {
         &self.keys.keys
     }

@@ -442,7 +442,7 @@ struct ValueDecodeArena<'a> {
     keys: &'a [InternalString],
 }
 
-impl<'a> ValueDecodedArenasTrait for ValueDecodeArena<'a> {
+impl ValueDecodedArenasTrait for ValueDecodeArena<'_> {
     fn keys(&self) -> &[InternalString] {
         self.keys
     }

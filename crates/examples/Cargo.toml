@@ -16,6 +16,7 @@ tracing = "0.1.40"
 rand = "0.8.5"
 zstd = "0.13.2"
 ensure-cov = { workspace = true }
+base64 = "0.22.1"
 
 [dev-dependencies]
 tabled = "0.15.0"

@@ -63,7 +63,7 @@ impl From<LoroValue> for loro::LoroValue {
     }
 }
 
-impl<'a> From<&'a LoroValue> for loro::LoroValue {
+impl From<&LoroValue> for loro::LoroValue {
     fn from(value: &LoroValue) -> loro::LoroValue {
         match value {
             LoroValue::Null => loro::LoroValue::Null,
@@ -164,7 +164,7 @@ impl From<ContainerID> for loro::ContainerID {
     }
 }
 
-impl<'a> From<&'a ContainerID> for loro::ContainerID {
+impl From<&ContainerID> for loro::ContainerID {
     fn from(value: &ContainerID) -> loro::ContainerID {
         match value {
             ContainerID::Root {
@@ -210,7 +210,7 @@ impl From<loro::ContainerID> for ContainerID {
     }
 }
 
-impl<'a> From<&'a loro::ContainerID> for ContainerID {
+impl From<&loro::ContainerID> for ContainerID {
     fn from(value: &loro::ContainerID) -> ContainerID {
         match value {
             loro::ContainerID::Root {

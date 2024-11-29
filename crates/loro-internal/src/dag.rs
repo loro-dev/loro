@@ -244,35 +244,40 @@ struct OrdIdSpan<'a> {
     deps: Cow<'a, Frontiers>,
 }
 
-impl<'a> HasLength for OrdIdSpan<'a> {
+impl HasLength for OrdIdSpan<'_> {
     fn content_len(&self) -> usize {
         self.len
     }
 }
 
-impl<'a> HasId for OrdIdSpan<'a> {
+impl HasId for OrdIdSpan<'_> {
     fn id_start(&self) -> ID {
         self.id
     }
 }
 
-impl<'a> HasLamport for OrdIdSpan<'a> {
+impl HasLamport for OrdIdSpan<'_> {
     fn lamport(&self) -> Lamport {
         self.lamport
     }
 }
 
-impl<'a> PartialOrd for OrdIdSpan<'a> {
+impl PartialOrd for OrdIdSpan<'_> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<'a> Ord for OrdIdSpan<'a> {
+impl Ord for OrdIdSpan<'_> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.lamport_last()
             .cmp(&other.lamport_last())
             .then(self.id.peer.cmp(&other.id.peer))
+            // If they have the same last id, we want the shorter one to be greater;
+            // Otherwise, find_common_ancestor won't work correctly. Because we may
+            // lazily load the dag node, so sometimes the longer one should be broken
+            // into smaller pieces but it's already pushed to the queue.
+            .then(other.len.cmp(&self.len))
     }
 }
 
@@ -285,7 +290,7 @@ enum NodeType {
 
 impl<'a> OrdIdSpan<'a> {
     #[inline]
-    fn from_dag_node<D, F>(id: ID, get: &'a F) -> Option<OrdIdSpan>
+    fn from_dag_node<D, F>(id: ID, get: &'a F) -> Option<OrdIdSpan<'a>>
     where
         D: DagNode + 'a,
         F: Fn(ID) -> Option<D>,
@@ -577,7 +582,11 @@ where
         );
         while let Some((other_node, other_type)) = queue.peek() {
             trace!("find_common_ancestor_new queue peek {:?}", other_node);
-            if node == *other_node {
+            if node == *other_node
+                || (node.len() == 1
+                    && other_node.len() == 1
+                    && node[0].id_last() == other_node[0].id_last())
+            {
                 if node_type != *other_type {
                     node_type = NodeType::Shared;
                 }

@@ -1002,7 +1002,7 @@ mod encode {
         }
     }
 
-    impl<'a> generic_btree::rle::HasLength for TempOp<'a> {
+    impl generic_btree::rle::HasLength for TempOp<'_> {
         #[inline(always)]
         fn rle_len(&self) -> usize {
             self.op.atom_len()

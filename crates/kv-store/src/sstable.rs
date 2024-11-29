@@ -496,7 +496,7 @@ pub struct SsTableIter<'a> {
     back_block_idx: isize,
 }
 
-impl<'a> Debug for SsTableIter<'a> {
+impl Debug for SsTableIter<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SsTableIter")
             .field("iter", &self.iter)
@@ -736,7 +736,7 @@ impl<'a> SsTableIter<'a> {
     }
 }
 
-impl<'a> KvIterator for SsTableIter<'a> {
+impl KvIterator for SsTableIter<'_> {
     fn peek_next_key(&self) -> Option<Bytes> {
         self.peek_next_key()
     }
@@ -770,7 +770,7 @@ impl<'a> KvIterator for SsTableIter<'a> {
     }
 }
 
-impl<'a> Iterator for SsTableIter<'a> {
+impl Iterator for SsTableIter<'_> {
     type Item = (Bytes, Bytes);
     fn next(&mut self) -> Option<Self::Item> {
         if !self.has_next() {
@@ -783,7 +783,7 @@ impl<'a> Iterator for SsTableIter<'a> {
     }
 }
 
-impl<'a> DoubleEndedIterator for SsTableIter<'a> {
+impl DoubleEndedIterator for SsTableIter<'_> {
     fn next_back(&mut self) -> Option<Self::Item> {
         if !self.has_next_back() {
             return None;

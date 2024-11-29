@@ -105,6 +105,7 @@ impl SecureRandomGenerator for DefaultRandom {
         #[cfg(test)]
         // SAFETY: this is only used in test
         unsafe {
+            #[allow(static_mut_refs)]
             let bytes = TEST_RANDOM.fetch_add(1, std::sync::atomic::Ordering::Release);
             dest.copy_from_slice(&bytes.to_le_bytes());
         }
