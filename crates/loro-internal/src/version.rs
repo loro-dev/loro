@@ -30,6 +30,17 @@ pub struct VersionVector(FxHashMap<PeerID, Counter>);
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct VersionRange(pub(crate) FxHashMap<PeerID, (Counter, Counter)>);
 
+#[macro_export]
+macro_rules! version_range {
+    ($($peer:expr => ($start:expr, $end:expr)),* $(,)?) => {{
+        let mut map = ::fxhash::FxHashMap::default();
+        $(
+            map.insert($peer, ($start, $end));
+        )*
+        $crate::version::VersionRange::from_map(map)
+    }};
+}
+
 impl VersionRange {
     pub fn new() -> Self {
         Self(Default::default())

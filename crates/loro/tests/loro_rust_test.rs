@@ -11,10 +11,12 @@ use std::{
 
 use loro::{
     awareness::Awareness, loro_value, CommitOptions, ContainerID, ContainerTrait, ContainerType,
-    ExportMode, Frontiers, FrontiersNotIncluded, LoroDoc, LoroError, LoroList, LoroMap, LoroText,
-    ToJson,
+    ExportMode, Frontiers, FrontiersNotIncluded, IdSpan, LoroDoc, LoroError, LoroList, LoroMap,
+    LoroText, ToJson,
 };
-use loro_internal::{encoding::EncodedBlobMode, handler::TextDelta, id::ID, vv, LoroResult};
+use loro_internal::{
+    encoding::EncodedBlobMode, handler::TextDelta, id::ID, version_range, vv, LoroResult,
+};
 use rand::{Rng, SeedableRng};
 use serde_json::json;
 use tracing::trace_span;
@@ -2256,4 +2258,54 @@ fn change_count() {
     let new_doc = LoroDoc::new();
     new_doc.import(&bytes.unwrap()).unwrap();
     assert_eq!(new_doc.len_changes(), n);
+}
+
+#[test]
+fn loro_import_batch_status() {
+    let doc_1 = LoroDoc::new();
+    doc_1.set_peer_id(1).unwrap();
+    doc_1.get_text("text").insert(0, "Hello world!").unwrap();
+
+    let doc_2 = LoroDoc::new();
+    doc_2.set_peer_id(2).unwrap();
+    doc_2.get_text("text").insert(0, "Hello world!").unwrap();
+
+    let blob11 = doc_1
+        .export(ExportMode::updates_in_range(vec![IdSpan::new(1, 0, 5)]))
+        .unwrap();
+    let blob12 = doc_1
+        .export(ExportMode::updates_in_range(vec![IdSpan::new(1, 5, 7)]))
+        .unwrap();
+    let blob13 = doc_1
+        .export(ExportMode::updates_in_range(vec![IdSpan::new(1, 6, 12)]))
+        .unwrap();
+
+    let blob21 = doc_2
+        .export(ExportMode::updates_in_range(vec![IdSpan::new(2, 0, 5)]))
+        .unwrap();
+    let blob22 = doc_2
+        .export(ExportMode::updates_in_range(vec![IdSpan::new(2, 5, 6)]))
+        .unwrap();
+    let blob23 = doc_2
+        .export(ExportMode::updates_in_range(vec![IdSpan::new(2, 6, 12)]))
+        .unwrap();
+
+    let new_doc = LoroDoc::new();
+    let status = new_doc
+        .import_batch(&[blob11, blob13, blob21, blob23])
+        .unwrap();
+
+    assert_eq!(status.success, version_range!(1 => (0, 5), 2 => (0, 5)));
+    assert_eq!(
+        status.pending,
+        Some(version_range!(1 => (6, 12), 2 => (6, 12)))
+    );
+
+    let status = new_doc.import_batch(&[blob12, blob22]).unwrap();
+    assert_eq!(status.success, version_range!(1 => (5, 12), 2 => (5, 12)));
+    assert!(status.pending.is_none());
+    assert_eq!(
+        new_doc.get_text("text").to_string(),
+        "Hello world!Hello world!"
+    );
 }

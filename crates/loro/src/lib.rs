@@ -308,7 +308,7 @@ impl LoroDoc {
     ///
     /// The data can be in arbitrary order. The import result will be the same.
     #[inline]
-    pub fn import_batch(&self, bytes: &[Vec<u8>]) -> LoroResult<()> {
+    pub fn import_batch(&self, bytes: &[Vec<u8>]) -> LoroResult<ImportStatus> {
         self.doc.import_batch(bytes)
     }
 
