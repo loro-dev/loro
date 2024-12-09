@@ -1289,7 +1289,7 @@ impl LoroDoc {
     /// doc2.importUpdateBatch([snapshot, updates]);
     /// ```
     #[wasm_bindgen(js_name = "importUpdateBatch")]
-    pub fn import_update_batch(&mut self, data: Array) -> JsResult<()> {
+    pub fn import_update_batch(&mut self, data: Array) -> JsResult<JsImportStatus> {
         let data = data
             .iter()
             .map(|x| {
@@ -1297,10 +1297,9 @@ impl LoroDoc {
                 arr.to_vec()
             })
             .collect::<Vec<_>>();
-        if data.is_empty() {
-            return Ok(());
-        }
-        Ok(self.0.import_batch(&data)?)
+
+        let status = self.0.import_batch(&data)?;
+        Ok(import_status_to_js_value(status).into())
     }
 
     /// Get the shallow json format of the document state.
