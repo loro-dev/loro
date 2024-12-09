@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.0
+
+### Minor Changes
+
+- 01fccc5: Return ImportStatus in the import_batch method
+
 ## 1.1.4
 
 ### Patch Changes
