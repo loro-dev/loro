@@ -751,3 +751,59 @@ describe("isDeleted", () => {
     expect(subB.isDeleted()).toBe(true);
   })
 })
+
+it("test import batch", () => {
+  const doc1 = new LoroDoc();
+  doc1.setPeerId("1");
+  doc1.getText("text").insert(0, "Hello world!");
+
+  const doc2 = new LoroDoc();
+  doc2.setPeerId("2");
+  doc2.getText("text").insert(0, "Hello world!");
+
+  const blob11 = doc1.export({
+    mode: "updates-in-range",
+    spans: [{ id: { peer: "1", counter: 0 }, len: 5 }]
+  });
+  const blob12 = doc1.export({
+    mode: "updates-in-range",
+    spans: [{ id: { peer: "1", counter: 5 }, len: 2 }]
+  });
+  const blob13 = doc1.export({
+    mode: "updates-in-range",
+    spans: [{ id: { peer: "1", counter: 6 }, len: 6 }]
+  });
+
+  const blob21 = doc2.export({
+    mode: "updates-in-range",
+    spans: [{ id: { peer: "2", counter: 0 }, len: 5 }]
+  });
+  const blob22 = doc2.export({
+    mode: "updates-in-range",
+    spans: [{ id: { peer: "2", counter: 5 }, len: 1 }]
+  });
+  const blob23 = doc2.export({
+    mode: "updates-in-range",
+    spans: [{ id: { peer: "2", counter: 6 }, len: 6 }]
+  });
+
+  const newDoc = new LoroDoc();
+  const status = newDoc.importUpdateBatch([blob11, blob13, blob21, blob23]);
+
+  expect(status.success).toEqual(new Map([
+    ["1", { start: 0, end: 5 }],
+    ["2", { start: 0, end: 5 }]
+  ]));
+  expect(status.pending).toEqual(new Map([
+    ["1", { start: 6, end: 12 }],
+    ["2", { start: 6, end: 12 }]
+  ]));
+
+  const status2 = newDoc.importUpdateBatch([blob12, blob22]);
+  expect(status2.success).toEqual(new Map([
+    ["1", { start: 5, end: 12 }],
+    ["2", { start: 5, end: 12 }]
+  ]));
+  expect(status2.pending).toBeNull();
+  expect(newDoc.getText("text").toString()).toBe("Hello world!Hello world!");
+})

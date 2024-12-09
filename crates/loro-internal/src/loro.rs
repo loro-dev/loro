@@ -9,7 +9,7 @@ use rle::HasLength;
 use std::{
     borrow::Cow,
     cmp::Ordering,
-    collections::BinaryHeap,
+    collections::{hash_map::Entry, BinaryHeap},
     ops::ControlFlow,
     sync::{
         atomic::{
@@ -48,7 +48,7 @@ use crate::{
     txn::Transaction,
     undo::DiffBatch,
     utils::subscription::{SubscriberSetWithQueue, Subscription},
-    version::{shrink_frontiers, Frontiers, ImVersionVector},
+    version::{shrink_frontiers, Frontiers, ImVersionVector, VersionRange},
     ChangeMeta, DocDiff, HandlerTrait, InternalString, ListHandler, LoroError, MapHandler,
     VersionVector,
 };
@@ -986,15 +986,17 @@ impl LoroDoc {
 
     // PERF: opt
     #[tracing::instrument(skip_all)]
-    pub fn import_batch(&self, bytes: &[Vec<u8>]) -> LoroResult<()> {
+    pub fn import_batch(&self, bytes: &[Vec<u8>]) -> LoroResult<ImportStatus> {
         if bytes.is_empty() {
-            return Ok(());
+            return Ok(ImportStatus::default());
         }
 
         if bytes.len() == 1 {
-            return self.import(&bytes[0]).map(|_| ());
+            return self.import(&bytes[0]);
         }
 
+        let mut success = VersionRange::default();
+        let mut pending = VersionRange::default();
         let mut meta_arr = bytes
             .iter()
             .map(|b| Ok((LoroDoc::decode_import_blob_meta(b, false)?, b)))
@@ -1012,8 +1014,31 @@ impl LoroDoc {
         let mut err = None;
         for (_meta, data) in meta_arr {
             match self.import(data) {
-                Ok(_s) => {
-                    // TODO: merge
+                Ok(s) => {
+                    for (peer, (start, end)) in s.success.iter() {
+                        match success.0.entry(*peer) {
+                            Entry::Occupied(mut e) => {
+                                e.get_mut().1 = *end.max(&e.get().1);
+                            }
+                            Entry::Vacant(e) => {
+                                e.insert((*start, *end));
+                            }
+                        }
+                    }
+
+                    if let Some(p) = s.pending.as_ref() {
+                        for (&peer, &(start, end)) in p.iter() {
+                            match pending.0.entry(peer) {
+                                Entry::Occupied(mut e) => {
+                                    e.get_mut().0 = start.min(e.get().0);
+                                    e.get_mut().1 = end.min(e.get().1);
+                                }
+                                Entry::Vacant(e) => {
+                                    e.insert((start, end));
+                                }
+                            }
+                        }
+                    }
                 }
                 Err(e) => {
                     err = Some(e);
@@ -1034,7 +1059,14 @@ impl LoroDoc {
             return Err(err);
         }
 
-        Ok(())
+        Ok(ImportStatus {
+            success,
+            pending: if pending.is_empty() {
+                None
+            } else {
+                Some(pending)
+            },
+        })
     }
 
     /// Get shallow value of the document.

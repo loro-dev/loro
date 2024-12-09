@@ -177,8 +177,9 @@ impl LoroDoc {
     ///
     /// The data can be in arbitrary order. The import result will be the same.
     #[inline]
-    pub fn import_batch(&self, bytes: &[Vec<u8>]) -> LoroResult<()> {
-        self.doc.import_batch(bytes)
+    pub fn import_batch(&self, bytes: &[Vec<u8>]) -> Result<ImportStatus, LoroError> {
+        let status = self.doc.import_batch(bytes)?;
+        Ok(status.into())
     }
 
     pub fn get_movable_list(&self, id: Arc<dyn ContainerIdLike>) -> Arc<LoroMovableList> {
