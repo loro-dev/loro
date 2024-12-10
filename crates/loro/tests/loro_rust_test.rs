@@ -12,7 +12,7 @@ use std::{
 use loro::{
     awareness::Awareness, loro_value, CommitOptions, ContainerID, ContainerTrait, ContainerType,
     ExportMode, Frontiers, FrontiersNotIncluded, IdSpan, LoroDoc, LoroError, LoroList, LoroMap,
-    LoroText, ToJson,
+    LoroText, LoroValue, ToJson,
 };
 use loro_internal::{
     encoding::EncodedBlobMode, handler::TextDelta, id::ID, version_range, vv, LoroResult,
@@ -2307,5 +2307,35 @@ fn loro_import_batch_status() {
     assert_eq!(
         new_doc.get_text("text").to_string(),
         "Hello world!Hello world!"
+    );
+}
+
+#[test]
+fn test_get_or_create_container_with_null() {
+    let doc = LoroDoc::new();
+    let root = doc.get_map("root");
+
+    // No key -- should work
+    root.get_or_create_container("key", LoroMap::new()).unwrap();
+    doc.commit();
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({ "root": { "key": {} } })
+    );
+
+    // Set to null -- should work
+    root.insert("key", LoroValue::Null).unwrap();
+    doc.commit();
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({ "root": { "key": null } })
+    );
+
+    // Key is null, create a container -- should work
+    let result = root.get_or_create_container("key", LoroMap::new());
+    result.unwrap();
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({ "root": { "key": {} } })
     );
 }
