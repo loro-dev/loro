@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.2.0
+
+### Minor Changes
+
+- 01fccc5: Return ImportStatus in the import_batch method
+
+### Patch Changes
+
+- d08a865: fix: getOrCreateContainer should not throw if value is null #576
+
 ## 1.1.4
 
 ### Patch Changes
