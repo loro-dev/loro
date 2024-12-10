@@ -3726,6 +3726,8 @@ impl MapHandler {
                             .into_boxed_str(),
                     )
                 });
+            } else if let ValueOrHandler::Value(LoroValue::Null) = ans {
+                // do nothing
             } else {
                 return Err(LoroError::ArgErr(
                     format!("Expected value type {} but found {:?}", child.kind(), ans)
