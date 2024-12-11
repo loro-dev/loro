@@ -812,5 +812,15 @@ it("iter on text #577", () => {
   const doc = new LoroDoc();
   const text = doc.getText("text");
   text.insert(0, "Hello");
-  text.iter((_: string) => { })
+  text.iter((_: string) => {
+    return null as any
+  })
+  text.insert(3, " ");
+  const result: string[] = [];
+  text.iter((s: string) => {
+    result.push(s);
+    return true;
+  })
+  expect(result).toStrictEqual(["Hel", " ", "lo"]);
 })
+
