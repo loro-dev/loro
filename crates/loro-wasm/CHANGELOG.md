@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.1
+
+### Patch Changes
+
+- adb6ab8: fix: panic when returned non-boolean value from text.iter(f) #578
+
 ## 1.2.0
 
 ### Minor Changes
