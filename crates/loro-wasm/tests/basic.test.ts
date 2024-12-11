@@ -807,3 +807,10 @@ it("test import batch", () => {
   expect(status2.pending).toBeNull();
   expect(newDoc.getText("text").toString()).toBe("Hello world!Hello world!");
 })
+
+it("iter on text #577", () => {
+  const doc = new LoroDoc();
+  const text = doc.getText("text");
+  text.insert(0, "Hello");
+  text.iter((_: string) => { })
+})
