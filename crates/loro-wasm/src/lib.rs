@@ -194,6 +194,8 @@ extern "C" {
     pub type JsTravelChangeFunction;
     #[wasm_bindgen(typescript_type = "(string|number)[]")]
     pub type JsContainerPath;
+    #[wasm_bindgen(typescript_type = "(string) => boolean")]
+    pub type JsTextIterCallback;
 }
 
 mod observer {
@@ -1852,12 +1854,22 @@ impl LoroText {
     /// text.insert(0, "Hello");
     /// text.iter((str) => (console.log(str), true));
     /// ```
-    pub fn iter(&self, callback: &js_sys::Function) {
+    pub fn iter(&self, callback: JsTextIterCallback) -> JsResult<()> {
+        let callback: JsValue = callback.into();
+        let callback: js_sys::Function = match callback.dyn_into() {
+            Ok(f) => f,
+            Err(_) => return Err(JsError::new("Invalid callback").into()),
+        };
         let context = JsValue::NULL;
         self.handler.iter(|c| {
             let result = callback.call1(&context, &JsValue::from(c)).unwrap();
-            result.as_bool().unwrap()
-        })
+            match result.as_bool() {
+                Some(true) => true,
+                Some(false) => false,
+                None => true,
+            }
+        });
+        Ok(())
     }
 
     /// Update the current text to the target text.
