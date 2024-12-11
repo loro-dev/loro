@@ -1856,7 +1856,11 @@ impl LoroText {
         let context = JsValue::NULL;
         self.handler.iter(|c| {
             let result = callback.call1(&context, &JsValue::from(c)).unwrap();
-            result.as_bool().unwrap()
+            match result.as_bool() {
+                Some(true) => true,
+                Some(false) => false,
+                None => true,
+            }
         })
     }
 
