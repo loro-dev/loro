@@ -196,6 +196,8 @@ extern "C" {
     pub type JsContainerPath;
     #[wasm_bindgen(typescript_type = "(string) => boolean")]
     pub type JsTextIterCallback;
+    #[wasm_bindgen(typescript_type = "Uint8Array[]")]
+    pub type JsBinaryArray;
 }
 
 mod observer {
@@ -1274,7 +1276,30 @@ impl LoroDoc {
         Ok(import_status_to_js_value(status).into())
     }
 
-    /// Import a batch of updates.
+    /// Import a batch of updates and snapshots.
+    ///
+    /// It's more efficient than importing updates one by one.
+    ///
+    /// @deprecated Use `importBatch` instead.
+    ///
+    /// @example
+    /// ```ts
+    /// import { LoroDoc } from "loro-crdt";
+    ///
+    /// const doc = new LoroDoc();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello");
+    /// const updates = doc.export({ mode: "update" });
+    /// const snapshot = doc.export({ mode: "snapshot" });
+    /// const doc2 = new LoroDoc();
+    /// doc2.importBatch([snapshot, updates]);
+    /// ```
+    #[wasm_bindgen(js_name = "importUpdateBatch")]
+    pub fn import_update_batch(&mut self, data: JsBinaryArray) -> JsResult<JsImportStatus> {
+        self.import_batch(data)
+    }
+
+    /// Import a batch of updates or snapshots.
     ///
     /// It's more efficient than importing updates one by one.
     ///
@@ -1288,10 +1313,11 @@ impl LoroDoc {
     /// const updates = doc.export({ mode: "update" });
     /// const snapshot = doc.export({ mode: "snapshot" });
     /// const doc2 = new LoroDoc();
-    /// doc2.importUpdateBatch([snapshot, updates]);
+    /// doc2.importBatch([snapshot, updates]);
     /// ```
-    #[wasm_bindgen(js_name = "importUpdateBatch")]
-    pub fn import_update_batch(&mut self, data: Array) -> JsResult<JsImportStatus> {
+    #[wasm_bindgen(js_name = "importBatch")]
+    pub fn import_batch(&mut self, data: JsBinaryArray) -> JsResult<JsImportStatus> {
+        let data: Array = data.dyn_into()?;
         let data = data
             .iter()
             .map(|x| {

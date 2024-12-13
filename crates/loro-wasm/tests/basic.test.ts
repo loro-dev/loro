@@ -201,7 +201,7 @@ describe("import", () => {
     const docA = new LoroDoc();
     const updateA = docA.exportSnapshot();
     const docB = new LoroDoc();
-    docB.importUpdateBatch([updateA]);
+    docB.importBatch([updateA]);
     docB.getText("text").insert(0, "hello");
     docB.commit();
   });
@@ -788,7 +788,7 @@ it("test import batch", () => {
   });
 
   const newDoc = new LoroDoc();
-  const status = newDoc.importUpdateBatch([blob11, blob13, blob21, blob23]);
+  const status = newDoc.importBatch([blob11, blob13, blob21, blob23]);
 
   expect(status.success).toEqual(new Map([
     ["1", { start: 0, end: 5 }],
@@ -799,7 +799,7 @@ it("test import batch", () => {
     ["2", { start: 6, end: 12 }]
   ]));
 
-  const status2 = newDoc.importUpdateBatch([blob12, blob22]);
+  const status2 = newDoc.importBatch([blob12, blob22]);
   expect(status2.success).toEqual(new Map([
     ["1", { start: 5, end: 12 }],
     ["2", { start: 5, end: 12 }]
