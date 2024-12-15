@@ -77,3 +77,9 @@ test("fail on set/insert container", () => {
   mList.insertContainer(0, list); // should work
   mList.setContainer(0, list); // should work
 });
+
+test("batchImport type", () => {
+  const doc = new LoroDoc();
+  // doc.importBatch(["abc"]); // should fail
+  doc.importBatch([]); // should work
+});
