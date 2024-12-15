@@ -213,3 +213,62 @@ export class Awareness<T extends Value = Value> {
         }, this.timeout / 2) as unknown as number;
     }
 }
+
+LoroDoc.prototype.toJsonWithReplacer = function (replacer: (key: string | number, value: Value | Container) => Value | Container | undefined) {
+    const doc = this;
+    const m = (key: string | number, value: Value): Value | undefined => {
+        if (typeof value === "string") {
+            if (isContainerId(value)) {
+                const container = doc.getContainerById(value);
+                if (container == null) {
+                    throw new Error(`ContainerID not found: ${value}`);
+                }
+
+                const ans = replacer(key, container);
+                if (ans === container) {
+                    const ans = container.getShallowValue();
+                    if (typeof ans === "object") {
+                        return run(ans as any);
+                    }
+
+                    return ans;
+                }
+
+                if (isContainer(ans)) {
+                    throw new Error("Using new container is not allowed in toJsonWithReplacer");
+                }
+
+                return ans;
+            }
+        }
+
+        const ans = replacer(key, value);
+        if (isContainer(ans)) {
+            throw new Error("Using new container is not allowed in toJsonWithReplacer");
+        }
+
+        return ans;
+    }
+
+    const run = (layer: Record<string, Value> | Value[]): Value => {
+        if (Array.isArray(layer)) {
+            return layer.map((item, index) => {
+                return m(index, item);
+            }).filter((item): item is NonNullable<typeof item> => item !== undefined);
+        }
+
+        const result: Record<string, Value> = {};
+        for (const [key, value] of Object.entries(layer)) {
+            const ans = m(key, value);
+            if (ans !== undefined) {
+                result[key] = ans;
+            }
+        }
+
+        return result;
+    }
+
+    const layer = this.getShallowValue();
+    return run(layer);
+}
+
