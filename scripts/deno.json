@@ -4,6 +4,6 @@
     "@std/toml": "jsr:@std/toml@^1.0.1"
   },
   "tasks": {
-    "doc-test": "deno run --allow-env --allow-read --allow-run run-js-doc-tests.ts ../crates/loro-wasm/src/lib.rs ../loro-js/src/index.ts"
+    "doc-test": "deno run --allow-env --allow-read --allow-run run-js-doc-tests.ts ../crates/loro-wasm/src/lib.rs"
   }
 }

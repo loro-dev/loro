@@ -6,7 +6,8 @@
     "jsr:@std/path@^1.0.3": "1.0.3",
     "jsr:@std/toml@^1.0.1": "1.0.1",
     "npm:expect@29.7.0": "29.7.0",
-    "npm:loro-crdt@1.0.7": "1.0.7"
+    "npm:loro-crdt@1.0.7": "1.0.7",
+    "npm:loro-crdt@1.2.1": "1.2.1"
   },
   "jsr": {
     "@std/collections@1.0.5": {
@@ -255,6 +256,9 @@
       "dependencies": [
         "loro-wasm"
       ]
+    },
+    "loro-crdt@1.2.1": {
+      "integrity": "sha512-KP06MrpH2Yh2Tl7VHSCS78/ko575nVS5tEp/0NsIf4Q8XfJ0on+Zj6SVHnKpOq0iwKB7xt/mU2yVroe5jPr4SQ=="
     },
     "loro-wasm@1.0.7": {
       "integrity": "sha512-WFIpGGzc6I7zRMDoRGxa3AHhno7gVnOgwqcrTfmpKWOtktZQ7BvhIV4kYgsdyuIBcMSrQEJTfOY/80xQSjUKTw=="

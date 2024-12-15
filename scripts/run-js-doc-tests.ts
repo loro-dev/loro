@@ -1,4 +1,4 @@
-const LORO_VERSION = "1.0.7";
+const LORO_VERSION = "1.2.1";
 
 export interface CodeBlock {
     filename: string;
@@ -102,8 +102,7 @@ async function runCodeBlocks(codeBlocks: CodeBlock[]) {
         }
         await Deno.stdout.write(
             new TextEncoder().encode(
-                `\r🧪 ${testCases} tests, ✅ ${passed} passed,${
-                    failed > 0 ? " ❌" : ""
+                `\r🧪 ${testCases} tests, ✅ ${passed} passed,${failed > 0 ? " ❌" : ""
                 } ${failed} failed`,
             ),
         );
