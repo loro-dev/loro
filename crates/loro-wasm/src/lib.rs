@@ -1382,10 +1382,8 @@ impl LoroDoc {
     /// text.insert(0, "Hello");
     /// const map = list.insertContainer(1, new LoroMap());
     /// map.set("foo", "bar");
-    /// /*
-    /// {"list": ["Hello", {"foo": "bar"}]}
-    ///  */
     /// console.log(doc.toJSON());
+    /// // {"list": ["Hello", {"foo": "bar"}]}
     /// ```
     #[wasm_bindgen(js_name = "toJSON")]
     pub fn to_json(&self) -> JsResult<JsValue> {
