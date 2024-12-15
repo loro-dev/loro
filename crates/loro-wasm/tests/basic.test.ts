@@ -824,7 +824,7 @@ it("iter on text #577", () => {
   expect(result).toStrictEqual(["Hel", " ", "lo"]);
 })
 
-it.only("can get shallow value of containers", () => {
+it("can get shallow value of containers", () => {
   const doc = new LoroDoc();
   doc.setPeerId("1");
 
@@ -895,3 +895,74 @@ it.only("can get shallow value of containers", () => {
   });
 });
 
+it("tree shallow value vs toJSON", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId("1");
+  const tree = doc.getTree("tree");
+  const root = tree.createNode();
+  root.data.set("name", "root");
+  const text = root.data.setContainer("content", new LoroText());
+  text.insert(0, "Hello");
+
+  expect(tree.getShallowValue()).toStrictEqual([{
+    id: "0@1",
+    parent: null,
+    index: 0,
+    fractional_index: "80",
+    meta: "cid:0@1:Map",
+    children: []
+  }]);
+
+  expect(tree.toJSON()).toStrictEqual([{
+    id: "0@1",
+    parent: null,
+    index: 0,
+    fractional_index: "80",
+    meta: {
+      name: "root",
+      content: "Hello"
+    },
+    children: []
+  }]);
+});
+
+it("map shallow value vs toJSON", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId("1");
+  const map = doc.getMap("map");
+  map.set("key", "value");
+  const subText = map.setContainer("text", new LoroText());
+  subText.insert(0, "Hello");
+
+  expect(map.getShallowValue()).toStrictEqual({
+    key: "value",
+    text: "cid:1@1:Text"
+  });
+
+  expect(map.toJSON()).toStrictEqual({
+    key: "value",
+    text: "Hello"
+  });
+});
+
+it("list shallow value vs toJSON", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId("1");
+  const list = doc.getList("list");
+  list.insert(0, 1);
+  list.insert(1, "two");
+  const subList = list.insertContainer(2, new LoroList());
+  subList.insert(0, "sub");
+
+  expect(list.getShallowValue()).toStrictEqual([
+    1,
+    "two",
+    "cid:2@1:List"
+  ]);
+
+  expect(list.toJSON()).toStrictEqual([
+    1,
+    "two",
+    ["sub"]
+  ]);
+});

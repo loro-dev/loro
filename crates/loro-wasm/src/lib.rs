@@ -1338,6 +1338,9 @@ impl LoroDoc {
 
     /// Get the shallow json format of the document state.
     ///
+    /// Unlike `toJSON()` which recursively resolves all containers to their values,
+    /// `getShallowValue()` returns container IDs as strings for any nested containers.
+    ///
     /// @example
     /// ```ts
     /// import { LoroDoc } from "loro-crdt";
@@ -1365,9 +1368,12 @@ impl LoroDoc {
 
     /// Get the json format of the entire document state.
     ///
+    /// Unlike `getShallowValue()` which returns container IDs as strings,
+    /// `toJSON()` recursively resolves all containers to their actual values.
+    ///
     /// @example
     /// ```ts
-    /// import { LoroDoc, LoroText, LoroMap } from "loro-crdt";
+    /// import { LoroDoc, LoroText } from "loro-crdt";
     ///
     /// const doc = new LoroDoc();
     /// const list = doc.getList("list");
@@ -1378,7 +1384,7 @@ impl LoroDoc {
     /// map.set("foo", "bar");
     /// /*
     /// {"list": ["Hello", {"foo": "bar"}]}
-    ///  *\/
+    ///  */
     /// console.log(doc.toJSON());
     /// ```
     #[wasm_bindgen(js_name = "toJSON")]
@@ -2692,6 +2698,30 @@ impl LoroMap {
     }
 
     /// Get the shallow value of the map.
+    ///
+    /// Unlike `toJSON()` which recursively resolves all containers to their values,
+    /// `getShallowValue()` returns container IDs as strings for any nested containers.
+    ///
+    /// @example
+    /// ```ts
+    /// import { LoroDoc } from "loro-crdt";
+    ///
+    /// const doc = new LoroDoc();
+    /// doc.setPeerId("1");
+    /// const map = doc.getMap("map");
+    /// map.set("key", "value");
+    /// const subText = map.setContainer("text", new LoroText());
+    /// subText.insert(0, "Hello");
+    ///
+    /// // Get shallow value - nested containers are represented by their IDs
+    /// console.log(map.getShallowValue());
+    /// // Output: { key: "value", text: "cid:1@1:Text" }
+    ///
+    /// // Get full value with nested containers resolved by `toJSON()`
+    /// console.log(map.toJSON());
+    /// // Output: { key: "value", text: "Hello" }
+    /// ```
+    ///
     #[wasm_bindgen(js_name = "getShallowValue")]
     pub fn get_shallow_value(&self) -> JsLoroMapValue {
         let v: JsValue = self.handler.get_value().into();
@@ -3028,6 +3058,22 @@ impl LoroList {
     }
 
     /// Get the shallow value of the list.
+    ///
+    /// Unlike `toJSON()` which recursively resolves all containers to their values,
+    /// `getShallowValue()` returns container IDs as strings for any nested containers.
+    ///
+    /// ```js
+    /// const doc = new LoroDoc();
+    /// doc.setPeerId("1");
+    /// const list = doc.getList("list");
+    /// list.insert(0, 1);
+    /// list.insert(1, "two");
+    /// const subList = list.insertContainer(2, new LoroList());
+    /// subList.insert(0, "sub");
+    /// list.getShallowValue(); // [1, "two", "cid:2@1:List"]
+    /// list.toJSON(); // [1, "two", ["sub"]]
+    /// ```
+    ///
     #[wasm_bindgen(js_name = "getShallowValue")]
     pub fn get_shallow_value(&self) -> JsLoroListValue {
         let v: JsValue = self.handler.get_value().into();
@@ -3417,6 +3463,21 @@ impl LoroMovableList {
     }
 
     /// Get the shallow value of the movable list.
+    ///
+    /// Unlike `toJSON()` which recursively resolves all containers to their values,
+    /// `getShallowValue()` returns container IDs as strings for any nested containers.
+    ///
+    /// ```js
+    /// const doc = new LoroDoc();
+    /// doc.setPeerId("1");
+    /// const list = doc.getMovableList("list");
+    /// list.insert(0, 1);
+    /// list.insert(1, "two");
+    /// const subList = list.insertContainer(2, new LoroList());
+    /// subList.insert(0, "sub");
+    /// list.getShallowValue(); // [1, "two", "cid:2@1:List"]
+    /// list.toJSON(); // [1, "two", ["sub"]]
+    /// ```
     #[wasm_bindgen(js_name = "getShallowValue")]
     pub fn get_shallow_value(&self) -> JsLoroListValue {
         let v: JsValue = self.handler.get_value().into();
@@ -4108,6 +4169,43 @@ impl LoroTree {
     }
 
     /// Get the shallow value of the tree.
+    ///
+    /// Unlike `toJSON()` which recursively resolves nested containers to their values,
+    /// `getShallowValue()` returns container IDs as strings for any nested containers.
+    ///
+    /// @example
+    /// ```ts
+    /// const doc = new LoroDoc();
+    /// doc.setPeerId("1");
+    /// const tree = doc.getTree("tree");
+    /// const root = tree.createNode();
+    /// root.data.set("name", "root");
+    /// const text = root.data.setContainer("content", new LoroText());
+    /// text.insert(0, "Hello");
+    ///
+    /// console.log(tree.getShallowValue());
+    /// // [{
+    /// //   id: "0@1",
+    /// //   parent: null,
+    /// //   index: 0,
+    /// //   fractional_index: "80",
+    /// //   meta: "cid:0@1:Map",
+    /// //   children: []
+    /// // }]
+    ///
+    /// console.log(tree.toJSON());
+    /// // [{
+    /// //   id: "0@1",
+    /// //   parent: null,
+    /// //   index: 0,
+    /// //   fractional_index: "80",
+    /// //   meta: {
+    /// //     name: "root",
+    /// //     content: "Hello"
+    /// //   },
+    /// //   children: []
+    /// // }]
+    /// ```
     #[wasm_bindgen(js_name = "getShallowValue")]
     pub fn get_shallow_value(&self) -> JsLoroTreeValue {
         let v: JsValue = self.handler.get_value().into();
