@@ -3029,7 +3029,7 @@ impl LoroList {
 
     /// Get the shallow value of the list.
     #[wasm_bindgen(js_name = "getShallowValue")]
-    pub fn get_shallow_value(&self) -> JsValue {
+    pub fn get_shallow_value(&self) -> JsLoroListValue {
         let v: JsValue = self.handler.get_value().into();
         v.into()
     }
