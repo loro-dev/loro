@@ -108,4 +108,10 @@ impl LoroCounter {
             JsValue::UNDEFINED.into()
         }
     }
+
+    /// Get the value of the counter.
+    #[wasm_bindgen(js_name = "getShallowValue")]
+    pub fn get_shallow_value(&self) -> f64 {
+        self.handler.get_value().into_double().unwrap()
+    }
 }

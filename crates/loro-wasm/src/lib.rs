@@ -198,6 +198,12 @@ extern "C" {
     pub type JsTextIterCallback;
     #[wasm_bindgen(typescript_type = "Uint8Array[]")]
     pub type JsBinaryArray;
+    #[wasm_bindgen(typescript_type = "Record<string, Value>")]
+    pub type JsLoroMapValue;
+    #[wasm_bindgen(typescript_type = "Value[]")]
+    pub type JsLoroListValue;
+    #[wasm_bindgen(typescript_type = "TreeNodeValue[]")]
+    pub type JsLoroTreeValue;
 }
 
 mod observer {
@@ -1341,10 +1347,15 @@ impl LoroDoc {
     /// const tree = doc.getTree("tree");
     /// const map = doc.getMap("map");
     /// const shallowValue = doc.getShallowValue();
-    /// /*
-    /// {"list": ..., "tree": ..., "map": ...}
-    ///  *\/
     /// console.log(shallowValue);
+    /// // {
+    /// //   list: 'cid:root-list:List',
+    /// //   tree: 'cid:root-tree:Tree',
+    /// //   map: 'cid:root-map:Map'
+    /// // }
+    ///
+    /// // It points to the same container as `list`
+    /// const listB = doc.getContainerById(shallowValue.list);
     /// ```
     #[wasm_bindgen(js_name = "getShallowValue")]
     pub fn get_shallow_value(&self) -> JsResult<JsValue> {
@@ -2327,6 +2338,12 @@ impl LoroText {
     pub fn isDeleted(&self) -> bool {
         self.handler.is_deleted()
     }
+
+    /// Get the shallow value of the text. This equals to `text.toString()`.
+    #[wasm_bindgen(js_name = "getShallowValue")]
+    pub fn get_shallow_value(&self) -> String {
+        self.handler.get_value().as_string().unwrap().to_string()
+    }
 }
 
 impl Default for LoroText {
@@ -2673,6 +2690,13 @@ impl LoroMap {
     pub fn isDeleted(&self) -> bool {
         self.handler.is_deleted()
     }
+
+    /// Get the shallow value of the map.
+    #[wasm_bindgen(js_name = "getShallowValue")]
+    pub fn get_shallow_value(&self) -> JsLoroMapValue {
+        let v: JsValue = self.handler.get_value().into();
+        v.into()
+    }
 }
 
 impl Default for LoroMap {
@@ -3001,6 +3025,13 @@ impl LoroList {
     /// Check if the container is deleted
     pub fn isDeleted(&self) -> bool {
         self.handler.is_deleted()
+    }
+
+    /// Get the shallow value of the list.
+    #[wasm_bindgen(js_name = "getShallowValue")]
+    pub fn get_shallow_value(&self) -> JsValue {
+        let v: JsValue = self.handler.get_value().into();
+        v.into()
     }
 }
 
@@ -3383,6 +3414,13 @@ impl LoroMovableList {
     /// Check if the container is deleted
     pub fn isDeleted(&self) -> bool {
         self.handler.is_deleted()
+    }
+
+    /// Get the shallow value of the movable list.
+    #[wasm_bindgen(js_name = "getShallowValue")]
+    pub fn get_shallow_value(&self) -> JsLoroListValue {
+        let v: JsValue = self.handler.get_value().into();
+        v.into()
     }
 }
 
@@ -4067,6 +4105,13 @@ impl LoroTree {
     /// Check if the container is deleted
     pub fn isDeleted(&self) -> bool {
         self.handler.is_deleted()
+    }
+
+    /// Get the shallow value of the tree.
+    #[wasm_bindgen(js_name = "getShallowValue")]
+    pub fn get_shallow_value(&self) -> JsLoroTreeValue {
+        let v: JsValue = self.handler.get_value().into();
+        v.into()
     }
 }
 

@@ -824,3 +824,74 @@ it("iter on text #577", () => {
   expect(result).toStrictEqual(["Hel", " ", "lo"]);
 })
 
+it.only("can get shallow value of containers", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId("1");
+
+  // Test Text container
+  const text = doc.getText("text");
+  text.insert(0, "Hello");
+  expect(text.getShallowValue()).toBe("Hello");
+
+  // Test Map container
+  const map = doc.getMap("map");
+  map.set("key", "value");
+  const subText = map.setContainer("text", new LoroText());
+  subText.insert(0, "Hello");
+  expect(map.getShallowValue()).toStrictEqual({
+    key: "value",
+    text: "cid:6@1:Text"
+  });
+
+  // Test List container 
+  const list = doc.getList("list");
+  list.insert(0, 1);
+  list.insert(1, "two");
+  const subMap = list.insertContainer(2, new LoroMap());
+  subMap.set("key", "value");
+  expect(list.getShallowValue()).toStrictEqual([1, "two", "cid:14@1:Map"]);
+
+  // Test MovableList container
+  const movableList = doc.getMovableList("movable");
+  movableList.insert(0, 1);
+  movableList.insert(1, "two");
+  const subList = movableList.insertContainer(2, new LoroList());
+  subList.insert(0, "sub");
+  expect(movableList.getShallowValue()).toStrictEqual([1, "two", "cid:18@1:List"]);
+
+  // Test Tree container
+  const tree = doc.getTree("tree");
+  const root = tree.createNode();
+  root.data.set("key", "value");
+  const child = root.createNode();
+  child.data.set("child", true);
+  expect(tree.getShallowValue()).toStrictEqual([
+    {
+      id: root.id,
+      parent: null,
+      index: 0,
+      fractional_index: "80",
+      meta: "cid:20@1:Map",
+      children: [
+        {
+          id: child.id,
+          parent: root.id,
+          index: 0,
+          fractional_index: "80",
+          meta: "cid:22@1:Map",
+          children: []
+        }
+      ]
+    }
+  ]);
+
+  const value = doc.getShallowValue();
+  expect(value).toStrictEqual({
+    list: 'cid:root-list:List',
+    map: 'cid:root-map:Map',
+    movable: 'cid:root-movable:MovableList',
+    tree: 'cid:root-tree:Tree',
+    text: 'cid:root-text:Text'
+  });
+});
+
