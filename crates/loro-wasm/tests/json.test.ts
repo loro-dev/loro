@@ -1,8 +1,11 @@
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   LoroDoc,
   LoroMap,
+  LoroList,
+  LoroText,
   TextOp,
+  LoroTree,
 } from "../bundler/index";
 
 it("json encoding", () => {
@@ -162,4 +165,181 @@ it("test some type correctness", () => {
     len: -3,
     start_id: "0@0",
   } as TextOp);
+});
+
+
+describe("toJsonWithReplacer", () => {
+  it("should work with basic values", () => {
+    const doc = new LoroDoc();
+    doc.getText("text").insert(0, "123");
+    const json = doc.toJsonWithReplacer((key, value) => {
+      return value;
+    });
+
+    expect(json).toStrictEqual({
+      text: "123",
+    });
+  });
+
+  it("should handle multiple container types", () => {
+    const doc = new LoroDoc();
+    doc.getText("text").insert(0, "Hello");
+    doc.getMap("map").set("key", "value");
+    doc.getList("list").push("item");
+
+    const json = doc.toJsonWithReplacer((key, value) => value);
+
+    expect(json).toStrictEqual({
+      text: "Hello",
+      map: { key: "value" },
+      list: ["item"]
+    });
+  });
+
+  it("should allow value transformation", () => {
+    const doc = new LoroDoc();
+    const text = doc.getText("text");
+    text.insert(0, "Hello");
+    text.mark({ start: 0, end: 2 }, "bold", true);
+
+    const json = doc.toJsonWithReplacer((key, value) => {
+      if (value instanceof LoroText) {
+        return value.toDelta();
+      }
+      return value;
+    });
+
+    expect(json).toStrictEqual({
+      text: [
+        { insert: "He", attributes: { bold: true } },
+        { insert: "llo" }
+      ]
+    });
+  });
+
+  it("should skip undefined values", () => {
+    const doc = new LoroDoc();
+    doc.getText("text").insert(0, "Hello");
+    doc.getMap("map").set("visible", "yes");
+    doc.getMap("map").set("hidden", "no");
+
+    const json = doc.toJsonWithReplacer((key, value) => {
+      if (key === "hidden") return undefined;
+      return value;
+    });
+
+    expect(json).toStrictEqual({
+      text: "Hello",
+      map: {
+        visible: "yes"
+      }
+    });
+  });
+
+  it("should handle nested containers", () => {
+    const doc = new LoroDoc();
+    const map = doc.getMap("map");
+    const subMap = map.setContainer("subMap", new LoroMap());
+    subMap.set("foo", "bar");
+
+    const list = doc.getList("list");
+    list.push("item1");
+    list.push("item2");
+
+    const json = doc.toJsonWithReplacer((key, value) => {
+      if (value instanceof LoroMap || value instanceof LoroList) {
+        return value;
+      }
+      return value;
+    });
+
+    expect(json).toStrictEqual({
+      map: {
+        subMap: {
+          foo: "bar"
+        }
+      },
+      list: ["item1", "item2"]
+    });
+  });
+
+  it("tree with replacer", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId("1");
+    const tree = doc.getTree("tree");
+    const root = tree.createNode();
+    root.data.set("name", "root");
+    const text = root.data.setContainer("content", new LoroText());
+    text.insert(0, "Hello");
+
+    // Test case 1: Return shallow value for tree nodes
+    const json1 = doc.toJsonWithReplacer((key, value) => {
+      if (value instanceof LoroTree) {
+        return value.getShallowValue();
+      }
+
+      return value;
+    });
+
+    expect(json1).toEqual({
+      tree: [{
+        id: "0@1",
+        parent: null,
+        index: 0,
+        fractional_index: "80",
+        meta: "cid:0@1:Map",
+        children: []
+      }]
+    });
+
+    // Test case 2: Custom handling of tree nodes and text
+    const json2 = doc.toJsonWithReplacer((key, value) => {
+      if (value instanceof LoroTree) {
+        // Only return root node IDs
+        return value.toJSON().map((node: any) => node.id);
+      }
+      if (value instanceof LoroText) {
+        return value.toDelta();
+      }
+      return value;
+    });
+
+    expect(json2).toEqual({
+      tree: ["0@1"]
+    });
+
+    // Test case 3: Transform tree node structure
+    const json3 = doc.toJsonWithReplacer((_key, value) => {
+      if (value instanceof LoroTree) {
+        return value.toJSON().map((node: any) => ({
+          nodeId: node.id,
+          nodeData: node.meta
+        }));
+      }
+      return value;
+    });
+
+    expect(json3).toEqual({
+      tree: [{
+        nodeId: "0@1",
+        nodeData: {
+          name: "root",
+          content: "Hello"
+        }
+      }]
+    });
+
+    // Test case 4: Skip certain nodes based on condition
+    const json4 = doc.toJsonWithReplacer((key, value) => {
+      if (value instanceof LoroTree) {
+        const nodes = value.toJSON();
+        return nodes.filter((node: any) => node.meta.name !== "root");
+      }
+      return value;
+    });
+
+    expect(json4).toEqual({
+      tree: []
+    });
+  });
 });

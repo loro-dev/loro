@@ -202,8 +202,10 @@ extern "C" {
     pub type JsLoroMapValue;
     #[wasm_bindgen(typescript_type = "Value[]")]
     pub type JsLoroListValue;
-    #[wasm_bindgen(typescript_type = "TreeNodeValue[]")]
+    #[wasm_bindgen(typescript_type = "TreeNodeShallowValue[]")]
     pub type JsLoroTreeValue;
+    #[wasm_bindgen(typescript_type = "Record<string, ContainerID>")]
+    pub type JsLoroRootShallowValue;
 }
 
 mod observer {
@@ -1361,9 +1363,10 @@ impl LoroDoc {
     /// const listB = doc.getContainerById(shallowValue.list);
     /// ```
     #[wasm_bindgen(js_name = "getShallowValue")]
-    pub fn get_shallow_value(&self) -> JsResult<JsValue> {
+    pub fn get_shallow_value(&self) -> JsResult<JsLoroRootShallowValue> {
         let json = self.0.get_value();
-        Ok(json.into())
+        let v: JsValue = json.into();
+        Ok(v.into())
     }
 
     /// Get the json format of the entire document state.
@@ -4946,6 +4949,36 @@ interface LoroDoc {
      * ```
      */
     subscribeLocalUpdates(f: (bytes: Uint8Array) => void): () => void
+    /**
+     * Convert the document to a JSON value with a custom replacer function.
+     * 
+     * This method works similarly to `JSON.stringify`'s replacer parameter.
+     * The replacer function is called for each value in the document and can transform
+     * how values are serialized to JSON.
+     * 
+     * @param replacer - A function that takes a key and value, and returns how that value
+     *                  should be serialized. Similar to JSON.stringify's replacer. 
+     *                  If return undefined, the value will be skipped.
+     * @returns The JSON representation of the document after applying the replacer function.
+     * 
+     * @example
+     * ```ts
+     * const doc = new LoroDoc();
+     * const text = doc.getText("text");
+     * text.insert(0, "Hello");
+     * text.mark(0, 2, {bold: true});
+     * 
+     * // Use delta to represent text
+     * const json = doc.toJsonWithReplacer((key, value) => {
+     *   if (value instanceof LoroText) {
+     *     return value.toDelta();
+     *   } 
+     * 
+     *   return value;
+     * });
+     * ```
+     */
+    toJsonWithReplacer(replacer: (key: string | index, value: Value | Container) => Value | Container | undefined): Value;
 }
 
 /**
@@ -5022,7 +5055,8 @@ export type Value =
   | null
   | { [key: string]: Value }
   | Uint8Array
-  | Value[];
+  | Value[]
+  | undefined;
 
 export type UndoConfig = {
     mergeInterval?: number,
@@ -5132,6 +5166,15 @@ interface LoroList {
      * ```
      */
     getCursor(pos: number, side?: Side): Cursor | undefined;
+}
+
+export type TreeNodeShallowValue = {
+    id: TreeID,
+    parent: TreeID | undefined,
+    index: number,
+    fractionalIndex: string,
+    meta: ContainerID,
+    children: TreeNodeShallowValue[],
 }
 
 export type TreeNodeValue = {
