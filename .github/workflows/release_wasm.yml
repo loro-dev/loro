@@ -47,7 +47,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build WASM release-build
         run: pnpm release-wasm
-
+      - name: Creating .npmrc
+        run: |
+          cat << EOF > "$HOME/.npmrc"
+            //registry.npmjs.org/:_authToken=$NPM_TOKEN
+          EOF
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Create Release Pull Request or Publish to npm
         id: changesets
         uses: changesets/action@v1
