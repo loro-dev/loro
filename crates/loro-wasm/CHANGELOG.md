@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.3
+
+### Patch Changes
+
+- 42949c0: Fix VersionVector ownership issue in WASM binding
+
 ## 1.2.2
 
 ### Patch Changes
