@@ -1165,12 +1165,13 @@ impl LoroDoc {
     /// const updates2 = doc.exportFrom(version);
     /// ```
     #[wasm_bindgen(skip_typescript, js_name = "exportFrom")]
-    pub fn export_from(&self, vv: Option<VersionVector>) -> JsResult<Vec<u8>> {
-        if let Some(vv) = vv {
+    pub fn export_from(&self, vv: JsValue) -> JsResult<Vec<u8>> {
+        if vv.is_null() || vv.is_undefined() {
+            Ok(self.0.export_from(&Default::default()))
+        } else {
+            let vv = js_to_version_vector(vv)?;
             // `version` may be null or undefined
             Ok(self.0.export_from(&vv.0))
-        } else {
-            Ok(self.0.export_from(&Default::default()))
         }
     }
 
@@ -1216,19 +1217,23 @@ impl LoroDoc {
     }
 
     /// Export updates in the given range in JSON format.
-    #[wasm_bindgen(js_name = "exportJsonUpdates")]
+    #[wasm_bindgen(js_name = "exportJsonUpdates", skip_typescript)]
     pub fn export_json_updates(
         &self,
-        start_vv: Option<VersionVector>,
-        end_vv: Option<VersionVector>,
+        start_vv: JsValue,
+        end_vv: JsValue,
     ) -> JsResult<JsJsonSchema> {
-        let mut json_start_vv = Default::default();
-        if let Some(vv) = start_vv {
-            json_start_vv = vv.0;
+        let mut json_start_vv: &InternalVersionVector = &Default::default();
+        let temp_start_vv: Option<wasm_bindgen::__rt::Ref<'static, VersionVector>>;
+        if !start_vv.is_null() && !start_vv.is_undefined() {
+            temp_start_vv = Some(js_to_version_vector(start_vv)?);
+            json_start_vv = &temp_start_vv.as_ref().unwrap().0;
         }
-        let mut json_end_vv = self.oplog_version().0;
-        if let Some(vv) = end_vv {
-            json_end_vv = vv.0;
+        let mut json_end_vv = &self.oplog_version().0;
+        let temp_end_vv: Option<wasm_bindgen::__rt::Ref<'static, VersionVector>>;
+        if !end_vv.is_null() && !end_vv.is_undefined() {
+            temp_end_vv = Some(js_to_version_vector(end_vv)?);
+            json_end_vv = &temp_end_vv.as_ref().unwrap().0;
         }
         let json_schema = self.0.export_json_updates(&json_start_vv, &json_end_vv);
         let s = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
@@ -5588,6 +5593,14 @@ interface LoroDoc<T extends Record<string, Container> = Record<string, Container
      */
     getTree<Key extends keyof T | ContainerID>(name: Key): T[Key] extends LoroTree ? T[Key] : LoroTree;
     getText(key: string | ContainerID): LoroText;
+    /**
+     * Export the updates in the given range.
+     *
+     * @param start - The start version vector.
+     * @param end - The end version vector.
+     * @returns The updates in the given range.
+     */
+    exportJsonUpdates(start?: VersionVector, end?: VersionVector): JsonSchema;
 }
 interface LoroList<T = unknown> {
     new(): LoroList<T>;
