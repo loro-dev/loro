@@ -1235,7 +1235,7 @@ impl LoroDoc {
             temp_end_vv = Some(js_to_version_vector(end_vv)?);
             json_end_vv = &temp_end_vv.as_ref().unwrap().0;
         }
-        let json_schema = self.0.export_json_updates(&json_start_vv, &json_end_vv);
+        let json_schema = self.0.export_json_updates(json_start_vv, json_end_vv);
         let s = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
         let v = json_schema
             .serialize(&s)
