@@ -966,3 +966,21 @@ it("list shallow value vs toJSON", () => {
     ["sub"]
   ]);
 });
+
+
+it("can use version vector multiple times", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId("1");
+  doc.getText("text").update("Hello");
+  doc.commit();
+  const v = doc.version();
+  v.toJSON();
+  doc.exportJsonUpdates(v, v);
+  v.toJSON()
+  doc.exportJsonUpdates(v, v);
+  v.toJSON();
+  doc.export({ mode: "update", from: v });
+  v.toJSON();
+  doc.vvToFrontiers(v);
+  v.toJSON();
+})
