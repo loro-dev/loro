@@ -56,11 +56,16 @@ impl UndoManager {
     /// Set the listener for push events.
     /// The listener will be called when a new undo/redo item is pushed into the stack.
     pub fn set_on_push(&self, on_push: Option<Arc<dyn OnPush>>) {
-        let on_push = on_push.map(|x| {
-            Box::new(move |u, c| loro::undo::UndoItemMeta::from(x.on_push(u, c)))
-                as loro::undo::OnPush
-        });
-        self.0.write().unwrap().set_on_push(on_push)
+        if let Some(on_push) = on_push {
+            self.0
+                .write()
+                .unwrap()
+                .set_on_push(Some(Box::new(move |u, c, e| {
+                    loro::undo::UndoItemMeta::from(on_push.on_push(u, c, e))
+                })));
+        } else {
+            self.0.write().unwrap().set_on_push(None);
+        }
     }
 
     /// Set the listener for pop events.
@@ -78,7 +83,8 @@ pub trait OnPush: Send + Sync {
     fn on_push(
         &self,
         undo_or_redo: loro::undo::UndoOrRedo,
-        couter_span: loro::CounterSpan,
+        counter_span: loro::CounterSpan,
+        diff_event: Option<loro_internal::event::DiffEvent>,
     ) -> UndoItemMeta;
 }
 
@@ -86,7 +92,7 @@ pub trait OnPop: Send + Sync {
     fn on_pop(
         &self,
         undo_or_redo: loro::undo::UndoOrRedo,
-        couter_span: loro::CounterSpan,
+        counter_span: loro::CounterSpan,
         undo_meta: UndoItemMeta,
     );
 }
