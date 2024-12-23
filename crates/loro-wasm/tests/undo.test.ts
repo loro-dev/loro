@@ -229,4 +229,24 @@ describe("undo", () => {
     expect(doc.getCursorPos(poppedCursors[0]).offset).toBe(0);
     expect(doc.getCursorPos(poppedCursors[1]).offset).toBe(5);
   });
+
+  test("it can retrieve event in onPush event", async () => {
+    const doc = new LoroDoc();
+    let ran = false;
+    const undo = new UndoManager(doc, {
+      mergeInterval: 0,
+      onPush: (isUndo, counterRange, event) => {
+        expect(event).toBeDefined();
+        expect(event?.by).toBe("local");
+        expect(event?.origin).toBe("test");
+        ran = true;
+        return { value: null, cursors: [] };
+      }
+    });
+
+    doc.getText("text").insert(0, "hello");
+    doc.commit({ origin: "test" });
+    await new Promise((r) => setTimeout(r, 1));
+    expect(ran).toBeTruthy();
+  })
 });

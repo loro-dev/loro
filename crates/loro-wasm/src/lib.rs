@@ -4462,53 +4462,65 @@ impl UndoManager {
     /// Every time an undo step or redo step is pushed, the on push event listener will be called.
     #[wasm_bindgen(skip_typescript)]
     pub fn setOnPush(&mut self, on_push: JsValue) {
+        let doc = Arc::downgrade(&self.doc);
         let on_push = on_push.dyn_into::<js_sys::Function>().ok();
         if let Some(on_push) = on_push {
             let on_push = observer::Observer::new(on_push);
-            self.undo.set_on_push(Some(Box::new(move |kind, span| {
-                let is_undo = JsValue::from_bool(matches!(kind, UndoOrRedo::Undo));
-                let counter_range = js_sys::Object::new();
-                js_sys::Reflect::set(
-                    &counter_range,
-                    &JsValue::from_str("start"),
-                    &JsValue::from_f64(span.start as f64),
-                )
-                .unwrap();
-                js_sys::Reflect::set(
-                    &counter_range,
-                    &JsValue::from_str("end"),
-                    &JsValue::from_f64(span.end as f64),
-                )
-                .unwrap();
+            self.undo
+                .set_on_push(Some(Box::new(move |kind, span, event| {
+                    let is_undo = JsValue::from_bool(matches!(kind, UndoOrRedo::Undo));
+                    let counter_range = js_sys::Object::new();
+                    js_sys::Reflect::set(
+                        &counter_range,
+                        &JsValue::from_str("start"),
+                        &JsValue::from_f64(span.start as f64),
+                    )
+                    .unwrap();
+                    js_sys::Reflect::set(
+                        &counter_range,
+                        &JsValue::from_str("end"),
+                        &JsValue::from_f64(span.end as f64),
+                    )
+                    .unwrap();
 
-                let mut undo_item_meta = UndoItemMeta::new();
-                match on_push.call2(&is_undo, &counter_range) {
-                    Ok(v) => {
-                        if let Ok(obj) = v.dyn_into::<js_sys::Object>() {
-                            if let Ok(value) =
-                                js_sys::Reflect::get(&obj, &JsValue::from_str("value"))
-                            {
-                                let value: LoroValue = value.into();
-                                undo_item_meta.value = value;
-                            }
-                            if let Ok(cursors) =
-                                js_sys::Reflect::get(&obj, &JsValue::from_str("cursors"))
-                            {
-                                let cursors: js_sys::Array = cursors.into();
-                                for cursor in cursors.iter() {
-                                    let cursor = js_to_cursor(cursor).unwrap_throw();
-                                    undo_item_meta.add_cursor(&cursor.pos);
+                    let mut undo_item_meta = UndoItemMeta::new();
+                    let r = if let Some(e) = event {
+                        if let Some(doc_ref) = doc.upgrade() {
+                            let diff = diff_event_to_js_value(e, &doc_ref);
+                            on_push.call3(&is_undo, &counter_range, &diff)
+                        } else {
+                            on_push.call2(&is_undo, &counter_range)
+                        }
+                    } else {
+                        on_push.call2(&is_undo, &counter_range)
+                    };
+                    match r {
+                        Ok(v) => {
+                            if let Ok(obj) = v.dyn_into::<js_sys::Object>() {
+                                if let Ok(value) =
+                                    js_sys::Reflect::get(&obj, &JsValue::from_str("value"))
+                                {
+                                    let value: LoroValue = value.into();
+                                    undo_item_meta.value = value;
+                                }
+                                if let Ok(cursors) =
+                                    js_sys::Reflect::get(&obj, &JsValue::from_str("cursors"))
+                                {
+                                    let cursors: js_sys::Array = cursors.into();
+                                    for cursor in cursors.iter() {
+                                        let cursor = js_to_cursor(cursor).unwrap_throw();
+                                        undo_item_meta.add_cursor(&cursor.pos);
+                                    }
                                 }
                             }
                         }
+                        Err(e) => {
+                            throw_error_after_micro_task(e);
+                        }
                     }
-                    Err(e) => {
-                        throw_error_after_micro_task(e);
-                    }
-                }
 
-                undo_item_meta
-            })));
+                    undo_item_meta
+                })));
         } else {
             self.undo.set_on_push(None);
         }
@@ -5067,7 +5079,7 @@ export type UndoConfig = {
     mergeInterval?: number,
     maxUndoSteps?: number,
     excludeOriginPrefixes?: string[],
-    onPush?: (isUndo: boolean, counterRange: { start: number, end: number }) => { value: Value, cursors: Cursor[] },
+    onPush?: (isUndo: boolean, counterRange: { start: number, end: number }, event?: LoroEventBatch) => { value: Value, cursors: Cursor[] },
     onPop?: (isUndo: boolean, value: { value: Value, cursors: Cursor[] }, counterRange: { start: number, end: number }) => void
 };
 export type Container = LoroList | LoroMap | LoroText | LoroTree | LoroMovableList;

@@ -16,7 +16,7 @@ use crate::{
     delta::TreeExternalDiff,
     event::{Diff, EventTriggerKind},
     version::Frontiers,
-    ContainerDiff, DocDiff, LoroDoc, Subscription,
+    ContainerDiff, DiffEvent, DocDiff, LoroDoc, Subscription,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -155,7 +155,9 @@ impl UndoOrRedo {
 
 /// When a undo/redo item is pushed, the undo manager will call the on_push callback to get the meta data of the undo item.
 /// The returned cursors will be recorded for a new pushed undo item.
-pub type OnPush = Box<dyn Fn(UndoOrRedo, CounterSpan) -> UndoItemMeta + Send + Sync>;
+pub type OnPush = Box<
+    dyn for<'a> Fn(UndoOrRedo, CounterSpan, Option<DiffEvent<'a>>) -> UndoItemMeta + Send + Sync,
+>;
 pub type OnPop = Box<dyn Fn(UndoOrRedo, CounterSpan, UndoItemMeta) + Send + Sync>;
 
 struct UndoManagerInner {
@@ -386,7 +388,7 @@ impl UndoManagerInner {
         }
     }
 
-    fn record_checkpoint(&mut self, latest_counter: Counter) {
+    fn record_checkpoint(&mut self, latest_counter: Counter, event: Option<DiffEvent>) {
         if Some(latest_counter) == self.next_counter {
             return;
         }
@@ -402,7 +404,7 @@ impl UndoManagerInner {
         let meta = self
             .on_push
             .as_ref()
-            .map(|x| x(UndoOrRedo::Undo, span))
+            .map(|x| x(UndoOrRedo::Undo, span, event))
             .unwrap_or_default();
 
         if !self.undo_stack.is_empty() && now - self.last_undo_time < self.merge_interval {
@@ -471,7 +473,7 @@ impl UndoManager {
                         inner.redo_stack.compose_remote_event(event.events);
                         inner.next_counter = Some(id.counter + 1);
                     } else {
-                        inner.record_checkpoint(id.counter + 1);
+                        inner.record_checkpoint(id.counter + 1, Some(event));
                     }
                 }
             }
@@ -553,7 +555,10 @@ impl UndoManager {
 
         doc.commit_then_renew();
         let counter = get_counter_end(doc, self.peer());
-        self.inner.try_lock().unwrap().record_checkpoint(counter);
+        self.inner
+            .try_lock()
+            .unwrap()
+            .record_checkpoint(counter, None);
         Ok(())
     }
 
@@ -695,7 +700,13 @@ impl UndoManager {
                 let mut meta = inner
                     .on_push
                     .as_ref()
-                    .map(|x| x(kind.opposite(), CounterSpan::new(end_counter, new_counter)))
+                    .map(|x| {
+                        x(
+                            kind.opposite(),
+                            CounterSpan::new(end_counter, new_counter),
+                            None,
+                        )
+                    })
                     .unwrap_or_default();
                 if matches!(kind, UndoOrRedo::Undo) && get_opposite(&mut inner).is_empty() {
                     // If it's the first undo, we use the cursors from the users

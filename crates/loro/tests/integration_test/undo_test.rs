@@ -1536,7 +1536,7 @@ fn undo_manager_events() -> anyhow::Result<()> {
     let pop_count_clone = pop_count.clone();
     let popped_value = Arc::new(Mutex::new(LoroValue::Null));
     let popped_value_clone = popped_value.clone();
-    undo.set_on_push(Some(Box::new(move |_source, span| {
+    undo.set_on_push(Some(Box::new(move |_source, span, _| {
         push_count_clone.fetch_add(1, atomic::Ordering::SeqCst);
         UndoItemMeta {
             value: LoroValue::I64(span.start as i64),
@@ -1583,7 +1583,7 @@ fn undo_transform_cursor_position() -> anyhow::Result<()> {
     let mut undo = UndoManager::new(&doc);
     let cursors: Arc<Mutex<Vec<Cursor>>> = Arc::new(Mutex::new(Vec::new()));
     let cursors_clone = cursors.clone();
-    undo.set_on_push(Some(Box::new(move |_, _| {
+    undo.set_on_push(Some(Box::new(move |_, _, _| {
         let mut ans = UndoItemMeta::new();
         let cursors = cursors_clone.try_lock().unwrap();
         for c in cursors.iter() {
