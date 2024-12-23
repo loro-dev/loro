@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.3
+
+### Patch Changes
+
+- 42949c0: Fix VersionVector ownership issue in WASM binding
+- 1ca1275: feat: UndoManager's onPush now can access the change event
+
 ## 1.2.2
 
 ### Patch Changes
