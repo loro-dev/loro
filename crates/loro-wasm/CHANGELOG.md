@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.5
+
+### Patch Changes
+
+- 89f2f86: Fixed LoroTree's incorrect index when moving a node within its current parent
+
 ## 1.2.4
 
 ### Patch Changes
