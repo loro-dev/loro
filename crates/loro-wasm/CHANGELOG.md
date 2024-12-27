@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.4
+
+### Patch Changes
+
+- 5aa7985: Fixed incorrect subscript calculation when moving a child in the current parent
+
 ## 1.2.3
 
 ### Patch Changes
