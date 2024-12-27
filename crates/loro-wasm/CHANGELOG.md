@@ -4,7 +4,7 @@
 
 ### Patch Changes
 
-- 5aa7985: Fixed incorrect subscript calculation when moving a child in the current parent
+- 5aa7985: Fixed LoroTree's incorrect index when moving a node within its current parent
 
 ## 1.2.3
 

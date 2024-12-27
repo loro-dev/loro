@@ -131,6 +131,13 @@ test('sync example', () => {
 });
 ```
 
+# Blog
+
+- [Loro 1.0](https://loro.dev/blog/v1.0)
+- [Movable tree CRDTs and Loro's implementation](https://loro.dev/blog/movable-tree)
+- [Introduction to Loro's Rich Text CRDT](https://loro.dev/blog/loro-richtext)
+- [Loro: Reimagine State Management with CRDTs](https://loro.dev/blog/loro-now-open-source)
+
 # Credits
 
 Loro draws inspiration from the innovative work of the following projects and individuals:
