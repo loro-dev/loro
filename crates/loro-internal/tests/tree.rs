@@ -23,3 +23,13 @@ fn tree_index() {
     assert_eq!(tree.get_index_by_tree_id(&child).unwrap(), 1);
     assert_eq!(tree.get_index_by_tree_id(&child2).unwrap(), 0);
 }
+
+#[test]
+fn tree_move_in_parent() {
+    let doc = LoroDoc::new_auto_commit();
+    doc.set_peer_id(0).unwrap();
+    let tree = doc.get_tree("tree");
+    let root = tree.create(TreeParentId::Root).unwrap();
+    let child = tree.create(root.into()).unwrap();
+    tree.mov(child, root.into()).unwrap();
+}

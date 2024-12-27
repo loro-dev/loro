@@ -538,7 +538,10 @@ impl TreeHandler {
                 self.move_to(target, parent, index)
             }
             MaybeDetached::Attached(a) => {
-                let index: usize = self.children_num(&parent).unwrap_or(0);
+                let mut index: usize = self.children_num(&parent).unwrap_or(0);
+                if self.is_parent(&target, &parent) {
+                    index -= 1;
+                }
                 a.with_txn(|txn| {
                     self.mov_with_txn(txn, target, parent, index, FiIfNotConfigured::Zero)
                 })
