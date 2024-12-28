@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.5
+
+### Patch Changes
+
+- 9faa149: Fix detach + attach error
+
 ## 1.2.4
 
 ### Patch Changes
