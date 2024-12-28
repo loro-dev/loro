@@ -282,6 +282,7 @@ impl LoroDoc {
 
     #[inline(always)]
     pub fn detach(&self) {
+        self.commit_then_stop();
         self.set_detached(true);
     }
 

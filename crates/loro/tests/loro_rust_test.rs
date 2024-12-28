@@ -2339,3 +2339,13 @@ fn test_get_or_create_container_with_null() {
         json!({ "root": { "key": {} } })
     );
 }
+
+#[test]
+fn test_detach_and_attach() {
+    let doc = LoroDoc::new();
+    assert!(!doc.is_detached());
+    doc.detach();
+    assert!(doc.is_detached());
+    doc.attach();
+    assert!(!doc.is_detached());
+}

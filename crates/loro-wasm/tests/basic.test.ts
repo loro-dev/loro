@@ -984,3 +984,12 @@ it("can use version vector multiple times", () => {
   doc.vvToFrontiers(v);
   v.toJSON();
 })
+
+it("detach and attach on empty doc", () => {
+  const doc = new LoroDoc();
+  expect(doc.isDetached()).toBe(false);
+  doc.detach();
+  expect(doc.isDetached()).toBe(true);
+  doc.attach();
+  expect(doc.isDetached()).toBe(false);
+})
