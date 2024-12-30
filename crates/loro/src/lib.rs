@@ -723,8 +723,8 @@ impl LoroDoc {
     /// let root = tree.create(None).unwrap();
     /// tree.get_meta(root).unwrap().insert("name", "root").unwrap();
     /// // Access tree by ID or index
-    /// let name1 = doc.get_by_str_path(&format!("tree/{}/name", root));
-    /// let name2 = doc.get_by_str_path("tree/0/name");
+    /// let name1 = doc.get_by_str_path(&format!("tree/{}/name", root)).unwrap().into_value().unwrap();
+    /// let name2 = doc.get_by_str_path("tree/0/name").unwrap().into_value().unwrap();
     /// assert_eq!(name1, name2);
     ///
     /// // List example
@@ -733,21 +733,21 @@ impl LoroDoc {
     /// list.insert(1, "second").unwrap();
     /// // Access list by index
     /// let item = doc.get_by_str_path("list/0");
-    /// assert_eq!(item.unwrap().into_value().unwrap().into_string().unwrap(), "first");
+    /// assert_eq!(item.unwrap().into_value().unwrap().into_string().unwrap(), "first".into());
     ///
     /// // Map example
     /// let map = doc.get_map("map");
     /// map.insert("key", "value").unwrap();
     /// // Access map by key
     /// let value = doc.get_by_str_path("map/key");
-    /// assert_eq!(value.unwrap().into_value().unwrap().into_string().unwrap(), "value");
+    /// assert_eq!(value.unwrap().into_value().unwrap().into_string().unwrap(), "value".into());
     ///
     /// // MovableList example
     /// let mlist = doc.get_movable_list("mlist");
     /// mlist.insert(0, "item").unwrap();
     /// // Access movable list by index
     /// let item = doc.get_by_str_path("mlist/0");
-    /// assert_eq!(item.unwrap().into_value().unwrap().into_string().unwrap(), "item");
+    /// assert_eq!(item.unwrap().into_value().unwrap().into_string().unwrap(), "item".into());
     /// ```
     #[inline]
     pub fn get_by_str_path(&self, path: &str) -> Option<ValueOrContainer> {
