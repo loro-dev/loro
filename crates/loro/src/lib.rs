@@ -697,6 +697,58 @@ impl LoroDoc {
     }
 
     /// Get the handler by the string path.
+    ///
+    /// The path can be specified in different ways depending on the container type:
+    ///
+    /// For Tree:
+    /// 1. Using node IDs: `tree/{node_id}/property`
+    /// 2. Using indices: `tree/0/1/property`
+    ///
+    /// For List and MovableList:
+    /// - Using indices: `list/0` or `list/1/property`
+    ///
+    /// For Map:
+    /// - Using keys: `map/key` or `map/nested/property`
+    ///
+    /// For tree structures, index-based paths follow depth-first traversal order.
+    /// The indices start from 0 and represent the position of a node among its siblings.
+    ///
+    /// # Examples
+    /// ```
+    /// # use loro::{LoroDoc, LoroValue};
+    /// let doc = LoroDoc::new();
+    ///
+    /// // Tree example
+    /// let tree = doc.get_tree("tree");
+    /// let root = tree.create(None).unwrap();
+    /// tree.get_meta(root).unwrap().insert("name", "root").unwrap();
+    /// // Access tree by ID or index
+    /// let name1 = doc.get_by_str_path(&format!("tree/{}/name", root));
+    /// let name2 = doc.get_by_str_path("tree/0/name");
+    /// assert_eq!(name1, name2);
+    ///
+    /// // List example
+    /// let list = doc.get_list("list");
+    /// list.insert(0, "first").unwrap();
+    /// list.insert(1, "second").unwrap();
+    /// // Access list by index
+    /// let item = doc.get_by_str_path("list/0");
+    /// assert_eq!(item.unwrap().into_value().unwrap().into_string().unwrap(), "first");
+    ///
+    /// // Map example
+    /// let map = doc.get_map("map");
+    /// map.insert("key", "value").unwrap();
+    /// // Access map by key
+    /// let value = doc.get_by_str_path("map/key");
+    /// assert_eq!(value.unwrap().into_value().unwrap().into_string().unwrap(), "value");
+    ///
+    /// // MovableList example
+    /// let mlist = doc.get_movable_list("mlist");
+    /// mlist.insert(0, "item").unwrap();
+    /// // Access movable list by index
+    /// let item = doc.get_by_str_path("mlist/0");
+    /// assert_eq!(item.unwrap().into_value().unwrap().into_string().unwrap(), "item");
+    /// ```
     #[inline]
     pub fn get_by_str_path(&self, path: &str) -> Option<ValueOrContainer> {
         self.doc.get_by_str_path(path).map(ValueOrContainer::from)
