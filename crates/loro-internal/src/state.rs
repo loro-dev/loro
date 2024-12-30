@@ -1596,7 +1596,7 @@ impl DocState {
                             .register_container(&node.associated_meta_container());
                         let map = self.store.get_container(idx)?;
                         let Some(LoroValue::Container(c)) =
-                            map.as_map_state().unwrap().get(&internal_string)
+                            map.as_map_state().unwrap().get(internal_string)
                         else {
                             return None;
                         };
