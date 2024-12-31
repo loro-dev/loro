@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.6
+
+### Patch Changes
+
+- d552955: Make getByPath work for "tree/0/key"
+- df81aec: Better event ordering
+
 ## 1.2.5
 
 ### Patch Changes
