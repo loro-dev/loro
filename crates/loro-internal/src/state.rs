@@ -1302,7 +1302,16 @@ impl DocState {
 
         // Sort by path length, so caller can apply the diff from the root to the leaf.
         // Otherwise, the caller may use a wrong path to apply the diff.
-        diff.sort_by_key(|x| x.path.len());
+
+        diff.sort_by_key(|x| {
+            (
+                x.path.len(),
+                match &x.id {
+                    ContainerID::Root { .. } => 0,
+                    ContainerID::Normal { counter, .. } => *counter + 1,
+                },
+            )
+        });
         DocDiff {
             from,
             to,
