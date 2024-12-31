@@ -3585,6 +3585,7 @@ impl LoroTreeNode {
     /// //    /  \
     /// // node2 node
     /// ```
+    // Using custom typescript for generic on returned node
     #[wasm_bindgen(js_name = "createNode", skip_typescript)]
     pub fn create_node(&self, index: Option<usize>) -> JsResult<LoroTreeNode> {
         let id = if let Some(index) = index {
@@ -3596,27 +3597,8 @@ impl LoroTreeNode {
         Ok(node)
     }
 
-    /// Move this tree node to be a child of the parent.
-    /// If the parent is undefined, this node will be a root node.
-    ///
-    /// If the index is not provided, the node will be appended to the end.
-    ///
-    /// It's not allowed that the target is an ancestor of the parent.
-    ///
-    /// @example
-    /// ```ts
-    /// const doc = new LoroDoc();
-    /// const tree = doc.getTree("tree");
-    /// const root = tree.createNode();
-    /// const node = root.createNode();
-    /// const node2 = node.createNode();
-    /// node2.move(undefined, 0);
-    /// // node2   root
-    /// //          |
-    /// //         node
-    ///
-    /// ```
-    #[wasm_bindgen(js_name = "move")]
+    // Using custom typescript for generic parameter & optional argument
+    #[wasm_bindgen(js_name = "move", skip_typescript)]
     pub fn mov(&self, parent: &JsTreeNodeOrUndefined, index: Option<usize>) -> JsResult<()> {
         let parent: Option<LoroTreeNode> = parse_js_tree_node(parent)?;
         if let Some(index) = index {
@@ -3728,12 +3710,8 @@ impl LoroTreeNode {
         .tree_node_to_js_obj(node, true)
     }
 
-    /// Get the parent node of this node.
-    ///
-    /// - The parent of the root node is `undefined`.
-    /// - The object returned is a new js object each time because it need to cross
-    ///   the WASM boundary.
-    #[wasm_bindgen]
+    // Using custom typescript for generic parameter on the returned node
+    #[wasm_bindgen(skip_typescript)]
     pub fn parent(&self) -> JsResult<Option<LoroTreeNode>> {
         let parent = self
             .tree
@@ -3894,6 +3872,7 @@ impl LoroTree {
     }
 
     /// Get LoroTreeNode by the TreeID.
+    // Using custom typescript for generic parameter on the returned node
     #[wasm_bindgen(js_name = "getNodeByID", skip_typescript)]
     pub fn get_node_by_id(&self, target: &JsTreeID) -> Option<LoroTreeNode> {
         let target: JsValue = target.into();
@@ -5223,11 +5202,6 @@ export type TreeNodeJSON<T> = Omit<TreeNodeValue, 'meta' | 'children'> & {
     children: TreeNodeJSON<T>[],
 }
 
-interface LoroTree{
-    toArray(): TreeNodeValue[];
-    getNodes(options?: { withDeleted?: boolean } ): LoroTreeNode[];
-}
-
 interface LoroMovableList {
     /**
      * Get the cursor position at the given pos.
@@ -5956,6 +5930,8 @@ interface LoroTree<T extends Record<string, unknown> = Record<string, unknown>> 
      */
     getNodeByID(target: TreeID): LoroTreeNode<T>;
     subscribe(listener: Listener): Subscription;
+    toArray(): TreeNodeValue[];
+    getNodes(options?: { withDeleted?: boolean } ): LoroTreeNode<T>[];
 }
 interface LoroTreeNode<T extends Record<string, unknown> = Record<string, unknown>> {
     /**
@@ -5983,7 +5959,36 @@ interface LoroTreeNode<T extends Record<string, unknown> = Record<string, unknow
      * ```
      */
     createNode(index?: number): LoroTreeNode<T>;
+    /**
+     * Move this tree node to be a child of the parent.
+     * If the parent is undefined, this node will be a root node.
+     *
+     * If the index is not provided, the node will be appended to the end.
+     *
+     * It's not allowed that the target is an ancestor of the parent.
+     *
+     * @example
+     * ```ts
+     * const doc = new LoroDoc();
+     * const tree = doc.getTree("tree");
+     * const root = tree.createNode();
+     * const node = root.createNode();
+     * const node2 = node.createNode();
+     * node2.move(undefined, 0);
+     * // node2   root
+     * //          |
+     * //         node
+     *
+     * ```
+     */
     move(parent?: LoroTreeNode<T>, index?: number): void;
+    /**
+     * Get the parent node of this node.
+     *
+     * - The parent of the root node is `undefined`.
+     * - The object returned is a new js object each time because it need to cross
+     *   the WASM boundary.
+     */
     parent(): LoroTreeNode<T> | undefined;
     /**
      * Get the children of this node.
