@@ -12,7 +12,7 @@ use std::{
 use loro::{
     awareness::Awareness, loro_value, CommitOptions, ContainerID, ContainerTrait, ContainerType,
     ExportMode, Frontiers, FrontiersNotIncluded, IdSpan, LoroDoc, LoroError, LoroList, LoroMap,
-    LoroText, LoroValue, ToJson,
+    LoroStringValue, LoroText, LoroValue, ToJson,
 };
 use loro_internal::{
     encoding::EncodedBlobMode, handler::TextDelta, id::ID, version_range, vv, LoroResult,
@@ -2365,4 +2365,105 @@ fn test_event_order() {
     doc.get_list("list").insert(0, "item").unwrap();
     doc.get_tree("tree").create(None).unwrap();
     doc.commit();
+}
+
+#[test]
+fn test_rust_get_value_by_path() {
+    let doc = LoroDoc::new();
+    let tree = doc.get_tree("tree");
+    let root = tree.create(None).unwrap();
+    let child1 = tree.create(root).unwrap();
+    let child2 = tree.create(root).unwrap();
+    let grandchild = tree.create(child1).unwrap();
+
+    // Set up metadata for nodes
+    tree.get_meta(root).unwrap().insert("name", "root").unwrap();
+    tree.get_meta(child1)
+        .unwrap()
+        .insert("name", "child1")
+        .unwrap();
+    tree.get_meta(child2)
+        .unwrap()
+        .insert("name", "child2")
+        .unwrap();
+    tree.get_meta(grandchild)
+        .unwrap()
+        .insert("name", "grandchild")
+        .unwrap();
+
+    // Test getting values by path
+    let root_meta = doc.get_by_str_path(&format!("tree/{}", root)).unwrap();
+    let root_name = doc.get_by_str_path(&format!("tree/{}/name", root)).unwrap();
+    let child1_meta = doc.get_by_str_path(&format!("tree/{}", child1)).unwrap();
+    let child1_name = doc
+        .get_by_str_path(&format!("tree/{}/name", child1))
+        .unwrap();
+    let grandchild_name = doc
+        .get_by_str_path(&format!("tree/{}/name", grandchild))
+        .unwrap();
+
+    // Verify the values
+    assert!(root_meta.into_container().unwrap().is_map());
+    assert_eq!(
+        root_name.into_value().unwrap().into_string().unwrap(),
+        LoroStringValue::from("root")
+    );
+    assert!(child1_meta.into_container().unwrap().is_map());
+    assert_eq!(
+        child1_name.into_value().unwrap().into_string().unwrap(),
+        LoroStringValue::from("child1")
+    );
+    assert_eq!(
+        grandchild_name.into_value().unwrap().into_string().unwrap(),
+        LoroStringValue::from("grandchild")
+    );
+
+    // Test non-existent paths
+    assert!(doc.get_by_str_path("tree/nonexistent").is_none());
+    assert!(doc
+        .get_by_str_path(&format!("tree/{}/nonexistent", root))
+        .is_none());
+
+    // Verify values accessed by index
+    assert_eq!(
+        doc.get_by_str_path("tree/0/name")
+            .unwrap()
+            .into_value()
+            .unwrap()
+            .into_string()
+            .unwrap(),
+        LoroStringValue::from("root")
+    );
+    assert_eq!(
+        doc.get_by_str_path("tree/0/0/name")
+            .unwrap()
+            .into_value()
+            .unwrap()
+            .into_string()
+            .unwrap(),
+        LoroStringValue::from("child1")
+    );
+    assert_eq!(
+        doc.get_by_str_path("tree/0/1/name")
+            .unwrap()
+            .into_value()
+            .unwrap()
+            .into_string()
+            .unwrap(),
+        LoroStringValue::from("child2")
+    );
+    assert_eq!(
+        doc.get_by_str_path("tree/0/0/0/name")
+            .unwrap()
+            .into_value()
+            .unwrap()
+            .into_string()
+            .unwrap(),
+        LoroStringValue::from("grandchild")
+    );
+
+    // Test invalid index paths
+    assert!(doc.get_by_str_path("tree/1").is_none()); // Invalid root index
+    assert!(doc.get_by_str_path("tree/0/2").is_none()); // Invalid child index
+    assert!(doc.get_by_str_path("tree/0/0/1").is_none()); // Invalid grandchild index
 }

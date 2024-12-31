@@ -1663,6 +1663,21 @@ impl LoroDoc {
 
     /// Get the value or container at the given path
     ///
+    /// The path can be specified in different ways depending on the container type:
+    ///
+    /// For Tree:
+    /// 1. Using node IDs: `tree/{node_id}/property`
+    /// 2. Using indices: `tree/0/1/property`
+    ///
+    /// For List and MovableList:
+    /// - Using indices: `list/0` or `list/1/property`
+    ///
+    /// For Map:
+    /// - Using keys: `map/key` or `map/nested/property`
+    ///
+    /// For tree structures, index-based paths follow depth-first traversal order.
+    /// The indices start from 0 and represent the position of a node among its siblings.
+    ///
     /// @example
     /// ```ts
     /// import { LoroDoc } from "loro-crdt";

@@ -13,7 +13,7 @@ use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use fxhash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
-use loro_common::{ContainerID, LoroError, LoroResult};
+use loro_common::{ContainerID, LoroError, LoroResult, TreeID};
 use loro_delta::DeltaItem;
 use tracing::{info_span, instrument, warn};
 
@@ -1537,51 +1537,125 @@ impl DocState {
             return None;
         }
 
+        enum CurContainer {
+            Container(ContainerIdx),
+            TreeNode {
+                tree: ContainerIdx,
+                node: Option<TreeID>,
+            },
+        }
+
         let mut state_idx = {
             let root_index = path[0].as_key()?;
-            self.arena.get_root_container_idx_by_key(root_index)?
+            CurContainer::Container(self.arena.get_root_container_idx_by_key(root_index)?)
         };
 
         if path.len() == 1 {
-            let cid = self.arena.idx_to_id(state_idx)?;
-            return Some(LoroValue::Container(cid));
-        }
-
-        for index in path[..path.len() - 1].iter().skip(1) {
-            let parent_state = self.store.get_container_mut(state_idx)?;
-            match parent_state {
-                State::ListState(l) => {
-                    let Some(LoroValue::Container(c)) = l.get(*index.as_seq()?) else {
-                        return None;
-                    };
-                    state_idx = self.arena.register_container(c);
-                }
-                State::MovableListState(l) => {
-                    let Some(LoroValue::Container(c)) = l.get(*index.as_seq()?, IndexType::ForUser)
-                    else {
-                        return None;
-                    };
-                    state_idx = self.arena.register_container(c);
-                }
-                State::MapState(m) => {
-                    let Some(LoroValue::Container(c)) = m.get(index.as_key()?) else {
-                        return None;
-                    };
-                    state_idx = self.arena.register_container(c);
-                }
-                State::RichtextState(_) => return None,
-                State::TreeState(_) => {
-                    let id = index.as_node()?;
-                    let cid = id.associated_meta_container();
-                    state_idx = self.arena.register_container(&cid);
-                }
-                #[cfg(feature = "counter")]
-                State::CounterState(_) => return None,
-                State::UnknownState(_) => unreachable!(),
+            if let CurContainer::Container(c) = state_idx {
+                let cid = self.arena.idx_to_id(c)?;
+                return Some(LoroValue::Container(cid));
             }
         }
 
-        let parent_state = self.store.get_container_mut(state_idx)?;
+        let mut i = 1;
+        while i < path.len() - 1 {
+            let index = &path[i];
+            match state_idx {
+                CurContainer::Container(idx) => {
+                    let parent_state = self.store.get_container_mut(idx)?;
+                    match parent_state {
+                        State::ListState(l) => {
+                            let Some(LoroValue::Container(c)) = l.get(*index.as_seq()?) else {
+                                return None;
+                            };
+                            state_idx = CurContainer::Container(self.arena.register_container(c));
+                        }
+                        State::MovableListState(l) => {
+                            let Some(LoroValue::Container(c)) =
+                                l.get(*index.as_seq()?, IndexType::ForUser)
+                            else {
+                                return None;
+                            };
+                            state_idx = CurContainer::Container(self.arena.register_container(c));
+                        }
+                        State::MapState(m) => {
+                            let Some(LoroValue::Container(c)) = m.get(index.as_key()?) else {
+                                return None;
+                            };
+                            state_idx = CurContainer::Container(self.arena.register_container(c));
+                        }
+                        State::RichtextState(_) => return None,
+                        State::TreeState(_) => {
+                            state_idx = CurContainer::TreeNode {
+                                tree: idx,
+                                node: None,
+                            };
+                            continue;
+                        }
+                        #[cfg(feature = "counter")]
+                        State::CounterState(_) => return None,
+                        State::UnknownState(_) => unreachable!(),
+                    }
+                }
+                CurContainer::TreeNode { tree, node } => match index {
+                    Index::Key(internal_string) => {
+                        let node = node?;
+                        let idx = self
+                            .arena
+                            .register_container(&node.associated_meta_container());
+                        let map = self.store.get_container(idx)?;
+                        let Some(LoroValue::Container(c)) =
+                            map.as_map_state().unwrap().get(internal_string)
+                        else {
+                            return None;
+                        };
+
+                        state_idx = CurContainer::Container(self.arena.register_container(c));
+                    }
+                    Index::Seq(i) => {
+                        let tree_state =
+                            self.store.get_container_mut(tree)?.as_tree_state().unwrap();
+                        let parent: TreeParentId = if let Some(node) = node {
+                            node.into()
+                        } else {
+                            TreeParentId::Root
+                        };
+                        let child = tree_state.get_children(&parent)?.nth(*i)?;
+                        state_idx = CurContainer::TreeNode {
+                            tree,
+                            node: Some(child),
+                        };
+                    }
+                    Index::Node(tree_id) => {
+                        let tree_state =
+                            self.store.get_container_mut(tree)?.as_tree_state().unwrap();
+                        if tree_state.parent(tree_id).is_some() {
+                            state_idx = CurContainer::TreeNode {
+                                tree,
+                                node: Some(*tree_id),
+                            }
+                        } else {
+                            return None;
+                        }
+                    }
+                },
+            }
+            i += 1;
+        }
+
+        let parent_idx = match state_idx {
+            CurContainer::Container(container_idx) => container_idx,
+            CurContainer::TreeNode { tree, node } => {
+                if let Some(node) = node {
+                    self.arena
+                        .register_container(&node.associated_meta_container())
+                } else {
+                    tree
+                }
+            }
+        };
+
+        let parent_state = self.store.get_container_mut(parent_idx)?;
         let index = path.last().unwrap();
         let value: LoroValue = match parent_state {
             State::ListState(l) => l.get(*index.as_seq()?).cloned()?,
