@@ -2349,3 +2349,20 @@ fn test_detach_and_attach() {
     doc.attach();
     assert!(!doc.is_detached());
 }
+
+#[test]
+fn test_event_order() {
+    let doc = LoroDoc::new();
+    let _sub = doc.subscribe_root(Arc::new(|e| {
+        let e0 = &e.events[0].diff;
+        assert!(e0.is_map());
+        let e1 = &e.events[1].diff;
+        assert!(e1.is_list());
+        let e2 = &e.events[2].diff;
+        assert!(e2.is_tree());
+    }));
+    doc.get_map("map").insert("key", "value").unwrap();
+    doc.get_list("list").insert(0, "item").unwrap();
+    doc.get_tree("tree").create(None).unwrap();
+    doc.commit();
+}
