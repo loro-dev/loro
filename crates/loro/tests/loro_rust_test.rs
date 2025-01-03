@@ -2467,3 +2467,15 @@ fn test_rust_get_value_by_path() {
     assert!(doc.get_by_str_path("tree/0/2").is_none()); // Invalid child index
     assert!(doc.get_by_str_path("tree/0/0/1").is_none()); // Invalid grandchild index
 }
+
+#[test]
+fn travel_before_commit() -> Result<(), Box<dyn std::error::Error>> {
+    let doc = LoroDoc::new();
+    let map = doc.get_map("metadata");
+    map.insert("key", "value")?;
+    let last_frontiers = doc.state_frontiers();
+    doc.travel_change_ancestors(&last_frontiers.to_vec(), &mut |_meta| {
+        std::ops::ControlFlow::Continue(())
+    })?;
+    Ok(())
+}
