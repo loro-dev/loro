@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.7
+
+### Patch Changes
+
+- da24910: fix: should commit before travel_change_ancestors #599
+
 ## 1.2.6
 
 ### Patch Changes
