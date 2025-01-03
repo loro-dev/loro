@@ -1,6 +1,6 @@
 [package]
 name = "loro"
-version = "1.1.0"
+version = "1.2.7"
 edition = "2021"
 license = "MIT"
 documentation = "https://docs.rs/loro/"
@@ -14,10 +14,10 @@ keywords = ["crdt", "local-first"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-loro-internal = { path = "../loro-internal", version = "1.1.0" }
-loro-common = { path = "../loro-common", version = "1.1.0", features = ["serde_json"] }
-loro-kv-store = { path = "../kv-store", version = "1.1.0" }
-delta = { path = "../delta", package = "loro-delta", version = "1.1.0" }
+loro-internal = { path = "../loro-internal", version = "1.2.7" }
+loro-common = { path = "../loro-common", version = "1.2.7", features = ["serde_json"] }
+loro-kv-store = { path = "../kv-store", version = "1.2.7" }
+delta = { path = "../delta", package = "loro-delta", version = "1.2.7" }
 generic-btree = { version = "^0.10.5" }
 enum-as-inner = { workspace = true }
 tracing = { workspace = true }

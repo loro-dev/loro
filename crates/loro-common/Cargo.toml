@@ -1,6 +1,6 @@
 [package]
 name = "loro-common"
-version = "1.1.0"
+version = "1.2.7"
 edition = "2021"
 license = "MIT"
 description = "Common types and functions for Loro. This is an internal lib of Loro."
@@ -14,7 +14,7 @@ keywords = ["crdt", "local-first"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-rle = { path = "../rle", version = "1.1.0", package = "loro-rle" }
+rle = { path = "../rle", version = "1.2.7", package = "loro-rle" }
 serde = { workspace = true }
 serde_json = { workspace = true, optional=true }
 thiserror = "1.0.43"
