@@ -1635,6 +1635,7 @@ impl LoroDoc {
         ids: &[ID],
         f: &mut dyn FnMut(ChangeMeta) -> ControlFlow<()>,
     ) -> Result<(), ChangeTravelError> {
+        self.commit_then_renew();
         struct PendingNode(ChangeMeta);
         impl PartialEq for PendingNode {
             fn eq(&self, other: &Self) -> bool {
