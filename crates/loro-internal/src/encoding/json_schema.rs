@@ -19,8 +19,8 @@ use crate::{
 use either::Either;
 use json::{JsonOpContent, JsonSchema};
 use loro_common::{
-    ContainerID, ContainerType, HasCounterSpan, HasIdSpan, IdLp, LoroError, LoroResult, LoroValue,
-    PeerID, TreeID, ID,
+    ContainerID, ContainerType, HasCounterSpan, HasId, HasIdSpan, IdLp, IdSpan, LoroError,
+    LoroResult, LoroValue, PeerID, TreeID, ID,
 };
 use rle::{HasLength, RleVec, Sliceable};
 use std::sync::Arc;
@@ -47,21 +47,52 @@ pub(crate) fn export_json<'a, 'c: 'a>(
     oplog: &'c OpLog,
     start_vv: &VersionVector,
     end_vv: &VersionVector,
+    with_peer_compression: bool,
 ) -> JsonSchema {
     let actual_start_vv = refine_vv(start_vv, oplog);
     let actual_end_vv = refine_vv(end_vv, oplog);
 
     let frontiers = oplog.dag.vv_to_frontiers(&actual_start_vv);
 
-    let mut peer_register = ValueRegister::<PeerID>::new();
     let diff_changes = init_encode(oplog, &actual_start_vv, &actual_end_vv);
-    let changes = encode_changes(&diff_changes, &oplog.arena, &mut peer_register);
-    JsonSchema {
-        changes,
-        schema_version: SCHEMA_VERSION,
-        peers: peer_register.unwrap_vec(),
-        start_version: frontiers,
+    if with_peer_compression {
+        let mut peer_register = ValueRegister::<PeerID>::new();
+        let changes = encode_changes(&diff_changes, &oplog.arena, Some(&mut peer_register));
+        JsonSchema {
+            changes,
+            schema_version: SCHEMA_VERSION,
+            peers: Some(peer_register.unwrap_vec()),
+            start_version: frontiers,
+        }
+    } else {
+        let changes = encode_changes(&diff_changes, &oplog.arena, None);
+        JsonSchema {
+            changes,
+            schema_version: SCHEMA_VERSION,
+            peers: None,
+            start_version: frontiers,
+        }
     }
+}
+
+pub(crate) fn export_json_in_id_span(oplog: &OpLog, mut id_span: IdSpan) -> Vec<json::JsonChange> {
+    id_span.normalize_();
+    let mut diff_changes: Vec<Either<BlockChangeRef, Change>> = Vec::new();
+    while id_span.atom_len() > 0 {
+        let change = oplog.get_change_at(id_span.id_start()).unwrap();
+        let ctr_end = change.ctr_end();
+        if change.ctr_end() > id_span.counter.end {
+            let len = id_span.counter.end - change.id.counter;
+            diff_changes.push(Either::Right(change.slice(0, len as usize)));
+            break;
+        } else {
+            diff_changes.push(Either::Left(change));
+        }
+
+        id_span.counter.start = ctr_end;
+    }
+
+    encode_changes(&diff_changes, &oplog.arena, None)
 }
 
 pub(crate) fn import_json(oplog: &mut OpLog, json: JsonSchema) -> LoroResult<ImportStatus> {
@@ -124,28 +155,38 @@ fn init_encode<'s, 'a: 's>(
     diff_changes
 }
 
-fn register_id(id: &ID, peer_register: &mut ValueRegister<PeerID>) -> ID {
-    let peer = peer_register.register(&id.peer);
+fn register_id(id: &ID, peer_register: Option<&mut ValueRegister<PeerID>>) -> ID {
+    let peer = match peer_register {
+        Some(peer_register) => peer_register.register(&id.peer) as PeerID,
+        None => id.peer,
+    };
     ID::new(peer as PeerID, id.counter)
 }
 
-fn register_idlp(idlp: &IdLp, peer_register: &mut ValueRegister<PeerID>) -> IdLp {
+fn register_idlp(idlp: &IdLp, peer_register: Option<&mut ValueRegister<PeerID>>) -> IdLp {
+    let peer = match peer_register {
+        Some(peer_register) => peer_register.register(&idlp.peer) as PeerID,
+        None => idlp.peer,
+    };
     IdLp {
-        peer: peer_register.register(&idlp.peer) as PeerID,
+        peer,
         lamport: idlp.lamport,
     }
 }
 
-fn register_tree_id(tree: &TreeID, peer_register: &mut ValueRegister<PeerID>) -> TreeID {
+fn register_tree_id(tree: &TreeID, peer_register: Option<&mut ValueRegister<PeerID>>) -> TreeID {
     TreeID {
-        peer: peer_register.register(&tree.peer) as PeerID,
+        peer: match peer_register {
+            Some(peer_register) => peer_register.register(&tree.peer) as PeerID,
+            None => tree.peer,
+        },
         counter: tree.counter,
     }
 }
 
 fn register_container_id(
     container: ContainerID,
-    peer_register: &mut ValueRegister<PeerID>,
+    peer_register: Option<&mut ValueRegister<PeerID>>,
 ) -> ContainerID {
     match container {
         ContainerID::Normal {
@@ -153,7 +194,10 @@ fn register_container_id(
             counter,
             container_type,
         } => ContainerID::Normal {
-            peer: peer_register.register(&peer) as PeerID,
+            peer: match peer_register {
+                Some(peer_register) => peer_register.register(&peer) as PeerID,
+                None => peer,
+            },
             counter,
             container_type,
         },
@@ -161,14 +205,14 @@ fn register_container_id(
     }
 }
 
-fn convert_container_id(container: ContainerID, peers: &[PeerID]) -> ContainerID {
+fn convert_container_id(container: ContainerID, peers: &Option<Vec<PeerID>>) -> ContainerID {
     match container {
         ContainerID::Normal {
             peer,
             counter,
             container_type,
         } => ContainerID::Normal {
-            peer: peers[peer as usize],
+            peer: get_peer_from_peers(peers, peer),
             counter,
             container_type,
         },
@@ -176,23 +220,30 @@ fn convert_container_id(container: ContainerID, peers: &[PeerID]) -> ContainerID
     }
 }
 
-fn convert_id(id: &ID, peers: &[PeerID]) -> ID {
+pub(crate) fn get_peer_from_peers(peers: &Option<Vec<PeerID>>, peer: PeerID) -> PeerID {
+    match peers {
+        Some(peers) => peers[peer as usize],
+        None => peer,
+    }
+}
+
+fn convert_id(id: &ID, peers: &Option<Vec<PeerID>>) -> ID {
     ID {
-        peer: peers[id.peer as usize],
+        peer: get_peer_from_peers(peers, id.peer),
         counter: id.counter,
     }
 }
 
-fn convert_idlp(idlp: &IdLp, peers: &[PeerID]) -> IdLp {
+fn convert_idlp(idlp: &IdLp, peers: &Option<Vec<PeerID>>) -> IdLp {
     IdLp {
         lamport: idlp.lamport,
-        peer: peers[idlp.peer as usize],
+        peer: get_peer_from_peers(peers, idlp.peer),
     }
 }
 
-fn convert_tree_id(tree: &TreeID, peers: &[PeerID]) -> TreeID {
+fn convert_tree_id(tree: &TreeID, peers: &Option<Vec<PeerID>>) -> TreeID {
     TreeID {
-        peer: peers[tree.peer as usize],
+        peer: get_peer_from_peers(peers, tree.peer),
         counter: tree.counter,
     }
 }
@@ -200,7 +251,7 @@ fn convert_tree_id(tree: &TreeID, peers: &[PeerID]) -> TreeID {
 fn encode_changes(
     diff_changes: &[Either<BlockChangeRef, Change>],
     arena: &SharedArena,
-    peer_register: &mut ValueRegister<PeerID>,
+    mut peer_register: Option<&mut ValueRegister<PeerID>>,
 ) -> Vec<json::JsonChange> {
     let mut changes = Vec::with_capacity(diff_changes.len());
     for change in diff_changes.iter() {
@@ -217,7 +268,7 @@ fn encode_changes(
         {
             let mut container = arena.get_container_id(*container).unwrap();
             if container.is_normal() {
-                container = register_container_id(container, peer_register);
+                container = register_container_id(container, peer_register.as_deref_mut());
             }
             let op = match container.container_type() {
                 ContainerType::List => match content {
@@ -228,7 +279,10 @@ fn encode_changes(
                             values.iter_mut().for_each(|x| {
                                 if let LoroValue::Container(id) = x {
                                     if id.is_normal() {
-                                        *id = register_container_id(id.clone(), peer_register);
+                                        *id = register_container_id(
+                                            id.clone(),
+                                            peer_register.as_deref_mut(),
+                                        );
                                     }
                                 }
                             });
@@ -243,7 +297,7 @@ fn encode_changes(
                         }) => json::ListOp::Delete {
                             pos: *pos as i32,
                             len: *signed_len as i32,
-                            start_id: register_id(id_start, peer_register),
+                            start_id: register_id(id_start, peer_register.as_deref_mut()),
                         },
                         _ => unreachable!(),
                     }),
@@ -257,7 +311,10 @@ fn encode_changes(
                             values.iter_mut().for_each(|x| {
                                 if let LoroValue::Container(id) = x {
                                     if id.is_normal() {
-                                        *id = register_container_id(id.clone(), peer_register);
+                                        *id = register_container_id(
+                                            id.clone(),
+                                            peer_register.as_deref_mut(),
+                                        );
                                     }
                                 }
                             });
@@ -272,7 +329,7 @@ fn encode_changes(
                         }) => json::MovableListOp::Delete {
                             pos: *pos as i32,
                             len: *signed_len as i32,
-                            start_id: register_id(id_start, peer_register),
+                            start_id: register_id(id_start, peer_register.as_deref_mut()),
                         },
                         InnerListOp::Move {
                             from,
@@ -281,14 +338,14 @@ fn encode_changes(
                         } => json::MovableListOp::Move {
                             from: *from,
                             to: *to,
-                            elem_id: register_idlp(from_id, peer_register),
+                            elem_id: register_idlp(from_id, peer_register.as_deref_mut()),
                         },
                         InnerListOp::Set { elem_id, value } => {
                             let value = if let LoroValue::Container(id) = value {
                                 if id.is_normal() {
                                     LoroValue::Container(register_container_id(
                                         id.clone(),
-                                        peer_register,
+                                        peer_register.as_deref_mut(),
                                     ))
                                 } else {
                                     value.clone()
@@ -297,7 +354,7 @@ fn encode_changes(
                                 value.clone()
                             };
                             json::MovableListOp::Set {
-                                elem_id: register_idlp(elem_id, peer_register),
+                                elem_id: register_idlp(elem_id, peer_register.as_deref_mut()),
                                 value,
                             }
                         }
@@ -322,7 +379,7 @@ fn encode_changes(
                         }) => json::TextOp::Delete {
                             pos: *pos as i32,
                             len: *signed_len as i32,
-                            start_id: register_id(id_start, peer_register),
+                            start_id: register_id(id_start, peer_register.as_deref_mut()),
                         },
                         InnerListOp::StyleStart {
                             start,
@@ -349,7 +406,7 @@ fn encode_changes(
                                 if id.is_normal() {
                                     LoroValue::Container(register_container_id(
                                         id.clone(),
-                                        peer_register,
+                                        peer_register.as_deref_mut(),
                                     ))
                                 } else {
                                     v.clone()
@@ -378,8 +435,9 @@ fn encode_changes(
                             parent,
                             position,
                         } => json::TreeOp::Create {
-                            target: register_tree_id(target, peer_register),
-                            parent: parent.map(|p| register_tree_id(&p, peer_register)),
+                            target: register_tree_id(target, peer_register.as_deref_mut()),
+                            parent: parent
+                                .map(|p| register_tree_id(&p, peer_register.as_deref_mut())),
                             fractional_index: position.clone(),
                         },
                         TreeOp::Move {
@@ -387,12 +445,13 @@ fn encode_changes(
                             parent,
                             position,
                         } => json::TreeOp::Move {
-                            target: register_tree_id(target, peer_register),
-                            parent: parent.map(|p| register_tree_id(&p, peer_register)),
+                            target: register_tree_id(target, peer_register.as_deref_mut()),
+                            parent: parent
+                                .map(|p| register_tree_id(&p, peer_register.as_deref_mut())),
                             fractional_index: position.clone(),
                         },
                         TreeOp::Delete { target } => json::TreeOp::Delete {
-                            target: register_tree_id(target, peer_register),
+                            target: register_tree_id(target, peer_register.as_deref_mut()),
                         },
                     }),
                     _ => unreachable!(),
@@ -430,12 +489,12 @@ fn encode_changes(
             });
         }
         let c = json::JsonChange {
-            id: register_id(&change.id, peer_register),
+            id: register_id(&change.id, peer_register.as_deref_mut()),
             ops,
             deps: change
                 .deps
                 .iter()
-                .map(|id| register_id(&id, peer_register))
+                .map(|id| register_id(&id, peer_register.as_deref_mut()))
                 .collect(),
             lamport: change.lamport,
             timestamp: change.timestamp,
@@ -478,7 +537,7 @@ fn decode_changes(json: JsonSchema, arena: &SharedArena) -> LoroResult<Vec<Chang
     Ok(ans)
 }
 
-fn decode_op(op: json::JsonOp, arena: &SharedArena, peers: &[PeerID]) -> LoroResult<Op> {
+fn decode_op(op: json::JsonOp, arena: &SharedArena, peers: &Option<Vec<PeerID>>) -> LoroResult<Op> {
     let json::JsonOp {
         counter,
         container,
@@ -724,7 +783,7 @@ pub mod json {
     use serde::{Deserialize, Serialize};
     use std::ops::Range;
 
-    use super::redact_value;
+    use super::{get_peer_from_peers, redact_value};
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct JsonSchema {
@@ -732,7 +791,7 @@ pub mod json {
         #[serde(with = "self::serde_impl::frontiers")]
         pub start_version: Frontiers,
         #[serde(with = "self::serde_impl::peer_id")]
-        pub peers: Vec<PeerID>,
+        pub peers: Option<Vec<PeerID>>,
         pub changes: Vec<JsonChange>,
     }
 
@@ -1123,19 +1182,22 @@ pub mod json {
             use loro_common::PeerID;
             use serde::{Deserialize, Deserializer, Serializer};
 
-            pub fn serialize<S>(peers: &[PeerID], s: S) -> Result<S::Ok, S::Error>
+            pub fn serialize<S>(peers: &Option<Vec<PeerID>>, s: S) -> Result<S::Ok, S::Error>
             where
                 S: Serializer,
             {
-                s.collect_seq(peers.iter().map(|x| x.to_string()))
+                match peers {
+                    Some(peers) => s.collect_seq(peers.iter().map(|x| x.to_string())),
+                    None => s.serialize_none(),
+                }
             }
 
-            pub fn deserialize<'de, 'a, D>(d: D) -> Result<Vec<PeerID>, D::Error>
+            pub fn deserialize<'de, 'a, D>(d: D) -> Result<Option<Vec<PeerID>>, D::Error>
             where
                 D: Deserializer<'de>,
             {
-                let peers: Vec<String> = Deserialize::deserialize(d)?;
-                Ok(peers.into_iter().map(|x| x.parse().unwrap()).collect())
+                let peers: Option<Vec<String>> = Deserialize::deserialize(d)?;
+                Ok(peers.map(|x| x.into_iter().map(|x| x.parse().unwrap()).collect()))
             }
         }
 
@@ -1258,7 +1320,7 @@ pub mod json {
         let peers = json.peers.clone();
         let mut errors = Vec::new();
         for change in json.changes.iter_mut() {
-            let real_peer = peers[change.id.peer as usize];
+            let real_peer = get_peer_from_peers(&peers, change.id.peer);
             let real_id = ID::new(real_peer, change.id.counter);
             if !range.has_overlap_with(real_id.to_span(change.op_len())) {
                 continue;
@@ -1400,11 +1462,13 @@ mod tests {
         let json = doc.export_json_updates(
             &VersionVector::from_iter(vec![(0, 1)]),
             &VersionVector::from_iter(vec![(0, 2)]),
+            true,
         );
         assert_eq!(json.changes[0].ops.len(), 1);
         let json = doc.export_json_updates(
             &VersionVector::from_iter(vec![(0, 0)]),
             &VersionVector::from_iter(vec![(0, 2)]),
+            true,
         );
         assert_eq!(json.changes[0].ops.len(), 2);
     }

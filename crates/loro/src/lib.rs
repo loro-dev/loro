@@ -442,7 +442,25 @@ impl LoroDoc {
         start_vv: &VersionVector,
         end_vv: &VersionVector,
     ) -> JsonSchema {
-        self.doc.export_json_updates(start_vv, end_vv)
+        self.doc.export_json_updates(start_vv, end_vv, true)
+    }
+
+    /// Export the current state with json-string format of the document, without peer compression.
+    ///
+    /// Compared to [`export_json_updates`], this method does not compress the peer IDs in the updates.
+    /// So the operations are easier to be processed by application code.
+    #[inline]
+    pub fn export_json_updates_without_peer_compression(
+        &self,
+        start_vv: &VersionVector,
+        end_vv: &VersionVector,
+    ) -> JsonSchema {
+        self.doc.export_json_updates(start_vv, end_vv, false)
+    }
+
+    /// Export the readable [`Change`]s in the given [`IdSpan`]
+    pub fn export_json_in_id_span(&self, id_span: IdSpan) -> Vec<JsonChange> {
+        self.doc.export_json_in_id_span(id_span)
     }
 
     /// Export all the ops not included in the given `VersionVector`

@@ -41,6 +41,7 @@ use crate::{
     event::{str_to_path, EventTriggerKind, Index, InternalDocDiff},
     handler::{Handler, MovableListHandler, TextHandler, TreeHandler, ValueOrHandler},
     id::PeerID,
+    json::JsonChange,
     op::InnerContent,
     oplog::{loro_dag::FrontiersNotIncluded, OpLog},
     state::DocState,
@@ -570,10 +571,25 @@ impl LoroDoc {
         &self,
         start_vv: &VersionVector,
         end_vv: &VersionVector,
+        with_peer_compression: bool,
     ) -> JsonSchema {
         self.commit_then_stop();
         let oplog = self.oplog.try_lock().unwrap();
-        let json = crate::encoding::json_schema::export_json(&oplog, start_vv, end_vv);
+        let json = crate::encoding::json_schema::export_json(
+            &oplog,
+            start_vv,
+            end_vv,
+            with_peer_compression,
+        );
+        drop(oplog);
+        self.renew_txn_if_auto_commit();
+        json
+    }
+
+    pub fn export_json_in_id_span(&self, id_span: IdSpan) -> Vec<JsonChange> {
+        self.commit_then_stop();
+        let oplog = self.oplog.try_lock().unwrap();
+        let json = crate::encoding::json_schema::export_json_in_id_span(&oplog, id_span);
         drop(oplog);
         self.renew_txn_if_auto_commit();
         json
