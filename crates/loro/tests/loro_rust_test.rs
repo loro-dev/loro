@@ -2479,3 +2479,177 @@ fn travel_before_commit() -> Result<(), Box<dyn std::error::Error>> {
     })?;
     Ok(())
 }
+
+#[test]
+fn test_export_json_in_id_span() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+
+    // Test list operations
+    let list = doc.get_list("list");
+    list.insert(0, 1)?;
+    doc.set_next_commit_message("list");
+    doc.commit();
+
+    // Test map operations
+    let map = doc.get_map("map");
+    map.insert("key1", "value1")?;
+    doc.set_next_commit_message("map");
+    doc.commit();
+
+    // Test text operations
+    let text = doc.get_text("text");
+    text.insert(0, "H")?;
+    doc.set_next_commit_message("text");
+    doc.commit();
+
+    // Export changes for list (first change)
+    let changes = doc.export_json_in_id_span(IdSpan::new(1, 0, 1));
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].id.peer, 1);
+    assert_eq!(changes[0].id.counter, 0);
+    assert!(!changes[0].ops.is_empty());
+
+    // Export changes for map (second change)
+    let changes = doc.export_json_in_id_span(IdSpan::new(1, 1, 2));
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].id.peer, 1);
+    assert_eq!(changes[0].id.counter, 1);
+    assert!(!changes[0].ops.is_empty());
+
+    // Export changes for text (third change)
+    let changes = doc.export_json_in_id_span(IdSpan::new(1, 2, 3));
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].id.peer, 1);
+    assert_eq!(changes[0].id.counter, 2);
+    assert!(!changes[0].ops.is_empty());
+
+    // Export multiple changes
+    let changes = doc.export_json_in_id_span(IdSpan::new(1, 0, 3));
+    assert_eq!(changes.len(), 3);
+    assert_eq!(changes[0].id.counter, 0);
+    assert_eq!(changes[1].id.counter, 1);
+    assert_eq!(changes[2].id.counter, 2);
+
+    // Test with multiple peers
+    let doc2 = LoroDoc::new();
+    doc2.set_peer_id(2)?;
+    doc2.get_list("list").insert(0, 3)?;
+    doc2.commit();
+    doc.import(&doc2.export_snapshot())?;
+
+    let changes = doc.export_json_in_id_span(IdSpan::new(2, 0, 1));
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].id.peer, 2);
+    assert_eq!(changes[0].id.counter, 0);
+
+    // Test empty span
+    let changes = doc.export_json_in_id_span(IdSpan::new(1, 0, 0));
+    assert_eq!(changes.len(), 0);
+
+    // Test concurrent operations
+    let doc1 = LoroDoc::new();
+    doc1.set_peer_id(1)?;
+    let doc2 = LoroDoc::new();
+    doc2.set_peer_id(2)?;
+
+    // Make concurrent changes
+    doc1.get_text("text").insert(0, "Hello")?;
+    doc2.get_text("text").insert(0, "World")?;
+    doc1.commit();
+    doc2.commit();
+
+    // Sync the documents
+    doc1.import(&doc2.export_snapshot())?;
+    doc2.import(&doc1.export_snapshot())?;
+
+    // Export changes from both peers
+    let changes1 = doc1.export_json_in_id_span(IdSpan::new(1, 0, 1));
+    let changes2 = doc1.export_json_in_id_span(IdSpan::new(2, 0, 1));
+    assert_eq!(changes1.len(), 1);
+    assert_eq!(changes2.len(), 1);
+    assert_eq!(changes1[0].id.peer, 1);
+    assert_eq!(changes2[0].id.peer, 2);
+
+    // Verify that the changes can be imported back
+    let doc3 = LoroDoc::new();
+    doc3.import(&doc1.export_snapshot())?;
+    assert_eq!(
+        doc3.get_text("text").to_string(),
+        doc1.get_text("text").to_string()
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_export_json_in_id_span_with_complex_operations() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+
+    // Test nested container operations
+    let map = doc.get_map("root");
+    let list = map.insert_container("list", LoroList::new())?;
+    list.insert(0, 1)?;
+    let text = list.insert_container(1, LoroText::new())?;
+    text.insert(0, "Hello")?;
+    doc.commit();
+
+    // Export the changes
+    let changes = doc.export_json_in_id_span(IdSpan::new(1, 0, 1));
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].id.peer, 1);
+    assert_eq!(changes[0].id.counter, 0);
+    assert!(!changes[0].ops.is_empty());
+
+    // Test tree operations
+    let tree = doc.get_tree("tree");
+    let root = tree.create(None)?;
+    let child1 = tree.create(None)?;
+    let child2 = tree.create(None)?;
+    tree.mov(child1, root)?;
+    tree.mov(child2, root)?;
+    doc.commit();
+
+    // Export tree changes
+    let changes = doc.export_json_in_id_span(IdSpan::new(1, 1, 2));
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].id.peer, 1);
+    assert_eq!(changes[0].id.counter, 1);
+    assert!(!changes[0].ops.is_empty());
+
+    // Test rich text operations with multiple attributes
+    let text = doc.get_text("richtext");
+    text.insert(0, "Hello World")?;
+    text.mark(0..5, "bold", true)?;
+    text.mark(6..11, "italic", true)?;
+    doc.commit();
+
+    // Export rich text changes
+    let changes = doc.export_json_in_id_span(IdSpan::new(1, 2, 3));
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].id.peer, 1);
+    assert_eq!(changes[0].id.counter, 2);
+    assert!(!changes[0].ops.is_empty());
+
+    // Test movable list operations
+    let movable_list = doc.get_movable_list("movable");
+    movable_list.insert(0, 1)?;
+    movable_list.insert(1, 2)?;
+    movable_list.mov(0, 1)?;
+    doc.commit();
+
+    // Export movable list changes
+    let changes = doc.export_json_in_id_span(IdSpan::new(1, 3, 4));
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].id.peer, 1);
+    assert_eq!(changes[0].id.counter, 3);
+    assert!(!changes[0].ops.is_empty());
+
+    // Verify that all changes can be imported back
+    let doc2 = LoroDoc::new();
+    doc2.import(&doc.export_snapshot())?;
+    assert_eq!(doc2.get_deep_value(), doc.get_deep_value());
+
+    Ok(())
+}

@@ -4,7 +4,9 @@
 #![allow(clippy::doc_lazy_continuation)]
 // #![warn(missing_docs)]
 
-use convert::{import_status_to_js_value, js_to_version_vector, resolved_diff_to_js};
+use convert::{
+    import_status_to_js_value, js_to_id_span, js_to_version_vector, resolved_diff_to_js,
+};
 use js_sys::{Array, Object, Promise, Reflect, Uint8Array};
 use loro_internal::{
     change::Lamport,
@@ -206,6 +208,8 @@ extern "C" {
     pub type JsLoroTreeValue;
     #[wasm_bindgen(typescript_type = "Record<string, ContainerID>")]
     pub type JsLoroRootShallowValue;
+    #[wasm_bindgen(typescript_type = "{ peer: PeerID, counter: number, length: number }")]
+    pub type JsIdSpan;
 }
 
 mod observer {
@@ -1222,6 +1226,7 @@ impl LoroDoc {
         &self,
         start_vv: JsValue,
         end_vv: JsValue,
+        with_peer_compression: Option<bool>,
     ) -> JsResult<JsJsonSchema> {
         let mut json_start_vv: &InternalVersionVector = &Default::default();
         let temp_start_vv: Option<wasm_bindgen::__rt::Ref<'static, VersionVector>>;
@@ -1235,12 +1240,27 @@ impl LoroDoc {
             temp_end_vv = Some(js_to_version_vector(end_vv)?);
             json_end_vv = &temp_end_vv.as_ref().unwrap().0;
         }
-        let json_schema = self.0.export_json_updates(json_start_vv, json_end_vv);
+        let json_schema = self.0.export_json_updates(
+            json_start_vv,
+            json_end_vv,
+            with_peer_compression.unwrap_or(true),
+        );
         let s = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
         let v = json_schema
             .serialize(&s)
             .map_err(std::convert::Into::<JsValue>::into)?;
         Ok(v.into())
+    }
+
+    #[wasm_bindgen(js_name = "exportJsonInIdSpan", skip_typescript)]
+    pub fn exportJsonInIdSpan(&self, idSpan: JsIdSpan) -> JsResult<JsValue> {
+        let id_span = js_to_id_span(idSpan)?;
+        let json = self.0.export_json_in_id_span(id_span);
+        let s = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+        let v = json
+            .serialize(&s)
+            .map_err(std::convert::Into::<JsValue>::into)?;
+        Ok(v)
     }
 
     /// Import updates from the JSON format.
@@ -5599,9 +5619,19 @@ interface LoroDoc<T extends Record<string, Container> = Record<string, Container
      *
      * @param start - The start version vector.
      * @param end - The end version vector.
+     * @param withPeerCompression - Whether to compress the peer IDs in the updates. Defaults to true. If you want to process the operations in application code, set this to false.
      * @returns The updates in the given range.
      */
-    exportJsonUpdates(start?: VersionVector, end?: VersionVector): JsonSchema;
+    exportJsonUpdates(start?: VersionVector, end?: VersionVector, withPeerCompression?: boolean): JsonSchema;
+    /**
+     * Export the readable [`Change`]s in the given [`IdSpan`].
+     *
+     * The peers are not compressed in the returned changes.
+     *
+     * @param idSpan - The id span to export.
+     * @returns The changes in the given id span.
+     */
+    exportJsonInIdSpan(idSpan: IdSpan): JsonChange[];
 }
 interface LoroList<T = unknown> {
     new(): LoroList<T>;

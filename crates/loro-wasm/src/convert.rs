@@ -6,12 +6,12 @@ use loro_internal::encoding::{ImportBlobMetadata, ImportStatus};
 use loro_internal::event::Diff;
 use loro_internal::handler::{Handler, ValueOrHandler};
 use loro_internal::version::VersionRange;
-use loro_internal::{CounterSpan, ListDiffItem, LoroDoc, LoroValue};
+use loro_internal::{Counter, CounterSpan, IdSpan, ListDiffItem, LoroDoc, LoroValue};
 use wasm_bindgen::JsValue;
 
 use crate::{
-    frontiers_to_ids, Container, Cursor, JsContainer, JsImportBlobMetadata, LoroCounter, LoroList,
-    LoroMap, LoroMovableList, LoroText, LoroTree, VersionVector,
+    frontiers_to_ids, Container, Cursor, JsContainer, JsIdSpan, JsImportBlobMetadata, LoroCounter,
+    LoroList, LoroMap, LoroMovableList, LoroText, LoroTree, VersionVector,
 };
 use wasm_bindgen::__rt::IntoJsResult;
 use wasm_bindgen::convert::RefFromWasmAbi;
@@ -77,6 +77,22 @@ pub(crate) fn js_to_container(js: JsContainer) -> Result<Container, JsValue> {
     };
 
     Ok(container)
+}
+
+pub(crate) fn js_to_id_span(js: JsIdSpan) -> Result<IdSpan, JsValue> {
+    let value: JsValue = js.into();
+    let peer = Reflect::get(&value, &JsValue::from_str("peer"))?
+        .as_string()
+        .unwrap()
+        .parse::<u64>()
+        .unwrap();
+    let counter = Reflect::get(&value, &JsValue::from_str("counter"))?
+        .as_f64()
+        .unwrap() as Counter;
+    let length = Reflect::get(&value, &JsValue::from_str("length"))?
+        .as_f64()
+        .unwrap() as Counter;
+    Ok(IdSpan::new(peer, counter, counter + length))
 }
 
 pub(crate) fn js_to_version_vector(

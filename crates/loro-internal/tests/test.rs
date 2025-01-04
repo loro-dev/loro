@@ -947,7 +947,7 @@ fn counter() {
     counter.increment(1.).unwrap();
     counter.increment(2.).unwrap();
     counter.decrement(1.).unwrap();
-    let json = doc.export_json_updates(&Default::default(), &doc.oplog_vv());
+    let json = doc.export_json_updates(&Default::default(), &doc.oplog_vv(), true);
     let doc2 = LoroDoc::new_auto_commit();
     doc2.import_json_updates(json).unwrap();
 }
