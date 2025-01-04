@@ -993,3 +993,33 @@ it("detach and attach on empty doc", () => {
   doc.attach();
   expect(doc.isDetached()).toBe(false);
 })
+
+it("export json in id span", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId("1");
+  doc.getText("text").insert(0, "Hello");
+  doc.commit();
+  {
+    const changes = doc.exportJsonInIdSpan({ peer: "1", counter: 0, length: 1 });
+    expect(changes).toStrictEqual([{
+      id: "0@1",
+      timestamp: expect.any(Number),
+      deps: [],
+      lamport: 0,
+      msg: undefined,
+      ops: [{
+        container: "cid:root-text:Text",
+        counter: 0,
+        content: {
+          type: "insert",
+          pos: 0,
+          text: "H"
+        }
+      }]
+    }]);
+  }
+  {
+    const changes = doc.exportJsonInIdSpan({ peer: "2", counter: 0, length: 1 });
+    expect(changes).toStrictEqual([]);
+  }
+})

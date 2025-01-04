@@ -77,16 +77,32 @@ pub(crate) fn export_json<'a, 'c: 'a>(
 
 pub(crate) fn export_json_in_id_span(oplog: &OpLog, mut id_span: IdSpan) -> Vec<json::JsonChange> {
     id_span.normalize_();
+    let end = oplog.vv().get(&id_span.peer).copied().unwrap_or(0);
+    if id_span.counter.start >= end {
+        return vec![];
+    }
+
+    id_span.counter.end = id_span.counter.end.min(end);
     let mut diff_changes: Vec<Either<BlockChangeRef, Change>> = Vec::new();
-    while id_span.atom_len() > 0 {
-        let change = oplog.get_change_at(id_span.id_start()).unwrap();
+    while id_span.counter.end - id_span.counter.start > 0 {
+        let change: BlockChangeRef = oplog.get_change_at(id_span.id_start()).unwrap();
         let ctr_end = change.ctr_end();
-        if change.ctr_end() > id_span.counter.end {
-            let len = id_span.counter.end - change.id.counter;
-            diff_changes.push(Either::Right(change.slice(0, len as usize)));
-            break;
-        } else {
+        if change.id.counter >= id_span.counter.start && change.ctr_end() <= id_span.counter.end {
             diff_changes.push(Either::Left(change));
+        } else {
+            let start = if change.id.counter < id_span.counter.start {
+                (id_span.counter.start - change.id.counter) as usize
+            } else {
+                0
+            };
+
+            let end = if change.ctr_end() > id_span.counter.end {
+                (id_span.counter.end - change.id.counter) as usize
+            } else {
+                change.atom_len()
+            };
+
+            diff_changes.push(Either::Right(change.slice(start, end)));
         }
 
         id_span.counter.start = ctr_end;

@@ -1260,7 +1260,7 @@ impl LoroDoc {
         let v = json
             .serialize(&s)
             .map_err(std::convert::Into::<JsValue>::into)?;
-        Ok(v.into())
+        Ok(v)
     }
 
     /// Import updates from the JSON format.

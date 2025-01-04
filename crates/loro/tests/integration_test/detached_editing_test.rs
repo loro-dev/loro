@@ -100,10 +100,12 @@ fn allow_editing_on_detached_mode_when_detached_editing_is_enabled() {
     start_version: Frontiers(
         [],
     ),
-    peers: [
-        1,
-        2,
-    ],
+    peers: Some(
+        [
+            1,
+            2,
+        ],
+    ),
     changes: [
         JsonChange {
             id: 0@0,
