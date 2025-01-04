@@ -994,7 +994,7 @@ it("detach and attach on empty doc", () => {
   expect(doc.isDetached()).toBe(false);
 })
 
-it("export json in id span", () => {
+it("export json in id span #602", () => {
   const doc = new LoroDoc();
   doc.setPeerId("1");
   doc.getText("text").insert(0, "Hello");
