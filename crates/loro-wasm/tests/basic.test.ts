@@ -1039,7 +1039,7 @@ it("find spans between versions", () => {
   const f2 = doc.oplogFrontiers();
 
   // Test finding spans between frontiers (f1 -> f2)
-  let diff = doc.findSpansBetween(f1, f2);
+  let diff = doc.findIdSpansBetween(f1, f2);
   expect(diff.left).toHaveLength(0); // No changes needed to go from f2 to f1
   expect(diff.right).toHaveLength(1); // One change needed to go from f1 to f2
   expect(diff.right[0]).toEqual({
@@ -1050,7 +1050,7 @@ it("find spans between versions", () => {
 
   // Test empty frontiers
   const emptyFrontiers: OpId[] = [];
-  diff = doc.findSpansBetween(emptyFrontiers, f2);
+  diff = doc.findIdSpansBetween(emptyFrontiers, f2);
   expect(diff.left).toHaveLength(0); // No changes needed to go from f2 to empty
   expect(diff.right).toHaveLength(1); // One change needed to go from empty to f2
   expect(diff.right[0]).toEqual({
@@ -1068,7 +1068,7 @@ it("find spans between versions", () => {
   const f3 = doc.oplogFrontiers();
 
   // Test finding spans between f2 and f3
-  diff = doc.findSpansBetween(f2, f3);
+  diff = doc.findIdSpansBetween(f2, f3);
   expect(diff.left).toHaveLength(0); // No changes needed to go from f3 to f2
   expect(diff.right).toHaveLength(1); // One change needed to go from f2 to f3
   expect(diff.right[0]).toEqual({
@@ -1078,7 +1078,7 @@ it("find spans between versions", () => {
   });
 
   // Test spans in both directions between f1 and f3
-  diff = doc.findSpansBetween(f1, f3);
+  diff = doc.findIdSpansBetween(f1, f3);
   expect(diff.left).toHaveLength(0); // No changes needed to go from f3 to f1
   expect(diff.right).toHaveLength(2); // Two changes needed to go from f1 to f3
   const rightSpans = new Map(diff.right.map(span => [span.peer, span]));
@@ -1094,7 +1094,7 @@ it("find spans between versions", () => {
   });
 
   // Test spans in reverse direction (f3 -> f1)
-  diff = doc.findSpansBetween(f3, f1);
+  diff = doc.findIdSpansBetween(f3, f1);
   expect(diff.right).toHaveLength(0); // No changes needed to go from f3 to f1
   expect(diff.left).toHaveLength(2); // Two changes needed to go from f1 to f3
   const leftSpans = new Map(diff.left.map(span => [span.peer, span]));
