@@ -10,7 +10,6 @@ use loro_internal::cursor::PosQueryResult;
 use loro_internal::cursor::Side;
 pub use loro_internal::encoding::ImportStatus;
 use loro_internal::handler::HandlerTrait;
-use loro_internal::handler::ValueOrHandler;
 pub use loro_internal::loro::ChangeTravelError;
 use loro_internal::undo::{OnPop, OnPush};
 use loro_internal::version::shrink_frontiers;
@@ -883,14 +882,9 @@ impl LoroDoc {
     #[inline]
     #[cfg(feature = "jsonpath")]
     pub fn jsonpath(&self, path: &str) -> Result<Vec<ValueOrContainer>, JsonPathError> {
-        self.doc.jsonpath(path).map(|vec| {
-            vec.into_iter()
-                .map(|v| match v {
-                    ValueOrHandler::Value(v) => ValueOrContainer::Value(v),
-                    ValueOrHandler::Handler(h) => ValueOrContainer::Container(h.into()),
-                })
-                .collect()
-        })
+        self.doc
+            .jsonpath(path)
+            .map(|vec| vec.into_iter().map(ValueOrContainer::from).collect())
     }
 
     /// Get the number of operations in the pending transaction.
@@ -1063,13 +1057,7 @@ impl LoroList {
     /// Get the value at the given position.
     #[inline]
     pub fn get(&self, index: usize) -> Option<ValueOrContainer> {
-        match self.handler.get_(index) {
-            Some(ValueOrHandler::Handler(c)) => {
-                Some(ValueOrContainer::Container(Container::from_handler(c)))
-            }
-            Some(ValueOrHandler::Value(v)) => Some(ValueOrContainer::Value(v)),
-            None => None,
-        }
+        self.handler.get_(index).map(ValueOrContainer::from)
     }
 
     /// Get the deep value of the container.
@@ -1326,11 +1314,13 @@ impl LoroMap {
     }
 
     /// Iterate over the key-value pairs of the map.
-    pub fn for_each<I>(&self, f: I)
+    pub fn for_each<I>(&self, mut f: I)
     where
-        I: FnMut(&str, ValueOrHandler),
+        I: FnMut(&str, ValueOrContainer),
     {
-        self.handler.for_each(f)
+        self.handler.for_each(|k, v| {
+            f(k, ValueOrContainer::from(v));
+        })
     }
 
     /// Insert a key-value pair into the map.
@@ -1355,13 +1345,7 @@ impl LoroMap {
 
     /// Get the value of the map with the given key.
     pub fn get(&self, key: &str) -> Option<ValueOrContainer> {
-        match self.handler.get_(key) {
-            None => None,
-            Some(ValueOrHandler::Handler(c)) => {
-                Some(ValueOrContainer::Container(Container::from_handler(c)))
-            }
-            Some(ValueOrHandler::Value(v)) => Some(ValueOrContainer::Value(v)),
-        }
+        self.handler.get_(key).map(ValueOrContainer::from)
     }
 
     /// Insert a container with the given type at the given key.
@@ -1418,10 +1402,7 @@ impl LoroMap {
 
     /// Get the values of the map.
     pub fn values(&self) -> impl Iterator<Item = ValueOrContainer> + '_ {
-        self.handler.values().map(|v| match v {
-            ValueOrHandler::Value(v) => ValueOrContainer::Value(v),
-            ValueOrHandler::Handler(c) => ValueOrContainer::Container(Container::from_handler(c)),
-        })
+        self.handler.values().map(ValueOrContainer::from)
     }
 
     /// Get the peer id of the last editor on the given entry
@@ -2229,13 +2210,7 @@ impl LoroMovableList {
 
     /// Get the value at the given position.
     pub fn get(&self, index: usize) -> Option<ValueOrContainer> {
-        match self.handler.get_(index) {
-            Some(ValueOrHandler::Handler(c)) => {
-                Some(ValueOrContainer::Container(Container::from_handler(c)))
-            }
-            Some(ValueOrHandler::Value(v)) => Some(ValueOrContainer::Value(v)),
-            None => None,
-        }
+        self.handler.get_(index).map(ValueOrContainer::from)
     }
 
     /// Get the length of the list.
@@ -2265,13 +2240,8 @@ impl LoroMovableList {
 
     /// Pop the last element of the list.
     pub fn pop(&self) -> LoroResult<Option<ValueOrContainer>> {
-        Ok(match self.handler.pop_()? {
-            Some(ValueOrHandler::Handler(c)) => {
-                Some(ValueOrContainer::Container(Container::from_handler(c)))
-            }
-            Some(ValueOrHandler::Value(v)) => Some(ValueOrContainer::Value(v)),
-            None => None,
-        })
+        let ans = self.handler.pop_()?.map(ValueOrContainer::from);
+        Ok(ans)
     }
 
     /// Push a value to the end of the list.
