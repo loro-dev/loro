@@ -133,8 +133,8 @@ pub struct VersionVectorDiff {
 impl From<loro::VersionVectorDiff> for VersionVectorDiff {
     fn from(value: loro::VersionVectorDiff) -> Self {
         Self {
-            left: value.left.into_iter().collect(),
-            right: value.right.into_iter().collect(),
+            left: value.retreat.into_iter().collect(),
+            right: value.forward.into_iter().collect(),
         }
     }
 }

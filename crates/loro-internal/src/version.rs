@@ -300,42 +300,46 @@ impl Deref for VersionVector {
 
 #[derive(Default, Debug, PartialEq, Eq)]
 pub struct VersionVectorDiff {
+    /// The spans that the `left` side needs to retreat to reach the `right` side
+    ///
     /// these spans are included in the left, but not in the right
-    pub left: IdSpanVector,
+    pub retreat: IdSpanVector,
+    /// The spans that the `left` side needs to forward to reach the `right` side
+    ///
     /// these spans are included in the right, but not in the left
-    pub right: IdSpanVector,
+    pub forward: IdSpanVector,
 }
 
 impl VersionVectorDiff {
     #[inline]
     pub fn merge_left(&mut self, span: IdSpan) {
-        merge(&mut self.left, span);
+        merge(&mut self.retreat, span);
     }
 
     #[inline]
     pub fn merge_right(&mut self, span: IdSpan) {
-        merge(&mut self.right, span);
+        merge(&mut self.forward, span);
     }
 
     #[inline]
     pub fn subtract_start_left(&mut self, span: IdSpan) {
-        subtract_start(&mut self.left, span);
+        subtract_start(&mut self.retreat, span);
     }
 
     #[inline]
     pub fn subtract_start_right(&mut self, span: IdSpan) {
-        subtract_start(&mut self.right, span);
+        subtract_start(&mut self.forward, span);
     }
 
     pub fn get_id_spans_left(&self) -> impl Iterator<Item = IdSpan> + '_ {
-        self.left.iter().map(|(peer, span)| IdSpan {
+        self.retreat.iter().map(|(peer, span)| IdSpan {
             peer: *peer,
             counter: *span,
         })
     }
 
     pub fn get_id_spans_right(&self) -> impl Iterator<Item = IdSpan> + '_ {
-        self.right.iter().map(|(peer, span)| IdSpan {
+        self.forward.iter().map(|(peer, span)| IdSpan {
             peer: *peer,
             counter: *span,
         })
@@ -457,7 +461,7 @@ impl VersionVector {
             if let Some(&rhs_counter) = rhs.get(client_id) {
                 match counter.cmp(&rhs_counter) {
                     Ordering::Less => {
-                        ans.right.insert(
+                        ans.forward.insert(
                             *client_id,
                             CounterSpan {
                                 start: counter,
@@ -466,7 +470,7 @@ impl VersionVector {
                         );
                     }
                     Ordering::Greater => {
-                        ans.left.insert(
+                        ans.retreat.insert(
                             *client_id,
                             CounterSpan {
                                 start: rhs_counter,
@@ -477,7 +481,7 @@ impl VersionVector {
                     Ordering::Equal => {}
                 }
             } else {
-                ans.left.insert(
+                ans.retreat.insert(
                     *client_id,
                     CounterSpan {
                         start: 0,
@@ -488,7 +492,7 @@ impl VersionVector {
         }
         for (client_id, &rhs_counter) in rhs.iter() {
             if !self.contains_key(client_id) {
-                ans.right.insert(
+                ans.forward.insert(
                     *client_id,
                     CounterSpan {
                         start: 0,

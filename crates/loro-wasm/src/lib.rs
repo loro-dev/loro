@@ -715,8 +715,8 @@ impl LoroDoc {
         let diff = self.0.find_id_spans_between(&from, &to);
         let obj = Object::new();
 
-        js_sys::Reflect::set(&obj, &"left".into(), &id_span_vector_to_js(diff.left)).unwrap();
-        js_sys::Reflect::set(&obj, &"right".into(), &id_span_vector_to_js(diff.right)).unwrap();
+        js_sys::Reflect::set(&obj, &"retreat".into(), &id_span_vector_to_js(diff.retreat)).unwrap();
+        js_sys::Reflect::set(&obj, &"forward".into(), &id_span_vector_to_js(diff.forward)).unwrap();
         let v: JsValue = obj.into();
         Ok(v.into())
     }
@@ -5156,8 +5156,18 @@ export type IdSpan = {
 }
 
 export type VersionVectorDiff = {
-    left: IdSpan[],
-    right: IdSpan[],
+    /**
+     * The spans that the `from` side needs to retreat to reach the `to` side
+     *
+     * These spans are included in the `from`, but not in the `to`
+     */
+    retreat: IdSpan[],
+    /**
+     * The spans that the `from` side needs to forward to reach the `to` side
+     *
+     * These spans are included in the `to`, but not in the `from`
+     */
+    forward: IdSpan[],
 }
 
 export type UndoConfig = {

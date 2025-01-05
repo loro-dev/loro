@@ -111,12 +111,12 @@ impl<T: Dag + ?Sized> DagUtils for T {
                 let to_span = self.get(to).unwrap();
                 if from_span.id_start() == to_span.id_start() {
                     if from.counter < to.counter {
-                        ans.right.insert(
+                        ans.forward.insert(
                             from.peer,
                             CounterSpan::new(from.counter + 1, to.counter + 1),
                         );
                     } else {
-                        ans.left.insert(
+                        ans.retreat.insert(
                             from.peer,
                             CounterSpan::new(to.counter + 1, from.counter + 1),
                         );
@@ -127,7 +127,7 @@ impl<T: Dag + ?Sized> DagUtils for T {
                 if from_span.deps().len() == 1
                     && to_span.contains_id(from_span.deps().as_single().unwrap())
                 {
-                    ans.left.insert(
+                    ans.retreat.insert(
                         from.peer,
                         CounterSpan::new(to.counter + 1, from.counter + 1),
                     );
@@ -137,7 +137,7 @@ impl<T: Dag + ?Sized> DagUtils for T {
                 if to_span.deps().len() == 1
                     && from_span.contains_id(to_span.deps().as_single().unwrap())
                 {
-                    ans.right.insert(
+                    ans.forward.insert(
                         from.peer,
                         CounterSpan::new(from.counter + 1, to.counter + 1),
                     );

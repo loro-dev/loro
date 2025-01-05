@@ -1040,9 +1040,9 @@ it("find spans between versions", () => {
 
   // Test finding spans between frontiers (f1 -> f2)
   let diff = doc.findIdSpansBetween(f1, f2);
-  expect(diff.left).toHaveLength(0); // No changes needed to go from f2 to f1
-  expect(diff.right).toHaveLength(1); // One change needed to go from f1 to f2
-  expect(diff.right[0]).toEqual({
+  expect(diff.retreat).toHaveLength(0); // No changes needed to go from f2 to f1
+  expect(diff.forward).toHaveLength(1); // One change needed to go from f1 to f2
+  expect(diff.forward[0]).toEqual({
     peer: "1",
     counter: 5,
     length: 6,
@@ -1051,9 +1051,9 @@ it("find spans between versions", () => {
   // Test empty frontiers
   const emptyFrontiers: OpId[] = [];
   diff = doc.findIdSpansBetween(emptyFrontiers, f2);
-  expect(diff.left).toHaveLength(0); // No changes needed to go from f2 to empty
-  expect(diff.right).toHaveLength(1); // One change needed to go from empty to f2
-  expect(diff.right[0]).toEqual({
+  expect(diff.retreat).toHaveLength(0); // No changes needed to go from f2 to empty
+  expect(diff.forward).toHaveLength(1); // One change needed to go from empty to f2
+  expect(diff.forward[0]).toEqual({
     peer: "1",
     counter: 0,
     length: 11,
@@ -1069,9 +1069,9 @@ it("find spans between versions", () => {
 
   // Test finding spans between f2 and f3
   diff = doc.findIdSpansBetween(f2, f3);
-  expect(diff.left).toHaveLength(0); // No changes needed to go from f3 to f2
-  expect(diff.right).toHaveLength(1); // One change needed to go from f2 to f3
-  expect(diff.right[0]).toEqual({
+  expect(diff.retreat).toHaveLength(0); // No changes needed to go from f3 to f2
+  expect(diff.forward).toHaveLength(1); // One change needed to go from f2 to f3
+  expect(diff.forward[0]).toEqual({
     peer: "2",
     counter: 0,
     length: 2,
@@ -1079,15 +1079,15 @@ it("find spans between versions", () => {
 
   // Test spans in both directions between f1 and f3
   diff = doc.findIdSpansBetween(f1, f3);
-  expect(diff.left).toHaveLength(0); // No changes needed to go from f3 to f1
-  expect(diff.right).toHaveLength(2); // Two changes needed to go from f1 to f3
-  const rightSpans = new Map(diff.right.map(span => [span.peer, span]));
-  expect(rightSpans.get("1")).toEqual({
+  expect(diff.retreat).toHaveLength(0); // No changes needed to go from f3 to f1
+  expect(diff.forward).toHaveLength(2); // Two changes needed to go from f1 to f3
+  const forwardSpans = new Map(diff.forward.map(span => [span.peer, span]));
+  expect(forwardSpans.get("1")).toEqual({
     peer: "1",
     counter: 5,
     length: 6,
   });
-  expect(rightSpans.get("2")).toEqual({
+  expect(forwardSpans.get("2")).toEqual({
     peer: "2",
     counter: 0,
     length: 2,
@@ -1095,15 +1095,15 @@ it("find spans between versions", () => {
 
   // Test spans in reverse direction (f3 -> f1)
   diff = doc.findIdSpansBetween(f3, f1);
-  expect(diff.right).toHaveLength(0); // No changes needed to go from f3 to f1
-  expect(diff.left).toHaveLength(2); // Two changes needed to go from f1 to f3
-  const leftSpans = new Map(diff.left.map(span => [span.peer, span]));
-  expect(leftSpans.get("1")).toEqual({
+  expect(diff.forward).toHaveLength(0); // No changes needed to go from f3 to f1
+  expect(diff.retreat).toHaveLength(2); // Two changes needed to go from f1 to f3
+  const retreatSpans = new Map(diff.retreat.map(span => [span.peer, span]));
+  expect(retreatSpans.get("1")).toEqual({
     peer: "1",
     counter: 5,
     length: 6,
   });
-  expect(leftSpans.get("2")).toEqual({
+  expect(retreatSpans.get("2")).toEqual({
     peer: "2",
     counter: 0,
     length: 2,
@@ -1121,14 +1121,14 @@ it("can travel changes from event", async () => {
   let done = false;
   docB.subscribe(e => {
     const spans = docB.findIdSpansBetween(e.from, e.to);
-    expect(spans.left).toHaveLength(0);
-    expect(spans.right).toHaveLength(1);
-    expect(spans.right[0]).toEqual({
+    expect(spans.retreat).toHaveLength(0);
+    expect(spans.forward).toHaveLength(1);
+    expect(spans.forward[0]).toEqual({
       peer: "1",
       counter: 0,
       length: 5,
     });
-    const changes = docB.exportJsonInIdSpan(spans.right[0]);
+    const changes = docB.exportJsonInIdSpan(spans.forward[0]);
     expect(changes).toStrictEqual([{
       id: "0@1",
       timestamp: expect.any(Number),

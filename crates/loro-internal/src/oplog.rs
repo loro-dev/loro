@@ -409,7 +409,7 @@ impl OpLog {
 
         let common_ancestors_vv = self.dag.frontiers_to_vv(&common_ancestors).unwrap();
         // go from lca to merged_vv
-        let diff = common_ancestors_vv.diff(&merged_vv).right;
+        let diff = common_ancestors_vv.diff(&merged_vv).forward;
         let mut iter = self.dag.iter_causal(common_ancestors, diff);
         let mut node = iter.next();
         let mut cur_cnt = 0;

@@ -2672,18 +2672,18 @@ fn test_find_spans_between() -> LoroResult<()> {
 
     // Test finding spans between frontiers (f1 -> f2)
     let diff = doc.find_id_spans_between(&f1, &f2);
-    assert!(diff.left.is_empty()); // No changes needed to go from f2 to f1
-    assert_eq!(diff.right.len(), 1); // One change needed to go from f1 to f2
-    let span = diff.right.get(&1).unwrap();
+    assert!(diff.retreat.is_empty()); // No changes needed to go from f2 to f1
+    assert_eq!(diff.forward.len(), 1); // One change needed to go from f1 to f2
+    let span = diff.forward.get(&1).unwrap();
     assert_eq!(span.start, 5); // First change ends at counter 3
     assert_eq!(span.end, 11); // Second change ends at counter 6
 
     // Test empty frontiers
     let empty_frontiers = Frontiers::default();
     let diff = doc.find_id_spans_between(&empty_frontiers, &f2);
-    assert!(diff.left.is_empty()); // No changes needed to go from f2 to empty
-    assert_eq!(diff.right.len(), 1); // One change needed to go from empty to f2
-    let span = diff.right.get(&1).unwrap();
+    assert!(diff.retreat.is_empty()); // No changes needed to go from f2 to empty
+    assert_eq!(diff.forward.len(), 1); // One change needed to go from empty to f2
+    let span = diff.forward.get(&1).unwrap();
     assert_eq!(span.start, 0); // From beginning
     assert_eq!(span.end, 11); // To latest change
 
@@ -2697,17 +2697,17 @@ fn test_find_spans_between() -> LoroResult<()> {
 
     // Test finding spans between f2 and f3
     let diff = doc.find_id_spans_between(&f2, &f3);
-    assert!(diff.left.is_empty()); // No changes needed to go from f3 to f2
-    assert_eq!(diff.right.len(), 1); // One change needed to go from f2 to f3
-    let span = diff.right.get(&2).unwrap();
+    assert!(diff.retreat.is_empty()); // No changes needed to go from f3 to f2
+    assert_eq!(diff.forward.len(), 1); // One change needed to go from f2 to f3
+    let span = diff.forward.get(&2).unwrap();
     assert_eq!(span.start, 0);
     assert_eq!(span.end, 2);
 
     // Test spans in both directions between f1 and f3
     let diff = doc.find_id_spans_between(&f1, &f3);
-    assert!(diff.left.is_empty()); // No changes needed to go from f3 to f1
-    assert_eq!(diff.right.len(), 2); // Two changes needed to go from f1 to f3
-    for (peer, span) in diff.right.iter() {
+    assert!(diff.retreat.is_empty()); // No changes needed to go from f3 to f1
+    assert_eq!(diff.forward.len(), 2); // Two changes needed to go from f1 to f3
+    for (peer, span) in diff.forward.iter() {
         match peer {
             1 => {
                 assert_eq!(span.start, 5);
@@ -2722,9 +2722,9 @@ fn test_find_spans_between() -> LoroResult<()> {
     }
 
     let diff = doc.find_id_spans_between(&f3, &f1);
-    assert!(diff.right.is_empty()); // No changes needed to go from f3 to f1
-    assert_eq!(diff.left.len(), 2); // Two changes needed to go from f1 to f3
-    for (peer, span) in diff.left.iter() {
+    assert!(diff.forward.is_empty()); // No changes needed to go from f3 to f1
+    assert_eq!(diff.retreat.len(), 2); // Two changes needed to go from f1 to f3
+    for (peer, span) in diff.retreat.iter() {
         match peer {
             1 => {
                 assert_eq!(span.start, 5);
