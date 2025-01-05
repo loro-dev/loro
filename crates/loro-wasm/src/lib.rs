@@ -675,10 +675,48 @@ impl LoroDoc {
             .map_err(|e| JsValue::from(e.to_string()))
     }
 
-    /// Find the operation id spans that between the `from` version and the `to` version.
+    /// Find the op id spans that between the `from` version and the `to` version.
     ///
-    /// - left: the id_span that you need to forward from `from` to `to`
-    /// - right: the id_span that you need to forward from `to` to `from`
+    /// You can combine it with `exportJsonInIdSpan` to get the changes between two versions.
+    ///
+    /// You can use it to travel all the changes from `from` to `to`. `from` and `to` are frontiers,
+    /// and they can be concurrent to each other. You can use it to find all the changes related to an event:
+    ///
+    /// @example
+    /// ```ts
+    /// import { LoroDoc } from "loro-crdt";
+    ///
+    /// const docA = new LoroDoc();
+    /// docA.setPeerId("1");
+    /// const docB = new LoroDoc();
+    ///
+    /// docA.getText("text").update("Hello");
+    /// docA.commit();
+    /// const snapshot = docA.export({ mode: "snapshot" });
+    /// let done = false;
+    /// docB.subscribe(e => {
+    ///   const spans = docB.findIdSpansBetween(e.from, e.to);
+    ///   const changes = docB.exportJsonInIdSpan(spans.forward[0]);
+    ///   console.log(changes);
+    ///   // [{
+    ///   //   id: "0@1",
+    ///   //   timestamp: expect.any(Number),
+    ///   //   deps: [],
+    ///   //   lamport: 0,
+    ///   //   msg: undefined,
+    ///   //   ops: [{
+    ///   //     container: "cid:root-text:Text",
+    ///   //     counter: 0,
+    ///   //     content: {
+    ///   //       type: "insert",
+    ///   //       pos: 0,
+    ///   //       text: "Hello"
+    ///   //     }
+    ///   //   }]
+    ///   // }]
+    /// });
+    /// docB.import(snapshot);
+    /// ```
     #[wasm_bindgen(js_name = "findIdSpansBetween")]
     pub fn find_id_spans_between(
         &self,
@@ -1449,7 +1487,7 @@ impl LoroDoc {
     ///
     /// @example
     /// ```ts
-    /// import { LoroDoc, LoroText } from "loro-crdt";
+    /// import { LoroDoc, LoroText, LoroMap } from "loro-crdt";
     ///
     /// const doc = new LoroDoc();
     /// const list = doc.getList("list");
@@ -2805,7 +2843,7 @@ impl LoroMap {
     ///
     /// @example
     /// ```ts
-    /// import { LoroDoc } from "loro-crdt";
+    /// import { LoroDoc, LoroText } from "loro-crdt";
     ///
     /// const doc = new LoroDoc();
     /// doc.setPeerId("1");
@@ -5057,7 +5095,7 @@ interface LoroDoc {
      * const doc = new LoroDoc();
      * const text = doc.getText("text");
      * text.insert(0, "Hello");
-     * text.mark(0, 2, {bold: true});
+     * text.mark({ start: 0, end: 2 }, "bold", true);
      * 
      * // Use delta to represent text
      * const json = doc.toJsonWithReplacer((key, value) => {
