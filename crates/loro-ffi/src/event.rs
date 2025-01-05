@@ -30,6 +30,17 @@ impl From<loro::event::DiffEvent<'_>> for DiffEvent {
     }
 }
 
+impl<'a> From<&DiffEvent> for loro::event::DiffEvent<'a> {
+    fn from(value: &DiffEvent) -> Self {
+        loro::event::DiffEvent {
+            triggered_by: value.triggered_by,
+            origin: &value.origin,
+            current_target: value.current_target.map(|id| id.into()),
+            events: value.events.iter().map(|&diff| diff.into()).collect(),
+        }
+    }
+}
+
 pub struct PathItem {
     pub container: ContainerID,
     pub index: Index,
@@ -149,6 +160,21 @@ impl<'a> From<&loro::event::ContainerDiff<'a>> for ContainerDiff {
                     container: id.into(),
                     index: index.into(),
                 })
+                .collect(),
+            is_unknown: value.is_unknown,
+            diff: (&value.diff).into(),
+        }
+    }
+}
+
+impl<'a> From<&ContainerDiff> for loro::event::ContainerDiff<'a> {
+    fn from(value: &ContainerDiff) -> Self {
+        Self {
+            target: &value.target.into(),
+            path: value
+                .path
+                .iter()
+                .map(|path_item| (path_item.container.into(), path_item.index.into()))
                 .collect(),
             is_unknown: value.is_unknown,
             diff: (&value.diff).into(),
