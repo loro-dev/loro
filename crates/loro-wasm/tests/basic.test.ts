@@ -1109,3 +1109,40 @@ it("find spans between versions", () => {
     length: 2,
   });
 });
+
+it("can travel changes from event", () => {
+  const docA = new LoroDoc();
+  docA.setPeerId("1");
+  const docB = new LoroDoc();
+
+  docA.getText("text").update("Hello");
+  docA.commit();
+  const snapshot = docA.export({ mode: "snapshot" });
+  docB.subscribe(e => {
+    const spans = docB.findSpansBetween(e.from, e.to);
+    expect(spans.left).toHaveLength(0);
+    expect(spans.right).toHaveLength(1);
+    expect(spans.right[0]).toEqual({
+      peer: "1",
+      counter: 0,
+      length: 5,
+    });
+    const changes = docB.exportJsonInIdSpan(spans.right[0]);
+    expect(changes).toStrictEqual([{
+      id: "0@1",
+      timestamp: expect.any(Number),
+      deps: [],
+      lamport: 0,
+      msg: undefined,
+      ops: [{
+        container: "cid:root-text:Text",
+        counter: 0,
+        content: {
+          type: "insert",
+          pos: 0,
+          text: "Hello"
+        }
+      }]
+    }]);
+  });
+})

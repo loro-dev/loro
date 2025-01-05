@@ -1889,6 +1889,18 @@ fn diff_event_to_js_value(event: DiffEvent, doc: &Arc<LoroDocInner>) -> JsValue 
     }
 
     Reflect::set(&obj, &"events".into(), &events.into()).unwrap();
+    Reflect::set(
+        &obj,
+        &"from".into(),
+        &frontiers_to_ids(&event.event_meta.from).into(),
+    )
+    .unwrap();
+    Reflect::set(
+        &obj,
+        &"to".into(),
+        &frontiers_to_ids(&event.event_meta.to).into(),
+    )
+    .unwrap();
     obj.into()
 }
 
@@ -5512,6 +5524,8 @@ export interface LoroEventBatch {
      */
     currentTarget?: ContainerID;
     events: LoroEvent[];
+    from: Frontiers;
+    to: Frontiers;
 }
 
 /**
