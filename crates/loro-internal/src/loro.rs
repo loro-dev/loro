@@ -1637,7 +1637,7 @@ impl LoroDoc {
     }
 
     #[inline]
-    pub fn find_spans_between(&self, from: &Frontiers, to: &Frontiers) -> VersionVectorDiff {
+    pub fn find_id_spans_between(&self, from: &Frontiers, to: &Frontiers) -> VersionVectorDiff {
         self.oplog().try_lock().unwrap().dag.find_path(from, to)
     }
 }

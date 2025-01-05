@@ -940,8 +940,8 @@ impl LoroDoc {
 
     /// Find the operation id spans that between the `from` version and the `to` version.
     #[inline]
-    pub fn find_spans_between(&self, from: &Frontiers, to: &Frontiers) -> VersionVectorDiff {
-        self.doc.find_spans_between(from, to)
+    pub fn find_id_spans_between(&self, from: &Frontiers, to: &Frontiers) -> VersionVectorDiff {
+        self.doc.find_id_spans_between(from, to)
     }
 }
 

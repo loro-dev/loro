@@ -2671,7 +2671,7 @@ fn test_find_spans_between() -> LoroResult<()> {
     let f2 = doc.state_frontiers();
 
     // Test finding spans between frontiers (f1 -> f2)
-    let diff = doc.find_spans_between(&f1, &f2);
+    let diff = doc.find_id_spans_between(&f1, &f2);
     assert!(diff.left.is_empty()); // No changes needed to go from f2 to f1
     assert_eq!(diff.right.len(), 1); // One change needed to go from f1 to f2
     let span = diff.right.get(&1).unwrap();
@@ -2680,7 +2680,7 @@ fn test_find_spans_between() -> LoroResult<()> {
 
     // Test empty frontiers
     let empty_frontiers = Frontiers::default();
-    let diff = doc.find_spans_between(&empty_frontiers, &f2);
+    let diff = doc.find_id_spans_between(&empty_frontiers, &f2);
     assert!(diff.left.is_empty()); // No changes needed to go from f2 to empty
     assert_eq!(diff.right.len(), 1); // One change needed to go from empty to f2
     let span = diff.right.get(&1).unwrap();
@@ -2696,7 +2696,7 @@ fn test_find_spans_between() -> LoroResult<()> {
     let f3 = doc.state_frontiers();
 
     // Test finding spans between f2 and f3
-    let diff = doc.find_spans_between(&f2, &f3);
+    let diff = doc.find_id_spans_between(&f2, &f3);
     assert!(diff.left.is_empty()); // No changes needed to go from f3 to f2
     assert_eq!(diff.right.len(), 1); // One change needed to go from f2 to f3
     let span = diff.right.get(&2).unwrap();
@@ -2704,7 +2704,7 @@ fn test_find_spans_between() -> LoroResult<()> {
     assert_eq!(span.end, 2);
 
     // Test spans in both directions between f1 and f3
-    let diff = doc.find_spans_between(&f1, &f3);
+    let diff = doc.find_id_spans_between(&f1, &f3);
     assert!(diff.left.is_empty()); // No changes needed to go from f3 to f1
     assert_eq!(diff.right.len(), 2); // Two changes needed to go from f1 to f3
     for (peer, span) in diff.right.iter() {
@@ -2721,7 +2721,7 @@ fn test_find_spans_between() -> LoroResult<()> {
         }
     }
 
-    let diff = doc.find_spans_between(&f3, &f1);
+    let diff = doc.find_id_spans_between(&f3, &f1);
     assert!(diff.right.is_empty()); // No changes needed to go from f3 to f1
     assert_eq!(diff.left.len(), 2); // Two changes needed to go from f1 to f3
     for (peer, span) in diff.left.iter() {

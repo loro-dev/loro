@@ -1120,7 +1120,7 @@ it("can travel changes from event", async () => {
   const snapshot = docA.export({ mode: "snapshot" });
   let done = false;
   docB.subscribe(e => {
-    const spans = docB.findSpansBetween(e.from, e.to);
+    const spans = docB.findIdSpansBetween(e.from, e.to);
     expect(spans.left).toHaveLength(0);
     expect(spans.right).toHaveLength(1);
     expect(spans.right[0]).toEqual({

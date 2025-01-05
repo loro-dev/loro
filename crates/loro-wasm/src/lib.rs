@@ -679,8 +679,8 @@ impl LoroDoc {
     ///
     /// - left: the id_span that you need to forward from `from` to `to`
     /// - right: the id_span that you need to forward from `to` to `from`
-    #[wasm_bindgen(js_name = "findSpansBetween")]
-    pub fn find_spans_between(
+    #[wasm_bindgen(js_name = "findIdSpansBetween")]
+    pub fn find_id_spans_between(
         &self,
         from: Vec<JsID>,
         to: Vec<JsID>,
@@ -712,7 +712,7 @@ impl LoroDoc {
 
         let from = ids_to_frontiers(from)?;
         let to = ids_to_frontiers(to)?;
-        let diff = self.0.find_spans_between(&from, &to);
+        let diff = self.0.find_id_spans_between(&from, &to);
         let obj = Object::new();
 
         js_sys::Reflect::set(&obj, &"left".into(), &id_span_vector_to_js(diff.left)).unwrap();
