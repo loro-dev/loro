@@ -83,6 +83,32 @@ pub enum TextDelta {
     },
 }
 
+impl From<TextDelta> for loro_internal::handler::TextDelta {
+    fn from(value: TextDelta) -> Self {
+        match value {
+            TextDelta::Retain { retain, attributes } => loro_internal::handler::TextDelta::Retain {
+                retain: retain as usize,
+                attributes: attributes.as_ref().map(|a| {
+                    a.iter()
+                        .map(|(k, v)| (k.to_string(), v.clone().into()))
+                        .collect()
+                }),
+            },
+            TextDelta::Insert { insert, attributes } => loro_internal::handler::TextDelta::Insert {
+                insert,
+                attributes: attributes.as_ref().map(|a| {
+                    a.iter()
+                        .map(|(k, v)| (k.to_string(), v.clone().into()))
+                        .collect()
+                }),
+            },
+            TextDelta::Delete { delete } => loro_internal::handler::TextDelta::Delete {
+                delete: delete as usize,
+            },
+        }
+    }
+}
+
 pub enum ListDiffItem {
     /// Insert a new element into the list.
     Insert {
