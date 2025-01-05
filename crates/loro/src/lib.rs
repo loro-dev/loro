@@ -937,6 +937,12 @@ impl LoroDoc {
     pub fn get_changed_containers_in(&self, id: ID, len: usize) -> FxHashSet<ContainerID> {
         self.doc.get_changed_containers_in(id, len)
     }
+
+    /// Find the operation id spans that between the `from` version and the `to` version.
+    #[inline]
+    pub fn find_spans_between(&self, from: &Frontiers, to: &Frontiers) -> VersionVectorDiff {
+        self.doc.find_spans_between(from, to)
+    }
 }
 
 /// It's used to prevent the user from implementing the trait directly.

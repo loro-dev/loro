@@ -15,6 +15,7 @@ import {
   Frontiers,
   encodeFrontiers,
   decodeFrontiers,
+  OpId,
 } from "../bundler/index";
 import { ContainerID } from "loro-wasm";
 
@@ -1023,3 +1024,88 @@ it("export json in id span #602", () => {
     expect(changes).toStrictEqual([]);
   }
 })
+
+it("find spans between versions", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId("1");
+
+  // Make some changes to create version history
+  doc.getText("text").insert(0, "Hello");
+  doc.commit({ message: "a" });
+  const f1 = doc.oplogFrontiers();
+
+  doc.getText("text").insert(5, " World");
+  doc.commit({ message: "b" });
+  const f2 = doc.oplogFrontiers();
+
+  // Test finding spans between frontiers (f1 -> f2)
+  let diff = doc.findSpansBetween(f1, f2);
+  expect(diff.left).toHaveLength(0); // No changes needed to go from f2 to f1
+  expect(diff.right).toHaveLength(1); // One change needed to go from f1 to f2
+  expect(diff.right[0]).toEqual({
+    peer: "1",
+    counter: 5,
+    length: 6,
+  });
+
+  // Test empty frontiers
+  const emptyFrontiers: OpId[] = [];
+  diff = doc.findSpansBetween(emptyFrontiers, f2);
+  expect(diff.left).toHaveLength(0); // No changes needed to go from f2 to empty
+  expect(diff.right).toHaveLength(1); // One change needed to go from empty to f2
+  expect(diff.right[0]).toEqual({
+    peer: "1",
+    counter: 0,
+    length: 11,
+  });
+
+  // Test with multiple peers
+  const doc2 = new LoroDoc();
+  doc2.setPeerId("2");
+  doc2.getText("text").insert(0, "Hi");
+  doc2.commit();
+  doc.import(doc2.export({ mode: "snapshot" }));
+  const f3 = doc.oplogFrontiers();
+
+  // Test finding spans between f2 and f3
+  diff = doc.findSpansBetween(f2, f3);
+  expect(diff.left).toHaveLength(0); // No changes needed to go from f3 to f2
+  expect(diff.right).toHaveLength(1); // One change needed to go from f2 to f3
+  expect(diff.right[0]).toEqual({
+    peer: "2",
+    counter: 0,
+    length: 2,
+  });
+
+  // Test spans in both directions between f1 and f3
+  diff = doc.findSpansBetween(f1, f3);
+  expect(diff.left).toHaveLength(0); // No changes needed to go from f3 to f1
+  expect(diff.right).toHaveLength(2); // Two changes needed to go from f1 to f3
+  const rightSpans = new Map(diff.right.map(span => [span.peer, span]));
+  expect(rightSpans.get("1")).toEqual({
+    peer: "1",
+    counter: 5,
+    length: 6,
+  });
+  expect(rightSpans.get("2")).toEqual({
+    peer: "2",
+    counter: 0,
+    length: 2,
+  });
+
+  // Test spans in reverse direction (f3 -> f1)
+  diff = doc.findSpansBetween(f3, f1);
+  expect(diff.right).toHaveLength(0); // No changes needed to go from f3 to f1
+  expect(diff.left).toHaveLength(2); // Two changes needed to go from f1 to f3
+  const leftSpans = new Map(diff.left.map(span => [span.peer, span]));
+  expect(leftSpans.get("1")).toEqual({
+    peer: "1",
+    counter: 5,
+    length: 6,
+  });
+  expect(leftSpans.get("2")).toEqual({
+    peer: "2",
+    counter: 0,
+    length: 2,
+  });
+});

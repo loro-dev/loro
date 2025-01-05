@@ -30,7 +30,7 @@ use crate::{
         IntoContainerId,
     },
     cursor::{AbsolutePosition, CannotFindRelativePosition, Cursor, PosQueryResult},
-    dag::Dag,
+    dag::{Dag, DagUtils},
     diff_calc::DiffCalculator,
     encoding::{
         self, decode_snapshot, export_fast_snapshot, export_fast_updates,
@@ -49,7 +49,7 @@ use crate::{
     txn::Transaction,
     undo::DiffBatch,
     utils::subscription::{SubscriberSetWithQueue, Subscription},
-    version::{shrink_frontiers, Frontiers, ImVersionVector, VersionRange},
+    version::{shrink_frontiers, Frontiers, ImVersionVector, VersionRange, VersionVectorDiff},
     ChangeMeta, DocDiff, HandlerTrait, InternalString, ListHandler, LoroError, MapHandler,
     VersionVector,
 };
@@ -1634,6 +1634,11 @@ impl LoroDoc {
         } else {
             0
         }
+    }
+
+    #[inline]
+    pub fn find_spans_between(&self, from: &Frontiers, to: &Frontiers) -> VersionVectorDiff {
+        self.oplog().try_lock().unwrap().dag.find_path(from, to)
     }
 }
 

@@ -300,9 +300,9 @@ impl Deref for VersionVector {
 
 #[derive(Default, Debug, PartialEq, Eq)]
 pub struct VersionVectorDiff {
-    /// need to add these spans to move from right to left
+    /// these spans are included in the left, but not in the right
     pub left: IdSpanVector,
-    /// need to add these spans to move from left to right
+    /// these spans are included in the right, but not in the left
     pub right: IdSpanVector,
 }
 

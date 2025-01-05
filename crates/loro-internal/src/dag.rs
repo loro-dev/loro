@@ -99,7 +99,6 @@ impl<T: Dag + ?Sized> DagUtils for T {
 
     fn find_path(&self, from: &Frontiers, to: &Frontiers) -> VersionVectorDiff {
         let mut ans = VersionVectorDiff::default();
-        trace!("find_path from={:?} to={:?}", from, to);
         if from == to {
             return ans;
         }

@@ -22,10 +22,10 @@ use loro_internal::{
     id::{Counter, PeerID, TreeID, ID},
     json::JsonSchema,
     loro::{CommitOptions, ExportMode},
-    loro_common::check_root_container_name,
+    loro_common::{check_root_container_name, IdSpanVector},
     undo::{UndoItemMeta, UndoOrRedo},
     version::Frontiers,
-    ContainerType, DiffEvent, FxHashMap, HandlerTrait, LoroDoc as LoroDocInner, LoroResult,
+    ContainerType, DiffEvent, FxHashMap, HandlerTrait, IdSpan, LoroDoc as LoroDocInner, LoroResult,
     LoroValue, MovableListHandler, Subscription, TreeNodeWithChildren, TreeParentId,
     UndoManager as InnerUndoManager, VersionVector as InternalVersionVector,
 };
@@ -210,6 +210,8 @@ extern "C" {
     pub type JsLoroRootShallowValue;
     #[wasm_bindgen(typescript_type = "{ peer: PeerID, counter: number, length: number }")]
     pub type JsIdSpan;
+    #[wasm_bindgen(typescript_type = "VersionVectorDiff")]
+    pub type JsVersionVectorDiff;
 }
 
 mod observer {
@@ -671,6 +673,52 @@ impl LoroDoc {
                 },
             )
             .map_err(|e| JsValue::from(e.to_string()))
+    }
+
+    /// Find the operation id spans that between the `from` version and the `to` version.
+    ///
+    /// - left: the id_span that you need to forward from `from` to `to`
+    /// - right: the id_span that you need to forward from `to` to `from`
+    #[wasm_bindgen(js_name = "findSpansBetween")]
+    pub fn find_spans_between(
+        &self,
+        from: Vec<JsID>,
+        to: Vec<JsID>,
+    ) -> JsResult<JsVersionVectorDiff> {
+        fn id_span_to_js(v: IdSpan) -> JsValue {
+            let obj = Object::new();
+            js_sys::Reflect::set(&obj, &"peer".into(), &JsValue::from(v.peer.to_string())).unwrap();
+            js_sys::Reflect::set(&obj, &"counter".into(), &JsValue::from(v.counter.start)).unwrap();
+            js_sys::Reflect::set(
+                &obj,
+                &"length".into(),
+                &JsValue::from(v.counter.end - v.counter.start),
+            )
+            .unwrap();
+            obj.into()
+        }
+
+        fn id_span_vector_to_js(v: IdSpanVector) -> JsValue {
+            let arr = Array::new();
+            for (peer, span) in v.iter() {
+                let v = id_span_to_js(IdSpan {
+                    peer: *peer,
+                    counter: *span,
+                });
+                arr.push(&v);
+            }
+            arr.into()
+        }
+
+        let from = ids_to_frontiers(from)?;
+        let to = ids_to_frontiers(to)?;
+        let diff = self.0.find_spans_between(&from, &to);
+        let obj = Object::new();
+
+        js_sys::Reflect::set(&obj, &"left".into(), &id_span_vector_to_js(diff.left)).unwrap();
+        js_sys::Reflect::set(&obj, &"right".into(), &id_span_vector_to_js(diff.right)).unwrap();
+        let v: JsValue = obj.into();
+        Ok(v.into())
     }
 
     /// Checkout the `DocState` to a specific version.
@@ -5088,6 +5136,17 @@ export type Value =
   | Uint8Array
   | Value[]
   | undefined;
+
+export type IdSpan = {
+    peer: PeerID,
+    counter: number,
+    length: number,
+}
+
+export type VersionVectorDiff = {
+    left: IdSpan[],
+    right: IdSpan[],
+}
 
 export type UndoConfig = {
     mergeInterval?: number,

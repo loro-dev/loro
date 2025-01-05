@@ -2653,3 +2653,90 @@ fn test_export_json_in_id_span_with_complex_operations() -> LoroResult<()> {
 
     Ok(())
 }
+
+#[test]
+fn test_find_spans_between() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+
+    // Make some changes to create version history
+    doc.get_text("text").insert(0, "Hello")?;
+    doc.set_next_commit_message("a");
+    doc.commit();
+    let f1 = doc.state_frontiers();
+
+    doc.get_text("text").insert(5, " World")?;
+    doc.set_next_commit_message("b");
+    doc.commit();
+    let f2 = doc.state_frontiers();
+
+    // Test finding spans between frontiers (f1 -> f2)
+    let diff = doc.find_spans_between(&f1, &f2);
+    assert!(diff.left.is_empty()); // No changes needed to go from f2 to f1
+    assert_eq!(diff.right.len(), 1); // One change needed to go from f1 to f2
+    let span = diff.right.get(&1).unwrap();
+    assert_eq!(span.start, 5); // First change ends at counter 3
+    assert_eq!(span.end, 11); // Second change ends at counter 6
+
+    // Test empty frontiers
+    let empty_frontiers = Frontiers::default();
+    let diff = doc.find_spans_between(&empty_frontiers, &f2);
+    assert!(diff.left.is_empty()); // No changes needed to go from f2 to empty
+    assert_eq!(diff.right.len(), 1); // One change needed to go from empty to f2
+    let span = diff.right.get(&1).unwrap();
+    assert_eq!(span.start, 0); // From beginning
+    assert_eq!(span.end, 11); // To latest change
+
+    // Test with multiple peers
+    let doc2 = LoroDoc::new();
+    doc2.set_peer_id(2)?;
+    doc2.get_text("text").insert(0, "Hi")?;
+    doc2.commit();
+    doc.import(&doc2.export_snapshot())?;
+    let f3 = doc.state_frontiers();
+
+    // Test finding spans between f2 and f3
+    let diff = doc.find_spans_between(&f2, &f3);
+    assert!(diff.left.is_empty()); // No changes needed to go from f3 to f2
+    assert_eq!(diff.right.len(), 1); // One change needed to go from f2 to f3
+    let span = diff.right.get(&2).unwrap();
+    assert_eq!(span.start, 0);
+    assert_eq!(span.end, 2);
+
+    // Test spans in both directions between f1 and f3
+    let diff = doc.find_spans_between(&f1, &f3);
+    assert!(diff.left.is_empty()); // No changes needed to go from f3 to f1
+    assert_eq!(diff.right.len(), 2); // Two changes needed to go from f1 to f3
+    for (peer, span) in diff.right.iter() {
+        match peer {
+            1 => {
+                assert_eq!(span.start, 5);
+                assert_eq!(span.end, 11);
+            }
+            2 => {
+                assert_eq!(span.start, 0);
+                assert_eq!(span.end, 2);
+            }
+            _ => panic!("Unexpected peer ID"),
+        }
+    }
+
+    let diff = doc.find_spans_between(&f3, &f1);
+    assert!(diff.right.is_empty()); // No changes needed to go from f3 to f1
+    assert_eq!(diff.left.len(), 2); // Two changes needed to go from f1 to f3
+    for (peer, span) in diff.left.iter() {
+        match peer {
+            1 => {
+                assert_eq!(span.start, 5);
+                assert_eq!(span.end, 11);
+            }
+            2 => {
+                assert_eq!(span.start, 0);
+                assert_eq!(span.end, 2);
+            }
+            _ => panic!("Unexpected peer ID"),
+        }
+    }
+
+    Ok(())
+}
