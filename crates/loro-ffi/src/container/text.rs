@@ -1,8 +1,9 @@
 use std::{fmt::Display, sync::Arc};
 
-use loro::{cursor::Side, LoroResult, PeerID, TextDelta, UpdateOptions, UpdateTimeoutError};
+use loro::{cursor::Side, LoroResult, PeerID, UpdateOptions, UpdateTimeoutError};
+use loro_internal::handler::TextDelta as InternalTextDelta;
 
-use crate::{ContainerID, LoroValue, LoroValueLike};
+use crate::{ContainerID, LoroValue, LoroValueLike, TextDelta};
 
 use super::Cursor;
 
@@ -107,8 +108,9 @@ impl LoroText {
 
     /// Apply a [delta](https://quilljs.com/docs/delta/) to the text container.
     // TODO:
-    pub fn apply_delta(&self, delta: &[TextDelta]) -> LoroResult<()> {
-        self.text.apply_delta(delta)
+    pub fn apply_delta(&self, delta: Vec<TextDelta>) -> LoroResult<()> {
+        let internal_delta: Vec<InternalTextDelta> = delta.into_iter().map(|d| d.into()).collect();
+        self.text.apply_delta(&internal_delta)
     }
 
     /// Mark a range of text with a key-value pair.
