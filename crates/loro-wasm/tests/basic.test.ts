@@ -1110,7 +1110,7 @@ it("find spans between versions", () => {
   });
 });
 
-it("can travel changes from event", () => {
+it("can travel changes from event", async () => {
   const docA = new LoroDoc();
   docA.setPeerId("1");
   const docB = new LoroDoc();
@@ -1118,6 +1118,7 @@ it("can travel changes from event", () => {
   docA.getText("text").update("Hello");
   docA.commit();
   const snapshot = docA.export({ mode: "snapshot" });
+  let done = false;
   docB.subscribe(e => {
     const spans = docB.findSpansBetween(e.from, e.to);
     expect(spans.left).toHaveLength(0);
@@ -1144,5 +1145,9 @@ it("can travel changes from event", () => {
         }
       }]
     }]);
+    done = true;
   });
+  docB.import(snapshot);
+  await Promise.resolve();
+  expect(done).toBe(true);
 })
