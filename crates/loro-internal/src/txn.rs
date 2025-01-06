@@ -728,7 +728,10 @@ fn change_to_diff(
                 );
                 let diff = DeltaRopeBuilder::new()
                     .retain(start as usize, Default::default())
-                    .retain((end - start) as usize, meta)
+                    .retain(
+                        (end - start) as usize,
+                        meta.to_option_map().unwrap_or_default().into(),
+                    )
                     .build();
                 ans.push(TxnContainerDiff {
                     idx: op.container,
@@ -745,7 +748,10 @@ fn change_to_diff(
                         unreachable!()
                     };
 
-                    delta.push_insert(slice.clone().into(), styles.clone());
+                    delta.push_insert(
+                        slice.clone().into(),
+                        styles.to_option_map().unwrap_or_default().into(),
+                    );
                 }
                 ans.push(TxnContainerDiff {
                     idx: op.container,

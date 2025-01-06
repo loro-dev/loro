@@ -1,4 +1,3 @@
-
 use fxhash::FxHashMap;
 use loro_common::{InternalString, LoroValue, PeerID};
 use loro_delta::delta_trait::DeltaAttr;
@@ -6,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::change::Lamport;
 use crate::container::richtext::{Style, Styles};
+use crate::event::TextMeta;
 use crate::ToJson;
 
 use super::Meta;
@@ -84,6 +84,24 @@ impl Meta for StyleMeta {
     fn merge(&mut self, _: &Self) {}
 }
 
+impl Meta for TextMeta {
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    fn compose(&mut self, other: &Self, _: (super::DeltaType, super::DeltaType)) {
+        for (key, value) in other.0.iter() {
+            self.0.insert(key.clone(), value.clone());
+        }
+    }
+
+    fn is_mergeable(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+
+    fn merge(&mut self, _: &Self) {}
+}
+
 impl StyleMeta {
     pub(crate) fn iter(&self) -> impl Iterator<Item = (InternalString, Style)> + '_ {
         self.map.iter().map(|(key, style)| {
@@ -151,6 +169,23 @@ impl ToJson for StyleMeta {
 
     fn from_json(_: &str) -> Self {
         unreachable!()
+    }
+}
+
+impl ToJson for TextMeta {
+    fn to_json_value(&self) -> serde_json::Value {
+        let mut map = serde_json::Map::new();
+        for (key, value) in self.0.iter() {
+            let value = serde_json::to_value(value).unwrap();
+            map.insert(key.to_string(), value);
+        }
+
+        serde_json::Value::Object(map)
+    }
+
+    fn from_json(s: &str) -> Self {
+        let map: FxHashMap<String, LoroValue> = serde_json::from_str(s).unwrap();
+        TextMeta(map)
     }
 }
 

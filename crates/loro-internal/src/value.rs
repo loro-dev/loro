@@ -1,7 +1,7 @@
 use crate::{
     container::richtext::richtext_state::{unicode_to_utf8_index, utf16_to_utf8_index},
-    delta::{Delta, DeltaItem, Meta, StyleMeta},
-    event::{Diff, Index, Path, TextDiff, TextDiffItem},
+    delta::{Delta, DeltaItem, Meta},
+    event::{Diff, Index, Path, TextDiff, TextDiffItem, TextMeta},
     handler::ValueOrHandler,
     utils::string_slice::StringSlice,
 };
@@ -41,7 +41,7 @@ impl ToJson for LoroValue {
     }
 }
 
-impl ToJson for DeltaItem<StringSlice, StyleMeta> {
+impl ToJson for DeltaItem<StringSlice, TextMeta> {
     fn to_json_value(&self) -> serde_json::Value {
         match self {
             DeltaItem::Retain {
@@ -82,9 +82,9 @@ impl ToJson for DeltaItem<StringSlice, StyleMeta> {
         if map.contains_key("retain") {
             let len = map["retain"].as_u64().unwrap();
             let meta = if let Some(meta) = map.get("attributes") {
-                StyleMeta::from_json(meta.to_string().as_str())
+                TextMeta::from_json(meta.to_string().as_str())
             } else {
-                StyleMeta::default()
+                TextMeta::default()
             };
             DeltaItem::Retain {
                 retain: len as usize,
@@ -93,9 +93,9 @@ impl ToJson for DeltaItem<StringSlice, StyleMeta> {
         } else if map.contains_key("insert") {
             let value = map["insert"].as_str().unwrap().to_string().into();
             let meta = if let Some(meta) = map.get("attributes") {
-                StyleMeta::from_json(meta.to_string().as_str())
+                TextMeta::from_json(meta.to_string().as_str())
             } else {
-                StyleMeta::default()
+                TextMeta::default()
             };
             DeltaItem::Insert {
                 insert: value,
@@ -164,9 +164,9 @@ fn diff_item_from_json(v: serde_json::Value) -> TextDiffItem {
     if map.contains_key("retain") {
         let len = map["retain"].as_u64().unwrap();
         let meta = if let Some(meta) = map.get("attributes") {
-            StyleMeta::from_json(meta.to_string().as_str())
+            TextMeta::from_json(meta.to_string().as_str())
         } else {
-            StyleMeta::default()
+            TextMeta::default()
         };
         TextDiffItem::Retain {
             len: len as usize,
@@ -175,9 +175,9 @@ fn diff_item_from_json(v: serde_json::Value) -> TextDiffItem {
     } else if map.contains_key("insert") {
         let value = map["insert"].as_str().unwrap().to_string().into();
         let meta = if let Some(meta) = map.get("attributes") {
-            StyleMeta::from_json(meta.to_string().as_str())
+            TextMeta::from_json(meta.to_string().as_str())
         } else {
-            StyleMeta::default()
+            TextMeta::default()
         };
         TextDiffItem::Replace {
             value,
@@ -215,7 +215,7 @@ impl ToJson for TextDiff {
     }
 }
 
-impl ToJson for Delta<StringSlice, StyleMeta> {
+impl ToJson for Delta<StringSlice, TextMeta> {
     fn to_json_value(&self) -> serde_json::Value {
         let mut vec = Vec::new();
         for item in self.iter() {
@@ -521,16 +521,14 @@ pub(crate) fn unresolved_to_collection(v: &ValueOrHandler) -> LoroValue {
 
 #[cfg(feature = "wasm")]
 pub mod wasm {
-
+    use crate::{
+        delta::{Delta, DeltaItem, Meta, StyleMeta, TreeDiff, TreeExternalDiff},
+        event::{Index, TextDiff, TextDiffItem, TextMeta},
+        utils::string_slice::StringSlice,
+    };
     use generic_btree::rle::HasLength;
     use js_sys::{Array, Object};
     use wasm_bindgen::{JsValue, __rt::IntoJsResult};
-
-    use crate::{
-        delta::{Delta, DeltaItem, Meta, StyleMeta, TreeDiff, TreeExternalDiff},
-        event::{Index, TextDiff, TextDiffItem},
-        utils::string_slice::StringSlice,
-    };
 
     impl From<Index> for JsValue {
         fn from(value: Index) -> Self {
@@ -779,6 +777,18 @@ pub mod wasm {
             for (key, style) in value.iter() {
                 let value = JsValue::from(style.data);
                 js_sys::Reflect::set(&obj, &JsValue::from_str(&key), &value).unwrap();
+            }
+
+            obj.into_js_result().unwrap()
+        }
+    }
+
+    impl From<&TextMeta> for JsValue {
+        fn from(value: &TextMeta) -> Self {
+            let obj = Object::new();
+            for (key, value) in value.0.iter() {
+                js_sys::Reflect::set(&obj, &JsValue::from_str(key), &JsValue::from(value.clone()))
+                    .unwrap();
             }
 
             obj.into_js_result().unwrap()

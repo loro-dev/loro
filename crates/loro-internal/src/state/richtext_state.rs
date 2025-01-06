@@ -385,7 +385,10 @@ impl ContainerState for RichtextState {
                                                 )
                                             }
                                         }
-                                        delta.push_retain(event_len, style_meta);
+                                        delta.push_retain(
+                                            event_len,
+                                            style_meta.to_option_map().unwrap_or_default().into(),
+                                        );
                                     }
                                     RichtextStateChunk::Style { .. } => {}
                                 }
@@ -408,7 +411,10 @@ impl ContainerState for RichtextState {
                                         entity_index,
                                         RichtextStateChunk::Text(s.clone()),
                                     );
-                                let insert_styles = styles.clone().into();
+                                // PERF: this can be optimized
+                                let insert_styles = Into::<StyleMeta>::into(styles.clone())
+                                    .to_option_map()
+                                    .unwrap_or_default();
 
                                 if pos > event_index {
                                     ans.push_retain(pos - event_index, Default::default());
@@ -416,7 +422,7 @@ impl ContainerState for RichtextState {
                                 event_index = pos + s.event_len() as usize;
                                 ans.push_insert(
                                     StringSlice::from(s.bytes().clone()),
-                                    insert_styles,
+                                    insert_styles.into(),
                                 );
                             }
                             RichtextStateChunk::Style { anchor_type, style } => {
@@ -464,7 +470,10 @@ impl ContainerState for RichtextState {
                                                 style.clone(),
                                             );
                                         for (s, l) in event {
-                                            delta.push_retain(l, s);
+                                            delta.push_retain(
+                                                l,
+                                                s.to_option_map().unwrap_or_default().into(),
+                                            );
                                         }
 
                                         delta.chop();
@@ -644,7 +653,10 @@ impl ContainerState for RichtextState {
     ) -> Diff {
         let mut delta = TextDiff::new();
         for span in self.state.get_mut().iter() {
-            delta.push_insert(span.text, span.attributes);
+            delta.push_insert(
+                span.text,
+                span.attributes.to_option_map().unwrap_or_default().into(),
+            );
         }
 
         Diff::Text(delta)

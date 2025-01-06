@@ -390,7 +390,11 @@ impl TextDelta {
                 loro_delta::DeltaItem::Retain { len, attr } => {
                     ans.push(TextDelta::Retain {
                         retain: *len,
-                        attributes: attr.to_option_map(),
+                        attributes: if attr.0.is_empty() {
+                            None
+                        } else {
+                            Some(attr.0.clone())
+                        },
                     });
                 }
                 loro_delta::DeltaItem::Replace {
@@ -401,7 +405,11 @@ impl TextDelta {
                     if value.rle_len() > 0 {
                         ans.push(TextDelta::Insert {
                             insert: value.to_string(),
-                            attributes: attr.to_option_map(),
+                            attributes: if attr.0.is_empty() {
+                                None
+                            } else {
+                                Some(attr.0.clone())
+                            },
                         });
                     }
                     if *delete > 0 {
