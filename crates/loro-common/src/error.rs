@@ -94,6 +94,8 @@ pub enum LoroError {
     ContainerDeleted { container: Box<ContainerID> },
     #[error("You cannot set the `PeerID` with `PeerID::MAX`, which is an internal specific value")]
     InvalidPeerID,
+    #[error("The containers {containers:?} are not found in the doc")]
+    ContainersNotFound { containers: Box<Vec<ContainerID>> },
 }
 
 #[derive(Error, Debug, PartialEq)]

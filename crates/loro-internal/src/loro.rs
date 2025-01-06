@@ -923,29 +923,55 @@ impl LoroDoc {
             return Err(LoroError::EditWhenDetached);
         }
 
-        // Sort container from the top to the bottom, so that we can have correct container remap
-        let containers = diff.0.keys().cloned().sorted_by_cached_key(|cid| {
-            let idx = self.arena.id_to_idx(cid).unwrap();
-            self.arena.get_depth(idx).unwrap().get()
-        });
-
         let mut ans: LoroResult<()> = Ok(());
-        for mut id in containers {
-            let mut remapped = false;
-            let diff = diff.0.remove(&id).unwrap();
+        while !diff.0.is_empty() {
+            let known_containers = diff.0.keys().cloned().filter_map(|id| match &id {
+                ContainerID::Root { .. } => Some(id),
+                ContainerID::Normal { .. } => {
+                    let idx = self.arena.id_to_idx(&id);
+                    if let Some(_idx) = idx {
+                        Some(id)
+                    } else {
+                        container_remap.get(&id).map(|_| id)
+                    }
+                }
+            });
 
-            while let Some(rid) = container_remap.get(&id) {
-                remapped = true;
-                id = rid.clone();
+            // Sort container from the top to the bottom, so that we can have correct container remap
+            let containers = known_containers.into_iter().sorted_by_cached_key(|cid| {
+                let idx = self.arena.register_container(cid);
+                self.arena.get_depth(idx).unwrap().get()
+            });
+
+            let mut count = 0;
+            for mut id in containers {
+                count += 1;
+                let mut remapped = false;
+                let diff = diff.0.remove(&id).unwrap();
+
+                while let Some(rid) = container_remap.get(&id) {
+                    remapped = true;
+                    id = rid.clone();
+                }
+
+                if skip_unreachable
+                    && !remapped
+                    && !self.state.try_lock().unwrap().get_reachable(&id)
+                {
+                    continue;
+                }
+
+                let h = self.get_handler(id);
+                if let Err(e) = h.apply_diff(diff, container_remap) {
+                    ans = Err(e);
+                }
             }
-
-            if skip_unreachable && !remapped && !self.state.try_lock().unwrap().get_reachable(&id) {
-                continue;
-            }
-
-            let h = self.get_handler(id);
-            if let Err(e) = h.apply_diff(diff, container_remap) {
-                ans = Err(e);
+            if count == 0 && !diff.0.is_empty() {
+                // There are unreachable containers,
+                let unknown_containers: Vec<ContainerID> = diff.0.keys().cloned().collect();
+                return Err(LoroError::ContainersNotFound {
+                    containers: Box::new(unknown_containers),
+                });
             }
         }
 

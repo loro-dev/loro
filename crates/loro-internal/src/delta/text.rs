@@ -1,6 +1,5 @@
 use fxhash::FxHashMap;
 use loro_common::{InternalString, LoroValue, PeerID};
-use loro_delta::delta_trait::DeltaAttr;
 use serde::{Deserialize, Serialize};
 
 use crate::change::Lamport;
@@ -156,22 +155,6 @@ impl StyleMeta {
     }
 }
 
-impl ToJson for StyleMeta {
-    fn to_json_value(&self) -> serde_json::Value {
-        let mut map = serde_json::Map::new();
-        for (key, style) in self.iter() {
-            let value = serde_json::to_value(&style.data).unwrap();
-            map.insert(key.to_string(), value);
-        }
-
-        serde_json::Value::Object(map)
-    }
-
-    fn from_json(_: &str) -> Self {
-        unreachable!()
-    }
-}
-
 impl ToJson for TextMeta {
     fn to_json_value(&self) -> serde_json::Value {
         let mut map = serde_json::Map::new();
@@ -186,17 +169,5 @@ impl ToJson for TextMeta {
     fn from_json(s: &str) -> Self {
         let map: FxHashMap<String, LoroValue> = serde_json::from_str(s).unwrap();
         TextMeta(map)
-    }
-}
-
-impl DeltaAttr for StyleMeta {
-    fn compose(&mut self, other: &Self) {
-        for (key, value) in other.map.iter() {
-            self.map.insert(key.clone(), value.clone());
-        }
-    }
-
-    fn attr_is_empty(&self) -> bool {
-        self.is_empty()
     }
 }

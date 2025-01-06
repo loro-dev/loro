@@ -9,7 +9,7 @@ use crate::{
     cursor::{Cursor, Side},
     delta::{DeltaItem, Meta, StyleMeta, TreeExternalDiff},
     diff::{diff, diff_impl::UpdateTimeoutError, OperateProxy},
-    event::{Diff, TextDiffItem},
+    event::{Diff, TextDiff, TextDiffItem, TextMeta},
     op::ListSlice,
     state::{IndexType, State, TreeParentId},
     txn::EventHint,
@@ -32,7 +32,7 @@ use std::{
     ops::Deref,
     sync::{Arc, Mutex, Weak},
 };
-use tracing::{error, info, instrument, trace};
+use tracing::{error, info, instrument};
 
 pub use crate::diff::diff_impl::UpdateOptions;
 pub use tree::TreeHandler;
@@ -420,6 +420,28 @@ impl TextDelta {
         }
 
         ans
+    }
+
+    pub fn into_text_diff(vec: impl Iterator<Item = Self>) -> TextDiff {
+        let mut delta = TextDiff::new();
+        for item in vec {
+            match item {
+                TextDelta::Retain { retain, attributes } => {
+                    delta.push_retain(retain, TextMeta(attributes.unwrap_or_default().clone()));
+                }
+                TextDelta::Insert { insert, attributes } => {
+                    delta.push_insert(
+                        StringSlice::from(insert.as_str()),
+                        TextMeta(attributes.unwrap_or_default()),
+                    );
+                }
+                TextDelta::Delete { delete } => {
+                    delta.push_delete(delete);
+                }
+            }
+        }
+
+        delta
     }
 }
 
@@ -1088,7 +1110,6 @@ impl Handler {
     ) -> LoroResult<()> {
         // In this method we will not clone the values of the containers if
         // they are remapped. It's the caller's duty to do so
-        trace!("apply_diff: {:#?}", &diff);
         let on_container_remap = &mut |old_id, new_id| {
             container_remap.insert(old_id, new_id);
         };

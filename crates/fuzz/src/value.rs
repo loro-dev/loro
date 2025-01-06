@@ -125,7 +125,7 @@ impl ApplyDiff for MapTracker {
                     }
                 }
             } else {
-                self.remove(*k);
+                self.remove(k.deref());
             }
         }
     }

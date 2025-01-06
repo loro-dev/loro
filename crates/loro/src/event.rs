@@ -1,14 +1,20 @@
 //! Loro event handling.
+use delta::array_vec::ArrayVec;
+use delta::DeltaRope;
 use enum_as_inner::EnumAsInner;
+use loro_common::IdLp;
 use loro_internal::container::ContainerID;
-use loro_internal::delta::TreeDiff;
-use loro_internal::event::EventTriggerKind;
+use loro_internal::delta::{ResolvedMapDelta, ResolvedMapValue, TreeDiff};
+use loro_internal::event::{EventTriggerKind, ListDeltaMeta};
 use loro_internal::handler::{TextDelta, ValueOrHandler};
-use loro_internal::FxHashMap;
+use loro_internal::undo::DiffBatch as InnerDiffBatch;
 use loro_internal::{
     event::{Diff as DiffInner, Index},
     ContainerDiff as ContainerDiffInner, DiffEvent as DiffEventInner,
 };
+use loro_internal::{FxHashMap, ListDiffInsertItem};
+use std::borrow::Cow;
+use std::ops::Deref;
 use std::sync::Arc;
 
 use crate::ValueOrContainer;
@@ -43,7 +49,7 @@ pub struct ContainerDiff<'a> {
 }
 
 /// A concrete diff.
-#[derive(Debug, EnumAsInner)]
+#[derive(Debug, EnumAsInner, Clone)]
 pub enum Diff<'a> {
     /// A list diff.
     List(Vec<ListDiffItem>),
@@ -52,7 +58,7 @@ pub enum Diff<'a> {
     /// A map diff.
     Map(MapDelta<'a>),
     /// A tree diff.
-    Tree(&'a TreeDiff),
+    Tree(Cow<'a, TreeDiff>),
     #[cfg(feature = "counter")]
     /// A counter diff.
     Counter(f64),
@@ -73,7 +79,7 @@ pub enum Diff<'a> {
 /// It means that the list has 3 elements that are not changed, 1 element is deleted, and 2 elements are inserted.
 ///
 /// If the original list is [1, 2, 3, 4, 5], the list after the diff is [1, 2, 3, 1, 2, 5].
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ListDiffItem {
     /// Insert a new element into the list.
     Insert {
@@ -97,10 +103,10 @@ pub enum ListDiffItem {
 }
 
 /// A map delta.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MapDelta<'a> {
     /// All the updated keys and their new values.
-    pub updated: FxHashMap<&'a str, Option<ValueOrContainer>>,
+    pub updated: FxHashMap<Cow<'a, str>, Option<ValueOrContainer>>,
 }
 
 impl<'a> From<DiffEventInner<'a>> for DiffEvent<'a> {
@@ -162,16 +168,69 @@ impl<'a> From<&'a DiffInner> for Diff<'a> {
                 updated: m
                     .updated
                     .iter()
-                    .map(|(k, v)| (k.as_ref(), v.value.clone().map(|v| v.into())))
+                    .map(|(k, v)| (Cow::Borrowed(k.as_str()), v.value.clone().map(|v| v.into())))
                     .collect(),
             }),
             DiffInner::Text(t) => {
                 let text = TextDelta::from_text_diff(t.iter());
                 Diff::Text(text)
             }
-            DiffInner::Tree(t) => Diff::Tree(t),
+            DiffInner::Tree(t) => Diff::Tree(Cow::Borrowed(t)),
             #[cfg(feature = "counter")]
             DiffInner::Counter(c) => Diff::Counter(*c),
+            DiffInner::Unknown => Diff::Unknown,
+            _ => todo!(),
+        }
+    }
+}
+
+impl From<DiffInner> for Diff<'static> {
+    fn from(value: DiffInner) -> Self {
+        match value {
+            DiffInner::List(l) => {
+                let mut ans = Vec::new();
+                for item in l.iter() {
+                    match item {
+                        delta::DeltaItem::Retain { len, .. } => {
+                            ans.push(ListDiffItem::Retain { retain: *len });
+                        }
+                        delta::DeltaItem::Replace {
+                            value,
+                            delete,
+                            attr,
+                        } => {
+                            if value.len() > 0 {
+                                ans.push(ListDiffItem::Insert {
+                                    insert: value
+                                        .iter()
+                                        .map(|v| ValueOrContainer::from(v.clone()))
+                                        .collect(),
+                                    is_move: attr.from_move,
+                                });
+                            }
+                            if *delete > 0 {
+                                ans.push(ListDiffItem::Delete { delete: *delete });
+                            }
+                        }
+                    }
+                }
+
+                Diff::List(ans)
+            }
+            DiffInner::Map(m) => Diff::Map(MapDelta {
+                updated: m
+                    .updated
+                    .iter()
+                    .map(|(k, v)| (Cow::Owned(k.to_string()), v.value.clone().map(|v| v.into())))
+                    .collect(),
+            }),
+            DiffInner::Text(t) => {
+                let text = TextDelta::from_text_diff(t.iter());
+                Diff::Text(text)
+            }
+            DiffInner::Tree(t) => Diff::Tree(Cow::Owned(t.clone())),
+            #[cfg(feature = "counter")]
+            DiffInner::Counter(c) => Diff::Counter(c),
             DiffInner::Unknown => Diff::Unknown,
             _ => todo!(),
         }
@@ -184,5 +243,88 @@ impl From<ValueOrHandler> for ValueOrContainer {
             ValueOrHandler::Value(v) => ValueOrContainer::Value(v),
             ValueOrHandler::Handler(h) => ValueOrContainer::Container(h.into()),
         }
+    }
+}
+
+/// A batch of diffs.
+#[derive(Debug, Default, Clone)]
+pub struct DiffBatch(pub FxHashMap<ContainerID, Diff<'static>>);
+
+impl From<InnerDiffBatch> for DiffBatch {
+    fn from(value: InnerDiffBatch) -> Self {
+        let mut map = FxHashMap::with_capacity_and_hasher(value.0.len(), Default::default());
+        for (id, diff) in value.0.into_iter() {
+            map.insert(id.clone(), diff.into());
+        }
+
+        DiffBatch(map)
+    }
+}
+
+impl From<Diff<'static>> for DiffInner {
+    fn from(value: Diff<'static>) -> Self {
+        match value {
+            Diff::List(vec) => {
+                let mut ans: DeltaRope<ListDiffInsertItem, ListDeltaMeta> = DeltaRope::new();
+                for item in vec.iter() {
+                    match item {
+                        ListDiffItem::Insert { insert, is_move } => {
+                            for item in ArrayVec::from_many(
+                                insert.iter().map(|v| v.clone().into_value_or_handler()),
+                            ) {
+                                ans.push_insert(
+                                    item,
+                                    ListDeltaMeta {
+                                        from_move: *is_move,
+                                    },
+                                );
+                            }
+                        }
+                        ListDiffItem::Delete { delete } => {
+                            ans.push_delete(*delete);
+                        }
+                        ListDiffItem::Retain { retain } => {
+                            ans.push_retain(*retain, ListDeltaMeta { from_move: false });
+                        }
+                    }
+                }
+
+                DiffInner::List(ans)
+            }
+            Diff::Text(t) => {
+                let text = TextDelta::into_text_diff(t.into_iter());
+                DiffInner::Text(text)
+            }
+            Diff::Map(map_delta) => DiffInner::Map(ResolvedMapDelta {
+                updated: map_delta
+                    .updated
+                    .into_iter()
+                    .map(|(k, v)| {
+                        (
+                            k.deref().into(),
+                            ResolvedMapValue {
+                                value: v.map(|v| v.into_value_or_handler()),
+                                idlp: IdLp::new(0, 0),
+                            },
+                        )
+                    })
+                    .collect(),
+            }),
+            Diff::Tree(cow) => DiffInner::Tree(cow.into_owned()),
+            #[cfg(feature = "counter")]
+            Diff::Counter(c) => DiffInner::Counter(c),
+            Diff::Unknown => DiffInner::Unknown,
+        }
+    }
+}
+
+impl From<DiffBatch> for InnerDiffBatch {
+    fn from(value: DiffBatch) -> Self {
+        let mut map = FxHashMap::with_capacity_and_hasher(value.0.len(), Default::default());
+        for (id, diff) in value.0.into_iter() {
+            map.insert(id.clone(), diff.into());
+        }
+
+        InnerDiffBatch(map)
     }
 }
