@@ -23,7 +23,7 @@ use loro_internal::{
     json::JsonSchema,
     loro::{CommitOptions, ExportMode},
     loro_common::{check_root_container_name, IdSpanVector},
-    undo::{UndoItemMeta, UndoOrRedo},
+    undo::{DiffBatch, UndoItemMeta, UndoOrRedo},
     version::Frontiers,
     ContainerType, DiffEvent, FxHashMap, HandlerTrait, IdSpan, LoroDoc as LoroDocInner, LoroResult,
     LoroValue, MovableListHandler, Subscription, TreeNodeWithChildren, TreeParentId,
@@ -212,6 +212,8 @@ extern "C" {
     pub type JsIdSpan;
     #[wasm_bindgen(typescript_type = "VersionVectorDiff")]
     pub type JsVersionVectorDiff;
+    #[wasm_bindgen(typescript_type = "Record<ContainerID, Diff>")]
+    pub type JsDiffBatch;
 }
 
 mod observer {
@@ -1870,6 +1872,43 @@ impl LoroDoc {
                 v.into()
             })
             .collect())
+    }
+
+    /// Revert the document to the given frontiers
+    #[wasm_bindgen(js_name = "revertTo")]
+    pub fn revert_to(&self, frontiers: Vec<JsID>) -> JsResult<()> {
+        let frontiers = ids_to_frontiers(frontiers)?;
+        self.0.revert_to(&frontiers)?;
+        Ok(())
+    }
+
+    pub fn apply_diff(&self, diff: JsDiffBatch) -> JsResult<()> {
+        let diff: JsValue = diff.into();
+        let obj: js_sys::Object = diff.into();
+        let mut diff = FxHashMap::default();
+        for entry in js_sys::Object::entries(&obj).iter() {
+            let entry = entry.unchecked_into::<js_sys::Array>();
+            let k = entry.get(0);
+            let v = entry.get(1);
+            diff.insert(k.as_string().unwrap(), js_diff_to_inner_diff(v));
+        }
+        self.0.apply_diff(DiffBatch(diff))?;
+        Ok(())
+    }
+
+    /// Calculate the differences between two frontiers
+    pub fn diff(&self, from: Vec<JsID>, to: Vec<JsID>) -> JsResult<JsDiffBatch> {
+        let from = ids_to_frontiers(from)?;
+        let to = ids_to_frontiers(to)?;
+        let diff = self.0.diff(&from, &to)?;
+        let obj = js_sys::Object::new();
+        for (id, d) in diff.0.iter() {
+            let id_str = id.to_string();
+            let v = resolved_diff_to_js(d, &self.0);
+            Reflect::set(&obj, &JsValue::from_str(&id_str), &v)?;
+        }
+        let v: JsValue = obj.into();
+        Ok(v.into())
     }
 }
 

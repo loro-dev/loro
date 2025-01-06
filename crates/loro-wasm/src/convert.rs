@@ -1,17 +1,19 @@
 use std::sync::Arc;
 
 use js_sys::{Array, Map, Object, Reflect, Uint8Array};
+use loro_internal::container::ContainerID;
 use loro_internal::delta::ResolvedMapDelta;
 use loro_internal::encoding::{ImportBlobMetadata, ImportStatus};
 use loro_internal::event::Diff;
 use loro_internal::handler::{Handler, ValueOrHandler};
+use loro_internal::undo::DiffBatch;
 use loro_internal::version::VersionRange;
-use loro_internal::{Counter, CounterSpan, IdSpan, ListDiffItem, LoroDoc, LoroValue};
-use wasm_bindgen::JsValue;
+use loro_internal::{Counter, CounterSpan, FxHashMap, IdSpan, ListDiffItem, LoroDoc, LoroValue};
+use wasm_bindgen::{JsCast, JsValue};
 
 use crate::{
-    frontiers_to_ids, Container, Cursor, JsContainer, JsIdSpan, JsImportBlobMetadata, LoroCounter,
-    LoroList, LoroMap, LoroMovableList, LoroText, LoroTree, VersionVector,
+    frontiers_to_ids, Container, Cursor, JsContainer, JsIdSpan, JsImportBlobMetadata, JsResult,
+    LoroCounter, LoroList, LoroMap, LoroMovableList, LoroText, LoroTree, VersionVector,
 };
 use wasm_bindgen::__rt::IntoJsResult;
 use wasm_bindgen::convert::RefFromWasmAbi;
@@ -200,6 +202,41 @@ pub(crate) fn resolved_diff_to_js(value: &Diff, doc: &Arc<LoroDoc>) -> JsValue {
 
     // convert object to js value
     obj.into_js_result().unwrap()
+}
+
+pub(crate) fn js_diff_to_inner_diff(js: JsValue) -> JsResult<Diff> {
+    let obj = js.dyn_into::<Object>()?;
+    let diff_type = js_sys::Reflect::get(&obj, &"type".into())?;
+    let diff_type = diff_type.as_string().ok_or("type must be string")?;
+
+    match diff_type.as_str() {
+        "text" => {
+            let diff = js_sys::Reflect::get(&obj, &"diff".into())?;
+            let text_diff = loro_internal::wasm::js_value_to_text_diff(diff)?;
+            Ok(Diff::Text(text_diff))
+        }
+        "map" => {
+            let updated = js_sys::Reflect::get(&obj, &"updated".into())?;
+            let map_diff = js_to_map_delta(updated)?;
+            Ok(Diff::Map(map_diff))
+        }
+        "counter" => {
+            let increment = js_sys::Reflect::get(&obj, &"increment".into())?;
+            let increment = increment.as_f64().ok_or("increment must be number")?;
+            Ok(Diff::Counter(increment))
+        }
+        "tree" => {
+            let diff = js_sys::Reflect::get(&obj, &"diff".into())?;
+            let tree_diff = (&diff).try_into()?;
+            Ok(Diff::Tree(tree_diff))
+        }
+        "list" => {
+            let diff = js_sys::Reflect::get(&obj, &"diff".into())?;
+            let list_diff = loro_internal::wasm::js_value_to_tree_diff(diff)?;
+            Ok(Diff::List(list_diff))
+        }
+        _ => Err(format!("Unknown diff type: {}", diff_type).into()),
+    }
 }
 
 fn delta_item_to_js(item: ListDiffItem, doc: &Arc<LoroDoc>) -> (JsValue, Option<JsValue>) {
