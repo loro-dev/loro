@@ -1151,3 +1151,70 @@ it("can travel changes from event", async () => {
   await Promise.resolve();
   expect(done).toBe(true);
 })
+
+it("can revert to frontiers", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId("1");
+  doc.getText("text").update("Hello");
+  doc.commit();
+  doc.revertTo([{ peer: "1", counter: 1 }]);
+  expect(doc.getText("text").toString()).toBe("He");
+})
+
+it("can diff two versions", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId("1");
+  // Text edits with formatting
+  const text = doc.getText("text");
+  text.update("Hello");
+  text.mark({ start: 0, end: 5 }, "bold", true);
+  doc.commit();
+
+  // Map edits
+  const map = doc.getMap("map");
+  map.set("key1", "value1");
+  map.set("key2", 42);
+  doc.commit();
+
+  // List edits
+  const list = doc.getList("list");
+  list.insert(0, "item1");
+  list.insert(1, "item2");
+  list.delete(1, 1);
+  doc.commit();
+
+  // Tree edits
+  const tree = doc.getTree("tree");
+  const a = tree.createNode();
+  a.createNode();
+  doc.commit();
+
+  const diff = doc.diff([], doc.frontiers());
+  expect(diff).toMatchSnapshot()
+
+  const doc2 = new LoroDoc();
+  doc2.setPeerId("2");
+  doc2.applyDiff(diff);
+  expect(doc2.toJSON()).toMatchSnapshot()
+  expect(doc2.getText("text").toDelta()).toStrictEqual(doc.getText("text").toDelta())
+})
+
+it('the diff will deduplication', () => {
+  const doc = new LoroDoc();
+  const list = doc.getList("list");
+  const map = doc.getMap("map");
+  doc.getText("hi").insert(0, "Hello");
+  for (let i = 0; i < 100; i += 1) {
+    list.push(1)
+    map.set(i.toString(), i);
+    doc.setNextCommitMessage("hi " + i);
+    doc.commit();
+  }
+
+  list.clear();
+  map.clear();
+  doc.commit();
+
+  const diff = doc.diff([], doc.frontiers());
+  expect(diff).toMatchSnapshot()
+})

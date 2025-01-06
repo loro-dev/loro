@@ -1,14 +1,15 @@
 use std::sync::Arc;
 
 use js_sys::{Array, Map, Object, Reflect, Uint8Array};
-use loro_internal::container::ContainerID;
-use loro_internal::delta::ResolvedMapDelta;
+use loro_common::{IdLp, LoroListValue, LoroMapValue, LoroValue};
+use loro_delta::{array_vec, DeltaRopeBuilder};
+use loro_internal::delta::{ResolvedMapDelta, ResolvedMapValue};
 use loro_internal::encoding::{ImportBlobMetadata, ImportStatus};
-use loro_internal::event::Diff;
+use loro_internal::event::{Diff, ListDeltaMeta, ListDiff, TextDiff, TextMeta};
 use loro_internal::handler::{Handler, ValueOrHandler};
-use loro_internal::undo::DiffBatch;
 use loro_internal::version::VersionRange;
-use loro_internal::{Counter, CounterSpan, FxHashMap, IdSpan, ListDiffItem, LoroDoc, LoroValue};
+use loro_internal::StringSlice;
+use loro_internal::{Counter, CounterSpan, FxHashMap, IdSpan, ListDiffItem, LoroDoc};
 use wasm_bindgen::{JsCast, JsValue};
 
 use crate::{
@@ -212,12 +213,12 @@ pub(crate) fn js_diff_to_inner_diff(js: JsValue) -> JsResult<Diff> {
     match diff_type.as_str() {
         "text" => {
             let diff = js_sys::Reflect::get(&obj, &"diff".into())?;
-            let text_diff = loro_internal::wasm::js_value_to_text_diff(diff)?;
+            let text_diff = js_value_to_text_diff(&diff)?;
             Ok(Diff::Text(text_diff))
         }
         "map" => {
             let updated = js_sys::Reflect::get(&obj, &"updated".into())?;
-            let map_diff = js_to_map_delta(updated)?;
+            let map_diff = js_to_map_delta(&updated)?;
             Ok(Diff::Map(map_diff))
         }
         "counter" => {
@@ -232,7 +233,7 @@ pub(crate) fn js_diff_to_inner_diff(js: JsValue) -> JsResult<Diff> {
         }
         "list" => {
             let diff = js_sys::Reflect::get(&obj, &"diff".into())?;
-            let list_diff = loro_internal::wasm::js_value_to_tree_diff(diff)?;
+            let list_diff = js_value_to_list_diff(&diff)?;
             Ok(Diff::List(list_diff))
         }
         _ => Err(format!("Unknown diff type: {}", diff_type).into()),
@@ -463,4 +464,170 @@ fn id_span_vector_to_js_value(v: VersionRange) -> JsValue {
         );
     }
     map.into()
+}
+
+pub(crate) fn js_value_to_text_diff(js: &JsValue) -> Result<TextDiff, JsValue> {
+    let arr = js
+        .dyn_ref::<Array>()
+        .ok_or_else(|| JsValue::from_str("Expected an array"))?;
+    let mut builder = DeltaRopeBuilder::new();
+
+    for i in 0..arr.length() {
+        let item = arr.get(i);
+        let obj = item
+            .dyn_ref::<Object>()
+            .ok_or_else(|| JsValue::from_str("Expected an object"))?;
+
+        if let Some(retain) = Reflect::get(&obj, &JsValue::from_str("retain"))?.as_f64() {
+            let len = retain as usize;
+            let js_meta = Reflect::get(&obj, &JsValue::from_str("attributes"))?;
+            let meta = TextMeta::try_from(&js_meta).unwrap_or_default();
+            builder = builder.retain(len, meta);
+        } else if let Some(insert) = Reflect::get(&obj, &JsValue::from_str("insert"))?.as_string() {
+            let js_meta = Reflect::get(&obj, &JsValue::from_str("attributes"))?;
+            let meta = TextMeta::try_from(&js_meta).unwrap_or_default();
+            builder = builder.insert(StringSlice::from(insert), meta);
+        } else if let Some(delete) = Reflect::get(&obj, &JsValue::from_str("delete"))?.as_f64() {
+            let len = delete as usize;
+            builder = builder.delete(len);
+        } else {
+            return Err(JsValue::from_str("Invalid delta item"));
+        }
+    }
+
+    Ok(builder.build())
+}
+
+pub(crate) fn js_to_map_delta(js: &JsValue) -> Result<ResolvedMapDelta, JsValue> {
+    let obj = js
+        .dyn_ref::<Object>()
+        .ok_or_else(|| JsValue::from_str("Expected an object"))?;
+    let mut delta = ResolvedMapDelta::new();
+
+    let entries = Object::entries(&obj);
+    for i in 0..entries.length() {
+        let entry = entries.get(i);
+        let entry_arr = entry.dyn_ref::<Array>().unwrap();
+        let key = entry_arr.get(0).as_string().unwrap();
+        let value = entry_arr.get(1);
+
+        if value.is_object() && !value.is_null() {
+            let obj = value.dyn_ref::<Object>().unwrap();
+            if let Ok(kind) = Reflect::get(&obj, &JsValue::from_str("kind")) {
+                if kind.is_function() {
+                    let container = js_to_container(value.clone().unchecked_into())?;
+                    delta = delta.with_entry(
+                        key.into(),
+                        ResolvedMapValue {
+                            idlp: IdLp::new(0, 0),
+                            value: Some(ValueOrHandler::Handler(container.to_handler())),
+                        },
+                    );
+                    continue;
+                }
+            }
+        }
+        delta = delta.with_entry(
+            key.into(),
+            ResolvedMapValue {
+                idlp: IdLp::new(0, 0),
+                value: Some(ValueOrHandler::Value(js_value_to_loro_value(&value))),
+            },
+        );
+    }
+
+    Ok(delta)
+}
+
+pub(crate) fn js_value_to_list_diff(js: &JsValue) -> Result<ListDiff, JsValue> {
+    let arr = js
+        .dyn_ref::<Array>()
+        .ok_or_else(|| JsValue::from_str("Expected an array"))?;
+    let mut builder = DeltaRopeBuilder::new();
+
+    for i in 0..arr.length() {
+        let item = arr.get(i);
+        let obj = item
+            .dyn_ref::<Object>()
+            .ok_or_else(|| JsValue::from_str("Expected an object"))?;
+
+        if let Some(retain) = Reflect::get(&obj, &JsValue::from_str("retain"))?.as_f64() {
+            let len = retain as usize;
+            builder = builder.retain(len, ListDeltaMeta::default());
+        } else if let Some(delete) = Reflect::get(&obj, &JsValue::from_str("delete"))?.as_f64() {
+            let len = delete as usize;
+            builder = builder.delete(len);
+        } else if let Ok(insert) = Reflect::get(&obj, &JsValue::from_str("insert")) {
+            let insert_arr = insert
+                .dyn_ref::<Array>()
+                .ok_or_else(|| JsValue::from_str("insert must be an array"))?;
+            let mut values = array_vec::ArrayVec::<ValueOrHandler, 8>::new();
+
+            for j in 0..insert_arr.length() {
+                let value = insert_arr.get(j);
+                if value.is_object() && !value.is_null() {
+                    let obj = value.dyn_ref::<Object>().unwrap();
+                    if let Ok(kind) = Reflect::get(&obj, &JsValue::from_str("kind")) {
+                        if kind.is_function() {
+                            let container = js_to_container(value.clone().unchecked_into())?;
+                            values
+                                .push(ValueOrHandler::Handler(container.to_handler()))
+                                .unwrap();
+                            continue;
+                        }
+                    }
+                }
+                values
+                    .push(ValueOrHandler::Value(js_value_to_loro_value(&value)))
+                    .unwrap();
+            }
+
+            builder = builder.insert(values, ListDeltaMeta::default());
+        } else {
+            return Err(JsValue::from_str("Invalid delta item"));
+        }
+    }
+
+    Ok(builder.build())
+}
+
+pub(crate) fn js_value_to_loro_value(js: &JsValue) -> LoroValue {
+    if js.is_null() {
+        LoroValue::Null
+    } else if let Some(b) = js.as_bool() {
+        LoroValue::Bool(b)
+    } else if let Some(n) = js.as_f64() {
+        if n.fract() == 0.0 && n >= -(2i64.pow(53) as f64) && n <= 2i64.pow(53) as f64 {
+            LoroValue::I64(n as i64)
+        } else {
+            LoroValue::Double(n)
+        }
+    } else if let Some(s) = js.as_string() {
+        LoroValue::String(s.into())
+    } else if js.is_array() {
+        let arr = Array::from(js);
+        let mut vec = Vec::with_capacity(arr.length() as usize);
+        for i in 0..arr.length() {
+            vec.push(js_value_to_loro_value(&arr.get(i)));
+        }
+        LoroValue::List(LoroListValue::from(vec))
+    } else if js.is_object() {
+        let obj = Object::from(JsValue::from(js));
+        let mut map = FxHashMap::default();
+        let entries = Object::entries(&obj);
+        for i in 0..entries.length() {
+            let entry = entries.get(i);
+            let key = entry
+                .dyn_ref::<Array>()
+                .unwrap()
+                .get(0)
+                .as_string()
+                .unwrap();
+            let value = entry.dyn_ref::<Array>().unwrap().get(1);
+            map.insert(key, js_value_to_loro_value(&value));
+        }
+        LoroValue::Map(LoroMapValue::from(map))
+    } else {
+        LoroValue::Null
+    }
 }

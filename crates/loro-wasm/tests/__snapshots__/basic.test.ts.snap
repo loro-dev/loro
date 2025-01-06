@@ -1,0 +1,203 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`can diff two versions 1`] = `
+{
+  "cid:root-list:List": {
+    "diff": [
+      {
+        "insert": [
+          "item1",
+        ],
+      },
+    ],
+    "type": "list",
+  },
+  "cid:root-map:Map": {
+    "type": "map",
+    "updated": {
+      "key1": "value1",
+      "key2": 42,
+    },
+  },
+  "cid:root-text:Text": {
+    "diff": [
+      {
+        "attributes": {
+          "bold": true,
+        },
+        "insert": "Hello",
+      },
+    ],
+    "type": "text",
+  },
+  "cid:root-tree:Tree": {
+    "diff": [
+      {
+        "action": "create",
+        "fractionalIndex": "80",
+        "index": 0,
+        "parent": undefined,
+        "target": "12@1",
+      },
+      {
+        "action": "create",
+        "fractionalIndex": "80",
+        "index": 0,
+        "parent": "12@1",
+        "target": "13@1",
+      },
+    ],
+    "type": "tree",
+  },
+}
+`;
+
+exports[`can diff two versions 2`] = `
+{
+  "list": [
+    "item1",
+  ],
+  "map": {
+    "key1": "value1",
+    "key2": 42,
+  },
+  "text": "Hello",
+  "tree": [
+    {
+      "children": [
+        {
+          "children": [],
+          "fractional_index": "80",
+          "id": "1@2",
+          "index": 0,
+          "meta": {},
+          "parent": "0@2",
+        },
+      ],
+      "fractional_index": "80",
+      "id": "0@2",
+      "index": 0,
+      "meta": {},
+      "parent": null,
+    },
+  ],
+}
+`;
+
+exports[`the diff will deduplication 1`] = `
+{
+  "cid:root-hi:Text": {
+    "diff": [
+      {
+        "insert": "Hello",
+      },
+    ],
+    "type": "text",
+  },
+  "cid:root-map:Map": {
+    "type": "map",
+    "updated": {
+      "0": null,
+      "1": null,
+      "10": null,
+      "11": null,
+      "12": null,
+      "13": null,
+      "14": null,
+      "15": null,
+      "16": null,
+      "17": null,
+      "18": null,
+      "19": null,
+      "2": null,
+      "20": null,
+      "21": null,
+      "22": null,
+      "23": null,
+      "24": null,
+      "25": null,
+      "26": null,
+      "27": null,
+      "28": null,
+      "29": null,
+      "3": null,
+      "30": null,
+      "31": null,
+      "32": null,
+      "33": null,
+      "34": null,
+      "35": null,
+      "36": null,
+      "37": null,
+      "38": null,
+      "39": null,
+      "4": null,
+      "40": null,
+      "41": null,
+      "42": null,
+      "43": null,
+      "44": null,
+      "45": null,
+      "46": null,
+      "47": null,
+      "48": null,
+      "49": null,
+      "5": null,
+      "50": null,
+      "51": null,
+      "52": null,
+      "53": null,
+      "54": null,
+      "55": null,
+      "56": null,
+      "57": null,
+      "58": null,
+      "59": null,
+      "6": null,
+      "60": null,
+      "61": null,
+      "62": null,
+      "63": null,
+      "64": null,
+      "65": null,
+      "66": null,
+      "67": null,
+      "68": null,
+      "69": null,
+      "7": null,
+      "70": null,
+      "71": null,
+      "72": null,
+      "73": null,
+      "74": null,
+      "75": null,
+      "76": null,
+      "77": null,
+      "78": null,
+      "79": null,
+      "8": null,
+      "80": null,
+      "81": null,
+      "82": null,
+      "83": null,
+      "84": null,
+      "85": null,
+      "86": null,
+      "87": null,
+      "88": null,
+      "89": null,
+      "9": null,
+      "90": null,
+      "91": null,
+      "92": null,
+      "93": null,
+      "94": null,
+      "95": null,
+      "96": null,
+      "97": null,
+      "98": null,
+      "99": null,
+    },
+  },
+}
+`;

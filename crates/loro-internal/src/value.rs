@@ -5,12 +5,9 @@ use crate::{
     handler::ValueOrHandler,
     utils::string_slice::StringSlice,
 };
-
-use crate::state::TreeParentId;
-use fractional_index::FractionalIndex;
 use generic_btree::rle::HasLength;
+use loro_common::ContainerType;
 pub use loro_common::LoroValue;
-use loro_common::{ContainerType, TreeID};
 
 // TODO: rename this trait
 pub trait ToJson {
@@ -532,8 +529,8 @@ pub mod wasm {
     use fractional_index::FractionalIndex;
     use generic_btree::rle::HasLength;
     use js_sys::{Array, Object};
-    use loro_common::TreeID;
-    use wasm_bindgen::{JsValue, __rt::IntoJsResult};
+    use loro_common::{LoroValue, TreeID};
+    use wasm_bindgen::{JsCast, JsValue, __rt::IntoJsResult};
 
     impl From<Index> for JsValue {
         fn from(value: Index) -> Self {
@@ -948,6 +945,33 @@ pub mod wasm {
             }
 
             obj.into_js_result().unwrap()
+        }
+    }
+
+    impl TryFrom<&JsValue> for TextMeta {
+        type Error = JsValue;
+
+        fn try_from(value: &JsValue) -> Result<Self, Self::Error> {
+            if value.is_null() || value.is_undefined() {
+                return Ok(TextMeta::default());
+            }
+
+            let obj = value.dyn_ref::<Object>().ok_or("Expected an object")?;
+            let mut meta = TextMeta::default();
+
+            let entries = Object::entries(obj);
+            for i in 0..entries.length() {
+                let entry = entries.get(i);
+                let entry_arr = entry.dyn_ref::<Array>().ok_or("Expected an array")?;
+                let key = entry_arr
+                    .get(0)
+                    .as_string()
+                    .ok_or("Expected a string key")?;
+                let value = entry_arr.get(1);
+                meta.0.insert(key, LoroValue::from(value));
+            }
+
+            Ok(meta)
         }
     }
 }

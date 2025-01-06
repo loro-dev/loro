@@ -5,7 +5,8 @@
 // #![warn(missing_docs)]
 
 use convert::{
-    import_status_to_js_value, js_to_id_span, js_to_version_vector, resolved_diff_to_js,
+    import_status_to_js_value, js_diff_to_inner_diff, js_to_id_span, js_to_version_vector,
+    resolved_diff_to_js,
 };
 use js_sys::{Array, Object, Promise, Reflect, Uint8Array};
 use loro_internal::{
@@ -1874,7 +1875,21 @@ impl LoroDoc {
             .collect())
     }
 
-    /// Revert the document to the given frontiers
+    /// Revert the document to the given frontiers.
+    ///
+    /// The doc will not become detached when using this method. Instead, it will generate a series
+    /// of operations to revert the document to the given version.
+    ///
+    /// @example
+    /// ```ts
+    /// const doc = new LoroDoc();
+    /// doc.setPeerId("1");
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello");
+    /// doc.commit();
+    /// doc.revertTo([{ peer: "1", counter: 1 }]);
+    /// expect(doc.getText("text").toString()).toBe("He");
+    /// ```
     #[wasm_bindgen(js_name = "revertTo")]
     pub fn revert_to(&self, frontiers: Vec<JsID>) -> JsResult<()> {
         let frontiers = ids_to_frontiers(frontiers)?;
@@ -1882,6 +1897,8 @@ impl LoroDoc {
         Ok(())
     }
 
+    /// Apply a diff batch to the document
+    #[wasm_bindgen(js_name = "applyDiff")]
     pub fn apply_diff(&self, diff: JsDiffBatch) -> JsResult<()> {
         let diff: JsValue = diff.into();
         let obj: js_sys::Object = diff.into();
@@ -1890,7 +1907,14 @@ impl LoroDoc {
             let entry = entry.unchecked_into::<js_sys::Array>();
             let k = entry.get(0);
             let v = entry.get(1);
-            diff.insert(k.as_string().unwrap(), js_diff_to_inner_diff(v));
+            diff.insert(
+                k.as_string()
+                    .ok_or("Expected string key")?
+                    .as_str()
+                    .try_into()
+                    .map_err(|_| "Failed to convert key")?,
+                js_diff_to_inner_diff(v)?,
+            );
         }
         self.0.apply_diff(DiffBatch(diff))?;
         Ok(())
