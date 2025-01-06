@@ -22,10 +22,10 @@ use loro_internal::{
     id::{Counter, PeerID, TreeID, ID},
     json::JsonSchema,
     loro::{CommitOptions, ExportMode},
-    loro_common::check_root_container_name,
+    loro_common::{check_root_container_name, IdSpanVector},
     undo::{UndoItemMeta, UndoOrRedo},
     version::Frontiers,
-    ContainerType, DiffEvent, FxHashMap, HandlerTrait, LoroDoc as LoroDocInner, LoroResult,
+    ContainerType, DiffEvent, FxHashMap, HandlerTrait, IdSpan, LoroDoc as LoroDocInner, LoroResult,
     LoroValue, MovableListHandler, Subscription, TreeNodeWithChildren, TreeParentId,
     UndoManager as InnerUndoManager, VersionVector as InternalVersionVector,
 };
@@ -210,6 +210,8 @@ extern "C" {
     pub type JsLoroRootShallowValue;
     #[wasm_bindgen(typescript_type = "{ peer: PeerID, counter: number, length: number }")]
     pub type JsIdSpan;
+    #[wasm_bindgen(typescript_type = "VersionVectorDiff")]
+    pub type JsVersionVectorDiff;
 }
 
 mod observer {
@@ -671,6 +673,90 @@ impl LoroDoc {
                 },
             )
             .map_err(|e| JsValue::from(e.to_string()))
+    }
+
+    /// Find the op id spans that between the `from` version and the `to` version.
+    ///
+    /// You can combine it with `exportJsonInIdSpan` to get the changes between two versions.
+    ///
+    /// You can use it to travel all the changes from `from` to `to`. `from` and `to` are frontiers,
+    /// and they can be concurrent to each other. You can use it to find all the changes related to an event:
+    ///
+    /// @example
+    /// ```ts
+    /// import { LoroDoc } from "loro-crdt";
+    ///
+    /// const docA = new LoroDoc();
+    /// docA.setPeerId("1");
+    /// const docB = new LoroDoc();
+    ///
+    /// docA.getText("text").update("Hello");
+    /// docA.commit();
+    /// const snapshot = docA.export({ mode: "snapshot" });
+    /// let done = false;
+    /// docB.subscribe(e => {
+    ///   const spans = docB.findIdSpansBetween(e.from, e.to);
+    ///   const changes = docB.exportJsonInIdSpan(spans.forward[0]);
+    ///   console.log(changes);
+    ///   // [{
+    ///   //   id: "0@1",
+    ///   //   timestamp: expect.any(Number),
+    ///   //   deps: [],
+    ///   //   lamport: 0,
+    ///   //   msg: undefined,
+    ///   //   ops: [{
+    ///   //     container: "cid:root-text:Text",
+    ///   //     counter: 0,
+    ///   //     content: {
+    ///   //       type: "insert",
+    ///   //       pos: 0,
+    ///   //       text: "Hello"
+    ///   //     }
+    ///   //   }]
+    ///   // }]
+    /// });
+    /// docB.import(snapshot);
+    /// ```
+    #[wasm_bindgen(js_name = "findIdSpansBetween")]
+    pub fn find_id_spans_between(
+        &self,
+        from: Vec<JsID>,
+        to: Vec<JsID>,
+    ) -> JsResult<JsVersionVectorDiff> {
+        fn id_span_to_js(v: IdSpan) -> JsValue {
+            let obj = Object::new();
+            js_sys::Reflect::set(&obj, &"peer".into(), &JsValue::from(v.peer.to_string())).unwrap();
+            js_sys::Reflect::set(&obj, &"counter".into(), &JsValue::from(v.counter.start)).unwrap();
+            js_sys::Reflect::set(
+                &obj,
+                &"length".into(),
+                &JsValue::from(v.counter.end - v.counter.start),
+            )
+            .unwrap();
+            obj.into()
+        }
+
+        fn id_span_vector_to_js(v: IdSpanVector) -> JsValue {
+            let arr = Array::new();
+            for (peer, span) in v.iter() {
+                let v = id_span_to_js(IdSpan {
+                    peer: *peer,
+                    counter: *span,
+                });
+                arr.push(&v);
+            }
+            arr.into()
+        }
+
+        let from = ids_to_frontiers(from)?;
+        let to = ids_to_frontiers(to)?;
+        let diff = self.0.find_id_spans_between(&from, &to);
+        let obj = Object::new();
+
+        js_sys::Reflect::set(&obj, &"retreat".into(), &id_span_vector_to_js(diff.retreat)).unwrap();
+        js_sys::Reflect::set(&obj, &"forward".into(), &id_span_vector_to_js(diff.forward)).unwrap();
+        let v: JsValue = obj.into();
+        Ok(v.into())
     }
 
     /// Checkout the `DocState` to a specific version.
@@ -1401,7 +1487,7 @@ impl LoroDoc {
     ///
     /// @example
     /// ```ts
-    /// import { LoroDoc, LoroText } from "loro-crdt";
+    /// import { LoroDoc, LoroText, LoroMap } from "loro-crdt";
     ///
     /// const doc = new LoroDoc();
     /// const list = doc.getList("list");
@@ -1841,6 +1927,18 @@ fn diff_event_to_js_value(event: DiffEvent, doc: &Arc<LoroDocInner>) -> JsValue 
     }
 
     Reflect::set(&obj, &"events".into(), &events.into()).unwrap();
+    Reflect::set(
+        &obj,
+        &"from".into(),
+        &frontiers_to_ids(&event.event_meta.from).into(),
+    )
+    .unwrap();
+    Reflect::set(
+        &obj,
+        &"to".into(),
+        &frontiers_to_ids(&event.event_meta.to).into(),
+    )
+    .unwrap();
     obj.into()
 }
 
@@ -2745,7 +2843,7 @@ impl LoroMap {
     ///
     /// @example
     /// ```ts
-    /// import { LoroDoc } from "loro-crdt";
+    /// import { LoroDoc, LoroText } from "loro-crdt";
     ///
     /// const doc = new LoroDoc();
     /// doc.setPeerId("1");
@@ -4997,7 +5095,7 @@ interface LoroDoc {
      * const doc = new LoroDoc();
      * const text = doc.getText("text");
      * text.insert(0, "Hello");
-     * text.mark(0, 2, {bold: true});
+     * text.mark({ start: 0, end: 2 }, "bold", true);
      * 
      * // Use delta to represent text
      * const json = doc.toJsonWithReplacer((key, value) => {
@@ -5088,6 +5186,27 @@ export type Value =
   | Uint8Array
   | Value[]
   | undefined;
+
+export type IdSpan = {
+    peer: PeerID,
+    counter: number,
+    length: number,
+}
+
+export type VersionVectorDiff = {
+    /**
+     * The spans that the `from` side needs to retreat to reach the `to` side
+     *
+     * These spans are included in the `from`, but not in the `to`
+     */
+    retreat: IdSpan[],
+    /**
+     * The spans that the `from` side needs to forward to reach the `to` side
+     *
+     * These spans are included in the `to`, but not in the `from`
+     */
+    forward: IdSpan[],
+}
 
 export type UndoConfig = {
     mergeInterval?: number,
@@ -5453,6 +5572,8 @@ export interface LoroEventBatch {
      */
     currentTarget?: ContainerID;
     events: LoroEvent[];
+    from: Frontiers;
+    to: Frontiers;
 }
 
 /**

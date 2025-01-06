@@ -15,6 +15,7 @@ import {
   Frontiers,
   encodeFrontiers,
   decodeFrontiers,
+  OpId,
 } from "../bundler/index";
 import { ContainerID } from "loro-wasm";
 
@@ -1022,4 +1023,131 @@ it("export json in id span #602", () => {
     const changes = doc.exportJsonInIdSpan({ peer: "2", counter: 0, length: 1 });
     expect(changes).toStrictEqual([]);
   }
+})
+
+it("find spans between versions", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId("1");
+
+  // Make some changes to create version history
+  doc.getText("text").insert(0, "Hello");
+  doc.commit({ message: "a" });
+  const f1 = doc.oplogFrontiers();
+
+  doc.getText("text").insert(5, " World");
+  doc.commit({ message: "b" });
+  const f2 = doc.oplogFrontiers();
+
+  // Test finding spans between frontiers (f1 -> f2)
+  let diff = doc.findIdSpansBetween(f1, f2);
+  expect(diff.retreat).toHaveLength(0); // No changes needed to go from f2 to f1
+  expect(diff.forward).toHaveLength(1); // One change needed to go from f1 to f2
+  expect(diff.forward[0]).toEqual({
+    peer: "1",
+    counter: 5,
+    length: 6,
+  });
+
+  // Test empty frontiers
+  const emptyFrontiers: OpId[] = [];
+  diff = doc.findIdSpansBetween(emptyFrontiers, f2);
+  expect(diff.retreat).toHaveLength(0); // No changes needed to go from f2 to empty
+  expect(diff.forward).toHaveLength(1); // One change needed to go from empty to f2
+  expect(diff.forward[0]).toEqual({
+    peer: "1",
+    counter: 0,
+    length: 11,
+  });
+
+  // Test with multiple peers
+  const doc2 = new LoroDoc();
+  doc2.setPeerId("2");
+  doc2.getText("text").insert(0, "Hi");
+  doc2.commit();
+  doc.import(doc2.export({ mode: "snapshot" }));
+  const f3 = doc.oplogFrontiers();
+
+  // Test finding spans between f2 and f3
+  diff = doc.findIdSpansBetween(f2, f3);
+  expect(diff.retreat).toHaveLength(0); // No changes needed to go from f3 to f2
+  expect(diff.forward).toHaveLength(1); // One change needed to go from f2 to f3
+  expect(diff.forward[0]).toEqual({
+    peer: "2",
+    counter: 0,
+    length: 2,
+  });
+
+  // Test spans in both directions between f1 and f3
+  diff = doc.findIdSpansBetween(f1, f3);
+  expect(diff.retreat).toHaveLength(0); // No changes needed to go from f3 to f1
+  expect(diff.forward).toHaveLength(2); // Two changes needed to go from f1 to f3
+  const forwardSpans = new Map(diff.forward.map(span => [span.peer, span]));
+  expect(forwardSpans.get("1")).toEqual({
+    peer: "1",
+    counter: 5,
+    length: 6,
+  });
+  expect(forwardSpans.get("2")).toEqual({
+    peer: "2",
+    counter: 0,
+    length: 2,
+  });
+
+  // Test spans in reverse direction (f3 -> f1)
+  diff = doc.findIdSpansBetween(f3, f1);
+  expect(diff.forward).toHaveLength(0); // No changes needed to go from f3 to f1
+  expect(diff.retreat).toHaveLength(2); // Two changes needed to go from f1 to f3
+  const retreatSpans = new Map(diff.retreat.map(span => [span.peer, span]));
+  expect(retreatSpans.get("1")).toEqual({
+    peer: "1",
+    counter: 5,
+    length: 6,
+  });
+  expect(retreatSpans.get("2")).toEqual({
+    peer: "2",
+    counter: 0,
+    length: 2,
+  });
+});
+
+it("can travel changes from event", async () => {
+  const docA = new LoroDoc();
+  docA.setPeerId("1");
+  const docB = new LoroDoc();
+
+  docA.getText("text").update("Hello");
+  docA.commit();
+  const snapshot = docA.export({ mode: "snapshot" });
+  let done = false;
+  docB.subscribe(e => {
+    const spans = docB.findIdSpansBetween(e.from, e.to);
+    expect(spans.retreat).toHaveLength(0);
+    expect(spans.forward).toHaveLength(1);
+    expect(spans.forward[0]).toEqual({
+      peer: "1",
+      counter: 0,
+      length: 5,
+    });
+    const changes = docB.exportJsonInIdSpan(spans.forward[0]);
+    expect(changes).toStrictEqual([{
+      id: "0@1",
+      timestamp: expect.any(Number),
+      deps: [],
+      lamport: 0,
+      msg: undefined,
+      ops: [{
+        container: "cid:root-text:Text",
+        counter: 0,
+        content: {
+          type: "insert",
+          pos: 0,
+          text: "Hello"
+        }
+      }]
+    }]);
+    done = true;
+  });
+  docB.import(snapshot);
+  await Promise.resolve();
+  expect(done).toBe(true);
 })
