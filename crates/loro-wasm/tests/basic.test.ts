@@ -1161,6 +1161,40 @@ it("can revert to frontiers", () => {
   expect(doc.getText("text").toString()).toBe("He");
 })
 
+it("can revert with child container recreation", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId(1);
+  const list = doc.getList("list");
+  list.insert(0, "item1");
+  list.insert(1, "item2");
+  const text = list.insertContainer(2, new LoroText());
+  text.insert(0, "Hello");
+  const v = doc.frontiers();
+  text.delete(0, 5);
+  list.clear();
+  const vEmpty = doc.frontiers();
+  doc.commit();
+  expect(doc.toJSON()).toStrictEqual({
+    list: []
+  });
+  for (let i = 0; i < 10; i++) {
+    doc.revertTo(v);
+    expect(doc.toJSON()).toStrictEqual({
+      list: [
+        "item1",
+        "item2",
+        "Hello"
+      ],
+    });
+    doc.revertTo(vEmpty);
+    expect(doc.toJSON()).toStrictEqual({
+      list: []
+    });
+  }
+  expect(doc.frontiers()).toStrictEqual([{ peer: "1", counter: 125 }])
+  expect(doc.export({ mode: "snapshot" }).length).toBe(570)
+})
+
 it("can diff two versions", () => {
   const doc = new LoroDoc();
   doc.setPeerId("1");
