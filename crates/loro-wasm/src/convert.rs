@@ -478,16 +478,16 @@ pub(crate) fn js_value_to_text_diff(js: &JsValue) -> Result<TextDiff, JsValue> {
             .dyn_ref::<Object>()
             .ok_or_else(|| JsValue::from_str("Expected an object"))?;
 
-        if let Some(retain) = Reflect::get(&obj, &JsValue::from_str("retain"))?.as_f64() {
+        if let Some(retain) = Reflect::get(obj, &JsValue::from_str("retain"))?.as_f64() {
             let len = retain as usize;
-            let js_meta = Reflect::get(&obj, &JsValue::from_str("attributes"))?;
+            let js_meta = Reflect::get(obj, &JsValue::from_str("attributes"))?;
             let meta = TextMeta::try_from(&js_meta).unwrap_or_default();
             builder = builder.retain(len, meta);
-        } else if let Some(insert) = Reflect::get(&obj, &JsValue::from_str("insert"))?.as_string() {
-            let js_meta = Reflect::get(&obj, &JsValue::from_str("attributes"))?;
+        } else if let Some(insert) = Reflect::get(obj, &JsValue::from_str("insert"))?.as_string() {
+            let js_meta = Reflect::get(obj, &JsValue::from_str("attributes"))?;
             let meta = TextMeta::try_from(&js_meta).unwrap_or_default();
             builder = builder.insert(StringSlice::from(insert), meta);
-        } else if let Some(delete) = Reflect::get(&obj, &JsValue::from_str("delete"))?.as_f64() {
+        } else if let Some(delete) = Reflect::get(obj, &JsValue::from_str("delete"))?.as_f64() {
             let len = delete as usize;
             builder = builder.delete(len);
         } else {
@@ -504,7 +504,7 @@ pub(crate) fn js_to_map_delta(js: &JsValue) -> Result<ResolvedMapDelta, JsValue>
         .ok_or_else(|| JsValue::from_str("Expected an object"))?;
     let mut delta = ResolvedMapDelta::new();
 
-    let entries = Object::entries(&obj);
+    let entries = Object::entries(obj);
     for i in 0..entries.length() {
         let entry = entries.get(i);
         let entry_arr = entry.dyn_ref::<Array>().unwrap();
@@ -513,7 +513,7 @@ pub(crate) fn js_to_map_delta(js: &JsValue) -> Result<ResolvedMapDelta, JsValue>
 
         if value.is_object() && !value.is_null() {
             let obj = value.dyn_ref::<Object>().unwrap();
-            if let Ok(kind) = Reflect::get(&obj, &JsValue::from_str("kind")) {
+            if let Ok(kind) = Reflect::get(obj, &JsValue::from_str("kind")) {
                 if kind.is_function() {
                     let container = js_to_container(value.clone().unchecked_into())?;
                     delta = delta.with_entry(
@@ -551,13 +551,13 @@ pub(crate) fn js_value_to_list_diff(js: &JsValue) -> Result<ListDiff, JsValue> {
             .dyn_ref::<Object>()
             .ok_or_else(|| JsValue::from_str("Expected an object"))?;
 
-        if let Some(retain) = Reflect::get(&obj, &JsValue::from_str("retain"))?.as_f64() {
+        if let Some(retain) = Reflect::get(obj, &JsValue::from_str("retain"))?.as_f64() {
             let len = retain as usize;
             builder = builder.retain(len, ListDeltaMeta::default());
-        } else if let Some(delete) = Reflect::get(&obj, &JsValue::from_str("delete"))?.as_f64() {
+        } else if let Some(delete) = Reflect::get(obj, &JsValue::from_str("delete"))?.as_f64() {
             let len = delete as usize;
             builder = builder.delete(len);
-        } else if let Ok(insert) = Reflect::get(&obj, &JsValue::from_str("insert")) {
+        } else if let Ok(insert) = Reflect::get(obj, &JsValue::from_str("insert")) {
             let insert_arr = insert
                 .dyn_ref::<Array>()
                 .ok_or_else(|| JsValue::from_str("insert must be an array"))?;
@@ -567,7 +567,7 @@ pub(crate) fn js_value_to_list_diff(js: &JsValue) -> Result<ListDiff, JsValue> {
                 let value = insert_arr.get(j);
                 if value.is_object() && !value.is_null() {
                     let obj = value.dyn_ref::<Object>().unwrap();
-                    if let Ok(kind) = Reflect::get(&obj, &JsValue::from_str("kind")) {
+                    if let Ok(kind) = Reflect::get(obj, &JsValue::from_str("kind")) {
                         if kind.is_function() {
                             let container = js_to_container(value.clone().unchecked_into())?;
                             values
@@ -579,7 +579,7 @@ pub(crate) fn js_value_to_list_diff(js: &JsValue) -> Result<ListDiff, JsValue> {
                 }
                 values
                     .push(ValueOrHandler::Value(js_value_to_loro_value(&value)))
-                    .unwrap();
+                    .unwrap()
             }
 
             builder = builder.insert(values, ListDeltaMeta::default());
