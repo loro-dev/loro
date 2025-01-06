@@ -2699,16 +2699,20 @@ impl UndoManager {
 
     /// Set the listener for push events.
     /// The listener will be called when a new undo/redo item is pushed into the stack.
-    pub fn set_on_push(&mut self, on_push: OnPush) {
-        self.0.set_on_push(Some(Box::new(move |u, c, e| {
-            on_push(u, c, e.map(|x| x.into()))
-        })))
+    pub fn set_on_push(&mut self, on_push: Option<OnPush>) {
+        if let Some(on_push) = on_push {
+            self.0.set_on_push(Some(Box::new(move |u, c, e| {
+                on_push(u, c, e.map(|x| x.into()))
+            })));
+        } else {
+            self.0.set_on_push(None);
+        }
     }
 
     /// Set the listener for pop events.
     /// The listener will be called when an undo/redo item is popped from the stack.
-    pub fn set_on_pop(&mut self, on_pop: OnPop) {
-        self.0.set_on_pop(Some(on_pop));
+    pub fn set_on_pop(&mut self, on_pop: Option<OnPop>) {
+        self.0.set_on_pop(on_pop);
     }
 
     /// Clear the undo stack and the redo stack

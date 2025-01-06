@@ -55,21 +55,32 @@ impl UndoManager {
 
     /// Set the listener for push events.
     /// The listener will be called when a new undo/redo item is pushed into the stack.
-    pub fn set_on_push(&self, on_push: Arc<dyn OnPush>) {
-        self.0
-            .write()
-            .unwrap()
-            .set_on_push(Box::new(move |u, c, e| {
-                loro::UndoItemMeta::from(on_push.on_push(u, c, e.map(|x| x.into())))
-            }));
+    pub fn set_on_push(&self, on_push: Option<Arc<dyn OnPush>>) {
+        if let Some(on_push) = on_push {
+            self.0
+                .write()
+                .unwrap()
+                .set_on_push(Some(Box::new(move |u, c, e| {
+                    loro::UndoItemMeta::from(on_push.on_push(u, c, e.map(|x| x.into())))
+                })));
+        } else {
+            self.0.write().unwrap().set_on_push(None);
+        }
     }
 
     /// Set the listener for pop events.
     /// The listener will be called when an undo/redo item is popped from the stack.
-    pub fn set_on_pop(&self, on_pop: Arc<dyn OnPop>) {
-        self.0.write().unwrap().set_on_pop(Box::new(move |u, c, m| {
-            on_pop.on_pop(u, c, UndoItemMeta::from(m))
-        }))
+    pub fn set_on_pop(&self, on_pop: Option<Arc<dyn OnPop>>) {
+        if let Some(on_pop) = on_pop {
+            self.0
+                .write()
+                .unwrap()
+                .set_on_pop(Some(Box::new(move |u, c, m| {
+                    on_pop.on_pop(u, c, UndoItemMeta::from(m))
+                })));
+        } else {
+            self.0.write().unwrap().set_on_pop(None);
+        }
     }
 }
 
