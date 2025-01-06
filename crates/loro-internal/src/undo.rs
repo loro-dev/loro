@@ -19,8 +19,11 @@ use crate::{
     ContainerDiff, DiffEvent, DocDiff, LoroDoc, Subscription,
 };
 
+/// A batch of diffs.
+///
+/// You can use `loroDoc.apply_diff(diff)` to apply the diff to the document.
 #[derive(Debug, Clone, Default)]
-pub struct DiffBatch(pub(crate) FxHashMap<ContainerID, Diff>);
+pub struct DiffBatch(pub FxHashMap<ContainerID, Diff>);
 
 impl DiffBatch {
     pub fn new(diff: Vec<DocDiff>) -> Self {

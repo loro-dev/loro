@@ -831,7 +831,7 @@ impl LoroDoc {
         // Try applying the diff, but ignore the error if it happens.
         // MovableList's undo behavior is too tricky to handle in a collaborative env
         // so in edge cases this may be an Error
-        if let Err(e) = self.apply_diff(diff, container_remap, true) {
+        if let Err(e) = self._apply_diff(diff, container_remap, true) {
             warn!("Undo Failed {:?}", e);
         }
 
@@ -841,11 +841,17 @@ impl LoroDoc {
         })
     }
 
-    /// Calculate the diff between the current state and the target state, and apply the diff to the current state.
-    pub fn diff_and_apply(&self, target: &Frontiers) -> LoroResult<()> {
+    /// Generate a series of local operations that can revert the current doc to the target
+    /// version.
+    ///
+    /// Internally, it will calculate the diff between the current state and the target state,
+    /// and apply the diff to the current state.
+    pub fn revert_to(&self, target: &Frontiers) -> LoroResult<()> {
+        // TODO: test when the doc is readonly
+        // TODO: test when the doc is detached but enabled editing
         let f = self.state_frontiers();
         let diff = self.diff(&f, target)?;
-        self.apply_diff(diff, &mut Default::default(), false)
+        self._apply_diff(diff, &mut Default::default(), false)
     }
 
     /// Calculate the diff between two versions so that apply diff on a will make the state same as b.
@@ -892,6 +898,12 @@ impl LoroDoc {
     }
 
     /// Apply a diff to the current state.
+    #[inline(always)]
+    pub fn apply_diff(&self, diff: DiffBatch) -> LoroResult<()> {
+        self._apply_diff(diff, &mut Default::default(), true)
+    }
+
+    /// Apply a diff to the current state.
     ///
     /// This method will not recreate containers with the same [ContainerID]s.
     /// While this can be convenient in certain cases, it can break several internal invariants:
@@ -902,7 +914,7 @@ impl LoroDoc {
     ///
     /// However, the diff may contain operations that depend on container IDs.
     /// Therefore, users need to provide a `container_remap` to record and retrieve the container ID remapping.
-    pub fn apply_diff(
+    pub(crate) fn _apply_diff(
         &self,
         mut diff: DiffBatch,
         container_remap: &mut FxHashMap<ContainerID, ContainerID>,

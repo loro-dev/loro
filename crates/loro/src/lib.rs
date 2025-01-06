@@ -11,6 +11,7 @@ use loro_internal::cursor::Side;
 pub use loro_internal::encoding::ImportStatus;
 use loro_internal::handler::HandlerTrait;
 pub use loro_internal::loro::ChangeTravelError;
+pub use loro_internal::undo::DiffBatch;
 use loro_internal::undo::{OnPop, OnPush};
 use loro_internal::version::shrink_frontiers;
 pub use loro_internal::version::ImVersionVector;
@@ -936,6 +937,30 @@ impl LoroDoc {
     #[inline]
     pub fn find_id_spans_between(&self, from: &Frontiers, to: &Frontiers) -> VersionVectorDiff {
         self.doc.find_id_spans_between(from, to)
+    }
+
+    /// Revert the current document state back to the target version
+    ///
+    /// Internally, it will generate a series of local operations that can revert the
+    /// current doc to the target version. It will calculate the diff between the current
+    /// state and the target state, and apply the diff to the current state.
+    #[inline]
+    pub fn revert_to(&self, version: &Frontiers) -> LoroResult<()> {
+        self.doc.revert_to(version)
+    }
+
+    /// Apply a diff to the current document state.
+    ///
+    /// Internally, it will apply the diff to the current state.
+    #[inline]
+    pub fn apply_diff(&self, diff: DiffBatch) -> LoroResult<()> {
+        self.doc.apply_diff(diff)
+    }
+
+    /// Calculate the diff between two versions
+    #[inline]
+    pub fn diff(&self, a: &Frontiers, b: &Frontiers) -> LoroResult<DiffBatch> {
+        self.doc.diff(a, b)
     }
 }
 
