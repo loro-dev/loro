@@ -11,7 +11,7 @@ use loro_internal::cursor::Side;
 pub use loro_internal::encoding::ImportStatus;
 use loro_internal::handler::HandlerTrait;
 pub use loro_internal::loro::ChangeTravelError;
-use loro_internal::undo::{OnPop, OnPush};
+pub use loro_internal::undo::{OnPop, UndoItemMeta, UndoOrRedo};
 use loro_internal::version::shrink_frontiers;
 pub use loro_internal::version::ImVersionVector;
 use loro_internal::DocState;
@@ -2699,14 +2699,16 @@ impl UndoManager {
 
     /// Set the listener for push events.
     /// The listener will be called when a new undo/redo item is pushed into the stack.
-    pub fn set_on_push(&mut self, on_push: Option<OnPush>) {
-        self.0.set_on_push(on_push)
+    pub fn set_on_push(&mut self, on_push: OnPush) {
+        self.0.set_on_push(Some(Box::new(move |u, c, e| {
+            on_push(u, c, e.map(|x| x.into()))
+        })))
     }
 
     /// Set the listener for pop events.
     /// The listener will be called when an undo/redo item is popped from the stack.
-    pub fn set_on_pop(&mut self, on_pop: Option<OnPop>) {
-        self.0.set_on_pop(on_pop)
+    pub fn set_on_pop(&mut self, on_pop: OnPop) {
+        self.0.set_on_pop(Some(on_pop));
     }
 
     /// Clear the undo stack and the redo stack
@@ -2714,3 +2716,7 @@ impl UndoManager {
         self.0.clear();
     }
 }
+/// When a undo/redo item is pushed, the undo manager will call the on_push callback to get the meta data of the undo item.
+/// The returned cursors will be recorded for a new pushed undo item.
+pub type OnPush =
+    Box<dyn for<'a> Fn(UndoOrRedo, CounterSpan, Option<DiffEvent>) -> UndoItemMeta + Send + Sync>;
