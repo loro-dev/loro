@@ -875,26 +875,25 @@ impl LoroDoc {
         }
 
         self.commit_then_stop();
-
-        let ans = {
-            let was_detached = self.is_detached();
-            let old_frontiers = self.state_frontiers();
-            self.state.try_lock().unwrap().stop_and_clear_recording();
-            self.checkout_without_emitting(a, true).unwrap();
-            self.state.try_lock().unwrap().start_recording();
-            self.checkout_without_emitting(b, true).unwrap();
+        let was_detached = self.is_detached();
+        let old_frontiers = self.state_frontiers();
+        self.state.try_lock().unwrap().stop_and_clear_recording();
+        self.checkout_without_emitting(a, true).unwrap();
+        self.state.try_lock().unwrap().start_recording();
+        self.checkout_without_emitting(b, true).unwrap();
+        let e = {
             let mut state = self.state.try_lock().unwrap();
             let e = state.take_events();
             state.stop_and_clear_recording();
-            self.checkout_without_emitting(&old_frontiers, false)
-                .unwrap();
-            if !was_detached {
-                self.set_detached(false);
-            }
-            DiffBatch::new(e)
+            e
         };
-
-        Ok(ans)
+        self.checkout_without_emitting(&old_frontiers, false)
+            .unwrap();
+        if !was_detached {
+            self.set_detached(false);
+            self.renew_txn_if_auto_commit();
+        }
+        Ok(DiffBatch::new(e))
     }
 
     /// Apply a diff to the current state.

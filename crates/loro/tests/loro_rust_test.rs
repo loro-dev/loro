@@ -2740,3 +2740,29 @@ fn test_find_spans_between() -> LoroResult<()> {
 
     Ok(())
 }
+
+#[test]
+fn revert_to() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    doc.get_text("text").insert(0, "Hello")?;
+    doc.commit();
+    let f1 = doc.state_frontiers();
+    doc.get_text("text").insert(5, " World")?;
+    doc.commit();
+    let f2 = doc.state_frontiers();
+    doc.revert_to(&f1)?;
+    assert_eq!(doc.get_text("text").to_string(), "Hello");
+    for _ in 0..10 {
+        doc.get_text("text").insert(0, "12345")?;
+        doc.commit();
+    }
+    doc.get_text("text").delete(0, 50)?;
+    doc.commit();
+    let f3_counter = doc.state_frontiers().as_single().unwrap().counter;
+    doc.revert_to(&f2)?;
+    let f4_counter = doc.state_frontiers().as_single().unwrap().counter;
+    assert_eq!(f4_counter - f3_counter, 6); // Only need to redo the insertion of " World", other 50 operations should be ignored
+    assert_eq!(doc.get_text("text").to_string(), "Hello World");
+    Ok(())
+}
