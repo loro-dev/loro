@@ -51,11 +51,12 @@ impl DiffBatch {
             return;
         }
 
-        for (idx, diff) in other.cid_to_events.iter() {
-            if let Some(this_diff) = self.cid_to_events.get_mut(idx) {
+        for (id, diff) in other.iter() {
+            if let Some(this_diff) = self.cid_to_events.get_mut(id) {
                 this_diff.compose_ref(diff);
             } else {
-                self.cid_to_events.insert(idx.clone(), diff.clone());
+                self.cid_to_events.insert(id.clone(), diff.clone());
+                self.order.push(id.clone());
             }
         }
     }
@@ -74,6 +75,7 @@ impl DiffBatch {
 
     pub fn clear(&mut self) {
         self.cid_to_events.clear();
+        self.order.clear();
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&ContainerID, &Diff)> + '_ {
@@ -351,6 +353,7 @@ impl Stack {
                 remote_diff
                     .cid_to_events
                     .insert(e.id.clone(), e.diff.clone());
+                remote_diff.order.push(e.id.clone());
             }
         }
     }
