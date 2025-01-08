@@ -51,7 +51,7 @@ let text = doc.get_text("text");
 text.insert(0, "Hello world!").unwrap();
 text.mark(0..5, "bold", true).unwrap();
 assert_eq!(
-    text.to_delta().to_json_value(),
+    text.get_richtext_value().to_json_value(),
     json!([
         { "insert": "Hello", "attributes": {"bold": true} },
         { "insert": " world!" },
@@ -59,7 +59,7 @@ assert_eq!(
 );
 text.unmark(3..5, "bold").unwrap();
 assert_eq!(
-    text.to_delta().to_json_value(),
+    text.get_richtext_value().to_json_value(),
     json!([
           { "insert": "Hel", "attributes": {"bold": true} },
           { "insert": "lo world!" },
@@ -86,7 +86,7 @@ text_b
     .unwrap();
 doc.import(&doc_b.export_from(&doc.oplog_vv())).unwrap();
 assert_eq!(
-    text.to_delta().to_json_value(),
+    text.get_richtext_value().to_json_value(),
     json!([
         { "insert": "Hello", "attributes": {"bold": true} },
         { "insert": " world!" },

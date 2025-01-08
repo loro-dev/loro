@@ -25,6 +25,7 @@ use loro_internal::{
 };
 use std::cmp::Ordering;
 use std::ops::ControlFlow;
+use std::ops::Deref;
 use std::ops::Range;
 use std::sync::Arc;
 use tracing::info;
@@ -1632,7 +1633,62 @@ impl LoroText {
     ///
     /// # Example
     /// ```
-    /// # use loro::{LoroDoc, ToJson, ExpandType};
+    /// use loro::{LoroDoc, ToJson, ExpandType, TextDelta};
+    /// use serde_json::json;
+    /// use fxhash::FxHashMap;
+    ///
+    /// let doc = LoroDoc::new();
+    /// let text = doc.get_text("text");
+    /// text.insert(0, "Hello world!").unwrap();
+    /// text.mark(0..5, "bold", true).unwrap();
+    /// assert_eq!(
+    ///     text.to_delta(),
+    ///     vec![
+    ///         TextDelta::Insert {
+    ///             insert: "Hello".to_string(),
+    ///             attributes: Some(FxHashMap::from_iter([("bold".to_string(), true.into())])),
+    ///         },
+    ///         TextDelta::Insert {
+    ///             insert: " world!".to_string(),
+    ///             attributes: None,
+    ///         },
+    ///     ]
+    /// );
+    /// text.unmark(3..5, "bold").unwrap();
+    /// assert_eq!(
+    ///     text.to_delta(),
+    ///     vec![
+    ///         TextDelta::Insert {
+    ///             insert: "Hel".to_string(),
+    ///             attributes: Some(FxHashMap::from_iter([("bold".to_string(), true.into())])),
+    ///         },
+    ///         TextDelta::Insert {
+    ///             insert: "lo world!".to_string(),
+    ///             attributes: None,
+    ///         },
+    ///     ]
+    /// );
+    /// ```
+    pub fn to_delta(&self) -> Vec<TextDelta> {
+        let delta = self.handler.get_richtext_value().into_list().unwrap();
+        delta
+            .iter()
+            .map(|x| {
+                let map = x.as_map().unwrap();
+                let insert = map.get("insert").unwrap().as_string().unwrap().to_string();
+                let attributes = map
+                    .get("attributes")
+                    .map(|v| v.as_map().unwrap().deref().clone());
+                TextDelta::Insert { insert, attributes }
+            })
+            .collect()
+    }
+
+    /// Get the rich text value in [Delta](https://quilljs.com/docs/delta/) format.
+    ///
+    /// # Example
+    /// ```
+    /// # use loro::{LoroDoc, ToJson, ExpandType, TextDelta};
     /// # use serde_json::json;
     ///
     /// let doc = LoroDoc::new();
@@ -1640,7 +1696,7 @@ impl LoroText {
     /// text.insert(0, "Hello world!").unwrap();
     /// text.mark(0..5, "bold", true).unwrap();
     /// assert_eq!(
-    ///     text.to_delta().to_json_value(),
+    ///     text.get_richtext_value().to_json_value(),
     ///     json!([
     ///         { "insert": "Hello", "attributes": {"bold": true} },
     ///         { "insert": " world!" },
@@ -1648,14 +1704,14 @@ impl LoroText {
     /// );
     /// text.unmark(3..5, "bold").unwrap();
     /// assert_eq!(
-    ///     text.to_delta().to_json_value(),
+    ///     text.get_richtext_value().to_json_value(),
     ///     json!([
     ///         { "insert": "Hel", "attributes": {"bold": true} },
     ///         { "insert": "lo world!" },
     ///    ])
     /// );
     /// ```
-    pub fn to_delta(&self) -> LoroValue {
+    pub fn get_richtext_value(&self) -> LoroValue {
         self.handler.get_richtext_value()
     }
 

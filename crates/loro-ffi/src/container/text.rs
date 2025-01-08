@@ -162,6 +162,50 @@ impl LoroText {
     ///
     /// # Example
     /// ```
+    /// use loro::{LoroDoc, ToJson, ExpandType, TextDelta};
+    /// use serde_json::json;
+    /// use std::collections::HashMap;
+    ///
+    /// let doc = LoroDoc::new();
+    /// let text = doc.get_text("text");
+    /// text.insert(0, "Hello world!").unwrap();
+    /// text.mark(0..5, "bold", true).unwrap();
+    /// assert_eq!(
+    ///     text.to_delta(),
+    ///     vec![
+    ///         TextDelta::Insert {
+    ///             insert: "Hello".to_string(),
+    ///             attributes: Some(HashMap::from_iter([("bold".to_string(), true.into())])),
+    ///         },
+    ///         TextDelta::Insert {
+    ///             insert: " world!".to_string(),
+    ///             attributes: None,
+    ///         },
+    ///     ]
+    /// );
+    /// text.unmark(3..5, "bold").unwrap();
+    /// assert_eq!(
+    ///     text.to_delta(),
+    ///     vec![
+    ///         TextDelta::Insert {
+    ///             insert: "Hel".to_string(),
+    ///             attributes: Some(HashMap::from_iter([("bold".to_string(), true.into())])),
+    ///         },
+    ///         TextDelta::Insert {
+    ///             insert: "lo world!".to_string(),
+    ///             attributes: None,
+    ///         },
+    ///     ]
+    /// );
+    /// ```
+    pub fn to_delta(&self) -> Vec<TextDelta> {
+        self.text.to_delta().into_iter().map(|d| d.into()).collect()
+    }
+
+    /// Get the text in [Delta](https://quilljs.com/docs/delta/) format.
+    ///
+    /// # Example
+    /// ```
     /// # use loro::{LoroDoc, ToJson, ExpandType};
     /// # use serde_json::json;
     ///
@@ -170,7 +214,7 @@ impl LoroText {
     /// text.insert(0, "Hello world!").unwrap();
     /// text.mark(0..5, "bold", true).unwrap();
     /// assert_eq!(
-    ///     text.to_delta().to_json_value(),
+    ///     text.get_richtext_value().to_json_value(),
     ///     json!([
     ///         { "insert": "Hello", "attributes": {"bold": true} },
     ///         { "insert": " world!" },
@@ -178,15 +222,15 @@ impl LoroText {
     /// );
     /// text.unmark(3..5, "bold").unwrap();
     /// assert_eq!(
-    ///     text.to_delta().to_json_value(),
+    ///     text.get_richtext_value().to_json_value(),
     ///     json!([
     ///         { "insert": "Hel", "attributes": {"bold": true} },
     ///         { "insert": "lo world!" },
     ///    ])
     /// );
     /// ```
-    pub fn to_delta(&self) -> LoroValue {
-        self.text.to_delta().into()
+    pub fn get_richtext_value(&self) -> LoroValue {
+        self.text.get_richtext_value().into()
     }
 
     /// Get the cursor at the given position.

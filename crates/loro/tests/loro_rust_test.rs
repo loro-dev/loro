@@ -321,10 +321,10 @@ fn travel_back_should_remove_styles() {
     });
     doc.checkout(&f).unwrap();
     assert_eq!(
-        text.to_delta().as_list().unwrap().len(),
+        text.get_richtext_value().as_list().unwrap().len(),
         1,
         "should remove the bold style but got {:?}",
-        text.to_delta()
+        text.get_richtext_value()
     );
     assert_eq!(doc.state_frontiers(), f);
     doc.check_state_correctness_slow();
@@ -427,7 +427,7 @@ fn richtext_test() {
     text.insert(0, "Hello world!").unwrap();
     text.mark(0..5, "bold", true).unwrap();
     assert_eq!(
-        text.to_delta().to_json_value(),
+        text.get_richtext_value().to_json_value(),
         json!([
             { "insert": "Hello", "attributes": {"bold": true} },
             { "insert": " world!" },
@@ -435,7 +435,7 @@ fn richtext_test() {
     );
     text.unmark(3..5, "bold").unwrap();
     assert_eq!(
-        text.to_delta().to_json_value(),
+        text.get_richtext_value().to_json_value(),
         json!([
              { "insert": "Hel", "attributes": {"bold": true} },
              { "insert": "lo world!" },
@@ -459,7 +459,7 @@ fn sync() {
     text_b.mark(0..5, "bold", true).unwrap();
     doc.import(&doc_b.export_from(&doc.oplog_vv())).unwrap();
     assert_eq!(
-        text.to_delta().to_json_value(),
+        text.get_richtext_value().to_json_value(),
         json!([
             { "insert": "Hello", "attributes": {"bold": true} },
             { "insert": " world!" },
@@ -1637,7 +1637,7 @@ fn richtext_map_value() {
     let text = doc.get_text("text");
     text.insert(0, "Hello").unwrap();
     text.mark(0..2, "comment", loro_value!({"b": {}})).unwrap();
-    let delta = text.to_delta();
+    let delta = text.get_richtext_value();
     assert_eq!(
         delta,
         loro_value!([
