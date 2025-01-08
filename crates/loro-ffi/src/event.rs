@@ -109,6 +109,32 @@ impl From<TextDelta> for loro_internal::handler::TextDelta {
     }
 }
 
+impl From<loro::TextDelta> for TextDelta {
+    fn from(value: loro::TextDelta) -> Self {
+        match value {
+            loro::TextDelta::Retain { retain, attributes } => TextDelta::Retain {
+                retain: retain as u32,
+                attributes: attributes.as_ref().map(|a| {
+                    a.iter()
+                        .map(|(k, v)| (k.to_string(), v.clone().into()))
+                        .collect()
+                }),
+            },
+            loro::TextDelta::Insert { insert, attributes } => TextDelta::Insert {
+                insert,
+                attributes: attributes.as_ref().map(|a| {
+                    a.iter()
+                        .map(|(k, v)| (k.to_string(), v.clone().into()))
+                        .collect()
+                }),
+            },
+            loro::TextDelta::Delete { delete } => TextDelta::Delete {
+                delete: delete as u32,
+            },
+        }
+    }
+}
+
 pub enum ListDiffItem {
     /// Insert a new element into the list.
     Insert {
