@@ -411,9 +411,9 @@ impl LoroDoc {
         self.0.set_record_timestamp(auto_record);
     }
 
-    /// If two continuous local changes are within the interval, they will be merged into one change.
+    /// If two continuous local changes are within the interval(**in seconds**), they will be merged into one change.
     ///
-    /// The default value is 1_000_000, the default unit is seconds.
+    /// The default value is 1_000 seconds
     #[wasm_bindgen(js_name = "setChangeMergeInterval")]
     pub fn set_change_merge_interval(&self, interval: f64) {
         self.0.set_change_merge_interval(interval as i64);
@@ -4552,6 +4552,7 @@ impl UndoManager {
     }
 
     /// Set the merge interval (in ms).
+    ///
     /// If the interval is set to 0, the undo steps will not be merged.
     /// Otherwise, the undo steps will be merged if the interval between the two steps is less than the given interval.
     pub fn setMergeInterval(&mut self, interval: f64) {

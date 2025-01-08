@@ -215,7 +215,7 @@ impl LoroDoc {
         self.doc.is_detached_editing_enabled()
     }
 
-    /// Set the interval of mergeable changes, in seconds.
+    /// Set the interval of mergeable changes, **in seconds**.
     ///
     /// If two continuous local changes are within the interval, they will be merged into one change.
     /// The default value is 1000 seconds.

@@ -129,7 +129,7 @@ impl LoroDoc {
         self.config.set_record_timestamp(record);
     }
 
-    /// Set the interval of mergeable changes, in milliseconds.
+    /// Set the interval of mergeable changes, in seconds.
     ///
     /// If two continuous local changes are within the interval, they will be merged into one change.
     /// The default value is 1000 seconds.

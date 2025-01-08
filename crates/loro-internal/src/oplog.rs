@@ -70,7 +70,7 @@ impl OpLog {
     pub(crate) fn new() -> Self {
         let arena = SharedArena::new();
         let cfg = Configure::default();
-        let change_store = ChangeStore::new_mem(&arena, cfg.merge_interval.clone());
+        let change_store = ChangeStore::new_mem(&arena, cfg.merge_interval_in_s.clone());
         Self {
             history_cache: Mutex::new(ContainerHistoryCache::new(change_store.clone(), None)),
             dag: AppDag::new(change_store.clone()),

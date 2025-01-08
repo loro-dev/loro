@@ -1151,3 +1151,21 @@ it("can travel changes from event", async () => {
   await Promise.resolve();
   expect(done).toBe(true);
 })
+
+
+it("merge interval", async () => {
+  const doc = new LoroDoc();
+  doc.setPeerId("1");
+  doc.setRecordTimestamp(true);
+  doc.setChangeMergeInterval(2);
+  doc.getText("text").update("Hello");
+  doc.commit();
+  await new Promise(resolve => setTimeout(resolve, 1000));
+  doc.getText("text").update("Hello world!");
+  doc.commit();
+  await new Promise(resolve => setTimeout(resolve, 2000));
+  doc.getText("text").update("Hello ABC!");
+  doc.commit();
+  const updates = doc.exportJsonUpdates();
+  expect(updates.changes.length).toBe(2);
+})
