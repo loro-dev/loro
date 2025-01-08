@@ -1,5 +1,4 @@
 #![allow(deprecated)]
-use fxhash::FxHashMap;
 use pretty_assertions::assert_eq;
 use std::{
     cmp::Ordering,
@@ -2803,9 +2802,10 @@ fn test_diff_and_apply_on_another_doc() -> LoroResult<()> {
     let diff_str = format!("{:#?}", diff);
     assert_eq!(
         diff_str,
-        r#"DiffBatch(
-    {
-        Root("list" List): List(
+        r#"[
+    (
+        Root("list" List),
+        List(
             [
                 Retain {
                     retain: 2,
@@ -2824,7 +2824,10 @@ fn test_diff_and_apply_on_another_doc() -> LoroResult<()> {
                 },
             ],
         ),
-        Root("map" Map): Map(
+    ),
+    (
+        Root("map" Map),
+        Map(
             MapDelta {
                 updated: {
                     "key": Some(
@@ -2839,8 +2842,8 @@ fn test_diff_and_apply_on_another_doc() -> LoroResult<()> {
                 },
             },
         ),
-    },
-)"#
+    ),
+]"#
     );
     Ok(())
 }
@@ -2881,17 +2884,10 @@ fn test_diff_and_apply_on_another_doc_with_child_container() -> LoroResult<()> {
     let diff_str = format!("{:#?}", diff);
     assert_eq!(
         diff_str,
-        r#"DiffBatch(
-    {
-        Normal(Text 2@1): Text(
-            [
-                Insert {
-                    insert: "value",
-                    attributes: None,
-                },
-            ],
-        ),
-        Root("list" List): List(
+        r#"[
+    (
+        Root("list" List),
+        List(
             [
                 Retain {
                     retain: 2,
@@ -2910,7 +2906,10 @@ fn test_diff_and_apply_on_another_doc_with_child_container() -> LoroResult<()> {
                 },
             ],
         ),
-        Root("map" Map): Map(
+    ),
+    (
+        Root("map" Map),
+        Map(
             MapDelta {
                 updated: {
                     "key": Some(
@@ -2925,8 +2924,19 @@ fn test_diff_and_apply_on_another_doc_with_child_container() -> LoroResult<()> {
                 },
             },
         ),
-    },
-)"#
+    ),
+    (
+        Normal(Text 2@1),
+        Text(
+            [
+                Insert {
+                    insert: "value",
+                    attributes: None,
+                },
+            ],
+        ),
+    ),
+]"#
     );
     Ok(())
 }
@@ -2934,13 +2944,14 @@ fn test_diff_and_apply_on_another_doc_with_child_container() -> LoroResult<()> {
 #[test]
 fn test_diff_apply_with_unknown_container() -> LoroResult<()> {
     let doc = LoroDoc::new();
-    let mut map: FxHashMap<ContainerID, Diff<'static>> = FxHashMap::default();
-    map.insert(
-        ContainerID::new_normal(ID::new(1, 1), ContainerType::List),
-        Diff::List(vec![ListDiffItem::Delete { delete: 5 }]),
-    );
-
-    let ans = doc.apply_diff(DiffBatch(map));
+    let mut batch = DiffBatch::default();
+    batch
+        .push(
+            ContainerID::new_normal(ID::new(1, 1), ContainerType::List),
+            Diff::List(vec![ListDiffItem::Delete { delete: 5 }]),
+        )
+        .unwrap();
+    let ans = doc.apply_diff(batch);
     assert!(ans.is_err());
     assert!(matches!(
         ans,

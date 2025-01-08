@@ -383,7 +383,7 @@ impl InternalDiff {
 }
 
 impl Diff {
-    pub(crate) fn compose_ref(&mut self, diff: &Diff) {
+    pub fn compose_ref(&mut self, diff: &Diff) {
         // PERF: avoid clone
         match (self, diff) {
             (Diff::List(a), Diff::List(b)) => {
@@ -404,7 +404,7 @@ impl Diff {
         }
     }
 
-    pub(crate) fn compose(self, diff: Diff) -> Result<Self, Self> {
+    pub fn compose(self, diff: Diff) -> Result<Self, Self> {
         // PERF: avoid clone
         match (self, diff) {
             (Diff::List(mut a), Diff::List(b)) => {
@@ -425,7 +425,7 @@ impl Diff {
     }
 
     // Transform this diff based on the other diff
-    pub(crate) fn transform(&mut self, other: &Self, left_prior: bool) {
+    pub fn transform(&mut self, other: &Self, left_prior: bool) {
         match (self, other) {
             (Diff::List(a), Diff::List(b)) => a.transform_(b, left_prior),
             (Diff::Text(a), Diff::Text(b)) => a.transform_(b, left_prior),
@@ -443,8 +443,7 @@ impl Diff {
         }
     }
 
-    #[allow(unused)]
-    pub(crate) fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         match self {
             Diff::List(s) => s.is_empty(),
             Diff::Text(t) => t.is_empty(),

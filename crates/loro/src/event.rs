@@ -247,17 +247,58 @@ impl From<ValueOrHandler> for ValueOrContainer {
 }
 
 /// A batch of diffs.
-#[derive(Debug, Default, Clone)]
-pub struct DiffBatch(pub FxHashMap<ContainerID, Diff<'static>>);
+#[derive(Default, Clone)]
+pub struct DiffBatch {
+    cid_to_events: FxHashMap<ContainerID, Diff<'static>>,
+    order: Vec<ContainerID>,
+}
+
+impl std::fmt::Debug for DiffBatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let v: Vec<(&ContainerID, &Diff<'static>)> = self.iter().collect();
+        write!(f, "{:#?}", v)
+    }
+}
+
+impl DiffBatch {
+    /// Returns an iterator over the diffs in this batch, in the order they were added.
+    ///
+    /// The iterator yields tuples of `(&ContainerID, &Diff)` where:
+    /// - `ContainerID` is the ID of the container that was modified
+    /// - `Diff` contains the actual changes made to that container
+    ///
+    /// The order of the diffs is preserved from when they were originally added to the batch.
+    pub fn iter(&self) -> impl Iterator<Item = (&ContainerID, &Diff<'static>)> {
+        self.order.iter().map(|id| (id, &self.cid_to_events[id]))
+    }
+
+    /// Push a new event to the batch.
+    ///
+    /// If the cid already exists in the batch, return Err
+    pub fn push(&mut self, cid: ContainerID, diff: Diff<'static>) -> Result<(), Diff<'static>> {
+        match self.cid_to_events.entry(cid.clone()) {
+            std::collections::hash_map::Entry::Occupied(_) => Err(diff),
+            std::collections::hash_map::Entry::Vacant(vacant_entry) => {
+                vacant_entry.insert(diff);
+                self.order.push(cid);
+                Ok(())
+            }
+        }
+    }
+}
 
 impl From<InnerDiffBatch> for DiffBatch {
     fn from(value: InnerDiffBatch) -> Self {
-        let mut map = FxHashMap::with_capacity_and_hasher(value.0.len(), Default::default());
-        for (id, diff) in value.0.into_iter() {
+        let mut map =
+            FxHashMap::with_capacity_and_hasher(value.cid_to_events.len(), Default::default());
+        for (id, diff) in value.cid_to_events.into_iter() {
             map.insert(id.clone(), diff.into());
         }
 
-        DiffBatch(map)
+        DiffBatch {
+            cid_to_events: map,
+            order: value.order,
+        }
     }
 }
 
@@ -320,11 +361,15 @@ impl From<Diff<'static>> for DiffInner {
 
 impl From<DiffBatch> for InnerDiffBatch {
     fn from(value: DiffBatch) -> Self {
-        let mut map = FxHashMap::with_capacity_and_hasher(value.0.len(), Default::default());
-        for (id, diff) in value.0.into_iter() {
+        let mut map =
+            FxHashMap::with_capacity_and_hasher(value.cid_to_events.len(), Default::default());
+        for (id, diff) in value.cid_to_events.into_iter() {
             map.insert(id.clone(), diff.into());
         }
 
-        InnerDiffBatch(map)
+        InnerDiffBatch {
+            cid_to_events: map,
+            order: value.order,
+        }
     }
 }

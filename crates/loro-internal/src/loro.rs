@@ -1,6 +1,5 @@
 use either::Either;
 use fxhash::{FxHashMap, FxHashSet};
-use itertools::Itertools;
 use loro_common::{
     ContainerID, ContainerType, HasIdSpan, HasLamportSpan, IdSpan, LoroEncodeError, LoroResult,
     LoroValue, ID,
@@ -915,7 +914,7 @@ impl LoroDoc {
     /// Therefore, users need to provide a `container_remap` to record and retrieve the container ID remapping.
     pub(crate) fn _apply_diff(
         &self,
-        mut diff: DiffBatch,
+        diff: DiffBatch,
         container_remap: &mut FxHashMap<ContainerID, ContainerID>,
         skip_unreachable: bool,
     ) -> LoroResult<()> {
@@ -924,55 +923,35 @@ impl LoroDoc {
         }
 
         let mut ans: LoroResult<()> = Ok(());
-        while !diff.0.is_empty() {
-            let known_containers = diff.0.keys().cloned().filter_map(|id| match &id {
-                ContainerID::Root { .. } => Some(id),
-                ContainerID::Normal { .. } => {
-                    let idx = self.arena.id_to_idx(&id);
-                    if let Some(_idx) = idx {
-                        Some(id)
-                    } else {
-                        container_remap.get(&id).map(|_| id)
-                    }
-                }
-            });
+        let mut missing_containers: Vec<ContainerID> = Vec::new();
+        for (mut id, diff) in diff.into_iter() {
+            let mut remapped = false;
+            while let Some(rid) = container_remap.get(&id) {
+                remapped = true;
+                id = rid.clone();
+            }
 
-            // Sort container from the top to the bottom, so that we can have correct container remap
-            let containers = known_containers.into_iter().sorted_by_cached_key(|cid| {
-                let idx = self.arena.register_container(cid);
-                self.arena.get_depth(idx).unwrap().get()
-            });
-
-            let mut count = 0;
-            for mut id in containers {
-                count += 1;
-                let mut remapped = false;
-                let diff = diff.0.remove(&id).unwrap();
-
-                while let Some(rid) = container_remap.get(&id) {
-                    remapped = true;
-                    id = rid.clone();
-                }
-
-                if skip_unreachable
-                    && !remapped
-                    && !self.state.try_lock().unwrap().get_reachable(&id)
-                {
+            if matches!(&id, ContainerID::Normal { .. }) {
+                if self.arena.id_to_idx(&id).is_none() {
+                    missing_containers.push(id);
                     continue;
                 }
+            }
 
-                let h = self.get_handler(id);
-                if let Err(e) = h.apply_diff(diff, container_remap) {
-                    ans = Err(e);
-                }
+            if skip_unreachable && !remapped && !self.state.try_lock().unwrap().get_reachable(&id) {
+                continue;
             }
-            if count == 0 && !diff.0.is_empty() {
-                // There are unreachable containers,
-                let unknown_containers: Vec<ContainerID> = diff.0.keys().cloned().collect();
-                return Err(LoroError::ContainersNotFound {
-                    containers: Box::new(unknown_containers),
-                });
+
+            let h = self.get_handler(id);
+            if let Err(e) = h.apply_diff(diff, container_remap) {
+                ans = Err(e);
             }
+        }
+
+        if !missing_containers.is_empty() {
+            return Err(LoroError::ContainersNotFound {
+                containers: Box::new(missing_containers),
+            });
         }
 
         ans

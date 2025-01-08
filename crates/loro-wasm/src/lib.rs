@@ -1903,20 +1903,25 @@ impl LoroDoc {
         let diff: JsValue = diff.into();
         let obj: js_sys::Object = diff.into();
         let mut diff = FxHashMap::default();
+        let mut order = Vec::default();
         for entry in js_sys::Object::entries(&obj).iter() {
             let entry = entry.unchecked_into::<js_sys::Array>();
             let k = entry.get(0);
             let v = entry.get(1);
-            diff.insert(
-                k.as_string()
-                    .ok_or("Expected string key")?
-                    .as_str()
-                    .try_into()
-                    .map_err(|_| "Failed to convert key")?,
-                js_diff_to_inner_diff(v)?,
-            );
+            let d = js_diff_to_inner_diff(v)?;
+            let cid: ContainerID = k
+                .as_string()
+                .ok_or("Expected string key")?
+                .as_str()
+                .try_into()
+                .map_err(|_| "Failed to convert key")?;
+            order.push(cid.clone());
+            diff.insert(cid, d);
         }
-        self.0.apply_diff(DiffBatch(diff))?;
+        self.0.apply_diff(DiffBatch {
+            cid_to_events: diff,
+            order,
+        })?;
         Ok(())
     }
 
@@ -1926,7 +1931,7 @@ impl LoroDoc {
         let to = ids_to_frontiers(to)?;
         let diff = self.0.diff(&from, &to)?;
         let obj = js_sys::Object::new();
-        for (id, d) in diff.0.iter() {
+        for (id, d) in diff.iter() {
             let id_str = id.to_string();
             let v = resolved_diff_to_js(d, &self.0);
             Reflect::set(&obj, &JsValue::from_str(&id_str), &v)?;

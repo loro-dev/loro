@@ -1322,6 +1322,10 @@ impl DocState {
     }
 
     pub(crate) fn get_reachable(&mut self, id: &ContainerID) -> bool {
+        if matches!(id, ContainerID::Root { .. }) {
+            return true;
+        }
+
         let Some(mut idx) = self.arena.id_to_idx(id) else {
             return false;
         };
