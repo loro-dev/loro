@@ -812,12 +812,14 @@ impl LoroDoc {
         Ok(())
     }
 
-    /// Commit the cumulative auto committed transaction.
+    /// Commit the cumulative auto-committed transaction.
     ///
     /// You can specify the `origin`, `timestamp`, and `message` of the commit.
     ///
     /// - The `origin` is used to mark the event
     /// - The `message` works like a git commit message, which will be recorded and synced to peers
+    /// - The `timestamp` is the number of seconds that have elapsed since 00:00:00 UTC on January 1, 1970.
+    ///   It defaults to `Date.now() / 1000` when timestamp recording is enabled
     ///
     /// The events will be emitted after a transaction is committed. A transaction is committed when:
     ///

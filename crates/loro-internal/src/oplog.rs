@@ -137,7 +137,7 @@ impl OpLog {
             .unwrap()
             .insert_by_new_change(&change, true, true);
         self.register_container_and_parent_link(&change);
-        self.change_store.insert_change(change, true);
+        self.change_store.insert_change(change, true, from_local);
     }
 
     #[inline(always)]

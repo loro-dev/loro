@@ -397,6 +397,8 @@ impl LoroDoc {
     }
 
     /// Set commit message for the current uncommitted changes
+    ///
+    /// It will be persisted.
     pub fn set_next_commit_message(&self, msg: &str) {
         self.doc.set_next_commit_message(msg)
     }

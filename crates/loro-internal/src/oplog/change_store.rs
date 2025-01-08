@@ -163,7 +163,7 @@ impl ChangeStore {
                 }
 
                 let ch = c.slice(start, end);
-                new_store.insert_change(ch, false);
+                new_store.insert_change(ch, false, false);
             }
         }
 
@@ -189,7 +189,7 @@ impl ChangeStore {
                 }
 
                 let ch = c.slice(start, end);
-                new_store.insert_change(ch, false);
+                new_store.insert_change(ch, false, false);
             }
         }
 
@@ -501,7 +501,7 @@ impl ChangeStore {
 
                 assert_ne!(start, end);
                 let ch = c.slice(start, end);
-                new_store.insert_change(ch, false);
+                new_store.insert_change(ch, false, false);
             }
         }
 
@@ -536,7 +536,7 @@ impl ChangeStore {
 
                 assert_ne!(start, end);
                 let ch = c.slice(start, end);
-                new_store.insert_change(ch, false);
+                new_store.insert_change(ch, false, false);
             }
         }
 
@@ -690,7 +690,7 @@ mod mut_inner_kv {
         ///
         /// The new change either merges with the previous block or is put into a new block.
         /// This method only updates the internal kv store.
-        pub fn insert_change(&self, mut change: Change, split_when_exceeds: bool) {
+        pub fn insert_change(&self, mut change: Change, split_when_exceeds: bool, is_local: bool) {
             #[cfg(debug_assertions)]
             {
                 let vv = self.external_vv.try_lock().unwrap();
@@ -718,8 +718,14 @@ mod mut_inner_kv {
                     match block.push_change(
                         change,
                         estimated_size,
-                        self.merge_interval
-                            .load(std::sync::atomic::Ordering::Acquire),
+                        if is_local {
+                            // local change should try to merge with previous change when
+                            // the timestamp interval <= the `merge_interval`
+                            self.merge_interval
+                                .load(std::sync::atomic::Ordering::Acquire)
+                        } else {
+                            0
+                        },
                         &self.arena,
                     ) {
                         Ok(_) => {
@@ -955,7 +961,7 @@ mod mut_inner_kv {
 
             if !new_change.ops.is_empty() {
                 total_len += new_change.atom_len();
-                self.insert_change(new_change, false);
+                self.insert_change(new_change, false, false);
             }
 
             assert_eq!(total_len, original_len);
@@ -983,7 +989,7 @@ mod mut_inner_kv {
                 commit_msg: new_change.commit_msg.clone(),
             };
 
-            self.insert_change(new_change, false);
+            self.insert_change(new_change, false, false);
             *estimated_size = ans.estimate_storage_size();
             ans
         }
