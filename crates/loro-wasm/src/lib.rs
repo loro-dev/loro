@@ -411,9 +411,12 @@ impl LoroDoc {
         self.0.set_record_timestamp(auto_record);
     }
 
-    /// If two continuous local changes are within the interval(**in seconds**), they will be merged into one change.
+    /// If two continuous local changes are within (<=) the interval(**in seconds**), they will be merged into one change.
     ///
-    /// The default value is 1_000 seconds
+    /// The default value is 1_000 seconds.
+    ///
+    /// By default, we record timestamps in seconds for each change. So if the merge interval is 1, and changes A and B
+    /// have timestamps of 3 and 4 respectively, then they will be merged into one change
     #[wasm_bindgen(js_name = "setChangeMergeInterval")]
     pub fn set_change_merge_interval(&self, interval: f64) {
         self.0.set_change_merge_interval(interval as i64);
