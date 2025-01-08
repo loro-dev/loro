@@ -1926,6 +1926,9 @@ impl LoroDoc {
     }
 
     /// Calculate the differences between two frontiers
+    ///
+    /// The entries in the returned object are sorted by causal order: the creation of a child container will be
+    /// presented before its use.
     pub fn diff(&self, from: Vec<JsID>, to: Vec<JsID>) -> JsResult<JsDiffBatch> {
         let from = ids_to_frontiers(from)?;
         let to = ids_to_frontiers(to)?;
