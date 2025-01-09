@@ -193,7 +193,7 @@ struct UndoManagerInner {
     redo_stack: Stack,
     processing_undo: bool,
     last_undo_time: i64,
-    merge_interval: i64,
+    merge_interval_in_ms: i64,
     max_stack_size: usize,
     exclude_origin_prefixes: Vec<Box<str>>,
     last_popped_selection: Option<Vec<CursorWithPos>>,
@@ -209,7 +209,7 @@ impl std::fmt::Debug for UndoManagerInner {
             .field("redo_stack", &self.redo_stack)
             .field("processing_undo", &self.processing_undo)
             .field("last_undo_time", &self.last_undo_time)
-            .field("merge_interval", &self.merge_interval)
+            .field("merge_interval", &self.merge_interval_in_ms)
             .field("max_stack_size", &self.max_stack_size)
             .field("exclude_origin_prefixes", &self.exclude_origin_prefixes)
             .finish()
@@ -408,7 +408,7 @@ impl UndoManagerInner {
             undo_stack: Default::default(),
             redo_stack: Default::default(),
             processing_undo: false,
-            merge_interval: 0,
+            merge_interval_in_ms: 0,
             last_undo_time: 0,
             max_stack_size: usize::MAX,
             exclude_origin_prefixes: vec![],
@@ -437,7 +437,7 @@ impl UndoManagerInner {
             .map(|x| x(UndoOrRedo::Undo, span, event))
             .unwrap_or_default();
 
-        if !self.undo_stack.is_empty() && now - self.last_undo_time < self.merge_interval {
+        if !self.undo_stack.is_empty() && now - self.last_undo_time < self.merge_interval_in_ms {
             self.undo_stack.push_with_merge(span, meta, true);
         } else {
             self.last_undo_time = now;
@@ -560,7 +560,7 @@ impl UndoManager {
     }
 
     pub fn set_merge_interval(&mut self, interval: i64) {
-        self.inner.try_lock().unwrap().merge_interval = interval;
+        self.inner.try_lock().unwrap().merge_interval_in_ms = interval;
     }
 
     pub fn set_max_undo_steps(&mut self, size: usize) {

@@ -12,7 +12,7 @@ use loro_internal::cursor::Side;
 pub use loro_internal::encoding::ImportStatus;
 use loro_internal::handler::{HandlerTrait, ValueOrHandler};
 pub use loro_internal::loro::ChangeTravelError;
-use loro_internal::undo::{OnPop, OnPush};
+pub use loro_internal::undo::{OnPop, UndoItemMeta, UndoOrRedo};
 use loro_internal::version::shrink_frontiers;
 pub use loro_internal::version::ImVersionVector;
 use loro_internal::DocState;
@@ -26,6 +26,7 @@ use loro_internal::{
 };
 use std::cmp::Ordering;
 use std::ops::ControlFlow;
+use std::ops::Deref;
 use std::ops::Range;
 use std::sync::Arc;
 use tracing::info;
@@ -216,10 +217,13 @@ impl LoroDoc {
         self.doc.is_detached_editing_enabled()
     }
 
-    /// Set the interval of mergeable changes, in seconds.
+    /// Set the interval of mergeable changes, **in seconds**.
     ///
     /// If two continuous local changes are within the interval, they will be merged into one change.
     /// The default value is 1000 seconds.
+    /// 
+    /// By default, we record timestamps in seconds for each change. So if the merge interval is 1, and changes A and B
+    /// have timestamps of 3 and 4 respectively, then they will be merged into one change
     #[inline]
     pub fn set_change_merge_interval(&self, interval: i64) {
         self.doc.set_change_merge_interval(interval);
@@ -398,6 +402,8 @@ impl LoroDoc {
     }
 
     /// Set commit message for the current uncommitted changes
+    ///
+    /// It will be persisted.
     pub fn set_next_commit_message(&self, msg: &str) {
         self.doc.set_next_commit_message(msg)
     }
@@ -1657,7 +1663,62 @@ impl LoroText {
     ///
     /// # Example
     /// ```
-    /// # use loro::{LoroDoc, ToJson, ExpandType};
+    /// use loro::{LoroDoc, ToJson, ExpandType, TextDelta};
+    /// use serde_json::json;
+    /// use fxhash::FxHashMap;
+    ///
+    /// let doc = LoroDoc::new();
+    /// let text = doc.get_text("text");
+    /// text.insert(0, "Hello world!").unwrap();
+    /// text.mark(0..5, "bold", true).unwrap();
+    /// assert_eq!(
+    ///     text.to_delta(),
+    ///     vec![
+    ///         TextDelta::Insert {
+    ///             insert: "Hello".to_string(),
+    ///             attributes: Some(FxHashMap::from_iter([("bold".to_string(), true.into())])),
+    ///         },
+    ///         TextDelta::Insert {
+    ///             insert: " world!".to_string(),
+    ///             attributes: None,
+    ///         },
+    ///     ]
+    /// );
+    /// text.unmark(3..5, "bold").unwrap();
+    /// assert_eq!(
+    ///     text.to_delta(),
+    ///     vec![
+    ///         TextDelta::Insert {
+    ///             insert: "Hel".to_string(),
+    ///             attributes: Some(FxHashMap::from_iter([("bold".to_string(), true.into())])),
+    ///         },
+    ///         TextDelta::Insert {
+    ///             insert: "lo world!".to_string(),
+    ///             attributes: None,
+    ///         },
+    ///     ]
+    /// );
+    /// ```
+    pub fn to_delta(&self) -> Vec<TextDelta> {
+        let delta = self.handler.get_richtext_value().into_list().unwrap();
+        delta
+            .iter()
+            .map(|x| {
+                let map = x.as_map().unwrap();
+                let insert = map.get("insert").unwrap().as_string().unwrap().to_string();
+                let attributes = map
+                    .get("attributes")
+                    .map(|v| v.as_map().unwrap().deref().clone());
+                TextDelta::Insert { insert, attributes }
+            })
+            .collect()
+    }
+
+    /// Get the rich text value in [Delta](https://quilljs.com/docs/delta/) format.
+    ///
+    /// # Example
+    /// ```
+    /// # use loro::{LoroDoc, ToJson, ExpandType, TextDelta};
     /// # use serde_json::json;
     ///
     /// let doc = LoroDoc::new();
@@ -1665,7 +1726,7 @@ impl LoroText {
     /// text.insert(0, "Hello world!").unwrap();
     /// text.mark(0..5, "bold", true).unwrap();
     /// assert_eq!(
-    ///     text.to_delta().to_json_value(),
+    ///     text.get_richtext_value().to_json_value(),
     ///     json!([
     ///         { "insert": "Hello", "attributes": {"bold": true} },
     ///         { "insert": " world!" },
@@ -1673,14 +1734,14 @@ impl LoroText {
     /// );
     /// text.unmark(3..5, "bold").unwrap();
     /// assert_eq!(
-    ///     text.to_delta().to_json_value(),
+    ///     text.get_richtext_value().to_json_value(),
     ///     json!([
     ///         { "insert": "Hel", "attributes": {"bold": true} },
     ///         { "insert": "lo world!" },
     ///    ])
     /// );
     /// ```
-    pub fn to_delta(&self) -> LoroValue {
+    pub fn get_richtext_value(&self) -> LoroValue {
         self.handler.get_richtext_value()
     }
 
@@ -2732,13 +2793,19 @@ impl UndoManager {
     /// Set the listener for push events.
     /// The listener will be called when a new undo/redo item is pushed into the stack.
     pub fn set_on_push(&mut self, on_push: Option<OnPush>) {
-        self.0.set_on_push(on_push)
+        if let Some(on_push) = on_push {
+            self.0.set_on_push(Some(Box::new(move |u, c, e| {
+                on_push(u, c, e.map(|x| x.into()))
+            })));
+        } else {
+            self.0.set_on_push(None);
+        }
     }
 
     /// Set the listener for pop events.
     /// The listener will be called when an undo/redo item is popped from the stack.
     pub fn set_on_pop(&mut self, on_pop: Option<OnPop>) {
-        self.0.set_on_pop(on_pop)
+        self.0.set_on_pop(on_pop);
     }
 
     /// Clear the undo stack and the redo stack
@@ -2746,3 +2813,7 @@ impl UndoManager {
         self.0.clear();
     }
 }
+/// When a undo/redo item is pushed, the undo manager will call the on_push callback to get the meta data of the undo item.
+/// The returned cursors will be recorded for a new pushed undo item.
+pub type OnPush =
+    Box<dyn for<'a> Fn(UndoOrRedo, CounterSpan, Option<DiffEvent>) -> UndoItemMeta + Send + Sync>;

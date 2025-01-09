@@ -513,7 +513,7 @@ fn test_richtext_checkout() -> LoroResult<()> {
     }));
     doc.checkout(&ID::new(1, 6).into())?;
     assert_eq!(
-        text.to_delta().to_json_value(),
+        text.get_richtext_value().to_json_value(),
         json!([{"insert": "Hello", "attributes": {"bold": true}}])
     );
     Ok(())
@@ -530,7 +530,7 @@ fn undo_richtext_editing() -> LoroResult<()> {
     text.mark(0..5, "bold", true)?;
     undo.record_new_checkpoint(&doc)?;
     assert_eq!(
-        text.to_delta().to_json_value(),
+        text.get_richtext_value().to_json_value(),
         json!([
             {"insert": "Hello", "attributes": {"bold": true}}
         ])
@@ -539,18 +539,18 @@ fn undo_richtext_editing() -> LoroResult<()> {
         debug_span!("round", i).in_scope(|| {
             undo.undo(&doc)?;
             assert_eq!(
-                text.to_delta().to_json_value(),
+                text.get_richtext_value().to_json_value(),
                 json!([
                     {"insert": "Hello", }
                 ])
             );
             undo.undo(&doc)?;
-            assert_eq!(text.to_delta().to_json_value(), json!([]));
+            assert_eq!(text.get_richtext_value().to_json_value(), json!([]));
             debug_span!("redo 1").in_scope(|| {
                 undo.redo(&doc).unwrap();
             });
             assert_eq!(
-                text.to_delta().to_json_value(),
+                text.get_richtext_value().to_json_value(),
                 json!([
                     {"insert": "Hello", }
                 ])
@@ -559,7 +559,7 @@ fn undo_richtext_editing() -> LoroResult<()> {
                 undo.redo(&doc).unwrap();
             });
             assert_eq!(
-                text.to_delta().to_json_value(),
+                text.get_richtext_value().to_json_value(),
                 json!([
                     {"insert": "Hello", "attributes": {"bold": true}}
                 ])
@@ -587,7 +587,7 @@ fn undo_richtext_editing_collab() -> LoroResult<()> {
     undo.record_new_checkpoint(&doc_a)?;
     sync(&doc_a, &doc_b);
     assert_eq!(
-        doc_a.get_text("text").to_delta().to_json_value(),
+        doc_a.get_text("text").get_richtext_value().to_json_value(),
         json!([
             {"insert": "A ", "attributes": {"bold": true}},
             {"insert": "fox", "attributes": {"bold": true, "italic": true}},
@@ -597,7 +597,7 @@ fn undo_richtext_editing_collab() -> LoroResult<()> {
     for _ in 0..10 {
         undo.undo(&doc_a)?;
         assert_eq!(
-            doc_a.get_text("text").to_delta().to_json_value(),
+            doc_a.get_text("text").get_richtext_value().to_json_value(),
             json!([
                 {"insert": "A " },
                 {"insert": "fox jumped", "attributes": {"italic": true}}
@@ -606,7 +606,7 @@ fn undo_richtext_editing_collab() -> LoroResult<()> {
         // FIXME: right now redo/undo like this is wasteful
         undo.redo(&doc_a)?;
         assert_eq!(
-            doc_a.get_text("text").to_delta().to_json_value(),
+            doc_a.get_text("text").get_richtext_value().to_json_value(),
             json!([
                 {"insert": "A ", "attributes": {"bold": true}},
                 {"insert": "fox", "attributes": {"bold": true, "italic": true}},
@@ -644,7 +644,7 @@ fn undo_richtext_conflict_set_style() -> LoroResult<()> {
     undo.record_new_checkpoint(&doc_a)?;
     sync(&doc_a, &doc_b);
     assert_eq!(
-        doc_a.get_text("text").to_delta().to_json_value(),
+        doc_a.get_text("text").get_richtext_value().to_json_value(),
         json!([
             {"insert": "A fox", "attributes": {"color": "green"}},
             {"insert": " jumped", "attributes": {"color": "red"}}
@@ -653,17 +653,20 @@ fn undo_richtext_conflict_set_style() -> LoroResult<()> {
     for _ in 0..10 {
         undo.undo(&doc_a)?;
         assert_eq!(
-            doc_a.get_text("text").to_delta().to_json_value(),
+            doc_a.get_text("text").get_richtext_value().to_json_value(),
             json!([
                 {"insert": "A " },
                 {"insert": "fox jumped", "attributes": {"color": "red"}}
             ])
         );
         undo.undo(&doc_a)?;
-        assert_eq!(doc_a.get_text("text").to_delta().to_json_value(), json!([]));
+        assert_eq!(
+            doc_a.get_text("text").get_richtext_value().to_json_value(),
+            json!([])
+        );
         undo.redo(&doc_a)?;
         assert_eq!(
-            doc_a.get_text("text").to_delta().to_json_value(),
+            doc_a.get_text("text").get_richtext_value().to_json_value(),
             json!([
                 {"insert": "A " },
                 {"insert": "fox jumped", "attributes": {"color": "red"}}
@@ -671,7 +674,7 @@ fn undo_richtext_conflict_set_style() -> LoroResult<()> {
         );
         undo.redo(&doc_a)?;
         assert_eq!(
-            doc_a.get_text("text").to_delta().to_json_value(),
+            doc_a.get_text("text").get_richtext_value().to_json_value(),
             json!([
                 {"insert": "A fox", "attributes": {"color": "green"}},
                 {"insert": " jumped", "attributes": {"color": "red"}}
@@ -762,7 +765,7 @@ fn collab_undo() -> anyhow::Result<()> {
         debug_span!("round A", j).in_scope(|| {
             assert!(!undo_a.can_redo(), "{:#?}", &undo_a);
             assert_eq!(
-                doc_a.get_text("text").to_delta().to_json_value(),
+                doc_a.get_text("text").get_richtext_value().to_json_value(),
                 json!([
                     {"insert": "Hello World! "},
                     {"insert": "A", "attributes": {"bold": true}},
@@ -772,7 +775,7 @@ fn collab_undo() -> anyhow::Result<()> {
             undo_a.undo(&doc_a)?;
             assert!(undo_a.can_redo());
             assert_eq!(
-                doc_a.get_text("text").to_delta().to_json_value(),
+                doc_a.get_text("text").get_richtext_value().to_json_value(),
                 json!([
                     {"insert": "Hello "},
                     {"insert": "A", "attributes": {"bold": true}},
@@ -781,14 +784,14 @@ fn collab_undo() -> anyhow::Result<()> {
             );
             undo_a.undo(&doc_a)?;
             assert_eq!(
-                doc_a.get_text("text").to_delta().to_json_value(),
+                doc_a.get_text("text").get_richtext_value().to_json_value(),
                 json!([
                     {"insert": "Hello A fox jumped."},
                 ])
             );
             undo_a.undo(&doc_a)?;
             assert_eq!(
-                doc_a.get_text("text").to_delta().to_json_value(),
+                doc_a.get_text("text").get_richtext_value().to_json_value(),
                 json!([
                     {"insert": "A fox jumped."},
                 ])
@@ -797,7 +800,7 @@ fn collab_undo() -> anyhow::Result<()> {
             assert!(!undo_a.can_undo());
             undo_a.redo(&doc_a)?;
             assert_eq!(
-                doc_a.get_text("text").to_delta().to_json_value(),
+                doc_a.get_text("text").get_richtext_value().to_json_value(),
                 json!([
                     {"insert": "Hello A fox jumped."},
                 ])
@@ -805,7 +808,7 @@ fn collab_undo() -> anyhow::Result<()> {
 
             undo_a.redo(&doc_a)?;
             assert_eq!(
-                doc_a.get_text("text").to_delta().to_json_value(),
+                doc_a.get_text("text").get_richtext_value().to_json_value(),
                 json!([
                     {"insert": "Hello "},
                     {"insert": "A", "attributes": {"bold": true}},
@@ -821,7 +824,7 @@ fn collab_undo() -> anyhow::Result<()> {
     for _ in 0..3 {
         assert!(!undo_b.can_redo());
         assert_eq!(
-            doc_b.get_text("text").to_delta().to_json_value(),
+            doc_b.get_text("text").get_richtext_value().to_json_value(),
             json!([
                 {"insert": "Hello World! "},
                 {"insert": "A", "attributes": {"bold": true}},
@@ -831,7 +834,7 @@ fn collab_undo() -> anyhow::Result<()> {
         undo_b.undo(&doc_b)?;
         assert!(undo_b.can_redo());
         assert_eq!(
-            doc_b.get_text("text").to_delta().to_json_value(),
+            doc_b.get_text("text").get_richtext_value().to_json_value(),
             json!([
                 {"insert": "Hello World! "},
                 {"insert": "A", "attributes": {"bold": true}},
@@ -841,7 +844,7 @@ fn collab_undo() -> anyhow::Result<()> {
 
         undo_b.undo(&doc_b)?;
         assert_eq!(
-            doc_b.get_text("text").to_delta().to_json_value(),
+            doc_b.get_text("text").get_richtext_value().to_json_value(),
             json!([
                 {"insert": "Hello World! "},
                 {"insert": "A", "attributes": {"bold": true}},
@@ -850,7 +853,7 @@ fn collab_undo() -> anyhow::Result<()> {
         );
         undo_b.undo(&doc_b)?;
         assert_eq!(
-            doc_b.get_text("text").to_delta().to_json_value(),
+            doc_b.get_text("text").get_richtext_value().to_json_value(),
             json!([
                 {"insert": "Hello World! "},
             ])
@@ -859,7 +862,7 @@ fn collab_undo() -> anyhow::Result<()> {
         assert!(undo_b.can_redo());
         undo_b.redo(&doc_b)?;
         assert_eq!(
-            doc_b.get_text("text").to_delta().to_json_value(),
+            doc_b.get_text("text").get_richtext_value().to_json_value(),
             json!([
                 {"insert": "Hello World! "},
                 {"insert": "A", "attributes": {"bold": true}},
@@ -868,7 +871,7 @@ fn collab_undo() -> anyhow::Result<()> {
         );
         undo_b.redo(&doc_b)?;
         assert_eq!(
-            doc_b.get_text("text").to_delta().to_json_value(),
+            doc_b.get_text("text").get_richtext_value().to_json_value(),
             json!([
                 {"insert": "Hello World! "},
                 {"insert": "A", "attributes": {"bold": true}},
@@ -931,7 +934,7 @@ fn undo_sub_sub_container() -> anyhow::Result<()> {
     text_b.insert(2, "o")?;
     text_b.insert(4, "x")?;
     assert_eq!(
-        text_b.to_delta().to_json_value(),
+        text_b.get_richtext_value().to_json_value(),
         json!([
             {"insert": "FHoexllo World!"},
         ])
@@ -939,7 +942,7 @@ fn undo_sub_sub_container() -> anyhow::Result<()> {
     sync(&doc_a, &doc_b);
     text_a.mark(0..3, "bold", true)?;
     assert_eq!(
-        text_a.to_delta().to_json_value(),
+        text_a.get_richtext_value().to_json_value(),
         json!([
             {"insert": "Fox", "attributes": { "bold": true }},
             {"insert": " World!"}
@@ -948,7 +951,7 @@ fn undo_sub_sub_container() -> anyhow::Result<()> {
 
     undo_a.undo(&doc_a)?; // 4 -> 3
     assert_eq!(
-        text_a.to_delta().to_json_value(),
+        text_a.get_richtext_value().to_json_value(),
         json!([
             {"insert": "Fox World!"},
         ])
@@ -959,7 +962,7 @@ fn undo_sub_sub_container() -> anyhow::Result<()> {
                           // So we skip the test
     undo_a.undo(&doc_a)?; // 2 -> 1.5
     assert_eq!(
-        text_a.to_delta().to_json_value(),
+        text_a.get_richtext_value().to_json_value(),
         json!([
             {"insert": "Fox"},
         ])
@@ -989,7 +992,7 @@ fn undo_sub_sub_container() -> anyhow::Result<()> {
     );
     undo_a.redo(&doc_a)?; // 1 -> 1.5
     assert_eq!(
-        text_a.to_delta().to_json_value(),
+        text_a.get_richtext_value().to_json_value(),
         json!([
             {"insert": "Fox"},
         ])
@@ -1018,7 +1021,7 @@ fn undo_sub_sub_container() -> anyhow::Result<()> {
         .unwrap();
     undo_a.redo(&doc_a)?; // 3 -> 4
     assert_eq!(
-        text_a.to_delta().to_json_value(),
+        text_a.get_richtext_value().to_json_value(),
         json!([
             {"insert": "Fox", "attributes": { "bold": true }},
             {"insert": " World!"}
@@ -1080,7 +1083,7 @@ fn test_remote_merge_transform() -> LoroResult<()> {
 
     // Check the state after concurrent operations
     assert_eq!(
-        text_a.to_delta().to_json_value(),
+        text_a.get_richtext_value().to_json_value(),
         json!([
             {"insert": "B", "attributes": {"bold": true}}
         ])
@@ -1088,14 +1091,14 @@ fn test_remote_merge_transform() -> LoroResult<()> {
 
     undo_a.undo(&doc_a)?;
     assert_eq!(
-        text_a.to_delta().to_json_value(),
+        text_a.get_richtext_value().to_json_value(),
         json!([
             {"insert": "B"}
         ])
     );
 
     undo_a.undo(&doc_a)?;
-    assert_eq!(text_a.to_delta().to_json_value(), json!([]));
+    assert_eq!(text_a.get_richtext_value().to_json_value(), json!([]));
 
     Ok(())
 }

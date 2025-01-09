@@ -5,7 +5,7 @@ use crate::LoroDoc;
 pub struct Configure {
     pub(crate) text_style_config: Arc<RwLock<StyleConfigMap>>,
     record_timestamp: Arc<AtomicBool>,
-    pub(crate) merge_interval: Arc<AtomicI64>,
+    pub(crate) merge_interval_in_s: Arc<AtomicI64>,
     pub(crate) editable_detached_mode: Arc<AtomicBool>,
 }
 
@@ -24,7 +24,7 @@ impl Default for Configure {
             text_style_config: Arc::new(RwLock::new(StyleConfigMap::default_rich_text_config())),
             record_timestamp: Arc::new(AtomicBool::new(false)),
             editable_detached_mode: Arc::new(AtomicBool::new(false)),
-            merge_interval: Arc::new(AtomicI64::new(1000 * 1000)),
+            merge_interval_in_s: Arc::new(AtomicI64::new(1000)),
         }
     }
 }
@@ -39,8 +39,8 @@ impl Configure {
                 self.record_timestamp
                     .load(std::sync::atomic::Ordering::Relaxed),
             )),
-            merge_interval: Arc::new(AtomicI64::new(
-                self.merge_interval
+            merge_interval_in_s: Arc::new(AtomicI64::new(
+                self.merge_interval_in_s
                     .load(std::sync::atomic::Ordering::Relaxed),
             )),
             editable_detached_mode: Arc::new(AtomicBool::new(
@@ -75,12 +75,12 @@ impl Configure {
     }
 
     pub fn merge_interval(&self) -> i64 {
-        self.merge_interval
+        self.merge_interval_in_s
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     pub fn set_merge_interval(&self, interval: i64) {
-        self.merge_interval
+        self.merge_interval_in_s
             .store(interval, std::sync::atomic::Ordering::Relaxed);
     }
 }
