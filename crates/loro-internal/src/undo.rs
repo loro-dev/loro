@@ -84,6 +84,7 @@ impl DiffBatch {
             .map(|cid| (cid, self.cid_to_events.get(cid).unwrap()))
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn into_iter(self) -> impl Iterator<Item = (ContainerID, Diff)> {
         let mut cid_to_events = self.cid_to_events;
         self.order.into_iter().map(move |cid| {

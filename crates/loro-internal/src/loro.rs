@@ -931,11 +931,9 @@ impl LoroDoc {
                 id = rid.clone();
             }
 
-            if matches!(&id, ContainerID::Normal { .. }) {
-                if self.arena.id_to_idx(&id).is_none() {
-                    missing_containers.push(id);
-                    continue;
-                }
+            if matches!(&id, ContainerID::Normal { .. }) && self.arena.id_to_idx(&id).is_none() {
+                missing_containers.push(id);
+                continue;
             }
 
             if skip_unreachable && !remapped && !self.state.try_lock().unwrap().get_reachable(&id) {
