@@ -2740,3 +2740,27 @@ fn test_find_spans_between() -> LoroResult<()> {
 
     Ok(())
 }
+
+#[test]
+fn test_set_merge_interval() {
+    let doc = LoroDoc::new();
+    doc.set_record_timestamp(true);
+    doc.set_change_merge_interval(1);
+    doc.get_text("text").insert(0, "Hello").unwrap();
+    doc.commit_with(CommitOptions::default().timestamp(100));
+    doc.get_text("text").insert(0, "Hello").unwrap();
+    doc.commit_with(CommitOptions::default().timestamp(200));
+    assert_eq!(doc.len_changes(), 2);
+    {
+        let snapshot = doc.export(ExportMode::Snapshot).unwrap();
+        let new_doc = LoroDoc::new();
+        new_doc.import(&snapshot).unwrap();
+        assert_eq!(new_doc.len_changes(), 2);
+    }
+    {
+        let updates = doc.export(ExportMode::all_updates()).unwrap();
+        let new_doc = LoroDoc::new();
+        new_doc.import(&updates).unwrap();
+        assert_eq!(new_doc.len_changes(), 2);
+    }
+}

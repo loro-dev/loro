@@ -216,10 +216,13 @@ impl LoroDoc {
         self.doc.is_detached_editing_enabled()
     }
 
-    /// Set the interval of mergeable changes, in seconds.
+    /// Set the interval of mergeable changes, **in seconds**.
     ///
     /// If two continuous local changes are within the interval, they will be merged into one change.
     /// The default value is 1000 seconds.
+    /// 
+    /// By default, we record timestamps in seconds for each change. So if the merge interval is 1, and changes A and B
+    /// have timestamps of 3 and 4 respectively, then they will be merged into one change
     #[inline]
     pub fn set_change_merge_interval(&self, interval: i64) {
         self.doc.set_change_merge_interval(interval);
@@ -398,6 +401,8 @@ impl LoroDoc {
     }
 
     /// Set commit message for the current uncommitted changes
+    ///
+    /// It will be persisted.
     pub fn set_next_commit_message(&self, msg: &str) {
         self.doc.set_next_commit_message(msg)
     }

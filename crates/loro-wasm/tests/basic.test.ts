@@ -404,7 +404,7 @@ it("can control the mergeable interval", () => {
   {
     const doc = new LoroDoc();
     doc.setPeerId(1);
-    doc.setChangeMergeInterval(10);
+    doc.setChangeMergeInterval(9);
     doc.getText("123").insert(0, "1");
     doc.commit({ timestamp: 110 });
     doc.getText("123").insert(0, "1");
@@ -1150,4 +1150,46 @@ it("can travel changes from event", async () => {
   docB.import(snapshot);
   await Promise.resolve();
   expect(done).toBe(true);
+})
+
+
+it("merge interval", async () => {
+  const doc = new LoroDoc();
+  doc.setPeerId("1");
+  doc.setRecordTimestamp(true);
+  doc.setChangeMergeInterval(1);
+  doc.getText("text").update("Hello");
+  doc.commit();
+  await new Promise(resolve => setTimeout(resolve, 100));
+  doc.getText("text").update("Hello world!");
+  doc.commit();
+  await new Promise(resolve => setTimeout(resolve, 2000));
+  doc.getText("text").update("Hello ABC!");
+  doc.commit();
+  const updates = doc.exportJsonUpdates();
+  expect(updates.changes.length).toBe(2);
+
+  await new Promise(resolve => setTimeout(resolve, 2000));
+  doc.getText("text").update("Hello");
+  doc.commit();
+  await new Promise(resolve => setTimeout(resolve, 100));
+  doc.getText("text").update("Hello world!");
+  doc.commit();
+  const updates2 = doc.exportJsonUpdates();
+  expect(updates2.changes.length).toBe(3);
+})
+
+it("setRecordTimestamp should be reflected on current txn", async () => {
+  const doc = new LoroDoc();
+  doc.getText("text").insert(0, "hi");
+  doc.commit();
+  {
+    const updates = doc.exportJsonUpdates();
+    expect(updates.changes[0].timestamp).toBe(0);
+  }
+  doc.setRecordTimestamp(true);
+  doc.getText("text").insert(0, "hi");
+  doc.commit();
+  const updates = doc.exportJsonUpdates();
+  expect(updates.changes[1].timestamp).toBeGreaterThan(0);
 })

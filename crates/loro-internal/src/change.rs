@@ -248,7 +248,7 @@ impl Change {
             && other.id.counter == self.id.counter + self.content_len() as Counter
             && other.deps.len() == 1
             && other.deps.as_single().unwrap().peer == self.id.peer
-            && other.timestamp - self.timestamp < merge_interval
+            && other.timestamp - self.timestamp <= merge_interval
             && self.commit_msg == other.commit_msg
         {
             debug_assert!(other.timestamp >= self.timestamp);

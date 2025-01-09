@@ -129,7 +129,7 @@ impl LoroDoc {
         self.config.set_record_timestamp(record);
     }
 
-    /// Set the interval of mergeable changes, in milliseconds.
+    /// Set the interval of mergeable changes, in seconds.
     ///
     /// If two continuous local changes are within the interval, they will be merged into one change.
     /// The default value is 1000 seconds.
@@ -1766,15 +1766,27 @@ impl Drop for CommitWhenDrop<'_> {
     }
 }
 
+/// Options for configuring a commit operation.
 #[derive(Debug, Clone)]
 pub struct CommitOptions {
+    /// Origin identifier for the commit event, used to track the source of changes.
+    /// It doesn't persist.
     pub origin: Option<InternalString>,
+
+    /// Whether to immediately start a new transaction after committing.
+    /// Defaults to true.
     pub immediate_renew: bool,
+
+    /// Custom timestamp for the commit in seconds since Unix epoch.
+    /// If None, the current time will be used.
     pub timestamp: Option<Timestamp>,
+
+    /// Optional commit message to attach to the changes. It will be persisted.
     pub commit_msg: Option<Arc<str>>,
 }
 
 impl CommitOptions {
+    /// Creates a new CommitOptions with default values.
     pub fn new() -> Self {
         Self {
             origin: None,
@@ -1784,30 +1796,38 @@ impl CommitOptions {
         }
     }
 
+    /// Sets the origin identifier for this commit.
     pub fn origin(mut self, origin: &str) -> Self {
         self.origin = Some(origin.into());
         self
     }
 
+    /// Sets whether to immediately start a new transaction after committing.
     pub fn immediate_renew(mut self, immediate_renew: bool) -> Self {
         self.immediate_renew = immediate_renew;
         self
     }
 
+    /// Set the timestamp of the commit.
+    ///
+    /// The timestamp is the number of **seconds** that have elapsed since 00:00:00 UTC on January 1, 1970.
     pub fn timestamp(mut self, timestamp: Timestamp) -> Self {
         self.timestamp = Some(timestamp);
         self
     }
 
+    /// Sets a commit message to be attached to the changes.
     pub fn commit_msg(mut self, commit_msg: &str) -> Self {
         self.commit_msg = Some(commit_msg.into());
         self
     }
 
+    /// Sets the origin identifier for this commit.
     pub fn set_origin(&mut self, origin: Option<&str>) {
         self.origin = origin.map(|x| x.into())
     }
 
+    /// Sets the timestamp for this commit.
     pub fn set_timestamp(&mut self, timestamp: Option<Timestamp>) {
         self.timestamp = timestamp;
     }
