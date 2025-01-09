@@ -5,7 +5,8 @@
 // #![warn(missing_docs)]
 
 use convert::{
-    import_status_to_js_value, js_to_id_span, js_to_version_vector, resolved_diff_to_js,
+    import_status_to_js_value, js_diff_to_inner_diff, js_to_id_span, js_to_version_vector,
+    resolved_diff_to_js,
 };
 use js_sys::{Array, Object, Promise, Reflect, Uint8Array};
 use loro_internal::{
@@ -23,7 +24,7 @@ use loro_internal::{
     json::JsonSchema,
     loro::{CommitOptions, ExportMode},
     loro_common::{check_root_container_name, IdSpanVector},
-    undo::{UndoItemMeta, UndoOrRedo},
+    undo::{DiffBatch, UndoItemMeta, UndoOrRedo},
     version::Frontiers,
     ContainerType, DiffEvent, FxHashMap, HandlerTrait, IdSpan, LoroDoc as LoroDocInner, LoroResult,
     LoroValue, MovableListHandler, Subscription, TreeNodeWithChildren, TreeParentId,
@@ -212,6 +213,8 @@ extern "C" {
     pub type JsIdSpan;
     #[wasm_bindgen(typescript_type = "VersionVectorDiff")]
     pub type JsVersionVectorDiff;
+    #[wasm_bindgen(typescript_type = "Record<ContainerID, Diff>")]
+    pub type JsDiffBatch;
 }
 
 mod observer {
@@ -1875,6 +1878,74 @@ impl LoroDoc {
                 v.into()
             })
             .collect())
+    }
+
+    /// Revert the document to the given frontiers.
+    ///
+    /// The doc will not become detached when using this method. Instead, it will generate a series
+    /// of operations to revert the document to the given version.
+    ///
+    /// @example
+    /// ```ts
+    /// const doc = new LoroDoc();
+    /// doc.setPeerId("1");
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello");
+    /// doc.commit();
+    /// doc.revertTo([{ peer: "1", counter: 1 }]);
+    /// expect(doc.getText("text").toString()).toBe("He");
+    /// ```
+    #[wasm_bindgen(js_name = "revertTo")]
+    pub fn revert_to(&self, frontiers: Vec<JsID>) -> JsResult<()> {
+        let frontiers = ids_to_frontiers(frontiers)?;
+        self.0.revert_to(&frontiers)?;
+        Ok(())
+    }
+
+    /// Apply a diff batch to the document
+    #[wasm_bindgen(js_name = "applyDiff")]
+    pub fn apply_diff(&self, diff: JsDiffBatch) -> JsResult<()> {
+        let diff: JsValue = diff.into();
+        let obj: js_sys::Object = diff.into();
+        let mut diff = FxHashMap::default();
+        let mut order = Vec::default();
+        for entry in js_sys::Object::entries(&obj).iter() {
+            let entry = entry.unchecked_into::<js_sys::Array>();
+            let k = entry.get(0);
+            let v = entry.get(1);
+            let d = js_diff_to_inner_diff(v)?;
+            let cid: ContainerID = k
+                .as_string()
+                .ok_or("Expected string key")?
+                .as_str()
+                .try_into()
+                .map_err(|_| "Failed to convert key")?;
+            order.push(cid.clone());
+            diff.insert(cid, d);
+        }
+        self.0.apply_diff(DiffBatch {
+            cid_to_events: diff,
+            order,
+        })?;
+        Ok(())
+    }
+
+    /// Calculate the differences between two frontiers
+    ///
+    /// The entries in the returned object are sorted by causal order: the creation of a child container will be
+    /// presented before its use.
+    pub fn diff(&self, from: Vec<JsID>, to: Vec<JsID>) -> JsResult<JsDiffBatch> {
+        let from = ids_to_frontiers(from)?;
+        let to = ids_to_frontiers(to)?;
+        let diff = self.0.diff(&from, &to)?;
+        let obj = js_sys::Object::new();
+        for (id, d) in diff.iter() {
+            let id_str = id.to_string();
+            let v = resolved_diff_to_js(d, &self.0);
+            Reflect::set(&obj, &JsValue::from_str(&id_str), &v)?;
+        }
+        let v: JsValue = obj.into();
+        Ok(v.into())
     }
 }
 

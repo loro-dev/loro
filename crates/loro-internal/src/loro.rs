@@ -1,6 +1,5 @@
 use either::Either;
 use fxhash::{FxHashMap, FxHashSet};
-use itertools::Itertools;
 use loro_common::{
     ContainerID, ContainerType, HasIdSpan, HasLamportSpan, IdSpan, LoroEncodeError, LoroResult,
     LoroValue, ID,
@@ -831,7 +830,7 @@ impl LoroDoc {
         // Try applying the diff, but ignore the error if it happens.
         // MovableList's undo behavior is too tricky to handle in a collaborative env
         // so in edge cases this may be an Error
-        if let Err(e) = self.apply_diff(diff, container_remap, true) {
+        if let Err(e) = self._apply_diff(diff, container_remap, true) {
             warn!("Undo Failed {:?}", e);
         }
 
@@ -841,11 +840,17 @@ impl LoroDoc {
         })
     }
 
-    /// Calculate the diff between the current state and the target state, and apply the diff to the current state.
-    pub fn diff_and_apply(&self, target: &Frontiers) -> LoroResult<()> {
+    /// Generate a series of local operations that can revert the current doc to the target
+    /// version.
+    ///
+    /// Internally, it will calculate the diff between the current state and the target state,
+    /// and apply the diff to the current state.
+    pub fn revert_to(&self, target: &Frontiers) -> LoroResult<()> {
+        // TODO: test when the doc is readonly
+        // TODO: test when the doc is detached but enabled editing
         let f = self.state_frontiers();
         let diff = self.diff(&f, target)?;
-        self.apply_diff(diff, &mut Default::default(), false)
+        self._apply_diff(diff, &mut Default::default(), false)
     }
 
     /// Calculate the diff between two versions so that apply diff on a will make the state same as b.
@@ -869,26 +874,31 @@ impl LoroDoc {
         }
 
         self.commit_then_stop();
-
-        let ans = {
-            let was_detached = self.is_detached();
-            let old_frontiers = self.state_frontiers();
-            self.state.try_lock().unwrap().stop_and_clear_recording();
-            self.checkout_without_emitting(a, true).unwrap();
-            self.state.try_lock().unwrap().start_recording();
-            self.checkout_without_emitting(b, true).unwrap();
+        let was_detached = self.is_detached();
+        let old_frontiers = self.state_frontiers();
+        self.state.try_lock().unwrap().stop_and_clear_recording();
+        self.checkout_without_emitting(a, true).unwrap();
+        self.state.try_lock().unwrap().start_recording();
+        self.checkout_without_emitting(b, true).unwrap();
+        let e = {
             let mut state = self.state.try_lock().unwrap();
             let e = state.take_events();
             state.stop_and_clear_recording();
-            self.checkout_without_emitting(&old_frontiers, false)
-                .unwrap();
-            if !was_detached {
-                self.set_detached(false);
-            }
-            DiffBatch::new(e)
+            e
         };
+        self.checkout_without_emitting(&old_frontiers, false)
+            .unwrap();
+        if !was_detached {
+            self.set_detached(false);
+            self.renew_txn_if_auto_commit();
+        }
+        Ok(DiffBatch::new(e))
+    }
 
-        Ok(ans)
+    /// Apply a diff to the current state.
+    #[inline(always)]
+    pub fn apply_diff(&self, diff: DiffBatch) -> LoroResult<()> {
+        self._apply_diff(diff, &mut Default::default(), true)
     }
 
     /// Apply a diff to the current state.
@@ -902,9 +912,9 @@ impl LoroDoc {
     ///
     /// However, the diff may contain operations that depend on container IDs.
     /// Therefore, users need to provide a `container_remap` to record and retrieve the container ID remapping.
-    pub fn apply_diff(
+    pub(crate) fn _apply_diff(
         &self,
-        mut diff: DiffBatch,
+        diff: DiffBatch,
         container_remap: &mut FxHashMap<ContainerID, ContainerID>,
         skip_unreachable: bool,
     ) -> LoroResult<()> {
@@ -912,20 +922,18 @@ impl LoroDoc {
             return Err(LoroError::EditWhenDetached);
         }
 
-        // Sort container from the top to the bottom, so that we can have correct container remap
-        let containers = diff.0.keys().cloned().sorted_by_cached_key(|cid| {
-            let idx = self.arena.id_to_idx(cid).unwrap();
-            self.arena.get_depth(idx).unwrap().get()
-        });
-
         let mut ans: LoroResult<()> = Ok(());
-        for mut id in containers {
+        let mut missing_containers: Vec<ContainerID> = Vec::new();
+        for (mut id, diff) in diff.into_iter() {
             let mut remapped = false;
-            let diff = diff.0.remove(&id).unwrap();
-
             while let Some(rid) = container_remap.get(&id) {
                 remapped = true;
                 id = rid.clone();
+            }
+
+            if matches!(&id, ContainerID::Normal { .. }) && self.arena.id_to_idx(&id).is_none() {
+                missing_containers.push(id);
+                continue;
             }
 
             if skip_unreachable && !remapped && !self.state.try_lock().unwrap().get_reachable(&id) {
@@ -936,6 +944,12 @@ impl LoroDoc {
             if let Err(e) = h.apply_diff(diff, container_remap) {
                 ans = Err(e);
             }
+        }
+
+        if !missing_containers.is_empty() {
+            return Err(LoroError::ContainersNotFound {
+                containers: Box::new(missing_containers),
+            });
         }
 
         ans

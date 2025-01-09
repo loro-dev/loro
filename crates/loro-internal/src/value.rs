@@ -1,11 +1,10 @@
 use crate::{
     container::richtext::richtext_state::{unicode_to_utf8_index, utf16_to_utf8_index},
-    delta::{Delta, DeltaItem, Meta, StyleMeta},
-    event::{Diff, Index, Path, TextDiff, TextDiffItem},
+    delta::{Delta, DeltaItem, Meta},
+    event::{Diff, Index, Path, TextDiff, TextDiffItem, TextMeta},
     handler::ValueOrHandler,
     utils::string_slice::StringSlice,
 };
-
 use generic_btree::rle::HasLength;
 use loro_common::ContainerType;
 pub use loro_common::LoroValue;
@@ -41,7 +40,7 @@ impl ToJson for LoroValue {
     }
 }
 
-impl ToJson for DeltaItem<StringSlice, StyleMeta> {
+impl ToJson for DeltaItem<StringSlice, TextMeta> {
     fn to_json_value(&self) -> serde_json::Value {
         match self {
             DeltaItem::Retain {
@@ -82,9 +81,9 @@ impl ToJson for DeltaItem<StringSlice, StyleMeta> {
         if map.contains_key("retain") {
             let len = map["retain"].as_u64().unwrap();
             let meta = if let Some(meta) = map.get("attributes") {
-                StyleMeta::from_json(meta.to_string().as_str())
+                TextMeta::from_json(meta.to_string().as_str())
             } else {
-                StyleMeta::default()
+                TextMeta::default()
             };
             DeltaItem::Retain {
                 retain: len as usize,
@@ -93,9 +92,9 @@ impl ToJson for DeltaItem<StringSlice, StyleMeta> {
         } else if map.contains_key("insert") {
             let value = map["insert"].as_str().unwrap().to_string().into();
             let meta = if let Some(meta) = map.get("attributes") {
-                StyleMeta::from_json(meta.to_string().as_str())
+                TextMeta::from_json(meta.to_string().as_str())
             } else {
-                StyleMeta::default()
+                TextMeta::default()
             };
             DeltaItem::Insert {
                 insert: value,
@@ -164,9 +163,9 @@ fn diff_item_from_json(v: serde_json::Value) -> TextDiffItem {
     if map.contains_key("retain") {
         let len = map["retain"].as_u64().unwrap();
         let meta = if let Some(meta) = map.get("attributes") {
-            StyleMeta::from_json(meta.to_string().as_str())
+            TextMeta::from_json(meta.to_string().as_str())
         } else {
-            StyleMeta::default()
+            TextMeta::default()
         };
         TextDiffItem::Retain {
             len: len as usize,
@@ -175,9 +174,9 @@ fn diff_item_from_json(v: serde_json::Value) -> TextDiffItem {
     } else if map.contains_key("insert") {
         let value = map["insert"].as_str().unwrap().to_string().into();
         let meta = if let Some(meta) = map.get("attributes") {
-            StyleMeta::from_json(meta.to_string().as_str())
+            TextMeta::from_json(meta.to_string().as_str())
         } else {
-            StyleMeta::default()
+            TextMeta::default()
         };
         TextDiffItem::Replace {
             value,
@@ -215,7 +214,7 @@ impl ToJson for TextDiff {
     }
 }
 
-impl ToJson for Delta<StringSlice, StyleMeta> {
+impl ToJson for Delta<StringSlice, TextMeta> {
     fn to_json_value(&self) -> serde_json::Value {
         let mut vec = Vec::new();
         for item in self.iter() {
@@ -521,16 +520,17 @@ pub(crate) fn unresolved_to_collection(v: &ValueOrHandler) -> LoroValue {
 
 #[cfg(feature = "wasm")]
 pub mod wasm {
-
+    use crate::{
+        delta::{Delta, DeltaItem, Meta, StyleMeta, TreeDiff, TreeDiffItem, TreeExternalDiff},
+        event::{Index, TextDiff, TextDiffItem, TextMeta},
+        utils::string_slice::StringSlice,
+        TreeParentId,
+    };
+    use fractional_index::FractionalIndex;
     use generic_btree::rle::HasLength;
     use js_sys::{Array, Object};
-    use wasm_bindgen::{JsValue, __rt::IntoJsResult};
-
-    use crate::{
-        delta::{Delta, DeltaItem, Meta, StyleMeta, TreeDiff, TreeExternalDiff},
-        event::{Index, TextDiff, TextDiffItem},
-        utils::string_slice::StringSlice,
-    };
+    use loro_common::{LoroValue, TreeID};
+    use wasm_bindgen::{JsCast, JsValue, __rt::IntoJsResult};
 
     impl From<Index> for JsValue {
         fn from(value: Index) -> Self {
@@ -617,6 +617,157 @@ pub mod wasm {
                 array.push(&obj);
             }
             array.into_js_result().unwrap()
+        }
+    }
+
+    impl TryFrom<&JsValue> for TreeDiff {
+        type Error = String;
+
+        fn try_from(value: &JsValue) -> Result<Self, Self::Error> {
+            if !value.is_array() {
+                return Err("Expected an array".to_string());
+            }
+
+            let array = js_sys::Array::from(value);
+            let mut diff = Vec::new();
+
+            for i in 0..array.length() {
+                let item = array.get(i);
+                if !item.is_object() {
+                    return Err(format!("Item at index {} is not an object", i));
+                }
+
+                let obj = js_sys::Object::from(item);
+                let target = js_sys::Reflect::get(&obj, &"target".into())
+                    .map_err(|e| format!("Failed to get target: {:?}", e))?;
+                let target = TreeID::try_from(target)
+                    .map_err(|e| format!("Failed to parse target: {:?}", e))?;
+
+                let action = js_sys::Reflect::get(&obj, &"action".into())
+                    .map_err(|e| format!("Failed to get action: {:?}", e))?;
+                let action = action
+                    .as_string()
+                    .ok_or_else(|| "action is not a string".to_string())?;
+
+                let action = match action.as_str() {
+                    "create" => {
+                        let parent = js_sys::Reflect::get(&obj, &"parent".into())
+                            .map_err(|e| format!("Failed to get parent: {:?}", e))?;
+                        let parent_id = if parent.is_null() || parent.is_undefined() {
+                            None
+                        } else {
+                            Some(
+                                TreeID::try_from(parent)
+                                    .map_err(|e| format!("Failed to parse parent: {:?}", e))?,
+                            )
+                        };
+                        let parent = TreeParentId::from(parent_id);
+                        let index = js_sys::Reflect::get(&obj, &"index".into())
+                            .map_err(|e| format!("Failed to get index: {:?}", e))?;
+                        let index = index
+                            .as_f64()
+                            .ok_or_else(|| "index is not a number".to_string())?
+                            as usize;
+
+                        let position = js_sys::Reflect::get(&obj, &"fractionalIndex".into())
+                            .map_err(|e| format!("Failed to get fractionalIndex: {:?}", e))?;
+                        let position = position
+                            .as_string()
+                            .ok_or_else(|| "fractionalIndex is not a string".to_string())?;
+                        let position = FractionalIndex::from_hex_string(position);
+
+                        TreeExternalDiff::Create {
+                            parent,
+                            index,
+                            position,
+                        }
+                    }
+                    "move" => {
+                        let parent = js_sys::Reflect::get(&obj, &"parent".into())
+                            .map_err(|e| format!("Failed to get parent: {:?}", e))?;
+                        let parent_id = if parent.is_null() || parent.is_undefined() {
+                            None
+                        } else {
+                            Some(
+                                TreeID::try_from(parent)
+                                    .map_err(|e| format!("Failed to parse parent: {:?}", e))?,
+                            )
+                        };
+                        let parent = TreeParentId::from(parent_id);
+
+                        let index = js_sys::Reflect::get(&obj, &"index".into())
+                            .map_err(|e| format!("Failed to get index: {:?}", e))?;
+                        let index = index
+                            .as_f64()
+                            .ok_or_else(|| "index is not a number".to_string())?
+                            as usize;
+
+                        let position = js_sys::Reflect::get(&obj, &"fractionalIndex".into())
+                            .map_err(|e| format!("Failed to get fractionalIndex: {:?}", e))?;
+                        let position = position
+                            .as_string()
+                            .ok_or_else(|| "fractionalIndex is not a string".to_string())?;
+                        let position = FractionalIndex::from_hex_string(position);
+
+                        let old_parent = js_sys::Reflect::get(&obj, &"oldParent".into())
+                            .map_err(|e| format!("Failed to get oldParent: {:?}", e))?;
+                        let old_parent_id = if old_parent.is_null() || old_parent.is_undefined() {
+                            None
+                        } else {
+                            Some(
+                                TreeID::try_from(old_parent)
+                                    .map_err(|e| format!("Failed to parse oldParent: {:?}", e))?,
+                            )
+                        };
+                        let old_parent = TreeParentId::from(old_parent_id);
+
+                        let old_index = js_sys::Reflect::get(&obj, &"oldIndex".into())
+                            .map_err(|e| format!("Failed to get oldIndex: {:?}", e))?;
+                        let old_index = old_index
+                            .as_f64()
+                            .ok_or_else(|| "oldIndex is not a number".to_string())?
+                            as usize;
+
+                        TreeExternalDiff::Move {
+                            parent,
+                            index,
+                            position,
+                            old_parent,
+                            old_index,
+                        }
+                    }
+                    "delete" => {
+                        let old_parent = js_sys::Reflect::get(&obj, &"oldParent".into())
+                            .map_err(|e| format!("Failed to get oldParent: {:?}", e))?;
+                        let old_parent_id = if old_parent.is_null() || old_parent.is_undefined() {
+                            None
+                        } else {
+                            Some(
+                                TreeID::try_from(old_parent)
+                                    .map_err(|e| format!("Failed to parse oldParent: {:?}", e))?,
+                            )
+                        };
+                        let old_parent = TreeParentId::from(old_parent_id);
+
+                        let old_index = js_sys::Reflect::get(&obj, &"oldIndex".into())
+                            .map_err(|e| format!("Failed to get oldIndex: {:?}", e))?;
+                        let old_index = old_index
+                            .as_f64()
+                            .ok_or_else(|| "oldIndex is not a number".to_string())?
+                            as usize;
+
+                        TreeExternalDiff::Delete {
+                            old_parent,
+                            old_index,
+                        }
+                    }
+                    action => Err(format!("Unknown tree diff action: {}", action))?,
+                };
+
+                diff.push(TreeDiffItem { target, action });
+            }
+
+            Ok(TreeDiff { diff })
         }
     }
 
@@ -782,6 +933,45 @@ pub mod wasm {
             }
 
             obj.into_js_result().unwrap()
+        }
+    }
+
+    impl From<&TextMeta> for JsValue {
+        fn from(value: &TextMeta) -> Self {
+            let obj = Object::new();
+            for (key, value) in value.0.iter() {
+                js_sys::Reflect::set(&obj, &JsValue::from_str(key), &JsValue::from(value.clone()))
+                    .unwrap();
+            }
+
+            obj.into_js_result().unwrap()
+        }
+    }
+
+    impl TryFrom<&JsValue> for TextMeta {
+        type Error = JsValue;
+
+        fn try_from(value: &JsValue) -> Result<Self, Self::Error> {
+            if value.is_null() || value.is_undefined() {
+                return Ok(TextMeta::default());
+            }
+
+            let obj = value.dyn_ref::<Object>().ok_or("Expected an object")?;
+            let mut meta = TextMeta::default();
+
+            let entries = Object::entries(obj);
+            for i in 0..entries.length() {
+                let entry = entries.get(i);
+                let entry_arr = entry.dyn_ref::<Array>().ok_or("Expected an array")?;
+                let key = entry_arr
+                    .get(0)
+                    .as_string()
+                    .ok_or("Expected a string key")?;
+                let value = entry_arr.get(1);
+                meta.0.insert(key, LoroValue::from(value));
+            }
+
+            Ok(meta)
         }
     }
 }

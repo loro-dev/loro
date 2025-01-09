@@ -1,6 +1,7 @@
 #![doc = include_str!("../README.md")]
 #![warn(missing_docs)]
 #![warn(missing_debug_implementations)]
+use event::DiffBatch;
 use event::{DiffEvent, Subscriber};
 use fxhash::FxHashSet;
 pub use loro_common::InternalString;
@@ -9,7 +10,7 @@ use loro_internal::cursor::Cursor;
 use loro_internal::cursor::PosQueryResult;
 use loro_internal::cursor::Side;
 pub use loro_internal::encoding::ImportStatus;
-use loro_internal::handler::HandlerTrait;
+use loro_internal::handler::{HandlerTrait, ValueOrHandler};
 pub use loro_internal::loro::ChangeTravelError;
 pub use loro_internal::undo::{OnPop, UndoItemMeta, UndoOrRedo};
 use loro_internal::version::shrink_frontiers;
@@ -943,6 +944,30 @@ impl LoroDoc {
     pub fn find_id_spans_between(&self, from: &Frontiers, to: &Frontiers) -> VersionVectorDiff {
         self.doc.find_id_spans_between(from, to)
     }
+
+    /// Revert the current document state back to the target version
+    ///
+    /// Internally, it will generate a series of local operations that can revert the
+    /// current doc to the target version. It will calculate the diff between the current
+    /// state and the target state, and apply the diff to the current state.
+    #[inline]
+    pub fn revert_to(&self, version: &Frontiers) -> LoroResult<()> {
+        self.doc.revert_to(version)
+    }
+
+    /// Apply a diff to the current document state.
+    ///
+    /// Internally, it will apply the diff to the current state.
+    #[inline]
+    pub fn apply_diff(&self, diff: DiffBatch) -> LoroResult<()> {
+        self.doc.apply_diff(diff.into())
+    }
+
+    /// Calculate the diff between two versions
+    #[inline]
+    pub fn diff(&self, a: &Frontiers, b: &Frontiers) -> LoroResult<DiffBatch> {
+        self.doc.diff(a, b).map(|x| x.into())
+    }
 }
 
 /// It's used to prevent the user from implementing the trait directly.
@@ -1833,7 +1858,7 @@ pub struct TreeNode {
     /// ID of the tree node.
     pub id: TreeID,
     /// ID of the parent tree node.
-    /// If the ndoe is deleted this value is TreeParentId::Deleted.
+    /// If the node is deleted this value is TreeParentId::Deleted.
     /// If you checkout to a version before the node is created, this value is TreeParentId::Unexist.
     pub parent: TreeParentId,
     /// Fraction index of the node
@@ -2700,6 +2725,13 @@ impl ValueOrContainer {
                 Container::Counter(c) => c.get_value().into(),
                 Container::Unknown(_) => LoroValue::Null,
             },
+        }
+    }
+
+    pub(crate) fn into_value_or_handler(self) -> ValueOrHandler {
+        match self {
+            ValueOrContainer::Value(v) => ValueOrHandler::Value(v),
+            ValueOrContainer::Container(c) => ValueOrHandler::Handler(c.to_handler()),
         }
     }
 }

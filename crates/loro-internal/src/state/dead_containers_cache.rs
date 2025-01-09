@@ -1,7 +1,6 @@
 use super::{ContainerState, DocState};
 use crate::container::idx::ContainerIdx;
 use fxhash::FxHashMap;
-use tracing::trace;
 
 #[derive(Default, Debug, Clone)]
 pub(super) struct DeadContainersCache {
@@ -14,7 +13,6 @@ impl DeadContainersCache {
     }
 
     pub(crate) fn clear_alive(&mut self) {
-        trace!("clear alive");
         self.cache.retain(|_, is_deleted| *is_deleted);
     }
 }

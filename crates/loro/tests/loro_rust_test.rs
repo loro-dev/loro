@@ -10,9 +10,11 @@ use std::{
 };
 
 use loro::{
-    awareness::Awareness, loro_value, CommitOptions, ContainerID, ContainerTrait, ContainerType,
-    ExportMode, Frontiers, FrontiersNotIncluded, IdSpan, LoroDoc, LoroError, LoroList, LoroMap,
-    LoroStringValue, LoroText, LoroValue, ToJson,
+    awareness::Awareness,
+    event::{Diff, DiffBatch, ListDiffItem},
+    loro_value, CommitOptions, ContainerID, ContainerTrait, ContainerType, ExportMode, Frontiers,
+    FrontiersNotIncluded, IdSpan, LoroDoc, LoroError, LoroList, LoroMap, LoroStringValue, LoroText,
+    LoroValue, ToJson,
 };
 use loro_internal::{
     encoding::EncodedBlobMode, handler::TextDelta, id::ID, version_range, vv, LoroResult,
@@ -2742,6 +2744,222 @@ fn test_find_spans_between() -> LoroResult<()> {
 }
 
 #[test]
+fn revert_to() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    doc.get_text("text").insert(0, "Hello")?;
+    doc.commit();
+    let f1 = doc.state_frontiers();
+    doc.get_text("text").insert(5, " World")?;
+    doc.commit();
+    let f2 = doc.state_frontiers();
+    doc.revert_to(&f1)?;
+    assert_eq!(doc.get_text("text").to_string(), "Hello");
+    for _ in 0..10 {
+        doc.get_text("text").insert(0, "12345")?;
+        doc.commit();
+    }
+    doc.get_text("text").delete(0, 50)?;
+    doc.commit();
+    let f3_counter = doc.state_frontiers().as_single().unwrap().counter;
+    doc.revert_to(&f2)?;
+    let f4_counter = doc.state_frontiers().as_single().unwrap().counter;
+    assert_eq!(f4_counter - f3_counter, 6); // Only need to redo the insertion of " World", other 50 operations should be ignored
+    assert_eq!(doc.get_text("text").to_string(), "Hello World");
+    Ok(())
+}
+
+#[test]
+fn test_diff_and_apply_on_another_doc() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    doc.get_list("list").insert(0, "a")?;
+    doc.get_list("list").insert(1, "b")?;
+    let f0 = doc.state_frontiers();
+    doc.get_map("map").insert("key", "value")?;
+    doc.get_list("list").insert(2, "hi")?;
+    doc.commit();
+    let f1 = doc.state_frontiers();
+    let diff = doc.diff(&f0, &f1)?;
+    let diff_revert = doc.diff(&f1, &f0)?;
+
+    let doc2 = LoroDoc::new();
+    doc2.set_peer_id(2)?;
+    doc2.get_list("list").insert(0, 1)?;
+    doc2.get_list("list").insert(1, 2)?;
+    doc2.commit();
+    doc2.apply_diff(diff.clone())?;
+    assert_eq!(
+        doc2.get_deep_value().to_json_value(),
+        json!({"list": [1, 2, "hi"], "map": {"key": "value"}})
+    );
+    doc2.apply_diff(diff_revert)?;
+    assert_eq!(
+        doc2.get_deep_value().to_json_value(),
+        json!({"list": [1, 2], "map": {}})
+    );
+
+    let diff_str = format!("{:#?}", diff);
+    assert_eq!(
+        diff_str,
+        r#"[
+    (
+        Root("list" List),
+        List(
+            [
+                Retain {
+                    retain: 2,
+                },
+                Insert {
+                    insert: [
+                        Value(
+                            String(
+                                LoroStringValue(
+                                    "hi",
+                                ),
+                            ),
+                        ),
+                    ],
+                    is_move: false,
+                },
+            ],
+        ),
+    ),
+    (
+        Root("map" Map),
+        Map(
+            MapDelta {
+                updated: {
+                    "key": Some(
+                        Value(
+                            String(
+                                LoroStringValue(
+                                    "value",
+                                ),
+                            ),
+                        ),
+                    ),
+                },
+            },
+        ),
+    ),
+]"#
+    );
+    Ok(())
+}
+
+#[test]
+fn test_diff_and_apply_on_another_doc_with_child_container() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    doc.get_list("list").insert(0, "a")?;
+    doc.get_list("list").insert(1, "b")?;
+    let f0 = doc.state_frontiers();
+    let text = doc
+        .get_map("map")
+        .insert_container("key", LoroText::new())?;
+    text.insert(0, "value")?;
+    doc.get_list("list").insert(2, "hi")?;
+    doc.commit();
+    let f1 = doc.state_frontiers();
+    let diff = doc.diff(&f0, &f1)?;
+    let diff_revert = doc.diff(&f1, &f0)?;
+
+    let doc2 = LoroDoc::new();
+    doc2.set_peer_id(2)?;
+    doc2.get_list("list").insert(0, 1)?;
+    doc2.get_list("list").insert(1, 2)?;
+    doc2.commit();
+    doc2.apply_diff(diff.clone())?;
+    assert_eq!(
+        doc2.get_deep_value().to_json_value(),
+        json!({"list": [1, 2, "hi"], "map": {"key": "value"}})
+    );
+    doc2.apply_diff(diff_revert)?;
+    assert_eq!(
+        doc2.get_deep_value().to_json_value(),
+        json!({"list": [1, 2], "map": {}})
+    );
+
+    let diff_str = format!("{:#?}", diff);
+    assert_eq!(
+        diff_str,
+        r#"[
+    (
+        Root("list" List),
+        List(
+            [
+                Retain {
+                    retain: 2,
+                },
+                Insert {
+                    insert: [
+                        Value(
+                            String(
+                                LoroStringValue(
+                                    "hi",
+                                ),
+                            ),
+                        ),
+                    ],
+                    is_move: false,
+                },
+            ],
+        ),
+    ),
+    (
+        Root("map" Map),
+        Map(
+            MapDelta {
+                updated: {
+                    "key": Some(
+                        Container(
+                            Text(
+                                LoroText {
+                                    handler: TextHandler(Normal(Text 2@1)),
+                                },
+                            ),
+                        ),
+                    ),
+                },
+            },
+        ),
+    ),
+    (
+        Normal(Text 2@1),
+        Text(
+            [
+                Insert {
+                    insert: "value",
+                    attributes: None,
+                },
+            ],
+        ),
+    ),
+]"#
+    );
+    Ok(())
+}
+
+#[test]
+fn test_diff_apply_with_unknown_container() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    let mut batch = DiffBatch::default();
+    batch
+        .push(
+            ContainerID::new_normal(ID::new(1, 1), ContainerType::List),
+            Diff::List(vec![ListDiffItem::Delete { delete: 5 }]),
+        )
+        .unwrap();
+    let ans = doc.apply_diff(batch);
+    assert!(ans.is_err());
+    assert!(matches!(
+        ans,
+        Err(LoroError::ContainersNotFound { containers: _ }),
+    ),);
+    Ok(())
+}
+
 fn test_set_merge_interval() {
     let doc = LoroDoc::new();
     doc.set_record_timestamp(true);

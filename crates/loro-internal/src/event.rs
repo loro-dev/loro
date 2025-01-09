@@ -1,4 +1,5 @@
 use enum_as_inner::EnumAsInner;
+use fxhash::FxHashMap;
 use itertools::Itertools;
 use loro_delta::{array_vec::ArrayVec, delta_trait::DeltaAttr, DeltaItem, DeltaRope};
 use serde::{Deserialize, Serialize};
@@ -6,10 +7,7 @@ use smallvec::SmallVec;
 
 use crate::{
     container::richtext::richtext_state::RichtextStateChunk,
-    delta::{
-        Delta, MapDelta, Meta, MovableListInnerDelta, ResolvedMapDelta, StyleMeta, TreeDelta,
-        TreeDiff,
-    },
+    delta::{Delta, MapDelta, Meta, MovableListInnerDelta, ResolvedMapDelta, TreeDelta, TreeDiff},
     diff_calc::DiffMode,
     handler::ValueOrHandler,
     op::SliceWithId,
@@ -19,7 +17,7 @@ use crate::{
 
 use std::{borrow::Cow, hash::Hash};
 
-use loro_common::{ContainerID, TreeID};
+use loro_common::{ContainerID, LoroValue, TreeID};
 
 use crate::{container::idx::ContainerIdx, version::Frontiers};
 
@@ -293,8 +291,35 @@ pub type ListDiffInsertItem = ArrayVec<ValueOrHandler, 8>;
 pub type ListDiffItem = DeltaItem<ListDiffInsertItem, ListDeltaMeta>;
 pub type ListDiff = DeltaRope<ListDiffInsertItem, ListDeltaMeta>;
 
-pub type TextDiffItem = DeltaItem<StringSlice, StyleMeta>;
-pub type TextDiff = DeltaRope<StringSlice, StyleMeta>;
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TextMeta(pub FxHashMap<String, LoroValue>);
+
+impl From<TextMeta> for FxHashMap<String, LoroValue> {
+    fn from(value: TextMeta) -> Self {
+        value.0
+    }
+}
+
+impl From<FxHashMap<String, LoroValue>> for TextMeta {
+    fn from(value: FxHashMap<String, LoroValue>) -> Self {
+        TextMeta(value)
+    }
+}
+
+pub type TextDiffItem = DeltaItem<StringSlice, TextMeta>;
+pub type TextDiff = DeltaRope<StringSlice, TextMeta>;
+
+impl DeltaAttr for TextMeta {
+    fn compose(&mut self, other: &Self) {
+        for (key, value) in other.0.iter() {
+            self.0.insert(key.clone(), value.clone());
+        }
+    }
+
+    fn attr_is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
 
 /// Diff is the diff between two versions of a container.
 /// It's used to describe the change of a container and the events.
@@ -309,8 +334,6 @@ pub type TextDiff = DeltaRope<StringSlice, StyleMeta>;
 #[derive(Clone, Debug, EnumAsInner)]
 pub enum Diff {
     List(ListDiff),
-    // TODO: refactor, doesn't make much sense to use `StyleMeta` here, because sometime style
-    // don't have peer and lamport info
     /// - When feature `wasm` is enabled, it should use utf16 indexes.
     /// - When feature `wasm` is disabled, it should use unicode indexes.
     Text(TextDiff),
@@ -360,7 +383,7 @@ impl InternalDiff {
 }
 
 impl Diff {
-    pub(crate) fn compose_ref(&mut self, diff: &Diff) {
+    pub fn compose_ref(&mut self, diff: &Diff) {
         // PERF: avoid clone
         match (self, diff) {
             (Diff::List(a), Diff::List(b)) => {
@@ -381,7 +404,7 @@ impl Diff {
         }
     }
 
-    pub(crate) fn compose(self, diff: Diff) -> Result<Self, Self> {
+    pub fn compose(self, diff: Diff) -> Result<Self, Self> {
         // PERF: avoid clone
         match (self, diff) {
             (Diff::List(mut a), Diff::List(b)) => {
@@ -402,7 +425,7 @@ impl Diff {
     }
 
     // Transform this diff based on the other diff
-    pub(crate) fn transform(&mut self, other: &Self, left_prior: bool) {
+    pub fn transform(&mut self, other: &Self, left_prior: bool) {
         match (self, other) {
             (Diff::List(a), Diff::List(b)) => a.transform_(b, left_prior),
             (Diff::Text(a), Diff::Text(b)) => a.transform_(b, left_prior),
@@ -420,8 +443,7 @@ impl Diff {
         }
     }
 
-    #[allow(unused)]
-    pub(crate) fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         match self {
             Diff::List(s) => s.is_empty(),
             Diff::Text(t) => t.is_empty(),

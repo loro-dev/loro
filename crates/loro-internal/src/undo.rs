@@ -19,50 +19,78 @@ use crate::{
     ContainerDiff, DiffEvent, DocDiff, LoroDoc, Subscription,
 };
 
+/// A batch of diffs.
+///
+/// You can use `loroDoc.apply_diff(diff)` to apply the diff to the document.
 #[derive(Debug, Clone, Default)]
-pub struct DiffBatch(pub(crate) FxHashMap<ContainerID, Diff>);
+pub struct DiffBatch {
+    pub cid_to_events: FxHashMap<ContainerID, Diff>,
+    pub order: Vec<ContainerID>,
+}
 
 impl DiffBatch {
     pub fn new(diff: Vec<DocDiff>) -> Self {
         let mut map: FxHashMap<ContainerID, Diff> = Default::default();
+        let mut order: Vec<ContainerID> = Vec::with_capacity(diff.len());
         for d in diff.into_iter() {
             for item in d.diff.into_iter() {
                 let old = map.insert(item.id.clone(), item.diff);
                 assert!(old.is_none());
+                order.push(item.id.clone());
             }
         }
 
-        Self(map)
+        Self {
+            cid_to_events: map,
+            order,
+        }
     }
 
     pub fn compose(&mut self, other: &Self) {
-        if other.0.is_empty() {
+        if other.cid_to_events.is_empty() {
             return;
         }
 
-        for (idx, diff) in other.0.iter() {
-            if let Some(this_diff) = self.0.get_mut(idx) {
+        for (id, diff) in other.iter() {
+            if let Some(this_diff) = self.cid_to_events.get_mut(id) {
                 this_diff.compose_ref(diff);
             } else {
-                self.0.insert(idx.clone(), diff.clone());
+                self.cid_to_events.insert(id.clone(), diff.clone());
+                self.order.push(id.clone());
             }
         }
     }
 
     pub fn transform(&mut self, other: &Self, left_priority: bool) {
-        if other.0.is_empty() || self.0.is_empty() {
+        if other.cid_to_events.is_empty() || self.cid_to_events.is_empty() {
             return;
         }
 
-        for (idx, diff) in self.0.iter_mut() {
-            if let Some(b_diff) = other.0.get(idx) {
+        for (idx, diff) in self.cid_to_events.iter_mut() {
+            if let Some(b_diff) = other.cid_to_events.get(idx) {
                 diff.transform(b_diff, left_priority);
             }
         }
     }
 
     pub fn clear(&mut self) {
-        self.0.clear();
+        self.cid_to_events.clear();
+        self.order.clear();
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&ContainerID, &Diff)> + '_ {
+        self.order
+            .iter()
+            .map(|cid| (cid, self.cid_to_events.get(cid).unwrap()))
+    }
+
+    #[allow(clippy::should_implement_trait)]
+    pub fn into_iter(self) -> impl Iterator<Item = (ContainerID, Diff)> {
+        let mut cid_to_events = self.cid_to_events;
+        self.order.into_iter().map(move |cid| {
+            let d = cid_to_events.remove(&cid).unwrap();
+            (cid, d)
+        })
     }
 }
 
@@ -77,7 +105,7 @@ fn transform_cursor(
         cid = new_cid;
     }
 
-    if let Some(diff) = remote_diff.0.get(cid) {
+    if let Some(diff) = remote_diff.cid_to_events.get(cid) {
         let new_pos = diff.transform_cursor(cursor_with_pos.pos.pos, false);
         cursor_with_pos.pos.pos = new_pos;
     };
@@ -255,7 +283,7 @@ impl Stack {
         while self.stack.back().unwrap().0.is_empty() && self.stack.len() > 1 {
             let (_, diff) = self.stack.pop_back().unwrap();
             let diff = diff.try_lock().unwrap();
-            if !diff.0.is_empty() {
+            if !diff.cid_to_events.is_empty() {
                 self.stack
                     .back_mut()
                     .unwrap()
@@ -287,7 +315,7 @@ impl Stack {
     pub fn push_with_merge(&mut self, span: CounterSpan, meta: UndoItemMeta, can_merge: bool) {
         let last = self.stack.back_mut().unwrap();
         let last_remote_diff = last.1.try_lock().unwrap();
-        if !last_remote_diff.0.is_empty() {
+        if !last_remote_diff.cid_to_events.is_empty() {
             // If the remote diff is not empty, we cannot merge
             drop(last_remote_diff);
             let mut v = VecDeque::new();
@@ -320,10 +348,13 @@ impl Stack {
         let remote_diff = &mut self.stack.back_mut().unwrap().1;
         let mut remote_diff = remote_diff.try_lock().unwrap();
         for e in diff {
-            if let Some(d) = remote_diff.0.get_mut(&e.id) {
+            if let Some(d) = remote_diff.cid_to_events.get_mut(&e.id) {
                 d.compose_ref(&e.diff);
             } else {
-                remote_diff.0.insert(e.id.clone(), e.diff.clone());
+                remote_diff
+                    .cid_to_events
+                    .insert(e.id.clone(), e.diff.clone());
+                remote_diff.order.push(e.id.clone());
             }
         }
     }

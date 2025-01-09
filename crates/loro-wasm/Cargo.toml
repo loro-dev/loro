@@ -15,6 +15,8 @@ loro-internal = { path = "../loro-internal", features = [
     "counter",
     "jsonpath",
 ] }
+loro-common = { path = "../loro-common" }
+loro-delta = { path = "../delta" }
 wasm-bindgen = "=0.2.92"
 serde-wasm-bindgen = { version = "^0.6.5" }
 wasm-bindgen-derive = "0.2.1"
@@ -25,6 +27,8 @@ rle = { path = "../rle", package = "loro-rle" }
 tracing-wasm = "0.2.1"
 tracing = { version = "0.1", features = ["release_max_level_warn"] }
 serde_json = "1"
+smallvec = "1.11.2"
+arrayvec = "0.7.4"
 
 [features]
 default = []

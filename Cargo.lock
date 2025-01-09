@@ -1480,14 +1480,18 @@ checksum = "3f3d053a135388e6b1df14e8af1212af5064746e9b87a06a345a7a779ee9695a"
 name = "loro-wasm"
 version = "0.1.0"
 dependencies = [
+ "arrayvec",
  "console_error_panic_hook",
  "getrandom",
  "js-sys",
+ "loro-common 1.2.7",
+ "loro-delta 1.2.7",
  "loro-internal 1.2.7",
  "loro-rle 1.2.7",
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
+ "smallvec",
  "tracing",
  "tracing-wasm",
  "wasm-bindgen",
