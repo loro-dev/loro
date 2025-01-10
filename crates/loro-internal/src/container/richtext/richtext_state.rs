@@ -1611,7 +1611,8 @@ impl RichtextState {
         result
     }
 
-    /// Find the best insert position based on algorithm similar to Peritext.
+    /// Find the best insert position based on the rich-text CRDT algorithm.
+    ///
     /// The result is only different from `query` when there are style anchors around the insert pos.
     /// Returns the right neighbor of the insert pos and the entity index.
     ///

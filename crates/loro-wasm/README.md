@@ -56,7 +56,7 @@ Loro is a [CRDTs(Conflict-free Replicated Data Types)](https://crdt.tech/) libra
 **Supported CRDT Algorithms**
 
 - 📝 Text Editing with [Fugue]
-- 📙 [Peritext-like Rich Text CRDT](https://loro.dev/blog/loro-richtext)
+- 📙 [Rich Text CRDT](https://loro.dev/blog/loro-richtext)
 - 🌲 [Moveable Tree](https://loro.dev/docs/tutorial/tree)
 - 🚗 [Moveable List](https://loro.dev/docs/tutorial/list)
 - 🗺️ [Last-Write-Wins Map](https://loro.dev/docs/tutorial/map)
@@ -137,7 +137,6 @@ test('sync example', () => {
 
 Loro draws inspiration from the innovative work of the following projects and individuals:
 
-- [Ink & Switch](https://inkandswitch.com/): The principles of Local-first Software have greatly influenced this project. The [Peritext](https://www.inkandswitch.com/peritext/) project has also shaped our approach to rich text CRDTs.
 - [Diamond-types](https://github.com/josephg/diamond-types): The [Event Graph Walker (Eg-walker)](https://loro.dev/docs/advanced/event_graph_walker) algorithm from @josephg has been adapted to reduce the computation and space usage of CRDTs.
 - [Automerge](https://github.com/automerge/automerge): Their use of columnar encoding for CRDTs has informed our strategies for efficient data encoding.
 - [Yjs](https://github.com/yjs/yjs): We have incorporated a similar algorithm for effectively merging collaborative editing operations, thanks to their pioneering work.
@@ -147,4 +146,3 @@ Loro draws inspiration from the innovative work of the following projects and in
 
 [local-first]: https://www.inkandswitch.com/local-first/
 [Fugue]: https://arxiv.org/abs/2305.00583
-[Peritext]: https://www.inkandswitch.com/peritext/
