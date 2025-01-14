@@ -13,7 +13,7 @@ use loro::{
 };
 
 use crate::{
-    event::{DiffEvent, Subscriber},
+    event::{DiffBatch, DiffEvent, Subscriber},
     AbsolutePosition, Configure, ContainerID, ContainerIdLike, Cursor, Frontiers, Index,
     LoroCounter, LoroList, LoroMap, LoroMovableList, LoroText, LoroTree, LoroValue, StyleConfigMap,
     ValueOrContainer, VersionVector,
@@ -615,6 +615,18 @@ impl LoroDoc {
 
     pub fn get_pending_txn_len(&self) -> u32 {
         self.doc.get_pending_txn_len() as u32
+    }
+
+    pub fn revert_to(&self, version: &Frontiers) -> LoroResult<()> {
+        self.doc.revert_to(&version.into())
+    }
+
+    pub fn apply_diff(&self, diff: DiffBatch) -> LoroResult<()> {
+        self.doc.apply_diff(diff.into())
+    }
+
+    pub fn diff(&self, a: &Frontiers, b: &Frontiers) -> LoroResult<DiffBatch> {
+        self.doc.diff(&a.into(), &b.into()).map(|x| x.into())
     }
 }
 

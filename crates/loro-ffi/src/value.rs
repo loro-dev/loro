@@ -6,7 +6,7 @@ pub trait LoroValueLike: Sync + Send {
     fn as_loro_value(&self) -> crate::LoroValue;
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 pub enum ContainerType {
     Text,
     Map,
@@ -17,7 +17,7 @@ pub enum ContainerType {
     Unknown { kind: u8 },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub enum ContainerID {
     Root {
         name: String,

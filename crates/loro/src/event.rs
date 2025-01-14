@@ -249,8 +249,8 @@ impl From<ValueOrHandler> for ValueOrContainer {
 /// A batch of diffs.
 #[derive(Default, Clone)]
 pub struct DiffBatch {
-    cid_to_events: FxHashMap<ContainerID, Diff<'static>>,
-    order: Vec<ContainerID>,
+    pub cid_to_events: FxHashMap<ContainerID, Diff<'static>>,
+    pub order: Vec<ContainerID>,
 }
 
 impl std::fmt::Debug for DiffBatch {

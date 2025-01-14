@@ -1,6 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{borrow::Cow, collections::HashMap, sync::Arc};
 
-use loro::{EventTriggerKind, TreeID};
+use loro::{event::MapDelta as LoroMapDelta, EventTriggerKind, TreeID};
+use loro_internal::FxHashMap;
 
 use crate::{ContainerID, LoroValue, TreeParentId, ValueOrContainer};
 
@@ -26,6 +27,39 @@ impl From<loro::event::DiffEvent<'_>> for DiffEvent {
             origin: diff_event.origin.to_string(),
             current_target: diff_event.current_target.map(|v| v.into()),
             events: diff_event.events.iter().map(ContainerDiff::from).collect(),
+        }
+    }
+}
+
+pub struct DiffBatch {
+    pub cid_to_events: HashMap<ContainerID, Diff>,
+    pub order: Vec<ContainerID>,
+}
+
+impl From<loro::event::DiffBatch> for DiffBatch {
+    fn from(value: loro::event::DiffBatch) -> Self {
+        Self {
+            cid_to_events: value
+                .cid_to_events
+                .into_iter()
+                .map(|(k, v)| (k.into(), (&v).into()))
+                .collect(),
+            order: value.order.iter().map(|k| k.clone().into()).collect(),
+        }
+    }
+}
+
+impl From<DiffBatch> for loro::event::DiffBatch {
+    fn from(value: DiffBatch) -> Self {
+        let mut map =
+            FxHashMap::with_capacity_and_hasher(value.cid_to_events.len(), Default::default());
+        for (id, diff) in value.cid_to_events.into_iter() {
+            map.insert(id.into(), (&diff).into());
+        }
+
+        Self {
+            cid_to_events: map,
+            order: value.order.iter().map(|k| k.into()).collect(),
         }
     }
 }
