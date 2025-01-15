@@ -45,8 +45,8 @@ pub use loro_internal::container::richtext::ExpandType;
 pub use loro_internal::container::{ContainerID, ContainerType, IntoContainerId};
 pub use loro_internal::cursor;
 pub use loro_internal::delta::{TreeDeltaItem, TreeDiff, TreeDiffItem, TreeExternalDiff};
-pub use loro_internal::encoding::ExportMode;
 pub use loro_internal::encoding::ImportBlobMetadata;
+pub use loro_internal::encoding::{EncodedBlobMode, ExportMode};
 pub use loro_internal::event::{EventTriggerKind, Index};
 pub use loro_internal::handler::TextDelta;
 pub use loro_internal::json;
@@ -221,7 +221,7 @@ impl LoroDoc {
     ///
     /// If two continuous local changes are within the interval, they will be merged into one change.
     /// The default value is 1000 seconds.
-    /// 
+    ///
     /// By default, we record timestamps in seconds for each change. So if the merge interval is 1, and changes A and B
     /// have timestamps of 3 and 4 respectively, then they will be merged into one change
     #[inline]
