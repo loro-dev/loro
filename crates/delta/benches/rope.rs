@@ -149,7 +149,7 @@ impl<T: Rng> RandomCharIter<T> {
     pub fn new(rng: T) -> Self {
         Self {
             rng,
-            simple_text: std::env::var("SIMPLE_TEXT").map_or(false, |v| !v.is_empty()),
+            simple_text: std::env::var("SIMPLE_TEXT").is_ok_and(|v| !v.is_empty()),
         }
     }
 

@@ -1,3 +1,4 @@
+#![allow(unexpected_cfgs)]
 use loro_delta::{array_vec::ArrayVec, DeltaRope, DeltaRopeBuilder};
 use tracing_subscriber::fmt::format::FmtSpan;
 

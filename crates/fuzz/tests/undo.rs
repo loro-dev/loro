@@ -1,3 +1,4 @@
+#![allow(unexpected_cfgs)]
 use fuzz::{
     actions::{ActionWrapper::*, GenericAction},
     crdt_fuzzer::{minify_simple, test_multi_sites, Action::*, FuzzTarget, FuzzValue::*},

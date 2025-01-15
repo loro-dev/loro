@@ -1,4 +1,5 @@
 #![allow(deprecated)]
+#![allow(unexpected_cfgs)]
 use pretty_assertions::assert_eq;
 use std::{
     cmp::Ordering,

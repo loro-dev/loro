@@ -1,4 +1,5 @@
 #![allow(deprecated)]
+#![allow(unexpected_cfgs)]
 use std::sync::Arc;
 
 use loro::{ToJson as _, ID};
