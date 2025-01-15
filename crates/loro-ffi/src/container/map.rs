@@ -22,6 +22,13 @@ impl LoroMap {
         self.map.is_attached()
     }
 
+    /// If a detached container is attached, this method will return its corresponding attached handler.
+    pub fn get_attached(&self) -> Option<Arc<LoroMap>> {
+        self.map
+            .get_attached()
+            .map(|x| Arc::new(LoroMap { map: x }))
+    }
+
     /// Delete a key-value pair from the map.
     pub fn delete(&self, key: &str) -> LoroResult<()> {
         self.map.delete(key)

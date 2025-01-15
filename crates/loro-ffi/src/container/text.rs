@@ -1,6 +1,6 @@
 use std::{fmt::Display, sync::Arc};
 
-use loro::{cursor::Side, LoroResult, PeerID, UpdateOptions, UpdateTimeoutError};
+use loro::{cursor::Side, ContainerTrait, LoroResult, PeerID, UpdateOptions, UpdateTimeoutError};
 use loro_internal::handler::TextDelta as InternalTextDelta;
 
 use crate::{ContainerID, LoroValue, LoroValueLike, TextDelta};
@@ -29,6 +29,13 @@ impl LoroText {
     /// To attach the container to the document, please insert it into an attached container.
     pub fn is_attached(&self) -> bool {
         self.text.is_attached()
+    }
+
+    /// If a detached container is attached, this method will return its corresponding attached handler.
+    pub fn get_attached(&self) -> Option<Arc<LoroText>> {
+        self.text
+            .get_attached()
+            .map(|x| Arc::new(LoroText { text: x }))
     }
 
     /// Get the [ContainerID]  of the text container.

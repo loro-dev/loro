@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use loro::{ContainerTrait, LoroResult};
 
 use crate::ContainerID;
@@ -12,6 +14,21 @@ impl LoroCounter {
         Self {
             counter: loro::LoroCounter::new(),
         }
+    }
+
+    /// Whether the container is attached to a document
+    ///
+    /// The edits on a detached container will not be persisted.
+    /// To attach the container to the document, please insert it into an attached container.
+    pub fn is_attached(&self) -> bool {
+        self.counter.is_attached()
+    }
+
+    /// If a detached container is attached, this method will return its corresponding attached handler.
+    pub fn get_attached(&self) -> Option<Arc<LoroCounter>> {
+        self.counter
+            .get_attached()
+            .map(|x| Arc::new(LoroCounter { counter: x }))
     }
 
     /// Return container id of the Counter.

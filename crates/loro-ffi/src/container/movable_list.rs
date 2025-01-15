@@ -31,6 +31,13 @@ impl LoroMovableList {
         self.list.is_attached()
     }
 
+    /// If a detached container is attached, this method will return its corresponding attached handler.
+    pub fn get_attached(&self) -> Option<Arc<LoroMovableList>> {
+        self.list
+            .get_attached()
+            .map(|x| Arc::new(LoroMovableList { list: x }))
+    }
+
     /// Insert a value at the given position.
     pub fn insert(&self, pos: u32, v: Arc<dyn LoroValueLike>) -> LoroResult<()> {
         self.list.insert(pos as usize, v.as_loro_value())
