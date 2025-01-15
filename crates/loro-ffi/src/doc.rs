@@ -13,10 +13,10 @@ use loro::{
 };
 
 use crate::{
-    event::{DiffEvent, Subscriber},
+    event::{DiffBatch, DiffEvent, Subscriber},
     AbsolutePosition, Configure, ContainerID, ContainerIdLike, Cursor, Frontiers, Index,
     LoroCounter, LoroList, LoroMap, LoroMovableList, LoroText, LoroTree, LoroValue, StyleConfigMap,
-    ValueOrContainer, VersionVector,
+    ValueOrContainer, VersionVector, VersionVectorDiff,
 };
 
 /// Decodes the metadata for an imported blob from the provided bytes.
@@ -88,10 +88,13 @@ impl LoroDoc {
         self.doc.set_record_timestamp(record);
     }
 
-    /// Set the interval of mergeable changes, in milliseconds.
+    /// Set the interval of mergeable changes, **in seconds**.
     ///
     /// If two continuous local changes are within the interval, they will be merged into one change.
     /// The default value is 1000 seconds.
+    ///
+    /// By default, we record timestamps in seconds for each change. So if the merge interval is 1, and changes A and B
+    /// have timestamps of 3 and 4 respectively, then they will be merged into one change
     #[inline]
     pub fn set_change_merge_interval(&self, interval: i64) {
         self.doc.set_change_merge_interval(interval);
@@ -249,6 +252,8 @@ impl LoroDoc {
     }
 
     /// Set commit message for the current uncommitted changes
+    ///
+    /// It will be persisted.
     pub fn set_next_commit_message(&self, msg: &str) {
         self.doc.set_next_commit_message(msg)
     }
@@ -289,6 +294,32 @@ impl LoroDoc {
             .doc
             .export_json_updates(&start_vv.into(), &end_vv.into());
         serde_json::to_string(&json).unwrap()
+    }
+
+    /// Export the current state with json-string format of the document, without peer compression.
+    ///
+    /// Compared to [`export_json_updates`], this method does not compress the peer IDs in the updates.
+    /// So the operations are easier to be processed by application code.
+    #[inline]
+    pub fn export_json_updates_without_peer_compression(
+        &self,
+        start_vv: &VersionVector,
+        end_vv: &VersionVector,
+    ) -> String {
+        let json = self
+            .doc
+            .export_json_updates_without_peer_compression(&start_vv.into(), &end_vv.into());
+        serde_json::to_string(&json).unwrap()
+    }
+
+    /// Export the readable [`Change`]s in the given [`IdSpan`]
+    // TODO: swift type
+    pub fn export_json_in_id_span(&self, id_span: IdSpan) -> Vec<String> {
+        self.doc
+            .export_json_in_id_span(id_span)
+            .into_iter()
+            .map(|x| serde_json::to_string(&x).unwrap())
+            .collect()
     }
 
     // TODO: add export method
@@ -464,6 +495,58 @@ impl LoroDoc {
             .map(|x| Arc::new(x) as Arc<dyn ValueOrContainer>)
     }
 
+    ///
+    /// The path can be specified in different ways depending on the container type:
+    ///
+    /// For Tree:
+    /// 1. Using node IDs: `tree/{node_id}/property`
+    /// 2. Using indices: `tree/0/1/property`
+    ///
+    /// For List and MovableList:
+    /// - Using indices: `list/0` or `list/1/property`
+    ///
+    /// For Map:
+    /// - Using keys: `map/key` or `map/nested/property`
+    ///
+    /// For tree structures, index-based paths follow depth-first traversal order.
+    /// The indices start from 0 and represent the position of a node among its siblings.
+    ///
+    /// # Examples
+    /// ```
+    /// # use loro::{LoroDoc, LoroValue};
+    /// let doc = LoroDoc::new();
+    ///
+    /// // Tree example
+    /// let tree = doc.get_tree("tree");
+    /// let root = tree.create(None).unwrap();
+    /// tree.get_meta(root).unwrap().insert("name", "root").unwrap();
+    /// // Access tree by ID or index
+    /// let name1 = doc.get_by_str_path(&format!("tree/{}/name", root)).unwrap().into_value().unwrap();
+    /// let name2 = doc.get_by_str_path("tree/0/name").unwrap().into_value().unwrap();
+    /// assert_eq!(name1, name2);
+    ///
+    /// // List example
+    /// let list = doc.get_list("list");
+    /// list.insert(0, "first").unwrap();
+    /// list.insert(1, "second").unwrap();
+    /// // Access list by index
+    /// let item = doc.get_by_str_path("list/0");
+    /// assert_eq!(item.unwrap().into_value().unwrap().into_string().unwrap(), "first".into());
+    ///
+    /// // Map example
+    /// let map = doc.get_map("map");
+    /// map.insert("key", "value").unwrap();
+    /// // Access map by key
+    /// let value = doc.get_by_str_path("map/key");
+    /// assert_eq!(value.unwrap().into_value().unwrap().into_string().unwrap(), "value".into());
+    ///
+    /// // MovableList example
+    /// let mlist = doc.get_movable_list("mlist");
+    /// mlist.insert(0, "item").unwrap();
+    /// // Access movable list by index
+    /// let item = doc.get_by_str_path("mlist/0");
+    /// assert_eq!(item.unwrap().into_value().unwrap().into_string().unwrap(), "item".into());
+    /// ```
     pub fn get_by_str_path(&self, path: &str) -> Option<Arc<dyn ValueOrContainer>> {
         self.doc
             .get_by_str_path(path)
@@ -615,6 +698,38 @@ impl LoroDoc {
 
     pub fn get_pending_txn_len(&self) -> u32 {
         self.doc.get_pending_txn_len() as u32
+    }
+
+    /// Find the operation id spans that between the `from` version and the `to` version.
+    #[inline]
+    pub fn find_id_spans_between(&self, from: &Frontiers, to: &Frontiers) -> VersionVectorDiff {
+        self.doc
+            .find_id_spans_between(&from.into(), &to.into())
+            .into()
+    }
+
+    /// Revert the current document state back to the target version
+    ///
+    /// Internally, it will generate a series of local operations that can revert the
+    /// current doc to the target version. It will calculate the diff between the current
+    /// state and the target state, and apply the diff to the current state.
+    #[inline]
+    pub fn revert_to(&self, version: &Frontiers) -> LoroResult<()> {
+        self.doc.revert_to(&version.into())
+    }
+
+    /// Apply a diff to the current document state.
+    ///
+    /// Internally, it will apply the diff to the current state.
+    #[inline]
+    pub fn apply_diff(&self, diff: DiffBatch) -> LoroResult<()> {
+        self.doc.apply_diff(diff.into())
+    }
+
+    /// Calculate the diff between two versions
+    #[inline]
+    pub fn diff(&self, a: &Frontiers, b: &Frontiers) -> LoroResult<DiffBatch> {
+        self.doc.diff(&a.into(), &b.into()).map(|x| x.into())
     }
 }
 

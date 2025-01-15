@@ -1,8 +1,14 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
-use loro::{EventTriggerKind, TreeID};
+use loro::{EventTriggerKind, FractionalIndex, TreeID};
 
-use crate::{ContainerID, LoroValue, TreeParentId, ValueOrContainer};
+use crate::{
+    convert_trait_to_v_or_container, ContainerID, LoroValue, TreeParentId, ValueOrContainer,
+};
 
 pub trait Subscriber: Sync + Send {
     fn on_diff(&self, diff: DiffEvent);
@@ -135,6 +141,76 @@ impl From<loro::TextDelta> for TextDelta {
     }
 }
 
+impl From<ListDiffItem> for loro::event::ListDiffItem {
+    fn from(value: ListDiffItem) -> Self {
+        match value {
+            ListDiffItem::Insert { insert, is_move } => loro::event::ListDiffItem::Insert {
+                insert: insert
+                    .into_iter()
+                    .map(convert_trait_to_v_or_container)
+                    .collect(),
+                is_move,
+            },
+            ListDiffItem::Delete { delete } => loro::event::ListDiffItem::Delete {
+                delete: delete as usize,
+            },
+            ListDiffItem::Retain { retain } => loro::event::ListDiffItem::Retain {
+                retain: retain as usize,
+            },
+        }
+    }
+}
+
+impl From<MapDelta> for loro::event::MapDelta<'static> {
+    fn from(value: MapDelta) -> Self {
+        loro::event::MapDelta {
+            updated: value
+                .updated
+                .into_iter()
+                .map(|(k, v)| (Cow::Owned(k), v.map(convert_trait_to_v_or_container)))
+                .collect(),
+        }
+    }
+}
+
+impl From<TreeDiffItem> for loro::TreeDiffItem {
+    fn from(value: TreeDiffItem) -> Self {
+        let target: TreeID = value.target;
+        let action = match value.action {
+            TreeExternalDiff::Create {
+                parent,
+                index,
+                fractional_index,
+            } => loro::TreeExternalDiff::Create {
+                parent: parent.into(),
+                index: index as usize,
+                position: FractionalIndex::from_hex_string(fractional_index),
+            },
+            TreeExternalDiff::Move {
+                parent,
+                index,
+                fractional_index,
+                old_parent,
+                old_index,
+            } => loro::TreeExternalDiff::Move {
+                parent: parent.into(),
+                index: index as usize,
+                position: FractionalIndex::from_hex_string(fractional_index),
+                old_parent: old_parent.into(),
+                old_index: old_index as usize,
+            },
+            TreeExternalDiff::Delete {
+                old_parent,
+                old_index,
+            } => loro::TreeExternalDiff::Delete {
+                old_parent: old_parent.into(),
+                old_index: old_index as usize,
+            },
+        };
+        loro::TreeDiffItem { target, action }
+    }
+}
+
 pub enum ListDiffItem {
     /// Insert a new element into the list.
     Insert {
@@ -263,40 +339,9 @@ impl From<&loro::event::Diff<'_>> for Diff {
                 }
                 Diff::List { diff: ans }
             }
-            loro::event::Diff::Text(t) => {
-                let mut ans = Vec::new();
-                for item in t.iter() {
-                    match item {
-                        loro::TextDelta::Retain { retain, attributes } => {
-                            ans.push(TextDelta::Retain {
-                                retain: *retain as u32,
-                                attributes: attributes.as_ref().map(|a| {
-                                    a.iter()
-                                        .map(|(k, v)| (k.to_string(), v.clone().into()))
-                                        .collect()
-                                }),
-                            });
-                        }
-                        loro::TextDelta::Insert { insert, attributes } => {
-                            ans.push(TextDelta::Insert {
-                                insert: insert.to_string(),
-                                attributes: attributes.as_ref().map(|a| {
-                                    a.iter()
-                                        .map(|(k, v)| (k.to_string(), v.clone().into()))
-                                        .collect()
-                                }),
-                            });
-                        }
-                        loro::TextDelta::Delete { delete } => {
-                            ans.push(TextDelta::Delete {
-                                delete: *delete as u32,
-                            });
-                        }
-                    }
-                }
-
-                Diff::Text { diff: ans }
-            }
+            loro::event::Diff::Text(t) => Diff::Text {
+                diff: t.iter().map(|i| i.clone().into()).collect(),
+            },
             loro::event::Diff::Map(m) => {
                 let mut updated = HashMap::new();
                 for (key, value) in m.updated.iter() {
@@ -357,5 +402,62 @@ impl From<&loro::event::Diff<'_>> for Diff {
             loro::event::Diff::Counter(c) => Diff::Counter { diff: *c },
             loro::event::Diff::Unknown => Diff::Unknown,
         }
+    }
+}
+
+impl From<Diff> for loro::event::Diff<'static> {
+    fn from(value: Diff) -> Self {
+        match value {
+            Diff::List { diff } => {
+                loro::event::Diff::List(diff.into_iter().map(|i| i.into()).collect())
+            }
+            Diff::Text { diff } => {
+                loro::event::Diff::Text(diff.into_iter().map(|i| i.into()).collect())
+            }
+            Diff::Map { diff } => loro::event::Diff::Map(diff.into()),
+            Diff::Tree { diff } => loro::event::Diff::Tree(Cow::Owned(loro::TreeDiff {
+                diff: diff.diff.into_iter().map(|i| i.into()).collect(),
+            })),
+            Diff::Counter { diff } => loro::event::Diff::Counter(diff),
+            Diff::Unknown => loro::event::Diff::Unknown,
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct DiffBatch(Mutex<loro::event::DiffBatch>);
+
+impl DiffBatch {
+    pub fn new() -> Self {
+        Self(Default::default())
+    }
+
+    pub fn push(&self, cid: ContainerID, diff: Diff) -> Option<Diff> {
+        let mut batch = self.0.lock().unwrap();
+        if let Err(diff) = batch.push(cid.into(), diff.into()) {
+            Some((&diff).into())
+        } else {
+            None
+        }
+    }
+
+    pub fn diffs(&self) -> Vec<(ContainerID, Diff)> {
+        let batch = self.0.lock().unwrap();
+        batch
+            .iter()
+            .map(|(id, diff)| (id.into(), diff.into()))
+            .collect()
+    }
+}
+
+impl From<DiffBatch> for loro::event::DiffBatch {
+    fn from(value: DiffBatch) -> Self {
+        value.0.into_inner().unwrap()
+    }
+}
+
+impl From<loro::event::DiffBatch> for DiffBatch {
+    fn from(value: loro::event::DiffBatch) -> Self {
+        Self(Mutex::new(value))
     }
 }
