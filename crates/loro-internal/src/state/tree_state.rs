@@ -903,9 +903,7 @@ impl TreeState {
     ///
     /// O(1)
     pub fn is_parent(&self, target: &TreeID, parent: &TreeParentId) -> bool {
-        self.trees
-            .get(target)
-            .map_or(false, |x| x.parent == *parent)
+        self.trees.get(target).is_some_and(|x| x.parent == *parent)
     }
 
     /// Delete the position cache of the node

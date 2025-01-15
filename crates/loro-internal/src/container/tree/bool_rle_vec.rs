@@ -77,7 +77,7 @@ impl BoolRleVec {
         self.len -= n;
 
         // Remove any trailing zero-length runs
-        while self.rle_vec.last().map_or(false, |&x| x == 0) {
+        while self.rle_vec.last().is_some_and(|&x| x == 0) {
             self.rle_vec.pop();
         }
     }
