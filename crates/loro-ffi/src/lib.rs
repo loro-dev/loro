@@ -24,8 +24,8 @@ pub use container::{
 };
 mod event;
 pub use event::{
-    ContainerDiff, Diff, DiffEvent, Index, ListDiffItem, MapDelta, PathItem, Subscriber, TextDelta,
-    TreeDiff, TreeDiffItem, TreeExternalDiff,
+    ContainerDiff, ContainerIDAndDiff, Diff, DiffBatch, DiffEvent, Index, ListDiffItem, MapDelta,
+    PathItem, Subscriber, TextDelta, TreeDiff, TreeDiffItem, TreeExternalDiff,
 };
 mod undo;
 pub use undo::{AbsolutePosition, CursorWithPos, OnPop, OnPush, UndoItemMeta, UndoManager};

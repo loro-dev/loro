@@ -424,14 +424,17 @@ impl From<Diff> for loro::event::Diff<'static> {
     }
 }
 
-#[derive(Debug, Default)]
-pub struct DiffBatch(Mutex<loro::event::DiffBatch>);
+#[derive(Debug, Clone, Default)]
+pub struct DiffBatch(Arc<Mutex<loro::event::DiffBatch>>);
 
 impl DiffBatch {
     pub fn new() -> Self {
         Self(Default::default())
     }
 
+    /// Push a new event to the batch.
+    ///
+    /// If the cid already exists in the batch, return Err
     pub fn push(&self, cid: ContainerID, diff: Diff) -> Option<Diff> {
         let mut batch = self.0.lock().unwrap();
         if let Err(diff) = batch.push(cid.into(), diff.into()) {
@@ -441,23 +444,38 @@ impl DiffBatch {
         }
     }
 
-    pub fn get_diff(&self) -> Vec<(ContainerID, Diff)> {
+    /// Returns an iterator over the diffs in this batch, in the order they were added.
+    ///
+    /// The iterator yields tuples of `(&ContainerID, &Diff)` where:
+    /// - `ContainerID` is the ID of the container that was modified
+    /// - `Diff` contains the actual changes made to that container
+    ///
+    /// The order of the diffs is preserved from when they were originally added to the batch.
+    pub fn get_diff(&self) -> Vec<ContainerIDAndDiff> {
         let batch = self.0.lock().unwrap();
         batch
             .iter()
-            .map(|(id, diff)| (id.into(), diff.into()))
+            .map(|(id, diff)| ContainerIDAndDiff {
+                cid: id.into(),
+                diff: diff.into(),
+            })
             .collect()
     }
 }
 
 impl From<DiffBatch> for loro::event::DiffBatch {
     fn from(value: DiffBatch) -> Self {
-        value.0.into_inner().unwrap()
+        value.0.lock().unwrap().clone()
     }
 }
 
 impl From<loro::event::DiffBatch> for DiffBatch {
     fn from(value: loro::event::DiffBatch) -> Self {
-        Self(Mutex::new(value))
+        Self(Arc::new(Mutex::new(value)))
     }
+}
+
+pub struct ContainerIDAndDiff {
+    pub cid: ContainerID,
+    pub diff: Diff,
 }
