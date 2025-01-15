@@ -441,7 +441,7 @@ impl DiffBatch {
         }
     }
 
-    pub fn diffs(&self) -> Vec<(ContainerID, Diff)> {
+    pub fn get_diff(&self) -> Vec<(ContainerID, Diff)> {
         let batch = self.0.lock().unwrap();
         batch
             .iter()
