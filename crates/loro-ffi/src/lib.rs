@@ -49,7 +49,7 @@ pub trait ValueOrContainer: Send + Sync {
     fn as_loro_movable_list(&self) -> Option<Arc<LoroMovableList>>;
     fn as_loro_tree(&self) -> Option<Arc<LoroTree>>;
     fn as_loro_counter(&self) -> Option<Arc<LoroCounter>>;
-    fn as_unknown(&self) -> Option<Arc<LoroUnknown>>;
+    fn as_loro_unknown(&self) -> Option<Arc<LoroUnknown>>;
 }
 
 impl ValueOrContainer for loro::ValueOrContainer {
@@ -130,7 +130,7 @@ impl ValueOrContainer for loro::ValueOrContainer {
         }
     }
 
-    fn as_unknown(&self) -> Option<Arc<LoroUnknown>> {
+    fn as_loro_unknown(&self) -> Option<Arc<LoroUnknown>> {
         match self {
             loro::ValueOrContainer::Container(Container::Unknown(c)) => {
                 Some(Arc::new(LoroUnknown { unknown: c.clone() }))
@@ -157,7 +157,7 @@ fn convert_trait_to_v_or_container<T: AsRef<dyn ValueOrContainer>>(i: T) -> loro
                 Container::Counter((*v.as_loro_counter().unwrap()).clone().counter)
             }
             ContainerType::Unknown { kind: _ } => {
-                Container::Unknown((*v.as_unknown().unwrap()).clone().unknown)
+                Container::Unknown((*v.as_loro_unknown().unwrap()).clone().unknown)
             }
         };
         loro::ValueOrContainer::Container(container)
