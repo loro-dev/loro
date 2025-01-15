@@ -32,7 +32,7 @@ fn log_size() {
         println!("\n");
         println!("Snapshot size={}", snapshot.len());
         println!("Updates size={}", updates.len());
-        println!("Json Updates size={}", json_updates.as_bytes().len());
+        println!("Json Updates size={}", json_updates.len());
         println!("\n");
         loro.diagnose_size();
     }

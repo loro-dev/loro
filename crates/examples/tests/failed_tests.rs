@@ -1,3 +1,4 @@
+#![allow(unexpected_cfgs)]
 use examples::json::fuzz;
 use loro::loro_value;
 

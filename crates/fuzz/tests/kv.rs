@@ -1,3 +1,4 @@
+#![allow(unexpected_cfgs)]
 use fuzz::{kv_minify_simple, test_mem_kv_fuzzer, KVAction::*};
 
 #[ctor::ctor]
@@ -146,21 +147,21 @@ fn merge_import() {
 #[test]
 fn scan_empty() {
     test_mem_kv_fuzzer(&mut [
-	    Add{
-	    	key: vec![0, 255],
-	    	value: vec![]
-	    },
-	    Add{
-	    	key: vec![],
-	    	value: vec![]
-	    },
-	    Scan{
-	    	start: 129,
-	    	end: 0,
-	    	start_include: false,
-	    	end_include: false
-	    },
-	])
+        Add {
+            key: vec![0, 255],
+            value: vec![],
+        },
+        Add {
+            key: vec![],
+            value: vec![],
+        },
+        Scan {
+            start: 129,
+            end: 0,
+            start_include: false,
+            end_include: false,
+        },
+    ])
 }
 #[test]
 fn minify() {

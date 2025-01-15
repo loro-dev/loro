@@ -1,3 +1,4 @@
+#![allow(unexpected_cfgs)]
 #[allow(unused_imports)]
 use fuzz::{
     actions::{ActionInner, ActionWrapper::*, GenericAction},

@@ -1615,10 +1615,7 @@ impl TextHandler {
         match &self.inner {
             MaybeDetached::Detached(t) => {
                 let mut t = t.try_lock().unwrap();
-                let ranges = match t.value.get_text_entity_ranges(pos, len, PosType::Bytes) {
-                    Err(x) => return Err(x),
-                    Ok(x) => x,
-                };
+                let ranges = t.value.get_text_entity_ranges(pos, len, PosType::Bytes)?;
                 for range in ranges.iter().rev() {
                     t.value
                         .drain_by_entity_index(range.entity_start, range.entity_len(), None);
@@ -1635,10 +1632,7 @@ impl TextHandler {
         match &self.inner {
             MaybeDetached::Detached(t) => {
                 let mut t = t.try_lock().unwrap();
-                let ranges = match t.value.get_text_entity_ranges(pos, len, PosType::Unicode) {
-                    Err(x) => return Err(x),
-                    Ok(x) => x,
-                };
+                let ranges = t.value.get_text_entity_ranges(pos, len, PosType::Unicode)?;
                 for range in ranges.iter().rev() {
                     t.value
                         .drain_by_entity_index(range.entity_start, range.entity_len(), None);
@@ -3827,8 +3821,10 @@ impl MapHandler {
             }
             MaybeDetached::Attached(a) => {
                 a.with_state(|state| {
-                    for (k, _) in state.as_map_state().unwrap().iter() {
-                        keys.push(k.clone());
+                    for (k, v) in state.as_map_state().unwrap().iter() {
+                        if v.value.is_some() {
+                            keys.push(k.clone());
+                        }
                     }
                 });
             }

@@ -1,3 +1,4 @@
+#![allow(unexpected_cfgs)]
 use bytes::Bytes;
 use loro_kv_store::{mem_store::MemKvConfig, MemKvStore};
 

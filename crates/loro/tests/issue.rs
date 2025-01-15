@@ -1,3 +1,4 @@
+#![allow(unexpected_cfgs)]
 use loro::LoroDoc;
 
 #[ctor::ctor]

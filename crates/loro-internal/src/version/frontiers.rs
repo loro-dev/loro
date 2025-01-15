@@ -66,7 +66,7 @@ impl InternalMap {
     fn contains(&self, id: &ID) -> bool {
         self.0
             .get(&id.peer)
-            .map_or(false, |&counter| counter == id.counter)
+            .is_some_and(|&counter| counter == id.counter)
     }
 
     fn insert(&mut self, id: ID) {

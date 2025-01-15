@@ -1,3 +1,4 @@
+#![allow(unexpected_cfgs)]
 #![allow(deprecated)]
 
 use loro::{LoroDoc, LoroError, ToJson};
