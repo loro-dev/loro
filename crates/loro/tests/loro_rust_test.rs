@@ -2960,6 +2960,7 @@ fn test_diff_apply_with_unknown_container() -> LoroResult<()> {
     Ok(())
 }
 
+#[test]
 fn test_set_merge_interval() {
     let doc = LoroDoc::new();
     doc.set_record_timestamp(true);

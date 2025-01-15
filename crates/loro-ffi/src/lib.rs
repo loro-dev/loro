@@ -41,6 +41,7 @@ pub trait ValueOrContainer: Send + Sync {
     fn is_value(&self) -> bool;
     fn is_container(&self) -> bool;
     fn as_value(&self) -> Option<LoroValue>;
+    fn container_type(&self) -> Option<ContainerType>;
     fn as_container(&self) -> Option<ContainerID>;
     fn as_loro_list(&self) -> Option<Arc<LoroList>>;
     fn as_loro_text(&self) -> Option<Arc<LoroText>>;
@@ -48,6 +49,7 @@ pub trait ValueOrContainer: Send + Sync {
     fn as_loro_movable_list(&self) -> Option<Arc<LoroMovableList>>;
     fn as_loro_tree(&self) -> Option<Arc<LoroTree>>;
     fn as_loro_counter(&self) -> Option<Arc<LoroCounter>>;
+    fn as_unknown(&self) -> Option<Arc<LoroUnknown>>;
 }
 
 impl ValueOrContainer for loro::ValueOrContainer {
@@ -59,12 +61,17 @@ impl ValueOrContainer for loro::ValueOrContainer {
         loro::ValueOrContainer::is_container(self)
     }
 
+    fn container_type(&self) -> Option<ContainerType> {
+        loro::ValueOrContainer::as_container(self).map(|c| c.id().container_type().into())
+    }
+
     fn as_value(&self) -> Option<LoroValue> {
         loro::ValueOrContainer::as_value(self)
             .cloned()
             .map(LoroValue::from)
     }
 
+    // TODO: pass Container to Swift
     fn as_container(&self) -> Option<ContainerID> {
         loro::ValueOrContainer::as_container(self).map(|c| c.id().into())
     }
@@ -121,5 +128,38 @@ impl ValueOrContainer for loro::ValueOrContainer {
             }
             _ => None,
         }
+    }
+
+    fn as_unknown(&self) -> Option<Arc<LoroUnknown>> {
+        match self {
+            loro::ValueOrContainer::Container(Container::Unknown(c)) => {
+                Some(Arc::new(LoroUnknown { unknown: c.clone() }))
+            }
+            _ => None,
+        }
+    }
+}
+
+fn convert_trait_to_v_or_container<T: AsRef<dyn ValueOrContainer>>(i: T) -> loro::ValueOrContainer {
+    let v = i.as_ref();
+    if v.is_value() {
+        loro::ValueOrContainer::Value(v.as_value().unwrap().into())
+    } else {
+        let container = match v.container_type().unwrap() {
+            ContainerType::List => Container::List((*v.as_loro_list().unwrap()).clone().list),
+            ContainerType::Text => Container::Text((*v.as_loro_text().unwrap()).clone().text),
+            ContainerType::Map => Container::Map((*v.as_loro_map().unwrap()).clone().map),
+            ContainerType::MovableList => {
+                Container::MovableList((*v.as_loro_movable_list().unwrap()).clone().list)
+            }
+            ContainerType::Tree => Container::Tree((*v.as_loro_tree().unwrap()).clone().tree),
+            ContainerType::Counter => {
+                Container::Counter((*v.as_loro_counter().unwrap()).clone().counter)
+            }
+            ContainerType::Unknown { kind: _ } => {
+                Container::Unknown((*v.as_unknown().unwrap()).clone().unknown)
+            }
+        };
+        loro::ValueOrContainer::Container(container)
     }
 }

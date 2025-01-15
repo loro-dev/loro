@@ -34,6 +34,7 @@
     "pointee",
     "reparent",
     "RUSTFLAGS",
+    "serde",
     "smstring",
     "sstable",
     "Stewen",
