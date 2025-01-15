@@ -3827,8 +3827,10 @@ impl MapHandler {
             }
             MaybeDetached::Attached(a) => {
                 a.with_state(|state| {
-                    for (k, _) in state.as_map_state().unwrap().iter() {
-                        keys.push(k.clone());
+                    for (k, v) in state.as_map_state().unwrap().iter() {
+                        if v.value.is_some() {
+                            keys.push(k.clone());
+                        }
                     }
                 });
             }

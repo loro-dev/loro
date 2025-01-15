@@ -2,6 +2,7 @@
 use pretty_assertions::assert_eq;
 use std::{
     cmp::Ordering,
+    collections::HashSet,
     ops::ControlFlow,
     sync::{
         atomic::{AtomicBool, AtomicU64},
@@ -2960,6 +2961,7 @@ fn test_diff_apply_with_unknown_container() -> LoroResult<()> {
     Ok(())
 }
 
+#[test]
 fn test_set_merge_interval() {
     let doc = LoroDoc::new();
     doc.set_record_timestamp(true);
@@ -2981,4 +2983,49 @@ fn test_set_merge_interval() {
         new_doc.import(&updates).unwrap();
         assert_eq!(new_doc.len_changes(), 2);
     }
+}
+
+#[test]
+fn test_child_container_attach_behavior() {
+    let map = LoroMap::new();
+    let child = map.insert_container("child", LoroMap::new()).unwrap();
+    let doc = LoroDoc::new();
+    doc.get_map("meta").insert_container("map", map).unwrap();
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({
+            "meta": { "map": { "child": {} } }
+        })
+    );
+    let attached = child.get_attached().unwrap();
+    attached.insert("key", "value").unwrap();
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({
+            "meta": { "map": { "child": { "key": "value" } } }
+        })
+    );
+}
+
+#[test]
+fn test_map_keys_values_for_each() {
+    let doc = LoroDoc::new();
+    let map = doc.get_map("map");
+    map.insert("a", "b").unwrap();
+    map.insert("c", "d").unwrap();
+    map.insert("e", "f").unwrap();
+    map.delete("c").unwrap();
+    let mut keys = HashSet::new();
+    let mut values = HashSet::new();
+    map.for_each(|k, v| {
+        keys.insert(k.to_string());
+        values.insert(v.into_value().unwrap().into_string().unwrap().to_string());
+    });
+    let keys2 = map.keys().map(|k| k.to_string()).collect::<HashSet<_>>();
+    let values2 = map
+        .values()
+        .map(|v| v.into_value().unwrap().into_string().unwrap().to_string())
+        .collect::<HashSet<_>>();
+    assert_eq!(keys, keys2);
+    assert_eq!(values, values2);
 }
