@@ -722,14 +722,16 @@ impl LoroDoc {
     ///
     /// Internally, it will apply the diff to the current state.
     #[inline]
-    pub fn apply_diff(&self, diff: DiffBatch) -> LoroResult<()> {
-        self.doc.apply_diff(diff.into())
+    pub fn apply_diff(&self, diff: &DiffBatch) -> LoroResult<()> {
+        self.doc.apply_diff(diff.clone().into())
     }
 
     /// Calculate the diff between two versions
     #[inline]
-    pub fn diff(&self, a: &Frontiers, b: &Frontiers) -> LoroResult<DiffBatch> {
-        self.doc.diff(&a.into(), &b.into()).map(|x| x.into())
+    pub fn diff(&self, a: &Frontiers, b: &Frontiers) -> LoroResult<Arc<DiffBatch>> {
+        self.doc
+            .diff(&a.into(), &b.into())
+            .map(|x| Arc::new(x.into()))
     }
 }
 
