@@ -125,16 +125,16 @@ impl Default for Frontiers {
 
 pub struct VersionVectorDiff {
     /// need to add these spans to move from right to left
-    pub left: HashMap<PeerID, CounterSpan>,
+    pub retreat: HashMap<PeerID, CounterSpan>,
     /// need to add these spans to move from left to right
-    pub right: HashMap<PeerID, CounterSpan>,
+    pub forward: HashMap<PeerID, CounterSpan>,
 }
 
 impl From<loro::VersionVectorDiff> for VersionVectorDiff {
     fn from(value: loro::VersionVectorDiff) -> Self {
         Self {
-            left: value.retreat.into_iter().collect(),
-            right: value.forward.into_iter().collect(),
+            retreat: value.retreat.into_iter().collect(),
+            forward: value.forward.into_iter().collect(),
         }
     }
 }
