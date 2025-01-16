@@ -10,7 +10,7 @@ use crate::{
     event::{Diff, Index, InternalDiff},
     op::{Op, RawOp, RawOpContent},
     txn::Transaction,
-    DocState,
+    DocState, LoroDocInner,
 };
 
 use super::{ApplyLocalOpReturn, ContainerState, DiffApplyContext};
@@ -68,7 +68,7 @@ impl ContainerState for CounterState {
         &mut self,
         _arena: &SharedArena,
         _txn: &Weak<Mutex<Option<Transaction>>>,
-        _state: &Weak<Mutex<DocState>>,
+        _doc: &Weak<LoroDocInner>,
     ) -> Diff {
         Diff::Counter(self.value)
     }

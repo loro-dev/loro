@@ -31,7 +31,7 @@ use crate::{
     op::{Op, RawOp},
     txn::Transaction,
     version::Frontiers,
-    ContainerDiff, ContainerType, DocDiff, InternalString, LoroValue, OpLog,
+    ContainerDiff, ContainerType, DocDiff, InternalString, LoroDocInner, LoroValue, OpLog,
 };
 
 pub(crate) mod analyzer;
@@ -71,7 +71,7 @@ pub struct DocState {
     pub(super) arena: SharedArena,
     pub(crate) config: Configure,
     // resolve event stuff
-    weak_state: Weak<Mutex<DocState>>,
+    doc: Weak<LoroDocInner>,
     global_txn: Weak<Mutex<Option<Transaction>>>,
     // txn related stuff
     in_txn: bool,
@@ -101,7 +101,7 @@ pub(crate) struct DiffApplyContext<'a> {
     pub mode: DiffMode,
     pub arena: &'a SharedArena,
     pub txn: &'a Weak<Mutex<Option<Transaction>>>,
-    pub state: &'a Weak<Mutex<DocState>>,
+    pub doc: &'a Weak<LoroDocInner>,
 }
 
 pub(crate) trait FastStateSnapshot {
@@ -139,7 +139,7 @@ pub(crate) trait ContainerState {
         &mut self,
         arena: &SharedArena,
         txn: &Weak<Mutex<Option<Transaction>>>,
-        state: &Weak<Mutex<DocState>>,
+        doc: &Weak<LoroDocInner>,
     ) -> Diff;
 
     fn get_value(&mut self) -> LoroValue;
@@ -217,9 +217,9 @@ impl<T: ContainerState> ContainerState for Box<T> {
         &mut self,
         arena: &SharedArena,
         txn: &Weak<Mutex<Option<Transaction>>>,
-        state: &Weak<Mutex<DocState>>,
+        doc: &Weak<LoroDocInner>,
     ) -> Diff {
-        self.as_mut().to_diff(arena, txn, state)
+        self.as_mut().to_diff(arena, txn, doc)
     }
 
     fn get_value(&mut self) -> LoroValue {
@@ -368,32 +368,33 @@ impl DocState {
     pub fn new_arc(
         arena: SharedArena,
         global_txn: Weak<Mutex<Option<Transaction>>>,
+        doc: Weak<LoroDocInner>,
         config: Configure,
     ) -> Arc<Mutex<Self>> {
         let peer = DefaultRandom.next_u64();
         // TODO: maybe we should switch to certain version in oplog?
-        Arc::new_cyclic(|weak| {
-            let peer = Arc::new(AtomicU64::new(peer));
-            Mutex::new(Self {
-                store: ContainerStore::new(arena.clone(), config.clone(), peer.clone()),
-                peer,
-                arena,
-                frontiers: Frontiers::default(),
-                weak_state: weak.clone(),
-                config,
-                global_txn,
-                in_txn: false,
-                changed_idx_in_txn: FxHashSet::default(),
-                event_recorder: Default::default(),
-                dead_containers_cache: Default::default(),
-            })
-        })
+
+        let peer = Arc::new(AtomicU64::new(peer));
+        Arc::new(Mutex::new(Self {
+            store: ContainerStore::new(arena.clone(), config.clone(), peer.clone()),
+            peer,
+            arena,
+            frontiers: Frontiers::default(),
+            doc,
+            config,
+            global_txn,
+            in_txn: false,
+            changed_idx_in_txn: FxHashSet::default(),
+            event_recorder: Default::default(),
+            dead_containers_cache: Default::default(),
+        }))
     }
 
     pub fn fork_with_new_peer_id(
         &mut self,
         arena: SharedArena,
         global_txn: Weak<Mutex<Option<Transaction>>>,
+        doc: Weak<LoroDocInner>,
         config: Configure,
     ) -> Arc<Mutex<Self>> {
         let peer = Arc::new(AtomicU64::new(DefaultRandom.next_u64()));
@@ -405,7 +406,7 @@ impl DocState {
                 store,
                 arena,
                 config,
-                weak_state: weak.clone(),
+                doc,
                 global_txn,
                 in_txn: false,
                 changed_idx_in_txn: FxHashSet::default(),
@@ -590,8 +591,7 @@ impl DocState {
                         continue;
                     }
 
-                    let external_diff =
-                        state.to_diff(&self.arena, &self.global_txn, &self.weak_state);
+                    let external_diff = state.to_diff(&self.arena, &self.global_txn, &self.doc);
                     trigger_on_new_container(
                         &external_diff,
                         |cid| {
@@ -618,8 +618,7 @@ impl DocState {
                 crate::event::DiffVariant::None => {
                     if is_recording {
                         let state = self.store.get_or_create_mut(diff.idx);
-                        let extern_diff =
-                            state.to_diff(&self.arena, &self.global_txn, &self.weak_state);
+                        let extern_diff = state.to_diff(&self.arena, &self.global_txn, &self.doc);
                         trigger_on_new_container(
                             &extern_diff,
                             |cid| {
@@ -647,10 +646,10 @@ impl DocState {
                                             mode: diff.diff_mode,
                                             arena: &self.arena,
                                             txn: &self.global_txn,
-                                            state: &self.weak_state,
+                                            doc: &self.doc,
                                         },
                                     );
-                                    state.to_diff(&self.arena, &self.global_txn, &self.weak_state)
+                                    state.to_diff(&self.arena, &self.global_txn, &self.doc)
                                 } else {
                                     state.apply_diff_and_convert(
                                         internal_diff.into_internal().unwrap(),
@@ -658,7 +657,7 @@ impl DocState {
                                             mode: diff.diff_mode,
                                             arena: &self.arena,
                                             txn: &self.global_txn,
-                                            state: &self.weak_state,
+                                            doc: &self.doc,
                                         },
                                     )
                                 };
@@ -677,7 +676,7 @@ impl DocState {
                                     mode: diff.diff_mode,
                                     arena: &self.arena,
                                     txn: &self.global_txn,
-                                    state: &self.weak_state,
+                                    doc: &self.doc,
                                 },
                             );
                         }
@@ -701,7 +700,7 @@ impl DocState {
                     continue;
                 }
 
-                let external_diff = state.to_diff(&self.arena, &self.global_txn, &self.weak_state);
+                let external_diff = state.to_diff(&self.arena, &self.global_txn, &self.doc);
                 trigger_on_new_container(
                     &external_diff,
                     |cid| {
@@ -892,7 +891,7 @@ impl DocState {
                                 peer: self.peer.load(Ordering::Relaxed),
                             },
                         )
-                        .to_diff(&self.arena, &self.global_txn, &self.weak_state)
+                        .to_diff(&self.arena, &self.global_txn, &self.doc)
                         .into(),
                     diff_mode: DiffMode::Checkout,
                 })

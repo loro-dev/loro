@@ -309,7 +309,7 @@ impl TreeHandler {
                     old_index: index
                 },
             }]),
-            &inner.state,
+            &inner.doc,
         )
     }
 
@@ -414,7 +414,7 @@ impl TreeHandler {
                         position: position.clone(),
                     },
                 }]),
-                &inner.state,
+                &inner.doc,
             )?;
 
             Ok(self
@@ -492,7 +492,7 @@ impl TreeHandler {
                         old_index: self.get_index_by_tree_id(&target).unwrap(),
                     },
                 }]),
-                &inner.state,
+                &inner.doc,
             )
         })?;
         Ok(true)
@@ -667,7 +667,7 @@ impl TreeHandler {
                     position,
                 },
             }]),
-            &inner.state,
+            &inner.doc,
         )?;
         Ok(tree_id)
     }
@@ -700,7 +700,7 @@ impl TreeHandler {
                     old_index,
                 },
             }]),
-            &inner.state,
+            &inner.doc,
         )
     }
 

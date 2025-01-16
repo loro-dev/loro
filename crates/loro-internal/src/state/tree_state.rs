@@ -24,7 +24,6 @@ use crate::encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncod
 use crate::event::InternalDiff;
 use crate::op::Op;
 use crate::txn::Transaction;
-use crate::DocState;
 use crate::{
     arena::SharedArena,
     container::tree::tree_op::TreeOp,
@@ -32,6 +31,7 @@ use crate::{
     event::{Diff, Index},
     op::RawOp,
 };
+use crate::{DocState, LoroDocInner};
 
 #[derive(Clone, Debug, EnumAsInner)]
 pub enum TreeFractionalIndexConfigInner {
@@ -1325,7 +1325,7 @@ impl ContainerState for TreeState {
         &mut self,
         _arena: &SharedArena,
         _txn: &Weak<Mutex<Option<Transaction>>>,
-        _state: &Weak<Mutex<DocState>>,
+        _doc: &Weak<LoroDocInner>,
     ) -> Diff {
         let mut diffs = vec![];
         let Some(roots) = self.children.get(&TreeParentId::Root) else {

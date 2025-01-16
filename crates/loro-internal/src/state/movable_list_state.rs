@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use loro_delta::{array_vec::ArrayVec, DeltaRope, DeltaRopeBuilder};
 use serde_columnar::columnar;
-use std::sync::{Mutex, Weak};
+use std::sync::{Arc, Mutex, Weak};
 use tracing::{instrument, warn};
 
 use fxhash::FxHashMap;
@@ -20,7 +20,7 @@ use crate::{
     op::{ListSlice, Op, RawOp},
     state::movable_list_state::inner::PushElemInfo,
     txn::Transaction,
-    DocState, ListDiff,
+    DocState, ListDiff, LoroDocInner,
 };
 
 use self::{
@@ -1028,7 +1028,7 @@ impl ContainerState for MovableListState {
         DiffApplyContext {
             arena,
             txn,
-            state,
+            doc,
             mode,
         }: DiffApplyContext,
     ) -> Diff {
@@ -1123,6 +1123,7 @@ impl ContainerState for MovableListState {
         }
 
         {
+            let doc = &doc.upgrade().unwrap();
             // Apply element changes
             //
             // In this block, we need to handle the events generated from the following sources:
@@ -1160,7 +1161,7 @@ impl ContainerState for MovableListState {
                                         .delete(1)
                                         .insert(
                                             ArrayVec::from([ValueOrHandler::from_value(
-                                                value, arena, txn, state,
+                                                value, arena, txn, doc,
                                             )]),
                                             ListDeltaMeta { from_move: false },
                                         )
@@ -1191,7 +1192,7 @@ impl ContainerState for MovableListState {
                                     .retain(new_index, Default::default())
                                     .insert(
                                         ArrayVec::from([ValueOrHandler::from_value(
-                                            new_value, arena, txn, state,
+                                            new_value, arena, txn, doc,
                                         )]),
                                         ListDeltaMeta {
                                             from_move: (result.delete.is_some() && !value_updated)
@@ -1239,7 +1240,7 @@ impl ContainerState for MovableListState {
                                     .retain(index, Default::default())
                                     .insert(
                                         ArrayVec::from([ValueOrHandler::from_value(
-                                            value, arena, txn, state,
+                                            value, arena, txn, doc,
                                         )]),
                                         ListDeltaMeta {
                                             from_move: (result.delete.is_some() && !value_updated)
@@ -1354,14 +1355,15 @@ impl ContainerState for MovableListState {
         &mut self,
         arena: &SharedArena,
         txn: &Weak<Mutex<Option<Transaction>>>,
-        state: &Weak<Mutex<DocState>>,
+        doc: &Weak<LoroDocInner>,
     ) -> Diff {
+        let doc = &doc.upgrade().unwrap();
         Diff::List(
             DeltaRopeBuilder::new()
                 .insert_many(
                     self.to_vec()
                         .into_iter()
-                        .map(|v| ValueOrHandler::from_value(v, arena, txn, state)),
+                        .map(|v| ValueOrHandler::from_value(v, arena, txn, doc)),
                     Default::default(),
                 )
                 .build(),

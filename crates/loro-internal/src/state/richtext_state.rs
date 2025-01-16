@@ -28,7 +28,7 @@ use crate::{
     op::{Op, RawOp},
     txn::Transaction,
     utils::{lazy::LazyLoad, string_slice::StringSlice},
-    DocState,
+    DocState, LoroDocInner,
 };
 
 use super::{ApplyLocalOpReturn, ContainerState, DiffApplyContext};
@@ -649,7 +649,7 @@ impl ContainerState for RichtextState {
         &mut self,
         _arena: &SharedArena,
         _txn: &Weak<Mutex<Option<Transaction>>>,
-        _state: &Weak<Mutex<DocState>>,
+        _doc: &Weak<LoroDocInner>,
     ) -> Diff {
         let mut delta = TextDiff::new();
         for span in self.state.get_mut().iter() {

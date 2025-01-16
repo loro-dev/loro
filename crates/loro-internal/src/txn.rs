@@ -28,7 +28,7 @@ use crate::{
     op::{Op, RawOp, RawOpContent},
     span::HasIdSpan,
     version::Frontiers,
-    InternalString, LoroError, LoroValue,
+    InternalString, LoroDocInner, LoroError, LoroValue,
 };
 
 use super::{
@@ -40,6 +40,10 @@ use super::{
 };
 
 impl crate::LoroDoc {
+    pub(crate) fn inner(&self) -> &LoroDocInner {
+        &self.inner
+    }
+
     /// Create a new transaction.
     /// Every ops created inside one transaction will be packed into a single
     /// [Change].
@@ -61,12 +65,8 @@ impl crate::LoroDoc {
             ));
         }
 
-        let mut txn = Transaction::new_with_origin(
-            self.state.clone(),
-            self.oplog.clone(),
-            origin.into(),
-            self.get_global_txn(),
-        );
+        let mut txn =
+            Transaction::new_with_origin(self.inner.clone(), origin.into(), self.get_global_txn());
 
         let obs = self.observer.clone();
         let local_update_subs_weak = self.local_update_subs.downgrade();
@@ -142,8 +142,7 @@ pub struct Transaction {
     next_counter: Counter,
     start_lamport: Lamport,
     next_lamport: Lamport,
-    state: Arc<Mutex<DocState>>,
-    oplog: Arc<Mutex<OpLog>>,
+    doc: Arc<LoroDocInner>,
     frontiers: Frontiers,
     local_ops: RleVec<[Op; 1]>, // TODO: use a more efficient data structure
     event_hints: Vec<EventHint>,
@@ -320,26 +319,21 @@ impl generic_btree::rle::Mergeable for EventHint {
 
 impl Transaction {
     #[inline]
-    pub fn new(
-        state: Arc<Mutex<DocState>>,
-        oplog: Arc<Mutex<OpLog>>,
-        global_txn: Weak<Mutex<Option<Transaction>>>,
-    ) -> Self {
-        Self::new_with_origin(state, oplog, "".into(), global_txn)
+    pub fn new(doc: Arc<LoroDocInner>, global_txn: Weak<Mutex<Option<Transaction>>>) -> Self {
+        Self::new_with_origin(doc.clone(), "".into(), global_txn)
     }
 
     pub fn new_with_origin(
-        state: Arc<Mutex<DocState>>,
-        oplog: Arc<Mutex<OpLog>>,
+        doc: Arc<LoroDocInner>,
         origin: InternalString,
         global_txn: Weak<Mutex<Option<Transaction>>>,
     ) -> Self {
-        let mut state_lock = state.try_lock().unwrap();
+        let mut state_lock = doc.state.try_lock().unwrap();
         if state_lock.is_in_txn() {
             panic!("Cannot start a transaction while another one is in progress");
         }
 
-        let oplog_lock = oplog.try_lock().unwrap();
+        let oplog_lock = doc.oplog.try_lock().unwrap();
         state_lock.start_txn(origin, crate::event::EventTriggerKind::Local);
         let arena = state_lock.arena.clone();
         let frontiers = state_lock.frontiers.clone();
@@ -354,9 +348,8 @@ impl Transaction {
         drop(oplog_lock);
         Self {
             peer,
-            state,
+            doc,
             arena,
-            oplog,
             frontiers,
             timestamp: None,
             global_txn,
@@ -405,14 +398,14 @@ impl Transaction {
         }
 
         self.finished = true;
-        let mut state = self.state.try_lock().unwrap();
+        let mut state = self.doc.state.try_lock().unwrap();
         if self.local_ops.is_empty() {
             state.abort_txn();
             return Ok(());
         }
 
         let ops = std::mem::take(&mut self.local_ops);
-        let mut oplog = self.oplog.try_lock().unwrap();
+        let mut oplog = self.doc.oplog.try_lock().unwrap();
         let deps = take(&mut self.frontiers);
         let change = Change {
             lamport: self.start_lamport,
@@ -431,7 +424,7 @@ impl Transaction {
                 &change,
                 &oplog.arena,
                 &self.global_txn,
-                &Arc::downgrade(&self.state),
+                self.doc.clone(),
                 std::mem::take(&mut self.event_hints),
             ))
         } else {
@@ -468,7 +461,11 @@ impl Transaction {
         drop(state);
         drop(oplog);
         if let Some(on_commit) = self.on_commit.take() {
-            on_commit(&self.state, &self.oplog, self.id_span());
+            on_commit(
+                &self.doc.state.clone(),
+                &self.doc.oplog.clone(),
+                self.id_span(),
+            );
         }
         Ok(())
     }
@@ -479,19 +476,20 @@ impl Transaction {
         content: RawOpContent,
         event: EventHint,
         // check whether context and txn are referring to the same state context
-        state_ref: &Weak<Mutex<DocState>>,
+        doc: &Arc<LoroDocInner>,
     ) -> LoroResult<()> {
-        if Arc::as_ptr(&self.state) != Weak::as_ptr(state_ref) {
+        // TODO: need to check if the doc is the same
+        if Arc::as_ptr(&self.doc.state) != Arc::as_ptr(&doc.state) {
             return Err(LoroError::UnmatchedContext {
                 expected: self
+                    .doc
                     .state
                     .try_lock()
                     .unwrap()
                     .peer
                     .load(std::sync::atomic::Ordering::Relaxed),
-                found: state_ref
-                    .upgrade()
-                    .unwrap()
+                found: doc
+                    .state
                     .try_lock()
                     .unwrap()
                     .peer
@@ -511,7 +509,7 @@ impl Transaction {
             content,
         };
 
-        let mut state = self.state.try_lock().unwrap();
+        let mut state = self.doc.state.try_lock().unwrap();
         if state.is_deleted(container) {
             return Err(LoroError::ContainerDeleted {
                 container: Box::new(state.arena.idx_to_id(container).unwrap()),
@@ -522,7 +520,7 @@ impl Transaction {
         state.apply_local_op(&raw_op, &op)?;
         {
             // update version info
-            let mut oplog = self.oplog.try_lock().unwrap();
+            let mut oplog = self.doc.oplog.try_lock().unwrap();
             let dep_id = Frontiers::from_id(ID::new(self.peer, self.next_counter - 1));
             let start_id = ID::new(self.peer, self.next_counter);
             self.next_counter += len as Counter;
@@ -570,7 +568,7 @@ impl Transaction {
             id,
             self.arena.clone(),
             self.global_txn.clone(),
-            Arc::downgrade(&self.state),
+            self.doc.clone(),
         )
         .into_text()
         .unwrap()
@@ -584,7 +582,7 @@ impl Transaction {
             id,
             self.arena.clone(),
             self.global_txn.clone(),
-            Arc::downgrade(&self.state),
+            self.doc.clone(),
         )
         .into_list()
         .unwrap()
@@ -598,7 +596,7 @@ impl Transaction {
             id,
             self.arena.clone(),
             self.global_txn.clone(),
-            Arc::downgrade(&self.state),
+            self.doc.clone(),
         )
         .into_map()
         .unwrap()
@@ -612,7 +610,7 @@ impl Transaction {
             id,
             self.arena.clone(),
             self.global_txn.clone(),
-            Arc::downgrade(&self.state),
+            self.doc.clone(),
         )
         .into_tree()
         .unwrap()
@@ -668,7 +666,7 @@ fn change_to_diff(
     change: &Change,
     arena: &SharedArena,
     txn: &Weak<Mutex<Option<Transaction>>>,
-    state: &Weak<Mutex<DocState>>,
+    doc: Arc<LoroDocInner>,
     event_hints: Vec<EventHint>,
 ) -> Vec<TxnContainerDiff> {
     let mut ans: Vec<TxnContainerDiff> = Vec::with_capacity(change.ops.len());
@@ -780,7 +778,7 @@ fn change_to_diff(
                     let values = arena
                         .get_values(range.to_range())
                         .into_iter()
-                        .map(|v| ValueOrHandler::from_value(v, arena, txn, state));
+                        .map(|v| ValueOrHandler::from_value(v, arena, txn, &doc));
                     ans.push(TxnContainerDiff {
                         idx: op.container,
                         diff: Diff::List(
@@ -808,7 +806,7 @@ fn change_to_diff(
                 diff: Diff::Map(ResolvedMapDelta::new().with_entry(
                     key,
                     ResolvedMapValue {
-                        value: value.map(|v| ValueOrHandler::from_value(v, arena, txn, state)),
+                        value: value.map(|v| ValueOrHandler::from_value(v, arena, txn, &doc)),
                         idlp: IdLp::new(peer, lamport),
                     },
                 )),
@@ -830,7 +828,7 @@ fn change_to_diff(
                     &DeltaRopeBuilder::new()
                         .retain(to as usize, Default::default())
                         .insert(
-                            ArrayVec::from([ValueOrHandler::from_value(value, arena, txn, state)]),
+                            ArrayVec::from([ValueOrHandler::from_value(value, arena, txn, &doc)]),
                             ListDeltaMeta { from_move: true },
                         )
                         .build(),
@@ -849,7 +847,7 @@ fn change_to_diff(
                             .delete(1)
                             .insert(
                                 ArrayVec::from([ValueOrHandler::from_value(
-                                    value, arena, txn, state,
+                                    value, arena, txn, &doc,
                                 )]),
                                 Default::default(),
                             )

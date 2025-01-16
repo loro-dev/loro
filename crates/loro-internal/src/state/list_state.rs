@@ -14,7 +14,7 @@ use crate::{
     handler::ValueOrHandler,
     op::{ListSlice, Op, RawOp, RawOpContent},
     txn::Transaction,
-    DocState, LoroValue,
+    DocState, LoroDocInner, LoroValue,
 };
 
 use fxhash::FxHashMap;
@@ -378,7 +378,7 @@ impl ContainerState for ListState {
         &mut self,
         diff: InternalDiff,
         DiffApplyContext {
-            arena, txn, state, ..
+            arena, txn, doc, ..
         }: DiffApplyContext,
     ) -> Diff {
         let InternalDiff::ListRaw(delta) = diff else {
@@ -386,6 +386,7 @@ impl ContainerState for ListState {
         };
         let mut ans: ListDiff = ListDiff::default();
         let mut index = 0;
+        let doc = &doc.upgrade().unwrap();
         for span in delta.iter() {
             match span {
                 crate::delta::DeltaItem::Retain { retain: len, .. } => {
@@ -405,7 +406,7 @@ impl ContainerState for ListState {
                     }
                     for arr in ArrayVec::from_many(
                         arr.iter()
-                            .map(|v| ValueOrHandler::from_value(v.clone(), arena, txn, state)),
+                            .map(|v| ValueOrHandler::from_value(v.clone(), arena, txn, doc)),
                     ) {
                         ans.push_insert(arr, Default::default());
                     }
@@ -496,12 +497,13 @@ impl ContainerState for ListState {
         &mut self,
         arena: &SharedArena,
         txn: &Weak<Mutex<Option<Transaction>>>,
-        state: &Weak<Mutex<DocState>>,
+        doc: &Weak<LoroDocInner>,
     ) -> Diff {
+        let doc = &doc.upgrade().unwrap();
         Diff::List(ListDiff::from_many(
             self.to_vec()
                 .into_iter()
-                .map(|v| ValueOrHandler::from_value(v, arena, txn, state)),
+                .map(|v| ValueOrHandler::from_value(v, arena, txn, doc)),
         ))
     }
 

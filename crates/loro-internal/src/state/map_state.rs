@@ -19,7 +19,7 @@ use crate::{
     handler::ValueOrHandler,
     op::{Op, RawOp, RawOpContent},
     txn::Transaction,
-    DocState, InternalString, LoroValue,
+    DocState, InternalString, LoroDocInner, LoroValue,
 };
 
 use super::{ApplyLocalOpReturn, ContainerState, DiffApplyContext};
@@ -51,13 +51,14 @@ impl ContainerState for MapState {
         DiffApplyContext {
             arena,
             txn,
-            state,
+            doc,
             mode,
         }: DiffApplyContext,
     ) -> Diff {
         let InternalDiff::Map(delta) = diff else {
             unreachable!()
         };
+        let doc = &doc.upgrade().unwrap();
         let force = matches!(mode, DiffMode::Checkout | DiffMode::Linear);
         let mut resolved_delta = ResolvedMapDelta::new();
         for (key, value) in delta.updated.into_iter() {
@@ -90,7 +91,7 @@ impl ContainerState for MapState {
                         idlp: IdLp::new(value.peer, value.lamp),
                         value: value
                             .value
-                            .map(|v| ValueOrHandler::from_value(v, arena, txn, state)),
+                            .map(|v| ValueOrHandler::from_value(v, arena, txn, doc)),
                     },
                 )
             }
@@ -136,14 +137,14 @@ impl ContainerState for MapState {
         &mut self,
         arena: &SharedArena,
         txn: &Weak<Mutex<Option<Transaction>>>,
-        state: &Weak<Mutex<DocState>>,
+        doc: &Weak<LoroDocInner>,
     ) -> Diff {
         Diff::Map(ResolvedMapDelta {
             updated: self
                 .map
                 .clone()
                 .into_iter()
-                .map(|(k, v)| (k, ResolvedMapValue::from_map_value(v, arena, txn, state)))
+                .map(|(k, v)| (k, ResolvedMapValue::from_map_value(v, arena, txn, doc)))
                 .collect::<FxHashMap<_, _>>(),
         })
     }
