@@ -33,6 +33,13 @@ impl LoroTree {
         self.tree.is_attached()
     }
 
+    /// If a detached container is attached, this method will return its corresponding attached handler.
+    pub fn get_attached(&self) -> Option<Arc<LoroTree>> {
+        self.tree
+            .get_attached()
+            .map(|x| Arc::new(LoroTree { tree: x }))
+    }
+
     /// Create a new tree node and return the [`TreeID`].
     ///
     /// If the `parent` is `None`, the created node is the root of a tree.
