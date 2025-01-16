@@ -13,8 +13,7 @@ use crate::{
     event::{Diff, Index, InternalDiff, ListDiff},
     handler::ValueOrHandler,
     op::{ListSlice, Op, RawOp, RawOpContent},
-    txn::Transaction,
-    DocState, LoroDocInner, LoroValue,
+    txn::Transaction, LoroDocInner, LoroValue,
 };
 
 use fxhash::FxHashMap;

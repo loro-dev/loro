@@ -18,8 +18,7 @@ use crate::{
     event::{Diff, Index, InternalDiff},
     handler::ValueOrHandler,
     op::{Op, RawOp, RawOpContent},
-    txn::Transaction,
-    DocState, InternalString, LoroDocInner, LoroValue,
+    txn::Transaction, InternalString, LoroDocInner, LoroValue,
 };
 
 use super::{ApplyLocalOpReturn, ContainerState, DiffApplyContext};

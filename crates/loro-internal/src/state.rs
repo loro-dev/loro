@@ -399,21 +399,19 @@ impl DocState {
     ) -> Arc<Mutex<Self>> {
         let peer = Arc::new(AtomicU64::new(DefaultRandom.next_u64()));
         let store = self.store.fork(arena.clone(), peer.clone(), config.clone());
-        Arc::new_cyclic(move |weak| {
-            Mutex::new(Self {
-                peer,
-                frontiers: self.frontiers.clone(),
-                store,
-                arena,
-                config,
-                doc,
-                global_txn,
-                in_txn: false,
-                changed_idx_in_txn: FxHashSet::default(),
-                event_recorder: Default::default(),
-                dead_containers_cache: Default::default(),
-            })
-        })
+        Arc::new(Mutex::new(Self {
+            peer,
+            frontiers: self.frontiers.clone(),
+            store,
+            arena,
+            config,
+            doc,
+            global_txn,
+            in_txn: false,
+            changed_idx_in_txn: FxHashSet::default(),
+            event_recorder: Default::default(),
+            dead_containers_cache: Default::default(),
+        }))
     }
 
     pub fn start_recording(&mut self) {

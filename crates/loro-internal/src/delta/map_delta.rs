@@ -9,7 +9,7 @@ use serde::{ser::SerializeStruct, Serialize};
 
 use crate::{
     arena::SharedArena, change::Lamport, handler::ValueOrHandler, id::PeerID, span::HasLamport,
-    txn::Transaction, DocState, InternalString, LoroDocInner, LoroValue,
+    txn::Transaction, InternalString, LoroDocInner, LoroValue,
 };
 
 #[derive(Default, Debug, Clone, Serialize)]

@@ -9,8 +9,7 @@ use crate::{
     encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff},
     op::{Op, RawOp},
-    txn::Transaction,
-    DocState, LoroDocInner,
+    txn::Transaction, LoroDocInner,
 };
 
 use super::{ApplyLocalOpReturn, ContainerState, DiffApplyContext};

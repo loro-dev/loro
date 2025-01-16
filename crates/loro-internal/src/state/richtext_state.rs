@@ -27,8 +27,7 @@ use crate::{
     handler::TextDelta,
     op::{Op, RawOp},
     txn::Transaction,
-    utils::{lazy::LazyLoad, string_slice::StringSlice},
-    DocState, LoroDocInner,
+    utils::{lazy::LazyLoad, string_slice::StringSlice}, LoroDocInner,
 };
 
 use super::{ApplyLocalOpReturn, ContainerState, DiffApplyContext};

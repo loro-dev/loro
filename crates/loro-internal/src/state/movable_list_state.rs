@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use loro_delta::{array_vec::ArrayVec, DeltaRope, DeltaRopeBuilder};
 use serde_columnar::columnar;
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Mutex, Weak};
 use tracing::{instrument, warn};
 
 use fxhash::FxHashMap;
@@ -19,8 +19,7 @@ use crate::{
     handler::ValueOrHandler,
     op::{ListSlice, Op, RawOp},
     state::movable_list_state::inner::PushElemInfo,
-    txn::Transaction,
-    DocState, ListDiff, LoroDocInner,
+    txn::Transaction, ListDiff, LoroDocInner,
 };
 
 use self::{

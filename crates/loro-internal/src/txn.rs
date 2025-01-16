@@ -40,10 +40,6 @@ use super::{
 };
 
 impl crate::LoroDoc {
-    pub(crate) fn inner(&self) -> &LoroDocInner {
-        &self.inner
-    }
-
     /// Create a new transaction.
     /// Every ops created inside one transaction will be packed into a single
     /// [Change].
