@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.1
+
+### Patch Changes
+
+- 07500da: fix: map.keys() may return keys from deleted entries #618
+
 ## 1.3.0
 
 ### Minor Changes
