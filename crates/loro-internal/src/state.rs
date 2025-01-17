@@ -29,7 +29,6 @@ use crate::{
     handler::ValueOrHandler,
     id::PeerID,
     op::{Op, RawOp},
-    txn::Transaction,
     version::Frontiers,
     ContainerDiff, ContainerType, DocDiff, InternalString, LoroDocInner, LoroValue, OpLog,
 };

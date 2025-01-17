@@ -15,7 +15,7 @@ use std::{
             AtomicBool,
             Ordering::{Acquire, Release},
         },
-        Arc, Mutex, Weak,
+        Arc, Mutex,
     },
 };
 use tracing::{debug_span, info, info_span, instrument, warn};
@@ -45,7 +45,6 @@ use crate::{
     oplog::{loro_dag::FrontiersNotIncluded, OpLog},
     state::DocState,
     subscription::{LocalUpdateCallback, Observer, Subscriber},
-    txn::Transaction,
     undo::DiffBatch,
     utils::subscription::{SubscriberSetWithQueue, Subscription},
     version::{shrink_frontiers, Frontiers, ImVersionVector, VersionRange, VersionVectorDiff},
