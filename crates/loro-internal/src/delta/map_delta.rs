@@ -1,6 +1,6 @@
 use std::{
     hash::Hash,
-    sync::{Mutex, Weak},
+    sync::Weak,
 };
 
 use fxhash::FxHashMap;
@@ -8,8 +8,7 @@ use loro_common::IdLp;
 use serde::{ser::SerializeStruct, Serialize};
 
 use crate::{
-    arena::SharedArena, change::Lamport, handler::ValueOrHandler, id::PeerID, span::HasLamport,
-    txn::Transaction, InternalString, LoroDocInner, LoroValue,
+    change::Lamport, handler::ValueOrHandler, id::PeerID, span::HasLamport, InternalString, LoroDocInner, LoroValue,
 };
 
 #[derive(Default, Debug, Clone, Serialize)]

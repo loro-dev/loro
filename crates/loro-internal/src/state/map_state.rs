@@ -1,7 +1,7 @@
 use std::{
     collections::BTreeMap,
     mem,
-    sync::{Mutex, Weak},
+    sync::Weak,
 };
 
 use fxhash::FxHashMap;
@@ -9,7 +9,6 @@ use loro_common::{ContainerID, IdLp, LoroResult, PeerID};
 use rle::HasLength;
 
 use crate::{
-    arena::SharedArena,
     configure::Configure,
     container::{idx::ContainerIdx, map::MapSet},
     delta::{MapValue, ResolvedMapDelta, ResolvedMapValue},
@@ -18,7 +17,6 @@ use crate::{
     event::{Diff, Index, InternalDiff},
     handler::ValueOrHandler,
     op::{Op, RawOp, RawOpContent},
-    txn::Transaction,
     InternalString, LoroDocInner, LoroValue,
 };
 

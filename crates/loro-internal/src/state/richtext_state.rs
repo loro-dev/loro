@@ -1,6 +1,6 @@
 use std::{
     ops::Range,
-    sync::{Arc, Mutex, RwLock, Weak},
+    sync::{Arc, RwLock, Weak},
 };
 
 use fxhash::{FxHashMap, FxHashSet};
@@ -9,7 +9,6 @@ use loro_common::{ContainerID, InternalString, LoroError, LoroResult, LoroValue,
 use loro_delta::DeltaRopeBuilder;
 
 use crate::{
-    arena::SharedArena,
     container::{
         idx::ContainerIdx,
         list::list_op,
@@ -26,7 +25,6 @@ use crate::{
     event::{Diff, Index, InternalDiff, TextDiff},
     handler::TextDelta,
     op::{Op, RawOp},
-    txn::Transaction,
     utils::{lazy::LazyLoad, string_slice::StringSlice},
     LoroDocInner,
 };

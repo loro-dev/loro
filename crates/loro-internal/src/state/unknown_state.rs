@@ -1,15 +1,13 @@
-use std::sync::{Mutex, Weak};
+use std::sync::Weak;
 
 use loro_common::{ContainerID, LoroResult, LoroValue};
 
 use crate::{
-    arena::SharedArena,
     configure::Configure,
     container::idx::ContainerIdx,
     encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff},
     op::{Op, RawOp},
-    txn::Transaction,
     LoroDocInner,
 };
 

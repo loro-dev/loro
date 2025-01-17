@@ -1,19 +1,17 @@
 use std::{
     io::Write,
     ops::RangeBounds,
-    sync::{Mutex, Weak},
+    sync::Weak,
 };
 
 use super::{ApplyLocalOpReturn, ContainerState, DiffApplyContext, FastStateSnapshot};
 use crate::{
-    arena::SharedArena,
     configure::Configure,
     container::{idx::ContainerIdx, list::list_op::ListOp, ContainerID},
     encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff, ListDiff},
     handler::ValueOrHandler,
     op::{ListSlice, Op, RawOp, RawOpContent},
-    txn::Transaction,
     LoroDocInner, LoroValue,
 };
 
@@ -378,7 +376,7 @@ impl ContainerState for ListState {
         &mut self,
         diff: InternalDiff,
         DiffApplyContext {
-            arena, txn, doc, ..
+            arena,  doc, ..
         }: DiffApplyContext,
     ) -> Diff {
         let InternalDiff::ListRaw(delta) = diff else {

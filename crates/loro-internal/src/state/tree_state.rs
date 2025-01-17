@@ -13,7 +13,7 @@ use serde::Serialize;
 use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
-use std::sync::{Mutex, Weak};
+use std::sync::Weak;
 
 use super::{ApplyLocalOpReturn, ContainerState, DiffApplyContext};
 use crate::configure::Configure;
@@ -23,9 +23,7 @@ use crate::diff_calc::DiffMode;
 use crate::encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder};
 use crate::event::InternalDiff;
 use crate::op::Op;
-use crate::txn::Transaction;
 use crate::{
-    arena::SharedArena,
     container::tree::tree_op::TreeOp,
     delta::TreeInternalDiff,
     event::{Diff, Index},

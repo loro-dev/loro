@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use loro_delta::{array_vec::ArrayVec, DeltaRope, DeltaRopeBuilder};
 use serde_columnar::columnar;
-use std::sync::{Mutex, Weak};
+use std::sync::Weak;
 use tracing::{instrument, warn};
 
 use fxhash::FxHashMap;
@@ -9,7 +9,6 @@ use generic_btree::BTree;
 use loro_common::{CompactIdLp, ContainerID, IdFull, IdLp, LoroResult, LoroValue, PeerID, ID};
 
 use crate::{
-    arena::SharedArena,
     configure::Configure,
     container::{idx::ContainerIdx, list::list_op::ListOp},
     delta::DeltaItem,
@@ -19,7 +18,6 @@ use crate::{
     handler::ValueOrHandler,
     op::{ListSlice, Op, RawOp},
     state::movable_list_state::inner::PushElemInfo,
-    txn::Transaction,
     ListDiff, LoroDocInner,
 };
 

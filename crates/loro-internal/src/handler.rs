@@ -1,6 +1,5 @@
 use super::{state::DocState, txn::Transaction};
 use crate::{
-    arena::SharedArena,
     container::{
         idx::ContainerIdx,
         list::list_op::{DeleteSpan, DeleteSpanWithId, ListOp},
@@ -31,7 +30,7 @@ use std::{
     collections::BinaryHeap,
     fmt::Debug,
     ops::Deref,
-    sync::{Arc, Mutex, Weak},
+    sync::{Arc, Mutex},
 };
 use tracing::{error, info, instrument};
 
