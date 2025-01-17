@@ -1,4 +1,3 @@
-use std::sync::Arc;
 
 use js_sys::{Array, Map, Object, Reflect, Uint8Array};
 use loro_common::{IdLp, LoroListValue, LoroMapValue, LoroValue};
@@ -9,7 +8,7 @@ use loro_internal::event::{Diff, ListDeltaMeta, ListDiff, TextDiff, TextMeta};
 use loro_internal::handler::{Handler, ValueOrHandler};
 use loro_internal::version::VersionRange;
 use loro_internal::StringSlice;
-use loro_internal::{Counter, CounterSpan, FxHashMap, IdSpan, ListDiffItem, LoroDoc};
+use loro_internal::{Counter, CounterSpan, FxHashMap, IdSpan, ListDiffItem};
 use wasm_bindgen::{JsCast, JsValue};
 
 use crate::{

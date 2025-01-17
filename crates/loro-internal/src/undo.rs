@@ -6,7 +6,7 @@ use std::{
 use either::Either;
 use fxhash::FxHashMap;
 use loro_common::{
-    ContainerID, Counter, CounterSpan, HasIdSpan, IdSpan, LoroError, LoroResult, LoroValue, PeerID,
+    ContainerID, Counter, CounterSpan, HasIdSpan, IdSpan, LoroResult, LoroValue, PeerID,
 };
 use tracing::{debug_span, info_span, instrument};
 
@@ -16,7 +16,7 @@ use crate::{
     delta::TreeExternalDiff,
     event::{Diff, EventTriggerKind},
     version::Frontiers,
-    ContainerDiff, DiffEvent, DocDiff, LoroDoc, LoroDocInner, Subscription,
+    ContainerDiff, DiffEvent, DocDiff, LoroDoc, Subscription,
 };
 
 /// A batch of diffs.
