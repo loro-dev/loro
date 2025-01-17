@@ -68,6 +68,10 @@ pub(crate) fn js_to_container(js: JsContainer) -> Result<Container, JsValue> {
             let obj = unsafe { LoroMovableList::ref_from_abi(ptr_u32) };
             Container::MovableList(obj.clone())
         }
+        "Counter" => {
+            let obj = unsafe { LoroCounter::ref_from_abi(ptr_u32) };
+            Container::Counter(obj.clone())
+        }
         _ => {
             return Err(JsValue::from_str(
                 format!(

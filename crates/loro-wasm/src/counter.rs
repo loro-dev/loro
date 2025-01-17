@@ -7,11 +7,11 @@ use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 
 use crate::{
-    call_after_micro_task, convert::handler_to_js_value, observer, JsContainerOrUndefined,
-    JsLoroTreeOrUndefined, JsResult,
+    call_after_micro_task, convert::handler_to_js_value, observer, JsContainerID,
+    JsContainerOrUndefined, JsCounterStr, JsLoroTreeOrUndefined, JsResult,
 };
 
-/// The handler of a tree(forest) container.
+/// The handler of a counter container.
 #[derive(Clone)]
 #[wasm_bindgen]
 pub struct LoroCounter {
@@ -34,6 +34,18 @@ impl LoroCounter {
             handler: CounterHandler::new_detached(),
             doc: None,
         }
+    }
+
+    /// "Counter"
+    pub fn kind(&self) -> JsCounterStr {
+        JsValue::from_str("Counter").into()
+    }
+
+    /// The container id of this handler.
+    #[wasm_bindgen(js_name = "id", method, getter)]
+    pub fn id(&self) -> JsContainerID {
+        let value: JsValue = (&self.handler.id()).into();
+        value.into()
     }
 
     /// Increment the counter by the given value.

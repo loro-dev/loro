@@ -175,6 +175,8 @@ extern "C" {
     pub type JsListStr;
     #[wasm_bindgen(typescript_type = "'MovableList'")]
     pub type JsMovableListStr;
+    #[wasm_bindgen(typescript_type = "'Counter'")]
+    pub type JsCounterStr;
     #[wasm_bindgen(typescript_type = "ImportBlobMetadata")]
     pub type JsImportBlobMetadata;
     #[wasm_bindgen(typescript_type = "Side")]
@@ -4930,6 +4932,7 @@ enum Container {
     List(LoroList),
     Tree(LoroTree),
     MovableList(LoroMovableList),
+    Counter(LoroCounter),
 }
 
 impl Container {
@@ -4940,6 +4943,7 @@ impl Container {
             Container::List(l) => Handler::List(l.handler.clone()),
             Container::Tree(t) => Handler::Tree(t.handler.clone()),
             Container::MovableList(l) => Handler::MovableList(l.handler.clone()),
+            Container::Counter(c) => Handler::Counter(c.handler.clone()),
         }
     }
 }
@@ -5048,7 +5052,7 @@ const TYPES: &'static str = r#"
 * const text = list.insertContainer(1, new LoroText());
 * ```
 */
-export type ContainerType = "Text" | "Map" | "List"| "Tree" | "MovableList";
+export type ContainerType = "Text" | "Map" | "List"| "Tree" | "MovableList" | "Counter";
 
 export type PeerID = `${number}`;
 /**
@@ -5292,7 +5296,7 @@ export type UndoConfig = {
     onPush?: (isUndo: boolean, counterRange: { start: number, end: number }, event?: LoroEventBatch) => { value: Value, cursors: Cursor[] },
     onPop?: (isUndo: boolean, value: { value: Value, cursors: Cursor[] }, counterRange: { start: number, end: number }) => void
 };
-export type Container = LoroList | LoroMap | LoroText | LoroTree | LoroMovableList;
+export type Container = LoroList | LoroMap | LoroText | LoroTree | LoroMovableList | LoroCounter;
 
 export interface ImportBlobMetadata {
     /**
