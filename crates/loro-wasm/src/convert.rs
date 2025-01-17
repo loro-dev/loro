@@ -128,7 +128,7 @@ pub(crate) fn js_to_version_vector(
     Ok(vv)
 }
 
-pub(crate) fn resolved_diff_to_js(value: &Diff, doc: &LoroDoc) -> JsValue {
+pub(crate) fn resolved_diff_to_js(value: &Diff) -> JsValue {
     // create a obj
     let obj = Object::new();
     match value {
@@ -145,7 +145,7 @@ pub(crate) fn resolved_diff_to_js(value: &Diff, doc: &LoroDoc) -> JsValue {
             let arr = Array::new();
             let mut i = 0;
             for v in list.iter() {
-                let (a, b) = delta_item_to_js(v.clone(), doc);
+                let (a, b) = delta_item_to_js(v.clone());
                 arr.set(i as u32, a);
                 i += 1;
                 if let Some(b) = b {
@@ -176,12 +176,8 @@ pub(crate) fn resolved_diff_to_js(value: &Diff, doc: &LoroDoc) -> JsValue {
             js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("map"))
                 .unwrap();
 
-            js_sys::Reflect::set(
-                &obj,
-                &JsValue::from_str("updated"),
-                &map_delta_to_js(map, doc),
-            )
-            .unwrap();
+            js_sys::Reflect::set(&obj, &JsValue::from_str("updated"), &map_delta_to_js(map))
+                .unwrap();
         }
 
         Diff::Counter(v) => {
@@ -240,7 +236,7 @@ pub(crate) fn js_diff_to_inner_diff(js: JsValue) -> JsResult<Diff> {
     }
 }
 
-fn delta_item_to_js(item: ListDiffItem, doc: &LoroDoc) -> (JsValue, Option<JsValue>) {
+fn delta_item_to_js(item: ListDiffItem) -> (JsValue, Option<JsValue>) {
     match item {
         loro_internal::loro_delta::DeltaItem::Retain { len, attr: _ } => {
             let obj = Object::new();
@@ -265,7 +261,7 @@ fn delta_item_to_js(item: ListDiffItem, doc: &LoroDoc) -> (JsValue, Option<JsVal
                 for (i, v) in value.into_iter().enumerate() {
                     let value = match v {
                         ValueOrHandler::Value(v) => convert(v),
-                        ValueOrHandler::Handler(h) => handler_to_js_value(h, Some(doc.clone())),
+                        ValueOrHandler::Handler(h) => handler_to_js_value(h),
                     };
                     arr.set(i as u32, value);
                 }
@@ -396,13 +392,13 @@ impl From<ImportBlobMetadata> for JsImportBlobMetadata {
     }
 }
 
-fn map_delta_to_js(value: &ResolvedMapDelta, doc: &Arc<LoroDoc>) -> JsValue {
+fn map_delta_to_js(value: &ResolvedMapDelta) -> JsValue {
     let obj = Object::new();
     for (key, value) in value.updated.iter() {
         let value = if let Some(value) = value.value.clone() {
             match value {
                 ValueOrHandler::Value(v) => convert(v),
-                ValueOrHandler::Handler(h) => handler_to_js_value(h, Some(doc.clone())),
+                ValueOrHandler::Handler(h) => handler_to_js_value(h),
             }
         } else {
             JsValue::null()

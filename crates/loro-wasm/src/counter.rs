@@ -16,7 +16,6 @@ use crate::{
 #[wasm_bindgen]
 pub struct LoroCounter {
     pub(crate) handler: CounterHandler,
-    pub(crate) doc: Option<Arc<LoroDoc>>,
 }
 
 impl Default for LoroCounter {
@@ -32,7 +31,6 @@ impl LoroCounter {
     pub fn new() -> Self {
         Self {
             handler: CounterHandler::new_detached(),
-            doc: None,
         }
     }
 
@@ -58,14 +56,13 @@ impl LoroCounter {
     pub fn subscribe(&self, f: js_sys::Function) -> JsResult<JsValue> {
         let observer = observer::Observer::new(f);
         let doc = self
-            .doc
-            .clone()
+            .handler
+            .doc()
             .ok_or_else(|| JsError::new("Document is not attached"))?;
-        let doc_clone = doc.clone();
         let sub = doc.subscribe(
             &self.handler.id(),
             Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e, &doc_clone);
+                call_after_micro_task(observer.clone(), e);
             }),
         );
         Ok(subscription_to_js_function_callback(sub))
@@ -78,7 +75,7 @@ impl LoroCounter {
     ///   the WASM boundary.
     pub fn parent(&self) -> JsContainerOrUndefined {
         if let Some(p) = HandlerTrait::parent(&self.handler) {
-            handler_to_js_value(p, self.doc.clone()).into()
+            handler_to_js_value(p).into()
         } else {
             JsContainerOrUndefined::from(JsValue::UNDEFINED)
         }
@@ -103,7 +100,7 @@ impl LoroCounter {
         }
 
         if let Some(h) = self.handler.get_attached() {
-            handler_to_js_value(Handler::Counter(h), self.doc.clone()).into()
+            handler_to_js_value(Handler::Counter(h)).into()
         } else {
             JsValue::UNDEFINED.into()
         }

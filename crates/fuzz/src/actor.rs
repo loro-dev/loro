@@ -140,14 +140,14 @@ impl Actor {
         // trace!("BeforeUndo {:#?}", self.loro.get_deep_value_with_id());
         // println!("\n\nstart undo\n");
         for _ in 0..undo_length {
-            self.undo_manager.undo.undo(&self.loro).unwrap();
+            self.undo_manager.undo.undo().unwrap();
             self.loro.commit();
         }
         // trace!("AfterUndo {:#?}", self.loro.get_deep_value_with_id());
 
         // println!("\n\nstart redo\n");
         for _ in 0..undo_length {
-            self.undo_manager.undo.redo(&self.loro).unwrap();
+            self.undo_manager.undo.redo().unwrap();
             self.loro.commit();
         }
         // trace!("AfterRedo {:#?}", self.loro.get_deep_value_with_id());

@@ -13,7 +13,7 @@ use crate::{
     state::{IndexType, State, TreeParentId},
     txn::EventHint,
     utils::{string_slice::StringSlice, utf16::count_utf16_len},
-    LoroDocInner,
+    LoroDoc, LoroDocInner,
 };
 use append_only_bytes::BytesSlice;
 use enum_as_inner::EnumAsInner;
@@ -52,6 +52,7 @@ pub trait HandlerTrait: Clone + Sized {
     fn kind(&self) -> ContainerType;
     fn to_handler(&self) -> Handler;
     fn from_handler(h: Handler) -> Option<Self>;
+    fn doc(&self) -> Option<LoroDoc>;
     /// This method returns an attached handler.
     fn attach(
         &self,
@@ -167,6 +168,10 @@ impl<T> From<BasicHandler> for MaybeDetached<T> {
 }
 
 impl BasicHandler {
+    pub(crate) fn doc(&self) -> LoroDoc {
+        LoroDoc::from_inner(self.doc.clone())
+    }
+
     #[inline]
     fn with_doc_state<R>(&self, f: impl FnOnce(&mut DocState) -> R) -> R {
         let state = self.doc.state.clone();
@@ -335,6 +340,13 @@ impl HandlerTrait for TextHandler {
         match h {
             Handler::Text(x) => Some(x),
             _ => None,
+        }
+    }
+
+    fn doc(&self) -> Option<LoroDoc> {
+        match &self.inner {
+            MaybeDetached::Detached(_) => None,
+            MaybeDetached::Attached(a) => Some(a.doc()),
         }
     }
 }
@@ -560,6 +572,13 @@ impl HandlerTrait for MapHandler {
             _ => None,
         }
     }
+
+    fn doc(&self) -> Option<LoroDoc> {
+        match &self.inner {
+            MaybeDetached::Detached(_) => None,
+            MaybeDetached::Attached(a) => Some(a.doc()),
+        }
+    }
 }
 
 impl std::fmt::Debug for MapHandler {
@@ -678,6 +697,13 @@ impl HandlerTrait for MovableListHandler {
             MaybeDetached::Attached(_a) => Some(self.clone()),
         }
     }
+
+    fn doc(&self) -> Option<LoroDoc> {
+        match &self.inner {
+            MaybeDetached::Detached(_) => None,
+            MaybeDetached::Attached(a) => Some(a.doc()),
+        }
+    }
 }
 
 impl std::fmt::Debug for MovableListHandler {
@@ -789,6 +815,13 @@ impl HandlerTrait for ListHandler {
             _ => None,
         }
     }
+
+    fn doc(&self) -> Option<LoroDoc> {
+        match &self.inner {
+            MaybeDetached::Detached(_) => None,
+            MaybeDetached::Attached(a) => Some(a.doc()),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -853,6 +886,10 @@ impl HandlerTrait for UnknownHandler {
 
     fn get_attached(&self) -> Option<Self> {
         Some(self.clone())
+    }
+
+    fn doc(&self) -> Option<LoroDoc> {
+        Some(self.inner.doc())
     }
 }
 
@@ -980,6 +1017,19 @@ impl HandlerTrait for Handler {
 
     fn from_handler(h: Handler) -> Option<Self> {
         Some(h)
+    }
+
+    fn doc(&self) -> Option<LoroDoc> {
+        match self {
+            Self::Text(x) => x.doc(),
+            Self::Map(x) => x.doc(),
+            Self::List(x) => x.doc(),
+            Self::MovableList(x) => x.doc(),
+            Self::Tree(x) => x.doc(),
+            #[cfg(feature = "counter")]
+            Self::Counter(x) => x.doc(),
+            Self::Unknown(x) => x.doc(),
+        }
     }
 }
 
@@ -3993,6 +4043,13 @@ pub mod counter {
                     inner: MaybeDetached::Attached(a.clone()),
                 }),
                 MaybeDetached::Detached(_) => None,
+            }
+        }
+
+        fn doc(&self) -> Option<crate::LoroDoc> {
+            match &self.inner {
+                MaybeDetached::Detached(_) => None,
+                MaybeDetached::Attached(a) => Some(a.doc()),
             }
         }
     }

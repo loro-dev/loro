@@ -27,14 +27,14 @@ fn basic_list_undo_insertion() -> Result<(), LoroError> {
             "list": ["12", "34"]
         })
     );
-    undo.undo(&doc)?;
+    undo.undo()?;
     assert_eq!(
         doc.get_deep_value().to_json_value(),
         json!({
             "list": ["12"]
         })
     );
-    undo.undo(&doc)?;
+    undo.undo()?;
     assert_eq!(
         doc.get_deep_value().to_json_value(),
         json!({
@@ -63,7 +63,7 @@ fn basic_list_undo_deletion() -> Result<(), LoroError> {
             "list": ["12"]
         })
     );
-    undo.undo(&doc)?; // op 3
+    undo.undo()?; // op 3
     assert_eq!(
         doc.get_deep_value().to_json_value(),
         json!({
@@ -73,7 +73,7 @@ fn basic_list_undo_deletion() -> Result<(), LoroError> {
 
     // Now, to undo "34" correctly we need to include the latest change
     // If we only undo op 1, op 3 will create "34" again.
-    undo.undo(&doc)?; // op 4
+    undo.undo()?; // op 4
     assert_eq!(
         doc.get_deep_value().to_json_value(),
         json!({
@@ -97,23 +97,23 @@ fn basic_map_undo() -> Result<(), LoroError> {
     doc_a.commit();
     doc_a.get_map("map").delete("a")?;
     doc_a.commit();
-    undo.undo(&doc_a)?; // op 3
+    undo.undo()?; // op 3
     assert_eq!(
         doc_a.get_deep_value().to_json_value(),
         json!({"map": {"a": "a", "b": "b"}})
     );
 
-    undo.undo(&doc_a)?; // op 4
+    undo.undo()?; // op 4
     assert_eq!(
         doc_a.get_deep_value().to_json_value(),
         json!({"map": {"a": "a"}})
     );
 
-    undo.undo(&doc_a)?; // op 5
+    undo.undo()?; // op 5
     assert_eq!(doc_a.get_deep_value().to_json_value(), json!({"map": {}}));
 
     // Redo
-    undo.redo(&doc_a)?;
+    undo.redo()?;
     assert_eq!(
         doc_a.get_deep_value().to_json_value(),
         json!({"map": {
@@ -122,7 +122,7 @@ fn basic_map_undo() -> Result<(), LoroError> {
     );
 
     // Redo
-    undo.redo(&doc_a)?;
+    undo.redo()?;
     assert_eq!(
         doc_a.get_deep_value().to_json_value(),
         json!({"map": {
@@ -132,7 +132,7 @@ fn basic_map_undo() -> Result<(), LoroError> {
     );
 
     // Redo
-    undo.redo(&doc_a)?;
+    undo.redo()?;
     assert_eq!(
         doc_a.get_deep_value().to_json_value(),
         json!({"map": {
@@ -157,7 +157,7 @@ fn map_collaborative_undo() -> Result<(), LoroError> {
     doc_b.commit();
 
     doc_a.import(&doc_b.export_from(&Default::default()))?;
-    undo.undo(&doc_a)?;
+    undo.undo()?;
     assert_eq!(
         doc_a.get_deep_value().to_json_value(),
         json!({"map": {"b": "b"}})
@@ -177,17 +177,17 @@ fn map_container_undo() -> Result<(), LoroError> {
     doc.commit();
     map.insert("number", 0)?; // op 2
     doc.commit();
-    undo.undo(&doc)?;
+    undo.undo()?;
     assert_eq!(
         doc.get_deep_value().to_json_value(),
         json!({"map": {"text": "T"}})
     );
-    undo.undo(&doc)?;
-    undo.undo(&doc)?;
+    undo.undo()?;
+    undo.undo()?;
     assert_eq!(doc.get_deep_value().to_json_value(), json!({"map": {}}));
-    undo.redo(&doc)?;
-    undo.redo(&doc)?;
-    undo.redo(&doc)?;
+    undo.redo()?;
+    undo.redo()?;
+    undo.redo()?;
     assert_eq!(
         doc.get_deep_value().to_json_value(),
         json!({"map": {"text": "T", "number": 0}})
@@ -228,17 +228,17 @@ fn one_register_collaborative_undo() -> Result<(), LoroError> {
     sync(&doc_a, &doc_b);
     let mut undo = UndoManager::new(&doc_a);
     doc_a.get_map("map").insert("color", "red")?;
-    undo.record_new_checkpoint(&doc_a)?;
+    undo.record_new_checkpoint()?;
     sync(&doc_a, &doc_b);
     doc_b.get_map("map").insert("color", "green")?;
     sync(&doc_a, &doc_b);
-    undo.record_new_checkpoint(&doc_a)?;
-    undo.undo(&doc_a)?;
+    undo.record_new_checkpoint()?;
+    undo.undo()?;
     assert_eq!(
         doc_a.get_deep_value().to_json_value(),
         json!({"map": {"color": "black"}})
     );
-    undo.redo(&doc_a)?;
+    undo.redo()?;
     assert_eq!(
         doc_a.get_deep_value().to_json_value(),
         json!({"map": {"color": "green"}})
@@ -302,7 +302,7 @@ fn undo_id_span_that_contains_remote_deps_inside() -> Result<(), LoroError> {
         })
     );
     while undo_a.can_undo() {
-        undo_a.undo(&doc_a)?;
+        undo_a.undo()?;
     }
     assert_eq!(
         doc_a.get_deep_value().to_json_value(),
@@ -336,7 +336,7 @@ fn undo_id_span_that_contains_remote_deps_inside_many_times() -> Result<(), Loro
 
     // Undo all ops from A
     while undo.can_undo() {
-        undo.undo(&doc_a)?;
+        undo.undo()?;
     }
     assert_eq!(
         doc_a.get_deep_value().to_json_value(),
@@ -353,25 +353,25 @@ fn undo_manager() -> Result<(), LoroError> {
     doc.set_peer_id(1)?;
     let mut undo = UndoManager::new(&doc);
     doc.get_text("text").insert(0, "123")?;
-    undo.record_new_checkpoint(&doc)?;
+    undo.record_new_checkpoint()?;
     doc.get_text("text").insert(3, "456")?;
-    undo.record_new_checkpoint(&doc)?;
+    undo.record_new_checkpoint()?;
     doc.get_text("text").insert(6, "789")?;
-    undo.record_new_checkpoint(&doc)?;
+    undo.record_new_checkpoint()?;
     for i in 0..10 {
         info_span!("round", i).in_scope(|| {
             assert_eq!(doc.get_text("text").to_string(), "123456789");
-            undo.undo(&doc)?;
+            undo.undo()?;
             assert_eq!(doc.get_text("text").to_string(), "123456");
-            undo.undo(&doc)?;
+            undo.undo()?;
             assert_eq!(doc.get_text("text").to_string(), "123");
-            undo.undo(&doc)?;
+            undo.undo()?;
             assert_eq!(doc.get_text("text").to_string(), "");
-            undo.redo(&doc)?;
+            undo.redo()?;
             assert_eq!(doc.get_text("text").to_string(), "123");
-            undo.redo(&doc)?;
+            undo.redo()?;
             assert_eq!(doc.get_text("text").to_string(), "123456");
-            undo.redo(&doc)?;
+            undo.redo()?;
             assert_eq!(doc.get_text("text").to_string(), "123456789");
             Ok::<(), loro::LoroError>(())
         })?;
@@ -386,11 +386,11 @@ fn undo_manager_with_sub_container() -> Result<(), LoroError> {
     doc.set_peer_id(1)?;
     let mut undo = UndoManager::new(&doc);
     let map = doc.get_list("list").insert_container(0, LoroMap::new())?;
-    undo.record_new_checkpoint(&doc)?;
+    undo.record_new_checkpoint()?;
     let text = map.insert_container("text", LoroText::new())?;
-    undo.record_new_checkpoint(&doc)?;
+    undo.record_new_checkpoint()?;
     text.insert(0, "123")?;
-    undo.record_new_checkpoint(&doc)?;
+    undo.record_new_checkpoint()?;
     for i in 0..10 {
         info_span!("round", ?i).in_scope(|| {
             assert_eq!(
@@ -401,7 +401,7 @@ fn undo_manager_with_sub_container() -> Result<(), LoroError> {
                     }]
                 })
             );
-            undo.undo(&doc)?;
+            undo.undo()?;
             assert_eq!(
                 doc.get_deep_value().to_json_value(),
                 json!({
@@ -410,28 +410,28 @@ fn undo_manager_with_sub_container() -> Result<(), LoroError> {
                     }]
                 })
             );
-            undo.undo(&doc)?;
+            undo.undo()?;
             assert_eq!(
                 doc.get_deep_value().to_json_value(),
                 json!({
                     "list": [{}]
                 })
             );
-            undo.undo(&doc)?;
+            undo.undo()?;
             assert_eq!(
                 doc.get_deep_value().to_json_value(),
                 json!({
                     "list": []
                 })
             );
-            undo.redo(&doc)?;
+            undo.redo()?;
             assert_eq!(
                 doc.get_deep_value().to_json_value(),
                 json!({
                     "list": [{}]
                 })
             );
-            undo.redo(&doc)?;
+            undo.redo()?;
             assert_eq!(
                 doc.get_deep_value().to_json_value(),
                 json!({
@@ -440,7 +440,7 @@ fn undo_manager_with_sub_container() -> Result<(), LoroError> {
                     }]
                 })
             );
-            undo.redo(&doc)?;
+            undo.redo()?;
             assert_eq!(
                 doc.get_deep_value().to_json_value(),
                 json!({
@@ -465,29 +465,29 @@ fn test_undo_container_deletion() -> LoroResult<()> {
 
     let map = doc.get_map("map");
     let text = map.insert_container("text", LoroText::new())?;
-    undo.record_new_checkpoint(&doc)?;
+    undo.record_new_checkpoint()?;
     text.insert(0, "T")?;
-    undo.record_new_checkpoint(&doc)?;
+    undo.record_new_checkpoint()?;
     assert_eq!(
         doc.get_deep_value().to_json_value(),
         json!({"map": {"text": "T"}})
     );
     map.delete("text")?;
     assert_eq!(doc.get_deep_value().to_json_value(), json!({"map": {}}));
-    undo.record_new_checkpoint(&doc)?;
-    undo.undo(&doc)?;
+    undo.record_new_checkpoint()?;
+    undo.undo()?;
     assert_eq!(
         doc.get_deep_value().to_json_value(),
         json!({"map": {"text": "T"}})
     );
-    undo.redo(&doc)?;
+    undo.redo()?;
     assert_eq!(doc.get_deep_value().to_json_value(), json!({"map": {}}));
-    undo.undo(&doc)?;
+    undo.undo()?;
     assert_eq!(
         doc.get_deep_value().to_json_value(),
         json!({"map": {"text": "T"}})
     );
-    undo.redo(&doc)?;
+    undo.redo()?;
     assert_eq!(doc.get_deep_value().to_json_value(), json!({"map": {}}));
     doc.commit();
     Ok(())
@@ -526,9 +526,9 @@ fn undo_richtext_editing() -> LoroResult<()> {
     let mut undo = UndoManager::new(&doc);
     let text = doc.get_text("text");
     text.insert(0, "Hello")?;
-    undo.record_new_checkpoint(&doc)?;
+    undo.record_new_checkpoint()?;
     text.mark(0..5, "bold", true)?;
-    undo.record_new_checkpoint(&doc)?;
+    undo.record_new_checkpoint()?;
     assert_eq!(
         text.get_richtext_value().to_json_value(),
         json!([
@@ -537,17 +537,17 @@ fn undo_richtext_editing() -> LoroResult<()> {
     );
     for i in 0..10 {
         debug_span!("round", i).in_scope(|| {
-            undo.undo(&doc)?;
+            undo.undo()?;
             assert_eq!(
                 text.get_richtext_value().to_json_value(),
                 json!([
                     {"insert": "Hello", }
                 ])
             );
-            undo.undo(&doc)?;
+            undo.undo()?;
             assert_eq!(text.get_richtext_value().to_json_value(), json!([]));
             debug_span!("redo 1").in_scope(|| {
-                undo.redo(&doc).unwrap();
+                undo.redo().unwrap();
             });
             assert_eq!(
                 text.get_richtext_value().to_json_value(),
@@ -556,7 +556,7 @@ fn undo_richtext_editing() -> LoroResult<()> {
                 ])
             );
             debug_span!("redo 2").in_scope(|| {
-                undo.redo(&doc).unwrap();
+                undo.redo().unwrap();
             });
             assert_eq!(
                 text.get_richtext_value().to_json_value(),
@@ -579,12 +579,12 @@ fn undo_richtext_editing_collab() -> LoroResult<()> {
     let doc_b = LoroDoc::new();
     doc_b.set_peer_id(2)?;
     doc_a.get_text("text").insert(0, "A fox jumped")?;
-    undo.record_new_checkpoint(&doc_a)?;
+    undo.record_new_checkpoint()?;
     sync(&doc_a, &doc_b);
     doc_b.get_text("text").mark(2..12, "italic", true)?;
     sync(&doc_a, &doc_b);
     doc_a.get_text("text").mark(0..5, "bold", true)?;
-    undo.record_new_checkpoint(&doc_a)?;
+    undo.record_new_checkpoint()?;
     sync(&doc_a, &doc_b);
     assert_eq!(
         doc_a.get_text("text").get_richtext_value().to_json_value(),
@@ -595,7 +595,7 @@ fn undo_richtext_editing_collab() -> LoroResult<()> {
         ])
     );
     for _ in 0..10 {
-        undo.undo(&doc_a)?;
+        undo.undo()?;
         assert_eq!(
             doc_a.get_text("text").get_richtext_value().to_json_value(),
             json!([
@@ -604,7 +604,7 @@ fn undo_richtext_editing_collab() -> LoroResult<()> {
             ])
         );
         // FIXME: right now redo/undo like this is wasteful
-        undo.redo(&doc_a)?;
+        undo.redo()?;
         assert_eq!(
             doc_a.get_text("text").get_richtext_value().to_json_value(),
             json!([
@@ -636,12 +636,12 @@ fn undo_richtext_conflict_set_style() -> LoroResult<()> {
     doc_b.set_peer_id(2)?;
 
     doc_a.get_text("text").insert(0, "A fox jumped")?;
-    undo.record_new_checkpoint(&doc_a)?;
+    undo.record_new_checkpoint()?;
     sync(&doc_a, &doc_b);
     doc_b.get_text("text").mark(2..12, "color", "red")?;
     sync(&doc_a, &doc_b);
     doc_a.get_text("text").mark(0..5, "color", "green")?;
-    undo.record_new_checkpoint(&doc_a)?;
+    undo.record_new_checkpoint()?;
     sync(&doc_a, &doc_b);
     assert_eq!(
         doc_a.get_text("text").get_richtext_value().to_json_value(),
@@ -651,7 +651,7 @@ fn undo_richtext_conflict_set_style() -> LoroResult<()> {
         ])
     );
     for _ in 0..10 {
-        undo.undo(&doc_a)?;
+        undo.undo()?;
         assert_eq!(
             doc_a.get_text("text").get_richtext_value().to_json_value(),
             json!([
@@ -659,12 +659,12 @@ fn undo_richtext_conflict_set_style() -> LoroResult<()> {
                 {"insert": "fox jumped", "attributes": {"color": "red"}}
             ])
         );
-        undo.undo(&doc_a)?;
+        undo.undo()?;
         assert_eq!(
             doc_a.get_text("text").get_richtext_value().to_json_value(),
             json!([])
         );
-        undo.redo(&doc_a)?;
+        undo.redo()?;
         assert_eq!(
             doc_a.get_text("text").get_richtext_value().to_json_value(),
             json!([
@@ -672,7 +672,7 @@ fn undo_richtext_conflict_set_style() -> LoroResult<()> {
                 {"insert": "fox jumped", "attributes": {"color": "red"}}
             ])
         );
-        undo.redo(&doc_a)?;
+        undo.redo()?;
         assert_eq!(
             doc_a.get_text("text").get_richtext_value().to_json_value(),
             json!([
@@ -693,30 +693,30 @@ fn undo_text_collab_delete() -> LoroResult<()> {
     let doc_b = LoroDoc::new();
     doc_b.set_peer_id(2)?;
     doc_a.get_text("text").insert(0, "A ")?;
-    undo.record_new_checkpoint(&doc_a)?;
+    undo.record_new_checkpoint()?;
     doc_a.get_text("text").insert(2, "fox ")?;
-    undo.record_new_checkpoint(&doc_a)?;
+    undo.record_new_checkpoint()?;
     doc_a.get_text("text").insert(6, "jumped")?;
-    undo.record_new_checkpoint(&doc_a)?;
+    undo.record_new_checkpoint()?;
     sync(&doc_a, &doc_b);
 
     doc_b.get_text("text").delete(2, 4)?;
     sync(&doc_a, &doc_b);
     doc_a.get_text("text").insert(0, "123!")?;
-    undo.record_new_checkpoint(&doc_a)?;
+    undo.record_new_checkpoint()?;
     for _ in 0..3 {
         assert_eq!(doc_a.get_text("text").to_string(), "123!A jumped");
-        undo.undo(&doc_a)?;
+        undo.undo()?;
         assert_eq!(doc_a.get_text("text").to_string(), "A jumped");
-        undo.undo(&doc_a)?;
+        undo.undo()?;
         assert_eq!(doc_a.get_text("text").to_string(), "A ");
-        undo.undo(&doc_a)?;
+        undo.undo()?;
         assert_eq!(doc_a.get_text("text").to_string(), "");
-        undo.redo(&doc_a)?;
+        undo.redo()?;
         assert_eq!(doc_a.get_text("text").to_string(), "A ");
-        undo.redo(&doc_a)?;
+        undo.redo()?;
         assert_eq!(doc_a.get_text("text").to_string(), "A jumped");
-        undo.redo(&doc_a)?;
+        undo.redo()?;
         assert_eq!(doc_a.get_text("text").to_string(), "123!A jumped");
     }
     Ok(())
@@ -772,7 +772,7 @@ fn collab_undo() -> anyhow::Result<()> {
                     {"insert": " fox jumped."}
                 ])
             );
-            undo_a.undo(&doc_a)?;
+            undo_a.undo()?;
             assert!(undo_a.can_redo());
             assert_eq!(
                 doc_a.get_text("text").get_richtext_value().to_json_value(),
@@ -782,14 +782,14 @@ fn collab_undo() -> anyhow::Result<()> {
                     {"insert": " fox jumped."}
                 ])
             );
-            undo_a.undo(&doc_a)?;
+            undo_a.undo()?;
             assert_eq!(
                 doc_a.get_text("text").get_richtext_value().to_json_value(),
                 json!([
                     {"insert": "Hello A fox jumped."},
                 ])
             );
-            undo_a.undo(&doc_a)?;
+            undo_a.undo()?;
             assert_eq!(
                 doc_a.get_text("text").get_richtext_value().to_json_value(),
                 json!([
@@ -798,7 +798,7 @@ fn collab_undo() -> anyhow::Result<()> {
             );
 
             assert!(!undo_a.can_undo());
-            undo_a.redo(&doc_a)?;
+            undo_a.redo()?;
             assert_eq!(
                 doc_a.get_text("text").get_richtext_value().to_json_value(),
                 json!([
@@ -806,7 +806,7 @@ fn collab_undo() -> anyhow::Result<()> {
                 ])
             );
 
-            undo_a.redo(&doc_a)?;
+            undo_a.redo()?;
             assert_eq!(
                 doc_a.get_text("text").get_richtext_value().to_json_value(),
                 json!([
@@ -815,7 +815,7 @@ fn collab_undo() -> anyhow::Result<()> {
                     {"insert": " fox jumped."}
                 ])
             );
-            undo_a.redo(&doc_a)?;
+            undo_a.redo()?;
             Ok::<(), LoroError>(())
         })?;
     }
@@ -831,7 +831,7 @@ fn collab_undo() -> anyhow::Result<()> {
                 {"insert": " fox jumped."}
             ])
         );
-        undo_b.undo(&doc_b)?;
+        undo_b.undo()?;
         assert!(undo_b.can_redo());
         assert_eq!(
             doc_b.get_text("text").get_richtext_value().to_json_value(),
@@ -842,7 +842,7 @@ fn collab_undo() -> anyhow::Result<()> {
             ])
         );
 
-        undo_b.undo(&doc_b)?;
+        undo_b.undo()?;
         assert_eq!(
             doc_b.get_text("text").get_richtext_value().to_json_value(),
             json!([
@@ -851,7 +851,7 @@ fn collab_undo() -> anyhow::Result<()> {
                 {"insert": " "},
             ])
         );
-        undo_b.undo(&doc_b)?;
+        undo_b.undo()?;
         assert_eq!(
             doc_b.get_text("text").get_richtext_value().to_json_value(),
             json!([
@@ -860,7 +860,7 @@ fn collab_undo() -> anyhow::Result<()> {
         );
         assert!(!undo_b.can_undo());
         assert!(undo_b.can_redo());
-        undo_b.redo(&doc_b)?;
+        undo_b.redo()?;
         assert_eq!(
             doc_b.get_text("text").get_richtext_value().to_json_value(),
             json!([
@@ -869,7 +869,7 @@ fn collab_undo() -> anyhow::Result<()> {
                 {"insert": " "},
             ])
         );
-        undo_b.redo(&doc_b)?;
+        undo_b.redo()?;
         assert_eq!(
             doc_b.get_text("text").get_richtext_value().to_json_value(),
             json!([
@@ -878,7 +878,7 @@ fn collab_undo() -> anyhow::Result<()> {
                 {"insert": " fox"}
             ])
         );
-        undo_b.redo(&doc_b)?;
+        undo_b.redo()?;
     }
 
     Ok(())
@@ -949,25 +949,25 @@ fn undo_sub_sub_container() -> anyhow::Result<()> {
         ])
     );
 
-    undo_a.undo(&doc_a)?; // 4 -> 3
+    undo_a.undo()?; // 4 -> 3
     assert_eq!(
         text_a.get_richtext_value().to_json_value(),
         json!([
             {"insert": "Fox World!"},
         ])
     );
-    undo_a.undo(&doc_a)?; // 3 -> 2
-                          // It should be "FHoexllo World!" here ideally
-                          // But it's too expensive to calculate and make the code too complicated
-                          // So we skip the test
-    undo_a.undo(&doc_a)?; // 2 -> 1.5
+    undo_a.undo()?; // 3 -> 2
+                    // It should be "FHoexllo World!" here ideally
+                    // But it's too expensive to calculate and make the code too complicated
+                    // So we skip the test
+    undo_a.undo()?; // 2 -> 1.5
     assert_eq!(
         text_a.get_richtext_value().to_json_value(),
         json!([
             {"insert": "Fox"},
         ])
     );
-    undo_a.undo(&doc_a)?; // 1.5 -> 1
+    undo_a.undo()?; // 1.5 -> 1
     assert_eq!(
         doc_a.get_deep_value().to_json_value(),
         json!({
@@ -975,7 +975,7 @@ fn undo_sub_sub_container() -> anyhow::Result<()> {
         })
     );
 
-    undo_a.undo(&doc_a)?; // 1 -> 0
+    undo_a.undo()?; // 1 -> 0
     assert_eq!(
         doc_a.get_deep_value().to_json_value(),
         json!({
@@ -983,23 +983,23 @@ fn undo_sub_sub_container() -> anyhow::Result<()> {
         })
     );
 
-    undo_a.redo(&doc_a)?; // 0 -> 1
+    undo_a.redo()?; // 0 -> 1
     assert_eq!(
         doc_a.get_deep_value().to_json_value(),
         json!({
             "map": {"list": []}
         })
     );
-    undo_a.redo(&doc_a)?; // 1 -> 1.5
+    undo_a.redo()?; // 1 -> 1.5
     assert_eq!(
         text_a.get_richtext_value().to_json_value(),
         json!([
             {"insert": "Fox"},
         ])
     );
-    undo_a.redo(&doc_a)?; // 1.5 -> 2
+    undo_a.redo()?; // 1.5 -> 2
 
-    undo_a.redo(&doc_a)?; // 2 -> 3
+    undo_a.redo()?; // 2 -> 3
 
     assert_eq!(
         doc_a.get_deep_value().to_json_value(),
@@ -1019,7 +1019,7 @@ fn undo_sub_sub_container() -> anyhow::Result<()> {
         .unwrap()
         .into_text()
         .unwrap();
-    undo_a.redo(&doc_a)?; // 3 -> 4
+    undo_a.redo()?; // 3 -> 4
     assert_eq!(
         text_a.get_richtext_value().to_json_value(),
         json!([
@@ -1089,7 +1089,7 @@ fn test_remote_merge_transform() -> LoroResult<()> {
         ])
     );
 
-    undo_a.undo(&doc_a)?;
+    undo_a.undo()?;
     assert_eq!(
         text_a.get_richtext_value().to_json_value(),
         json!([
@@ -1097,7 +1097,7 @@ fn test_remote_merge_transform() -> LoroResult<()> {
         ])
     );
 
-    undo_a.undo(&doc_a)?;
+    undo_a.undo()?;
     assert_eq!(text_a.get_richtext_value().to_json_value(), json!([]));
 
     Ok(())
@@ -1123,7 +1123,7 @@ fn undo_tree_move() -> LoroResult<()> {
     doc_b.import(&doc_a.export_from(&Default::default()))?;
     let latest_value = tree_a.get_value();
     // a
-    undo.undo(&doc_a)?;
+    undo.undo()?;
     let a_value = tree_a.get_value().as_list().unwrap().clone();
     assert_eq!(a_value.len(), 2);
     assert!(a_value[0]
@@ -1139,14 +1139,14 @@ fn undo_tree_move() -> LoroResult<()> {
         .unwrap()
         .is_null());
 
-    undo.redo(&doc_a)?;
+    undo.redo()?;
     assert_eq!(tree_a.get_value(), latest_value);
     // b
-    undo2.undo(&doc_b)?;
+    undo2.undo()?;
     let b_value = tree_b.get_value().as_list().unwrap().clone();
     assert_eq!(b_value.len(), 0);
-    undo.undo(&doc_a)?;
-    undo.undo(&doc_a)?;
+    undo.undo()?;
+    undo.undo()?;
     let a_value = tree_a.get_value().as_list().unwrap().clone();
     assert_eq!(a_value.len(), 1);
     assert_eq!(
@@ -1181,7 +1181,7 @@ fn undo_tree_concurrent_delete() -> LoroResult<()> {
     tree_b.delete(child)?;
     doc_a.import(&doc_b.export_from(&Default::default()))?;
     doc_b.import(&doc_a.export_from(&Default::default()))?;
-    undo_b.undo(&doc_b)?;
+    undo_b.undo()?;
     assert!(tree_b.get_value().as_list().unwrap().is_empty());
     Ok(())
 }
@@ -1203,7 +1203,7 @@ fn undo_tree_concurrent_delete2() -> LoroResult<()> {
     tree_b.delete(child)?;
     doc_a.import(&doc_b.export_from(&Default::default()))?;
     doc_b.import(&doc_a.export_from(&Default::default()))?;
-    undo_b.undo(&doc_b)?;
+    undo_b.undo()?;
     assert_eq!(tree_b.get_value().as_list().unwrap().len(), 1);
     assert_eq!(
         tree_b.get_value().as_list().unwrap()[0]
@@ -1289,7 +1289,7 @@ fn undo_redo_when_collab() -> anyhow::Result<()> {
     text_a.insert(0, "Alice")?;
     sync(&doc_a, &doc_b);
     text_b.delete(0, 5)?;
-    undo_a.undo(&doc_a)?;
+    undo_a.undo()?;
     assert_eq!(
         doc_a.get_deep_value().to_json_value(),
         json!({
@@ -1297,7 +1297,7 @@ fn undo_redo_when_collab() -> anyhow::Result<()> {
         })
     );
     doc_a.import(&doc_b.export_from(&Default::default()))?;
-    undo_a.undo(&doc_a)?;
+    undo_a.undo()?;
     assert_eq!(
         doc_a.get_deep_value().to_json_value(),
         json!({
@@ -1306,7 +1306,7 @@ fn undo_redo_when_collab() -> anyhow::Result<()> {
     );
     text_b.insert(0, "Bob ")?;
     doc_a.import(&doc_b.export_from(&Default::default()))?;
-    undo_a.undo(&doc_a)?;
+    undo_a.undo()?;
     assert_eq!(
         doc_a.get_deep_value().to_json_value(),
         json!({
@@ -1315,21 +1315,21 @@ fn undo_redo_when_collab() -> anyhow::Result<()> {
     );
 
     assert!(undo_a.can_redo());
-    undo_a.redo(&doc_a)?;
+    undo_a.redo()?;
     assert_eq!(
         doc_a.get_deep_value().to_json_value(),
         json!({
             "text": "Bob Hi "
         })
     );
-    undo_a.redo(&doc_a)?;
+    undo_a.redo()?;
     assert_eq!(
         doc_a.get_deep_value().to_json_value(),
         json!({
             "text": "Bob Hi World"
         })
     );
-    undo_a.redo(&doc_a)?;
+    undo_a.redo()?;
     assert_eq!(
         doc_a.get_deep_value().to_json_value(),
         json!({
@@ -1366,7 +1366,7 @@ fn undo_list_move() -> anyhow::Result<()> {
                 "list": ["2", "1", "0"]
             })
         );
-        undo.undo(&doc)?;
+        undo.undo()?;
         assert!(undo.can_redo());
         assert_eq!(
             doc.get_deep_value().to_json_value(),
@@ -1374,14 +1374,14 @@ fn undo_list_move() -> anyhow::Result<()> {
                 "list": ["1", "2", "0"]
             })
         );
-        undo.undo(&doc)?;
+        undo.undo()?;
         assert_eq!(
             doc.get_deep_value().to_json_value(),
             json!({
                 "list": ["0", "1", "2"]
             })
         );
-        undo.undo(&doc)?;
+        undo.undo()?;
         assert_eq!(
             doc.get_deep_value().to_json_value(),
             json!({
@@ -1389,28 +1389,28 @@ fn undo_list_move() -> anyhow::Result<()> {
             })
         );
 
-        undo.undo(&doc)?;
-        undo.undo(&doc)?;
+        undo.undo()?;
+        undo.undo()?;
         assert!(!undo.can_undo());
-        undo.redo(&doc)?;
+        undo.redo()?;
         assert!(undo.can_undo());
-        undo.redo(&doc)?;
+        undo.redo()?;
 
-        undo.redo(&doc)?;
+        undo.redo()?;
         assert_eq!(
             doc.get_deep_value().to_json_value(),
             json!({
                 "list": ["0", "1", "2"]
             })
         );
-        undo.redo(&doc)?;
+        undo.redo()?;
         assert_eq!(
             doc.get_deep_value().to_json_value(),
             json!({
                 "list": ["1", "2", "0"]
             })
         );
-        undo.redo(&doc)?;
+        undo.redo()?;
         assert_eq!(
             doc.get_deep_value().to_json_value(),
             json!({
@@ -1442,7 +1442,7 @@ fn undo_collab_list_move() -> LoroResult<()> {
     doc_b.get_movable_list("list").mov(0, 1)?;
     sync(&doc, &doc_b);
     assert_eq!(list.get_value().to_json_value(), json!(["1", "0", "2"]));
-    undo.undo(&doc)?;
+    undo.undo()?;
     // FIXME: cannot infer move correctly for now
     assert_eq!(list.get_value().to_json_value(), json!(["0", "1", "2"]));
     Ok(())
@@ -1469,14 +1469,14 @@ fn exclude_certain_local_ops_from_undo() -> anyhow::Result<()> {
             "text": "x1y2z3abc"
         })
     );
-    undo.undo(&doc)?;
+    undo.undo()?;
     assert_eq!(
         doc.get_deep_value().to_json_value(),
         json!({
             "text": "x1y2z3"
         })
     );
-    undo.undo(&doc)?;
+    undo.undo()?;
     assert_eq!(
         doc.get_deep_value().to_json_value(),
         json!({
@@ -1484,14 +1484,14 @@ fn exclude_certain_local_ops_from_undo() -> anyhow::Result<()> {
         })
     );
     assert!(!undo.can_undo());
-    undo.redo(&doc)?;
+    undo.redo()?;
     assert_eq!(
         doc.get_deep_value().to_json_value(),
         json!({
             "text": "x1y2z3"
         })
     );
-    undo.redo(&doc)?;
+    undo.redo()?;
     assert_eq!(
         doc.get_deep_value().to_json_value(),
         json!({
@@ -1522,7 +1522,7 @@ fn should_not_trigger_update_when_undo_ops_depend_on_deleted_container() -> anyh
     doc_a.get_map("map").delete("text")?;
     sync(&doc_a, &doc_b);
     let f = doc_b.oplog_frontiers();
-    undo.undo(&doc_b)?;
+    undo.undo()?;
     // should not update doc_b, because the undo operation depends on a deleted container
     assert_eq!(f, doc_b.oplog_frontiers());
     Ok(())
@@ -1561,18 +1561,18 @@ fn undo_manager_events() -> anyhow::Result<()> {
     doc.commit();
     assert_eq!(push_count.load(atomic::Ordering::SeqCst), 2);
 
-    undo.undo(&doc)?;
+    undo.undo()?;
     assert_eq!(&*popped_value.try_lock().unwrap(), &LoroValue::I64(5));
     assert_eq!(pop_count.load(atomic::Ordering::SeqCst), 1);
     assert_eq!(push_count.load(atomic::Ordering::SeqCst), 3);
-    undo.undo(&doc)?;
+    undo.undo()?;
     assert_eq!(&*popped_value.try_lock().unwrap(), &LoroValue::I64(0));
     assert_eq!(pop_count.load(atomic::Ordering::SeqCst), 2);
     assert_eq!(push_count.load(atomic::Ordering::SeqCst), 4);
-    undo.redo(&doc)?;
+    undo.redo()?;
     assert_eq!(pop_count.load(atomic::Ordering::SeqCst), 3);
     assert_eq!(push_count.load(atomic::Ordering::SeqCst), 5);
-    undo.redo(&doc)?;
+    undo.redo()?;
     assert_eq!(pop_count.load(atomic::Ordering::SeqCst), 4);
     assert_eq!(push_count.load(atomic::Ordering::SeqCst), 6);
     Ok(())
@@ -1620,7 +1620,7 @@ fn undo_transform_cursor_position() -> anyhow::Result<()> {
         assert_eq!(text.to_string(), "Hi Hii world!");
     }
     assert_eq!(popped_cursors.try_lock().unwrap().len(), 0);
-    undo.undo(&doc)?;
+    undo.undo()?;
 
     // Undo will create new "Hello". They have different IDs than the original ones.
     // But the original cursors are bound on the original deleted text.

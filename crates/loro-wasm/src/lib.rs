@@ -1074,7 +1074,7 @@ impl LoroDoc {
             .into_iter()
         {
             ans.push(&match v {
-                ValueOrHandler::Handler(h) => handler_to_js_value(h, Some(self.0.clone())),
+                ValueOrHandler::Handler(h) => handler_to_js_value(h),
                 ValueOrHandler::Value(v) => v.into(),
             });
         }
@@ -1506,9 +1506,8 @@ impl LoroDoc {
     #[wasm_bindgen(skip_typescript)]
     pub fn subscribe(&self, f: js_sys::Function) -> JsValue {
         let observer = observer::Observer::new(f);
-        let doc = self.0.clone();
         let sub = self.0.subscribe_root(Arc::new(move |e| {
-            call_after_micro_task(observer.clone(), e, &doc)
+            call_after_micro_task(observer.clone(), e)
             // call_subscriber(observer.clone(), e);
         }));
         subscription_to_js_function_callback(sub)
@@ -1768,7 +1767,7 @@ impl LoroDoc {
     pub fn get_by_path(&self, path: &str) -> JsValueOrContainerOrUndefined {
         let ans = self.0.get_by_str_path(path);
         let v: JsValue = match ans {
-            Some(ValueOrHandler::Handler(h)) => handler_to_js_value(h, Some(self.0.clone())),
+            Some(ValueOrHandler::Handler(h)) => handler_to_js_value(h),
             Some(ValueOrHandler::Value(v)) => v.into(),
             None => JsValue::UNDEFINED,
         };
@@ -1903,7 +1902,7 @@ impl LoroDoc {
         let obj = js_sys::Object::new();
         for (id, d) in diff.iter() {
             let id_str = id.to_string();
-            let v = resolved_diff_to_js(d, &self.0);
+            let v = resolved_diff_to_js(d);
             Reflect::set(&obj, &JsValue::from_str(&id_str), &v)?;
         }
         let v: JsValue = obj.into();
@@ -1912,26 +1911,26 @@ impl LoroDoc {
 }
 
 #[allow(unused)]
-fn call_subscriber(ob: observer::Observer, e: DiffEvent, doc: &Arc<LoroDocInner>) {
+fn call_subscriber(ob: observer::Observer, e: DiffEvent) {
     // We convert the event to js object here, so that we don't need to worry about GC.
     // In the future, when FinalizationRegistry[1] is stable, we can use `--weak-ref`[2] feature
     // in wasm-bindgen to avoid this.
     //
     // [1]: https://caniuse.com/?search=FinalizationRegistry
     // [2]: https://rustwasm.github.io/wasm-bindgen/reference/weak-references.html
-    let event = diff_event_to_js_value(e, doc);
+    let event = diff_event_to_js_value(e);
     if let Err(e) = ob.call1(&event) {
         throw_error_after_micro_task(e);
     }
 }
 
 #[allow(unused)]
-fn call_after_micro_task(ob: observer::Observer, event: DiffEvent, doc: &Arc<LoroDocInner>) {
+fn call_after_micro_task(ob: observer::Observer, event: DiffEvent) {
     let promise = Promise::resolve(&JsValue::NULL);
     type C = Closure<dyn FnMut(JsValue)>;
     let drop_handler: Rc<RefCell<Option<C>>> = Rc::new(RefCell::new(None));
     let copy = drop_handler.clone();
-    let event = diff_event_to_js_value(event, doc);
+    let event = diff_event_to_js_value(event);
     let closure = Closure::once(move |_: JsValue| {
         let ans = ob.call1(&event);
         drop(copy);
@@ -1950,7 +1949,7 @@ impl Default for LoroDoc {
     }
 }
 
-fn diff_event_to_js_value(event: DiffEvent, doc: &Arc<LoroDocInner>) -> JsValue {
+fn diff_event_to_js_value(event: DiffEvent) -> JsValue {
     let obj = js_sys::Object::new();
     Reflect::set(&obj, &"by".into(), &event.event_meta.by.to_string().into()).unwrap();
     let origin: &str = &event.event_meta.origin;
@@ -1961,7 +1960,7 @@ fn diff_event_to_js_value(event: DiffEvent, doc: &Arc<LoroDocInner>) -> JsValue 
 
     let events = js_sys::Array::new_with_length(event.events.len() as u32);
     for (i, &event) in event.events.iter().enumerate() {
-        events.set(i as u32, container_diff_to_js_value(event, doc));
+        events.set(i as u32, container_diff_to_js_value(event));
     }
 
     Reflect::set(&obj, &"events".into(), &events.into()).unwrap();
@@ -1995,13 +1994,10 @@ fn diff_event_to_js_value(event: DiffEvent, doc: &Arc<LoroDocInner>) -> JsValue 
 ///   path: Path;
 /// }
 ///
-fn container_diff_to_js_value(
-    event: &loro_internal::ContainerDiff,
-    doc: &Arc<LoroDocInner>,
-) -> JsValue {
+fn container_diff_to_js_value(event: &loro_internal::ContainerDiff) -> JsValue {
     let obj = js_sys::Object::new();
     Reflect::set(&obj, &"target".into(), &event.id.to_string().into()).unwrap();
-    Reflect::set(&obj, &"diff".into(), &resolved_diff_to_js(&event.diff, doc)).unwrap();
+    Reflect::set(&obj, &"diff".into(), &resolved_diff_to_js(&event.diff)).unwrap();
     Reflect::set(
         &obj,
         &"path".into(),
@@ -2403,14 +2399,13 @@ impl LoroText {
     pub fn subscribe(&self, f: js_sys::Function) -> JsResult<JsValue> {
         let observer = observer::Observer::new(f);
         let doc = self
-            .doc
-            .clone()
+            .handler
+            .doc()
             .ok_or_else(|| JsError::new("Document is not attached"))?;
-        let doc_clone = doc.clone();
         let ans = doc.subscribe(
             &self.handler.id(),
             Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e, &doc_clone);
+                call_after_micro_task(observer.clone(), e);
             }),
         );
 
@@ -2480,7 +2475,7 @@ impl LoroText {
         }
 
         if let Some(h) = self.handler.get_attached() {
-            handler_to_js_value(Handler::Text(h), self.doc.clone()).into()
+            handler_to_js_value(Handler::Text(h)).into()
         } else {
             JsValue::UNDEFINED.into()
         }
@@ -2615,7 +2610,7 @@ impl LoroMap {
     pub fn get(&self, key: &str) -> JsValueOrContainerOrUndefined {
         let v = self.handler.get_(key);
         (match v {
-            Some(ValueOrHandler::Handler(c)) => handler_to_js_value(c, self.doc.clone()),
+            Some(ValueOrHandler::Handler(c)) => handler_to_js_value(c),
             Some(ValueOrHandler::Value(v)) => v.into(),
             None => JsValue::UNDEFINED,
         })
@@ -2642,7 +2637,7 @@ impl LoroMap {
         let handler = self
             .handler
             .get_or_create_container(key, child.to_handler())?;
-        Ok(handler_to_js_value(handler, self.doc.clone()).into())
+        Ok(handler_to_js_value(handler).into())
     }
 
     /// Get the keys of the map.
@@ -2681,7 +2676,7 @@ impl LoroMap {
     pub fn values(&self) -> Vec<JsValue> {
         let mut ans: Vec<JsValue> = Vec::with_capacity(self.handler.len());
         self.handler.for_each(|_, v| {
-            ans.push(loro_value_to_js_value_or_container(v, self.doc.clone()));
+            ans.push(loro_value_to_js_value_or_container(v));
         });
         ans
     }
@@ -2704,7 +2699,7 @@ impl LoroMap {
         self.handler.for_each(|k, v| {
             let array = Array::new();
             array.push(&k.to_string().into());
-            array.push(&loro_value_to_js_value_or_container(v, self.doc.clone()));
+            array.push(&loro_value_to_js_value_or_container(v));
             let v: JsValue = array.into();
             ans.push(v.into());
         });
@@ -2753,7 +2748,7 @@ impl LoroMap {
     pub fn insert_container(&mut self, key: &str, child: JsContainer) -> JsResult<JsContainer> {
         let child = convert::js_to_container(child)?;
         let c = self.handler.insert_container(key, child.to_handler())?;
-        Ok(handler_to_js_value(c, self.doc.clone()).into())
+        Ok(handler_to_js_value(c).into())
     }
 
     /// Subscribe to the changes of the map.
@@ -2785,14 +2780,13 @@ impl LoroMap {
     pub fn subscribe(&self, f: js_sys::Function) -> JsResult<JsValue> {
         let observer = observer::Observer::new(f);
         let doc = self
-            .doc
-            .clone()
+            .handler
+            .doc()
             .ok_or_else(|| JsError::new("Document is not attached"))?;
-        let doc_clone = doc.clone();
         let sub = doc.subscribe(
             &self.handler.id(),
             Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e, &doc_clone);
+                call_after_micro_task(observer.clone(), e);
             }),
         );
 
@@ -2849,7 +2843,7 @@ impl LoroMap {
         let Some(h) = self.handler.get_attached() else {
             return JsValue::UNDEFINED.into();
         };
-        handler_to_js_value(Handler::Map(h), self.doc.clone()).into()
+        handler_to_js_value(Handler::Map(h)).into()
     }
 
     /// Delete all key-value pairs in the map.
@@ -3074,7 +3068,7 @@ impl LoroList {
     pub fn insert_container(&mut self, index: usize, child: JsContainer) -> JsResult<JsContainer> {
         let child = js_to_container(child)?;
         let c = self.handler.insert_container(index, child.to_handler())?;
-        Ok(handler_to_js_value(c, self.doc.clone()).into())
+        Ok(handler_to_js_value(c).into())
     }
 
     #[wasm_bindgen(js_name = "pushContainer", skip_typescript)]
@@ -3109,14 +3103,13 @@ impl LoroList {
     pub fn subscribe(&self, f: js_sys::Function) -> JsResult<JsValue> {
         let observer = observer::Observer::new(f);
         let doc = self
-            .doc
-            .clone()
+            .handler
+            .doc()
             .ok_or_else(|| JsError::new("Document is not attached"))?;
-        let doc_clone = doc.clone();
         let sub = doc.subscribe(
             &self.handler.id(),
             Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e, &doc_clone);
+                call_after_micro_task(observer.clone(), e);
             }),
         );
         Ok(subscription_to_js_function_callback(sub))
@@ -3172,7 +3165,7 @@ impl LoroList {
         }
 
         if let Some(h) = self.handler.get_attached() {
-            handler_to_js_value(Handler::List(h), self.doc.clone()).into()
+            handler_to_js_value(Handler::List(h)).into()
         } else {
             JsValue::UNDEFINED.into()
         }
@@ -3430,7 +3423,7 @@ impl LoroMovableList {
     pub fn insert_container(&mut self, index: usize, child: JsContainer) -> JsResult<JsContainer> {
         let child = js_to_container(child)?;
         let c = self.handler.insert_container(index, child.to_handler())?;
-        Ok(handler_to_js_value(c, self.doc.clone()).into())
+        Ok(handler_to_js_value(c).into())
     }
 
     /// Push a container to the end of the list.
@@ -3466,14 +3459,13 @@ impl LoroMovableList {
     pub fn subscribe(&self, f: js_sys::Function) -> JsResult<JsValue> {
         let observer = observer::Observer::new(f);
         let loro = self
-            .doc
-            .as_ref()
+            .handler
+            .doc()
             .ok_or_else(|| JsError::new("Document is not attached"))?;
-        let doc_clone = loro.clone();
         let sub = loro.subscribe(
             &self.handler.id(),
             Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e, &doc_clone);
+                call_after_micro_task(observer.clone(), e);
             }),
         );
         Ok(subscription_to_js_function_callback(sub))
@@ -3529,7 +3521,7 @@ impl LoroMovableList {
         }
 
         if let Some(h) = self.handler.get_attached() {
-            handler_to_js_value(Handler::MovableList(h), self.doc.clone()).into()
+            handler_to_js_value(Handler::MovableList(h)).into()
         } else {
             JsValue::UNDEFINED.into()
         }
@@ -3585,7 +3577,7 @@ impl LoroMovableList {
     pub fn setContainer(&self, pos: usize, child: JsContainer) -> JsResult<JsContainer> {
         let child = js_to_container(child)?;
         let c = self.handler.set_container(pos, child.to_handler())?;
-        Ok(handler_to_js_value(c, self.doc.clone()).into())
+        Ok(handler_to_js_value(c).into())
     }
 
     /// Push a value to the end of the list.
@@ -3954,7 +3946,7 @@ impl LoroTree {
         } else {
             self.handler.create(parent.into())?
         };
-        let node = LoroTreeNode::from_tree(id, self.handler.clone(), self.doc.clone());
+        let node = LoroTreeNode::from_tree(id, self.handler.clone());
         Ok(node)
     }
 
@@ -4021,11 +4013,7 @@ impl LoroTree {
         if self.handler.is_node_unexist(&target) {
             return None;
         }
-        Some(LoroTreeNode::from_tree(
-            target,
-            self.handler.clone(),
-            self.doc.clone(),
-        ))
+        Some(LoroTreeNode::from_tree(target, self.handler.clone()))
     }
 
     /// Get the id of the container.
@@ -4077,12 +4065,12 @@ impl LoroTree {
         };
         let nodes = Array::new();
         for v in self.handler.get_nodes_under(TreeParentId::Root) {
-            let node = LoroTreeNode::from_tree(v.id, self.handler.clone(), self.doc.clone());
+            let node = LoroTreeNode::from_tree(v.id, self.handler.clone());
             nodes.push(&node.into());
         }
         if with_deleted {
             for v in self.handler.get_nodes_under(TreeParentId::Deleted) {
-                let node = LoroTreeNode::from_tree(v.id, self.handler.clone(), self.doc.clone());
+                let node = LoroTreeNode::from_tree(v.id, self.handler.clone());
                 nodes.push(&node.into());
             }
         }
@@ -4169,7 +4157,7 @@ impl LoroTree {
         self.handler
             .nodes()
             .into_iter()
-            .map(|n| LoroTreeNode::from_tree(n, self.handler.clone(), self.doc.clone()))
+            .map(|n| LoroTreeNode::from_tree(n, self.handler.clone()))
             .collect()
     }
 
@@ -4178,7 +4166,7 @@ impl LoroTree {
         self.handler
             .roots()
             .into_iter()
-            .map(|n| LoroTreeNode::from_tree(n, self.handler.clone(), self.doc.clone()))
+            .map(|n| LoroTreeNode::from_tree(n, self.handler.clone()))
             .collect()
     }
 
@@ -4223,14 +4211,13 @@ impl LoroTree {
     pub fn subscribe(&self, f: js_sys::Function) -> JsResult<JsValue> {
         let observer = observer::Observer::new(f);
         let doc = self
-            .doc
-            .clone()
+            .handler
+            .doc()
             .ok_or_else(|| JsError::new("Document is not attached"))?;
-        let doc_clone = doc.clone();
         let ans = doc.subscribe(
             &self.handler.id(),
             Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e, &doc_clone);
+                call_after_micro_task(observer.clone(), e);
             }),
         );
         Ok(subscription_to_js_function_callback(ans))
@@ -4268,7 +4255,7 @@ impl LoroTree {
         }
 
         if let Some(h) = self.handler.get_attached() {
-            handler_to_js_value(Handler::Tree(h), self.doc.clone()).into()
+            handler_to_js_value(Handler::Tree(h)).into()
         } else {
             JsValue::UNDEFINED.into()
         }
@@ -4445,17 +4432,14 @@ impl Cursor {
     }
 }
 
-fn loro_value_to_js_value_or_container(
-    value: ValueOrHandler,
-    doc: Option<Arc<LoroDocInner>>,
-) -> JsValue {
+fn loro_value_to_js_value_or_container(value: ValueOrHandler) -> JsValue {
     match value {
         ValueOrHandler::Value(v) => {
             let value: JsValue = v.into();
             value
         }
         ValueOrHandler::Handler(c) => {
-            let handler: JsValue = handler_to_js_value(c, doc.clone());
+            let handler: JsValue = handler_to_js_value(c);
             handler
         }
     }
@@ -4477,7 +4461,6 @@ fn loro_value_to_js_value_or_container(
 #[derive(Debug)]
 pub struct UndoManager {
     undo: InnerUndoManager,
-    doc: Arc<LoroDocInner>,
 }
 
 #[wasm_bindgen]
@@ -4532,10 +4515,7 @@ impl UndoManager {
             undo.add_exclude_origin_prefix(&prefix);
         }
 
-        let mut ans = UndoManager {
-            undo,
-            doc: doc.0.clone(),
-        };
+        let mut ans = UndoManager { undo };
 
         if let Some(on_push) = on_push {
             ans.setOnPush(on_push);
@@ -4548,13 +4528,13 @@ impl UndoManager {
 
     /// Undo the last operation.
     pub fn undo(&mut self) -> JsResult<bool> {
-        let executed = self.undo.undo(&self.doc)?;
+        let executed = self.undo.undo()?;
         Ok(executed)
     }
 
     /// Redo the last undone operation.
     pub fn redo(&mut self) -> JsResult<bool> {
-        let executed = self.undo.redo(&self.doc)?;
+        let executed = self.undo.redo()?;
         Ok(executed)
     }
 
@@ -4588,17 +4568,11 @@ impl UndoManager {
         self.undo.add_exclude_origin_prefix(&prefix)
     }
 
-    /// Check if the undo manager is bound to the given document.
-    pub fn checkBinding(&self, doc: &LoroDoc) -> bool {
-        Arc::ptr_eq(&self.doc, &doc.0)
-    }
-
     /// Set the on push event listener.
     ///
     /// Every time an undo step or redo step is pushed, the on push event listener will be called.
     #[wasm_bindgen(skip_typescript)]
     pub fn setOnPush(&mut self, on_push: JsValue) {
-        let doc = Arc::downgrade(&self.doc);
         let on_push = on_push.dyn_into::<js_sys::Function>().ok();
         if let Some(on_push) = on_push {
             let on_push = observer::Observer::new(on_push);
@@ -4621,12 +4595,8 @@ impl UndoManager {
 
                     let mut undo_item_meta = UndoItemMeta::new();
                     let r = if let Some(e) = event {
-                        if let Some(doc_ref) = doc.upgrade() {
-                            let diff = diff_event_to_js_value(e, &doc_ref);
-                            on_push.call3(&is_undo, &counter_range, &diff)
-                        } else {
-                            on_push.call2(&is_undo, &counter_range)
-                        }
+                        let diff = diff_event_to_js_value(e);
+                        on_push.call3(&is_undo, &counter_range, &diff)
                     } else {
                         on_push.call2(&is_undo, &counter_range)
                     };

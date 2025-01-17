@@ -257,6 +257,13 @@ impl HandlerTrait for TreeHandler {
             _ => None,
         }
     }
+
+    fn doc(&self) -> Option<crate::LoroDoc> {
+        match &self.inner {
+            MaybeDetached::Detached(_) => None,
+            MaybeDetached::Attached(a) => Some(a.doc()),
+        }
+    }
 }
 
 impl std::fmt::Debug for TreeHandler {

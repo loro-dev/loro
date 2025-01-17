@@ -13,18 +13,18 @@ impl UndoManager {
     }
 
     /// Undo the last change made by the peer.
-    pub fn undo(&self, doc: &LoroDoc) -> LoroResult<bool> {
-        self.0.write().unwrap().undo(doc)
+    pub fn undo(&self) -> LoroResult<bool> {
+        self.0.write().unwrap().undo()
     }
 
     /// Redo the last change made by the peer.
-    pub fn redo(&self, doc: &LoroDoc) -> LoroResult<bool> {
-        self.0.write().unwrap().redo(doc)
+    pub fn redo(&self) -> LoroResult<bool> {
+        self.0.write().unwrap().redo()
     }
 
     /// Record a new checkpoint.
-    pub fn record_new_checkpoint(&self, doc: &LoroDoc) -> LoroResult<()> {
-        self.0.write().unwrap().record_new_checkpoint(doc)
+    pub fn record_new_checkpoint(&self) -> LoroResult<()> {
+        self.0.write().unwrap().record_new_checkpoint()
     }
 
     /// Whether the undo manager can undo.

@@ -110,13 +110,19 @@ pub use version::VersionVector;
 /// `LoroApp::detach()` separates [AppState] from [OpLog]. In this mode,
 /// updates to [OpLog] won't affect [AppState], while updates to [AppState]
 /// will continue to affect [OpLog].
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LoroDoc {
     inner: Arc<LoroDocInner>,
 }
 
+impl LoroDoc {
+    pub(crate) fn from_inner(inner: Arc<LoroDocInner>) -> Self {
+        Self { inner }
+    }
+}
+
 impl std::ops::Deref for LoroDoc {
-    type Target = LoroDocInner;
+    type Target = Arc<LoroDocInner>;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
