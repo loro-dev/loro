@@ -16,8 +16,9 @@ import {
   encodeFrontiers,
   decodeFrontiers,
   OpId,
+  ContainerID,
+  LoroCounter
 } from "../bundler/index";
-import { ContainerID } from "loro-wasm";
 
 it("basic example", () => {
   const doc = new LoroDoc();
@@ -1292,4 +1293,26 @@ it("setRecordTimestamp should be reflected on current txn", async () => {
   doc.commit();
   const updates = doc.exportJsonUpdates();
   expect(updates.changes[1].timestamp).toBeGreaterThan(0);
+})
+
+it("insert counter container", () => {
+  function createItem(label: string, checked: boolean) {
+    const item = new LoroMap<Record<string, Container>>();
+
+    const $label = new LoroText();
+    $label.insert(0, label);
+
+    const $checked = new LoroCounter();
+    if (checked) $checked.increment(1);
+
+    item.setContainer("label", $label);
+    item.setContainer("checked", $checked);
+
+    return item;
+  }
+
+  const item = createItem("hello", true);
+
+  console.log(item.get("label").toString());
+  console.log((item.get("checked") as LoroCounter).value);
 })
