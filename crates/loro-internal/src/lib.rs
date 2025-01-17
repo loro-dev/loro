@@ -122,7 +122,7 @@ impl LoroDoc {
 }
 
 impl std::ops::Deref for LoroDoc {
-    type Target = Arc<LoroDocInner>;
+    type Target = LoroDocInner;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
