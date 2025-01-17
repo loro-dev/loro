@@ -6,7 +6,7 @@ use std::{
 use either::Either;
 use fxhash::FxHashMap;
 use loro_common::{
-    ContainerID, Counter, CounterSpan, HasIdSpan, IdSpan, LoroError, LoroResult, LoroValue, PeerID,
+    ContainerID, Counter, CounterSpan, HasIdSpan, IdSpan, LoroResult, LoroValue, PeerID,
 };
 use tracing::{debug_span, info_span, instrument};
 
@@ -154,6 +154,7 @@ pub struct UndoManager {
     inner: Arc<Mutex<UndoManagerInner>>,
     _peer_id_change_sub: Subscription,
     _undo_sub: Subscription,
+    doc: LoroDoc,
 }
 
 impl std::fmt::Debug for UndoManager {
@@ -553,6 +554,7 @@ impl UndoManager {
             inner,
             _peer_id_change_sub: sub,
             _undo_sub: undo_sub,
+            doc: doc.clone(),
         }
     }
 
@@ -576,16 +578,9 @@ impl UndoManager {
             .push(prefix.into());
     }
 
-    pub fn record_new_checkpoint(&mut self, doc: &LoroDoc) -> LoroResult<()> {
-        if doc.peer_id() != self.peer() {
-            return Err(LoroError::UndoWithDifferentPeerId {
-                expected: self.peer(),
-                actual: doc.peer_id(),
-            });
-        }
-
-        doc.commit_then_renew();
-        let counter = get_counter_end(doc, self.peer());
+    pub fn record_new_checkpoint(&mut self) -> LoroResult<()> {
+        self.doc.commit_then_renew();
+        let counter = get_counter_end(&self.doc, self.peer());
         self.inner
             .try_lock()
             .unwrap()
@@ -594,9 +589,8 @@ impl UndoManager {
     }
 
     #[instrument(skip_all)]
-    pub fn undo(&mut self, doc: &LoroDoc) -> LoroResult<bool> {
+    pub fn undo(&mut self) -> LoroResult<bool> {
         self.perform(
-            doc,
             |x| &mut x.undo_stack,
             |x| &mut x.redo_stack,
             UndoOrRedo::Undo,
@@ -604,9 +598,8 @@ impl UndoManager {
     }
 
     #[instrument(skip_all)]
-    pub fn redo(&mut self, doc: &LoroDoc) -> LoroResult<bool> {
+    pub fn redo(&mut self) -> LoroResult<bool> {
         self.perform(
-            doc,
             |x| &mut x.redo_stack,
             |x| &mut x.undo_stack,
             UndoOrRedo::Redo,
@@ -615,11 +608,11 @@ impl UndoManager {
 
     fn perform(
         &mut self,
-        doc: &LoroDoc,
         get_stack: impl Fn(&mut UndoManagerInner) -> &mut Stack,
         get_opposite: impl Fn(&mut UndoManagerInner) -> &mut Stack,
         kind: UndoOrRedo,
     ) -> LoroResult<bool> {
+        let doc = &self.doc.clone();
         // When in the undo/redo loop, the new undo/redo stack item should restore the selection
         // to the state it was in before the item that was popped two steps ago from the stack.
         //
@@ -673,8 +666,7 @@ impl UndoManager {
         // Because users may change the selections during the undo/redo loop, it's
         // more stable to keep the selection stored in the last stack item
         // rather than using the current selection directly.
-
-        self.record_new_checkpoint(doc)?;
+        self.record_new_checkpoint()?;
         let end_counter = get_counter_end(doc, self.peer());
         let mut top = {
             let mut inner = self.inner.try_lock().unwrap();

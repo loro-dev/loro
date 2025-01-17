@@ -15,7 +15,7 @@ use std::{
             AtomicBool,
             Ordering::{Acquire, Release},
         },
-        Arc, Mutex, Weak,
+        Arc, Mutex,
     },
 };
 use tracing::{debug_span, info, info_span, instrument, warn};
@@ -45,17 +45,16 @@ use crate::{
     oplog::{loro_dag::FrontiersNotIncluded, OpLog},
     state::DocState,
     subscription::{LocalUpdateCallback, Observer, Subscriber},
-    txn::Transaction,
     undo::DiffBatch,
     utils::subscription::{SubscriberSetWithQueue, Subscription},
     version::{shrink_frontiers, Frontiers, ImVersionVector, VersionRange, VersionVectorDiff},
-    ChangeMeta, DocDiff, HandlerTrait, InternalString, ListHandler, LoroError, MapHandler,
+    ChangeMeta, DocDiff, HandlerTrait, InternalString, ListHandler, LoroDoc, LoroError, MapHandler,
     VersionVector,
 };
 
 pub use crate::encoding::ExportMode;
 pub use crate::state::analyzer::{ContainerAnalysisInfo, DocAnalysis};
-pub(crate) use crate::LoroDoc;
+pub(crate) use crate::LoroDocInner;
 
 impl Default for LoroDoc {
     fn default() -> Self {
@@ -63,7 +62,7 @@ impl Default for LoroDoc {
     }
 }
 
-impl std::fmt::Debug for LoroDoc {
+impl std::fmt::Debug for LoroDocInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LoroDoc")
             .field("config", &self.config)
@@ -77,23 +76,25 @@ impl LoroDoc {
     pub fn new() -> Self {
         let oplog = OpLog::new();
         let arena = oplog.arena.clone();
-        let global_txn = Arc::new(Mutex::new(None));
         let config: Configure = oplog.configure.clone();
-        // share arena
-        let state = DocState::new_arc(arena.clone(), Arc::downgrade(&global_txn), config.clone());
-        Self {
-            oplog: Arc::new(Mutex::new(oplog)),
-            state,
-            config,
-            detached: AtomicBool::new(false),
-            auto_commit: AtomicBool::new(false),
-            observer: Arc::new(Observer::new(arena.clone())),
-            diff_calculator: Arc::new(Mutex::new(DiffCalculator::new(true))),
-            txn: global_txn,
-            arena,
-            local_update_subs: SubscriberSetWithQueue::new(),
-            peer_id_change_subs: SubscriberSetWithQueue::new(),
-        }
+        let global_txn = Arc::new(Mutex::new(None));
+        let inner = Arc::new_cyclic(|w| {
+            let state = DocState::new_arc(w.clone(), arena.clone(), config.clone());
+            LoroDocInner {
+                oplog: Arc::new(Mutex::new(oplog)),
+                state,
+                config,
+                detached: AtomicBool::new(false),
+                auto_commit: AtomicBool::new(false),
+                observer: Arc::new(Observer::new(arena.clone())),
+                diff_calculator: Arc::new(Mutex::new(DiffCalculator::new(true))),
+                txn: global_txn,
+                arena,
+                local_update_subs: SubscriberSetWithQueue::new(),
+                peer_id_change_subs: SubscriberSetWithQueue::new(),
+            }
+        });
+        Self { inner }
     }
 
     pub fn fork(&self) -> Self {
@@ -111,30 +112,6 @@ impl LoroDoc {
         }
         self.renew_txn_if_auto_commit();
         doc
-    }
-
-    /// Set whether to record the timestamp of each change. Default is `false`.
-    ///
-    /// If enabled, the Unix timestamp will be recorded for each change automatically.
-    ///
-    /// You can also set each timestamp manually when you commit a change.
-    /// The timestamp manually set will override the automatic one.
-    ///
-    /// NOTE: Timestamps are forced to be in ascending order.
-    /// If you commit a new change with a timestamp that is less than the existing one,
-    /// the largest existing timestamp will be used instead.
-    #[inline]
-    pub fn set_record_timestamp(&self, record: bool) {
-        self.config.set_record_timestamp(record);
-    }
-
-    /// Set the interval of mergeable changes, in seconds.
-    ///
-    /// If two continuous local changes are within the interval, they will be merged into one change.
-    /// The default value is 1000 seconds.
-    #[inline]
-    pub fn set_change_merge_interval(&self, interval: i64) {
-        self.config.set_merge_interval(interval);
     }
 
     /// Enables editing of the document in detached mode.
@@ -161,82 +138,12 @@ impl LoroDoc {
         }
     }
 
-    /// Renews the PeerID for the document.
-    pub(crate) fn renew_peer_id(&self) {
-        let peer_id = DefaultRandom.next_u64();
-        self.set_peer_id(peer_id).unwrap();
-    }
-
-    pub fn can_edit(&self) -> bool {
-        !self.is_detached() || self.config.detached_editing()
-    }
-
-    pub fn is_detached_editing_enabled(&self) -> bool {
-        self.config.detached_editing()
-    }
-
-    #[inline]
-    pub fn config_text_style(&self, text_style: StyleConfigMap) {
-        *self.config.text_style_config.try_write().unwrap() = text_style;
-    }
-
     /// Create a doc with auto commit enabled.
     #[inline]
     pub fn new_auto_commit() -> Self {
         let doc = Self::new();
         doc.start_auto_commit();
         doc
-    }
-
-    pub fn from_snapshot(bytes: &[u8]) -> LoroResult<Self> {
-        let doc = Self::new();
-        let ParsedHeaderAndBody { mode, body, .. } = parse_header_and_body(bytes, true)?;
-        if mode.is_snapshot() {
-            decode_snapshot(&doc, mode, body)?;
-            Ok(doc)
-        } else {
-            Err(LoroError::DecodeError(
-                "Invalid encode mode".to_string().into(),
-            ))
-        }
-    }
-
-    /// Is the document empty? (no ops)
-    #[inline(always)]
-    pub fn can_reset_with_snapshot(&self) -> bool {
-        let oplog = self.oplog.try_lock().unwrap();
-        if oplog.batch_importing {
-            return false;
-        }
-
-        if self.is_detached() {
-            return false;
-        }
-
-        oplog.is_empty() && self.state.try_lock().unwrap().can_import_snapshot()
-    }
-
-    /// Whether [OpLog] and [DocState] are detached.
-    ///
-    /// If so, the document is in readonly mode by default and importing will not change the state of the document.
-    /// It also doesn't change the version of the [DocState]. The changes will be recorded into [OpLog] only.
-    /// You need to call `checkout` to make it take effect.
-    #[inline(always)]
-    pub fn is_detached(&self) -> bool {
-        self.detached.load(Acquire)
-    }
-
-    pub(crate) fn set_detached(&self, detached: bool) {
-        self.detached.store(detached, Release);
-    }
-
-    #[inline(always)]
-    pub fn peer_id(&self) -> PeerID {
-        self.state
-            .try_lock()
-            .unwrap()
-            .peer
-            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     #[inline(always)]
@@ -280,22 +187,10 @@ impl LoroDoc {
         Ok(())
     }
 
-    #[inline(always)]
-    pub fn detach(&self) {
-        self.commit_then_stop();
-        self.set_detached(true);
-    }
-
-    #[inline(always)]
-    pub fn attach(&self) {
-        self.checkout_to_latest()
-    }
-
-    /// Get the timestamp of the current state.
-    /// It's the last edit time of the [DocState].
-    pub fn state_timestamp(&self) -> Timestamp {
-        let f = &self.state.try_lock().unwrap().frontiers;
-        self.oplog.try_lock().unwrap().get_timestamp_of_version(f)
+    /// Renews the PeerID for the document.
+    pub(crate) fn renew_peer_id(&self) {
+        let peer_id = DefaultRandom.next_u64();
+        self.set_peer_id(peer_id).unwrap();
     }
 
     /// Commit the cumulative auto commit transaction.
@@ -372,9 +267,110 @@ impl LoroDoc {
         }
     }
 
+    /// Set whether to record the timestamp of each change. Default is `false`.
+    ///
+    /// If enabled, the Unix timestamp will be recorded for each change automatically.
+    ///
+    /// You can also set each timestamp manually when you commit a change.
+    /// The timestamp manually set will override the automatic one.
+    ///
+    /// NOTE: Timestamps are forced to be in ascending order.
+    /// If you commit a new change with a timestamp that is less than the existing one,
+    /// the largest existing timestamp will be used instead.
     #[inline]
-    pub(crate) fn get_global_txn(&self) -> Weak<Mutex<Option<Transaction>>> {
-        Arc::downgrade(&self.txn)
+    pub fn set_record_timestamp(&self, record: bool) {
+        self.config.set_record_timestamp(record);
+    }
+
+    /// Set the interval of mergeable changes, in seconds.
+    ///
+    /// If two continuous local changes are within the interval, they will be merged into one change.
+    /// The default value is 1000 seconds.
+    #[inline]
+    pub fn set_change_merge_interval(&self, interval: i64) {
+        self.config.set_merge_interval(interval);
+    }
+
+    pub fn can_edit(&self) -> bool {
+        !self.is_detached() || self.config.detached_editing()
+    }
+
+    pub fn is_detached_editing_enabled(&self) -> bool {
+        self.config.detached_editing()
+    }
+
+    #[inline]
+    pub fn config_text_style(&self, text_style: StyleConfigMap) {
+        *self.config.text_style_config.try_write().unwrap() = text_style;
+    }
+
+    pub fn from_snapshot(bytes: &[u8]) -> LoroResult<Self> {
+        let doc = Self::new();
+        let ParsedHeaderAndBody { mode, body, .. } = parse_header_and_body(bytes, true)?;
+        if mode.is_snapshot() {
+            decode_snapshot(&doc, mode, body)?;
+            Ok(doc)
+        } else {
+            Err(LoroError::DecodeError(
+                "Invalid encode mode".to_string().into(),
+            ))
+        }
+    }
+
+    /// Is the document empty? (no ops)
+    #[inline(always)]
+    pub fn can_reset_with_snapshot(&self) -> bool {
+        let oplog = self.oplog.try_lock().unwrap();
+        if oplog.batch_importing {
+            return false;
+        }
+
+        if self.is_detached() {
+            return false;
+        }
+
+        oplog.is_empty() && self.state.try_lock().unwrap().can_import_snapshot()
+    }
+
+    /// Whether [OpLog] and [DocState] are detached.
+    ///
+    /// If so, the document is in readonly mode by default and importing will not change the state of the document.
+    /// It also doesn't change the version of the [DocState]. The changes will be recorded into [OpLog] only.
+    /// You need to call `checkout` to make it take effect.
+    #[inline(always)]
+    pub fn is_detached(&self) -> bool {
+        self.detached.load(Acquire)
+    }
+
+    pub(crate) fn set_detached(&self, detached: bool) {
+        self.detached.store(detached, Release);
+    }
+
+    #[inline(always)]
+    pub fn peer_id(&self) -> PeerID {
+        self.state
+            .try_lock()
+            .unwrap()
+            .peer
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    #[inline(always)]
+    pub fn detach(&self) {
+        self.commit_then_stop();
+        self.set_detached(true);
+    }
+
+    #[inline(always)]
+    pub fn attach(&self) {
+        self.checkout_to_latest()
+    }
+
+    /// Get the timestamp of the current state.
+    /// It's the last edit time of the [DocState].
+    pub fn state_timestamp(&self) -> Timestamp {
+        let f = &self.state.try_lock().unwrap().frontiers;
+        self.oplog.try_lock().unwrap().get_timestamp_of_version(f)
     }
 
     #[inline(always)]
@@ -617,9 +613,7 @@ impl LoroDoc {
         if let LoroValue::Container(c) = value {
             Some(ValueOrHandler::Handler(Handler::new_attached(
                 c.clone(),
-                self.arena.clone(),
-                self.get_global_txn(),
-                Arc::downgrade(&self.state),
+                self.inner.clone(),
             )))
         } else {
             Some(ValueOrHandler::Value(value))
@@ -635,12 +629,7 @@ impl LoroDoc {
     #[inline]
     pub fn get_handler(&self, id: ContainerID) -> Handler {
         self.assert_container_exists(&id);
-        Handler::new_attached(
-            id,
-            self.arena.clone(),
-            self.get_global_txn(),
-            Arc::downgrade(&self.state),
-        )
+        Handler::new_attached(id, self.inner.clone())
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
@@ -649,14 +638,9 @@ impl LoroDoc {
     pub fn get_text<I: IntoContainerId>(&self, id: I) -> TextHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Text);
         self.assert_container_exists(&id);
-        Handler::new_attached(
-            id,
-            self.arena.clone(),
-            self.get_global_txn(),
-            Arc::downgrade(&self.state),
-        )
-        .into_text()
-        .unwrap()
+        Handler::new_attached(id, self.inner.clone())
+            .into_text()
+            .unwrap()
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
@@ -665,14 +649,9 @@ impl LoroDoc {
     pub fn get_list<I: IntoContainerId>(&self, id: I) -> ListHandler {
         let id = id.into_container_id(&self.arena, ContainerType::List);
         self.assert_container_exists(&id);
-        Handler::new_attached(
-            id,
-            self.arena.clone(),
-            self.get_global_txn(),
-            Arc::downgrade(&self.state),
-        )
-        .into_list()
-        .unwrap()
+        Handler::new_attached(id, self.inner.clone())
+            .into_list()
+            .unwrap()
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
@@ -681,14 +660,9 @@ impl LoroDoc {
     pub fn get_movable_list<I: IntoContainerId>(&self, id: I) -> MovableListHandler {
         let id = id.into_container_id(&self.arena, ContainerType::MovableList);
         self.assert_container_exists(&id);
-        Handler::new_attached(
-            id,
-            self.arena.clone(),
-            self.get_global_txn(),
-            Arc::downgrade(&self.state),
-        )
-        .into_movable_list()
-        .unwrap()
+        Handler::new_attached(id, self.inner.clone())
+            .into_movable_list()
+            .unwrap()
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
@@ -697,14 +671,9 @@ impl LoroDoc {
     pub fn get_map<I: IntoContainerId>(&self, id: I) -> MapHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Map);
         self.assert_container_exists(&id);
-        Handler::new_attached(
-            id,
-            self.arena.clone(),
-            self.get_global_txn(),
-            Arc::downgrade(&self.state),
-        )
-        .into_map()
-        .unwrap()
+        Handler::new_attached(id, self.inner.clone())
+            .into_map()
+            .unwrap()
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
@@ -713,14 +682,9 @@ impl LoroDoc {
     pub fn get_tree<I: IntoContainerId>(&self, id: I) -> TreeHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Tree);
         self.assert_container_exists(&id);
-        Handler::new_attached(
-            id,
-            self.arena.clone(),
-            self.get_global_txn(),
-            Arc::downgrade(&self.state),
-        )
-        .into_tree()
-        .unwrap()
+        Handler::new_attached(id, self.inner.clone())
+            .into_tree()
+            .unwrap()
     }
 
     #[cfg(feature = "counter")]
@@ -730,14 +694,9 @@ impl LoroDoc {
     ) -> crate::handler::counter::CounterHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Counter);
         self.assert_container_exists(&id);
-        Handler::new_attached(
-            id,
-            self.arena.clone(),
-            self.get_global_txn(),
-            Arc::downgrade(&self.state),
-        )
-        .into_counter()
-        .unwrap()
+        Handler::new_attached(id, self.inner.clone())
+            .into_counter()
+            .unwrap()
     }
 
     fn assert_container_exists(&self, id: &ContainerID) {

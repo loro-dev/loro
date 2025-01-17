@@ -250,9 +250,9 @@ fn undo_still_works_after_detached_editing() {
     doc.commit();
     doc.get_text("text").insert(5, " world!").unwrap();
     doc.commit();
-    undo.undo(&doc).unwrap();
+    undo.undo().unwrap();
     assert_eq!(doc.get_text("text").to_string(), "Hello");
-    undo.redo(&doc).unwrap();
+    undo.redo().unwrap();
     assert_eq!(doc.get_text("text").to_string(), "Hello world!");
 
     doc.set_detached_editing(true);
@@ -263,10 +263,10 @@ fn undo_still_works_after_detached_editing() {
     doc.commit();
     assert!(undo.can_undo());
     assert!(!undo.can_redo());
-    undo.undo(&doc).unwrap();
+    undo.undo().unwrap();
     assert_eq!(doc.get_text("text").to_string(), "Hello");
     assert!(!undo.can_undo());
     assert!(undo.can_redo());
-    undo.redo(&doc).unwrap();
+    undo.redo().unwrap();
     assert_eq!(doc.get_text("text").to_string(), "Hello alice!");
 }

@@ -1,6 +1,6 @@
 use std::{
     ops::Range,
-    sync::{Arc, Mutex, RwLock, Weak},
+    sync::{Arc, RwLock, Weak},
 };
 
 use fxhash::{FxHashMap, FxHashSet};
@@ -9,7 +9,6 @@ use loro_common::{ContainerID, InternalString, LoroError, LoroResult, LoroValue,
 use loro_delta::DeltaRopeBuilder;
 
 use crate::{
-    arena::SharedArena,
     container::{
         idx::ContainerIdx,
         list::list_op,
@@ -26,9 +25,8 @@ use crate::{
     event::{Diff, Index, InternalDiff, TextDiff},
     handler::TextDelta,
     op::{Op, RawOp},
-    txn::Transaction,
     utils::{lazy::LazyLoad, string_slice::StringSlice},
-    DocState,
+    LoroDocInner,
 };
 
 use super::{ApplyLocalOpReturn, ContainerState, DiffApplyContext};
@@ -645,12 +643,7 @@ impl ContainerState for RichtextState {
         Ok(Default::default())
     }
 
-    fn to_diff(
-        &mut self,
-        _arena: &SharedArena,
-        _txn: &Weak<Mutex<Option<Transaction>>>,
-        _state: &Weak<Mutex<DocState>>,
-    ) -> Diff {
+    fn to_diff(&mut self, _doc: &Weak<LoroDocInner>) -> Diff {
         let mut delta = TextDiff::new();
         for span in self.state.get_mut().iter() {
             delta.push_insert(

@@ -2,7 +2,7 @@ use loro_internal::{
     container::ContainerID, handler::counter::CounterHandler, HandlerTrait, LoroResult,
 };
 
-use crate::{Container, ContainerTrait, SealedTrait};
+use crate::{Container, ContainerTrait, LoroDoc, SealedTrait};
 
 /// A counter that can be incremented or decremented.
 #[derive(Debug, Clone)]
@@ -80,5 +80,9 @@ impl ContainerTrait for LoroCounter {
 
     fn is_deleted(&self) -> bool {
         self.handler.is_deleted()
+    }
+
+    fn doc(&self) -> Option<LoroDoc> {
+        self.handler.doc().map(LoroDoc::_new)
     }
 }

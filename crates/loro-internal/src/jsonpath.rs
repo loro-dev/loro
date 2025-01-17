@@ -5,7 +5,8 @@ use tracing::trace;
 use crate::handler::{
     Handler, ListHandler, MapHandler, MovableListHandler, TextHandler, TreeHandler, ValueOrHandler,
 };
-use crate::loro::LoroDoc;
+
+use crate::LoroDoc;
 use std::ops::ControlFlow;
 
 #[derive(Error, Debug)]
@@ -708,7 +709,6 @@ impl PathValue for LoroValue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::loro::LoroDoc;
 
     #[test]
     fn test_parse_jsonpath() -> Result<(), JsonPathError> {

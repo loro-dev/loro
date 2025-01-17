@@ -1,20 +1,14 @@
-use std::{
-    io::Write,
-    ops::RangeBounds,
-    sync::{Mutex, Weak},
-};
+use std::{io::Write, ops::RangeBounds, sync::Weak};
 
 use super::{ApplyLocalOpReturn, ContainerState, DiffApplyContext, FastStateSnapshot};
 use crate::{
-    arena::SharedArena,
     configure::Configure,
     container::{idx::ContainerIdx, list::list_op::ListOp, ContainerID},
     encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff, ListDiff},
     handler::ValueOrHandler,
     op::{ListSlice, Op, RawOp, RawOpContent},
-    txn::Transaction,
-    DocState, LoroValue,
+    LoroDocInner, LoroValue,
 };
 
 use fxhash::FxHashMap;
@@ -377,15 +371,14 @@ impl ContainerState for ListState {
     fn apply_diff_and_convert(
         &mut self,
         diff: InternalDiff,
-        DiffApplyContext {
-            arena, txn, state, ..
-        }: DiffApplyContext,
+        DiffApplyContext { doc, .. }: DiffApplyContext,
     ) -> Diff {
         let InternalDiff::ListRaw(delta) = diff else {
             unreachable!()
         };
         let mut ans: ListDiff = ListDiff::default();
         let mut index = 0;
+        let doc = &doc.upgrade().unwrap();
         for span in delta.iter() {
             match span {
                 crate::delta::DeltaItem::Retain { retain: len, .. } => {
@@ -397,7 +390,7 @@ impl ContainerState for ListState {
                     match &value.values {
                         either::Either::Left(range) => {
                             for i in range.to_range() {
-                                let value = arena.get_value(i).unwrap();
+                                let value = doc.arena.get_value(i).unwrap();
                                 arr.push(value);
                             }
                         }
@@ -405,7 +398,7 @@ impl ContainerState for ListState {
                     }
                     for arr in ArrayVec::from_many(
                         arr.iter()
-                            .map(|v| ValueOrHandler::from_value(v.clone(), arena, txn, state)),
+                            .map(|v| ValueOrHandler::from_value(v.clone(), doc)),
                     ) {
                         ans.push_insert(arr, Default::default());
                     }
@@ -423,7 +416,8 @@ impl ContainerState for ListState {
         Diff::List(ans)
     }
 
-    fn apply_diff(&mut self, diff: InternalDiff, DiffApplyContext { arena, .. }: DiffApplyContext) {
+    fn apply_diff(&mut self, diff: InternalDiff, DiffApplyContext { doc, .. }: DiffApplyContext) {
+        let doc = &doc.upgrade().unwrap();
         match diff {
             InternalDiff::ListRaw(delta) => {
                 let mut index = 0;
@@ -437,7 +431,7 @@ impl ContainerState for ListState {
                             match &value.values {
                                 either::Either::Left(range) => {
                                     for i in range.to_range() {
-                                        let value = arena.get_value(i).unwrap();
+                                        let value = doc.arena.get_value(i).unwrap();
                                         arr.push(value);
                                     }
                                 }
@@ -492,16 +486,12 @@ impl ContainerState for ListState {
 
     #[doc = " Convert a state to a diff that when apply this diff on a empty state,"]
     #[doc = " the state will be the same as this state."]
-    fn to_diff(
-        &mut self,
-        arena: &SharedArena,
-        txn: &Weak<Mutex<Option<Transaction>>>,
-        state: &Weak<Mutex<DocState>>,
-    ) -> Diff {
+    fn to_diff(&mut self, doc: &Weak<LoroDocInner>) -> Diff {
+        let doc = &doc.upgrade().unwrap();
         Diff::List(ListDiff::from_many(
             self.to_vec()
                 .into_iter()
-                .map(|v| ValueOrHandler::from_value(v, arena, txn, state)),
+                .map(|v| ValueOrHandler::from_value(v, doc)),
         ))
     }
 

@@ -1,6 +1,6 @@
 use std::{
     hash::Hash,
-    sync::{Mutex, Weak},
+    sync::Weak,
 };
 
 use fxhash::FxHashMap;
@@ -8,8 +8,7 @@ use loro_common::IdLp;
 use serde::{ser::SerializeStruct, Serialize};
 
 use crate::{
-    arena::SharedArena, change::Lamport, handler::ValueOrHandler, id::PeerID, span::HasLamport,
-    txn::Transaction, DocState, InternalString, LoroValue,
+    change::Lamport, handler::ValueOrHandler, id::PeerID, span::HasLamport, InternalString, LoroDocInner, LoroValue,
 };
 
 #[derive(Default, Debug, Clone, Serialize)]
@@ -66,17 +65,11 @@ pub struct ResolvedMapValue {
 }
 
 impl ResolvedMapValue {
-    pub(crate) fn from_map_value(
-        v: MapValue,
-        arena: &SharedArena,
-        txn: &Weak<Mutex<Option<Transaction>>>,
-        state: &Weak<Mutex<DocState>>,
-    ) -> Self {
+    pub(crate) fn from_map_value(v: MapValue, doc: &Weak<LoroDocInner>) -> Self {
+        let doc = &doc.upgrade().unwrap();
         ResolvedMapValue {
             idlp: IdLp::new(v.peer, v.lamp),
-            value: v
-                .value
-                .map(|v| ValueOrHandler::from_value(v, arena, txn, state)),
+            value: v.value.map(|v| ValueOrHandler::from_value(v, doc)),
         }
     }
 

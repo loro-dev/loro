@@ -1,15 +1,10 @@
-use std::{
-    collections::BTreeMap,
-    mem,
-    sync::{Mutex, Weak},
-};
+use std::{collections::BTreeMap, mem, sync::Weak};
 
 use fxhash::FxHashMap;
 use loro_common::{ContainerID, IdLp, LoroResult, PeerID};
 use rle::HasLength;
 
 use crate::{
-    arena::SharedArena,
     configure::Configure,
     container::{idx::ContainerIdx, map::MapSet},
     delta::{MapValue, ResolvedMapDelta, ResolvedMapValue},
@@ -18,8 +13,7 @@ use crate::{
     event::{Diff, Index, InternalDiff},
     handler::ValueOrHandler,
     op::{Op, RawOp, RawOpContent},
-    txn::Transaction,
-    DocState, InternalString, LoroValue,
+    InternalString, LoroDocInner, LoroValue,
 };
 
 use super::{ApplyLocalOpReturn, ContainerState, DiffApplyContext};
@@ -48,16 +42,12 @@ impl ContainerState for MapState {
     fn apply_diff_and_convert(
         &mut self,
         diff: InternalDiff,
-        DiffApplyContext {
-            arena,
-            txn,
-            state,
-            mode,
-        }: DiffApplyContext,
+        DiffApplyContext { doc, mode }: DiffApplyContext,
     ) -> Diff {
         let InternalDiff::Map(delta) = diff else {
             unreachable!()
         };
+        let doc = &doc.upgrade().unwrap();
         let force = matches!(mode, DiffMode::Checkout | DiffMode::Linear);
         let mut resolved_delta = ResolvedMapDelta::new();
         for (key, value) in delta.updated.into_iter() {
@@ -88,9 +78,7 @@ impl ContainerState for MapState {
                     key,
                     ResolvedMapValue {
                         idlp: IdLp::new(value.peer, value.lamp),
-                        value: value
-                            .value
-                            .map(|v| ValueOrHandler::from_value(v, arena, txn, state)),
+                        value: value.value.map(|v| ValueOrHandler::from_value(v, doc)),
                     },
                 )
             }
@@ -132,18 +120,13 @@ impl ContainerState for MapState {
 
     #[doc = " Convert a state to a diff that when apply this diff on a empty state,"]
     #[doc = " the state will be the same as this state."]
-    fn to_diff(
-        &mut self,
-        arena: &SharedArena,
-        txn: &Weak<Mutex<Option<Transaction>>>,
-        state: &Weak<Mutex<DocState>>,
-    ) -> Diff {
+    fn to_diff(&mut self, doc: &Weak<LoroDocInner>) -> Diff {
         Diff::Map(ResolvedMapDelta {
             updated: self
                 .map
                 .clone()
                 .into_iter()
-                .map(|(k, v)| (k, ResolvedMapValue::from_map_value(v, arena, txn, state)))
+                .map(|(k, v)| (k, ResolvedMapValue::from_map_value(v, doc)))
                 .collect::<FxHashMap<_, _>>(),
         })
     }

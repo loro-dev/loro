@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use loro_delta::{array_vec::ArrayVec, DeltaRope, DeltaRopeBuilder};
 use serde_columnar::columnar;
-use std::sync::{Mutex, Weak};
+use std::sync::Weak;
 use tracing::{instrument, warn};
 
 use fxhash::FxHashMap;
@@ -9,7 +9,6 @@ use generic_btree::BTree;
 use loro_common::{CompactIdLp, ContainerID, IdFull, IdLp, LoroResult, LoroValue, PeerID, ID};
 
 use crate::{
-    arena::SharedArena,
     configure::Configure,
     container::{idx::ContainerIdx, list::list_op::ListOp},
     delta::DeltaItem,
@@ -19,8 +18,7 @@ use crate::{
     handler::ValueOrHandler,
     op::{ListSlice, Op, RawOp},
     state::movable_list_state::inner::PushElemInfo,
-    txn::Transaction,
-    DocState, ListDiff,
+    ListDiff, LoroDocInner,
 };
 
 use self::{
@@ -1025,12 +1023,7 @@ impl ContainerState for MovableListState {
     fn apply_diff_and_convert(
         &mut self,
         diff: InternalDiff,
-        DiffApplyContext {
-            arena,
-            txn,
-            state,
-            mode,
-        }: DiffApplyContext,
+        DiffApplyContext { doc, mode }: DiffApplyContext,
     ) -> Diff {
         let InternalDiff::MovableList(mut diff) = diff else {
             unreachable!()
@@ -1123,6 +1116,7 @@ impl ContainerState for MovableListState {
         }
 
         {
+            let doc = &doc.upgrade().unwrap();
             // Apply element changes
             //
             // In this block, we need to handle the events generated from the following sources:
@@ -1160,7 +1154,7 @@ impl ContainerState for MovableListState {
                                         .delete(1)
                                         .insert(
                                             ArrayVec::from([ValueOrHandler::from_value(
-                                                value, arena, txn, state,
+                                                value, doc,
                                             )]),
                                             ListDeltaMeta { from_move: false },
                                         )
@@ -1191,7 +1185,7 @@ impl ContainerState for MovableListState {
                                     .retain(new_index, Default::default())
                                     .insert(
                                         ArrayVec::from([ValueOrHandler::from_value(
-                                            new_value, arena, txn, state,
+                                            new_value, doc,
                                         )]),
                                         ListDeltaMeta {
                                             from_move: (result.delete.is_some() && !value_updated)
@@ -1238,9 +1232,7 @@ impl ContainerState for MovableListState {
                                 &DeltaRopeBuilder::new()
                                     .retain(index, Default::default())
                                     .insert(
-                                        ArrayVec::from([ValueOrHandler::from_value(
-                                            value, arena, txn, state,
-                                        )]),
+                                        ArrayVec::from([ValueOrHandler::from_value(value, doc)]),
                                         ListDeltaMeta {
                                             from_move: (result.delete.is_some() && !value_updated)
                                                 || from_delete,
@@ -1350,18 +1342,14 @@ impl ContainerState for MovableListState {
         Ok(ans)
     }
 
-    fn to_diff(
-        &mut self,
-        arena: &SharedArena,
-        txn: &Weak<Mutex<Option<Transaction>>>,
-        state: &Weak<Mutex<DocState>>,
-    ) -> Diff {
+    fn to_diff(&mut self, doc: &Weak<LoroDocInner>) -> Diff {
+        let doc = &doc.upgrade().unwrap();
         Diff::List(
             DeltaRopeBuilder::new()
                 .insert_many(
                     self.to_vec()
                         .into_iter()
-                        .map(|v| ValueOrHandler::from_value(v, arena, txn, state)),
+                        .map(|v| ValueOrHandler::from_value(v, doc)),
                     Default::default(),
                 )
                 .build(),

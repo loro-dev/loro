@@ -1,6 +1,5 @@
 use super::{state::DocState, txn::Transaction};
 use crate::{
-    arena::SharedArena,
     container::{
         idx::ContainerIdx,
         list::list_op::{DeleteSpan, DeleteSpanWithId, ListOp},
@@ -14,6 +13,7 @@ use crate::{
     state::{IndexType, State, TreeParentId},
     txn::EventHint,
     utils::{string_slice::StringSlice, utf16::count_utf16_len},
+    LoroDoc, LoroDocInner,
 };
 use append_only_bytes::BytesSlice;
 use enum_as_inner::EnumAsInner;
@@ -30,7 +30,7 @@ use std::{
     collections::BinaryHeap,
     fmt::Debug,
     ops::Deref,
-    sync::{Arc, Mutex, Weak},
+    sync::{Arc, Mutex},
 };
 use tracing::{error, info, instrument};
 
@@ -52,6 +52,7 @@ pub trait HandlerTrait: Clone + Sized {
     fn kind(&self) -> ContainerType;
     fn to_handler(&self) -> Handler;
     fn from_handler(h: Handler) -> Option<Self>;
+    fn doc(&self) -> Option<LoroDoc>;
     /// This method returns an attached handler.
     fn attach(
         &self,
@@ -84,29 +85,22 @@ pub trait HandlerTrait: Clone + Sized {
             .ok_or(LoroError::MisuseDetachedContainer {
                 method: "with_state",
             })?;
-        let state = inner.state.upgrade().unwrap();
+        let state = inner.doc.state.clone();
         let mut guard = state.try_lock().unwrap();
         guard.with_state_mut(inner.container_idx, f)
     }
 }
 
 fn create_handler(inner: &BasicHandler, id: ContainerID) -> Handler {
-    Handler::new_attached(
-        id,
-        inner.arena.clone(),
-        inner.txn.clone(),
-        inner.state.clone(),
-    )
+    Handler::new_attached(id, inner.doc.clone())
 }
 
 /// Flatten attributes that allow overlap
 #[derive(Clone, Debug)]
 pub struct BasicHandler {
     id: ContainerID,
-    arena: SharedArena,
     container_idx: ContainerIdx,
-    txn: Weak<Mutex<Option<Transaction>>>,
-    state: Weak<Mutex<DocState>>,
+    doc: Arc<LoroDocInner>,
 }
 
 struct DetachedInner<T> {
@@ -174,9 +168,13 @@ impl<T> From<BasicHandler> for MaybeDetached<T> {
 }
 
 impl BasicHandler {
+    pub(crate) fn doc(&self) -> LoroDoc {
+        LoroDoc::from_inner(self.doc.clone())
+    }
+
     #[inline]
     fn with_doc_state<R>(&self, f: impl FnOnce(&mut DocState) -> R) -> R {
-        let state = self.state.upgrade().unwrap();
+        let state = self.doc.state.clone();
         let mut guard = state.try_lock().unwrap();
         f(&mut guard)
     }
@@ -185,23 +183,18 @@ impl BasicHandler {
         &self,
         f: impl FnOnce(&mut Transaction) -> Result<R, LoroError>,
     ) -> Result<R, LoroError> {
-        with_txn(&self.txn, f)
+        with_txn(&self.doc.txn, f)
     }
 
     fn get_parent(&self) -> Option<Handler> {
-        let parent_idx = self.arena.get_parent(self.container_idx)?;
-        let parent_id = self.arena.get_container_id(parent_idx).unwrap();
+        let parent_idx = self.doc.arena.get_parent(self.container_idx)?;
+        let parent_id = self.doc.arena.get_container_id(parent_idx).unwrap();
         {
-            let arena = self.arena.clone();
-            let txn = self.txn.clone();
-            let state = self.state.clone();
             let kind = parent_id.container_type();
             let handler = BasicHandler {
                 container_idx: parent_idx,
                 id: parent_id,
-                txn,
-                arena,
-                state,
+                doc: self.doc.clone(),
             };
 
             Some(match kind {
@@ -230,26 +223,23 @@ impl BasicHandler {
     }
 
     pub fn get_value(&self) -> LoroValue {
-        self.state
-            .upgrade()
-            .unwrap()
+        self.doc
+            .state
             .try_lock()
             .unwrap()
             .get_value_by_idx(self.container_idx)
     }
 
     pub fn get_deep_value(&self) -> LoroValue {
-        self.state
-            .upgrade()
-            .unwrap()
+        self.doc
+            .state
             .try_lock()
             .unwrap()
             .get_container_deep_value(self.container_idx)
     }
 
     fn with_state<R>(&self, f: impl FnOnce(&mut State) -> R) -> R {
-        let state = self.state.upgrade().unwrap();
-        let mut guard = state.try_lock().unwrap();
+        let mut guard = self.doc.state.try_lock().unwrap();
         guard.with_state_mut(self.container_idx, f)
     }
 
@@ -258,10 +248,11 @@ impl BasicHandler {
     }
 
     fn is_deleted(&self) -> bool {
-        match self.state.upgrade() {
-            None => false,
-            Some(state) => state.try_lock().unwrap().is_deleted(self.container_idx),
-        }
+        self.doc
+            .state
+            .try_lock()
+            .unwrap()
+            .is_deleted(self.container_idx)
     }
 }
 
@@ -349,6 +340,13 @@ impl HandlerTrait for TextHandler {
         match h {
             Handler::Text(x) => Some(x),
             _ => None,
+        }
+    }
+
+    fn doc(&self) -> Option<LoroDoc> {
+        match &self.inner {
+            MaybeDetached::Detached(_) => None,
+            MaybeDetached::Attached(a) => Some(a.doc()),
         }
     }
 }
@@ -574,6 +572,13 @@ impl HandlerTrait for MapHandler {
             _ => None,
         }
     }
+
+    fn doc(&self) -> Option<LoroDoc> {
+        match &self.inner {
+            MaybeDetached::Detached(_) => None,
+            MaybeDetached::Attached(a) => Some(a.doc()),
+        }
+    }
 }
 
 impl std::fmt::Debug for MapHandler {
@@ -692,6 +697,13 @@ impl HandlerTrait for MovableListHandler {
             MaybeDetached::Attached(_a) => Some(self.clone()),
         }
     }
+
+    fn doc(&self) -> Option<LoroDoc> {
+        match &self.inner {
+            MaybeDetached::Detached(_) => None,
+            MaybeDetached::Attached(a) => Some(a.doc()),
+        }
+    }
 }
 
 impl std::fmt::Debug for MovableListHandler {
@@ -803,6 +815,13 @@ impl HandlerTrait for ListHandler {
             _ => None,
         }
     }
+
+    fn doc(&self) -> Option<LoroDoc> {
+        match &self.inner {
+            MaybeDetached::Detached(_) => None,
+            MaybeDetached::Attached(a) => Some(a.doc()),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -867,6 +886,10 @@ impl HandlerTrait for UnknownHandler {
 
     fn get_attached(&self) -> Option<Self> {
         Some(self.clone())
+    }
+
+    fn doc(&self) -> Option<LoroDoc> {
+        Some(self.inner.doc())
     }
 }
 
@@ -995,22 +1018,28 @@ impl HandlerTrait for Handler {
     fn from_handler(h: Handler) -> Option<Self> {
         Some(h)
     }
+
+    fn doc(&self) -> Option<LoroDoc> {
+        match self {
+            Self::Text(x) => x.doc(),
+            Self::Map(x) => x.doc(),
+            Self::List(x) => x.doc(),
+            Self::MovableList(x) => x.doc(),
+            Self::Tree(x) => x.doc(),
+            #[cfg(feature = "counter")]
+            Self::Counter(x) => x.doc(),
+            Self::Unknown(x) => x.doc(),
+        }
+    }
 }
 
 impl Handler {
-    pub(crate) fn new_attached(
-        id: ContainerID,
-        arena: SharedArena,
-        txn: Weak<Mutex<Option<Transaction>>>,
-        state: Weak<Mutex<DocState>>,
-    ) -> Self {
+    pub(crate) fn new_attached(id: ContainerID, doc: Arc<LoroDocInner>) -> Self {
         let kind = id.container_type();
         let handler = BasicHandler {
-            container_idx: arena.register_container(&id),
+            container_idx: doc.arena.register_container(&id),
             id,
-            txn,
-            arena,
-            state,
+            doc,
         };
 
         match kind {
@@ -1260,19 +1289,9 @@ pub enum ValueOrHandler {
 }
 
 impl ValueOrHandler {
-    pub(crate) fn from_value(
-        value: LoroValue,
-        arena: &SharedArena,
-        txn: &Weak<Mutex<Option<Transaction>>>,
-        state: &Weak<Mutex<DocState>>,
-    ) -> Self {
+    pub(crate) fn from_value(value: LoroValue, doc: &Arc<LoroDocInner>) -> Self {
         if let LoroValue::Container(c) = value {
-            ValueOrHandler::Handler(Handler::new_attached(
-                c,
-                arena.clone(),
-                txn.clone(),
-                state.clone(),
-            ))
+            ValueOrHandler::Handler(Handler::new_attached(c, doc.clone()))
         } else {
             ValueOrHandler::Value(value)
         }
@@ -1795,7 +1814,7 @@ impl TextHandler {
                 unicode_len: unicode_len as u32,
                 event_len: event_len as u32,
             },
-            &inner.state,
+            &inner.doc,
         )?;
 
         Ok(override_styles)
@@ -1878,7 +1897,7 @@ impl TextHandler {
                     },
                     unicode_len: range.entity_len(),
                 },
-                &inner.state,
+                &inner.doc,
             )?;
             event_end = event_start;
         }
@@ -2021,8 +2040,7 @@ impl TextHandler {
         let inner = self.inner.try_attached_state()?;
         let key: InternalString = key.into();
 
-        let mutex = &inner.state.upgrade().unwrap();
-        let mut doc_state = mutex.try_lock().unwrap();
+        let mut doc_state = inner.doc.state.try_lock().unwrap();
         let (entity_range, skip) = doc_state.with_state_mut(inner.container_idx, |state| {
             let (entity_range, styles) = state
                 .as_richtext_state_mut()
@@ -2072,14 +2090,14 @@ impl TextHandler {
                 end: end as u32,
                 style: crate::container::richtext::Style { key, data: value },
             },
-            &inner.state,
+            &inner.doc,
         )?;
 
         txn.apply_local_op(
             inner.container_idx,
             crate::op::RawOpContent::List(ListOp::StyleEnd),
             EventHint::MarkEnd,
-            &inner.state,
+            &inner.doc,
         )?;
 
         Ok(())
@@ -2369,7 +2387,7 @@ impl ListHandler {
                 pos,
             }),
             EventHint::InsertList { len: 1, pos },
-            &inner.state,
+            &inner.doc,
         )
     }
 
@@ -2453,7 +2471,7 @@ impl ListHandler {
                 pos,
             }),
             EventHint::InsertList { len: 1, pos },
-            &inner.state,
+            &inner.doc,
         )?;
         let ans = child.attach(txn, inner, container_id)?;
         Ok(ans)
@@ -2500,7 +2518,7 @@ impl ListHandler {
                     1,
                 ))),
                 EventHint::DeleteList(DeleteSpan::new(pos as isize, 1)),
-                &inner.state,
+                &inner.doc,
             )?;
         }
 
@@ -2826,7 +2844,7 @@ impl MovableListHandler {
                 pos: op_index,
             }),
             EventHint::InsertList { len: 1, pos },
-            &inner.state,
+            &inner.doc,
         )
     }
 
@@ -2908,7 +2926,7 @@ impl MovableListHandler {
                 from: from as u32,
                 to: to as u32,
             },
-            &inner.state,
+            &inner.doc,
         )
     }
 
@@ -3021,7 +3039,7 @@ impl MovableListHandler {
                 pos: op_index,
             }),
             EventHint::InsertList { len: 1, pos },
-            &inner.state,
+            &inner.doc,
         )?;
         child.attach(txn, inner, container_id)
     }
@@ -3075,7 +3093,7 @@ impl MovableListHandler {
         });
 
         let hint = EventHint::SetList { index, value };
-        txn.apply_local_op(inner.container_idx, op, hint, &inner.state)
+        txn.apply_local_op(inner.container_idx, op, hint, &inner.doc)
     }
 
     pub fn set_container<H: HandlerTrait>(&self, pos: usize, child: H) -> LoroResult<H> {
@@ -3118,7 +3136,7 @@ impl MovableListHandler {
                 index: pos,
                 value: v,
             },
-            &inner.state,
+            &inner.doc,
         )?;
 
         child.attach(txn, inner, container_id)
@@ -3179,7 +3197,7 @@ impl MovableListHandler {
                     1,
                 ))),
                 EventHint::DeleteList(DeleteSpan::new(user_pos as isize, 1)),
-                &inner.state,
+                &inner.doc,
             )?;
         }
 
@@ -3254,9 +3272,8 @@ impl MovableListHandler {
     pub fn get_deep_value_with_id(&self) -> LoroValue {
         let inner = self.inner.try_attached_state().unwrap();
         inner
+            .doc
             .state
-            .upgrade()
-            .unwrap()
             .try_lock()
             .unwrap()
             .get_container_deep_value_with_id(inner.container_idx, None)
@@ -3520,7 +3537,7 @@ impl MapHandler {
                         key: key.into(),
                         value: Some(value.clone()),
                     },
-                    &inner.state,
+                    &inner.doc,
                 )
             }),
         }
@@ -3556,7 +3573,7 @@ impl MapHandler {
                 key: key.into(),
                 value: Some(value.clone()),
             },
-            &inner.state,
+            &inner.doc,
         )
     }
 
@@ -3594,7 +3611,7 @@ impl MapHandler {
                 key: key.into(),
                 value: Some(LoroValue::Container(container_id.clone())),
             },
-            &inner.state,
+            &inner.doc,
         )?;
 
         child.attach(txn, inner, container_id)
@@ -3623,7 +3640,7 @@ impl MapHandler {
                 key: key.into(),
                 value: None,
             },
-            &inner.state,
+            &inner.doc,
         )
     }
 
@@ -3872,11 +3889,10 @@ impl MapHandler {
 
 #[inline(always)]
 fn with_txn<R>(
-    txn: &Weak<Mutex<Option<Transaction>>>,
+    txn: &Arc<Mutex<Option<Transaction>>>,
     f: impl FnOnce(&mut Transaction) -> LoroResult<R>,
 ) -> LoroResult<R> {
-    let mutex = &txn.upgrade().unwrap();
-    let mut txn = mutex.try_lock().unwrap();
+    let mut txn = txn.try_lock().unwrap();
     match &mut *txn {
         Some(t) => f(t),
         None => Err(LoroError::AutoCommitNotStarted),
@@ -3935,7 +3951,7 @@ pub mod counter {
                 inner.container_idx,
                 crate::op::RawOpContent::Counter(n),
                 EventHint::Counter(n),
-                &inner.state,
+                &inner.doc,
             )
         }
 
@@ -4029,6 +4045,13 @@ pub mod counter {
                 MaybeDetached::Detached(_) => None,
             }
         }
+
+        fn doc(&self) -> Option<crate::LoroDoc> {
+            match &self.inner {
+                MaybeDetached::Detached(_) => None,
+                MaybeDetached::Attached(a) => Some(a.doc()),
+            }
+        }
     }
 }
 
@@ -4036,9 +4059,9 @@ pub mod counter {
 mod test {
 
     use super::{HandlerTrait, TextDelta};
-    use crate::loro::LoroDoc;
     use crate::state::TreeParentId;
     use crate::version::Frontiers;
+    use crate::LoroDoc;
     use crate::{fx_map, ToJson};
     use loro_common::ID;
     use serde_json::json;

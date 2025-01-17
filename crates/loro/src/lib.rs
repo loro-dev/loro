@@ -998,6 +998,8 @@ pub trait ContainerTrait: SealedTrait {
         Self: Sized;
     /// Whether the container is deleted.
     fn is_deleted(&self) -> bool;
+    /// Get the doc of the container.
+    fn doc(&self) -> Option<LoroDoc>;
 }
 
 /// LoroList container. It's used to model array.
@@ -1052,6 +1054,10 @@ impl ContainerTrait for LoroList {
 
     fn is_deleted(&self) -> bool {
         self.handler.is_deleted()
+    }
+
+    fn doc(&self) -> Option<LoroDoc> {
+        self.handler.doc().map(LoroDoc::_new)
     }
 }
 
@@ -1321,6 +1327,10 @@ impl ContainerTrait for LoroMap {
     fn is_deleted(&self) -> bool {
         self.handler.is_deleted()
     }
+
+    fn doc(&self) -> Option<LoroDoc> {
+        self.handler.doc().map(LoroDoc::_new)
+    }
 }
 
 impl LoroMap {
@@ -1484,6 +1494,10 @@ impl ContainerTrait for LoroText {
 
     fn is_deleted(&self) -> bool {
         self.handler.is_deleted()
+    }
+
+    fn doc(&self) -> Option<LoroDoc> {
+        self.handler.doc().map(LoroDoc::_new)
     }
 }
 
@@ -1849,6 +1863,9 @@ impl ContainerTrait for LoroTree {
 
     fn is_deleted(&self) -> bool {
         self.handler.is_deleted()
+    }
+    fn doc(&self) -> Option<LoroDoc> {
+        self.handler.doc().map(LoroDoc::_new)
     }
 }
 
@@ -2258,6 +2275,9 @@ impl ContainerTrait for LoroMovableList {
     fn is_deleted(&self) -> bool {
         self.handler.is_deleted()
     }
+    fn doc(&self) -> Option<LoroDoc> {
+        self.handler.doc().map(LoroDoc::_new)
+    }
 }
 
 impl LoroMovableList {
@@ -2533,6 +2553,9 @@ impl ContainerTrait for LoroUnknown {
     fn is_deleted(&self) -> bool {
         self.handler.is_deleted()
     }
+    fn doc(&self) -> Option<LoroDoc> {
+        self.handler.doc().map(LoroDoc::_new)
+    }
 }
 
 use enum_as_inner::EnumAsInner;
@@ -2634,6 +2657,18 @@ impl ContainerTrait for Container {
             #[cfg(feature = "counter")]
             Container::Counter(x) => x.is_deleted(),
             Container::Unknown(x) => x.is_deleted(),
+        }
+    }
+    fn doc(&self) -> Option<LoroDoc> {
+        match self {
+            Container::List(x) => x.doc(),
+            Container::Map(x) => x.doc(),
+            Container::Text(x) => x.doc(),
+            Container::Tree(x) => x.doc(),
+            Container::MovableList(x) => x.doc(),
+            #[cfg(feature = "counter")]
+            Container::Counter(x) => x.doc(),
+            Container::Unknown(x) => x.doc(),
         }
     }
 }
@@ -2750,18 +2785,18 @@ impl UndoManager {
     }
 
     /// Undo the last change made by the peer.
-    pub fn undo(&mut self, doc: &LoroDoc) -> LoroResult<bool> {
-        self.0.undo(&doc.doc)
+    pub fn undo(&mut self) -> LoroResult<bool> {
+        self.0.undo()
     }
 
     /// Redo the last change made by the peer.
-    pub fn redo(&mut self, doc: &LoroDoc) -> LoroResult<bool> {
-        self.0.redo(&doc.doc)
+    pub fn redo(&mut self) -> LoroResult<bool> {
+        self.0.redo()
     }
 
     /// Record a new checkpoint.
-    pub fn record_new_checkpoint(&mut self, doc: &LoroDoc) -> LoroResult<()> {
-        self.0.record_new_checkpoint(&doc.doc)
+    pub fn record_new_checkpoint(&mut self) -> LoroResult<()> {
+        self.0.record_new_checkpoint()
     }
 
     /// Whether the undo manager can undo.

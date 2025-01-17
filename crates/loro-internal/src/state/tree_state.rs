@@ -13,7 +13,7 @@ use serde::Serialize;
 use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
-use std::sync::{Mutex, Weak};
+use std::sync::Weak;
 
 use super::{ApplyLocalOpReturn, ContainerState, DiffApplyContext};
 use crate::configure::Configure;
@@ -23,15 +23,13 @@ use crate::diff_calc::DiffMode;
 use crate::encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder};
 use crate::event::InternalDiff;
 use crate::op::Op;
-use crate::txn::Transaction;
-use crate::DocState;
 use crate::{
-    arena::SharedArena,
     container::tree::tree_op::TreeOp,
     delta::TreeInternalDiff,
     event::{Diff, Index},
     op::RawOp,
 };
+use crate::{DocState, LoroDocInner};
 
 #[derive(Clone, Debug, EnumAsInner)]
 pub enum TreeFractionalIndexConfigInner {
@@ -1321,12 +1319,7 @@ impl ContainerState for TreeState {
         Ok(ApplyLocalOpReturn { deleted_containers })
     }
 
-    fn to_diff(
-        &mut self,
-        _arena: &SharedArena,
-        _txn: &Weak<Mutex<Option<Transaction>>>,
-        _state: &Weak<Mutex<DocState>>,
-    ) -> Diff {
+    fn to_diff(&mut self, _doc: &Weak<LoroDocInner>) -> Diff {
         let mut diffs = vec![];
         let Some(roots) = self.children.get(&TreeParentId::Root) else {
             return Diff::Tree(TreeDiff { diff: vec![] });

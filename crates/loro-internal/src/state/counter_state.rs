@@ -1,16 +1,14 @@
-use std::sync::{Mutex, Weak};
+use std::sync::Weak;
 
 use loro_common::{ContainerID, LoroError, LoroResult, LoroValue};
 
 use crate::{
-    arena::SharedArena,
     configure::Configure,
     container::idx::ContainerIdx,
     encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff},
     op::{Op, RawOp, RawOpContent},
-    txn::Transaction,
-    DocState,
+    LoroDocInner,
 };
 
 use super::{ApplyLocalOpReturn, ContainerState, DiffApplyContext};
@@ -64,12 +62,7 @@ impl ContainerState for CounterState {
     }
 
     #[doc = " Convert a state to a diff, such that an empty state will be transformed into the same as this state when it\'s applied."]
-    fn to_diff(
-        &mut self,
-        _arena: &SharedArena,
-        _txn: &Weak<Mutex<Option<Transaction>>>,
-        _state: &Weak<Mutex<DocState>>,
-    ) -> Diff {
+    fn to_diff(&mut self, _doc: &Weak<LoroDocInner>) -> Diff {
         Diff::Counter(self.value)
     }
 

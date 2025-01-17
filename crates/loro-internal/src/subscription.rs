@@ -157,7 +157,7 @@ mod test {
     use tracing::trace;
 
     use super::*;
-    use crate::{handler::HandlerTrait, loro::LoroDoc};
+    use crate::{handler::HandlerTrait, LoroDoc};
 
     #[test]
     fn test_recursive_events() {
