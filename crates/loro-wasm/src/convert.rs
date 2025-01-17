@@ -128,7 +128,7 @@ pub(crate) fn js_to_version_vector(
     Ok(vv)
 }
 
-pub(crate) fn resolved_diff_to_js(value: &Diff, doc: &Arc<LoroDoc>) -> JsValue {
+pub(crate) fn resolved_diff_to_js(value: &Diff, doc: &LoroDoc) -> JsValue {
     // create a obj
     let obj = Object::new();
     match value {
@@ -240,7 +240,7 @@ pub(crate) fn js_diff_to_inner_diff(js: JsValue) -> JsResult<Diff> {
     }
 }
 
-fn delta_item_to_js(item: ListDiffItem, doc: &Arc<LoroDoc>) -> (JsValue, Option<JsValue>) {
+fn delta_item_to_js(item: ListDiffItem, doc: &LoroDoc) -> (JsValue, Option<JsValue>) {
     match item {
         loro_internal::loro_delta::DeltaItem::Retain { len, attr: _ } => {
             let obj = Object::new();
@@ -414,19 +414,18 @@ fn map_delta_to_js(value: &ResolvedMapDelta, doc: &Arc<LoroDoc>) -> JsValue {
     obj.into_js_result().unwrap()
 }
 
-pub(crate) fn handler_to_js_value(handler: Handler, doc: Option<Arc<LoroDoc>>) -> JsValue {
+pub(crate) fn handler_to_js_value(handler: Handler) -> JsValue {
     match handler {
         Handler::Text(t) => LoroText {
             handler: t,
-            doc,
             delta_cache: None,
         }
         .into(),
-        Handler::Map(m) => LoroMap { handler: m, doc }.into(),
-        Handler::List(l) => LoroList { handler: l, doc }.into(),
-        Handler::Tree(t) => LoroTree { handler: t, doc }.into(),
-        Handler::MovableList(m) => LoroMovableList { handler: m, doc }.into(),
-        Handler::Counter(c) => LoroCounter { handler: c, doc }.into(),
+        Handler::Map(m) => LoroMap { handler: m }.into(),
+        Handler::List(l) => LoroList { handler: l }.into(),
+        Handler::Tree(t) => LoroTree { handler: t }.into(),
+        Handler::MovableList(m) => LoroMovableList { handler: m }.into(),
+        Handler::Counter(c) => LoroCounter { handler: c }.into(),
         Handler::Unknown(_) => unreachable!(),
     }
 }

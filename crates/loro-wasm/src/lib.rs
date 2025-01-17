@@ -89,7 +89,7 @@ type JsResult<T> = Result<T, JsValue>;
 /// const tree = loro.getTree("tree");
 /// ```
 #[wasm_bindgen]
-pub struct LoroDoc(Arc<LoroDocInner>);
+pub struct LoroDoc(LoroDocInner);
 
 #[wasm_bindgen]
 extern "C" {
@@ -366,7 +366,7 @@ impl LoroDoc {
     pub fn new() -> Self {
         let doc = LoroDocInner::new();
         doc.start_auto_commit();
-        Self(Arc::new(doc))
+        Self(doc)
     }
 
     /// Enables editing in detached mode, which is disabled by default.
@@ -508,7 +508,7 @@ impl LoroDoc {
     pub fn from_snapshot(snapshot: &[u8]) -> JsResult<LoroDoc> {
         let doc = LoroDocInner::from_snapshot(snapshot)?;
         doc.start_auto_commit();
-        Ok(Self(Arc::new(doc)))
+        Ok(Self(doc))
     }
 
     /// Attach the document state to the latest known version.
@@ -588,7 +588,7 @@ impl LoroDoc {
     /// When called in detached mode, it will fork at the current state frontiers.
     /// It will have the same effect as `forkAt(&self.frontiers())`.
     pub fn fork(&self) -> Self {
-        Self(Arc::new(self.0.fork()))
+        Self(self.0.fork())
     }
 
     /// Creates a new LoroDoc at a specified version (Frontiers)
@@ -596,9 +596,7 @@ impl LoroDoc {
     /// The created doc will only contain the history before the specified frontiers.
     #[wasm_bindgen(js_name = "forkAt")]
     pub fn fork_at(&self, frontiers: Vec<JsID>) -> JsResult<LoroDoc> {
-        Ok(Self(Arc::new(
-            self.0.fork_at(&ids_to_frontiers(frontiers)?),
-        )))
+        Ok(Self(self.0.fork_at(&ids_to_frontiers(frontiers)?)))
     }
 
     /// Checkout the `DocState` to the latest version of `OpLog`.
@@ -895,7 +893,6 @@ impl LoroDoc {
             .get_text(js_value_to_container_id(cid, ContainerType::Text)?);
         Ok(LoroText {
             handler: text,
-            doc: Some(self.0.clone()),
             delta_cache: None,
         })
     }
@@ -917,10 +914,7 @@ impl LoroDoc {
         let map = self
             .0
             .get_map(js_value_to_container_id(cid, ContainerType::Map)?);
-        Ok(LoroMap {
-            handler: map,
-            doc: Some(self.0.clone()),
-        })
+        Ok(LoroMap { handler: map })
     }
 
     /// Get a LoroList by container id
@@ -940,10 +934,7 @@ impl LoroDoc {
         let list = self
             .0
             .get_list(js_value_to_container_id(cid, ContainerType::List)?);
-        Ok(LoroList {
-            handler: list,
-            doc: Some(self.0.clone()),
-        })
+        Ok(LoroList { handler: list })
     }
 
     /// Get a LoroMovableList by container id
@@ -963,10 +954,7 @@ impl LoroDoc {
         let list = self
             .0
             .get_movable_list(js_value_to_container_id(cid, ContainerType::MovableList)?);
-        Ok(LoroMovableList {
-            handler: list,
-            doc: Some(self.0.clone()),
-        })
+        Ok(LoroMovableList { handler: list })
     }
 
     /// Get a LoroCounter by container id
@@ -975,10 +963,7 @@ impl LoroDoc {
         let counter = self
             .0
             .get_counter(js_value_to_container_id(cid, ContainerType::Counter)?);
-        Ok(LoroCounter {
-            handler: counter,
-            doc: Some(self.0.clone()),
-        })
+        Ok(LoroCounter { handler: counter })
     }
 
     /// Get a LoroTree by container id
@@ -998,10 +983,7 @@ impl LoroDoc {
         let tree = self
             .0
             .get_tree(js_value_to_container_id(cid, ContainerType::Tree)?);
-        Ok(LoroTree {
-            handler: tree,
-            doc: Some(self.0.clone()),
-        })
+        Ok(LoroTree { handler: tree })
     }
 
     /// Get the container corresponding to the container id
@@ -1023,52 +1005,32 @@ impl LoroDoc {
         Ok(match ty {
             ContainerType::Map => {
                 let map = self.0.get_map(container_id);
-                LoroMap {
-                    handler: map,
-                    doc: Some(self.0.clone()),
-                }
-                .into()
+                LoroMap { handler: map }.into()
             }
             ContainerType::List => {
                 let list = self.0.get_list(container_id);
-                LoroList {
-                    handler: list,
-                    doc: Some(self.0.clone()),
-                }
-                .into()
+                LoroList { handler: list }.into()
             }
             ContainerType::Text => {
                 let richtext = self.0.get_text(container_id);
                 LoroText {
                     handler: richtext,
-                    doc: Some(self.0.clone()),
+
                     delta_cache: None,
                 }
                 .into()
             }
             ContainerType::Tree => {
                 let tree = self.0.get_tree(container_id);
-                LoroTree {
-                    handler: tree,
-                    doc: Some(self.0.clone()),
-                }
-                .into()
+                LoroTree { handler: tree }.into()
             }
             ContainerType::MovableList => {
                 let movelist = self.0.get_movable_list(container_id);
-                LoroMovableList {
-                    handler: movelist,
-                    doc: Some(self.0.clone()),
-                }
-                .into()
+                LoroMovableList { handler: movelist }.into()
             }
             ContainerType::Counter => {
                 let counter = self.0.get_counter(container_id);
-                LoroCounter {
-                    handler: counter,
-                    doc: Some(self.0.clone()),
-                }
-                .into()
+                LoroCounter { handler: counter }.into()
             }
             ContainerType::Unknown(_) => {
                 return Err(JsValue::from_str(
@@ -2065,7 +2027,6 @@ fn convert_container_path_to_js_value(path: &[(ContainerID, Index)]) -> JsContai
 #[wasm_bindgen]
 pub struct LoroText {
     handler: TextHandler,
-    doc: Option<Arc<LoroDocInner>>,
     delta_cache: Option<(usize, JsValue)>,
 }
 
@@ -2085,7 +2046,6 @@ impl LoroText {
     pub fn new() -> Self {
         Self {
             handler: TextHandler::new_detached(),
-            doc: None,
             delta_cache: None,
         }
     }
@@ -2495,7 +2455,7 @@ impl LoroText {
     ///   the WASM boundary.
     pub fn parent(&self) -> JsContainerOrUndefined {
         if let Some(p) = self.handler.parent() {
-            handler_to_js_value(p, self.doc.clone()).into()
+            handler_to_js_value(p).into()
         } else {
             JsContainerOrUndefined::from(JsValue::UNDEFINED)
         }
@@ -2580,7 +2540,6 @@ impl Default for LoroText {
 #[wasm_bindgen]
 pub struct LoroMap {
     handler: MapHandler,
-    doc: Option<Arc<LoroDocInner>>,
 }
 
 #[wasm_bindgen]
@@ -2593,7 +2552,6 @@ impl LoroMap {
     pub fn new() -> Self {
         Self {
             handler: MapHandler::new_detached(),
-            doc: None,
         }
     }
 
@@ -2864,7 +2822,7 @@ impl LoroMap {
     ///   the WASM boundary.
     pub fn parent(&self) -> JsContainerOrUndefined {
         if let Some(p) = self.handler.parent() {
-            handler_to_js_value(p, self.doc.clone()).into()
+            handler_to_js_value(p).into()
         } else {
             JsContainerOrUndefined::from(JsValue::UNDEFINED)
         }
@@ -2957,7 +2915,6 @@ impl Default for LoroMap {
 #[wasm_bindgen]
 pub struct LoroList {
     handler: ListHandler,
-    doc: Option<Arc<LoroDocInner>>,
 }
 
 #[wasm_bindgen]
@@ -2970,7 +2927,6 @@ impl LoroList {
     pub fn new() -> Self {
         Self {
             handler: ListHandler::new_detached(),
-            doc: None,
         }
     }
 
@@ -3036,7 +2992,7 @@ impl LoroList {
 
         (match v {
             ValueOrHandler::Value(v) => v.into(),
-            ValueOrHandler::Handler(h) => handler_to_js_value(h, self.doc.clone()),
+            ValueOrHandler::Handler(h) => handler_to_js_value(h),
         })
         .into()
     }
@@ -3073,7 +3029,7 @@ impl LoroList {
                     v.into()
                 }
                 ValueOrHandler::Handler(h) => {
-                    let v: JsValue = handler_to_js_value(h, self.doc.clone());
+                    let v: JsValue = handler_to_js_value(h);
                     v.into()
                 }
             });
@@ -3191,7 +3147,7 @@ impl LoroList {
     ///   the WASM boundary.
     pub fn parent(&self) -> JsContainerOrUndefined {
         if let Some(p) = self.handler.parent() {
-            handler_to_js_value(p, self.doc.clone()).into()
+            handler_to_js_value(p).into()
         } else {
             JsContainerOrUndefined::from(JsValue::UNDEFINED)
         }
@@ -3309,7 +3265,6 @@ impl Default for LoroList {
 #[wasm_bindgen]
 pub struct LoroMovableList {
     handler: MovableListHandler,
-    doc: Option<Arc<LoroDocInner>>,
 }
 
 impl Default for LoroMovableList {
@@ -3328,7 +3283,6 @@ impl LoroMovableList {
     pub fn new() -> Self {
         Self {
             handler: MovableListHandler::new_detached(),
-            doc: None,
         }
     }
 
@@ -3394,7 +3348,7 @@ impl LoroMovableList {
 
         (match v {
             ValueOrHandler::Value(v) => v.into(),
-            ValueOrHandler::Handler(h) => handler_to_js_value(h, self.doc.clone()),
+            ValueOrHandler::Handler(h) => handler_to_js_value(h),
         })
         .into()
     }
@@ -3431,7 +3385,7 @@ impl LoroMovableList {
                     v.into()
                 }
                 ValueOrHandler::Handler(h) => {
-                    let v: JsValue = handler_to_js_value(h, self.doc.clone());
+                    let v: JsValue = handler_to_js_value(h);
                     v.into()
                 }
             });
@@ -3550,7 +3504,7 @@ impl LoroMovableList {
     ///   the WASM boundary.
     pub fn parent(&self) -> JsContainerOrUndefined {
         if let Some(p) = self.handler.parent() {
-            handler_to_js_value(p, self.doc.clone()).into()
+            handler_to_js_value(p).into()
         } else {
             JsContainerOrUndefined::from(JsValue::UNDEFINED)
         }
@@ -3707,7 +3661,6 @@ impl LoroMovableList {
 #[wasm_bindgen]
 pub struct LoroTree {
     handler: TreeHandler,
-    doc: Option<Arc<LoroDocInner>>,
 }
 
 extern crate alloc;
@@ -3718,7 +3671,6 @@ extern crate alloc;
 pub struct LoroTreeNode {
     id: TreeID,
     tree: TreeHandler,
-    doc: Option<Arc<LoroDocInner>>,
 }
 
 fn parse_js_parent(parent: &JsParentTreeID) -> JsResult<Option<TreeID>> {
@@ -3750,8 +3702,8 @@ fn parse_js_tree_id(target: &JsTreeID) -> JsResult<TreeID> {
 
 #[wasm_bindgen]
 impl LoroTreeNode {
-    fn from_tree(id: TreeID, tree: TreeHandler, doc: Option<Arc<LoroDocInner>>) -> Self {
-        Self { id, tree, doc }
+    fn from_tree(id: TreeID, tree: TreeHandler) -> Self {
+        Self { id, tree }
     }
 
     /// The TreeID of the node.
@@ -3787,7 +3739,7 @@ impl LoroTreeNode {
         } else {
             self.tree.create(TreeParentId::Node(self.id))?
         };
-        let node = LoroTreeNode::from_tree(id, self.tree.clone(), self.doc.clone());
+        let node = LoroTreeNode::from_tree(id, self.tree.clone());
         Ok(node)
     }
 
@@ -3878,10 +3830,7 @@ impl LoroTreeNode {
     #[wasm_bindgen(getter, skip_typescript)]
     pub fn data(&self) -> JsResult<LoroMap> {
         let data = self.tree.get_meta(self.id)?;
-        let map = LoroMap {
-            handler: data,
-            doc: self.doc.clone(),
-        };
+        let map = LoroMap { handler: data };
         Ok(map)
     }
 
@@ -3899,7 +3848,6 @@ impl LoroTreeNode {
         };
         LoroTree {
             handler: self.tree.clone(),
-            doc: self.doc.clone(),
         }
         .tree_node_to_js_obj(node, true)
     }
@@ -3913,7 +3861,7 @@ impl LoroTreeNode {
             .ok_or(JsValue::from_str(&format!("TreeID({}) not found", self.id)))?;
         let ans = parent
             .tree_id()
-            .map(|p| LoroTreeNode::from_tree(p, self.tree.clone(), self.doc.clone()));
+            .map(|p| LoroTreeNode::from_tree(p, self.tree.clone()));
         Ok(ans)
     }
 
@@ -3927,7 +3875,7 @@ impl LoroTreeNode {
             return JsValue::undefined();
         };
         let children = children.into_iter().map(|c| {
-            let node = LoroTreeNode::from_tree(c, self.tree.clone(), self.doc.clone());
+            let node = LoroTreeNode::from_tree(c, self.tree.clone());
             JsValue::from(node)
         });
         Array::from_iter(children).into()
@@ -3968,7 +3916,6 @@ impl LoroTree {
     pub fn new() -> Self {
         Self {
             handler: TreeHandler::new_detached(),
-            doc: None,
         }
     }
 
@@ -4296,7 +4243,7 @@ impl LoroTree {
     ///   the WASM boundary.
     pub fn parent(&self) -> JsContainerOrUndefined {
         if let Some(p) = HandlerTrait::parent(&self.handler) {
-            handler_to_js_value(p, self.doc.clone()).into()
+            handler_to_js_value(p).into()
         } else {
             JsContainerOrUndefined::from(JsValue::UNDEFINED)
         }
