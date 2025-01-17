@@ -72,7 +72,6 @@ pub struct DocState {
     pub(crate) config: Configure,
     // resolve event stuff
     doc: Weak<LoroDocInner>,
-    global_txn: Weak<Mutex<Option<Transaction>>>,
     // txn related stuff
     in_txn: bool,
     changed_idx_in_txn: FxHashSet<ContainerIdx>,
@@ -99,8 +98,6 @@ pub(crate) struct ContainerCreationContext<'a> {
 
 pub(crate) struct DiffApplyContext<'a> {
     pub mode: DiffMode,
-    pub arena: &'a SharedArena,
-    pub txn: &'a Weak<Mutex<Option<Transaction>>>,
     pub doc: &'a Weak<LoroDocInner>,
 }
 
@@ -355,13 +352,9 @@ impl State {
 
 impl DocState {
     #[inline]
-    pub fn new_arc(
-        arena: SharedArena,
-        global_txn: Weak<Mutex<Option<Transaction>>>,
-        doc: Weak<LoroDocInner>,
-        config: Configure,
-    ) -> Arc<Mutex<Self>> {
+    pub fn new_arc(doc: Weak<LoroDocInner>, config: Configure) -> Arc<Mutex<Self>> {
         let peer = DefaultRandom.next_u64();
+        let arena = doc.upgrade().unwrap().arena.clone();
         // TODO: maybe we should switch to certain version in oplog?
 
         let peer = Arc::new(AtomicU64::new(peer));
@@ -372,7 +365,6 @@ impl DocState {
             frontiers: Frontiers::default(),
             doc,
             config,
-            global_txn,
             in_txn: false,
             changed_idx_in_txn: FxHashSet::default(),
             event_recorder: Default::default(),
@@ -382,11 +374,10 @@ impl DocState {
 
     pub fn fork_with_new_peer_id(
         &mut self,
-        arena: SharedArena,
-        global_txn: Weak<Mutex<Option<Transaction>>>,
         doc: Weak<LoroDocInner>,
         config: Configure,
     ) -> Arc<Mutex<Self>> {
+        let arena = doc.upgrade().unwrap().arena.clone();
         let peer = Arc::new(AtomicU64::new(DefaultRandom.next_u64()));
         let store = self.store.fork(arena.clone(), peer.clone(), config.clone());
         Arc::new(Mutex::new(Self {
@@ -396,7 +387,6 @@ impl DocState {
             arena,
             config,
             doc,
-            global_txn,
             in_txn: false,
             changed_idx_in_txn: FxHashSet::default(),
             event_recorder: Default::default(),
@@ -632,8 +622,6 @@ impl DocState {
                                         internal_diff.into_internal().unwrap(),
                                         DiffApplyContext {
                                             mode: diff.diff_mode,
-                                            arena: &self.arena,
-                                            txn: &self.global_txn,
                                             doc: &self.doc,
                                         },
                                     );
@@ -643,8 +631,6 @@ impl DocState {
                                         internal_diff.into_internal().unwrap(),
                                         DiffApplyContext {
                                             mode: diff.diff_mode,
-                                            arena: &self.arena,
-                                            txn: &self.global_txn,
                                             doc: &self.doc,
                                         },
                                     )
@@ -662,8 +648,6 @@ impl DocState {
                                 internal_diff.into_internal().unwrap(),
                                 DiffApplyContext {
                                     mode: diff.diff_mode,
-                                    arena: &self.arena,
-                                    txn: &self.global_txn,
                                     doc: &self.doc,
                                 },
                             );

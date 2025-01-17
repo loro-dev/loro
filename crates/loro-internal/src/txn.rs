@@ -2,7 +2,7 @@ use core::panic;
 use std::{
     borrow::Cow,
     mem::take,
-    sync::{Arc, Mutex, Weak},
+    sync::{Arc, Mutex},
 };
 
 use enum_as_inner::EnumAsInner;
@@ -61,8 +61,7 @@ impl crate::LoroDoc {
             ));
         }
 
-        let mut txn =
-            Transaction::new_with_origin(self.inner.clone(), origin.into(), self.get_global_txn());
+        let mut txn = Transaction::new_with_origin(self.inner.clone(), origin.into());
 
         let obs = self.observer.clone();
         let local_update_subs_weak = self.local_update_subs.downgrade();
@@ -131,7 +130,6 @@ pub(crate) type OnCommitFn =
     Box<dyn FnOnce(&Arc<Mutex<DocState>>, &Arc<Mutex<OpLog>>, IdSpan) + Sync + Send>;
 
 pub struct Transaction {
-    global_txn: Weak<Mutex<Option<Transaction>>>,
     peer: PeerID,
     origin: InternalString,
     start_counter: Counter,
@@ -315,15 +313,11 @@ impl generic_btree::rle::Mergeable for EventHint {
 
 impl Transaction {
     #[inline]
-    pub fn new(doc: Arc<LoroDocInner>, global_txn: Weak<Mutex<Option<Transaction>>>) -> Self {
-        Self::new_with_origin(doc.clone(), "".into(), global_txn)
+    pub fn new(doc: Arc<LoroDocInner>) -> Self {
+        Self::new_with_origin(doc.clone(), "".into())
     }
 
-    pub fn new_with_origin(
-        doc: Arc<LoroDocInner>,
-        origin: InternalString,
-        global_txn: Weak<Mutex<Option<Transaction>>>,
-    ) -> Self {
+    pub fn new_with_origin(doc: Arc<LoroDocInner>, origin: InternalString) -> Self {
         let mut state_lock = doc.state.try_lock().unwrap();
         if state_lock.is_in_txn() {
             panic!("Cannot start a transaction while another one is in progress");
@@ -348,7 +342,6 @@ impl Transaction {
             arena,
             frontiers,
             timestamp: None,
-            global_txn,
             next_counter,
             next_lamport,
             origin: Default::default(),
@@ -418,8 +411,6 @@ impl Transaction {
         let diff = if state.is_recording() {
             Some(change_to_diff(
                 &change,
-                &oplog.arena,
-                &self.global_txn,
                 self.doc.clone(),
                 std::mem::take(&mut self.event_hints),
             ))
@@ -640,8 +631,6 @@ pub(crate) struct TxnContainerDiff {
 // PERF: could be compacter
 fn change_to_diff(
     change: &Change,
-    arena: &SharedArena,
-    txn: &Weak<Mutex<Option<Transaction>>>,
     doc: Arc<LoroDocInner>,
     event_hints: Vec<EventHint>,
 ) -> Vec<TxnContainerDiff> {
@@ -751,7 +740,8 @@ fn change_to_diff(
                 // be using op index for the MovableList
                 for op in ops.iter() {
                     let (range, _) = op.content.as_list().unwrap().as_insert().unwrap();
-                    let values = arena
+                    let values = doc
+                        .arena
                         .get_values(range.to_range())
                         .into_iter()
                         .map(|v| ValueOrHandler::from_value(v, &doc));

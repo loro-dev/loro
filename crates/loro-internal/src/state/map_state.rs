@@ -1,8 +1,4 @@
-use std::{
-    collections::BTreeMap,
-    mem,
-    sync::Weak,
-};
+use std::{collections::BTreeMap, mem, sync::Weak};
 
 use fxhash::FxHashMap;
 use loro_common::{ContainerID, IdLp, LoroResult, PeerID};
@@ -46,12 +42,7 @@ impl ContainerState for MapState {
     fn apply_diff_and_convert(
         &mut self,
         diff: InternalDiff,
-        DiffApplyContext {
-            arena,
-            txn,
-            doc,
-            mode,
-        }: DiffApplyContext,
+        DiffApplyContext { doc, mode }: DiffApplyContext,
     ) -> Diff {
         let InternalDiff::Map(delta) = diff else {
             unreachable!()

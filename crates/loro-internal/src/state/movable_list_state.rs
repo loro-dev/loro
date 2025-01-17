@@ -1023,12 +1023,7 @@ impl ContainerState for MovableListState {
     fn apply_diff_and_convert(
         &mut self,
         diff: InternalDiff,
-        DiffApplyContext {
-            arena,
-            txn,
-            doc,
-            mode,
-        }: DiffApplyContext,
+        DiffApplyContext { doc, mode }: DiffApplyContext,
     ) -> Diff {
         let InternalDiff::MovableList(mut diff) = diff else {
             unreachable!()

@@ -1,8 +1,4 @@
-use std::{
-    io::Write,
-    ops::RangeBounds,
-    sync::Weak,
-};
+use std::{io::Write, ops::RangeBounds, sync::Weak};
 
 use super::{ApplyLocalOpReturn, ContainerState, DiffApplyContext, FastStateSnapshot};
 use crate::{
@@ -375,9 +371,7 @@ impl ContainerState for ListState {
     fn apply_diff_and_convert(
         &mut self,
         diff: InternalDiff,
-        DiffApplyContext {
-            arena,  doc, ..
-        }: DiffApplyContext,
+        DiffApplyContext { doc, .. }: DiffApplyContext,
     ) -> Diff {
         let InternalDiff::ListRaw(delta) = diff else {
             unreachable!()
@@ -396,7 +390,7 @@ impl ContainerState for ListState {
                     match &value.values {
                         either::Either::Left(range) => {
                             for i in range.to_range() {
-                                let value = arena.get_value(i).unwrap();
+                                let value = doc.arena.get_value(i).unwrap();
                                 arr.push(value);
                             }
                         }
@@ -422,7 +416,8 @@ impl ContainerState for ListState {
         Diff::List(ans)
     }
 
-    fn apply_diff(&mut self, diff: InternalDiff, DiffApplyContext { arena, .. }: DiffApplyContext) {
+    fn apply_diff(&mut self, diff: InternalDiff, DiffApplyContext { doc, .. }: DiffApplyContext) {
+        let doc = &doc.upgrade().unwrap();
         match diff {
             InternalDiff::ListRaw(delta) => {
                 let mut index = 0;
@@ -436,7 +431,7 @@ impl ContainerState for ListState {
                             match &value.values {
                                 either::Either::Left(range) => {
                                     for i in range.to_range() {
-                                        let value = arena.get_value(i).unwrap();
+                                        let value = doc.arena.get_value(i).unwrap();
                                         arr.push(value);
                                     }
                                 }

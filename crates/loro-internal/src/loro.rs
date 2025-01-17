@@ -80,12 +80,7 @@ impl LoroDoc {
         let config: Configure = oplog.configure.clone();
         let global_txn = Arc::new(Mutex::new(None));
         let inner = Arc::new_cyclic(|w| {
-            let state = DocState::new_arc(
-                arena.clone(),
-                Arc::downgrade(&global_txn),
-                w.clone(),
-                config.clone(),
-            );
+            let state = DocState::new_arc(w.clone(), config.clone());
             LoroDocInner {
                 oplog: Arc::new(Mutex::new(oplog)),
                 state,
@@ -377,11 +372,6 @@ impl LoroDoc {
     pub fn state_timestamp(&self) -> Timestamp {
         let f = &self.state.try_lock().unwrap().frontiers;
         self.oplog.try_lock().unwrap().get_timestamp_of_version(f)
-    }
-
-    #[inline]
-    pub(crate) fn get_global_txn(&self) -> Weak<Mutex<Option<Transaction>>> {
-        Arc::downgrade(&self.txn)
     }
 
     #[inline(always)]
