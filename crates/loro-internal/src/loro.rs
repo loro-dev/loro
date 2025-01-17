@@ -79,7 +79,7 @@ impl LoroDoc {
         let config: Configure = oplog.configure.clone();
         let global_txn = Arc::new(Mutex::new(None));
         let inner = Arc::new_cyclic(|w| {
-            let state = DocState::new_arc(w.clone(), config.clone());
+            let state = DocState::new_arc(w.clone(), arena.clone(), config.clone());
             LoroDocInner {
                 oplog: Arc::new(Mutex::new(oplog)),
                 state,

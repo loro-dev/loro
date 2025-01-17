@@ -351,9 +351,12 @@ impl State {
 
 impl DocState {
     #[inline]
-    pub fn new_arc(doc: Weak<LoroDocInner>, config: Configure) -> Arc<Mutex<Self>> {
+    pub fn new_arc(
+        doc: Weak<LoroDocInner>,
+        arena: SharedArena,
+        config: Configure,
+    ) -> Arc<Mutex<Self>> {
         let peer = DefaultRandom.next_u64();
-        let arena = doc.upgrade().unwrap().arena.clone();
         // TODO: maybe we should switch to certain version in oplog?
 
         let peer = Arc::new(AtomicU64::new(peer));
@@ -374,9 +377,9 @@ impl DocState {
     pub fn fork_with_new_peer_id(
         &mut self,
         doc: Weak<LoroDocInner>,
+        arena: SharedArena,
         config: Configure,
     ) -> Arc<Mutex<Self>> {
-        let arena = doc.upgrade().unwrap().arena.clone();
         let peer = Arc::new(AtomicU64::new(DefaultRandom.next_u64()));
         let store = self.store.fork(arena.clone(), peer.clone(), config.clone());
         Arc::new(Mutex::new(Self {
