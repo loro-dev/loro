@@ -19,7 +19,8 @@ use crate::{
     handler::ValueOrHandler,
     op::{ListSlice, Op, RawOp},
     state::movable_list_state::inner::PushElemInfo,
-    txn::Transaction, ListDiff, LoroDocInner,
+    txn::Transaction,
+    ListDiff, LoroDocInner,
 };
 
 use self::{
@@ -1160,7 +1161,7 @@ impl ContainerState for MovableListState {
                                         .delete(1)
                                         .insert(
                                             ArrayVec::from([ValueOrHandler::from_value(
-                                                value, arena, txn, doc,
+                                                value, doc,
                                             )]),
                                             ListDeltaMeta { from_move: false },
                                         )
@@ -1191,7 +1192,7 @@ impl ContainerState for MovableListState {
                                     .retain(new_index, Default::default())
                                     .insert(
                                         ArrayVec::from([ValueOrHandler::from_value(
-                                            new_value, arena, txn, doc,
+                                            new_value, doc,
                                         )]),
                                         ListDeltaMeta {
                                             from_move: (result.delete.is_some() && !value_updated)
@@ -1238,9 +1239,7 @@ impl ContainerState for MovableListState {
                                 &DeltaRopeBuilder::new()
                                     .retain(index, Default::default())
                                     .insert(
-                                        ArrayVec::from([ValueOrHandler::from_value(
-                                            value, arena, txn, doc,
-                                        )]),
+                                        ArrayVec::from([ValueOrHandler::from_value(value, doc)]),
                                         ListDeltaMeta {
                                             from_move: (result.delete.is_some() && !value_updated)
                                                 || from_delete,
@@ -1350,19 +1349,14 @@ impl ContainerState for MovableListState {
         Ok(ans)
     }
 
-    fn to_diff(
-        &mut self,
-        arena: &SharedArena,
-        txn: &Weak<Mutex<Option<Transaction>>>,
-        doc: &Weak<LoroDocInner>,
-    ) -> Diff {
+    fn to_diff(&mut self, doc: &Weak<LoroDocInner>) -> Diff {
         let doc = &doc.upgrade().unwrap();
         Diff::List(
             DeltaRopeBuilder::new()
                 .insert_many(
                     self.to_vec()
                         .into_iter()
-                        .map(|v| ValueOrHandler::from_value(v, arena, txn, doc)),
+                        .map(|v| ValueOrHandler::from_value(v, doc)),
                     Default::default(),
                 )
                 .build(),

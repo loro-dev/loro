@@ -13,7 +13,8 @@ use crate::{
     event::{Diff, Index, InternalDiff, ListDiff},
     handler::ValueOrHandler,
     op::{ListSlice, Op, RawOp, RawOpContent},
-    txn::Transaction, LoroDocInner, LoroValue,
+    txn::Transaction,
+    LoroDocInner, LoroValue,
 };
 
 use fxhash::FxHashMap;
@@ -405,7 +406,7 @@ impl ContainerState for ListState {
                     }
                     for arr in ArrayVec::from_many(
                         arr.iter()
-                            .map(|v| ValueOrHandler::from_value(v.clone(), arena, txn, doc)),
+                            .map(|v| ValueOrHandler::from_value(v.clone(), doc)),
                     ) {
                         ans.push_insert(arr, Default::default());
                     }
@@ -492,17 +493,12 @@ impl ContainerState for ListState {
 
     #[doc = " Convert a state to a diff that when apply this diff on a empty state,"]
     #[doc = " the state will be the same as this state."]
-    fn to_diff(
-        &mut self,
-        arena: &SharedArena,
-        txn: &Weak<Mutex<Option<Transaction>>>,
-        doc: &Weak<LoroDocInner>,
-    ) -> Diff {
+    fn to_diff(&mut self, doc: &Weak<LoroDocInner>) -> Diff {
         let doc = &doc.upgrade().unwrap();
         Diff::List(ListDiff::from_many(
             self.to_vec()
                 .into_iter()
-                .map(|v| ValueOrHandler::from_value(v, arena, txn, doc)),
+                .map(|v| ValueOrHandler::from_value(v, doc)),
         ))
     }
 

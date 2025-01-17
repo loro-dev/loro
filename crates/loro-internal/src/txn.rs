@@ -560,56 +560,36 @@ impl Transaction {
     /// if it's str it will use Root container, which will not be None
     pub fn get_text<I: IntoContainerId>(&self, id: I) -> TextHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Text);
-        Handler::new_attached(
-            id,
-            self.arena.clone(),
-            self.global_txn.clone(),
-            self.doc.clone(),
-        )
-        .into_text()
-        .unwrap()
+        Handler::new_attached(id, self.doc.clone())
+            .into_text()
+            .unwrap()
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
     pub fn get_list<I: IntoContainerId>(&self, id: I) -> ListHandler {
         let id = id.into_container_id(&self.arena, ContainerType::List);
-        Handler::new_attached(
-            id,
-            self.arena.clone(),
-            self.global_txn.clone(),
-            self.doc.clone(),
-        )
-        .into_list()
-        .unwrap()
+        Handler::new_attached(id, self.doc.clone())
+            .into_list()
+            .unwrap()
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
     pub fn get_map<I: IntoContainerId>(&self, id: I) -> MapHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Map);
-        Handler::new_attached(
-            id,
-            self.arena.clone(),
-            self.global_txn.clone(),
-            self.doc.clone(),
-        )
-        .into_map()
-        .unwrap()
+        Handler::new_attached(id, self.doc.clone())
+            .into_map()
+            .unwrap()
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
     pub fn get_tree<I: IntoContainerId>(&self, id: I) -> TreeHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Tree);
-        Handler::new_attached(
-            id,
-            self.arena.clone(),
-            self.global_txn.clone(),
-            self.doc.clone(),
-        )
-        .into_tree()
-        .unwrap()
+        Handler::new_attached(id, self.doc.clone())
+            .into_tree()
+            .unwrap()
     }
 
     pub fn next_id(&self) -> ID {
@@ -774,7 +754,7 @@ fn change_to_diff(
                     let values = arena
                         .get_values(range.to_range())
                         .into_iter()
-                        .map(|v| ValueOrHandler::from_value(v, arena, txn, &doc));
+                        .map(|v| ValueOrHandler::from_value(v, &doc));
                     ans.push(TxnContainerDiff {
                         idx: op.container,
                         diff: Diff::List(
@@ -802,7 +782,7 @@ fn change_to_diff(
                 diff: Diff::Map(ResolvedMapDelta::new().with_entry(
                     key,
                     ResolvedMapValue {
-                        value: value.map(|v| ValueOrHandler::from_value(v, arena, txn, &doc)),
+                        value: value.map(|v| ValueOrHandler::from_value(v, &doc)),
                         idlp: IdLp::new(peer, lamport),
                     },
                 )),
@@ -824,7 +804,7 @@ fn change_to_diff(
                     &DeltaRopeBuilder::new()
                         .retain(to as usize, Default::default())
                         .insert(
-                            ArrayVec::from([ValueOrHandler::from_value(value, arena, txn, &doc)]),
+                            ArrayVec::from([ValueOrHandler::from_value(value, &doc)]),
                             ListDeltaMeta { from_move: true },
                         )
                         .build(),
@@ -842,9 +822,7 @@ fn change_to_diff(
                             .retain(index, Default::default())
                             .delete(1)
                             .insert(
-                                ArrayVec::from([ValueOrHandler::from_value(
-                                    value, arena, txn, &doc,
-                                )]),
+                                ArrayVec::from([ValueOrHandler::from_value(value, &doc)]),
                                 Default::default(),
                             )
                             .build(),

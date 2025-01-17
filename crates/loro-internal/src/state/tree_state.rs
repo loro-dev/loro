@@ -1321,12 +1321,7 @@ impl ContainerState for TreeState {
         Ok(ApplyLocalOpReturn { deleted_containers })
     }
 
-    fn to_diff(
-        &mut self,
-        _arena: &SharedArena,
-        _txn: &Weak<Mutex<Option<Transaction>>>,
-        _doc: &Weak<LoroDocInner>,
-    ) -> Diff {
+    fn to_diff(&mut self, _doc: &Weak<LoroDocInner>) -> Diff {
         let mut diffs = vec![];
         let Some(roots) = self.children.get(&TreeParentId::Root) else {
             return Diff::Tree(TreeDiff { diff: vec![] });

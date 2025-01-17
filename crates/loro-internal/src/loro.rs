@@ -624,8 +624,6 @@ impl LoroDoc {
         if let LoroValue::Container(c) = value {
             Some(ValueOrHandler::Handler(Handler::new_attached(
                 c.clone(),
-                self.arena.clone(),
-                self.get_global_txn(),
                 self.inner.clone(),
             )))
         } else {
@@ -642,12 +640,7 @@ impl LoroDoc {
     #[inline]
     pub fn get_handler(&self, id: ContainerID) -> Handler {
         self.assert_container_exists(&id);
-        Handler::new_attached(
-            id,
-            self.arena.clone(),
-            self.get_global_txn(),
-            self.inner.clone(),
-        )
+        Handler::new_attached(id, self.inner.clone())
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
@@ -656,14 +649,9 @@ impl LoroDoc {
     pub fn get_text<I: IntoContainerId>(&self, id: I) -> TextHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Text);
         self.assert_container_exists(&id);
-        Handler::new_attached(
-            id,
-            self.arena.clone(),
-            self.get_global_txn(),
-            self.inner.clone(),
-        )
-        .into_text()
-        .unwrap()
+        Handler::new_attached(id, self.inner.clone())
+            .into_text()
+            .unwrap()
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
@@ -672,14 +660,9 @@ impl LoroDoc {
     pub fn get_list<I: IntoContainerId>(&self, id: I) -> ListHandler {
         let id = id.into_container_id(&self.arena, ContainerType::List);
         self.assert_container_exists(&id);
-        Handler::new_attached(
-            id,
-            self.arena.clone(),
-            self.get_global_txn(),
-            self.inner.clone(),
-        )
-        .into_list()
-        .unwrap()
+        Handler::new_attached(id, self.inner.clone())
+            .into_list()
+            .unwrap()
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
@@ -688,14 +671,9 @@ impl LoroDoc {
     pub fn get_movable_list<I: IntoContainerId>(&self, id: I) -> MovableListHandler {
         let id = id.into_container_id(&self.arena, ContainerType::MovableList);
         self.assert_container_exists(&id);
-        Handler::new_attached(
-            id,
-            self.arena.clone(),
-            self.get_global_txn(),
-            self.inner.clone(),
-        )
-        .into_movable_list()
-        .unwrap()
+        Handler::new_attached(id, self.inner.clone())
+            .into_movable_list()
+            .unwrap()
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
@@ -704,14 +682,9 @@ impl LoroDoc {
     pub fn get_map<I: IntoContainerId>(&self, id: I) -> MapHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Map);
         self.assert_container_exists(&id);
-        Handler::new_attached(
-            id,
-            self.arena.clone(),
-            self.get_global_txn(),
-            self.inner.clone(),
-        )
-        .into_map()
-        .unwrap()
+        Handler::new_attached(id, self.inner.clone())
+            .into_map()
+            .unwrap()
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
@@ -720,14 +693,9 @@ impl LoroDoc {
     pub fn get_tree<I: IntoContainerId>(&self, id: I) -> TreeHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Tree);
         self.assert_container_exists(&id);
-        Handler::new_attached(
-            id,
-            self.arena.clone(),
-            self.get_global_txn(),
-            self.inner.clone(),
-        )
-        .into_tree()
-        .unwrap()
+        Handler::new_attached(id, self.inner.clone())
+            .into_tree()
+            .unwrap()
     }
 
     #[cfg(feature = "counter")]
@@ -737,14 +705,9 @@ impl LoroDoc {
     ) -> crate::handler::counter::CounterHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Counter);
         self.assert_container_exists(&id);
-        Handler::new_attached(
-            id,
-            self.arena.clone(),
-            self.get_global_txn(),
-            self.inner.clone(),
-        )
-        .into_counter()
-        .unwrap()
+        Handler::new_attached(id, self.inner.clone())
+            .into_counter()
+            .unwrap()
     }
 
     fn assert_container_exists(&self, id: &ContainerID) {

@@ -92,21 +92,14 @@ pub trait HandlerTrait: Clone + Sized {
 }
 
 fn create_handler(inner: &BasicHandler, id: ContainerID) -> Handler {
-    Handler::new_attached(
-        id,
-        inner.arena.clone(),
-        inner.txn.clone(),
-        inner.doc.clone(),
-    )
+    Handler::new_attached(id, inner.doc.clone())
 }
 
 /// Flatten attributes that allow overlap
 #[derive(Clone, Debug)]
 pub struct BasicHandler {
     id: ContainerID,
-    arena: SharedArena,
     container_idx: ContainerIdx,
-    txn: Weak<Mutex<Option<Transaction>>>,
     doc: Arc<LoroDocInner>,
 }
 
@@ -186,21 +179,17 @@ impl BasicHandler {
         &self,
         f: impl FnOnce(&mut Transaction) -> Result<R, LoroError>,
     ) -> Result<R, LoroError> {
-        with_txn(&self.txn, f)
+        with_txn(&self.doc.txn, f)
     }
 
     fn get_parent(&self) -> Option<Handler> {
-        let parent_idx = self.arena.get_parent(self.container_idx)?;
-        let parent_id = self.arena.get_container_id(parent_idx).unwrap();
+        let parent_idx = self.doc.arena.get_parent(self.container_idx)?;
+        let parent_id = self.doc.arena.get_container_id(parent_idx).unwrap();
         {
-            let arena = self.arena.clone();
-            let txn = self.txn.clone();
             let kind = parent_id.container_type();
             let handler = BasicHandler {
                 container_idx: parent_idx,
                 id: parent_id,
-                txn,
-                arena,
                 doc: self.doc.clone(),
             };
 
@@ -996,18 +985,11 @@ impl HandlerTrait for Handler {
 }
 
 impl Handler {
-    pub(crate) fn new_attached(
-        id: ContainerID,
-        arena: SharedArena,
-        txn: Weak<Mutex<Option<Transaction>>>,
-        doc: Arc<LoroDocInner>,
-    ) -> Self {
+    pub(crate) fn new_attached(id: ContainerID, doc: Arc<LoroDocInner>) -> Self {
         let kind = id.container_type();
         let handler = BasicHandler {
-            container_idx: arena.register_container(&id),
+            container_idx: doc.arena.register_container(&id),
             id,
-            txn,
-            arena,
             doc,
         };
 
@@ -1258,19 +1240,9 @@ pub enum ValueOrHandler {
 }
 
 impl ValueOrHandler {
-    pub(crate) fn from_value(
-        value: LoroValue,
-        arena: &SharedArena,
-        txn: &Weak<Mutex<Option<Transaction>>>,
-        doc: &Arc<LoroDocInner>,
-    ) -> Self {
+    pub(crate) fn from_value(value: LoroValue, doc: &Arc<LoroDocInner>) -> Self {
         if let LoroValue::Container(c) = value {
-            ValueOrHandler::Handler(Handler::new_attached(
-                c,
-                arena.clone(),
-                txn.clone(),
-                doc.clone(),
-            ))
+            ValueOrHandler::Handler(Handler::new_attached(c, doc.clone()))
         } else {
             ValueOrHandler::Value(value)
         }
@@ -3868,11 +3840,10 @@ impl MapHandler {
 
 #[inline(always)]
 fn with_txn<R>(
-    txn: &Weak<Mutex<Option<Transaction>>>,
+    txn: &Arc<Mutex<Option<Transaction>>>,
     f: impl FnOnce(&mut Transaction) -> LoroResult<R>,
 ) -> LoroResult<R> {
-    let mutex = &txn.upgrade().unwrap();
-    let mut txn = mutex.try_lock().unwrap();
+    let mut txn = txn.try_lock().unwrap();
     match &mut *txn {
         Some(t) => f(t),
         None => Err(LoroError::AutoCommitNotStarted),

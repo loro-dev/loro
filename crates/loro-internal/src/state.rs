@@ -135,12 +135,7 @@ pub(crate) trait ContainerState {
 
     fn apply_local_op(&mut self, raw_op: &RawOp, op: &Op) -> LoroResult<ApplyLocalOpReturn>;
     /// Convert a state to a diff, such that an empty state will be transformed into the same as this state when it's applied.
-    fn to_diff(
-        &mut self,
-        arena: &SharedArena,
-        txn: &Weak<Mutex<Option<Transaction>>>,
-        doc: &Weak<LoroDocInner>,
-    ) -> Diff;
+    fn to_diff(&mut self, doc: &Weak<LoroDocInner>) -> Diff;
 
     fn get_value(&mut self) -> LoroValue;
 
@@ -213,13 +208,8 @@ impl<T: ContainerState> ContainerState for Box<T> {
     }
 
     #[doc = r" Convert a state to a diff, such that an empty state will be transformed into the same as this state when it's applied."]
-    fn to_diff(
-        &mut self,
-        arena: &SharedArena,
-        txn: &Weak<Mutex<Option<Transaction>>>,
-        doc: &Weak<LoroDocInner>,
-    ) -> Diff {
-        self.as_mut().to_diff(arena, txn, doc)
+    fn to_diff(&mut self, doc: &Weak<LoroDocInner>) -> Diff {
+        self.as_mut().to_diff(doc)
     }
 
     fn get_value(&mut self) -> LoroValue {
@@ -589,7 +579,7 @@ impl DocState {
                         continue;
                     }
 
-                    let external_diff = state.to_diff(&self.arena, &self.global_txn, &self.doc);
+                    let external_diff = state.to_diff(&self.doc);
                     trigger_on_new_container(
                         &external_diff,
                         |cid| {
@@ -616,7 +606,7 @@ impl DocState {
                 crate::event::DiffVariant::None => {
                     if is_recording {
                         let state = self.store.get_or_create_mut(diff.idx);
-                        let extern_diff = state.to_diff(&self.arena, &self.global_txn, &self.doc);
+                        let extern_diff = state.to_diff(&self.doc);
                         trigger_on_new_container(
                             &extern_diff,
                             |cid| {
@@ -647,7 +637,7 @@ impl DocState {
                                             doc: &self.doc,
                                         },
                                     );
-                                    state.to_diff(&self.arena, &self.global_txn, &self.doc)
+                                    state.to_diff(&self.doc)
                                 } else {
                                     state.apply_diff_and_convert(
                                         internal_diff.into_internal().unwrap(),
@@ -698,7 +688,7 @@ impl DocState {
                     continue;
                 }
 
-                let external_diff = state.to_diff(&self.arena, &self.global_txn, &self.doc);
+                let external_diff = state.to_diff(&self.doc);
                 trigger_on_new_container(
                     &external_diff,
                     |cid| {
@@ -889,7 +879,7 @@ impl DocState {
                                 peer: self.peer.load(Ordering::Relaxed),
                             },
                         )
-                        .to_diff(&self.arena, &self.global_txn, &self.doc)
+                        .to_diff(&self.doc)
                         .into(),
                     diff_mode: DiffMode::Checkout,
                 })

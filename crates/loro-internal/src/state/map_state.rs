@@ -18,7 +18,8 @@ use crate::{
     event::{Diff, Index, InternalDiff},
     handler::ValueOrHandler,
     op::{Op, RawOp, RawOpContent},
-    txn::Transaction, InternalString, LoroDocInner, LoroValue,
+    txn::Transaction,
+    InternalString, LoroDocInner, LoroValue,
 };
 
 use super::{ApplyLocalOpReturn, ContainerState, DiffApplyContext};
@@ -88,9 +89,7 @@ impl ContainerState for MapState {
                     key,
                     ResolvedMapValue {
                         idlp: IdLp::new(value.peer, value.lamp),
-                        value: value
-                            .value
-                            .map(|v| ValueOrHandler::from_value(v, arena, txn, doc)),
+                        value: value.value.map(|v| ValueOrHandler::from_value(v, doc)),
                     },
                 )
             }
@@ -132,18 +131,13 @@ impl ContainerState for MapState {
 
     #[doc = " Convert a state to a diff that when apply this diff on a empty state,"]
     #[doc = " the state will be the same as this state."]
-    fn to_diff(
-        &mut self,
-        arena: &SharedArena,
-        txn: &Weak<Mutex<Option<Transaction>>>,
-        doc: &Weak<LoroDocInner>,
-    ) -> Diff {
+    fn to_diff(&mut self, doc: &Weak<LoroDocInner>) -> Diff {
         Diff::Map(ResolvedMapDelta {
             updated: self
                 .map
                 .clone()
                 .into_iter()
-                .map(|(k, v)| (k, ResolvedMapValue::from_map_value(v, arena, txn, doc)))
+                .map(|(k, v)| (k, ResolvedMapValue::from_map_value(v, doc)))
                 .collect::<FxHashMap<_, _>>(),
         })
     }
