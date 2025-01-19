@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.2
+
+### Patch Changes
+
+- a168063: refactor: hold doc reference in handler (#624)
+- a168063: fix: a few LoroCounter errors (#626)
+
 ## 1.3.1
 
 ### Patch Changes
