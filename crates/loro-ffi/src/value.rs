@@ -232,3 +232,15 @@ impl From<&loro::ContainerID> for ContainerID {
         }
     }
 }
+
+impl LoroValueLike for LoroValue {
+    fn as_loro_value(&self) -> crate::LoroValue {
+        return self.clone();
+    }
+}
+
+impl LoroValueLike for &LoroValue {
+    fn as_loro_value(&self) -> crate::LoroValue {
+        return (*self).clone();
+    }
+}
