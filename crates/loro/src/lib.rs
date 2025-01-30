@@ -89,6 +89,7 @@ pub use counter::LoroCounter;
 #[derive(Debug)]
 pub struct LoroDoc {
     doc: InnerLoroDoc,
+    // This field is here to prevent some weird issues in debug mode
     #[cfg(debug_assertions)]
     _temp: u8,
 }
@@ -96,6 +97,13 @@ pub struct LoroDoc {
 impl Default for LoroDoc {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Clone for LoroDoc {
+    fn clone(&self) -> Self {
+        let doc = self.doc.clone();
+        LoroDoc::_new(doc)
     }
 }
 
