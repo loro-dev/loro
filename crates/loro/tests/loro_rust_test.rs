@@ -3030,3 +3030,13 @@ fn test_map_keys_values_for_each() {
     assert_eq!(keys, keys2);
     assert_eq!(values, values2);
 }
+
+#[test]
+fn test_update_long_text() {
+    let text = "a".repeat(1_000_000);
+    let doc = LoroDoc::new();
+    doc.get_text("text")
+        .update(&text, Default::default())
+        .unwrap();
+    assert_eq!(doc.get_text("text").to_string(), text);
+}
