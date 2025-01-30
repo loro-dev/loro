@@ -8,7 +8,7 @@
 //!
 //! * time: `O((N+M)D)`
 //! * space `O(N+M)`
-//!  
+//!
 //! See [the original article by Eugene W. Myers](http://www.xmailserver.org/diff2.pdf)
 //! describing it.
 //!
@@ -294,7 +294,7 @@ fn conquer<D: DiffHandler>(
     if is_not_empty_range(old_start, old_end) || is_not_empty_range(new_start, new_end) {
         let len_old = old_end - old_start;
         let len_new = new_end - new_start;
-        if should_use_dj && (len_old * len_new < 128 * 128) {
+        if should_use_dj && (len_old.max(1) * len_new.max(1) < 128 * 128) {
             let ok = dj_diff(
                 proxy,
                 &old[old_start..old_end],
@@ -370,8 +370,10 @@ pub(crate) fn dj_diff<D: DiffHandler>(
     let common_suffix_len = common_suffix_len(&old[common_prefix_len..], &new[common_prefix_len..]);
     let old = &old[common_prefix_len..old.len() - common_suffix_len];
     let new = &new[common_prefix_len..new.len() - common_suffix_len];
-    assert!(old.len() <= u16::MAX as usize);
-    assert!(new.len() <= u16::MAX as usize);
+    if old.len() >= u16::MAX as usize || new.len() >= u16::MAX as usize {
+        return false;
+    }
+
     if old.is_empty() {
         if new.is_empty() {
             return true;
