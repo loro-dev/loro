@@ -1373,6 +1373,9 @@ impl LoroMap {
     }
 
     /// Insert a key-value pair into the map.
+    ///
+    /// > **Note**: When calling `map.set(key, value)` on a LoroMap, if `map.get(key)` already returns `value`,
+    /// > the operation will be a no-op (no operation recorded) to avoid unnecessary updates.
     pub fn insert(&self, key: &str, value: impl Into<LoroValue>) -> LoroResult<()> {
         self.handler.insert(key, value)
     }

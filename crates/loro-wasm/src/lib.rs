@@ -5945,6 +5945,7 @@ interface LoroMovableList<T = unknown> {
      */
     setContainer<C extends Container>(pos: number, child: C): T extends C ? T : C;
 }
+
 interface LoroMap<T extends Record<string, unknown> = Record<string, unknown>> {
     new(): LoroMap<T>;
     /**
@@ -5998,9 +5999,13 @@ interface LoroMap<T extends Record<string, unknown> = Record<string, unknown>> {
      */
     get<Key extends keyof T>(key: Key): T[Key];
     /**
-     * Set the key with the value.
+     *  Set the key with the value.
      *
-     *  If the value of the key is exist, the old value will be updated.
+     *  If the key already exists, its value will be updated. If the key doesn't exist,
+     *  a new key-value pair will be created.
+     *
+     *  > **Note**: When calling `map.set(key, value)` on a LoroMap, if `map.get(key)` already returns `value`, 
+     *  > the operation will be a no-op (no operation recorded) to avoid unnecessary updates.
      *
      *  @example
      *  ```ts
