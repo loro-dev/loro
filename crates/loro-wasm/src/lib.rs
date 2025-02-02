@@ -78,6 +78,10 @@ type JsResult<T> = Result<T, JsValue>;
 /// [**RichText**](LoroText), [**Map**](LoroMap) and [**Movable Tree**](LoroTree),
 /// you could build all kind of applications by these.
 ///
+/// **Important:** Loro is a pure library and does not handle network protocols.
+/// It is the responsibility of the user to manage the storage, loading, and synchronization
+/// of the bytes exported by Loro in a manner suitable for their specific environment.
+///
 /// @example
 /// ```ts
 /// import { LoroDoc } from "loro-crdt"
@@ -6082,7 +6086,7 @@ interface LoroTree<T extends Record<string, unknown> = Record<string, unknown>> 
     /**
      * Get LoroTreeNode by the TreeID.
      */
-    getNodeByID(target: TreeID): LoroTreeNode<T>;
+    getNodeByID(target: TreeID): LoroTreeNode<T> | undefined;
     subscribe(listener: Listener): Subscription;
     toArray(): TreeNodeValue[];
     getNodes(options?: { withDeleted?: boolean } ): LoroTreeNode<T>[];
