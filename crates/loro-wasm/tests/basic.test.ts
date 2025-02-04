@@ -17,7 +17,7 @@ import {
   decodeFrontiers,
   OpId,
   ContainerID,
-  LoroCounter
+  LoroCounter,
 } from "../bundler/index";
 
 it("basic example", () => {
@@ -102,7 +102,7 @@ it("basic sync example", () => {
 
 it("basic events", () => {
   const doc = new LoroDoc();
-  doc.subscribe((event) => { });
+  doc.subscribe((event) => {});
   const list = doc.getList("list");
 });
 
@@ -500,11 +500,14 @@ describe("export", () => {
     const doc = new LoroDoc();
     doc.getText("text").insert(0, "123");
     doc.commit();
-    const updates = doc.export({ mode: "update", from: new VersionVector(null) });
+    const updates = doc.export({
+      mode: "update",
+      from: new VersionVector(null),
+    });
     const doc2 = new LoroDoc();
     doc2.import(updates);
     expect(doc2.toJSON()).toStrictEqual({ text: "123" });
-  })
+  });
 
   it("test export snapshot", () => {
     const doc = new LoroDoc();
@@ -514,29 +517,35 @@ describe("export", () => {
     const doc2 = new LoroDoc();
     doc2.import(snapshot);
     expect(doc2.toJSON()).toStrictEqual({ text: "123" });
-  })
+  });
 
   it("test export shallow-snapshot", () => {
     const doc = new LoroDoc();
     doc.getText("text").insert(0, "123");
     doc.commit();
-    const snapshot = doc.export({ mode: "shallow-snapshot", frontiers: doc.oplogFrontiers() });
+    const snapshot = doc.export({
+      mode: "shallow-snapshot",
+      frontiers: doc.oplogFrontiers(),
+    });
     const doc2 = new LoroDoc();
     doc2.import(snapshot);
     expect(doc2.toJSON()).toStrictEqual({ text: "123" });
-  })
+  });
 
   it("test export updates-in-range", () => {
     const doc = new LoroDoc();
     doc.setPeerId(1);
     doc.getText("text").insert(0, "123");
     doc.commit();
-    const bytes = doc.export({ mode: "updates-in-range", spans: [{ id: { peer: "1", counter: 0 }, len: 1 }] });
+    const bytes = doc.export({
+      mode: "updates-in-range",
+      spans: [{ id: { peer: "1", counter: 0 }, len: 1 }],
+    });
     const doc2 = new LoroDoc();
     doc2.import(bytes);
     expect(doc2.toJSON()).toStrictEqual({ text: "1" });
-  })
-})
+  });
+});
 it("has correct map value #453", async () => {
   {
     const doc = new LoroDoc();
@@ -545,33 +554,33 @@ it("has correct map value #453", async () => {
     text.mark({ start: 0, end: 2 }, "bold", { b: {} });
     expect(text.toDelta()).toStrictEqual([
       { insert: "He", attributes: { bold: { b: {} } } },
-      { insert: "llo" }
+      { insert: "llo" },
     ]);
     let diff: Diff | undefined;
     let expectedDiff: TextDiff = {
-      "type": "text",
-      "diff": [
+      type: "text",
+      diff: [
         { insert: "He", attributes: { bold: { b: {} } } },
-        { insert: "llo" }
-      ]
+        { insert: "llo" },
+      ],
     };
-    doc.subscribe(e => {
+    doc.subscribe((e) => {
       console.log("Text", e);
       diff = e.events[0].diff;
-    })
+    });
     doc.commit();
-    await new Promise(resolve => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(diff).toStrictEqual(expectedDiff);
   }
   {
     const map = new LoroMap();
-    map.set('a', { b: {} });
+    map.set("a", { b: {} });
     expect(map.toJSON()).toStrictEqual({ a: { b: {} } });
   }
   {
     const doc = new LoroDoc();
     const map = doc.getMap("map");
-    map.set('a', { b: {} });
+    map.set("a", { b: {} });
     doc.commit();
     expect(map.toJSON()).toStrictEqual({ a: { b: {} } });
   }
@@ -579,31 +588,33 @@ it("has correct map value #453", async () => {
     const doc = new LoroDoc();
     let diff: Diff | undefined;
     const expectedDiff: MapDiff = {
-      "type": "map",
-      "updated": {
-        "a": {
-          "b": {}
-        }
-      }
+      type: "map",
+      updated: {
+        a: {
+          b: {},
+        },
+      },
     };
-    doc.subscribe(e => {
+    doc.subscribe((e) => {
       diff = e.events[0].diff;
-    })
+    });
     const map = doc.getMap("map");
-    map.set('a', { b: {} });
+    map.set("a", { b: {} });
     doc.commit();
-    await new Promise(resolve => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(diff).toStrictEqual(expectedDiff);
   }
-})
+});
 
 it("can set commit message", () => {
   const doc = new LoroDoc();
   doc.setPeerId(1);
   doc.getText("text").insert(0, "123");
   doc.commit({ message: "Hello world" });
-  expect(doc.getChangeAt({ peer: "1", counter: 0 }).message).toBe("Hello world");
-})
+  expect(doc.getChangeAt({ peer: "1", counter: 0 }).message).toBe(
+    "Hello world",
+  );
+});
 
 it("can query pending txn length", () => {
   const doc = new LoroDoc();
@@ -613,15 +624,17 @@ it("can query pending txn length", () => {
   expect(doc.getPendingTxnLength()).toBe(3);
   doc.commit();
   expect(doc.getPendingTxnLength()).toBe(0);
-})
-
+});
 
 it("can encode/decode frontiers", () => {
-  const frontiers = [{ peer: "1123", counter: 1 }, { peer: "222", counter: 2 }] as Frontiers;
+  const frontiers = [
+    { peer: "1123", counter: 1 },
+    { peer: "222", counter: 2 },
+  ] as Frontiers;
   const encoded = encodeFrontiers(frontiers);
   const decoded = decodeFrontiers(encoded);
   expect(decoded).toStrictEqual(frontiers);
-})
+});
 
 it("travel changes", () => {
   let doc = new LoroDoc();
@@ -631,10 +644,10 @@ it("travel changes", () => {
   let n = 0;
   doc.travelChangeAncestors([{ peer: "1", counter: 0 }], (meta: any) => {
     n += 1;
-    return true
-  })
+    return true;
+  });
   expect(n).toBe(1);
-})
+});
 
 it("get path to container", () => {
   const doc = new LoroDoc();
@@ -642,8 +655,8 @@ it("get path to container", () => {
   const list = map.setContainer("list", new LoroList());
   const sub = list.insertContainer(0, new LoroMap());
   const path = doc.getPathToContainer(sub.id);
-  expect(path).toStrictEqual(["map", "list", 0])
-})
+  expect(path).toStrictEqual(["map", "list", 0]);
+});
 
 it("json path", () => {
   const doc = new LoroDoc();
@@ -656,42 +669,44 @@ it("json path", () => {
   const path = "$['map'].books[0].title";
   const result = doc.JSONPath(path);
   expect(result.length).toBe(1);
-  expect(result).toStrictEqual(["1984"])
-})
+  expect(result).toStrictEqual(["1984"]);
+});
 
 it("can push string to text", () => {
   const doc = new LoroDoc();
   const text = doc.getText("text");
   text.push("123");
   expect(text.toString()).toBe("123");
-})
+});
 
 it("can push container to list", () => {
   const doc = new LoroDoc();
   const list = doc.getList("list");
   const map = list.pushContainer(new LoroMap());
   expect(list.toJSON()).toStrictEqual([{}]);
-})
+});
 
 it("can push container to movable list", () => {
   const doc = new LoroDoc();
   const list = doc.getMovableList("list");
   const map = list.pushContainer(new LoroMap());
   expect(list.toJSON()).toStrictEqual([{}]);
-})
+});
 
 it("can query the history for changed containers", () => {
   const doc = new LoroDoc();
   doc.setPeerId("0");
   doc.getText("text").insert(0, "H");
   doc.getMap("map").set("key", "H");
-  const changed = doc.getChangedContainersIn({ peer: "0", counter: 0 }, 2)
+  const changed = doc.getChangedContainersIn({ peer: "0", counter: 0 }, 2);
   const changedSet = new Set(changed);
-  expect(changedSet).toEqual(new Set([
-    "cid:root-text:Text" as ContainerID,
-    "cid:root-map:Map" as ContainerID,
-  ]))
-})
+  expect(changedSet).toEqual(
+    new Set([
+      "cid:root-text:Text" as ContainerID,
+      "cid:root-map:Map" as ContainerID,
+    ]),
+  );
+});
 
 it("update VV", () => {
   const vv = new VersionVector(null);
@@ -700,8 +715,13 @@ it("update VV", () => {
   vv.setLast({ peer: "3", counter: 4 });
   vv.remove("3");
   const map = vv.toJSON();
-  expect(map).toStrictEqual(new Map([["1", 1], ["2", 2]]))
-})
+  expect(map).toStrictEqual(
+    new Map([
+      ["1", 1],
+      ["2", 2],
+    ]),
+  );
+});
 
 describe("isDeleted", () => {
   it("test text container deletion", () => {
@@ -715,7 +735,7 @@ describe("isDeleted", () => {
     tree.delete(node.id);
     const containerAfter = node.data;
     expect(containerAfter.isDeleted()).toBe(true);
-  })
+  });
 
   it("movable list setContainer", () => {
     const doc = new LoroDoc();
@@ -724,7 +744,7 @@ describe("isDeleted", () => {
     expect(map.isDeleted()).toBe(false);
     list.set(0, 1);
     expect(map.isDeleted()).toBe(true);
-  })
+  });
 
   it("map set", () => {
     const doc = new LoroDoc();
@@ -733,7 +753,7 @@ describe("isDeleted", () => {
     expect(sub.isDeleted()).toBe(false);
     map.set("sub", "value");
     expect(sub.isDeleted()).toBe(true);
-  })
+  });
 
   it("remote map set", () => {
     const doc = new LoroDoc();
@@ -751,8 +771,8 @@ describe("isDeleted", () => {
 
     expect(sub.isDeleted()).toBe(true);
     expect(subB.isDeleted()).toBe(true);
-  })
-})
+  });
+});
 
 it("test import batch", () => {
   const doc1 = new LoroDoc();
@@ -765,66 +785,72 @@ it("test import batch", () => {
 
   const blob11 = doc1.export({
     mode: "updates-in-range",
-    spans: [{ id: { peer: "1", counter: 0 }, len: 5 }]
+    spans: [{ id: { peer: "1", counter: 0 }, len: 5 }],
   });
   const blob12 = doc1.export({
     mode: "updates-in-range",
-    spans: [{ id: { peer: "1", counter: 5 }, len: 2 }]
+    spans: [{ id: { peer: "1", counter: 5 }, len: 2 }],
   });
   const blob13 = doc1.export({
     mode: "updates-in-range",
-    spans: [{ id: { peer: "1", counter: 6 }, len: 6 }]
+    spans: [{ id: { peer: "1", counter: 6 }, len: 6 }],
   });
 
   const blob21 = doc2.export({
     mode: "updates-in-range",
-    spans: [{ id: { peer: "2", counter: 0 }, len: 5 }]
+    spans: [{ id: { peer: "2", counter: 0 }, len: 5 }],
   });
   const blob22 = doc2.export({
     mode: "updates-in-range",
-    spans: [{ id: { peer: "2", counter: 5 }, len: 1 }]
+    spans: [{ id: { peer: "2", counter: 5 }, len: 1 }],
   });
   const blob23 = doc2.export({
     mode: "updates-in-range",
-    spans: [{ id: { peer: "2", counter: 6 }, len: 6 }]
+    spans: [{ id: { peer: "2", counter: 6 }, len: 6 }],
   });
 
   const newDoc = new LoroDoc();
   const status = newDoc.importBatch([blob11, blob13, blob21, blob23]);
 
-  expect(status.success).toEqual(new Map([
-    ["1", { start: 0, end: 5 }],
-    ["2", { start: 0, end: 5 }]
-  ]));
-  expect(status.pending).toEqual(new Map([
-    ["1", { start: 6, end: 12 }],
-    ["2", { start: 6, end: 12 }]
-  ]));
+  expect(status.success).toEqual(
+    new Map([
+      ["1", { start: 0, end: 5 }],
+      ["2", { start: 0, end: 5 }],
+    ]),
+  );
+  expect(status.pending).toEqual(
+    new Map([
+      ["1", { start: 6, end: 12 }],
+      ["2", { start: 6, end: 12 }],
+    ]),
+  );
 
   const status2 = newDoc.importBatch([blob12, blob22]);
-  expect(status2.success).toEqual(new Map([
-    ["1", { start: 5, end: 12 }],
-    ["2", { start: 5, end: 12 }]
-  ]));
+  expect(status2.success).toEqual(
+    new Map([
+      ["1", { start: 5, end: 12 }],
+      ["2", { start: 5, end: 12 }],
+    ]),
+  );
   expect(status2.pending).toBeNull();
   expect(newDoc.getText("text").toString()).toBe("Hello world!Hello world!");
-})
+});
 
 it("iter on text #577", () => {
   const doc = new LoroDoc();
   const text = doc.getText("text");
   text.insert(0, "Hello");
   text.iter((_: string) => {
-    return null as any
-  })
+    return null as any;
+  });
   text.insert(3, " ");
   const result: string[] = [];
   text.iter((s: string) => {
     result.push(s);
     return true;
-  })
+  });
   expect(result).toStrictEqual(["Hel", " ", "lo"]);
-})
+});
 
 it("can get shallow value of containers", () => {
   const doc = new LoroDoc();
@@ -842,10 +868,10 @@ it("can get shallow value of containers", () => {
   subText.insert(0, "Hello");
   expect(map.getShallowValue()).toStrictEqual({
     key: "value",
-    text: "cid:6@1:Text"
+    text: "cid:6@1:Text",
   });
 
-  // Test List container 
+  // Test List container
   const list = doc.getList("list");
   list.insert(0, 1);
   list.insert(1, "two");
@@ -859,7 +885,11 @@ it("can get shallow value of containers", () => {
   movableList.insert(1, "two");
   const subList = movableList.insertContainer(2, new LoroList());
   subList.insert(0, "sub");
-  expect(movableList.getShallowValue()).toStrictEqual([1, "two", "cid:18@1:List"]);
+  expect(movableList.getShallowValue()).toStrictEqual([
+    1,
+    "two",
+    "cid:18@1:List",
+  ]);
 
   // Test Tree container
   const tree = doc.getTree("tree");
@@ -881,19 +911,19 @@ it("can get shallow value of containers", () => {
           index: 0,
           fractional_index: "80",
           meta: "cid:22@1:Map",
-          children: []
-        }
-      ]
-    }
+          children: [],
+        },
+      ],
+    },
   ]);
 
   const value = doc.getShallowValue();
   expect(value).toStrictEqual({
-    list: 'cid:root-list:List',
-    map: 'cid:root-map:Map',
-    movable: 'cid:root-movable:MovableList',
-    tree: 'cid:root-tree:Tree',
-    text: 'cid:root-text:Text'
+    list: "cid:root-list:List",
+    map: "cid:root-map:Map",
+    movable: "cid:root-movable:MovableList",
+    tree: "cid:root-tree:Tree",
+    text: "cid:root-text:Text",
   });
 });
 
@@ -906,26 +936,30 @@ it("tree shallow value vs toJSON", () => {
   const text = root.data.setContainer("content", new LoroText());
   text.insert(0, "Hello");
 
-  expect(tree.getShallowValue()).toStrictEqual([{
-    id: "0@1",
-    parent: null,
-    index: 0,
-    fractional_index: "80",
-    meta: "cid:0@1:Map",
-    children: []
-  }]);
-
-  expect(tree.toJSON()).toStrictEqual([{
-    id: "0@1",
-    parent: null,
-    index: 0,
-    fractional_index: "80",
-    meta: {
-      name: "root",
-      content: "Hello"
+  expect(tree.getShallowValue()).toStrictEqual([
+    {
+      id: "0@1",
+      parent: null,
+      index: 0,
+      fractional_index: "80",
+      meta: "cid:0@1:Map",
+      children: [],
     },
-    children: []
-  }]);
+  ]);
+
+  expect(tree.toJSON()).toStrictEqual([
+    {
+      id: "0@1",
+      parent: null,
+      index: 0,
+      fractional_index: "80",
+      meta: {
+        name: "root",
+        content: "Hello",
+      },
+      children: [],
+    },
+  ]);
 });
 
 it("map shallow value vs toJSON", () => {
@@ -938,12 +972,12 @@ it("map shallow value vs toJSON", () => {
 
   expect(map.getShallowValue()).toStrictEqual({
     key: "value",
-    text: "cid:1@1:Text"
+    text: "cid:1@1:Text",
   });
 
   expect(map.toJSON()).toStrictEqual({
     key: "value",
-    text: "Hello"
+    text: "Hello",
   });
 });
 
@@ -956,19 +990,10 @@ it("list shallow value vs toJSON", () => {
   const subList = list.insertContainer(2, new LoroList());
   subList.insert(0, "sub");
 
-  expect(list.getShallowValue()).toStrictEqual([
-    1,
-    "two",
-    "cid:2@1:List"
-  ]);
+  expect(list.getShallowValue()).toStrictEqual([1, "two", "cid:2@1:List"]);
 
-  expect(list.toJSON()).toStrictEqual([
-    1,
-    "two",
-    ["sub"]
-  ]);
+  expect(list.toJSON()).toStrictEqual([1, "two", ["sub"]]);
 });
-
 
 it("can use version vector multiple times", () => {
   const doc = new LoroDoc();
@@ -978,14 +1003,14 @@ it("can use version vector multiple times", () => {
   const v = doc.version();
   v.toJSON();
   doc.exportJsonUpdates(v, v);
-  v.toJSON()
+  v.toJSON();
   doc.exportJsonUpdates(v, v);
   v.toJSON();
   doc.export({ mode: "update", from: v });
   v.toJSON();
   doc.vvToFrontiers(v);
   v.toJSON();
-})
+});
 
 it("detach and attach on empty doc", () => {
   const doc = new LoroDoc();
@@ -994,7 +1019,7 @@ it("detach and attach on empty doc", () => {
   expect(doc.isDetached()).toBe(true);
   doc.attach();
   expect(doc.isDetached()).toBe(false);
-})
+});
 
 it("export json in id span #602", () => {
   const doc = new LoroDoc();
@@ -1002,29 +1027,41 @@ it("export json in id span #602", () => {
   doc.getText("text").insert(0, "Hello");
   doc.commit();
   {
-    const changes = doc.exportJsonInIdSpan({ peer: "1", counter: 0, length: 1 });
-    expect(changes).toStrictEqual([{
-      id: "0@1",
-      timestamp: expect.any(Number),
-      deps: [],
-      lamport: 0,
-      msg: undefined,
-      ops: [{
-        container: "cid:root-text:Text",
-        counter: 0,
-        content: {
-          type: "insert",
-          pos: 0,
-          text: "H"
-        }
-      }]
-    }]);
+    const changes = doc.exportJsonInIdSpan({
+      peer: "1",
+      counter: 0,
+      length: 1,
+    });
+    expect(changes).toStrictEqual([
+      {
+        id: "0@1",
+        timestamp: expect.any(Number),
+        deps: [],
+        lamport: 0,
+        msg: undefined,
+        ops: [
+          {
+            container: "cid:root-text:Text",
+            counter: 0,
+            content: {
+              type: "insert",
+              pos: 0,
+              text: "H",
+            },
+          },
+        ],
+      },
+    ]);
   }
   {
-    const changes = doc.exportJsonInIdSpan({ peer: "2", counter: 0, length: 1 });
+    const changes = doc.exportJsonInIdSpan({
+      peer: "2",
+      counter: 0,
+      length: 1,
+    });
     expect(changes).toStrictEqual([]);
   }
-})
+});
 
 it("find spans between versions", () => {
   const doc = new LoroDoc();
@@ -1082,7 +1119,7 @@ it("find spans between versions", () => {
   diff = doc.findIdSpansBetween(f1, f3);
   expect(diff.retreat).toHaveLength(0); // No changes needed to go from f3 to f1
   expect(diff.forward).toHaveLength(2); // Two changes needed to go from f1 to f3
-  const forwardSpans = new Map(diff.forward.map(span => [span.peer, span]));
+  const forwardSpans = new Map(diff.forward.map((span) => [span.peer, span]));
   expect(forwardSpans.get("1")).toEqual({
     peer: "1",
     counter: 5,
@@ -1098,7 +1135,7 @@ it("find spans between versions", () => {
   diff = doc.findIdSpansBetween(f3, f1);
   expect(diff.forward).toHaveLength(0); // No changes needed to go from f3 to f1
   expect(diff.retreat).toHaveLength(2); // Two changes needed to go from f1 to f3
-  const retreatSpans = new Map(diff.retreat.map(span => [span.peer, span]));
+  const retreatSpans = new Map(diff.retreat.map((span) => [span.peer, span]));
   expect(retreatSpans.get("1")).toEqual({
     peer: "1",
     counter: 5,
@@ -1120,7 +1157,7 @@ it("can travel changes from event", async () => {
   docA.commit();
   const snapshot = docA.export({ mode: "snapshot" });
   let done = false;
-  docB.subscribe(e => {
+  docB.subscribe((e) => {
     const spans = docB.findIdSpansBetween(e.from, e.to);
     expect(spans.retreat).toHaveLength(0);
     expect(spans.forward).toHaveLength(1);
@@ -1130,28 +1167,32 @@ it("can travel changes from event", async () => {
       length: 5,
     });
     const changes = docB.exportJsonInIdSpan(spans.forward[0]);
-    expect(changes).toStrictEqual([{
-      id: "0@1",
-      timestamp: expect.any(Number),
-      deps: [],
-      lamport: 0,
-      msg: undefined,
-      ops: [{
-        container: "cid:root-text:Text",
-        counter: 0,
-        content: {
-          type: "insert",
-          pos: 0,
-          text: "Hello"
-        }
-      }]
-    }]);
+    expect(changes).toStrictEqual([
+      {
+        id: "0@1",
+        timestamp: expect.any(Number),
+        deps: [],
+        lamport: 0,
+        msg: undefined,
+        ops: [
+          {
+            container: "cid:root-text:Text",
+            counter: 0,
+            content: {
+              type: "insert",
+              pos: 0,
+              text: "Hello",
+            },
+          },
+        ],
+      },
+    ]);
     done = true;
   });
   docB.import(snapshot);
   await Promise.resolve();
   expect(done).toBe(true);
-})
+});
 
 it("can revert to frontiers", () => {
   const doc = new LoroDoc();
@@ -1160,7 +1201,7 @@ it("can revert to frontiers", () => {
   doc.commit();
   doc.revertTo([{ peer: "1", counter: 1 }]);
   expect(doc.getText("text").toString()).toBe("He");
-})
+});
 
 it("can revert with child container recreation", () => {
   const doc = new LoroDoc();
@@ -1176,25 +1217,21 @@ it("can revert with child container recreation", () => {
   const vEmpty = doc.frontiers();
   doc.commit();
   expect(doc.toJSON()).toStrictEqual({
-    list: []
+    list: [],
   });
   for (let i = 0; i < 10; i++) {
     doc.revertTo(v);
     expect(doc.toJSON()).toStrictEqual({
-      list: [
-        "item1",
-        "item2",
-        "Hello"
-      ],
+      list: ["item1", "item2", "Hello"],
     });
     doc.revertTo(vEmpty);
     expect(doc.toJSON()).toStrictEqual({
-      list: []
+      list: [],
     });
   }
-  expect(doc.frontiers()).toStrictEqual([{ peer: "1", counter: 125 }])
-  expect(doc.export({ mode: "snapshot" }).length).toBe(570)
-})
+  expect(doc.frontiers()).toStrictEqual([{ peer: "1", counter: 125 }]);
+  expect(doc.export({ mode: "snapshot" }).length).toBe(570);
+});
 
 it("can diff two versions", () => {
   const doc = new LoroDoc();
@@ -1225,22 +1262,24 @@ it("can diff two versions", () => {
   doc.commit();
 
   const diff = doc.diff([], doc.frontiers());
-  expect(diff).toMatchSnapshot()
+  expect(diff).toMatchSnapshot();
 
   const doc2 = new LoroDoc();
   doc2.setPeerId("2");
   doc2.applyDiff(diff);
-  expect(doc2.toJSON()).toMatchSnapshot()
-  expect(doc2.getText("text").toDelta()).toStrictEqual(doc.getText("text").toDelta())
-})
+  expect(doc2.toJSON()).toMatchSnapshot();
+  expect(doc2.getText("text").toDelta()).toStrictEqual(
+    doc.getText("text").toDelta(),
+  );
+});
 
-it('the diff will deduplication', () => {
+it("the diff will deduplication", () => {
   const doc = new LoroDoc();
   const list = doc.getList("list");
   const map = doc.getMap("map");
   doc.getText("hi").insert(0, "Hello");
   for (let i = 0; i < 100; i += 1) {
-    list.push(1)
+    list.push(1);
     map.set(i.toString(), i);
     doc.setNextCommitMessage("hi " + i);
     doc.commit();
@@ -1251,7 +1290,7 @@ it('the diff will deduplication', () => {
   doc.commit();
 
   const diff = doc.diff([], doc.frontiers());
-  expect(diff).toMatchSnapshot()
+  expect(diff).toMatchSnapshot();
 });
 
 it("merge interval", async () => {
@@ -1261,24 +1300,24 @@ it("merge interval", async () => {
   doc.setChangeMergeInterval(1);
   doc.getText("text").update("Hello");
   doc.commit();
-  await new Promise(resolve => setTimeout(resolve, 100));
+  await new Promise((resolve) => setTimeout(resolve, 100));
   doc.getText("text").update("Hello world!");
   doc.commit();
-  await new Promise(resolve => setTimeout(resolve, 2000));
+  await new Promise((resolve) => setTimeout(resolve, 2000));
   doc.getText("text").update("Hello ABC!");
   doc.commit();
   const updates = doc.exportJsonUpdates();
   expect(updates.changes.length).toBe(2);
 
-  await new Promise(resolve => setTimeout(resolve, 2000));
+  await new Promise((resolve) => setTimeout(resolve, 2000));
   doc.getText("text").update("Hello");
   doc.commit();
-  await new Promise(resolve => setTimeout(resolve, 100));
+  await new Promise((resolve) => setTimeout(resolve, 100));
   doc.getText("text").update("Hello world!");
   doc.commit();
   const updates2 = doc.exportJsonUpdates();
   expect(updates2.changes.length).toBe(3);
-})
+});
 
 it("setRecordTimestamp should be reflected on current txn", async () => {
   const doc = new LoroDoc();
@@ -1293,7 +1332,7 @@ it("setRecordTimestamp should be reflected on current txn", async () => {
   doc.commit();
   const updates = doc.exportJsonUpdates();
   expect(updates.changes[1].timestamp).toBeGreaterThan(0);
-})
+});
 
 it("insert counter container", () => {
   function createItem(label: string, checked: boolean) {
@@ -1315,4 +1354,16 @@ it("insert counter container", () => {
 
   console.log(item.get("label").toString());
   console.log((item.get("checked") as LoroCounter).value);
-})
+});
+
+it("move tree nodes within the same parent", () => {
+  const doc = new LoroDoc();
+  const t = doc.getTree("myTree");
+  const root = t.createNode();
+  const child = root.createNode();
+  for (let i = 0; i < 16; i++) {
+    root.createNode();
+  }
+  child.data.set("test", "test");
+  child.move(root);
+});

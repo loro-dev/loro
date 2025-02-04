@@ -3040,3 +3040,19 @@ fn test_update_long_text() {
         .unwrap();
     assert_eq!(doc.get_text("text").to_string(), text);
 }
+
+#[test]
+fn test_loro_tree_move() {
+    let doc = LoroDoc::new();
+    let tree = doc.get_tree("myTree");
+    let root = tree.create(None).unwrap();
+    let child = tree.create(Some(root)).unwrap();
+    for _ in 0..16 {
+        tree.create(root).unwrap();
+    }
+    tree.get_meta(child)
+        .unwrap()
+        .insert("test", "test")
+        .unwrap();
+    tree.mov(child, root).unwrap();
+}

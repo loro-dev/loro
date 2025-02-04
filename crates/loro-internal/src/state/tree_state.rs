@@ -251,9 +251,12 @@ impl NodeChildren {
         match self {
             NodeChildren::Vec(v) => {
                 let mut btree = btree::ChildTree::new();
+                dbg!(&v);
                 for (pos, id) in v.drain(..) {
                     btree.insert_child(pos, id);
                 }
+
+                dbg!(&btree);
                 *self = NodeChildren::BTree(btree);
             }
             NodeChildren::BTree(_) => unreachable!(),
@@ -378,8 +381,6 @@ mod btree {
         pub(super) fn delete_child(&mut self, id: &TreeID) {
             if let Some(leaf) = self.id_to_leaf_index.remove(id) {
                 self.tree.remove_leaf(Cursor { leaf, offset: 0 });
-            } else {
-                panic!("The id is not in the tree");
             }
         }
 
@@ -693,7 +694,7 @@ impl TreeState {
         }
         if let Some(old_parent) = self.trees.get(&target).map(|x| x.parent) {
             // remove old position
-            self.delete_position(&old_parent, &target);
+            self.try_delete_position_cache(&old_parent, &target);
         }
 
         let entry = self.children.entry(parent).or_default();
@@ -905,7 +906,7 @@ impl TreeState {
     }
 
     /// Delete the position cache of the node
-    pub(crate) fn delete_position(&mut self, parent: &TreeParentId, target: &TreeID) {
+    pub(crate) fn try_delete_position_cache(&mut self, parent: &TreeParentId, target: &TreeID) {
         if let Some(x) = self.children.get_mut(parent) {
             x.delete_child(target);
         }
