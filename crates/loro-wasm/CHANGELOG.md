@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.4
+
+### Patch Changes
+
+- b58e6bd: fix: should be able to call subscription after diffing #637
+
 ## 1.3.3
 
 ### Patch Changes
