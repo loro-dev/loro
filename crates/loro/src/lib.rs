@@ -86,6 +86,10 @@ pub use counter::LoroCounter;
 
 /// `LoroDoc` is the entry for the whole document.
 /// When it's dropped, all the associated [`Handler`]s will be invalidated.
+///
+/// **Important:** Loro is a pure library and does not handle network protocols.
+/// It is the responsibility of the user to manage the storage, loading, and synchronization
+/// of the bytes exported by Loro in a manner suitable for their specific environment.
 #[derive(Debug)]
 pub struct LoroDoc {
     doc: InnerLoroDoc,

@@ -59,10 +59,10 @@ describe("loro tree", () => {
   it("getNodeByID", () => {
     const root = tree.createNode();
     const child = tree.createNode(root.id);
-    assertEquals(tree.getNodeByID(child.id).id, child.id);
+    assertEquals(tree.getNodeByID(child.id)!.id, child.id);
     tree.delete(child.id);
     assertEquals(child.isDeleted(), true);
-    assertEquals(tree.getNodeByID(child.id).id, child.id);
+    assertEquals(tree.getNodeByID(child.id)!.id, child.id);
   });
 
   it("parent", () => {
@@ -90,7 +90,7 @@ describe("loro tree", () => {
     const arr = tree2.toArray();
     expect(arr).toMatchSnapshot();
     assertEquals(arr.length, 1);
-    assertEquals(arr[0].children.length, 2)
+    assertEquals(arr[0].children.length, 2);
     const keys = Object.keys(arr[0]);
     assert(keys.includes("id"));
     assert(keys.includes("parent"));
@@ -107,11 +107,26 @@ describe("loro tree", () => {
     const child = root.createNode();
     const nodes = tree2.getNodes({ withDeleted: false });
     assertEquals(nodes.length, 2);
-    assertEquals(nodes.map((n) => { return n.id }), [root.id, child.id])
+    assertEquals(
+      nodes.map((n) => {
+        return n.id;
+      }),
+      [root.id, child.id],
+    );
     tree2.delete(child.id);
     const nodesWithDeleted = tree2.getNodes({ withDeleted: true });
-    assertEquals(nodesWithDeleted.map((n) => { return n.id }), [root.id, child.id]);
-    assertEquals(tree2.getNodes({ withDeleted: false }).map((n) => { return n.id }), [root.id]);
+    assertEquals(
+      nodesWithDeleted.map((n) => {
+        return n.id;
+      }),
+      [root.id, child.id],
+    );
+    assertEquals(
+      tree2.getNodes({ withDeleted: false }).map((n) => {
+        return n.id;
+      }),
+      [root.id],
+    );
   });
 
   it("subscribe", async () => {
@@ -222,7 +237,7 @@ describe("loro tree node", () => {
     });
     child2.move(child);
     loro.commit();
-    unsub()
+    unsub();
     assertEquals(child2.parent()!.id, child.id);
   });
 
@@ -251,7 +266,7 @@ describe("loro tree node", () => {
     assert(childrenKeys.includes("fractionalIndex"));
     assert(childrenKeys.includes("meta"));
     assert(childrenKeys.includes("children"));
-  })
+  });
 });
 
 function one_ms(): Promise<void> {
