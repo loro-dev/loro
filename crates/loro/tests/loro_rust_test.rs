@@ -3056,3 +3056,20 @@ fn test_loro_tree_move() {
         .unwrap();
     tree.mov(child, root).unwrap();
 }
+
+#[test]
+fn should_call_subscription_after_diff() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id((1));
+    doc.get_text("text").insert(0, "Hello").unwrap();
+    let mut called = false;
+    let sub = doc.subscribe_root(move |_| {
+        called = true;
+    });
+    doc.diff(&doc.state_frontiers(), &ID::new(0, 3).into())
+        .unwrap();
+
+    doc.get_text("text").insert(0, "Hello").unwrap();
+    doc.commit();
+    assert!(called);
+}

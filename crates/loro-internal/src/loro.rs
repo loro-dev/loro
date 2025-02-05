@@ -835,7 +835,12 @@ impl LoroDoc {
         self.commit_then_stop();
         let was_detached = self.is_detached();
         let old_frontiers = self.state_frontiers();
-        self.state.try_lock().unwrap().stop_and_clear_recording();
+        let was_recording = {
+            let mut state = self.state.try_lock().unwrap();
+            let is_recording = state.is_recording();
+            state.stop_and_clear_recording();
+            is_recording
+        };
         self.checkout_without_emitting(a, true).unwrap();
         self.state.try_lock().unwrap().start_recording();
         self.checkout_without_emitting(b, true).unwrap();
@@ -850,6 +855,9 @@ impl LoroDoc {
         if !was_detached {
             self.set_detached(false);
             self.renew_txn_if_auto_commit();
+        }
+        if was_recording {
+            self.state.try_lock().unwrap().start_recording();
         }
         Ok(DiffBatch::new(e))
     }
