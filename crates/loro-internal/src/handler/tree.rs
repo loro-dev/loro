@@ -629,6 +629,7 @@ impl TreeHandler {
                 LoroTreeError::TreeNodeDeletedOrNotExist(target),
             ));
         };
+
         if already_in_parent {
             self.delete_position(&parent, &target);
         }
@@ -947,7 +948,7 @@ impl TreeHandler {
         };
         a.with_state(|state| {
             let a = state.as_tree_state_mut().unwrap();
-            a.delete_position(parent, target)
+            a.try_delete_position_cache(parent, target)
         })
     }
 
