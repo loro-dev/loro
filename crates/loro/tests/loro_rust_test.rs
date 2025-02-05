@@ -3061,14 +3061,15 @@ fn test_loro_tree_move() {
 fn should_call_subscription_after_diff() {
     use std::sync::atomic::{AtomicBool, Ordering};
     let doc = LoroDoc::new();
-    doc.set_peer_id(1);
+    doc.set_peer_id(1).unwrap();
     doc.get_text("text").insert(0, "Hello").unwrap();
     let called = Arc::new(AtomicBool::new(false));
     let called_clone = called.clone();
     let sub = doc.subscribe_root(Arc::new(move |_| {
         called_clone.store(true, Ordering::SeqCst);
     }));
-    doc.diff(&doc.state_frontiers(), &ID::new(0, 3).into())
+    sub.detach();
+    doc.diff(&doc.state_frontiers(), &ID::new(1, 3).into())
         .unwrap();
 
     doc.get_text("text").insert(0, "Hello").unwrap();
