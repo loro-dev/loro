@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.3
+
+### Patch Changes
+
+- 8fdb25e: fix: move tree node within the self parent with 16 siblings #635
+
 ## 1.3.2
 
 ### Patch Changes
