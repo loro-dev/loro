@@ -102,7 +102,7 @@ it("basic sync example", () => {
 
 it("basic events", () => {
   const doc = new LoroDoc();
-  doc.subscribe((event) => {});
+  doc.subscribe((event) => { });
   const list = doc.getList("list");
 });
 
@@ -1366,4 +1366,30 @@ it("move tree nodes within the same parent", () => {
   }
   child.data.set("test", "test");
   child.move(root);
+});
+
+it("should call subscription after diff", async () => {
+  const doc = new LoroDoc();
+  const tree = doc.getTree("tree");
+  doc.commit();
+  await Promise.resolve();
+
+  const v0 = doc.version();
+  const parent = tree.createNode();
+  let called = false;
+  const child = tree.createNode(parent.id);
+  child.data.subscribe(() => {
+    called = true;
+  });
+
+  // seems to break the subscription
+  doc.diff(doc.vvToFrontiers(doc.version()), doc.vvToFrontiers(v0));
+
+  child.data.set("type", "Hi there");
+  doc.commit();
+
+  await Promise.resolve();
+
+  expect(child.data.get("type")).toBe("Hi there");
+  expect(called).toBe(true);
 });
