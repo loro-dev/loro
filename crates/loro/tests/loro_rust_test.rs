@@ -3058,6 +3058,19 @@ fn test_loro_tree_move() {
 }
 
 #[test]
+fn test_export_json_updates_in_shallow_snapshot() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    doc.get_text("text").insert(0, "123").unwrap();
+    let snapshot = doc
+        .export(ExportMode::shallow_snapshot_since(ID::new(1, 2)))
+        .unwrap();
+    let new_doc = LoroDoc::new();
+    new_doc.import(&snapshot).unwrap();
+    new_doc.export_json_updates(&Default::default(), &new_doc.oplog_vv());
+}
+
+#[test]
 fn should_call_subscription_after_diff() {
     use std::sync::atomic::{AtomicBool, Ordering};
     let doc = LoroDoc::new();

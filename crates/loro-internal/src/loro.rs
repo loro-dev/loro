@@ -570,6 +570,27 @@ impl LoroDoc {
     ) -> JsonSchema {
         self.commit_then_stop();
         let oplog = self.oplog.try_lock().unwrap();
+        let mut start_vv = start_vv;
+        let _temp: Option<VersionVector>;
+        if !oplog.dag.shallow_since_vv().is_empty() {
+            // Make sure that start_vv >= shallow_since_vv
+            let mut include_all = true;
+            for (peer, counter) in oplog.dag.shallow_since_vv().iter() {
+                if start_vv.get(peer).unwrap_or(&0) < counter {
+                    include_all = false;
+                    break;
+                }
+            }
+            if !include_all {
+                let mut vv = start_vv.clone();
+                for (&peer, &counter) in oplog.dag.shallow_since_vv().iter() {
+                    vv.extend_to_include_end_id(ID::new(peer, counter));
+                }
+                _temp = Some(vv);
+                start_vv = _temp.as_ref().unwrap();
+            }
+        }
+
         let json = crate::encoding::json_schema::export_json(
             &oplog,
             start_vv,
