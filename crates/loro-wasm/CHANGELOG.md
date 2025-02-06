@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.5
+
+### Patch Changes
+
+- c2a61f3: fix: improve shallow snapshot and JSON export handling #639
+
 ## 1.3.4
 
 ### Patch Changes
