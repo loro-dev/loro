@@ -3069,3 +3069,23 @@ fn test_export_json_updates_in_shallow_snapshot() {
     new_doc.import(&snapshot).unwrap();
     new_doc.export_json_updates(&Default::default(), &new_doc.oplog_vv());
 }
+
+#[test]
+fn should_call_subscription_after_diff() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    doc.get_text("text").insert(0, "Hello").unwrap();
+    let called = Arc::new(AtomicBool::new(false));
+    let called_clone = called.clone();
+    let sub = doc.subscribe_root(Arc::new(move |_| {
+        called_clone.store(true, Ordering::SeqCst);
+    }));
+    sub.detach();
+    doc.diff(&doc.state_frontiers(), &ID::new(1, 3).into())
+        .unwrap();
+
+    doc.get_text("text").insert(0, "Hello").unwrap();
+    doc.commit();
+    assert!(called.load(Ordering::SeqCst));
+}
