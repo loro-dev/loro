@@ -297,12 +297,18 @@ impl ChangeStore {
             Bound::Excluded(id_span.id_end()),
         );
         let mut inner = self.inner.try_lock().unwrap();
-        let start_counter = inner
-            .mem_parsed_kv
-            .range(..=id_span.id_start())
-            .next_back()
-            .map(|(id, _)| id.counter)
-            .unwrap_or(0);
+        let next_back = inner.mem_parsed_kv.range(..=id_span.id_start()).next_back();
+        match next_back {
+            None => {
+                return vec![];
+            }
+            Some(next_back) => {
+                if next_back.0.peer != id_span.peer {
+                    return vec![];
+                }
+            }
+        }
+        let start_counter = next_back.map(|(id, _)| id.counter).unwrap_or(0);
         let ans = inner
             .mem_parsed_kv
             .range_mut(
@@ -350,6 +356,7 @@ impl ChangeStore {
         {
             if !v.is_empty() {
                 assert_eq!(v[0].0.peer, id_span.peer);
+                assert_eq!(v.last().unwrap().0.peer, id_span.peer);
                 {
                     // Test start
                     let (block, start, _end) = v.first().unwrap();
