@@ -1632,12 +1632,34 @@ impl DocState {
             }
         };
 
-        let parent_state = self.store.get_container_mut(parent_idx)?;
+        let parent_state = self.store.get_or_create_mut(parent_idx);
         let index = path.last().unwrap();
         let value: LoroValue = match parent_state {
             State::ListState(l) => l.get(*index.as_seq()?).cloned()?,
             State::MovableListState(l) => l.get(*index.as_seq()?, IndexType::ForUser).cloned()?,
-            State::MapState(m) => m.get(index.as_key()?).cloned()?,
+            State::MapState(m) => {
+                if let Some(key) = index.as_key() {
+                    m.get(key).cloned()?
+                } else if let CurContainer::TreeNode { tree, node } = state_idx {
+                    match index {
+                        Index::Seq(index) => {
+                            let tree_state =
+                                self.store.get_container_mut(tree)?.as_tree_state().unwrap();
+                            let parent: TreeParentId = if let Some(node) = node {
+                                node.into()
+                            } else {
+                                TreeParentId::Root
+                            };
+                            let child = tree_state.get_children(&parent)?.nth(*index)?;
+                            child.associated_meta_container().into()
+                        }
+                        Index::Node(id) => id.associated_meta_container().into(),
+                        _ => return None,
+                    }
+                } else {
+                    return None;
+                }
+            }
             State::RichtextState(s) => {
                 let s = s.to_string_mut();
                 s.chars()

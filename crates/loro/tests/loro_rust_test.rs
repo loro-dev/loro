@@ -15,8 +15,8 @@ use loro::{
     awareness::Awareness,
     event::{Diff, DiffBatch, ListDiffItem},
     loro_value, CommitOptions, ContainerID, ContainerTrait, ContainerType, ExportMode, Frontiers,
-    FrontiersNotIncluded, IdSpan, LoroDoc, LoroError, LoroList, LoroMap, LoroStringValue, LoroText,
-    LoroValue, ToJson,
+    FrontiersNotIncluded, IdSpan, Index, LoroDoc, LoroError, LoroList, LoroMap, LoroStringValue,
+    LoroText, LoroValue, ToJson, TreeParentId,
 };
 use loro_internal::{
     encoding::EncodedBlobMode, handler::TextDelta, id::ID, version_range, vv, LoroResult,
@@ -3088,4 +3088,130 @@ fn should_call_subscription_after_diff() {
     doc.get_text("text").insert(0, "Hello").unwrap();
     doc.commit();
     assert!(called.load(Ordering::SeqCst));
+}
+
+#[test]
+fn test_get_value_by_path() {
+    let doc = LoroDoc::new();
+    let tree = doc.get_tree("tree");
+
+    // Create a tree structure:
+    // root
+    //  |- child1
+    //  |   |- grandchild
+    //  |- child2
+    let root = tree.create(TreeParentId::Root).unwrap();
+    let child1 = tree.create(TreeParentId::Node(root)).unwrap();
+    let child2 = tree.create(TreeParentId::Node(root)).unwrap();
+    let grandchild = tree.create(TreeParentId::Node(child1)).unwrap();
+
+    // Set metadata for each node
+    tree.get_meta(root).unwrap().insert("name", "root").unwrap();
+    tree.get_meta(child1)
+        .unwrap()
+        .insert("name", "child1")
+        .unwrap();
+    tree.get_meta(child2)
+        .unwrap()
+        .insert("name", "child2")
+        .unwrap();
+    tree.get_meta(grandchild)
+        .unwrap()
+        .insert("name", "grandchild")
+        .unwrap();
+
+    // Test accessing nodes by index
+    let path = vec![
+        Index::Key("tree".into()),
+        Index::Seq(0), // root
+        Index::Seq(0), // child1
+        Index::Seq(0), // grandchild
+    ];
+    let value = doc.get_by_path(&path).unwrap();
+    let map = value.into_container().unwrap().into_map().unwrap();
+    assert_eq!(
+        map.get("name")
+            .unwrap()
+            .as_value()
+            .unwrap()
+            .as_string()
+            .unwrap()
+            .as_str(),
+        "grandchild"
+    );
+
+    // Test accessing nodes by ID
+    let path = vec![
+        Index::Key("tree".into()),
+        Index::Node(root),
+        Index::Node(child1),
+        Index::Node(grandchild),
+    ];
+    let value = doc.get_by_path(&path).unwrap();
+    let map = value.into_container().unwrap().into_map().unwrap();
+    assert_eq!(
+        map.get("name")
+            .unwrap()
+            .as_value()
+            .unwrap()
+            .as_string()
+            .unwrap()
+            .as_str(),
+        "grandchild"
+    );
+
+    // Test accessing node metadata directly
+    let path = vec![
+        Index::Key("tree".into()),
+        Index::Node(root),
+        Index::Key("name".into()),
+    ];
+    let value = doc.get_by_path(&path).unwrap();
+    assert_eq!(
+        value.into_value().unwrap().as_string().unwrap().as_str(),
+        "root"
+    );
+
+    // Test accessing node metadata through index
+    let path = vec![
+        Index::Key("tree".into()),
+        Index::Seq(0), // root
+        Index::Key("name".into()),
+    ];
+    let value = doc.get_by_path(&path).unwrap();
+    assert_eq!(
+        value.into_value().unwrap().as_string().unwrap().as_str(),
+        "root"
+    );
+}
+
+#[test]
+fn test_by_str_path() {
+    let doc = LoroDoc::new();
+    let tree = doc.get_tree("tree");
+    let root = tree.create(TreeParentId::Root).unwrap();
+    let child = tree.create(TreeParentId::Node(root)).unwrap();
+    let grandchild = tree.create(TreeParentId::Node(child)).unwrap();
+    tree.get_meta(grandchild)
+        .unwrap()
+        .insert("type", "grandChild")
+        .unwrap();
+    let container = doc.get_by_str_path("tree/0/0/0").unwrap();
+    assert!(container.is_container());
+    let map = container.into_container().unwrap().into_map().unwrap();
+    assert_eq!(
+        map.get("type")
+            .unwrap()
+            .as_value()
+            .unwrap()
+            .as_string()
+            .unwrap()
+            .as_str(),
+        "grandChild"
+    );
+    let value = doc.get_by_str_path("tree/0/0/0/type").unwrap();
+    assert_eq!(
+        value.into_value().unwrap().as_string().unwrap().as_str(),
+        "grandChild"
+    );
 }
