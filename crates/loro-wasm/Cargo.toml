@@ -8,6 +8,9 @@ repository = "https://github.com/loro-dev/loro/"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[package.metadata.release]
+release = false
+
 [dependencies]
 js-sys = "0.3.60"
 loro-internal = { path = "../loro-internal", features = [

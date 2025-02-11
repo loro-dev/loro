@@ -685,7 +685,7 @@ dependencies = [
  "dev-utils",
  "ensure-cov",
  "flate2",
- "loro 1.3.2",
+ "loro 1.3.5",
  "rand",
  "serde_json",
  "tabled 0.15.0",
@@ -742,7 +742,7 @@ dependencies = [
  "loro 0.16.12",
  "loro 0.16.2 (git+https://github.com/loro-dev/loro.git?tag=loro-crdt%400.16.7)",
  "loro 0.16.2 (git+https://github.com/loro-dev/loro.git?rev=90470658435ec4c62b5af59ebb82fe9e1f5aa761)",
- "loro 1.3.2",
+ "loro 1.3.5",
  "num_cpus",
  "pretty_assertions",
  "rand",
@@ -1113,7 +1113,7 @@ dependencies = [
 
 [[package]]
 name = "loro"
-version = "1.3.2"
+version = "1.3.5"
 dependencies = [
  "anyhow",
  "ctor 0.2.9",
@@ -1123,7 +1123,7 @@ dependencies = [
  "generic-btree",
  "loro-common 1.3.1",
  "loro-delta 1.3.1",
- "loro-internal 1.3.2",
+ "loro-internal 1.3.5",
  "loro-kv-store 1.3.1",
  "pretty_assertions",
  "rand",
@@ -1255,7 +1255,7 @@ dependencies = [
 name = "loro-ffi"
 version = "1.3.5"
 dependencies = [
- "loro 1.3.2",
+ "loro 1.3.5",
  "serde_json",
 ]
 
@@ -1372,7 +1372,7 @@ dependencies = [
 
 [[package]]
 name = "loro-internal"
-version = "1.3.2"
+version = "1.3.5"
 dependencies = [
  "append-only-bytes",
  "arbitrary",
@@ -1528,7 +1528,7 @@ dependencies = [
  "js-sys",
  "loro-common 1.3.1",
  "loro-delta 1.3.1",
- "loro-internal 1.3.2",
+ "loro-internal 1.3.5",
  "loro-rle 1.2.7",
  "serde",
  "serde-wasm-bindgen",
