@@ -89,10 +89,10 @@ pub enum TextDelta {
     },
 }
 
-impl From<TextDelta> for loro_internal::handler::TextDelta {
+impl From<TextDelta> for loro::TextDelta {
     fn from(value: TextDelta) -> Self {
         match value {
-            TextDelta::Retain { retain, attributes } => loro_internal::handler::TextDelta::Retain {
+            TextDelta::Retain { retain, attributes } => loro::TextDelta::Retain {
                 retain: retain as usize,
                 attributes: attributes.as_ref().map(|a| {
                     a.iter()
@@ -100,7 +100,7 @@ impl From<TextDelta> for loro_internal::handler::TextDelta {
                         .collect()
                 }),
             },
-            TextDelta::Insert { insert, attributes } => loro_internal::handler::TextDelta::Insert {
+            TextDelta::Insert { insert, attributes } => loro::TextDelta::Insert {
                 insert,
                 attributes: attributes.as_ref().map(|a| {
                     a.iter()
@@ -108,7 +108,7 @@ impl From<TextDelta> for loro_internal::handler::TextDelta {
                         .collect()
                 }),
             },
-            TextDelta::Delete { delete } => loro_internal::handler::TextDelta::Delete {
+            TextDelta::Delete { delete } => loro::TextDelta::Delete {
                 delete: delete as usize,
             },
         }

@@ -1,6 +1,6 @@
 [package]
 name = "loro-ffi"
-version = "1.3.2"
+version = "1.3.5"
 edition = "2021"
 license = "MIT"
 publish = false
@@ -9,5 +9,4 @@ publish = false
 
 [dependencies]
 loro = { path = "../loro", features = ["counter", "jsonpath"] }
-loro-internal = { path = "../loro-internal", features = ["counter", "jsonpath"] }
 serde_json = { workspace = true }

@@ -1253,10 +1253,9 @@ dependencies = [
 
 [[package]]
 name = "loro-ffi"
-version = "1.3.2"
+version = "1.3.5"
 dependencies = [
  "loro 1.3.2",
- "loro-internal 1.3.2",
  "serde_json",
 ]
 

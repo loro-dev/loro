@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use loro::{ContainerTrait, LoroError, LoroResult, LoroTreeError, TreeID, ID};
 
-use crate::{ContainerID, LoroValue};
+use crate::{ContainerID, LoroDoc, LoroValue};
 
 use super::LoroMap;
 
@@ -15,13 +15,13 @@ pub enum TreeParentId {
 
 #[derive(Debug, Clone)]
 pub struct LoroTree {
-    pub(crate) tree: loro::LoroTree,
+    pub(crate) inner: loro::LoroTree,
 }
 
 impl LoroTree {
     pub fn new() -> Self {
         Self {
-            tree: loro::LoroTree::new(),
+            inner: loro::LoroTree::new(),
         }
     }
 
@@ -30,14 +30,14 @@ impl LoroTree {
     /// The edits on a detached container will not be persisted.
     /// To attach the container to the document, please insert it into an attached container.
     pub fn is_attached(&self) -> bool {
-        self.tree.is_attached()
+        self.inner.is_attached()
     }
 
     /// If a detached container is attached, this method will return its corresponding attached handler.
     pub fn get_attached(&self) -> Option<Arc<LoroTree>> {
-        self.tree
+        self.inner
             .get_attached()
-            .map(|x| Arc::new(LoroTree { tree: x }))
+            .map(|x| Arc::new(LoroTree { inner: x }))
     }
 
     /// Create a new tree node and return the [`TreeID`].
@@ -58,7 +58,7 @@ impl LoroTree {
     /// let child = tree.create(root).unwrap();
     /// ```
     pub fn create(&self, parent: TreeParentId) -> LoroResult<TreeID> {
-        self.tree.create(parent)
+        self.inner.create(parent)
     }
 
     /// Create a new tree node at the given index and return the [`TreeID`].
@@ -66,11 +66,11 @@ impl LoroTree {
     /// If the `parent` is `None`, the created node is the root of a tree.
     /// If the `index` is greater than the number of children of the parent, error will be returned.
     pub fn create_at(&self, parent: TreeParentId, index: u32) -> LoroResult<TreeID> {
-        self.tree.create_at(parent, index as usize)
+        self.inner.create_at(parent, index as usize)
     }
 
     pub fn roots(&self) -> Vec<TreeID> {
-        self.tree.roots()
+        self.inner.roots()
     }
 
     /// Move the `target` node to be a child of the `parent` node.
@@ -90,23 +90,23 @@ impl LoroTree {
     /// tree.mov(root2, root).unwrap();
     /// ```
     pub fn mov(&self, target: TreeID, parent: TreeParentId) -> LoroResult<()> {
-        self.tree.mov(target, parent)
+        self.inner.mov(target, parent)
     }
 
     /// Move the `target` node to be a child of the `parent` node at the given index.
     /// If the `parent` is `None`, the `target` node will be a root.
     pub fn mov_to(&self, target: TreeID, parent: TreeParentId, to: u32) -> LoroResult<()> {
-        self.tree.mov_to(target, parent, to as usize)
+        self.inner.mov_to(target, parent, to as usize)
     }
 
     /// Move the `target` node to be a child after the `after` node with the same parent.
     pub fn mov_after(&self, target: TreeID, after: TreeID) -> LoroResult<()> {
-        self.tree.mov_after(target, after)
+        self.inner.mov_after(target, after)
     }
 
     /// Move the `target` node to be a child before the `before` node with the same parent.
     pub fn mov_before(&self, target: TreeID, before: TreeID) -> LoroResult<()> {
-        self.tree.mov_before(target, before)
+        self.inner.mov_before(target, before)
     }
 
     /// Delete a tree node.
@@ -125,7 +125,7 @@ impl LoroTree {
     /// tree.delete(root).unwrap();
     /// ```
     pub fn delete(&self, target: TreeID) -> LoroResult<()> {
-        self.tree.delete(target)
+        self.inner.delete(target)
     }
 
     /// Get the associated metadata map handler of a tree node.
@@ -141,9 +141,9 @@ impl LoroTree {
     /// root_meta.insert("color", "red");
     /// ```
     pub fn get_meta(&self, target: TreeID) -> LoroResult<Arc<LoroMap>> {
-        self.tree
+        self.inner
             .get_meta(target)
-            .map(|h| Arc::new(LoroMap { map: h }))
+            .map(|h| Arc::new(LoroMap { inner: h }))
     }
 
     /// Return the parent of target node.
@@ -151,7 +151,7 @@ impl LoroTree {
     /// - If the target node does not exist, throws Error.
     /// - If the target node is a root node, return `None`.
     pub fn parent(&self, target: TreeID) -> LoroResult<TreeParentId> {
-        if let Some(p) = self.tree.parent(target) {
+        if let Some(p) = self.inner.parent(target) {
             Ok(p.into())
         } else {
             Err(LoroError::TreeError(LoroTreeError::TreeNodeNotExist(
@@ -162,7 +162,7 @@ impl LoroTree {
 
     /// Return whether target node exists.
     pub fn contains(&self, target: TreeID) -> bool {
-        self.tree.contains(target)
+        self.inner.contains(target)
     }
 
     /// Return whether target node is deleted.
@@ -171,34 +171,34 @@ impl LoroTree {
     ///
     /// - If the target node does not exist, return `LoroTreeError::TreeNodeNotExist`.
     pub fn is_node_deleted(&self, target: TreeID) -> LoroResult<bool> {
-        self.tree.is_node_deleted(&target)
+        self.inner.is_node_deleted(&target)
     }
 
     /// Return all nodes, including deleted nodes
     pub fn nodes(&self) -> Vec<TreeID> {
-        self.tree.nodes()
+        self.inner.nodes()
     }
 
     /// Return all children of the target node.
     ///
     /// If the parent node does not exist, return `None`.
     pub fn children(&self, parent: TreeParentId) -> Option<Vec<TreeID>> {
-        self.tree.children(parent)
+        self.inner.children(parent)
     }
 
     /// Return the number of children of the target node.
     pub fn children_num(&self, parent: TreeParentId) -> Option<u32> {
-        self.tree.children_num(parent).map(|v| v as u32)
+        self.inner.children_num(parent).map(|v| v as u32)
     }
 
     /// Return container id of the tree.
     pub fn id(&self) -> ContainerID {
-        self.tree.id().into()
+        self.inner.id().into()
     }
 
     /// Return the fractional index of the target node with hex format.
     pub fn fractional_index(&self, target: TreeID) -> Option<String> {
-        self.tree.fractional_index(target)
+        self.inner.fractional_index(target)
     }
 
     /// Return the flat array of the forest.
@@ -206,17 +206,17 @@ impl LoroTree {
     /// Note: the metadata will be not resolved. So if you don't only care about hierarchy
     /// but also the metadata, you should use [TreeHandler::get_value_with_meta()].
     pub fn get_value(&self) -> LoroValue {
-        self.tree.get_value().into()
+        self.inner.get_value().into()
     }
 
     /// Return the flat array of the forest, each node is with metadata.
     pub fn get_value_with_meta(&self) -> LoroValue {
-        self.tree.get_value_with_meta().into()
+        self.inner.get_value_with_meta().into()
     }
 
     /// Whether the fractional index is enabled.
     pub fn is_fractional_index_enabled(&self) -> bool {
-        self.tree.is_fractional_index_enabled()
+        self.inner.is_fractional_index_enabled()
     }
 
     /// Enable fractional index for Tree Position.
@@ -228,22 +228,26 @@ impl LoroTree {
     /// [Read more about it](https://www.loro.dev/blog/movable-tree#implementation-and-encoding-size)
     #[inline]
     pub fn enable_fractional_index(&self, jitter: u8) {
-        self.tree.enable_fractional_index(jitter);
+        self.inner.enable_fractional_index(jitter);
     }
 
     /// Disable the fractional index generation for Tree Position when
     /// you don't need the Tree's siblings to be sorted. The fractional index will be always default.
     #[inline]
     pub fn disable_fractional_index(&self) {
-        self.tree.disable_fractional_index();
+        self.inner.disable_fractional_index();
     }
 
     pub fn is_deleted(&self) -> bool {
-        self.tree.is_deleted()
+        self.inner.is_deleted()
     }
 
     pub fn get_last_move_id(&self, target: &TreeID) -> Option<ID> {
-        self.tree.get_last_move_id(target)
+        self.inner.get_last_move_id(target)
+    }
+
+    pub fn doc(&self) -> Option<Arc<LoroDoc>> {
+        self.inner.doc().map(|x| Arc::new(LoroDoc { doc: x }))
     }
 }
 

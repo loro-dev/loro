@@ -7,7 +7,7 @@ use tracing::debug;
 
 use crate::{
     container::list::list_op::InnerListOp,
-    dag::{Dag, DagUtils},
+    dag::DagUtils,
     encoding::fast_snapshot::{Snapshot, _encode_snapshot},
     state::container_store::FRONTIERS_KEY,
     version::Frontiers,
@@ -44,6 +44,7 @@ pub(crate) fn export_shallow_snapshot_inner(
 
     #[cfg(debug_assertions)]
     {
+        use crate::dag::Dag;
         if !start_from.is_empty() {
             assert!(start_from.len() == 1);
             let id = start_from.as_single().unwrap();
