@@ -6,9 +6,7 @@ use std::{
 
 use loro::{EventTriggerKind, FractionalIndex, TreeID};
 
-use crate::{
-    convert_trait_to_v_or_container, ContainerID, LoroValue, TreeParentId, ValueOrContainer,
-};
+use crate::{ContainerID, LoroValue, TreeParentId, ValueOrContainer};
 
 pub trait Subscriber: Sync + Send {
     fn on_diff(&self, diff: DiffEvent);
@@ -89,10 +87,10 @@ pub enum TextDelta {
     },
 }
 
-impl From<TextDelta> for loro_internal::handler::TextDelta {
+impl From<TextDelta> for loro::TextDelta {
     fn from(value: TextDelta) -> Self {
         match value {
-            TextDelta::Retain { retain, attributes } => loro_internal::handler::TextDelta::Retain {
+            TextDelta::Retain { retain, attributes } => loro::TextDelta::Retain {
                 retain: retain as usize,
                 attributes: attributes.as_ref().map(|a| {
                     a.iter()
@@ -100,7 +98,7 @@ impl From<TextDelta> for loro_internal::handler::TextDelta {
                         .collect()
                 }),
             },
-            TextDelta::Insert { insert, attributes } => loro_internal::handler::TextDelta::Insert {
+            TextDelta::Insert { insert, attributes } => loro::TextDelta::Insert {
                 insert,
                 attributes: attributes.as_ref().map(|a| {
                     a.iter()
@@ -108,7 +106,7 @@ impl From<TextDelta> for loro_internal::handler::TextDelta {
                         .collect()
                 }),
             },
-            TextDelta::Delete { delete } => loro_internal::handler::TextDelta::Delete {
+            TextDelta::Delete { delete } => loro::TextDelta::Delete {
                 delete: delete as usize,
             },
         }
@@ -145,10 +143,7 @@ impl From<ListDiffItem> for loro::event::ListDiffItem {
     fn from(value: ListDiffItem) -> Self {
         match value {
             ListDiffItem::Insert { insert, is_move } => loro::event::ListDiffItem::Insert {
-                insert: insert
-                    .into_iter()
-                    .map(convert_trait_to_v_or_container)
-                    .collect(),
+                insert: insert.into_iter().map(|v| v.into()).collect(),
                 is_move,
             },
             ListDiffItem::Delete { delete } => loro::event::ListDiffItem::Delete {
@@ -167,7 +162,7 @@ impl From<MapDelta> for loro::event::MapDelta<'static> {
             updated: value
                 .updated
                 .into_iter()
-                .map(|(k, v)| (Cow::Owned(k), v.map(convert_trait_to_v_or_container)))
+                .map(|(k, v)| (Cow::Owned(k), v.map(|v| v.into())))
                 .collect(),
         }
     }
@@ -215,7 +210,7 @@ pub enum ListDiffItem {
     /// Insert a new element into the list.
     Insert {
         /// The new elements to insert.
-        insert: Vec<Arc<dyn ValueOrContainer>>,
+        insert: Vec<ValueOrContainer>,
         /// Whether the new elements are created by moving
         is_move: bool,
     },
@@ -235,7 +230,7 @@ pub enum ListDiffItem {
 
 pub struct MapDelta {
     /// All the updated keys and their new values.
-    pub updated: HashMap<String, Option<Arc<dyn ValueOrContainer>>>,
+    pub updated: HashMap<String, Option<ValueOrContainer>>,
 }
 
 pub struct TreeDiff {
@@ -318,7 +313,7 @@ impl From<&loro::event::Diff<'_>> for Diff {
                         loro::event::ListDiffItem::Insert { insert, is_move } => {
                             let mut new_insert = Vec::with_capacity(insert.len());
                             for v in insert.iter() {
-                                new_insert.push(Arc::new(v.clone()) as Arc<dyn ValueOrContainer>);
+                                new_insert.push(v.clone().into());
                             }
                             ans.push(ListDiffItem::Insert {
                                 insert: new_insert,
@@ -345,12 +340,7 @@ impl From<&loro::event::Diff<'_>> for Diff {
             loro::event::Diff::Map(m) => {
                 let mut updated = HashMap::new();
                 for (key, value) in m.updated.iter() {
-                    updated.insert(
-                        key.to_string(),
-                        value
-                            .as_ref()
-                            .map(|v| Arc::new(v.clone()) as Arc<dyn ValueOrContainer>),
-                    );
+                    updated.insert(key.to_string(), value.as_ref().map(|v| v.clone().into()));
                 }
 
                 Diff::Map {

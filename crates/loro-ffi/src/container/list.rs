@@ -2,19 +2,19 @@ use std::{ops::Deref, sync::Arc};
 
 use loro::{cursor::Side, ContainerTrait, LoroList as InnerLoroList, LoroResult, ID};
 
-use crate::{ContainerID, LoroValue, LoroValueLike, ValueOrContainer};
+use crate::{ContainerID, LoroDoc, LoroValue, LoroValueLike, ValueOrContainer};
 
 use super::{LoroCounter, LoroMap, LoroMovableList, LoroText, LoroTree};
 
 #[derive(Debug, Clone)]
 pub struct LoroList {
-    pub(crate) list: InnerLoroList,
+    pub(crate) inner: InnerLoroList,
 }
 
 impl LoroList {
     pub fn new() -> Self {
         Self {
-            list: InnerLoroList::new(),
+            inner: InnerLoroList::new(),
         }
     }
 
@@ -23,39 +23,37 @@ impl LoroList {
     /// The edits on a detached container will not be persisted.
     /// To attach the container to the document, please insert it into an attached container.
     pub fn is_attached(&self) -> bool {
-        self.list.is_attached()
+        self.inner.is_attached()
     }
 
     /// If a detached container is attached, this method will return its corresponding attached handler.
     pub fn get_attached(&self) -> Option<Arc<LoroList>> {
-        self.list
+        self.inner
             .get_attached()
-            .map(|x| Arc::new(LoroList { list: x }))
+            .map(|x| Arc::new(LoroList { inner: x }))
     }
 
     /// Insert a value at the given position.
     pub fn insert(&self, pos: u32, v: Arc<dyn LoroValueLike>) -> LoroResult<()> {
-        self.list.insert(pos as usize, v.as_loro_value())
+        self.inner.insert(pos as usize, v.as_loro_value())
     }
 
     /// Delete values at the given position.
     #[inline]
     pub fn delete(&self, pos: u32, len: u32) -> LoroResult<()> {
-        self.list.delete(pos as usize, len as usize)
+        self.inner.delete(pos as usize, len as usize)
     }
 
     /// Get the value at the given position.
     #[inline]
-    pub fn get(&self, index: u32) -> Option<Arc<dyn ValueOrContainer>> {
-        self.list
-            .get(index as usize)
-            .map(|v| Arc::new(v) as Arc<dyn ValueOrContainer>)
+    pub fn get(&self, index: u32) -> Option<ValueOrContainer> {
+        self.inner.get(index as usize).map(|v| v.into())
     }
 
     /// Get the deep value of the container.
     #[inline]
     pub fn get_deep_value(&self) -> LoroValue {
-        self.list.get_deep_value().into()
+        self.inner.get_deep_value().into()
     }
 
     /// Get the shallow value of the container.
@@ -63,43 +61,43 @@ impl LoroList {
     /// This does not convert the state of sub-containers; instead, it represents them as [LoroValue::Container].
     #[inline]
     pub fn get_value(&self) -> LoroValue {
-        self.list.get_value().into()
+        self.inner.get_value().into()
     }
 
     /// Get the ID of the container.
     #[inline]
     pub fn id(&self) -> ContainerID {
-        self.list.id().into()
+        self.inner.id().into()
     }
 
     #[inline]
     pub fn len(&self) -> u32 {
-        self.list.len() as u32
+        self.inner.len() as u32
     }
 
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.list.is_empty()
+        self.inner.is_empty()
     }
 
     /// Pop the last element of the list.
     #[inline]
     pub fn pop(&self) -> LoroResult<Option<LoroValue>> {
-        self.list.pop().map(|v| v.map(|v| v.into()))
+        self.inner.pop().map(|v| v.map(|v| v.into()))
     }
 
     #[inline]
     pub fn push(&self, v: Arc<dyn LoroValueLike>) -> LoroResult<()> {
-        self.list.push(v.as_loro_value())
+        self.inner.push(v.as_loro_value())
     }
 
     /// Iterate over the elements of the list.
     // TODO: wrap it in ffi side
-    pub fn for_each<I>(&self, f: I)
+    pub fn for_each<I>(&self, mut f: I)
     where
-        I: FnMut(loro::ValueOrContainer),
+        I: FnMut(ValueOrContainer),
     {
-        self.list.for_each(f)
+        self.inner.for_each(|v| f(v.into()))
     }
 
     /// Push a container to the list.
@@ -116,17 +114,17 @@ impl LoroList {
         child: Arc<LoroList>,
     ) -> LoroResult<Arc<LoroList>> {
         let c = self
-            .list
-            .insert_container(pos as usize, child.as_ref().clone().list)?;
-        Ok(Arc::new(LoroList { list: c }))
+            .inner
+            .insert_container(pos as usize, child.as_ref().clone().inner)?;
+        Ok(Arc::new(LoroList { inner: c }))
     }
 
     #[inline]
     pub fn insert_map_container(&self, pos: u32, child: Arc<LoroMap>) -> LoroResult<Arc<LoroMap>> {
         let c = self
-            .list
-            .insert_container(pos as usize, child.as_ref().clone().map)?;
-        Ok(Arc::new(LoroMap { map: c }))
+            .inner
+            .insert_container(pos as usize, child.as_ref().clone().inner)?;
+        Ok(Arc::new(LoroMap { inner: c }))
     }
 
     #[inline]
@@ -136,9 +134,9 @@ impl LoroList {
         child: Arc<LoroText>,
     ) -> LoroResult<Arc<LoroText>> {
         let c = self
-            .list
-            .insert_container(pos as usize, child.as_ref().clone().text)?;
-        Ok(Arc::new(LoroText { text: c }))
+            .inner
+            .insert_container(pos as usize, child.as_ref().clone().inner)?;
+        Ok(Arc::new(LoroText { inner: c }))
     }
 
     #[inline]
@@ -148,9 +146,9 @@ impl LoroList {
         child: Arc<LoroTree>,
     ) -> LoroResult<Arc<LoroTree>> {
         let c = self
-            .list
-            .insert_container(pos as usize, child.as_ref().clone().tree)?;
-        Ok(Arc::new(LoroTree { tree: c }))
+            .inner
+            .insert_container(pos as usize, child.as_ref().clone().inner)?;
+        Ok(Arc::new(LoroTree { inner: c }))
     }
 
     #[inline]
@@ -160,9 +158,9 @@ impl LoroList {
         child: Arc<LoroMovableList>,
     ) -> LoroResult<Arc<LoroMovableList>> {
         let c = self
-            .list
-            .insert_container(pos as usize, child.as_ref().clone().list)?;
-        Ok(Arc::new(LoroMovableList { list: c }))
+            .inner
+            .insert_container(pos as usize, child.as_ref().clone().inner)?;
+        Ok(Arc::new(LoroMovableList { inner: c }))
     }
 
     #[inline]
@@ -172,31 +170,35 @@ impl LoroList {
         child: Arc<LoroCounter>,
     ) -> LoroResult<Arc<LoroCounter>> {
         let c = self
-            .list
-            .insert_container(pos as usize, child.as_ref().clone().counter)?;
-        Ok(Arc::new(LoroCounter { counter: c }))
+            .inner
+            .insert_container(pos as usize, child.as_ref().clone().inner)?;
+        Ok(Arc::new(LoroCounter { inner: c }))
     }
 
     pub fn get_cursor(&self, pos: u32, side: Side) -> Option<Arc<Cursor>> {
-        self.list
+        self.inner
             .get_cursor(pos as usize, side)
             .map(|v| Arc::new(v.into()))
     }
 
     pub fn is_deleted(&self) -> bool {
-        self.list.is_deleted()
+        self.inner.is_deleted()
     }
 
     pub fn to_vec(&self) -> Vec<LoroValue> {
-        self.list.to_vec().into_iter().map(|v| v.into()).collect()
+        self.inner.to_vec().into_iter().map(|v| v.into()).collect()
     }
 
     pub fn clear(&self) -> LoroResult<()> {
-        self.list.clear()
+        self.inner.clear()
     }
 
     pub fn get_id_at(&self, index: u32) -> Option<ID> {
-        self.list.get_id_at(index as usize)
+        self.inner.get_id_at(index as usize)
+    }
+
+    pub fn doc(&self) -> Option<Arc<LoroDoc>> {
+        self.inner.doc().map(|x| Arc::new(LoroDoc { doc: x }))
     }
 }
 

@@ -1,6 +1,5 @@
 mod value;
 
-use loro::Container;
 pub use loro::{
     cursor::Side, undo::UndoOrRedo, CannotFindRelativePosition, ChangeTravelError, Counter,
     CounterSpan, EventTriggerKind, ExpandType, FractionalIndex, IdLp, IdSpan, JsonChange,
@@ -9,18 +8,17 @@ pub use loro::{
     LoroError, PeerID, StyleConfig, TreeID, UpdateOptions, UpdateTimeoutError, ID,
 };
 pub use std::cmp::Ordering;
-use std::sync::Arc;
 pub use value::{ContainerID, ContainerType, LoroValue, LoroValueLike};
 mod doc;
 pub use doc::{
     decode_import_blob_meta, ChangeAncestorsTraveler, ChangeMeta, CommitOptions, ContainerPath,
-    FrontiersOrID, ImportBlobMetadata, ImportStatus, JsonSchemaLike, LocalUpdateCallback, LoroDoc,
-    PosQueryResult, Subscription, Unsubscriber,
+    ExportMode, FrontiersOrID, ImportBlobMetadata, ImportStatus, JsonSchemaLike,
+    LocalUpdateCallback, LoroDoc, PosQueryResult, Subscription, Unsubscriber,
 };
 mod container;
 pub use container::{
-    ContainerIdLike, Cursor, LoroCounter, LoroList, LoroMap, LoroMovableList, LoroText, LoroTree,
-    LoroUnknown, TreeParentId,
+    Container, ContainerIdLike, Cursor, LoroCounter, LoroList, LoroMap, LoroMovableList, LoroText,
+    LoroTree, LoroUnknown, TreeParentId,
 };
 mod event;
 pub use event::{
@@ -36,130 +34,30 @@ pub use version::{Frontiers, VersionVector, VersionVectorDiff};
 mod awareness;
 pub use awareness::{Awareness, AwarenessPeerUpdate, PeerInfo};
 
-// https://github.com/mozilla/uniffi-rs/issues/1372
-pub trait ValueOrContainer: Send + Sync {
-    fn is_value(&self) -> bool;
-    fn is_container(&self) -> bool;
-    fn as_value(&self) -> Option<LoroValue>;
-    fn container_type(&self) -> Option<ContainerType>;
-    fn as_container(&self) -> Option<ContainerID>;
-    fn as_loro_list(&self) -> Option<Arc<LoroList>>;
-    fn as_loro_text(&self) -> Option<Arc<LoroText>>;
-    fn as_loro_map(&self) -> Option<Arc<LoroMap>>;
-    fn as_loro_movable_list(&self) -> Option<Arc<LoroMovableList>>;
-    fn as_loro_tree(&self) -> Option<Arc<LoroTree>>;
-    fn as_loro_counter(&self) -> Option<Arc<LoroCounter>>;
-    fn as_loro_unknown(&self) -> Option<Arc<LoroUnknown>>;
+#[derive(Debug, Clone)]
+pub enum ValueOrContainer {
+    Value { value: LoroValue },
+    Container { container: Container },
 }
 
-impl ValueOrContainer for loro::ValueOrContainer {
-    fn is_value(&self) -> bool {
-        loro::ValueOrContainer::is_value(self)
-    }
-
-    fn is_container(&self) -> bool {
-        loro::ValueOrContainer::is_container(self)
-    }
-
-    fn container_type(&self) -> Option<ContainerType> {
-        loro::ValueOrContainer::as_container(self).map(|c| c.id().container_type().into())
-    }
-
-    fn as_value(&self) -> Option<LoroValue> {
-        loro::ValueOrContainer::as_value(self)
-            .cloned()
-            .map(LoroValue::from)
-    }
-
-    // TODO: pass Container to Swift
-    fn as_container(&self) -> Option<ContainerID> {
-        loro::ValueOrContainer::as_container(self).map(|c| c.id().into())
-    }
-
-    fn as_loro_list(&self) -> Option<Arc<LoroList>> {
-        match self {
-            loro::ValueOrContainer::Container(Container::List(list)) => {
-                Some(Arc::new(LoroList { list: list.clone() }))
+impl From<ValueOrContainer> for loro::ValueOrContainer {
+    fn from(value: ValueOrContainer) -> Self {
+        match value {
+            ValueOrContainer::Value { value } => loro::ValueOrContainer::Value(value.into()),
+            ValueOrContainer::Container { container } => {
+                loro::ValueOrContainer::Container(container.into())
             }
-            _ => None,
-        }
-    }
-
-    fn as_loro_text(&self) -> Option<Arc<LoroText>> {
-        match self {
-            loro::ValueOrContainer::Container(Container::Text(c)) => {
-                Some(Arc::new(LoroText { text: c.clone() }))
-            }
-            _ => None,
-        }
-    }
-
-    fn as_loro_map(&self) -> Option<Arc<LoroMap>> {
-        match self {
-            loro::ValueOrContainer::Container(Container::Map(c)) => {
-                Some(Arc::new(LoroMap { map: c.clone() }))
-            }
-            _ => None,
-        }
-    }
-
-    fn as_loro_movable_list(&self) -> Option<Arc<LoroMovableList>> {
-        match self {
-            loro::ValueOrContainer::Container(Container::MovableList(c)) => {
-                Some(Arc::new(LoroMovableList { list: c.clone() }))
-            }
-            _ => None,
-        }
-    }
-
-    fn as_loro_tree(&self) -> Option<Arc<LoroTree>> {
-        match self {
-            loro::ValueOrContainer::Container(Container::Tree(c)) => {
-                Some(Arc::new(LoroTree { tree: c.clone() }))
-            }
-            _ => None,
-        }
-    }
-
-    fn as_loro_counter(&self) -> Option<Arc<LoroCounter>> {
-        match self {
-            loro::ValueOrContainer::Container(Container::Counter(c)) => {
-                Some(Arc::new(LoroCounter { counter: c.clone() }))
-            }
-            _ => None,
-        }
-    }
-
-    fn as_loro_unknown(&self) -> Option<Arc<LoroUnknown>> {
-        match self {
-            loro::ValueOrContainer::Container(Container::Unknown(c)) => {
-                Some(Arc::new(LoroUnknown { unknown: c.clone() }))
-            }
-            _ => None,
         }
     }
 }
 
-fn convert_trait_to_v_or_container<T: AsRef<dyn ValueOrContainer>>(i: T) -> loro::ValueOrContainer {
-    let v = i.as_ref();
-    if v.is_value() {
-        loro::ValueOrContainer::Value(v.as_value().unwrap().into())
-    } else {
-        let container = match v.container_type().unwrap() {
-            ContainerType::List => Container::List((*v.as_loro_list().unwrap()).clone().list),
-            ContainerType::Text => Container::Text((*v.as_loro_text().unwrap()).clone().text),
-            ContainerType::Map => Container::Map((*v.as_loro_map().unwrap()).clone().map),
-            ContainerType::MovableList => {
-                Container::MovableList((*v.as_loro_movable_list().unwrap()).clone().list)
-            }
-            ContainerType::Tree => Container::Tree((*v.as_loro_tree().unwrap()).clone().tree),
-            ContainerType::Counter => {
-                Container::Counter((*v.as_loro_counter().unwrap()).clone().counter)
-            }
-            ContainerType::Unknown { kind: _ } => {
-                Container::Unknown((*v.as_loro_unknown().unwrap()).clone().unknown)
-            }
-        };
-        loro::ValueOrContainer::Container(container)
+impl From<loro::ValueOrContainer> for ValueOrContainer {
+    fn from(value: loro::ValueOrContainer) -> Self {
+        match value {
+            loro::ValueOrContainer::Value(v) => ValueOrContainer::Value { value: v.into() },
+            loro::ValueOrContainer::Container(c) => ValueOrContainer::Container {
+                container: c.into(),
+            },
+        }
     }
 }

@@ -9,5 +9,4 @@ publish = false
 
 [dependencies]
 loro = { path = "../loro", features = ["counter", "jsonpath"] }
-loro-internal = { path = "../loro-internal", features = ["counter", "jsonpath"] }
 serde_json = { workspace = true }

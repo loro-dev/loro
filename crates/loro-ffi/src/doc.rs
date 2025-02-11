@@ -30,7 +30,7 @@ pub fn decode_import_blob_meta(
 }
 
 pub struct LoroDoc {
-    doc: InnerLoroDoc,
+    pub(crate) doc: InnerLoroDoc,
 }
 
 impl LoroDoc {
@@ -187,7 +187,7 @@ impl LoroDoc {
 
     pub fn get_movable_list(&self, id: Arc<dyn ContainerIdLike>) -> Arc<LoroMovableList> {
         Arc::new(LoroMovableList {
-            list: self.doc.get_movable_list(loro::ContainerID::from(
+            inner: self.doc.get_movable_list(loro::ContainerID::from(
                 id.as_container_id(crate::ContainerType::MovableList),
             )),
         })
@@ -195,7 +195,7 @@ impl LoroDoc {
 
     pub fn get_list(&self, id: Arc<dyn ContainerIdLike>) -> Arc<LoroList> {
         Arc::new(LoroList {
-            list: self.doc.get_list(loro::ContainerID::from(
+            inner: self.doc.get_list(loro::ContainerID::from(
                 id.as_container_id(crate::ContainerType::List),
             )),
         })
@@ -203,7 +203,7 @@ impl LoroDoc {
 
     pub fn get_map(&self, id: Arc<dyn ContainerIdLike>) -> Arc<LoroMap> {
         Arc::new(LoroMap {
-            map: self.doc.get_map(loro::ContainerID::from(
+            inner: self.doc.get_map(loro::ContainerID::from(
                 id.as_container_id(crate::ContainerType::Map),
             )),
         })
@@ -211,7 +211,7 @@ impl LoroDoc {
 
     pub fn get_text(&self, id: Arc<dyn ContainerIdLike>) -> Arc<LoroText> {
         Arc::new(LoroText {
-            text: self.doc.get_text(loro::ContainerID::from(
+            inner: self.doc.get_text(loro::ContainerID::from(
                 id.as_container_id(crate::ContainerType::Text),
             )),
         })
@@ -219,7 +219,7 @@ impl LoroDoc {
 
     pub fn get_tree(&self, id: Arc<dyn ContainerIdLike>) -> Arc<LoroTree> {
         Arc::new(LoroTree {
-            tree: self.doc.get_tree(loro::ContainerID::from(
+            inner: self.doc.get_tree(loro::ContainerID::from(
                 id.as_container_id(crate::ContainerType::Tree),
             )),
         })
@@ -227,7 +227,7 @@ impl LoroDoc {
 
     pub fn get_counter(&self, id: Arc<dyn ContainerIdLike>) -> Arc<LoroCounter> {
         Arc::new(LoroCounter {
-            counter: self.doc.get_counter(loro::ContainerID::from(
+            inner: self.doc.get_counter(loro::ContainerID::from(
                 id.as_container_id(crate::ContainerType::Counter),
             )),
         })
@@ -322,25 +322,8 @@ impl LoroDoc {
             .collect()
     }
 
-    // TODO: add export method
-    /// Export all the ops not included in the given `VersionVector`
-    #[inline]
-    pub fn export_updates(&self, vv: &VersionVector) -> Result<Vec<u8>, LoroEncodeError> {
-        self.doc.export(loro::ExportMode::Updates {
-            from: Cow::Owned(vv.into()),
-        })
-    }
-
-    /// Export the current state and history of the document.
-    #[inline]
-    pub fn export_snapshot(&self) -> Result<Vec<u8>, LoroEncodeError> {
-        self.doc.export(loro::ExportMode::Snapshot)
-    }
-
-    pub fn export_snapshot_at(&self, frontiers: &Frontiers) -> Result<Vec<u8>, LoroEncodeError> {
-        self.doc.export(loro::ExportMode::SnapshotAt {
-            version: Cow::Owned(frontiers.into()),
-        })
+    pub fn export(&self, mode: ExportMode) -> Result<Vec<u8>, LoroEncodeError> {
+        self.doc.export(mode.into())
     }
 
     pub fn frontiers_to_vv(&self, frontiers: &Frontiers) -> Option<Arc<VersionVector>> {
@@ -489,10 +472,10 @@ impl LoroDoc {
         self.doc.check_state_correctness_slow()
     }
 
-    pub fn get_by_path(&self, path: &[Index]) -> Option<Arc<dyn ValueOrContainer>> {
+    pub fn get_by_path(&self, path: &[Index]) -> Option<ValueOrContainer> {
         self.doc
             .get_by_path(&path.iter().map(|v| v.clone().into()).collect::<Vec<_>>())
-            .map(|x| Arc::new(x) as Arc<dyn ValueOrContainer>)
+            .map(|x| x.into())
     }
 
     ///
@@ -547,10 +530,8 @@ impl LoroDoc {
     /// let item = doc.get_by_str_path("mlist/0");
     /// assert_eq!(item.unwrap().into_value().unwrap().into_string().unwrap(), "item".into());
     /// ```
-    pub fn get_by_str_path(&self, path: &str) -> Option<Arc<dyn ValueOrContainer>> {
-        self.doc
-            .get_by_str_path(path)
-            .map(|v| Arc::new(v) as Arc<dyn ValueOrContainer>)
+    pub fn get_by_str_path(&self, path: &str) -> Option<ValueOrContainer> {
+        self.doc.get_by_str_path(path).map(|v| v.into())
     }
 
     pub fn get_cursor_pos(
@@ -596,38 +577,6 @@ impl LoroDoc {
         self.doc.compact_change_store()
     }
 
-    // TODO: https://github.com/mozilla/uniffi-rs/issues/1372
-    /// Export the document in the given mode.
-    // pub fn export(&self, mode: ExportMode) -> Vec<u8> {
-    //     self.doc.export(mode.into())
-    // }
-    pub fn export_updates_in_range(&self, spans: &[IdSpan]) -> Result<Vec<u8>, LoroEncodeError> {
-        self.doc.export(loro::ExportMode::UpdatesInRange {
-            spans: Cow::Borrowed(spans),
-        })
-    }
-
-    pub fn export_shallow_snapshot(
-        &self,
-        frontiers: &Frontiers,
-    ) -> Result<Vec<u8>, LoroEncodeError> {
-        self.doc
-            .export(loro::ExportMode::ShallowSnapshot(Cow::Owned(
-                frontiers.into(),
-            )))
-    }
-
-    pub fn export_state_only(
-        &self,
-        frontiers: Option<Arc<Frontiers>>,
-    ) -> Result<Vec<u8>, LoroEncodeError> {
-        self.doc
-            .export(loro::ExportMode::StateOnly(frontiers.map(|x| {
-                let a = x.as_ref();
-                Cow::Owned(loro::Frontiers::from(a))
-            })))
-    }
-
     // TODO: impl
     /// Analyze the container info of the doc
     ///
@@ -664,12 +613,10 @@ impl LoroDoc {
     /// - `Ok(Vec<ValueOrHandler>)`: A vector of matching values or handlers.
     /// - `Err(String)`: An error message if the JSONPath expression is invalid or evaluation fails.
     #[inline]
-    pub fn jsonpath(&self, path: &str) -> Result<Vec<Arc<dyn ValueOrContainer>>, JsonPathError> {
-        self.doc.jsonpath(path).map(|vec| {
-            vec.into_iter()
-                .map(|v| Arc::new(v) as Arc<dyn ValueOrContainer>)
-                .collect()
-        })
+    pub fn jsonpath(&self, path: &str) -> Result<Vec<ValueOrContainer>, JsonPathError> {
+        self.doc
+            .jsonpath(path)
+            .map(|vec| vec.into_iter().map(|v| v.into()).collect())
     }
 
     pub fn travel_change_ancestors(
@@ -881,33 +828,33 @@ pub struct PosQueryResult {
     pub current: AbsolutePosition,
 }
 
-// pub enum ExportMode {
-//     Snapshot,
-//     Updates { from: VersionVector },
-//     UpdatesInRange { spans: Vec<IdSpan> },
-//     ShallowSnapshot { frontiers: Frontiers },
-//     StateOnly { frontiers: Option<Frontiers> },
-// }
+pub enum ExportMode {
+    Snapshot,
+    Updates { from: Arc<VersionVector> },
+    UpdatesInRange { spans: Vec<IdSpan> },
+    ShallowSnapshot { frontiers: Arc<Frontiers> },
+    StateOnly { frontiers: Option<Arc<Frontiers>> },
+}
 
-// impl From<ExportMode> for loro::ExportMode<'_> {
-//     fn from(value: ExportMode) -> Self {
-//         match value {
-//             ExportMode::Snapshot => loro::ExportMode::Snapshot,
-//             ExportMode::Updates { from } => loro::ExportMode::Updates {
-//                 from: Cow::Owned(from.into()),
-//             },
-//             ExportMode::UpdatesInRange { spans } => loro::ExportMode::UpdatesInRange {
-//                 spans: Cow::Owned(spans),
-//             },
-//             ExportMode::ShallowSnapshot { frontiers } => {
-//                 loro::ExportMode::ShallowSnapshot(Cow::Owned(frontiers.into()))
-//             }
-//             ExportMode::StateOnly { frontiers } => {
-//                 loro::ExportMode::StateOnly(frontiers.map(|x| Cow::Owned(x.into())))
-//             }
-//         }
-//     }
-// }
+impl From<ExportMode> for loro::ExportMode<'_> {
+    fn from(value: ExportMode) -> Self {
+        match value {
+            ExportMode::Snapshot => loro::ExportMode::Snapshot,
+            ExportMode::Updates { from } => loro::ExportMode::Updates {
+                from: Cow::Owned(from.as_ref().into()),
+            },
+            ExportMode::UpdatesInRange { spans } => loro::ExportMode::UpdatesInRange {
+                spans: Cow::Owned(spans),
+            },
+            ExportMode::ShallowSnapshot { frontiers } => {
+                loro::ExportMode::ShallowSnapshot(Cow::Owned(frontiers.as_ref().into()))
+            }
+            ExportMode::StateOnly { frontiers } => {
+                loro::ExportMode::StateOnly(frontiers.map(|x| Cow::Owned(x.as_ref().into())))
+            }
+        }
+    }
+}
 
 pub struct ContainerPath {
     pub id: ContainerID,

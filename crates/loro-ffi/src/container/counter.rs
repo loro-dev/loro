@@ -2,17 +2,17 @@ use std::sync::Arc;
 
 use loro::{ContainerTrait, LoroResult};
 
-use crate::ContainerID;
+use crate::{ContainerID, LoroDoc};
 
 #[derive(Debug, Clone)]
 pub struct LoroCounter {
-    pub(crate) counter: loro::LoroCounter,
+    pub(crate) inner: loro::LoroCounter,
 }
 
 impl LoroCounter {
     pub fn new() -> Self {
         Self {
-            counter: loro::LoroCounter::new(),
+            inner: loro::LoroCounter::new(),
         }
     }
 
@@ -21,38 +21,42 @@ impl LoroCounter {
     /// The edits on a detached container will not be persisted.
     /// To attach the container to the document, please insert it into an attached container.
     pub fn is_attached(&self) -> bool {
-        self.counter.is_attached()
+        self.inner.is_attached()
     }
 
     /// If a detached container is attached, this method will return its corresponding attached handler.
     pub fn get_attached(&self) -> Option<Arc<LoroCounter>> {
-        self.counter
+        self.inner
             .get_attached()
-            .map(|x| Arc::new(LoroCounter { counter: x }))
+            .map(|x| Arc::new(LoroCounter { inner: x }))
     }
 
     /// Return container id of the Counter.
     pub fn id(&self) -> ContainerID {
-        self.counter.id().into()
+        self.inner.id().into()
     }
 
     /// Increment the counter by the given value.
     pub fn increment(&self, value: f64) -> LoroResult<()> {
-        self.counter.increment(value)
+        self.inner.increment(value)
     }
 
     /// Decrement the counter by the given value.
     pub fn decrement(&self, value: f64) -> LoroResult<()> {
-        self.counter.decrement(value)
+        self.inner.decrement(value)
     }
 
     /// Get the current value of the counter.
     pub fn get_value(&self) -> f64 {
-        self.counter.get_value()
+        self.inner.get_value()
     }
 
     pub fn is_deleted(&self) -> bool {
-        self.counter.is_deleted()
+        self.inner.is_deleted()
+    }
+
+    pub fn doc(&self) -> Option<Arc<LoroDoc>> {
+        self.inner.doc().map(|x| Arc::new(LoroDoc { doc: x }))
     }
 }
 
