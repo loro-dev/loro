@@ -1393,3 +1393,18 @@ it("should call subscription after diff", async () => {
   expect(child.data.get("type")).toBe("Hi there");
   expect(called).toBe(true);
 });
+
+it("should return map for get_path_by_str", () => {
+  const doc = new LoroDoc();
+  const tree = doc.getTree("tree");
+  const root = tree.createNode();
+  const child = root.createNode();
+  const grandChild = child.createNode();
+  grandChild.data.set("type", "grandChild");
+  console.log(doc.getByPath("tree/0/0/0"))
+  expect(isContainer(doc.getByPath("tree/0/0/0"))).toBe(true)
+  expect((doc.getByPath("tree/0/0/0") as LoroMap).toJSON()).toStrictEqual({
+    "type": "grandChild"
+  })
+  expect(doc.getByPath("tree/0/0/0/type")).toBe("grandChild")
+})
