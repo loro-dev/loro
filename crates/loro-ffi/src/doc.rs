@@ -30,7 +30,7 @@ pub fn decode_import_blob_meta(
 }
 
 pub struct LoroDoc {
-    doc: InnerLoroDoc,
+    pub(crate) doc: InnerLoroDoc,
 }
 
 impl LoroDoc {
@@ -187,7 +187,7 @@ impl LoroDoc {
 
     pub fn get_movable_list(&self, id: Arc<dyn ContainerIdLike>) -> Arc<LoroMovableList> {
         Arc::new(LoroMovableList {
-            list: self.doc.get_movable_list(loro::ContainerID::from(
+            inner: self.doc.get_movable_list(loro::ContainerID::from(
                 id.as_container_id(crate::ContainerType::MovableList),
             )),
         })
@@ -195,7 +195,7 @@ impl LoroDoc {
 
     pub fn get_list(&self, id: Arc<dyn ContainerIdLike>) -> Arc<LoroList> {
         Arc::new(LoroList {
-            list: self.doc.get_list(loro::ContainerID::from(
+            inner: self.doc.get_list(loro::ContainerID::from(
                 id.as_container_id(crate::ContainerType::List),
             )),
         })
@@ -203,7 +203,7 @@ impl LoroDoc {
 
     pub fn get_map(&self, id: Arc<dyn ContainerIdLike>) -> Arc<LoroMap> {
         Arc::new(LoroMap {
-            map: self.doc.get_map(loro::ContainerID::from(
+            inner: self.doc.get_map(loro::ContainerID::from(
                 id.as_container_id(crate::ContainerType::Map),
             )),
         })
@@ -211,7 +211,7 @@ impl LoroDoc {
 
     pub fn get_text(&self, id: Arc<dyn ContainerIdLike>) -> Arc<LoroText> {
         Arc::new(LoroText {
-            text: self.doc.get_text(loro::ContainerID::from(
+            inner: self.doc.get_text(loro::ContainerID::from(
                 id.as_container_id(crate::ContainerType::Text),
             )),
         })
@@ -219,7 +219,7 @@ impl LoroDoc {
 
     pub fn get_tree(&self, id: Arc<dyn ContainerIdLike>) -> Arc<LoroTree> {
         Arc::new(LoroTree {
-            tree: self.doc.get_tree(loro::ContainerID::from(
+            inner: self.doc.get_tree(loro::ContainerID::from(
                 id.as_container_id(crate::ContainerType::Tree),
             )),
         })
@@ -227,7 +227,7 @@ impl LoroDoc {
 
     pub fn get_counter(&self, id: Arc<dyn ContainerIdLike>) -> Arc<LoroCounter> {
         Arc::new(LoroCounter {
-            counter: self.doc.get_counter(loro::ContainerID::from(
+            inner: self.doc.get_counter(loro::ContainerID::from(
                 id.as_container_id(crate::ContainerType::Counter),
             )),
         })

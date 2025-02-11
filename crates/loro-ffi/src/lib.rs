@@ -78,9 +78,9 @@ impl ValueOrContainer for loro::ValueOrContainer {
 
     fn as_loro_list(&self) -> Option<Arc<LoroList>> {
         match self {
-            loro::ValueOrContainer::Container(Container::List(list)) => {
-                Some(Arc::new(LoroList { list: list.clone() }))
-            }
+            loro::ValueOrContainer::Container(Container::List(list)) => Some(Arc::new(LoroList {
+                inner: list.clone(),
+            })),
             _ => None,
         }
     }
@@ -88,7 +88,7 @@ impl ValueOrContainer for loro::ValueOrContainer {
     fn as_loro_text(&self) -> Option<Arc<LoroText>> {
         match self {
             loro::ValueOrContainer::Container(Container::Text(c)) => {
-                Some(Arc::new(LoroText { text: c.clone() }))
+                Some(Arc::new(LoroText { inner: c.clone() }))
             }
             _ => None,
         }
@@ -97,7 +97,7 @@ impl ValueOrContainer for loro::ValueOrContainer {
     fn as_loro_map(&self) -> Option<Arc<LoroMap>> {
         match self {
             loro::ValueOrContainer::Container(Container::Map(c)) => {
-                Some(Arc::new(LoroMap { map: c.clone() }))
+                Some(Arc::new(LoroMap { inner: c.clone() }))
             }
             _ => None,
         }
@@ -106,7 +106,7 @@ impl ValueOrContainer for loro::ValueOrContainer {
     fn as_loro_movable_list(&self) -> Option<Arc<LoroMovableList>> {
         match self {
             loro::ValueOrContainer::Container(Container::MovableList(c)) => {
-                Some(Arc::new(LoroMovableList { list: c.clone() }))
+                Some(Arc::new(LoroMovableList { inner: c.clone() }))
             }
             _ => None,
         }
@@ -115,7 +115,7 @@ impl ValueOrContainer for loro::ValueOrContainer {
     fn as_loro_tree(&self) -> Option<Arc<LoroTree>> {
         match self {
             loro::ValueOrContainer::Container(Container::Tree(c)) => {
-                Some(Arc::new(LoroTree { tree: c.clone() }))
+                Some(Arc::new(LoroTree { inner: c.clone() }))
             }
             _ => None,
         }
@@ -124,7 +124,7 @@ impl ValueOrContainer for loro::ValueOrContainer {
     fn as_loro_counter(&self) -> Option<Arc<LoroCounter>> {
         match self {
             loro::ValueOrContainer::Container(Container::Counter(c)) => {
-                Some(Arc::new(LoroCounter { counter: c.clone() }))
+                Some(Arc::new(LoroCounter { inner: c.clone() }))
             }
             _ => None,
         }
@@ -133,7 +133,7 @@ impl ValueOrContainer for loro::ValueOrContainer {
     fn as_loro_unknown(&self) -> Option<Arc<LoroUnknown>> {
         match self {
             loro::ValueOrContainer::Container(Container::Unknown(c)) => {
-                Some(Arc::new(LoroUnknown { unknown: c.clone() }))
+                Some(Arc::new(LoroUnknown { inner: c.clone() }))
             }
             _ => None,
         }
@@ -146,18 +146,18 @@ fn convert_trait_to_v_or_container<T: AsRef<dyn ValueOrContainer>>(i: T) -> loro
         loro::ValueOrContainer::Value(v.as_value().unwrap().into())
     } else {
         let container = match v.container_type().unwrap() {
-            ContainerType::List => Container::List((*v.as_loro_list().unwrap()).clone().list),
-            ContainerType::Text => Container::Text((*v.as_loro_text().unwrap()).clone().text),
-            ContainerType::Map => Container::Map((*v.as_loro_map().unwrap()).clone().map),
+            ContainerType::List => Container::List((*v.as_loro_list().unwrap()).clone().inner),
+            ContainerType::Text => Container::Text((*v.as_loro_text().unwrap()).clone().inner),
+            ContainerType::Map => Container::Map((*v.as_loro_map().unwrap()).clone().inner),
             ContainerType::MovableList => {
-                Container::MovableList((*v.as_loro_movable_list().unwrap()).clone().list)
+                Container::MovableList((*v.as_loro_movable_list().unwrap()).clone().inner)
             }
-            ContainerType::Tree => Container::Tree((*v.as_loro_tree().unwrap()).clone().tree),
+            ContainerType::Tree => Container::Tree((*v.as_loro_tree().unwrap()).clone().inner),
             ContainerType::Counter => {
-                Container::Counter((*v.as_loro_counter().unwrap()).clone().counter)
+                Container::Counter((*v.as_loro_counter().unwrap()).clone().inner)
             }
             ContainerType::Unknown { kind: _ } => {
-                Container::Unknown((*v.as_loro_unknown().unwrap()).clone().unknown)
+                Container::Unknown((*v.as_loro_unknown().unwrap()).clone().inner)
             }
         };
         loro::ValueOrContainer::Container(container)
