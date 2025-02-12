@@ -2,7 +2,7 @@ use fxhash::FxHashSet;
 use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
 use std::slice;
-use std::sync::LazyLock;
+use std::sync::OnceLock;
 use std::{
     fmt::Display,
     num::NonZeroU64,
@@ -234,13 +234,15 @@ impl Borrow<str> for ArcWrapper {
     }
 }
 
-static STRING_SET: LazyLock<Mutex<FxHashSet<ArcWrapper>>> =
-    LazyLock::new(|| Mutex::new(FxHashSet::default()));
+static STRING_SET: OnceLock<Mutex<FxHashSet<ArcWrapper>>> = OnceLock::new();
 
 fn get_or_init_internalized_string(s: &str) -> Arc<Box<str>> {
     static MAX_MET_CACHE_SIZE: AtomicUsize = AtomicUsize::new(1 << 16);
 
-    let mut set = STRING_SET.lock().unwrap();
+    let mut set = STRING_SET
+        .get_or_init(|| Mutex::new(FxHashSet::default()))
+        .lock()
+        .unwrap();
     if let Some(v) = set.get(s) {
         v.0.clone()
     } else {
@@ -263,7 +265,10 @@ fn get_or_init_internalized_string(s: &str) -> Arc<Box<str>> {
 }
 
 fn drop_cache(s: Arc<Box<str>>) {
-    let mut set = STRING_SET.lock().unwrap();
+    let mut set = STRING_SET
+        .get_or_init(|| Mutex::new(FxHashSet::default()))
+        .lock()
+        .unwrap();
     set.remove(&ArcWrapper(s));
     if set.len() < set.capacity() / 2 && set.capacity() > 128 {
         set.shrink_to_fit();
@@ -330,7 +335,10 @@ mod tests {
     #[test]
     fn test_long_string_cache_drop() {
         {
-            let set = STRING_SET.lock().unwrap();
+            let set = STRING_SET
+                .get_or_init(|| Mutex::new(FxHashSet::default()))
+                .lock()
+                .unwrap();
             assert_eq!(set.len(), 0);
         }
         {
@@ -338,7 +346,10 @@ mod tests {
             let s2 = InternalString::from("hello".repeat(10));
             assert!(std::ptr::eq(s1.as_str().as_ptr(), s2.as_str().as_ptr()));
         }
-        let set = STRING_SET.lock().unwrap();
+        let set = STRING_SET
+            .get_or_init(|| Mutex::new(FxHashSet::default()))
+            .lock()
+            .unwrap();
         assert_eq!(set.len(), 0);
     }
 }
