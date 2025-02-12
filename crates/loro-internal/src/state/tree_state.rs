@@ -251,12 +251,10 @@ impl NodeChildren {
         match self {
             NodeChildren::Vec(v) => {
                 let mut btree = btree::ChildTree::new();
-                dbg!(&v);
                 for (pos, id) in v.drain(..) {
                     btree.insert_child(pos, id);
                 }
 
-                dbg!(&btree);
                 *self = NodeChildren::BTree(btree);
             }
             NodeChildren::BTree(_) => unreachable!(),
