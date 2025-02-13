@@ -1,7 +1,6 @@
 use core::panic;
 use std::{
     borrow::Cow,
-    f64::consts::E,
     mem::take,
     sync::{Arc, Mutex, Weak},
 };
