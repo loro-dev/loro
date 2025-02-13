@@ -14,6 +14,7 @@
     "npm:loro-crdt@1.0.7": "1.0.7",
     "npm:loro-crdt@1.2.1": "1.2.1",
     "npm:loro-crdt@1.2.7": "1.2.7",
+    "npm:loro-crdt@1.3.5": "1.3.5",
     "npm:yargs@17.7.2": "17.7.2"
   },
   "jsr": {
@@ -331,6 +332,9 @@
     },
     "loro-crdt@1.2.7": {
       "integrity": "sha512-eqVxUtLr7YBv5QaSW4obs01HIMzzJGfBC6MVnKHzMAEdaRitTP6Dj+BRvLFPqLEJthRtjohKez8wZgwzAUDiTg=="
+    },
+    "loro-crdt@1.3.5": {
+      "integrity": "sha512-hfY5JBrA0lv+2uANPHqC6qiZrlw4xnHj1mtEu+ipswly6ue+pKD3ebpKONf3aTgP8IyT4NJkeBBX9Xd2Sk0Qaw=="
     },
     "loro-wasm@1.0.7": {
       "integrity": "sha512-WFIpGGzc6I7zRMDoRGxa3AHhno7gVnOgwqcrTfmpKWOtktZQ7BvhIV4kYgsdyuIBcMSrQEJTfOY/80xQSjUKTw=="

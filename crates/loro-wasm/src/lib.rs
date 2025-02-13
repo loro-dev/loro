@@ -219,7 +219,7 @@ extern "C" {
     pub type JsIdSpan;
     #[wasm_bindgen(typescript_type = "VersionVectorDiff")]
     pub type JsVersionVectorDiff;
-    #[wasm_bindgen(typescript_type = "Record<ContainerID, Diff>")]
+    #[wasm_bindgen(typescript_type = "[ContainerID, Diff|JsonDiff][]")]
     pub type JsDiffBatch;
 }
 
@@ -1031,8 +1031,8 @@ impl LoroDoc {
                 LoroTree { handler: tree }.into()
             }
             ContainerType::MovableList => {
-                let movelist = self.0.get_movable_list(container_id);
-                LoroMovableList { handler: movelist }.into()
+                let list = self.0.get_movable_list(container_id);
+                LoroMovableList { handler: list }.into()
             }
             ContainerType::Counter => {
                 let counter = self.0.get_counter(container_id);
@@ -1080,7 +1080,7 @@ impl LoroDoc {
             .into_iter()
         {
             ans.push(&match v {
-                ValueOrHandler::Handler(h) => handler_to_js_value(h),
+                ValueOrHandler::Handler(h) => handler_to_js_value(h, false),
                 ValueOrHandler::Value(v) => v.into(),
             });
         }
@@ -1773,7 +1773,7 @@ impl LoroDoc {
     pub fn get_by_path(&self, path: &str) -> JsValueOrContainerOrUndefined {
         let ans = self.0.get_by_str_path(path);
         let v: JsValue = match ans {
-            Some(ValueOrHandler::Handler(h)) => handler_to_js_value(h),
+            Some(ValueOrHandler::Handler(h)) => handler_to_js_value(h, false),
             Some(ValueOrHandler::Value(v)) => v.into(),
             None => JsValue::UNDEFINED,
         };
@@ -1869,29 +1869,55 @@ impl LoroDoc {
         Ok(())
     }
 
-    /// Apply a diff batch to the document
+    /// Apply a batch of diff to the document
+    ///
+    /// A diff batch represents a set of changes between two versions of the document.
+    /// You can calculate a diff batch using `doc.diff()`.
+    ///
+    /// Changes are associated with container IDs. During diff application, if new containers were created in the source
+    /// document, they will be assigned fresh IDs in the target document. Loro automatically handles remapping these
+    /// container IDs from their original IDs to the new IDs as the diff is applied.
+    ///
+    /// @example
+    /// ```ts
+    /// const doc1 = new LoroDoc();
+    /// const doc2 = new LoroDoc();
+    ///
+    /// // Make some changes to doc1
+    /// const text = doc1.getText("text");
+    /// text.insert(0, "Hello");
+    ///
+    /// // Calculate diff between empty and current state
+    /// const diff = doc1.diff([], doc1.frontiers());
+    ///
+    /// // Apply changes to doc2
+    /// doc2.applyDiff(diff);
+    /// console.log(doc2.getText("text").toString()); // "Hello"
+    /// ```
     #[wasm_bindgen(js_name = "applyDiff")]
     pub fn apply_diff(&self, diff: JsDiffBatch) -> JsResult<()> {
         let diff: JsValue = diff.into();
-        let obj: js_sys::Object = diff.into();
-        let mut diff = FxHashMap::default();
+        let arr: js_sys::Array = diff.into();
+        let mut cid_to_events = FxHashMap::default();
         let mut order = Vec::default();
-        for entry in js_sys::Object::entries(&obj).iter() {
+        for entry in js_sys::Array::iter(&arr) {
             let entry = entry.unchecked_into::<js_sys::Array>();
-            let k = entry.get(0);
-            let v = entry.get(1);
-            let d = js_diff_to_inner_diff(v)?;
-            let cid: ContainerID = k
+            let cid = entry.get(0);
+            let cid: ContainerID = cid
                 .as_string()
                 .ok_or("Expected string key")?
                 .as_str()
                 .try_into()
                 .map_err(|_| "Failed to convert key")?;
+            let diff = entry.get(1);
+            let diff = js_diff_to_inner_diff(diff)?;
             order.push(cid.clone());
-            diff.insert(cid, d);
+            cid_to_events.insert(cid, diff);
         }
+        console_log!("{:#?}", &cid_to_events);
+        console_log!("{:#?}", &order);
         self.0.apply_diff(DiffBatch {
-            cid_to_events: diff,
+            cid_to_events,
             order,
         })?;
         Ok(())
@@ -1901,17 +1927,26 @@ impl LoroDoc {
     ///
     /// The entries in the returned object are sorted by causal order: the creation of a child container will be
     /// presented before its use.
-    pub fn diff(&self, from: Vec<JsID>, to: Vec<JsID>) -> JsResult<JsDiffBatch> {
+    #[wasm_bindgen(skip_typescript)]
+    pub fn diff(
+        &self,
+        from: Vec<JsID>,
+        to: Vec<JsID>,
+        for_json: Option<bool>,
+    ) -> JsResult<JsDiffBatch> {
         let from = ids_to_frontiers(from)?;
         let to = ids_to_frontiers(to)?;
         let diff = self.0.diff(&from, &to)?;
-        let obj = js_sys::Object::new();
+        let arr = js_sys::Array::new();
         for (id, d) in diff.iter() {
+            let entry = js_sys::Array::new();
             let id_str = id.to_string();
-            let v = resolved_diff_to_js(d);
-            Reflect::set(&obj, &JsValue::from_str(&id_str), &v)?;
+            let v = resolved_diff_to_js(d, for_json.unwrap_or(true));
+            entry.push(&id_str.into());
+            entry.push(&v);
+            arr.push(&entry.into());
         }
-        let v: JsValue = obj.into();
+        let v: JsValue = arr.into();
         Ok(v.into())
     }
 }
@@ -1924,7 +1959,7 @@ fn call_subscriber(ob: observer::Observer, e: DiffEvent) {
     //
     // [1]: https://caniuse.com/?search=FinalizationRegistry
     // [2]: https://rustwasm.github.io/wasm-bindgen/reference/weak-references.html
-    let event = diff_event_to_js_value(e);
+    let event = diff_event_to_js_value(e, false);
     if let Err(e) = ob.call1(&event) {
         throw_error_after_micro_task(e);
     }
@@ -1936,7 +1971,7 @@ fn call_after_micro_task(ob: observer::Observer, event: DiffEvent) {
     type C = Closure<dyn FnMut(JsValue)>;
     let drop_handler: Rc<RefCell<Option<C>>> = Rc::new(RefCell::new(None));
     let copy = drop_handler.clone();
-    let event = diff_event_to_js_value(event);
+    let event = diff_event_to_js_value(event, false);
     let closure = Closure::once(move |_: JsValue| {
         let ans = ob.call1(&event);
         drop(copy);
@@ -1955,7 +1990,7 @@ impl Default for LoroDoc {
     }
 }
 
-fn diff_event_to_js_value(event: DiffEvent) -> JsValue {
+fn diff_event_to_js_value(event: DiffEvent, for_json: bool) -> JsValue {
     let obj = js_sys::Object::new();
     Reflect::set(&obj, &"by".into(), &event.event_meta.by.to_string().into()).unwrap();
     let origin: &str = &event.event_meta.origin;
@@ -1966,7 +2001,7 @@ fn diff_event_to_js_value(event: DiffEvent) -> JsValue {
 
     let events = js_sys::Array::new_with_length(event.events.len() as u32);
     for (i, &event) in event.events.iter().enumerate() {
-        events.set(i as u32, container_diff_to_js_value(event));
+        events.set(i as u32, container_diff_to_js_value(event, for_json));
     }
 
     Reflect::set(&obj, &"events".into(), &events.into()).unwrap();
@@ -2000,10 +2035,15 @@ fn diff_event_to_js_value(event: DiffEvent) -> JsValue {
 ///   path: Path;
 /// }
 ///
-fn container_diff_to_js_value(event: &loro_internal::ContainerDiff) -> JsValue {
+fn container_diff_to_js_value(event: &loro_internal::ContainerDiff, for_json: bool) -> JsValue {
     let obj = js_sys::Object::new();
     Reflect::set(&obj, &"target".into(), &event.id.to_string().into()).unwrap();
-    Reflect::set(&obj, &"diff".into(), &resolved_diff_to_js(&event.diff)).unwrap();
+    Reflect::set(
+        &obj,
+        &"diff".into(),
+        &resolved_diff_to_js(&event.diff, for_json),
+    )
+    .unwrap();
     Reflect::set(
         &obj,
         &"path".into(),
@@ -2456,7 +2496,7 @@ impl LoroText {
     ///   the WASM boundary.
     pub fn parent(&self) -> JsContainerOrUndefined {
         if let Some(p) = self.handler.parent() {
-            handler_to_js_value(p).into()
+            handler_to_js_value(p, false).into()
         } else {
             JsContainerOrUndefined::from(JsValue::UNDEFINED)
         }
@@ -2481,7 +2521,7 @@ impl LoroText {
         }
 
         if let Some(h) = self.handler.get_attached() {
-            handler_to_js_value(Handler::Text(h)).into()
+            handler_to_js_value(Handler::Text(h), false).into()
         } else {
             JsValue::UNDEFINED.into()
         }
@@ -2616,7 +2656,7 @@ impl LoroMap {
     pub fn get(&self, key: &str) -> JsValueOrContainerOrUndefined {
         let v = self.handler.get_(key);
         (match v {
-            Some(ValueOrHandler::Handler(c)) => handler_to_js_value(c),
+            Some(ValueOrHandler::Handler(c)) => handler_to_js_value(c, false),
             Some(ValueOrHandler::Value(v)) => v.into(),
             None => JsValue::UNDEFINED,
         })
@@ -2643,7 +2683,7 @@ impl LoroMap {
         let handler = self
             .handler
             .get_or_create_container(key, child.to_handler())?;
-        Ok(handler_to_js_value(handler).into())
+        Ok(handler_to_js_value(handler, false).into())
     }
 
     /// Get the keys of the map.
@@ -2682,7 +2722,7 @@ impl LoroMap {
     pub fn values(&self) -> Vec<JsValue> {
         let mut ans: Vec<JsValue> = Vec::with_capacity(self.handler.len());
         self.handler.for_each(|_, v| {
-            ans.push(loro_value_to_js_value_or_container(v));
+            ans.push(loro_value_to_js_value_or_container(v, false));
         });
         ans
     }
@@ -2705,7 +2745,7 @@ impl LoroMap {
         self.handler.for_each(|k, v| {
             let array = Array::new();
             array.push(&k.to_string().into());
-            array.push(&loro_value_to_js_value_or_container(v));
+            array.push(&loro_value_to_js_value_or_container(v, false));
             let v: JsValue = array.into();
             ans.push(v.into());
         });
@@ -2754,7 +2794,7 @@ impl LoroMap {
     pub fn insert_container(&mut self, key: &str, child: JsContainer) -> JsResult<JsContainer> {
         let child = convert::js_to_container(child)?;
         let c = self.handler.insert_container(key, child.to_handler())?;
-        Ok(handler_to_js_value(c).into())
+        Ok(handler_to_js_value(c, false).into())
     }
 
     /// Subscribe to the changes of the map.
@@ -2822,7 +2862,7 @@ impl LoroMap {
     ///   the WASM boundary.
     pub fn parent(&self) -> JsContainerOrUndefined {
         if let Some(p) = self.handler.parent() {
-            handler_to_js_value(p).into()
+            handler_to_js_value(p, false).into()
         } else {
             JsContainerOrUndefined::from(JsValue::UNDEFINED)
         }
@@ -2849,7 +2889,7 @@ impl LoroMap {
         let Some(h) = self.handler.get_attached() else {
             return JsValue::UNDEFINED.into();
         };
-        handler_to_js_value(Handler::Map(h)).into()
+        handler_to_js_value(Handler::Map(h), false).into()
     }
 
     /// Delete all key-value pairs in the map.
@@ -2992,7 +3032,7 @@ impl LoroList {
 
         (match v {
             ValueOrHandler::Value(v) => v.into(),
-            ValueOrHandler::Handler(h) => handler_to_js_value(h),
+            ValueOrHandler::Handler(h) => handler_to_js_value(h, false),
         })
         .into()
     }
@@ -3029,7 +3069,7 @@ impl LoroList {
                     v.into()
                 }
                 ValueOrHandler::Handler(h) => {
-                    let v: JsValue = handler_to_js_value(h);
+                    let v: JsValue = handler_to_js_value(h, false);
                     v.into()
                 }
             });
@@ -3074,7 +3114,7 @@ impl LoroList {
     pub fn insert_container(&mut self, index: usize, child: JsContainer) -> JsResult<JsContainer> {
         let child = js_to_container(child)?;
         let c = self.handler.insert_container(index, child.to_handler())?;
-        Ok(handler_to_js_value(c).into())
+        Ok(handler_to_js_value(c, false).into())
     }
 
     #[wasm_bindgen(js_name = "pushContainer", skip_typescript)]
@@ -3146,7 +3186,7 @@ impl LoroList {
     ///   the WASM boundary.
     pub fn parent(&self) -> JsContainerOrUndefined {
         if let Some(p) = self.handler.parent() {
-            handler_to_js_value(p).into()
+            handler_to_js_value(p, false).into()
         } else {
             JsContainerOrUndefined::from(JsValue::UNDEFINED)
         }
@@ -3171,7 +3211,7 @@ impl LoroList {
         }
 
         if let Some(h) = self.handler.get_attached() {
-            handler_to_js_value(Handler::List(h)).into()
+            handler_to_js_value(Handler::List(h), false).into()
         } else {
             JsValue::UNDEFINED.into()
         }
@@ -3347,7 +3387,7 @@ impl LoroMovableList {
 
         (match v {
             ValueOrHandler::Value(v) => v.into(),
-            ValueOrHandler::Handler(h) => handler_to_js_value(h),
+            ValueOrHandler::Handler(h) => handler_to_js_value(h, false),
         })
         .into()
     }
@@ -3384,7 +3424,7 @@ impl LoroMovableList {
                     v.into()
                 }
                 ValueOrHandler::Handler(h) => {
-                    let v: JsValue = handler_to_js_value(h);
+                    let v: JsValue = handler_to_js_value(h, false);
                     v.into()
                 }
             });
@@ -3429,7 +3469,7 @@ impl LoroMovableList {
     pub fn insert_container(&mut self, index: usize, child: JsContainer) -> JsResult<JsContainer> {
         let child = js_to_container(child)?;
         let c = self.handler.insert_container(index, child.to_handler())?;
-        Ok(handler_to_js_value(c).into())
+        Ok(handler_to_js_value(c, false).into())
     }
 
     /// Push a container to the end of the list.
@@ -3502,7 +3542,7 @@ impl LoroMovableList {
     ///   the WASM boundary.
     pub fn parent(&self) -> JsContainerOrUndefined {
         if let Some(p) = self.handler.parent() {
-            handler_to_js_value(p).into()
+            handler_to_js_value(p, false).into()
         } else {
             JsContainerOrUndefined::from(JsValue::UNDEFINED)
         }
@@ -3527,7 +3567,7 @@ impl LoroMovableList {
         }
 
         if let Some(h) = self.handler.get_attached() {
-            handler_to_js_value(Handler::MovableList(h)).into()
+            handler_to_js_value(Handler::MovableList(h), false).into()
         } else {
             JsValue::UNDEFINED.into()
         }
@@ -3583,7 +3623,7 @@ impl LoroMovableList {
     pub fn setContainer(&self, pos: usize, child: JsContainer) -> JsResult<JsContainer> {
         let child = js_to_container(child)?;
         let c = self.handler.set_container(pos, child.to_handler())?;
-        Ok(handler_to_js_value(c).into())
+        Ok(handler_to_js_value(c, false).into())
     }
 
     /// Push a value to the end of the list.
@@ -4236,7 +4276,7 @@ impl LoroTree {
     ///   the WASM boundary.
     pub fn parent(&self) -> JsContainerOrUndefined {
         if let Some(p) = HandlerTrait::parent(&self.handler) {
-            handler_to_js_value(p).into()
+            handler_to_js_value(p, false).into()
         } else {
             JsContainerOrUndefined::from(JsValue::UNDEFINED)
         }
@@ -4261,7 +4301,7 @@ impl LoroTree {
         }
 
         if let Some(h) = self.handler.get_attached() {
-            handler_to_js_value(Handler::Tree(h)).into()
+            handler_to_js_value(Handler::Tree(h), false).into()
         } else {
             JsValue::UNDEFINED.into()
         }
@@ -4438,14 +4478,14 @@ impl Cursor {
     }
 }
 
-fn loro_value_to_js_value_or_container(value: ValueOrHandler) -> JsValue {
+fn loro_value_to_js_value_or_container(value: ValueOrHandler, for_json: bool) -> JsValue {
     match value {
         ValueOrHandler::Value(v) => {
             let value: JsValue = v.into();
             value
         }
         ValueOrHandler::Handler(c) => {
-            let handler: JsValue = handler_to_js_value(c);
+            let handler: JsValue = handler_to_js_value(c, for_json);
             handler
         }
     }
@@ -4601,7 +4641,7 @@ impl UndoManager {
 
                     let mut undo_item_meta = UndoItemMeta::new();
                     let r = if let Some(e) = event {
-                        let diff = diff_event_to_js_value(e);
+                        let diff = diff_event_to_js_value(e, false);
                         on_push.call3(&is_undo, &counter_range, &diff)
                     } else {
                         on_push.call2(&is_undo, &counter_range)
@@ -5080,36 +5120,55 @@ interface LoroDoc {
      * ```
      */
     subscribeLocalUpdates(f: (bytes: Uint8Array) => void): () => void
+
     /**
      * Convert the document to a JSON value with a custom replacer function.
-     * 
+     *
      * This method works similarly to `JSON.stringify`'s replacer parameter.
      * The replacer function is called for each value in the document and can transform
      * how values are serialized to JSON.
-     * 
+     *
      * @param replacer - A function that takes a key and value, and returns how that value
-     *                  should be serialized. Similar to JSON.stringify's replacer. 
+     *                  should be serialized. Similar to JSON.stringify's replacer.
      *                  If return undefined, the value will be skipped.
      * @returns The JSON representation of the document after applying the replacer function.
-     * 
+     *
      * @example
      * ```ts
      * const doc = new LoroDoc();
      * const text = doc.getText("text");
      * text.insert(0, "Hello");
      * text.mark({ start: 0, end: 2 }, "bold", true);
-     * 
+     *
      * // Use delta to represent text
      * const json = doc.toJsonWithReplacer((key, value) => {
      *   if (value instanceof LoroText) {
      *     return value.toDelta();
-     *   } 
-     * 
+     *   }
+     *
      *   return value;
      * });
      * ```
      */
     toJsonWithReplacer(replacer: (key: string | index, value: Value | Container) => Value | Container | undefined): Value;
+
+    /**
+     * Calculate the differences between two frontiers
+     *
+     * The entries in the returned object are sorted by causal order: the creation of a child container will be
+     * presented before its use.
+     *
+     * @param from - The source frontier to diff from. A frontier represents a consistent version of the document.
+     * @param to - The target frontier to diff to. A frontier represents a consistent version of the document.
+     * @param for_json - Controls the diff format:
+     *                   - If true, returns JsonDiff format suitable for JSON serialization
+     *                   - If false, returns Diff format that shares the same type as LoroEvent
+     *                   - The default value is `true`
+     */
+    diff(from: OpId[], to: OpId[], for_json: false): [ContainerID, Diff][];
+    diff(from: OpId[], to: OpId[], for_json: true): [ContainerID, JsonDiff][];
+    diff(from: OpId[], to: OpId[], for_json: undefined): [ContainerID, JsonDiff][];
+    diff(from: OpId[], to: OpId[], for_json?: boolean): [ContainerID, JsonDiff|Diff][];
 }
 
 /**
@@ -5598,6 +5657,11 @@ export type ListDiff = {
     diff: Delta<(Value | Container)[]>[];
 };
 
+export type ListJsonDiff = {
+    type: "list";
+    diff: Delta<(Value | JsonContainerID )[]>[];
+};
+
 export type TextDiff = {
     type: "text";
     diff: Delta<string>[];
@@ -5606,6 +5670,11 @@ export type TextDiff = {
 export type MapDiff = {
     type: "map";
     updated: Record<string, Value | Container | undefined>;
+};
+
+export type MapJsonDiff = {
+    type: "map";
+    updated: Record<string, Value | JsonContainerID | undefined>;
 };
 
 export type TreeDiffItem =
@@ -5643,6 +5712,7 @@ export type CounterDiff = {
 };
 
 export type Diff = ListDiff | TextDiff | MapDiff | TreeDiff | CounterDiff;
+export type JsonDiff = ListJsonDiff | TextDiff | MapJsonDiff | CounterDiff | TreeDiff;
 export type Subscription = () => void;
 type NonNullableType<T> = Exclude<T, null | undefined>;
 export type AwarenessListener = (
@@ -6008,7 +6078,7 @@ interface LoroMap<T extends Record<string, unknown> = Record<string, unknown>> {
      *  If the key already exists, its value will be updated. If the key doesn't exist,
      *  a new key-value pair will be created.
      *
-     *  > **Note**: When calling `map.set(key, value)` on a LoroMap, if `map.get(key)` already returns `value`, 
+     *  > **Note**: When calling `map.set(key, value)` on a LoroMap, if `map.get(key)` already returns `value`,
      *  > the operation will be a no-op (no operation recorded) to avoid unnecessary updates.
      *
      *  @example

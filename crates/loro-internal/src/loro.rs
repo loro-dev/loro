@@ -913,6 +913,10 @@ impl LoroDoc {
         let mut ans: LoroResult<()> = Ok(());
         let mut missing_containers: Vec<ContainerID> = Vec::new();
         for (mut id, diff) in diff.into_iter() {
+            info!(
+                "id: {:?} diff: {:?} remap: {:?}",
+                &id, &diff, container_remap
+            );
             let mut remapped = false;
             while let Some(rid) = container_remap.get(&id) {
                 remapped = true;

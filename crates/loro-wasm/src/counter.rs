@@ -87,7 +87,7 @@ impl LoroCounter {
     ///   the WASM boundary.
     pub fn parent(&self) -> JsContainerOrUndefined {
         if let Some(p) = HandlerTrait::parent(&self.handler) {
-            handler_to_js_value(p).into()
+            handler_to_js_value(p, false).into()
         } else {
             JsContainerOrUndefined::from(JsValue::UNDEFINED)
         }
@@ -112,7 +112,7 @@ impl LoroCounter {
         }
 
         if let Some(h) = self.handler.get_attached() {
-            handler_to_js_value(Handler::Counter(h)).into()
+            handler_to_js_value(Handler::Counter(h), false).into()
         } else {
             JsValue::UNDEFINED.into()
         }
