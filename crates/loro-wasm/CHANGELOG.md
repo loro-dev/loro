@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.4.0
+
+### Minor Changes
+
+- 2f3364a: refactor!: use better data type for doc.diff #646
+
+### Patch Changes
+
+- 72699ae: fix: getting values by path in LoroTree (#643)
+
 ## 1.3.5
 
 ### Patch Changes
