@@ -858,9 +858,18 @@ pub trait Unsubscriber: Sync + Send {
 pub struct Subscription(Mutex<Option<loro::Subscription>>);
 
 impl Subscription {
+    /// Detaches the subscription from this handle. The callback will
+    /// continue to be invoked until the doc has been subscribed to
+    /// are dropped
     pub fn detach(self: Arc<Self>) {
         let s = self.0.try_lock().unwrap().take().unwrap();
         s.detach();
+    }
+
+    /// Unsubscribes the subscription.
+    pub fn unsubscribe(self: Arc<Self>) {
+        let s = self.0.try_lock().unwrap().take().unwrap();
+        s.unsubscribe();
     }
 }
 
