@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.1
+
+### Patch Changes
+
+- 9090c4d: fix: memory leak issue
+
 ## 1.4.0
 
 ### Minor Changes
