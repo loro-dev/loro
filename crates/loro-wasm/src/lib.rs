@@ -5712,7 +5712,7 @@ export type CounterDiff = {
 };
 
 export type Diff = ListDiff | TextDiff | MapDiff | TreeDiff | CounterDiff;
-export type JsonDiff = ListJsonDiff | TextDiff | MapJsonDiff | CounterDiff;
+export type JsonDiff = ListJsonDiff | TextDiff | MapJsonDiff | CounterDiff | TreeDiff;
 export type Subscription = () => void;
 type NonNullableType<T> = Exclude<T, null | undefined>;
 export type AwarenessListener = (
