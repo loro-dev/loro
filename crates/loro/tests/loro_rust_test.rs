@@ -1,5 +1,6 @@
 #![allow(deprecated)]
 #![allow(unexpected_cfgs)]
+use dev_utils::ByteSize;
 use pretty_assertions::assert_eq;
 use std::{
     cmp::Ordering,
@@ -3213,5 +3214,30 @@ fn test_by_str_path() {
     assert_eq!(
         value.into_value().unwrap().as_string().unwrap().as_str(),
         "grandChild"
+    );
+}
+
+#[test]
+fn test_memory_leak() {
+    fn repeat(f: impl Fn(), n: usize) {
+        for _ in 0..n {
+            f();
+        }
+    }
+
+    let s = "h".repeat(100_000);
+    repeat(
+        || {
+            let doc = LoroDoc::new();
+            doc.get_text("text").insert(0, &s).unwrap();
+            doc.commit();
+        },
+        10,
+    );
+
+    assert!(
+        dev_utils::get_mem_usage() < ByteSize(1_000_000),
+        "memory usage should be less than 1MB {:?}",
+        dev_utils::get_mem_usage()
     );
 }
