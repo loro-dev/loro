@@ -174,7 +174,7 @@ dependencies = [
  "arbitrary",
  "enum-as-inner 0.5.1",
  "flate2",
- "loro-common 1.3.1",
+ "loro-common 1.4.1",
  "rand",
  "serde_json",
 ]
@@ -685,7 +685,7 @@ dependencies = [
  "dev-utils",
  "ensure-cov",
  "flate2",
- "loro 1.3.5",
+ "loro 1.4.1",
  "rand",
  "serde_json",
  "tabled 0.15.0",
@@ -742,7 +742,7 @@ dependencies = [
  "loro 0.16.12",
  "loro 0.16.2 (git+https://github.com/loro-dev/loro.git?tag=loro-crdt%400.16.7)",
  "loro 0.16.2 (git+https://github.com/loro-dev/loro.git?rev=90470658435ec4c62b5af59ebb82fe9e1f5aa761)",
- "loro 1.3.5",
+ "loro 1.4.1",
  "num_cpus",
  "pretty_assertions",
  "rand",
@@ -1113,7 +1113,7 @@ dependencies = [
 
 [[package]]
 name = "loro"
-version = "1.3.5"
+version = "1.4.1"
 dependencies = [
  "anyhow",
  "ctor 0.2.9",
@@ -1121,10 +1121,10 @@ dependencies = [
  "enum-as-inner 0.6.1",
  "fxhash",
  "generic-btree",
- "loro-common 1.3.1",
+ "loro-common 1.4.1",
  "loro-delta 1.3.1",
- "loro-internal 1.3.5",
- "loro-kv-store 1.3.1",
+ "loro-internal 1.4.1",
+ "loro-kv-store 1.4.1",
  "pretty_assertions",
  "rand",
  "serde_json",
@@ -1183,7 +1183,7 @@ dependencies = [
 
 [[package]]
 name = "loro-common"
-version = "1.3.1"
+version = "1.4.1"
 dependencies = [
  "arbitrary",
  "enum-as-inner 0.6.1",
@@ -1253,9 +1253,9 @@ dependencies = [
 
 [[package]]
 name = "loro-ffi"
-version = "1.3.5"
+version = "1.4.1"
 dependencies = [
- "loro 1.3.5",
+ "loro 1.4.1",
  "serde_json",
 ]
 
@@ -1372,7 +1372,7 @@ dependencies = [
 
 [[package]]
 name = "loro-internal"
-version = "1.3.5"
+version = "1.4.1"
 dependencies = [
  "append-only-bytes",
  "arbitrary",
@@ -1396,9 +1396,9 @@ dependencies = [
  "itertools 0.12.1",
  "js-sys",
  "leb128",
- "loro-common 1.3.1",
+ "loro-common 1.4.1",
  "loro-delta 1.3.1",
- "loro-kv-store 1.3.1",
+ "loro-kv-store 1.4.1",
  "loro-rle 1.2.7",
  "loro_fractional_index 1.2.7",
  "md5",
@@ -1443,14 +1443,14 @@ dependencies = [
 
 [[package]]
 name = "loro-kv-store"
-version = "1.3.1"
+version = "1.4.1"
 dependencies = [
  "bytes",
  "ctor 0.2.9",
  "dev-utils",
  "ensure-cov",
  "fxhash",
- "loro-common 1.3.1",
+ "loro-common 1.4.1",
  "lz4_flex",
  "once_cell",
  "quick_cache",
@@ -1526,9 +1526,9 @@ dependencies = [
  "console_error_panic_hook",
  "getrandom",
  "js-sys",
- "loro-common 1.3.1",
+ "loro-common 1.4.1",
  "loro-delta 1.3.1",
- "loro-internal 1.3.5",
+ "loro-internal 1.4.1",
  "loro-rle 1.2.7",
  "serde",
  "serde-wasm-bindgen",
