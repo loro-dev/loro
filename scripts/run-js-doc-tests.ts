@@ -1,4 +1,4 @@
-const LORO_VERSION = "1.2.7";
+const LORO_VERSION = "1.3.5";
 
 export interface CodeBlock {
     filename: string;
