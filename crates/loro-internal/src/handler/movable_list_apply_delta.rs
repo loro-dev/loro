@@ -252,7 +252,7 @@ impl MovableListHandler {
                 }
             }
         }
-        Ok(if let Some(old_index) = context.to_delete.remove(&old_id) {
+        if let Some(old_index) = context.to_delete.remove(&old_id) {
             if old_index > *context.index {
                 ensure_cov::notify_cov(
                     "loro_internal::handler::movable_list_apply_delta::process_replacements::mov_0",
@@ -281,7 +281,8 @@ impl MovableListHandler {
             Self::update_positions_on_insert(context.to_delete, *context.index, 1);
             *context.index += 1;
             *context.index_shift += 1;
-        })
+        }
+        Ok(())
     }
 
     /// Applies any remaining deletions after processing insertions and moves.

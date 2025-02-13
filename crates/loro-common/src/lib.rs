@@ -257,8 +257,8 @@ impl ContainerID {
     }
 
     pub fn try_from_loro_value_string(s: &str) -> Option<Self> {
-        if s.starts_with(Self::LORO_CONTAINER_ID_PREFIX) {
-            Self::try_from(&s[Self::LORO_CONTAINER_ID_PREFIX.len()..]).ok()
+        if let Some(s) = s.strip_prefix(Self::LORO_CONTAINER_ID_PREFIX) {
+            Self::try_from(s).ok()
         } else {
             None
         }

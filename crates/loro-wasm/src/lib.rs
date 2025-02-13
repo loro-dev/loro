@@ -1943,7 +1943,7 @@ impl LoroDoc {
             let id_str = id.to_string();
             let v = resolved_diff_to_js(d, for_json.unwrap_or(true));
             entry.push(&id_str.into());
-            entry.push(&v.into());
+            entry.push(&v);
             arr.push(&entry.into());
         }
         let v: JsValue = arr.into();
@@ -5123,41 +5123,41 @@ interface LoroDoc {
 
     /**
      * Convert the document to a JSON value with a custom replacer function.
-     * 
+     *
      * This method works similarly to `JSON.stringify`'s replacer parameter.
      * The replacer function is called for each value in the document and can transform
      * how values are serialized to JSON.
-     * 
+     *
      * @param replacer - A function that takes a key and value, and returns how that value
-     *                  should be serialized. Similar to JSON.stringify's replacer. 
+     *                  should be serialized. Similar to JSON.stringify's replacer.
      *                  If return undefined, the value will be skipped.
      * @returns The JSON representation of the document after applying the replacer function.
-     * 
+     *
      * @example
      * ```ts
      * const doc = new LoroDoc();
      * const text = doc.getText("text");
      * text.insert(0, "Hello");
      * text.mark({ start: 0, end: 2 }, "bold", true);
-     * 
+     *
      * // Use delta to represent text
      * const json = doc.toJsonWithReplacer((key, value) => {
      *   if (value instanceof LoroText) {
      *     return value.toDelta();
-     *   } 
-     * 
+     *   }
+     *
      *   return value;
      * });
      * ```
      */
     toJsonWithReplacer(replacer: (key: string | index, value: Value | Container) => Value | Container | undefined): Value;
 
-    /** 
+    /**
      * Calculate the differences between two frontiers
      *
      * The entries in the returned object are sorted by causal order: the creation of a child container will be
      * presented before its use.
-     * 
+     *
      * @param from - The source frontier to diff from. A frontier represents a consistent version of the document.
      * @param to - The target frontier to diff to. A frontier represents a consistent version of the document.
      * @param for_json - Controls the diff format:
@@ -6078,7 +6078,7 @@ interface LoroMap<T extends Record<string, unknown> = Record<string, unknown>> {
      *  If the key already exists, its value will be updated. If the key doesn't exist,
      *  a new key-value pair will be created.
      *
-     *  > **Note**: When calling `map.set(key, value)` on a LoroMap, if `map.get(key)` already returns `value`, 
+     *  > **Note**: When calling `map.set(key, value)` on a LoroMap, if `map.get(key)` already returns `value`,
      *  > the operation will be a no-op (no operation recorded) to avoid unnecessary updates.
      *
      *  @example
