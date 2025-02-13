@@ -219,54 +219,69 @@ impl MovableListHandler {
     ) -> LoroResult<()> {
         for v in values.iter() {
             match v {
+                ValueOrHandler::Value(LoroValue::Container(old_id)) => {
+                    self.apply_insertion(attr, context, old_id.clone())?;
+                }
+                ValueOrHandler::Handler(handler) => {
+                    let old_id = handler.id();
+                    self.apply_insertion(attr, context, old_id)?;
+                }
                 ValueOrHandler::Value(value) => {
                     self.insert(*context.index, value.clone())?;
                     Self::update_positions_on_insert(context.to_delete, *context.index, 1);
                     *context.index += 1;
                     *context.index_shift += 1;
                 }
-                ValueOrHandler::Handler(handler) => {
-                    let mut old_id = handler.id();
-                    if !context.to_delete.contains_key(&old_id) {
-                        while let Some(new_id) = context.container_remap.get(&old_id) {
-                            old_id = new_id.clone();
-                            if context.to_delete.contains_key(&old_id) {
-                                break;
-                            }
-                        }
-                    }
-
-                    if let Some(old_index) = context.to_delete.remove(&old_id) {
-                        if old_index > *context.index {
-                            ensure_cov::notify_cov("loro_internal::handler::movable_list_apply_delta::process_replacements::mov_0");
-                            self.mov(old_index, *context.index)?;
-                            context.next_deleted.push(Reverse(old_index));
-                            *context.index += 1;
-                            *context.index_shift += 1;
-                        } else {
-                            ensure_cov::notify_cov("loro_internal::handler::movable_list_apply_delta::process_replacements::mov_1");
-                            self.mov(old_index, *context.index - 1)?;
-                        }
-                        context.deleted_indices.push(old_index);
-                        Self::update_positions_on_delete(context.to_delete, old_index);
-                        Self::update_positions_on_insert(context.to_delete, *context.index, 1);
-                    } else if !attr.from_move {
-                        // Insert a new container if not moved.
-                        let new_handler = self.insert_container(
-                            *context.index,
-                            Handler::new_unattached(old_id.container_type()),
-                        )?;
-                        let new_id = new_handler.id();
-                        context.container_remap.insert(old_id, new_id);
-                        Self::update_positions_on_insert(context.to_delete, *context.index, 1);
-                        *context.index += 1;
-                        *context.index_shift += 1;
-                    }
-                }
             }
         }
 
         Ok(())
+    }
+
+    fn apply_insertion(
+        &self,
+        attr: &crate::event::ListDeltaMeta,
+        context: &mut ReplacementContext<'_>,
+        mut old_id: ContainerID,
+    ) -> Result<(), LoroError> {
+        if !context.to_delete.contains_key(&old_id) {
+            while let Some(new_id) = context.container_remap.get(&old_id) {
+                old_id = new_id.clone();
+                if context.to_delete.contains_key(&old_id) {
+                    break;
+                }
+            }
+        }
+        Ok(if let Some(old_index) = context.to_delete.remove(&old_id) {
+            if old_index > *context.index {
+                ensure_cov::notify_cov(
+                    "loro_internal::handler::movable_list_apply_delta::process_replacements::mov_0",
+                );
+                self.mov(old_index, *context.index)?;
+                context.next_deleted.push(Reverse(old_index));
+                *context.index += 1;
+                *context.index_shift += 1;
+            } else {
+                ensure_cov::notify_cov(
+                    "loro_internal::handler::movable_list_apply_delta::process_replacements::mov_1",
+                );
+                self.mov(old_index, *context.index - 1)?;
+            }
+            context.deleted_indices.push(old_index);
+            Self::update_positions_on_delete(context.to_delete, old_index);
+            Self::update_positions_on_insert(context.to_delete, *context.index, 1);
+        } else if !attr.from_move {
+            // Insert a new container if not moved.
+            let new_handler = self.insert_container(
+                *context.index,
+                Handler::new_unattached(old_id.container_type()),
+            )?;
+            let new_id = new_handler.id();
+            context.container_remap.insert(old_id, new_id);
+            Self::update_positions_on_insert(context.to_delete, *context.index, 1);
+            *context.index += 1;
+            *context.index_shift += 1;
+        })
     }
 
     /// Applies any remaining deletions after processing insertions and moves.

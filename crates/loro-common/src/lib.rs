@@ -250,6 +250,19 @@ impl ContainerID {
             }
         }
     }
+
+    const LORO_CONTAINER_ID_PREFIX: &str = "🦜:";
+    pub fn to_loro_value_string(&self) -> String {
+        format!("{}{}", Self::LORO_CONTAINER_ID_PREFIX, self)
+    }
+
+    pub fn try_from_loro_value_string(s: &str) -> Option<Self> {
+        if s.starts_with(Self::LORO_CONTAINER_ID_PREFIX) {
+            Self::try_from(&s[Self::LORO_CONTAINER_ID_PREFIX.len()..]).ok()
+        } else {
+            None
+        }
+    }
 }
 
 impl std::fmt::Debug for ContainerID {

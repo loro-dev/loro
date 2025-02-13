@@ -1156,6 +1156,14 @@ impl Handler {
                             let new_id = new_h.id();
                             on_container_remap(old_id, new_id);
                         }
+                        Some(ValueOrHandler::Value(LoroValue::Container(old_id))) => {
+                            let new_h = x.insert_container(
+                                &key,
+                                Handler::new_unattached(old_id.container_type()),
+                            )?;
+                            let new_id = new_h.id();
+                            on_container_remap(old_id, new_id);
+                        }
                         Some(ValueOrHandler::Value(v)) => {
                             x.insert_without_skipping(&key, v)?;
                         }
@@ -2724,8 +2732,13 @@ impl ListHandler {
 
                             for v in value.iter() {
                                 match v {
-                                    ValueOrHandler::Value(v) => {
-                                        self.insert(index, v.clone())?;
+                                    ValueOrHandler::Value(LoroValue::Container(old_id)) => {
+                                        let new_h = self.insert_container(
+                                            index,
+                                            Handler::new_unattached(old_id.container_type()),
+                                        )?;
+                                        let new_id = new_h.id();
+                                        on_container_remap(old_id.clone(), new_id);
                                     }
                                     ValueOrHandler::Handler(h) => {
                                         let old_id = h.id();
@@ -2735,6 +2748,9 @@ impl ListHandler {
                                         )?;
                                         let new_id = new_h.id();
                                         on_container_remap(old_id, new_id);
+                                    }
+                                    ValueOrHandler::Value(v) => {
+                                        self.insert(index, v.clone())?;
                                     }
                                 }
 

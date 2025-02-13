@@ -1,6 +1,5 @@
-
 use js_sys::{Array, Map, Object, Reflect, Uint8Array};
-use loro_common::{IdLp, LoroListValue, LoroMapValue, LoroValue};
+use loro_common::{ContainerID, IdLp, LoroListValue, LoroMapValue, LoroValue};
 use loro_delta::{array_vec, DeltaRopeBuilder};
 use loro_internal::delta::{ResolvedMapDelta, ResolvedMapValue};
 use loro_internal::encoding::{ImportBlobMetadata, ImportStatus};
@@ -131,7 +130,7 @@ pub(crate) fn js_to_version_vector(
     Ok(vv)
 }
 
-pub(crate) fn resolved_diff_to_js(value: &Diff) -> JsValue {
+pub(crate) fn resolved_diff_to_js(value: &Diff, for_json: bool) -> JsValue {
     // create a obj
     let obj = Object::new();
     match value {
@@ -148,7 +147,7 @@ pub(crate) fn resolved_diff_to_js(value: &Diff) -> JsValue {
             let arr = Array::new();
             let mut i = 0;
             for v in list.iter() {
-                let (a, b) = delta_item_to_js(v.clone());
+                let (a, b) = delta_item_to_js(v.clone(), for_json);
                 arr.set(i as u32, a);
                 i += 1;
                 if let Some(b) = b {
@@ -179,8 +178,12 @@ pub(crate) fn resolved_diff_to_js(value: &Diff) -> JsValue {
             js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("map"))
                 .unwrap();
 
-            js_sys::Reflect::set(&obj, &JsValue::from_str("updated"), &map_delta_to_js(map))
-                .unwrap();
+            js_sys::Reflect::set(
+                &obj,
+                &JsValue::from_str("updated"),
+                &map_delta_to_js(map, for_json),
+            )
+            .unwrap();
         }
 
         Diff::Counter(v) => {
@@ -239,7 +242,7 @@ pub(crate) fn js_diff_to_inner_diff(js: JsValue) -> JsResult<Diff> {
     }
 }
 
-fn delta_item_to_js(item: ListDiffItem) -> (JsValue, Option<JsValue>) {
+fn delta_item_to_js(item: ListDiffItem, for_json: bool) -> (JsValue, Option<JsValue>) {
     match item {
         loro_internal::loro_delta::DeltaItem::Retain { len, attr: _ } => {
             let obj = Object::new();
@@ -264,7 +267,7 @@ fn delta_item_to_js(item: ListDiffItem) -> (JsValue, Option<JsValue>) {
                 for (i, v) in value.into_iter().enumerate() {
                     let value = match v {
                         ValueOrHandler::Value(v) => convert(v),
-                        ValueOrHandler::Handler(h) => handler_to_js_value(h),
+                        ValueOrHandler::Handler(h) => handler_to_js_value(h, for_json),
                     };
                     arr.set(i as u32, value);
                 }
@@ -395,13 +398,13 @@ impl From<ImportBlobMetadata> for JsImportBlobMetadata {
     }
 }
 
-fn map_delta_to_js(value: &ResolvedMapDelta) -> JsValue {
+fn map_delta_to_js(value: &ResolvedMapDelta, for_json: bool) -> JsValue {
     let obj = Object::new();
     for (key, value) in value.updated.iter() {
         let value = if let Some(value) = value.value.clone() {
             match value {
                 ValueOrHandler::Value(v) => convert(v),
-                ValueOrHandler::Handler(h) => handler_to_js_value(h),
+                ValueOrHandler::Handler(h) => handler_to_js_value(h, for_json),
             }
         } else {
             JsValue::null()
@@ -413,7 +416,12 @@ fn map_delta_to_js(value: &ResolvedMapDelta) -> JsValue {
     obj.into_js_result().unwrap()
 }
 
-pub(crate) fn handler_to_js_value(handler: Handler) -> JsValue {
+pub(crate) fn handler_to_js_value(handler: Handler, for_json: bool) -> JsValue {
+    if for_json {
+        let cid = handler.id();
+        return JsValue::from_str(&cid.to_loro_value_string());
+    }
+
     match handler {
         Handler::Text(t) => LoroText {
             handler: t,
@@ -601,7 +609,11 @@ pub(crate) fn js_value_to_loro_value(js: &JsValue) -> LoroValue {
             LoroValue::Double(n)
         }
     } else if let Some(s) = js.as_string() {
-        LoroValue::String(s.into())
+        if let Some(cid) = ContainerID::try_from_loro_value_string(&s) {
+            LoroValue::Container(cid)
+        } else {
+            LoroValue::String(s.into())
+        }
     } else if js.is_array() {
         let arr = Array::from(js);
         let mut vec = Vec::with_capacity(arr.length() as usize);

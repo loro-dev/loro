@@ -18,6 +18,7 @@ import {
   OpId,
   ContainerID,
   LoroCounter,
+  JsonDiff,
 } from "../bundler/index";
 
 it("basic example", () => {
@@ -1272,6 +1273,49 @@ it("can diff two versions", () => {
     doc.getText("text").toDelta(),
   );
 });
+
+it("diff two version with serialization", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId("1");
+  const text = doc.getMap("map").setContainer("key1", new LoroText());
+  text.insert(0, "Hello");
+  doc.commit();
+  const diff = doc.diff([], doc.frontiers(), true);
+  expectTypeOf(diff).toEqualTypeOf<[ContainerID, JsonDiff][]>()
+  const newDiff = JSON.parse(JSON.stringify(diff));
+  console.dir(newDiff, { depth: 100 });
+  const newDoc = new LoroDoc();
+  newDoc.applyDiff(newDiff);
+  expect(newDoc.toJSON()).toStrictEqual(doc.toJSON());
+})
+
+it("diff two version and apply without for_json", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId("1");
+  const text = doc.getMap("map").setContainer("key1", new LoroText());
+  text.insert(0, "Hello");
+  doc.commit();
+  const diff = doc.diff([], doc.frontiers(), false); // for_json = false here
+  expectTypeOf(diff).toEqualTypeOf<[ContainerID, Diff][]>()
+  const newDiff = JSON.parse(JSON.stringify(diff));
+  const newDoc = new LoroDoc();
+  expect(() => {
+    newDoc.applyDiff(newDiff);
+  }).toThrowError()
+  expect(newDoc.toJSON()).not.toStrictEqual(doc.toJSON());
+})
+
+it("apply diff without for_json should work", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId("1");
+  const text = doc.getMap("map").setContainer("key1", new LoroText());
+  text.insert(0, "Hello");
+  doc.commit();
+  const diff = doc.diff([], doc.frontiers(), false);
+  const newDoc = new LoroDoc();
+  newDoc.applyDiff(diff);
+  expect(newDoc.toJSON()).toStrictEqual(doc.toJSON());
+})
 
 it("the diff will deduplication", () => {
   const doc = new LoroDoc();
