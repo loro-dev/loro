@@ -1,8 +1,9 @@
 use core::panic;
 use std::{
     borrow::Cow,
+    f64::consts::E,
     mem::take,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, Weak},
 };
 
 use enum_as_inner::EnumAsInner;
@@ -136,7 +137,7 @@ pub struct Transaction {
     next_counter: Counter,
     start_lamport: Lamport,
     next_lamport: Lamport,
-    doc: Arc<LoroDocInner>,
+    doc: Weak<LoroDocInner>,
     frontiers: Frontiers,
     local_ops: RleVec<[Op; 1]>, // TODO: use a more efficient data structure
     event_hints: Vec<EventHint>,
@@ -338,7 +339,7 @@ impl Transaction {
         drop(oplog_lock);
         Self {
             peer,
-            doc,
+            doc: Arc::downgrade(&doc),
             arena,
             frontiers,
             timestamp: None,
@@ -386,15 +387,18 @@ impl Transaction {
             return Ok(());
         }
 
+        let Some(doc) = self.doc.upgrade() else {
+            return Ok(());
+        };
         self.finished = true;
-        let mut state = self.doc.state.try_lock().unwrap();
+        let mut state = doc.state.try_lock().unwrap();
         if self.local_ops.is_empty() {
             state.abort_txn();
             return Ok(());
         }
 
         let ops = std::mem::take(&mut self.local_ops);
-        let mut oplog = self.doc.oplog.try_lock().unwrap();
+        let mut oplog = doc.oplog.try_lock().unwrap();
         let deps = take(&mut self.frontiers);
         let change = Change {
             lamport: self.start_lamport,
@@ -411,7 +415,7 @@ impl Transaction {
         let diff = if state.is_recording() {
             Some(change_to_diff(
                 &change,
-                self.doc.clone(),
+                doc.clone(),
                 std::mem::take(&mut self.event_hints),
             ))
         } else {
@@ -448,11 +452,7 @@ impl Transaction {
         drop(state);
         drop(oplog);
         if let Some(on_commit) = self.on_commit.take() {
-            on_commit(
-                &self.doc.state.clone(),
-                &self.doc.oplog.clone(),
-                self.id_span(),
-            );
+            on_commit(&doc.state.clone(), &doc.oplog.clone(), self.id_span());
         }
         Ok(())
     }
@@ -466,10 +466,10 @@ impl Transaction {
         doc: &Arc<LoroDocInner>,
     ) -> LoroResult<()> {
         // TODO: need to check if the doc is the same
-        if Arc::as_ptr(&self.doc.state) != Arc::as_ptr(&doc.state) {
+        let this_doc = self.doc.upgrade().unwrap();
+        if Arc::as_ptr(&this_doc.state) != Arc::as_ptr(&doc.state) {
             return Err(LoroError::UnmatchedContext {
-                expected: self
-                    .doc
+                expected: this_doc
                     .state
                     .try_lock()
                     .unwrap()
@@ -496,7 +496,7 @@ impl Transaction {
             content,
         };
 
-        let mut state = self.doc.state.try_lock().unwrap();
+        let mut state = doc.state.try_lock().unwrap();
         if state.is_deleted(container) {
             return Err(LoroError::ContainerDeleted {
                 container: Box::new(state.arena.idx_to_id(container).unwrap()),
@@ -507,7 +507,7 @@ impl Transaction {
         state.apply_local_op(&raw_op, &op)?;
         {
             // update version info
-            let mut oplog = self.doc.oplog.try_lock().unwrap();
+            let mut oplog = doc.oplog.try_lock().unwrap();
             let dep_id = Frontiers::from_id(ID::new(self.peer, self.next_counter - 1));
             let start_id = ID::new(self.peer, self.next_counter);
             self.next_counter += len as Counter;
@@ -551,7 +551,7 @@ impl Transaction {
     /// if it's str it will use Root container, which will not be None
     pub fn get_text<I: IntoContainerId>(&self, id: I) -> TextHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Text);
-        Handler::new_attached(id, self.doc.clone())
+        Handler::new_attached(id, self.doc.upgrade().unwrap())
             .into_text()
             .unwrap()
     }
@@ -560,7 +560,7 @@ impl Transaction {
     /// if it's str it will use Root container, which will not be None
     pub fn get_list<I: IntoContainerId>(&self, id: I) -> ListHandler {
         let id = id.into_container_id(&self.arena, ContainerType::List);
-        Handler::new_attached(id, self.doc.clone())
+        Handler::new_attached(id, self.doc.upgrade().unwrap())
             .into_list()
             .unwrap()
     }
@@ -569,7 +569,7 @@ impl Transaction {
     /// if it's str it will use Root container, which will not be None
     pub fn get_map<I: IntoContainerId>(&self, id: I) -> MapHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Map);
-        Handler::new_attached(id, self.doc.clone())
+        Handler::new_attached(id, self.doc.upgrade().unwrap())
             .into_map()
             .unwrap()
     }
@@ -578,7 +578,7 @@ impl Transaction {
     /// if it's str it will use Root container, which will not be None
     pub fn get_tree<I: IntoContainerId>(&self, id: I) -> TreeHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Tree);
-        Handler::new_attached(id, self.doc.clone())
+        Handler::new_attached(id, self.doc.upgrade().unwrap())
             .into_tree()
             .unwrap()
     }
