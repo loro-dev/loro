@@ -329,7 +329,6 @@ impl ChangeStore {
                 if id_span.counter.start <= block.counter_range.0
                     && id_span.counter.end >= block.counter_range.1
                 {
-                    println!("Test start {:?} {:?}", block.counter_range, id_span);
                     start = 0;
                     end = changes.len();
                 } else {
@@ -346,7 +345,6 @@ impl ChangeStore {
                             end = e;
                         }
                     }
-                    println!("start={} end={}", start, end);
                 }
                 if start == end {
                     return None;
@@ -377,7 +375,6 @@ impl ChangeStore {
                     // Test end
                     let (block, _start, end) = v.last().unwrap();
                     let changes = block.content.try_changes().unwrap();
-                    println!("Test end {:?} {:?}", changes[*end - 1].id_span(), id_span);
                     assert!(changes[*end - 1].ctr_end() >= id_span.counter.end);
                     assert!(changes[*end - 1].ctr_start() < id_span.counter.end);
                 }
@@ -546,15 +543,12 @@ impl ChangeStore {
             // PERF: this can be optimized by reusing the current encoded blocks
             // In the current method, it needs to parse and re-encode the blocks
             for c in self.iter_changes(span) {
-                dbg!(&span);
-                dbg!(&c.id_span());
                 let start = ((start_vv.get(&c.id.peer).copied().unwrap_or(0) - c.id.counter).max(0)
                     as usize)
                     .min(c.atom_len());
                 let end = ((vv.get(&c.id.peer).copied().unwrap_or(0) - c.id.counter).max(0)
                     as usize)
                     .min(c.atom_len());
-                dbg!(start, end);
 
                 assert_ne!(start, end);
                 let ch = c.slice(start, end);
