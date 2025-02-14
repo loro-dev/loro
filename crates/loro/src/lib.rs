@@ -980,6 +980,40 @@ impl LoroDoc {
     pub fn diff(&self, a: &Frontiers, b: &Frontiers) -> LoroResult<DiffBatch> {
         self.doc.diff(a, b).map(|x| x.into())
     }
+
+    /// Check if the doc contains the target container.
+    ///
+    /// A root container always exists, while a normal container exists
+    /// if it has ever been created on the doc.
+    ///
+    /// # Examples
+    /// ```
+    /// use loro::{LoroDoc, LoroText, LoroList, ExportMode};
+    ///
+    /// let doc = LoroDoc::new();
+    /// doc.set_peer_id(1);
+    /// let map = doc.get_map("map");
+    /// map.insert_container("text", LoroText::new()).unwrap();
+    /// map.insert_container("list", LoroList::new()).unwrap();
+    ///
+    /// // Root map container exists
+    /// assert!(doc.has_container(&"cid:root-map:Map".try_into().unwrap()));
+    /// // Text container exists
+    /// assert!(doc.has_container(&"cid:0@1:Text".try_into().unwrap()));
+    /// // List container exists  
+    /// assert!(doc.has_container(&"cid:1@1:List".try_into().unwrap()));
+    ///
+    /// let doc2 = LoroDoc::new();
+    /// // Containers exist as long as the history or doc state includes them
+    /// doc.detach();
+    /// doc2.import(&doc.export(ExportMode::all_updates()).unwrap()).unwrap();
+    /// assert!(doc2.has_container(&"cid:root-map:Map".try_into().unwrap()));
+    /// assert!(doc2.has_container(&"cid:0@1:Text".try_into().unwrap()));
+    /// assert!(doc2.has_container(&"cid:1@1:List".try_into().unwrap()));
+    /// ```
+    pub fn has_container(&self, container_id: &ContainerID) -> bool {
+        self.doc.has_container(container_id)
+    }
 }
 
 /// It's used to prevent the user from implementing the trait directly.

@@ -1452,3 +1452,19 @@ it("should return map for get_path_by_str", () => {
   })
   expect(doc.getByPath("tree/0/0/0/type")).toBe("grandChild")
 })
+
+it("test container existence", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId("1");
+  const text = doc.getMap("map").setContainer("text", new LoroText());
+  const list = doc.getMap("map").setContainer("list", new LoroList());
+  expect(doc.hasContainer("cid:root-map:Map")).toBe(true);
+  expect(doc.hasContainer("cid:0@1:Text")).toBe(true);
+  expect(doc.hasContainer("cid:1@1:List")).toBe(true);
+  const doc2 = new LoroDoc();
+  doc.detach();
+  doc2.import(doc.export({ mode: "update" }));
+  expect(doc2.hasContainer("cid:root-map:Map")).toBe(true);
+  expect(doc2.hasContainer("cid:0@1:Text")).toBe(true);
+  expect(doc2.hasContainer("cid:1@1:List")).toBe(true);
+})
