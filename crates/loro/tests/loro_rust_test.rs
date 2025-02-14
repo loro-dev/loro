@@ -3241,3 +3241,22 @@ fn test_memory_leak() {
         dev_utils::get_mem_usage()
     );
 }
+
+#[test]
+fn test_iter_change_on_edge() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    doc.set_change_merge_interval(10);
+    doc.get_text("text").insert(0, "hello").unwrap();
+    doc.commit_with(CommitOptions::default().timestamp(1000));
+    doc.get_text("text").insert(0, "hello").unwrap();
+    doc.commit_with(CommitOptions::default().timestamp(3000));
+    doc.get_text("text").insert(0, "hello").unwrap();
+    doc.commit_with(CommitOptions::default().timestamp(5000));
+    doc.set_peer_id(2).unwrap();
+    doc.get_text("text").insert(0, "hello").unwrap();
+    doc.commit_with(CommitOptions::default().timestamp(6000));
+    doc.fork_at(&Frontiers::from_id(ID::new(1, 9)));
+    doc.fork_at(&Frontiers::from_id(ID::new(1, 10)));
+    doc.fork_at(&Frontiers::from_id(ID::new(1, 11)));
+}
