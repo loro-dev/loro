@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.2
+
+### Patch Changes
+
+- e0948d8: feat: add container existence check methods & avoid panic in wasm/js #651
+- 9955500: fix: an internal iter_change err that may cause fork_at panic #649
+
 ## 1.4.1
 
 ### Patch Changes
