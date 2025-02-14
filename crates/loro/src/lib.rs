@@ -36,6 +36,7 @@ pub use loro_internal::diff::diff_impl::UpdateTimeoutError;
 pub use loro_internal::subscription::LocalUpdateCallback;
 pub use loro_internal::subscription::PeerIdUpdateCallback;
 pub use loro_internal::ChangeMeta;
+pub use loro_internal::LORO_VERSION;
 pub mod event;
 pub use loro_internal::awareness;
 pub use loro_internal::change::Timestamp;

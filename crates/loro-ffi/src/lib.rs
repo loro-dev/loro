@@ -6,7 +6,7 @@ pub use loro::{
     CounterSpan, EventTriggerKind, ExpandType, FractionalIndex, IdLp, IdSpan, JsonChange,
     JsonFutureOp, JsonFutureOpWrapper, JsonListOp, JsonMapOp, JsonMovableListOp, JsonOp,
     JsonOpContent, JsonPathError, JsonSchema, JsonTextOp, JsonTreeOp, Lamport, LoroEncodeError,
-    LoroError, PeerID, StyleConfig, TreeID, UpdateOptions, UpdateTimeoutError, ID,
+    LoroError, PeerID, StyleConfig, TreeID, UpdateOptions, UpdateTimeoutError, ID, LORO_VERSION,
 };
 pub use std::cmp::Ordering;
 use std::sync::Arc;
