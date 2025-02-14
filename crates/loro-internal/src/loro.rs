@@ -648,9 +648,12 @@ impl LoroDoc {
     }
 
     #[inline]
-    pub fn get_handler(&self, id: ContainerID) -> Handler {
-        self.assert_container_exists(&id);
-        Handler::new_attached(id, self.inner.clone())
+    pub fn get_handler(&self, id: ContainerID) -> Option<Handler> {
+        if self.has_container(&id) {
+            Some(Handler::new_attached(id, self.inner.clone()))
+        } else {
+            None
+        }
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
@@ -658,7 +661,7 @@ impl LoroDoc {
     #[inline]
     pub fn get_text<I: IntoContainerId>(&self, id: I) -> TextHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Text);
-        self.assert_container_exists(&id);
+        assert!(self.has_container(&id));
         Handler::new_attached(id, self.inner.clone())
             .into_text()
             .unwrap()
@@ -669,7 +672,7 @@ impl LoroDoc {
     #[inline]
     pub fn get_list<I: IntoContainerId>(&self, id: I) -> ListHandler {
         let id = id.into_container_id(&self.arena, ContainerType::List);
-        self.assert_container_exists(&id);
+        assert!(self.has_container(&id));
         Handler::new_attached(id, self.inner.clone())
             .into_list()
             .unwrap()
@@ -680,7 +683,7 @@ impl LoroDoc {
     #[inline]
     pub fn get_movable_list<I: IntoContainerId>(&self, id: I) -> MovableListHandler {
         let id = id.into_container_id(&self.arena, ContainerType::MovableList);
-        self.assert_container_exists(&id);
+        assert!(self.has_container(&id));
         Handler::new_attached(id, self.inner.clone())
             .into_movable_list()
             .unwrap()
@@ -691,7 +694,7 @@ impl LoroDoc {
     #[inline]
     pub fn get_map<I: IntoContainerId>(&self, id: I) -> MapHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Map);
-        self.assert_container_exists(&id);
+        assert!(self.has_container(&id));
         Handler::new_attached(id, self.inner.clone())
             .into_map()
             .unwrap()
@@ -702,7 +705,7 @@ impl LoroDoc {
     #[inline]
     pub fn get_tree<I: IntoContainerId>(&self, id: I) -> TreeHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Tree);
-        self.assert_container_exists(&id);
+        assert!(self.has_container(&id));
         Handler::new_attached(id, self.inner.clone())
             .into_tree()
             .unwrap()
@@ -714,21 +717,20 @@ impl LoroDoc {
         id: I,
     ) -> crate::handler::counter::CounterHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Counter);
-        self.assert_container_exists(&id);
+        assert!(self.has_container(&id));
         Handler::new_attached(id, self.inner.clone())
             .into_counter()
             .unwrap()
     }
 
-    fn assert_container_exists(&self, id: &ContainerID) {
+    #[must_use]
+    pub fn has_container(&self, id: &ContainerID) -> bool {
         if id.is_root() {
-            return;
+            return true;
         }
 
         let exist = self.state.try_lock().unwrap().does_container_exist(id);
-        if !exist {
-            panic!("Target container does not exist: {:?}", id);
-        }
+        exist
     }
 
     /// Undo the operations between the given id_span. It can be used even in a collaborative environment.
@@ -932,7 +934,11 @@ impl LoroDoc {
                 continue;
             }
 
-            let h = self.get_handler(id);
+            let Some(h) = self.get_handler(id.clone()) else {
+                return Err(LoroError::ContainersNotFound {
+                    containers: Box::new(vec![id]),
+                });
+            };
             if let Err(e) = h.apply_diff(diff, container_remap) {
                 ans = Err(e);
             }

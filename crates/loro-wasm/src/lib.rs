@@ -885,6 +885,8 @@ impl LoroDoc {
     /// The object returned is a new js object each time because it need to cross
     /// the WASM boundary.
     ///
+    /// If the container does not exist, an error will be thrown.
+    ///
     /// @example
     /// ```ts
     /// import { LoroDoc } from "loro-crdt";
@@ -894,11 +896,12 @@ impl LoroDoc {
     /// ```
     #[wasm_bindgen(js_name = "getText")]
     pub fn get_text(&self, cid: &JsIntoContainerID) -> JsResult<LoroText> {
-        let text = self
-            .0
-            .get_text(js_value_to_container_id(cid, ContainerType::Text)?);
+        let container_id = js_value_to_container_id(cid, ContainerType::Text)?;
+        if !self.0.has_container(&container_id) {
+            return Err(JsValue::from_str("The container does not exist in the doc"));
+        }
         Ok(LoroText {
-            handler: text,
+            handler: self.0.get_text(container_id),
             delta_cache: None,
         })
     }
@@ -907,6 +910,8 @@ impl LoroDoc {
     ///
     /// The object returned is a new js object each time because it need to cross
     /// the WASM boundary.
+    ///
+    /// If the container does not exist, an error will be thrown.
     ///
     /// @example
     /// ```ts
@@ -917,16 +922,21 @@ impl LoroDoc {
     /// ```
     #[wasm_bindgen(js_name = "getMap", skip_typescript)]
     pub fn get_map(&self, cid: &JsIntoContainerID) -> JsResult<LoroMap> {
-        let map = self
-            .0
-            .get_map(js_value_to_container_id(cid, ContainerType::Map)?);
-        Ok(LoroMap { handler: map })
+        let container_id = js_value_to_container_id(cid, ContainerType::Map)?;
+        if !self.0.has_container(&container_id) {
+            return Err(JsValue::from_str("The container does not exist in the doc"));
+        }
+        Ok(LoroMap {
+            handler: self.0.get_map(container_id),
+        })
     }
 
     /// Get a LoroList by container id
     ///
     /// The object returned is a new js object each time because it need to cross
     /// the WASM boundary.
+    ///
+    /// If the container does not exist, an error will be thrown.
     ///
     /// @example
     /// ```ts
@@ -937,16 +947,21 @@ impl LoroDoc {
     /// ```
     #[wasm_bindgen(js_name = "getList", skip_typescript)]
     pub fn get_list(&self, cid: &JsIntoContainerID) -> JsResult<LoroList> {
-        let list = self
-            .0
-            .get_list(js_value_to_container_id(cid, ContainerType::List)?);
-        Ok(LoroList { handler: list })
+        let container_id = js_value_to_container_id(cid, ContainerType::List)?;
+        if !self.0.has_container(&container_id) {
+            return Err(JsValue::from_str("The container does not exist in the doc"));
+        }
+        Ok(LoroList {
+            handler: self.0.get_list(container_id),
+        })
     }
 
     /// Get a LoroMovableList by container id
     ///
     /// The object returned is a new js object each time because it need to cross
     /// the WASM boundary.
+    ///
+    /// If the container does not exist, an error will be thrown.
     ///
     /// @example
     /// ```ts
@@ -957,25 +972,36 @@ impl LoroDoc {
     /// ```
     #[wasm_bindgen(skip_typescript)]
     pub fn getMovableList(&self, cid: &JsIntoContainerID) -> JsResult<LoroMovableList> {
-        let list = self
-            .0
-            .get_movable_list(js_value_to_container_id(cid, ContainerType::MovableList)?);
-        Ok(LoroMovableList { handler: list })
+        let container_id = js_value_to_container_id(cid, ContainerType::MovableList)?;
+        if !self.0.has_container(&container_id) {
+            return Err(JsValue::from_str("The container does not exist in the doc"));
+        }
+        Ok(LoroMovableList {
+            handler: self.0.get_movable_list(container_id),
+        })
     }
 
     /// Get a LoroCounter by container id
+    ///
+    /// If the container does not exist, an error will be thrown.
+    ///
     #[wasm_bindgen(js_name = "getCounter")]
     pub fn get_counter(&self, cid: &JsIntoContainerID) -> JsResult<LoroCounter> {
-        let counter = self
-            .0
-            .get_counter(js_value_to_container_id(cid, ContainerType::Counter)?);
-        Ok(LoroCounter { handler: counter })
+        let container_id = js_value_to_container_id(cid, ContainerType::Counter)?;
+        if !self.0.has_container(&container_id) {
+            return Err(JsValue::from_str("The container does not exist in the doc"));
+        }
+        Ok(LoroCounter {
+            handler: self.0.get_counter(container_id),
+        })
     }
 
     /// Get a LoroTree by container id
     ///
     /// The object returned is a new js object each time because it need to cross
     /// the WASM boundary.
+    ///
+    /// If the container does not exist, an error will be thrown.
     ///
     /// @example
     /// ```ts
@@ -986,14 +1012,51 @@ impl LoroDoc {
     /// ```
     #[wasm_bindgen(js_name = "getTree", skip_typescript)]
     pub fn get_tree(&self, cid: &JsIntoContainerID) -> JsResult<LoroTree> {
-        let tree = self
-            .0
-            .get_tree(js_value_to_container_id(cid, ContainerType::Tree)?);
-        Ok(LoroTree { handler: tree })
+        let container_id = js_value_to_container_id(cid, ContainerType::Tree)?;
+        if !self.0.has_container(&container_id) {
+            return Err(JsValue::from_str("The container does not exist in the doc"));
+        }
+        Ok(LoroTree {
+            handler: self.0.get_tree(container_id),
+        })
     }
 
-    /// Get the container corresponding to the container id
+    /// Check if the doc contains the target container.
     ///
+    /// A root container always exists, while a normal container exists
+    /// if it has ever been created on the doc.
+    ///
+    /// @example
+    /// ```ts
+    /// import { LoroDoc, LoroMap, LoroText, LoroList } from "loro-crdt";
+    ///
+    /// const doc = new LoroDoc();
+    /// doc.setPeerId("1");
+    /// const text = doc.getMap("map").setContainer("text", new LoroText());
+    /// const list = doc.getMap("map").setContainer("list", new LoroList());
+    /// expect(doc.isContainerExists("cid:root-map:Map")).toBe(true);
+    /// expect(doc.isContainerExists("cid:0@1:Text")).toBe(true);
+    /// expect(doc.isContainerExists("cid:1@1:List")).toBe(true);
+    ///
+    /// const doc2 = new LoroDoc();
+    /// // Containers exist, as long as the history or the doc state include it
+    /// doc.detach();
+    /// doc2.import(doc.export({ mode: "update" }));
+    /// expect(doc2.isContainerExists("cid:root-map:Map")).toBe(true);
+    /// expect(doc2.isContainerExists("cid:0@1:Text")).toBe(true);
+    /// expect(doc2.isContainerExists("cid:1@1:List")).toBe(true);
+    /// ```
+    pub fn hasContainer(&self, container_id: JsContainerID) -> bool {
+        let container_id: ContainerID = match container_id.to_owned().try_into() {
+            Ok(id) => id,
+            Err(_) => return false,
+        };
+        self.0.has_container(&container_id)
+    }
+
+    /// Get the container corresponding to the container id.
+    ///
+    /// If the container does not exist, it returns `undefined`.
     ///
     /// @example
     /// ```ts
@@ -1007,6 +1070,10 @@ impl LoroDoc {
     #[wasm_bindgen(skip_typescript, js_name = "getContainerById")]
     pub fn get_container_by_id(&self, container_id: JsContainerID) -> JsResult<JsValue> {
         let container_id: ContainerID = container_id.to_owned().try_into()?;
+        if !self.0.has_container(&container_id) {
+            return Ok(JsValue::UNDEFINED);
+        }
+
         let ty = container_id.container_type();
         Ok(match ty {
             ContainerType::Map => {
@@ -5074,7 +5141,7 @@ interface LoroDoc {
      *  text = doc.getContainerById(textId);
      *  ```
      */
-    getContainerById(id: ContainerID): Container;
+    getContainerById(id: ContainerID): Container | undefined;
 
     /**
      * Subscribe to updates from local edits.
