@@ -143,3 +143,6 @@ pub struct LoroDocInner {
     local_update_subs: SubscriberSetWithQueue<(), LocalUpdateCallback, Vec<u8>>,
     peer_id_change_subs: SubscriberSetWithQueue<(), PeerIdUpdateCallback, ID>,
 }
+
+/// The version of the loro crate
+pub const LORO_VERSION: &str = include_str!("../VERSION");

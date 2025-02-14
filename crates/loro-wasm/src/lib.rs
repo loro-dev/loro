@@ -47,6 +47,12 @@ pub use awareness::AwarenessWasm;
 
 mod convert;
 
+/// Get the version of Loro
+#[wasm_bindgen]
+pub fn LORO_VERSION() -> String {
+    loro_internal::LORO_VERSION.to_string()
+}
+
 #[wasm_bindgen(start)]
 fn run() {
     console_error_panic_hook::set_once();

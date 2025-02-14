@@ -11,11 +11,12 @@
     "test-all": "pnpm test && pnpm test-wasm",
     "test-wasm": "cd crates/loro-wasm && pnpm i && pnpm build-dev",
     "coverage": "mkdir -p coverage && cargo llvm-cov nextest --features test_utils,jsonpath --lcov > coverage/lcov-nextest.info && cargo llvm-cov report",
-    "release-wasm": "cd crates/loro-wasm && pnpm i && pnpm build-release",
+    "release-wasm": "deno run -A ./scripts/sync-loro-version.ts && cd crates/loro-wasm && pnpm i && pnpm build-release",
     "check": "cargo clippy --all-features -- -Dwarnings",
     "run-fuzz-corpus": "cd crates/fuzz && cargo +nightly fuzz run all -- -max_total_time=1",
     "fix": "cargo clippy --fix --features=test_utils",
-    "vet": "cargo vet"
+    "vet": "cargo vet",
+    "release-rust": "deno run -A ./scripts/cargo-release.ts"
   },
   "keywords": [],
   "author": "",
