@@ -39,10 +39,19 @@ pub enum TreeExternalDiff {
 }
 
 impl TreeDiff {
-    pub(crate) fn compose(mut self, other: Self) -> Self {
-        self.diff.extend(other.diff);
-        // self = compose_tree_diff(&self);
-        self
+    pub(crate) fn compose(self, other: Self) -> Self {
+        // println!("\ncompose \n{:?} \n{:?}", self, other);
+        let mut temp_tree = compose::TempTree::default();
+        for item in self.diff.into_iter() {
+            temp_tree.apply(item);
+        }
+        for item in other.diff.into_iter() {
+            temp_tree.apply(item);
+        }
+        // println!("\ntemp_tree {:?}\n", temp_tree);
+        let ans = temp_tree.into_diff();
+        // println!("ans {:?}", ans);
+        ans
     }
 
     pub(crate) fn extend<I: IntoIterator<Item = TreeDiffItem>>(mut self, other: I) -> Self {
@@ -205,5 +214,293 @@ impl Deref for TreeDiff {
 impl DerefMut for TreeDiff {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.diff
+    }
+}
+
+mod compose {
+    use super::*;
+    #[derive(Debug, Default)]
+    pub struct TempTree {
+        tree: FxHashMap<TreeID, Node>,
+        roots: Vec<TreeID>,
+        deleted: FxHashMap<TreeID, Node>,
+        deleted_sorted: Vec<TreeID>,
+    }
+
+    #[derive(Debug, Clone)]
+    struct Node {
+        id: TreeID,
+        children: Vec<TreeID>,
+        index: usize,
+        filter: bool,
+        diff: Option<TreeExternalDiff>,
+    }
+
+    impl TempTree {
+        pub fn apply(&mut self, TreeDiffItem { target, mut action }: TreeDiffItem) {
+            match action {
+                TreeExternalDiff::Create { parent, index, .. } => {
+                    self.create(target, parent, index, action);
+                }
+                TreeExternalDiff::Move {
+                    parent,
+                    index,
+                    old_parent,
+                    old_index,
+                    ..
+                } => {
+                    if self.tree.contains_key(&target)
+                        && self
+                            .tree
+                            .get(&target)
+                            .unwrap()
+                            .diff
+                            .as_ref()
+                            .is_some_and(|d| matches!(d, TreeExternalDiff::Create { .. }))
+                    {
+                        let position = match &action {
+                            TreeExternalDiff::Move { position, .. } => position.clone(),
+                            _ => unreachable!(),
+                        };
+                        action = TreeExternalDiff::Create {
+                            parent,
+                            index,
+                            position,
+                        };
+                    }
+                    self.delete(target, old_parent, old_index);
+
+                    self.create(target, parent, index, action);
+                    // 如果在 batch 中创建，则是create,而不是move
+                }
+                TreeExternalDiff::Delete {
+                    old_parent,
+                    old_index,
+                } => {
+                    self.delete(target, old_parent, old_index);
+                }
+            }
+        }
+
+        fn create(
+            &mut self,
+            target: TreeID,
+            parent: TreeParentId,
+            index: usize,
+            action: TreeExternalDiff,
+        ) {
+            let node = Node {
+                id: target,
+                children: vec![],
+                index,
+                diff: Some(action),
+                filter: false,
+            };
+            // insert into parent
+            match parent {
+                TreeParentId::Root => {
+                    let children = &mut self.roots;
+                    if children.is_empty() {
+                        children.push(target);
+                    } else {
+                        for (i, id) in children.iter().enumerate().rev() {
+                            // 从后向前遍历，找到第一个比create index小的
+                            if self.tree.get(id).unwrap().index < index {
+                                children.insert(i + 1, target);
+                                break;
+                            }
+                            // 遍历的项的 index 都需要再 + 1
+                            self.tree.get_mut(id).unwrap().index += 1;
+                        }
+                    }
+                }
+                TreeParentId::Node(id) => {
+                    let children = self
+                        .tree
+                        .entry(id)
+                        .or_insert_with(|| {
+                            self.roots.push(id);
+                            Node {
+                                id,
+                                children: vec![],
+                                index: 0,
+                                diff: None,
+                                filter: true,
+                            }
+                        })
+                        .children
+                        .clone();
+                    if children.is_empty() {
+                        self.tree.get_mut(&id).unwrap().children.push(target);
+                    } else {
+                        for (i, id) in children.iter().enumerate().rev() {
+                            // 从后向前遍历，找到第一个比create index小的
+                            if self.tree.get(id).unwrap().index < index {
+                                self.tree
+                                    .get_mut(id)
+                                    .unwrap()
+                                    .children
+                                    .insert(i + 1, target);
+                                break;
+                            }
+                            // 遍历的项的 index 都需要再 + 1
+                            self.tree.get_mut(id).unwrap().index += 1;
+                        }
+                    }
+                }
+                TreeParentId::Unexist | TreeParentId::Deleted => unreachable!(),
+            };
+
+            if let Some(prev) = self.tree.insert(target, node) {
+                self.tree.get_mut(&target).unwrap().children = prev.children;
+            }
+            self.deleted.remove(&target);
+            self.deleted_sorted.retain(|id| *id != target);
+        }
+
+        fn delete(&mut self, target: TreeID, old_parent: TreeParentId, old_index: usize) {
+            self.deleted_sorted.push(target);
+            match old_parent {
+                TreeParentId::Root => {
+                    if let Some(index) = self.roots.iter().position(|id| *id == target) {
+                        // 此次创建或移动的节点被删除
+                        let node_id = self.roots.remove(index);
+                        // 从后向前遍历，找到第一个比delete index小的
+                        for id in self.roots.iter().rev() {
+                            let node = self.tree.get_mut(id).unwrap();
+                            if node.index <= old_index {
+                                break;
+                            }
+                            // 遍历的项的 index 都需要再 - 1
+                            node.index -= 1;
+                        }
+                        let mut node = self.tree.remove(&node_id).unwrap();
+                        node.diff = Some(TreeExternalDiff::Delete {
+                            old_parent,
+                            old_index,
+                        });
+                        node.filter = true;
+                        self.deleted.insert(target, node);
+                    } else {
+                        self.deleted.insert(
+                            target,
+                            Node {
+                                id: target,
+                                children: vec![],
+                                index: 0,
+                                filter: false,
+                                diff: Some(TreeExternalDiff::Delete {
+                                    old_parent,
+                                    old_index,
+                                }),
+                            },
+                        );
+                    }
+                }
+                TreeParentId::Node(id) => {
+                    if let Some(parent) = self.tree.get_mut(&id) {
+                        if let Some(index) = parent.children.iter().position(|id| *id == target) {
+                            // 此次创建或移动的节点被删除
+                            let node_id = parent.children.remove(index);
+                            // 从后向前遍历，找到第一个比delete index小的
+                            for id in parent.children.clone().iter().rev() {
+                                let node = self.tree.get_mut(id).unwrap();
+                                if node.index <= old_index {
+                                    break;
+                                }
+                                // 遍历的项的 index 都需要再 - 1
+                                node.index -= 1;
+                            }
+                            let mut node = self.tree.remove(&node_id).unwrap();
+                            node.diff = Some(TreeExternalDiff::Delete {
+                                old_parent,
+                                old_index,
+                            });
+                            node.filter = true;
+                            self.deleted.insert(target, node);
+                        } else {
+                            // 父节点存在，目标不在batch中
+                            self.deleted.insert(
+                                target,
+                                Node {
+                                    id: target,
+                                    children: vec![],
+                                    index: 0,
+                                    filter: false,
+                                    diff: Some(TreeExternalDiff::Delete {
+                                        old_parent,
+                                        old_index,
+                                    }),
+                                },
+                            );
+                        }
+                    } else {
+                        self.deleted.insert(
+                            target,
+                            Node {
+                                id: target,
+                                children: vec![],
+                                index: 0,
+                                filter: false,
+                                diff: Some(TreeExternalDiff::Delete {
+                                    old_parent,
+                                    old_index,
+                                }),
+                            },
+                        );
+                    }
+                }
+                TreeParentId::Unexist | TreeParentId::Deleted => unreachable!(),
+            };
+        }
+
+        pub fn into_diff(mut self) -> TreeDiff {
+            let mut diff = TreeDiff::default();
+            self.roots
+                .sort_by_key(|id| self.tree.get(id).map(|node| node.index).unwrap());
+            self.pre_order_traverse(|mut node| {
+                if node.filter {
+                    return;
+                }
+                if let Some(action) = node.diff.take() {
+                    diff.push(TreeDiffItem {
+                        target: node.id,
+                        action,
+                    });
+                }
+            });
+            diff
+        }
+
+        fn pre_order_traverse<F>(&mut self, f: F)
+        where
+            F: FnMut(Node),
+        {
+            let mut f = f;
+            let mut stack = Vec::new();
+
+            // Push all root nodes to stack initially
+            for root_id in self.roots.iter().rev() {
+                stack.push(*root_id);
+            }
+
+            // Process nodes in stack
+            while let Some(node_id) = stack.pop() {
+                if let Some(node) = self.tree.remove(&node_id) {
+                    // Push children to stack in reverse order
+                    // so they are processed in correct order
+                    for child_id in node.children.iter().rev() {
+                        stack.push(*child_id);
+                    }
+                    f(node);
+                }
+            }
+
+            for id in self.deleted_sorted.iter() {
+                if let Some(node) = self.deleted.remove(id) {
+                    f(node);
+                }
+            }
+        }
     }
 }
