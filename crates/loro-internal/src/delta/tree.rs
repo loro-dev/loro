@@ -459,6 +459,7 @@ mod compose {
                         });
                         node.filter = true;
                         node.sort_index = sort_index;
+                        node.children = vec![];
                         self.deleted.insert(target, node);
                     } else {
                         self.deleted.insert(
@@ -500,6 +501,8 @@ mod compose {
                                 old_index,
                             });
                             node.filter = true;
+                            node.sort_index = sort_index;
+                            node.children = vec![];
                             self.deleted.insert(target, node);
                         } else {
                             // Parent exists but target is not in batch
