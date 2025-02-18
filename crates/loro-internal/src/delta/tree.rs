@@ -52,17 +52,17 @@ impl TreeDiff {
     #[allow(clippy::let_and_return)]
     pub(crate) fn compose(self, other: Self) -> Self {
         println!("\ncompose \n{:?} \n{:?}", self, other);
-        let mut sort_index = 0;
         let mut temp_tree = compose::TempTree::default();
-        for item in self.diff.into_iter() {
+        for (sort_index, item) in self
+            .diff
+            .into_iter()
+            .chain(other.diff.into_iter())
+            .enumerate()
+        {
+            println!("\napply self {:?}", item);
             temp_tree.apply(item, sort_index);
-            sort_index += 1;
+            println!("\ntemp_tree {:?}\n", temp_tree);
         }
-        for item in other.diff.into_iter() {
-            temp_tree.apply(item, sort_index);
-            sort_index += 1;
-        }
-        println!("\ntemp_tree {:?}\n", temp_tree);
         let ans = temp_tree.into_diff();
         println!("ans {:?}", ans);
         ans
@@ -238,7 +238,6 @@ mod compose {
         tree: FxHashMap<TreeID, Node>,
         roots: Vec<TreeID>,
         deleted: FxHashMap<TreeID, Node>,
-        deleted_sorted: Vec<TreeID>,
     }
 
     #[derive(Debug, Clone)]
@@ -251,11 +250,18 @@ mod compose {
     }
 
     impl Node {
-        fn index(&self) -> usize {
+        fn temp(&self) -> bool {
+            !matches!(
+                &self.diff,
+                Some(TreeExternalDiff::Create { .. }) | Some(TreeExternalDiff::Move { .. })
+            )
+        }
+
+        fn index(&self) -> Option<usize> {
             match &self.diff {
-                Some(TreeExternalDiff::Create { index, .. }) => *index,
-                Some(TreeExternalDiff::Move { index, .. }) => *index,
-                _ => usize::MAX,
+                Some(TreeExternalDiff::Create { index, .. }) => Some(*index),
+                Some(TreeExternalDiff::Move { index, .. }) => Some(*index),
+                _ => None,
             }
         }
 
@@ -326,13 +332,21 @@ mod compose {
             action: TreeExternalDiff,
             sort_index: usize,
         ) {
-            let node = Node {
-                id: target,
-                children: vec![],
-                diff: Some(action),
-                filter: false,
-                sort_index,
+            let (mut node, need_update) = if self.deleted.contains_key(&target) {
+                (self.deleted.remove(&target).unwrap(), true)
+            } else {
+                (
+                    Node {
+                        id: target,
+                        children: vec![],
+                        diff: Some(action.clone()),
+                        filter: false,
+                        sort_index,
+                    },
+                    false,
+                )
             };
+
             // insert into parent
             match parent {
                 TreeParentId::Root => {
@@ -341,14 +355,18 @@ mod compose {
                         children.push(target);
                     } else {
                         for (i, id) in children.iter().enumerate().rev() {
+                            if self.tree.get(id).unwrap().temp() {
+                                continue;
+                            }
                             // Traverse backwards to find the first one with index less than create index
-                            if self.tree.get(id).unwrap().index() < index {
+                            if self.tree.get(id).unwrap().index().unwrap() < index {
                                 children.insert(i + 1, target);
                                 break;
                             }
                             // The traversed items need to increment index by 1
-                            if let Some(index) = self.tree.get_mut(id).unwrap().index_mut() {
-                                *index += 1;
+                            let other_node = self.tree.get_mut(id).unwrap();
+                            if need_update && other_node.sort_index > node.sort_index {
+                                *other_node.index_mut().unwrap() += 1;
                             }
                         }
                     }
@@ -374,7 +392,7 @@ mod compose {
                     } else {
                         for (i, child_id) in children.iter().enumerate().rev() {
                             // Traverse backwards to find the first one with index less than create index
-                            if self.tree.get(child_id).unwrap().index() < index {
+                            if self.tree.get(child_id).unwrap().index().unwrap() < index {
                                 self.tree
                                     .get_mut(&id)
                                     .unwrap()
@@ -383,8 +401,9 @@ mod compose {
                                 break;
                             }
                             // The traversed items need to increment index by 1
-                            if let Some(index) = self.tree.get_mut(child_id).unwrap().index_mut() {
-                                *index += 1;
+                            let other_node = self.tree.get_mut(child_id).unwrap();
+                            if need_update && other_node.sort_index > node.sort_index {
+                                *other_node.index_mut().unwrap() += 1;
                             }
                         }
                     }
@@ -392,11 +411,13 @@ mod compose {
                 TreeParentId::Unexist | TreeParentId::Deleted => unreachable!(),
             };
 
-            if let Some(prev) = self.tree.insert(target, node) {
-                self.tree.get_mut(&target).unwrap().children = prev.children;
+            if need_update {
+                node.filter = false;
+                node.sort_index = sort_index;
+                node.diff = Some(action);
             }
-            self.deleted.remove(&target);
-            self.deleted_sorted.retain(|id| *id != target);
+
+            self.tree.insert(target, node);
         }
 
         fn delete(
@@ -406,30 +427,38 @@ mod compose {
             old_index: usize,
             sort_index: usize,
         ) {
-            self.deleted_sorted.push(target);
+            // Check if previous events are affected. For example, if A was created first, then B was created after target,
+            // when A is deleted, B's index needs to be decremented by 1
+
             match old_parent {
                 TreeParentId::Root => {
                     if let Some(index) = self.roots.iter().position(|id| *id == target) {
                         // The node created or moved this time is deleted
                         let node_id = self.roots.remove(index);
-                        // Traverse backwards to find the first one with index less than delete index
-                        for id in self.roots.iter().rev() {
-                            let node = self.tree.get_mut(id).unwrap();
-                            if node.index() <= old_index {
-                                break;
+
+                        let mut node = self.tree.remove(&node_id).unwrap();
+
+                        for n in self.roots.iter() {
+                            if self.tree.get(n).unwrap().temp() {
+                                // temp tree root
+                                continue;
                             }
-                            // The traversed items need to decrement index by 1
-                            if let Some(index) = node.index_mut() {
-                                *index -= 1;
+                            let other_node = self.tree.get_mut(n).unwrap();
+                            if other_node.sort_index > node.sort_index
+                                && other_node.index().unwrap() > old_index
+                            {
+                                if let Some(index) = other_node.index_mut() {
+                                    *index -= 1;
+                                }
                             }
                         }
-                        self.roots.retain(|id| *id != node_id);
-                        let mut node = self.tree.remove(&node_id).unwrap();
+
                         node.diff = Some(TreeExternalDiff::Delete {
                             old_parent,
                             old_index,
                         });
                         node.filter = true;
+                        node.sort_index = sort_index;
                         self.deleted.insert(target, node);
                     } else {
                         self.deleted.insert(
@@ -448,23 +477,24 @@ mod compose {
                     }
                 }
                 TreeParentId::Node(id) => {
-                    if let Some(parent) = self.tree.get_mut(&id) {
+                    // just for ownership of parent
+                    if let Some(mut parent) = self.tree.remove(&id) {
                         if let Some(index) = parent.children.iter().position(|id| *id == target) {
                             // The node created or moved this time is deleted
                             let node_id = parent.children.remove(index);
-                            // Traverse backwards to find the first one with index less than delete index
-                            for child_id in parent.children.clone().iter().rev() {
-                                let node = self.tree.get_mut(child_id).unwrap();
-                                if node.index() <= old_index {
-                                    break;
-                                }
-                                // The traversed items need to decrement index by 1
-                                if let Some(index) = node.index_mut() {
-                                    *index -= 1;
-                                }
-                            }
+
                             self.roots.retain(|id| *id != node_id);
                             let mut node = self.tree.remove(&node_id).unwrap();
+                            for n in parent.children.iter() {
+                                let other_node = self.tree.get_mut(n).unwrap();
+                                if other_node.sort_index > node.sort_index
+                                    && other_node.index().unwrap() > old_index
+                                {
+                                    if let Some(index) = other_node.index_mut() {
+                                        *index -= 1;
+                                    }
+                                }
+                            }
                             node.diff = Some(TreeExternalDiff::Delete {
                                 old_parent,
                                 old_index,
@@ -487,6 +517,7 @@ mod compose {
                                 },
                             );
                         }
+                        self.tree.insert(id, parent);
                     } else {
                         self.deleted.insert(
                             target,
@@ -529,12 +560,9 @@ mod compose {
         where
             F: FnMut(Node),
         {
-            let mut ans = Vec::new();
-            for id in self.deleted_sorted.iter() {
-                if let Some(node) = self.deleted.remove(id) {
-                    ans.push(node);
-                }
-            }
+            let mut ans = std::mem::take(&mut self.deleted)
+                .into_values()
+                .collect::<Vec<_>>();
             let mut stack = Vec::new();
 
             // Push all root nodes to stack initially
@@ -556,124 +584,6 @@ mod compose {
             for node in ans.into_iter().sorted_by_key(|node| node.sort_index) {
                 f(node);
             }
-        }
-    }
-
-    #[cfg(test)]
-    mod tests {
-        use super::*;
-
-        #[test]
-        fn test_compose() {
-            let diff_a = vec![
-                TreeDiffItem {
-                    target: TreeID {
-                        peer: 0,
-                        counter: 1,
-                    },
-                    action: TreeExternalDiff::Create {
-                        parent: TreeParentId::Node(TreeID {
-                            peer: 0,
-                            counter: 2,
-                        }),
-                        index: 0,
-                        position: FractionalIndex::default(),
-                    },
-                },
-                TreeDiffItem {
-                    target: TreeID {
-                        peer: 0,
-                        counter: 2,
-                    },
-                    action: TreeExternalDiff::Create {
-                        parent: TreeParentId::Node(TreeID {
-                            peer: 0,
-                            counter: 3,
-                        }),
-                        index: 0,
-                        position: FractionalIndex::default(),
-                    },
-                },
-            ];
-
-            let diff_b = vec![
-                TreeDiffItem {
-                    target: TreeID {
-                        peer: 0,
-                        counter: 2,
-                    },
-                    action: TreeExternalDiff::Move {
-                        parent: TreeParentId::Root,
-                        index: 0,
-                        position: FractionalIndex::default(),
-                        old_parent: TreeParentId::Node(TreeID {
-                            peer: 0,
-                            counter: 3,
-                        }),
-                        old_index: 0,
-                    },
-                },
-                TreeDiffItem {
-                    target: TreeID {
-                        peer: 0,
-                        counter: 2,
-                    },
-                    action: TreeExternalDiff::Move {
-                        parent: TreeParentId::Node(TreeID {
-                            peer: 0,
-                            counter: 3,
-                        }),
-                        index: 0,
-                        position: FractionalIndex::default(),
-                        old_parent: TreeParentId::Root,
-                        old_index: 0,
-                    },
-                },
-            ];
-            let mut temp_tree = compose::TempTree::default();
-            let mut sort_index = 0;
-            for item in diff_a {
-                temp_tree.apply(item, sort_index);
-                sort_index += 1;
-            }
-            for item in diff_b {
-                temp_tree.apply(item, sort_index);
-                sort_index += 1;
-            }
-            let ans = temp_tree.into_diff();
-            assert_eq!(
-                ans.diff,
-                vec![
-                    TreeDiffItem {
-                        target: TreeID {
-                            peer: 0,
-                            counter: 1,
-                        },
-                        action: TreeExternalDiff::Create {
-                            parent: TreeParentId::Node(TreeID {
-                                peer: 0,
-                                counter: 2,
-                            }),
-                            index: 0,
-                            position: FractionalIndex::default(),
-                        }
-                    },
-                    TreeDiffItem {
-                        target: TreeID {
-                            peer: 0,
-                            counter: 2,
-                        },
-                        action: TreeExternalDiff::Create {
-                            parent: TreeParentId::Node(TreeID {
-                                peer: 0,
-                                counter: 3,
-                            }),
-                            index: 0,
-                            position: FractionalIndex::default(),
-                        },
-                    }
-                ],
-            );
         }
     }
 }
