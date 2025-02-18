@@ -51,7 +51,7 @@ pub enum TreeExternalDiff {
 impl TreeDiff {
     #[allow(clippy::let_and_return)]
     pub(crate) fn compose(self, other: Self) -> Self {
-        println!("\ncompose \n{:?} \n{:?}", self, other);
+        // println!("\ncompose \n{:?} \n{:?}", self, other);
         let mut temp_tree = compose::TempTree::default();
         for (sort_index, item) in self
             .diff
@@ -59,12 +59,12 @@ impl TreeDiff {
             .chain(other.diff.into_iter())
             .enumerate()
         {
-            println!("\napply self {:?}", item);
+            // println!("\napply self {:?}", item);
             temp_tree.apply(item, sort_index);
-            println!("\ntemp_tree {:?}\n", temp_tree);
+            // println!("\ntemp_tree {:?}\n", temp_tree);
         }
         let ans = temp_tree.into_diff();
-        println!("ans {:?}", ans);
+        // println!("ans {:?}", ans);
         ans
     }
 
@@ -300,8 +300,9 @@ mod compose {
                             .as_ref()
                             .is_some_and(|d| matches!(d, TreeExternalDiff::Create { .. }))
                     {
-                        let position = match &action {
-                            TreeExternalDiff::Move { position, .. } => position.clone(),
+                        // If there is a create event before, we need to transform move to create
+                        let position = match &mut action {
+                            TreeExternalDiff::Move { position, .. } => std::mem::take(position),
                             _ => unreachable!(),
                         };
                         action = TreeExternalDiff::Create {
@@ -311,9 +312,7 @@ mod compose {
                         };
                     }
                     self.delete(target, old_parent, old_index, sort_index);
-
                     self.create(target, parent, index, action, sort_index);
-                    // If created in batch, it should be create instead of move
                 }
                 TreeExternalDiff::Delete {
                     old_parent,
@@ -332,19 +331,13 @@ mod compose {
             action: TreeExternalDiff,
             sort_index: usize,
         ) {
-            let (mut node, need_update) = if self.deleted.contains_key(&target) {
-                (self.deleted.remove(&target).unwrap(), true)
-            } else {
-                (
-                    Node {
-                        id: target,
-                        children: vec![],
-                        diff: Some(action.clone()),
-                        filter: false,
-                        sort_index,
-                    },
-                    false,
-                )
+            let need_update = self.deleted.remove(&target).is_some();
+            let node = Node {
+                id: target,
+                children: vec![],
+                diff: Some(action),
+                filter: false,
+                sort_index,
             };
 
             // insert into parent
@@ -410,13 +403,6 @@ mod compose {
                 }
                 TreeParentId::Unexist | TreeParentId::Deleted => unreachable!(),
             };
-
-            if need_update {
-                node.filter = false;
-                node.sort_index = sort_index;
-                node.diff = Some(action);
-            }
-
             self.tree.insert(target, node);
         }
 
@@ -459,7 +445,7 @@ mod compose {
                         });
                         node.filter = true;
                         node.sort_index = sort_index;
-                        node.children = vec![];
+                        node.children.clear();
                         self.deleted.insert(target, node);
                     } else {
                         self.deleted.insert(
@@ -502,7 +488,7 @@ mod compose {
                             });
                             node.filter = true;
                             node.sort_index = sort_index;
-                            node.children = vec![];
+                            node.children.clear();
                             self.deleted.insert(target, node);
                         } else {
                             // Parent exists but target is not in batch
