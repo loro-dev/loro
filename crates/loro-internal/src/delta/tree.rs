@@ -529,8 +529,6 @@ mod compose {
 
         pub fn into_diff(mut self) -> TreeDiff {
             let mut diff = TreeDiff::default();
-            self.roots
-                .sort_by_key(|id| self.tree.get(id).map(|node| node.index()).unwrap());
             self.pre_order_traverse(|mut node| {
                 if node.filter {
                     return;
