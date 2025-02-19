@@ -51,7 +51,7 @@ pub enum TreeExternalDiff {
 impl TreeDiff {
     #[allow(clippy::let_and_return)]
     pub(crate) fn compose(self, other: Self) -> Self {
-        // println!("\ncompose \n{:?} \n{:?}", self, other);
+        println!("\ncompose \n{:?} \n{:?}", self, other);
         let mut temp_tree = compose::TempTree::default();
         for (sort_index, item) in self
             .diff
@@ -59,12 +59,12 @@ impl TreeDiff {
             .chain(other.diff.into_iter())
             .enumerate()
         {
-            // println!("\napply self {:?}", item);
+            println!("\napply self {:?}", item);
             temp_tree.apply(item, sort_index);
-            // println!("\ntemp_tree {:?}\n", temp_tree);
+            println!("\ntemp_tree {:?}\n", temp_tree);
         }
         let ans = temp_tree.into_diff();
-        // println!("ans {:?}", ans);
+        println!("ans {:?}", ans);
         ans
     }
 
@@ -240,7 +240,6 @@ mod compose {
         tree: FxHashMap<TreeID, RefCell<Node>>,
         roots: Children,
         deleted: FxHashMap<TreeID, Node>,
-        // TODO: old
     }
 
     #[derive(Debug, Clone)]
@@ -249,6 +248,8 @@ mod compose {
         children: Children,
         sort_index: usize,
         filter: bool,
+        exist: bool,
+        old_parent_index: Option<(TreeParentId, usize)>,
         diff: Option<TreeExternalDiff>,
     }
 
@@ -356,46 +357,99 @@ mod compose {
                 _ => None,
             }
         }
+
+        fn into_diff(self) -> Option<TreeDiffItem> {
+            let diff = self.diff?;
+            let action = match diff {
+                TreeExternalDiff::Create {
+                    parent,
+                    index,
+                    position,
+                } => {
+                    if self.exist {
+                        TreeExternalDiff::Move {
+                            parent,
+                            index,
+                            position,
+                            old_parent: self.old_parent_index.unwrap().0,
+                            old_index: self.old_parent_index.unwrap().1,
+                        }
+                    } else {
+                        TreeExternalDiff::Create {
+                            parent,
+                            index,
+                            position,
+                        }
+                    }
+                }
+                TreeExternalDiff::Move {
+                    parent,
+                    index,
+                    position,
+                    old_parent,
+                    old_index,
+                } => {
+                    if self.exist {
+                        if parent == old_parent && index == old_index {
+                            return None;
+                        }
+                        TreeExternalDiff::Move {
+                            parent,
+                            index,
+                            position,
+                            old_parent: self.old_parent_index.unwrap().0,
+                            old_index: self.old_parent_index.unwrap().1,
+                        }
+                    } else {
+                        TreeExternalDiff::Create {
+                            parent,
+                            index,
+                            position,
+                        }
+                    }
+                }
+                TreeExternalDiff::Delete {
+                    old_parent,
+                    old_index,
+                } => {
+                    if self.exist {
+                        TreeExternalDiff::Delete {
+                            old_parent: self
+                                .old_parent_index
+                                .as_ref()
+                                .map(|(x, _)| *x)
+                                .unwrap_or(old_parent),
+                            old_index: self
+                                .old_parent_index
+                                .as_ref()
+                                .map(|(_, y)| *y)
+                                .unwrap_or(old_index),
+                        }
+                    } else {
+                        return None;
+                    }
+                }
+            };
+            Some(TreeDiffItem {
+                target: self.id,
+                action,
+            })
+        }
     }
 
     impl TempTree {
-        pub fn apply(
-            &mut self,
-            TreeDiffItem { target, mut action }: TreeDiffItem,
-            sort_index: usize,
-        ) {
+        pub fn apply(&mut self, TreeDiffItem { target, action }: TreeDiffItem, sort_index: usize) {
             match action {
                 TreeExternalDiff::Create { parent, index, .. } => {
                     self.create(target, parent, index, action, sort_index);
                 }
                 TreeExternalDiff::Move {
                     parent,
-                    index,
                     old_parent,
                     old_index,
+                    index,
                     ..
                 } => {
-                    if self.tree.contains_key(&target)
-                        && self
-                            .tree
-                            .get(&target)
-                            .unwrap()
-                            .borrow()
-                            .diff
-                            .as_ref()
-                            .is_some_and(|d| matches!(d, TreeExternalDiff::Create { .. }))
-                    {
-                        // If there is a create event before, we need to transform move to create
-                        let position = match &mut action {
-                            TreeExternalDiff::Move { position, .. } => std::mem::take(position),
-                            _ => unreachable!(),
-                        };
-                        action = TreeExternalDiff::Create {
-                            parent,
-                            index,
-                            position,
-                        };
-                    }
                     self.delete(target, old_parent, old_index, sort_index);
                     self.create(target, parent, index, action, sort_index);
                 }
@@ -429,7 +483,9 @@ mod compose {
                                 children: Children::default(),
                                 diff: None,
                                 filter: true,
+                                old_parent_index: None,
                                 sort_index,
+                                exist: true,
                             })
                         });
                         &mut self.tree.get(&id).unwrap().borrow_mut().children
@@ -453,8 +509,11 @@ mod compose {
                 id: target,
                 children: Children::default(),
                 diff: Some(action),
-                filter: maybe_deleted.is_some(),
                 sort_index,
+                filter: maybe_deleted.as_ref().is_some_and(|x| !x.filter)
+                    && (maybe_deleted.as_ref().unwrap().old_parent_index == Some((parent, index))),
+                exist: maybe_deleted.is_some() && maybe_deleted.as_ref().unwrap().exist,
+                old_parent_index: maybe_deleted.and_then(|x| x.old_parent_index),
             };
 
             self.tree.insert(target, RefCell::new(node));
@@ -478,11 +537,13 @@ mod compose {
                                 id: target,
                                 children: Children::default(),
                                 filter: false,
+                                old_parent_index: Some((old_parent, old_index)),
                                 diff: Some(TreeExternalDiff::Delete {
                                     old_parent,
                                     old_index,
                                 }),
                                 sort_index,
+                                exist: true,
                             },
                         );
                         return;
@@ -507,6 +568,8 @@ mod compose {
                                 old_parent,
                                 old_index,
                             }),
+                            exist: node.borrow().exist,
+                            old_parent_index: node.borrow().old_parent_index,
                         },
                     );
                 }
@@ -521,13 +584,16 @@ mod compose {
                                     id: target,
                                     children: Children::default(),
                                     filter: false,
+                                    exist: true,
                                     diff: Some(TreeExternalDiff::Delete {
                                         old_parent,
                                         old_index,
                                     }),
                                     sort_index,
+                                    old_parent_index: Some((old_parent, old_index)),
                                 },
                             );
+                            self.tree.insert(id, parent);
                             return;
                         }
                         self.roots.remove(target);
@@ -552,6 +618,8 @@ mod compose {
                                     old_parent,
                                     old_index,
                                 }),
+                                old_parent_index: node.borrow().old_parent_index,
+                                exist: node.borrow().exist,
                             },
                         );
                         self.tree.insert(id, parent);
@@ -562,11 +630,13 @@ mod compose {
                                 id: target,
                                 children: Children::default(),
                                 filter: false,
+                                exist: true,
                                 diff: Some(TreeExternalDiff::Delete {
                                     old_parent,
                                     old_index,
                                 }),
                                 sort_index,
+                                old_parent_index: Some((old_parent, old_index)),
                             },
                         );
                     }
@@ -577,23 +647,15 @@ mod compose {
 
         pub fn into_diff(mut self) -> TreeDiff {
             let mut diff = TreeDiff::default();
-            self.pre_order_traverse(|mut node| {
-                if node.filter {
-                    return;
-                }
-                if let Some(action) = node.diff.take() {
-                    diff.push(TreeDiffItem {
-                        target: node.id,
-                        action,
-                    });
-                }
+            self.traverse(|d| {
+                diff.push(d);
             });
             diff
         }
 
-        fn pre_order_traverse<F>(&mut self, mut f: F)
+        fn traverse<F>(&mut self, mut f: F)
         where
-            F: FnMut(Node),
+            F: FnMut(TreeDiffItem),
         {
             let mut ans = std::mem::take(&mut self.deleted)
                 .into_values()
@@ -610,23 +672,32 @@ mod compose {
                 let Some(node) = self.tree.remove(&node_id.id) else {
                     continue;
                 };
+
                 // Push children to stack in reverse order
                 // so they are processed in correct order
                 for child_id in node.borrow().children.0.iter() {
                     stack.push(*child_id);
                 }
+                if node.borrow().filter {
+                    continue;
+                }
                 ans.push(node.into_inner());
             }
-            for node in ans.into_iter().sorted_by_key(|node| node.sort_index) {
-                f(node);
+            for node in ans
+                .into_iter()
+                .filter(|x| !x.filter)
+                .sorted_by_key(|node| node.sort_index)
+            {
+                if let Some(diff) = node.into_diff() {
+                    f(diff);
+                }
             }
         }
 
+        #[allow(dead_code)]
         fn apply_diffs(&mut self, diffs: Vec<TreeDiffItem>) {
             for (sort_index, diff) in diffs.into_iter().enumerate() {
-                println!("\napply diff {:?}", diff);
                 self.apply(diff, sort_index);
-                println!("\ntemp_tree {:?}\n", self);
             }
         }
     }
