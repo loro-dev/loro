@@ -51,7 +51,7 @@ pub enum TreeExternalDiff {
 impl TreeDiff {
     #[allow(clippy::let_and_return)]
     pub(crate) fn compose(self, other: Self) -> Self {
-        println!("\ncompose \n{:?} \n{:?}", self, other);
+        // println!("\ncompose \n{:?} \n{:?}", self, other);
         let mut temp_tree = compose::TempTree::default();
         for (sort_index, item) in self
             .diff
@@ -59,12 +59,12 @@ impl TreeDiff {
             .chain(other.diff.into_iter())
             .enumerate()
         {
-            println!("\napply self {:?}", item);
+            // println!("\napply self {:?}", item);
             temp_tree.apply(item, sort_index);
-            println!("\ntemp_tree {:?}\n", temp_tree);
+            // println!("\ntemp_tree {:?}\n", temp_tree);
         }
         let ans = temp_tree.into_diff();
-        println!("ans {:?}", ans);
+        // println!("ans {:?}", ans);
         ans
     }
 
