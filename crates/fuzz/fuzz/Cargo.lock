@@ -282,7 +282,7 @@ dependencies = [
  "loro 0.16.12",
  "loro 0.16.2 (git+https://github.com/loro-dev/loro.git?tag=loro-crdt%400.16.7)",
  "loro 0.16.2 (git+https://github.com/loro-dev/loro.git?rev=90470658435ec4c62b5af59ebb82fe9e1f5aa761)",
- "loro 1.0.0-beta.5",
+ "loro 1.4.1",
  "num_cpus",
  "pretty_assertions",
  "rand",
@@ -298,7 +298,7 @@ version = "0.0.0"
 dependencies = [
  "fuzz",
  "libfuzzer-sys",
- "loro 1.0.0-beta.5",
+ "loro 1.4.1",
 ]
 
 [[package]]
@@ -546,14 +546,15 @@ dependencies = [
 
 [[package]]
 name = "loro"
-version = "1.0.0-beta.5"
+version = "1.4.1"
 dependencies = [
  "enum-as-inner 0.6.0",
+ "fxhash",
  "generic-btree",
- "loro-common 1.0.0-beta.5",
- "loro-delta 1.0.0-beta.5",
- "loro-internal 1.0.0-beta.5",
- "loro-kv-store 1.0.0-beta.5",
+ "loro-common 1.4.1",
+ "loro-delta 1.3.1",
+ "loro-internal 1.4.1",
+ "loro-kv-store 1.4.1",
  "tracing",
 ]
 
@@ -609,18 +610,17 @@ dependencies = [
 
 [[package]]
 name = "loro-common"
-version = "1.0.0-beta.5"
+version = "1.4.1"
 dependencies = [
  "arbitrary",
  "enum-as-inner 0.6.0",
  "fxhash",
  "leb128",
- "loro-rle 1.0.0-beta.5",
+ "loro-rle 1.2.7",
  "nonmax",
  "serde",
  "serde_columnar",
  "serde_json",
- "string_cache",
  "thiserror",
 ]
 
@@ -662,7 +662,7 @@ dependencies = [
 
 [[package]]
 name = "loro-delta"
-version = "1.0.0-beta.5"
+version = "1.3.1"
 dependencies = [
  "arrayvec",
  "enum-as-inner 0.5.1",
@@ -783,7 +783,7 @@ dependencies = [
 
 [[package]]
 name = "loro-internal"
-version = "1.0.0-beta.5"
+version = "1.4.1"
 dependencies = [
  "append-only-bytes",
  "arref",
@@ -798,11 +798,11 @@ dependencies = [
  "im",
  "itertools 0.12.1",
  "leb128",
- "loro-common 1.0.0-beta.5",
- "loro-delta 1.0.0-beta.5",
- "loro-kv-store 1.0.0-beta.5",
- "loro-rle 1.0.0-beta.5",
- "loro_fractional_index 1.0.0-beta.5",
+ "loro-common 1.4.1",
+ "loro-delta 1.3.1",
+ "loro-kv-store 1.4.1",
+ "loro-rle 1.2.7",
+ "loro_fractional_index 1.2.7",
  "md5",
  "nonmax",
  "num",
@@ -838,12 +838,12 @@ dependencies = [
 
 [[package]]
 name = "loro-kv-store"
-version = "1.0.0-beta.5"
+version = "1.4.1"
 dependencies = [
  "bytes",
  "ensure-cov",
  "fxhash",
- "loro-common 1.0.0-beta.5",
+ "loro-common 1.4.1",
  "lz4_flex",
  "once_cell",
  "quick_cache",
@@ -892,7 +892,7 @@ dependencies = [
 
 [[package]]
 name = "loro-rle"
-version = "1.0.0-beta.5"
+version = "1.2.7"
 dependencies = [
  "append-only-bytes",
  "num",
@@ -941,7 +941,7 @@ dependencies = [
 
 [[package]]
 name = "loro_fractional_index"
-version = "1.0.0-beta.5"
+version = "1.2.7"
 dependencies = [
  "once_cell",
  "rand",
