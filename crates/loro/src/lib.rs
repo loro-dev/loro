@@ -401,7 +401,7 @@ impl LoroDoc {
     /// - `doc.checkout(version)` is called.
     #[inline]
     pub fn commit(&self) {
-        self.doc.commit_then_renew()
+        self.doc.commit_then_renew();
     }
 
     /// Commit the cumulative auto commit transaction with custom configure.
@@ -411,7 +411,7 @@ impl LoroDoc {
     /// The event will be sent after a transaction is committed
     #[inline]
     pub fn commit_with(&self, options: CommitOptions) {
-        self.doc.commit_with(options)
+        self.doc.commit_with(options);
     }
 
     /// Set commit message for the current uncommitted changes
@@ -419,6 +419,33 @@ impl LoroDoc {
     /// It will be persisted.
     pub fn set_next_commit_message(&self, msg: &str) {
         self.doc.set_next_commit_message(msg)
+    }
+
+    /// Set `origin` for the current uncommitted changes, it can be used to track the source of changes in an event.
+    ///
+    /// It will NOT be persisted.
+    pub fn set_next_commit_origin(&self, origin: &str) {
+        self.doc.set_next_commit_origin(origin)
+    }
+
+    /// Set the timestamp of the next commit.
+    ///
+    /// It will be persisted and stored in the `OpLog`.
+    /// You can get the timestamp from the [`Change`] type.
+    pub fn set_next_commit_timestamp(&self, timestamp: Timestamp) {
+        self.doc.set_next_commit_timestamp(timestamp)
+    }
+
+    /// Set the options of the next commit.
+    ///
+    /// It will be used when the next commit is performed.
+    pub fn set_next_commit_options(&self, options: CommitOptions) {
+        self.doc.set_next_commit_options(options);
+    }
+
+    /// Clear the options of the next commit.
+    pub fn clear_next_commit_options(&self) {
+        self.doc.clear_next_commit_options();
     }
 
     /// Whether the document is in detached mode, where the [loro_internal::DocState] is not
