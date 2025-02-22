@@ -851,25 +851,7 @@ impl LoroDoc {
     /// NOTE: The `origin` will not be persisted, but the `message` will.
     pub fn commit(&self, options: Option<JsCommitOption>) -> JsResult<()> {
         if let Some(options) = options {
-            if !options.is_object() {
-                return Err(JsValue::from_str("Commit options must be an object"));
-            }
-            let origin: Option<String> = Reflect::get(&options, &JsValue::from_str("origin"))
-                .ok()
-                .and_then(|x| x.as_string());
-            let timestamp: Option<f64> = Reflect::get(&options, &JsValue::from_str("timestamp"))
-                .ok()
-                .and_then(|x| x.as_f64());
-            let message: Option<String> = Reflect::get(&options, &JsValue::from_str("message"))
-                .ok()
-                .and_then(|x| x.as_string());
-
-            let mut options = CommitOptions::default();
-            options.set_origin(origin.as_deref());
-            options.set_timestamp(timestamp.map(|x| x as i64));
-            if let Some(msg) = message {
-                options = options.commit_msg(&msg);
-            }
+            let options = js_commit_option_to_commit_options(options)?;
             self.0.commit_with(options);
         } else {
             self.0.commit_with(CommitOptions::default());
@@ -1123,6 +1105,32 @@ impl LoroDoc {
     #[wasm_bindgen(js_name = "setNextCommitMessage")]
     pub fn set_next_commit_message(&self, msg: &str) {
         self.0.set_next_commit_message(msg);
+    }
+
+    /// Set the origin of the next commit
+    #[wasm_bindgen(js_name = "setNextCommitOrigin")]
+    pub fn set_next_commit_origin(&self, origin: &str) {
+        self.0.set_next_commit_origin(origin);
+    }
+
+    /// Set the timestamp of the next commit
+    #[wasm_bindgen(js_name = "setNextCommitTimestamp")]
+    pub fn set_next_commit_timestamp(&self, timestamp: f64) {
+        self.0.set_next_commit_timestamp(timestamp as i64);
+    }
+
+    /// Set the options of the next commit
+    #[wasm_bindgen(js_name = "setNextCommitOptions")]
+    pub fn set_next_commit_options(&self, options: JsCommitOption) -> JsResult<()> {
+        let options = js_commit_option_to_commit_options(options)?;
+        self.0.set_next_commit_options(options);
+        Ok(())
+    }
+
+    /// Clear the options of the next commit
+    #[wasm_bindgen(js_name = "clearNextCommitOptions")]
+    pub fn clear_next_commit_options(&self) {
+        self.0.clear_next_commit_options();
     }
 
     /// Get deep value of the document with container id
@@ -2061,6 +2069,29 @@ impl Default for LoroDoc {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn js_commit_option_to_commit_options(options: JsCommitOption) -> JsResult<CommitOptions> {
+    if !options.is_object() {
+        return Err(JsValue::from_str("Commit options must be an object"));
+    }
+    let origin: Option<String> = Reflect::get(&options, &JsValue::from_str("origin"))
+        .ok()
+        .and_then(|x| x.as_string());
+    let timestamp: Option<f64> = Reflect::get(&options, &JsValue::from_str("timestamp"))
+        .ok()
+        .and_then(|x| x.as_f64());
+    let message: Option<String> = Reflect::get(&options, &JsValue::from_str("message"))
+        .ok()
+        .and_then(|x| x.as_string());
+
+    let mut options = CommitOptions::default();
+    options.set_origin(origin.as_deref());
+    options.set_timestamp(timestamp.map(|x| x as i64));
+    if let Some(msg) = message {
+        options = options.commit_msg(&msg);
+    }
+    Ok(options)
 }
 
 fn diff_event_to_js_value(event: DiffEvent, for_json: bool) -> JsValue {

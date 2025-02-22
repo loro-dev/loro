@@ -258,6 +258,33 @@ impl LoroDoc {
         self.doc.set_next_commit_message(msg)
     }
 
+    /// Set `origin` for the current uncommitted changes, it can be used to track the source of changes in an event.
+    ///
+    /// It will NOT be persisted.
+    pub fn set_next_commit_origin(&self, origin: &str) {
+        self.doc.set_next_commit_origin(origin)
+    }
+
+    /// Set the timestamp of the next commit.
+    ///
+    /// It will be persisted and stored in the `OpLog`.
+    /// You can get the timestamp from the [`Change`] type.
+    pub fn set_next_commit_timestamp(&self, timestamp: i64) {
+        self.doc.set_next_commit_timestamp(timestamp)
+    }
+
+    /// Set the options of the next commit.
+    ///
+    /// It will be used when the next commit is performed.
+    pub fn set_next_commit_options(&self, options: CommitOptions) {
+        self.doc.set_next_commit_options(options.into())
+    }
+
+    /// Clear the options of the next commit.
+    pub fn clear_next_commit_options(&self) {
+        self.doc.clear_next_commit_options()
+    }
+
     /// Whether the document is in detached mode, where the [loro_internal::DocState] is not
     /// synchronized with the latest version of the [loro_internal::OpLog].
     #[inline]

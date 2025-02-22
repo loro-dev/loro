@@ -198,7 +198,7 @@ impl LoroDoc {
     ///
     /// Afterwards, the users need to call `self.renew_txn_after_commit()` to resume the continuous transaction.
     #[inline]
-    pub fn commit_then_stop(&self) {
+    pub fn commit_then_stop(&self) -> Option<CommitOptions> {
         self.commit_with(CommitOptions::new().immediate_renew(false))
     }
 
@@ -206,25 +206,28 @@ impl LoroDoc {
     /// It will start the next one immediately
     #[inline]
     pub fn commit_then_renew(&self) {
-        self.commit_with(CommitOptions::new().immediate_renew(true))
+        let options = self.commit_with(CommitOptions::new().immediate_renew(true));
+        if let Some(options) = options {
+            self.set_next_commit_options(options);
+        }
     }
 
     /// Commit the cumulative auto commit transaction.
     /// This method only has effect when `auto_commit` is true.
     /// If `immediate_renew` is true, a new transaction will be created after the old one is committed
     #[instrument(skip_all)]
-    pub fn commit_with(&self, config: CommitOptions) {
+    pub fn commit_with(&self, config: CommitOptions) -> Option<CommitOptions> {
         if !self.auto_commit.load(Acquire) {
             // if not auto_commit, nothing should happen
             // because the global txn is not used
-            return;
+            return None;
         }
 
         let mut txn_guard = self.txn.try_lock().unwrap();
         let txn = txn_guard.take();
         drop(txn_guard);
         let Some(mut txn) = txn else {
-            return;
+            return None;
         };
 
         let on_commit = txn.take_on_commit();
@@ -241,7 +244,7 @@ impl LoroDoc {
         }
 
         let id_span = txn.id_span();
-        txn.commit().unwrap();
+        let options = txn.commit().unwrap();
         if config.immediate_renew {
             let mut txn_guard = self.txn.try_lock().unwrap();
             assert!(self.can_edit());
@@ -251,6 +254,8 @@ impl LoroDoc {
         if let Some(on_commit) = on_commit {
             on_commit(&self.state, &self.oplog, id_span);
         }
+
+        options
     }
 
     /// Set the commit message of the next commit
@@ -264,6 +269,38 @@ impl LoroDoc {
             txn.set_msg(None)
         } else {
             txn.set_msg(Some(message.into()))
+        }
+    }
+
+    /// Set the origin of the next commit
+    pub fn set_next_commit_origin(&self, origin: &str) {
+        let mut txn = self.txn.try_lock().unwrap();
+        if let Some(txn) = txn.as_mut() {
+            txn.set_origin(origin.into());
+        }
+    }
+
+    /// Set the timestamp of the next commit
+    pub fn set_next_commit_timestamp(&self, timestamp: Timestamp) {
+        let mut txn = self.txn.try_lock().unwrap();
+        if let Some(txn) = txn.as_mut() {
+            txn.set_timestamp(timestamp);
+        }
+    }
+
+    /// Set the options of the next commit
+    pub fn set_next_commit_options(&self, options: CommitOptions) {
+        let mut txn = self.txn.try_lock().unwrap();
+        if let Some(txn) = txn.as_mut() {
+            txn.set_options(options);
+        }
+    }
+
+    /// Clear the options of the next commit
+    pub fn clear_next_commit_options(&self) {
+        let mut txn = self.txn.try_lock().unwrap();
+        if let Some(txn) = txn.as_mut() {
+            txn.set_options(CommitOptions::new());
         }
     }
 
@@ -758,7 +795,7 @@ impl LoroDoc {
             return Err(LoroError::EditWhenDetached);
         }
 
-        self.commit_then_stop();
+        let options = self.commit_then_stop();
         if !self
             .oplog()
             .try_lock()
@@ -767,6 +804,9 @@ impl LoroDoc {
             .includes_id(id_span.id_last())
         {
             self.renew_txn_if_auto_commit();
+            if let Some(options) = options {
+                self.set_next_commit_options(options);
+            }
             return Err(LoroError::UndoInvalidIdSpan(id_span.id_last()));
         }
 
@@ -816,9 +856,12 @@ impl LoroDoc {
             warn!("Undo Failed {:?}", e);
         }
 
+        if let Some(options) = options {
+            self.set_next_commit_options(options);
+        }
         Ok(CommitWhenDrop {
             doc: self,
-            options: CommitOptions::new().origin("undo"),
+            default_options: CommitOptions::new().origin("undo"),
         })
     }
 
@@ -1769,12 +1812,19 @@ fn find_last_delete_op(oplog: &OpLog, id: ID, idx: ContainerIdx) -> Option<ID> {
 #[derive(Debug)]
 pub struct CommitWhenDrop<'a> {
     doc: &'a LoroDoc,
-    options: CommitOptions,
+    default_options: CommitOptions,
 }
 
 impl Drop for CommitWhenDrop<'_> {
     fn drop(&mut self) {
-        self.doc.commit_with(std::mem::take(&mut self.options));
+        {
+            let mut guard = self.doc.txn.try_lock().unwrap();
+            if let Some(txn) = guard.as_mut() {
+                txn.set_default_options(std::mem::take(&mut self.default_options));
+            };
+        }
+
+        self.doc.commit_then_renew();
     }
 }
 
