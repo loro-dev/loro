@@ -15,7 +15,6 @@ use crate::{
     cursor::{AbsolutePosition, Cursor},
     delta::TreeExternalDiff,
     event::{Diff, EventTriggerKind},
-    loro::CommitOptions,
     version::Frontiers,
     ContainerDiff, DiffEvent, DocDiff, LoroDoc, Subscription,
 };

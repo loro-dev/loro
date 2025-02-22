@@ -226,10 +226,7 @@ impl LoroDoc {
         let mut txn_guard = self.txn.try_lock().unwrap();
         let txn = txn_guard.take();
         drop(txn_guard);
-        let Some(mut txn) = txn else {
-            return None;
-        };
-
+        let mut txn = txn?;
         let on_commit = txn.take_on_commit();
         if let Some(origin) = config.origin {
             txn.set_origin(origin);
