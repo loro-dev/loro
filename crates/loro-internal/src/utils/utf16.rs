@@ -16,8 +16,8 @@ pub fn count_utf16_len(utf8_str: &[u8]) -> usize {
 
             utf16_count += 1;
         } else if byte & 0b1111_1000 == 0b1111_0000 {
-            let u = ((byte & 0b0000_0111) as u32) << 18
-                | ((iter.next().unwrap() & 0b0011_1111) as u32) << 12;
+            let u = (((byte & 0b0000_0111) as u32) << 18)
+                | (((iter.next().unwrap() & 0b0011_1111) as u32) << 12);
 
             let _ = iter.next();
             let _ = iter.next();
