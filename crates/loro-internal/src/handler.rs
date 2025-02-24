@@ -1243,10 +1243,8 @@ impl Handler {
                         }
                         TreeExternalDiff::Move {
                             mut parent,
-                            index: _,
                             position,
-                            old_parent: _,
-                            old_index: _,
+                            ..
                         } => {
                             if let TreeParentId::Node(p) = &mut parent {
                                 remap_tree_id(p, container_remap)

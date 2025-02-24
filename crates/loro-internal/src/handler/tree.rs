@@ -300,11 +300,11 @@ impl TreeHandler {
 
     pub(crate) fn delete_with_txn(&self, txn: &mut Transaction, target: TreeID) -> LoroResult<()> {
         let inner = self.inner.try_attached_state()?;
-        let index = match self.get_index_by_tree_id(&target) {
-            Some(i) => i,
-            None => {
-                return Err(LoroTreeError::TreeNodeDeletedOrNotExist(target).into());
-            }
+        let Some(index) = self.get_index_by_tree_id(&target) else {
+            return Err(LoroTreeError::TreeNodeDeletedOrNotExist(target).into());
+        };
+        let Some(position) = self.get_position_by_tree_id(&target) else {
+            return Err(LoroTreeError::TreeNodeDeletedOrNotExist(target).into());
         };
         txn.apply_local_op(
             inner.container_idx,
@@ -313,7 +313,8 @@ impl TreeHandler {
                 target,
                 action: TreeExternalDiff::Delete {
                     old_parent: self.get_node_parent(&target).unwrap(),
-                    old_index: index
+                    old_index: index,
+                    old_position: position,
                 },
             }]),
             &inner.doc,
@@ -497,6 +498,7 @@ impl TreeHandler {
                         // the old parent should be exist, so we can unwrap
                         old_parent: self.get_node_parent(&target).unwrap(),
                         old_index: self.get_index_by_tree_id(&target).unwrap(),
+                        old_position: self.get_position_by_tree_id(&target).unwrap(),
                     },
                 }]),
                 &inner.doc,
@@ -706,6 +708,7 @@ impl TreeHandler {
                     position,
                     old_parent: self.get_node_parent(&target).unwrap(),
                     old_index,
+                    old_position: self.get_position_by_tree_id(&target).unwrap(),
                 },
             }]),
             &inner.doc,

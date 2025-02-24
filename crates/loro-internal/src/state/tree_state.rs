@@ -1098,6 +1098,7 @@ impl ContainerState for TreeState {
                         let old_parent = self.trees.get(&target).unwrap().parent;
                         // If this is some, the node is still alive at the moment
                         let old_index = self.get_index_by_tree_id(&target);
+                        let old_position = self.get_position(&target);
                         let was_alive = !self.is_node_deleted(&target).unwrap();
                         if need_check {
                             if self
@@ -1112,6 +1113,7 @@ impl ContainerState for TreeState {
                                             action: TreeExternalDiff::Delete {
                                                 old_parent,
                                                 old_index: old_index.unwrap(),
+                                                old_position: old_position.unwrap(),
                                             },
                                         });
                                     }
@@ -1126,6 +1128,7 @@ impl ContainerState for TreeState {
                                             position: position.clone(),
                                             old_parent,
                                             old_index: old_index.unwrap(),
+                                            old_position: old_position.unwrap(),
                                         },
                                     });
                                 } else {
@@ -1162,6 +1165,7 @@ impl ContainerState for TreeState {
                                             position: position.clone(),
                                             old_parent,
                                             old_index: old_index.unwrap(),
+                                            old_position: old_position.unwrap(),
                                         },
                                     });
                                 }
@@ -1189,6 +1193,7 @@ impl ContainerState for TreeState {
                                 action: TreeExternalDiff::Delete {
                                     old_parent: self.trees.get(&target).unwrap().parent,
                                     old_index: self.get_index_by_tree_id(&target).unwrap(),
+                                    old_position: self.get_position(&target).unwrap(),
                                 },
                             });
                         }
@@ -1207,6 +1212,7 @@ impl ContainerState for TreeState {
                                 action: TreeExternalDiff::Delete {
                                     old_parent: self.trees.get(&target).unwrap().parent,
                                     old_index: self.get_index_by_tree_id(&target).unwrap(),
+                                    old_position: self.get_position(&target).unwrap(),
                                 },
                             });
                         }

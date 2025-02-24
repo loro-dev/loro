@@ -572,6 +572,7 @@ pub mod wasm {
                     TreeExternalDiff::Delete {
                         old_parent,
                         old_index,
+                        old_position,
                     } => {
                         js_sys::Reflect::set(&obj, &"action".into(), &"delete".into()).unwrap();
                         js_sys::Reflect::set(
@@ -582,6 +583,12 @@ pub mod wasm {
                         .unwrap();
                         js_sys::Reflect::set(&obj, &"oldIndex".into(), &(*old_index).into())
                             .unwrap();
+                        js_sys::Reflect::set(
+                            &obj,
+                            &"oldPosition".into(),
+                            &old_position.to_string().into(),
+                        )
+                        .unwrap();
                     }
                     TreeExternalDiff::Move {
                         parent,
@@ -589,6 +596,7 @@ pub mod wasm {
                         position,
                         old_parent,
                         old_index,
+                        old_position,
                     } => {
                         js_sys::Reflect::set(&obj, &"action".into(), &"move".into()).unwrap();
                         js_sys::Reflect::set(
@@ -612,6 +620,12 @@ pub mod wasm {
                         .unwrap();
                         js_sys::Reflect::set(&obj, &"oldIndex".into(), &(*old_index).into())
                             .unwrap();
+                        js_sys::Reflect::set(
+                            &obj,
+                            &"oldPosition".into(),
+                            &old_position.to_string().into(),
+                        )
+                        .unwrap();
                     }
                 }
                 array.push(&obj);
@@ -728,12 +742,20 @@ pub mod wasm {
                             .ok_or_else(|| "oldIndex is not a number".to_string())?
                             as usize;
 
+                        let old_position = js_sys::Reflect::get(&obj, &"oldPosition".into())
+                            .map_err(|e| format!("Failed to get oldPosition: {:?}", e))?;
+                        let old_position = old_position
+                            .as_string()
+                            .ok_or_else(|| "oldPosition is not a string".to_string())?;
+                        let old_position = FractionalIndex::from_hex_string(old_position);
+
                         TreeExternalDiff::Move {
                             parent,
                             index,
                             position,
                             old_parent,
                             old_index,
+                            old_position,
                         }
                     }
                     "delete" => {
@@ -756,9 +778,17 @@ pub mod wasm {
                             .ok_or_else(|| "oldIndex is not a number".to_string())?
                             as usize;
 
+                        let old_position = js_sys::Reflect::get(&obj, &"oldPosition".into())
+                            .map_err(|e| format!("Failed to get oldPosition: {:?}", e))?;
+                        let old_position = old_position
+                            .as_string()
+                            .ok_or_else(|| "oldPosition is not a string".to_string())?;
+                        let old_position = FractionalIndex::from_hex_string(old_position);
+
                         TreeExternalDiff::Delete {
                             old_parent,
                             old_index,
+                            old_position,
                         }
                     }
                     action => Err(format!("Unknown tree diff action: {}", action))?,
