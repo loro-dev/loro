@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.3
+
+### Patch Changes
+
+- 2a82396: feat: add new ways to control commit options (#656)
+- 2a82396: fix: mark err on detached LoroText (#659)
+
 ## 1.4.2
 
 ### Patch Changes
