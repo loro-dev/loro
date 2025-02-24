@@ -102,7 +102,7 @@ impl LoroDoc {
             return self.fork_at(&self.state_frontiers());
         }
 
-        self.commit_then_stop();
+        let options = self.commit_then_stop();
         let snapshot = encoding::fast_snapshot::encode_snapshot_inner(self);
         let doc = Self::new();
         encoding::fast_snapshot::decode_snapshot_inner(snapshot, &doc).unwrap();
@@ -110,7 +110,7 @@ impl LoroDoc {
         if self.auto_commit.load(std::sync::atomic::Ordering::Relaxed) {
             doc.start_auto_commit();
         }
-        self.renew_txn_if_auto_commit();
+        self.renew_txn_if_auto_commit(options);
         doc
     }
 
@@ -132,9 +132,9 @@ impl LoroDoc {
     pub fn set_detached_editing(&self, enable: bool) {
         self.config.set_detached_editing(enable);
         if enable && self.is_detached() {
-            self.commit_then_stop();
+            let options = self.commit_then_stop();
             self.renew_peer_id();
-            self.renew_txn_if_auto_commit();
+            self.renew_txn_if_auto_commit(options);
         }
     }
 
@@ -197,24 +197,28 @@ impl LoroDoc {
     /// This method only has effect when `auto_commit` is true.
     ///
     /// Afterwards, the users need to call `self.renew_txn_after_commit()` to resume the continuous transaction.
+    ///
+    /// It only returns Some(options_of_the_empty_txn) when the txn is empty
     #[inline]
+    #[must_use]
     pub fn commit_then_stop(&self) -> Option<CommitOptions> {
         self.commit_with(CommitOptions::new().immediate_renew(false))
     }
 
     /// Commit the cumulative auto commit transaction.
     /// It will start the next one immediately
+    ///
+    /// It only returns Some(options_of_the_empty_txn) when the txn is empty
     #[inline]
-    pub fn commit_then_renew(&self) {
-        let options = self.commit_with(CommitOptions::new().immediate_renew(true));
-        if let Some(options) = options {
-            self.set_next_commit_options(options);
-        }
+    pub fn commit_then_renew(&self) -> Option<CommitOptions> {
+        self.commit_with(CommitOptions::new().immediate_renew(true))
     }
 
     /// Commit the cumulative auto commit transaction.
     /// This method only has effect when `auto_commit` is true.
     /// If `immediate_renew` is true, a new transaction will be created after the old one is committed
+    ///
+    /// It only returns Some(options_of_the_empty_txn) when the txn is empty
     #[instrument(skip_all)]
     pub fn commit_with(&self, config: CommitOptions) -> Option<CommitOptions> {
         if !self.auto_commit.load(Acquire) {
@@ -245,7 +249,11 @@ impl LoroDoc {
         if config.immediate_renew {
             let mut txn_guard = self.txn.try_lock().unwrap();
             assert!(self.can_edit());
-            *txn_guard = Some(self.txn().unwrap());
+            let mut t = self.txn().unwrap();
+            if let Some(options) = options.as_ref() {
+                t.set_options(options.clone());
+            }
+            *txn_guard = Some(t);
         }
 
         if let Some(on_commit) = on_commit {
@@ -391,8 +399,9 @@ impl LoroDoc {
 
     #[inline(always)]
     pub fn detach(&self) {
-        self.commit_then_stop();
+        let options = self.commit_then_stop();
         self.set_detached(true);
+        self.renew_txn_if_auto_commit(options);
     }
 
     #[inline(always)]
@@ -423,9 +432,9 @@ impl LoroDoc {
     }
 
     pub fn export_from(&self, vv: &VersionVector) -> Vec<u8> {
-        self.commit_then_stop();
+        let options = self.commit_then_stop();
         let ans = self.oplog.try_lock().unwrap().export_from(vv);
-        self.renew_txn_if_auto_commit();
+        self.renew_txn_if_auto_commit(options);
         ans
     }
 
@@ -442,9 +451,9 @@ impl LoroDoc {
         bytes: &[u8],
         origin: InternalString,
     ) -> Result<ImportStatus, LoroError> {
-        self.commit_then_stop();
+        let options = self.commit_then_stop();
         let ans = self._import_with(bytes, origin);
-        self.renew_txn_if_auto_commit();
+        self.renew_txn_if_auto_commit(options);
         ans
     }
 
@@ -574,9 +583,9 @@ impl LoroDoc {
         if self.is_shallow() {
             return Err(LoroEncodeError::ShallowSnapshotIncompatibleWithOldFormat);
         }
-        self.commit_then_stop();
+        let options = self.commit_then_stop();
         let ans = export_snapshot(self);
-        self.renew_txn_if_auto_commit();
+        self.renew_txn_if_auto_commit(options);
         Ok(ans)
     }
 
@@ -586,13 +595,13 @@ impl LoroDoc {
     #[tracing::instrument(skip_all)]
     pub fn import_json_updates<T: TryInto<JsonSchema>>(&self, json: T) -> LoroResult<ImportStatus> {
         let json = json.try_into().map_err(|_| LoroError::InvalidJsonSchema)?;
-        self.commit_then_stop();
+        let options = self.commit_then_stop();
         let result = self.update_oplog_and_apply_delta_to_state_if_needed(
             |oplog| crate::encoding::json_schema::import_json(oplog, json),
             Default::default(),
         );
         self.emit_events();
-        self.renew_txn_if_auto_commit();
+        self.renew_txn_if_auto_commit(options);
         result
     }
 
@@ -602,7 +611,7 @@ impl LoroDoc {
         end_vv: &VersionVector,
         with_peer_compression: bool,
     ) -> JsonSchema {
-        self.commit_then_stop();
+        let options = self.commit_then_stop();
         let oplog = self.oplog.try_lock().unwrap();
         let mut start_vv = start_vv;
         let _temp: Option<VersionVector>;
@@ -632,16 +641,16 @@ impl LoroDoc {
             with_peer_compression,
         );
         drop(oplog);
-        self.renew_txn_if_auto_commit();
+        self.renew_txn_if_auto_commit(options);
         json
     }
 
     pub fn export_json_in_id_span(&self, id_span: IdSpan) -> Vec<JsonChange> {
-        self.commit_then_stop();
+        let options = self.commit_then_stop();
         let oplog = self.oplog.try_lock().unwrap();
         let json = crate::encoding::json_schema::export_json_in_id_span(&oplog, id_span);
         drop(oplog);
-        self.renew_txn_if_auto_commit();
+        self.renew_txn_if_auto_commit(options);
         json
     }
 
@@ -800,10 +809,7 @@ impl LoroDoc {
             .vv()
             .includes_id(id_span.id_last())
         {
-            self.renew_txn_if_auto_commit();
-            if let Some(options) = options {
-                self.set_next_commit_options(options);
-            }
+            self.renew_txn_if_auto_commit(options);
             return Err(LoroError::UndoInvalidIdSpan(id_span.id_last()));
         }
 
@@ -895,7 +901,7 @@ impl LoroDoc {
             }
         }
 
-        self.commit_then_stop();
+        let options = self.commit_then_stop();
         let was_detached = self.is_detached();
         let old_frontiers = self.state_frontiers();
         let was_recording = {
@@ -917,7 +923,7 @@ impl LoroDoc {
             .unwrap();
         if !was_detached {
             self.set_detached(false);
-            self.renew_txn_if_auto_commit();
+            self.renew_txn_if_auto_commit(options);
         }
         if was_recording {
             self.state.try_lock().unwrap().start_recording();
@@ -1076,7 +1082,7 @@ impl LoroDoc {
                 .then(b.0.change_num.cmp(&a.0.change_num))
         });
 
-        self.commit_then_stop();
+        let options = self.commit_then_stop();
         let is_detached = self.is_detached();
         self.detach();
         self.oplog.try_lock().unwrap().batch_importing = true;
@@ -1123,7 +1129,7 @@ impl LoroDoc {
             self.checkout_to_latest();
         }
 
-        self.renew_txn_if_auto_commit();
+        self.renew_txn_if_auto_commit(options);
         if let Some(err) = err {
             return Err(err);
         }
@@ -1157,7 +1163,7 @@ impl LoroDoc {
     }
 
     pub fn checkout_to_latest(&self) {
-        self.commit_then_renew();
+        let options = self.commit_then_renew();
         if !self.is_detached() {
             return;
         }
@@ -1171,11 +1177,10 @@ impl LoroDoc {
             this.emit_events();
             if this.config.detached_editing() {
                 this.renew_peer_id();
-                this.renew_txn_if_auto_commit();
             }
 
             self.set_detached(false);
-            self.renew_txn_if_auto_commit();
+            self.renew_txn_if_auto_commit(options);
         });
     }
 
@@ -1184,11 +1189,11 @@ impl LoroDoc {
     /// This will make the current [DocState] detached from the latest version of [OpLog].
     /// Any further import will not be reflected on the [DocState], until user call [LoroDoc::attach()]
     pub fn checkout(&self, frontiers: &Frontiers) -> LoroResult<()> {
-        self.checkout_without_emitting(frontiers, true)?;
+        let options = self.checkout_without_emitting(frontiers, true)?;
         self.emit_events();
         if self.config.detached_editing() {
             self.renew_peer_id();
-            self.renew_txn_if_auto_commit();
+            self.renew_txn_if_auto_commit(options);
         }
 
         Ok(())
@@ -1199,10 +1204,11 @@ impl LoroDoc {
         &self,
         frontiers: &Frontiers,
         to_shrink_frontiers: bool,
-    ) -> Result<(), LoroError> {
+    ) -> Result<Option<CommitOptions>, LoroError> {
+        let mut options = None;
         let had_txn = self.txn.try_lock().unwrap().is_some();
         if had_txn {
-            self.commit_then_stop();
+            options = self.commit_then_stop();
         }
         let from_frontiers = self.state_frontiers();
         info!(
@@ -1214,16 +1220,16 @@ impl LoroDoc {
 
         if &from_frontiers == frontiers {
             if had_txn {
-                self.renew_txn_if_auto_commit();
+                self.renew_txn_if_auto_commit(options);
             }
-            return Ok(());
+            return Ok(None);
         }
 
         let oplog = self.oplog.try_lock().unwrap();
         if oplog.dag.is_before_shallow_root(frontiers) {
             drop(oplog);
             if had_txn {
-                self.renew_txn_if_auto_commit();
+                self.renew_txn_if_auto_commit(options);
             }
             return Err(LoroError::SwitchToVersionBeforeShallowRoot);
         }
@@ -1237,9 +1243,9 @@ impl LoroDoc {
         if from_frontiers == frontiers {
             drop(oplog);
             if had_txn {
-                self.renew_txn_if_auto_commit();
+                self.renew_txn_if_auto_commit(options);
             }
-            return Ok(());
+            return Ok(None);
         }
 
         let mut state = self.state.try_lock().unwrap();
@@ -1249,7 +1255,7 @@ impl LoroDoc {
                 drop(oplog);
                 drop(state);
                 if had_txn {
-                    self.renew_txn_if_auto_commit();
+                    self.renew_txn_if_auto_commit(options);
                 }
                 return Err(LoroError::FrontiersNotFound(i));
             }
@@ -1260,7 +1266,7 @@ impl LoroDoc {
             drop(oplog);
             drop(state);
             if had_txn {
-                self.renew_txn_if_auto_commit();
+                self.renew_txn_if_auto_commit(options);
             }
             return Err(LoroError::NotFoundError(
                 format!("Cannot find the specified version {:?}", frontiers).into_boxed_str(),
@@ -1282,7 +1288,7 @@ impl LoroDoc {
 
         drop(state);
         drop(oplog);
-        Ok(())
+        Ok(options)
     }
 
     #[inline]
@@ -1352,7 +1358,7 @@ impl LoroDoc {
             let peer_id = self.peer_id();
             let s = info_span!("CheckStateDiffCalcConsistencySlow", ?peer_id);
             let _g = s.enter();
-            self.commit_then_stop();
+            let options = self.commit_then_stop();
             self.oplog.try_lock().unwrap().check_dag_correctness();
             if self.is_shallow() {
                 // For shallow documents, we cannot replay from the beginning as the history is not complete.
@@ -1407,7 +1413,7 @@ impl LoroDoc {
                 current_state.check_is_the_same(&mut calculated_state);
             }
 
-            self.renew_txn_if_auto_commit();
+            self.renew_txn_if_auto_commit(options);
             IS_CHECKING.store(false, std::sync::atomic::Ordering::Release);
         }
     }
@@ -1630,7 +1636,7 @@ impl LoroDoc {
 
     #[instrument(skip(self))]
     pub fn export(&self, mode: ExportMode) -> Result<Vec<u8>, LoroEncodeError> {
-        self.commit_then_stop();
+        let options = self.commit_then_stop();
         let ans = match mode {
             ExportMode::Snapshot => export_fast_snapshot(self),
             ExportMode::Updates { from } => export_fast_updates(self, &from),
@@ -1645,7 +1651,7 @@ impl LoroDoc {
             ExportMode::SnapshotAt { version } => export_snapshot_at(self, &version)?,
         };
 
-        self.renew_txn_if_auto_commit();
+        self.renew_txn_if_auto_commit(options);
         Ok(ans)
     }
 

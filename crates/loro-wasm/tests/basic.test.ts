@@ -628,16 +628,17 @@ it("can set next commit options", () => {
   expect(change.timestamp).toBe(123);
 });
 
-it("can set next commit origin", () => {
+it("can set next commit origin", async () => {
   const doc = new LoroDoc();
   doc.setPeerId("1");
   let eventOrigin = "";
   doc.subscribe((e) => {
-    eventOrigin = e.origin;
+    eventOrigin = e.origin ?? "";
   });
   doc.getText("text").insert(0, "123");
   doc.setNextCommitOrigin("test origin");
   doc.commit();
+  await Promise.resolve()
   expect(eventOrigin).toBe("test origin");
 });
 
@@ -663,7 +664,7 @@ it("can clear next commit options", () => {
   expect(change.timestamp).toBe(0);
 });
 
-it("commit options persist across multiple commits", () => {
+it("commit options persist across empty commits", () => {
   const doc = new LoroDoc();
   doc.setPeerId("1");
 
@@ -672,6 +673,9 @@ it("commit options persist across multiple commits", () => {
   doc.setNextCommitOptions({ message: "first commit", timestamp: 100 });
   doc.commit();
 
+  doc.setNextCommitOptions({ message: "second commit", timestamp: 200 });
+  doc.commit();
+  doc.export({ mode: "snapshot" });
   // Options should persist for second commit
   doc.getText("text").insert(3, "456");
   doc.commit();
@@ -681,8 +685,8 @@ it("commit options persist across multiple commits", () => {
 
   expect(firstChange.message).toBe("first commit");
   expect(firstChange.timestamp).toBe(100);
-  expect(secondChange.message).toBe("first commit");
-  expect(secondChange.timestamp).toBe(100);
+  expect(secondChange.message).toBe("second commit");
+  expect(secondChange.timestamp).toBe(200);
 });
 
 it("can query pending txn length", () => {

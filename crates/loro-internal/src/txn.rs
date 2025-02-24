@@ -114,14 +114,17 @@ impl crate::LoroDoc {
     }
 
     #[inline]
-    pub fn renew_txn_if_auto_commit(&self) {
+    pub fn renew_txn_if_auto_commit(&self, options: Option<CommitOptions>) {
         if self.auto_commit.load(std::sync::atomic::Ordering::Acquire) && self.can_edit() {
             let mut self_txn = self.txn.try_lock().unwrap();
             if self_txn.is_some() {
                 return;
             }
 
-            let txn = self.txn().unwrap();
+            let mut txn = self.txn().unwrap();
+            if let Some(options) = options {
+                txn.set_options(options);
+            }
             self_txn.replace(txn);
         }
     }
