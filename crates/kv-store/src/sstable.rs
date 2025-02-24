@@ -76,7 +76,7 @@ impl BlockMeta {
             buf.put_u32_le(m.offset as u32);
             buf.put_u16_le(m.first_key.len() as u16);
             buf.put_slice(&m.first_key);
-            let large_and_compress = (m.is_large as u8) << 7 | m.compression_type as u8;
+            let large_and_compress = ((m.is_large as u8) << 7) | m.compression_type as u8;
             buf.put_u8(large_and_compress);
             if m.is_large {
                 continue;

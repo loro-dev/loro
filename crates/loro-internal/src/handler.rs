@@ -1927,14 +1927,10 @@ impl TextHandler {
         value: LoroValue,
     ) -> LoroResult<()> {
         match &self.inner {
-            MaybeDetached::Detached(t) => self.mark_for_detached(
-                &mut t.try_lock().unwrap().value,
-                key,
-                &value,
-                start,
-                end,
-                false,
-            ),
+            MaybeDetached::Detached(t) => {
+                let mut v = t.try_lock().unwrap().value.clone();
+                self.mark_for_detached(&mut v, key, &value, start, end, false)
+            }
             MaybeDetached::Attached(a) => {
                 a.with_txn(|txn| self.mark_with_txn(txn, start, end, key, value, false))
             }
