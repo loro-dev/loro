@@ -53,7 +53,7 @@ pub enum TreeExternalDiff {
 impl TreeDiff {
     #[allow(clippy::let_and_return)]
     pub(crate) fn compose(self, other: Self) -> Self {
-        println!("\ncompose \n{:?} \n{:?}", self, other);
+        // println!("\ncompose \n{:?} \n{:?}", self, other);
         let mut temp_tree = compose::TempTree::new();
         for (sort_index, item) in self
             .diff
@@ -61,9 +61,9 @@ impl TreeDiff {
             .chain(other.diff.into_iter())
             .enumerate()
         {
-            println!("\napply self {:?}", item);
+            // println!("\napply self {:?}", item);
             temp_tree.apply(item, sort_index);
-            println!("\ntemp_tree {:?}\n", temp_tree);
+            // println!("\ntemp_tree {:?}\n", temp_tree);
         }
         let ans = temp_tree.into_diff();
         // println!("ans {:?}", ans);
@@ -366,13 +366,22 @@ mod compose {
                     position,
                 } => {
                     if self.alive {
-                        TreeExternalDiff::Move {
-                            parent,
-                            index,
-                            position,
-                            old_parent: self.old_info.as_ref().unwrap().0,
-                            old_index: self.old_info.as_ref().unwrap().1,
-                            old_position: self.old_info.unwrap().2,
+                        if let Some(old_info) = self.old_info {
+                            // TODO: position should be equal?
+                            if old_info.0 == parent && old_info.1 == index && old_info.2 == position
+                            {
+                                return None;
+                            }
+                            TreeExternalDiff::Move {
+                                parent,
+                                index,
+                                position,
+                                old_parent: old_info.0,
+                                old_index: old_info.1,
+                                old_position: old_info.2,
+                            }
+                        } else {
+                            unreachable!()
                         }
                     } else {
                         TreeExternalDiff::Create {
@@ -481,18 +490,18 @@ mod compose {
             &mut self,
             target: TreeID,
             parent: TreeParentId,
-            index: usize,
+            last_index: usize,
             last_event_order: usize,
         ) {
             if self.only_once_ids.contains(&target) {
                 return;
             }
             // 第一次出现，移动到 root 或者 delete 不用消除副作用
-            if self.first_appear_event_order.contains(&last_event_order)
-                && (parent == TreeParentId::Root)
-            {
-                return;
-            }
+            // if self.first_appear_event_order.contains(&last_event_order)
+            //     && (parent == TreeParentId::Root)
+            // {
+            //     return;
+            // }
 
             // index
             let parent_id = match parent {
@@ -508,15 +517,18 @@ mod compose {
                     event_order: last_event_order,
                 }..,
             ) {
+                if child.id == target {
+                    continue;
+                }
                 // 在causal_index之后的事件
                 let other_node = self.tree.get(&Some(child.id)).unwrap();
                 if other_node.borrow().diff.is_none() {
                     // 过滤临时的节点
                     continue;
                 }
-                if other_node.borrow().index().unwrap() > index {
+                if other_node.borrow().index().unwrap() >= last_index {
                     // 如果index大于当前index，则需要消除副作用，相当于没有创建过节点
-                    *other_node.borrow_mut().index_mut().unwrap() -= 1;
+                    *other_node.borrow_mut().index_mut().unwrap() += 1;
                 }
             }
 
@@ -534,7 +546,8 @@ mod compose {
 
                 // 如果 old parent 是 parent，需要消除副作用
                 if let Some(old_index) = node.borrow_mut().old_index_mut() {
-                    if *old_index > index {
+                    // TODO: should equal?
+                    if *old_index > last_index {
                         *old_index -= 1;
                     }
                 }
@@ -552,7 +565,7 @@ mod compose {
 
                 // 如果 old parent 是 parent，需要消除副作用
                 if let Some(old_index) = node.old_index_mut() {
-                    if *old_index > index {
+                    if *old_index > last_index {
                         *old_index -= 1;
                     }
                 }
@@ -567,7 +580,7 @@ mod compose {
             last_event_order: usize,
         ) {
             if self.only_once_ids.contains(&target)
-                || self.first_appear_event_order.contains(&last_event_order)
+            // || self.first_appear_event_order.contains(&last_event_order)
             {
                 return;
             }
@@ -593,7 +606,7 @@ mod compose {
                 }
                 if other_node.borrow().index().unwrap() > old_index {
                     // 如果index大于当前index，则需要消除副作用，相当于没有创建过节点
-                    *other_node.borrow_mut().index_mut().unwrap() += 1;
+                    *other_node.borrow_mut().index_mut().unwrap() -= 1;
                 }
             }
 
@@ -612,7 +625,7 @@ mod compose {
                 // 如果 old parent 是 parent，需要消除副作用
                 if let Some(i) = node.borrow_mut().old_index_mut() {
                     if *i > old_index {
-                        *i -= 1;
+                        *i += 1;
                     }
                 }
             }
@@ -674,24 +687,16 @@ mod compose {
 
         // action could be create or move, if this is the second time to appear, we can assume the node in deleted
         fn create(&mut self, target: TreeID, action: TreeExternalDiff, sort_index: usize) {
-            let (parent, index, position) = match &action {
-                TreeExternalDiff::Create {
-                    parent,
-                    index,
-                    position,
-                    ..
-                } => (*parent, *index, position.clone()),
-                TreeExternalDiff::Move {
-                    parent,
-                    index,
-                    position,
-                    ..
-                } => (*parent, *index, position.clone()),
+            let (parent, index) = match &action {
+                TreeExternalDiff::Create { parent, index, .. } => (*parent, *index),
+                TreeExternalDiff::Move { parent, index, .. } => (*parent, *index),
                 _ => unreachable!(),
             };
 
             let maybe_deleted = self.deleted.remove(&target);
-            let side_effect = maybe_deleted.is_some();
+            let last_index_order = maybe_deleted
+                .as_ref()
+                .map(|x| (x.old_index().unwrap(), x.event_order));
             {
                 // get the children of the parent
                 let children = match parent {
@@ -735,8 +740,8 @@ mod compose {
                 old_info: maybe_deleted.and_then(|x| x.old_info),
             };
             self.tree.insert(Some(target), RefCell::new(node));
-            if side_effect {
-                self.create_side_effect(target, parent, index, sort_index);
+            if let Some((index, event_order)) = last_index_order {
+                self.create_side_effect(target, parent, index, event_order);
             }
         }
 
@@ -890,10 +895,6 @@ mod compose {
         }
 
         pub fn into_diff(mut self) -> TreeDiff {
-            println!(
-                "move_to_root_or_delete_ids: {:?}",
-                self.move_to_root_or_delete_ids
-            );
             let mut diffs = vec![];
             let mut old_info = FxHashMap::default();
             for (_, node) in self
@@ -921,8 +922,6 @@ mod compose {
             let mut need_move_to_root_first = vec![];
             let mut left_ids = vec![];
 
-            println!("diffs: {:?}", diffs);
-
             // Push all root nodes to stack initially
             for root_id in self.tree.get(&None).unwrap().borrow().children.ids.iter() {
                 stack.push(root_id.id);
@@ -943,15 +942,10 @@ mod compose {
                 }
                 if !self.move_to_root_or_delete_ids.contains(&node_id) {
                     left_ids.push(node_id);
-                    need_move_to_root_first.push(node_id);
                 } else if !self.only_once_ids.contains(&node_id) {
                     need_move_to_root_first.push(node_id);
                 }
             }
-
-            println!("need_move_to_root_first: {:?}", need_move_to_root_first);
-            println!("left_ids: {:?}", left_ids);
-            println!("tree: {:?}", self.tree);
 
             for (order, id) in need_move_to_root_first.iter().copied().enumerate() {
                 let node = self.tree.get(&Some(id)).unwrap();
@@ -979,7 +973,10 @@ mod compose {
                 });
                 old_info.insert(id, need_move_to_root_first.len() - 1 - order);
             }
-            for id in left_ids {
+            for id in left_ids
+                .into_iter()
+                .sorted_by_key(|x| self.tree.get(&Some(*x)).unwrap().borrow().event_order)
+            {
                 let mut node = self.tree.remove(&Some(id)).unwrap().into_inner();
                 if need_move_to_root_first.contains(&id) {
                     match &mut node.diff {
@@ -1031,7 +1028,6 @@ mod compose {
                 }
                 j = i + 1;
             }
-            println!("#### diffs: {:?}\n", diffs);
             diffs
         }
 
@@ -1378,7 +1374,25 @@ mod compose {
                 [
                     tree_diff!("B", create("root", 2)),
                     tree_diff!("C", create("root", 2)),
-                    tree_diff!("A", mov("root", 3, "root", 0))
+                    tree_diff!("A", mov("root", 3, "root", 0)),
+                ]
+            );
+        }
+
+        #[test]
+        fn test_mov_final() {
+            compose_test!(
+                [
+                    tree_diff!("A", mov("D", 8, "E", 0)),
+                    tree_diff!("B", create("root", 1)),
+                    tree_diff!("C", create("root", 1)),
+                    tree_diff!("A", mov("root", 3, "root", 8)),
+                ],
+                [
+                    tree_diff!("A", mov("root", 0, "E", 0)),
+                    tree_diff!("B", create("root", 2)),
+                    tree_diff!("C", create("root", 2)),
+                    tree_diff!("A", mov("root", 3, "root", 0)),
                 ]
             );
         }
