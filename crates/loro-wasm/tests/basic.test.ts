@@ -617,6 +617,78 @@ it("can set commit message", () => {
   );
 });
 
+it("can set next commit options", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId("1");
+  doc.getText("text").insert(0, "123");
+  doc.setNextCommitOptions({ message: "test message", origin: "test origin", timestamp: 123 });
+  doc.commit();
+  const change = doc.getChangeAt({ peer: "1", counter: 0 });
+  expect(change.message).toBe("test message");
+  expect(change.timestamp).toBe(123);
+});
+
+it("can set next commit origin", async () => {
+  const doc = new LoroDoc();
+  doc.setPeerId("1");
+  let eventOrigin = "";
+  doc.subscribe((e) => {
+    eventOrigin = e.origin ?? "";
+  });
+  doc.getText("text").insert(0, "123");
+  doc.setNextCommitOrigin("test origin");
+  doc.commit();
+  await Promise.resolve()
+  expect(eventOrigin).toBe("test origin");
+});
+
+it("can set next commit timestamp", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId("1");
+  doc.getText("text").insert(0, "123");
+  doc.setNextCommitTimestamp(456);
+  doc.commit();
+  const change = doc.getChangeAt({ peer: "1", counter: 0 });
+  expect(change.timestamp).toBe(456);
+});
+
+it("can clear next commit options", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId("1");
+  doc.getText("text").insert(0, "123");
+  doc.setNextCommitOptions({ message: "test message", origin: "test origin", timestamp: 123 });
+  doc.clearNextCommitOptions();
+  doc.commit();
+  const change = doc.getChangeAt({ peer: "1", counter: 0 });
+  expect(change.message).toBeUndefined();
+  expect(change.timestamp).toBe(0);
+});
+
+it("commit options persist across empty commits", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId("1");
+
+  // Set options for first commit
+  doc.getText("text").insert(0, "123");
+  doc.setNextCommitOptions({ message: "first commit", timestamp: 100 });
+  doc.commit();
+
+  doc.setNextCommitOptions({ message: "second commit", timestamp: 200 });
+  doc.commit();
+  doc.export({ mode: "snapshot" });
+  // Options should persist for second commit
+  doc.getText("text").insert(3, "456");
+  doc.commit();
+
+  const firstChange = doc.getChangeAt({ peer: "1", counter: 0 });
+  const secondChange = doc.getChangeAt({ peer: "1", counter: 3 });
+
+  expect(firstChange.message).toBe("first commit");
+  expect(firstChange.timestamp).toBe(100);
+  expect(secondChange.message).toBe("second commit");
+  expect(secondChange.timestamp).toBe(200);
+});
+
 it("can query pending txn length", () => {
   const doc = new LoroDoc();
   doc.setPeerId(1);

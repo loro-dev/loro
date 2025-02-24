@@ -25,6 +25,7 @@ use crate::{
     event::{Diff, ListDeltaMeta, TextDiff},
     handler::{Handler, ValueOrHandler},
     id::{Counter, PeerID, ID},
+    loro::CommitOptions,
     op::{Op, RawOp, RawOpContent},
     span::HasIdSpan,
     version::Frontiers,
@@ -113,14 +114,17 @@ impl crate::LoroDoc {
     }
 
     #[inline]
-    pub fn renew_txn_if_auto_commit(&self) {
+    pub fn renew_txn_if_auto_commit(&self, options: Option<CommitOptions>) {
         if self.auto_commit.load(std::sync::atomic::Ordering::Acquire) && self.can_edit() {
             let mut self_txn = self.txn.try_lock().unwrap();
             if self_txn.is_some() {
                 return;
             }
 
-            let txn = self.txn().unwrap();
+            let mut txn = self.txn().unwrap();
+            if let Some(options) = options {
+                txn.set_options(options);
+            }
             self_txn.replace(txn);
         }
     }
@@ -376,24 +380,24 @@ impl Transaction {
         self.on_commit.take()
     }
 
-    pub fn commit(mut self) -> Result<(), LoroError> {
+    pub fn commit(mut self) -> Result<Option<CommitOptions>, LoroError> {
         self._commit()
     }
 
     #[tracing::instrument(level = "debug", skip(self))]
-    fn _commit(&mut self) -> Result<(), LoroError> {
+    fn _commit(&mut self) -> Result<Option<CommitOptions>, LoroError> {
         if self.finished {
-            return Ok(());
+            return Ok(None);
         }
 
         let Some(doc) = self.doc.upgrade() else {
-            return Ok(());
+            return Ok(None);
         };
         self.finished = true;
         let mut state = doc.state.try_lock().unwrap();
         if self.local_ops.is_empty() {
             state.abort_txn();
-            return Ok(());
+            return Ok(Some(self.take_options()));
         }
 
         let ops = std::mem::take(&mut self.local_ops);
@@ -453,7 +457,21 @@ impl Transaction {
         if let Some(on_commit) = self.on_commit.take() {
             on_commit(&doc.state.clone(), &doc.oplog.clone(), self.id_span());
         }
-        Ok(())
+        Ok(None)
+    }
+
+    fn take_options(&self) -> CommitOptions {
+        let mut options = CommitOptions::new();
+        if !self.origin.is_empty() {
+            options = options.origin(self.origin.as_str());
+        }
+        if let Some(msg) = self.msg.as_ref() {
+            options = options.commit_msg(msg);
+        }
+        if let Some(timestamp) = self.timestamp {
+            options = options.timestamp(timestamp);
+        }
+        options
     }
 
     pub(super) fn apply_local_op(
@@ -607,6 +625,24 @@ impl Transaction {
 
     pub(crate) fn len(&self) -> usize {
         (self.next_counter - self.start_counter) as usize
+    }
+
+    pub(crate) fn set_options(&mut self, options: CommitOptions) {
+        self.origin = options.origin.unwrap_or_default();
+        self.msg = options.commit_msg;
+        self.timestamp = options.timestamp;
+    }
+
+    pub(crate) fn set_default_options(&mut self, default_options: crate::loro::CommitOptions) {
+        if self.origin.is_empty() {
+            self.origin = default_options.origin.unwrap_or_default();
+        }
+        if self.msg.is_none() {
+            self.msg = default_options.commit_msg;
+        }
+        if self.timestamp.is_none() {
+            self.timestamp = default_options.timestamp;
+        }
     }
 }
 

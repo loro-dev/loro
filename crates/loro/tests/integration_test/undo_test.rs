@@ -1642,3 +1642,27 @@ fn undo_transform_cursor_position() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn undo_with_custom_commit_options() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    let mut undo = UndoManager::new(&doc);
+    doc.get_text("text").insert(0, "Hello")?;
+    doc.commit();
+    let trigger_times = Arc::new(AtomicUsize::new(0));
+    let trigger_times_clone = trigger_times.clone();
+    let _sub = doc.subscribe_root(Arc::new(move |e| {
+        trigger_times_clone.fetch_add(1, atomic::Ordering::SeqCst);
+        assert_eq!(e.origin, "undo_then_redo");
+    }));
+    doc.set_next_commit_origin("undo_then_redo");
+    doc.commit();
+    undo.undo()?;
+    assert_eq!(doc.get_text("text").to_string(), "");
+    doc.set_next_commit_origin("undo_then_redo");
+    undo.redo()?;
+    assert_eq!(doc.get_text("text").to_string(), "Hello");
+    doc.commit_with(CommitOptions::new().origin("undo_then_redo"));
+    assert_eq!(trigger_times.load(atomic::Ordering::SeqCst), 2);
+    Ok(())
+}
