@@ -1468,3 +1468,11 @@ it("test container existence", () => {
   expect(doc2.hasContainer("cid:0@1:Text")).toBe(true);
   expect(doc2.hasContainer("cid:1@1:List")).toBe(true);
 })
+
+
+
+it("text mark on LoroText", () => {
+  const text = new LoroText();
+  text.insert(0, "Hello");
+  text.mark({ start: 0, end: 5 }, "bold", true);
+})
