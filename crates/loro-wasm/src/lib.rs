@@ -1995,8 +1995,6 @@ impl LoroDoc {
             order.push(cid.clone());
             cid_to_events.insert(cid, diff);
         }
-        console_log!("{:#?}", &cid_to_events);
-        console_log!("{:#?}", &order);
         self.0.apply_diff(DiffBatch {
             cid_to_events,
             order,
