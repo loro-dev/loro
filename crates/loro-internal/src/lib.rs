@@ -144,5 +144,5 @@ pub struct LoroDocInner {
     peer_id_change_subs: SubscriberSetWithQueue<(), PeerIdUpdateCallback, ID>,
 }
 
-/// The version of the loro crate
-pub const LORO_VERSION: &str = include_str!("../VERSION");
+/// The version of the loro-crdt package
+pub const LORO_VERSION: &str = include_str!(concat!(env!("OUT_DIR"), "/version.txt"));

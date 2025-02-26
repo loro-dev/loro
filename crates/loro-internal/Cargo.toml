@@ -54,6 +54,8 @@ nonmax = "0.5.5"
 ensure-cov = { workspace = true }
 pretty_assertions = "1.4.1"
 
+[build-dependencies]
+serde_json = { workspace = true }
 
 [dev-dependencies]
 arbitrary = { version = "1" }
