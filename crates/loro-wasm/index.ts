@@ -215,10 +215,12 @@ export class Awareness<T extends Value = Value> {
 }
 
 LoroDoc.prototype.toJsonWithReplacer = function (replacer: (key: string | number, value: Value | Container) => Value | Container | undefined) {
+    const processed = new Set<string>();
     const doc = this;
     const m = (key: string | number, value: Value): Value | undefined => {
         if (typeof value === "string") {
-            if (isContainerId(value)) {
+            if (isContainerId(value) && !processed.has(value)) {
+                processed.add(value);
                 const container = doc.getContainerById(value);
                 if (container == null) {
                     throw new Error(`ContainerID not found: ${value}`);
@@ -238,8 +240,16 @@ LoroDoc.prototype.toJsonWithReplacer = function (replacer: (key: string | number
                     throw new Error("Using new container is not allowed in toJsonWithReplacer");
                 }
 
+                if (typeof ans === "object" && ans != null) {
+                    return run(ans as any);
+                }
+
                 return ans;
             }
+        }
+
+        if (typeof value === "object" && value != null) {
+            return run(value as Record<string, Value>);
         }
 
         const ans = replacer(key, value);
@@ -268,7 +278,7 @@ LoroDoc.prototype.toJsonWithReplacer = function (replacer: (key: string | number
         return result;
     }
 
-    const layer = this.getShallowValue();
+    const layer = doc.getShallowValue();
     return run(layer);
 }
 

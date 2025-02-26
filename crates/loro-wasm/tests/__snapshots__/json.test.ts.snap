@@ -1,0 +1,47 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`toJsonWithReplacer > should be able to avoid recursive dead loops 1`] = `
+{
+  "map": {
+    "id": "cid:root-map:Map",
+    "value": {
+      "key": {
+        "type": "object",
+      },
+    },
+  },
+  "text": {
+    "id": "cid:root-text:Text",
+    "value": "Hello",
+  },
+}
+`;
+
+exports[`toJsonWithReplacer > should be able to handle container in embedded object 1`] = `
+{
+  "map": {
+    "id": "ID:cid:root-map:Map",
+    "value": {
+      "key": {
+        "type": "object",
+        "value": {
+          "type": "container",
+        },
+      },
+      "users": {
+        "id": "ID:cid:1@1:List",
+        "value": [
+          {
+            "age": 30,
+            "name": "John",
+          },
+          {
+            "age": 25,
+            "name": "Jane",
+          },
+        ],
+      },
+    },
+  },
+}
+`;
