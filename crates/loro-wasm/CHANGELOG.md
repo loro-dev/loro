@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.5
+
+### Patch Changes
+
+- 6cf06e5: fix: detached loro text issues #665
+
 ## 1.4.4
 
 ### Patch Changes
