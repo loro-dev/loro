@@ -1340,13 +1340,11 @@ impl TextHandler {
     /// Get the version id of the richtext
     ///
     /// This can be used to detect whether the richtext is changed
-    pub fn version_id(&self) -> usize {
+    pub fn version_id(&self) -> Option<usize> {
         match &self.inner {
-            MaybeDetached::Detached(_) => {
-                unimplemented!("Detached text container does not have version id")
-            }
+            MaybeDetached::Detached(_) => None,
             MaybeDetached::Attached(a) => {
-                a.with_state(|state| state.as_richtext_state_mut().unwrap().get_version_id())
+                Some(a.with_state(|state| state.as_richtext_state_mut().unwrap().get_version_id()))
             }
         }
     }
@@ -1928,8 +1926,8 @@ impl TextHandler {
     ) -> LoroResult<()> {
         match &self.inner {
             MaybeDetached::Detached(t) => {
-                let mut v = t.try_lock().unwrap().value.clone();
-                self.mark_for_detached(&mut v, key, &value, start, end, false)
+                let mut g = t.try_lock().unwrap();
+                self.mark_for_detached(&mut g.value, key, &value, start, end, false)
             }
             MaybeDetached::Attached(a) => {
                 a.with_txn(|txn| self.mark_with_txn(txn, start, end, key, value, false))
@@ -1947,7 +1945,7 @@ impl TextHandler {
         is_delete: bool,
     ) -> Result<(), LoroError> {
         let key: InternalString = key.into();
-        let len = self.len_event();
+        let len = state.len_event();
         if start >= end {
             return Err(loro_common::LoroError::ArgErr(
                 "Start must be less than end".to_string().into_boxed_str(),

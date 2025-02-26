@@ -1532,3 +1532,11 @@ it("text mark on LoroText", () => {
   text.insert(0, "Hello");
   text.mark({ start: 0, end: 5 }, "bold", true);
 })
+
+it("call toDelta on detached text", () => {
+  const text = new LoroText();
+  text.insert(0, "Hello");
+  text.mark({ start: 0, end: 5 }, "bold", true);
+  const d = text.toDelta();
+  expect(d).toMatchSnapshot();
+})

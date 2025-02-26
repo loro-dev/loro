@@ -63,8 +63,6 @@ impl Display for RichtextState {
 use cache::CachedCursor;
 
 mod cache {
-    use tracing::trace;
-
     use super::*;
 
     #[derive(Clone, Debug)]
@@ -143,7 +141,6 @@ mod cache {
 
                         let cached_index = match c.index.entry(pos_type) {
                             std::collections::hash_map::Entry::Vacant(vacant_entry) => {
-                                trace!("new cache");
                                 let index = self.get_index_from_cursor(
                                     Cursor {
                                         leaf: c.leaf,
@@ -164,7 +161,6 @@ mod cache {
                         }
 
                         if cached_index == index {
-                            trace!("eq");
                             break 'block Some(Cursor {
                                 leaf: c.leaf,
                                 offset: 0,
@@ -175,14 +171,6 @@ mod cache {
                         let elem_len = elem.len_with(pos_type);
                         if cached_index + elem_len == index {
                             let offset = elem.len_with(PosType::Entity);
-                            trace!(
-                                "end cached_index={} index={} elem.len_with(pos_type) = {} offset={}",
-                                cached_index,
-                                index,
-                                elem_len,
-                                offset
-                            );
-
                             break 'block Some(Cursor {
                                 leaf: c.leaf,
                                 offset,
@@ -195,11 +183,6 @@ mod cache {
 
                         let offset =
                             pos_type_offset_to_entity_offset(pos_type, elem, index - cached_index)?;
-                        trace!(
-                            "offset convert from {} to {:?}",
-                            index - cached_index,
-                            offset
-                        );
                         Some(Cursor {
                             leaf: c.leaf,
                             offset,
@@ -214,7 +197,6 @@ mod cache {
             {
                 if let Some(c) = ans.as_ref() {
                     let actual = self.get_index_from_cursor(*c, pos_type);
-                    trace!("actual={} index={}", actual.unwrap(), index);
                     assert_eq!(actual.unwrap(), index);
                 }
             }
@@ -2570,7 +2552,6 @@ fn entity_offset_to_pos_type_offset(
     }
 }
 
-#[tracing::instrument(level = "trace")]
 fn pos_type_offset_to_entity_offset(
     pos_type: PosType,
     elem: &RichtextStateChunk,
