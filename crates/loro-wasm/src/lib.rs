@@ -2668,6 +2668,12 @@ impl LoroText {
     pub fn get_shallow_value(&self) -> String {
         self.handler.get_value().as_string().unwrap().to_string()
     }
+
+    /// Get the JSON representation of the text.
+    #[wasm_bindgen(js_name = "toJSON")]
+    pub fn to_json(&self) -> JsValue {
+        self.handler.get_value().into()
+    }
 }
 
 impl Default for LoroText {

@@ -6,7 +6,11 @@ import {
   LoroText,
   TextOp,
   LoroTree,
+  isContainerId,
+  Value,
+  Container,
 } from "../bundler/index";
+import { isContainer } from "..";
 
 it("json encoding", () => {
   const doc = new LoroDoc();
@@ -287,7 +291,10 @@ describe("toJsonWithReplacer", () => {
         parent: null,
         index: 0,
         fractional_index: "80",
-        meta: "cid:0@1:Map",
+        meta: {
+          "content": "Hello",
+          "name": "root",
+        },
         children: []
       }]
     });
@@ -342,4 +349,58 @@ describe("toJsonWithReplacer", () => {
       tree: []
     });
   });
+
+  it("should be able to handle container in embedded object", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId("1");
+    const map = doc.getMap("map");
+    map.set("key", {
+      type: "object",
+      value: {
+        type: "container",
+
+      }
+    });
+    const users = map.setContainer("users", new LoroList());
+    users.push({
+      name: "John",
+      age: 30
+    });
+    users.push({
+      name: "Jane",
+      age: 25
+    });
+    const json = doc.toJsonWithReplacer((key, value) => {
+      if (isContainer(value)) {
+        return {
+          id: "ID:" + value.id,
+          value: value.getShallowValue()
+        }
+      } else {
+        return value
+      }
+    });
+    expect(json).toMatchSnapshot()
+  })
+
+  it("should be able to avoid recursive dead loops", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId("1");
+    const map = doc.getMap("map");
+    map.set("key", {
+      type: "object",
+    });
+    doc.getText("text").insert(0, "Hello");
+    const json = doc.toJsonWithReplacer((key, value) => {
+      if (isContainer(value)) {
+        return {
+          id: value.id,
+          value: value.getShallowValue()
+        }
+      } else {
+        return value
+      }
+    });
+    expect(json).toMatchSnapshot()
+  })
 });
