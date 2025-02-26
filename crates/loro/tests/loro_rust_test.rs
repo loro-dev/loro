@@ -24,7 +24,7 @@ use loro_internal::{
 };
 use rand::{Rng, SeedableRng};
 use serde_json::json;
-use tracing::{trace, trace_span};
+use tracing::trace_span;
 
 mod integration_test;
 

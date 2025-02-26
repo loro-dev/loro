@@ -18,7 +18,7 @@ use std::{
     str::Utf8Error,
     sync::Arc,
 };
-use tracing::{instrument, trace};
+use tracing::instrument;
 
 use crate::{
     container::richtext::style_range_map::EMPTY_STYLES,
