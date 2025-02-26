@@ -1,7 +1,7 @@
 #!/usr/bin/env -S deno run --allow-run
 
 import { defineCommand, runMain } from "npm:citty";
-import { runSyncLoroVersion } from "./sync-loro-version.ts";
+import { runCheckLoroVersion } from "./check-loro-version.ts";
 
 async function runCargoRelease(version: string): Promise<string> {
   const process = new Deno.Command("cargo", {
@@ -63,7 +63,7 @@ const main = defineCommand({
       throw new Error("Version must be in format x.y.z (e.g., 1.2.3)");
     }
 
-    runSyncLoroVersion(version);
+    runCheckLoroVersion(version);
     const output = await runCargoRelease(version);
     console.log("Original output:");
     console.log(output);

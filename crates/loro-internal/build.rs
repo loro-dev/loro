@@ -17,7 +17,7 @@ fn main() {
     let out_dir = env::var("OUT_DIR").expect("Failed to get OUT_DIR");
 
     // Write the version to a file in the output directory
-    let version_path = Path::new(&out_dir).join("version.txt");
+    let version_path = Path::new(&out_dir).join("loro-crdt-package-version.txt");
     eprintln!("loro-crdt version: {}", version);
     fs::write(version_path, version).expect("Failed to write version to file");
 }

@@ -145,4 +145,5 @@ pub struct LoroDocInner {
 }
 
 /// The version of the loro-crdt package
-pub const LORO_VERSION: &str = include_str!(concat!(env!("OUT_DIR"), "/version.txt"));
+pub const LORO_VERSION: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/loro-crdt-package-version.txt"));
