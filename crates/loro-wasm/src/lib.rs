@@ -2507,16 +2507,20 @@ impl LoroText {
     #[wasm_bindgen(js_name = "toDelta")]
     pub fn to_delta(&mut self) -> JsStringDelta {
         let version = self.handler.version_id();
-        if let Some((v, delta)) = self.delta_cache.as_ref() {
-            if *v == version {
-                return delta.clone().into();
+        if let Some(v) = version {
+            if let Some((vv, delta)) = self.delta_cache.as_ref() {
+                if v == *vv {
+                    return delta.clone().into();
+                }
             }
         }
 
         let delta = self.handler.get_richtext_value();
         let value: JsValue = delta.into();
         let ans: JsStringDelta = value.clone().into();
-        self.delta_cache = Some((version, value));
+        if let Some(v) = version {
+            self.delta_cache = Some((v, value));
+        }
         ans
     }
 

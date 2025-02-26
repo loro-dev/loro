@@ -20,11 +20,11 @@ use loro::{
     LoroText, LoroValue, ToJson, TreeParentId,
 };
 use loro_internal::{
-    encoding::EncodedBlobMode, handler::TextDelta, id::ID, version_range, vv, LoroResult,
+    encoding::EncodedBlobMode, fx_map, handler::TextDelta, id::ID, version_range, vv, LoroResult,
 };
 use rand::{Rng, SeedableRng};
 use serde_json::json;
-use tracing::trace_span;
+use tracing::{trace, trace_span};
 
 mod integration_test;
 
@@ -3259,4 +3259,19 @@ fn test_iter_change_on_edge() {
     doc.fork_at(&Frontiers::from_id(ID::new(1, 9)));
     doc.fork_at(&Frontiers::from_id(ID::new(1, 10)));
     doc.fork_at(&Frontiers::from_id(ID::new(1, 11)));
+}
+
+#[test]
+fn test_to_delta_on_detached_text() {
+    let text = LoroText::new();
+    text.insert(0, "Hello").unwrap();
+    text.mark(0..5, "bold", true).unwrap();
+    let delta = text.to_delta();
+    assert_eq!(
+        delta,
+        vec![TextDelta::Insert {
+            insert: "Hello".to_string(),
+            attributes: Some(fx_map! { "bold".into() => LoroValue::Bool(true) }),
+        }]
+    );
 }
