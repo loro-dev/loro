@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.4
+
+### Patch Changes
+
+- 28d1264: feat(wasm): enhance toJsonWithReplacer to handle nested containers in replacer returned value
+- 28d1264: fix(wasm): add toJSON to LoroText
+
+  Now all containers have toJSON method.
+
 ## 1.4.3
 
 ### Patch Changes
