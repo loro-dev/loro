@@ -1,5 +1,16 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
+exports[`call toDelta on detached text 1`] = `
+[
+  {
+    "attributes": {
+      "bold": true,
+    },
+    "insert": "Hello",
+  },
+]
+`;
+
 exports[`can diff two versions 1`] = `
 [
   [
