@@ -9,7 +9,7 @@ use std::{
 use loro::{
     cursor::CannotFindRelativePosition, ChangeTravelError, CounterSpan, DocAnalysis,
     FrontiersNotIncluded, IdSpan, JsonPathError, JsonSchema, Lamport, LoroDoc as InnerLoroDoc,
-    LoroEncodeError, LoroError, LoroResult, PeerID, Timestamp, VersionRange, ID,
+    LoroEncodeError, LoroError, LoroResult, PeerID, StyleConfig, Timestamp, VersionRange, ID,
 };
 
 use crate::{
@@ -110,6 +110,18 @@ impl LoroDoc {
     #[inline]
     pub fn config_text_style(&self, text_style: Arc<StyleConfigMap>) {
         self.doc.config_text_style(text_style.as_ref().to_loro())
+    }
+
+    /// Configures the default text style for the document.
+    ///
+    /// This method sets the default text style configuration for the document when using LoroText.
+    /// If `None` is provided, the default style is reset.
+    ///
+    /// # Parameters
+    ///
+    /// - `text_style`: The style configuration to set as the default. `None` to reset.
+    pub fn config_default_text_style(&self, text_style: Option<StyleConfig>) {
+        self.doc.config_default_text_style(text_style);
     }
 
     /// Attach the document state to the latest known version.

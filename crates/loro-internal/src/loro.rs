@@ -347,12 +347,12 @@ impl LoroDoc {
     }
 
     #[inline]
-    pub fn config_default_text_style(&self, text_style: StyleConfig) {
+    pub fn config_default_text_style(&self, text_style: Option<StyleConfig>) {
         self.config
             .text_style_config
             .try_write()
             .unwrap()
-            .default_style = Some(text_style);
+            .default_style = text_style;
     }
     pub fn from_snapshot(bytes: &[u8]) -> LoroResult<Self> {
         let doc = Self::new();

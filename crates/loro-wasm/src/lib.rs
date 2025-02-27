@@ -169,7 +169,7 @@ extern "C" {
     pub type MapEntry;
     #[wasm_bindgen(typescript_type = "{[key: string]: { expand: 'before'|'after'|'none'|'both' }}")]
     pub type JsTextStyles;
-    #[wasm_bindgen(typescript_type = "{ expand: 'before'|'after'|'none'|'both' }}")]
+    #[wasm_bindgen(typescript_type = "{ expand: 'before'|'after'|'none'|'both' } | undefined")]
     pub type JsTextStyle;
     #[wasm_bindgen(typescript_type = "Delta<string>[]")]
     pub type JsDelta;
@@ -504,17 +504,25 @@ impl LoroDoc {
         Ok(())
     }
 
+    /// Configures the default text style for the document.
+    ///
+    /// This method sets the default text style configuration for the document when using LoroText.
+    /// If `None` is provided, the default style is reset.
     #[wasm_bindgen(js_name = "configDefaultTextStyle")]
     pub fn config_default_text_style(&self, style: JsTextStyle) -> JsResult<()> {
         let mut style_config = StyleConfig::new();
-        let value = style.obj;
-        let expand = Reflect::get(&value, &"expand".into()).expect("`expand` not specified");
-        let expand_str = expand.as_string().unwrap();
+        if style.is_undefined() {
+            self.0.config_default_text_style(None);
+        } else {
+            let value = style.obj;
+            let expand = Reflect::get(&value, &"expand".into()).expect("`expand` not specified");
+            let expand_str = expand.as_string().unwrap();
 
-        style_config.expand = ExpandType::try_from_str(&expand_str)
-            .expect("`expand` must be one of `none`, `start`, `end`, `both`");
+            style_config.expand = ExpandType::try_from_str(&expand_str)
+                .expect("`expand` must be one of `none`, `start`, `end`, `both`");
 
-        self.0.config_default_text_style(style_config);
+            self.0.config_default_text_style(Some(style_config));
+        }
         Ok(())
     }
     /// Create a loro document from the snapshot.
