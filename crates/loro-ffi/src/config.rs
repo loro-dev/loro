@@ -45,7 +45,7 @@ impl StyleConfigMap {
 
     pub fn get(&self, key: &str) -> Option<StyleConfig> {
         let m = self.0.read().unwrap();
-        m.get(&(key.into())).cloned()
+        m.get(&(key.into()))
     }
 
     pub fn default_rich_text_config() -> Self {

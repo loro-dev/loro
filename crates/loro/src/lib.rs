@@ -254,6 +254,18 @@ impl LoroDoc {
         self.doc.config_text_style(text_style)
     }
 
+    /// Configures the default text style for the document.
+    ///
+    /// This method sets the default text style configuration for the document when using LoroText.
+    /// If `None` is provided, the default style is reset.
+    ///
+    /// # Parameters
+    ///
+    /// - `text_style`: The style configuration to set as the default. `None` to reset.
+    pub fn config_default_text_style(&self, text_style: Option<StyleConfig>) {
+        self.doc.config_default_text_style(text_style);
+    }
+
     /// Attach the document state to the latest known version.
     ///
     /// > The document becomes detached during a `checkout` operation.

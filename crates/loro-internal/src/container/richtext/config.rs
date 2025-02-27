@@ -5,13 +5,15 @@ use super::{ExpandType, TextStyleInfoFlag};
 
 #[derive(Debug, Default, Clone)]
 pub struct StyleConfigMap {
-    map: FxHashMap<InternalString, StyleConfig>,
+    pub(crate) map: FxHashMap<InternalString, StyleConfig>,
+    pub(crate) default_style: Option<StyleConfig>,
 }
 
 impl StyleConfigMap {
     pub fn new() -> Self {
         Self {
             map: FxHashMap::default(),
+            default_style: None,
         }
     }
 
@@ -23,8 +25,8 @@ impl StyleConfigMap {
         self.map.insert(key, value);
     }
 
-    pub fn get(&self, key: &InternalString) -> Option<&StyleConfig> {
-        self.map.get(key)
+    pub fn get(&self, key: &InternalString) -> Option<StyleConfig> {
+        self.map.get(key).copied().or(self.default_style)
     }
 
     pub fn get_style_flag(&self, key: &InternalString) -> Option<TextStyleInfoFlag> {
@@ -36,20 +38,21 @@ impl StyleConfigMap {
     }
 
     fn _get_style_flag(&self, key: &InternalString, is_del: bool) -> Option<TextStyleInfoFlag> {
-        let f = |x: &StyleConfig| {
+        let f = |x: StyleConfig| {
             TextStyleInfoFlag::new(if is_del { x.expand.reverse() } else { x.expand })
         };
         if let Some(index) = key.find(':') {
             let key = key[..index].into();
-            self.map.get(&key).map(f)
+            self.map.get(&key).copied().or(self.default_style).map(f)
         } else {
-            self.map.get(key).map(f)
+            self.map.get(key).copied().or(self.default_style).map(f)
         }
     }
 
     pub fn default_rich_text_config() -> Self {
         let mut map = Self {
             map: FxHashMap::default(),
+            default_style: None,
         };
 
         map.map.insert(
