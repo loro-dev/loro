@@ -169,6 +169,8 @@ extern "C" {
     pub type MapEntry;
     #[wasm_bindgen(typescript_type = "{[key: string]: { expand: 'before'|'after'|'none'|'both' }}")]
     pub type JsTextStyles;
+    #[wasm_bindgen(typescript_type = "{ expand: 'before'|'after'|'none'|'both' }}")]
+    pub type JsTextStyle;
     #[wasm_bindgen(typescript_type = "Delta<string>[]")]
     pub type JsDelta;
     #[wasm_bindgen(typescript_type = "-1 | 1 | 0 | undefined")]
@@ -502,6 +504,19 @@ impl LoroDoc {
         Ok(())
     }
 
+    #[wasm_bindgen(js_name = "configDefaultTextStyle")]
+    pub fn config_default_text_style(&self, style: JsTextStyle) -> JsResult<()> {
+        let mut style_config = StyleConfig::new();
+        let value = style.obj;
+        let expand = Reflect::get(&value, &"expand".into()).expect("`expand` not specified");
+        let expand_str = expand.as_string().unwrap();
+
+        style_config.expand = ExpandType::try_from_str(&expand_str)
+            .expect("`expand` must be one of `none`, `start`, `end`, `both`");
+
+        self.0.config_default_text_style(style_config);
+        Ok(())
+    }
     /// Create a loro document from the snapshot.
     ///
     /// @see You can learn more [here](https://loro.dev/docs/tutorial/encoding).

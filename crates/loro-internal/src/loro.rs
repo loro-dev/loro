@@ -23,7 +23,7 @@ use tracing::{debug_span, info, info_span, instrument, warn};
 use crate::{
     arena::SharedArena,
     change::Timestamp,
-    configure::{Configure, DefaultRandom, SecureRandomGenerator},
+    configure::{Configure, DefaultRandom, SecureRandomGenerator, StyleConfig},
     container::{
         idx::ContainerIdx, list::list_op::InnerListOp, richtext::config::StyleConfigMap,
         IntoContainerId,
@@ -343,9 +343,17 @@ impl LoroDoc {
 
     #[inline]
     pub fn config_text_style(&self, text_style: StyleConfigMap) {
-        *self.config.text_style_config.try_write().unwrap() = text_style;
+        self.config.text_style_config.try_write().unwrap().map = text_style.map;
     }
 
+    #[inline]
+    pub fn config_default_text_style(&self, text_style: StyleConfig) {
+        self.config
+            .text_style_config
+            .try_write()
+            .unwrap()
+            .default_style = Some(text_style);
+    }
     pub fn from_snapshot(bytes: &[u8]) -> LoroResult<Self> {
         let doc = Self::new();
         let ParsedHeaderAndBody { mode, body, .. } = parse_header_and_body(bytes, true)?;

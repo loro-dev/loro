@@ -1540,3 +1540,26 @@ it("call toDelta on detached text", () => {
   const d = text.toDelta();
   expect(d).toMatchSnapshot();
 })
+
+it("can allow default config for text style", () => {
+  {
+    const doc = new LoroDoc();
+    const text = doc.getText("text");
+    text.insert(0, "Hello");
+    expect(() => {
+      text.mark({ start: 0, end: 5 }, "size", true);
+    }).toThrow()
+  }
+  {
+    const doc = new LoroDoc();
+    doc.configDefaultTextStyle({ expand: "before" })
+    const text = doc.getText("text");
+    text.insert(0, "Hello");
+    text.mark({ start: 0, end: 5 }, "size", true);
+  }
+  {
+    const text = new LoroText();
+    text.insert(0, "Hello");
+    text.mark({ start: 0, end: 5 }, "size", true);
+  }
+})
