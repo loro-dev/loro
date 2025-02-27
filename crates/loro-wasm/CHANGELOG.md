@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.5
+
+### Patch Changes
+
+- aab07c6: feat: set default config for text style #669
+- 6cf06e5: fix: detached loro text issues #665
+
 ## 1.4.4
 
 ### Patch Changes
