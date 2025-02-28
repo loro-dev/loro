@@ -2081,6 +2081,10 @@ impl RichtextState {
     }
 
     pub fn entity_index_to_event_index(&self, index: usize) -> usize {
+        if index == 0 {
+            // the tree maybe empty
+            return 0;
+        }
         let cursor = self.tree.query::<EntityQuery>(&index).unwrap();
         self.cursor_to_event_index(cursor.cursor)
     }
