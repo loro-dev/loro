@@ -772,6 +772,14 @@ impl LoroDoc {
             .diff(&a.into(), &b.into())
             .map(|x| Arc::new(x.into()))
     }
+
+    /// Check if the doc contains the target container.
+    ///
+    /// A root container always exists, while a normal container exists
+    /// if it has ever been created on the doc.
+    pub fn has_container(&self, id: &ContainerID) -> bool {
+        self.doc.has_container(&id.into())
+    }
 }
 
 pub trait ChangeAncestorsTraveler: Sync + Send {

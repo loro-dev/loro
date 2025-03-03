@@ -163,3 +163,7 @@ fn convert_trait_to_v_or_container<T: AsRef<dyn ValueOrContainer>>(i: T) -> loro
         loro::ValueOrContainer::Container(container)
     }
 }
+
+pub fn get_version() -> String {
+    LORO_VERSION.to_string()
+}
