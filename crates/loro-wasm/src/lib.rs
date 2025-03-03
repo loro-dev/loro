@@ -2069,8 +2069,8 @@ impl LoroDoc {
     /// doc.commit();
     /// const emptyOps = doc.getPendingOpsFromCurrentTxnAsJson(); // this is undefined
     /// ```
-    pub fn getPendingOpsFromCurrentTxnAsJson(&self) -> JsResult<Option<JsJsonSchema>> {
-        let json_schema = self.0.get_txn_ops_in_json();
+    pub fn getUncommittedOpsAsJson(&self) -> JsResult<Option<JsJsonSchema>> {
+        let json_schema = self.0.get_uncommitted_ops_as_json();
         let s = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
         let v = json_schema
             .serialize(&s)

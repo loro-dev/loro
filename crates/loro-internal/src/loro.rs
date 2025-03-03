@@ -698,7 +698,7 @@ impl LoroDoc {
         self.get_by_path(&path)
     }
 
-    pub fn get_txn_ops_in_json(&self) -> Option<JsonSchema> {
+    pub fn get_uncommitted_ops_as_json(&self) -> Option<JsonSchema> {
         let arena = &self.arena;
         let txn = self.txn.try_lock().unwrap();
         let txn = txn.as_ref()?;

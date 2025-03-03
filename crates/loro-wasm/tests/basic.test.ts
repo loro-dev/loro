@@ -1566,10 +1566,10 @@ it("can allow default config for text style", () => {
 it("can get pending ops as json", () => {
   const doc = new LoroDoc();
   doc.setPeerId("1");
-  expect(doc.getPendingOpsFromCurrentTxnAsJson()).toBeUndefined();
+  expect(doc.getUncommittedOpsAsJson()).toBeUndefined();
   const text = doc.getText("text");
   text.insert(0, "Hello");
-  const pendingOps = doc.getPendingOpsFromCurrentTxnAsJson()
+  const pendingOps = doc.getUncommittedOpsAsJson()
   expect(pendingOps).toBeDefined();
   expect(JSON.stringify(pendingOps)).toContain("insert");
   expect(JSON.stringify(pendingOps)).toContain("Hello");
