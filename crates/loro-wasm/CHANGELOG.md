@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.6
+
+### Patch Changes
+
+- 0b0ac7c: fix: entity index when the tree is empty
+
 ## 1.4.5
 
 ### Patch Changes
