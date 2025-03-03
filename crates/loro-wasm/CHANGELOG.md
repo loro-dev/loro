@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.7
+
+### Patch Changes
+
+- 4cb7ae3: feat: get ops from current txn as json #676
+
 ## 1.4.6
 
 ### Patch Changes
