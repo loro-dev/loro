@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{
     arena::SharedArena,
-    change::Change,
+    change::{Change, ChangeRef},
     container::{
         list::list_op::{DeleteSpan, DeleteSpanWithId, InnerListOp},
         map::MapSet,
@@ -17,7 +17,7 @@ use crate::{
     OpLog, VersionVector,
 };
 use either::Either;
-use json::{JsonOpContent, JsonSchema};
+use json::{JsonChange, JsonOpContent, JsonSchema};
 use loro_common::{
     ContainerID, ContainerType, HasCounterSpan, HasId, HasIdSpan, IdLp, IdSpan, LoroError,
     LoroResult, LoroValue, PeerID, TreeID, ID,
@@ -263,6 +263,16 @@ fn convert_tree_id(tree: &TreeID, peers: &Option<Vec<PeerID>>) -> TreeID {
         counter: tree.counter,
     }
 }
+pub(crate) fn encode_change_to_json(change: ChangeRef<'_>, arena: &SharedArena) -> JsonSchema {
+    let f = change.deps.clone();
+    let changes = vec![encode_change(change, arena, None)];
+    JsonSchema {
+        changes,
+        schema_version: SCHEMA_VERSION,
+        peers: None,
+        start_version: f,
+    }
+}
 
 fn encode_changes(
     diff_changes: &[Either<BlockChangeRef, Change>],
@@ -275,251 +285,261 @@ fn encode_changes(
             Either::Left(c) => c,
             Either::Right(c) => c,
         };
-        let mut ops = Vec::with_capacity(change.ops().len());
-        for Op {
-            counter,
-            container,
-            content,
-        } in change.ops().iter()
-        {
-            let mut container = arena.get_container_id(*container).unwrap();
-            if container.is_normal() {
-                container = register_container_id(container, peer_register.as_deref_mut());
-            }
-            let op = match container.container_type() {
-                ContainerType::List => match content {
-                    InnerContent::List(list) => JsonOpContent::List(match list {
-                        InnerListOp::Insert { slice, pos } => {
-                            let mut values =
-                                arena.get_values(slice.0.start as usize..slice.0.end as usize);
-                            values.iter_mut().for_each(|x| {
-                                if let LoroValue::Container(id) = x {
-                                    if id.is_normal() {
-                                        *id = register_container_id(
-                                            id.clone(),
-                                            peer_register.as_deref_mut(),
-                                        );
-                                    }
-                                }
-                            });
-                            json::ListOp::Insert {
-                                pos: *pos as u32,
-                                value: values,
-                            }
-                        }
-                        InnerListOp::Delete(DeleteSpanWithId {
-                            id_start,
-                            span: DeleteSpan { pos, signed_len },
-                        }) => json::ListOp::Delete {
-                            pos: *pos as i32,
-                            len: *signed_len as i32,
-                            start_id: register_id(id_start, peer_register.as_deref_mut()),
-                        },
-                        _ => unreachable!(),
-                    }),
-                    _ => unreachable!(),
-                },
-                ContainerType::MovableList => match content {
-                    InnerContent::List(list) => JsonOpContent::MovableList(match list {
-                        InnerListOp::Insert { slice, pos } => {
-                            let mut values =
-                                arena.get_values(slice.0.start as usize..slice.0.end as usize);
-                            values.iter_mut().for_each(|x| {
-                                if let LoroValue::Container(id) = x {
-                                    if id.is_normal() {
-                                        *id = register_container_id(
-                                            id.clone(),
-                                            peer_register.as_deref_mut(),
-                                        );
-                                    }
-                                }
-                            });
-                            json::MovableListOp::Insert {
-                                pos: *pos as u32,
-                                value: values,
-                            }
-                        }
-                        InnerListOp::Delete(DeleteSpanWithId {
-                            id_start,
-                            span: DeleteSpan { pos, signed_len },
-                        }) => json::MovableListOp::Delete {
-                            pos: *pos as i32,
-                            len: *signed_len as i32,
-                            start_id: register_id(id_start, peer_register.as_deref_mut()),
-                        },
-                        InnerListOp::Move {
-                            from,
-                            elem_id: from_id,
-                            to,
-                        } => json::MovableListOp::Move {
-                            from: *from,
-                            to: *to,
-                            elem_id: register_idlp(from_id, peer_register.as_deref_mut()),
-                        },
-                        InnerListOp::Set { elem_id, value } => {
-                            let value = if let LoroValue::Container(id) = value {
-                                if id.is_normal() {
-                                    LoroValue::Container(register_container_id(
-                                        id.clone(),
-                                        peer_register.as_deref_mut(),
-                                    ))
-                                } else {
-                                    value.clone()
-                                }
-                            } else {
-                                value.clone()
-                            };
-                            json::MovableListOp::Set {
-                                elem_id: register_idlp(elem_id, peer_register.as_deref_mut()),
-                                value,
-                            }
-                        }
-                        _ => unreachable!(),
-                    }),
-                    _ => unreachable!(),
-                },
-                ContainerType::Text => match content {
-                    InnerContent::List(list) => JsonOpContent::Text(match list {
-                        InnerListOp::InsertText {
-                            slice,
-                            unicode_start: _,
-                            unicode_len: _,
-                            pos,
-                        } => {
-                            let text = String::from_utf8(slice.as_bytes().to_vec()).unwrap();
-                            json::TextOp::Insert { pos: *pos, text }
-                        }
-                        InnerListOp::Delete(DeleteSpanWithId {
-                            id_start,
-                            span: DeleteSpan { pos, signed_len },
-                        }) => json::TextOp::Delete {
-                            pos: *pos as i32,
-                            len: *signed_len as i32,
-                            start_id: register_id(id_start, peer_register.as_deref_mut()),
-                        },
-                        InnerListOp::StyleStart {
-                            start,
-                            end,
-                            key,
-                            value,
-                            info,
-                        } => json::TextOp::Mark {
-                            start: *start,
-                            end: *end,
-                            style_key: key.to_string(),
-                            style_value: value.clone(),
-                            info: info.to_byte(),
-                        },
-                        InnerListOp::StyleEnd => json::TextOp::MarkEnd,
-                        _ => unreachable!(),
-                    }),
-                    _ => unreachable!(),
-                },
-                ContainerType::Map => match content {
-                    InnerContent::Map(MapSet { key, value }) => {
-                        JsonOpContent::Map(if let Some(v) = value {
-                            let value = if let LoroValue::Container(id) = v {
-                                if id.is_normal() {
-                                    LoroValue::Container(register_container_id(
-                                        id.clone(),
-                                        peer_register.as_deref_mut(),
-                                    ))
-                                } else {
-                                    v.clone()
-                                }
-                            } else {
-                                v.clone()
-                            };
-                            json::MapOp::Insert {
-                                key: key.to_string(),
-                                value,
-                            }
-                        } else {
-                            json::MapOp::Delete {
-                                key: key.to_string(),
-                            }
-                        })
-                    }
-
-                    _ => unreachable!(),
-                },
-
-                ContainerType::Tree => match content {
-                    InnerContent::Tree(op) => JsonOpContent::Tree(match &**op {
-                        TreeOp::Create {
-                            target,
-                            parent,
-                            position,
-                        } => json::TreeOp::Create {
-                            target: register_tree_id(target, peer_register.as_deref_mut()),
-                            parent: parent
-                                .map(|p| register_tree_id(&p, peer_register.as_deref_mut())),
-                            fractional_index: position.clone(),
-                        },
-                        TreeOp::Move {
-                            target,
-                            parent,
-                            position,
-                        } => json::TreeOp::Move {
-                            target: register_tree_id(target, peer_register.as_deref_mut()),
-                            parent: parent
-                                .map(|p| register_tree_id(&p, peer_register.as_deref_mut())),
-                            fractional_index: position.clone(),
-                        },
-                        TreeOp::Delete { target } => json::TreeOp::Delete {
-                            target: register_tree_id(target, peer_register.as_deref_mut()),
-                        },
-                    }),
-                    _ => unreachable!(),
-                },
-                ContainerType::Unknown(_) => {
-                    let InnerContent::Future(FutureInnerContent::Unknown { prop, value }) = content
-                    else {
-                        unreachable!();
-                    };
-                    JsonOpContent::Future(json::FutureOpWrapper {
-                        prop: *prop,
-                        value: json::FutureOp::Unknown((**value).clone()),
-                    })
-                }
-                #[cfg(feature = "counter")]
-                ContainerType::Counter => {
-                    let InnerContent::Future(f) = content else {
-                        unreachable!()
-                    };
-                    match f {
-                        FutureInnerContent::Counter(x) => {
-                            JsonOpContent::Future(json::FutureOpWrapper {
-                                prop: 0,
-                                value: json::FutureOp::Counter(super::OwnedValue::F64(*x)),
-                            })
-                        }
-                        _ => unreachable!(),
-                    }
-                }
-            };
-            ops.push(json::JsonOp {
-                counter: *counter,
-                container,
-                content: op,
-            });
-        }
-        let c = json::JsonChange {
-            id: register_id(&change.id, peer_register.as_deref_mut()),
-            ops,
-            deps: change
-                .deps
-                .iter()
-                .map(|id| register_id(&id, peer_register.as_deref_mut()))
-                .collect(),
-            lamport: change.lamport,
-            timestamp: change.timestamp,
-            msg: change.message().map(|x| x.to_string()),
-        };
-
+        let c = encode_change(
+            ChangeRef::from_change(change),
+            arena,
+            peer_register.as_deref_mut(),
+        );
         changes.push(c);
     }
     changes
+}
+
+fn encode_change(
+    change: ChangeRef<'_, Op>,
+    arena: &SharedArena,
+    mut peer_register: Option<&mut ValueRegister<PeerID>>,
+) -> JsonChange {
+    let mut ops = Vec::with_capacity(change.ops.len());
+    for Op {
+        counter,
+        container,
+        content,
+    } in change.ops.iter()
+    {
+        let mut container = arena.get_container_id(*container).unwrap();
+        if container.is_normal() {
+            container = register_container_id(container, peer_register.as_deref_mut());
+        }
+        let op = match container.container_type() {
+            ContainerType::List => match content {
+                InnerContent::List(list) => JsonOpContent::List(match list {
+                    InnerListOp::Insert { slice, pos } => {
+                        let mut values =
+                            arena.get_values(slice.0.start as usize..slice.0.end as usize);
+                        values.iter_mut().for_each(|x| {
+                            if let LoroValue::Container(id) = x {
+                                if id.is_normal() {
+                                    *id = register_container_id(
+                                        id.clone(),
+                                        peer_register.as_deref_mut(),
+                                    );
+                                }
+                            }
+                        });
+                        json::ListOp::Insert {
+                            pos: *pos as u32,
+                            value: values,
+                        }
+                    }
+                    InnerListOp::Delete(DeleteSpanWithId {
+                        id_start,
+                        span: DeleteSpan { pos, signed_len },
+                    }) => json::ListOp::Delete {
+                        pos: *pos as i32,
+                        len: *signed_len as i32,
+                        start_id: register_id(id_start, peer_register.as_deref_mut()),
+                    },
+                    _ => unreachable!(),
+                }),
+                _ => unreachable!(),
+            },
+            ContainerType::MovableList => match content {
+                InnerContent::List(list) => JsonOpContent::MovableList(match list {
+                    InnerListOp::Insert { slice, pos } => {
+                        let mut values =
+                            arena.get_values(slice.0.start as usize..slice.0.end as usize);
+                        values.iter_mut().for_each(|x| {
+                            if let LoroValue::Container(id) = x {
+                                if id.is_normal() {
+                                    *id = register_container_id(
+                                        id.clone(),
+                                        peer_register.as_deref_mut(),
+                                    );
+                                }
+                            }
+                        });
+                        json::MovableListOp::Insert {
+                            pos: *pos as u32,
+                            value: values,
+                        }
+                    }
+                    InnerListOp::Delete(DeleteSpanWithId {
+                        id_start,
+                        span: DeleteSpan { pos, signed_len },
+                    }) => json::MovableListOp::Delete {
+                        pos: *pos as i32,
+                        len: *signed_len as i32,
+                        start_id: register_id(id_start, peer_register.as_deref_mut()),
+                    },
+                    InnerListOp::Move {
+                        from,
+                        elem_id: from_id,
+                        to,
+                    } => json::MovableListOp::Move {
+                        from: *from,
+                        to: *to,
+                        elem_id: register_idlp(from_id, peer_register.as_deref_mut()),
+                    },
+                    InnerListOp::Set { elem_id, value } => {
+                        let value = if let LoroValue::Container(id) = value {
+                            if id.is_normal() {
+                                LoroValue::Container(register_container_id(
+                                    id.clone(),
+                                    peer_register.as_deref_mut(),
+                                ))
+                            } else {
+                                value.clone()
+                            }
+                        } else {
+                            value.clone()
+                        };
+                        json::MovableListOp::Set {
+                            elem_id: register_idlp(elem_id, peer_register.as_deref_mut()),
+                            value,
+                        }
+                    }
+                    _ => unreachable!(),
+                }),
+                _ => unreachable!(),
+            },
+            ContainerType::Text => match content {
+                InnerContent::List(list) => JsonOpContent::Text(match list {
+                    InnerListOp::InsertText {
+                        slice,
+                        unicode_start: _,
+                        unicode_len: _,
+                        pos,
+                    } => {
+                        let text = String::from_utf8(slice.as_bytes().to_vec()).unwrap();
+                        json::TextOp::Insert { pos: *pos, text }
+                    }
+                    InnerListOp::Delete(DeleteSpanWithId {
+                        id_start,
+                        span: DeleteSpan { pos, signed_len },
+                    }) => json::TextOp::Delete {
+                        pos: *pos as i32,
+                        len: *signed_len as i32,
+                        start_id: register_id(id_start, peer_register.as_deref_mut()),
+                    },
+                    InnerListOp::StyleStart {
+                        start,
+                        end,
+                        key,
+                        value,
+                        info,
+                    } => json::TextOp::Mark {
+                        start: *start,
+                        end: *end,
+                        style_key: key.to_string(),
+                        style_value: value.clone(),
+                        info: info.to_byte(),
+                    },
+                    InnerListOp::StyleEnd => json::TextOp::MarkEnd,
+                    _ => unreachable!(),
+                }),
+                _ => unreachable!(),
+            },
+            ContainerType::Map => match content {
+                InnerContent::Map(MapSet { key, value }) => {
+                    JsonOpContent::Map(if let Some(v) = value {
+                        let value = if let LoroValue::Container(id) = v {
+                            if id.is_normal() {
+                                LoroValue::Container(register_container_id(
+                                    id.clone(),
+                                    peer_register.as_deref_mut(),
+                                ))
+                            } else {
+                                v.clone()
+                            }
+                        } else {
+                            v.clone()
+                        };
+                        json::MapOp::Insert {
+                            key: key.to_string(),
+                            value,
+                        }
+                    } else {
+                        json::MapOp::Delete {
+                            key: key.to_string(),
+                        }
+                    })
+                }
+
+                _ => unreachable!(),
+            },
+
+            ContainerType::Tree => match content {
+                InnerContent::Tree(op) => JsonOpContent::Tree(match &**op {
+                    TreeOp::Create {
+                        target,
+                        parent,
+                        position,
+                    } => json::TreeOp::Create {
+                        target: register_tree_id(target, peer_register.as_deref_mut()),
+                        parent: parent.map(|p| register_tree_id(&p, peer_register.as_deref_mut())),
+                        fractional_index: position.clone(),
+                    },
+                    TreeOp::Move {
+                        target,
+                        parent,
+                        position,
+                    } => json::TreeOp::Move {
+                        target: register_tree_id(target, peer_register.as_deref_mut()),
+                        parent: parent.map(|p| register_tree_id(&p, peer_register.as_deref_mut())),
+                        fractional_index: position.clone(),
+                    },
+                    TreeOp::Delete { target } => json::TreeOp::Delete {
+                        target: register_tree_id(target, peer_register.as_deref_mut()),
+                    },
+                }),
+                _ => unreachable!(),
+            },
+            ContainerType::Unknown(_) => {
+                let InnerContent::Future(FutureInnerContent::Unknown { prop, value }) = content
+                else {
+                    unreachable!();
+                };
+                JsonOpContent::Future(json::FutureOpWrapper {
+                    prop: *prop,
+                    value: json::FutureOp::Unknown((**value).clone()),
+                })
+            }
+            #[cfg(feature = "counter")]
+            ContainerType::Counter => {
+                let InnerContent::Future(f) = content else {
+                    unreachable!()
+                };
+                match f {
+                    FutureInnerContent::Counter(x) => {
+                        JsonOpContent::Future(json::FutureOpWrapper {
+                            prop: 0,
+                            value: json::FutureOp::Counter(super::OwnedValue::F64(*x)),
+                        })
+                    }
+                    _ => unreachable!(),
+                }
+            }
+        };
+        ops.push(json::JsonOp {
+            counter: *counter,
+            container,
+            content: op,
+        });
+    }
+    let c = json::JsonChange {
+        id: register_id(change.id, peer_register.as_deref_mut()),
+        ops,
+        deps: change
+            .deps
+            .iter()
+            .map(|id| register_id(&id, peer_register.as_deref_mut()))
+            .collect(),
+        lamport: *change.lamport,
+        timestamp: *change.timestamp,
+        msg: change.commit_msg.as_deref().map(|x| x.to_string()),
+    };
+    c
 }
 
 fn decode_changes(json: JsonSchema, arena: &SharedArena) -> LoroResult<Vec<Change>> {

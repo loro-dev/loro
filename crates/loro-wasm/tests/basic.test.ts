@@ -1563,3 +1563,37 @@ it("can allow default config for text style", () => {
     text.mark({ start: 0, end: 5 }, "size", true);
   }
 })
+it("can get pending ops as json", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId("1");
+  expect(doc.getUncommittedOpsAsJson()).toBeUndefined();
+  const text = doc.getText("text");
+  text.insert(0, "Hello");
+  const pendingOps = doc.getUncommittedOpsAsJson()
+  expect(pendingOps).toBeDefined();
+  expect(JSON.stringify(pendingOps)).toContain("insert");
+  expect(JSON.stringify(pendingOps)).toContain("Hello");
+  expect(pendingOps).toEqual({
+    "peers": undefined,
+    "schema_version": 1,
+    "start_version": {},
+    changes: [{
+      "id": "0@1",
+      "deps": [],
+      "msg": undefined,
+      "lamport": 0,
+      "ops": [
+        {
+          "container": "cid:root-text:Text",
+          "counter": 0,
+          "content": {
+            "type": "insert",
+            "pos": 0,
+            "text": "Hello"
+          }
+        }
+      ],
+      "timestamp": 0,
+    }],
+  })
+});

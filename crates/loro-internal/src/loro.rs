@@ -1,3 +1,39 @@
+use crate::change::ChangeRef;
+pub use crate::encoding::ExportMode;
+pub use crate::state::analyzer::{ContainerAnalysisInfo, DocAnalysis};
+pub(crate) use crate::LoroDocInner;
+use crate::{
+    arena::SharedArena,
+    change::Timestamp,
+    configure::{Configure, DefaultRandom, SecureRandomGenerator, StyleConfig},
+    container::{
+        idx::ContainerIdx, list::list_op::InnerListOp, richtext::config::StyleConfigMap,
+        IntoContainerId,
+    },
+    cursor::{AbsolutePosition, CannotFindRelativePosition, Cursor, PosQueryResult},
+    dag::{Dag, DagUtils},
+    diff_calc::DiffCalculator,
+    encoding::{
+        self, decode_snapshot, export_fast_snapshot, export_fast_updates,
+        export_fast_updates_in_range, export_shallow_snapshot, export_snapshot, export_snapshot_at,
+        export_state_only_snapshot,
+        json_schema::{encode_change_to_json, json::JsonSchema},
+        parse_header_and_body, EncodeMode, ImportBlobMetadata, ImportStatus, ParsedHeaderAndBody,
+    },
+    event::{str_to_path, EventTriggerKind, Index, InternalDocDiff},
+    handler::{Handler, MovableListHandler, TextHandler, TreeHandler, ValueOrHandler},
+    id::PeerID,
+    json::JsonChange,
+    op::InnerContent,
+    oplog::{loro_dag::FrontiersNotIncluded, OpLog},
+    state::DocState,
+    subscription::{LocalUpdateCallback, Observer, Subscriber},
+    undo::DiffBatch,
+    utils::subscription::{SubscriberSetWithQueue, Subscription},
+    version::{shrink_frontiers, Frontiers, ImVersionVector, VersionRange, VersionVectorDiff},
+    ChangeMeta, DocDiff, HandlerTrait, InternalString, ListHandler, LoroDoc, LoroError, MapHandler,
+    VersionVector,
+};
 use either::Either;
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{
@@ -19,42 +55,6 @@ use std::{
     },
 };
 use tracing::{debug_span, info, info_span, instrument, warn};
-
-use crate::{
-    arena::SharedArena,
-    change::Timestamp,
-    configure::{Configure, DefaultRandom, SecureRandomGenerator, StyleConfig},
-    container::{
-        idx::ContainerIdx, list::list_op::InnerListOp, richtext::config::StyleConfigMap,
-        IntoContainerId,
-    },
-    cursor::{AbsolutePosition, CannotFindRelativePosition, Cursor, PosQueryResult},
-    dag::{Dag, DagUtils},
-    diff_calc::DiffCalculator,
-    encoding::{
-        self, decode_snapshot, export_fast_snapshot, export_fast_updates,
-        export_fast_updates_in_range, export_shallow_snapshot, export_snapshot, export_snapshot_at,
-        export_state_only_snapshot, json_schema::json::JsonSchema, parse_header_and_body,
-        EncodeMode, ImportBlobMetadata, ImportStatus, ParsedHeaderAndBody,
-    },
-    event::{str_to_path, EventTriggerKind, Index, InternalDocDiff},
-    handler::{Handler, MovableListHandler, TextHandler, TreeHandler, ValueOrHandler},
-    id::PeerID,
-    json::JsonChange,
-    op::InnerContent,
-    oplog::{loro_dag::FrontiersNotIncluded, OpLog},
-    state::DocState,
-    subscription::{LocalUpdateCallback, Observer, Subscriber},
-    undo::DiffBatch,
-    utils::subscription::{SubscriberSetWithQueue, Subscription},
-    version::{shrink_frontiers, Frontiers, ImVersionVector, VersionRange, VersionVectorDiff},
-    ChangeMeta, DocDiff, HandlerTrait, InternalString, ListHandler, LoroDoc, LoroError, MapHandler,
-    VersionVector,
-};
-
-pub use crate::encoding::ExportMode;
-pub use crate::state::analyzer::{ContainerAnalysisInfo, DocAnalysis};
-pub(crate) use crate::LoroDocInner;
 
 impl Default for LoroDoc {
     fn default() -> Self {
@@ -696,6 +696,31 @@ impl LoroDoc {
     pub fn get_by_str_path(&self, path: &str) -> Option<ValueOrHandler> {
         let path = str_to_path(path)?;
         self.get_by_path(&path)
+    }
+
+    pub fn get_uncommitted_ops_as_json(&self) -> Option<JsonSchema> {
+        let arena = &self.arena;
+        let txn = self.txn.try_lock().unwrap();
+        let txn = txn.as_ref()?;
+        let ops_ = txn.local_ops();
+        let new_id = ID {
+            peer: *txn.peer(),
+            counter: ops_.first()?.counter,
+        };
+        let change = ChangeRef {
+            id: &new_id,
+            deps: txn.frontiers(),
+            timestamp: &txn
+                .timestamp()
+                .as_ref()
+                .copied()
+                .unwrap_or_else(|| self.oplog.try_lock().unwrap().get_timestamp_for_next_txn()),
+            commit_msg: txn.msg(),
+            ops: ops_,
+            lamport: txn.lamport(),
+        };
+        let json = encode_change_to_json(change, arena);
+        Some(json)
     }
 
     #[inline]
