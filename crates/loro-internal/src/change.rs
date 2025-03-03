@@ -38,6 +38,28 @@ pub struct Change<O = Op> {
     pub(crate) ops: RleVec<[O; 1]>,
 }
 
+pub(crate) struct ChangeRef<'a, O = Op> {
+    pub(crate) id: &'a ID,
+    pub(crate) lamport: &'a Lamport,
+    pub(crate) deps: &'a Frontiers,
+    pub(crate) timestamp: &'a Timestamp,
+    pub(crate) commit_msg: &'a Option<Arc<str>>,
+    pub(crate) ops: &'a RleVec<[O; 1]>,
+}
+
+impl<'a, O> ChangeRef<'a, O> {
+    pub fn from_change(change: &'a Change<O>) -> Self {
+        Self {
+            id: &change.id,
+            lamport: &change.lamport,
+            deps: &change.deps,
+            timestamp: &change.timestamp,
+            commit_msg: &change.commit_msg,
+            ops: &change.ops,
+        }
+    }
+}
+
 impl<O> Change<O> {
     pub fn new(
         ops: RleVec<[O; 1]>,

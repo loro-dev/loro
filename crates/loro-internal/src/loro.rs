@@ -1,9 +1,10 @@
+use crate::change::ChangeRef;
 pub use crate::encoding::ExportMode;
 pub use crate::state::analyzer::{ContainerAnalysisInfo, DocAnalysis};
 pub(crate) use crate::LoroDocInner;
 use crate::{
     arena::SharedArena,
-    change::{Change, Timestamp},
+    change::Timestamp,
     configure::{Configure, DefaultRandom, SecureRandomGenerator, StyleConfig},
     container::{
         idx::ContainerIdx, list::list_op::InnerListOp, richtext::config::StyleConfigMap,
@@ -706,17 +707,17 @@ impl LoroDoc {
             peer: *txn.peer(),
             counter: ops_.first()?.counter,
         };
-        let change = Change {
-            id: new_id,
-            deps: txn.frontiers().clone(),
-            timestamp: txn
+        let change = ChangeRef {
+            id: &new_id,
+            deps: txn.frontiers(),
+            timestamp: &txn
                 .timestamp()
                 .as_ref()
-                .cloned()
+                .copied()
                 .unwrap_or_else(|| self.oplog.try_lock().unwrap().get_timestamp_for_next_txn()),
-            commit_msg: txn.msg().clone(),
-            ops: ops_.clone(),
-            lamport: *txn.lamport(),
+            commit_msg: txn.msg(),
+            ops: ops_,
+            lamport: txn.lamport(),
         };
         let json = encode_change_to_json(change, arena);
         Some(json)
