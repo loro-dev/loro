@@ -2051,6 +2051,32 @@ impl LoroDoc {
         let v: JsValue = arr.into();
         Ok(v.into())
     }
+
+    /// Get the pending operations from the current transaction in JSON format
+    ///
+    /// This method returns a JSON representation of operations that have been applied
+    /// but not yet committed in the current transaction.
+    ///
+    /// It will use the same data format as `doc.exportJsonUpdates()`
+    ///
+    /// @example
+    /// ```ts
+    /// const doc = new LoroDoc();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello");
+    /// // Get pending ops before commit
+    /// const pendingOps = doc.getPendingOpsFromCurrentTxnAsJson();
+    /// doc.commit();
+    /// const emptyOps = doc.getPendingOpsFromCurrentTxnAsJson(); // this is undefined
+    /// ```
+    pub fn getPendingOpsFromCurrentTxnAsJson(&self) -> JsResult<Option<JsJsonSchema>> {
+        let json_schema = self.0.get_txn_ops_in_json();
+        let s = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+        let v = json_schema
+            .serialize(&s)
+            .map_err(std::convert::Into::<JsValue>::into)?;
+        Ok(Some(v.into()))
+    }
 }
 
 #[allow(unused)]

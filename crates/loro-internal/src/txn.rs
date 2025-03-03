@@ -372,6 +372,29 @@ impl Transaction {
         self.msg = msg;
     }
 
+    pub fn local_ops(&self) -> &RleVec<[Op; 1]> {
+        &self.local_ops
+    }
+
+    pub fn peer(&self) -> &PeerID {
+        &self.peer
+    }
+
+    pub fn timestamp(&self) -> &Option<Timestamp> {
+        &self.timestamp
+    }
+
+    pub fn frontiers(&self) -> &Frontiers {
+        &self.frontiers
+    }
+    pub fn msg(&self) -> &Option<Arc<str>> {
+        &self.msg
+    }
+
+    pub fn lamport(&self) -> &Lamport {
+        &self.start_lamport
+    }
+
     pub(crate) fn set_on_commit(&mut self, f: OnCommitFn) {
         self.on_commit = Some(f);
     }
@@ -599,7 +622,6 @@ impl Transaction {
             .into_tree()
             .unwrap()
     }
-
     pub fn next_id(&self) -> ID {
         ID {
             peer: self.peer,

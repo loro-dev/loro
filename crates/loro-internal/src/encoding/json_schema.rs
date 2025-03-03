@@ -263,7 +263,16 @@ fn convert_tree_id(tree: &TreeID, peers: &Option<Vec<PeerID>>) -> TreeID {
         counter: tree.counter,
     }
 }
-
+pub(crate) fn encode_change_to_json(change: Change, arena: &SharedArena) -> JsonSchema {
+    let f = change.deps.clone();
+    let changes = encode_changes(&[Either::Right(change)], arena, None);
+    JsonSchema {
+        changes,
+        schema_version: SCHEMA_VERSION,
+        peers: None,
+        start_version: f,
+    }
+}
 fn encode_changes(
     diff_changes: &[Either<BlockChangeRef, Change>],
     arena: &SharedArena,
