@@ -312,7 +312,7 @@ pub mod v2 {
 
             peer.state = value;
             peer.timestamp = if delete {
-                -(get_sys_timestamp() as Timestamp)
+                -1
             } else {
                 get_sys_timestamp() as Timestamp
             };
