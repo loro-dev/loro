@@ -160,63 +160,69 @@ impl Awareness {
 }
 
 pub mod v2 {
-    use fxhash::{FxHashMap, FxHashSet};
-    use loro_common::{LoroValue, PeerID};
+    use fxhash::FxHashMap;
+    use loro_common::LoroValue;
     use serde::{Deserialize, Serialize};
 
-    use crate::change::{get_sys_timestamp, Timestamp};
+    use crate::{
+        change::{get_sys_timestamp, Timestamp},
+        SubscriberSetWithQueue, Subscription,
+    };
 
-    #[derive(Debug, Clone)]
+    pub type LocalAwarenessCallback = Box<dyn Fn(&Vec<u8>) -> bool + Send + Sync + 'static>;
+
     pub struct AwarenessV2 {
-        peer: PeerID,
-        peers: FxHashMap<PeerID, FxHashMap<String, PeerInfo>>,
+        states: FxHashMap<String, PeerState>,
+        subs: SubscriberSetWithQueue<(), LocalAwarenessCallback, Vec<u8>>,
         timeout: i64,
+    }
+
+    impl std::fmt::Debug for AwarenessV2 {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(
+                f,
+                "AwarenessV2 {{ states: {:?}, timeout: {:?} }}",
+                self.states, self.timeout
+            )
+        }
     }
 
     #[derive(Serialize, Deserialize)]
     struct EncodedPeerInfo<'a> {
-        peer: PeerID,
         #[serde(borrow)]
-        field: &'a str,
-        record: LoroValue,
+        key: &'a str,
+        record: Option<LoroValue>,
         timestamp: i64,
     }
 
     #[derive(Debug, Clone)]
-    pub struct PeerInfo {
-        pub state: LoroValue,
-        // This field is generated locally
+    pub struct PeerState {
+        pub state: Option<LoroValue>,
         pub timestamp: i64,
     }
 
     impl AwarenessV2 {
-        pub fn new(peer: PeerID, timeout: i64) -> AwarenessV2 {
+        pub fn new(timeout: i64) -> AwarenessV2 {
             AwarenessV2 {
-                peer,
                 timeout,
-                peers: FxHashMap::default(),
+                states: FxHashMap::default(),
+                subs: SubscriberSetWithQueue::new(),
             }
         }
 
-        pub fn encode(&self, peers: &[PeerID], field: &str) -> Vec<u8> {
+        pub fn encode(&self, key: &str) -> Vec<u8> {
             let mut peers_info = Vec::new();
             let now = get_sys_timestamp() as Timestamp;
-            for peer in peers {
-                if let Some(peer_state) = self.peers.get(peer) {
-                    let Some(peer_info) = peer_state.get(field) else {
-                        continue;
-                    };
-                    if now - peer_info.timestamp > self.timeout {
-                        continue;
-                    }
-                    let encoded_peer_info = EncodedPeerInfo {
-                        peer: *peer,
-                        field,
-                        record: peer_info.state.clone(),
-                        timestamp: peer_info.timestamp,
-                    };
-                    peers_info.push(encoded_peer_info);
+            if let Some(peer_state) = self.states.get(key) {
+                if now - peer_state.timestamp > self.timeout {
+                    return vec![];
                 }
+                let encoded_peer_info = EncodedPeerInfo {
+                    key,
+                    record: peer_state.state.clone(),
+                    timestamp: peer_state.timestamp,
+                };
+                peers_info.push(encoded_peer_info);
             }
 
             postcard::to_allocvec(&peers_info).unwrap()
@@ -225,133 +231,118 @@ pub mod v2 {
         pub fn encode_all(&self) -> Vec<u8> {
             let mut peers_info = Vec::new();
             let now = get_sys_timestamp() as Timestamp;
-            for peer in self.peers.keys() {
-                if let Some(peer_state) = self.peers.get(peer) {
-                    for (field, peer_info) in peer_state.iter() {
-                        if now - peer_info.timestamp > self.timeout {
-                            continue;
-                        }
-                        let encoded_peer_info = EncodedPeerInfo {
-                            peer: *peer,
-                            field,
-                            record: peer_info.state.clone(),
-                            timestamp: peer_info.timestamp,
-                        };
-                        peers_info.push(encoded_peer_info);
-                    }
+            for (key, peer_state) in self.states.iter() {
+                if now - peer_state.timestamp > self.timeout {
+                    continue;
                 }
+                let encoded_peer_info = EncodedPeerInfo {
+                    key,
+                    record: peer_state.state.clone(),
+                    timestamp: peer_state.timestamp,
+                };
+                peers_info.push(encoded_peer_info);
             }
             postcard::to_allocvec(&peers_info).unwrap()
         }
 
-        pub fn encode_all_peers(&self, field: &str) -> Vec<u8> {
-            self.encode(&self.peers.keys().copied().collect::<Vec<_>>(), field)
-        }
-
-        /// Returns (updated, added)
+        /// Returns (updated, added, removed)
         pub fn apply(
             &mut self,
             encoded_peers_info: &[u8],
-        ) -> (FxHashSet<PeerID>, FxHashSet<PeerID>) {
+        ) -> (Vec<String>, Vec<String>, Vec<String>) {
             let peers_info: Vec<EncodedPeerInfo> =
                 postcard::from_bytes(encoded_peers_info).unwrap();
-            let mut changed_peers = FxHashSet::default();
-            let mut added_peers = FxHashSet::default();
+            let mut changed_keys = Vec::new();
+            let mut added_keys = Vec::new();
+            let mut removed_keys = Vec::new();
             let now = get_sys_timestamp() as Timestamp;
             for EncodedPeerInfo {
-                peer,
-                field,
+                key,
                 record,
                 timestamp,
             } in peers_info
             {
-                let peer_state = self.peers.entry(peer).or_insert_with(|| {
-                    added_peers.insert(peer);
-                    FxHashMap::default()
-                });
-                match peer_state.get_mut(field) {
-                    Some(peer_info) if peer_info.timestamp >= timestamp || peer == self.peer => {
+                match self.states.get_mut(key) {
+                    Some(peer_info) if peer_info.timestamp >= timestamp => {
                         // do nothing
                     }
                     _ => {
-                        if timestamp < 0 {
-                            peer_state.remove(field);
-                        } else {
-                            peer_state.insert(
-                                field.to_string(),
-                                PeerInfo {
-                                    state: record,
-                                    timestamp: now,
-                                },
-                            );
-                        }
-                        if !added_peers.contains(&peer) {
-                            changed_peers.insert(peer);
+                        let old = self.states.insert(
+                            key.to_string(),
+                            PeerState {
+                                state: record.clone(),
+                                timestamp: now,
+                            },
+                        );
+                        match (old, record) {
+                            (Some(_), Some(_)) => changed_keys.push(key.to_string()),
+                            (None, Some(_)) => added_keys.push(key.to_string()),
+                            (Some(_), None) => removed_keys.push(key.to_string()),
+                            (None, None) => {}
                         }
                     }
                 }
             }
 
-            (changed_peers, added_peers)
+            (changed_keys, added_keys, removed_keys)
         }
 
-        pub fn set_local_state(&mut self, field: &str, value: impl Into<LoroValue>) {
-            self._set_local_state(field, value.into(), false);
+        pub fn set(&mut self, key: &str, value: impl Into<LoroValue>) {
+            self._set_local_state(key, Some(value.into()));
         }
 
-        pub fn delete_local_state(&mut self, field: &str) {
-            self._set_local_state(field, LoroValue::Null, true);
+        pub fn delete(&mut self, key: &str) {
+            self._set_local_state(key, None);
         }
 
-        fn _set_local_state(&mut self, field: &str, value: LoroValue, delete: bool) {
-            let peer = self.peers.entry(self.peer).or_default();
-            let peer = peer.entry(field.to_string()).or_insert_with(|| PeerInfo {
-                state: Default::default(),
-                timestamp: 0,
-            });
-
-            peer.state = value;
-            peer.timestamp = if delete {
-                -1
-            } else {
-                get_sys_timestamp() as Timestamp
-            };
+        fn _set_local_state(&mut self, key: &str, value: Option<LoroValue>) {
+            self.states.insert(
+                key.to_string(),
+                PeerState {
+                    state: value,
+                    timestamp: get_sys_timestamp() as Timestamp,
+                },
+            );
+            if self.subs.inner().is_empty() {
+                return;
+            }
+            self.subs.emit(&(), self.encode(key));
         }
 
-        pub fn get_local_state(&self, field: &str) -> Option<LoroValue> {
-            self.peers
-                .get(&self.peer)
-                .and_then(|x| x.get(field))
-                .map(|x| x.state.clone())
+        pub fn get(&self, key: &str) -> Option<LoroValue> {
+            self.states.get(key).and_then(|x| x.state.clone())
         }
 
-        pub fn remove_outdated(&mut self, field: &str) -> FxHashSet<PeerID> {
+        pub fn remove_outdated(&mut self) -> Vec<String> {
             let now = get_sys_timestamp() as Timestamp;
-            let mut removed = FxHashSet::default();
-            for (id, v) in self.peers.iter_mut() {
-                if let Some(timestamp) = v.get(field).map(|x| x.timestamp) {
-                    if now - timestamp > self.timeout {
-                        removed.insert(*id);
-                        v.remove(field);
+            let mut removed = Vec::new();
+
+            self.states.retain(|key, state| {
+                if now - state.timestamp > self.timeout {
+                    if state.state.is_some() {
+                        removed.push(key.clone());
                     }
+                    false
+                } else {
+                    true
                 }
-            }
+            });
 
             removed
         }
 
-        pub fn get_all_states(&self, field: &str) -> FxHashMap<PeerID, LoroValue> {
-            let mut ans = FxHashMap::default();
-            for (id, v) in self.peers.iter() {
-                if let Some(peer_info) = v.get(field) {
-                    ans.insert(*id, peer_info.state.clone());
-                }
-            }
-            ans
+        pub fn get_all_states(&self) -> FxHashMap<String, LoroValue> {
+            self.states
+                .iter()
+                .filter(|(_, v)| v.state.is_some())
+                .map(|(k, v)| (k.clone(), v.state.clone().unwrap()))
+                .collect()
         }
 
-        pub fn peer(&self) -> PeerID {
-            self.peer
+        pub fn subscribe_local_update(&self, callback: LocalAwarenessCallback) -> Subscription {
+            let (sub, activate) = self.subs.inner().insert((), callback);
+            activate();
+            sub
         }
     }
 }
