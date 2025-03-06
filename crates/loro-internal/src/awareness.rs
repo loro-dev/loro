@@ -3,6 +3,7 @@ use loro_common::{LoroValue, PeerID};
 use serde::{Deserialize, Serialize};
 
 use crate::change::{get_sys_timestamp, Timestamp};
+use crate::{SubscriberSetWithQueue, Subscription};
 
 /// `Awareness` is a structure that tracks the ephemeral state of peers.
 ///
@@ -159,190 +160,190 @@ impl Awareness {
     }
 }
 
-pub mod v2 {
-    use fxhash::FxHashMap;
-    use loro_common::LoroValue;
-    use serde::{Deserialize, Serialize};
+pub type LocalAwarenessCallback = Box<dyn Fn(&Vec<u8>) -> bool + Send + Sync + 'static>;
 
-    use crate::{
-        change::{get_sys_timestamp, Timestamp},
-        SubscriberSetWithQueue, Subscription,
-    };
+/// `EphemeralStore` is a structure that tracks the ephemeral state of peers.
+///
+/// It can be used to synchronize cursor positions, selections, and the names of the peers.
+/// We use the latest timestamp as the tie-breaker for LWW (Last-Write-Wins) conflict resolution.
+pub struct EphemeralStore {
+    states: FxHashMap<String, State>,
+    subs: SubscriberSetWithQueue<(), LocalAwarenessCallback, Vec<u8>>,
+    timeout: i64,
+}
 
-    pub type LocalAwarenessCallback = Box<dyn Fn(&Vec<u8>) -> bool + Send + Sync + 'static>;
-
-    pub struct AwarenessV2 {
-        states: FxHashMap<String, PeerState>,
-        subs: SubscriberSetWithQueue<(), LocalAwarenessCallback, Vec<u8>>,
-        timeout: i64,
+impl std::fmt::Debug for EphemeralStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "AwarenessV2 {{ states: {:?}, timeout: {:?} }}",
+            self.states, self.timeout
+        )
     }
+}
 
-    impl std::fmt::Debug for AwarenessV2 {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            write!(
-                f,
-                "AwarenessV2 {{ states: {:?}, timeout: {:?} }}",
-                self.states, self.timeout
-            )
+#[derive(Serialize, Deserialize)]
+struct EncodedState<'a> {
+    #[serde(borrow)]
+    key: &'a str,
+    value: Option<LoroValue>,
+    timestamp: i64,
+}
+
+#[derive(Debug, Clone)]
+struct State {
+    state: Option<LoroValue>,
+    timestamp: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct AwarenessUpdates {
+    pub added: Vec<String>,
+    pub changed: Vec<String>,
+    pub removed: Vec<String>,
+}
+
+impl EphemeralStore {
+    pub fn new(timeout: i64) -> EphemeralStore {
+        EphemeralStore {
+            timeout,
+            states: FxHashMap::default(),
+            subs: SubscriberSetWithQueue::new(),
         }
     }
 
-    #[derive(Serialize, Deserialize)]
-    struct EncodedPeerInfo<'a> {
-        #[serde(borrow)]
-        key: &'a str,
-        record: Option<LoroValue>,
-        timestamp: i64,
-    }
-
-    #[derive(Debug, Clone)]
-    pub struct PeerState {
-        pub state: Option<LoroValue>,
-        pub timestamp: i64,
-    }
-
-    impl AwarenessV2 {
-        pub fn new(timeout: i64) -> AwarenessV2 {
-            AwarenessV2 {
-                timeout,
-                states: FxHashMap::default(),
-                subs: SubscriberSetWithQueue::new(),
+    pub fn encode(&self, key: &str) -> Vec<u8> {
+        let mut peers_info = Vec::new();
+        let now = get_sys_timestamp() as Timestamp;
+        if let Some(peer_state) = self.states.get(key) {
+            if now - peer_state.timestamp > self.timeout {
+                return vec![];
             }
-        }
-
-        pub fn encode(&self, key: &str) -> Vec<u8> {
-            let mut peers_info = Vec::new();
-            let now = get_sys_timestamp() as Timestamp;
-            if let Some(peer_state) = self.states.get(key) {
-                if now - peer_state.timestamp > self.timeout {
-                    return vec![];
-                }
-                let encoded_peer_info = EncodedPeerInfo {
-                    key,
-                    record: peer_state.state.clone(),
-                    timestamp: peer_state.timestamp,
-                };
-                peers_info.push(encoded_peer_info);
-            }
-
-            postcard::to_allocvec(&peers_info).unwrap()
-        }
-
-        pub fn encode_all(&self) -> Vec<u8> {
-            let mut peers_info = Vec::new();
-            let now = get_sys_timestamp() as Timestamp;
-            for (key, peer_state) in self.states.iter() {
-                if now - peer_state.timestamp > self.timeout {
-                    continue;
-                }
-                let encoded_peer_info = EncodedPeerInfo {
-                    key,
-                    record: peer_state.state.clone(),
-                    timestamp: peer_state.timestamp,
-                };
-                peers_info.push(encoded_peer_info);
-            }
-            postcard::to_allocvec(&peers_info).unwrap()
-        }
-
-        /// Returns (updated, added, removed)
-        pub fn apply(
-            &mut self,
-            encoded_peers_info: &[u8],
-        ) -> (Vec<String>, Vec<String>, Vec<String>) {
-            let peers_info: Vec<EncodedPeerInfo> =
-                postcard::from_bytes(encoded_peers_info).unwrap();
-            let mut changed_keys = Vec::new();
-            let mut added_keys = Vec::new();
-            let mut removed_keys = Vec::new();
-            let now = get_sys_timestamp() as Timestamp;
-            for EncodedPeerInfo {
+            let encoded_peer_info = EncodedState {
                 key,
-                record,
-                timestamp,
-            } in peers_info
-            {
-                match self.states.get_mut(key) {
-                    Some(peer_info) if peer_info.timestamp >= timestamp => {
-                        // do nothing
-                    }
-                    _ => {
-                        let old = self.states.insert(
-                            key.to_string(),
-                            PeerState {
-                                state: record.clone(),
-                                timestamp: now,
-                            },
-                        );
-                        match (old, record) {
-                            (Some(_), Some(_)) => changed_keys.push(key.to_string()),
-                            (None, Some(_)) => added_keys.push(key.to_string()),
-                            (Some(_), None) => removed_keys.push(key.to_string()),
-                            (None, None) => {}
-                        }
+                value: peer_state.state.clone(),
+                timestamp: peer_state.timestamp,
+            };
+            peers_info.push(encoded_peer_info);
+        }
+
+        postcard::to_allocvec(&peers_info).unwrap()
+    }
+
+    pub fn encode_all(&self) -> Vec<u8> {
+        let mut peers_info = Vec::new();
+        let now = get_sys_timestamp() as Timestamp;
+        for (key, peer_state) in self.states.iter() {
+            if now - peer_state.timestamp > self.timeout {
+                continue;
+            }
+            let encoded_peer_info = EncodedState {
+                key,
+                value: peer_state.state.clone(),
+                timestamp: peer_state.timestamp,
+            };
+            peers_info.push(encoded_peer_info);
+        }
+        postcard::to_allocvec(&peers_info).unwrap()
+    }
+
+    /// Returns (updated, added, removed)
+    pub fn apply(&mut self, encoded_peers_info: &[u8]) -> AwarenessUpdates {
+        let peers_info: Vec<EncodedState> = postcard::from_bytes(encoded_peers_info).unwrap();
+        let mut changed_keys = Vec::new();
+        let mut added_keys = Vec::new();
+        let mut removed_keys = Vec::new();
+        let now = get_sys_timestamp() as Timestamp;
+        for EncodedState {
+            key,
+            value: record,
+            timestamp,
+        } in peers_info
+        {
+            match self.states.get_mut(key) {
+                Some(peer_info) if peer_info.timestamp >= timestamp => {
+                    // do nothing
+                }
+                _ => {
+                    let old = self.states.insert(
+                        key.to_string(),
+                        State {
+                            state: record.clone(),
+                            timestamp: now,
+                        },
+                    );
+                    match (old, record) {
+                        (Some(_), Some(_)) => changed_keys.push(key.to_string()),
+                        (None, Some(_)) => added_keys.push(key.to_string()),
+                        (Some(_), None) => removed_keys.push(key.to_string()),
+                        (None, None) => {}
                     }
                 }
             }
-
-            (changed_keys, added_keys, removed_keys)
         }
 
-        pub fn set(&mut self, key: &str, value: impl Into<LoroValue>) {
-            self._set_local_state(key, Some(value.into()));
+        AwarenessUpdates {
+            added: added_keys,
+            changed: changed_keys,
+            removed: removed_keys,
         }
+    }
 
-        pub fn delete(&mut self, key: &str) {
-            self._set_local_state(key, None);
-        }
+    pub fn set(&mut self, key: &str, value: impl Into<LoroValue>) {
+        self._set_local_state(key, Some(value.into()));
+    }
 
-        fn _set_local_state(&mut self, key: &str, value: Option<LoroValue>) {
-            self.states.insert(
-                key.to_string(),
-                PeerState {
-                    state: value,
-                    timestamp: get_sys_timestamp() as Timestamp,
-                },
-            );
-            if self.subs.inner().is_empty() {
-                return;
-            }
-            self.subs.emit(&(), self.encode(key));
-        }
+    pub fn delete(&mut self, key: &str) {
+        self._set_local_state(key, None);
+    }
 
-        pub fn get(&self, key: &str) -> Option<LoroValue> {
-            self.states.get(key).and_then(|x| x.state.clone())
-        }
+    pub fn get(&self, key: &str) -> Option<LoroValue> {
+        self.states.get(key).and_then(|x| x.state.clone())
+    }
 
-        pub fn remove_outdated(&mut self) -> Vec<String> {
-            let now = get_sys_timestamp() as Timestamp;
-            let mut removed = Vec::new();
+    pub fn remove_outdated(&mut self) -> Vec<String> {
+        let now = get_sys_timestamp() as Timestamp;
+        let mut removed = Vec::new();
 
-            self.states.retain(|key, state| {
-                if now - state.timestamp > self.timeout {
-                    if state.state.is_some() {
-                        removed.push(key.clone());
-                    }
-                    false
-                } else {
-                    true
+        self.states.retain(|key, state| {
+            if now - state.timestamp > self.timeout {
+                if state.state.is_some() {
+                    removed.push(key.clone());
                 }
-            });
+                false
+            } else {
+                true
+            }
+        });
 
-            removed
-        }
+        removed
+    }
 
-        pub fn get_all_states(&self) -> FxHashMap<String, LoroValue> {
-            self.states
-                .iter()
-                .filter(|(_, v)| v.state.is_some())
-                .map(|(k, v)| (k.clone(), v.state.clone().unwrap()))
-                .collect()
-        }
+    pub fn get_all_states(&self) -> FxHashMap<String, LoroValue> {
+        self.states
+            .iter()
+            .filter(|(_, v)| v.state.is_some())
+            .map(|(k, v)| (k.clone(), v.state.clone().unwrap()))
+            .collect()
+    }
 
-        pub fn subscribe_local_update(&self, callback: LocalAwarenessCallback) -> Subscription {
-            let (sub, activate) = self.subs.inner().insert((), callback);
-            activate();
-            sub
+    pub fn subscribe_local_update(&self, callback: LocalAwarenessCallback) -> Subscription {
+        let (sub, activate) = self.subs.inner().insert((), callback);
+        activate();
+        sub
+    }
+
+    fn _set_local_state(&mut self, key: &str, value: Option<LoroValue>) {
+        self.states.insert(
+            key.to_string(),
+            State {
+                state: value,
+                timestamp: get_sys_timestamp() as Timestamp,
+            },
+        );
+        if self.subs.inner().is_empty() {
+            return;
         }
+        self.subs.emit(&(), self.encode(key));
     }
 }
