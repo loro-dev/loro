@@ -248,8 +248,8 @@ impl EphemeralStore {
     }
 
     /// Returns (updated, added, removed)
-    pub fn apply(&mut self, encoded_peers_info: &[u8]) -> AwarenessUpdates {
-        let peers_info: Vec<EncodedState> = postcard::from_bytes(encoded_peers_info).unwrap();
+    pub fn apply(&mut self, data: &[u8]) -> AwarenessUpdates {
+        let peers_info: Vec<EncodedState> = postcard::from_bytes(data).unwrap();
         let mut changed_keys = Vec::new();
         let mut added_keys = Vec::new();
         let mut removed_keys = Vec::new();
