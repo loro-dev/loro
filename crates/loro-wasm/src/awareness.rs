@@ -5,7 +5,10 @@ use loro_internal::{
 };
 use wasm_bindgen::prelude::*;
 
-use crate::{js_peer_to_peer, JsIntoPeerID, JsResult, JsStrPeerID};
+use crate::{
+    console_error, js_peer_to_peer, observer, subscription_to_js_function_callback, JsIntoPeerID,
+    JsResult, JsStrPeerID,
+};
 
 /// `Awareness` is a structure that tracks the ephemeral state of peers.
 ///
@@ -166,11 +169,54 @@ pub struct EphemeralStoreWasm {
 
 #[wasm_bindgen]
 impl EphemeralStoreWasm {
+    /// Creates a new `EphemeralStore` instance.
+    ///
+    /// The `timeout` parameter specifies the duration in milliseconds.
+    /// A state of a peer is considered outdated, if the last update of the state of the peer
+    /// is older than the `timeout`.
     #[wasm_bindgen(constructor)]
     pub fn new(timeout: f64) -> EphemeralStoreWasm {
         EphemeralStoreWasm {
             inner: InternalEphemeralStore::new(timeout as i64),
         }
+    }
+
+    pub fn set(&mut self, key: &str, value: JsValue) {
+        self.inner.set(key, value);
+    }
+
+    pub fn delete(&mut self, key: &str) {
+        self.inner.delete(key);
+    }
+
+    pub fn get(&self, key: &str) -> JsValue {
+        self.inner
+            .get(key)
+            .map(|v| v.into())
+            .unwrap_or(JsValue::UNDEFINED)
+    }
+
+    pub fn getAllStates(&self) -> JsValue {
+        let states = self.inner.get_all_states();
+        let obj = Object::new();
+        for (key, value) in states {
+            Reflect::set(&obj, &key.into(), &value.into()).unwrap();
+        }
+        obj.into()
+    }
+
+    pub fn subscribeLocalUpdate(&self, f: js_sys::Function) -> JsValue {
+        let observer = observer::Observer::new(f);
+        let sub = self.inner.subscribe_local_update(Box::new(move |e| {
+            let arr = js_sys::Uint8Array::new_with_length(e.len() as u32);
+            arr.copy_from(e);
+            if let Err(e) = observer.call1(&arr.into()) {
+                console_error!("EphemeralStore subscribeLocalUpdate: Error: {:?}", e);
+            }
+            true
+        }));
+
+        subscription_to_js_function_callback(sub)
     }
 
     pub fn encode(&self, key: &str) -> Vec<u8> {
@@ -184,13 +230,26 @@ impl EphemeralStoreWasm {
     pub fn apply(&mut self, data: &[u8]) -> JsResult<JsAwarenessUpdates> {
         let updates = self.inner.apply(data);
         let ans = Object::new();
-        let updated = Array::from_iter(updates.updated.into_iter().map(peer_to_str_js));
-        let added = Array::from_iter(updates.added.into_iter().map(peer_to_str_js));
-        let removed = Array::from_iter(updates.removed.into_iter().map(peer_to_str_js));
+        let updated = Array::from_iter(updates.updated.into_iter().map(|s| JsValue::from_str(&s)));
+        let added = Array::from_iter(updates.added.into_iter().map(|s| JsValue::from_str(&s)));
+        let removed = Array::from_iter(updates.removed.into_iter().map(|s| JsValue::from_str(&s)));
         Reflect::set(&ans, &"updated".into(), &updated.into())?;
         Reflect::set(&ans, &"added".into(), &added.into())?;
         Reflect::set(&ans, &"removed".into(), &removed.into())?;
         let v: JsValue = ans.into();
         Ok(v.into())
+    }
+
+    pub fn removeOutdated(&mut self) -> Vec<String> {
+        self.inner.remove_outdated()
+    }
+
+    /// If the state is empty.
+    pub fn isEmpty(&self) -> bool {
+        self.inner.get_all_states().is_empty()
+    }
+
+    pub fn keys(&self) -> Vec<String> {
+        self.inner.get_all_states().keys().cloned().collect()
     }
 }

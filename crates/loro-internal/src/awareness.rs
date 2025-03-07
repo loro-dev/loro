@@ -12,7 +12,7 @@ use crate::{SubscriberSetWithQueue, Subscription};
 /// The state of a specific peer is expected to be removed after a specified timeout. Use
 /// `remove_outdated` to eliminate outdated states.
 #[derive(Debug, Clone)]
-#[deprecated(since = "1.4.6", note = "Use `AwarenessV2` instead.")]
+#[deprecated(since = "1.4.6", note = "Use `EphemeralStore` instead.")]
 pub struct Awareness {
     peer: PeerID,
     peers: FxHashMap<PeerID, PeerInfo>,
@@ -199,7 +199,7 @@ struct State {
 #[derive(Debug, Clone)]
 pub struct AwarenessUpdates {
     pub added: Vec<String>,
-    pub changed: Vec<String>,
+    pub updated: Vec<String>,
     pub removed: Vec<String>,
 }
 
@@ -250,7 +250,7 @@ impl EphemeralStore {
     /// Returns (updated, added, removed)
     pub fn apply(&mut self, data: &[u8]) -> AwarenessUpdates {
         let peers_info: Vec<EncodedState> = postcard::from_bytes(data).unwrap();
-        let mut changed_keys = Vec::new();
+        let mut updated_keys = Vec::new();
         let mut added_keys = Vec::new();
         let mut removed_keys = Vec::new();
         let now = get_sys_timestamp() as Timestamp;
@@ -273,7 +273,7 @@ impl EphemeralStore {
                         },
                     );
                     match (old, record) {
-                        (Some(_), Some(_)) => changed_keys.push(key.to_string()),
+                        (Some(_), Some(_)) => updated_keys.push(key.to_string()),
                         (None, Some(_)) => added_keys.push(key.to_string()),
                         (Some(_), None) => removed_keys.push(key.to_string()),
                         (None, None) => {}
@@ -284,7 +284,7 @@ impl EphemeralStore {
 
         AwarenessUpdates {
             added: added_keys,
-            changed: changed_keys,
+            updated: updated_keys,
             removed: removed_keys,
         }
     }

@@ -2,6 +2,7 @@ export * from "loro-wasm";
 export type * from "loro-wasm";
 import {
     AwarenessWasm,
+    EphemeralStoreWasm,
     PeerID,
     Container,
     ContainerID,
@@ -15,6 +16,7 @@ import {
     OpId,
     Value,
     AwarenessListener,
+    EphemeralListener,
 } from "loro-wasm";
 
 /**
@@ -113,6 +115,8 @@ export function newRootContainerID(
 
 
 /**
+ * @deprecated Please use `EphemeralStore` instead.
+ * 
  * Awareness is a structure that allows to track the ephemeral state of the peers.
  *
  * If we don't receive a state update from a peer within the timeout, we will remove their state.
@@ -214,6 +218,101 @@ export class Awareness<T extends Value = Value> {
     }
 }
 
+/**
+ * Awareness is a structure that allows to track the ephemeral state of the peers.
+ *
+ * If we don't receive a state update from a peer within the timeout, we will remove their state.
+ * The timeout is in milliseconds. This can be used to handle the off-line state of a peer.
+ */
+export class EphemeralStore<T extends Value = Value> {
+    inner: EphemeralStoreWasm<T>;
+    private timer: number | undefined;
+    private timeout: number;
+    private listeners: Set<EphemeralListener> = new Set();
+    constructor(timeout: number = 30000) {
+        this.inner = new EphemeralStoreWasm(timeout);
+        this.timeout = timeout;
+    }
+
+    apply(bytes: Uint8Array, origin = "remote") {
+        const { updated, added, removed } = this.inner.apply(bytes);
+        this.listeners.forEach((listener) => {
+            listener({ updated, added, removed }, origin);
+        });
+
+        this.startTimerIfNotEmpty();
+    }
+
+    set(key: string, value: T) {
+        const wasEmpty = this.get(key) == null;
+        this.inner.set(key, value);
+        if (wasEmpty) {
+            this.listeners.forEach((listener) => {
+                listener(
+                    { updated: [], added: [key], removed: [] },
+                    "local",
+                );
+            });
+        } else {
+            this.listeners.forEach((listener) => {
+                listener(
+                    { updated: [key], added: [], removed: [] },
+                    "local",
+                );
+            });
+        }
+
+        this.startTimerIfNotEmpty();
+    }
+
+    get(key: string): T | undefined {
+        return this.inner.get(key);
+    }
+
+    getAllStates(): Record<string, T> {
+        return this.inner.getAllStates();
+    }
+
+    encode(key: string): Uint8Array {
+        return this.inner.encode(key);
+    }
+
+    encodeAll(): Uint8Array {
+        return this.inner.encodeAll();
+    }
+
+    addListener(listener: EphemeralListener) {
+        this.listeners.add(listener);
+    }
+
+    removeListener(listener: EphemeralListener) {
+        this.listeners.delete(listener);
+    }
+
+    destroy() {
+        clearInterval(this.timer);
+        this.listeners.clear();
+    }
+
+    private startTimerIfNotEmpty() {
+        if (this.inner.isEmpty() || this.timer != null) {
+            return;
+        }
+
+        this.timer = setInterval(() => {
+            const removed = this.inner.removeOutdated();
+            if (removed.length > 0) {
+                this.listeners.forEach((listener) => {
+                    listener({ updated: [], added: [], removed }, "timeout");
+                });
+            }
+            if (this.inner.isEmpty()) {
+                clearInterval(this.timer);
+                this.timer = undefined;
+            }
+        }, this.timeout / 2) as unknown as number;
+    }
+}
 LoroDoc.prototype.toJsonWithReplacer = function (replacer: (key: string | number, value: Value | Container) => Value | Container | undefined) {
     const processed = new Set<string>();
     const doc = this;
