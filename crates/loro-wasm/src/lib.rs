@@ -43,7 +43,7 @@ mod awareness;
 mod log;
 
 use crate::convert::{handler_to_js_value, js_to_container, js_to_cursor};
-pub use awareness::AwarenessWasm;
+pub use awareness::{AwarenessWasm, EphemeralStoreWasm};
 
 mod convert;
 
@@ -5880,6 +5880,10 @@ export type AwarenessListener = (
     arg: { updated: PeerID[]; added: PeerID[]; removed: PeerID[] },
     origin: "local" | "timeout" | "remote" | string,
 ) => void;
+export type EphemeralListener = (
+    arg: { updated: string[]; added: string[]; removed: string[] },
+    origin: "local" | "timeout" | "remote" | string,
+) => void;
 
 
 interface Listener {
@@ -6394,6 +6398,12 @@ interface AwarenessWasm<T extends Value = Value> {
     getAllStates(): Record<PeerID, T>;
     setLocalState(value: T): void;
     removeOutdated(): PeerID[];
+}
+interface EphemeralStoreWasm<T extends Value = Value> {
+    set(key: string, value: T): void;
+    get(key: string): T | undefined;
+    getAllStates(): Record<string, T>;
+    removeOutdated(): string[];
 }
 
 "#;
