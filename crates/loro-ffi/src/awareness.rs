@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},

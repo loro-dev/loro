@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 use js_sys::{Array, Object, Reflect};
 use loro_internal::{
     awareness::Awareness as InternalAwareness, awareness::EphemeralStore as InternalEphemeralStore,
