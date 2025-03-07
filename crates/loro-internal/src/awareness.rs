@@ -160,7 +160,7 @@ impl Awareness {
     }
 }
 
-pub type LocalAwarenessCallback = Box<dyn Fn(&Vec<u8>) -> bool + Send + Sync + 'static>;
+pub type LocalEphemeralCallback = Box<dyn Fn(&Vec<u8>) -> bool + Send + Sync + 'static>;
 
 /// `EphemeralStore` is a structure that tracks the ephemeral state of peers.
 ///
@@ -168,7 +168,7 @@ pub type LocalAwarenessCallback = Box<dyn Fn(&Vec<u8>) -> bool + Send + Sync + '
 /// We use the latest timestamp as the tie-breaker for LWW (Last-Write-Wins) conflict resolution.
 pub struct EphemeralStore {
     states: FxHashMap<String, State>,
-    subs: SubscriberSetWithQueue<(), LocalAwarenessCallback, Vec<u8>>,
+    subs: SubscriberSetWithQueue<(), LocalEphemeralCallback, Vec<u8>>,
     timeout: i64,
 }
 
@@ -334,7 +334,7 @@ impl EphemeralStore {
             .map(|s| s.as_str())
     }
 
-    pub fn subscribe_local_update(&self, callback: LocalAwarenessCallback) -> Subscription {
+    pub fn subscribe_local_update(&self, callback: LocalEphemeralCallback) -> Subscription {
         let (sub, activate) = self.subs.inner().insert((), callback);
         activate();
         sub
