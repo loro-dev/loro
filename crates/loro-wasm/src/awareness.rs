@@ -250,6 +250,6 @@ impl EphemeralStoreWasm {
     }
 
     pub fn keys(&self) -> Vec<String> {
-        self.inner.get_all_states().keys().cloned().collect()
+        self.inner.keys().map(|s| s.to_string()).collect()
     }
 }

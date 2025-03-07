@@ -197,7 +197,7 @@ struct State {
 }
 
 #[derive(Debug, Clone)]
-pub struct AwarenessUpdates {
+pub struct EphemeralUpdates {
     pub added: Vec<String>,
     pub updated: Vec<String>,
     pub removed: Vec<String>,
@@ -248,7 +248,7 @@ impl EphemeralStore {
     }
 
     /// Returns (updated, added, removed)
-    pub fn apply(&mut self, data: &[u8]) -> AwarenessUpdates {
+    pub fn apply(&mut self, data: &[u8]) -> EphemeralUpdates {
         let peers_info: Vec<EncodedState> = postcard::from_bytes(data).unwrap();
         let mut updated_keys = Vec::new();
         let mut added_keys = Vec::new();
@@ -282,7 +282,7 @@ impl EphemeralStore {
             }
         }
 
-        AwarenessUpdates {
+        EphemeralUpdates {
             added: added_keys,
             updated: updated_keys,
             removed: removed_keys,
@@ -325,6 +325,13 @@ impl EphemeralStore {
             .filter(|(_, v)| v.state.is_some())
             .map(|(k, v)| (k.clone(), v.state.clone().unwrap()))
             .collect()
+    }
+
+    pub fn keys(&self) -> impl Iterator<Item = &str> {
+        self.states
+            .keys()
+            .filter(|&k| self.states.get(k).unwrap().state.is_some())
+            .map(|s| s.as_str())
     }
 
     pub fn subscribe_local_update(&self, callback: LocalAwarenessCallback) -> Subscription {
