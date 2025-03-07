@@ -289,6 +289,10 @@ export class EphemeralStore<T extends Value = Value> {
         this.listeners.delete(listener);
     }
 
+    keys(): string[] {
+        return this.inner.keys();
+    }
+
     destroy() {
         clearInterval(this.timer);
         this.listeners.clear();
