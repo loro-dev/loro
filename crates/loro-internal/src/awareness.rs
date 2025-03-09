@@ -160,7 +160,23 @@ impl Awareness {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EphemeralEventTrigger {
+    Local,
+    Remote,
+    Timeout,
+}
+
+#[derive(Debug)]
+pub struct EphemeralStoreEvent {
+    pub by: EphemeralEventTrigger,
+    pub added: Vec<String>,
+    pub updated: Vec<String>,
+    pub removed: Vec<String>,
+}
+
 pub type LocalEphemeralCallback = Box<dyn Fn(&Vec<u8>) -> bool + Send + Sync + 'static>;
+pub type EphemeralSubscriber = Box<dyn Fn(&EphemeralStoreEvent) -> bool + Send + Sync + 'static>;
 
 /// `EphemeralStore` is a structure that tracks the ephemeral state of peers.
 ///
@@ -168,7 +184,8 @@ pub type LocalEphemeralCallback = Box<dyn Fn(&Vec<u8>) -> bool + Send + Sync + '
 /// We use the latest timestamp as the tie-breaker for LWW (Last-Write-Wins) conflict resolution.
 pub struct EphemeralStore {
     states: FxHashMap<String, State>,
-    subs: SubscriberSetWithQueue<(), LocalEphemeralCallback, Vec<u8>>,
+    local_subs: SubscriberSetWithQueue<(), LocalEphemeralCallback, Vec<u8>>,
+    subscribers: SubscriberSetWithQueue<(), EphemeralSubscriber, EphemeralStoreEvent>,
     timeout: i64,
 }
 
@@ -196,19 +213,13 @@ struct State {
     timestamp: i64,
 }
 
-#[derive(Debug, Clone)]
-pub struct EphemeralUpdates {
-    pub added: Vec<String>,
-    pub updated: Vec<String>,
-    pub removed: Vec<String>,
-}
-
 impl EphemeralStore {
     pub fn new(timeout: i64) -> EphemeralStore {
         EphemeralStore {
             timeout,
             states: FxHashMap::default(),
-            subs: SubscriberSetWithQueue::new(),
+            local_subs: SubscriberSetWithQueue::new(),
+            subscribers: SubscriberSetWithQueue::new(),
         }
     }
 
@@ -247,8 +258,7 @@ impl EphemeralStore {
         postcard::to_allocvec(&peers_info).unwrap()
     }
 
-    /// Returns (updated, added, removed)
-    pub fn apply(&mut self, data: &[u8]) -> EphemeralUpdates {
+    pub fn apply(&mut self, data: &[u8]) {
         let peers_info: Vec<EncodedState> = postcard::from_bytes(data).unwrap();
         let mut updated_keys = Vec::new();
         let mut added_keys = Vec::new();
@@ -281,11 +291,16 @@ impl EphemeralStore {
                 }
             }
         }
-
-        EphemeralUpdates {
-            added: added_keys,
-            updated: updated_keys,
-            removed: removed_keys,
+        if !self.subscribers.inner().is_empty() {
+            self.subscribers.emit(
+                &(),
+                EphemeralStoreEvent {
+                    by: EphemeralEventTrigger::Remote,
+                    added: added_keys.clone(),
+                    updated: updated_keys.clone(),
+                    removed: removed_keys.clone(),
+                },
+            );
         }
     }
 
@@ -301,7 +316,7 @@ impl EphemeralStore {
         self.states.get(key).and_then(|x| x.state.clone())
     }
 
-    pub fn remove_outdated(&mut self) -> Vec<String> {
+    pub fn remove_outdated(&mut self) {
         let now = get_sys_timestamp() as Timestamp;
         let mut removed = Vec::new();
 
@@ -315,8 +330,17 @@ impl EphemeralStore {
                 true
             }
         });
-
-        removed
+        if !self.subscribers.inner().is_empty() {
+            self.subscribers.emit(
+                &(),
+                EphemeralStoreEvent {
+                    by: EphemeralEventTrigger::Timeout,
+                    added: vec![],
+                    updated: vec![],
+                    removed,
+                },
+            );
+        }
     }
 
     pub fn get_all_states(&self) -> FxHashMap<String, LoroValue> {
@@ -334,23 +358,60 @@ impl EphemeralStore {
             .map(|s| s.as_str())
     }
 
-    pub fn subscribe_local_update(&self, callback: LocalEphemeralCallback) -> Subscription {
-        let (sub, activate) = self.subs.inner().insert((), callback);
+    pub fn subscribe_local_updates(&self, callback: LocalEphemeralCallback) -> Subscription {
+        let (sub, activate) = self.local_subs.inner().insert((), callback);
+        activate();
+        sub
+    }
+
+    pub fn subscribe(&self, callback: EphemeralSubscriber) -> Subscription {
+        let (sub, activate) = self.subscribers.inner().insert((), callback);
         activate();
         sub
     }
 
     fn _set_local_state(&mut self, key: &str, value: Option<LoroValue>) {
-        self.states.insert(
+        let is_delete = value.is_none();
+        let old = self.states.insert(
             key.to_string(),
             State {
                 state: value,
                 timestamp: get_sys_timestamp() as Timestamp,
             },
         );
-        if self.subs.inner().is_empty() {
-            return;
+        if !self.local_subs.inner().is_empty() {
+            self.local_subs.emit(&(), self.encode(key));
         }
-        self.subs.emit(&(), self.encode(key));
+        if !self.subscribers.inner().is_empty() {
+            if old.is_some() {
+                self.subscribers.emit(
+                    &(),
+                    EphemeralStoreEvent {
+                        by: EphemeralEventTrigger::Local,
+                        added: vec![],
+                        updated: if !is_delete {
+                            vec![key.to_string()]
+                        } else {
+                            vec![]
+                        },
+                        removed: if !is_delete {
+                            vec![]
+                        } else {
+                            vec![key.to_string()]
+                        },
+                    },
+                );
+            } else if !is_delete {
+                self.subscribers.emit(
+                    &(),
+                    EphemeralStoreEvent {
+                        by: EphemeralEventTrigger::Local,
+                        added: vec![key.to_string()],
+                        updated: vec![],
+                        removed: vec![],
+                    },
+                );
+            }
+        }
     }
 }

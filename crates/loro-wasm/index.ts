@@ -17,6 +17,7 @@ import {
     Value,
     AwarenessListener,
     EphemeralListener,
+    EphemeralLocalListener,
 } from "loro-wasm";
 
 /**
@@ -228,40 +229,18 @@ export class EphemeralStore<T extends Value = Value> {
     inner: EphemeralStoreWasm<T>;
     private timer: number | undefined;
     private timeout: number;
-    private listeners: Set<EphemeralListener> = new Set();
     constructor(timeout: number = 30000) {
         this.inner = new EphemeralStoreWasm(timeout);
         this.timeout = timeout;
     }
 
-    apply(bytes: Uint8Array, origin = "remote") {
-        const { updated, added, removed } = this.inner.apply(bytes);
-        this.listeners.forEach((listener) => {
-            listener({ updated, added, removed }, origin);
-        });
-
+    apply(bytes: Uint8Array) {
+        this.inner.apply(bytes);
         this.startTimerIfNotEmpty();
     }
 
     set(key: string, value: T) {
-        const wasEmpty = this.get(key) == null;
         this.inner.set(key, value);
-        if (wasEmpty) {
-            this.listeners.forEach((listener) => {
-                listener(
-                    { updated: [], added: [key], removed: [] },
-                    "local",
-                );
-            });
-        } else {
-            this.listeners.forEach((listener) => {
-                listener(
-                    { updated: [key], added: [], removed: [] },
-                    "local",
-                );
-            });
-        }
-
         this.startTimerIfNotEmpty();
     }
 
@@ -281,21 +260,20 @@ export class EphemeralStore<T extends Value = Value> {
         return this.inner.encodeAll();
     }
 
-    addListener(listener: EphemeralListener) {
-        this.listeners.add(listener);
-    }
-
-    removeListener(listener: EphemeralListener) {
-        this.listeners.delete(listener);
-    }
-
     keys(): string[] {
         return this.inner.keys();
     }
 
     destroy() {
         clearInterval(this.timer);
-        this.listeners.clear();
+    }
+
+    subscribe(listener: EphemeralListener) {
+        return this.inner.subscribe(listener);
+    }
+
+    subscribeLocalUpdates(listener: EphemeralLocalListener) {
+        return this.inner.subscribeLocalUpdates(listener);
     }
 
     private startTimerIfNotEmpty() {
@@ -304,12 +282,7 @@ export class EphemeralStore<T extends Value = Value> {
         }
 
         this.timer = setInterval(() => {
-            const removed = this.inner.removeOutdated();
-            if (removed.length > 0) {
-                this.listeners.forEach((listener) => {
-                    listener({ updated: [], added: [], removed }, "timeout");
-                });
-            }
+            this.inner.removeOutdated();
             if (this.inner.isEmpty()) {
                 clearInterval(this.timer);
                 this.timer = undefined;
@@ -317,6 +290,7 @@ export class EphemeralStore<T extends Value = Value> {
         }, this.timeout / 2) as unknown as number;
     }
 }
+
 LoroDoc.prototype.toJsonWithReplacer = function (replacer: (key: string | number, value: Value | Container) => Value | Container | undefined) {
     const processed = new Set<string>();
     const doc = this;

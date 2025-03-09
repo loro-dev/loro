@@ -1,5 +1,5 @@
 ---
-"loro-crdt": patch
+"loro-crdt": minor
 ---
 
 add `EphemeralStore`

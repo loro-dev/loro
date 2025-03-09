@@ -21,8 +21,8 @@ impl EphemeralStore {
         self.0.try_lock().unwrap().encode_all()
     }
 
-    pub fn apply(&self, data: &[u8]) -> EphemeralUpdates {
-        self.0.try_lock().unwrap().apply(data).into()
+    pub fn apply(&self, data: &[u8]) {
+        self.0.try_lock().unwrap().apply(data)
     }
 
     pub fn set(&self, key: &str, value: Arc<dyn LoroValueLike>) {
@@ -37,7 +37,7 @@ impl EphemeralStore {
         self.0.try_lock().unwrap().get(key).map(|v| v.into())
     }
 
-    pub fn remove_outdated(&self) -> Vec<String> {
+    pub fn remove_outdated(&self) {
         self.0.try_lock().unwrap().remove_outdated()
     }
 
@@ -68,27 +68,11 @@ impl EphemeralStore {
             .0
             .try_lock()
             .unwrap()
-            .subscribe_local_update(Box::new(move |update| {
+            .subscribe_local_updates(Box::new(move |update| {
                 // TODO: should it be cloned?
                 listener.on_ephemeral_update(update.to_vec());
                 true
             }));
         Arc::new(Subscription(Mutex::new(Some(s))))
-    }
-}
-
-pub struct EphemeralUpdates {
-    pub added: Vec<String>,
-    pub updated: Vec<String>,
-    pub removed: Vec<String>,
-}
-
-impl From<loro::awareness::EphemeralUpdates> for EphemeralUpdates {
-    fn from(value: loro::awareness::EphemeralUpdates) -> Self {
-        EphemeralUpdates {
-            added: value.added,
-            updated: value.updated,
-            removed: value.removed,
-        }
     }
 }

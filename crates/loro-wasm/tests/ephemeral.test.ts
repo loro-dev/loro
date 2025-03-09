@@ -4,6 +4,7 @@ import {
     EphemeralStoreWasm,
     EphemeralListener,
     setDebug,
+    EphemeralStoreEvent,
 } from "../bundler/index";
 
 describe("EphemeralStore", () => {
@@ -17,21 +18,31 @@ describe("EphemeralStore", () => {
     it("sync", () => {
         const store = new EphemeralStoreWasm(30_000);
         store.set("key1", { foo: "bar" });
+        let changed: EphemeralStoreEvent = { by: "local", added: [], updated: [], removed: [] };
 
         const storeB = new EphemeralStoreWasm(30_000);
-        const changed = storeB.apply(store.encode("key1"));
+        storeB.subscribe((e) => {
+            changed = e;
+        });
+        storeB.apply(store.encode("key1"));
 
-        expect(changed).toStrictEqual({ added: ["key1"], updated: [], removed: [] });
+        expect(changed).toStrictEqual({ by: "remote", added: ["key1"], updated: [], removed: [] });
         expect(storeB.get("key1")).toEqual({ foo: "bar" });
         expect(storeB.getAllStates()).toEqual({ "key1": { foo: "bar" } });
     });
 
     it("should remove outdated", async () => {
         setDebug();
+        let outdated: string[] = [];
         const store = new EphemeralStoreWasm(5);
+        store.subscribe((e) => {
+            if (e.removed.length > 0) {
+                outdated = e.removed;
+            }
+        })
         store.set("key1", { foo: "bar" });
         await new Promise((r) => setTimeout(r, 10));
-        const outdated = store.removeOutdated();
+        store.removeOutdated();
         expect(outdated).toEqual(["key1"]);
         expect(store.getAllStates()).toEqual({});
     });
@@ -39,33 +50,33 @@ describe("EphemeralStore", () => {
     it("wrapped", async () => {
         const store = new EphemeralStore(10);
         let i = 0;
-        const listener = ((arg, origin) => {
+        const listener = ((e) => {
             if (i === 0) {
-                expect(origin).toBe("local");
-                expect(arg).toStrictEqual({
+                expect(e).toStrictEqual({
+                    by: "local",
                     removed: [],
                     updated: [],
                     added: ["key1"],
                 });
             }
             if (i === 1) {
-                expect(origin).toBe("remote");
-                expect(arg).toStrictEqual({
+                expect(e).toStrictEqual({
+                    by: "remote",
                     removed: [],
                     updated: [],
                     added: ["key2"],
                 });
             }
             if (i >= 2) {
-                expect(origin).toBe("timeout");
-                for (const r of arg.removed) {
+                expect(e.by).toBe("timeout");
+                for (const r of e.removed) {
                     expect(["key1", "key2"]).toContain(r);
                 }
             }
 
             i += 1;
         }) as EphemeralListener;
-        store.addListener(listener);
+        store.subscribe(listener);
         store.set("key1", "123");
         const b = new EphemeralStore(10);
         b.set("key2", "223");

@@ -5880,11 +5880,6 @@ export type AwarenessListener = (
     arg: { updated: PeerID[]; added: PeerID[]; removed: PeerID[] },
     origin: "local" | "timeout" | "remote" | string,
 ) => void;
-export type EphemeralListener = (
-    arg: { updated: string[]; added: string[]; removed: string[] },
-    origin: "local" | "timeout" | "remote" | string,
-) => void;
-
 
 interface Listener {
     (event: LoroEventBatch): void;
@@ -6399,11 +6394,24 @@ interface AwarenessWasm<T extends Value = Value> {
     setLocalState(value: T): void;
     removeOutdated(): PeerID[];
 }
+
+type EphemeralListener = (event: EphemeralStoreEvent) => void;
+type EphemeralLocalListener = (bytes: Uint8Array) => void;
+
 interface EphemeralStoreWasm<T extends Value = Value> {
     set(key: string, value: T): void;
     get(key: string): T | undefined;
     getAllStates(): Record<string, T>;
-    removeOutdated(): string[];
+    removeOutdated();
+    subscribeLocalUpdates(f: EphemeralLocalListener): () => void;
+    subscribe(f: EphemeralListener): () => void;
+}
+
+interface EphemeralStoreEvent {
+    by: "local" | "import" | "timeout";
+    added: string[];
+    updated: string[];
+    removed: string[];
 }
 
 "#;

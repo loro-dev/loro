@@ -36,7 +36,7 @@ pub use version::{Frontiers, VersionVector, VersionVectorDiff};
 mod awareness;
 pub use awareness::{Awareness, AwarenessPeerUpdate, PeerInfo};
 mod ephemeral;
-pub use ephemeral::{EphemeralStore, EphemeralUpdates, LocalEphemeralListener};
+pub use ephemeral::{EphemeralStore, LocalEphemeralListener};
 
 // https://github.com/mozilla/uniffi-rs/issues/1372
 pub trait ValueOrContainer: Send + Sync {

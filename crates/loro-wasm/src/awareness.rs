@@ -1,7 +1,10 @@
 #![allow(deprecated)]
 use js_sys::{Array, Object, Reflect};
 use loro_internal::{
-    awareness::Awareness as InternalAwareness, awareness::EphemeralStore as InternalEphemeralStore,
+    awareness::{
+        Awareness as InternalAwareness, EphemeralEventTrigger,
+        EphemeralStore as InternalEphemeralStore, EphemeralStoreEvent,
+    },
     id::PeerID,
 };
 use wasm_bindgen::prelude::*;
@@ -206,9 +209,10 @@ impl EphemeralStoreWasm {
         obj.into()
     }
 
-    pub fn subscribeLocalUpdate(&self, f: js_sys::Function) -> JsValue {
+    #[wasm_bindgen(skip_typescript)]
+    pub fn subscribeLocalUpdates(&self, f: js_sys::Function) -> JsValue {
         let observer = observer::Observer::new(f);
-        let sub = self.inner.subscribe_local_update(Box::new(move |e| {
+        let sub = self.inner.subscribe_local_updates(Box::new(move |e| {
             let arr = js_sys::Uint8Array::new_with_length(e.len() as u32);
             arr.copy_from(e);
             if let Err(e) = observer.call1(&arr.into()) {
@@ -216,6 +220,65 @@ impl EphemeralStoreWasm {
             }
             true
         }));
+
+        subscription_to_js_function_callback(sub)
+    }
+
+    #[wasm_bindgen(skip_typescript)]
+    pub fn subscribe(&self, f: js_sys::Function) -> JsValue {
+        let observer = observer::Observer::new(f);
+        let sub = self.inner.subscribe(Box::new(
+            move |EphemeralStoreEvent {
+                      by,
+                      added,
+                      updated,
+                      removed,
+                  }| {
+                let obj = Object::new();
+                Reflect::set(
+                    &obj,
+                    &"added".into(),
+                    &added
+                        .iter()
+                        .map(|s| JsValue::from_str(s))
+                        .collect::<Array>()
+                        .into(),
+                )
+                .unwrap();
+                Reflect::set(
+                    &obj,
+                    &"updated".into(),
+                    &updated
+                        .iter()
+                        .map(|s| JsValue::from_str(s))
+                        .collect::<Array>()
+                        .into(),
+                )
+                .unwrap();
+                Reflect::set(
+                    &obj,
+                    &"removed".into(),
+                    &removed
+                        .iter()
+                        .map(|s| JsValue::from_str(s))
+                        .collect::<Array>()
+                        .into(),
+                )
+                .unwrap();
+                Reflect::set(
+                    &obj,
+                    &"by".into(),
+                    &match by {
+                        EphemeralEventTrigger::Local => JsValue::from_str("local"),
+                        EphemeralEventTrigger::Remote => JsValue::from_str("remote"),
+                        EphemeralEventTrigger::Timeout => JsValue::from_str("timeout"),
+                    },
+                )
+                .unwrap();
+                observer.call1(&obj.into()).unwrap();
+                true
+            },
+        ));
 
         subscription_to_js_function_callback(sub)
     }
@@ -228,20 +291,11 @@ impl EphemeralStoreWasm {
         self.inner.encode_all()
     }
 
-    pub fn apply(&mut self, data: &[u8]) -> JsResult<JsAwarenessUpdates> {
-        let updates = self.inner.apply(data);
-        let ans = Object::new();
-        let updated = Array::from_iter(updates.updated.into_iter().map(|s| JsValue::from_str(&s)));
-        let added = Array::from_iter(updates.added.into_iter().map(|s| JsValue::from_str(&s)));
-        let removed = Array::from_iter(updates.removed.into_iter().map(|s| JsValue::from_str(&s)));
-        Reflect::set(&ans, &"updated".into(), &updated.into())?;
-        Reflect::set(&ans, &"added".into(), &added.into())?;
-        Reflect::set(&ans, &"removed".into(), &removed.into())?;
-        let v: JsValue = ans.into();
-        Ok(v.into())
+    pub fn apply(&mut self, data: &[u8]) {
+        self.inner.apply(data);
     }
 
-    pub fn removeOutdated(&mut self) -> Vec<String> {
+    pub fn removeOutdated(&mut self) {
         self.inner.remove_outdated()
     }
 
