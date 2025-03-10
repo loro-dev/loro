@@ -165,7 +165,7 @@ impl Awareness {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EphemeralEventTrigger {
     Local,
-    Remote,
+    Import,
     Timeout,
 }
 
@@ -297,7 +297,7 @@ impl EphemeralStore {
             self.subscribers.emit(
                 &(),
                 EphemeralStoreEvent {
-                    by: EphemeralEventTrigger::Remote,
+                    by: EphemeralEventTrigger::Import,
                     added: Arc::new(added_keys),
                     updated: Arc::new(updated_keys),
                     removed: Arc::new(removed_keys),

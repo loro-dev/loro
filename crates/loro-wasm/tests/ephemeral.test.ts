@@ -26,7 +26,7 @@ describe("EphemeralStore", () => {
         });
         storeB.apply(store.encode("key1"));
 
-        expect(changed).toStrictEqual({ by: "remote", added: ["key1"], updated: [], removed: [] });
+        expect(changed).toStrictEqual({ by: "import", added: ["key1"], updated: [], removed: [] });
         expect(storeB.get("key1")).toEqual({ foo: "bar" });
         expect(storeB.getAllStates()).toEqual({ "key1": { foo: "bar" } });
     });
@@ -61,7 +61,7 @@ describe("EphemeralStore", () => {
             }
             if (i === 1) {
                 expect(e).toStrictEqual({
-                    by: "remote",
+                    by: "import",
                     removed: [],
                     updated: [],
                     added: ["key2"],

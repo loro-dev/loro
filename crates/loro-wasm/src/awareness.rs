@@ -270,7 +270,7 @@ impl EphemeralStoreWasm {
                     &"by".into(),
                     &match by {
                         EphemeralEventTrigger::Local => JsValue::from_str("local"),
-                        EphemeralEventTrigger::Remote => JsValue::from_str("remote"),
+                        EphemeralEventTrigger::Import => JsValue::from_str("import"),
                         EphemeralEventTrigger::Timeout => JsValue::from_str("timeout"),
                     },
                 )
