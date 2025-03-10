@@ -188,14 +188,16 @@ pub type EphemeralSubscriber = Box<dyn Fn(&EphemeralStoreEvent) -> bool + Send +
 /// # Example
 ///
 /// ```rust
-/// let store = EphemeralStore::new(1000);
+/// use loro_internal::awareness::EphemeralStore;
+///
+/// let mut store = EphemeralStore::new(1000);
 /// store.set("key", "value");
 /// let encoded = store.encode("key");
-/// let store2 = EphemeralStore::new(1000);
-/// store.subscribe_local_updates(|data| {
+/// let mut store2 = EphemeralStore::new(1000);
+/// store.subscribe_local_updates(Box::new(|data| {
 ///     println!("local update: {:?}", data);
 ///     true
-/// });
+/// }));
 /// store2.apply(&encoded);
 /// assert_eq!(store2.get("key"), Some("value".into()));
 /// ```
