@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use fxhash::FxHashMap;
 use loro_common::{LoroValue, PeerID};
 use serde::{Deserialize, Serialize};
@@ -160,19 +162,19 @@ impl Awareness {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EphemeralEventTrigger {
     Local,
     Remote,
     Timeout,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct EphemeralStoreEvent {
     pub by: EphemeralEventTrigger,
-    pub added: Vec<String>,
-    pub updated: Vec<String>,
-    pub removed: Vec<String>,
+    pub added: Arc<Vec<String>>,
+    pub updated: Arc<Vec<String>>,
+    pub removed: Arc<Vec<String>>,
 }
 
 pub type LocalEphemeralCallback = Box<dyn Fn(&Vec<u8>) -> bool + Send + Sync + 'static>;
@@ -296,9 +298,9 @@ impl EphemeralStore {
                 &(),
                 EphemeralStoreEvent {
                     by: EphemeralEventTrigger::Remote,
-                    added: added_keys.clone(),
-                    updated: updated_keys.clone(),
-                    removed: removed_keys.clone(),
+                    added: Arc::new(added_keys),
+                    updated: Arc::new(updated_keys),
+                    removed: Arc::new(removed_keys),
                 },
             );
         }
@@ -335,9 +337,9 @@ impl EphemeralStore {
                 &(),
                 EphemeralStoreEvent {
                     by: EphemeralEventTrigger::Timeout,
-                    added: vec![],
-                    updated: vec![],
-                    removed,
+                    added: Arc::new(Vec::new()),
+                    updated: Arc::new(Vec::new()),
+                    removed: Arc::new(removed),
                 },
             );
         }
@@ -388,16 +390,16 @@ impl EphemeralStore {
                     &(),
                     EphemeralStoreEvent {
                         by: EphemeralEventTrigger::Local,
-                        added: vec![],
+                        added: Arc::new(Vec::new()),
                         updated: if !is_delete {
-                            vec![key.to_string()]
+                            Arc::new(vec![key.to_string()])
                         } else {
-                            vec![]
+                            Arc::new(Vec::new())
                         },
                         removed: if !is_delete {
-                            vec![]
+                            Arc::new(Vec::new())
                         } else {
-                            vec![key.to_string()]
+                            Arc::new(vec![key.to_string()])
                         },
                     },
                 );
@@ -406,9 +408,9 @@ impl EphemeralStore {
                     &(),
                     EphemeralStoreEvent {
                         by: EphemeralEventTrigger::Local,
-                        added: vec![key.to_string()],
-                        updated: vec![],
-                        removed: vec![],
+                        added: Arc::new(vec![key.to_string()]),
+                        updated: Arc::new(Vec::new()),
+                        removed: Arc::new(Vec::new()),
                     },
                 );
             }
