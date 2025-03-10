@@ -184,6 +184,21 @@ pub type EphemeralSubscriber = Box<dyn Fn(&EphemeralStoreEvent) -> bool + Send +
 ///
 /// It can be used to synchronize cursor positions, selections, and the names of the peers.
 /// We use the latest timestamp as the tie-breaker for LWW (Last-Write-Wins) conflict resolution.
+///
+/// # Example
+///
+/// ```rust
+/// let store = EphemeralStore::new(1000);
+/// store.set("key", "value");
+/// let encoded = store.encode("key");
+/// let store2 = EphemeralStore::new(1000);
+/// store.subscribe_local_updates(|data| {
+///     println!("local update: {:?}", data);
+///     true
+/// });
+/// store2.apply(&encoded);
+/// assert_eq!(store2.get("key"), Some("value".into()));
+/// ```
 pub struct EphemeralStore {
     states: FxHashMap<String, State>,
     local_subs: SubscriberSetWithQueue<(), LocalEphemeralCallback, Vec<u8>>,

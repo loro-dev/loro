@@ -121,7 +121,7 @@ export function newRootContainerID(
  * Awareness is a structure that allows to track the ephemeral state of the peers.
  *
  * If we don't receive a state update from a peer within the timeout, we will remove their state.
- * The timeout is in milliseconds. This can be used to handle the off-line state of a peer.
+ * The timeout is in milliseconds. This can be used to handle the offline state of a peer.
  */
 export class Awareness<T extends Value = Value> {
     inner: AwarenessWasm<T>;
@@ -220,10 +220,31 @@ export class Awareness<T extends Value = Value> {
 }
 
 /**
- * Awareness is a structure that allows to track the ephemeral state of the peers.
+ * EphemeralStore is a structure that allows to track the ephemeral state of the peers.
  *
  * If we don't receive a state update from a peer within the timeout, we will remove their state.
- * The timeout is in milliseconds. This can be used to handle the off-line state of a peer.
+ * The timeout is in milliseconds. This can be used to handle the offline state of a peer.
+ * 
+ * @example
+ * 
+ * ```ts
+ * const store = new EphemeralStore();
+ * const store2 = new EphemeralStore();
+ * // Subscribe to local updates
+ * store.subscribeLocalUpdates((data)=>{
+ *     store2.apply(data);
+ * })
+ * // Subscribe to all updates
+ * store2.subscribe((event)=>{
+ *     console.log("event: ", event);
+ * })
+ * // Set a value
+ * store.set("key", "value");
+ * // Encode the value
+ * const encoded = store.encode("key");
+ * // Apply the encoded value
+ * store2.apply(encoded);
+ * ```
  */
 export class EphemeralStore<T extends Value = Value> {
     inner: EphemeralStoreWasm<T>;
