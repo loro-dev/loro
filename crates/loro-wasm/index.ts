@@ -2,6 +2,7 @@ export * from "loro-wasm";
 export type * from "loro-wasm";
 import {
     AwarenessWasm,
+    EphemeralStoreWasm,
     PeerID,
     Container,
     ContainerID,
@@ -15,6 +16,8 @@ import {
     OpId,
     Value,
     AwarenessListener,
+    EphemeralListener,
+    EphemeralLocalListener,
 } from "loro-wasm";
 
 /**
@@ -113,10 +116,12 @@ export function newRootContainerID(
 
 
 /**
+ * @deprecated Please use `EphemeralStore` instead.
+ * 
  * Awareness is a structure that allows to track the ephemeral state of the peers.
  *
  * If we don't receive a state update from a peer within the timeout, we will remove their state.
- * The timeout is in milliseconds. This can be used to handle the off-line state of a peer.
+ * The timeout is in milliseconds. This can be used to handle the offline state of a peer.
  */
 export class Awareness<T extends Value = Value> {
     inner: AwarenessWasm<T>;
@@ -206,6 +211,99 @@ export class Awareness<T extends Value = Value> {
                     listener({ updated: [], added: [], removed }, "timeout");
                 });
             }
+            if (this.inner.isEmpty()) {
+                clearInterval(this.timer);
+                this.timer = undefined;
+            }
+        }, this.timeout / 2) as unknown as number;
+    }
+}
+
+/**
+ * EphemeralStore is a structure that allows to track the ephemeral state of the peers.
+ *
+ * If we don't receive a state update from a peer within the timeout, we will remove their state.
+ * The timeout is in milliseconds. This can be used to handle the offline state of a peer.
+ * 
+ * @example
+ * 
+ * ```ts
+ * const store = new EphemeralStore();
+ * const store2 = new EphemeralStore();
+ * // Subscribe to local updates
+ * store.subscribeLocalUpdates((data)=>{
+ *     store2.apply(data);
+ * })
+ * // Subscribe to all updates
+ * store2.subscribe((event)=>{
+ *     console.log("event: ", event);
+ * })
+ * // Set a value
+ * store.set("key", "value");
+ * // Encode the value
+ * const encoded = store.encode("key");
+ * // Apply the encoded value
+ * store2.apply(encoded);
+ * ```
+ */
+export class EphemeralStore<T extends Value = Value> {
+    inner: EphemeralStoreWasm<T>;
+    private timer: number | undefined;
+    private timeout: number;
+    constructor(timeout: number = 30000) {
+        this.inner = new EphemeralStoreWasm(timeout);
+        this.timeout = timeout;
+    }
+
+    apply(bytes: Uint8Array) {
+        this.inner.apply(bytes);
+        this.startTimerIfNotEmpty();
+    }
+
+    set(key: string, value: T) {
+        this.inner.set(key, value);
+        this.startTimerIfNotEmpty();
+    }
+
+    get(key: string): T | undefined {
+        return this.inner.get(key);
+    }
+
+    getAllStates(): Record<string, T> {
+        return this.inner.getAllStates();
+    }
+
+    encode(key: string): Uint8Array {
+        return this.inner.encode(key);
+    }
+
+    encodeAll(): Uint8Array {
+        return this.inner.encodeAll();
+    }
+
+    keys(): string[] {
+        return this.inner.keys();
+    }
+
+    destroy() {
+        clearInterval(this.timer);
+    }
+
+    subscribe(listener: EphemeralListener) {
+        return this.inner.subscribe(listener);
+    }
+
+    subscribeLocalUpdates(listener: EphemeralLocalListener) {
+        return this.inner.subscribeLocalUpdates(listener);
+    }
+
+    private startTimerIfNotEmpty() {
+        if (this.inner.isEmpty() || this.timer != null) {
+            return;
+        }
+
+        this.timer = setInterval(() => {
+            this.inner.removeOutdated();
             if (this.inner.isEmpty()) {
                 clearInterval(this.timer);
                 this.timer = undefined;

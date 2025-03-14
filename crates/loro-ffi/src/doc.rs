@@ -902,7 +902,7 @@ pub trait Unsubscriber: Sync + Send {
 
 /// A handle to a subscription created by GPUI. When dropped, the subscription
 /// is cancelled and the callback will no longer be invoked.
-pub struct Subscription(Mutex<Option<loro::Subscription>>);
+pub struct Subscription(pub(crate) Mutex<Option<loro::Subscription>>);
 
 impl Subscription {
     /// Detaches the subscription from this handle. The callback will

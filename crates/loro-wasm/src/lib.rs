@@ -43,7 +43,7 @@ mod awareness;
 mod log;
 
 use crate::convert::{handler_to_js_value, js_to_container, js_to_cursor};
-pub use awareness::AwarenessWasm;
+pub use awareness::{AwarenessWasm, EphemeralStoreWasm};
 
 mod convert;
 
@@ -5881,7 +5881,6 @@ export type AwarenessListener = (
     origin: "local" | "timeout" | "remote" | string,
 ) => void;
 
-
 interface Listener {
     (event: LoroEventBatch): void;
 }
@@ -6394,6 +6393,25 @@ interface AwarenessWasm<T extends Value = Value> {
     getAllStates(): Record<PeerID, T>;
     setLocalState(value: T): void;
     removeOutdated(): PeerID[];
+}
+
+type EphemeralListener = (event: EphemeralStoreEvent) => void;
+type EphemeralLocalListener = (bytes: Uint8Array) => void;
+
+interface EphemeralStoreWasm<T extends Value = Value> {
+    set(key: string, value: T): void;
+    get(key: string): T | undefined;
+    getAllStates(): Record<string, T>;
+    removeOutdated();
+    subscribeLocalUpdates(f: EphemeralLocalListener): () => void;
+    subscribe(f: EphemeralListener): () => void;
+}
+
+interface EphemeralStoreEvent {
+    by: "local" | "import" | "timeout";
+    added: string[];
+    updated: string[];
+    removed: string[];
 }
 
 "#;
