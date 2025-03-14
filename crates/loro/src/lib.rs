@@ -87,7 +87,10 @@ mod counter;
 pub use counter::LoroCounter;
 
 /// `LoroDoc` is the entry for the whole document.
-/// When it's dropped, all the associated [`Handler`]s will be invalidated.
+///
+/// - When it's dropped, all the associated Containers will be invalidated.
+/// - `LoroDoc` implements `Send` but not `Sync`. If you need to share `LoroDoc` across threads, you probably need to use `Arc<Mutex<LoroDoc>>`.
+/// - Cloning `LoroDoc` creates a new reference to the same document.
 ///
 /// **Important:** Loro is a pure library and does not handle network protocols.
 /// It is the responsibility of the user to manage the storage, loading, and synchronization

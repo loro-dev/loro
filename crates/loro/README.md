@@ -6,6 +6,10 @@ Loro is a high-performance CRDTs framework offering Rust, JavaScript and Swift A
 
 Designed for local-first software, it enables effortless collaboration in app states. 
 
+Loro is a pure library and does not handle network protocols. 
+It is the responsibility of the user to manage the storage, loading, and synchronization
+of the bytes exported by Loro in a manner suitable for their specific environment.
+
 # Examples
 
 ## Map/List/Text
