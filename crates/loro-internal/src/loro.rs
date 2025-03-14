@@ -94,7 +94,10 @@ impl LoroDoc {
                 peer_id_change_subs: SubscriberSetWithQueue::new(),
             }
         });
-        Self { inner }
+        Self {
+            inner,
+            _marker: std::marker::PhantomData,
+        }
     }
 
     pub fn fork(&self) -> Self {
@@ -1945,9 +1948,9 @@ mod test {
 
     #[test]
     fn test_sync() {
-        fn is_send_sync<T: Send + Sync>(_v: T) {}
+        fn is_send<T: Send>(_v: T) {}
         let loro = super::LoroDoc::new();
-        is_send_sync(loro)
+        is_send(loro)
     }
 
     #[test]

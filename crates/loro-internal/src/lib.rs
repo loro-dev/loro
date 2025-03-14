@@ -113,11 +113,16 @@ pub use version::VersionVector;
 #[derive(Debug, Clone)]
 pub struct LoroDoc {
     inner: Arc<LoroDocInner>,
+    _marker: std::marker::PhantomData<*const ()>,
 }
 
+unsafe impl Send for LoroDoc {}
 impl LoroDoc {
     pub(crate) fn from_inner(inner: Arc<LoroDocInner>) -> Self {
-        Self { inner }
+        Self {
+            inner,
+            _marker: std::marker::PhantomData,
+        }
     }
 }
 
@@ -128,7 +133,6 @@ impl std::ops::Deref for LoroDoc {
         &self.inner
     }
 }
-
 pub struct LoroDocInner {
     oplog: Arc<Mutex<OpLog>>,
     state: Arc<Mutex<DocState>>,

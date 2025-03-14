@@ -37,7 +37,7 @@ mod awareness;
 pub use awareness::{Awareness, AwarenessPeerUpdate, PeerInfo};
 
 // https://github.com/mozilla/uniffi-rs/issues/1372
-pub trait ValueOrContainer: Send + Sync {
+pub trait ValueOrContainer {
     fn is_value(&self) -> bool;
     fn is_container(&self) -> bool;
     fn as_value(&self) -> Option<LoroValue>;

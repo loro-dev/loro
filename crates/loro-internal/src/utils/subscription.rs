@@ -268,8 +268,8 @@ struct Subscriber<Callback> {
 
 impl<EmitterKey, Callback> SubscriberSet<EmitterKey, Callback>
 where
-    EmitterKey: 'static + Ord + Clone + Debug + Send + Sync,
-    Callback: 'static + Send + Sync,
+    EmitterKey: 'static + Ord + Clone + Debug,
+    Callback: 'static,
 {
     pub fn new() -> Self {
         Self(Arc::new(Mutex::new(SubscriberSetState {
@@ -424,7 +424,7 @@ fn post_inc(next_subscriber_id: &mut usize) -> usize {
     *next_subscriber_id += 1;
     ans
 }
-type Callback = Box<dyn FnOnce() + 'static + Send + Sync>;
+type Callback = Box<dyn FnOnce() + 'static>;
 
 /// A handle to a subscription created by GPUI. When dropped, the subscription
 /// is cancelled and the callback will no longer be invoked.
@@ -507,9 +507,9 @@ impl<EmitterKey, Callback, Payload> WeakSubscriberSetWithQueue<EmitterKey, Callb
 
 impl<EmitterKey, Callback, Payload> SubscriberSetWithQueue<EmitterKey, Callback, Payload>
 where
-    EmitterKey: 'static + Ord + Clone + Debug + Send + Sync,
-    Callback: 'static + Send + Sync + for<'a> FnMut(&'a Payload) -> bool,
-    Payload: Send + Sync + Debug,
+    EmitterKey: 'static + Ord + Clone + Debug,
+    Callback: 'static + for<'a> FnMut(&'a Payload) -> bool,
+    Payload: Debug,
 {
     pub fn new() -> Self {
         Self {

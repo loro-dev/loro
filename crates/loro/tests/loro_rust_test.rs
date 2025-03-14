@@ -340,10 +340,11 @@ fn travel_back_should_remove_styles() {
 
 #[test]
 fn list() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    check_send(doc);
     use loro::{LoroDoc, ToJson};
     use serde_json::json;
     let doc = LoroDoc::new();
-    check_sync_send(&doc);
     let list = doc.get_list("list");
     list.insert(0, 123)?;
     list.insert(1, 123)?;
@@ -420,7 +421,7 @@ fn tree() {
     )
 }
 
-fn check_sync_send(_doc: impl Sync + Send) {}
+fn check_send<T: Send>(_doc: T) {}
 
 #[test]
 fn richtext_test() {

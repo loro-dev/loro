@@ -15,10 +15,10 @@ use std::{
 };
 
 /// The callback of the local update.
-pub type LocalUpdateCallback = Box<dyn Fn(&Vec<u8>) -> bool + Send + Sync + 'static>;
+pub type LocalUpdateCallback = Box<dyn Fn(&Vec<u8>) -> bool + 'static>;
 /// The callback of the peer id change. The second argument is the next counter for the peer.
-pub type PeerIdUpdateCallback = Box<dyn Fn(&ID) -> bool + Send + Sync + 'static>;
-pub type Subscriber = Arc<dyn (for<'a> Fn(DiffEvent<'a>)) + Send + Sync>;
+pub type PeerIdUpdateCallback = Box<dyn Fn(&ID) -> bool + 'static>;
+pub type Subscriber = Arc<dyn (for<'a> Fn(DiffEvent<'a>))>;
 
 impl LoroDoc {
     /// Subscribe to the changes of the peer id.
@@ -161,11 +161,12 @@ mod test {
 
     #[test]
     fn test_recursive_events() {
-        let loro = Arc::new(LoroDoc::new());
+        let loro = Arc::new(Mutex::new(LoroDoc::new()));
         let loro_cp = loro.clone();
         let count = Arc::new(AtomicUsize::new(0));
         let count_cp = Arc::clone(&count);
-        let _g = loro_cp.subscribe_root(Arc::new(move |_| {
+        let _g = loro_cp.lock().unwrap().subscribe_root(Arc::new(move |_| {
+            let loro = loro.lock().unwrap();
             count_cp.fetch_add(1, Ordering::SeqCst);
             let mut txn = loro.txn().unwrap();
             let text = loro.get_text("id");
@@ -180,8 +181,8 @@ mod test {
         }));
 
         let loro = loro_cp;
-        let mut txn = loro.txn().unwrap();
-        let text = loro.get_text("id");
+        let mut txn = loro.lock().unwrap().txn().unwrap();
+        let text = loro.lock().unwrap().get_text("id");
         text.insert_with_txn(&mut txn, 0, "123").unwrap();
         txn.commit().unwrap();
         let count = count.load(Ordering::SeqCst);

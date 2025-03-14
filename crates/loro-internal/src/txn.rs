@@ -130,8 +130,7 @@ impl crate::LoroDoc {
     }
 }
 
-pub(crate) type OnCommitFn =
-    Box<dyn FnOnce(&Arc<Mutex<DocState>>, &Arc<Mutex<OpLog>>, IdSpan) + Sync + Send>;
+pub(crate) type OnCommitFn = Box<dyn FnOnce(&Arc<Mutex<DocState>>, &Arc<Mutex<OpLog>>, IdSpan)>;
 
 pub struct Transaction {
     peer: PeerID,
