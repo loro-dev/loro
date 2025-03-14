@@ -25,7 +25,7 @@ impl LoroDoc {
 }
 
 // Define JSONPath tokens
-enum JSONPathToken {
+pub enum JSONPathToken {
     Root,
     Child(String),
     RecursiveDescend,
@@ -78,7 +78,7 @@ impl PartialEq for JSONPathToken {
 }
 
 // Parse JSONPath string into tokens
-fn parse_jsonpath(path: &str) -> Result<Vec<JSONPathToken>, JsonPathError> {
+pub fn parse_jsonpath(path: &str) -> Result<Vec<JSONPathToken>, JsonPathError> {
     let mut tokens = Vec::new();
     let chars = path.chars().collect::<Vec<char>>();
     let mut iter = chars.iter().peekable();
