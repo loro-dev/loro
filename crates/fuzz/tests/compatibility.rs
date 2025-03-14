@@ -282,6 +282,8 @@ fn init() {
 }
 
 mod compatibility_with_10_alpha_4 {
+    use std::sync::Mutex;
+
     use super::*;
     use loro_alpha_4::{self, ToJson};
 
@@ -381,11 +383,11 @@ mod compatibility_with_10_alpha_4 {
     #[test]
     fn test_updates() {
         let doc1 = loro_alpha_4::LoroDoc::new();
-        let doc2 = Arc::new(loro::LoroDoc::new());
+        let doc2 = Arc::new(Mutex::new(loro::LoroDoc::new()));
         let doc2_clone = doc2.clone();
         doc1.set_peer_id(1).unwrap();
         doc1.subscribe_local_update(Box::new(move |updates| {
-            doc2_clone.import(updates).unwrap();
+            doc2_clone.lock().unwrap().import(updates).unwrap();
             true
         }))
         .detach();
@@ -394,7 +396,7 @@ mod compatibility_with_10_alpha_4 {
             gen_random_ops!(doc1, i, 10);
             assert_eq!(
                 doc1.get_deep_value().to_json_value(),
-                doc2.get_deep_value().to_json_value()
+                doc2.lock().unwrap().get_deep_value().to_json_value()
             );
         }
     }

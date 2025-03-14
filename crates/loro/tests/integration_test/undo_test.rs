@@ -1581,6 +1581,7 @@ fn undo_manager_events() -> anyhow::Result<()> {
 #[test]
 fn undo_transform_cursor_position() -> anyhow::Result<()> {
     use loro::cursor::Cursor;
+    #[allow(clippy::arc_with_non_send_sync)]
     let doc = Arc::new(LoroDoc::new());
     let text = doc.get_text("text");
     let mut undo = UndoManager::new(&doc);

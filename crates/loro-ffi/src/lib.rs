@@ -1,3 +1,4 @@
+#![allow(clippy::arc_with_non_send_sync)]
 mod value;
 
 use loro::Container;
