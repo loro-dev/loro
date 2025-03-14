@@ -1,4 +1,5 @@
 #![allow(deprecated)]
+#![allow(clippy::arc_with_non_send_sync)]
 pub mod actions;
 pub mod actor;
 pub mod container;

@@ -25,6 +25,7 @@ use loro_internal::{
     UnknownHandler as InnerUnknownHandler,
 };
 use std::cmp::Ordering;
+use std::marker::PhantomData;
 use std::ops::ControlFlow;
 use std::ops::Deref;
 use std::ops::Range;
@@ -97,8 +98,10 @@ pub struct LoroDoc {
     // This field is here to prevent some weird issues in debug mode
     #[cfg(debug_assertions)]
     _temp: u8,
+    _phantom: PhantomData<*const ()>,
 }
 
+unsafe impl Send for LoroDoc {}
 impl Default for LoroDoc {
     fn default() -> Self {
         Self::new()
@@ -119,6 +122,7 @@ impl LoroDoc {
             doc,
             #[cfg(debug_assertions)]
             _temp: 0,
+            _phantom: PhantomData,
         }
     }
 
@@ -1040,7 +1044,7 @@ impl LoroDoc {
     /// assert!(doc.has_container(&"cid:root-map:Map".try_into().unwrap()));
     /// // Text container exists
     /// assert!(doc.has_container(&"cid:0@1:Text".try_into().unwrap()));
-    /// // List container exists  
+    /// // List container exists
     /// assert!(doc.has_container(&"cid:1@1:List".try_into().unwrap()));
     ///
     /// let doc2 = LoroDoc::new();

@@ -8,7 +8,7 @@ use std::{
     ops::ControlFlow,
     sync::{
         atomic::{AtomicBool, AtomicU64},
-        Arc,
+        Arc, Mutex,
     },
 };
 
@@ -341,9 +341,9 @@ fn travel_back_should_remove_styles() {
 #[test]
 fn list() -> LoroResult<()> {
     use loro::{LoroDoc, ToJson};
+    check_send(LoroDoc::new());
     use serde_json::json;
     let doc = LoroDoc::new();
-    check_sync_send(&doc);
     let list = doc.get_list("list");
     list.insert(0, 123)?;
     list.insert(1, 123)?;
@@ -420,7 +420,7 @@ fn tree() {
     )
 }
 
-fn check_sync_send(_doc: impl Sync + Send) {}
+fn check_send(_doc: impl Send) {}
 
 #[test]
 fn richtext_test() {
@@ -1914,26 +1914,43 @@ fn test_travel_change_ancestors() {
 
 #[test]
 fn no_dead_loop_when_subscribe_local_updates_to_each_other() {
-    let doc1 = Arc::new(LoroDoc::new());
-    let doc2 = Arc::new(LoroDoc::new());
+    let doc1 = Arc::new(Mutex::new(LoroDoc::new()));
+    let doc2 = Arc::new(Mutex::new(LoroDoc::new()));
 
     let doc1_clone = doc1.clone();
     let doc2_clone = doc2.clone();
-    let _sub1 = doc1.subscribe_local_update(Box::new(move |updates| {
-        doc2_clone.import(updates).unwrap();
-        true
-    }));
-    let _sub2 = doc2.subscribe_local_update(Box::new(move |updates| {
-        doc1_clone.import(updates).unwrap();
-        true
-    }));
+    let _sub1 = doc1
+        .lock()
+        .unwrap()
+        .subscribe_local_update(Box::new(move |updates| {
+            doc2_clone.lock().unwrap().import(updates).unwrap();
+            true
+        }));
+    let _sub2 = doc2
+        .lock()
+        .unwrap()
+        .subscribe_local_update(Box::new(move |updates| {
+            doc1_clone.lock().unwrap().import(updates).unwrap();
+            true
+        }));
 
-    doc1.get_text("text").insert(0, "Hello").unwrap();
-    doc1.commit();
-    doc2.get_text("text").insert(0, "World").unwrap();
-    doc2.commit();
+    doc1.lock()
+        .unwrap()
+        .get_text("text")
+        .insert(0, "Hello")
+        .unwrap();
+    doc1.lock().unwrap().commit();
+    doc2.lock()
+        .unwrap()
+        .get_text("text")
+        .insert(0, "World")
+        .unwrap();
+    doc2.lock().unwrap().commit();
 
-    assert_eq!(doc1.get_deep_value(), doc2.get_deep_value());
+    assert_eq!(
+        doc1.lock().unwrap().get_deep_value(),
+        doc2.lock().unwrap().get_deep_value()
+    );
 }
 
 /// https://github.com/loro-dev/loro/issues/490
