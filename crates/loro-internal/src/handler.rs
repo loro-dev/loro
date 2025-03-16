@@ -32,6 +32,8 @@ use std::{
     fmt::Debug,
     ops::Deref,
     sync::{Arc, Mutex},
+    thread::sleep,
+    time::Duration,
 };
 use tracing::{error, info, instrument};
 
@@ -2594,9 +2596,7 @@ impl ListHandler {
 
     pub fn get(&self, index: usize) -> Option<LoroValue> {
         match &self.inner {
-            MaybeDetached::Detached(l) => {
-                l.lock().unwrap().value.get(index).map(|x| x.to_value())
-            }
+            MaybeDetached::Detached(l) => l.lock().unwrap().value.get(index).map(|x| x.to_value()),
             MaybeDetached::Attached(a) => a.with_state(|state| {
                 let a = state.as_list_state().unwrap();
                 a.get(index).cloned()

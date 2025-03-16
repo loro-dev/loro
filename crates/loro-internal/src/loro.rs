@@ -233,7 +233,6 @@ impl LoroDoc {
 
         let mut txn_guard = self.txn.lock().unwrap();
         let txn = txn_guard.take();
-        drop(txn_guard);
         let mut txn = txn?;
         let on_commit = txn.take_on_commit();
         if let Some(origin) = config.origin {
@@ -251,7 +250,6 @@ impl LoroDoc {
         let id_span = txn.id_span();
         let options = txn.commit().unwrap();
         if config.immediate_renew {
-            let mut txn_guard = self.txn.lock().unwrap();
             assert!(self.can_edit());
             let mut t = self.txn().unwrap();
             if let Some(options) = options.as_ref() {
@@ -853,11 +851,7 @@ impl LoroDoc {
             (was_recording, state.frontiers.clone())
         };
 
-        let spans = self
-            .oplog
-            .lock()
-            .unwrap()
-            .split_span_based_on_deps(id_span);
+        let spans = self.oplog.lock().unwrap().split_span_based_on_deps(id_span);
         let diff = crate::undo::undo(
             spans,
             match post_transform_base {
@@ -1329,11 +1323,7 @@ impl LoroDoc {
 
     #[inline]
     pub fn frontiers_to_vv(&self, frontiers: &Frontiers) -> Option<VersionVector> {
-        self.oplog
-            .lock()
-            .unwrap()
-            .dag
-            .frontiers_to_vv(frontiers)
+        self.oplog.lock().unwrap().dag.frontiers_to_vv(frontiers)
     }
 
     /// Import ops from other doc.
@@ -1705,12 +1695,7 @@ impl LoroDoc {
 
     /// Check if the doc contains the full history.
     pub fn is_shallow(&self) -> bool {
-        !self
-            .oplog()
-            .lock()
-            .unwrap()
-            .shallow_since_vv()
-            .is_empty()
+        !self.oplog().lock().unwrap().shallow_since_vv().is_empty()
     }
 
     /// Get the number of operations in the pending transaction.
