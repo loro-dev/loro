@@ -644,7 +644,7 @@ fn calc_sorted_ops_for_snapshot<'a>(
 }
 
 pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
-    let mut oplog = doc.oplog().try_lock().map_err(|_| {
+    let mut oplog = doc.oplog().lock().map_err(|_| {
         LoroError::DecodeError(
             "decode_snapshot: failed to lock oplog"
                 .to_string()
@@ -655,7 +655,7 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
         unreachable!("Import snapshot to a non-empty loro doc");
     }
 
-    let mut state = doc.app_state().try_lock().map_err(|_| {
+    let mut state = doc.app_state().lock().map_err(|_| {
         LoroError::DecodeError(
             "decode_snapshot: failed to lock app state"
                 .to_string()

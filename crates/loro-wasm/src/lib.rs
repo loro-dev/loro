@@ -1643,14 +1643,14 @@ impl LoroDoc {
     #[wasm_bindgen(js_name = "debugHistory")]
     pub fn debug_history(&self) {
         let borrow_mut = &self.0;
-        let oplog = borrow_mut.oplog().try_lock().unwrap();
+        let oplog = borrow_mut.oplog().lock().unwrap();
         console_log!("{:#?}", oplog.diagnose_size());
     }
 
     /// Get the number of changes in the oplog.
     pub fn changeCount(&self) -> usize {
         let borrow_mut = &self.0;
-        let oplog = borrow_mut.oplog().try_lock().unwrap();
+        let oplog = borrow_mut.oplog().lock().unwrap();
         oplog.len_changes()
     }
 
@@ -1682,7 +1682,7 @@ impl LoroDoc {
     #[wasm_bindgen(js_name = "getAllChanges")]
     pub fn get_all_changes(&self) -> JsChanges {
         let borrow_mut = &self.0;
-        let oplog = borrow_mut.oplog().try_lock().unwrap();
+        let oplog = borrow_mut.oplog().lock().unwrap();
         let mut changes: FxHashMap<PeerID, Vec<ChangeMeta>> = FxHashMap::default();
         oplog.change_store().visit_all_changes(&mut |c| {
             let change_meta = ChangeMeta {
@@ -1722,7 +1722,7 @@ impl LoroDoc {
     pub fn get_change_at(&self, id: JsID) -> JsResult<JsChange> {
         let id = js_id_to_id(id)?;
         let borrow_mut = &self.0;
-        let oplog = borrow_mut.oplog().try_lock().unwrap();
+        let oplog = borrow_mut.oplog().lock().unwrap();
         let change = oplog
             .get_change_at(id)
             .ok_or_else(|| JsError::new(&format!("Change {:?} not found", id)))?;
@@ -1753,7 +1753,7 @@ impl LoroDoc {
         lamport: u32,
     ) -> JsResult<JsChangeOrUndefined> {
         let borrow_mut = &self.0;
-        let oplog = borrow_mut.oplog().try_lock().unwrap();
+        let oplog = borrow_mut.oplog().lock().unwrap();
         let Some(change) =
             oplog.get_change_with_lamport_lte(peer_id.parse().unwrap_throw(), lamport)
         else {
@@ -1784,7 +1784,7 @@ impl LoroDoc {
     pub fn get_ops_in_change(&self, id: JsID) -> JsResult<Vec<JsValue>> {
         let id = js_id_to_id(id)?;
         let borrow_mut = &self.0;
-        let oplog = borrow_mut.oplog().try_lock().unwrap();
+        let oplog = borrow_mut.oplog().lock().unwrap();
         let change = oplog
             .get_remote_change_at(id)
             .ok_or_else(|| JsError::new(&format!("Change {:?} not found", id)))?;
@@ -1814,7 +1814,7 @@ impl LoroDoc {
     pub fn frontiers_to_vv(&self, frontiers: Vec<JsID>) -> JsResult<VersionVector> {
         let frontiers = ids_to_frontiers(frontiers)?;
         let borrow_mut = &self.0;
-        let oplog = borrow_mut.oplog().try_lock().unwrap();
+        let oplog = borrow_mut.oplog().lock().unwrap();
         oplog
             .dag()
             .frontiers_to_vv(&frontiers)
@@ -1839,7 +1839,7 @@ impl LoroDoc {
         let f = self
             .0
             .oplog()
-            .try_lock()
+            .lock()
             .unwrap()
             .dag()
             .vv_to_frontiers(&vv.0);

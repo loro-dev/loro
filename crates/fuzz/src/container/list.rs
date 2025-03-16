@@ -41,7 +41,7 @@ impl ListActor {
             Arc::new(move |event| {
                 let s = debug_span!("List event", peer = peer_id);
                 let _g = s.enter();
-                let mut list = list.try_lock().unwrap();
+                let mut list = list.lock().unwrap();
                 list.apply_diff(event);
             }),
         ).detach();
@@ -73,7 +73,7 @@ impl ActorTrait for ListActor {
     fn check_tracker(&self) {
         let list = self.loro.get_list("list");
         let value = list.get_deep_value();
-        let tracker = self.tracker.try_lock().unwrap().to_value();
+        let tracker = self.tracker.lock().unwrap().to_value();
         assert_eq!(&value, tracker.into_map().unwrap().get("list").unwrap());
     }
 

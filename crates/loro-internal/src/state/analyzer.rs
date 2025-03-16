@@ -22,7 +22,7 @@ impl DocAnalysis {
         let mut ops_nums = FxHashMap::default();
         let mut last_edit_time = FxHashMap::default();
         {
-            let oplog = doc.oplog().try_lock().unwrap();
+            let oplog = doc.oplog().lock().unwrap();
             oplog.change_store().visit_all_changes(&mut |c| {
                 for op in c.ops().iter() {
                     let idx = op.container;
@@ -38,7 +38,7 @@ impl DocAnalysis {
         }
 
         let mut containers = FxHashMap::default();
-        let mut state = doc.app_state().try_lock().unwrap();
+        let mut state = doc.app_state().lock().unwrap();
         let alive_containers = state.get_all_alive_containers();
         for (&idx, c) in state.iter_all_containers_mut() {
             let ops_num = ops_nums.get(&idx).unwrap_or(&0);

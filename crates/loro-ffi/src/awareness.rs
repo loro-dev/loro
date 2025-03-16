@@ -15,40 +15,40 @@ impl Awareness {
     }
 
     pub fn encode(&self, peers: &[PeerID]) -> Vec<u8> {
-        self.0.try_lock().unwrap().encode(peers)
+        self.0.lock().unwrap().encode(peers)
     }
 
     pub fn encode_all(&self) -> Vec<u8> {
-        self.0.try_lock().unwrap().encode_all()
+        self.0.lock().unwrap().encode_all()
     }
 
     pub fn apply(&self, encoded_peers_info: &[u8]) -> AwarenessPeerUpdate {
-        let (updated, added) = self.0.try_lock().unwrap().apply(encoded_peers_info);
+        let (updated, added) = self.0.lock().unwrap().apply(encoded_peers_info);
         AwarenessPeerUpdate { updated, added }
     }
 
     pub fn set_local_state(&self, value: Arc<dyn LoroValueLike>) {
         self.0
-            .try_lock()
+            .lock()
             .unwrap()
             .set_local_state(value.as_loro_value());
     }
 
     pub fn get_local_state(&self) -> Option<LoroValue> {
         self.0
-            .try_lock()
+            .lock()
             .unwrap()
             .get_local_state()
             .map(|x| x.into())
     }
 
     pub fn remove_outdated(&self) -> Vec<PeerID> {
-        self.0.try_lock().unwrap().remove_outdated()
+        self.0.lock().unwrap().remove_outdated()
     }
 
     pub fn get_all_states(&self) -> HashMap<PeerID, PeerInfo> {
         self.0
-            .try_lock()
+            .lock()
             .unwrap()
             .get_all_states()
             .iter()
@@ -57,7 +57,7 @@ impl Awareness {
     }
 
     pub fn peer(&self) -> PeerID {
-        self.0.try_lock().unwrap().peer()
+        self.0.lock().unwrap().peer()
     }
 }
 

@@ -18,7 +18,7 @@ pub(crate) struct KvWrapper {
 impl Clone for KvWrapper {
     fn clone(&self) -> Self {
         Self {
-            kv: self.kv.try_lock().unwrap().clone_store(),
+            kv: self.kv.lock().unwrap().clone_store(),
         }
     }
 }
@@ -35,27 +35,27 @@ impl KvWrapper {
     }
 
     pub fn import(&self, bytes: Bytes) {
-        let mut kv = self.kv.try_lock().unwrap();
+        let mut kv = self.kv.lock().unwrap();
         kv.import_all(bytes).unwrap();
     }
 
     pub fn export(&self) -> Bytes {
-        let mut kv = self.kv.try_lock().unwrap();
+        let mut kv = self.kv.lock().unwrap();
         kv.export_all()
     }
 
     pub fn get(&self, key: &[u8]) -> Option<Bytes> {
-        let kv = self.kv.try_lock().unwrap();
+        let kv = self.kv.lock().unwrap();
         kv.get(key)
     }
 
     pub fn with_kv<R>(&self, f: impl FnOnce(&dyn KvStore) -> R) -> R {
-        let kv = self.kv.try_lock().unwrap();
+        let kv = self.kv.lock().unwrap();
         f(&*kv)
     }
 
     pub fn set_all(&self, iter: impl Iterator<Item = (Bytes, Bytes)>) {
-        let mut kv = self.kv.try_lock().unwrap();
+        let mut kv = self.kv.lock().unwrap();
         for (k, v) in iter {
             kv.set(&k, v);
         }
@@ -63,12 +63,12 @@ impl KvWrapper {
 
     #[allow(unused)]
     pub(crate) fn contains_key(&self, key: &[u8]) -> bool {
-        self.kv.try_lock().unwrap().contains_key(key)
+        self.kv.lock().unwrap().contains_key(key)
     }
 
     pub(crate) fn remove_same(&self, old_kv: &KvWrapper) {
-        let other = old_kv.kv.try_lock().unwrap();
-        let mut this = self.kv.try_lock().unwrap();
+        let other = old_kv.kv.lock().unwrap();
+        let mut this = self.kv.lock().unwrap();
         for (k, v) in other.scan(Bound::Unbounded, Bound::Unbounded) {
             if this.get(&k) == Some(v) {
                 this.remove(&k);
@@ -77,12 +77,12 @@ impl KvWrapper {
     }
 
     pub(crate) fn remove(&self, k: &[u8]) -> Option<Bytes> {
-        self.kv.try_lock().unwrap().remove(k)
+        self.kv.lock().unwrap().remove(k)
     }
 
     /// Remove all keys not in the given set
     pub(crate) fn retain_keys(&self, keys: &BTreeSet<Vec<u8>>) {
-        let mut kv = self.kv.try_lock().unwrap();
+        let mut kv = self.kv.lock().unwrap();
         let mut to_remove = BTreeSet::new();
         for (k, _) in kv.scan(Bound::Unbounded, Bound::Unbounded) {
             if !keys.contains(&*k) {
@@ -96,10 +96,10 @@ impl KvWrapper {
     }
 
     pub(crate) fn insert(&self, k: &[u8], v: Bytes) {
-        self.kv.try_lock().unwrap().set(k, v);
+        self.kv.lock().unwrap().set(k, v);
     }
 
     pub(crate) fn is_empty(&self) -> bool {
-        self.kv.try_lock().unwrap().is_empty()
+        self.kv.lock().unwrap().is_empty()
     }
 }

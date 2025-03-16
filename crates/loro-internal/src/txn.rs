@@ -68,7 +68,7 @@ impl crate::LoroDoc {
         let obs = self.observer.clone();
         let local_update_subs_weak = self.local_update_subs.downgrade();
         txn.set_on_commit(Box::new(move |state, oplog, id_span| {
-            let mut state = state.try_lock().unwrap();
+            let mut state = state.lock().unwrap();
             let events = state.take_events();
             drop(state);
             for event in events {
@@ -82,7 +82,7 @@ impl crate::LoroDoc {
             if let Some(local_update_subs) = local_update_subs_weak.upgrade() {
                 if !local_update_subs.inner().is_empty() {
                     let bytes =
-                        { export_fast_updates_in_range(&oplog.try_lock().unwrap(), &[id_span]) };
+                        { export_fast_updates_in_range(&oplog.lock().unwrap(), &[id_span]) };
                     local_update_subs.emit(&(), bytes);
                 }
             }
@@ -105,7 +105,7 @@ impl crate::LoroDoc {
     pub fn start_auto_commit(&self) {
         self.auto_commit
             .store(true, std::sync::atomic::Ordering::Release);
-        let mut self_txn = self.txn.try_lock().unwrap();
+        let mut self_txn = self.txn.lock().unwrap();
         if self_txn.is_some() || !self.can_edit() {
             return;
         }
@@ -117,7 +117,7 @@ impl crate::LoroDoc {
     #[inline]
     pub fn renew_txn_if_auto_commit(&self, options: Option<CommitOptions>) {
         if self.auto_commit.load(std::sync::atomic::Ordering::Acquire) && self.can_edit() {
-            let mut self_txn = self.txn.try_lock().unwrap();
+            let mut self_txn = self.txn.lock().unwrap();
             if self_txn.is_some() {
                 return;
             }
@@ -323,8 +323,8 @@ impl Transaction {
     }
 
     pub fn new_with_origin(doc: Arc<LoroDocInner>, origin: InternalString) -> Self {
-        let oplog_lock = doc.oplog.try_lock().unwrap();
-        let mut state_lock = doc.state.try_lock().unwrap();
+        let oplog_lock = doc.oplog.lock().unwrap();
+        let mut state_lock = doc.state.lock().unwrap();
         if state_lock.is_in_txn() {
             panic!("Cannot start a transaction while another one is in progress");
         }
@@ -418,8 +418,8 @@ impl Transaction {
             return Ok(None);
         };
         self.finished = true;
-        let mut oplog = doc.oplog.try_lock().unwrap();
-        let mut state = doc.state.try_lock().unwrap();
+        let mut oplog = doc.oplog.lock().unwrap();
+        let mut state = doc.state.lock().unwrap();
         if self.local_ops.is_empty() {
             state.abort_txn();
             return Ok(Some(self.take_options()));
@@ -512,13 +512,13 @@ impl Transaction {
             return Err(LoroError::UnmatchedContext {
                 expected: this_doc
                     .state
-                    .try_lock()
+                    .lock()
                     .unwrap()
                     .peer
                     .load(std::sync::atomic::Ordering::Relaxed),
                 found: doc
                     .state
-                    .try_lock()
+                    .lock()
                     .unwrap()
                     .peer
                     .load(std::sync::atomic::Ordering::Relaxed),
@@ -537,8 +537,8 @@ impl Transaction {
             content,
         };
 
-        let mut oplog = doc.oplog.try_lock().unwrap();
-        let mut state = doc.state.try_lock().unwrap();
+        let mut oplog = doc.oplog.lock().unwrap();
+        let mut state = doc.state.lock().unwrap();
         if state.is_deleted(container) {
             return Err(LoroError::ContainerDeleted {
                 container: Box::new(state.arena.idx_to_id(container).unwrap()),

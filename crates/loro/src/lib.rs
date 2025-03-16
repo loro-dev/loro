@@ -172,7 +172,7 @@ impl LoroDoc {
     ///
     /// The length of the `Change` is how many operations it contains
     pub fn get_change(&self, id: ID) -> Option<ChangeMeta> {
-        let change = self.doc.oplog().try_lock().unwrap().get_change_at(id)?;
+        let change = self.doc.oplog().lock().unwrap().get_change_at(id)?;
         Some(ChangeMeta::from_change(&change))
     }
 
@@ -563,7 +563,7 @@ impl LoroDoc {
     /// NOTE: Please be ware that the API in `OpLog` is unstable
     #[inline]
     pub fn with_oplog<R>(&self, f: impl FnOnce(&OpLog) -> R) -> R {
-        let oplog = self.doc.oplog().try_lock().unwrap();
+        let oplog = self.doc.oplog().lock().unwrap();
         f(&oplog)
     }
 
@@ -572,7 +572,7 @@ impl LoroDoc {
     /// NOTE: Please be ware that the API in `DocState` is unstable
     #[inline]
     pub fn with_state<R>(&self, f: impl FnOnce(&mut DocState) -> R) -> R {
-        let mut state = self.doc.app_state().try_lock().unwrap();
+        let mut state = self.doc.app_state().lock().unwrap();
         f(&mut state)
     }
 
@@ -636,7 +636,7 @@ impl LoroDoc {
     pub fn get_deep_value_with_id(&self) -> LoroValue {
         self.doc
             .app_state()
-            .try_lock()
+            .lock()
             .unwrap()
             .get_deep_value_with_id()
     }

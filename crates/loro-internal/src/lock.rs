@@ -68,10 +68,6 @@ impl<T> LoroMutex<T> {
         };
         Ok(ans)
     }
-
-    pub fn try_lock(&self) -> Result<LoroMutexGuard<T>, std::sync::PoisonError<MutexGuard<T>>> {
-        self.lock()
-    }
 }
 
 pub struct LoroMutexGuard<'a, T> {

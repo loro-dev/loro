@@ -405,7 +405,7 @@ impl PathValue for LoroDoc {
     }
 
     fn length_for_path(&self) -> usize {
-        let state = self.app_state().try_lock().unwrap();
+        let state = self.app_state().lock().unwrap();
         state.arena.root_containers().len()
     }
 
