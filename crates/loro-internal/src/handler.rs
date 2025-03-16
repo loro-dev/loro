@@ -32,8 +32,6 @@ use std::{
     fmt::Debug,
     ops::Deref,
     sync::{Arc, Mutex},
-    thread::sleep,
-    time::Duration,
 };
 use tracing::{error, info, instrument};
 
