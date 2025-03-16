@@ -28,6 +28,7 @@ use crate::{
     fx_map,
     handler::ValueOrHandler,
     id::PeerID,
+    lock::{LoroLockGroup, LoroMutex},
     op::{Op, RawOp},
     version::Frontiers,
     ContainerDiff, ContainerType, DocDiff, InternalString, LoroDocInner, LoroValue, OpLog,
@@ -355,23 +356,27 @@ impl DocState {
         doc: Weak<LoroDocInner>,
         arena: SharedArena,
         config: Configure,
-    ) -> Arc<Mutex<Self>> {
+        lock_group: &LoroLockGroup,
+    ) -> Arc<LoroMutex<Self>> {
         let peer = DefaultRandom.next_u64();
         // TODO: maybe we should switch to certain version in oplog?
 
         let peer = Arc::new(AtomicU64::new(peer));
-        Arc::new(Mutex::new(Self {
-            store: ContainerStore::new(arena.clone(), config.clone(), peer.clone()),
-            peer,
-            arena,
-            frontiers: Frontiers::default(),
-            doc,
-            config,
-            in_txn: false,
-            changed_idx_in_txn: FxHashSet::default(),
-            event_recorder: Default::default(),
-            dead_containers_cache: Default::default(),
-        }))
+        Arc::new(lock_group.new_lock(
+            Self {
+                store: ContainerStore::new(arena.clone(), config.clone(), peer.clone()),
+                peer,
+                arena,
+                frontiers: Frontiers::default(),
+                doc,
+                config,
+                in_txn: false,
+                changed_idx_in_txn: FxHashSet::default(),
+                event_recorder: Default::default(),
+                dead_containers_cache: Default::default(),
+            },
+            crate::lock::LockKind::DocState,
+        ))
     }
 
     pub fn fork_with_new_peer_id(

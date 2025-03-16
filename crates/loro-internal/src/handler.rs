@@ -9,6 +9,7 @@ use crate::{
     delta::{DeltaItem, Meta, StyleMeta, TreeExternalDiff},
     diff::{diff, diff_impl::UpdateTimeoutError, OperateProxy},
     event::{Diff, TextDiff, TextDiffItem, TextMeta},
+    lock::LoroMutex,
     op::ListSlice,
     state::{IndexType, State, TreeParentId},
     txn::EventHint,
@@ -3899,7 +3900,7 @@ impl MapHandler {
 
 #[inline(always)]
 fn with_txn<R>(
-    txn: &Arc<Mutex<Option<Transaction>>>,
+    txn: &Arc<LoroMutex<Option<Transaction>>>,
     f: impl FnOnce(&mut Transaction) -> LoroResult<R>,
 ) -> LoroResult<R> {
     let mut txn = txn.try_lock().unwrap();

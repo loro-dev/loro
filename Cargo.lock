@@ -1419,6 +1419,7 @@ dependencies = [
  "static_assertions",
  "tabled 0.10.0",
  "thiserror",
+ "thread_local",
  "tracing",
  "wasm-bindgen",
  "xxhash-rust",

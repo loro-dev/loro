@@ -257,8 +257,8 @@ pub(crate) fn encode_snapshot_at<W: std::io::Write>(
     let version_before_start = doc.oplog_frontiers();
     doc.checkout_without_emitting(frontiers, true).unwrap();
     let result = 'block: {
-        let mut state = doc.app_state().try_lock().unwrap();
         let oplog = doc.oplog().try_lock().unwrap();
+        let mut state = doc.app_state().try_lock().unwrap();
         let is_shallow = state.store.shallow_root_store().is_some();
         if is_shallow {
             unimplemented!()

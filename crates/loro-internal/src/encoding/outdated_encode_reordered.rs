@@ -644,15 +644,6 @@ fn calc_sorted_ops_for_snapshot<'a>(
 }
 
 pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
-    let mut state = doc.app_state().try_lock().map_err(|_| {
-        LoroError::DecodeError(
-            "decode_snapshot: failed to lock app state"
-                .to_string()
-                .into_boxed_str(),
-        )
-    })?;
-
-    state.check_before_decode_snapshot()?;
     let mut oplog = doc.oplog().try_lock().map_err(|_| {
         LoroError::DecodeError(
             "decode_snapshot: failed to lock oplog"
@@ -660,11 +651,18 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
                 .into_boxed_str(),
         )
     })?;
-
     if !oplog.is_empty() {
         unreachable!("Import snapshot to a non-empty loro doc");
     }
 
+    let mut state = doc.app_state().try_lock().map_err(|_| {
+        LoroError::DecodeError(
+            "decode_snapshot: failed to lock app state"
+                .to_string()
+                .into_boxed_str(),
+        )
+    })?;
+    state.check_before_decode_snapshot()?;
     assert!(state.frontiers.is_empty());
     assert!(oplog.frontiers().is_empty());
 
@@ -727,8 +725,8 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
     // we cannot assert this because frontiers of oplog is not updated yet when batch_importing
     // assert_eq!(&state.frontiers, oplog.frontiers());
     if !oplog.pending_changes.is_empty() {
-        drop(oplog);
         drop(state);
+        drop(oplog);
         // TODO: Fix this origin value
         doc.update_oplog_and_apply_delta_to_state_if_needed(
             |oplog| {
@@ -848,7 +846,7 @@ fn decode_snapshot_states(
     containers: Vec<ContainerID>,
     state_blob_arena: &[u8],
     ops: Vec<OpWithId>,
-    oplog: &std::sync::MutexGuard<'_, OpLog>,
+    oplog: &OpLog,
     peers: &PeerIdArena,
 ) -> LoroResult<()> {
     let mut state_blob_index: usize = 0;

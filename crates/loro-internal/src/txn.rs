@@ -2,7 +2,7 @@ use core::panic;
 use std::{
     borrow::Cow,
     mem::take,
-    sync::{Arc, Mutex, Weak},
+    sync::{Arc, Weak},
 };
 
 use enum_as_inner::EnumAsInner;
@@ -25,6 +25,7 @@ use crate::{
     event::{Diff, ListDeltaMeta, TextDiff},
     handler::{Handler, ValueOrHandler},
     id::{Counter, PeerID, ID},
+    lock::LoroMutex,
     loro::CommitOptions,
     op::{Op, RawOp, RawOpContent},
     span::HasIdSpan,
@@ -131,7 +132,7 @@ impl crate::LoroDoc {
 }
 
 pub(crate) type OnCommitFn =
-    Box<dyn FnOnce(&Arc<Mutex<DocState>>, &Arc<Mutex<OpLog>>, IdSpan) + Sync + Send>;
+    Box<dyn FnOnce(&Arc<LoroMutex<DocState>>, &Arc<LoroMutex<OpLog>>, IdSpan) + Sync + Send>;
 
 pub struct Transaction {
     peer: PeerID,
@@ -322,12 +323,12 @@ impl Transaction {
     }
 
     pub fn new_with_origin(doc: Arc<LoroDocInner>, origin: InternalString) -> Self {
+        let oplog_lock = doc.oplog.try_lock().unwrap();
         let mut state_lock = doc.state.try_lock().unwrap();
         if state_lock.is_in_txn() {
             panic!("Cannot start a transaction while another one is in progress");
         }
 
-        let oplog_lock = doc.oplog.try_lock().unwrap();
         state_lock.start_txn(origin, crate::event::EventTriggerKind::Local);
         let arena = state_lock.arena.clone();
         let frontiers = state_lock.frontiers.clone();
@@ -417,6 +418,7 @@ impl Transaction {
             return Ok(None);
         };
         self.finished = true;
+        let mut oplog = doc.oplog.try_lock().unwrap();
         let mut state = doc.state.try_lock().unwrap();
         if self.local_ops.is_empty() {
             state.abort_txn();
@@ -424,7 +426,6 @@ impl Transaction {
         }
 
         let ops = std::mem::take(&mut self.local_ops);
-        let mut oplog = doc.oplog.try_lock().unwrap();
         let deps = take(&mut self.frontiers);
         let change = Change {
             lamport: self.start_lamport,
@@ -536,6 +537,7 @@ impl Transaction {
             content,
         };
 
+        let mut oplog = doc.oplog.try_lock().unwrap();
         let mut state = doc.state.try_lock().unwrap();
         if state.is_deleted(container) {
             return Err(LoroError::ContainerDeleted {
@@ -547,7 +549,6 @@ impl Transaction {
         state.apply_local_op(&raw_op, &op)?;
         {
             // update version info
-            let mut oplog = doc.oplog.try_lock().unwrap();
             let dep_id = Frontiers::from_id(ID::new(self.peer, self.next_counter - 1));
             let start_id = ID::new(self.peer, self.next_counter);
             self.next_counter += len as Counter;
@@ -567,6 +568,7 @@ impl Transaction {
             state.frontiers = Frontiers::from_id(last_id);
         };
         drop(state);
+        drop(oplog);
         debug_assert_eq!(
             event.rle_len(),
             op.atom_len(),

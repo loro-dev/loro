@@ -1,5 +1,5 @@
-use crate::change::ChangeRef;
 pub use crate::encoding::ExportMode;
+use crate::lock::{LoroLockGroup, LoroMutex};
 pub use crate::state::analyzer::{ContainerAnalysisInfo, DocAnalysis};
 pub(crate) use crate::LoroDocInner;
 use crate::{
@@ -34,6 +34,7 @@ use crate::{
     ChangeMeta, DocDiff, HandlerTrait, InternalString, ListHandler, LoroDoc, LoroError, MapHandler,
     VersionVector,
 };
+use crate::{change::ChangeRef, lock::LockKind};
 use either::Either;
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{
@@ -51,7 +52,7 @@ use std::{
             AtomicBool,
             Ordering::{Acquire, Release},
         },
-        Arc, Mutex,
+        Arc,
     },
 };
 use tracing::{debug_span, info, info_span, instrument, warn};
@@ -77,17 +78,20 @@ impl LoroDoc {
         let oplog = OpLog::new();
         let arena = oplog.arena.clone();
         let config: Configure = oplog.configure.clone();
-        let global_txn = Arc::new(Mutex::new(None));
+        let lock_group = LoroLockGroup::new();
+        let global_txn = Arc::new(lock_group.new_lock(None, LockKind::Txn));
         let inner = Arc::new_cyclic(|w| {
-            let state = DocState::new_arc(w.clone(), arena.clone(), config.clone());
+            let state = DocState::new_arc(w.clone(), arena.clone(), config.clone(), &lock_group);
             LoroDocInner {
-                oplog: Arc::new(Mutex::new(oplog)),
+                oplog: Arc::new(lock_group.new_lock(oplog, LockKind::OpLog)),
                 state,
                 config,
                 detached: AtomicBool::new(false),
                 auto_commit: AtomicBool::new(false),
                 observer: Arc::new(Observer::new(arena.clone())),
-                diff_calculator: Arc::new(Mutex::new(DiffCalculator::new(true))),
+                diff_calculator: Arc::new(
+                    lock_group.new_lock(DiffCalculator::new(true), LockKind::DiffCalculator),
+                ),
                 txn: global_txn,
                 arena,
                 local_update_subs: SubscriberSetWithQueue::new(),
@@ -425,7 +429,7 @@ impl LoroDoc {
     }
 
     #[inline(always)]
-    pub fn app_state(&self) -> &Arc<Mutex<DocState>> {
+    pub fn app_state(&self) -> &Arc<LoroMutex<DocState>> {
         &self.state
     }
 
@@ -435,7 +439,7 @@ impl LoroDoc {
     }
 
     #[inline(always)]
-    pub fn oplog(&self) -> &Arc<Mutex<OpLog>> {
+    pub fn oplog(&self) -> &Arc<LoroMutex<OpLog>> {
         &self.oplog
     }
 
@@ -671,13 +675,9 @@ impl LoroDoc {
     /// Get the version vector of the current [DocState]
     #[inline]
     pub fn state_vv(&self) -> VersionVector {
+        let oplog = self.oplog.try_lock().unwrap();
         let f = &self.state.try_lock().unwrap().frontiers;
-        self.oplog
-            .try_lock()
-            .unwrap()
-            .dag
-            .frontiers_to_vv(f)
-            .unwrap()
+        oplog.dag.frontiers_to_vv(f).unwrap()
     }
 
     pub fn get_by_path(&self, path: &[Index]) -> Option<ValueOrHandler> {
@@ -1319,8 +1319,6 @@ impl LoroDoc {
             diff_mode,
         );
 
-        drop(state);
-        drop(oplog);
         Ok(options)
     }
 

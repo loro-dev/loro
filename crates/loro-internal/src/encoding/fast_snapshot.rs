@@ -100,6 +100,17 @@ pub(crate) fn decode_snapshot_inner(snapshot: Snapshot, doc: &LoroDoc) -> Result
         shallow_root_state_bytes,
     } = snapshot;
     ensure_cov::notify_cov("loro_internal::import::fast_snapshot::decode_snapshot");
+    let mut oplog = doc.oplog().try_lock().map_err(|_| {
+        LoroError::DecodeError(
+            "decode_snapshot: failed to lock oplog"
+                .to_string()
+                .into_boxed_str(),
+        )
+    })?;
+    if !oplog.is_empty() {
+        panic!("InternalError importing snapshot to an non-empty doc");
+    }
+
     let mut state = doc.app_state().try_lock().map_err(|_| {
         LoroError::DecodeError(
             "decode_snapshot: failed to lock app state"
@@ -109,17 +120,6 @@ pub(crate) fn decode_snapshot_inner(snapshot: Snapshot, doc: &LoroDoc) -> Result
     })?;
 
     state.check_before_decode_snapshot()?;
-    let mut oplog = doc.oplog().try_lock().map_err(|_| {
-        LoroError::DecodeError(
-            "decode_snapshot: failed to lock oplog"
-                .to_string()
-                .into_boxed_str(),
-        )
-    })?;
-
-    if !oplog.is_empty() {
-        panic!("InternalError importing snapshot to an non-empty doc");
-    }
 
     assert!(state.frontiers.is_empty());
     assert!(oplog.frontiers().is_empty());
@@ -160,8 +160,8 @@ pub(crate) fn decode_snapshot_inner(snapshot: Snapshot, doc: &LoroDoc) -> Result
     // Or we should lazy load it when the time comes?
 
     state.init_with_states_and_version(state_frontiers, &oplog, vec![], false);
-    drop(oplog);
     drop(state);
+    drop(oplog);
     if need_calc {
         doc.detach();
         doc.checkout_to_latest();
@@ -188,14 +188,14 @@ pub(crate) fn encode_snapshot_inner(doc: &LoroDoc) -> Snapshot {
     assert!(doc.drop_pending_events().is_empty());
     let old_state_frontiers = doc.state_frontiers();
     let was_detached = doc.is_detached();
-    let mut state = doc.app_state().try_lock().unwrap();
     let oplog = doc.oplog().try_lock().unwrap();
+    let mut state = doc.app_state().try_lock().unwrap();
     let is_gc = state.store.shallow_root_store().is_some();
     if is_gc {
         // TODO: PERF: this can be optimized by reusing the bytes of gc store
         let f = oplog.shallow_since_frontiers().clone();
-        drop(oplog);
         drop(state);
+        drop(oplog);
         let (snapshot, _) = shallow_snapshot::export_shallow_snapshot_inner(doc, &f).unwrap();
         return snapshot;
     }
@@ -210,8 +210,8 @@ pub(crate) fn encode_snapshot_inner(doc: &LoroDoc) -> Snapshot {
     }
     if was_detached {
         let latest = oplog.frontiers().clone();
-        drop(oplog);
         drop(state);
+        drop(oplog);
         doc.checkout_without_emitting(&latest, false).unwrap();
         state = doc.app_state().try_lock().unwrap();
     }

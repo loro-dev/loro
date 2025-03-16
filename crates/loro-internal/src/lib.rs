@@ -8,16 +8,17 @@
 #![warn(missing_debug_implementations)]
 
 pub mod arena;
-mod change_meta;
 pub mod diff;
 pub mod diff_calc;
 pub mod handler;
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex};
-
+use std::sync::Arc;
+mod change_meta;
+pub(crate) mod lock;
 use arena::SharedArena;
 use configure::Configure;
 use diff_calc::DiffCalculator;
+use lock::LoroMutex;
 
 pub use change_meta::ChangeMeta;
 pub use event::{ContainerDiff, DiffEvent, DocDiff, ListDiff, ListDiffInsertItem, ListDiffItem};
@@ -130,14 +131,14 @@ impl std::ops::Deref for LoroDoc {
 }
 
 pub struct LoroDocInner {
-    oplog: Arc<Mutex<OpLog>>,
-    state: Arc<Mutex<DocState>>,
+    oplog: Arc<LoroMutex<OpLog>>,
+    state: Arc<LoroMutex<DocState>>,
     arena: SharedArena,
     config: Configure,
     observer: Arc<Observer>,
-    diff_calculator: Arc<Mutex<DiffCalculator>>,
+    diff_calculator: Arc<LoroMutex<DiffCalculator>>,
     // when dropping the doc, the txn will be committed
-    txn: Arc<Mutex<Option<Transaction>>>,
+    txn: Arc<LoroMutex<Option<Transaction>>>,
     auto_commit: AtomicBool,
     detached: AtomicBool,
     local_update_subs: SubscriberSetWithQueue<(), LocalUpdateCallback, Vec<u8>>,
