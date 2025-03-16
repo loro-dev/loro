@@ -29,12 +29,13 @@ pub use handler::{
 };
 pub use loro_common;
 pub use oplog::OpLog;
-pub use state::DocState;
-pub use state::{TreeNode, TreeNodeWithChildren, TreeParentId};
-use subscription::{
-    LocalUpdateCallback, Observer, PeerIdUpdateCallback, PreCommitCallback,
+use pre_commit::{
+    FirstCommitFromPeerCallback, FirstCommitFromPeerPayload, PreCommitCallback,
     PreCommitCallbackPayload,
 };
+pub use state::DocState;
+pub use state::{TreeNode, TreeNodeWithChildren, TreeParentId};
+use subscription::{LocalUpdateCallback, Observer, PeerIdUpdateCallback};
 use txn::Transaction;
 pub use undo::UndoManager;
 use utils::subscription::SubscriberSetWithQueue;
@@ -63,6 +64,7 @@ mod error;
 #[cfg(feature = "test_utils")]
 pub mod fuzz;
 mod parent;
+pub(crate) mod pre_commit;
 mod span;
 #[cfg(test)]
 pub mod tests;
@@ -160,6 +162,8 @@ pub struct LoroDocInner {
     detached: AtomicBool,
     local_update_subs: SubscriberSetWithQueue<(), LocalUpdateCallback, Vec<u8>>,
     peer_id_change_subs: SubscriberSetWithQueue<(), PeerIdUpdateCallback, ID>,
+    first_commit_from_peer_subs:
+        SubscriberSetWithQueue<(), FirstCommitFromPeerCallback, FirstCommitFromPeerPayload>,
     pre_commit_subs: SubscriberSetWithQueue<(), PreCommitCallback, PreCommitCallbackPayload>,
 }
 

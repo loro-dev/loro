@@ -1,7 +1,6 @@
 pub use crate::encoding::ExportMode;
-use crate::lock::LoroMutexGuard;
+use crate::pre_commit::FirstCommitFromPeerCallback;
 pub use crate::state::analyzer::{ContainerAnalysisInfo, DocAnalysis};
-use crate::subscription::PreCommitCallback;
 pub(crate) use crate::LoroDocInner;
 use crate::{
     arena::SharedArena,
@@ -36,6 +35,7 @@ use crate::{
     VersionVector,
 };
 use crate::{change::ChangeRef, lock::LockKind};
+use crate::{lock::LoroMutexGuard, pre_commit::PreCommitCallback};
 use crate::{
     lock::{LoroLockGroup, LoroMutex},
     txn::Transaction,
@@ -102,6 +102,7 @@ impl LoroDoc {
                 local_update_subs: SubscriberSetWithQueue::new(),
                 peer_id_change_subs: SubscriberSetWithQueue::new(),
                 pre_commit_subs: SubscriberSetWithQueue::new(),
+                first_commit_from_peer_subs: SubscriberSetWithQueue::new(),
             }
         });
         Self { inner }
@@ -1748,6 +1749,23 @@ impl LoroDoc {
     #[inline]
     pub fn find_id_spans_between(&self, from: &Frontiers, to: &Frontiers) -> VersionVectorDiff {
         self.oplog().lock().unwrap().dag.find_path(from, to)
+    }
+
+    /// Subscribe to the first commit from a peer. Operations performed on the `LoroDoc` within this callback
+    /// will be merged into the current commit.
+    ///
+    /// This is useful for managing the relationship between `PeerID` and user information.
+    /// For example, you could store user names in a `LoroMap` using `PeerID` as the key and the `UserID` as the value.
+    pub fn subscribe_first_commit_from_peer(
+        &self,
+        callback: FirstCommitFromPeerCallback,
+    ) -> Subscription {
+        let (s, enable) = self
+            .first_commit_from_peer_subs
+            .inner()
+            .insert((), callback);
+        enable();
+        s
     }
 
     pub fn subscribe_pre_commit(&self, callback: PreCommitCallback) -> Subscription {

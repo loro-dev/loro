@@ -1301,12 +1301,13 @@ fn import_status() -> LoroResult<()> {
 }
 
 #[test]
-fn test_pre_commit_callback() {
+fn test_on_first_commit_from_peer() {
     let doc = LoroDoc::new_auto_commit();
+    doc.set_peer_id(0).unwrap();
     let p = Arc::new(Mutex::new(vec![]));
     let p2 = Arc::clone(&p);
-    let sub = doc.subscribe_pre_commit(Box::new(move |e| {
-        p2.try_lock().unwrap().push(e.is_peer_first_appearance);
+    let sub = doc.subscribe_first_commit_from_peer(Box::new(move |e| {
+        p2.try_lock().unwrap().push(e.change_meta.id.peer);
         true
     }));
     doc.get_text("text").insert(0, "a").unwrap();
@@ -1317,7 +1318,21 @@ fn test_pre_commit_callback() {
     doc.get_text("text").insert(0, "c").unwrap();
     doc.commit_then_renew();
     sub.unsubscribe();
-    assert_eq!(p.try_lock().unwrap().as_slice(), &[true, false, true]);
+    assert_eq!(p.try_lock().unwrap().as_slice(), &[0, 1]);
+}
+
+#[test]
+fn test_on_first_commit_from_peer_with_lock() {
+    let doc = LoroDoc::new_auto_commit();
+    let doc_clone = doc.clone();
+    let sub = doc.subscribe_first_commit_from_peer(Box::new(move |_e| {
+        doc_clone.get_text("text").insert(0, "b").unwrap();
+        // doc_clone.commit_then_renew();
+        true
+    }));
+    doc.get_text("text").insert(0, "a").unwrap();
+    doc.commit_then_renew();
+    sub.unsubscribe();
 }
 
 #[test]

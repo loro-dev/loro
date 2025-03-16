@@ -3,8 +3,8 @@ use super::{
     event::{DiffEvent, DocDiff},
 };
 use crate::{
-    container::idx::ContainerIdx, utils::subscription::SubscriberSet, ChangeMeta, ContainerDiff,
-    LoroDoc, Subscription,
+    container::idx::ContainerIdx, utils::subscription::SubscriberSet, ContainerDiff, LoroDoc,
+    Subscription,
 };
 use fxhash::FxHashMap;
 use loro_common::{ContainerID, ID};
@@ -18,19 +18,7 @@ use std::{
 pub type LocalUpdateCallback = Box<dyn Fn(&Vec<u8>) -> bool + Send + Sync + 'static>;
 /// The callback of the peer id change. The second argument is the next counter for the peer.
 pub type PeerIdUpdateCallback = Box<dyn Fn(&ID) -> bool + Send + Sync + 'static>;
-pub type PreCommitCallback = Box<dyn Fn(&PreCommitCallbackPayload) -> bool + Send + Sync + 'static>;
 pub type Subscriber = Arc<dyn (for<'a> Fn(DiffEvent<'a>)) + Send + Sync>;
-
-/// The payload of the pre commit callback.
-#[derive(Debug, Clone)]
-pub struct PreCommitCallbackPayload {
-    /// The metadata of the change which will be committed.
-    pub change_meta: ChangeMeta,
-    /// The origin of the commit.
-    pub origin: String,
-    /// Whether this is the first time this peer appears in the document
-    pub is_peer_first_appearance: bool,
-}
 
 impl LoroDoc {
     /// Subscribe to the changes of the peer id.

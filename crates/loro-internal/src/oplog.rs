@@ -500,7 +500,7 @@ impl OpLog {
 
     pub fn get_timestamp_for_next_txn(&self) -> Timestamp {
         if self.configure.record_timestamp() {
-            (get_sys_timestamp() as Timestamp + 500) / 1000
+            get_timestamp_now_txn()
         } else {
             0
         }
@@ -746,4 +746,8 @@ pub(crate) fn local_op_to_remote(
         })
     }
     ans
+}
+
+pub(crate) fn get_timestamp_now_txn() -> Timestamp {
+    (get_sys_timestamp() as Timestamp + 500) / 1000
 }
