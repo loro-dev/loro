@@ -795,9 +795,13 @@ impl DocState {
     }
 
     pub(crate) fn get_value_by_idx(&mut self, container_idx: ContainerIdx) -> LoroValue {
-        self.store
+        tracing::trace!("get_value_by_idx");
+        let v = self
+            .store
             .get_value(container_idx)
-            .unwrap_or_else(|| container_idx.get_type().default_value())
+            .unwrap_or_else(|| container_idx.get_type().default_value());
+        tracing::trace!("get_value_by_idx: {:?}", v);
+        v
     }
 
     /// Set the state of the container with the given container idx.

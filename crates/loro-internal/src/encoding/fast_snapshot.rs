@@ -163,8 +163,8 @@ pub(crate) fn decode_snapshot_inner(snapshot: Snapshot, doc: &LoroDoc) -> Result
     drop(state);
     drop(oplog);
     if need_calc {
-        doc.detach();
-        doc.checkout_to_latest();
+        doc.set_detached(true);
+        doc.checkout_to_latest_without_commit(false);
         debug_assert_eq!(doc.state_frontiers(), doc.oplog_frontiers());
     }
 
@@ -212,7 +212,7 @@ pub(crate) fn encode_snapshot_inner(doc: &LoroDoc) -> Snapshot {
         let latest = oplog.frontiers().clone();
         drop(state);
         drop(oplog);
-        doc.checkout_without_emitting(&latest, false).unwrap();
+        doc.checkout_without_emitting(&latest, false, true).unwrap();
         state = doc.app_state().lock().unwrap();
     }
     state.ensure_all_alive_containers();
@@ -224,7 +224,7 @@ pub(crate) fn encode_snapshot_inner(doc: &LoroDoc) -> Snapshot {
     };
     if was_detached {
         drop(state);
-        doc.checkout_without_emitting(&old_state_frontiers, false)
+        doc.checkout_without_emitting(&old_state_frontiers, false, true)
             .unwrap();
         doc.drop_pending_events();
     }

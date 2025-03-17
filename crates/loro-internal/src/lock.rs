@@ -51,7 +51,7 @@ impl<T> LoroMutex<T> {
     pub fn lock(&self) -> Result<LoroMutexGuard<T>, std::sync::PoisonError<MutexGuard<T>>> {
         let v = self.currently_locked_in_this_thread.get_or_default();
         let cur = v.load(Ordering::SeqCst);
-        if cur > self.kind {
+        if cur >= self.kind {
             panic!(
                 "Locking order violation. Current lock kind: {}, Required lock kind: {}",
                 cur, self.kind

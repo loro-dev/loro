@@ -1,5 +1,6 @@
 use super::{state::DocState, txn::Transaction};
 use crate::{
+    change::get_sys_timestamp,
     container::{
         idx::ContainerIdx,
         list::list_op::{DeleteSpan, DeleteSpanWithId, ListOp},
@@ -224,6 +225,7 @@ impl BasicHandler {
     }
 
     pub fn get_value(&self) -> LoroValue {
+        tracing::trace!("get_value");
         self.doc
             .state
             .lock()
@@ -3901,10 +3903,27 @@ fn with_txn<R>(
     txn: &Arc<LoroMutex<Option<Transaction>>>,
     f: impl FnOnce(&mut Transaction) -> LoroResult<R>,
 ) -> LoroResult<R> {
-    let mut txn = txn.lock().unwrap();
-    match &mut *txn {
-        Some(t) => f(t),
-        None => Err(LoroError::AutoCommitNotStarted),
+    let mut start = 0.0;
+    loop {
+        let mut txn = txn.lock().unwrap();
+        if let Some(txn) = &mut *txn {
+            return f(txn);
+        } else {
+            if cfg!(feature = "wasm") {
+                return Err(LoroError::AutoCommitNotStarted);
+            }
+
+            let now = get_sys_timestamp();
+            if start < 1.0 {
+                start = now;
+            }
+
+            if now - start > 5000.0 {
+                tracing::warn!("spin lock for too long");
+                return Err(LoroError::AutoCommitNotStarted);
+            }
+            drop(txn);
+        }
     }
 }
 
