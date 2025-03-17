@@ -250,46 +250,54 @@ impl LoroDoc {
             return (None, Some(txn_guard));
         }
 
-        let txn = txn_guard.take();
-        let Some(mut txn) = txn else {
-            return (None, Some(txn_guard));
-        };
-        let on_commit = txn.take_on_commit();
-        if let Some(origin) = config.origin {
-            txn.set_origin(origin);
-        }
-
-        if let Some(timestamp) = config.timestamp {
-            txn.set_timestamp(timestamp);
-        }
-
-        if let Some(msg) = config.commit_msg.as_ref() {
-            txn.set_msg(Some(msg.clone()));
-        }
-
-        let id_span = txn.id_span();
-        let options = txn.commit().unwrap();
-        if config.immediate_renew {
-            assert!(self.can_edit());
-            let mut t = self.txn().unwrap();
-            if let Some(options) = options.as_ref() {
-                t.set_options(options.clone());
+        loop {
+            let txn = txn_guard.take();
+            let Some(mut txn) = txn else {
+                return (None, Some(txn_guard));
+            };
+            let on_commit = txn.take_on_commit();
+            if let Some(origin) = config.origin.clone() {
+                txn.set_origin(origin);
             }
-            *txn_guard = Some(t);
-        }
 
-        if let Some(on_commit) = on_commit {
-            on_commit(&self.state, &self.oplog, id_span);
-        }
+            if let Some(timestamp) = config.timestamp {
+                txn.set_timestamp(timestamp);
+            }
 
-        (
-            options,
-            if !config.immediate_renew {
-                Some(txn_guard)
-            } else {
-                None
-            },
-        )
+            if let Some(msg) = config.commit_msg.as_ref() {
+                txn.set_msg(Some(msg.clone()));
+            }
+
+            let id_span = txn.id_span();
+            let options = txn.commit().unwrap();
+            if config.immediate_renew {
+                assert!(self.can_edit());
+                let mut t = self.txn().unwrap();
+                if let Some(options) = options.as_ref() {
+                    t.set_options(options.clone());
+                }
+                *txn_guard = Some(t);
+            }
+
+            if let Some(on_commit) = on_commit {
+                drop(txn_guard);
+                on_commit(&self.state, &self.oplog, id_span);
+                txn_guard = self.txn.lock().unwrap();
+                if !config.immediate_renew && txn_guard.is_some() {
+                    // make sure that txn_guard is None when config.immediate_renew is false
+                    continue;
+                }
+            }
+
+            return (
+                options,
+                if !config.immediate_renew {
+                    Some(txn_guard)
+                } else {
+                    None
+                },
+            );
+        }
     }
 
     /// Set the commit message of the next commit
