@@ -111,7 +111,7 @@ fn transform_cursor(
     };
 
     let new_pos = cursor_with_pos.pos.pos;
-    match doc.get_handler(cid.clone()).unwrap() {
+    match doc.get_handler(cid).unwrap() {
         crate::handler::Handler::Text(h) => {
             let Some(new_cursor) = h.get_cursor_internal(new_pos, cursor_with_pos.pos.side, false)
             else {

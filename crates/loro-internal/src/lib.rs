@@ -46,6 +46,8 @@ pub mod encoding;
 pub(crate) mod fork;
 pub mod id;
 #[cfg(feature = "jsonpath")]
+pub mod jsoninit;
+#[cfg(feature = "jsonpath")]
 pub mod jsonpath;
 pub mod kv_store;
 pub mod loro;

@@ -724,9 +724,9 @@ impl LoroDoc {
     }
 
     #[inline]
-    pub fn get_handler(&self, id: ContainerID) -> Option<Handler> {
-        if self.has_container(&id) {
-            Some(Handler::new_attached(id, self.inner.clone()))
+    pub fn get_handler(&self, id: &ContainerID) -> Option<Handler> {
+        if self.has_container(id) {
+            Some(Handler::new_attached(id.clone(), self.inner.clone()))
         } else {
             None
         }
@@ -1013,7 +1013,7 @@ impl LoroDoc {
                 continue;
             }
 
-            let Some(h) = self.get_handler(id.clone()) else {
+            let Some(h) = self.get_handler(&id) else {
                 return Err(LoroError::ContainersNotFound {
                     containers: Box::new(vec![id]),
                 });

@@ -397,7 +397,7 @@ impl PathValue for LoroDoc {
         let arena = self.arena();
         for c in arena.root_containers() {
             let cid = arena.idx_to_id(c).unwrap();
-            let h = self.get_handler(cid).unwrap();
+            let h = self.get_handler(&cid).unwrap();
             if f(ValueOrHandler::Handler(h)) == ControlFlow::Break(()) {
                 break;
             }
@@ -410,7 +410,7 @@ impl PathValue for LoroDoc {
     }
 
     fn get_child_by_id(&self, id: ContainerID) -> Option<Handler> {
-        self.get_handler(id)
+        self.get_handler(&id)
     }
 
     fn clone_this(&self) -> Result<ValueOrHandler, JsonPathError> {
