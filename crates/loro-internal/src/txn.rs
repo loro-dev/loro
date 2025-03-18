@@ -28,6 +28,7 @@ use crate::{
     loro::CommitOptions,
     op::{Op, RawOp, RawOpContent},
     span::HasIdSpan,
+    subscription::PreCommitCallbackPayload,
     version::Frontiers,
     InternalString, LoroDocInner, LoroError, LoroValue,
 };
@@ -150,6 +151,7 @@ pub struct Transaction {
     timestamp: Option<Timestamp>,
     msg: Option<Arc<str>>,
     latest_timestamp: Timestamp,
+    is_first_peer: bool,
 }
 
 impl std::fmt::Debug for Transaction {
@@ -357,6 +359,7 @@ impl Transaction {
             on_commit: None,
             msg: None,
             latest_timestamp,
+            is_first_peer: false,
         }
     }
 
@@ -437,6 +440,15 @@ impl Transaction {
             ),
             commit_msg: take(&mut self.msg),
         };
+
+        doc.pre_commit_subs.emit(
+            &(),
+            PreCommitCallbackPayload {
+                id: change.id,
+                is_first_peer: self.is_first_peer,
+            },
+        );
+        self.is_first_peer = false;
 
         let diff = if state.is_recording() {
             Some(change_to_diff(
@@ -548,6 +560,9 @@ impl Transaction {
         {
             // update version info
             let mut oplog = doc.oplog.try_lock().unwrap();
+            if !self.is_first_peer && !oplog.dag.latest_vv_contains_peer(self.peer) {
+                self.is_first_peer = true;
+            }
             let dep_id = Frontiers::from_id(ID::new(self.peer, self.next_counter - 1));
             let start_id = ID::new(self.peer, self.next_counter);
             self.next_counter += len as Counter;

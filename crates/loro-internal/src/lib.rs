@@ -30,7 +30,10 @@ pub use loro_common;
 pub use oplog::OpLog;
 pub use state::DocState;
 pub use state::{TreeNode, TreeNodeWithChildren, TreeParentId};
-use subscription::{LocalUpdateCallback, Observer, PeerIdUpdateCallback};
+use subscription::{
+    LocalUpdateCallback, Observer, PeerIdUpdateCallback, PreCommitCallback,
+    PreCommitCallbackPayload,
+};
 use txn::Transaction;
 pub use undo::UndoManager;
 use utils::subscription::SubscriberSetWithQueue;
@@ -142,6 +145,7 @@ pub struct LoroDocInner {
     detached: AtomicBool,
     local_update_subs: SubscriberSetWithQueue<(), LocalUpdateCallback, Vec<u8>>,
     peer_id_change_subs: SubscriberSetWithQueue<(), PeerIdUpdateCallback, ID>,
+    pre_commit_subs: SubscriberSetWithQueue<(), PreCommitCallback, PreCommitCallbackPayload>,
 }
 
 /// The version of the loro crate

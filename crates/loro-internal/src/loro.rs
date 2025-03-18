@@ -1,6 +1,7 @@
 use crate::change::ChangeRef;
 pub use crate::encoding::ExportMode;
 pub use crate::state::analyzer::{ContainerAnalysisInfo, DocAnalysis};
+use crate::subscription::PreCommitCallback;
 pub(crate) use crate::LoroDocInner;
 use crate::{
     arena::SharedArena,
@@ -92,6 +93,7 @@ impl LoroDoc {
                 arena,
                 local_update_subs: SubscriberSetWithQueue::new(),
                 peer_id_change_subs: SubscriberSetWithQueue::new(),
+                pre_commit_subs: SubscriberSetWithQueue::new(),
             }
         });
         Self { inner }
@@ -1730,6 +1732,12 @@ impl LoroDoc {
     #[inline]
     pub fn find_id_spans_between(&self, from: &Frontiers, to: &Frontiers) -> VersionVectorDiff {
         self.oplog().try_lock().unwrap().dag.find_path(from, to)
+    }
+
+    pub fn subscribe_pre_commit(&self, callback: PreCommitCallback) -> Subscription {
+        let (s, enable) = self.pre_commit_subs.inner().insert((), callback);
+        enable();
+        s
     }
 }
 
