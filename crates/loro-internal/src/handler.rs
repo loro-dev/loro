@@ -3903,16 +3903,12 @@ fn with_txn<R>(doc: &LoroDoc, f: impl FnOnce(&mut Transaction) -> LoroResult<R>)
     loop {
         if let Some(txn) = &mut *txn {
             return f(txn);
+        } else if cfg!(feature = "wasm") || !doc.can_edit() {
+            return Err(LoroError::AutoCommitNotStarted);
         } else {
-            if cfg!(feature = "wasm") {
-                return Err(LoroError::AutoCommitNotStarted);
-            } else if !doc.can_edit() {
-                return Err(LoroError::AutoCommitNotStarted);
-            } else {
-                drop(txn);
-                doc.start_auto_commit();
-                txn = doc.txn.lock().unwrap();
-            }
+            drop(txn);
+            doc.start_auto_commit();
+            txn = doc.txn.lock().unwrap();
         }
     }
 }
