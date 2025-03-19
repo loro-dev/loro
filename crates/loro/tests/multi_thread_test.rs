@@ -374,3 +374,10 @@ fn concurrent_document_checkout_with_modifications() {
     let text = doc.get_text("text").to_string();
     println!("Final text after concurrent checkouts: {}", text);
 }
+
+#[test]
+fn is_err_when_editing_in_detached_mode() {
+    let doc = LoroDoc::new();
+    doc.detach();
+    assert!(doc.get_text("text").insert(0, "Hello").is_err());
+}

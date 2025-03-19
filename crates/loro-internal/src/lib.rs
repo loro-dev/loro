@@ -112,6 +112,7 @@ pub use version::VersionVector;
 /// updates to [OpLog] won't affect [DocState], while updates to [DocState]
 /// will continue to affect [OpLog].
 #[derive(Debug, Clone)]
+#[repr(transparent)]
 pub struct LoroDoc {
     inner: Arc<LoroDocInner>,
 }

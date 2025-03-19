@@ -30,7 +30,7 @@ use crate::{
     op::{Op, RawOp, RawOpContent},
     span::HasIdSpan,
     version::Frontiers,
-    InternalString, LoroDocInner, LoroError, LoroValue,
+    InternalString, LoroDoc, LoroDocInner, LoroError, LoroValue,
 };
 
 use super::{
@@ -504,7 +504,7 @@ impl Transaction {
         content: RawOpContent,
         event: EventHint,
         // check whether context and txn are referring to the same state context
-        doc: &Arc<LoroDocInner>,
+        doc: &LoroDoc,
     ) -> LoroResult<()> {
         // TODO: need to check if the doc is the same
         let this_doc = self.doc.upgrade().unwrap();
@@ -593,7 +593,7 @@ impl Transaction {
     /// if it's str it will use Root container, which will not be None
     pub fn get_text<I: IntoContainerId>(&self, id: I) -> TextHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Text);
-        Handler::new_attached(id, self.doc.upgrade().unwrap())
+        Handler::new_attached(id, LoroDoc::from_inner(self.doc.upgrade().unwrap()))
             .into_text()
             .unwrap()
     }
@@ -602,7 +602,7 @@ impl Transaction {
     /// if it's str it will use Root container, which will not be None
     pub fn get_list<I: IntoContainerId>(&self, id: I) -> ListHandler {
         let id = id.into_container_id(&self.arena, ContainerType::List);
-        Handler::new_attached(id, self.doc.upgrade().unwrap())
+        Handler::new_attached(id, LoroDoc::from_inner(self.doc.upgrade().unwrap()))
             .into_list()
             .unwrap()
     }
@@ -611,7 +611,7 @@ impl Transaction {
     /// if it's str it will use Root container, which will not be None
     pub fn get_map<I: IntoContainerId>(&self, id: I) -> MapHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Map);
-        Handler::new_attached(id, self.doc.upgrade().unwrap())
+        Handler::new_attached(id, LoroDoc::from_inner(self.doc.upgrade().unwrap()))
             .into_map()
             .unwrap()
     }
@@ -620,7 +620,7 @@ impl Transaction {
     /// if it's str it will use Root container, which will not be None
     pub fn get_tree<I: IntoContainerId>(&self, id: I) -> TreeHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Tree);
-        Handler::new_attached(id, self.doc.upgrade().unwrap())
+        Handler::new_attached(id, LoroDoc::from_inner(self.doc.upgrade().unwrap()))
             .into_tree()
             .unwrap()
     }

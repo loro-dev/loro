@@ -62,9 +62,11 @@ impl<T> LoroMutex<T> {
         v.store(self.kind, Ordering::SeqCst);
         let ans = LoroMutexGuard {
             guard: ans,
-            this: self,
-            this_kind: self.kind,
-            last_kind: cur,
+            _inner: LoroMutexGuardInner {
+                this: self,
+                this_kind: self.kind,
+                last_kind: cur,
+            },
         };
         Ok(ans)
     }
@@ -72,10 +74,38 @@ impl<T> LoroMutex<T> {
     pub fn is_locked(&self) -> bool {
         self.lock.try_lock().is_err()
     }
+
+    pub fn create_lock_by_new_guard<'a>(
+        &'a self,
+        guard: MutexGuard<'a, T>,
+    ) -> LoroMutexGuard<'a, T> {
+        let v = self.currently_locked_in_this_thread.get_or_default();
+        let cur = v.load(Ordering::SeqCst);
+        if cur >= self.kind {
+            panic!(
+                "Locking order violation. Current lock kind: {}, Required lock kind: {}",
+                cur, self.kind
+            );
+        }
+
+        v.store(self.kind, Ordering::SeqCst);
+        LoroMutexGuard {
+            guard,
+            _inner: LoroMutexGuardInner {
+                this: self,
+                this_kind: self.kind,
+                last_kind: cur,
+            },
+        }
+    }
 }
 
 pub struct LoroMutexGuard<'a, T> {
     guard: MutexGuard<'a, T>,
+    _inner: LoroMutexGuardInner<'a, T>,
+}
+
+struct LoroMutexGuardInner<'a, T> {
     this: &'a LoroMutex<T>,
     this_kind: u8,
     last_kind: u8,
@@ -103,7 +133,13 @@ impl<T: Debug> std::fmt::Debug for LoroMutexGuard<'_, T> {
     }
 }
 
-impl<T> Drop for LoroMutexGuard<'_, T> {
+impl<'a, T> LoroMutexGuard<'a, T> {
+    pub fn take_guard(self) -> MutexGuard<'a, T> {
+        self.guard
+    }
+}
+
+impl<T> Drop for LoroMutexGuardInner<'_, T> {
     fn drop(&mut self) {
         let result = self
             .this

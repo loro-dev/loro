@@ -1,6 +1,5 @@
 use super::{state::DocState, txn::Transaction};
 use crate::{
-    change::get_sys_timestamp,
     container::{
         idx::ContainerIdx,
         list::list_op::{DeleteSpan, DeleteSpanWithId, ListOp},
@@ -10,7 +9,6 @@ use crate::{
     delta::{DeltaItem, Meta, StyleMeta, TreeExternalDiff},
     diff::{diff, diff_impl::UpdateTimeoutError, OperateProxy},
     event::{Diff, TextDiff, TextDiffItem, TextMeta},
-    lock::LoroMutex,
     op::ListSlice,
     state::{IndexType, State, TreeParentId},
     txn::EventHint,
@@ -102,7 +100,7 @@ fn create_handler(inner: &BasicHandler, id: ContainerID) -> Handler {
 pub struct BasicHandler {
     id: ContainerID,
     container_idx: ContainerIdx,
-    doc: Arc<LoroDocInner>,
+    doc: LoroDoc,
 }
 
 struct DetachedInner<T> {
@@ -171,7 +169,7 @@ impl<T> From<BasicHandler> for MaybeDetached<T> {
 
 impl BasicHandler {
     pub(crate) fn doc(&self) -> LoroDoc {
-        LoroDoc::from_inner(self.doc.clone())
+        self.doc.clone()
     }
 
     #[inline]
@@ -185,7 +183,7 @@ impl BasicHandler {
         &self,
         f: impl FnOnce(&mut Transaction) -> Result<R, LoroError>,
     ) -> Result<R, LoroError> {
-        with_txn(&self.doc.txn, f)
+        with_txn(&self.doc, f)
     }
 
     fn get_parent(&self) -> Option<Handler> {
@@ -1037,7 +1035,7 @@ impl HandlerTrait for Handler {
 }
 
 impl Handler {
-    pub(crate) fn new_attached(id: ContainerID, doc: Arc<LoroDocInner>) -> Self {
+    pub(crate) fn new_attached(id: ContainerID, doc: LoroDoc) -> Self {
         let kind = id.container_type();
         let handler = BasicHandler {
             container_idx: doc.arena.register_container(&id),
@@ -1302,7 +1300,7 @@ pub enum ValueOrHandler {
 impl ValueOrHandler {
     pub(crate) fn from_value(value: LoroValue, doc: &Arc<LoroDocInner>) -> Self {
         if let LoroValue::Container(c) = value {
-            ValueOrHandler::Handler(Handler::new_attached(c, doc.clone()))
+            ValueOrHandler::Handler(Handler::new_attached(c, LoroDoc::from_inner(doc.clone())))
         } else {
             ValueOrHandler::Value(value)
         }
@@ -3899,30 +3897,22 @@ impl MapHandler {
 }
 
 #[inline(always)]
-fn with_txn<R>(
-    txn: &Arc<LoroMutex<Option<Transaction>>>,
-    f: impl FnOnce(&mut Transaction) -> LoroResult<R>,
-) -> LoroResult<R> {
-    let mut start = 0.0;
+fn with_txn<R>(doc: &LoroDoc, f: impl FnOnce(&mut Transaction) -> LoroResult<R>) -> LoroResult<R> {
+    let txn = &doc.txn;
+    let mut txn = txn.lock().unwrap();
     loop {
-        let mut txn = txn.lock().unwrap();
         if let Some(txn) = &mut *txn {
             return f(txn);
         } else {
             if cfg!(feature = "wasm") {
                 return Err(LoroError::AutoCommitNotStarted);
-            }
-
-            let now = get_sys_timestamp();
-            if start < 1.0 {
-                start = now;
-            }
-
-            if now - start > 5000.0 {
-                tracing::warn!("spin lock for too long");
+            } else if !doc.can_edit() {
                 return Err(LoroError::AutoCommitNotStarted);
+            } else {
+                drop(txn);
+                doc.start_auto_commit();
+                txn = doc.txn.lock().unwrap();
             }
-            drop(txn);
         }
     }
 }
