@@ -420,14 +420,14 @@ impl Transaction {
             return Ok(None);
         };
         self.finished = true;
-        let mut state = doc.state.try_lock().unwrap();
+
         if self.local_ops.is_empty() {
+            let mut state = doc.state.try_lock().unwrap();
             state.abort_txn();
             return Ok(Some(self.take_options()));
         }
 
         let ops = std::mem::take(&mut self.local_ops);
-        let mut oplog = doc.oplog.try_lock().unwrap();
         let deps = take(&mut self.frontiers);
         let change = Change {
             lamport: self.start_lamport,
@@ -436,7 +436,7 @@ impl Transaction {
             id: ID::new(self.peer, self.start_counter),
             timestamp: self.latest_timestamp.max(
                 self.timestamp
-                    .unwrap_or_else(|| oplog.get_timestamp_for_next_txn()),
+                    .unwrap_or_else(|| doc.oplog.try_lock().unwrap().get_timestamp_for_next_txn()),
             ),
             commit_msg: take(&mut self.msg),
         };
@@ -449,6 +449,8 @@ impl Transaction {
             },
         );
         self.is_first_peer = false;
+        let mut state = doc.state.try_lock().unwrap();
+        let mut oplog = doc.oplog.try_lock().unwrap();
 
         let diff = if state.is_recording() {
             Some(change_to_diff(

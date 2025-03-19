@@ -1319,3 +1319,19 @@ fn test_pre_commit_callback() {
     sub.unsubscribe();
     assert_eq!(p.try_lock().unwrap().as_slice(), &[true, false, true]);
 }
+
+#[test]
+fn test_pre_commit_with_lock() {
+    let doc = LoroDoc::new_auto_commit();
+    let doc_clone = doc.clone();
+    let sub = doc.subscribe_pre_commit(Box::new(move |_e| {
+        // state lock
+        doc_clone.get_deep_value();
+        // oplog lock
+        doc_clone.oplog_vv();
+        true
+    }));
+    doc.get_text("text").insert(0, "a").unwrap();
+    doc.commit_then_renew();
+    sub.unsubscribe();
+}
