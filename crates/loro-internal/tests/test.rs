@@ -1306,7 +1306,7 @@ fn test_pre_commit_callback() {
     let p = Arc::new(Mutex::new(vec![]));
     let p2 = Arc::clone(&p);
     let sub = doc.subscribe_pre_commit(Box::new(move |e| {
-        p2.try_lock().unwrap().push(e.is_first_peer);
+        p2.try_lock().unwrap().push(e.is_peer_first_appearance);
         true
     }));
     doc.get_text("text").insert(0, "a").unwrap();

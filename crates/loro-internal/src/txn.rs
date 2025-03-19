@@ -30,7 +30,7 @@ use crate::{
     span::HasIdSpan,
     subscription::PreCommitCallbackPayload,
     version::Frontiers,
-    InternalString, LoroDocInner, LoroError, LoroValue,
+    ChangeMeta, InternalString, LoroDocInner, LoroError, LoroValue,
 };
 
 use super::{
@@ -151,7 +151,7 @@ pub struct Transaction {
     timestamp: Option<Timestamp>,
     msg: Option<Arc<str>>,
     latest_timestamp: Timestamp,
-    is_first_peer: bool,
+    is_peer_first_appearance: bool,
 }
 
 impl std::fmt::Debug for Transaction {
@@ -359,7 +359,7 @@ impl Transaction {
             on_commit: None,
             msg: None,
             latest_timestamp,
-            is_first_peer: false,
+            is_peer_first_appearance: false,
         }
     }
 
@@ -444,11 +444,12 @@ impl Transaction {
         doc.pre_commit_subs.emit(
             &(),
             PreCommitCallbackPayload {
-                id: change.id,
-                is_first_peer: self.is_first_peer,
+                change_meta: ChangeMeta::from_change(&change),
+                is_peer_first_appearance: self.is_peer_first_appearance,
+                origin: self.origin.to_string(),
             },
         );
-        self.is_first_peer = false;
+        self.is_peer_first_appearance = false;
         let mut state = doc.state.try_lock().unwrap();
         let mut oplog = doc.oplog.try_lock().unwrap();
 
@@ -562,8 +563,8 @@ impl Transaction {
         {
             // update version info
             let mut oplog = doc.oplog.try_lock().unwrap();
-            if !self.is_first_peer && !oplog.dag.latest_vv_contains_peer(self.peer) {
-                self.is_first_peer = true;
+            if !self.is_peer_first_appearance && !oplog.dag.latest_vv_contains_peer(self.peer) {
+                self.is_peer_first_appearance = true;
             }
             let dep_id = Frontiers::from_id(ID::new(self.peer, self.next_counter - 1));
             let start_id = ID::new(self.peer, self.next_counter);
