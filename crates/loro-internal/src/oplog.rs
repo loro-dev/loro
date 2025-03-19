@@ -133,7 +133,7 @@ impl OpLog {
         let _enter = s.enter();
         self.dag.handle_new_change(&change, from_local);
         self.history_cache
-            .try_lock()
+            .lock()
             .unwrap()
             .insert_by_new_change(&change, true, true);
         self.register_container_and_parent_link(&change);
@@ -145,16 +145,16 @@ impl OpLog {
     where
         F: FnOnce(&mut ContainerHistoryCache) -> R,
     {
-        let mut history_cache = self.history_cache.try_lock().unwrap();
+        let mut history_cache = self.history_cache.lock().unwrap();
         f(&mut history_cache)
     }
 
     pub fn has_history_cache(&self) -> bool {
-        self.history_cache.try_lock().unwrap().has_cache()
+        self.history_cache.lock().unwrap().has_cache()
     }
 
     pub fn free_history_cache(&self) {
-        let mut history_cache = self.history_cache.try_lock().unwrap();
+        let mut history_cache = self.history_cache.lock().unwrap();
         history_cache.free();
     }
 

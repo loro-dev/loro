@@ -39,7 +39,7 @@ impl MovableListActor {
         loro.subscribe(
             &ContainerID::new_root("movable_list", ContainerType::MovableList),
             Arc::new(move |event| {
-                let mut list = list.try_lock().unwrap();
+                let mut list = list.lock().unwrap();
                 list.apply_diff(event);
             }),
         )
@@ -72,7 +72,7 @@ impl ActorTrait for MovableListActor {
     fn check_tracker(&self) {
         let list = self.loro.get_movable_list("movable_list");
         let value = list.get_deep_value();
-        let tracker = self.tracker.try_lock().unwrap().to_value();
+        let tracker = self.tracker.lock().unwrap().to_value();
         assert_eq!(
             &value,
             tracker.into_map().unwrap().get("movable_list").unwrap()

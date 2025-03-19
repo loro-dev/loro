@@ -419,7 +419,7 @@ fn test_pending() {
 
     // b does not has c's change
     a.import(&b.export_from(&a.oplog_vv())).unwrap();
-    dbg!(&a.oplog().try_lock().unwrap());
+    dbg!(&a.oplog().lock().unwrap());
     assert_eq!(a.get_deep_value().to_json_value(), json!({"text": "210"}));
 }
 
@@ -434,7 +434,7 @@ fn test_checkout() {
     let root_value = value.clone();
     let _g = doc_0.subscribe_root(Arc::new(move |event| {
         dbg!(&event);
-        let mut root_value = root_value.try_lock().unwrap();
+        let mut root_value = root_value.lock().unwrap();
         for container_diff in event.events {
             root_value.apply(
                 &container_diff.path.iter().map(|x| x.1.clone()).collect(),
@@ -466,9 +466,9 @@ fn test_checkout() {
         .checkout(&Frontiers::from(vec![ID::new(0, 2)]))
         .unwrap();
 
-    assert_eq!(&doc_0.get_deep_value(), &*value.try_lock().unwrap());
+    assert_eq!(&doc_0.get_deep_value(), &*value.lock().unwrap());
     assert_eq!(
-        value.try_lock().unwrap().to_json_value(),
+        value.lock().unwrap().to_json_value(),
         json!({
             "map": {
                 "text": "12"
@@ -485,7 +485,7 @@ fn test_timestamp() {
     let mut txn = doc.txn().unwrap();
     text.insert_with_txn(&mut txn, 0, "123").unwrap();
     txn.commit().unwrap();
-    let op_log = &doc.oplog().try_lock().unwrap();
+    let op_log = &doc.oplog().lock().unwrap();
     let change = op_log.get_change_at(ID::new(doc.peer_id(), 0)).unwrap();
     assert!(change.timestamp() > 1690966970);
 }
@@ -817,7 +817,7 @@ fn missing_event_when_checkout() {
     let _g = doc.subscribe(
         &ContainerID::new_root("tree", ContainerType::Tree),
         Arc::new(move |e| {
-            let mut v = map.try_lock().unwrap();
+            let mut v = map.lock().unwrap();
             for container_diff in e.events.iter() {
                 let from_children =
                     container_diff.id != ContainerID::new_root("tree", ContainerType::Tree);
@@ -855,7 +855,7 @@ fn missing_event_when_checkout() {
     doc.import(&doc2.export_from(&doc.oplog_vv())).unwrap();
     // checkout use the same diff_calculator, the depth of calculator is not updated
     doc.attach();
-    assert!(value.try_lock().unwrap().contains_key("b"));
+    assert!(value.lock().unwrap().contains_key("b"));
 }
 
 #[test]

@@ -283,13 +283,13 @@ impl Stack {
     pub fn pop(&mut self) -> Option<(StackItem, Arc<Mutex<DiffBatch>>)> {
         while self.stack.back().unwrap().0.is_empty() && self.stack.len() > 1 {
             let (_, diff) = self.stack.pop_back().unwrap();
-            let diff = diff.try_lock().unwrap();
+            let diff = diff.lock().unwrap();
             if !diff.cid_to_events.is_empty() {
                 self.stack
                     .back_mut()
                     .unwrap()
                     .1
-                    .try_lock()
+                    .lock()
                     .unwrap()
                     .compose(&diff);
             }
@@ -297,7 +297,7 @@ impl Stack {
 
         if self.stack.len() == 1 && self.stack.back().unwrap().0.is_empty() {
             // If the stack is empty, we need to clear the remote diff
-            self.stack.back_mut().unwrap().1.try_lock().unwrap().clear();
+            self.stack.back_mut().unwrap().1.lock().unwrap().clear();
             return None;
         }
 
@@ -315,7 +315,7 @@ impl Stack {
 
     pub fn push_with_merge(&mut self, span: CounterSpan, meta: UndoItemMeta, can_merge: bool) {
         let last = self.stack.back_mut().unwrap();
-        let last_remote_diff = last.1.try_lock().unwrap();
+        let last_remote_diff = last.1.lock().unwrap();
         if !last_remote_diff.cid_to_events.is_empty() {
             // If the remote diff is not empty, we cannot merge
             drop(last_remote_diff);
@@ -347,7 +347,7 @@ impl Stack {
         }
 
         let remote_diff = &mut self.stack.back_mut().unwrap().1;
-        let mut remote_diff = remote_diff.try_lock().unwrap();
+        let mut remote_diff = remote_diff.lock().unwrap();
         for e in diff {
             if let Some(d) = remote_diff.cid_to_events.get_mut(&e.id) {
                 d.compose_ref(&e.diff);
@@ -365,7 +365,7 @@ impl Stack {
             return;
         }
         let remote_diff = &mut self.stack.back_mut().unwrap().1;
-        remote_diff.try_lock().unwrap().transform(diff, false);
+        remote_diff.lock().unwrap().transform(diff, false);
     }
 
     pub fn clear(&mut self) {
@@ -456,7 +456,7 @@ impl UndoManagerInner {
 
 fn get_counter_end(doc: &LoroDoc, peer: PeerID) -> Counter {
     doc.oplog()
-        .try_lock()
+        .lock()
         .unwrap()
         .vv()
         .get(&peer)
@@ -481,7 +481,7 @@ impl UndoManager {
             EventTriggerKind::Local => {
                 // TODO: PERF undo can be significantly faster if we can get
                 // the DiffBatch for undo here
-                let Ok(mut inner) = inner_clone.try_lock() else {
+                let Ok(mut inner) = inner_clone.lock() else {
                     return;
                 };
                 if inner.processing_undo {
@@ -510,7 +510,7 @@ impl UndoManager {
                 }
             }
             EventTriggerKind::Import => {
-                let mut inner = inner_clone.try_lock().unwrap();
+                let mut inner = inner_clone.lock().unwrap();
 
                 for e in event.events {
                     if let Diff::Tree(tree) = &e.diff {
@@ -520,7 +520,7 @@ impl UndoManager {
                                 // If the concurrent event is a create event, it may bring the deleted tree node back,
                                 // so we need to remove it from the remap of the container.
                                 remap_containers_clone
-                                    .try_lock()
+                                    .lock()
                                     .unwrap()
                                     .remove(&target.associated_meta_container());
                             }
@@ -532,7 +532,7 @@ impl UndoManager {
                 inner.redo_stack.compose_remote_event(event.events);
             }
             EventTriggerKind::Checkout => {
-                let mut inner = inner_clone.try_lock().unwrap();
+                let mut inner = inner_clone.lock().unwrap();
                 inner.undo_stack.clear();
                 inner.redo_stack.clear();
                 inner.next_counter = None;
@@ -540,7 +540,7 @@ impl UndoManager {
         }));
 
         let sub = doc.subscribe_peer_id_change(Box::new(move |id| {
-            let mut inner = inner_clone2.try_lock().unwrap();
+            let mut inner = inner_clone2.lock().unwrap();
             inner.undo_stack.clear();
             inner.redo_stack.clear();
             inner.next_counter = Some(id.counter);
@@ -563,16 +563,16 @@ impl UndoManager {
     }
 
     pub fn set_merge_interval(&mut self, interval: i64) {
-        self.inner.try_lock().unwrap().merge_interval_in_ms = interval;
+        self.inner.lock().unwrap().merge_interval_in_ms = interval;
     }
 
     pub fn set_max_undo_steps(&mut self, size: usize) {
-        self.inner.try_lock().unwrap().max_stack_size = size;
+        self.inner.lock().unwrap().max_stack_size = size;
     }
 
     pub fn add_exclude_origin_prefix(&mut self, prefix: &str) {
         self.inner
-            .try_lock()
+            .lock()
             .unwrap()
             .exclude_origin_prefixes
             .push(prefix.into());
@@ -582,7 +582,7 @@ impl UndoManager {
         self.doc.commit_then_renew();
         let counter = get_counter_end(&self.doc, self.peer());
         self.inner
-            .try_lock()
+            .lock()
             .unwrap()
             .record_checkpoint(counter, None);
         Ok(())
@@ -669,7 +669,7 @@ impl UndoManager {
         self.record_new_checkpoint()?;
         let end_counter = get_counter_end(doc, self.peer());
         let mut top = {
-            let mut inner = self.inner.try_lock().unwrap();
+            let mut inner = self.inner.lock().unwrap();
             inner.processing_undo = true;
             get_stack(&mut inner).pop()
         };
@@ -680,24 +680,24 @@ impl UndoManager {
             {
                 let inner = self.inner.clone();
                 // We need to clone this because otherwise <transform_delta> will be applied to the same remote diff
-                let remote_change_clone = remote_diff.try_lock().unwrap().clone();
+                let remote_change_clone = remote_diff.lock().unwrap().clone();
                 let commit = doc.undo_internal(
                     IdSpan {
                         peer: self.peer(),
                         counter: span.span,
                     },
-                    &mut self.container_remap.try_lock().unwrap(),
+                    &mut self.container_remap.lock().unwrap(),
                     Some(&remote_change_clone),
                     &mut |diff| {
                         info_span!("transform remote diff").in_scope(|| {
-                            let mut inner = inner.try_lock().unwrap();
+                            let mut inner = inner.lock().unwrap();
                             // <transform_delta>
                             get_stack(&mut inner).transform_based_on_this_delta(diff);
                         });
                     },
                 )?;
                 drop(commit);
-                let mut inner = self.inner.try_lock().unwrap();
+                let mut inner = self.inner.lock().unwrap();
                 if let Some(x) = inner.on_pop.as_ref() {
                     for cursor in span.meta.cursors.iter_mut() {
                         // <cursor_transform> We need to transform cursor here.
@@ -705,9 +705,9 @@ impl UndoManager {
                         // remote_diff is also transformed by it now (that's what we need).
                         transform_cursor(
                             cursor,
-                            &remote_diff.try_lock().unwrap(),
+                            &remote_diff.lock().unwrap(),
                             doc,
-                            &self.container_remap.try_lock().unwrap(),
+                            &self.container_remap.lock().unwrap(),
                         );
                     }
 
@@ -719,7 +719,7 @@ impl UndoManager {
             }
             let new_counter = get_counter_end(doc, self.peer());
             if end_counter != new_counter {
-                let mut inner = self.inner.try_lock().unwrap();
+                let mut inner = self.inner.lock().unwrap();
                 let mut meta = inner
                     .on_push
                     .as_ref()
@@ -744,34 +744,34 @@ impl UndoManager {
                 break;
             } else {
                 // continue to pop the undo item as this undo is a no-op
-                top = get_stack(&mut self.inner.try_lock().unwrap()).pop();
+                top = get_stack(&mut self.inner.lock().unwrap()).pop();
                 continue;
             }
         }
 
-        self.inner.try_lock().unwrap().processing_undo = false;
+        self.inner.lock().unwrap().processing_undo = false;
         Ok(executed)
     }
 
     pub fn can_undo(&self) -> bool {
-        !self.inner.try_lock().unwrap().undo_stack.is_empty()
+        !self.inner.lock().unwrap().undo_stack.is_empty()
     }
 
     pub fn can_redo(&self) -> bool {
-        !self.inner.try_lock().unwrap().redo_stack.is_empty()
+        !self.inner.lock().unwrap().redo_stack.is_empty()
     }
 
     pub fn set_on_push(&self, on_push: Option<OnPush>) {
-        self.inner.try_lock().unwrap().on_push = on_push;
+        self.inner.lock().unwrap().on_push = on_push;
     }
 
     pub fn set_on_pop(&self, on_pop: Option<OnPop>) {
-        self.inner.try_lock().unwrap().on_pop = on_pop;
+        self.inner.lock().unwrap().on_pop = on_pop;
     }
 
     pub fn clear(&self) {
-        self.inner.try_lock().unwrap().undo_stack.clear();
-        self.inner.try_lock().unwrap().redo_stack.clear();
+        self.inner.lock().unwrap().undo_stack.clear();
+        self.inner.lock().unwrap().redo_stack.clear();
     }
 }
 

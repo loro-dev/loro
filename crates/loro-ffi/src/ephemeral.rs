@@ -25,36 +25,36 @@ impl EphemeralStore {
     }
 
     pub fn encode(&self, key: &str) -> Vec<u8> {
-        self.0.try_lock().unwrap().encode(key)
+        self.0.lock().unwrap().encode(key)
     }
 
     pub fn encode_all(&self) -> Vec<u8> {
-        self.0.try_lock().unwrap().encode_all()
+        self.0.lock().unwrap().encode_all()
     }
 
     pub fn apply(&self, data: &[u8]) {
-        self.0.try_lock().unwrap().apply(data)
+        self.0.lock().unwrap().apply(data)
     }
 
     pub fn set(&self, key: &str, value: Arc<dyn LoroValueLike>) {
-        self.0.try_lock().unwrap().set(key, value.as_loro_value())
+        self.0.lock().unwrap().set(key, value.as_loro_value())
     }
 
     pub fn delete(&self, key: &str) {
-        self.0.try_lock().unwrap().delete(key)
+        self.0.lock().unwrap().delete(key)
     }
 
     pub fn get(&self, key: &str) -> Option<LoroValue> {
-        self.0.try_lock().unwrap().get(key).map(|v| v.into())
+        self.0.lock().unwrap().get(key).map(|v| v.into())
     }
 
     pub fn remove_outdated(&self) {
-        self.0.try_lock().unwrap().remove_outdated()
+        self.0.lock().unwrap().remove_outdated()
     }
 
     pub fn keys(&self) -> Vec<String> {
         self.0
-            .try_lock()
+            .lock()
             .unwrap()
             .keys()
             .map(|s| s.to_string())
@@ -63,7 +63,7 @@ impl EphemeralStore {
 
     pub fn get_all_states(&self) -> std::collections::HashMap<String, LoroValue> {
         self.0
-            .try_lock()
+            .lock()
             .unwrap()
             .get_all_states()
             .into_iter()
@@ -77,7 +77,7 @@ impl EphemeralStore {
     ) -> Arc<Subscription> {
         let s = self
             .0
-            .try_lock()
+            .lock()
             .unwrap()
             .subscribe_local_updates(Box::new(move |update| {
                 // TODO: should it be cloned?
@@ -90,7 +90,7 @@ impl EphemeralStore {
     pub fn subscribe(&self, listener: Arc<dyn EphemeralSubscriber>) -> Arc<Subscription> {
         let s = self
             .0
-            .try_lock()
+            .lock()
             .unwrap()
             .subscribe(Box::new(move |update| {
                 listener.on_ephemeral_event(EphemeralStoreEvent {
