@@ -421,10 +421,8 @@ impl Transaction {
             return Ok(None);
         };
         self.finished = true;
-        let mut oplog = doc.oplog.lock().unwrap();
-        let mut state = doc.state.lock().unwrap();
         if self.local_ops.is_empty() {
-            let mut state = doc.state.try_lock().unwrap();
+            let mut state = doc.state.lock().unwrap();
             state.abort_txn();
             return Ok(Some(self.take_options()));
         }
@@ -438,7 +436,7 @@ impl Transaction {
             id: ID::new(self.peer, self.start_counter),
             timestamp: self.latest_timestamp.max(
                 self.timestamp
-                    .unwrap_or_else(|| doc.oplog.try_lock().unwrap().get_timestamp_for_next_txn()),
+                    .unwrap_or_else(|| doc.oplog.lock().unwrap().get_timestamp_for_next_txn()),
             ),
             commit_msg: take(&mut self.msg),
         };
@@ -452,8 +450,8 @@ impl Transaction {
             },
         );
         self.is_peer_first_appearance = false;
-        let mut state = doc.state.try_lock().unwrap();
-        let mut oplog = doc.oplog.try_lock().unwrap();
+        let mut oplog = doc.oplog.lock().unwrap();
+        let mut state = doc.state.lock().unwrap();
 
         let diff = if state.is_recording() {
             Some(change_to_diff(
@@ -552,7 +550,6 @@ impl Transaction {
             container,
             content,
         };
-
         let mut oplog = doc.oplog.lock().unwrap();
         let mut state = doc.state.lock().unwrap();
         if state.is_deleted(container) {
@@ -565,7 +562,6 @@ impl Transaction {
         state.apply_local_op(&raw_op, &op)?;
         {
             // update version info
-            let mut oplog = doc.oplog.try_lock().unwrap();
             if !self.is_peer_first_appearance && !oplog.dag.latest_vv_contains_peer(self.peer) {
                 self.is_peer_first_appearance = true;
             }
