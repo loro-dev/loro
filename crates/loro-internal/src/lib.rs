@@ -94,22 +94,22 @@ pub use value::wasm;
 pub use value::{ApplyDiff, LoroValue, ToJson};
 pub use version::VersionVector;
 
-/// `LoroApp` serves as the library's primary entry point.
-/// It's constituted by an [OpLog] and an [AppState].
+/// [`LoroDoc`] serves as the library's primary entry point.
+/// It's constituted by an [OpLog] and an [DocState].
 ///
 /// - [OpLog] encompasses all operations, signifying the document history.
-/// - [AppState] signifies the current document state.
+/// - [DocState] signifies the current document state.
 ///
 /// They will share a [super::arena::SharedArena]
 ///
 /// # Detached Mode
 ///
-/// This mode enables separate usage of [OpLog] and [AppState].
-/// It facilitates temporal navigation. [AppState] can be reverted to
+/// This mode enables separate usage of [OpLog] and [DocState].
+/// It facilitates temporal navigation. [DocState] can be reverted to
 /// any version contained within the [OpLog].
 ///
-/// `LoroApp::detach()` separates [AppState] from [OpLog]. In this mode,
-/// updates to [OpLog] won't affect [AppState], while updates to [AppState]
+/// `LoroDoc::detach()` separates [DocState] from [OpLog]. In this mode,
+/// updates to [OpLog] won't affect [DocState], while updates to [DocState]
 /// will continue to affect [OpLog].
 #[derive(Debug, Clone)]
 pub struct LoroDoc {
@@ -137,7 +137,20 @@ pub struct LoroDocInner {
     config: Configure,
     observer: Arc<Observer>,
     diff_calculator: Arc<LoroMutex<DiffCalculator>>,
-    // when dropping the doc, the txn will be committed
+    /// When dropping the doc, the txn will be committed
+    ///
+    /// # Internal Notes
+    ///
+    /// Txn can be accessed by different threads. But for certain methods we need to lock the txn and ensure it's empty:
+    ///
+    /// - `import`
+    /// - `export`
+    /// - `checkout`
+    /// - `checkout_to_latest`
+    /// - ...
+    ///
+    /// We need to lock txn and keep it None because otherwise the DocState may change due to a parallel edit on a new Txn,
+    /// which may break the invariants of `import`, `export` and `checkout`.
     txn: Arc<LoroMutex<Option<Transaction>>>,
     auto_commit: AtomicBool,
     detached: AtomicBool,

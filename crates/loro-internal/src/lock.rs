@@ -68,6 +68,10 @@ impl<T> LoroMutex<T> {
         };
         Ok(ans)
     }
+
+    pub fn is_locked(&self) -> bool {
+        self.lock.try_lock().is_err()
+    }
 }
 
 pub struct LoroMutexGuard<'a, T> {
