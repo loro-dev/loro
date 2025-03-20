@@ -30,8 +30,8 @@ pub struct PreCommitCallbackPayload {
 pub struct FirstCommitFromPeerPayload {
     /// The peer id of the first commit.
     pub peer: PeerID,
-    /// The modifier of the change. You can modify the change in the callback.
-    pub modifier: ChangeModifier,
+    // /// The modifier of the change. You can modify the change in the callback.
+    // pub modifier: ChangeModifier,
 }
 
 #[derive(Debug, Clone, Default)]

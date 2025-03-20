@@ -247,22 +247,18 @@ impl LoroDoc {
                 .unwrap_or(false)
         };
         if is_peer_first_appear {
-            let change_modifier = ChangeModifier::default();
+            // let change_modifier = ChangeModifier::default();
             // First commit from a peer
             self.first_commit_from_peer_subs.emit(
                 &(),
                 FirstCommitFromPeerPayload {
                     peer: self.peer_id(),
-                    // change_meta: {
-                    //     let txn = self.txn.lock().unwrap();
-                    //     txn.as_ref().unwrap().get_change_meta_for_now(self)
-                    // },
-                    modifier: change_modifier.clone(),
+                    // modifier: change_modifier.clone(),
                 },
             );
             let mut txn = self.txn.lock().unwrap();
             let txn = txn.as_mut().unwrap();
-            change_modifier.modify(txn);
+            // change_modifier.modify(txn);
             txn.is_peer_first_appearance = false;
         }
         self.is_in_before_commit.store(false, Release);
@@ -289,7 +285,7 @@ impl LoroDoc {
                 return (None, Some(txn_guard));
             }
             if self.is_in_before_commit.load(Acquire) {
-                panic!("`commit()` should not be called in before_commit");
+                panic!("`commit()` should not be called in `FirstCommitFromPeerCallback`");
             }
         }
 

@@ -99,6 +99,7 @@ impl crate::LoroDoc {
     {
         let mut txn = self.txn().unwrap();
         let v = f(&mut txn)?;
+        // TODO: pre_commit and peer first commit
         txn.commit()?;
         Ok(v)
     }
