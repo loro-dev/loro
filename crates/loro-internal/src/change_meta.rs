@@ -1,12 +1,15 @@
 use std::{cmp::Ordering, sync::Arc};
 
-use loro_common::HasLamport;
+use itertools::Itertools;
+use loro_common::{HasLamport, IdSpan};
 use rle::HasLength;
 
 use crate::{
     change::{Change, Lamport, Timestamp},
+    encoding::export_fast_updates_in_range,
     id::ID,
     version::Frontiers,
+    LoroDoc,
 };
 
 /// `Change` is a grouped continuous operations that share the same id, timestamp, commit message.
@@ -89,5 +92,31 @@ impl ChangeMeta {
             Some(m) => m,
             None => "",
         }
+    }
+
+    pub fn hash_change(&self, doc: &LoroDoc) -> String {
+        let oplog = doc.oplog.lock().unwrap();
+        // TODO: just encode change content
+        let encoded = export_fast_updates_in_range(
+            &oplog,
+            &[IdSpan::new(
+                self.id.peer,
+                self.id.counter,
+                self.id.counter + self.len as i32,
+            )],
+        );
+        let mut deps_hash = vec![];
+        for dep in self.deps.iter().sorted() {
+            let c = oplog.get_change_at(dep).unwrap();
+            if let Some(msg) = c.message() {
+                let dep_hash = msg.lines().next().unwrap_or("");
+                deps_hash.extend_from_slice(dep_hash.as_bytes());
+            } else {
+                // TODO: how to handle this
+                panic!("Change {} has no hash message", dep);
+            }
+        }
+        let input = [deps_hash, encoded].concat();
+        blake3::hash(&input).to_hex().to_string()
     }
 }

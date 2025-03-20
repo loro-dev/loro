@@ -1,14 +1,16 @@
 use std::sync::{atomic::AtomicBool, Arc, Mutex};
 
 use fxhash::FxHashMap;
-use loro_common::{ContainerID, ContainerType, LoroError, LoroResult, LoroValue, PeerID, ID};
+use loro_common::{
+    loro_value, ContainerID, ContainerType, LoroError, LoroResult, LoroValue, PeerID, ID,
+};
 use loro_internal::{
     delta::ResolvedMapValue,
     encoding::ImportStatus,
     event::{Diff, EventTriggerKind},
     fx_map,
     handler::{Handler, TextDelta, ValueOrHandler},
-    loro::ExportMode,
+    loro::{CommitOptions, ExportMode},
     version::{Frontiers, VersionRange},
     ApplyDiff, HandlerTrait, ListHandler, LoroDoc, MapHandler, TextHandler, ToJson, TreeHandler,
     TreeParentId,
@@ -1307,7 +1309,7 @@ fn test_on_first_commit_from_peer() {
     let p = Arc::new(Mutex::new(vec![]));
     let p2 = Arc::clone(&p);
     let sub = doc.subscribe_first_commit_from_peer(Box::new(move |e| {
-        p2.try_lock().unwrap().push(e.change_meta.id.peer);
+        p2.try_lock().unwrap().push(e.peer);
         true
     }));
     doc.get_text("text").insert(0, "a").unwrap();
@@ -1343,6 +1345,29 @@ fn test_on_first_commit_from_peer_with_lock() {
 }
 
 #[test]
+fn test_on_first_peer_commit_attach_user_id() {
+    let doc = LoroDoc::new_auto_commit();
+    doc.set_peer_id(0).unwrap();
+    let doc_clone = doc.clone();
+    let sub = doc.subscribe_first_commit_from_peer(Box::new(move |e| {
+        doc_clone
+            .get_map("::loro::user_id")
+            .insert(e.peer.to_string().as_str(), "user_bob")
+            .unwrap();
+        true
+    }));
+    doc.get_text("text").insert(0, "a").unwrap();
+    doc.commit_then_renew();
+    sub.unsubscribe();
+    assert_eq!(
+        doc.get_map("::loro::user_id").get_value(),
+        loro_value!({
+            "0": "user_bob"
+        })
+    );
+}
+
+#[test]
 fn test_pre_commit_with_lock() {
     let doc = LoroDoc::new_auto_commit();
     let doc_clone = doc.clone();
@@ -1356,4 +1381,42 @@ fn test_pre_commit_with_lock() {
     doc.get_text("text").insert(0, "a").unwrap();
     doc.commit_then_renew();
     sub.unsubscribe();
+}
+
+#[test]
+fn test_pre_commit_with_hash() {
+    let doc = LoroDoc::new_auto_commit();
+    doc.set_peer_id(0).unwrap();
+    let doc_clone = doc.clone();
+    let sub = doc.subscribe_pre_commit(Box::new(move |e| {
+        let hash = e.change_meta.hash_change(&doc_clone);
+        e.modifier.lock().unwrap().set_msg(Arc::from(format!(
+            "{}\n{}",
+            hash,
+            e.change_meta.message()
+        )));
+        true
+    }));
+    doc.get_text("text").insert(0, "a").unwrap();
+    doc.commit_with(
+        CommitOptions::default()
+            .commit_msg("add a")
+            .immediate_renew(true),
+    );
+    doc.get_text("text").insert(0, "b").unwrap();
+    doc.commit_with(
+        CommitOptions::default()
+            .commit_msg("add b")
+            .immediate_renew(true),
+    );
+    sub.unsubscribe();
+    let changes = doc
+        .export_json_updates(&Default::default(), &doc.oplog_vv(), false)
+        .changes;
+    assert_eq!(changes.len(), 2);
+    for c in changes {
+        let mut msg = c.msg.as_ref().unwrap().lines();
+        assert_eq!(msg.next().unwrap().len(), 64);
+        assert!(msg.next().is_some());
+    }
 }

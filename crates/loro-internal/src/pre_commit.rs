@@ -2,7 +2,12 @@ use std::sync::{Arc, Mutex};
 
 use loro_common::PeerID;
 
-use crate::{change::Timestamp, oplog::get_timestamp_now_txn, txn::Transaction, ChangeMeta};
+use crate::{
+    change::{Change, Timestamp},
+    oplog::get_timestamp_now_txn,
+    txn::Transaction,
+    ChangeMeta,
+};
 
 /// The callback of the first commit from a peer.
 pub type FirstCommitFromPeerCallback =
@@ -16,6 +21,8 @@ pub struct PreCommitCallbackPayload {
     pub change_meta: ChangeMeta,
     /// The origin of the commit.
     pub origin: String,
+    /// The modifier of the change. You can modify the change in the callback.
+    pub modifier: Arc<Mutex<ChangeModifier>>,
 }
 
 /// The payload of the first commit from a peer callback.
@@ -23,8 +30,6 @@ pub struct PreCommitCallbackPayload {
 pub struct FirstCommitFromPeerPayload {
     /// The peer id of the first commit.
     pub peer: PeerID,
-    /// The metadata of the change which will be committed.
-    pub change_meta: ChangeMeta,
     /// The modifier of the change. You can modify the change in the callback.
     pub modifier: Arc<Mutex<ChangeModifier>>,
 }
@@ -48,9 +53,19 @@ impl ChangeModifier {
         self.new_timestamp = Some(get_timestamp_now_txn());
     }
 
-    pub(crate) fn modify(self, txn: &mut Transaction) {
-        if let Some(msg) = self.new_msg {
-            txn.set_msg(Some(msg));
+    pub(crate) fn modify_change(&self, change: &mut Change) {
+        if let Some(msg) = &self.new_msg {
+            change.commit_msg = Some(msg.clone());
+        }
+
+        if let Some(timestamp) = self.new_timestamp {
+            change.timestamp = timestamp;
+        }
+    }
+
+    pub(crate) fn modify(&self, txn: &mut Transaction) {
+        if let Some(msg) = &self.new_msg {
+            txn.set_msg(Some(msg.clone()));
         }
 
         if let Some(timestamp) = self.new_timestamp {

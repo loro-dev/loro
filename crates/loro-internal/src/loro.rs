@@ -253,23 +253,20 @@ impl LoroDoc {
                 &(),
                 FirstCommitFromPeerPayload {
                     peer: self.peer_id(),
-                    change_meta: {
-                        let txn = self.txn.lock().unwrap();
-                        txn.as_ref().unwrap().get_change_meta_for_now(self)
-                    },
+                    // change_meta: {
+                    //     let txn = self.txn.lock().unwrap();
+                    //     txn.as_ref().unwrap().get_change_meta_for_now(self)
+                    // },
                     modifier: change_modifier.clone(),
                 },
             );
             let mut txn = self.txn.lock().unwrap();
             let txn = txn.as_mut().unwrap();
-            let c = Arc::into_inner(change_modifier)
-                .unwrap()
-                .into_inner()
-                .unwrap();
+            let c = change_modifier.lock().unwrap();
             c.modify(txn);
             txn.is_peer_first_appearance = false;
-            self.is_in_before_commit.store(false, Release);
         }
+        self.is_in_before_commit.store(false, Release);
     }
 
     /// Commit the cumulative auto commit transaction.

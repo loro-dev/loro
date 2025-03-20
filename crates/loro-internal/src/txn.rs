@@ -9,7 +9,6 @@ use enum_as_inner::EnumAsInner;
 use generic_btree::rle::{HasLength as RleHasLength, Mergeable as GBSliceable};
 use loro_common::{ContainerType, IdLp, IdSpan, LoroResult};
 use loro_delta::{array_vec::ArrayVec, DeltaRopeBuilder};
-use num_traits::AsPrimitive;
 use rle::{HasLength, Mergable, RleVec};
 use smallvec::{smallvec, SmallVec};
 
@@ -29,7 +28,7 @@ use crate::{
     lock::LoroMutex,
     loro::CommitOptions,
     op::{Op, RawOp, RawOpContent},
-    pre_commit::{ChangeModifier, FirstCommitFromPeerPayload, PreCommitCallbackPayload},
+    pre_commit::{ChangeModifier, PreCommitCallbackPayload},
     span::HasIdSpan,
     version::Frontiers,
     ChangeMeta, InternalString, LoroDoc, LoroDocInner, LoroError, LoroValue,
@@ -430,7 +429,7 @@ impl Transaction {
 
         let ops = std::mem::take(&mut self.local_ops);
         let deps = take(&mut self.frontiers);
-        let change = Change {
+        let mut change = Change {
             lamport: self.start_lamport,
             ops,
             deps,
@@ -442,13 +441,16 @@ impl Transaction {
             commit_msg: take(&mut self.msg),
         };
 
+        let modifier = Arc::new(Mutex::new(ChangeModifier::default()));
         doc.pre_commit_subs.emit(
             &(),
             PreCommitCallbackPayload {
                 change_meta: ChangeMeta::from_change(&change),
                 origin: self.origin.to_string(),
+                modifier: modifier.clone(),
             },
         );
+        modifier.lock().unwrap().modify_change(&mut change);
 
         let mut oplog = doc.oplog.lock().unwrap();
         let mut state = doc.state.lock().unwrap();
@@ -496,20 +498,6 @@ impl Transaction {
             on_commit(&doc.state.clone(), &doc.oplog.clone(), self.id_span());
         }
         Ok(None)
-    }
-
-    pub(crate) fn get_change_meta_for_now(&self, doc: &LoroDoc) -> ChangeMeta {
-        ChangeMeta {
-            lamport: self.start_lamport,
-            id: ID::new(self.peer, self.start_counter),
-            timestamp: self.latest_timestamp.max(
-                self.timestamp
-                    .unwrap_or_else(|| doc.oplog.lock().unwrap().get_timestamp_for_next_txn()),
-            ),
-            message: self.msg.as_ref().map(Arc::clone),
-            deps: self.frontiers.clone(),
-            len: self.local_ops.span().as_(),
-        }
     }
 
     fn take_options(&self) -> CommitOptions {
