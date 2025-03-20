@@ -1390,11 +1390,8 @@ fn test_pre_commit_with_hash() {
     let doc_clone = doc.clone();
     let sub = doc.subscribe_pre_commit(Box::new(move |e| {
         let hash = e.change_meta.hash_change(&doc_clone);
-        e.modifier.lock().unwrap().set_msg(Arc::from(format!(
-            "{}\n{}",
-            hash,
-            e.change_meta.message()
-        )));
+        e.modifier
+            .set_msg(format!("{}\n{}", hash, e.change_meta.message()));
         true
     }));
     doc.get_text("text").insert(0, "a").unwrap();

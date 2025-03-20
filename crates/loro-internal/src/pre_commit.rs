@@ -22,7 +22,7 @@ pub struct PreCommitCallbackPayload {
     /// The origin of the commit.
     pub origin: String,
     /// The modifier of the change. You can modify the change in the callback.
-    pub modifier: Arc<Mutex<ChangeModifier>>,
+    pub modifier: ChangeModifier,
 }
 
 /// The payload of the first commit from a peer callback.
@@ -31,29 +31,54 @@ pub struct FirstCommitFromPeerPayload {
     /// The peer id of the first commit.
     pub peer: PeerID,
     /// The modifier of the change. You can modify the change in the callback.
-    pub modifier: Arc<Mutex<ChangeModifier>>,
+    pub modifier: ChangeModifier,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ChangeModifier(Arc<Mutex<ChangeModifierInner>>);
+
+impl ChangeModifier {
+    pub fn set_msg(&self, msg: String) {
+        self.0.lock().unwrap().set_msg(Arc::from(msg));
+    }
+
+    pub fn set_timestamp(&self, timestamp: Timestamp) {
+        self.0.lock().unwrap().set_timestamp(timestamp);
+    }
+
+    pub fn set_timestamp_now(&self) {
+        self.0.lock().unwrap().set_timestamp_now();
+    }
+
+    pub(crate) fn modify_change(&self, change: &mut Change) {
+        self.0.lock().unwrap().modify_change(change);
+    }
+
+    pub(crate) fn modify(&self, txn: &mut Transaction) {
+        self.0.lock().unwrap().modify(txn);
+    }
 }
 
 #[derive(Debug, Default)]
-pub struct ChangeModifier {
+struct ChangeModifierInner {
     new_msg: Option<Arc<str>>,
     new_timestamp: Option<Timestamp>,
 }
 
-impl ChangeModifier {
-    pub fn set_msg(&mut self, msg: Arc<str>) {
+impl ChangeModifierInner {
+    fn set_msg(&mut self, msg: Arc<str>) {
         self.new_msg = Some(msg);
     }
 
-    pub fn set_timestamp(&mut self, timestamp: Timestamp) {
+    fn set_timestamp(&mut self, timestamp: Timestamp) {
         self.new_timestamp = Some(timestamp);
     }
 
-    pub fn set_timestamp_now(&mut self) {
+    fn set_timestamp_now(&mut self) {
         self.new_timestamp = Some(get_timestamp_now_txn());
     }
 
-    pub(crate) fn modify_change(&self, change: &mut Change) {
+    fn modify_change(&self, change: &mut Change) {
         if let Some(msg) = &self.new_msg {
             change.commit_msg = Some(msg.clone());
         }
@@ -63,7 +88,7 @@ impl ChangeModifier {
         }
     }
 
-    pub(crate) fn modify(&self, txn: &mut Transaction) {
+    fn modify(&self, txn: &mut Transaction) {
         if let Some(msg) = &self.new_msg {
             txn.set_msg(Some(msg.clone()));
         }

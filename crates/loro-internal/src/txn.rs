@@ -2,7 +2,7 @@ use core::panic;
 use std::{
     borrow::Cow,
     mem::take,
-    sync::{Arc, Mutex, Weak},
+    sync::{Arc, Weak},
 };
 
 use enum_as_inner::EnumAsInner;
@@ -441,7 +441,7 @@ impl Transaction {
             commit_msg: take(&mut self.msg),
         };
 
-        let modifier = Arc::new(Mutex::new(ChangeModifier::default()));
+        let modifier = ChangeModifier::default();
         doc.pre_commit_subs.emit(
             &(),
             PreCommitCallbackPayload {
@@ -450,7 +450,7 @@ impl Transaction {
                 modifier: modifier.clone(),
             },
         );
-        modifier.lock().unwrap().modify_change(&mut change);
+        modifier.modify_change(&mut change);
 
         let mut oplog = doc.oplog.lock().unwrap();
         let mut state = doc.state.lock().unwrap();
