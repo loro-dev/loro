@@ -160,6 +160,7 @@ pub struct LoroDocInner {
     txn: Arc<LoroMutex<Option<Transaction>>>,
     auto_commit: AtomicBool,
     detached: AtomicBool,
+    is_in_before_commit: AtomicBool,
     local_update_subs: SubscriberSetWithQueue<(), LocalUpdateCallback, Vec<u8>>,
     peer_id_change_subs: SubscriberSetWithQueue<(), PeerIdUpdateCallback, ID>,
     first_commit_from_peer_subs:

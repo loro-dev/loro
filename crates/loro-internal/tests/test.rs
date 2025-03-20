@@ -1324,15 +1324,22 @@ fn test_on_first_commit_from_peer() {
 #[test]
 fn test_on_first_commit_from_peer_with_lock() {
     let doc = LoroDoc::new_auto_commit();
+    doc.set_peer_id(0).unwrap();
     let doc_clone = doc.clone();
     let sub = doc.subscribe_first_commit_from_peer(Box::new(move |_e| {
         doc_clone.get_text("text").insert(0, "b").unwrap();
-        // doc_clone.commit_then_renew();
         true
     }));
     doc.get_text("text").insert(0, "a").unwrap();
     doc.commit_then_renew();
     sub.unsubscribe();
+    assert_eq!(doc.get_text("text").to_string(), "ba");
+    assert_eq!(
+        doc.export_json_updates(&Default::default(), &doc.oplog_vv(), false)
+            .changes
+            .len(),
+        1
+    );
 }
 
 #[test]

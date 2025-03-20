@@ -93,6 +93,7 @@ impl LoroDoc {
                 config,
                 detached: AtomicBool::new(false),
                 auto_commit: AtomicBool::new(false),
+                is_in_before_commit: AtomicBool::new(false),
                 observer: Arc::new(Observer::new(arena.clone())),
                 diff_calculator: Arc::new(
                     lock_group.new_lock(DiffCalculator::new(true), LockKind::DiffCalculator),
@@ -236,6 +237,7 @@ impl LoroDoc {
     /// This method is called before the commit.
     /// It can be used to modify the change before it is committed.
     fn before_commit(&self) {
+        self.is_in_before_commit.store(true, Release);
         let is_peer_first_appear = {
             self.txn
                 .lock()
@@ -265,6 +267,8 @@ impl LoroDoc {
                 .into_inner()
                 .unwrap();
             c.modify(txn);
+            txn.is_peer_first_appearance = false;
+            self.is_in_before_commit.store(false, Release);
         }
     }
 
@@ -287,6 +291,9 @@ impl LoroDoc {
                 // if not auto_commit, nothing should happen
                 // because the global txn is not used
                 return (None, Some(txn_guard));
+            }
+            if self.is_in_before_commit.load(Acquire) {
+                panic!("`commit()` should not be called in before_commit");
             }
         }
 
