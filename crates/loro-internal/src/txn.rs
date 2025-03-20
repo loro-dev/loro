@@ -553,6 +553,7 @@ impl Transaction {
             container,
             content,
         };
+
         let mut oplog = doc.oplog.lock().unwrap();
         let mut state = doc.state.lock().unwrap();
         if state.is_deleted(container) {
