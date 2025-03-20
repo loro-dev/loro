@@ -136,7 +136,7 @@ impl AppDag {
         self.update_version_on_new_change(change, from_local);
         #[cfg(debug_assertions)]
         {
-            let unhandled_dep_points = self.unhandled_dep_points.try_lock().unwrap();
+            let unhandled_dep_points = self.unhandled_dep_points.lock().unwrap();
             let c = unhandled_dep_points
                 .range(change.id_start()..change.id_end())
                 .count();
@@ -183,7 +183,7 @@ impl AppDag {
             }
             .into();
 
-            let mut map = self.map.try_lock().unwrap();
+            let mut map = self.map.lock().unwrap();
             map.insert(node.id_start(), node);
             self.handle_deps_break_points(change.deps.iter(), change.id.peer, Some(&mut map));
         }
@@ -239,7 +239,7 @@ impl AppDag {
         f: impl FnOnce(Option<&mut AppDagNode>) -> R,
     ) -> R {
         self.lazy_load_last_of_peer(peer);
-        let mut binding = self.map.try_lock().unwrap();
+        let mut binding = self.map.lock().unwrap();
         let last = binding
             .range_mut(..=ID::new(peer, Counter::MAX))
             .next_back()
@@ -268,7 +268,7 @@ impl AppDag {
     }
 
     pub(super) fn lazy_load_last_of_peer(&mut self, peer: u64) {
-        let unparsed_vv = self.unparsed_vv.try_lock().unwrap();
+        let unparsed_vv = self.unparsed_vv.lock().unwrap();
         if !unparsed_vv.contains_key(&peer) || self.vv[&peer] >= unparsed_vv[&peer] {
             return;
         }
@@ -289,16 +289,16 @@ impl AppDag {
         assert!(!nodes.is_empty());
         let mut map_guard = None;
         let map = map_input.unwrap_or_else(|| {
-            map_guard = Some(self.map.try_lock().unwrap());
+            map_guard = Some(self.map.lock().unwrap());
             map_guard.as_mut().unwrap()
         });
         let new_dag_start_counter_for_the_peer = nodes[0].cnt;
         let nodes_cnt_end = nodes.last().unwrap().ctr_end();
-        let mut unparsed_vv = self.unparsed_vv.try_lock().unwrap();
+        let mut unparsed_vv = self.unparsed_vv.lock().unwrap();
         let end_counter = unparsed_vv[&peer];
         assert!(end_counter <= nodes_cnt_end);
         let mut deps_on_others = Vec::new();
-        let mut break_point_set = self.unhandled_dep_points.try_lock().unwrap();
+        let mut break_point_set = self.unhandled_dep_points.lock().unwrap();
         for mut node in nodes {
             if node.cnt >= end_counter {
                 // skip already parsed nodes
@@ -363,7 +363,7 @@ impl AppDag {
     ) {
         let mut map_guard = None;
         let map = map.unwrap_or_else(|| {
-            map_guard = Some(self.map.try_lock().unwrap());
+            map_guard = Some(self.map.lock().unwrap());
             map_guard.as_mut().unwrap()
         });
         for id in ids {
@@ -396,7 +396,7 @@ impl AppDag {
             if let Some(new_node) = ans {
                 map.insert(new_node.id_start(), new_node);
             } else if !handled {
-                self.unhandled_dep_points.try_lock().unwrap().insert(id);
+                self.unhandled_dep_points.lock().unwrap().insert(id);
             }
         }
     }
@@ -410,7 +410,7 @@ impl AppDag {
             // We need to load all the dag nodes that has the same peer and greater counter than the given `id`
             // Because we only record the end counter of the unparsed version on `unparsed_vv`
             let unparsed_end = {
-                let unparsed_vv = self.unparsed_vv.try_lock().unwrap();
+                let unparsed_vv = self.unparsed_vv.lock().unwrap();
                 unparsed_vv.get(&id.peer).copied().unwrap_or(0)
             };
             if unparsed_end <= id.counter {
@@ -430,12 +430,12 @@ impl AppDag {
     }
 
     pub fn total_parsed_dag_node(&self) -> usize {
-        self.map.try_lock().unwrap().len()
+        self.map.lock().unwrap().len()
     }
 
     pub(crate) fn set_version_by_fast_snapshot_import(&mut self, v: BatchDecodeInfo) {
         assert!(self.vv.is_empty());
-        *self.unparsed_vv.try_lock().unwrap() = v.vv.clone();
+        *self.unparsed_vv.lock().unwrap() = v.vv.clone();
         self.vv = v.vv;
         self.frontiers = v.frontiers;
         if let Some((vv, f)) = v.start_version {
@@ -464,7 +464,7 @@ impl AppDag {
     pub fn check_dag_correctness(&self) {
         {
             // parse all nodes
-            let unparsed_vv = self.unparsed_vv.try_lock().unwrap().clone();
+            let unparsed_vv = self.unparsed_vv.lock().unwrap().clone();
             for (peer, cnt) in unparsed_vv.iter() {
                 if *cnt == 0 {
                     continue;
@@ -477,7 +477,7 @@ impl AppDag {
                     self.ensure_lazy_load_node(ID::new(*peer, cnt));
                     end_cnt = self
                         .unparsed_vv
-                        .try_lock()
+                        .lock()
                         .unwrap()
                         .get(peer)
                         .copied()
@@ -485,11 +485,11 @@ impl AppDag {
                 }
             }
 
-            self.unparsed_vv.try_lock().unwrap().clear();
+            self.unparsed_vv.lock().unwrap().clear();
         }
         {
             // check property 1: Counter is continuous
-            let map = self.map.try_lock().unwrap();
+            let map = self.map.lock().unwrap();
             let mut last_end_id = ID::new(0, 0);
             for (&id, node) in map.iter() {
                 let init_counter = self.shallow_since_vv.get(&id.peer).copied().unwrap_or(0);
@@ -504,12 +504,12 @@ impl AppDag {
         }
         {
             // check property 2: A node always depends of the last ids of other nodes
-            let map = self.map.try_lock().unwrap();
+            let map = self.map.lock().unwrap();
             check_always_dep_on_last_id(&map);
         }
         {
             // check property 3: Lamport is correctly calculated
-            let map = self.map.try_lock().unwrap();
+            let map = self.map.lock().unwrap();
             'outer: for (_, node) in map.iter() {
                 let mut this_lamport = 0;
                 for dep in node.deps.iter() {
@@ -526,7 +526,7 @@ impl AppDag {
         }
         {
             // check property 4: VV for each node is correctly calculated
-            let map = self.map.try_lock().unwrap().clone();
+            let map = self.map.lock().unwrap().clone();
             'outer: for (_, node) in map.iter() {
                 let actual_vv = self.ensure_vv_for(node);
                 let mut expected_vv = ImVersionVector::default();
@@ -547,7 +547,7 @@ impl AppDag {
         {
             // check property 5: Frontiers are correctly calculated
             let mut maybe_frontiers = FxHashSet::default();
-            let map = self.map.try_lock().unwrap();
+            let map = self.map.lock().unwrap();
             for (_, node) in map.iter() {
                 maybe_frontiers.insert(node.id_last());
             }
@@ -819,7 +819,7 @@ impl Dag for AppDag {
 
     fn get(&self, id: ID) -> Option<Self::Node> {
         self.ensure_lazy_load_node(id);
-        let binding = self.map.try_lock().unwrap();
+        let binding = self.map.lock().unwrap();
         if let Some(x) = binding.range(..=id).next_back() {
             if x.1.contains_id(id) {
                 // PERF: do we need to optimize clone like this?

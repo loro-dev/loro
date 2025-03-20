@@ -105,13 +105,13 @@ impl TreeActor {
         loro.subscribe(
             &ContainerID::new_root("tree", ContainerType::Tree),
             Arc::new(move |event| {
-                // println!("\nbefore {:?}", tree.try_lock().unwrap().as_map().unwrap());
+                // println!("\nbefore {:?}", tree.lock().unwrap().as_map().unwrap());
                 // println!(
                 //     "{:?}",
                 //     event.events.iter().map(|e| &e.diff).collect::<Vec<_>>()
                 // );
-                tree.try_lock().unwrap().apply_diff(event);
-                // println!("after {:?}\n", tree.try_lock().unwrap().as_map().unwrap());
+                tree.lock().unwrap().apply_diff(event);
+                // println!("after {:?}\n", tree.lock().unwrap().as_map().unwrap());
             }),
         )
         .detach();
@@ -135,7 +135,7 @@ impl ActorTrait for TreeActor {
         let loro = &self.loro;
         let tree = loro.get_tree("tree");
         let result = tree.get_value_with_meta();
-        let tracker = self.tracker.try_lock().unwrap().to_value();
+        let tracker = self.tracker.lock().unwrap().to_value();
         assert_value_eq(
             &result,
             tracker.into_map().unwrap().get("tree").unwrap(),

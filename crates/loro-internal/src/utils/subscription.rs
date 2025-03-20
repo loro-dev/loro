@@ -289,7 +289,7 @@ where
         callback: Callback,
     ) -> (Subscription, impl FnOnce()) {
         let active = Arc::new(AtomicBool::new(false));
-        let mut lock = self.0.try_lock().unwrap();
+        let mut lock = self.0.lock().unwrap();
         let subscriber_id = post_inc(&mut lock.next_subscriber_id);
         let this = Arc::downgrade(&self.0);
         let emitter_key_1 = emitter_key.clone();
@@ -299,7 +299,7 @@ where
                     return;
                 };
 
-                let mut lock = this.try_lock().unwrap();
+                let mut lock = this.lock().unwrap();
                 let Some(subscribers) = lock.subscribers.get_mut(&emitter_key) else {
                     // remove was called with this emitter_key
                     return;
@@ -341,7 +341,7 @@ where
 
     #[allow(unused)]
     pub fn remove(&self, emitter: &EmitterKey) -> impl IntoIterator<Item = Callback> {
-        let mut lock = self.0.try_lock().unwrap();
+        let mut lock = self.0.lock().unwrap();
         let subscribers = lock.subscribers.remove(emitter);
         subscribers
             .unwrap_or_default()
@@ -358,7 +358,7 @@ where
     }
 
     pub fn is_recursive_calling(&self, emitter: &EmitterKey) -> bool {
-        if let Some(set) = self.0.try_lock().unwrap().subscribers.get(emitter) {
+        if let Some(set) = self.0.lock().unwrap().subscribers.get(emitter) {
             set.is_none()
         } else {
             false
@@ -373,7 +373,7 @@ where
         f: &mut dyn FnMut(&mut Callback) -> bool,
     ) -> Result<(), SubscriptionError> {
         let mut subscribers = {
-            let mut subscriber_set_state = self.0.try_lock().unwrap();
+            let mut subscriber_set_state = self.0.lock().unwrap();
             let Some(set) = subscriber_set_state.subscribers.get_mut(emitter) else {
                 return Ok(());
             };
@@ -390,7 +390,7 @@ where
                 true
             }
         });
-        let mut lock = self.0.try_lock().unwrap();
+        let mut lock = self.0.lock().unwrap();
 
         // Add any new subscribers that were added while invoking the callback.
         if let Some(Some(new_subscribers)) = lock.subscribers.remove(emitter) {
@@ -411,11 +411,11 @@ where
     }
 
     pub fn is_empty(&self) -> bool {
-        self.0.try_lock().unwrap().subscribers.is_empty()
+        self.0.lock().unwrap().subscribers.is_empty()
     }
 
     pub fn may_include(&self, emitter: &EmitterKey) -> bool {
-        self.0.try_lock().unwrap().subscribers.contains_key(emitter)
+        self.0.lock().unwrap().subscribers.contains_key(emitter)
     }
 }
 
@@ -538,13 +538,13 @@ where
                 .retain(key, &mut |callback| (callback)(&payload));
             match result {
                 Ok(_) => {
-                    let mut queue = self.queue.try_lock().unwrap();
+                    let mut queue = self.queue.lock().unwrap();
                     if let Some(new_pending_events) = queue.remove(key) {
                         pending_events.extend(new_pending_events);
                     }
                 }
                 Err(SubscriptionError::CannotEmitEventDueToRecursiveCall) => {
-                    let mut queue = self.queue.try_lock().unwrap();
+                    let mut queue = self.queue.lock().unwrap();
                     queue.entry(key.clone()).or_default().push(payload);
                 }
             }
