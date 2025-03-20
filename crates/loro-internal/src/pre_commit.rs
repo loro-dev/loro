@@ -2,11 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use loro_common::PeerID;
 
-use crate::{
-    change::{Change, Timestamp},
-    oplog::get_timestamp_now_txn,
-    ChangeMeta,
-};
+use crate::{change::Timestamp, oplog::get_timestamp_now_txn, txn::Transaction, ChangeMeta};
 
 /// The callback of the first commit from a peer.
 pub type FirstCommitFromPeerCallback =
@@ -52,13 +48,13 @@ impl ChangeModifier {
         self.new_timestamp = Some(get_timestamp_now_txn());
     }
 
-    pub(crate) fn modify(self, change: &mut Change) {
+    pub(crate) fn modify(self, txn: &mut Transaction) {
         if let Some(msg) = self.new_msg {
-            change.commit_msg = Some(msg);
+            txn.set_msg(Some(msg));
         }
 
         if let Some(timestamp) = self.new_timestamp {
-            change.timestamp = timestamp;
+            txn.set_timestamp(timestamp);
         }
     }
 }

@@ -153,7 +153,7 @@ pub struct Transaction {
     timestamp: Option<Timestamp>,
     msg: Option<Arc<str>>,
     latest_timestamp: Timestamp,
-    is_peer_first_appearance: bool,
+    pub(super) is_peer_first_appearance: bool,
 }
 
 impl std::fmt::Debug for Transaction {
@@ -428,35 +428,9 @@ impl Transaction {
             return Ok(Some(self.take_options()));
         }
 
-        // First commit from a peer
-        let modifier = if self.is_peer_first_appearance {
-            let modifier = Arc::new(Mutex::new(ChangeModifier::default()));
-            doc.first_commit_from_peer_subs.emit(
-                &(),
-                FirstCommitFromPeerPayload {
-                    peer: self.peer,
-                    change_meta: ChangeMeta {
-                        lamport: self.start_lamport,
-                        id: ID::new(self.peer, self.start_counter),
-                        timestamp: self.latest_timestamp.max(self.timestamp.unwrap_or_else(|| {
-                            doc.oplog.lock().unwrap().get_timestamp_for_next_txn()
-                        })),
-                        message: self.msg.clone(),
-                        deps: self.frontiers.clone(),
-                        len: self.local_ops().span().as_(),
-                    },
-                    modifier: Arc::clone(&modifier),
-                },
-            );
-            self.is_peer_first_appearance = false;
-            Some(modifier)
-        } else {
-            None
-        };
-
         let ops = std::mem::take(&mut self.local_ops);
         let deps = take(&mut self.frontiers);
-        let mut change = Change {
+        let change = Change {
             lamport: self.start_lamport,
             ops,
             deps,
@@ -467,13 +441,6 @@ impl Transaction {
             ),
             commit_msg: take(&mut self.msg),
         };
-
-        if let Some(modifier) = modifier {
-            let m = Arc::into_inner(modifier).unwrap();
-            m.into_inner()
-                .map_err(|_| LoroError::LockError)?
-                .modify(&mut change);
-        }
 
         doc.pre_commit_subs.emit(
             &(),
@@ -529,6 +496,20 @@ impl Transaction {
             on_commit(&doc.state.clone(), &doc.oplog.clone(), self.id_span());
         }
         Ok(None)
+    }
+
+    pub(crate) fn get_change_meta_for_now(&self, doc: &LoroDoc) -> ChangeMeta {
+        ChangeMeta {
+            lamport: self.start_lamport,
+            id: ID::new(self.peer, self.start_counter),
+            timestamp: self.latest_timestamp.max(
+                self.timestamp
+                    .unwrap_or_else(|| doc.oplog.lock().unwrap().get_timestamp_for_next_txn()),
+            ),
+            message: self.msg.as_ref().map(Arc::clone),
+            deps: self.frontiers.clone(),
+            len: self.local_ops.span().as_(),
+        }
     }
 
     fn take_options(&self) -> CommitOptions {

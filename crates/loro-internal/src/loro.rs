@@ -1,5 +1,5 @@
 pub use crate::encoding::ExportMode;
-use crate::pre_commit::FirstCommitFromPeerCallback;
+use crate::pre_commit::{ChangeModifier, FirstCommitFromPeerCallback, FirstCommitFromPeerPayload};
 pub use crate::state::analyzer::{ContainerAnalysisInfo, DocAnalysis};
 pub(crate) use crate::LoroDocInner;
 use crate::{
@@ -57,7 +57,7 @@ use std::{
             AtomicBool,
             Ordering::{Acquire, Release},
         },
-        Arc,
+        Arc, Mutex,
     },
 };
 use tracing::{debug_span, info, info_span, instrument, warn};
@@ -233,6 +233,41 @@ impl LoroDoc {
             .0
     }
 
+    /// This method is called before the commit.
+    /// It can be used to modify the change before it is committed.
+    fn before_commit(&self) {
+        let is_peer_first_appear = {
+            self.txn
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|x| x.is_peer_first_appearance)
+                .unwrap_or(false)
+        };
+        if is_peer_first_appear {
+            let change_modifier = Arc::new(Mutex::new(ChangeModifier::default()));
+            // First commit from a peer
+            self.first_commit_from_peer_subs.emit(
+                &(),
+                FirstCommitFromPeerPayload {
+                    peer: self.peer_id(),
+                    change_meta: {
+                        let txn = self.txn.lock().unwrap();
+                        txn.as_ref().unwrap().get_change_meta_for_now(self)
+                    },
+                    modifier: change_modifier.clone(),
+                },
+            );
+            let mut txn = self.txn.lock().unwrap();
+            let txn = txn.as_mut().unwrap();
+            let c = Arc::into_inner(change_modifier)
+                .unwrap()
+                .into_inner()
+                .unwrap();
+            c.modify(txn);
+        }
+    }
+
     /// Commit the cumulative auto commit transaction.
     /// This method only has effect when `auto_commit` is true.
     /// If `immediate_renew` is true, a new transaction will be created after the old one is committed
@@ -246,14 +281,18 @@ impl LoroDoc {
         Option<CommitOptions>,
         Option<LoroMutexGuard<Option<Transaction>>>,
     ) {
-        let mut txn_guard = self.txn.lock().unwrap();
-        if !self.auto_commit.load(Acquire) {
-            // if not auto_commit, nothing should happen
-            // because the global txn is not used
-            return (None, Some(txn_guard));
+        {
+            let txn_guard = self.txn.lock().unwrap();
+            if !self.auto_commit.load(Acquire) {
+                // if not auto_commit, nothing should happen
+                // because the global txn is not used
+                return (None, Some(txn_guard));
+            }
         }
 
         loop {
+            self.before_commit();
+            let mut txn_guard = self.txn.lock().unwrap();
             let txn = txn_guard.take();
             let Some(mut txn) = txn else {
                 return (None, Some(txn_guard));
