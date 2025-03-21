@@ -393,6 +393,7 @@ where
                         if std::thread::current().id() == *lock_thread {
                             return Err(SubscriptionError::CannotEmitEventDueToRecursiveCall);
                         } else {
+                            // return Ok(());
                             drop(subscriber_set_state);
                             std::thread::sleep(std::time::Duration::from_millis(10));
                         }
@@ -409,6 +410,7 @@ where
                 true
             }
         });
+
         let mut lock = self.0.lock().unwrap();
 
         // Add any new subscribers that were added while invoking the callback.
@@ -418,8 +420,12 @@ where
 
         // Remove any dropped subscriptions that were dropped while invoking the callback.
         for (dropped_emitter, dropped_subscription_id) in mem::take(&mut lock.dropped_subscribers) {
-            debug_assert_eq!(*emitter, dropped_emitter);
-            subscribers.remove(&dropped_subscription_id);
+            if *emitter == dropped_emitter {
+                subscribers.remove(&dropped_subscription_id);
+            } else {
+                lock.dropped_subscribers
+                    .insert((dropped_emitter, dropped_subscription_id));
+            }
         }
 
         lock.subscribers

@@ -261,6 +261,7 @@ fn concurrent_callbacks_modifying_same_doc() {
             started = cvar.wait(started).unwrap();
         }
 
+        drop(started);
         // Now both threads are modifying the document based on events
         doc2.get_text(text_id).insert(0, "B").unwrap();
         doc2.commit();

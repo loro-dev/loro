@@ -37,7 +37,8 @@ pub fn setup_test_log() {
                         .without_time()
                         .with_line_number(true)
                         .with_target(false)
-                        .with_file(true),
+                        .with_file(true)
+                        .with_thread_ids(true), // Display thread ID
                 )
                 .with(chrome_layer),
         )
