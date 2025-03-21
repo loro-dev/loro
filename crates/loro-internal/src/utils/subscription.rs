@@ -360,12 +360,8 @@ where
     }
 
     pub fn is_recursive_calling(&self, emitter: &EmitterKey) -> bool {
-        if let Some(set) = self.0.lock().unwrap().subscribers.get(emitter) {
-            if let Either::Right(thread_id) = set {
-                *thread_id == std::thread::current().id()
-            } else {
-                false
-            }
+        if let Some(Either::Right(thread_id)) = self.0.lock().unwrap().subscribers.get(emitter) {
+            *thread_id == std::thread::current().id()
         } else {
             false
         }
