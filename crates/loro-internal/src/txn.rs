@@ -439,7 +439,7 @@ impl Transaction {
                 modifier: modifier.clone(),
             },
         );
-        modifier.modify_change(&mut change);
+        modifier.modify_change(&LoroDoc::from_inner(Arc::clone(&doc)), &mut change);
 
         let mut oplog = doc.oplog.lock().unwrap();
         let mut state = doc.state.lock().unwrap();

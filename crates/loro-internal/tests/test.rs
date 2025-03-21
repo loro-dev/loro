@@ -1336,11 +1336,8 @@ fn test_pre_commit_with_lock() {
 fn test_pre_commit_with_hash() {
     let doc = LoroDoc::new_auto_commit();
     doc.set_peer_id(0).unwrap();
-    let doc_clone = doc.clone();
     let sub = doc.subscribe_pre_commit(Box::new(move |e| {
-        let hash = e.change_meta.hash_change(&doc_clone);
-        e.modifier
-            .set_msg(format!("{}\n{}", hash, e.change_meta.message()));
+        e.modifier.set_timestamp(0).hash_change();
         true
     }));
     doc.get_text("text").insert(0, "a").unwrap();
@@ -1360,6 +1357,14 @@ fn test_pre_commit_with_hash() {
         .export_json_updates(&Default::default(), &doc.oplog_vv(), false)
         .changes;
     assert_eq!(changes.len(), 2);
+    assert_eq!(
+        changes[0].msg.as_ref().unwrap(),
+        "8eb1aff3b40d0dd1fa8d2d55c9853ea4ddf8e64b06975eb1ac1f917d2d040c79\nadd a"
+    );
+    assert_eq!(
+        changes[1].msg.as_ref().unwrap(),
+        "bf5ad16dc086aeddc2dfa506b38931f22f332cdbf80465507162fe49e4f44b20\nadd b"
+    );
     for c in changes {
         let mut msg = c.msg.as_ref().unwrap().lines();
         assert_eq!(msg.next().unwrap().len(), 64);

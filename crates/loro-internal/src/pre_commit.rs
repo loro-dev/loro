@@ -1,12 +1,11 @@
 use std::sync::{Arc, Mutex};
 
-use loro_common::PeerID;
-
 use crate::{
     change::{Change, Timestamp},
     oplog::get_timestamp_now_txn,
-    ChangeMeta,
+    ChangeMeta, LoroDoc,
 };
+use loro_common::PeerID;
 
 /// The callback of the first commit from a peer.
 pub type FirstCommitFromPeerCallback =
@@ -34,50 +33,52 @@ pub struct FirstCommitFromPeerPayload {
 #[derive(Debug, Clone, Default)]
 pub struct ChangeModifier(Arc<Mutex<ChangeModifierInner>>);
 
-impl ChangeModifier {
-    pub fn set_msg(&self, msg: String) {
-        self.0.lock().unwrap().set_msg(Arc::from(msg));
-    }
-
-    pub fn set_timestamp(&self, timestamp: Timestamp) {
-        self.0.lock().unwrap().set_timestamp(timestamp);
-    }
-
-    pub fn set_timestamp_now(&self) {
-        self.0.lock().unwrap().set_timestamp_now();
-    }
-
-    pub(crate) fn modify_change(&self, change: &mut Change) {
-        self.0.lock().unwrap().modify_change(change);
-    }
-}
-
 #[derive(Debug, Default)]
 struct ChangeModifierInner {
     new_msg: Option<Arc<str>>,
     new_timestamp: Option<Timestamp>,
+    with_hash: bool,
 }
 
-impl ChangeModifierInner {
-    fn set_msg(&mut self, msg: Arc<str>) {
-        self.new_msg = Some(msg);
+impl ChangeModifier {
+    pub fn set_msg(&self, msg: &str) -> &Self {
+        self.0.lock().unwrap().new_msg = Some(Arc::from(msg));
+        self
     }
 
-    fn set_timestamp(&mut self, timestamp: Timestamp) {
-        self.new_timestamp = Some(timestamp);
+    pub fn set_timestamp(&self, timestamp: Timestamp) -> &Self {
+        self.0.lock().unwrap().new_timestamp = Some(timestamp);
+        self
     }
 
-    fn set_timestamp_now(&mut self) {
-        self.new_timestamp = Some(get_timestamp_now_txn());
+    pub fn set_timestamp_now(&self) -> &Self {
+        self.0.lock().unwrap().new_timestamp = Some(get_timestamp_now_txn());
+        self
     }
 
-    fn modify_change(&self, change: &mut Change) {
-        if let Some(msg) = &self.new_msg {
+    pub fn hash_change(&self) -> &Self {
+        self.0.lock().unwrap().with_hash = true;
+        self
+    }
+
+    pub(crate) fn modify_change(&self, doc: &LoroDoc, change: &mut Change) {
+        let m = self.0.lock().unwrap();
+        if let Some(msg) = &m.new_msg {
             change.commit_msg = Some(msg.clone());
         }
 
-        if let Some(timestamp) = self.new_timestamp {
+        if let Some(timestamp) = m.new_timestamp {
             change.timestamp = timestamp;
+        }
+
+        if m.with_hash {
+            let hash = doc.get_change_hash(change).unwrap();
+            // TODO: a better way to do msg
+            change.commit_msg = Some(Arc::from(format!(
+                "{}\n{}",
+                hash,
+                change.commit_msg.as_ref().unwrap()
+            )));
         }
     }
 }

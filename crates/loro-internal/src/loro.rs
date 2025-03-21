@@ -1,3 +1,5 @@
+use crate::change::{Change, ChangeHashContent};
+use crate::encoding::json_schema::encode_change;
 pub use crate::encoding::ExportMode;
 use crate::pre_commit::{FirstCommitFromPeerCallback, FirstCommitFromPeerPayload};
 pub use crate::state::analyzer::{ContainerAnalysisInfo, DocAnalysis};
@@ -42,6 +44,7 @@ use crate::{
 };
 use either::Either;
 use fxhash::{FxHashMap, FxHashSet};
+use itertools::Itertools;
 use loro_common::{
     ContainerID, ContainerType, HasIdSpan, HasLamportSpan, IdSpan, LoroEncodeError, LoroResult,
     LoroValue, ID,
@@ -1806,6 +1809,26 @@ impl LoroDoc {
         let (s, enable) = self.pre_commit_subs.inner().insert((), callback);
         enable();
         s
+    }
+
+    pub fn get_change_hash(&self, change: &Change) -> Option<String> {
+        let oplog = self.oplog.lock().unwrap();
+        let encoded = encode_change(ChangeRef::from_change(change), &self.arena, None);
+        let mut deps_hash = vec![];
+        for dep in change.deps.iter().sorted() {
+            let c = oplog.get_change_at(dep).unwrap();
+            if let Some(msg) = c.message() {
+                deps_hash.push(msg.clone());
+            } else {
+                // TODO: how to handle this
+                deps_hash.push(Arc::from(""));
+            }
+        }
+        let change_hash = ChangeHashContent {
+            change_content: encoded,
+            deps_msg: deps_hash,
+        };
+        Some(change_hash.hash())
     }
 }
 

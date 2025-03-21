@@ -295,7 +295,7 @@ fn encode_changes(
     changes
 }
 
-fn encode_change(
+pub(crate) fn encode_change(
     change: ChangeRef<'_, Op>,
     arena: &SharedArena,
     mut peer_register: Option<&mut ValueRegister<PeerID>>,
