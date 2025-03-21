@@ -1273,6 +1273,22 @@ fn test_on_first_commit_from_peer() {
 }
 
 #[test]
+fn test_on_first_commit_from_peer_and_set_peer_id() {
+    let doc = LoroDoc::new_auto_commit();
+    doc.set_peer_id(0).unwrap();
+    let f = Arc::new(AtomicBool::new(false));
+    let f2 = Arc::clone(&f);
+    let sub = doc.subscribe_first_commit_from_peer(Box::new(move |_e| {
+        f2.store(true, std::sync::atomic::Ordering::Relaxed);
+        true
+    }));
+    doc.get_text("text").insert(0, "a").unwrap();
+    doc.set_peer_id(1).unwrap();
+    sub.unsubscribe();
+    assert!(f.load(std::sync::atomic::Ordering::Relaxed));
+}
+
+#[test]
 fn test_on_first_commit_from_peer_with_lock() {
     let doc = LoroDoc::new_auto_commit();
     doc.set_peer_id(0).unwrap();

@@ -176,6 +176,7 @@ impl LoroDoc {
 
             if doc_state.is_in_txn() {
                 drop(doc_state);
+                self.before_commit();
                 let mut t = self.txn.lock().unwrap();
                 let txn = t.take();
                 if let Some(txn) = txn {
