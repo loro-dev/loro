@@ -10,8 +10,7 @@ fn init(s: &str) -> LoroDoc {
     let doc = LoroDoc::default();
     doc.set_peer_id(1).unwrap();
     let richtext = doc.get_text("r");
-    doc.with_txn(|txn| richtext.insert_with_txn(txn, 0, s))
-        .unwrap();
+    richtext.insert(0, s);
     doc
 }
 
@@ -41,38 +40,33 @@ impl Kind {
 
 fn insert(doc: &LoroDoc, pos: usize, s: &str) {
     let richtext = doc.get_text("r");
-    doc.with_txn(|txn| richtext.insert_with_txn(txn, pos, s))
-        .unwrap();
+    richtext.insert(pos, s).unwrap();
 }
 
 fn delete(doc: &LoroDoc, pos: usize, len: usize) {
     let richtext = doc.get_text("r");
-    doc.with_txn(|txn| richtext.delete_with_txn(txn, pos, len))
-        .unwrap();
+    richtext.delete(pos, len).unwrap();
 }
 
 fn mark(doc: &LoroDoc, range: Range<usize>, kind: Kind) {
     let richtext = doc.get_text("r");
-    doc.with_txn(|txn| {
-        richtext.mark_with_txn(txn, range.start, range.end, kind.key(), true.into(), false)
-    })
-    .unwrap();
+    richtext
+        .mark(range.start, range.end, kind.key(), true.into())
+        .unwrap();
 }
 
 fn unmark(doc: &LoroDoc, range: Range<usize>, kind: Kind) {
     let richtext = doc.get_text("r");
-    doc.with_txn(|txn| {
-        richtext.mark_with_txn(txn, range.start, range.end, kind.key(), false.into(), false)
-    })
-    .unwrap();
+    richtext
+        .mark(range.start, range.end, kind.key(), false.into())
+        .unwrap();
 }
 
 fn mark_kv(doc: &LoroDoc, range: Range<usize>, key: &str, value: impl Into<LoroValue>) {
     let richtext = doc.get_text("r");
-    doc.with_txn(|txn| {
-        richtext.mark_with_txn(txn, range.start, range.end, key, value.into(), false)
-    })
-    .unwrap();
+    richtext
+        .mark(range.start, range.end, key, value.into())
+        .unwrap();
 }
 
 fn merge(a: &LoroDoc, b: &LoroDoc) {

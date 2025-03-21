@@ -5,7 +5,6 @@ use loro_common::PeerID;
 use crate::{
     change::{Change, Timestamp},
     oplog::get_timestamp_now_txn,
-    txn::Transaction,
     ChangeMeta,
 };
 
@@ -30,8 +29,6 @@ pub struct PreCommitCallbackPayload {
 pub struct FirstCommitFromPeerPayload {
     /// The peer id of the first commit.
     pub peer: PeerID,
-    // /// The modifier of the change. You can modify the change in the callback.
-    // pub modifier: ChangeModifier,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -52,10 +49,6 @@ impl ChangeModifier {
 
     pub(crate) fn modify_change(&self, change: &mut Change) {
         self.0.lock().unwrap().modify_change(change);
-    }
-
-    pub(crate) fn modify(&self, txn: &mut Transaction) {
-        self.0.lock().unwrap().modify(txn);
     }
 }
 
@@ -85,16 +78,6 @@ impl ChangeModifierInner {
 
         if let Some(timestamp) = self.new_timestamp {
             change.timestamp = timestamp;
-        }
-    }
-
-    fn modify(&self, txn: &mut Transaction) {
-        if let Some(msg) = &self.new_msg {
-            txn.set_msg(Some(msg.clone()));
-        }
-
-        if let Some(timestamp) = self.new_timestamp {
-            txn.set_timestamp(timestamp);
         }
     }
 }

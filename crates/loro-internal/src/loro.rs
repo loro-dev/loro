@@ -1,5 +1,5 @@
 pub use crate::encoding::ExportMode;
-use crate::pre_commit::{ChangeModifier, FirstCommitFromPeerCallback, FirstCommitFromPeerPayload};
+use crate::pre_commit::{FirstCommitFromPeerCallback, FirstCommitFromPeerPayload};
 pub use crate::state::analyzer::{ContainerAnalysisInfo, DocAnalysis};
 pub(crate) use crate::LoroDocInner;
 use crate::{

@@ -695,7 +695,7 @@ impl AppDag {
     }
 
     pub(crate) fn latest_vv_contains_peer(&self, peer: PeerID) -> bool {
-        self.vv.contains_key(&peer)
+        self.vv.contains_key(&peer) && *self.vv.get(&peer).unwrap() > 0
     }
 }
 

@@ -446,19 +446,19 @@ fn test_checkout() {
     }));
 
     let map = doc_0.get_map("map");
-    doc_0
-        .with_txn(|txn| {
-            let handler =
-                map.insert_container_with_txn(txn, "text", TextHandler::new_detached())?;
-            let text = handler;
-            text.insert_with_txn(txn, 0, "123")
-        })
+    let handler = map
+        .insert_container("text", TextHandler::new_detached())
         .unwrap();
+    let text = handler;
+    text.insert(0, "123").unwrap();
 
     let map = doc_1.get_map("map");
-    doc_1
-        .with_txn(|txn| map.insert_with_txn(txn, "text", LoroValue::Double(1.0)))
+
+    let handler = map
+        .insert_container("text", TextHandler::new_detached())
         .unwrap();
+    let text = handler;
+    text.insert(0, "123").unwrap();
 
     doc_0
         .import(&doc_1.export_from(&Default::default()))
@@ -526,9 +526,9 @@ fn test_text_checkout() {
     assert_eq!(text.len_unicode(), 4);
 
     doc.checkout_to_latest();
-    doc.with_txn(|txn| text.delete_with_txn(txn, 3, 1)).unwrap();
+    text.delete(3, 1).unwrap();
     assert_eq!(text.get_value().as_string().unwrap().as_str(), "你好世");
-    doc.with_txn(|txn| text.delete_with_txn(txn, 2, 1)).unwrap();
+    text.delete(2, 1).unwrap();
     assert_eq!(text.get_value().as_string().unwrap().as_str(), "你好");
     doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 3)].as_slice()))
         .unwrap();
@@ -566,17 +566,9 @@ fn map_checkout() {
     let doc = LoroDoc::new();
     let meta = doc.get_map("meta");
     let v_empty = doc.oplog_frontiers();
-    doc.with_txn(|txn| {
-        meta.insert_with_txn(txn, "key", 0.into()).unwrap();
-        Ok(())
-    })
-    .unwrap();
+    meta.insert("key", 0).unwrap();
     let v0 = doc.oplog_frontiers();
-    doc.with_txn(|txn| {
-        meta.insert_with_txn(txn, "key", 1.into()).unwrap();
-        Ok(())
-    })
-    .unwrap();
+    meta.insert("key", 1).unwrap();
     let v1 = doc.oplog_frontiers();
     assert_eq!(meta.get_deep_value().to_json(), r#"{"key":1}"#);
     doc.checkout(&v0).unwrap();
@@ -591,60 +583,38 @@ fn map_checkout() {
 fn a_list_of_map_checkout() {
     let doc = LoroDoc::new();
     let entry = doc.get_map("entry");
-    let (list, sub) = doc
-        .with_txn(|txn| {
-            let list = entry.insert_container_with_txn(txn, "list", ListHandler::new_detached())?;
-            let sub_map = list.insert_container_with_txn(txn, 0, MapHandler::new_detached())?;
-            sub_map.insert_with_txn(txn, "x", 100.into())?;
-            sub_map.insert_with_txn(txn, "y", 1000.into())?;
-            Ok((list, sub_map))
-        })
-        .unwrap();
+    let (list, sub) = {
+        let list = entry
+            .insert_container("list", ListHandler::new_detached())
+            .unwrap();
+        let sub_map = list
+            .insert_container(0, MapHandler::new_detached())
+            .unwrap();
+        sub_map.insert("x", 100).unwrap();
+        sub_map.insert("y", 1000).unwrap();
+        (list, sub_map)
+    };
     let v0 = doc.oplog_frontiers();
     let d0 = doc.get_deep_value().to_json();
-    doc.with_txn(|txn| {
-        list.insert_with_txn(txn, 0, 3.into())?;
-        list.push_with_txn(txn, 4.into())?;
-        list.insert_container_with_txn(txn, 2, MapHandler::new_detached())?;
-        list.insert_container_with_txn(txn, 3, TextHandler::new_detached())?;
-        Ok(())
-    })
-    .unwrap();
-    doc.with_txn(|txn| {
-        list.delete_with_txn(txn, 2, 1)?;
-        Ok(())
-    })
-    .unwrap();
-    doc.with_txn(|txn| {
-        sub.insert_with_txn(txn, "x", 9.into())?;
-        sub.insert_with_txn(txn, "y", 9.into())?;
-        Ok(())
-    })
-    .unwrap();
-    doc.with_txn(|txn| {
-        sub.insert_with_txn(txn, "z", 9.into())?;
-        Ok(())
-    })
-    .unwrap();
+
+    list.insert(0, 3).unwrap();
+    list.push(4).unwrap();
+    list.insert_container(2, MapHandler::new_detached())
+        .unwrap();
+    list.insert_container(3, TextHandler::new_detached())
+        .unwrap();
+
+    list.delete(2, 1).unwrap();
+    sub.insert("x", 9).unwrap();
+    sub.insert("y", 9).unwrap();
+    sub.insert("z", 9).unwrap();
     let v1 = doc.oplog_frontiers();
     let d1 = doc.get_deep_value().to_json();
-    doc.with_txn(|txn| {
-        sub.insert_with_txn(txn, "x", 77.into())?;
-        Ok(())
-    })
-    .unwrap();
-    doc.with_txn(|txn| {
-        sub.insert_with_txn(txn, "y", 88.into())?;
-        Ok(())
-    })
-    .unwrap();
-    doc.with_txn(|txn| {
-        list.delete_with_txn(txn, 0, 1)?;
-        list.insert_with_txn(txn, 0, 123.into())?;
-        list.push_with_txn(txn, 99.into())?;
-        Ok(())
-    })
-    .unwrap();
+    sub.insert("x", 77).unwrap();
+    sub.insert("y", 88).unwrap();
+    list.delete(0, 1).unwrap();
+    list.insert(0, 123).unwrap();
+    list.push(99).unwrap();
     let v2 = doc.oplog_frontiers();
     let d2 = doc.get_deep_value().to_json();
 
@@ -670,34 +640,14 @@ fn map_concurrent_checkout() {
     let doc_b = LoroDoc::new();
     let meta_b = doc_b.get_map("meta");
 
-    doc_a
-        .with_txn(|txn| {
-            meta_a.insert_with_txn(txn, "key", 0.into()).unwrap();
-            Ok(())
-        })
-        .unwrap();
+    meta_a.insert("key", 0).unwrap();
     let va = doc_a.oplog_frontiers();
-    doc_b
-        .with_txn(|txn| {
-            meta_b.insert_with_txn(txn, "s", 1.into()).unwrap();
-            Ok(())
-        })
-        .unwrap();
+    meta_b.insert("s", 1).unwrap();
     let vb_0 = doc_b.oplog_frontiers();
-    doc_b
-        .with_txn(|txn| {
-            meta_b.insert_with_txn(txn, "key", 1.into()).unwrap();
-            Ok(())
-        })
-        .unwrap();
+    meta_b.insert("key", 1).unwrap();
     let vb_1 = doc_b.oplog_frontiers();
     doc_a.import(&doc_b.export_snapshot().unwrap()).unwrap();
-    doc_a
-        .with_txn(|txn| {
-            meta_a.insert_with_txn(txn, "key", 2.into()).unwrap();
-            Ok(())
-        })
-        .unwrap();
+    meta_a.insert("key", 2).unwrap();
 
     let v_merged = doc_a.oplog_frontiers();
 

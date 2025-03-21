@@ -93,13 +93,12 @@ impl crate::LoroDoc {
     }
 
     #[inline(always)]
-    pub fn with_txn<F, R>(&self, f: F) -> LoroResult<R>
+    pub(crate) fn with_txn<F, R>(&self, f: F) -> LoroResult<R>
     where
         F: FnOnce(&mut Transaction) -> LoroResult<R>,
     {
         let mut txn = self.txn().unwrap();
         let v = f(&mut txn)?;
-        // TODO: pre_commit and peer first commit
         txn.commit()?;
         Ok(v)
     }
