@@ -427,9 +427,9 @@ fn test_pending() {
 
 #[test]
 fn test_checkout() {
-    let doc_0 = LoroDoc::new();
+    let doc_0 = LoroDoc::new_auto_commit();
     doc_0.set_peer_id(0).unwrap();
-    let doc_1 = LoroDoc::new();
+    let doc_1 = LoroDoc::new_auto_commit();
     doc_1.set_peer_id(1).unwrap();
 
     let value: Arc<Mutex<LoroValue>> = Arc::new(Mutex::new(LoroValue::Map(Default::default())));
@@ -494,13 +494,12 @@ fn test_timestamp() {
 
 #[test]
 fn test_text_checkout() {
-    let doc = LoroDoc::new();
+    let doc = LoroDoc::new_auto_commit();
     doc.set_peer_id(1).unwrap();
     let text = doc.get_text("text");
-    let mut txn = doc.txn().unwrap();
-    text.insert_with_txn(&mut txn, 0, "你界").unwrap();
-    text.insert_with_txn(&mut txn, 1, "好世").unwrap();
-    txn.commit().unwrap();
+    text.insert(0, "你界").unwrap();
+    text.insert(1, "好世").unwrap();
+    doc.commit_then_renew();
     {
         doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 0)].as_slice()))
             .unwrap();
@@ -563,7 +562,7 @@ fn test_text_checkout() {
 
 #[test]
 fn map_checkout() {
-    let doc = LoroDoc::new();
+    let doc = LoroDoc::new_auto_commit();
     let meta = doc.get_map("meta");
     let v_empty = doc.oplog_frontiers();
     meta.insert("key", 0).unwrap();
@@ -581,7 +580,7 @@ fn map_checkout() {
 
 #[test]
 fn a_list_of_map_checkout() {
-    let doc = LoroDoc::new();
+    let doc = LoroDoc::new_auto_commit();
     let entry = doc.get_map("entry");
     let (list, sub) = {
         let list = entry
@@ -635,9 +634,9 @@ fn a_list_of_map_checkout() {
 
 #[test]
 fn map_concurrent_checkout() {
-    let doc_a = LoroDoc::new();
+    let doc_a = LoroDoc::new_auto_commit();
     let meta_a = doc_a.get_map("meta");
-    let doc_b = LoroDoc::new();
+    let doc_b = LoroDoc::new_auto_commit();
     let meta_b = doc_b.get_map("meta");
 
     meta_a.insert("key", 0).unwrap();

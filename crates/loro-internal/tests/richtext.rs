@@ -7,15 +7,15 @@ use loro_internal::{LoroDoc, ToJson};
 use serde_json::json;
 
 fn init(s: &str) -> LoroDoc {
-    let doc = LoroDoc::default();
+    let doc = LoroDoc::new_auto_commit();
     doc.set_peer_id(1).unwrap();
     let richtext = doc.get_text("r");
-    richtext.insert(0, s);
+    richtext.insert(0, s).unwrap();
     doc
 }
 
 fn clone(doc: &LoroDoc, peer_id: u64) -> LoroDoc {
-    let doc2 = LoroDoc::default();
+    let doc2 = LoroDoc::new_auto_commit();
     doc2.set_peer_id(peer_id).unwrap();
     doc2.import(&doc.export_from(&Default::default())).unwrap();
     doc2

@@ -92,17 +92,6 @@ impl crate::LoroDoc {
         Ok(txn)
     }
 
-    #[inline(always)]
-    pub(crate) fn with_txn<F, R>(&self, f: F) -> LoroResult<R>
-    where
-        F: FnOnce(&mut Transaction) -> LoroResult<R>,
-    {
-        let mut txn = self.txn().unwrap();
-        let v = f(&mut txn)?;
-        txn.commit()?;
-        Ok(v)
-    }
-
     pub fn start_auto_commit(&self) {
         self.auto_commit
             .store(true, std::sync::atomic::Ordering::Release);
