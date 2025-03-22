@@ -261,6 +261,7 @@ fn concurrent_callbacks_modifying_same_doc() {
             started = cvar.wait(started).unwrap();
         }
 
+        drop(started);
         // Now both threads are modifying the document based on events
         doc2.get_text(text_id).insert(0, "B").unwrap();
         doc2.commit();
@@ -329,10 +330,7 @@ fn concurrent_document_checkout_with_modifications() {
 
         // Modify again
         doc1.get_text("text")
-            .insert(
-                doc1.get_text("text").len_utf8(),
-                " - Thread 1 after checkout",
-            )
+            .insert(0, " - Thread 1 after checkout")
             .unwrap();
         doc1.commit();
     });
@@ -358,10 +356,7 @@ fn concurrent_document_checkout_with_modifications() {
 
         // Modify again
         doc2.get_text("text")
-            .insert(
-                doc2.get_text("text").len_utf8(),
-                " - Thread 2 after checkout",
-            )
+            .insert(0, " - Thread 2 after checkout")
             .unwrap();
         doc2.commit();
     });
@@ -371,8 +366,6 @@ fn concurrent_document_checkout_with_modifications() {
 
     // Make sure we end up at latest
     doc.checkout_to_latest();
-    let text = doc.get_text("text").to_string();
-    println!("Final text after concurrent checkouts: {}", text);
 }
 
 #[test]
