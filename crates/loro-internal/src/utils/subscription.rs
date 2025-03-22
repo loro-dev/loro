@@ -1,3 +1,4 @@
+use either::Either;
 /*
 This file is modified from the original file in the following repo:
 https://github.com/zed-industries/zed
@@ -230,6 +231,7 @@ use smallvec::SmallVec;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, Weak};
+use std::thread::ThreadId;
 use std::{fmt::Debug, mem, sync::Arc};
 
 #[derive(Debug)]
@@ -254,7 +256,7 @@ impl<EmitterKey, Callback> Clone for SubscriberSet<EmitterKey, Callback> {
 }
 
 struct SubscriberSetState<EmitterKey, Callback> {
-    subscribers: BTreeMap<EmitterKey, Option<BTreeMap<usize, Subscriber<Callback>>>>,
+    subscribers: BTreeMap<EmitterKey, Either<BTreeMap<usize, Subscriber<Callback>>, ThreadId>>,
     dropped_subscribers: BTreeSet<(EmitterKey, usize)>,
     next_subscriber_id: usize,
 }
@@ -305,7 +307,7 @@ where
                     return;
                 };
 
-                if let Some(subscribers) = subscribers {
+                if let Either::Left(subscribers) = subscribers {
                     subscribers.remove(&subscriber_id);
                     if subscribers.is_empty() {
                         lock.subscribers.remove(&emitter_key);
@@ -326,8 +328,9 @@ where
 
         lock.subscribers
             .entry(emitter_key_1)
-            .or_default()
-            .get_or_insert_with(Default::default)
+            .or_insert_with(|| Either::Left(BTreeMap::new()))
+            .as_mut()
+            .unwrap_left()
             .insert(
                 subscriber_id,
                 Subscriber {
@@ -344,8 +347,7 @@ where
         let mut lock = self.0.lock().unwrap();
         let subscribers = lock.subscribers.remove(emitter);
         subscribers
-            .unwrap_or_default()
-            .map(|s| s.into_values())
+            .and_then(|x| x.left().map(|s| s.into_values()))
             .into_iter()
             .flatten()
             .filter_map(|subscriber| {
@@ -358,8 +360,8 @@ where
     }
 
     pub fn is_recursive_calling(&self, emitter: &EmitterKey) -> bool {
-        if let Some(set) = self.0.lock().unwrap().subscribers.get(emitter) {
-            set.is_none()
+        if let Some(Either::Right(thread_id)) = self.0.lock().unwrap().subscribers.get(emitter) {
+            *thread_id == std::thread::current().id()
         } else {
             false
         }
@@ -373,12 +375,26 @@ where
         f: &mut dyn FnMut(&mut Callback) -> bool,
     ) -> Result<(), SubscriptionError> {
         let mut subscribers = {
-            let mut subscriber_set_state = self.0.lock().unwrap();
-            let Some(set) = subscriber_set_state.subscribers.get_mut(emitter) else {
-                return Ok(());
-            };
-            let Some(inner) = set.take() else {
-                return Err(SubscriptionError::CannotEmitEventDueToRecursiveCall);
+            let inner = loop {
+                let mut subscriber_set_state = self.0.lock().unwrap();
+                let Some(set) = subscriber_set_state.subscribers.get_mut(emitter) else {
+                    return Ok(());
+                };
+                match set {
+                    Either::Left(_) => {
+                        break std::mem::replace(set, Either::Right(std::thread::current().id()))
+                            .unwrap_left();
+                    }
+                    Either::Right(lock_thread) => {
+                        if std::thread::current().id() == *lock_thread {
+                            return Err(SubscriptionError::CannotEmitEventDueToRecursiveCall);
+                        } else {
+                            // return Ok(());
+                            drop(subscriber_set_state);
+                            std::thread::sleep(std::time::Duration::from_millis(10));
+                        }
+                    }
+                }
             };
             inner
         };
@@ -390,23 +406,26 @@ where
                 true
             }
         });
+
         let mut lock = self.0.lock().unwrap();
 
         // Add any new subscribers that were added while invoking the callback.
-        if let Some(Some(new_subscribers)) = lock.subscribers.remove(emitter) {
+        if let Some(Either::Left(new_subscribers)) = lock.subscribers.remove(emitter) {
             subscribers.extend(new_subscribers);
         }
 
         // Remove any dropped subscriptions that were dropped while invoking the callback.
         for (dropped_emitter, dropped_subscription_id) in mem::take(&mut lock.dropped_subscribers) {
-            debug_assert_eq!(*emitter, dropped_emitter);
-            subscribers.remove(&dropped_subscription_id);
+            if *emitter == dropped_emitter {
+                subscribers.remove(&dropped_subscription_id);
+            } else {
+                lock.dropped_subscribers
+                    .insert((dropped_emitter, dropped_subscription_id));
+            }
         }
 
-        if !subscribers.is_empty() {
-            lock.subscribers.insert(emitter.clone(), Some(subscribers));
-        }
-
+        lock.subscribers
+            .insert(emitter.clone(), Either::Left(subscribers));
         Ok(())
     }
 
