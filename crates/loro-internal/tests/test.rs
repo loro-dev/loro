@@ -1352,8 +1352,15 @@ fn test_pre_commit_with_lock() {
 fn test_pre_commit_with_hash() {
     let doc = LoroDoc::new_auto_commit();
     doc.set_peer_id(0).unwrap();
+    let doc_clone = doc.clone();
     let sub = doc.subscribe_pre_commit(Box::new(move |e| {
-        e.modifier.set_timestamp(0).hash_change();
+        let hash = doc_clone.get_change_hash(e.change_meta.id);
+        assert!(hash.is_some());
+        e.modifier.set_timestamp(0).set_message(&format!(
+            "{}\n{}",
+            hash.unwrap(),
+            e.change_meta.message()
+        ));
         true
     }));
     doc.get_text("text").insert(0, "a").unwrap();

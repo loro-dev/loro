@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use crate::{
     change::{Change, Timestamp},
     oplog::get_timestamp_now_txn,
-    ChangeMeta, LoroDoc,
+    ChangeMeta,
 };
 use loro_common::PeerID;
 
@@ -37,11 +37,10 @@ pub struct ChangeModifier(Arc<Mutex<ChangeModifierInner>>);
 struct ChangeModifierInner {
     new_msg: Option<Arc<str>>,
     new_timestamp: Option<Timestamp>,
-    with_hash: bool,
 }
 
 impl ChangeModifier {
-    pub fn set_msg(&self, msg: &str) -> &Self {
+    pub fn set_message(&self, msg: &str) -> &Self {
         self.0.lock().unwrap().new_msg = Some(Arc::from(msg));
         self
     }
@@ -56,12 +55,7 @@ impl ChangeModifier {
         self
     }
 
-    pub fn hash_change(&self) -> &Self {
-        self.0.lock().unwrap().with_hash = true;
-        self
-    }
-
-    pub(crate) fn modify_change(&self, doc: &LoroDoc, change: &mut Change) {
+    pub(crate) fn modify_change(&self, change: &mut Change) {
         let m = self.0.lock().unwrap();
         if let Some(msg) = &m.new_msg {
             change.commit_msg = Some(msg.clone());
@@ -69,16 +63,6 @@ impl ChangeModifier {
 
         if let Some(timestamp) = m.new_timestamp {
             change.timestamp = timestamp;
-        }
-
-        if m.with_hash {
-            let hash = doc.get_change_hash(change).unwrap();
-            // TODO: a better way to do msg
-            change.commit_msg = Some(Arc::from(format!(
-                "{}\n{}",
-                hash,
-                change.commit_msg.as_ref().unwrap()
-            )));
         }
     }
 }

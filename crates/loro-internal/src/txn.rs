@@ -418,7 +418,7 @@ impl Transaction {
 
         let ops = std::mem::take(&mut self.local_ops);
         let deps = take(&mut self.frontiers);
-        let mut change = Change {
+        let change = Change {
             lamport: self.start_lamport,
             ops,
             deps,
@@ -430,20 +430,28 @@ impl Transaction {
             commit_msg: take(&mut self.msg),
         };
 
+        let change_meta = ChangeMeta::from_change(&change);
+        {
+            // add change to uncommit field of oplog
+            let mut oplog = doc.oplog.lock().unwrap();
+            oplog.set_uncommitted_change(change);
+        }
+
         let modifier = ChangeModifier::default();
         doc.pre_commit_subs.emit(
             &(),
             PreCommitCallbackPayload {
-                change_meta: ChangeMeta::from_change(&change),
+                change_meta,
                 origin: self.origin.to_string(),
                 modifier: modifier.clone(),
             },
         );
-        modifier.modify_change(&LoroDoc::from_inner(Arc::clone(&doc)), &mut change);
 
         let mut oplog = doc.oplog.lock().unwrap();
         let mut state = doc.state.lock().unwrap();
 
+        let mut change = oplog.uncommitted_change.take().unwrap();
+        modifier.modify_change(&mut change);
         let diff = if state.is_recording() {
             Some(change_to_diff(
                 &change,

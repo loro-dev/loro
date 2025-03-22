@@ -1803,9 +1803,14 @@ impl LoroDoc {
         s
     }
 
-    pub fn get_change_hash(&self, change: &Change) -> Option<String> {
+    pub fn get_change_hash(&self, id: ID) -> Option<String> {
         let oplog = self.oplog.lock().unwrap();
-        let encoded = encode_change(ChangeRef::from_change(change), &self.arena, None);
+        let change = oplog.get_change_at_including_uncommitted(id)?;
+        let change_ref: &Change = match &change {
+            Either::Left(c) => c,
+            Either::Right(c) => c,
+        };
+        let encoded = encode_change(ChangeRef::from_change(change_ref), &self.arena, None);
         let mut deps_hash = vec![];
         for dep in change.deps.iter().sorted() {
             let c = oplog.get_change_at(dep).unwrap();
