@@ -3,6 +3,7 @@ pub(crate) mod loro_dag;
 mod pending_changes;
 
 use bytes::Bytes;
+use either::Either;
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::cmp::Ordering;
@@ -54,6 +55,9 @@ pub struct OpLog {
     /// If so the Dag's frontiers won't be updated until the batch is finished.
     pub(crate) batch_importing: bool,
     pub(crate) configure: Configure,
+    /// The uncommitted change, it's a placeholder for the change
+    /// that is being edited in pre-commit callback.
+    pub(crate) uncommitted_change: Option<Change>,
 }
 
 impl std::fmt::Debug for OpLog {
@@ -79,6 +83,7 @@ impl OpLog {
             pending_changes: Default::default(),
             batch_importing: false,
             configure: cfg,
+            uncommitted_change: None,
         }
     }
 
@@ -295,6 +300,23 @@ impl OpLog {
         self.change_store.get_change(id)
     }
 
+    pub(crate) fn set_uncommitted_change(&mut self, change: Change) {
+        self.uncommitted_change = Some(change);
+    }
+
+    pub(crate) fn get_change_at_including_uncommitted(
+        &self,
+        id: ID,
+    ) -> Option<Either<BlockChangeRef, &Change>> {
+        if let Some(change) = self.uncommitted_change.as_ref() {
+            if change.id == id {
+                return Some(Either::Right(change));
+            }
+        }
+
+        self.change_store.get_change(id).map(Either::Left)
+    }
+
     pub fn get_deps_of(&self, id: ID) -> Option<Frontiers> {
         self.get_change_at(id).map(|c| {
             if c.id.counter == id.counter {
@@ -500,7 +522,7 @@ impl OpLog {
 
     pub fn get_timestamp_for_next_txn(&self) -> Timestamp {
         if self.configure.record_timestamp() {
-            (get_sys_timestamp() as Timestamp + 500) / 1000
+            get_timestamp_now_txn()
         } else {
             0
         }
@@ -746,4 +768,8 @@ pub(crate) fn local_op_to_remote(
         })
     }
     ans
+}
+
+pub(crate) fn get_timestamp_now_txn() -> Timestamp {
+    (get_sys_timestamp() as Timestamp + 500) / 1000
 }

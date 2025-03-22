@@ -54,6 +54,7 @@ nonmax = "0.5.5"
 ensure-cov = { workspace = true }
 pretty_assertions = "1.4.1"
 thread_local = "1.1.8"
+blake3 = "1.7.0"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies.getrandom]
 version = "0.2.15"

@@ -1,5 +1,7 @@
+use crate::change::{Change, ChangeHashContent};
+use crate::encoding::json_schema::encode_change;
 pub use crate::encoding::ExportMode;
-use crate::lock::LoroMutexGuard;
+use crate::pre_commit::{FirstCommitFromPeerCallback, FirstCommitFromPeerPayload};
 pub use crate::state::analyzer::{ContainerAnalysisInfo, DocAnalysis};
 pub(crate) use crate::LoroDocInner;
 use crate::{
@@ -35,12 +37,14 @@ use crate::{
     VersionVector,
 };
 use crate::{change::ChangeRef, lock::LockKind};
+use crate::{lock::LoroMutexGuard, pre_commit::PreCommitCallback};
 use crate::{
     lock::{LoroLockGroup, LoroMutex},
     txn::Transaction,
 };
 use either::Either;
 use fxhash::{FxHashMap, FxHashSet};
+use itertools::Itertools;
 use loro_common::{
     ContainerID, ContainerType, HasIdSpan, HasLamportSpan, IdSpan, LoroEncodeError, LoroResult,
     LoroValue, ID,
@@ -100,6 +104,8 @@ impl LoroDoc {
                 arena,
                 local_update_subs: SubscriberSetWithQueue::new(),
                 peer_id_change_subs: SubscriberSetWithQueue::new(),
+                pre_commit_subs: SubscriberSetWithQueue::new(),
+                first_commit_from_peer_subs: SubscriberSetWithQueue::new(),
             }
         });
         Self { inner }
@@ -222,6 +228,36 @@ impl LoroDoc {
             .0
     }
 
+    /// This method is called before the commit.
+    /// It can be used to modify the change before it is committed.
+    fn before_commit(&self) {
+        let is_peer_first_appear = {
+            self.txn
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|x| x.is_peer_first_appearance)
+                .unwrap_or(false)
+        };
+        if is_peer_first_appear {
+            {
+                let mut txn = self.txn.lock().unwrap();
+                let txn = txn.as_mut().unwrap();
+                // change_modifier.modify(txn);
+                txn.is_peer_first_appearance = false;
+            }
+            // let change_modifier = ChangeModifier::default();
+            // First commit from a peer
+            self.first_commit_from_peer_subs.emit(
+                &(),
+                FirstCommitFromPeerPayload {
+                    peer: self.peer_id(),
+                    // modifier: change_modifier.clone(),
+                },
+            );
+        }
+    }
+
     /// Commit the cumulative auto commit transaction.
     /// This method only has effect when `auto_commit` is true.
     /// If `immediate_renew` is true, a new transaction will be created after the old one is committed
@@ -235,14 +271,18 @@ impl LoroDoc {
         Option<CommitOptions>,
         Option<LoroMutexGuard<Option<Transaction>>>,
     ) {
-        let mut txn_guard = self.txn.lock().unwrap();
-        if !self.auto_commit.load(Acquire) {
-            // if not auto_commit, nothing should happen
-            // because the global txn is not used
-            return (None, Some(txn_guard));
+        {
+            let txn_guard = self.txn.lock().unwrap();
+            if !self.auto_commit.load(Acquire) {
+                // if not auto_commit, nothing should happen
+                // because the global txn is not used
+                return (None, Some(txn_guard));
+            }
         }
 
         loop {
+            self.before_commit();
+            let mut txn_guard = self.txn.lock().unwrap();
             let txn = txn_guard.take();
             let Some(mut txn) = txn else {
                 return (None, Some(txn_guard));
@@ -1738,6 +1778,54 @@ impl LoroDoc {
     #[inline]
     pub fn find_id_spans_between(&self, from: &Frontiers, to: &Frontiers) -> VersionVectorDiff {
         self.oplog().lock().unwrap().dag.find_path(from, to)
+    }
+
+    /// Subscribe to the first commit from a peer. Operations performed on the `LoroDoc` within this callback
+    /// will be merged into the current commit.
+    ///
+    /// This is useful for managing the relationship between `PeerID` and user information.
+    /// For example, you could store user names in a `LoroMap` using `PeerID` as the key and the `UserID` as the value.
+    pub fn subscribe_first_commit_from_peer(
+        &self,
+        callback: FirstCommitFromPeerCallback,
+    ) -> Subscription {
+        let (s, enable) = self
+            .first_commit_from_peer_subs
+            .inner()
+            .insert((), callback);
+        enable();
+        s
+    }
+
+    pub fn subscribe_pre_commit(&self, callback: PreCommitCallback) -> Subscription {
+        let (s, enable) = self.pre_commit_subs.inner().insert((), callback);
+        enable();
+        s
+    }
+
+    pub fn get_change_hash(&self, id: ID) -> Option<String> {
+        let oplog = self.oplog.lock().unwrap();
+        let change = oplog.get_change_at_including_uncommitted(id)?;
+        let change_ref: &Change = match &change {
+            Either::Left(c) => c,
+            Either::Right(c) => c,
+        };
+        let encoded = encode_change(ChangeRef::from_change(change_ref), &self.arena, None);
+        let mut deps_hash = vec![];
+        for dep in change.deps.iter().sorted() {
+            let c = oplog.get_change_at(dep).unwrap();
+            if let Some(msg) = c.message() {
+                deps_hash.push(msg.clone());
+            } else {
+                // TODO: how to handle this
+                deps_hash.push(Arc::from(""));
+            }
+        }
+        let change_hash = ChangeHashContent {
+            change_content: encoded,
+            deps_msg: deps_hash,
+        };
+        Some(change_hash.hash())
     }
 }
 
