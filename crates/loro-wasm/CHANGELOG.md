@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.5.0
+
+### Minor Changes
+
+- a997885: add `EphemeralStore`
+
+### Patch Changes
+
+- 4cb7ae3: feat: get ops from current txn as json #676
+
 ## 1.4.6
 
 ### Patch Changes
