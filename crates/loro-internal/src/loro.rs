@@ -176,16 +176,7 @@ impl LoroDoc {
 
             if doc_state.is_in_txn() {
                 drop(doc_state);
-                self.before_commit();
-                let mut t = self.txn.lock().unwrap();
-                let txn = t.take();
-                if let Some(txn) = txn {
-                    txn.commit().unwrap();
-                }
-
-                let new_txn = self.txn().unwrap();
-                t.replace(new_txn);
-                drop(t);
+                self.commit_then_renew();
             }
             self.peer_id_change_subs.emit(&(), next_id);
             return Ok(());
