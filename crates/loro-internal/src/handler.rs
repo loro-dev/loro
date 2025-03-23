@@ -2140,7 +2140,12 @@ impl TextHandler {
         delta: &[TextDelta],
     ) -> LoroResult<()> {
         let mut index = 0;
-        let mut marks = Vec::new();
+        struct PendingMark {
+            start: usize,
+            end: usize,
+            attributes: FxHashMap<InternalString, LoroValue>,
+        }
+        let mut marks: Vec<PendingMark> = Vec::new();
         for d in delta {
             match d {
                 TextDelta::Insert { insert, attributes } => {
@@ -2153,10 +2158,15 @@ impl TextHandler {
                         PosType::Event,
                     )?;
 
+                    let mut pending_mark = PendingMark {
+                        start: index,
+                        end,
+                        attributes: FxHashMap::default(),
+                    };
                     for (key, value) in override_styles {
-                        marks.push((index, end, key, value));
+                        pending_mark.attributes.insert(key, value);
                     }
-
+                    marks.push(pending_mark);
                     index = end;
                 }
                 TextDelta::Delete { delete } => {
@@ -2166,9 +2176,17 @@ impl TextHandler {
                     let end = index + *retain;
                     match attributes {
                         Some(attr) if !attr.is_empty() => {
+                            let mut pending_mark = PendingMark {
+                                start: index,
+                                end,
+                                attributes: FxHashMap::default(),
+                            };
                             for (key, value) in attr {
-                                marks.push((index, end, key.deref().into(), value.clone()));
+                                pending_mark
+                                    .attributes
+                                    .insert(key.deref().into(), value.clone());
                             }
+                            marks.push(pending_mark);
                         }
                         _ => {}
                     }
@@ -2178,13 +2196,22 @@ impl TextHandler {
         }
 
         let mut len = self.len_event();
-        for (start, end, key, value) in marks {
-            if start >= len {
-                self.insert_with_txn(txn, len, &"\n".repeat(start - len + 1))?;
-                len = start;
+        for pending_mark in marks {
+            if pending_mark.start >= len {
+                self.insert_with_txn(txn, len, &"\n".repeat(pending_mark.start - len + 1))?;
+                len = pending_mark.start;
             }
 
-            self.mark_with_txn(txn, start, end, key.deref(), value, false)?;
+            for (key, value) in pending_mark.attributes {
+                self.mark_with_txn(
+                    txn,
+                    pending_mark.start,
+                    pending_mark.end,
+                    key.deref(),
+                    value,
+                    false,
+                )?;
+            }
         }
 
         Ok(())

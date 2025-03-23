@@ -3275,3 +3275,34 @@ fn test_to_delta_on_detached_text() {
         }]
     );
 }
+
+#[test]
+fn test_apply_delta_on_the_end() {
+    let doc = LoroDoc::new();
+    doc.get_text("text").insert(0, "Hello").unwrap();
+    doc.get_text("text").apply_delta(&[
+        TextDelta::Retain {
+            retain: 5,
+            attributes: None,
+        },
+        TextDelta::Retain {
+            retain: 1,
+            attributes: Some(fx_map! { "bold".into() => LoroValue::Bool(true),  "italic".into() => LoroValue::Bool(true)  }),
+        },
+    ]).unwrap();
+    assert_eq!(
+        doc.get_text("text").to_delta(),
+        vec![
+            TextDelta::Insert {
+                insert: "Hello".to_string(),
+                attributes: None,
+            },
+            TextDelta::Insert {
+                insert: "\n".to_string(),
+                attributes: Some(
+                    fx_map! { "bold".into() => LoroValue::Bool(true), "italic".into() => LoroValue::Bool(true) }
+                ),
+            },
+        ]
+    );
+}
