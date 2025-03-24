@@ -8,7 +8,6 @@ use crate::{
     dag::DagNode,
     estimated_size::EstimatedSize,
     id::{Counter, ID},
-    json::JsonChange,
     op::Op,
     span::{HasId, HasLamport},
     version::Frontiers,
@@ -16,7 +15,6 @@ use crate::{
 use loro_common::{HasCounter, HasCounterSpan, PeerID};
 use num::traits::AsPrimitive;
 use rle::{HasIndex, HasLength, Mergable, RleVec, Sliceable};
-use serde::Serialize;
 use smallvec::SmallVec;
 
 pub type Timestamp = i64;
@@ -284,18 +282,6 @@ impl Change {
     }
 }
 
-#[derive(Debug, Serialize)]
-pub(crate) struct ChangeHashContent {
-    pub(crate) change_content: JsonChange,
-    pub(crate) deps_msg: Vec<Arc<str>>,
-}
-
-impl ChangeHashContent {
-    pub fn hash(&self) -> String {
-        let input = serde_json::to_string(self).unwrap();
-        blake3::hash(input.as_bytes()).to_hex().to_string()
-    }
-}
 /// [Unix time](https://en.wikipedia.org/wiki/Unix_time)
 /// It is the number of milliseconds that have elapsed since 00:00:00 UTC on 1 January 1970.
 #[cfg(not(all(feature = "wasm", target_arch = "wasm32")))]

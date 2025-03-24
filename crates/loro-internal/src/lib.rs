@@ -169,3 +169,11 @@ pub struct LoroDocInner {
 
 /// The version of the loro crate
 pub const LORO_VERSION: &str = include_str!("../VERSION");
+
+impl Drop for LoroDoc {
+    fn drop(&mut self) {
+        if Arc::strong_count(&self.inner) == 1 {
+            let _ = self.commit_then_stop();
+        }
+    }
+}

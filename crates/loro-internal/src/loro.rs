@@ -1,4 +1,3 @@
-use crate::change::{Change, ChangeHashContent};
 use crate::encoding::json_schema::encode_change;
 pub use crate::encoding::ExportMode;
 use crate::pre_commit::{FirstCommitFromPeerCallback, FirstCommitFromPeerPayload};
@@ -44,7 +43,6 @@ use crate::{
 };
 use either::Either;
 use fxhash::{FxHashMap, FxHashSet};
-use itertools::Itertools;
 use loro_common::{
     ContainerID, ContainerType, HasIdSpan, HasLamportSpan, IdSpan, LoroEncodeError, LoroResult,
     LoroValue, ID,
@@ -108,7 +106,7 @@ impl LoroDoc {
                 first_commit_from_peer_subs: SubscriberSetWithQueue::new(),
             }
         });
-        Self { inner }
+        LoroDoc { inner }
     }
 
     pub fn fork(&self) -> Self {
@@ -128,7 +126,6 @@ impl LoroDoc {
         self.renew_txn_if_auto_commit(options);
         doc
     }
-
     /// Enables editing of the document in detached mode.
     ///
     /// By default, the document cannot be edited in detached mode (after calling
@@ -243,16 +240,13 @@ impl LoroDoc {
             {
                 let mut txn = self.txn.lock().unwrap();
                 let txn = txn.as_mut().unwrap();
-                // change_modifier.modify(txn);
                 txn.is_peer_first_appearance = false;
             }
-            // let change_modifier = ChangeModifier::default();
             // First commit from a peer
             self.first_commit_from_peer_subs.emit(
                 &(),
                 FirstCommitFromPeerPayload {
                     peer: self.peer_id(),
-                    // modifier: change_modifier.clone(),
                 },
             );
         }
@@ -271,13 +265,11 @@ impl LoroDoc {
         Option<CommitOptions>,
         Option<LoroMutexGuard<Option<Transaction>>>,
     ) {
-        {
+        if !self.auto_commit.load(Acquire) {
             let txn_guard = self.txn.lock().unwrap();
-            if !self.auto_commit.load(Acquire) {
-                // if not auto_commit, nothing should happen
-                // because the global txn is not used
-                return (None, Some(txn_guard));
-            }
+            // if not auto_commit, nothing should happen
+            // because the global txn is not used
+            return (None, Some(txn_guard));
         }
 
         loop {
@@ -1803,29 +1795,14 @@ impl LoroDoc {
         s
     }
 
-    pub fn get_change_hash(&self, id: ID) -> Option<String> {
+    pub fn change_to_json_schema(&self, id: ID) -> Option<JsonChange> {
         let oplog = self.oplog.lock().unwrap();
         let change = oplog.get_change_at_including_uncommitted(id)?;
-        let change_ref: &Change = match &change {
-            Either::Left(c) => c,
-            Either::Right(c) => c,
-        };
-        let encoded = encode_change(ChangeRef::from_change(change_ref), &self.arena, None);
-        let mut deps_hash = vec![];
-        for dep in change.deps.iter().sorted() {
-            let c = oplog.get_change_at(dep).unwrap();
-            if let Some(msg) = c.message() {
-                deps_hash.push(msg.clone());
-            } else {
-                // TODO: how to handle this
-                deps_hash.push(Arc::from(""));
-            }
-        }
-        let change_hash = ChangeHashContent {
-            change_content: encoded,
-            deps_msg: deps_hash,
-        };
-        Some(change_hash.hash())
+        Some(encode_change(
+            ChangeRef::from_change(&change),
+            &self.arena,
+            None,
+        ))
     }
 }
 

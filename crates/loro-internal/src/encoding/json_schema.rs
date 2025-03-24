@@ -17,6 +17,7 @@ use crate::{
     OpLog, VersionVector,
 };
 use either::Either;
+use itertools::Itertools;
 use json::{JsonChange, JsonOpContent, JsonSchema};
 use loro_common::{
     ContainerID, ContainerType, HasCounterSpan, HasId, HasIdSpan, IdLp, IdSpan, LoroError,
@@ -533,6 +534,8 @@ pub(crate) fn encode_change(
         deps: change
             .deps
             .iter()
+            // Make sure the json change is deterministic
+            .sorted()
             .map(|id| register_id(&id, peer_register.as_deref_mut()))
             .collect(),
         lamport: *change.lamport,
