@@ -1,4 +1,4 @@
-use crate::encoding::json_schema::encode_change;
+use crate::encoding::json_schema::{encode_change, export_json_in_id_span};
 pub use crate::encoding::ExportMode;
 use crate::pre_commit::{FirstCommitFromPeerCallback, FirstCommitFromPeerPayload};
 pub use crate::state::analyzer::{ContainerAnalysisInfo, DocAnalysis};
@@ -1795,14 +1795,14 @@ impl LoroDoc {
         s
     }
 
-    pub fn change_to_json_schema(&self, id: ID) -> Option<JsonChange> {
+    pub fn change_to_json_schema_include_uncommit(&self, id_span: IdSpan) -> Vec<JsonChange> {
         let oplog = self.oplog.lock().unwrap();
-        let change = oplog.get_change_at_including_uncommitted(id)?;
-        Some(encode_change(
-            ChangeRef::from_change(&change),
-            &self.arena,
-            None,
-        ))
+        let mut changes = export_json_in_id_span(&oplog, id_span);
+        if let Some(uncommit) = oplog.get_uncommitted_change_in_span(id_span) {
+            let change_json = encode_change(ChangeRef::from_change(&uncommit), &self.arena, None);
+            changes.push(change_json);
+        }
+        changes
     }
 }
 

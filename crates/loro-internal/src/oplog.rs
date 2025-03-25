@@ -3,7 +3,6 @@ pub(crate) mod loro_dag;
 mod pending_changes;
 
 use bytes::Bytes;
-use either::Either;
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::cmp::Ordering;
@@ -28,7 +27,7 @@ use crate::span::{HasCounterSpan, HasLamportSpan};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
 use change_store::BlockOpRef;
-use loro_common::{IdLp, IdSpan};
+use loro_common::{HasIdSpan, IdLp, IdSpan};
 use rle::{HasLength, RleVec, Sliceable};
 use smallvec::SmallVec;
 
@@ -304,17 +303,16 @@ impl OpLog {
         self.uncommitted_change = Some(change);
     }
 
-    pub(crate) fn get_change_at_including_uncommitted(
-        &self,
-        id: ID,
-    ) -> Option<Either<BlockChangeRef, &Change>> {
-        if let Some(change) = self.uncommitted_change.as_ref() {
-            if change.id == id {
-                return Some(Either::Right(change));
+    pub(crate) fn get_uncommitted_change_in_span(&self, id_span: IdSpan) -> Option<Cow<Change>> {
+        self.uncommitted_change.as_ref().and_then(|c| {
+            if c.id_span() == id_span {
+                Some(Cow::Borrowed(c))
+            } else if let Some((start, end)) = id_span.get_slice_range_on(&c.id_span()) {
+                Some(Cow::Owned(c.slice(start, end)))
+            } else {
+                None
             }
-        }
-
-        self.change_store.get_change(id).map(Either::Left)
+        })
     }
 
     pub fn get_deps_of(&self, id: ID) -> Option<Frontiers> {

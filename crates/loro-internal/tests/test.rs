@@ -1369,11 +1369,29 @@ fn test_pre_commit_with_hash() {
     doc.set_peer_id(0).unwrap();
     let doc_clone = doc.clone();
     let sub = doc.subscribe_pre_commit(Box::new(move |e| {
-        let change_json = doc_clone.change_to_json_schema(e.change_meta.id);
-        assert!(change_json.is_some());
+        let change_json = doc_clone
+            .change_to_json_schema_include_uncommit(e.change_meta.id.to_span(e.change_meta.len));
+        assert!(change_json.len() == 1);
+        let mut deps = vec![];
+        for dep in e.change_meta.deps.iter() {
+            let dep_msg = doc_clone
+                .oplog()
+                .lock()
+                .unwrap()
+                .get_change_at(dep)
+                .unwrap()
+                .message()
+                .cloned()
+                .unwrap_or(Arc::from(""));
+            deps.push(dep_msg);
+        }
         e.modifier.set_timestamp(0).set_message(&format!(
             "{}\n{}",
-            "some hash based on change json",
+            blake3::hash(
+                serde_json::to_string(&(&change_json, &deps))
+                    .unwrap()
+                    .as_bytes()
+            ),
             e.change_meta.message()
         ));
         true
@@ -1397,7 +1415,7 @@ fn test_pre_commit_with_hash() {
     assert_eq!(changes.len(), 2);
     for c in changes {
         let mut msg = c.msg.as_ref().unwrap().lines();
-        // assert_eq!(msg.next().unwrap().len(), 64);
+        assert_eq!(msg.next().unwrap().len(), 64);
         assert!(msg.next().is_some());
     }
 }

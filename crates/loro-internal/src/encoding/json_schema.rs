@@ -85,7 +85,9 @@ pub(crate) fn export_json_in_id_span(oplog: &OpLog, mut id_span: IdSpan) -> Vec<
     id_span.counter.end = id_span.counter.end.min(end);
     let mut diff_changes: Vec<Either<BlockChangeRef, Change>> = Vec::new();
     while id_span.counter.end - id_span.counter.start > 0 {
-        let change: BlockChangeRef = oplog.get_change_at(id_span.id_start()).unwrap();
+        let Some(change) = oplog.get_change_at(id_span.id_start()) else {
+            break;
+        };
         let ctr_end = change.ctr_end();
         if change.id.counter >= id_span.counter.start && change.ctr_end() <= id_span.counter.end {
             diff_changes.push(Either::Left(change));
