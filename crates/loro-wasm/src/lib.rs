@@ -2102,7 +2102,7 @@ impl LoroDoc {
     ///
     /// This method includes both committed changes and pending changes that have not yet been
     /// applied to the OpLog.
-    #[wasm_bindgen(js_name = "changeToJsonSchemaIncludeUncommit", skip_typescript)]
+    #[wasm_bindgen(js_name = "changeToJsonSchemaIncludeUncommit")]
     pub fn change_to_json_schema_include_uncommit(
         &self,
         id_span: JsIdSpan,
