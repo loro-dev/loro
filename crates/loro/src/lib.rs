@@ -1731,8 +1731,6 @@ impl LoroText {
     /// - `both`: when inserting text either right before or right after the given range, the mark will be expanded to include the inserted text
     ///
     /// *You should make sure that a key is always associated with the same expand type.*
-    ///
-    /// Note: this is not suitable for unmergeable annotations like comments.
     pub fn mark(
         &self,
         range: Range<usize>,

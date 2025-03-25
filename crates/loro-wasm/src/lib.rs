@@ -1836,13 +1836,7 @@ impl LoroDoc {
     /// ```
     #[wasm_bindgen(js_name = "vvToFrontiers")]
     pub fn vv_to_frontiers(&self, vv: &VersionVector) -> JsResult<JsIDs> {
-        let f = self
-            .0
-            .oplog()
-            .lock()
-            .unwrap()
-            .dag()
-            .vv_to_frontiers(&vv.0);
+        let f = self.0.oplog().lock().unwrap().dag().vv_to_frontiers(&vv.0);
         Ok(frontiers_to_ids(&f))
     }
 
@@ -2487,8 +2481,6 @@ impl LoroText {
     /// > You should call `configTextStyle` before using `mark` and `unmark`.
     ///
     /// You can use it to create a highlight, make a range of text bold, or add a link to a range of text.
-    ///
-    /// Note: this is not suitable for unmergeable annotations like comments.
     ///
     /// @example
     /// ```ts
