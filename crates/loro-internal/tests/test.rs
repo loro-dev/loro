@@ -2,7 +2,7 @@ use std::sync::{atomic::AtomicBool, Arc, Mutex};
 
 use fxhash::FxHashMap;
 use loro_common::{
-    loro_value, ContainerID, ContainerType, LoroError, LoroResult, LoroValue, PeerID, ID,
+    loro_value, ContainerID, ContainerType, IdSpan, LoroError, LoroResult, LoroValue, PeerID, ID,
 };
 use loro_internal::{
     delta::ResolvedMapValue,
@@ -1418,4 +1418,24 @@ fn test_pre_commit_with_hash() {
         assert_eq!(msg.next().unwrap().len(), 64);
         assert!(msg.next().is_some());
     }
+}
+
+#[test]
+fn test_change_to_json_schema_include_uncommit() {
+    let doc = LoroDoc::new_auto_commit();
+    doc.set_peer_id(0).unwrap();
+    doc.get_text("text").insert(0, "a").unwrap();
+    doc.commit_then_renew();
+    let doc_clone = doc.clone();
+    let _sub = doc.subscribe_pre_commit(Box::new(move |_e| {
+        let changes = doc_clone.change_to_json_schema_include_uncommit(IdSpan::new(0, 0, 2));
+        assert_eq!(changes.len(), 2);
+        true
+    }));
+    doc.get_text("text").insert(0, "b").unwrap();
+    let changes = doc.change_to_json_schema_include_uncommit(IdSpan::new(0, 0, 2));
+    assert_eq!(changes.len(), 1);
+    doc.commit_then_renew();
+    // change merged
+    assert_eq!(changes.len(), 1);
 }

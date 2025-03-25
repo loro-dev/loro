@@ -1789,12 +1789,23 @@ impl LoroDoc {
         s
     }
 
+    /// Subscribe to the pre-commit event.
+    ///
+    /// The callback will be called when the changes are committed but not yet applied to the OpLog.
+    /// You can modify the commit message and timestamp in the callback by [`ChangeModifier`].
     pub fn subscribe_pre_commit(&self, callback: PreCommitCallback) -> Subscription {
         let (s, enable) = self.pre_commit_subs.inner().insert((), callback);
         enable();
         s
     }
 
+    /// Exports changes within the specified ID span to JSON schema format.
+    ///
+    /// The JSON schema format is identical to [`export_json_updates`] and produces deterministic output,
+    /// making it suitable for hash calculation and verification purposes.
+    ///
+    /// This method includes both committed changes and pending changes that have not yet been
+    /// applied to the OpLog.
     pub fn change_to_json_schema_include_uncommit(&self, id_span: IdSpan) -> Vec<JsonChange> {
         let oplog = self.oplog.lock().unwrap();
         let mut changes = export_json_in_id_span(&oplog, id_span);

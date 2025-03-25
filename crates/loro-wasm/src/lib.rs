@@ -199,6 +199,10 @@ extern "C" {
     pub type JsUndoConfig;
     #[wasm_bindgen(typescript_type = "JsonSchema")]
     pub type JsJsonSchema;
+    #[wasm_bindgen(typescript_type = "JsonChange")]
+    pub type JsJsonChange;
+    #[wasm_bindgen(typescript_type = "JsonChange[]")]
+    pub type JsJsonChanges;
     #[wasm_bindgen(typescript_type = "string | JsonSchema")]
     pub type JsJsonSchemaOrString;
     #[wasm_bindgen(typescript_type = "ExportMode")]
@@ -368,6 +372,25 @@ impl ChangeMeta {
     fn to_js(&self) -> JsValue {
         let s = serde_wasm_bindgen::Serializer::new();
         self.serialize(&s).unwrap()
+    }
+
+    fn from_loro(meta: &loro_internal::ChangeMeta) -> Self {
+        Self {
+            lamport: meta.lamport,
+            length: meta.len as u32,
+            peer: meta.id.peer.to_string(),
+            counter: meta.id.counter,
+            deps: meta
+                .deps
+                .iter()
+                .map(|id| StringID {
+                    peer: id.peer.to_string(),
+                    counter: id.counter,
+                })
+                .collect(),
+            timestamp: meta.timestamp as f64,
+            message: meta.message.clone(),
+        }
     }
 }
 
@@ -1836,13 +1859,7 @@ impl LoroDoc {
     /// ```
     #[wasm_bindgen(js_name = "vvToFrontiers")]
     pub fn vv_to_frontiers(&self, vv: &VersionVector) -> JsResult<JsIDs> {
-        let f = self
-            .0
-            .oplog()
-            .lock()
-            .unwrap()
-            .dag()
-            .vv_to_frontiers(&vv.0);
+        let f = self.0.oplog().lock().unwrap().dag().vv_to_frontiers(&vv.0);
         Ok(frontiers_to_ids(&f))
     }
 
@@ -2076,6 +2093,73 @@ impl LoroDoc {
             .serialize(&s)
             .map_err(std::convert::Into::<JsValue>::into)?;
         Ok(Some(v.into()))
+    }
+
+    /// Exports changes within the specified ID span to JSON schema format.
+    ///
+    /// The JSON schema format is identical to [`export_json_updates`] and produces deterministic output,
+    /// making it suitable for hash calculation and verification purposes.
+    ///
+    /// This method includes both committed changes and pending changes that have not yet been
+    /// applied to the OpLog.
+    #[wasm_bindgen(js_name = "changeToJsonSchemaIncludeUncommit", skip_typescript)]
+    pub fn change_to_json_schema_include_uncommit(
+        &self,
+        id_span: JsIdSpan,
+    ) -> JsResult<JsJsonChanges> {
+        let id_span = js_to_id_span(id_span)?;
+        let changes = self.0.change_to_json_schema_include_uncommit(id_span);
+        let s = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+        let v = changes
+            .serialize(&s)
+            .map_err(std::convert::Into::<JsValue>::into)?;
+        Ok(v.into())
+    }
+
+    #[wasm_bindgen(js_name = "subscribeFirstCommitFromPeer", skip_typescript)]
+    pub fn subscribe_first_commit_from_peer(&self, f: js_sys::Function) -> JsValue {
+        let observer = observer::Observer::new(f);
+        let sub = self.0.subscribe_first_commit_from_peer(Box::new(move |e| {
+            let obj = js_sys::Object::new();
+            Reflect::set(&obj, &"peer".into(), &e.peer.to_string().into()).unwrap();
+            if let Err(e) = observer.call1(&obj.into()) {
+                console_error!("Error: {:?}", e);
+            }
+            true
+        }));
+
+        subscription_to_js_function_callback(sub)
+    }
+
+    /// Subscribe to the pre-commit event.
+    ///
+    /// The callback will be called when the changes are committed but not yet applied to the OpLog.
+    /// You can modify the commit message and timestamp in the callback by `ChangeModifier`.
+    #[wasm_bindgen(js_name = "subscribePreCommit", skip_typescript)]
+    pub fn subscribe_pre_commit(&self, f: js_sys::Function) -> JsValue {
+        let observer = observer::Observer::new(f);
+        let sub = self.0.subscribe_pre_commit(Box::new(move |e| {
+            let obj = js_sys::Object::new();
+            Reflect::set(
+                &obj,
+                &"changeMeta".into(),
+                &ChangeMeta::from_loro(&e.change_meta).to_js(),
+            )
+            .unwrap();
+            Reflect::set(&obj, &"origin".into(), &JsValue::from_str(&e.origin)).unwrap();
+            Reflect::set(
+                &obj,
+                &"modifier".into(),
+                &ChangeModifier(e.modifier.clone()).into(),
+            )
+            .unwrap();
+            if let Err(e) = observer.call1(&obj.into()) {
+                console_error!("Error: {:?}", e);
+            }
+            true
+        }));
+
+        subscription_to_js_function_callback(sub)
     }
 }
 
@@ -5158,6 +5242,22 @@ fn subscription_to_js_function_callback(sub: Subscription) -> JsValue {
     closure.into_js_value()
 }
 
+#[wasm_bindgen]
+pub struct ChangeModifier(loro_internal::pre_commit::ChangeModifier);
+
+#[wasm_bindgen]
+impl ChangeModifier {
+    #[wasm_bindgen(js_name = "setMessage")]
+    pub fn set_message(&self, message: &str) -> Self {
+        Self(self.0.set_message(message).clone())
+    }
+
+    #[wasm_bindgen(js_name = "setTimestamp")]
+    pub fn set_timestamp(&self, timestamp: f64) -> Self {
+        Self(self.0.set_timestamp(timestamp as i64).clone())
+    }
+}
+
 #[wasm_bindgen(typescript_custom_section)]
 const TYPES: &'static str = r#"
 /**
@@ -5281,6 +5381,59 @@ interface LoroDoc {
      * ```
      */
     subscribeLocalUpdates(f: (bytes: Uint8Array) => void): () => void
+
+    /**
+     * Subscribe to the first commit from a peer. Operations performed on the `LoroDoc` within this callback
+     * will be merged into the current commit.
+     *
+     * This is useful for managing the relationship between `PeerID` and user information.
+     * For example, you could store user names in a `LoroMap` using `PeerID` as the key and the `UserID` as the value.
+     *
+     * @param f - A callback function that receives a peer id.
+     *
+     * @example
+     * ```ts
+     * const doc = new LoroDoc();
+     * doc.setPeerId(0);
+     * const p = [];
+     * doc.subscribeFirstCommitFromPeer((peer) => {
+     *   p.push(peer);
+     *   doc.getMap("map").set(e.peer, "user-" + e.peer);
+     * });
+     * doc.getList("list").insert(0, 100);
+     * doc.commit();
+     * doc.getList("list").insert(0, 200);
+     * doc.commit();
+     * doc.setPeerId(1);
+     * doc.getList("list").insert(0, 300);
+     * doc.commit();
+     * expect(p).toEqual(["0", "1"]);
+     * expect(doc.getMap("map").get("0")).toBe("user-0");
+     * ```
+     **/
+    subscribeFirstCommitFromPeer(f: (e: { peer: PeerID }) => void): () => void
+
+    /**
+     * Subscribe to the pre-commit event.
+     *
+     * The callback will be called when the changes are committed but not yet applied to the OpLog.
+     * You can modify the commit message and timestamp in the callback by `ChangeModifier`.
+     *
+     * @example
+     * ```ts
+     * const doc = new LoroDoc();
+     * doc.subscribePreCommit((e) => {
+     *   e.modifier.setMessage("test").setTimestamp(Date.now());
+     * });
+     * doc.getList("list").insert(0, 100);
+     * doc.commit();
+     * expect(doc.getChangeAt({ peer: "0", counter: 0 }).message).toBe("test");
+     * ```
+     * @param f - A callback function that receives a pre commit event.
+     * 
+     * 
+     **/
+    subscribePreCommit(f: (e: { changeMeta: ChangeMeta, origin: string, modifier: ChangeModifier }) => void): () => void
 
     /**
      * Convert the document to a JSON value with a custom replacer function.

@@ -64,7 +64,7 @@ mod error;
 #[cfg(feature = "test_utils")]
 pub mod fuzz;
 mod parent;
-pub(crate) mod pre_commit;
+pub mod pre_commit;
 mod span;
 #[cfg(test)]
 pub mod tests;

@@ -10,6 +10,7 @@ import {
   LoroMap,
   LoroText,
   MapDiff,
+  PeerID,
   TextDiff,
 } from "../bundler/index";
 
@@ -536,6 +537,36 @@ it("subscription for local updates works after timeout", async () => {
     times = 0;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
+});
+
+it("subscribe first commit from peer", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId(0);
+  let p: PeerID[] = [];
+  doc.subscribeFirstCommitFromPeer((e) => {
+    p.push(e.peer);
+    doc.getMap("map").set(e.peer, "user-" + e.peer);
+  });
+  doc.getList("list").insert(0, 100);
+  doc.commit();
+  doc.getList("list").insert(0, 200);
+  doc.commit();
+  doc.setPeerId(1);
+  doc.getList("list").insert(0, 300);
+  doc.commit();
+  expect(p).toEqual(["0", "1"]);
+  expect(doc.getMap("map").get("0")).toBe("user-0");
+});
+
+it("subscribe pre commit", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId(0);
+  doc.subscribePreCommit((e) => {
+    e.modifier.setMessage("test").setTimestamp(Date.now());
+  });
+  doc.getList("list").insert(0, 100);
+  doc.commit();
+  expect(doc.getChangeAt({ peer: "0", counter: 0 }).message).toBe("test");
 });
 
 function oneMs(): Promise<void> {
