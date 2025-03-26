@@ -1386,11 +1386,13 @@ fn test_pre_commit_with_hash() {
             deps.push(dep_msg);
         }
         e.modifier.set_timestamp(0).set_message(&format!(
-            "{}\n{}",
-            blake3::hash(
+            "{:08x}\n{}",
+            // just for test example, should use sha256 or blake3 for hash
+            xxhash_rust::xxh32::xxh32(
                 serde_json::to_string(&(&change_json, &deps))
                     .unwrap()
-                    .as_bytes()
+                    .as_bytes(),
+                0
             ),
             e.change_meta.message()
         ));
@@ -1415,7 +1417,7 @@ fn test_pre_commit_with_hash() {
     assert_eq!(changes.len(), 2);
     for c in changes {
         let mut msg = c.msg.as_ref().unwrap().lines();
-        assert_eq!(msg.next().unwrap().len(), 64);
+        assert_eq!(msg.next().unwrap().len(), 8);
         assert!(msg.next().is_some());
     }
 }

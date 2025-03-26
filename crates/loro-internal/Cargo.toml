@@ -76,7 +76,6 @@ arbtest = "0.2.0"
 bench-utils = { path = "../bench-utils" }
 dev-utils = { path = "../dev-utils" }
 zstd = "0.13.0"
-blake3 = "^1.7.0"
 
 # See https://matklad.github.io/2021/02/27/delete-cargo-integration-tests.html
 [lib]
