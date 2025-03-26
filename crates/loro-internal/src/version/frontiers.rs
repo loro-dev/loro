@@ -1,6 +1,5 @@
 use super::*;
 use either::Either;
-use itertools::Itertools;
 
 /// Frontiers representation.
 //
@@ -61,8 +60,6 @@ impl InternalMap {
     fn iter(&self) -> impl Iterator<Item = ID> + '_ {
         self.0
             .iter()
-            // Make sure the order is deterministic
-            .sorted()
             .map(|(&peer, &counter)| ID::new(peer, counter))
     }
 

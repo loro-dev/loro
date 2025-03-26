@@ -695,8 +695,8 @@ it("can query pending txn length", () => {
 
 it("can encode/decode frontiers", () => {
   const frontiers = [
-    { peer: "222", counter: 2 },
     { peer: "1123", counter: 1 },
+    { peer: "222", counter: 2 },
   ] as Frontiers;
   const encoded = encodeFrontiers(frontiers);
   const decoded = decodeFrontiers(encoded);

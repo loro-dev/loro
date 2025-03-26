@@ -1072,8 +1072,12 @@ impl LoroDoc {
     /// doc.get_text("text").insert(0, "a").unwrap();
     /// doc.commit();
     /// let doc_clone = doc.clone();
-    /// let _sub = doc.subscribe_pre_commit(Box::new(move |_e| {
-    ///     let changes = doc_clone.change_to_json_schema_include_uncommit(IdSpan::new(0, 0, 2));
+    /// let _sub = doc.subscribe_pre_commit(Box::new(move |e| {
+    ///     let changes = doc_clone.change_to_json_schema_include_uncommit(IdSpan::new(
+    ///         0,
+    ///         0,
+    ///         e.change_meta.id.counter + e.change_meta.len as i32,
+    ///     ));
     ///     // 2 because commit one and the uncommit one
     ///     assert_eq!(changes.len(), 2);
     ///     true

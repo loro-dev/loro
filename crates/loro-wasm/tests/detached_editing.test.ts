@@ -52,7 +52,7 @@ describe("detached editing", () => {
         expect(doc.frontiers()).not.toEqual(doc.oplogFrontiers());
         expect(doc.oplogVersion().toJSON()).not.toEqual(doc.version().toJSON());
         expect(doc.frontiers()).toEqual([{ peer: "0", counter: 6 }]);
-        expect(doc.oplogFrontiers()).toEqual([{ peer: "0", counter: 6 }, { peer: "1", counter: 11 }]);
+        expect(doc.oplogFrontiers()).toEqual([{ peer: "1", counter: 11 }, { peer: "0", counter: 6 }]);
         expect(doc.version().toJSON()).toEqual(new Map([["1", 5], ["0", 7]]));
         expect(doc.oplogVersion().toJSON()).toEqual(new Map([["1", 12], ["0", 7]]));
 
