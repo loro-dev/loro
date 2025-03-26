@@ -17,6 +17,7 @@ use crate::{
     OpLog, VersionVector,
 };
 use either::Either;
+use itertools::Itertools;
 use json::{JsonChange, JsonOpContent, JsonSchema};
 use loro_common::{
     ContainerID, ContainerType, HasCounterSpan, HasId, HasIdSpan, IdLp, IdSpan, LoroError,
@@ -85,7 +86,9 @@ pub(crate) fn export_json_in_id_span(oplog: &OpLog, mut id_span: IdSpan) -> Vec<
     id_span.counter.end = id_span.counter.end.min(end);
     let mut diff_changes: Vec<Either<BlockChangeRef, Change>> = Vec::new();
     while id_span.counter.end - id_span.counter.start > 0 {
-        let change: BlockChangeRef = oplog.get_change_at(id_span.id_start()).unwrap();
+        let Some(change) = oplog.get_change_at(id_span.id_start()) else {
+            break;
+        };
         let ctr_end = change.ctr_end();
         if change.id.counter >= id_span.counter.start && change.ctr_end() <= id_span.counter.end {
             diff_changes.push(Either::Left(change));
@@ -295,7 +298,7 @@ fn encode_changes(
     changes
 }
 
-fn encode_change(
+pub(crate) fn encode_change(
     change: ChangeRef<'_, Op>,
     arena: &SharedArena,
     mut peer_register: Option<&mut ValueRegister<PeerID>>,
@@ -533,6 +536,8 @@ fn encode_change(
         deps: change
             .deps
             .iter()
+            // Make sure the order is deterministic
+            .sorted()
             .map(|id| register_id(&id, peer_register.as_deref_mut()))
             .collect(),
         lamport: *change.lamport,
@@ -1149,6 +1154,7 @@ pub mod json {
         }
 
         pub mod frontiers {
+            use itertools::Itertools;
             use loro_common::ID;
             use serde::{ser::SerializeMap, Deserializer, Serializer};
 
@@ -1159,7 +1165,11 @@ pub mod json {
                 S: Serializer,
             {
                 let mut map = s.serialize_map(Some(f.len()))?;
-                for id in f.iter() {
+                for id in f
+                    .iter()
+                    // Make sure the order is deterministic
+                    .sorted()
+                {
                     map.serialize_entry(&id.peer.to_string(), &id.counter)?;
                 }
                 map.end()
