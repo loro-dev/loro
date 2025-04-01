@@ -7,8 +7,8 @@ impl<V: DeltaValue, Attr> DeltaItem<V, Attr> {
     /// Including the delete length
     pub fn delta_len(&self) -> usize {
         match self {
-            DeltaItem::Retain { len, .. } => *len,
-            DeltaItem::Replace {
+            Self::Retain { len, .. } => *len,
+            Self::Replace {
                 value,
                 attr: _,
                 delete,
@@ -19,13 +19,13 @@ impl<V: DeltaValue, Attr> DeltaItem<V, Attr> {
     /// The real length of the item in the delta, excluding the delete length
     pub fn data_len(&self) -> usize {
         match self {
-            DeltaItem::Retain { len, .. } => *len,
-            DeltaItem::Replace { value, .. } => value.rle_len(),
+            Self::Retain { len, .. } => *len,
+            Self::Replace { value, .. } => value.rle_len(),
         }
     }
 
     pub fn new_insert(value: V, attr: Attr) -> Self {
-        DeltaItem::Replace {
+        Self::Replace {
             value,
             attr,
             delete: 0,
@@ -35,7 +35,7 @@ impl<V: DeltaValue, Attr> DeltaItem<V, Attr> {
 
 impl<V: DeltaValue, Attr: Default> DeltaItem<V, Attr> {
     pub fn new_delete(len: usize) -> Self {
-        DeltaItem::Replace {
+        Self::Replace {
             value: Default::default(),
             attr: Default::default(),
             delete: len,
@@ -53,16 +53,16 @@ impl<V: DeltaValue, Attr> HasLength for DeltaItem<V, Attr> {
 impl<V: Mergeable, Attr: PartialEq> Mergeable for DeltaItem<V, Attr> {
     fn can_merge(&self, rhs: &Self) -> bool {
         match (self, rhs) {
-            (DeltaItem::Retain { attr: attr1, .. }, DeltaItem::Retain { attr: attr2, .. }) => {
+            (Self::Retain { attr: attr1, .. }, Self::Retain { attr: attr2, .. }) => {
                 attr1 == attr2
             }
             (
-                DeltaItem::Replace {
+                Self::Replace {
                     value: value1,
                     attr: attr1,
                     delete: _del1,
                 },
-                DeltaItem::Replace {
+                Self::Replace {
                     value: value2,
                     attr: attr2,
                     delete: _del2,
@@ -74,16 +74,16 @@ impl<V: Mergeable, Attr: PartialEq> Mergeable for DeltaItem<V, Attr> {
 
     fn merge_right(&mut self, rhs: &Self) {
         match (self, rhs) {
-            (DeltaItem::Retain { len: len1, .. }, DeltaItem::Retain { len: len2, .. }) => {
+            (Self::Retain { len: len1, .. }, Self::Retain { len: len2, .. }) => {
                 *len1 += len2
             }
             (
-                DeltaItem::Replace {
+                Self::Replace {
                     value: value1,
                     delete: del1,
                     ..
                 },
-                DeltaItem::Replace {
+                Self::Replace {
                     value: value2,
                     delete: del2,
                     ..
@@ -98,16 +98,16 @@ impl<V: Mergeable, Attr: PartialEq> Mergeable for DeltaItem<V, Attr> {
 
     fn merge_left(&mut self, left: &Self) {
         match (self, left) {
-            (DeltaItem::Retain { len: len1, .. }, DeltaItem::Retain { len: len2, .. }) => {
+            (Self::Retain { len: len1, .. }, Self::Retain { len: len2, .. }) => {
                 *len1 += len2
             }
             (
-                DeltaItem::Replace {
+                Self::Replace {
                     value: value1,
                     delete: del1,
                     ..
                 },
-                DeltaItem::Replace {
+                Self::Replace {
                     value: value2,
                     delete: del2,
                     ..
@@ -125,21 +125,21 @@ impl<V: DeltaValue, Attr: DeltaAttr> Sliceable for DeltaItem<V, Attr> {
     fn _slice(&self, range: std::ops::Range<usize>) -> Self {
         assert!(range.end <= self.rle_len());
         match self {
-            DeltaItem::Retain { len, attr } => {
+            Self::Retain { len, attr } => {
                 assert!(range.end <= *len);
-                DeltaItem::Retain {
+                Self::Retain {
                     len: range.len(),
                     attr: attr.clone(),
                 }
             }
-            DeltaItem::Replace {
+            Self::Replace {
                 value,
                 attr,
                 delete,
             } => {
                 if range.end <= value.rle_len() {
                     let value = value._slice(range.clone());
-                    DeltaItem::Replace {
+                    Self::Replace {
                         value,
                         attr: attr.clone(),
                         delete: 0,
@@ -147,12 +147,12 @@ impl<V: DeltaValue, Attr: DeltaAttr> Sliceable for DeltaItem<V, Attr> {
                 } else if range.start >= value.rle_len() {
                     debug_assert!(range.end <= delete + value.rle_len());
                     debug_assert!(range.len() <= *delete);
-                    DeltaItem::new_delete(range.len())
+                    Self::new_delete(range.len())
                 } else {
                     let delete_len = range.end - value.rle_len();
                     debug_assert!(delete_len <= *delete);
                     let value = value._slice(range.start..value.rle_len());
-                    DeltaItem::Replace {
+                    Self::Replace {
                         delete: delete_len,
                         value,
                         attr: attr.clone(),
@@ -171,15 +171,15 @@ impl<V: DeltaValue, Attr: DeltaAttr> Sliceable for DeltaItem<V, Attr> {
     #[must_use]
     fn split(&mut self, pos: usize) -> Self {
         match self {
-            DeltaItem::Retain { len, attr } => {
+            Self::Retain { len, attr } => {
                 let right_len = *len - pos;
                 *len = pos;
-                DeltaItem::Retain {
+                Self::Retain {
                     len: right_len,
                     attr: attr.clone(),
                 }
             }
-            DeltaItem::Replace {
+            Self::Replace {
                 value,
                 attr,
                 delete,
@@ -188,14 +188,14 @@ impl<V: DeltaValue, Attr: DeltaAttr> Sliceable for DeltaItem<V, Attr> {
                     let right = value.split(pos);
                     let right_delete = *delete;
                     *delete = 0;
-                    DeltaItem::Replace {
+                    Self::Replace {
                         value: right,
                         attr: attr.clone(),
                         delete: right_delete,
                     }
                 } else {
                     let right_len = value.rle_len() + *delete - pos;
-                    let right = DeltaItem::new_delete(right_len);
+                    let right = Self::new_delete(right_len);
                     *delete -= right_len;
                     right
                 }
@@ -290,8 +290,8 @@ impl<V: DeltaValue, Attr: Clone + PartialEq + Debug> TryInsert for DeltaItem<V, 
     {
         match (self, elem) {
             (
-                DeltaItem::Retain { len, attr },
-                DeltaItem::Retain {
+                Self::Retain { len, attr },
+                Self::Retain {
                     len: len_b,
                     attr: attr_b,
                 },
@@ -300,19 +300,19 @@ impl<V: DeltaValue, Attr: Clone + PartialEq + Debug> TryInsert for DeltaItem<V, 
                     *len += len_b;
                     Ok(())
                 } else {
-                    Err(DeltaItem::Retain {
+                    Err(Self::Retain {
                         len: len_b,
                         attr: attr_b,
                     })
                 }
             }
             (
-                DeltaItem::Replace {
+                Self::Replace {
                     value: l_value,
                     attr: l_attr,
                     delete: l_delete,
                 },
-                DeltaItem::Replace {
+                Self::Replace {
                     value: r_value,
                     attr: r_attr,
                     delete: r_delete,
@@ -330,7 +330,7 @@ impl<V: DeltaValue, Attr: Clone + PartialEq + Debug> TryInsert for DeltaItem<V, 
                             return Ok(());
                         }
                         Err(r_value) => {
-                            return Err(DeltaItem::Replace {
+                            return Err(Self::Replace {
                                 value: r_value,
                                 attr: r_attr,
                                 delete: r_delete,
@@ -339,7 +339,7 @@ impl<V: DeltaValue, Attr: Clone + PartialEq + Debug> TryInsert for DeltaItem<V, 
                     }
                 }
 
-                Err(DeltaItem::Replace {
+                Err(Self::Replace {
                     value: r_value,
                     attr: r_attr,
                     delete: r_delete,
@@ -353,8 +353,8 @@ impl<V: DeltaValue, Attr: Clone + PartialEq + Debug> TryInsert for DeltaItem<V, 
 impl<V: DeltaValue, Attr: Clone> CanRemove for DeltaItem<V, Attr> {
     fn can_remove(&self) -> bool {
         match self {
-            DeltaItem::Retain { len, .. } => *len == 0,
-            DeltaItem::Replace {
+            Self::Retain { len, .. } => *len == 0,
+            Self::Replace {
                 value,
                 attr: _,
                 delete,
@@ -365,7 +365,7 @@ impl<V: DeltaValue, Attr: Clone> CanRemove for DeltaItem<V, Attr> {
 
 impl<V: DeltaValue, Attr: DeltaAttr> Default for DeltaItem<V, Attr> {
     fn default() -> Self {
-        DeltaItem::Retain {
+        Self::Retain {
             len: 0,
             attr: Default::default(),
         }

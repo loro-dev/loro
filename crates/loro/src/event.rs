@@ -241,8 +241,8 @@ impl From<DiffInner> for Diff<'static> {
 impl From<ValueOrHandler> for ValueOrContainer {
     fn from(value: ValueOrHandler) -> Self {
         match value {
-            ValueOrHandler::Value(v) => ValueOrContainer::Value(v),
-            ValueOrHandler::Handler(h) => ValueOrContainer::Container(h.into()),
+            ValueOrHandler::Value(v) => Self::Value(v),
+            ValueOrHandler::Handler(h) => Self::Container(h.into()),
         }
     }
 }
@@ -296,7 +296,7 @@ impl From<InnerDiffBatch> for DiffBatch {
             map.insert(id.clone(), diff.into());
         }
 
-        DiffBatch {
+        Self {
             cid_to_events: map,
             order: value.order,
         }
@@ -331,13 +331,13 @@ impl From<Diff<'static>> for DiffInner {
                     }
                 }
 
-                DiffInner::List(ans)
+                Self::List(ans)
             }
             Diff::Text(t) => {
                 let text = TextDelta::into_text_diff(t.into_iter());
-                DiffInner::Text(text)
+                Self::Text(text)
             }
-            Diff::Map(map_delta) => DiffInner::Map(ResolvedMapDelta {
+            Diff::Map(map_delta) => Self::Map(ResolvedMapDelta {
                 updated: map_delta
                     .updated
                     .into_iter()
@@ -352,10 +352,10 @@ impl From<Diff<'static>> for DiffInner {
                     })
                     .collect(),
             }),
-            Diff::Tree(cow) => DiffInner::Tree(cow.into_owned()),
+            Diff::Tree(cow) => Self::Tree(cow.into_owned()),
             #[cfg(feature = "counter")]
-            Diff::Counter(c) => DiffInner::Counter(c),
-            Diff::Unknown => DiffInner::Unknown,
+            Diff::Counter(c) => Self::Counter(c),
+            Diff::Unknown => Self::Unknown,
         }
     }
 }
@@ -368,7 +368,7 @@ impl From<DiffBatch> for InnerDiffBatch {
             map.insert(id.clone(), diff.into());
         }
 
-        InnerDiffBatch {
+        Self {
             cid_to_events: map,
             order: value.order,
         }

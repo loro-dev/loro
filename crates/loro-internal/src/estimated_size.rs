@@ -8,20 +8,20 @@ pub trait EstimatedSize {
 impl EstimatedSize for LoroValue {
     fn estimate_storage_size(&self) -> usize {
         match self {
-            LoroValue::Null => 1,
-            LoroValue::Bool(_) => 1,
-            LoroValue::Double(_) => 8,
-            LoroValue::I64(i) => 1 + (64 - i.leading_zeros()) as usize / 7,
-            LoroValue::Binary(b) => b.len() + 1,
-            LoroValue::String(s) => s.len() + 1,
-            LoroValue::List(l) => 3 + l.iter().map(|x| x.estimate_storage_size()).sum::<usize>(),
-            LoroValue::Map(m) => {
+            Self::Null => 1,
+            Self::Bool(_) => 1,
+            Self::Double(_) => 8,
+            Self::I64(i) => 1 + (64 - i.leading_zeros()) as usize / 7,
+            Self::Binary(b) => b.len() + 1,
+            Self::String(s) => s.len() + 1,
+            Self::List(l) => 3 + l.iter().map(|x| x.estimate_storage_size()).sum::<usize>(),
+            Self::Map(m) => {
                 3 + m
                     .iter()
                     .map(|(k, v)| k.len() + 3 + v.estimate_storage_size())
                     .sum::<usize>()
             }
-            LoroValue::Container(_) => 6,
+            Self::Container(_) => 6,
         }
     }
 }

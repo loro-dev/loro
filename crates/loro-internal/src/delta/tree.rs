@@ -67,7 +67,7 @@ impl TreeDiff {
             .collect()
     }
 
-    pub(crate) fn transform(&mut self, b: &TreeDiff, left_prior: bool) {
+    pub(crate) fn transform(&mut self, b: &Self, left_prior: bool) {
         // println!("\ntransform prior {:?} {:?} \nb {:?}", left_prior, self, b);
         if b.is_empty() || self.is_empty() {
             return;
@@ -172,7 +172,7 @@ impl TreeDeltaItem {
             }
         };
 
-        TreeDeltaItem {
+        Self {
             target,
             action,
             last_effective_move_op_id: op_id,
@@ -189,7 +189,7 @@ impl Deref for TreeDelta {
 
 impl TreeDelta {
     // TODO: cannot handle this for now
-    pub(crate) fn compose(mut self, x: TreeDelta) -> TreeDelta {
+    pub(crate) fn compose(mut self, x: Self) -> Self {
         self.diff.extend(x.diff);
         self
     }

@@ -316,7 +316,7 @@ impl Sliceable for StringSlice {
 
 impl Default for StringSlice {
     fn default() -> Self {
-        StringSlice {
+        Self {
             bytes: Variant::Owned(String::with_capacity(32)),
         }
     }

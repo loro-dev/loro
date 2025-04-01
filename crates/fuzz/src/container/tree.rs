@@ -50,32 +50,32 @@ pub enum TreeActionInner {
 impl Debug for TreeActionInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TreeActionInner::Create { index } => {
+            Self::Create { index } => {
                 write!(f, "TreeActionInner::Create{{index:{}}}", index)
             }
-            TreeActionInner::Delete => write!(f, "TreeActionInner::Delete"),
-            TreeActionInner::Move { parent, index } => {
+            Self::Delete => write!(f, "TreeActionInner::Delete"),
+            Self::Move { parent, index } => {
                 write!(
                     f,
                     "TreeActionInner::Move{{parent:{:?}, index:{}}}",
                     parent, index
                 )
             }
-            TreeActionInner::MoveBefore { target, before } => {
+            Self::MoveBefore { target, before } => {
                 write!(
                     f,
                     "TreeActionInner::MoveBefore{{target:{:?}, before:{:?}}}",
                     target, before
                 )
             }
-            TreeActionInner::MoveAfter { target, after } => {
+            Self::MoveAfter { target, after } => {
                 write!(
                     f,
                     "TreeActionInner::MoveAfter{{target:{:?}, after:{:?}}}",
                     target, after
                 )
             }
-            TreeActionInner::Meta { meta } => write!(
+            Self::Meta { meta } => write!(
                 f,
                 "TreeActionInner::Meta{{meta:(\"{}\".into(),{:?})}}",
                 meta.0, meta.1
@@ -158,7 +158,7 @@ impl Actionable for TreeAction {
             .filter(|x| !tree.is_node_deleted(x).unwrap())
             .collect::<Vec<_>>();
         let node_num = nodes.len();
-        let TreeAction { target, action } = self;
+        let Self { target, action } = self;
         if node_num == 0
             || node_num < 2
                 && (matches!(
@@ -238,7 +238,7 @@ impl Actionable for TreeAction {
             .containers
             .get_mut(container)
             .unwrap();
-        let TreeAction { target, action } = self;
+        let Self { target, action } = self;
         let target = TreeID {
             peer: target.0,
             counter: target.1,
@@ -418,7 +418,7 @@ impl ApplyDiff for TreeTracker {
     }
 
     fn empty(id: ContainerID) -> Self {
-        TreeTracker { id, tree: vec![] }
+        Self { id, tree: vec![] }
     }
 
     fn apply_diff(&mut self, diff: Diff) {
@@ -507,7 +507,7 @@ pub struct TreeNode {
 
 impl TreeNode {
     pub fn new(id: TreeID, parent: Option<TreeID>, position: String) -> Self {
-        TreeNode {
+        Self {
             id,
             meta: ContainerTracker::Map(MapTracker::empty(id.associated_meta_container())),
             parent,

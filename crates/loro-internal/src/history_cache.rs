@@ -407,7 +407,7 @@ pub(crate) enum HistoryCacheForImporting {
 impl HistoryCacheForImporting {
     fn insert(&mut self, op: &RichOp) {
         match self {
-            HistoryCacheForImporting::Tree(t) => t.insert(op),
+            Self::Tree(t) => t.insert(op),
         }
     }
 }

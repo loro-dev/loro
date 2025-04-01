@@ -1510,8 +1510,8 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
 }
 
 impl MovableListDiffCalculator {
-    fn new(_container: ContainerIdx) -> MovableListDiffCalculator {
-        MovableListDiffCalculator {
+    fn new(_container: ContainerIdx) -> Self {
+        Self {
             list: Default::default(),
             inner: Box::new(MovableListInner {
                 changed_elements: Default::default(),

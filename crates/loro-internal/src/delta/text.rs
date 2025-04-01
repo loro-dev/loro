@@ -23,7 +23,7 @@ pub struct StyleMetaItem {
 }
 
 impl StyleMetaItem {
-    pub fn try_replace(&mut self, other: &StyleMetaItem) {
+    pub fn try_replace(&mut self, other: &Self) {
         if (self.lamport, self.peer) < (other.lamport, other.peer) {
             self.lamport = other.lamport;
             self.peer = other.peer;
@@ -168,6 +168,6 @@ impl ToJson for TextMeta {
 
     fn from_json(s: &str) -> Self {
         let map: FxHashMap<String, LoroValue> = serde_json::from_str(s).unwrap();
-        TextMeta(map)
+        Self(map)
     }
 }

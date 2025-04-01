@@ -550,7 +550,7 @@ impl Query<CrdtRopeTrait> for ActiveLenQueryPreferLeft {
 
     fn init(target: &Self::QueryArg) -> Self {
         debug_assert!(*target >= 0);
-        ActiveLenQueryPreferLeft { left: *target }
+        Self { left: *target }
     }
 
     fn find_node(

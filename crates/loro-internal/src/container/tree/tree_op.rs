@@ -33,35 +33,35 @@ pub enum TreeOp {
 impl TreeOp {
     pub(crate) fn target(&self) -> TreeID {
         match self {
-            TreeOp::Create { target, .. } => *target,
-            TreeOp::Move { target, .. } => *target,
-            TreeOp::Delete { target, .. } => *target,
+            Self::Create { target, .. } => *target,
+            Self::Move { target, .. } => *target,
+            Self::Delete { target, .. } => *target,
         }
     }
 
     #[allow(unused)]
     pub(crate) fn parent(&self) -> Option<TreeID> {
         match self {
-            TreeOp::Create { parent, .. } => *parent,
-            TreeOp::Move { parent, .. } => *parent,
-            TreeOp::Delete { .. } => Some(TreeID::delete_root()),
+            Self::Create { parent, .. } => *parent,
+            Self::Move { parent, .. } => *parent,
+            Self::Delete { .. } => Some(TreeID::delete_root()),
         }
     }
 
     pub(crate) fn parent_id(&self) -> TreeParentId {
         match self {
-            TreeOp::Create { parent, .. } => TreeParentId::from(*parent),
-            TreeOp::Move { parent, .. } => TreeParentId::from(*parent),
-            TreeOp::Delete { .. } => TreeParentId::Deleted,
+            Self::Create { parent, .. } => TreeParentId::from(*parent),
+            Self::Move { parent, .. } => TreeParentId::from(*parent),
+            Self::Delete { .. } => TreeParentId::Deleted,
         }
     }
 
     pub(crate) fn fractional_index(&self) -> Option<FractionalIndex> {
         match self {
-            TreeOp::Create { position, .. } | TreeOp::Move { position, .. } => {
+            Self::Create { position, .. } | Self::Move { position, .. } => {
                 Some(position.clone())
             }
-            TreeOp::Delete { .. } => None,
+            Self::Delete { .. } => None,
         }
     }
 }

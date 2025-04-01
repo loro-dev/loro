@@ -369,7 +369,7 @@ mod snapshot {
             }
 
             //
-            let mut ans = MapState::new(idx);
+            let mut ans = Self::new(idx);
             let mut keys: Vec<_> = value.keys().map(|x| x.as_str().into()).collect();
             keys.extend(keys_with_none_value.iter().cloned());
             keys.sort_unstable();

@@ -41,7 +41,7 @@ impl Debug for CounterSpan {
 impl CounterSpan {
     #[inline]
     pub fn new(from: Counter, to: Counter) -> Self {
-        CounterSpan {
+        Self {
             start: from,
             end: to,
         }
@@ -168,11 +168,11 @@ impl CounterSpan {
         self.end
     }
 
-    fn get_intersection(&self, counter: &CounterSpan) -> Option<Self> {
+    fn get_intersection(&self, counter: &Self) -> Option<Self> {
         let start = self.start.max(counter.start);
         let end = self.end.min(counter.end);
         if start < end {
-            Some(CounterSpan { start, end })
+            Some(Self { start, end })
         } else {
             None
         }
@@ -196,12 +196,12 @@ impl Sliceable for CounterSpan {
         let len = to - from;
         assert!(len <= self.content_len());
         if self.start < self.end {
-            CounterSpan {
+            Self {
                 start: self.start + from as Counter,
                 end: self.start + to as Counter,
             }
         } else {
-            CounterSpan {
+            Self {
                 start: self.start - from as Counter,
                 end: self.start - to as Counter,
             }
@@ -376,7 +376,7 @@ impl HasLength for IdSpan {
 impl Sliceable for IdSpan {
     #[inline]
     fn slice(&self, from: usize, to: usize) -> Self {
-        IdSpan {
+        Self {
             peer: self.peer,
             counter: self.counter.slice(from, to),
         }
@@ -484,8 +484,8 @@ impl HasCounter for IdSpan {
     }
 }
 
-impl<'a> From<Slice<'a, IdSpan>> for IdSpan {
-    fn from(slice: Slice<'a, IdSpan>) -> Self {
+impl<'a> From<Slice<'a, Self>> for IdSpan {
+    fn from(slice: Slice<'a, Self>) -> Self {
         slice.value.slice(slice.start, slice.end)
     }
 }
@@ -526,11 +526,11 @@ mod wasm {
             let obj = Object::new();
             js_sys::Reflect::set(
                 &obj,
-                &JsValue::from_str("start"),
-                &JsValue::from(value.start),
+                &Self::from_str("start"),
+                &Self::from(value.start),
             )
             .unwrap();
-            js_sys::Reflect::set(&obj, &JsValue::from_str("end"), &JsValue::from(value.end))
+            js_sys::Reflect::set(&obj, &Self::from_str("end"), &Self::from(value.end))
                 .unwrap();
             obj.into()
         }

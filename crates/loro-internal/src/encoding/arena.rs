@@ -236,7 +236,7 @@ impl PeerIdArena {
             peer_ids.push(u64::from_be_bytes(peer_id_bytes));
             reader = &reader[8..];
         }
-        Ok(PeerIdArena { peer_ids })
+        Ok(Self { peer_ids })
     }
 }
 
@@ -300,7 +300,7 @@ impl ContainerArena {
     }
 
     pub fn decode(bytes: &[u8]) -> LoroResult<Self> {
-        Ok(ContainerArena {
+        Ok(Self {
             containers: serde_columnar::from_bytes(bytes)?,
         })
     }
@@ -387,7 +387,7 @@ impl DepsArena {
     pub fn decode_iter(
         bytes: &[u8],
     ) -> LoroResult<impl Iterator<Item = Result<EncodedDep, ColumnarError>> + '_> {
-        let iter = serde_columnar::iter_from_bytes::<DepsArena>(bytes)?;
+        let iter = serde_columnar::iter_from_bytes::<Self>(bytes)?;
         Ok(iter.deps)
     }
 }

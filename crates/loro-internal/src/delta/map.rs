@@ -12,7 +12,7 @@ pub struct ValuePair<T> {
 
 impl From<(LoroValue, LoroValue)> for ValuePair<LoroValue> {
     fn from((old, new): (LoroValue, LoroValue)) -> Self {
-        ValuePair { old, new }
+        Self { old, new }
     }
 }
 

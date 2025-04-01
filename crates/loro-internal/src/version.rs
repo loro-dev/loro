@@ -212,7 +212,7 @@ impl ImVersionVector {
     }
 
     pub fn from_vv(vv: &VersionVector) -> Self {
-        ImVersionVector(vv.0.iter().map(|(&k, &v)| (k, v)).collect())
+        Self(vv.0.iter().map(|(&k, &v)| (k, v)).collect())
     }
 
     pub fn extend_to_include_vv<'a>(
@@ -711,7 +711,7 @@ impl VersionVector {
         }
     }
 
-    pub fn includes_vv(&self, other: &VersionVector) -> bool {
+    pub fn includes_vv(&self, other: &Self) -> bool {
         match self.partial_cmp(other) {
             Some(ord) => match ord {
                 Ordering::Less => false,
@@ -821,8 +821,8 @@ impl VersionVector {
         }
     }
 
-    pub fn intersection(&self, other: &VersionVector) -> VersionVector {
-        let mut ans = VersionVector::new();
+    pub fn intersection(&self, other: &Self) -> Self {
+        let mut ans = Self::new();
         for (client_id, &counter) in self.iter() {
             if let Some(&other_counter) = other.get(client_id) {
                 if counter < other_counter {
@@ -847,8 +847,8 @@ impl VersionVector {
         postcard::from_bytes(bytes).map_err(|_| LoroError::DecodeVersionVectorError)
     }
 
-    pub(crate) fn trim(&self, vv: &VersionVector) -> VersionVector {
-        let mut ans = VersionVector::new();
+    pub(crate) fn trim(&self, vv: &Self) -> Self {
+        let mut ans = Self::new();
         for (client_id, &counter) in self.iter() {
             if let Some(&other_counter) = vv.get(client_id) {
                 ans.insert(*client_id, counter.min(other_counter));
@@ -862,7 +862,7 @@ impl VersionVector {
     }
 
     pub fn from_im_vv(im_vv: &ImVersionVector) -> Self {
-        VersionVector(im_vv.0.iter().map(|(&k, &v)| (k, v)).collect())
+        Self(im_vv.0.iter().map(|(&k, &v)| (k, v)).collect())
     }
 }
 
@@ -957,7 +957,7 @@ impl From<FxHashMap<PeerID, Counter>> for VersionVector {
 
 impl From<Vec<ID>> for VersionVector {
     fn from(vec: Vec<ID>) -> Self {
-        let mut vv = VersionVector::new();
+        let mut vv = Self::new();
         for id in vec {
             vv.set_last(id);
         }
@@ -969,7 +969,7 @@ impl From<Vec<ID>> for VersionVector {
 impl FromIterator<ID> for VersionVector {
     fn from_iter<T: IntoIterator<Item = ID>>(iter: T) -> Self {
         let iter = iter.into_iter();
-        let mut vv = VersionVector(FxHashMap::with_capacity_and_hasher(
+        let mut vv = Self(FxHashMap::with_capacity_and_hasher(
             iter.size_hint().0,
             Default::default(),
         ));
@@ -983,7 +983,7 @@ impl FromIterator<ID> for VersionVector {
 
 impl FromIterator<(PeerID, Counter)> for VersionVector {
     fn from_iter<T: IntoIterator<Item = (PeerID, Counter)>>(iter: T) -> Self {
-        VersionVector(FxHashMap::from_iter(iter))
+        Self(FxHashMap::from_iter(iter))
     }
 }
 

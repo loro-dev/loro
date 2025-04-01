@@ -75,7 +75,7 @@ pub struct PeerInfo {
 
 impl From<&loro::awareness::PeerInfo> for PeerInfo {
     fn from(value: &loro::awareness::PeerInfo) -> Self {
-        PeerInfo {
+        Self {
             state: value.state.clone().into(),
             counter: value.counter,
             timestamp: value.timestamp,

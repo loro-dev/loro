@@ -111,7 +111,7 @@ impl Op {
     #[inline]
     #[allow(unused)]
     pub(crate) fn new(id: ID, content: InnerContent, container: ContainerIdx) -> Self {
-        Op {
+        Self {
             counter: id.counter,
             content,
             container,
@@ -179,7 +179,7 @@ impl Sliceable for Op {
         assert!(to > from, "{to} should be greater than {from}");
         assert!(to <= self.atom_len());
         let content: InnerContent = self.content.slice(from, to);
-        Op {
+        Self {
             counter: (self.counter + from as Counter),
             content,
             container: self.container,
@@ -450,7 +450,7 @@ impl SliceRange {
 
 impl From<Range<u32>> for SliceRange {
     fn from(a: Range<u32>) -> Self {
-        SliceRange(a)
+        Self(a)
     }
 }
 
@@ -465,7 +465,7 @@ impl Sliceable for SliceRange {
         if self.is_unknown() {
             Self::new_unknown((to - from) as u32)
         } else {
-            SliceRange(self.0.start + from as u32..self.0.start + to as u32)
+            Self(self.0.start + from as u32..self.0.start + to as u32)
         }
     }
 }

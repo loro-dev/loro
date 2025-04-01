@@ -38,8 +38,8 @@ struct EncodedPeerInfo {
 
 #[allow(deprecated)]
 impl Awareness {
-    pub fn new(peer: PeerID, timeout: i64) -> Awareness {
-        Awareness {
+    pub fn new(peer: PeerID, timeout: i64) -> Self {
+        Self {
             peer,
             timeout,
             peers: FxHashMap::default(),
@@ -233,8 +233,8 @@ struct State {
 }
 
 impl EphemeralStore {
-    pub fn new(timeout: i64) -> EphemeralStore {
-        EphemeralStore {
+    pub fn new(timeout: i64) -> Self {
+        Self {
             timeout,
             states: FxHashMap::default(),
             local_subs: SubscriberSetWithQueue::new(),

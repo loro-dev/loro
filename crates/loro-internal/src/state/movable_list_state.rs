@@ -1712,7 +1712,7 @@ mod snapshot {
                 peers.push(PeerID::from_le_bytes(buf));
             }
 
-            let mut ans = MovableListState::new(idx);
+            let mut ans = Self::new(idx);
 
             let iters = serde_columnar::iter_from_bytes::<EncodedFastSnapshot>(bytes).unwrap();
             let mut elem_iter = iters.elem_ids;

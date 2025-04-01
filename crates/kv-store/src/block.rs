@@ -49,7 +49,7 @@ impl LargeValueBlock{
     fn decode(bytes: Bytes, key: Bytes, compression_type: CompressionType)->LoroResult<Self>{
         let mut value_bytes = vec![];
         decompress(&mut value_bytes, bytes.slice(..bytes.len() - SIZE_OF_U32), compression_type)?;
-        Ok(LargeValueBlock{
+        Ok(Self{
             value_bytes: Bytes::from(value_bytes),
             encoded_bytes: OnceCell::with_value((bytes, compression_type)),
             key,
@@ -101,7 +101,7 @@ impl NormalBlock {
         compression_type
     }
 
-    fn decode(raw_block_and_check: Bytes, first_key: Bytes, compression_type: CompressionType)-> LoroResult<NormalBlock>{
+    fn decode(raw_block_and_check: Bytes, first_key: Bytes, compression_type: CompressionType)-> LoroResult<Self>{
         let buf = raw_block_and_check.slice(..raw_block_and_check.len() - SIZE_OF_U32);
         let mut data = vec![];
         decompress(&mut data, buf, compression_type)?;
@@ -109,7 +109,7 @@ impl NormalBlock {
         let data_end = data.len() - SIZE_OF_U16 * (offsets_len + 1);
         let offsets = &data[data_end..data.len() - SIZE_OF_U16];
         let offsets = offsets.chunks(SIZE_OF_U16).map(|mut chunk| chunk.get_u16_le()).collect();
-        Ok(NormalBlock{
+        Ok(Self{
             data: Bytes::copy_from_slice(&data[..data_end]),
             encoded_data: OnceCell::with_value((raw_block_and_check, compression_type)),
             offsets,
@@ -126,26 +126,26 @@ pub enum Block{
 
 impl Block{
     pub fn is_large(&self)->bool{
-        matches!(self, Block::Large(_))
+        matches!(self, Self::Large(_))
     }
 
     pub fn data(&self)->Bytes{
         match self {
-            Block::Normal(block) => block.data.clone(),
-            Block::Large(block) => block.value_bytes.clone(),
+            Self::Normal(block) => block.data.clone(),
+            Self::Large(block) => block.value_bytes.clone(),
         }
     }
 
     pub fn first_key(&self) -> Bytes{
         match self { 
-            Block::Normal(block)=>block.first_key.clone(),
-            Block::Large(block)=>block.key.clone(),
+            Self::Normal(block)=>block.first_key.clone(),
+            Self::Large(block)=>block.key.clone(),
         }
     }
 
     pub fn last_key(&self) -> Bytes{
         match self {
-            Block::Normal(block)=>{
+            Self::Normal(block)=>{
                 if block.offsets.len() == 1 {
                     return block.first_key.clone();
                 }
@@ -159,14 +159,14 @@ impl Block{
                 last_key.extend_from_slice(&bytes[..key_suffix_len]);
                 last_key.into()
             }
-            Block::Large(block)=>block.key.clone(),
+            Self::Large(block)=>block.key.clone(),
         }
     }
 
     pub fn encode(&self,  w: &mut Vec<u8>, compression_type: CompressionType)->CompressionType{
         match self{
-            Block::Normal(block) => block.encode(w,compression_type),
-            Block::Large(block) => block.encode(w,compression_type),
+            Self::Normal(block) => block.encode(w,compression_type),
+            Self::Large(block) => block.encode(w,compression_type),
         }
     }
 
@@ -180,15 +180,15 @@ impl Block{
 
     pub fn len(&self)->usize{
         match self{
-            Block::Normal(block)=>block.offsets.len(),
-            Block::Large(_)=>1,
+            Self::Normal(block)=>block.offsets.len(),
+            Self::Large(_)=>1,
         }
     }
 
     pub fn is_empty(&self)->bool{
         match self{
-            Block::Normal(block)=>block.offsets.is_empty(),
-            Block::Large(_)=>false,
+            Self::Normal(block)=>block.offsets.is_empty(),
+            Self::Large(_)=>false,
         }
     }
 }

@@ -227,20 +227,20 @@ pub(super) enum EventHint {
 impl generic_btree::rle::HasLength for EventHint {
     fn rle_len(&self) -> usize {
         match self {
-            EventHint::Mark { .. } => 1,
-            EventHint::InsertText {
+            Self::Mark { .. } => 1,
+            Self::InsertText {
                 unicode_len: len, ..
             } => *len as usize,
-            EventHint::DeleteText { unicode_len, .. } => *unicode_len,
-            EventHint::InsertList { len, .. } => *len as usize,
-            EventHint::DeleteList(d) => d.len(),
-            EventHint::Map { .. } => 1,
-            EventHint::Tree(_) => 1,
-            EventHint::MarkEnd => 1,
-            EventHint::Move { .. } => 1,
-            EventHint::SetList { .. } => 1,
+            Self::DeleteText { unicode_len, .. } => *unicode_len,
+            Self::InsertList { len, .. } => *len as usize,
+            Self::DeleteList(d) => d.len(),
+            Self::Map { .. } => 1,
+            Self::Tree(_) => 1,
+            Self::MarkEnd => 1,
+            Self::Move { .. } => 1,
+            Self::SetList { .. } => 1,
             #[cfg(feature = "counter")]
-            EventHint::Counter(_) => 1,
+            Self::Counter(_) => 1,
         }
     }
 }
@@ -249,28 +249,28 @@ impl generic_btree::rle::Mergeable for EventHint {
     fn can_merge(&self, rhs: &Self) -> bool {
         match (self, rhs) {
             (
-                EventHint::InsertText {
+                Self::InsertText {
                     pos,
                     unicode_len: _,
                     event_len,
                     styles,
                 },
-                EventHint::InsertText {
+                Self::InsertText {
                     pos: r_pos,
                     styles: r_styles,
                     ..
                 },
             ) => *pos + *event_len == *r_pos && styles == r_styles,
-            (EventHint::InsertList { pos, len }, EventHint::InsertList { pos: pos_right, .. }) => {
+            (Self::InsertList { pos, len }, Self::InsertList { pos: pos_right, .. }) => {
                 pos + *len as usize == *pos_right
             }
             // We don't merge delete text because it's hard to infer the correct pos to split:
             // `range` param is in unicode range, but the delete text event is in UTF-16 range.
             // Without the original text, it's impossible to convert the range.
-            (EventHint::DeleteText { span, .. }, EventHint::DeleteText { span: r, .. }) => {
+            (Self::DeleteText { span, .. }, Self::DeleteText { span: r, .. }) => {
                 span.is_mergable(r, &())
             }
-            (EventHint::DeleteList(l), EventHint::DeleteList(r)) => l.is_mergable(r, &()),
+            (Self::DeleteList(l), Self::DeleteList(r)) => l.is_mergable(r, &()),
             _ => false,
         }
     }
@@ -278,12 +278,12 @@ impl generic_btree::rle::Mergeable for EventHint {
     fn merge_right(&mut self, rhs: &Self) {
         match (self, rhs) {
             (
-                EventHint::InsertText {
+                Self::InsertText {
                     event_len,
                     unicode_len: len,
                     ..
                 },
-                EventHint::InsertText {
+                Self::InsertText {
                     event_len: r_event_len,
                     unicode_len: r_len,
                     ..
@@ -293,13 +293,13 @@ impl generic_btree::rle::Mergeable for EventHint {
                 *event_len += *r_event_len;
             }
             (
-                EventHint::InsertList { len, pos: _ },
-                EventHint::InsertList { len: r_len, pos: _ },
+                Self::InsertList { len, pos: _ },
+                Self::InsertList { len: r_len, pos: _ },
             ) => *len += *r_len,
-            (EventHint::DeleteList(l), EventHint::DeleteList(r)) => l.merge(r, &()),
+            (Self::DeleteList(l), Self::DeleteList(r)) => l.merge(r, &()),
             (
-                EventHint::DeleteText { span, unicode_len },
-                EventHint::DeleteText {
+                Self::DeleteText { span, unicode_len },
+                Self::DeleteText {
                     span: r_span,
                     unicode_len: r_len,
                 },

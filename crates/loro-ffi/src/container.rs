@@ -29,7 +29,7 @@ impl ContainerIdLike for ContainerID {
 impl ContainerIdLike for String {
     fn as_container_id(&self, ty: ContainerType) -> ContainerID {
         ContainerID::Root {
-            name: String::from(self),
+            name: Self::from(self),
             container_type: ty,
         }
     }

@@ -251,7 +251,7 @@ pub(crate) struct SubscriberSet<EmitterKey, Callback>(
 
 impl<EmitterKey, Callback> Clone for SubscriberSet<EmitterKey, Callback> {
     fn clone(&self) -> Self {
-        SubscriberSet(self.0.clone())
+        Self(self.0.clone())
     }
 }
 

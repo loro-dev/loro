@@ -36,7 +36,7 @@ pub(super) struct TreeInner {
 
 impl TreeInner {
     fn new() -> Self {
-        TreeInner {
+        Self {
             next_counter: 0,
             map: FxHashMap::default(),
             parent_links: FxHashMap::default(),

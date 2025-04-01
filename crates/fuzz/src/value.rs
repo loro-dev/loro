@@ -22,15 +22,15 @@ pub enum Value {
 impl Value {
     pub fn empty_container(ty: ContainerType, id: ContainerID) -> Self {
         match ty {
-            ContainerType::Map => Value::Container(ContainerTracker::Map(MapTracker::empty(id))),
-            ContainerType::List => Value::Container(ContainerTracker::List(ListTracker::empty(id))),
+            ContainerType::Map => Self::Container(ContainerTracker::Map(MapTracker::empty(id))),
+            ContainerType::List => Self::Container(ContainerTracker::List(ListTracker::empty(id))),
             ContainerType::MovableList => {
-                Value::Container(ContainerTracker::MovableList(MovableListTracker::empty(id)))
+                Self::Container(ContainerTracker::MovableList(MovableListTracker::empty(id)))
             }
-            ContainerType::Text => Value::Container(ContainerTracker::Text(TextTracker::empty(id))),
-            ContainerType::Tree => Value::Container(ContainerTracker::Tree(TreeTracker::empty(id))),
+            ContainerType::Text => Self::Container(ContainerTracker::Text(TextTracker::empty(id))),
+            ContainerType::Tree => Self::Container(ContainerTracker::Tree(TreeTracker::empty(id))),
             ContainerType::Counter => {
-                Value::Container(ContainerTracker::Counter(CounterTracker::empty(id)))
+                Self::Container(ContainerTracker::Counter(CounterTracker::empty(id)))
             }
             ContainerType::Unknown(_) => unreachable!(),
         }
@@ -39,13 +39,13 @@ impl Value {
 
 impl From<LoroValue> for Value {
     fn from(value: LoroValue) -> Self {
-        Value::Value(value)
+        Self::Value(value)
     }
 }
 
 impl From<ContainerTracker> for Value {
     fn from(value: ContainerTracker) -> Self {
-        Value::Container(value)
+        Self::Container(value)
     }
 }
 
@@ -62,23 +62,23 @@ pub enum ContainerTracker {
 impl ContainerTracker {
     pub fn to_value(&self) -> LoroValue {
         match self {
-            ContainerTracker::Map(map) => map.to_value(),
-            ContainerTracker::List(list) => list.to_value(),
-            ContainerTracker::MovableList(list) => list.to_value(),
-            ContainerTracker::Text(text) => text.to_value(),
-            ContainerTracker::Tree(tree) => tree.to_value(),
-            ContainerTracker::Counter(counter) => counter.to_value(),
+            Self::Map(map) => map.to_value(),
+            Self::List(list) => list.to_value(),
+            Self::MovableList(list) => list.to_value(),
+            Self::Text(text) => text.to_value(),
+            Self::Tree(tree) => tree.to_value(),
+            Self::Counter(counter) => counter.to_value(),
         }
     }
 
     pub fn id(&self) -> &ContainerID {
         match self {
-            ContainerTracker::Map(map) => map.id(),
-            ContainerTracker::List(list) => list.id(),
-            ContainerTracker::MovableList(list) => list.id(),
-            ContainerTracker::Text(text) => text.id(),
-            ContainerTracker::Tree(tree) => tree.id(),
-            ContainerTracker::Counter(counter) => counter.id(),
+            Self::Map(map) => map.id(),
+            Self::List(list) => list.id(),
+            Self::MovableList(list) => list.id(),
+            Self::Text(text) => text.id(),
+            Self::Tree(tree) => tree.id(),
+            Self::Counter(counter) => counter.id(),
         }
     }
 }
@@ -102,7 +102,7 @@ impl DerefMut for MapTracker {
 
 impl ApplyDiff for MapTracker {
     fn empty(id: ContainerID) -> Self {
-        MapTracker {
+        Self {
             map: Default::default(),
             id,
         }
@@ -324,7 +324,7 @@ impl ApplyDiff for TextTracker {
     fn empty(id: ContainerID) -> Self {
         let doc = LoroDoc::new();
         let text = doc.get_text("text");
-        TextTracker {
+        Self {
             _doc: doc,
             text,
             id,
@@ -349,7 +349,7 @@ impl ContainerTracker {
     pub fn apply_diff(&mut self, diff: DiffEvent) {
         for diff in diff.events {
             let path = diff.path;
-            let mut value: &mut ContainerTracker = self;
+            let mut value: &mut Self = self;
             for (_, index) in path {
                 match index {
                     Index::Key(key) => {
@@ -371,10 +371,10 @@ impl ContainerTracker {
                     }
                     Index::Seq(idx) => {
                         value = match value {
-                            ContainerTracker::List(l) => {
+                            Self::List(l) => {
                                 l.get_mut(*idx).unwrap().as_container_mut().unwrap()
                             }
-                            ContainerTracker::MovableList(l) => {
+                            Self::MovableList(l) => {
                                 let item = l.get_mut(*idx).unwrap();
 
                                 item.as_container_mut().unwrap()

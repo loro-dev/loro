@@ -37,43 +37,43 @@ pub struct LoroMapValue(Arc<FxHashMap<String, LoroValue>>);
 
 impl From<Vec<u8>> for LoroBinaryValue {
     fn from(value: Vec<u8>) -> Self {
-        LoroBinaryValue(Arc::new(value))
+        Self(Arc::new(value))
     }
 }
 
 impl From<String> for LoroStringValue {
     fn from(value: String) -> Self {
-        LoroStringValue(Arc::new(value))
+        Self(Arc::new(value))
     }
 }
 
 impl From<&str> for LoroStringValue {
     fn from(value: &str) -> Self {
-        LoroStringValue(Arc::new(value.to_string()))
+        Self(Arc::new(value.to_string()))
     }
 }
 
 impl From<Vec<LoroValue>> for LoroListValue {
     fn from(value: Vec<LoroValue>) -> Self {
-        LoroListValue(Arc::new(value))
+        Self(Arc::new(value))
     }
 }
 
 impl From<FxHashMap<String, LoroValue>> for LoroMapValue {
     fn from(value: FxHashMap<String, LoroValue>) -> Self {
-        LoroMapValue(Arc::new(value))
+        Self(Arc::new(value))
     }
 }
 
 impl From<HashMap<String, LoroValue>> for LoroMapValue {
     fn from(value: HashMap<String, LoroValue>) -> Self {
-        LoroMapValue(Arc::new(FxHashMap::from_iter(value)))
+        Self(Arc::new(FxHashMap::from_iter(value)))
     }
 }
 
 impl From<Vec<(String, LoroValue)>> for LoroMapValue {
     fn from(value: Vec<(String, LoroValue)>) -> Self {
-        LoroMapValue(Arc::new(FxHashMap::from_iter(value)))
+        Self(Arc::new(FxHashMap::from_iter(value)))
     }
 }
 
@@ -167,14 +167,14 @@ impl LoroMapValue {
 
 impl FromIterator<LoroValue> for LoroListValue {
     fn from_iter<T: IntoIterator<Item = LoroValue>>(iter: T) -> Self {
-        LoroListValue(Arc::new(iter.into_iter().collect()))
+        Self(Arc::new(iter.into_iter().collect()))
     }
 }
 
 impl FromIterator<(String, LoroValue)> for LoroMapValue {
     fn from_iter<T: IntoIterator<Item = (String, LoroValue)>>(iter: T) -> Self {
         let map: FxHashMap<_, _> = iter.into_iter().collect();
-        LoroMapValue(Arc::new(map))
+        Self(Arc::new(map))
     }
 }
 
@@ -200,14 +200,14 @@ const MAX_DEPTH: usize = 128;
 impl<'a> arbitrary::Arbitrary<'a> for LoroValue {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
         let value = match u.int_in_range(0..=7).unwrap() {
-            0 => LoroValue::Null,
-            1 => LoroValue::Bool(u.arbitrary()?),
-            2 => LoroValue::Double(u.arbitrary()?),
-            3 => LoroValue::I64(u.arbitrary()?),
-            4 => LoroValue::Binary(LoroBinaryValue::arbitrary(u)?),
-            5 => LoroValue::String(LoroStringValue::arbitrary(u)?),
-            6 => LoroValue::List(LoroListValue::arbitrary(u)?),
-            7 => LoroValue::Map(LoroMapValue::arbitrary(u)?),
+            0 => Self::Null,
+            1 => Self::Bool(u.arbitrary()?),
+            2 => Self::Double(u.arbitrary()?),
+            3 => Self::I64(u.arbitrary()?),
+            4 => Self::Binary(LoroBinaryValue::arbitrary(u)?),
+            5 => Self::String(LoroStringValue::arbitrary(u)?),
+            6 => Self::List(LoroListValue::arbitrary(u)?),
+            7 => Self::Map(LoroMapValue::arbitrary(u)?),
             _ => unreachable!(),
         };
 
@@ -220,16 +220,16 @@ impl<'a> arbitrary::Arbitrary<'a> for LoroValue {
 }
 
 impl LoroValue {
-    pub fn get_by_key(&self, key: &str) -> Option<&LoroValue> {
+    pub fn get_by_key(&self, key: &str) -> Option<&Self> {
         match self {
-            LoroValue::Map(map) => map.get(key),
+            Self::Map(map) => map.get(key),
             _ => None,
         }
     }
 
-    pub fn get_by_index(&self, index: isize) -> Option<&LoroValue> {
+    pub fn get_by_index(&self, index: isize) -> Option<&Self> {
         match self {
-            LoroValue::List(list) => {
+            Self::List(list) => {
                 if index < 0 {
                     list.get(list.len() - (-index) as usize)
                 } else {
@@ -242,7 +242,7 @@ impl LoroValue {
 
     pub fn is_false(&self) -> bool {
         match self {
-            LoroValue::Bool(b) => !*b,
+            Self::Bool(b) => !*b,
             _ => false,
         }
     }
@@ -252,13 +252,13 @@ impl LoroValue {
         let mut value_depth_pairs = vec![(self, 0)];
         while let Some((value, depth)) = value_depth_pairs.pop() {
             match value {
-                LoroValue::List(arr) => {
+                Self::List(arr) => {
                     for v in arr.iter() {
                         value_depth_pairs.push((v, depth + 1));
                     }
                     max_depth = max_depth.max(depth + 1);
                 }
-                LoroValue::Map(map) => {
+                Self::Map(map) => {
                     for (_, v) in map.iter() {
                         value_depth_pairs.push((v, depth + 1));
                     }
@@ -279,14 +279,14 @@ impl LoroValue {
     }
 
     /// Visit the all list items or map's values
-    pub fn visit_children(&self, f: &mut dyn FnMut(&LoroValue)) {
+    pub fn visit_children(&self, f: &mut dyn FnMut(&Self)) {
         match self {
-            LoroValue::List(list) => {
+            Self::List(list) => {
                 for v in list.iter() {
                     f(v);
                 }
             }
-            LoroValue::Map(m) => {
+            Self::Map(m) => {
                 for (_k, v) in m.iter() {
                     f(v)
                 }
@@ -297,23 +297,23 @@ impl LoroValue {
 }
 
 impl Index<&str> for LoroValue {
-    type Output = LoroValue;
+    type Output = Self;
 
     fn index(&self, index: &str) -> &Self::Output {
         match self {
-            LoroValue::Map(map) => map.get(index).unwrap_or(&LoroValue::Null),
-            _ => &LoroValue::Null,
+            Self::Map(map) => map.get(index).unwrap_or(&Self::Null),
+            _ => &Self::Null,
         }
     }
 }
 
 impl Index<usize> for LoroValue {
-    type Output = LoroValue;
+    type Output = Self;
 
     fn index(&self, index: usize) -> &Self::Output {
         match self {
-            LoroValue::List(list) => list.get(index).unwrap_or(&LoroValue::Null),
-            _ => &LoroValue::Null,
+            Self::List(list) => list.get(index).unwrap_or(&Self::Null),
+            _ => &Self::Null,
         }
     }
 }
@@ -345,7 +345,7 @@ impl TryFrom<LoroValue> for i32 {
 
     fn try_from(value: LoroValue) -> Result<Self, Self::Error> {
         match value {
-            LoroValue::I64(v) => Ok(v as i32),
+            LoroValue::I64(v) => Ok(v as Self),
             _ => Err("not a i32"),
         }
     }
@@ -356,7 +356,7 @@ impl TryFrom<LoroValue> for Arc<Vec<u8>> {
 
     fn try_from(value: LoroValue) -> Result<Self, Self::Error> {
         match value {
-            LoroValue::Binary(v) => Ok(Arc::clone(&v.0)),
+            LoroValue::Binary(v) => Ok(Self::clone(&v.0)),
             _ => Err("not a binary"),
         }
     }
@@ -367,7 +367,7 @@ impl TryFrom<LoroValue> for Arc<String> {
 
     fn try_from(value: LoroValue) -> Result<Self, Self::Error> {
         match value {
-            LoroValue::String(v) => Ok(Arc::clone(&v.0)),
+            LoroValue::String(v) => Ok(Self::clone(&v.0)),
             _ => Err("not a string"),
         }
     }
@@ -378,7 +378,7 @@ impl TryFrom<LoroValue> for Arc<Vec<LoroValue>> {
 
     fn try_from(value: LoroValue) -> Result<Self, Self::Error> {
         match value {
-            LoroValue::List(v) => Ok(Arc::clone(&v.0)),
+            LoroValue::List(v) => Ok(Self::clone(&v.0)),
             _ => Err("not a list"),
         }
     }
@@ -389,7 +389,7 @@ impl TryFrom<LoroValue> for Arc<FxHashMap<String, LoroValue>> {
 
     fn try_from(value: LoroValue) -> Result<Self, Self::Error> {
         match value {
-            LoroValue::Map(v) => Ok(Arc::clone(&v.0)),
+            LoroValue::Map(v) => Ok(Self::clone(&v.0)),
             _ => Err("not a map"),
         }
     }
@@ -410,33 +410,33 @@ impl Hash for LoroValue {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         std::mem::discriminant(self).hash(state);
         match self {
-            LoroValue::Null => {}
-            LoroValue::Bool(v) => {
+            Self::Null => {}
+            Self::Bool(v) => {
                 state.write_u8(*v as u8);
             }
-            LoroValue::Double(v) => {
+            Self::Double(v) => {
                 state.write_u64(v.to_bits());
             }
-            LoroValue::I64(v) => {
+            Self::I64(v) => {
                 state.write_i64(*v);
             }
-            LoroValue::Binary(v) => {
+            Self::Binary(v) => {
                 v.hash(state);
             }
-            LoroValue::String(v) => {
+            Self::String(v) => {
                 v.hash(state);
             }
-            LoroValue::List(v) => {
+            Self::List(v) => {
                 v.hash(state);
             }
-            LoroValue::Map(v) => {
+            Self::Map(v) => {
                 state.write_usize(v.len());
                 for (k, v) in v.iter() {
                     k.hash(state);
                     v.hash(state);
                 }
             }
-            LoroValue::Container(v) => {
+            Self::Container(v) => {
                 v.hash(state);
             }
         }
@@ -445,105 +445,105 @@ impl Hash for LoroValue {
 
 impl Eq for LoroValue {}
 
-impl<S: Into<String>, M> From<HashMap<S, LoroValue, M>> for LoroValue {
-    fn from(map: HashMap<S, LoroValue, M>) -> Self {
+impl<S: Into<String>, M> From<HashMap<S, Self, M>> for LoroValue {
+    fn from(map: HashMap<S, Self, M>) -> Self {
         let mut new_map = FxHashMap::default();
         for (k, v) in map {
             new_map.insert(k.into(), v);
         }
 
-        LoroValue::Map(new_map.into())
+        Self::Map(new_map.into())
     }
 }
 
 impl From<Vec<u8>> for LoroValue {
     fn from(vec: Vec<u8>) -> Self {
-        LoroValue::Binary(vec.into())
+        Self::Binary(vec.into())
     }
 }
 
 impl From<&'_ [u8]> for LoroValue {
     fn from(vec: &[u8]) -> Self {
-        LoroValue::Binary(vec.to_vec().into())
+        Self::Binary(vec.to_vec().into())
     }
 }
 
 impl<const N: usize> From<&'_ [u8; N]> for LoroValue {
     fn from(vec: &[u8; N]) -> Self {
-        LoroValue::Binary(vec.to_vec().into())
+        Self::Binary(vec.to_vec().into())
     }
 }
 
 impl From<i32> for LoroValue {
     fn from(v: i32) -> Self {
-        LoroValue::I64(v as i64)
+        Self::I64(v as i64)
     }
 }
 
 impl From<u32> for LoroValue {
     fn from(v: u32) -> Self {
-        LoroValue::I64(v as i64)
+        Self::I64(v as i64)
     }
 }
 
 impl From<i64> for LoroValue {
     fn from(v: i64) -> Self {
-        LoroValue::I64(v)
+        Self::I64(v)
     }
 }
 
 impl From<u16> for LoroValue {
     fn from(v: u16) -> Self {
-        LoroValue::I64(v as i64)
+        Self::I64(v as i64)
     }
 }
 
 impl From<i16> for LoroValue {
     fn from(v: i16) -> Self {
-        LoroValue::I64(v as i64)
+        Self::I64(v as i64)
     }
 }
 
 impl From<f64> for LoroValue {
     fn from(v: f64) -> Self {
-        LoroValue::Double(v)
+        Self::Double(v)
     }
 }
 
 impl From<bool> for LoroValue {
     fn from(v: bool) -> Self {
-        LoroValue::Bool(v)
+        Self::Bool(v)
     }
 }
 
-impl<T: Into<LoroValue>> From<Vec<T>> for LoroValue {
+impl<T: Into<Self>> From<Vec<T>> for LoroValue {
     fn from(value: Vec<T>) -> Self {
-        let vec: Vec<LoroValue> = value.into_iter().map(|x| x.into()).collect();
-        LoroValue::List(vec.into())
+        let vec: Vec<Self> = value.into_iter().map(|x| x.into()).collect();
+        Self::List(vec.into())
     }
 }
 
 impl From<&str> for LoroValue {
     fn from(v: &str) -> Self {
-        LoroValue::String(v.to_string().into())
+        Self::String(v.to_string().into())
     }
 }
 
 impl From<String> for LoroValue {
     fn from(v: String) -> Self {
-        LoroValue::String(v.into())
+        Self::String(v.into())
     }
 }
 
-impl<'a> From<&'a [LoroValue]> for LoroValue {
-    fn from(v: &'a [LoroValue]) -> Self {
-        LoroValue::List(v.to_vec().into())
+impl<'a> From<&'a [Self]> for LoroValue {
+    fn from(v: &'a [Self]) -> Self {
+        Self::List(v.to_vec().into())
     }
 }
 
 impl From<ContainerID> for LoroValue {
     fn from(v: ContainerID) -> Self {
-        LoroValue::Container(v)
+        Self::Container(v)
     }
 }
 
@@ -601,26 +601,26 @@ pub mod wasm {
     impl From<JsValue> for LoroValue {
         fn from(js_value: JsValue) -> Self {
             if js_value.is_null() || js_value.is_undefined() {
-                LoroValue::Null
+                Self::Null
             } else if js_value.as_bool().is_some() {
-                LoroValue::Bool(js_value.as_bool().unwrap())
+                Self::Bool(js_value.as_bool().unwrap())
             } else if js_value.as_f64().is_some() {
                 let num = js_value.as_f64().unwrap();
                 if num.fract() == 0.0 && num <= i64::MAX as f64 && num >= i64::MIN as f64 {
-                    LoroValue::I64(num as i64)
+                    Self::I64(num as i64)
                 } else {
-                    LoroValue::Double(num)
+                    Self::Double(num)
                 }
             } else if js_value.is_string() {
-                LoroValue::String(js_value.as_string().unwrap().into())
+                Self::String(js_value.as_string().unwrap().into())
             } else if js_value.has_type::<Array>() {
                 let array = js_value.unchecked_into::<Array>();
                 let mut list = Vec::new();
                 for i in 0..array.length() {
-                    list.push(LoroValue::from(array.get(i)));
+                    list.push(Self::from(array.get(i)));
                 }
 
-                LoroValue::List(list.into())
+                Self::List(list.into())
             } else if js_value.is_instance_of::<Uint8Array>() {
                 let array = js_value.unchecked_into::<Uint8Array>();
                 let mut binary = Vec::new();
@@ -628,7 +628,7 @@ pub mod wasm {
                     binary.push(array.get_index(i));
                 }
 
-                LoroValue::Binary(binary.into())
+                Self::Binary(binary.into())
             } else if js_value.is_object() {
                 let object = js_value.unchecked_into::<Object>();
                 let mut map = FxHashMap::default();
@@ -636,11 +636,11 @@ pub mod wasm {
                     let key = key.as_string().unwrap();
                     map.insert(
                         key.clone(),
-                        LoroValue::from(js_sys::Reflect::get(&object, &key.into()).unwrap()),
+                        Self::from(js_sys::Reflect::get(&object, &key.into()).unwrap()),
                     );
                 }
 
-                LoroValue::Map(map.into())
+                Self::Map(map.into())
             } else {
                 panic!("Fail to convert JsValue {:?} to LoroValue ", js_value)
             }
@@ -649,7 +649,7 @@ pub mod wasm {
 
     impl From<&ContainerID> for JsValue {
         fn from(id: &ContainerID) -> Self {
-            JsValue::from_str(id.to_string().as_str())
+            Self::from_str(id.to_string().as_str())
         }
     }
 
@@ -664,7 +664,7 @@ pub mod wasm {
             }
 
             let s = value.as_string().unwrap();
-            ContainerID::try_from(s.as_str()).map_err(|_| {
+            Self::try_from(s.as_str()).map_err(|_| {
                 LoroError::DecodeError(
                     format!("Given ContainerId is not a valid ContainerID: {}", s).into(),
                 )
@@ -683,43 +683,43 @@ impl Serialize for LoroValue {
         if serializer.is_human_readable() {
             // json type
             match self {
-                LoroValue::Null => serializer.serialize_unit(),
-                LoroValue::Bool(b) => serializer.serialize_bool(*b),
-                LoroValue::Double(d) => serializer.serialize_f64(*d),
-                LoroValue::I64(i) => serializer.serialize_i64(*i),
-                LoroValue::String(s) => serializer.serialize_str(s),
-                LoroValue::Binary(b) => serializer.collect_seq(b.iter()),
-                LoroValue::List(l) => serializer.collect_seq(l.iter()),
-                LoroValue::Map(m) => serializer.collect_map(m.iter()),
-                LoroValue::Container(id) => {
+                Self::Null => serializer.serialize_unit(),
+                Self::Bool(b) => serializer.serialize_bool(*b),
+                Self::Double(d) => serializer.serialize_f64(*d),
+                Self::I64(i) => serializer.serialize_i64(*i),
+                Self::String(s) => serializer.serialize_str(s),
+                Self::Binary(b) => serializer.collect_seq(b.iter()),
+                Self::List(l) => serializer.collect_seq(l.iter()),
+                Self::Map(m) => serializer.collect_map(m.iter()),
+                Self::Container(id) => {
                     serializer.serialize_str(&format!("{}{}", LORO_CONTAINER_ID_PREFIX, id))
                 }
             }
         } else {
             // binary type
             match self {
-                LoroValue::Null => serializer.serialize_unit_variant("LoroValue", 0, "Null"),
-                LoroValue::Bool(b) => {
+                Self::Null => serializer.serialize_unit_variant("LoroValue", 0, "Null"),
+                Self::Bool(b) => {
                     serializer.serialize_newtype_variant("LoroValue", 1, "Bool", b)
                 }
-                LoroValue::Double(d) => {
+                Self::Double(d) => {
                     serializer.serialize_newtype_variant("LoroValue", 2, "Double", d)
                 }
-                LoroValue::I64(i) => serializer.serialize_newtype_variant("LoroValue", 3, "I32", i),
-                LoroValue::String(s) => {
+                Self::I64(i) => serializer.serialize_newtype_variant("LoroValue", 3, "I32", i),
+                Self::String(s) => {
                     serializer.serialize_newtype_variant("LoroValue", 4, "String", &**s)
                 }
 
-                LoroValue::List(l) => {
+                Self::List(l) => {
                     serializer.serialize_newtype_variant("LoroValue", 5, "List", &**l)
                 }
-                LoroValue::Map(m) => {
+                Self::Map(m) => {
                     serializer.serialize_newtype_variant("LoroValue", 6, "Map", &**m)
                 }
-                LoroValue::Container(id) => {
+                Self::Container(id) => {
                     serializer.serialize_newtype_variant("LoroValue", 7, "Container", id)
                 }
-                LoroValue::Binary(b) => {
+                Self::Binary(b) => {
                     serializer.serialize_newtype_variant("LoroValue", 8, "Binary", &**b)
                 }
             }
@@ -927,22 +927,22 @@ mod serde_json_impl {
     impl From<Value> for LoroValue {
         fn from(value: Value) -> Self {
             match value {
-                Value::Null => LoroValue::Null,
-                Value::Bool(b) => LoroValue::Bool(b),
+                Value::Null => Self::Null,
+                Value::Bool(b) => Self::Bool(b),
                 Value::Number(n) => {
                     if let Some(i) = n.as_i64() {
-                        LoroValue::I64(i)
+                        Self::I64(i)
                     } else {
-                        LoroValue::Double(n.as_f64().unwrap())
+                        Self::Double(n.as_f64().unwrap())
                     }
                 }
-                Value::String(s) => LoroValue::String(s.into()),
+                Value::String(s) => Self::String(s.into()),
                 Value::Array(arr) => {
-                    LoroValue::List(arr.into_iter().map(LoroValue::from).collect())
+                    Self::List(arr.into_iter().map(Self::from).collect())
                 }
-                Value::Object(obj) => LoroValue::Map(
+                Value::Object(obj) => Self::Map(
                     obj.into_iter()
-                        .map(|(k, v)| (k, LoroValue::from(v)))
+                        .map(|(k, v)| (k, Self::from(v)))
                         .collect(),
                 ),
             }
@@ -953,21 +953,21 @@ mod serde_json_impl {
     impl From<LoroValue> for Value {
         fn from(value: LoroValue) -> Self {
             match value {
-                LoroValue::Null => Value::Null,
-                LoroValue::Bool(b) => Value::Bool(b),
-                LoroValue::Double(d) => Value::Number(Number::from_f64(d).unwrap()),
-                LoroValue::I64(i) => Value::Number(Number::from(i)),
-                LoroValue::String(s) => Value::String(s.to_string()),
-                LoroValue::List(l) => Value::Array(l.iter().cloned().map(Value::from).collect()),
-                LoroValue::Map(m) => Value::Object(
+                LoroValue::Null => Self::Null,
+                LoroValue::Bool(b) => Self::Bool(b),
+                LoroValue::Double(d) => Self::Number(Number::from_f64(d).unwrap()),
+                LoroValue::I64(i) => Self::Number(Number::from(i)),
+                LoroValue::String(s) => Self::String(s.to_string()),
+                LoroValue::List(l) => Self::Array(l.iter().cloned().map(Self::from).collect()),
+                LoroValue::Map(m) => Self::Object(
                     m.iter()
-                        .map(|(k, v)| (k.clone(), Value::from(v.clone())))
+                        .map(|(k, v)| (k.clone(), Self::from(v.clone())))
                         .collect(),
                 ),
                 LoroValue::Container(id) => {
-                    Value::String(format!("{}{}", LORO_CONTAINER_ID_PREFIX, id))
+                    Self::String(format!("{}{}", LORO_CONTAINER_ID_PREFIX, id))
                 }
-                LoroValue::Binary(b) => Value::Array(b.iter().copied().map(Value::from).collect()),
+                LoroValue::Binary(b) => Self::Array(b.iter().copied().map(Self::from).collect()),
             }
         }
     }

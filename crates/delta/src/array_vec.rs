@@ -71,7 +71,7 @@ impl<V, const C: usize> ArrayVec<V, C> {
 
 impl<V: Debug + Clone, const C: usize, Attr: DeltaAttr> DeltaRope<ArrayVec<V, C>, Attr> {
     pub fn from_many(iter: impl Iterator<Item = V>) -> Self {
-        let mut rope = DeltaRope::new();
+        let mut rope = Self::new();
         rope.insert_values(
             0,
             ArrayVec::from_many(iter).map(|x| crate::DeltaItem::Replace {
@@ -169,7 +169,7 @@ where
 {
     fn from(array: [T; A]) -> Self {
         let vec = Vec::from_slice(&array).unwrap();
-        ArrayVec { vec }
+        Self { vec }
     }
 }
 

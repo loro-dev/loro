@@ -86,7 +86,7 @@ impl CompactId {
         }
     }
 
-    pub fn inc(&self, start: i32) -> CompactId {
+    pub fn inc(&self, start: i32) -> Self {
         Self {
             peer: self.peer,
             counter: NonMaxI32::new(start + self.counter.get()).unwrap(),
@@ -303,13 +303,13 @@ pub enum ContainerType {
 
 impl ContainerType {
     #[cfg(feature = "counter")]
-    pub const ALL_TYPES: [ContainerType; 6] = [
-        ContainerType::Map,
-        ContainerType::List,
-        ContainerType::Text,
-        ContainerType::Tree,
-        ContainerType::MovableList,
-        ContainerType::Counter,
+    pub const ALL_TYPES: [Self; 6] = [
+        Self::Map,
+        Self::List,
+        Self::Text,
+        Self::Tree,
+        Self::MovableList,
+        Self::Counter,
     ];
     #[cfg(not(feature = "counter"))]
     pub const ALL_TYPES: [ContainerType; 5] = [
@@ -322,40 +322,40 @@ impl ContainerType {
 
     pub fn default_value(&self) -> LoroValue {
         match self {
-            ContainerType::Map => LoroValue::Map(Default::default()),
-            ContainerType::List => LoroValue::List(Default::default()),
-            ContainerType::Text => LoroValue::String(Default::default()),
-            ContainerType::Tree => LoroValue::List(Default::default()),
-            ContainerType::MovableList => LoroValue::List(Default::default()),
+            Self::Map => LoroValue::Map(Default::default()),
+            Self::List => LoroValue::List(Default::default()),
+            Self::Text => LoroValue::String(Default::default()),
+            Self::Tree => LoroValue::List(Default::default()),
+            Self::MovableList => LoroValue::List(Default::default()),
             #[cfg(feature = "counter")]
-            ContainerType::Counter => LoroValue::Double(0.),
-            ContainerType::Unknown(_) => unreachable!(),
+            Self::Counter => LoroValue::Double(0.),
+            Self::Unknown(_) => unreachable!(),
         }
     }
 
     pub fn to_u8(self) -> u8 {
         match self {
-            ContainerType::Map => 0,
-            ContainerType::List => 1,
-            ContainerType::Text => 2,
-            ContainerType::Tree => 3,
-            ContainerType::MovableList => 4,
+            Self::Map => 0,
+            Self::List => 1,
+            Self::Text => 2,
+            Self::Tree => 3,
+            Self::MovableList => 4,
             #[cfg(feature = "counter")]
-            ContainerType::Counter => 5,
-            ContainerType::Unknown(k) => k,
+            Self::Counter => 5,
+            Self::Unknown(k) => k,
         }
     }
 
     pub fn try_from_u8(v: u8) -> LoroResult<Self> {
         match v {
-            0 => Ok(ContainerType::Map),
-            1 => Ok(ContainerType::List),
-            2 => Ok(ContainerType::Text),
-            3 => Ok(ContainerType::Tree),
-            4 => Ok(ContainerType::MovableList),
+            0 => Ok(Self::Map),
+            1 => Ok(Self::List),
+            2 => Ok(Self::Text),
+            3 => Ok(Self::Tree),
+            4 => Ok(Self::MovableList),
             #[cfg(feature = "counter")]
-            5 => Ok(ContainerType::Counter),
-            x => Ok(ContainerType::Unknown(x)),
+            5 => Ok(Self::Counter),
+            x => Ok(Self::Unknown(x)),
         }
     }
 }
@@ -368,14 +368,14 @@ mod container {
     impl Display for ContainerType {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             f.write_str(match self {
-                ContainerType::Map => "Map",
-                ContainerType::List => "List",
-                ContainerType::MovableList => "MovableList",
-                ContainerType::Text => "Text",
-                ContainerType::Tree => "Tree",
+                Self::Map => "Map",
+                Self::List => "List",
+                Self::MovableList => "MovableList",
+                Self::Text => "Text",
+                Self::Tree => "Tree",
                 #[cfg(feature = "counter")]
-                ContainerType::Counter => "Counter",
-                ContainerType::Unknown(k) => return f.write_fmt(format_args!("Unknown({})", k)),
+                Self::Counter => "Counter",
+                Self::Unknown(k) => return f.write_fmt(format_args!("Unknown({})", k)),
             })
         }
     }
@@ -383,11 +383,11 @@ mod container {
     impl Display for ContainerID {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             match self {
-                ContainerID::Root {
+                Self::Root {
                     name,
                     container_type,
                 } => f.write_fmt(format_args!("cid:root-{}:{}", name, container_type))?,
-                ContainerID::Normal {
+                Self::Normal {
                     peer,
                     counter,
                     container_type,
@@ -419,7 +419,7 @@ mod container {
                 }
                 let kind = ContainerType::try_from(&s[split + 1..]).map_err(|_| ())?;
                 let name = &s[..split];
-                Ok(ContainerID::Root {
+                Ok(Self::Root {
                     name: name.into(),
                     container_type: kind,
                 })
@@ -433,7 +433,7 @@ mod container {
 
                 let id = ID::try_from(id).map_err(|_| ())?;
                 let kind = ContainerType::try_from(kind).map_err(|_| ())?;
-                Ok(ContainerID::Normal {
+                Ok(Self::Normal {
                     peer: id.peer,
                     counter: id.counter,
                     container_type: kind,
@@ -445,7 +445,7 @@ mod container {
     impl ContainerID {
         #[inline]
         pub fn new_normal(id: ID, container_type: ContainerType) -> Self {
-            ContainerID::Normal {
+            Self::Normal {
                 peer: id.peer,
                 counter: id.counter,
                 container_type,
@@ -459,7 +459,7 @@ mod container {
                     "Invalid root container name, it should not be empty or contain '/' or '\\0'"
                 );
             } else {
-                ContainerID::Root {
+                Self::Root {
                     name: name.into(),
                     container_type,
                 }
@@ -469,16 +469,16 @@ mod container {
         #[inline]
         pub fn name(&self) -> &InternalString {
             match self {
-                ContainerID::Root { name, .. } => name,
-                ContainerID::Normal { .. } => unreachable!(),
+                Self::Root { name, .. } => name,
+                Self::Normal { .. } => unreachable!(),
             }
         }
 
         #[inline]
         pub fn container_type(&self) -> ContainerType {
             match self {
-                ContainerID::Root { container_type, .. } => *container_type,
-                ContainerID::Normal { container_type, .. } => *container_type,
+                Self::Root { container_type, .. } => *container_type,
+                Self::Normal { container_type, .. } => *container_type,
             }
         }
 
@@ -492,13 +492,13 @@ mod container {
 
         fn try_from(value: &str) -> Result<Self, Self::Error> {
             match value {
-                "Map" | "map" => Ok(ContainerType::Map),
-                "List" | "list" => Ok(ContainerType::List),
-                "Text" | "text" => Ok(ContainerType::Text),
-                "Tree" | "tree" => Ok(ContainerType::Tree),
-                "MovableList" | "movableList" => Ok(ContainerType::MovableList),
+                "Map" | "map" => Ok(Self::Map),
+                "List" | "list" => Ok(Self::List),
+                "Text" | "text" => Ok(Self::Text),
+                "Tree" | "tree" => Ok(Self::Tree),
+                "MovableList" | "movableList" => Ok(Self::MovableList),
                 #[cfg(feature = "counter")]
-                "Counter" | "counter" => Ok(ContainerType::Counter),
+                "Counter" | "counter" => Ok(Self::Counter),
                 a => {
                     if a.ends_with(')') {
                         let start = a.find('(').ok_or_else(|| {
@@ -511,9 +511,9 @@ mod container {
                     format!("Unknown container type \"{}\". The valid options are Map|List|Text|Tree|MovableList.", value).into(),
                 )
                         })?;
-                        match ContainerType::try_from_u8(k) {
+                        match Self::try_from_u8(k) {
                             Ok(k) => Ok(k),
-                            Err(_) => Ok(ContainerType::Unknown(k)),
+                            Err(_) => Ok(Self::Unknown(k)),
                         }
                     } else {
                         Err(LoroError::DecodeError(
@@ -596,7 +596,7 @@ impl TryFrom<&str> for TreeID {
     type Error = LoroError;
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         let id = ID::try_from(value)?;
-        Ok(TreeID {
+        Ok(Self {
             peer: id.peer,
             counter: id.counter,
         })
@@ -609,7 +609,7 @@ pub mod wasm {
     use wasm_bindgen::JsValue;
     impl From<TreeID> for JsValue {
         fn from(value: TreeID) -> Self {
-            JsValue::from_str(&format!("{}", value.id()))
+            Self::from_str(&format!("{}", value.id()))
         }
     }
 
@@ -617,7 +617,7 @@ pub mod wasm {
         type Error = LoroError;
         fn try_from(value: JsValue) -> Result<Self, Self::Error> {
             let id = value.as_string().unwrap();
-            TreeID::try_from(id.as_str())
+            Self::try_from(id.as_str())
         }
     }
 }

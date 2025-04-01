@@ -175,7 +175,7 @@ impl<T: FastStateSnapshot> FastStateSnapshot for Box<T> {
     where
         Self: Sized,
     {
-        T::decode_snapshot_fast(idx, v, ctx).map(|x| Box::new(x))
+        T::decode_snapshot_fast(idx, v, ctx).map(|x| Self::new(x))
     }
 }
 
@@ -243,7 +243,7 @@ impl<T: ContainerState> ContainerState for Box<T> {
     }
 
     fn fork(&self, config: &Configure) -> Self {
-        Box::new(self.as_ref().fork(config))
+        Self::new(self.as_ref().fork(config))
     }
 }
 
@@ -321,31 +321,31 @@ impl State {
 
     pub fn encode_snapshot_fast<W: Write>(&mut self, mut w: W) {
         match self {
-            State::ListState(s) => s.encode_snapshot_fast(&mut w),
-            State::MovableListState(s) => s.encode_snapshot_fast(&mut w),
-            State::MapState(s) => s.encode_snapshot_fast(&mut w),
-            State::RichtextState(s) => s.encode_snapshot_fast(&mut w),
-            State::TreeState(s) => s.encode_snapshot_fast(&mut w),
+            Self::ListState(s) => s.encode_snapshot_fast(&mut w),
+            Self::MovableListState(s) => s.encode_snapshot_fast(&mut w),
+            Self::MapState(s) => s.encode_snapshot_fast(&mut w),
+            Self::RichtextState(s) => s.encode_snapshot_fast(&mut w),
+            Self::TreeState(s) => s.encode_snapshot_fast(&mut w),
             #[cfg(feature = "counter")]
-            State::CounterState(s) => s.encode_snapshot_fast(&mut w),
-            State::UnknownState(s) => s.encode_snapshot_fast(&mut w),
+            Self::CounterState(s) => s.encode_snapshot_fast(&mut w),
+            Self::UnknownState(s) => s.encode_snapshot_fast(&mut w),
         }
     }
 
     pub fn fork(&self, config: &Configure) -> Self {
         match self {
-            State::ListState(list_state) => State::ListState(list_state.fork(config)),
-            State::MovableListState(movable_list_state) => {
-                State::MovableListState(movable_list_state.fork(config))
+            Self::ListState(list_state) => Self::ListState(list_state.fork(config)),
+            Self::MovableListState(movable_list_state) => {
+                Self::MovableListState(movable_list_state.fork(config))
             }
-            State::MapState(map_state) => State::MapState(map_state.fork(config)),
-            State::RichtextState(richtext_state) => {
-                State::RichtextState(richtext_state.fork(config))
+            Self::MapState(map_state) => Self::MapState(map_state.fork(config)),
+            Self::RichtextState(richtext_state) => {
+                Self::RichtextState(richtext_state.fork(config))
             }
-            State::TreeState(tree_state) => State::TreeState(tree_state.fork(config)),
+            Self::TreeState(tree_state) => Self::TreeState(tree_state.fork(config)),
             #[cfg(feature = "counter")]
-            State::CounterState(counter_state) => State::CounterState(counter_state.fork(config)),
-            State::UnknownState(unknown_state) => State::UnknownState(unknown_state.fork(config)),
+            Self::CounterState(counter_state) => Self::CounterState(counter_state.fork(config)),
+            Self::UnknownState(unknown_state) => Self::UnknownState(unknown_state.fork(config)),
         }
     }
 }

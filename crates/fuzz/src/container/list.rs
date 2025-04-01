@@ -88,15 +88,15 @@ impl Actionable for ListAction {
         let list = actor.containers.get(container).unwrap();
         let length = list.len();
 
-        if let ListAction::Insert { pos, .. } = self {
+        if let Self::Insert { pos, .. } = self {
             *pos %= length.max(1) as u8;
         } else if length == 0 {
-            *self = ListAction::Insert {
+            *self = Self::Insert {
                 pos: 0,
                 value: FuzzValue::I32(0),
             };
         } else {
-            let ListAction::Delete { pos, len } = self else {
+            let Self::Delete { pos, len } = self else {
                 unreachable!()
             };
             *pos %= length.max(1) as u8;
@@ -108,7 +108,7 @@ impl Actionable for ListAction {
         let actor = actor.as_list_actor_mut().unwrap();
         let list = actor.get_create_container_mut(container);
         match self {
-            ListAction::Insert { pos, value } => {
+            Self::Insert { pos, value } => {
                 let pos = *pos as usize;
                 match value {
                     FuzzValue::Container(c) => {
@@ -120,7 +120,7 @@ impl Actionable for ListAction {
                     }
                 }
             }
-            ListAction::Delete { pos, len } => {
+            Self::Delete { pos, len } => {
                 let pos = *pos as usize;
                 let len = *len as usize;
                 super::unwrap(list.delete(pos, len));
@@ -135,10 +135,10 @@ impl Actionable for ListAction {
 
     fn table_fields(&self) -> [std::borrow::Cow<'_, str>; 2] {
         match self {
-            ListAction::Insert { pos, value } => {
+            Self::Insert { pos, value } => {
                 [format!("insert {}", pos).into(), value.to_string().into()]
             }
-            ListAction::Delete { pos, len } => {
+            Self::Delete { pos, len } => {
                 ["delete".into(), format!("{} ~ {}", pos, pos + len).into()]
             }
         }
@@ -150,11 +150,11 @@ impl Actionable for ListAction {
 
     fn pre_process_container_value(&mut self) -> Option<&mut ContainerType> {
         match self {
-            ListAction::Insert { value, .. } => match value {
+            Self::Insert { value, .. } => match value {
                 FuzzValue::Container(c) => Some(c),
                 _ => None,
             },
-            ListAction::Delete { .. } => None,
+            Self::Delete { .. } => None,
         }
     }
 }
@@ -162,12 +162,12 @@ impl Actionable for ListAction {
 impl FromGenericAction for ListAction {
     fn from_generic_action(action: &GenericAction) -> Self {
         if action.bool {
-            ListAction::Insert {
+            Self::Insert {
                 pos: (action.pos % 256) as u8,
                 value: action.value,
             }
         } else {
-            ListAction::Delete {
+            Self::Delete {
                 pos: (action.pos % 256) as u8,
                 len: (action.length % 256) as u8,
             }

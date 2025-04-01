@@ -50,7 +50,7 @@ impl TryFrom<&str> for ID {
             .unwrap()
             .parse::<u64>()
             .map_err(|_| LoroError::DecodeError("Invalid ID format".into()))?;
-        Ok(ID {
+        Ok(Self {
             peer: client_id,
             counter,
         })
@@ -76,7 +76,7 @@ impl TryFrom<&str> for IdLp {
             .unwrap()
             .parse::<u64>()
             .map_err(|_| LoroError::DecodeError("Invalid ID format".into()))?;
-        Ok(IdLp {
+        Ok(Self {
             peer: client_id,
             lamport,
         })
@@ -105,7 +105,7 @@ pub const ROOT_ID: ID = ID {
 
 impl From<u128> for ID {
     fn from(id: u128) -> Self {
-        ID {
+        Self {
             peer: (id >> 64) as PeerID,
             counter: id as Counter,
         }
@@ -114,11 +114,11 @@ impl From<u128> for ID {
 
 impl ID {
     /// The ID of the null object. This should be use rarely.
-    pub const NONE_ID: ID = ID::new(u64::MAX, 0);
+    pub const NONE_ID: Self = Self::new(u64::MAX, 0);
 
     #[inline]
     pub const fn new(peer: PeerID, counter: Counter) -> Self {
-        ID { peer, counter }
+        Self { peer, counter }
     }
 
     #[inline]
@@ -141,7 +141,7 @@ impl ID {
 
     #[inline]
     pub fn unknown(counter: Counter) -> Self {
-        ID {
+        Self {
             peer: UNKNOWN,
             counter,
         }
@@ -160,14 +160,14 @@ impl ID {
 
     #[inline]
     pub fn inc(&self, inc: i32) -> Self {
-        ID {
+        Self {
             peer: self.peer,
             counter: self.counter.saturating_add(inc),
         }
     }
 
     #[inline]
-    pub fn contains(&self, len: Counter, target: ID) -> bool {
+    pub fn contains(&self, len: Counter, target: Self) -> bool {
         self.peer == target.peer
             && self.counter <= target.counter
             && target.counter < self.counter + len
@@ -176,7 +176,7 @@ impl ID {
 
 impl From<ID> for u128 {
     fn from(id: ID) -> Self {
-        ((id.peer as u128) << 64) | id.counter as u128
+        ((id.peer as Self) << 64) | id.counter as Self
     }
 }
 
@@ -191,15 +191,15 @@ impl RangeBounds<ID> for (ID, ID) {
 }
 
 impl IdLp {
-    pub const NONE_ID: IdLp = IdLp::new(u64::MAX, 0);
+    pub const NONE_ID: Self = Self::new(u64::MAX, 0);
 
     #[inline]
     pub const fn new(peer: PeerID, lp: Lamport) -> Self {
         Self { peer, lamport: lp }
     }
 
-    pub fn inc(&self, offset: i32) -> IdLp {
-        IdLp {
+    pub fn inc(&self, offset: i32) -> Self {
+        Self {
             peer: self.peer,
             lamport: (self.lamport as i32 + offset) as Lamport,
         }
@@ -212,7 +212,7 @@ impl IdLp {
 
 impl From<IdLp> for IdLpSpan {
     fn from(value: IdLp) -> Self {
-        IdLpSpan {
+        Self {
             peer: value.peer,
             lamport: crate::LamportSpan {
                 start: value.lamport,
@@ -223,7 +223,7 @@ impl From<IdLp> for IdLpSpan {
 }
 
 impl IdFull {
-    pub const NONE_ID: IdFull = IdFull {
+    pub const NONE_ID: Self = Self {
         peer: PeerID::MAX,
         lamport: 0,
         counter: 0,
@@ -237,8 +237,8 @@ impl IdFull {
         }
     }
 
-    pub fn inc(&self, offset: i32) -> IdFull {
-        IdFull {
+    pub fn inc(&self, offset: i32) -> Self {
+        Self {
             peer: self.peer,
             lamport: (self.lamport as i32 + offset) as Lamport,
             counter: self.counter + offset as Counter,

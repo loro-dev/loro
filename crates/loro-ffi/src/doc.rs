@@ -42,12 +42,12 @@ impl LoroDoc {
 
     pub fn fork(&self) -> Arc<Self> {
         let doc = self.doc.fork();
-        Arc::new(LoroDoc { doc })
+        Arc::new(Self { doc })
     }
 
     pub fn fork_at(&self, frontiers: &Frontiers) -> Arc<Self> {
         let doc = self.doc.fork_at(&frontiers.into());
-        Arc::new(LoroDoc { doc })
+        Arc::new(Self { doc })
     }
 
     /// Get the configurations of the document.
@@ -871,7 +871,7 @@ pub struct CommitOptions {
 
 impl From<CommitOptions> for loro::CommitOptions {
     fn from(value: CommitOptions) -> Self {
-        loro::CommitOptions {
+        Self {
             origin: value.origin.map(|x| x.into()),
             immediate_renew: value.immediate_renew,
             timestamp: value.timestamp,

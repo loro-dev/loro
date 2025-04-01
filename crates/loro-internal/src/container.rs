@@ -155,21 +155,21 @@ impl IntoContainerId for &ContainerIdx {
 
 impl From<String> for ContainerIdRaw {
     fn from(value: String) -> Self {
-        ContainerIdRaw::Root { name: value.into() }
+        Self::Root { name: value.into() }
     }
 }
 
 impl<'a> From<&'a str> for ContainerIdRaw {
     fn from(value: &'a str) -> Self {
-        ContainerIdRaw::Root { name: value.into() }
+        Self::Root { name: value.into() }
     }
 }
 
 impl From<&ContainerID> for ContainerIdRaw {
     fn from(id: &ContainerID) -> Self {
         match id {
-            ContainerID::Root { name, .. } => ContainerIdRaw::Root { name: name.clone() },
-            ContainerID::Normal { peer, counter, .. } => ContainerIdRaw::Normal {
+            ContainerID::Root { name, .. } => Self::Root { name: name.clone() },
+            ContainerID::Normal { peer, counter, .. } => Self::Normal {
                 id: ID::new(*peer, *counter),
             },
         }
@@ -179,8 +179,8 @@ impl From<&ContainerID> for ContainerIdRaw {
 impl From<ContainerID> for ContainerIdRaw {
     fn from(id: ContainerID) -> Self {
         match id {
-            ContainerID::Root { name, .. } => ContainerIdRaw::Root { name },
-            ContainerID::Normal { peer, counter, .. } => ContainerIdRaw::Normal {
+            ContainerID::Root { name, .. } => Self::Root { name },
+            ContainerID::Normal { peer, counter, .. } => Self::Normal {
                 id: ID::new(peer, counter),
             },
         }
@@ -190,11 +190,11 @@ impl From<ContainerID> for ContainerIdRaw {
 impl ContainerIdRaw {
     pub fn with_type(self, container_type: ContainerType) -> ContainerID {
         match self {
-            ContainerIdRaw::Root { name } => ContainerID::Root {
+            Self::Root { name } => ContainerID::Root {
                 name,
                 container_type,
             },
-            ContainerIdRaw::Normal { id } => ContainerID::Normal {
+            Self::Normal { id } => ContainerID::Normal {
                 peer: id.peer,
                 counter: id.counter,
                 container_type,

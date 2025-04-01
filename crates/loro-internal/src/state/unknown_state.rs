@@ -114,7 +114,7 @@ mod snapshot {
         where
             Self: Sized,
         {
-            Ok(UnknownState::new(idx))
+            Ok(Self::new(idx))
         }
     }
 }

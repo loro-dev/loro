@@ -108,17 +108,17 @@ impl InnerListOp {
 
     pub(crate) fn estimate_storage_size(&self, container_type: ContainerType) -> usize {
         match self {
-            InnerListOp::Insert { slice, .. } => match container_type {
+            Self::Insert { slice, .. } => match container_type {
                 ContainerType::MovableList | ContainerType::List => 4 * slice.atom_len(),
                 ContainerType::Text => slice.atom_len(),
                 _ => unreachable!(),
             },
-            InnerListOp::InsertText { slice, .. } => slice.len(),
-            InnerListOp::Delete(..) => 8,
-            InnerListOp::Move { .. } => 8,
-            InnerListOp::Set { .. } => 7,
-            InnerListOp::StyleStart { .. } => 10,
-            InnerListOp::StyleEnd => 1,
+            Self::InsertText { slice, .. } => slice.len(),
+            Self::Delete(..) => 8,
+            Self::Move { .. } => 8,
+            Self::Set { .. } => 7,
+            Self::StyleStart { .. } => 10,
+            Self::StyleEnd => 1,
         }
     }
 }
@@ -520,24 +520,24 @@ impl Mergable for InnerListOp {
     {
         match (self, other) {
             (
-                InnerListOp::Insert { pos, slice, .. },
-                InnerListOp::Insert {
+                Self::Insert { pos, slice, .. },
+                Self::Insert {
                     pos: other_pos,
                     slice: other_slice,
                     ..
                 },
             ) => pos + slice.content_len() == *other_pos && slice.is_mergable(other_slice, &()),
-            (InnerListOp::Delete(span), InnerListOp::Delete(other_span)) => {
+            (Self::Delete(span), Self::Delete(other_span)) => {
                 span.is_mergable(other_span, &())
             }
             (
-                InnerListOp::InsertText {
+                Self::InsertText {
                     unicode_start,
                     slice,
                     pos,
                     unicode_len: len,
                 },
-                InnerListOp::InsertText {
+                Self::InsertText {
                     slice: other_slice,
                     pos: other_pos,
                     unicode_start: other_unicode_start,
@@ -558,23 +558,23 @@ impl Mergable for InnerListOp {
     {
         match (self, other) {
             (
-                InnerListOp::Insert { slice, .. },
-                InnerListOp::Insert {
+                Self::Insert { slice, .. },
+                Self::Insert {
                     slice: other_slice, ..
                 },
             ) => {
                 slice.merge(other_slice, &());
             }
-            (InnerListOp::Delete(span), InnerListOp::Delete(other_span)) => {
+            (Self::Delete(span), Self::Delete(other_span)) => {
                 span.merge(other_span, &())
             }
             (
-                InnerListOp::InsertText {
+                Self::InsertText {
                     slice,
                     unicode_len: len,
                     ..
                 },
-                InnerListOp::InsertText {
+                Self::InsertText {
                     slice: other_slice,
                     unicode_len: other_len,
                     ..
@@ -591,15 +591,15 @@ impl Mergable for InnerListOp {
 impl HasLength for InnerListOp {
     fn content_len(&self) -> usize {
         match self {
-            InnerListOp::Insert { slice, .. } => slice.content_len(),
-            InnerListOp::InsertText {
+            Self::Insert { slice, .. } => slice.content_len(),
+            Self::InsertText {
                 unicode_len: len, ..
             } => *len as usize,
-            InnerListOp::Delete(span) => span.atom_len(),
-            InnerListOp::StyleStart { .. }
-            | InnerListOp::StyleEnd { .. }
-            | InnerListOp::Move { .. }
-            | InnerListOp::Set { .. } => 1,
+            Self::Delete(span) => span.atom_len(),
+            Self::StyleStart { .. }
+            | Self::StyleEnd { .. }
+            | Self::Move { .. }
+            | Self::Set { .. } => 1,
         }
     }
 }
@@ -607,16 +607,16 @@ impl HasLength for InnerListOp {
 impl Sliceable for InnerListOp {
     fn slice(&self, from: usize, to: usize) -> Self {
         match self {
-            InnerListOp::Insert { slice, pos } => InnerListOp::Insert {
+            Self::Insert { slice, pos } => Self::Insert {
                 slice: slice.slice(from, to),
                 pos: *pos + from,
             },
-            InnerListOp::InsertText {
+            Self::InsertText {
                 slice,
                 unicode_start,
                 unicode_len: _,
                 pos,
-            } => InnerListOp::InsertText {
+            } => Self::InsertText {
                 slice: {
                     let (a, b) = unicode_range_to_byte_range(
                         // SAFETY: we know it's a valid utf8 string
@@ -630,11 +630,11 @@ impl Sliceable for InnerListOp {
                 unicode_len: (to - from) as u32,
                 pos: *pos + from as u32,
             },
-            InnerListOp::Delete(span) => InnerListOp::Delete(span.slice(from, to)),
-            InnerListOp::StyleStart { .. }
-            | InnerListOp::StyleEnd { .. }
-            | InnerListOp::Move { .. }
-            | InnerListOp::Set { .. } => {
+            Self::Delete(span) => Self::Delete(span.slice(from, to)),
+            Self::StyleStart { .. }
+            | Self::StyleEnd { .. }
+            | Self::Move { .. }
+            | Self::Set { .. } => {
                 assert!(from == 0 && to == 1);
                 self.clone()
             }

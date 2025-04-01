@@ -134,7 +134,7 @@ impl BTreeTrait for ListImpl {
     }
 }
 
-impl UseLengthFinder<ListImpl> for ListImpl {
+impl UseLengthFinder<Self> for ListImpl {
     fn get_len(cache: &isize) -> usize {
         *cache as usize
     }

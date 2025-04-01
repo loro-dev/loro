@@ -82,7 +82,7 @@ impl BoolRleVec {
         }
     }
 
-    pub fn merge(&mut self, other: &BoolRleVec) {
+    pub fn merge(&mut self, other: &Self) {
         if self.is_empty() {
             self.rle_vec = other.rle_vec.clone();
             self.len = other.len;

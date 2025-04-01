@@ -9,8 +9,8 @@ impl FractionalIndex {
     }
 
     pub fn new_jitter<R: Rng>(
-        lower: Option<&FractionalIndex>,
-        upper: Option<&FractionalIndex>,
+        lower: Option<&Self>,
+        upper: Option<&Self>,
         rng: &mut R,
         jitter: u8,
     ) -> Option<Self> {
@@ -18,18 +18,18 @@ impl FractionalIndex {
             (Some(lower), Some(upper)) => Self::new_between_jitter(lower, upper, rng, jitter),
             (Some(lower), None) => Self::new_after_jitter(lower, rng, jitter).into(),
             (None, Some(upper)) => Self::new_before_jitter(upper, rng, jitter).into(),
-            (None, None) => FractionalIndex::jitter_default(rng, jitter).into(),
+            (None, None) => Self::jitter_default(rng, jitter).into(),
         }
     }
 
-    fn jitter<R: Rng>(mut bytes: Vec<u8>, rng: &mut R, jitter: u8) -> FractionalIndex {
+    fn jitter<R: Rng>(mut bytes: Vec<u8>, rng: &mut R, jitter: u8) -> Self {
         bytes.push(TERMINATOR);
         bytes.extend((0..jitter).map(|_| rng.gen::<u8>()));
-        FractionalIndex(Arc::new(bytes))
+        Self(Arc::new(bytes))
     }
 
     pub fn new_before_jitter<R: Rng>(
-        FractionalIndex(bytes): &FractionalIndex,
+        Self(bytes): &Self,
         rng: &mut R,
         jitter: u8,
     ) -> Self {
@@ -37,7 +37,7 @@ impl FractionalIndex {
     }
 
     pub fn new_after_jitter<R: Rng>(
-        FractionalIndex(bytes): &FractionalIndex,
+        Self(bytes): &Self,
         rng: &mut R,
         jitter: u8,
     ) -> Self {
@@ -45,8 +45,8 @@ impl FractionalIndex {
     }
 
     pub fn new_between_jitter<R: Rng>(
-        FractionalIndex(left): &FractionalIndex,
-        FractionalIndex(right): &FractionalIndex,
+        Self(left): &Self,
+        Self(right): &Self,
         rng: &mut R,
         jitter: u8,
     ) -> Option<Self> {
@@ -54,8 +54,8 @@ impl FractionalIndex {
     }
 
     pub fn generate_n_evenly_jitter<R: Rng>(
-        lower: Option<&FractionalIndex>,
-        upper: Option<&FractionalIndex>,
+        lower: Option<&Self>,
+        upper: Option<&Self>,
         n: usize,
         rng: &mut R,
         jitter: u8,

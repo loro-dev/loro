@@ -67,7 +67,7 @@ pub struct ResolvedMapValue {
 impl ResolvedMapValue {
     pub(crate) fn from_map_value(v: MapValue, doc: &Weak<LoroDocInner>) -> Self {
         let doc = &doc.upgrade().unwrap();
-        ResolvedMapValue {
+        Self {
             idlp: IdLp::new(v.peer, v.lamp),
             value: v.value.map(|v| ValueOrHandler::from_value(v, doc)),
         }
@@ -75,7 +75,7 @@ impl ResolvedMapValue {
 
     /// This is used to indicate that the entry is unset. (caused by checkout to before the entry is created)
     pub fn new_unset() -> Self {
-        ResolvedMapValue {
+        Self {
             idlp: IdLp::new(PeerID::default(), Lamport::MAX),
             value: None,
         }
@@ -83,7 +83,7 @@ impl ResolvedMapValue {
 }
 
 impl MapDelta {
-    pub(crate) fn compose(mut self, x: MapDelta) -> MapDelta {
+    pub(crate) fn compose(mut self, x: Self) -> Self {
         for (k, v) in x.updated.into_iter() {
             if let Some(old) = self.updated.get_mut(&k) {
                 if &v > old {
@@ -98,7 +98,7 @@ impl MapDelta {
 
     #[inline]
     pub fn new() -> Self {
-        MapDelta {
+        Self {
             updated: FxHashMap::default(),
         }
     }
@@ -111,7 +111,7 @@ impl MapDelta {
 }
 
 impl ResolvedMapDelta {
-    pub(crate) fn compose(&self, x: ResolvedMapDelta) -> ResolvedMapDelta {
+    pub(crate) fn compose(&self, x: Self) -> Self {
         let mut updated = self.updated.clone();
         for (k, v) in x.updated.into_iter() {
             if let Some(old) = updated.get_mut(&k) {
@@ -122,12 +122,12 @@ impl ResolvedMapDelta {
                 updated.insert(k, v);
             }
         }
-        ResolvedMapDelta { updated }
+        Self { updated }
     }
 
     #[inline]
     pub fn new() -> Self {
-        ResolvedMapDelta {
+        Self {
             updated: FxHashMap::default(),
         }
     }
@@ -138,7 +138,7 @@ impl ResolvedMapDelta {
         self
     }
 
-    pub(crate) fn transform(&mut self, b: &ResolvedMapDelta, left_prior: bool) {
+    pub(crate) fn transform(&mut self, b: &Self, left_prior: bool) {
         for (k, _) in b.updated.iter() {
             if !left_prior {
                 self.updated.remove(k);

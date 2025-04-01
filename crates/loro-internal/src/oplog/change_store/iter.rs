@@ -34,7 +34,7 @@ impl PeerChangesIter {
             }
         }
 
-        PeerChangesIter {
+        Self {
             blocks: changes,
             change_index: index,
             counter_range: counter,

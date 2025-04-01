@@ -61,7 +61,7 @@ impl Actor {
         .detach();
         let mut default_history = FxHashMap::default();
         default_history.insert(Vec::new(), loro.get_deep_value());
-        Actor {
+        Self {
             peer: id,
             loro: Arc::new(loro),
             tracker,
@@ -169,7 +169,7 @@ impl Actor {
         });
     }
 
-    pub fn check_eq(&self, other: &Actor) {
+    pub fn check_eq(&self, other: &Self) {
         let doc_a = &self.loro;
         let doc_b = &other.loro;
         let a_result = doc_a.get_deep_value();
@@ -391,12 +391,12 @@ pub enum ActionExecutor {
 impl Debug for ActionExecutor {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            ActionExecutor::MapActor(_) => write!(f, "MapActor"),
-            ActionExecutor::ListActor(_) => write!(f, "ListActor"),
-            ActionExecutor::MovableListActor(_) => write!(f, "MovableListActor"),
-            ActionExecutor::TextActor(_) => write!(f, "TextActor"),
-            ActionExecutor::TreeActor(_) => write!(f, "TreeActor"),
-            ActionExecutor::CounterActor(_) => write!(f, "CounterActor"),
+            Self::MapActor(_) => write!(f, "MapActor"),
+            Self::ListActor(_) => write!(f, "ListActor"),
+            Self::MovableListActor(_) => write!(f, "MovableListActor"),
+            Self::TextActor(_) => write!(f, "TextActor"),
+            Self::TreeActor(_) => write!(f, "TreeActor"),
+            Self::CounterActor(_) => write!(f, "CounterActor"),
         }
     }
 }
@@ -507,8 +507,8 @@ impl Node {
                 .unwrap()
                 .to_string();
             let children = map.get("children").unwrap().as_list().unwrap();
-            let children = Node::from_loro_value(children);
-            let tree_node = Node {
+            let children = Self::from_loro_value(children);
+            let tree_node = Self {
                 children,
                 meta,
                 position,

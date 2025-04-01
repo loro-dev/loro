@@ -40,7 +40,7 @@ impl MapActor {
         .detach();
 
         let root = loro.get_map("map");
-        MapActor {
+        Self {
             loro,
             containers: vec![root],
             tracker,
@@ -88,14 +88,14 @@ pub enum MapAction {
 impl Debug for MapAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            MapAction::Insert { key, value } => {
+            Self::Insert { key, value } => {
                 write!(
                     f,
                     "MapAction::Insert {{ key: {}, value: {:?} }}",
                     key, value
                 )
             }
-            MapAction::Delete { key } => write!(f, "MapAction::Delete {{ key: {} }}", key),
+            Self::Delete { key } => write!(f, "MapAction::Delete {{ key: {} }}", key),
         }
     }
 }
@@ -103,15 +103,15 @@ impl Debug for MapAction {
 impl MapAction {
     fn key(&self) -> u8 {
         match self {
-            MapAction::Insert { key, .. } => *key,
-            MapAction::Delete { key, .. } => *key,
+            Self::Insert { key, .. } => *key,
+            Self::Delete { key, .. } => *key,
         }
     }
 
     fn value_string(&self) -> String {
         match self {
-            MapAction::Insert { value, .. } => value.to_string(),
-            MapAction::Delete { .. } => "null".to_string(),
+            Self::Insert { value, .. } => value.to_string(),
+            Self::Delete { .. } => "null".to_string(),
         }
     }
 }
@@ -119,11 +119,11 @@ impl MapAction {
 impl FromGenericAction for MapAction {
     fn from_generic_action(action: &GenericAction) -> Self {
         match action.bool {
-            true => MapAction::Insert {
+            true => Self::Insert {
                 key: (action.key % 256) as u8,
                 value: action.value,
             },
-            false => MapAction::Delete {
+            false => Self::Delete {
                 key: (action.key % 256) as u8,
             },
         }
@@ -138,7 +138,7 @@ impl Actionable for MapAction {
         let handler = actor.get_create_container_mut(container);
         use super::unwrap;
         match self {
-            MapAction::Insert { key, value, .. } => {
+            Self::Insert { key, value, .. } => {
                 let key = &key.to_string();
                 match value {
                     FuzzValue::I32(v) => {
@@ -150,7 +150,7 @@ impl Actionable for MapAction {
                     }
                 }
             }
-            MapAction::Delete { key, .. } => {
+            Self::Delete { key, .. } => {
                 unwrap(handler.delete(&key.to_string()));
                 None
             }
@@ -159,11 +159,11 @@ impl Actionable for MapAction {
 
     fn pre_process_container_value(&mut self) -> Option<&mut ContainerType> {
         match self {
-            MapAction::Insert { value, .. } => match value {
+            Self::Insert { value, .. } => match value {
                 FuzzValue::Container(c) => Some(c),
                 _ => None,
             },
-            MapAction::Delete { .. } => None,
+            Self::Delete { .. } => None,
         }
     }
 

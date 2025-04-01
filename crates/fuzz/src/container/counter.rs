@@ -149,7 +149,7 @@ impl FromGenericAction for CounterAction {
         let pos = action.bool;
         let v = action.prop.rem_euclid(200);
         let v = if pos { v as i32 } else { -(v as i32) };
-        CounterAction(v)
+        Self(v)
     }
 }
 

@@ -127,7 +127,7 @@ impl<A: Array> RleVec<A> {
 
     #[inline]
     pub fn new() -> Self {
-        RleVec {
+        Self {
             vec: SmallVec::new(),
             _p: PhantomData,
         }
@@ -135,7 +135,7 @@ impl<A: Array> RleVec<A> {
 
     #[inline]
     pub fn with_capacity(size: usize) -> Self {
-        RleVec {
+        Self {
             vec: SmallVec::with_capacity(size),
             _p: PhantomData,
         }
@@ -447,7 +447,7 @@ where
     A::Item: Mergable + HasLength,
 {
     fn from(vec: Vec<A::Item>) -> Self {
-        let mut ans: RleVec<A> = RleVec::with_capacity(vec.len());
+        let mut ans: Self = Self::with_capacity(vec.len());
         for v in vec {
             ans.push(v);
         }
@@ -461,7 +461,7 @@ where
     A::Item: Mergable + HasLength + Clone,
 {
     fn from(value: &[A::Item]) -> Self {
-        let mut ans: RleVec<A> = RleVec::with_capacity(value.len());
+        let mut ans: Self = Self::with_capacity(value.len());
         for v in value.iter() {
             ans.push(v.clone());
         }
@@ -472,7 +472,7 @@ where
 
 impl<A: Array> From<SmallVec<A>> for RleVec<A> {
     fn from(value: SmallVec<A>) -> Self {
-        RleVec {
+        Self {
             vec: value,
             _p: PhantomData,
         }
@@ -528,7 +528,7 @@ where
     A::Item: Mergable + HasLength,
 {
     fn from_iter<I: IntoIterator<Item = A::Item>>(iter: I) -> Self {
-        let mut vec = RleVec::new();
+        let mut vec = Self::new();
         for item in iter {
             vec.push(item);
         }

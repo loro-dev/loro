@@ -135,13 +135,13 @@ pub mod wasm {
 
     impl From<LoroError> for JsValue {
         fn from(value: LoroError) -> Self {
-            JsValue::from_str(&value.to_string())
+            Self::from_str(&value.to_string())
         }
     }
 
     impl From<LoroEncodeError> for JsValue {
         fn from(value: LoroEncodeError) -> Self {
-            JsValue::from_str(&value.to_string())
+            Self::from_str(&value.to_string())
         }
     }
 
@@ -163,9 +163,9 @@ impl From<ColumnarError> for LoroError {
             | ColumnarError::RleEncodeError(_)
             | ColumnarError::RleDecodeError(_)
             | ColumnarError::OverflowError => {
-                LoroError::DecodeError(format!("Failed to decode Columnar: {}", e).into_boxed_str())
+                Self::DecodeError(format!("Failed to decode Columnar: {}", e).into_boxed_str())
             }
-            e => LoroError::Unknown(e.to_string().into_boxed_str()),
+            e => Self::Unknown(e.to_string().into_boxed_str()),
         }
     }
 }

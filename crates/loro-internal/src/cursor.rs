@@ -27,9 +27,9 @@ pub enum Side {
 impl Side {
     pub fn from_i32(i: i32) -> Option<Self> {
         match i {
-            -1 => Some(Side::Left),
-            0 => Some(Side::Middle),
-            1 => Some(Side::Right),
+            -1 => Some(Self::Left),
+            0 => Some(Self::Middle),
+            1 => Some(Self::Right),
             _ => None,
         }
     }

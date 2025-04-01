@@ -448,7 +448,7 @@ pub(super) struct IterAnchorItem {
     pub(super) anchor_type: AnchorType,
 }
 
-impl UseLengthFinder<RangeNumMapTrait> for RangeNumMapTrait {
+impl UseLengthFinder<Self> for RangeNumMapTrait {
     fn get_len(cache: &isize) -> usize {
         *cache as usize
     }
@@ -477,7 +477,7 @@ impl Mergeable for Elem {
 impl Sliceable for Elem {
     fn _slice(&self, range: std::ops::Range<usize>) -> Self {
         let len = range.len();
-        Elem {
+        Self {
             styles: self.styles.clone(),
             len,
         }

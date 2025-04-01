@@ -25,10 +25,10 @@ impl LoroCounter {
     }
 
     /// If a detached container is attached, this method will return its corresponding attached handler.
-    pub fn get_attached(&self) -> Option<Arc<LoroCounter>> {
+    pub fn get_attached(&self) -> Option<Arc<Self>> {
         self.inner
             .get_attached()
-            .map(|x| Arc::new(LoroCounter { inner: x }))
+            .map(|x| Arc::new(Self { inner: x }))
     }
 
     /// Return container id of the Counter.

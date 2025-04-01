@@ -23,10 +23,10 @@ impl LoroMap {
     }
 
     /// If a detached container is attached, this method will return its corresponding attached handler.
-    pub fn get_attached(&self) -> Option<Arc<LoroMap>> {
+    pub fn get_attached(&self) -> Option<Arc<Self>> {
         self.inner
             .get_attached()
-            .map(|x| Arc::new(LoroMap { inner: x }))
+            .map(|x| Arc::new(Self { inner: x }))
     }
 
     /// Delete a key-value pair from the map.
@@ -83,12 +83,12 @@ impl LoroMap {
     pub fn get_or_create_map_container(
         &self,
         key: &str,
-        map: Arc<LoroMap>,
-    ) -> LoroResult<Arc<LoroMap>> {
+        map: Arc<Self>,
+    ) -> LoroResult<Arc<Self>> {
         let c = self
             .inner
             .get_or_create_container(key, map.as_ref().clone().inner)?;
-        Ok(Arc::new(LoroMap { inner: c }))
+        Ok(Arc::new(Self { inner: c }))
     }
 
     pub fn get_or_create_tree_container(
@@ -148,11 +148,11 @@ impl LoroMap {
     }
 
     #[inline]
-    pub fn insert_map_container(&self, key: &str, child: Arc<LoroMap>) -> LoroResult<Arc<LoroMap>> {
+    pub fn insert_map_container(&self, key: &str, child: Arc<Self>) -> LoroResult<Arc<Self>> {
         let c = self
             .inner
             .insert_container(key, child.as_ref().clone().inner)?;
-        Ok(Arc::new(LoroMap { inner: c }))
+        Ok(Arc::new(Self { inner: c }))
     }
 
     #[inline]

@@ -38,11 +38,11 @@ impl VersionVector {
             .get_missing_span(&target.0.read().unwrap())
     }
 
-    pub fn merge(&self, other: &VersionVector) {
+    pub fn merge(&self, other: &Self) {
         self.0.write().unwrap().merge(&other.0.read().unwrap())
     }
 
-    pub fn includes_vv(&self, other: &VersionVector) -> bool {
+    pub fn includes_vv(&self, other: &Self) -> bool {
         self.0.read().unwrap().includes_vv(&other.0.read().unwrap())
     }
 
@@ -54,14 +54,14 @@ impl VersionVector {
         self.0.read().unwrap().intersect_span(target)
     }
 
-    pub fn extend_to_include_vv(&self, other: &VersionVector) {
+    pub fn extend_to_include_vv(&self, other: &Self) {
         self.0
             .write()
             .unwrap()
             .extend_to_include_vv(other.0.read().unwrap().iter());
     }
 
-    pub fn partial_cmp(&self, other: &VersionVector) -> Option<Ordering> {
+    pub fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         self.0.read().unwrap().partial_cmp(&other.0.read().unwrap())
     }
 

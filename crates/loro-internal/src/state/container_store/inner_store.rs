@@ -242,7 +242,7 @@ impl InnerStore {
         }
     }
 
-    pub(crate) fn fork(&mut self, arena: SharedArena, _config: &Configure) -> InnerStore {
+    pub(crate) fn fork(&mut self, arena: SharedArena, _config: &Configure) -> Self {
         // PERF: we can try to reuse
         let bytes = self.encode();
         let mut new_store = Self::new(arena);

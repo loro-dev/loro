@@ -340,7 +340,7 @@ impl MemKvStore {
     fn check_encode_data_correctness(&self, bytes: &Bytes) {
         let this_data: BTreeMap<Bytes, Bytes> =
             self.scan(Bound::Unbounded, Bound::Unbounded).collect();
-        let mut other_kv = MemKvStore::new(Default::default());
+        let mut other_kv = Self::new(Default::default());
         other_kv.import_all(bytes.clone()).unwrap();
         let other_data: BTreeMap<Bytes, Bytes> =
             other_kv.scan(Bound::Unbounded, Bound::Unbounded).collect();

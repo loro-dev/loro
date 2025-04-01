@@ -1096,7 +1096,7 @@ mod snapshot {
         where
             Self: Sized,
         {
-            let mut text = RichtextState::new(idx, ctx.configure.text_style_config.clone());
+            let mut text = Self::new(idx, ctx.configure.text_style_config.clone());
             let mut loader = RichtextStateLoader::default();
             let peer_num = leb128::read::unsigned(&mut bytes).unwrap() as usize;
             let mut peers = Vec::with_capacity(peer_num);

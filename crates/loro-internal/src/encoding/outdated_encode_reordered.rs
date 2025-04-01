@@ -548,7 +548,7 @@ impl PosMappingItem {
     fn split(&mut self, pos: usize) -> Self {
         let new_len = self.len - pos;
         self.len = pos;
-        PosMappingItem {
+        Self {
             start_id: ID {
                 peer: self.start_id.peer,
                 counter: self.start_id.counter + pos as Counter,
@@ -1007,8 +1007,8 @@ mod encode {
         }
     }
 
-    impl<'a> generic_btree::rle::Sliceable for TempOp<'a> {
-        fn _slice(&self, range: std::ops::Range<usize>) -> TempOp<'a> {
+    impl generic_btree::rle::Sliceable for TempOp<'_> {
+        fn _slice(&self, range: std::ops::Range<usize>) -> Self {
             Self {
                 op: if range.start == 0 && range.end == self.op.atom_len() {
                     match &self.op {

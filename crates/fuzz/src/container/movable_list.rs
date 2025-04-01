@@ -90,12 +90,12 @@ impl Actionable for MovableListAction {
         let list = actor.containers.get(container).unwrap();
         let length = list.len();
         match self {
-            MovableListAction::Insert { pos, value: _ } => {
+            Self::Insert { pos, value: _ } => {
                 *pos %= length.max(1) as u8;
             }
-            MovableListAction::Delete { pos, len } => {
+            Self::Delete { pos, len } => {
                 if list.is_empty() {
-                    *self = MovableListAction::Insert {
+                    *self = Self::Insert {
                         pos: 0,
                         value: FuzzValue::I32(*pos as i32),
                     };
@@ -104,9 +104,9 @@ impl Actionable for MovableListAction {
                     *len %= (length as u8).saturating_sub(*pos).max(1);
                 }
             }
-            MovableListAction::Move { from, to } => {
+            Self::Move { from, to } => {
                 if list.is_empty() {
-                    *self = MovableListAction::Insert {
+                    *self = Self::Insert {
                         pos: 0,
                         value: FuzzValue::I32(*from as i32),
                     };
@@ -115,9 +115,9 @@ impl Actionable for MovableListAction {
                     *to %= length.max(1) as u8;
                 }
             }
-            MovableListAction::Set { pos, value } => {
+            Self::Set { pos, value } => {
                 if list.is_empty() {
-                    *self = MovableListAction::Insert {
+                    *self = Self::Insert {
                         pos: 0,
                         value: *value,
                     };
@@ -132,7 +132,7 @@ impl Actionable for MovableListAction {
         let actor = actor.as_movable_list_actor_mut().unwrap();
         let list = actor.get_create_container_mut(container);
         match self {
-            MovableListAction::Insert { pos, value } => {
+            Self::Insert { pos, value } => {
                 let pos = *pos as usize;
                 match value {
                     FuzzValue::Container(c) => {
@@ -144,19 +144,19 @@ impl Actionable for MovableListAction {
                     }
                 }
             }
-            MovableListAction::Delete { pos, len } => {
+            Self::Delete { pos, len } => {
                 let pos = *pos as usize;
                 let len = *len as usize;
                 super::unwrap(list.delete(pos, len));
                 None
             }
-            MovableListAction::Move { from, to } => {
+            Self::Move { from, to } => {
                 let from = *from as usize;
                 let to = *to as usize;
                 super::unwrap(list.mov(from, to));
                 None
             }
-            MovableListAction::Set { pos, value } => {
+            Self::Set { pos, value } => {
                 let pos = *pos as usize;
                 match value {
                     FuzzValue::Container(c) => {
@@ -177,16 +177,16 @@ impl Actionable for MovableListAction {
 
     fn table_fields(&self) -> [std::borrow::Cow<'_, str>; 2] {
         match self {
-            MovableListAction::Insert { pos, value } => {
+            Self::Insert { pos, value } => {
                 [format!("insert {}", pos).into(), value.to_string().into()]
             }
-            MovableListAction::Delete { pos, len } => {
+            Self::Delete { pos, len } => {
                 ["delete".into(), format!("{} ~ {}", pos, pos + len).into()]
             }
-            MovableListAction::Move { from, to } => {
+            Self::Move { from, to } => {
                 ["move".into(), format!("{} -> {}", from, to).into()]
             }
-            MovableListAction::Set { pos, value } => {
+            Self::Set { pos, value } => {
                 [format!("set {}", pos).into(), value.to_string().into()]
             }
         }
@@ -198,13 +198,13 @@ impl Actionable for MovableListAction {
 
     fn pre_process_container_value(&mut self) -> Option<&mut ContainerType> {
         match self {
-            MovableListAction::Insert { value, .. } => match value {
+            Self::Insert { value, .. } => match value {
                 FuzzValue::Container(c) => Some(c),
                 _ => None,
             },
-            MovableListAction::Delete { .. } => None,
-            MovableListAction::Move { .. } => None,
-            MovableListAction::Set { value, .. } => match value {
+            Self::Delete { .. } => None,
+            Self::Move { .. } => None,
+            Self::Set { value, .. } => match value {
                 FuzzValue::Container(c) => Some(c),
                 _ => None,
             },
@@ -215,19 +215,19 @@ impl Actionable for MovableListAction {
 impl FromGenericAction for MovableListAction {
     fn from_generic_action(action: &GenericAction) -> Self {
         match action.prop % 4 {
-            0 => MovableListAction::Insert {
+            0 => Self::Insert {
                 pos: (action.pos % 256) as u8,
                 value: action.value,
             },
-            1 => MovableListAction::Delete {
+            1 => Self::Delete {
                 pos: (action.pos % 256) as u8,
                 len: (action.length % 256) as u8,
             },
-            2 => MovableListAction::Move {
+            2 => Self::Move {
                 from: (action.pos % 256) as u8,
                 to: (action.length % 256) as u8,
             },
-            3 => MovableListAction::Set {
+            3 => Self::Set {
                 pos: (action.pos % 256) as u8,
                 value: action.value,
             },

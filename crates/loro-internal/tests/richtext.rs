@@ -32,9 +32,9 @@ enum Kind {
 impl Kind {
     fn key(&self) -> &str {
         match self {
-            Kind::Bold => "bold",
-            Kind::Link => "link",
-            Kind::Italic => "italic",
+            Self::Bold => "bold",
+            Self::Link => "link",
+            Self::Italic => "italic",
         }
     }
 }

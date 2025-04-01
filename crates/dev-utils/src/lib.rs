@@ -102,7 +102,7 @@ impl Add for ByteSize {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
-        ByteSize(self.0 + rhs.0)
+        Self(self.0 + rhs.0)
     }
 }
 
@@ -110,7 +110,7 @@ impl Sub for ByteSize {
     type Output = Self;
 
     fn sub(self, rhs: Self) -> Self::Output {
-        ByteSize(self.0 - rhs.0)
+        Self(self.0 - rhs.0)
     }
 }
 

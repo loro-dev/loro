@@ -44,9 +44,9 @@ pub enum EventTriggerKind {
 impl std::fmt::Display for EventTriggerKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            EventTriggerKind::Local => write!(f, "local"),
-            EventTriggerKind::Import => write!(f, "import"),
-            EventTriggerKind::Checkout => write!(f, "checkout"),
+            Self::Local => write!(f, "local"),
+            Self::Import => write!(f, "import"),
+            Self::Checkout => write!(f, "checkout"),
         }
     }
 }
@@ -54,17 +54,17 @@ impl std::fmt::Display for EventTriggerKind {
 impl EventTriggerKind {
     #[inline]
     pub fn is_local(&self) -> bool {
-        matches!(self, EventTriggerKind::Local)
+        matches!(self, Self::Local)
     }
 
     #[inline]
     pub fn is_import(&self) -> bool {
-        matches!(self, EventTriggerKind::Import)
+        matches!(self, Self::Import)
     }
 
     #[inline]
     pub fn is_checkout(&self) -> bool {
-        matches!(self, EventTriggerKind::Checkout)
+        matches!(self, Self::Checkout)
     }
 }
 
@@ -162,16 +162,16 @@ impl std::fmt::Debug for Index {
 impl std::fmt::Display for Index {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Index::Key(key) => write!(f, "{}", key),
-            Index::Seq(s) => write!(f, "{}", s),
-            Index::Node(id) => write!(f, "{}@{}", id.peer, id.counter),
+            Self::Key(key) => write!(f, "{}", key),
+            Self::Seq(s) => write!(f, "{}", s),
+            Self::Node(id) => write!(f, "{}@{}", id.peer, id.counter),
         }
     }
 }
 
 impl From<usize> for Index {
     fn from(s: usize) -> Self {
-        Index::Seq(s)
+        Self::Seq(s)
     }
 }
 
@@ -179,20 +179,20 @@ impl TryFrom<&str> for Index {
     type Error = &'static str;
     fn try_from(s: &str) -> Result<Self, &'static str> {
         if s.is_empty() {
-            return Ok(Index::Key(InternalString::default()));
+            return Ok(Self::Key(InternalString::default()));
         }
 
         let c = s.chars().next().unwrap();
         if c.is_ascii_digit() {
             if let Ok(seq) = s.parse::<usize>() {
-                Ok(Index::Seq(seq))
+                Ok(Self::Seq(seq))
             } else if let Ok(id) = s.try_into() {
-                Ok(Index::Node(id))
+                Ok(Self::Node(id))
             } else {
-                Ok(Index::Key(InternalString::from(s)))
+                Ok(Self::Key(InternalString::from(s)))
             }
         } else {
-            Ok(Index::Key(InternalString::from(s)))
+            Ok(Self::Key(InternalString::from(s)))
         }
     }
 }
@@ -200,11 +200,11 @@ impl TryFrom<&str> for Index {
 impl DiffVariant {
     pub fn compose(self, other: Self) -> Result<Self, Self> {
         match (self, other) {
-            (DiffVariant::Internal(a), DiffVariant::Internal(b)) => {
-                Ok(DiffVariant::Internal(a.compose(b)?))
+            (Self::Internal(a), Self::Internal(b)) => {
+                Ok(Self::Internal(a.compose(b)?))
             }
-            (DiffVariant::External(a), DiffVariant::External(b)) => {
-                Ok(DiffVariant::External(a.compose(b)?))
+            (Self::External(a), Self::External(b)) => {
+                Ok(Self::External(a.compose(b)?))
             }
             (a, _) => Err(a),
         }
@@ -212,9 +212,9 @@ impl DiffVariant {
 
     pub fn is_empty(&self) -> bool {
         match self {
-            DiffVariant::Internal(diff) => diff.is_empty(),
-            DiffVariant::External(diff) => diff.is_empty(),
-            DiffVariant::None => true,
+            Self::Internal(diff) => diff.is_empty(),
+            Self::External(diff) => diff.is_empty(),
+            Self::None => true,
         }
     }
 }
@@ -235,7 +235,7 @@ pub(crate) enum InternalDiff {
 
 impl From<InternalDiff> for DiffVariant {
     fn from(diff: InternalDiff) -> Self {
-        DiffVariant::Internal(diff)
+        Self::Internal(diff)
     }
 }
 
@@ -302,7 +302,7 @@ impl From<TextMeta> for FxHashMap<String, LoroValue> {
 
 impl From<FxHashMap<String, LoroValue>> for TextMeta {
     fn from(value: FxHashMap<String, LoroValue>) -> Self {
-        TextMeta(value)
+        Self(value)
     }
 }
 
@@ -346,80 +346,80 @@ pub enum Diff {
 
 impl From<Diff> for DiffVariant {
     fn from(diff: Diff) -> Self {
-        DiffVariant::External(diff)
+        Self::External(diff)
     }
 }
 
 impl InternalDiff {
     pub(crate) fn is_empty(&self) -> bool {
         match self {
-            InternalDiff::ListRaw(s) => s.is_empty(),
-            InternalDiff::RichtextRaw(t) => t.is_empty(),
-            InternalDiff::Map(m) => m.updated.is_empty(),
-            InternalDiff::Tree(t) => t.is_empty(),
-            InternalDiff::MovableList(t) => t.is_empty(),
+            Self::ListRaw(s) => s.is_empty(),
+            Self::RichtextRaw(t) => t.is_empty(),
+            Self::Map(m) => m.updated.is_empty(),
+            Self::Tree(t) => t.is_empty(),
+            Self::MovableList(t) => t.is_empty(),
             #[cfg(feature = "counter")]
-            InternalDiff::Counter(c) => c.abs() < f64::EPSILON,
-            InternalDiff::Unknown => true,
+            Self::Counter(c) => c.abs() < f64::EPSILON,
+            Self::Unknown => true,
         }
     }
 
-    pub(crate) fn compose(self, diff: InternalDiff) -> Result<Self, Self> {
+    pub(crate) fn compose(self, diff: Self) -> Result<Self, Self> {
         // PERF: avoid clone
         match (self, diff) {
-            (InternalDiff::ListRaw(a), InternalDiff::ListRaw(b)) => {
-                Ok(InternalDiff::ListRaw(a.compose(b)))
+            (Self::ListRaw(a), Self::ListRaw(b)) => {
+                Ok(Self::ListRaw(a.compose(b)))
             }
-            (InternalDiff::RichtextRaw(a), InternalDiff::RichtextRaw(b)) => {
+            (Self::RichtextRaw(a), Self::RichtextRaw(b)) => {
                 let mut ans = a.clone();
                 ans.compose(&b);
-                Ok(InternalDiff::RichtextRaw(ans))
+                Ok(Self::RichtextRaw(ans))
             }
-            (InternalDiff::Map(a), InternalDiff::Map(b)) => Ok(InternalDiff::Map(a.compose(b))),
-            (InternalDiff::Tree(a), InternalDiff::Tree(b)) => Ok(InternalDiff::Tree(a.compose(b))),
+            (Self::Map(a), Self::Map(b)) => Ok(Self::Map(a.compose(b))),
+            (Self::Tree(a), Self::Tree(b)) => Ok(Self::Tree(a.compose(b))),
             (a, _) => Err(a),
         }
     }
 }
 
 impl Diff {
-    pub fn compose_ref(&mut self, diff: &Diff) {
+    pub fn compose_ref(&mut self, diff: &Self) {
         // PERF: avoid clone
         match (self, diff) {
-            (Diff::List(a), Diff::List(b)) => {
+            (Self::List(a), Self::List(b)) => {
                 a.compose(b);
             }
-            (Diff::Text(a), Diff::Text(b)) => {
+            (Self::Text(a), Self::Text(b)) => {
                 a.compose(b);
             }
-            (Diff::Map(a), Diff::Map(b)) => {
+            (Self::Map(a), Self::Map(b)) => {
                 *a = a.clone().compose(b.clone());
             }
-            (Diff::Tree(a), Diff::Tree(b)) => {
+            (Self::Tree(a), Self::Tree(b)) => {
                 *a = a.clone().compose(b.clone());
             }
             #[cfg(feature = "counter")]
-            (Diff::Counter(a), Diff::Counter(b)) => *a += b,
+            (Self::Counter(a), Self::Counter(b)) => *a += b,
             (_, _) => unreachable!(),
         }
     }
 
-    pub fn compose(self, diff: Diff) -> Result<Self, Self> {
+    pub fn compose(self, diff: Self) -> Result<Self, Self> {
         // PERF: avoid clone
         match (self, diff) {
-            (Diff::List(mut a), Diff::List(b)) => {
+            (Self::List(mut a), Self::List(b)) => {
                 a.compose(&b);
-                Ok(Diff::List(a))
+                Ok(Self::List(a))
             }
-            (Diff::Text(mut a), Diff::Text(b)) => {
+            (Self::Text(mut a), Self::Text(b)) => {
                 a.compose(&b);
-                Ok(Diff::Text(a))
+                Ok(Self::Text(a))
             }
-            (Diff::Map(a), Diff::Map(b)) => Ok(Diff::Map(a.compose(b))),
+            (Self::Map(a), Self::Map(b)) => Ok(Self::Map(a.compose(b))),
 
-            (Diff::Tree(a), Diff::Tree(b)) => Ok(Diff::Tree(a.compose(b))),
+            (Self::Tree(a), Self::Tree(b)) => Ok(Self::Tree(a.compose(b))),
             #[cfg(feature = "counter")]
-            (Diff::Counter(a), Diff::Counter(b)) => Ok(Diff::Counter(a + b)),
+            (Self::Counter(a), Self::Counter(b)) => Ok(Self::Counter(a + b)),
             (a, _) => Err(a),
         }
     }
@@ -427,12 +427,12 @@ impl Diff {
     // Transform this diff based on the other diff
     pub fn transform(&mut self, other: &Self, left_prior: bool) {
         match (self, other) {
-            (Diff::List(a), Diff::List(b)) => a.transform_(b, left_prior),
-            (Diff::Text(a), Diff::Text(b)) => a.transform_(b, left_prior),
-            (Diff::Map(a), Diff::Map(b)) => a.transform(b, left_prior),
-            (Diff::Tree(a), Diff::Tree(b)) => a.transform(b, left_prior),
+            (Self::List(a), Self::List(b)) => a.transform_(b, left_prior),
+            (Self::Text(a), Self::Text(b)) => a.transform_(b, left_prior),
+            (Self::Map(a), Self::Map(b)) => a.transform(b, left_prior),
+            (Self::Tree(a), Self::Tree(b)) => a.transform(b, left_prior),
             #[cfg(feature = "counter")]
-            (Diff::Counter(a), Diff::Counter(b)) => {
+            (Self::Counter(a), Self::Counter(b)) => {
                 if left_prior {
                     *a += b;
                 } else {
@@ -445,38 +445,38 @@ impl Diff {
 
     pub fn is_empty(&self) -> bool {
         match self {
-            Diff::List(s) => s.is_empty(),
-            Diff::Text(t) => t.is_empty(),
-            Diff::Map(m) => m.updated.is_empty(),
-            Diff::Tree(t) => t.diff.is_empty(),
+            Self::List(s) => s.is_empty(),
+            Self::Text(t) => t.is_empty(),
+            Self::Map(m) => m.updated.is_empty(),
+            Self::Tree(t) => t.diff.is_empty(),
             #[cfg(feature = "counter")]
-            Diff::Counter(c) => c.abs() < f64::EPSILON,
-            Diff::Unknown => true,
+            Self::Counter(c) => c.abs() < f64::EPSILON,
+            Self::Unknown => true,
         }
     }
 
     #[allow(unused)]
-    pub(crate) fn concat(self, diff: Diff) -> Diff {
+    pub(crate) fn concat(self, diff: Self) -> Self {
         match (self, diff) {
-            (Diff::List(mut a), Diff::List(b)) => {
+            (Self::List(mut a), Self::List(b)) => {
                 a.compose(&b);
-                Diff::List(a)
+                Self::List(a)
             }
-            (Diff::Text(mut a), Diff::Text(b)) => {
+            (Self::Text(mut a), Self::Text(b)) => {
                 a.compose(&b);
-                Diff::Text(a)
+                Self::Text(a)
             }
-            (Diff::Map(a), Diff::Map(b)) => {
+            (Self::Map(a), Self::Map(b)) => {
                 let mut a = a;
                 for (k, v) in b.updated {
                     a = a.with_entry(k, v);
                 }
-                Diff::Map(a)
+                Self::Map(a)
             }
 
-            (Diff::Tree(a), Diff::Tree(b)) => Diff::Tree(a.extend(b.diff)),
+            (Self::Tree(a), Self::Tree(b)) => Self::Tree(a.extend(b.diff)),
             #[cfg(feature = "counter")]
-            (Diff::Counter(a), Diff::Counter(b)) => Diff::Counter(a + b),
+            (Self::Counter(a), Self::Counter(b)) => Self::Counter(a + b),
             _ => unreachable!(),
         }
     }
@@ -484,8 +484,8 @@ impl Diff {
     /// Transform the cursor based on this diff
     pub(crate) fn transform_cursor(&self, pos: usize, left_prior: bool) -> usize {
         match self {
-            Diff::List(list) => list.transform_pos(pos, left_prior),
-            Diff::Text(text) => text.transform_pos(pos, left_prior),
+            Self::List(list) => list.transform_pos(pos, left_prior),
+            Self::Text(text) => text.transform_pos(pos, left_prior),
             _ => pos,
         }
     }

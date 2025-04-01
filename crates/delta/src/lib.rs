@@ -50,29 +50,29 @@ pub enum DeltaItem<V, Attr> {
 impl<V: DeltaValue, Attr: DeltaAttr> DeltaItem<V, Attr> {
     fn is_insert(&self) -> bool {
         match self {
-            DeltaItem::Retain { .. } => false,
-            DeltaItem::Replace { value, .. } => value.rle_len() > 0,
+            Self::Retain { .. } => false,
+            Self::Replace { value, .. } => value.rle_len() > 0,
         }
     }
 
     fn is_delete(&self) -> bool {
         match self {
-            DeltaItem::Retain { .. } => false,
-            DeltaItem::Replace { value, delete, .. } => value.rle_len() == 0 && *delete > 0,
+            Self::Retain { .. } => false,
+            Self::Replace { value, delete, .. } => value.rle_len() == 0 && *delete > 0,
         }
     }
 
     fn is_replace(&self) -> bool {
         match self {
-            DeltaItem::Retain { .. } => false,
-            DeltaItem::Replace { .. } => true,
+            Self::Retain { .. } => false,
+            Self::Replace { .. } => true,
         }
     }
 
     fn is_retain(&self) -> bool {
         match self {
-            DeltaItem::Retain { .. } => true,
-            DeltaItem::Replace { .. } => false,
+            Self::Retain { .. } => true,
+            Self::Replace { .. } => false,
         }
     }
 }

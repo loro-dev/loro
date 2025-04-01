@@ -138,7 +138,7 @@ mod snapshot {
         where
             Self: Sized,
         {
-            let mut counter = CounterState::new(idx);
+            let mut counter = Self::new(idx);
             counter.value = *v.0.as_double().unwrap();
             Ok(counter)
         }

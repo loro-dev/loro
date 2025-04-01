@@ -126,44 +126,44 @@ enum MaybeDetached<T> {
 impl<T> Clone for MaybeDetached<T> {
     fn clone(&self) -> Self {
         match self {
-            MaybeDetached::Detached(a) => MaybeDetached::Detached(Arc::clone(a)),
-            MaybeDetached::Attached(a) => MaybeDetached::Attached(a.clone()),
+            Self::Detached(a) => Self::Detached(Arc::clone(a)),
+            Self::Attached(a) => Self::Attached(a.clone()),
         }
     }
 }
 
 impl<T> MaybeDetached<T> {
     fn new_detached(v: T) -> Self {
-        MaybeDetached::Detached(Arc::new(Mutex::new(DetachedInner::new(v))))
+        Self::Detached(Arc::new(Mutex::new(DetachedInner::new(v))))
     }
 
     fn is_attached(&self) -> bool {
         match self {
-            MaybeDetached::Detached(_) => false,
-            MaybeDetached::Attached(_) => true,
+            Self::Detached(_) => false,
+            Self::Attached(_) => true,
         }
     }
 
     fn attached_handler(&self) -> Option<&BasicHandler> {
         match self {
-            MaybeDetached::Detached(_) => None,
-            MaybeDetached::Attached(a) => Some(a),
+            Self::Detached(_) => None,
+            Self::Attached(a) => Some(a),
         }
     }
 
     fn try_attached_state(&self) -> LoroResult<&BasicHandler> {
         match self {
-            MaybeDetached::Detached(_) => Err(LoroError::MisuseDetachedContainer {
+            Self::Detached(_) => Err(LoroError::MisuseDetachedContainer {
                 method: "inner_state",
             }),
-            MaybeDetached::Attached(a) => Ok(a),
+            Self::Attached(a) => Ok(a),
         }
     }
 }
 
 impl<T> From<BasicHandler> for MaybeDetached<T> {
     fn from(a: BasicHandler) -> Self {
-        MaybeDetached::Attached(a)
+        Self::Attached(a)
     }
 }
 
@@ -191,7 +191,7 @@ impl BasicHandler {
         let parent_id = self.doc.arena.get_container_id(parent_idx).unwrap();
         {
             let kind = parent_id.container_type();
-            let handler = BasicHandler {
+            let handler = Self {
                 container_idx: parent_idx,
                 id: parent_id,
                 doc: self.doc.clone(),
@@ -382,12 +382,12 @@ pub enum TextDelta {
 }
 
 impl TextDelta {
-    pub fn from_text_diff<'a>(diff: impl Iterator<Item = &'a TextDiffItem>) -> Vec<TextDelta> {
+    pub fn from_text_diff<'a>(diff: impl Iterator<Item = &'a TextDiffItem>) -> Vec<Self> {
         let mut ans = Vec::with_capacity(diff.size_hint().0);
         for iter in diff {
             match iter {
                 loro_delta::DeltaItem::Retain { len, attr } => {
-                    ans.push(TextDelta::Retain {
+                    ans.push(Self::Retain {
                         retain: *len,
                         attributes: if attr.0.is_empty() {
                             None
@@ -402,7 +402,7 @@ impl TextDelta {
                     delete,
                 } => {
                     if value.rle_len() > 0 {
-                        ans.push(TextDelta::Insert {
+                        ans.push(Self::Insert {
                             insert: value.to_string(),
                             attributes: if attr.0.is_empty() {
                                 None
@@ -412,7 +412,7 @@ impl TextDelta {
                         });
                     }
                     if *delete > 0 {
-                        ans.push(TextDelta::Delete { delete: *delete });
+                        ans.push(Self::Delete { delete: *delete });
                     }
                 }
             }
@@ -425,16 +425,16 @@ impl TextDelta {
         let mut delta = TextDiff::new();
         for item in vec {
             match item {
-                TextDelta::Retain { retain, attributes } => {
+                Self::Retain { retain, attributes } => {
                     delta.push_retain(retain, TextMeta(attributes.unwrap_or_default().clone()));
                 }
-                TextDelta::Insert { insert, attributes } => {
+                Self::Insert { insert, attributes } => {
                     delta.push_insert(
                         StringSlice::from(insert.as_str()),
                         TextMeta(attributes.unwrap_or_default()),
                     );
                 }
-                TextDelta::Delete { delete } => {
+                Self::Delete { delete } => {
                     delta.push_delete(delete);
                 }
             }
@@ -447,18 +447,18 @@ impl TextDelta {
 impl From<&DeltaItem<StringSlice, StyleMeta>> for TextDelta {
     fn from(value: &DeltaItem<StringSlice, StyleMeta>) -> Self {
         match value {
-            crate::delta::DeltaItem::Retain { retain, attributes } => TextDelta::Retain {
+            crate::delta::DeltaItem::Retain { retain, attributes } => Self::Retain {
                 retain: *retain,
                 attributes: attributes.to_option_map(),
             },
-            crate::delta::DeltaItem::Insert { insert, attributes } => TextDelta::Insert {
+            crate::delta::DeltaItem::Insert { insert, attributes } => Self::Insert {
                 insert: insert.to_string(),
                 attributes: attributes.to_option_map(),
             },
             crate::delta::DeltaItem::Delete {
                 delete,
                 attributes: _,
-            } => TextDelta::Delete { delete: *delete },
+            } => Self::Delete { delete: *delete },
         }
     }
 }
@@ -992,14 +992,14 @@ impl HandlerTrait for Handler {
         self_id: ContainerID,
     ) -> LoroResult<Self> {
         match self {
-            Self::Text(x) => Ok(Handler::Text(x.attach(txn, parent, self_id)?)),
-            Self::Map(x) => Ok(Handler::Map(x.attach(txn, parent, self_id)?)),
-            Self::List(x) => Ok(Handler::List(x.attach(txn, parent, self_id)?)),
-            Self::MovableList(x) => Ok(Handler::MovableList(x.attach(txn, parent, self_id)?)),
-            Self::Tree(x) => Ok(Handler::Tree(x.attach(txn, parent, self_id)?)),
+            Self::Text(x) => Ok(Self::Text(x.attach(txn, parent, self_id)?)),
+            Self::Map(x) => Ok(Self::Map(x.attach(txn, parent, self_id)?)),
+            Self::List(x) => Ok(Self::List(x.attach(txn, parent, self_id)?)),
+            Self::MovableList(x) => Ok(Self::MovableList(x.attach(txn, parent, self_id)?)),
+            Self::Tree(x) => Ok(Self::Tree(x.attach(txn, parent, self_id)?)),
             #[cfg(feature = "counter")]
-            Self::Counter(x) => Ok(Handler::Counter(x.attach(txn, parent, self_id)?)),
-            Self::Unknown(x) => Ok(Handler::Unknown(x.attach(txn, parent, self_id)?)),
+            Self::Counter(x) => Ok(Self::Counter(x.attach(txn, parent, self_id)?)),
+            Self::Unknown(x) => Ok(Self::Unknown(x.attach(txn, parent, self_id)?)),
         }
     }
 
@@ -1152,7 +1152,7 @@ impl Handler {
                             let old_id = h.id();
                             let new_h = x.insert_container(
                                 &key,
-                                Handler::new_unattached(old_id.container_type()),
+                                Self::new_unattached(old_id.container_type()),
                             )?;
                             let new_id = new_h.id();
                             on_container_remap(old_id, new_id);
@@ -1160,7 +1160,7 @@ impl Handler {
                         Some(ValueOrHandler::Value(LoroValue::Container(old_id))) => {
                             let new_h = x.insert_container(
                                 &key,
-                                Handler::new_unattached(old_id.container_type()),
+                                Self::new_unattached(old_id.container_type()),
                             )?;
                             let new_id = new_h.id();
                             on_container_remap(old_id, new_id);
@@ -1300,9 +1300,9 @@ pub enum ValueOrHandler {
 impl ValueOrHandler {
     pub(crate) fn from_value(value: LoroValue, doc: &Arc<LoroDocInner>) -> Self {
         if let LoroValue::Container(c) = value {
-            ValueOrHandler::Handler(Handler::new_attached(c, LoroDoc::from_inner(doc.clone())))
+            Self::Handler(Handler::new_attached(c, LoroDoc::from_inner(doc.clone())))
         } else {
-            ValueOrHandler::Value(value)
+            Self::Value(value)
         }
     }
 
@@ -1323,7 +1323,7 @@ impl ValueOrHandler {
 
 impl From<LoroValue> for ValueOrHandler {
     fn from(value: LoroValue) -> Self {
-        ValueOrHandler::Value(value)
+        Self::Value(value)
     }
 }
 
@@ -3398,8 +3398,8 @@ impl MovableListHandler {
         }
     }
 
-    pub fn new_detached() -> MovableListHandler {
-        MovableListHandler {
+    pub fn new_detached() -> Self {
+        Self {
             inner: MaybeDetached::new_detached(Default::default()),
         }
     }

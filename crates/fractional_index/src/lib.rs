@@ -25,11 +25,11 @@ impl Default for FractionalIndex {
 impl FractionalIndex {
     fn from_vec_unterminated(mut bytes: Vec<u8>) -> Self {
         bytes.push(TERMINATOR);
-        FractionalIndex(Arc::new(bytes))
+        Self(Arc::new(bytes))
     }
 
     pub fn from_bytes(bytes: Vec<u8>) -> Self {
-        FractionalIndex(Arc::new(bytes))
+        Self(Arc::new(bytes))
     }
 
     pub fn from_hex_string<T: AsRef<str>>(str: T) -> Self {
@@ -39,7 +39,7 @@ impl FractionalIndex {
             let byte = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).unwrap();
             bytes.push(byte);
         }
-        FractionalIndex::from_bytes(bytes)
+        Self::from_bytes(bytes)
     }
 
     pub fn as_bytes(&self) -> &[u8] {
@@ -123,33 +123,33 @@ pub(crate) fn new_between(left: &[u8], right: &[u8], extra_capacity: usize) -> O
     }
 }
 impl FractionalIndex {
-    pub fn new(lower: Option<&FractionalIndex>, upper: Option<&FractionalIndex>) -> Option<Self> {
+    pub fn new(lower: Option<&Self>, upper: Option<&Self>) -> Option<Self> {
         match (lower, upper) {
             (Some(lower), Some(upper)) => Self::new_between(lower, upper),
             (Some(lower), None) => Self::new_after(lower).into(),
             (None, Some(upper)) => Self::new_before(upper).into(),
-            (None, None) => FractionalIndex::default().into(),
+            (None, None) => Self::default().into(),
         }
     }
 
-    pub fn new_before(FractionalIndex(bytes): &FractionalIndex) -> Self {
-        FractionalIndex::from_vec_unterminated(new_before(bytes))
+    pub fn new_before(Self(bytes): &Self) -> Self {
+        Self::from_vec_unterminated(new_before(bytes))
     }
 
-    pub fn new_after(FractionalIndex(bytes): &FractionalIndex) -> Self {
-        FractionalIndex::from_vec_unterminated(new_after(bytes))
+    pub fn new_after(Self(bytes): &Self) -> Self {
+        Self::from_vec_unterminated(new_after(bytes))
     }
 
     pub fn new_between(
-        FractionalIndex(left): &FractionalIndex,
-        FractionalIndex(right): &FractionalIndex,
+        Self(left): &Self,
+        Self(right): &Self,
     ) -> Option<Self> {
-        new_between(left, right, 1).map(FractionalIndex::from_vec_unterminated)
+        new_between(left, right, 1).map(Self::from_vec_unterminated)
     }
 
     pub fn generate_n_evenly(
-        lower: Option<&FractionalIndex>,
-        upper: Option<&FractionalIndex>,
+        lower: Option<&Self>,
+        upper: Option<&Self>,
         n: usize,
     ) -> Option<Vec<Self>> {
         fn generate(

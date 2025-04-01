@@ -37,25 +37,25 @@ impl DrawAction {
 impl ActionTrait for DrawAction {
     fn normalize(&mut self) {
         match self {
-            DrawAction::CreatePath { points } => {
+            Self::CreatePath { points } => {
                 for point in points {
                     point.x %= Self::MAX_X;
                     point.y %= Self::MAX_Y;
                 }
             }
-            DrawAction::Text { pos, size, .. } => {
+            Self::Text { pos, size, .. } => {
                 pos.x %= Self::MAX_X;
                 pos.y %= Self::MAX_Y;
                 size.x %= Self::MAX_X;
                 size.y %= Self::MAX_Y;
             }
-            DrawAction::CreateRect { pos, size } => {
+            Self::CreateRect { pos, size } => {
                 pos.x %= Self::MAX_X;
                 pos.y %= Self::MAX_Y;
                 size.x %= Self::MAX_X;
                 size.y %= Self::MAX_Y;
             }
-            DrawAction::Move { relative_to, .. } => {
+            Self::Move { relative_to, .. } => {
                 relative_to.x %= Self::MAX_MOVE;
                 relative_to.y %= Self::MAX_MOVE;
             }

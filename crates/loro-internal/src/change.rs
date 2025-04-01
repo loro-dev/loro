@@ -68,7 +68,7 @@ impl<O> Change<O> {
         lamport: Lamport,
         timestamp: Timestamp,
     ) -> Self {
-        Change {
+        Self {
             ops,
             deps,
             id,

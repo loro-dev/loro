@@ -237,7 +237,7 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
     pub fn transform(&self, other: &Self, left_prior: bool) -> Self {
         let mut this_iter = self.iter_with_len();
         let mut other_iter = other.iter_with_len();
-        let mut transformed_delta = DeltaRope::new();
+        let mut transformed_delta = Self::new();
 
         while this_iter.peek().is_some() || other_iter.peek().is_some() {
             if this_iter.peek_is_insert() && (left_prior || !other_iter.peek_is_insert()) {

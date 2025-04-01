@@ -108,7 +108,7 @@ impl Default for LoroDoc {
 impl Clone for LoroDoc {
     fn clone(&self) -> Self {
         let doc = self.doc.clone();
-        LoroDoc::_new(doc)
+        Self::_new(doc)
     }
 }
 
@@ -128,7 +128,7 @@ impl LoroDoc {
         let doc = InnerLoroDoc::default();
         doc.start_auto_commit();
 
-        LoroDoc::_new(doc)
+        Self::_new(doc)
     }
 
     /// Duplicate the document with a different PeerID
@@ -140,16 +140,16 @@ impl LoroDoc {
     #[inline]
     pub fn fork(&self) -> Self {
         let doc = self.doc.fork();
-        LoroDoc::_new(doc)
+        Self::_new(doc)
     }
 
     /// Fork the document at the given frontiers.
     ///
     /// The created doc will only contain the history before the specified frontiers.
-    pub fn fork_at(&self, frontiers: &Frontiers) -> LoroDoc {
+    pub fn fork_at(&self, frontiers: &Frontiers) -> Self {
         let new_doc = self.doc.fork_at(frontiers);
         new_doc.start_auto_commit();
-        LoroDoc::_new(new_doc)
+        Self::_new(new_doc)
     }
 
     /// Get the configurations of the document.
@@ -2372,7 +2372,7 @@ impl LoroMovableList {
     ///
     /// The edits on a detached container will not be persisted.
     /// To attach the container to the document, please insert it into an attached container.
-    pub fn new() -> LoroMovableList {
+    pub fn new() -> Self {
         Self {
             handler: InnerMovableListHandler::new_detached(),
         }
@@ -2677,53 +2677,53 @@ impl ContainerTrait for Container {
 
     fn to_handler(&self) -> Self::Handler {
         match self {
-            Container::List(x) => Self::Handler::List(x.to_handler()),
-            Container::Map(x) => Self::Handler::Map(x.to_handler()),
-            Container::Text(x) => Self::Handler::Text(x.to_handler()),
-            Container::Tree(x) => Self::Handler::Tree(x.to_handler()),
-            Container::MovableList(x) => Self::Handler::MovableList(x.to_handler()),
+            Self::List(x) => Self::Handler::List(x.to_handler()),
+            Self::Map(x) => Self::Handler::Map(x.to_handler()),
+            Self::Text(x) => Self::Handler::Text(x.to_handler()),
+            Self::Tree(x) => Self::Handler::Tree(x.to_handler()),
+            Self::MovableList(x) => Self::Handler::MovableList(x.to_handler()),
             #[cfg(feature = "counter")]
-            Container::Counter(x) => Self::Handler::Counter(x.to_handler()),
-            Container::Unknown(x) => Self::Handler::Unknown(x.to_handler()),
+            Self::Counter(x) => Self::Handler::Counter(x.to_handler()),
+            Self::Unknown(x) => Self::Handler::Unknown(x.to_handler()),
         }
     }
 
     fn from_handler(handler: Self::Handler) -> Self {
         match handler {
-            InnerHandler::Text(x) => Container::Text(LoroText { handler: x }),
-            InnerHandler::Map(x) => Container::Map(LoroMap { handler: x }),
-            InnerHandler::List(x) => Container::List(LoroList { handler: x }),
-            InnerHandler::MovableList(x) => Container::MovableList(LoroMovableList { handler: x }),
-            InnerHandler::Tree(x) => Container::Tree(LoroTree { handler: x }),
+            InnerHandler::Text(x) => Self::Text(LoroText { handler: x }),
+            InnerHandler::Map(x) => Self::Map(LoroMap { handler: x }),
+            InnerHandler::List(x) => Self::List(LoroList { handler: x }),
+            InnerHandler::MovableList(x) => Self::MovableList(LoroMovableList { handler: x }),
+            InnerHandler::Tree(x) => Self::Tree(LoroTree { handler: x }),
             #[cfg(feature = "counter")]
-            InnerHandler::Counter(x) => Container::Counter(counter::LoroCounter { handler: x }),
-            InnerHandler::Unknown(x) => Container::Unknown(LoroUnknown { handler: x }),
+            InnerHandler::Counter(x) => Self::Counter(counter::LoroCounter { handler: x }),
+            InnerHandler::Unknown(x) => Self::Unknown(LoroUnknown { handler: x }),
         }
     }
 
     fn is_attached(&self) -> bool {
         match self {
-            Container::List(x) => x.is_attached(),
-            Container::Map(x) => x.is_attached(),
-            Container::Text(x) => x.is_attached(),
-            Container::Tree(x) => x.is_attached(),
-            Container::MovableList(x) => x.is_attached(),
+            Self::List(x) => x.is_attached(),
+            Self::Map(x) => x.is_attached(),
+            Self::Text(x) => x.is_attached(),
+            Self::Tree(x) => x.is_attached(),
+            Self::MovableList(x) => x.is_attached(),
             #[cfg(feature = "counter")]
-            Container::Counter(x) => x.is_attached(),
-            Container::Unknown(x) => x.is_attached(),
+            Self::Counter(x) => x.is_attached(),
+            Self::Unknown(x) => x.is_attached(),
         }
     }
 
     fn get_attached(&self) -> Option<Self> {
         match self {
-            Container::List(x) => x.get_attached().map(Container::List),
-            Container::MovableList(x) => x.get_attached().map(Container::MovableList),
-            Container::Map(x) => x.get_attached().map(Container::Map),
-            Container::Text(x) => x.get_attached().map(Container::Text),
-            Container::Tree(x) => x.get_attached().map(Container::Tree),
+            Self::List(x) => x.get_attached().map(Container::List),
+            Self::MovableList(x) => x.get_attached().map(Container::MovableList),
+            Self::Map(x) => x.get_attached().map(Container::Map),
+            Self::Text(x) => x.get_attached().map(Container::Text),
+            Self::Tree(x) => x.get_attached().map(Container::Tree),
             #[cfg(feature = "counter")]
-            Container::Counter(x) => x.get_attached().map(Container::Counter),
-            Container::Unknown(x) => x.get_attached().map(Container::Unknown),
+            Self::Counter(x) => x.get_attached().map(Container::Counter),
+            Self::Unknown(x) => x.get_attached().map(Container::Unknown),
         }
     }
 
@@ -2736,26 +2736,26 @@ impl ContainerTrait for Container {
 
     fn is_deleted(&self) -> bool {
         match self {
-            Container::List(x) => x.is_deleted(),
-            Container::Map(x) => x.is_deleted(),
-            Container::Text(x) => x.is_deleted(),
-            Container::Tree(x) => x.is_deleted(),
-            Container::MovableList(x) => x.is_deleted(),
+            Self::List(x) => x.is_deleted(),
+            Self::Map(x) => x.is_deleted(),
+            Self::Text(x) => x.is_deleted(),
+            Self::Tree(x) => x.is_deleted(),
+            Self::MovableList(x) => x.is_deleted(),
             #[cfg(feature = "counter")]
-            Container::Counter(x) => x.is_deleted(),
-            Container::Unknown(x) => x.is_deleted(),
+            Self::Counter(x) => x.is_deleted(),
+            Self::Unknown(x) => x.is_deleted(),
         }
     }
     fn doc(&self) -> Option<LoroDoc> {
         match self {
-            Container::List(x) => x.doc(),
-            Container::Map(x) => x.doc(),
-            Container::Text(x) => x.doc(),
-            Container::Tree(x) => x.doc(),
-            Container::MovableList(x) => x.doc(),
+            Self::List(x) => x.doc(),
+            Self::Map(x) => x.doc(),
+            Self::Text(x) => x.doc(),
+            Self::Tree(x) => x.doc(),
+            Self::MovableList(x) => x.doc(),
             #[cfg(feature = "counter")]
-            Container::Counter(x) => x.doc(),
-            Container::Unknown(x) => x.doc(),
+            Self::Counter(x) => x.doc(),
+            Self::Unknown(x) => x.doc(),
         }
     }
 }
@@ -2768,13 +2768,13 @@ impl Container {
     /// To attach the container to the document, please insert it into an attached container.
     pub fn new(kind: ContainerType) -> Self {
         match kind {
-            ContainerType::List => Container::List(LoroList::new()),
-            ContainerType::MovableList => Container::MovableList(LoroMovableList::new()),
-            ContainerType::Map => Container::Map(LoroMap::new()),
-            ContainerType::Text => Container::Text(LoroText::new()),
-            ContainerType::Tree => Container::Tree(LoroTree::new()),
+            ContainerType::List => Self::List(LoroList::new()),
+            ContainerType::MovableList => Self::MovableList(LoroMovableList::new()),
+            ContainerType::Map => Self::Map(LoroMap::new()),
+            ContainerType::Text => Self::Text(LoroText::new()),
+            ContainerType::Tree => Self::Tree(LoroTree::new()),
             #[cfg(feature = "counter")]
-            ContainerType::Counter => Container::Counter(counter::LoroCounter::new()),
+            ContainerType::Counter => Self::Counter(counter::LoroCounter::new()),
             ContainerType::Unknown(_) => unreachable!(),
         }
     }
@@ -2782,28 +2782,28 @@ impl Container {
     /// Get the type of the container.
     pub fn get_type(&self) -> ContainerType {
         match self {
-            Container::List(_) => ContainerType::List,
-            Container::MovableList(_) => ContainerType::MovableList,
-            Container::Map(_) => ContainerType::Map,
-            Container::Text(_) => ContainerType::Text,
-            Container::Tree(_) => ContainerType::Tree,
+            Self::List(_) => ContainerType::List,
+            Self::MovableList(_) => ContainerType::MovableList,
+            Self::Map(_) => ContainerType::Map,
+            Self::Text(_) => ContainerType::Text,
+            Self::Tree(_) => ContainerType::Tree,
             #[cfg(feature = "counter")]
-            Container::Counter(_) => ContainerType::Counter,
-            Container::Unknown(x) => x.handler.id().container_type(),
+            Self::Counter(_) => ContainerType::Counter,
+            Self::Unknown(x) => x.handler.id().container_type(),
         }
     }
 
     /// Get the id of the container.
     pub fn id(&self) -> ContainerID {
         match self {
-            Container::List(x) => x.id(),
-            Container::MovableList(x) => x.id(),
-            Container::Map(x) => x.id(),
-            Container::Text(x) => x.id(),
-            Container::Tree(x) => x.id(),
+            Self::List(x) => x.id(),
+            Self::MovableList(x) => x.id(),
+            Self::Map(x) => x.id(),
+            Self::Text(x) => x.id(),
+            Self::Tree(x) => x.id(),
             #[cfg(feature = "counter")]
-            Container::Counter(x) => x.id(),
-            Container::Unknown(x) => x.handler.id(),
+            Self::Counter(x) => x.id(),
+            Self::Unknown(x) => x.handler.id(),
         }
     }
 }
@@ -2811,14 +2811,14 @@ impl Container {
 impl From<InnerHandler> for Container {
     fn from(value: InnerHandler) -> Self {
         match value {
-            InnerHandler::Text(x) => Container::Text(LoroText { handler: x }),
-            InnerHandler::Map(x) => Container::Map(LoroMap { handler: x }),
-            InnerHandler::List(x) => Container::List(LoroList { handler: x }),
-            InnerHandler::Tree(x) => Container::Tree(LoroTree { handler: x }),
-            InnerHandler::MovableList(x) => Container::MovableList(LoroMovableList { handler: x }),
+            InnerHandler::Text(x) => Self::Text(LoroText { handler: x }),
+            InnerHandler::Map(x) => Self::Map(LoroMap { handler: x }),
+            InnerHandler::List(x) => Self::List(LoroList { handler: x }),
+            InnerHandler::Tree(x) => Self::Tree(LoroTree { handler: x }),
+            InnerHandler::MovableList(x) => Self::MovableList(LoroMovableList { handler: x }),
             #[cfg(feature = "counter")]
-            InnerHandler::Counter(x) => Container::Counter(counter::LoroCounter { handler: x }),
-            InnerHandler::Unknown(x) => Container::Unknown(LoroUnknown { handler: x }),
+            InnerHandler::Counter(x) => Self::Counter(counter::LoroCounter { handler: x }),
+            InnerHandler::Unknown(x) => Self::Unknown(LoroUnknown { handler: x }),
         }
     }
 }
@@ -2836,8 +2836,8 @@ impl ValueOrContainer {
     /// Get the deep value of the value or container.
     pub fn get_deep_value(&self) -> LoroValue {
         match self {
-            ValueOrContainer::Value(v) => v.clone(),
-            ValueOrContainer::Container(c) => match c {
+            Self::Value(v) => v.clone(),
+            Self::Container(c) => match c {
                 Container::List(c) => c.get_deep_value(),
                 Container::Map(c) => c.get_deep_value(),
                 Container::Text(c) => c.to_string().into(),
@@ -2852,8 +2852,8 @@ impl ValueOrContainer {
 
     pub(crate) fn into_value_or_handler(self) -> ValueOrHandler {
         match self {
-            ValueOrContainer::Value(v) => ValueOrHandler::Value(v),
-            ValueOrContainer::Container(c) => ValueOrHandler::Handler(c.to_handler()),
+            Self::Value(v) => ValueOrHandler::Value(v),
+            Self::Container(c) => ValueOrHandler::Handler(c.to_handler()),
         }
     }
 }

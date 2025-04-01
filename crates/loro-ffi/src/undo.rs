@@ -129,7 +129,7 @@ impl From<loro::undo::UndoItemMeta> for UndoItemMeta {
 
 impl From<&UndoItemMeta> for loro::undo::UndoItemMeta {
     fn from(meta: &UndoItemMeta) -> Self {
-        loro::undo::UndoItemMeta {
+        Self {
             value: (&meta.value).into(),
             cursors: meta
                 .cursors
@@ -148,7 +148,7 @@ impl From<&UndoItemMeta> for loro::undo::UndoItemMeta {
 
 impl From<UndoItemMeta> for loro::undo::UndoItemMeta {
     fn from(meta: UndoItemMeta) -> Self {
-        loro::undo::UndoItemMeta {
+        Self {
             value: (meta.value).into(),
             cursors: meta
                 .cursors

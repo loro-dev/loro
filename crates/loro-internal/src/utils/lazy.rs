@@ -7,15 +7,15 @@ pub enum LazyLoad<Src, Dst: From<Src>> {
 impl<Src: Default, Dst: From<Src>> LazyLoad<Src, Dst> {
     pub fn get_mut(&mut self) -> &mut Dst {
         match self {
-            LazyLoad::Src(src) => {
+            Self::Src(src) => {
                 let dst = Dst::from(std::mem::take(src));
-                *self = LazyLoad::Dst(dst);
+                *self = Self::Dst(dst);
                 match self {
-                    LazyLoad::Dst(dst) => dst,
+                    Self::Dst(dst) => dst,
                     _ => unreachable!(),
                 }
             }
-            LazyLoad::Dst(dst) => dst,
+            Self::Dst(dst) => dst,
         }
     }
 }

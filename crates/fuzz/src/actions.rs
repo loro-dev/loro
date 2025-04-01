@@ -28,12 +28,12 @@ pub enum ActionInner {
 impl Debug for ActionInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ActionInner::Map(m) => write!(f, "ActionInner::Map({:?})", m),
-            ActionInner::List(l) => write!(f, "ActionInner::List({:?})", l),
-            ActionInner::Text(t) => write!(f, "ActionInner::Text({:?})", t),
-            ActionInner::Tree(t) => write!(f, "ActionInner::Tree({:?})", t),
-            ActionInner::MovableList(m) => write!(f, "ActionInner::MovableList({:?})", m),
-            ActionInner::Counter(c) => write!(f, "ActionInner::Counter({:?})", c),
+            Self::Map(m) => write!(f, "ActionInner::Map({:?})", m),
+            Self::List(l) => write!(f, "ActionInner::List({:?})", l),
+            Self::Text(t) => write!(f, "ActionInner::Text({:?})", t),
+            Self::Tree(t) => write!(f, "ActionInner::Tree({:?})", t),
+            Self::MovableList(m) => write!(f, "ActionInner::MovableList({:?})", m),
+            Self::Counter(c) => write!(f, "ActionInner::Counter({:?})", c),
         }
     }
 }
@@ -91,8 +91,8 @@ pub enum ActionWrapper {
 impl PartialEq for ActionWrapper {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (ActionWrapper::Generic(g1), ActionWrapper::Generic(g2)) => g1 == g2,
-            (ActionWrapper::Action(_), ActionWrapper::Action(_)) => unreachable!(),
+            (Self::Generic(g1), Self::Generic(g2)) => g1 == g2,
+            (Self::Action(_), Self::Action(_)) => unreachable!(),
             _ => false,
         }
     }
@@ -102,14 +102,14 @@ impl Eq for ActionWrapper {}
 
 impl Arbitrary<'_> for ActionWrapper {
     fn arbitrary(u: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Self> {
-        Ok(ActionWrapper::Generic(GenericAction::arbitrary(u)?))
+        Ok(Self::Generic(GenericAction::arbitrary(u)?))
     }
 }
 
 impl ActionWrapper {
     pub fn convert_to_inner(&mut self, ty: &ContainerType) {
-        if let ActionWrapper::Generic(g) = self {
-            *self = ActionWrapper::Action(ActionInner::from_generic_action(g, ty));
+        if let Self::Generic(g) = self {
+            *self = Self::Action(ActionInner::from_generic_action(g, ty));
         }
     }
 }
@@ -133,20 +133,20 @@ impl Tabled for Action {
 
     fn fields(&self) -> Vec<std::borrow::Cow<'_, str>> {
         match self {
-            Action::Sync { from, to } => vec![
+            Self::Sync { from, to } => vec![
                 "sync".into(),
                 format!("{} with {}", from, to).into(),
                 "".into(),
                 "".into(),
             ],
-            Action::SyncAll => vec!["sync all".into(), "".into(), "".into()],
-            Action::Checkout { site, to } => vec![
+            Self::SyncAll => vec!["sync all".into(), "".into(), "".into()],
+            Self::Checkout { site, to } => vec![
                 "checkout".into(),
                 format!("{}", site).into(),
                 format!("to {}", to).into(),
                 "".into(),
             ],
-            Action::Handle {
+            Self::Handle {
                 site,
                 target: _,
                 container,
@@ -160,13 +160,13 @@ impl Tabled for Action {
                 fields.extend(action.as_action().unwrap().table_fields());
                 fields
             }
-            Action::Undo { site, op_len } => vec![
+            Self::Undo { site, op_len } => vec![
                 "undo".into(),
                 format!("{}", site).into(),
                 format!("{} op len", op_len).into(),
                 "".into(),
             ],
-            Action::SyncAllUndo { site, op_len } => vec![
+            Self::SyncAllUndo { site, op_len } => vec![
                 "sync all undo".into(),
                 format!("{}", site).into(),
                 format!("{} op len", op_len).into(),

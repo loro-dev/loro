@@ -92,7 +92,7 @@ pub enum TextDelta {
 impl From<TextDelta> for loro::TextDelta {
     fn from(value: TextDelta) -> Self {
         match value {
-            TextDelta::Retain { retain, attributes } => loro::TextDelta::Retain {
+            TextDelta::Retain { retain, attributes } => Self::Retain {
                 retain: retain as usize,
                 attributes: attributes.as_ref().map(|a| {
                     a.iter()
@@ -100,7 +100,7 @@ impl From<TextDelta> for loro::TextDelta {
                         .collect()
                 }),
             },
-            TextDelta::Insert { insert, attributes } => loro::TextDelta::Insert {
+            TextDelta::Insert { insert, attributes } => Self::Insert {
                 insert,
                 attributes: attributes.as_ref().map(|a| {
                     a.iter()
@@ -108,7 +108,7 @@ impl From<TextDelta> for loro::TextDelta {
                         .collect()
                 }),
             },
-            TextDelta::Delete { delete } => loro::TextDelta::Delete {
+            TextDelta::Delete { delete } => Self::Delete {
                 delete: delete as usize,
             },
         }
@@ -118,7 +118,7 @@ impl From<TextDelta> for loro::TextDelta {
 impl From<loro::TextDelta> for TextDelta {
     fn from(value: loro::TextDelta) -> Self {
         match value {
-            loro::TextDelta::Retain { retain, attributes } => TextDelta::Retain {
+            loro::TextDelta::Retain { retain, attributes } => Self::Retain {
                 retain: retain as u32,
                 attributes: attributes.as_ref().map(|a| {
                     a.iter()
@@ -126,7 +126,7 @@ impl From<loro::TextDelta> for TextDelta {
                         .collect()
                 }),
             },
-            loro::TextDelta::Insert { insert, attributes } => TextDelta::Insert {
+            loro::TextDelta::Insert { insert, attributes } => Self::Insert {
                 insert,
                 attributes: attributes.as_ref().map(|a| {
                     a.iter()
@@ -134,7 +134,7 @@ impl From<loro::TextDelta> for TextDelta {
                         .collect()
                 }),
             },
-            loro::TextDelta::Delete { delete } => TextDelta::Delete {
+            loro::TextDelta::Delete { delete } => Self::Delete {
                 delete: delete as u32,
             },
         }
@@ -144,17 +144,17 @@ impl From<loro::TextDelta> for TextDelta {
 impl From<ListDiffItem> for loro::event::ListDiffItem {
     fn from(value: ListDiffItem) -> Self {
         match value {
-            ListDiffItem::Insert { insert, is_move } => loro::event::ListDiffItem::Insert {
+            ListDiffItem::Insert { insert, is_move } => Self::Insert {
                 insert: insert
                     .into_iter()
                     .map(convert_trait_to_v_or_container)
                     .collect(),
                 is_move,
             },
-            ListDiffItem::Delete { delete } => loro::event::ListDiffItem::Delete {
+            ListDiffItem::Delete { delete } => Self::Delete {
                 delete: delete as usize,
             },
-            ListDiffItem::Retain { retain } => loro::event::ListDiffItem::Retain {
+            ListDiffItem::Retain { retain } => Self::Retain {
                 retain: retain as usize,
             },
         }
@@ -207,7 +207,7 @@ impl From<TreeDiffItem> for loro::TreeDiffItem {
                 old_index: old_index as usize,
             },
         };
-        loro::TreeDiffItem { target, action }
+        Self { target, action }
     }
 }
 
@@ -287,23 +287,23 @@ impl<'a> From<&loro::event::ContainerDiff<'a>> for ContainerDiff {
 impl From<&loro::Index> for Index {
     fn from(value: &loro::Index) -> Self {
         match value {
-            loro::Index::Key(key) => Index::Key {
+            loro::Index::Key(key) => Self::Key {
                 key: key.to_string(),
             },
-            loro::Index::Seq(index) => Index::Seq {
+            loro::Index::Seq(index) => Self::Seq {
                 index: *index as u32,
             },
-            loro::Index::Node(target) => Index::Node { target: *target },
+            loro::Index::Node(target) => Self::Node { target: *target },
         }
     }
 }
 
 impl From<Index> for loro::Index {
-    fn from(value: Index) -> loro::Index {
+    fn from(value: Index) -> Self {
         match value {
-            Index::Key { key } => loro::Index::Key(key.into()),
-            Index::Seq { index } => loro::Index::Seq(index as usize),
-            Index::Node { target } => loro::Index::Node(target),
+            Index::Key { key } => Self::Key(key.into()),
+            Index::Seq { index } => Self::Seq(index as usize),
+            Index::Node { target } => Self::Node(target),
         }
     }
 }
@@ -337,9 +337,9 @@ impl From<&loro::event::Diff<'_>> for Diff {
                         }
                     }
                 }
-                Diff::List { diff: ans }
+                Self::List { diff: ans }
             }
-            loro::event::Diff::Text(t) => Diff::Text {
+            loro::event::Diff::Text(t) => Self::Text {
                 diff: t.iter().map(|i| i.clone().into()).collect(),
             },
             loro::event::Diff::Map(m) => {
@@ -353,7 +353,7 @@ impl From<&loro::event::Diff<'_>> for Diff {
                     );
                 }
 
-                Diff::Map {
+                Self::Map {
                     diff: MapDelta { updated },
                 }
             }
@@ -395,12 +395,12 @@ impl From<&loro::event::Diff<'_>> for Diff {
                         },
                     });
                 }
-                Diff::Tree {
+                Self::Tree {
                     diff: TreeDiff { diff },
                 }
             }
-            loro::event::Diff::Counter(c) => Diff::Counter { diff: *c },
-            loro::event::Diff::Unknown => Diff::Unknown,
+            loro::event::Diff::Counter(c) => Self::Counter { diff: *c },
+            loro::event::Diff::Unknown => Self::Unknown,
         }
     }
 }

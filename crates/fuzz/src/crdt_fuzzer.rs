@@ -26,8 +26,8 @@ pub enum FuzzValue {
 impl Display for FuzzValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FuzzValue::I32(i) => write!(f, "{}", i),
-            FuzzValue::Container(c) => write!(f, "{}", c),
+            Self::I32(i) => write!(f, "{}", i),
+            Self::Container(c) => write!(f, "{}", c),
         }
     }
 }
@@ -296,30 +296,30 @@ impl FuzzTarget {
     pub(super) fn support_container_type(&self) -> FxHashSet<ContainerType> {
         let mut set = FxHashSet::default();
         match self {
-            FuzzTarget::All => {
+            Self::All => {
                 set.insert(ContainerType::Map);
                 set.insert(ContainerType::List);
                 set.insert(ContainerType::Text);
                 set.insert(ContainerType::Tree);
                 set.insert(ContainerType::MovableList);
             }
-            FuzzTarget::Map => {
+            Self::Map => {
                 set.insert(ContainerType::Map);
             }
-            FuzzTarget::List => {
+            Self::List => {
                 set.insert(ContainerType::List);
             }
-            FuzzTarget::Text => {
+            Self::Text => {
                 set.insert(ContainerType::Text);
             }
-            FuzzTarget::Tree => {
+            Self::Tree => {
                 set.insert(ContainerType::Tree);
                 set.insert(ContainerType::Map);
             }
-            FuzzTarget::MovableList => {
+            Self::MovableList => {
                 set.insert(ContainerType::MovableList);
             }
-            FuzzTarget::Counter => {
+            Self::Counter => {
                 set.insert(ContainerType::Counter);
             }
         }

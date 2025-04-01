@@ -42,17 +42,17 @@ use std::fmt;
 impl fmt::Debug for JSONPathToken {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            JSONPathToken::Root => write!(f, "Root"),
-            JSONPathToken::Child(s) => write!(f, "Child({})", s),
-            JSONPathToken::RecursiveDescend => write!(f, "RecursiveDescend"),
-            JSONPathToken::Wildcard => write!(f, "Wildcard"),
-            JSONPathToken::Index(i) => write!(f, "Index({})", i),
-            JSONPathToken::Slice(start, end, step) => {
+            Self::Root => write!(f, "Root"),
+            Self::Child(s) => write!(f, "Child({})", s),
+            Self::RecursiveDescend => write!(f, "RecursiveDescend"),
+            Self::Wildcard => write!(f, "Wildcard"),
+            Self::Index(i) => write!(f, "Index({})", i),
+            Self::Slice(start, end, step) => {
                 write!(f, "Slice({:?}, {:?}, {:?})", start, end, step)
             }
-            JSONPathToken::UnionIndex(indices) => write!(f, "UnionIndex({:?})", indices),
-            JSONPathToken::UnionKey(keys) => write!(f, "UnionKey({:?})", keys),
-            JSONPathToken::Filter(_) => write!(f, "Filter(<function>)"),
+            Self::UnionIndex(indices) => write!(f, "UnionIndex({:?})", indices),
+            Self::UnionKey(keys) => write!(f, "UnionKey({:?})", keys),
+            Self::Filter(_) => write!(f, "Filter(<function>)"),
         }
     }
 }
@@ -60,15 +60,15 @@ impl fmt::Debug for JSONPathToken {
 impl PartialEq for JSONPathToken {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (JSONPathToken::Root, JSONPathToken::Root) => true,
-            (JSONPathToken::Child(a), JSONPathToken::Child(b)) => a == b,
-            (JSONPathToken::RecursiveDescend, JSONPathToken::RecursiveDescend) => true,
-            (JSONPathToken::Wildcard, JSONPathToken::Wildcard) => true,
-            (JSONPathToken::Index(a), JSONPathToken::Index(b)) => a == b,
-            (JSONPathToken::Slice(a1, a2, a3), JSONPathToken::Slice(b1, b2, b3)) => {
+            (Self::Root, Self::Root) => true,
+            (Self::Child(a), Self::Child(b)) => a == b,
+            (Self::RecursiveDescend, Self::RecursiveDescend) => true,
+            (Self::Wildcard, Self::Wildcard) => true,
+            (Self::Index(a), Self::Index(b)) => a == b,
+            (Self::Slice(a1, a2, a3), Self::Slice(b1, b2, b3)) => {
                 a1 == b1 && a2 == b2 && a3 == b3
             }
-            (JSONPathToken::Filter(_), JSONPathToken::Filter(_)) => {
+            (Self::Filter(_), Self::Filter(_)) => {
                 // We can't compare functions for equality, so we'll consider all filters unequal
                 false
             }
@@ -342,43 +342,43 @@ pub trait PathValue {
 impl PathValue for ValueOrHandler {
     fn get_by_key(&self, key: &str) -> Option<ValueOrHandler> {
         match self {
-            ValueOrHandler::Value(v) => v.get_by_key(key).cloned().map(ValueOrHandler::Value),
-            ValueOrHandler::Handler(h) => h.get_by_key(key),
+            Self::Value(v) => v.get_by_key(key).cloned().map(ValueOrHandler::Value),
+            Self::Handler(h) => h.get_by_key(key),
         }
     }
 
     fn get_by_index(&self, index: isize) -> Option<ValueOrHandler> {
         match self {
-            ValueOrHandler::Value(v) => v.get_by_index(index).cloned().map(ValueOrHandler::Value),
-            ValueOrHandler::Handler(h) => h.get_by_index(index),
+            Self::Value(v) => v.get_by_index(index).cloned().map(ValueOrHandler::Value),
+            Self::Handler(h) => h.get_by_index(index),
         }
     }
 
     fn for_each_for_path(&self, f: &mut dyn FnMut(ValueOrHandler) -> ControlFlow<()>) {
         match self {
-            ValueOrHandler::Value(v) => v.for_each_for_path(f),
-            ValueOrHandler::Handler(h) => h.for_each_for_path(f),
+            Self::Value(v) => v.for_each_for_path(f),
+            Self::Handler(h) => h.for_each_for_path(f),
         }
     }
 
     fn length_for_path(&self) -> usize {
         match self {
-            ValueOrHandler::Value(v) => v.length_for_path(),
-            ValueOrHandler::Handler(h) => h.length_for_path(),
+            Self::Value(v) => v.length_for_path(),
+            Self::Handler(h) => h.length_for_path(),
         }
     }
 
     fn get_child_by_id(&self, id: ContainerID) -> Option<Handler> {
         match self {
-            ValueOrHandler::Handler(h) => h.get_child_by_id(id),
+            Self::Handler(h) => h.get_child_by_id(id),
             _ => None,
         }
     }
 
     fn clone_this(&self) -> Result<ValueOrHandler, JsonPathError> {
         match self {
-            ValueOrHandler::Value(v) => Ok(ValueOrHandler::Value(v.clone())),
-            ValueOrHandler::Handler(h) => Ok(ValueOrHandler::Handler(h.clone())),
+            Self::Value(v) => Ok(Self::Value(v.clone())),
+            Self::Handler(h) => Ok(Self::Handler(h.clone())),
         }
     }
 }
@@ -422,47 +422,47 @@ impl PathValue for LoroDoc {
 impl PathValue for Handler {
     fn get_by_key(&self, key: &str) -> Option<ValueOrHandler> {
         match self {
-            Handler::Map(h) => h.get_by_key(key),
-            Handler::Tree(h) => h.get_by_key(key),
+            Self::Map(h) => h.get_by_key(key),
+            Self::Tree(h) => h.get_by_key(key),
             _ => None,
         }
     }
 
     fn get_by_index(&self, index: isize) -> Option<ValueOrHandler> {
         match self {
-            Handler::List(h) => h.get_by_index(index),
-            Handler::MovableList(h) => h.get_by_index(index),
+            Self::List(h) => h.get_by_index(index),
+            Self::MovableList(h) => h.get_by_index(index),
             _ => None,
         }
     }
 
     fn for_each_for_path(&self, f: &mut dyn FnMut(ValueOrHandler) -> ControlFlow<()>) {
         match self {
-            Handler::Map(h) => h.for_each_for_path(f),
-            Handler::List(h) => h.for_each_for_path(f),
-            Handler::MovableList(h) => h.for_each_for_path(f),
-            Handler::Tree(h) => h.for_each_for_path(f),
+            Self::Map(h) => h.for_each_for_path(f),
+            Self::List(h) => h.for_each_for_path(f),
+            Self::MovableList(h) => h.for_each_for_path(f),
+            Self::Tree(h) => h.for_each_for_path(f),
             _ => {}
         }
     }
 
     fn length_for_path(&self) -> usize {
         match self {
-            Handler::Map(h) => h.length_for_path(),
-            Handler::List(h) => h.length_for_path(),
-            Handler::MovableList(h) => h.length_for_path(),
-            Handler::Tree(h) => h.length_for_path(),
-            Handler::Text(h) => h.length_for_path(),
+            Self::Map(h) => h.length_for_path(),
+            Self::List(h) => h.length_for_path(),
+            Self::MovableList(h) => h.length_for_path(),
+            Self::Tree(h) => h.length_for_path(),
+            Self::Text(h) => h.length_for_path(),
             _ => 0,
         }
     }
 
     fn get_child_by_id(&self, id: ContainerID) -> Option<Handler> {
         match self {
-            Handler::Map(h) => h.get_child_by_id(id),
-            Handler::List(h) => h.get_child_by_id(id),
-            Handler::MovableList(h) => h.get_child_by_id(id),
-            Handler::Tree(h) => h.get_child_by_id(id),
+            Self::Map(h) => h.get_child_by_id(id),
+            Self::List(h) => h.get_child_by_id(id),
+            Self::MovableList(h) => h.get_child_by_id(id),
+            Self::Tree(h) => h.get_child_by_id(id),
             _ => None,
         }
     }
@@ -645,14 +645,14 @@ impl PathValue for TreeHandler {
 impl PathValue for LoroValue {
     fn get_by_key(&self, key: &str) -> Option<ValueOrHandler> {
         match self {
-            LoroValue::Map(map) => map.get(key).map(|v| ValueOrHandler::Value(v.clone())),
+            Self::Map(map) => map.get(key).map(|v| ValueOrHandler::Value(v.clone())),
             _ => None,
         }
     }
 
     fn get_by_index(&self, index: isize) -> Option<ValueOrHandler> {
         match self {
-            LoroValue::List(list) => {
+            Self::List(list) => {
                 let index = if index < 0 {
                     if list.len() > (-index) as usize {
                         list.len() - (-index) as usize
@@ -670,14 +670,14 @@ impl PathValue for LoroValue {
 
     fn for_each_for_path(&self, f: &mut dyn FnMut(ValueOrHandler) -> ControlFlow<()>) {
         match self {
-            LoroValue::List(list) => {
+            Self::List(list) => {
                 for item in list.iter() {
                     if let ControlFlow::Break(_) = f(ValueOrHandler::Value(item.clone())) {
                         break;
                     }
                 }
             }
-            LoroValue::Map(map) => {
+            Self::Map(map) => {
                 for (_, value) in map.iter() {
                     if let ControlFlow::Break(_) = f(ValueOrHandler::Value(value.clone())) {
                         break;
@@ -690,9 +690,9 @@ impl PathValue for LoroValue {
 
     fn length_for_path(&self) -> usize {
         match self {
-            LoroValue::List(list) => list.len(),
-            LoroValue::Map(map) => map.len(),
-            LoroValue::String(s) => s.len(),
+            Self::List(list) => list.len(),
+            Self::Map(map) => map.len(),
+            Self::String(s) => s.len(),
             _ => 0,
         }
     }

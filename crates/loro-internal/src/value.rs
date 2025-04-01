@@ -43,7 +43,7 @@ impl ToJson for LoroValue {
 impl ToJson for DeltaItem<StringSlice, TextMeta> {
     fn to_json_value(&self) -> serde_json::Value {
         match self {
-            DeltaItem::Retain {
+            Self::Retain {
                 retain: len,
                 attributes: meta,
             } => {
@@ -54,7 +54,7 @@ impl ToJson for DeltaItem<StringSlice, TextMeta> {
                 }
                 serde_json::Value::Object(map)
             }
-            DeltaItem::Insert {
+            Self::Insert {
                 insert: value,
                 attributes: meta,
             } => {
@@ -65,7 +65,7 @@ impl ToJson for DeltaItem<StringSlice, TextMeta> {
                 }
                 serde_json::Value::Object(map)
             }
-            DeltaItem::Delete {
+            Self::Delete {
                 delete: len,
                 attributes: _,
             } => {
@@ -85,7 +85,7 @@ impl ToJson for DeltaItem<StringSlice, TextMeta> {
             } else {
                 TextMeta::default()
             };
-            DeltaItem::Retain {
+            Self::Retain {
                 retain: len as usize,
                 attributes: meta,
             }
@@ -96,13 +96,13 @@ impl ToJson for DeltaItem<StringSlice, TextMeta> {
             } else {
                 TextMeta::default()
             };
-            DeltaItem::Insert {
+            Self::Insert {
                 insert: value,
                 attributes: meta,
             }
         } else if map.contains_key("delete") {
             let len = map["delete"].as_u64().unwrap();
-            DeltaItem::Delete {
+            Self::Delete {
                 delete: len as usize,
                 attributes: Default::default(),
             }
@@ -206,7 +206,7 @@ impl ToJson for TextDiff {
 
     fn from_json(s: &str) -> Self {
         let vec: Vec<serde_json::Value> = serde_json::from_str(s).unwrap();
-        let mut ans = TextDiff::new();
+        let mut ans = Self::new();
         for item in vec.into_iter() {
             ans.push(diff_item_from_json(item));
         }
@@ -225,7 +225,7 @@ impl ToJson for Delta<StringSlice, TextMeta> {
 
     fn from_json(s: &str) -> Self {
         let vec: Vec<serde_json::Value> = serde_json::from_str(s).unwrap();
-        let mut ans = Delta::new();
+        let mut ans = Self::new();
         for item in vec.into_iter() {
             ans.push(DeltaItem::from_json(item.to_string().as_str()));
         }
@@ -252,7 +252,7 @@ pub trait ApplyDiff {
 impl ApplyDiff for LoroValue {
     fn apply_diff_shallow(&mut self, diff: &[Diff]) {
         match self {
-            LoroValue::String(value) => {
+            Self::String(value) => {
                 let mut s = value.to_string();
                 for item in diff.iter() {
                     let delta = item.as_text().unwrap();
@@ -286,7 +286,7 @@ impl ApplyDiff for LoroValue {
                 }
                 *value = s.into()
             }
-            LoroValue::List(seq) => {
+            Self::List(seq) => {
                 let is_tree = matches!(diff.first(), Some(Diff::Tree(_)));
                 if !is_tree {
                     let seq = seq.make_mut();
@@ -327,7 +327,7 @@ impl ApplyDiff for LoroValue {
                     unimplemented!()
                 }
             }
-            LoroValue::Map(map) => {
+            Self::Map(map) => {
                 for item in diff.iter() {
                     match item {
                         Diff::Map(diff) => {
@@ -353,7 +353,7 @@ impl ApplyDiff for LoroValue {
 
     fn apply_diff(&mut self, diff: &[Diff]) {
         match self {
-            LoroValue::String(value) => {
+            Self::String(value) => {
                 let mut s = value.to_string();
                 for item in diff.iter() {
                     let delta = item.as_text().unwrap();
@@ -376,7 +376,7 @@ impl ApplyDiff for LoroValue {
                 }
                 *value = s.into();
             }
-            LoroValue::List(seq) => {
+            Self::List(seq) => {
                 let is_tree = matches!(diff.first(), Some(Diff::Tree(_)));
                 if !is_tree {
                     let seq = seq.make_mut();
@@ -414,7 +414,7 @@ impl ApplyDiff for LoroValue {
                     unimplemented!()
                 }
             }
-            LoroValue::Map(map) => {
+            Self::Map(map) => {
                 for item in diff.iter() {
                     match item {
                         Diff::Map(diff) => {
@@ -466,19 +466,19 @@ impl ApplyDiff for LoroValue {
             }
 
             hints.push(hint);
-            let mut value: &mut LoroValue = self;
+            let mut value: &mut Self = self;
             for (item, hint) in path.iter().zip(hints.iter()) {
                 match item {
                     Index::Key(key) => {
                         let m = value.as_map_mut().unwrap();
                         let map = m.make_mut();
                         value = map.entry(key.to_string()).or_insert_with(|| match hint {
-                            TypeHint::Map => LoroValue::Map(Default::default()),
-                            TypeHint::Text => LoroValue::String(Default::default()),
-                            TypeHint::List => LoroValue::List(Default::default()),
-                            TypeHint::Tree => LoroValue::List(Default::default()),
+                            TypeHint::Map => Self::Map(Default::default()),
+                            TypeHint::Text => Self::String(Default::default()),
+                            TypeHint::List => Self::List(Default::default()),
+                            TypeHint::Tree => Self::List(Default::default()),
                             #[cfg(feature = "counter")]
-                            TypeHint::Counter => LoroValue::Double(0.),
+                            TypeHint::Counter => Self::Double(0.),
                         })
                     }
                     Index::Seq(index) => {
@@ -535,8 +535,8 @@ pub mod wasm {
     impl From<Index> for JsValue {
         fn from(value: Index) -> Self {
             match value {
-                Index::Key(key) => JsValue::from_str(&key),
-                Index::Seq(num) => JsValue::from_f64(num as f64),
+                Index::Key(key) => Self::from_str(&key),
+                Index::Seq(num) => Self::from_f64(num as f64),
                 Index::Node(node) => node.into(),
             }
         }
@@ -558,7 +558,7 @@ pub mod wasm {
                         js_sys::Reflect::set(
                             &obj,
                             &"parent".into(),
-                            &JsValue::from(parent.tree_id()),
+                            &Self::from(parent.tree_id()),
                         )
                         .unwrap();
                         js_sys::Reflect::set(&obj, &"index".into(), &(*index).into()).unwrap();
@@ -577,7 +577,7 @@ pub mod wasm {
                         js_sys::Reflect::set(
                             &obj,
                             &"oldParent".into(),
-                            &JsValue::from(old_parent.tree_id()),
+                            &Self::from(old_parent.tree_id()),
                         )
                         .unwrap();
                         js_sys::Reflect::set(&obj, &"oldIndex".into(), &(*old_index).into())
@@ -594,7 +594,7 @@ pub mod wasm {
                         js_sys::Reflect::set(
                             &obj,
                             &"parent".into(),
-                            &JsValue::from(parent.tree_id()),
+                            &Self::from(parent.tree_id()),
                         )
                         .unwrap();
                         js_sys::Reflect::set(&obj, &"index".into(), &(*index).into()).unwrap();
@@ -607,7 +607,7 @@ pub mod wasm {
                         js_sys::Reflect::set(
                             &obj,
                             &"oldParent".into(),
-                            &JsValue::from(old_parent.tree_id()),
+                            &Self::from(old_parent.tree_id()),
                         )
                         .unwrap();
                         js_sys::Reflect::set(&obj, &"oldIndex".into(), &(*old_index).into())
@@ -767,7 +767,7 @@ pub mod wasm {
                 diff.push(TreeDiffItem { target, action });
             }
 
-            Ok(TreeDiff { diff })
+            Ok(Self { diff })
         }
     }
 
@@ -775,7 +775,7 @@ pub mod wasm {
         fn from(value: &Delta<StringSlice, StyleMeta>) -> Self {
             let arr = Array::new_with_length(value.len() as u32);
             for (i, v) in value.iter().enumerate() {
-                arr.set(i as u32, JsValue::from(v.clone()));
+                arr.set(i as u32, Self::from(v.clone()));
             }
 
             arr.into_js_result().unwrap()
@@ -792,15 +792,15 @@ pub mod wasm {
                 } => {
                     js_sys::Reflect::set(
                         &obj,
-                        &JsValue::from_str("retain"),
-                        &JsValue::from_f64(len as f64),
+                        &Self::from_str("retain"),
+                        &Self::from_f64(len as f64),
                     )
                     .unwrap();
                     if !meta.is_empty() {
                         js_sys::Reflect::set(
                             &obj,
-                            &JsValue::from_str("attributes"),
-                            &JsValue::from(&meta),
+                            &Self::from_str("attributes"),
+                            &Self::from(&meta),
                         )
                         .unwrap();
                     }
@@ -811,15 +811,15 @@ pub mod wasm {
                 } => {
                     js_sys::Reflect::set(
                         &obj,
-                        &JsValue::from_str("insert"),
-                        &JsValue::from_str(value.as_str()),
+                        &Self::from_str("insert"),
+                        &Self::from_str(value.as_str()),
                     )
                     .unwrap();
                     if !meta.is_empty() {
                         js_sys::Reflect::set(
                             &obj,
-                            &JsValue::from_str("attributes"),
-                            &JsValue::from(&meta),
+                            &Self::from_str("attributes"),
+                            &Self::from(&meta),
                         )
                         .unwrap();
                     }
@@ -830,8 +830,8 @@ pub mod wasm {
                 } => {
                     js_sys::Reflect::set(
                         &obj,
-                        &JsValue::from_str("delete"),
-                        &JsValue::from_f64(len as f64),
+                        &Self::from_str("delete"),
+                        &Self::from_f64(len as f64),
                     )
                     .unwrap();
                 }
@@ -928,8 +928,8 @@ pub mod wasm {
             // TODO: refactor: should we extract the common code of ToJson and ToJsValue
             let obj = Object::new();
             for (key, style) in value.iter() {
-                let value = JsValue::from(style.data);
-                js_sys::Reflect::set(&obj, &JsValue::from_str(&key), &value).unwrap();
+                let value = Self::from(style.data);
+                js_sys::Reflect::set(&obj, &Self::from_str(&key), &value).unwrap();
             }
 
             obj.into_js_result().unwrap()
@@ -940,7 +940,7 @@ pub mod wasm {
         fn from(value: &TextMeta) -> Self {
             let obj = Object::new();
             for (key, value) in value.0.iter() {
-                js_sys::Reflect::set(&obj, &JsValue::from_str(key), &JsValue::from(value.clone()))
+                js_sys::Reflect::set(&obj, &Self::from_str(key), &Self::from(value.clone()))
                     .unwrap();
             }
 
@@ -953,11 +953,11 @@ pub mod wasm {
 
         fn try_from(value: &JsValue) -> Result<Self, Self::Error> {
             if value.is_null() || value.is_undefined() {
-                return Ok(TextMeta::default());
+                return Ok(Self::default());
             }
 
             let obj = value.dyn_ref::<Object>().ok_or("Expected an object")?;
-            let mut meta = TextMeta::default();
+            let mut meta = Self::default();
 
             let entries = Object::entries(obj);
             for i in 0..entries.length() {

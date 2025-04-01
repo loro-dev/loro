@@ -74,32 +74,32 @@ pub enum LoroValueKind {
 impl LoroValueKind {
     fn from_u8(kind: u8) -> Self {
         match kind {
-            0 => LoroValueKind::Null,
-            1 => LoroValueKind::True,
-            2 => LoroValueKind::False,
-            3 => LoroValueKind::I64,
-            4 => LoroValueKind::F64,
-            5 => LoroValueKind::Str,
-            6 => LoroValueKind::Binary,
-            7 => LoroValueKind::List,
-            8 => LoroValueKind::Map,
-            9 => LoroValueKind::ContainerType,
+            0 => Self::Null,
+            1 => Self::True,
+            2 => Self::False,
+            3 => Self::I64,
+            4 => Self::F64,
+            5 => Self::Str,
+            6 => Self::Binary,
+            7 => Self::List,
+            8 => Self::Map,
+            9 => Self::ContainerType,
             _ => unreachable!(),
         }
     }
 
     fn to_u8(&self) -> u8 {
         match self {
-            LoroValueKind::Null => 0,
-            LoroValueKind::True => 1,
-            LoroValueKind::False => 2,
-            LoroValueKind::I64 => 3,
-            LoroValueKind::F64 => 4,
-            LoroValueKind::Str => 5,
-            LoroValueKind::Binary => 6,
-            LoroValueKind::List => 7,
-            LoroValueKind::Map => 8,
-            LoroValueKind::ContainerType => 9,
+            Self::Null => 0,
+            Self::True => 1,
+            Self::False => 2,
+            Self::I64 => 3,
+            Self::F64 => 4,
+            Self::Str => 5,
+            Self::Binary => 6,
+            Self::List => 7,
+            Self::Map => 8,
+            Self::ContainerType => 9,
         }
     }
 }
@@ -112,50 +112,50 @@ pub enum FutureValueKind {
 impl ValueKind {
     pub(crate) fn to_u8(&self) -> u8 {
         match self {
-            ValueKind::Null => 0,
-            ValueKind::True => 1,
-            ValueKind::False => 2,
-            ValueKind::I64 => 3,
-            ValueKind::F64 => 4,
-            ValueKind::Str => 5,
-            ValueKind::Binary => 6,
-            ValueKind::ContainerType => 7,
-            ValueKind::DeleteOnce => 8,
-            ValueKind::DeleteSeq => 9,
-            ValueKind::DeltaInt => 10,
-            ValueKind::LoroValue => 11,
-            ValueKind::MarkStart => 12,
-            ValueKind::TreeMove => 13,
-            ValueKind::ListMove => 14,
-            ValueKind::ListSet => 15,
-            ValueKind::Future(future_value_kind) => match future_value_kind {
+            Self::Null => 0,
+            Self::True => 1,
+            Self::False => 2,
+            Self::I64 => 3,
+            Self::F64 => 4,
+            Self::Str => 5,
+            Self::Binary => 6,
+            Self::ContainerType => 7,
+            Self::DeleteOnce => 8,
+            Self::DeleteSeq => 9,
+            Self::DeltaInt => 10,
+            Self::LoroValue => 11,
+            Self::MarkStart => 12,
+            Self::TreeMove => 13,
+            Self::ListMove => 14,
+            Self::ListSet => 15,
+            Self::Future(future_value_kind) => match future_value_kind {
                 FutureValueKind::Unknown(u8) => *u8 | 0x80,
             },
-            ValueKind::RawTreeMove => 16,
+            Self::RawTreeMove => 16,
         }
     }
 
     pub(crate) fn from_u8(mut kind: u8) -> Self {
         kind &= 0x7F;
         match kind {
-            0 => ValueKind::Null,
-            1 => ValueKind::True,
-            2 => ValueKind::False,
-            3 => ValueKind::I64,
-            4 => ValueKind::F64,
-            5 => ValueKind::Str,
-            6 => ValueKind::Binary,
-            7 => ValueKind::ContainerType,
-            8 => ValueKind::DeleteOnce,
-            9 => ValueKind::DeleteSeq,
-            10 => ValueKind::DeltaInt,
-            11 => ValueKind::LoroValue,
-            12 => ValueKind::MarkStart,
-            13 => ValueKind::TreeMove,
-            14 => ValueKind::ListMove,
-            15 => ValueKind::ListSet,
-            16 => ValueKind::RawTreeMove,
-            _ => ValueKind::Future(FutureValueKind::Unknown(kind)),
+            0 => Self::Null,
+            1 => Self::True,
+            2 => Self::False,
+            3 => Self::I64,
+            4 => Self::F64,
+            5 => Self::Str,
+            6 => Self::Binary,
+            7 => Self::ContainerType,
+            8 => Self::DeleteOnce,
+            9 => Self::DeleteSeq,
+            10 => Self::DeltaInt,
+            11 => Self::LoroValue,
+            12 => Self::MarkStart,
+            13 => Self::TreeMove,
+            14 => Self::ListMove,
+            15 => Self::ListSet,
+            16 => Self::RawTreeMove,
+            _ => Self::Future(FutureValueKind::Unknown(kind)),
         }
     }
 }
@@ -565,7 +565,7 @@ impl EncodedTreeMove {
                         counter: x.counter,
                     })
                 });
-                EncodedTreeMove {
+                Self {
                     target_idx,
                     is_parent_null: parent.is_none(),
                     parent_idx: parent_idx.unwrap_or(0),
@@ -581,7 +581,7 @@ impl EncodedTreeMove {
                     peer_idx: registers.peer.register(&TreeID::delete_root().peer),
                     counter: TreeID::delete_root().counter,
                 });
-                EncodedTreeMove {
+                Self {
                     target_idx,
                     is_parent_null: false,
                     parent_idx,
@@ -991,7 +991,7 @@ impl<'a> ValueReader<'a> {
 
 impl ValueWriter {
     pub fn new() -> Self {
-        ValueWriter { buffer: Vec::new() }
+        Self { buffer: Vec::new() }
     }
 
     pub fn write_value_type_and_content(

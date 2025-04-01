@@ -182,21 +182,21 @@ pub enum AnchorType {
 impl ExpandType {
     #[inline(always)]
     pub const fn expand_before(&self) -> bool {
-        matches!(self, ExpandType::Before | ExpandType::Both)
+        matches!(self, Self::Before | Self::Both)
     }
 
     #[inline(always)]
     pub const fn expand_after(&self) -> bool {
-        matches!(self, ExpandType::After | ExpandType::Both)
+        matches!(self, Self::After | Self::Both)
     }
 
     /// 'before'|'after'|'both'|'none'
     pub fn try_from_str(s: &str) -> Option<Self> {
         match s {
-            "before" => Some(ExpandType::Before),
-            "after" => Some(ExpandType::After),
-            "both" => Some(ExpandType::Both),
-            "none" => Some(ExpandType::None),
+            "before" => Some(Self::Before),
+            "after" => Some(Self::After),
+            "both" => Some(Self::Both),
+            "none" => Some(Self::None),
             _ => None,
         }
     }
@@ -215,10 +215,10 @@ impl ExpandType {
     /// This method is useful to convert between the two
     pub const fn reverse(self) -> Self {
         match self {
-            ExpandType::Before => ExpandType::Before,
-            ExpandType::After => ExpandType::After,
-            ExpandType::Both => ExpandType::None,
-            ExpandType::None => ExpandType::Both,
+            Self::Before => Self::Before,
+            Self::After => Self::After,
+            Self::Both => Self::None,
+            Self::None => Self::Both,
         }
     }
 }
@@ -269,17 +269,17 @@ impl TextStyleInfoFlag {
             data |= EXPAND_AFTER_MASK;
         }
 
-        TextStyleInfoFlag { data }
+        Self { data }
     }
 
     #[inline(always)]
     pub const fn to_delete(self) -> Self {
-        TextStyleInfoFlag::new(self.expand_type().reverse())
+        Self::new(self.expand_type().reverse())
     }
 
-    pub const BOLD: TextStyleInfoFlag = TextStyleInfoFlag::new(ExpandType::After);
-    pub const LINK: TextStyleInfoFlag = TextStyleInfoFlag::new(ExpandType::None);
-    pub const COMMENT: TextStyleInfoFlag = TextStyleInfoFlag::new(ExpandType::None);
+    pub const BOLD: Self = Self::new(ExpandType::After);
+    pub const LINK: Self = Self::new(ExpandType::None);
+    pub const COMMENT: Self = Self::new(ExpandType::None);
 
     pub const fn to_byte(&self) -> u8 {
         self.data

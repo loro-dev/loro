@@ -103,7 +103,7 @@ impl<'de> Deserialize<'de> for InternalString {
         D: serde::Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
-        Ok(InternalString::from(s.as_str()))
+        Ok(Self::from(s.as_str()))
     }
 }
 

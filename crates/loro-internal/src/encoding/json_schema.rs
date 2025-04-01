@@ -872,12 +872,12 @@ pub mod json {
     impl JsonOpContent {
         pub fn op_len(&self) -> usize {
             match self {
-                JsonOpContent::List(list_op) => list_op.op_len(),
-                JsonOpContent::MovableList(movable_list_op) => movable_list_op.op_len(),
-                JsonOpContent::Map(..) => 1,
-                JsonOpContent::Text(text_op) => text_op.op_len(),
-                JsonOpContent::Tree(..) => 1,
-                JsonOpContent::Future(..) => 1,
+                Self::List(list_op) => list_op.op_len(),
+                Self::MovableList(movable_list_op) => movable_list_op.op_len(),
+                Self::Map(..) => 1,
+                Self::Text(text_op) => text_op.op_len(),
+                Self::Tree(..) => 1,
+                Self::Future(..) => 1,
             }
         }
     }
@@ -907,8 +907,8 @@ pub mod json {
     impl ListOp {
         fn op_len(&self) -> usize {
             match self {
-                ListOp::Insert { value: values, .. } => values.len(),
-                ListOp::Delete { len, .. } => (*len).unsigned_abs() as usize,
+                Self::Insert { value: values, .. } => values.len(),
+                Self::Delete { len, .. } => (*len).unsigned_abs() as usize,
             }
         }
     }
@@ -942,10 +942,10 @@ pub mod json {
     impl MovableListOp {
         fn op_len(&self) -> usize {
             match self {
-                MovableListOp::Insert { value: values, .. } => values.len(),
-                MovableListOp::Delete { len, .. } => (*len).unsigned_abs() as usize,
-                MovableListOp::Move { .. } => 1,
-                MovableListOp::Set { .. } => 1,
+                Self::Insert { value: values, .. } => values.len(),
+                Self::Delete { len, .. } => (*len).unsigned_abs() as usize,
+                Self::Move { .. } => 1,
+                Self::Set { .. } => 1,
             }
         }
     }
@@ -983,10 +983,10 @@ pub mod json {
     impl TextOp {
         fn op_len(&self) -> usize {
             match self {
-                TextOp::Insert { text, .. } => text.chars().count(),
-                TextOp::Delete { len, .. } => len.unsigned_abs() as usize,
-                TextOp::Mark { .. } => 1,
-                TextOp::MarkEnd => 1,
+                Self::Insert { text, .. } => text.chars().count(),
+                Self::Delete { len, .. } => len.unsigned_abs() as usize,
+                Self::Mark { .. } => 1,
+                Self::MarkEnd => 1,
             }
         }
     }
@@ -1050,7 +1050,7 @@ pub mod json {
         }
 
         impl<'de> Deserialize<'de> for super::JsonOp {
-            fn deserialize<D>(deserializer: D) -> Result<super::JsonOp, D::Error>
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
             where
                 D: Deserializer<'de>,
             {

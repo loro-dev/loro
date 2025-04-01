@@ -46,7 +46,7 @@ impl BlockMeta {
     /// ││     u32      │   bytes    │      │   bytes    │   u32     │
     /// │ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ┘─ ─ ─ ┘─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ┘│
     /// └────────────────────────────────────────────────────────────┘
-    fn encode_meta(meta: &[BlockMeta], buf: &mut Vec<u8>) {
+    fn encode_meta(meta: &[Self], buf: &mut Vec<u8>) {
         // the number of blocks
         let mut estimated_size = SIZE_OF_U32;
         for m in meta {
@@ -88,7 +88,7 @@ impl BlockMeta {
         buf.put_u32_le(checksum);
     }
 
-    fn decode_meta(data: &[u8]) -> LoroResult<Vec<BlockMeta>> {
+    fn decode_meta(data: &[u8]) -> LoroResult<Vec<Self>> {
         let (num, mut data) = get_u32_le(data)?;
         if num > MAX_BLOCK_NUM {
             return Err(LoroError::DecodeError("Invalid bytes".into()));
@@ -109,7 +109,7 @@ impl BlockMeta {
             let is_large = is_large_and_compression_type & 0b1000_0000 != 0;
             let compression_type = is_large_and_compression_type & 0b0111_1111;
             if is_large {
-                ans.push(BlockMeta {
+                ans.push(Self {
                     offset: offset as usize,
                     is_large,
                     compression_type: compression_type.try_into()?,
@@ -124,7 +124,7 @@ impl BlockMeta {
                 return Err(LoroError::DecodeError("Invalid bytes".into()));
             }
             let last_key = buf.copy_to_bytes(last_key_len as usize);
-            ans.push(BlockMeta {
+            ans.push(Self {
                 offset: offset as usize,
                 is_large,
                 compression_type: compression_type.try_into()?,
@@ -820,39 +820,39 @@ enum SsTableIterInner {
 impl SsTableIterInner {
     fn front_iter(&self) -> &BlockIter {
         match self {
-            SsTableIterInner::Same(iter) => iter,
-            SsTableIterInner::Double { front, .. } => front,
+            Self::Same(iter) => iter,
+            Self::Double { front, .. } => front,
         }
     }
 
     fn front_iter_mut(&mut self) -> &mut BlockIter {
         match self {
-            SsTableIterInner::Same(iter) => iter,
-            SsTableIterInner::Double { front, .. } => front,
+            Self::Same(iter) => iter,
+            Self::Double { front, .. } => front,
         }
     }
 
     fn back_iter(&self) -> &BlockIter {
         match self {
-            SsTableIterInner::Same(iter) => iter,
-            SsTableIterInner::Double { back, .. } => back,
+            Self::Same(iter) => iter,
+            Self::Double { back, .. } => back,
         }
     }
 
     fn back_iter_mut(&mut self) -> &mut BlockIter {
         match self {
-            SsTableIterInner::Same(iter) => iter,
-            SsTableIterInner::Double { back, .. } => back,
+            Self::Same(iter) => iter,
+            Self::Double { back, .. } => back,
         }
     }
 
     fn is_same(&self) -> bool {
-        matches!(self, SsTableIterInner::Same(_))
+        matches!(self, Self::Same(_))
     }
 
     fn reset_front(&mut self, iter: BlockIter) {
         debug_assert!(!self.is_same());
-        let SsTableIterInner::Double { front, back: _ } = self else {
+        let Self::Double { front, back: _ } = self else {
             unreachable!()
         };
         *front = iter;
@@ -860,7 +860,7 @@ impl SsTableIterInner {
 
     fn reset_back(&mut self, iter: BlockIter) {
         debug_assert!(!self.is_same());
-        let SsTableIterInner::Double { front: _, back } = self else {
+        let Self::Double { front: _, back } = self else {
             unreachable!()
         };
         *back = iter;
@@ -868,18 +868,18 @@ impl SsTableIterInner {
 
     fn convert_front_as_same(&mut self) {
         debug_assert!(!self.is_same());
-        let SsTableIterInner::Double { front, back: _ } = self else {
+        let Self::Double { front, back: _ } = self else {
             unreachable!()
         };
-        *self = SsTableIterInner::Same(front.clone());
+        *self = Self::Same(front.clone());
     }
 
     fn convert_back_as_same(&mut self) {
         debug_assert!(!self.is_same());
-        let SsTableIterInner::Double { front: _, back } = self else {
+        let Self::Double { front: _, back } = self else {
             unreachable!()
         };
-        *self = SsTableIterInner::Same(back.clone());
+        *self = Self::Same(back.clone());
     }
 }
 #[cfg(test)]

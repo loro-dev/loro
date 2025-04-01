@@ -34,10 +34,10 @@ impl LoroTree {
     }
 
     /// If a detached container is attached, this method will return its corresponding attached handler.
-    pub fn get_attached(&self) -> Option<Arc<LoroTree>> {
+    pub fn get_attached(&self) -> Option<Arc<Self>> {
         self.inner
             .get_attached()
-            .map(|x| Arc::new(LoroTree { inner: x }))
+            .map(|x| Arc::new(Self { inner: x }))
     }
 
     /// Create a new tree node and return the [`TreeID`].
@@ -260,10 +260,10 @@ impl Default for LoroTree {
 impl From<loro::TreeParentId> for TreeParentId {
     fn from(value: loro::TreeParentId) -> Self {
         match value {
-            loro::TreeParentId::Node(id) => TreeParentId::Node { id },
-            loro::TreeParentId::Root => TreeParentId::Root,
-            loro::TreeParentId::Deleted => TreeParentId::Deleted,
-            loro::TreeParentId::Unexist => TreeParentId::Unexist,
+            loro::TreeParentId::Node(id) => Self::Node { id },
+            loro::TreeParentId::Root => Self::Root,
+            loro::TreeParentId::Deleted => Self::Deleted,
+            loro::TreeParentId::Unexist => Self::Unexist,
         }
     }
 }
@@ -271,10 +271,10 @@ impl From<loro::TreeParentId> for TreeParentId {
 impl From<TreeParentId> for loro::TreeParentId {
     fn from(value: TreeParentId) -> Self {
         match value {
-            TreeParentId::Node { id } => loro::TreeParentId::Node(id),
-            TreeParentId::Root => loro::TreeParentId::Root,
-            TreeParentId::Deleted => loro::TreeParentId::Deleted,
-            TreeParentId::Unexist => loro::TreeParentId::Unexist,
+            TreeParentId::Node { id } => Self::Node(id),
+            TreeParentId::Root => Self::Root,
+            TreeParentId::Deleted => Self::Deleted,
+            TreeParentId::Unexist => Self::Unexist,
         }
     }
 }

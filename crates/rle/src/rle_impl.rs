@@ -61,7 +61,7 @@ impl<T: HasLength> HasLength for &T {
 impl<T: HasLength + Sliceable, A: Array<Item = T>> Sliceable for SmallVec<A> {
     fn slice(&self, from: usize, to: usize) -> Self {
         let mut index = 0;
-        let mut ans: SmallVec<A> = smallvec::smallvec![];
+        let mut ans: Self = smallvec::smallvec![];
         if to == from {
             return ans;
         }

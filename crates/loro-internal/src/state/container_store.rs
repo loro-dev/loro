@@ -69,7 +69,7 @@ macro_rules! ctx {
 
 impl ContainerStore {
     pub fn new(arena: SharedArena, conf: Configure, peer: Arc<AtomicU64>) -> Self {
-        ContainerStore {
+        Self {
             store: InnerStore::new(arena.clone()),
             arena,
             conf,
@@ -234,8 +234,8 @@ impl ContainerStore {
         arena: SharedArena,
         peer: Arc<AtomicU64>,
         config: Configure,
-    ) -> ContainerStore {
-        ContainerStore {
+    ) -> Self {
+        Self {
             store: self.store.fork(arena.clone(), &config),
             arena,
             conf: config,
@@ -245,7 +245,7 @@ impl ContainerStore {
     }
 
     #[allow(unused)]
-    fn check_eq_after_parsing(&mut self, other: &mut ContainerStore) {
+    fn check_eq_after_parsing(&mut self, other: &mut Self) {
         if self.store.len() != other.store.len() {
             panic!("store len mismatch");
         }

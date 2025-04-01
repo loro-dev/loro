@@ -27,10 +27,10 @@ impl LoroList {
     }
 
     /// If a detached container is attached, this method will return its corresponding attached handler.
-    pub fn get_attached(&self) -> Option<Arc<LoroList>> {
+    pub fn get_attached(&self) -> Option<Arc<Self>> {
         self.inner
             .get_attached()
-            .map(|x| Arc::new(LoroList { inner: x }))
+            .map(|x| Arc::new(Self { inner: x }))
     }
 
     /// Insert a value at the given position.
@@ -113,12 +113,12 @@ impl LoroList {
     pub fn insert_list_container(
         &self,
         pos: u32,
-        child: Arc<LoroList>,
-    ) -> LoroResult<Arc<LoroList>> {
+        child: Arc<Self>,
+    ) -> LoroResult<Arc<Self>> {
         let c = self
             .inner
             .insert_container(pos as usize, child.as_ref().clone().inner)?;
-        Ok(Arc::new(LoroList { inner: c }))
+        Ok(Arc::new(Self { inner: c }))
     }
 
     #[inline]

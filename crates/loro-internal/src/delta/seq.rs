@@ -87,15 +87,15 @@ impl<V: DeltaValue, M: Debug> DeltaValue for DeltaItem<V, M> {
 
     fn length(&self) -> usize {
         match self {
-            DeltaItem::Retain {
+            Self::Retain {
                 retain: len,
                 attributes: _,
             } => *len,
-            DeltaItem::Insert {
+            Self::Insert {
                 insert: value,
                 attributes: _,
             } => value.length(),
-            DeltaItem::Delete {
+            Self::Delete {
                 delete: len,
                 attributes: _,
             } => *len,
@@ -106,13 +106,13 @@ impl<V: DeltaValue, M: Debug> DeltaValue for DeltaItem<V, M> {
 impl<Value: DeltaValue, M: Meta> DeltaItem<Value, M> {
     pub fn meta(&self) -> &M {
         match self {
-            DeltaItem::Insert {
+            Self::Insert {
                 attributes: meta, ..
             } => meta,
-            DeltaItem::Retain {
+            Self::Retain {
                 attributes: meta, ..
             } => meta,
-            DeltaItem::Delete {
+            Self::Delete {
                 delete: _,
                 attributes: meta,
             } => meta,
@@ -121,13 +121,13 @@ impl<Value: DeltaValue, M: Meta> DeltaItem<Value, M> {
 
     pub fn meta_mut(&mut self) -> &mut M {
         match self {
-            DeltaItem::Insert {
+            Self::Insert {
                 attributes: meta, ..
             } => meta,
-            DeltaItem::Retain {
+            Self::Retain {
                 attributes: meta, ..
             } => meta,
-            DeltaItem::Delete {
+            Self::Delete {
                 delete: _,
                 attributes: meta,
             } => meta,
@@ -136,9 +136,9 @@ impl<Value: DeltaValue, M: Meta> DeltaItem<Value, M> {
 
     pub fn set_meta(&mut self, meta: M) {
         match self {
-            DeltaItem::Insert { attributes: m, .. } => *m = meta,
-            DeltaItem::Retain { attributes: m, .. } => *m = meta,
-            DeltaItem::Delete {
+            Self::Insert { attributes: m, .. } => *m = meta,
+            Self::Retain { attributes: m, .. } => *m = meta,
+            Self::Delete {
                 delete: _,
                 attributes: m,
             } => *m = meta,
@@ -147,9 +147,9 @@ impl<Value: DeltaValue, M: Meta> DeltaItem<Value, M> {
 
     fn type_(&self) -> DeltaType {
         match self {
-            DeltaItem::Insert { .. } => DeltaType::Insert,
-            DeltaItem::Retain { .. } => DeltaType::Retain,
-            DeltaItem::Delete { .. } => DeltaType::Delete,
+            Self::Insert { .. } => DeltaType::Insert,
+            Self::Retain { .. } => DeltaType::Retain,
+            Self::Delete { .. } => DeltaType::Delete,
         }
     }
 
@@ -164,7 +164,7 @@ impl<Value: DeltaValue, M: Meta> DeltaItem<Value, M> {
     // and return the taken one.
     pub(crate) fn take(&mut self, length: usize) -> Self {
         match self {
-            DeltaItem::Insert {
+            Self::Insert {
                 insert: value,
                 attributes: meta,
             } => {
@@ -174,7 +174,7 @@ impl<Value: DeltaValue, M: Meta> DeltaItem<Value, M> {
                     attributes: meta.clone(),
                 }
             }
-            DeltaItem::Retain {
+            Self::Retain {
                 retain: len,
                 attributes: meta,
             } => {
@@ -184,7 +184,7 @@ impl<Value: DeltaValue, M: Meta> DeltaItem<Value, M> {
                     attributes: meta.clone(),
                 }
             }
-            DeltaItem::Delete {
+            Self::Delete {
                 delete: len,
                 attributes: _,
             } => {
@@ -200,7 +200,7 @@ impl<Value: DeltaValue, M: Meta> DeltaItem<Value, M> {
 
     pub(crate) fn take_with_meta_ref(&mut self, length: usize, other_meta: &Self) -> Self {
         match self {
-            DeltaItem::Insert {
+            Self::Insert {
                 insert: value,
                 attributes: meta,
             } => {
@@ -210,7 +210,7 @@ impl<Value: DeltaValue, M: Meta> DeltaItem<Value, M> {
                     attributes: meta.take(other_meta.meta()),
                 }
             }
-            DeltaItem::Retain {
+            Self::Retain {
                 retain: len,
                 attributes: meta,
             } => {
@@ -220,7 +220,7 @@ impl<Value: DeltaValue, M: Meta> DeltaItem<Value, M> {
                     attributes: meta.take(other_meta.meta()),
                 }
             }
-            DeltaItem::Delete {
+            Self::Delete {
                 delete: len,
                 attributes: meta,
             } => {
@@ -235,7 +235,7 @@ impl<Value: DeltaValue, M: Meta> DeltaItem<Value, M> {
 
     fn insert_inner(self) -> Value {
         match self {
-            DeltaItem::Insert { insert: value, .. } => value,
+            Self::Insert { insert: value, .. } => value,
             _ => unreachable!(),
         }
     }
@@ -519,7 +519,7 @@ impl<Value: DeltaValue, M: Meta> Delta<Value, M> {
 
     /// Reference: [Quill Delta](https://github.com/quilljs/delta)
     // TODO: PERF use &mut self and &other
-    pub fn compose(self, other: Delta<Value, M>) -> Delta<Value, M> {
+    pub fn compose(self, other: Self) -> Self {
         let mut this_iter = self.into_op_iter();
         let mut other_iter = other.into_op_iter();
         let mut ops = vec![];
@@ -545,7 +545,7 @@ impl<Value: DeltaValue, M: Meta> Delta<Value, M> {
                 }
             }
         }
-        let mut delta = Delta { vec: ops };
+        let mut delta = Self { vec: ops };
         while this_iter.has_next() || other_iter.has_next() {
             if other_iter.peek_is_insert() {
                 // nothing to compose here
@@ -573,7 +573,7 @@ impl<Value: DeltaValue, M: Meta> Delta<Value, M> {
                             break;
                         }
 
-                        let rest = Delta { vec };
+                        let rest = Self { vec };
                         delta = delta.concat(rest);
                         break;
                     }
@@ -685,7 +685,7 @@ mod test {
 
     impl Meta for TestMeta {
         fn empty() -> Self {
-            TestMeta {
+            Self {
                 bold: None,
                 color: None,
             }

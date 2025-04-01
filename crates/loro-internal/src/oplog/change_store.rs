@@ -146,7 +146,7 @@ impl ChangeStore {
         latest_vv: &VersionVector,
         latest_frontiers: &Frontiers,
     ) -> Bytes {
-        let new_store = ChangeStore::new_mem(&self.arena, self.merge_interval.clone());
+        let new_store = Self::new_mem(&self.arena, self.merge_interval.clone());
         for span in latest_vv.sub_iter(start_vv) {
             // PERF: this can be optimized by reusing the current encoded blocks
             // In the current method, it needs to parse and re-encode the blocks
@@ -175,7 +175,7 @@ impl ChangeStore {
     }
 
     pub(super) fn export_blocks_in_range<W: std::io::Write>(&self, spans: &[IdSpan], w: &mut W) {
-        let new_store = ChangeStore::new_mem(&self.arena, self.merge_interval.clone());
+        let new_store = Self::new_mem(&self.arena, self.merge_interval.clone());
         for span in spans {
             let mut span = *span;
             span.normalize_();
@@ -220,7 +220,7 @@ impl ChangeStore {
         arena: &SharedArena,
         self_vv: &VersionVector,
     ) -> Result<Vec<Change>, LoroError> {
-        let change_store = ChangeStore::new_mem(arena, Arc::new(AtomicI64::new(0)));
+        let change_store = Self::new_mem(arena, Arc::new(AtomicI64::new(0)));
         let _ = change_store.import_all(bytes)?;
         let mut changes = Vec::new();
         change_store.visit_all_changes(&mut |c| {
@@ -496,7 +496,7 @@ impl ChangeStore {
         latest_vv: &VersionVector,
         w: &mut W,
     ) {
-        let new_store = ChangeStore::new_mem(&self.arena, self.merge_interval.clone());
+        let new_store = Self::new_mem(&self.arena, self.merge_interval.clone());
         for mut span in latest_vv.sub_iter(start_vv) {
             let counter_lower_bound = shallow_since_vv.get(&span.peer).copied().unwrap_or(0);
             span.counter.start = span.counter.start.max(counter_lower_bound);
@@ -531,7 +531,7 @@ impl ChangeStore {
         frontiers: &Frontiers,
         vv: &VersionVector,
     ) -> Bytes {
-        let new_store = ChangeStore::new_mem(&self.arena, self.merge_interval.clone());
+        let new_store = Self::new_mem(&self.arena, self.merge_interval.clone());
         for mut span in vv.sub_iter_im(start_vv) {
             let counter_lower_bound = start_vv.get(&span.peer).copied().unwrap_or(0);
             span.counter.start = span.counter.start.max(counter_lower_bound);
@@ -1400,7 +1400,7 @@ impl ChangesBlockContent {
     pub fn iter_dag_nodes(&self) -> Vec<AppDagNode> {
         let mut dag_nodes = Vec::new();
         match self {
-            ChangesBlockContent::Changes(c) | ChangesBlockContent::Both(c, _) => {
+            Self::Changes(c) | Self::Both(c, _) => {
                 for change in c.iter() {
                     let new_node = AppDagNodeInner {
                         peer: change.id.peer,
@@ -1416,7 +1416,7 @@ impl ChangesBlockContent {
                     dag_nodes.push_rle_element(new_node);
                 }
             }
-            ChangesBlockContent::Bytes(b) => {
+            Self::Bytes(b) => {
                 b.ensure_header().unwrap();
                 let header = b.header.get().unwrap();
                 let n = header.n_changes;
@@ -1443,11 +1443,11 @@ impl ChangesBlockContent {
     #[allow(unused)]
     pub fn changes(&mut self, a: &SharedArena) -> LoroResult<&Vec<Change>> {
         match self {
-            ChangesBlockContent::Changes(changes) => Ok(changes),
-            ChangesBlockContent::Both(changes, _) => Ok(changes),
-            ChangesBlockContent::Bytes(bytes) => {
+            Self::Changes(changes) => Ok(changes),
+            Self::Both(changes, _) => Ok(changes),
+            Self::Bytes(bytes) => {
                 let changes = bytes.parse(a)?;
-                *self = ChangesBlockContent::Both(Arc::new(changes), bytes.clone());
+                *self = Self::Both(Arc::new(changes), bytes.clone());
                 self.changes(a)
             }
         }
@@ -1456,14 +1456,14 @@ impl ChangesBlockContent {
     /// Note that this method will invalidate the stored bytes
     fn changes_mut(&mut self, a: &SharedArena) -> LoroResult<&mut Arc<Vec<Change>>> {
         match self {
-            ChangesBlockContent::Changes(changes) => Ok(changes),
-            ChangesBlockContent::Both(changes, _) => {
-                *self = ChangesBlockContent::Changes(std::mem::take(changes));
+            Self::Changes(changes) => Ok(changes),
+            Self::Both(changes, _) => {
+                *self = Self::Changes(std::mem::take(changes));
                 self.changes_mut(a)
             }
-            ChangesBlockContent::Bytes(bytes) => {
+            Self::Bytes(bytes) => {
                 let changes = bytes.parse(a)?;
-                *self = ChangesBlockContent::Changes(Arc::new(changes));
+                *self = Self::Changes(Arc::new(changes));
                 self.changes_mut(a)
             }
         }
@@ -1471,17 +1471,17 @@ impl ChangesBlockContent {
 
     pub(crate) fn try_changes(&self) -> Option<&Vec<Change>> {
         match self {
-            ChangesBlockContent::Changes(changes) => Some(changes),
-            ChangesBlockContent::Both(changes, _) => Some(changes),
-            ChangesBlockContent::Bytes(_) => None,
+            Self::Changes(changes) => Some(changes),
+            Self::Both(changes, _) => Some(changes),
+            Self::Bytes(_) => None,
         }
     }
 
     pub(crate) fn len_changes(&self) -> usize {
         match self {
-            ChangesBlockContent::Changes(changes) => changes.len(),
-            ChangesBlockContent::Both(changes, _) => changes.len(),
-            ChangesBlockContent::Bytes(bytes) => bytes.len_changes(),
+            Self::Changes(changes) => changes.len(),
+            Self::Both(changes, _) => changes.len(),
+            Self::Bytes(bytes) => bytes.len_changes(),
         }
     }
 }
@@ -1489,14 +1489,14 @@ impl ChangesBlockContent {
 impl std::fmt::Debug for ChangesBlockContent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ChangesBlockContent::Changes(changes) => f
+            Self::Changes(changes) => f
                 .debug_tuple("ChangesBlockContent::Changes")
                 .field(changes)
                 .finish(),
-            ChangesBlockContent::Bytes(_bytes) => {
+            Self::Bytes(_bytes) => {
                 f.debug_tuple("ChangesBlockContent::Bytes").finish()
             }
-            ChangesBlockContent::Both(changes, _bytes) => f
+            Self::Both(changes, _bytes) => f
                 .debug_tuple("ChangesBlockContent::Both")
                 .field(changes)
                 .finish(),
@@ -1532,7 +1532,7 @@ impl ChangesBlockBytes {
     fn serialize(changes: &[Change], a: &SharedArena) -> Self {
         let bytes = encode_block(changes, a);
         // TODO: Perf we can calculate header directly without parsing the bytes
-        let bytes = ChangesBlockBytes::new(Bytes::from(bytes));
+        let bytes = Self::new(Bytes::from(bytes));
         bytes.ensure_header().unwrap();
         bytes
     }

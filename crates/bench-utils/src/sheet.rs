@@ -22,14 +22,14 @@ impl ActionTrait for SheetAction {
     /// We need to normalize the action to fit the limit.
     fn normalize(&mut self) {
         match self {
-            SheetAction::SetValue { row, col, .. } => {
+            Self::SetValue { row, col, .. } => {
                 *row %= Self::MAX_ROW;
                 *col %= Self::MAX_COL;
             }
-            SheetAction::InsertRow { row } => {
+            Self::InsertRow { row } => {
                 *row %= Self::MAX_ROW;
             }
-            SheetAction::InsertCol { col } => {
+            Self::InsertCol { col } => {
                 *col %= Self::MAX_COL;
             }
         }

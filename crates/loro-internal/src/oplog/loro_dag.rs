@@ -88,7 +88,7 @@ pub struct AppDagNodeInner {
 
 impl From<AppDagNodeInner> for AppDagNode {
     fn from(inner: AppDagNodeInner) -> Self {
-        AppDagNode {
+        Self {
             inner: Arc::new(inner),
         }
     }

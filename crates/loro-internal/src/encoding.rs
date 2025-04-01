@@ -170,11 +170,11 @@ impl num_traits::FromPrimitive for EncodeMode {
     #[inline]
     fn from_i64(n: i64) -> Option<Self> {
         match n {
-            n if n == EncodeMode::Auto as i64 => Some(EncodeMode::Auto),
-            n if n == EncodeMode::OutdatedRle as i64 => Some(EncodeMode::OutdatedRle),
-            n if n == EncodeMode::OutdatedSnapshot as i64 => Some(EncodeMode::OutdatedSnapshot),
-            n if n == EncodeMode::FastSnapshot as i64 => Some(EncodeMode::FastSnapshot),
-            n if n == EncodeMode::FastUpdates as i64 => Some(EncodeMode::FastUpdates),
+            n if n == Self::Auto as i64 => Some(Self::Auto),
+            n if n == Self::OutdatedRle as i64 => Some(Self::OutdatedRle),
+            n if n == Self::OutdatedSnapshot as i64 => Some(Self::OutdatedSnapshot),
+            n if n == Self::FastSnapshot as i64 => Some(Self::FastSnapshot),
+            n if n == Self::FastUpdates as i64 => Some(Self::FastUpdates),
             _ => None,
         }
     }
@@ -189,11 +189,11 @@ impl num_traits::ToPrimitive for EncodeMode {
     #[allow(trivial_numeric_casts)]
     fn to_i64(&self) -> Option<i64> {
         Some(match *self {
-            EncodeMode::Auto => EncodeMode::Auto as i64,
-            EncodeMode::OutdatedRle => EncodeMode::OutdatedRle as i64,
-            EncodeMode::OutdatedSnapshot => EncodeMode::OutdatedSnapshot as i64,
-            EncodeMode::FastSnapshot => EncodeMode::FastSnapshot as i64,
-            EncodeMode::FastUpdates => EncodeMode::FastUpdates as i64,
+            Self::Auto => Self::Auto as i64,
+            Self::OutdatedRle => Self::OutdatedRle as i64,
+            Self::OutdatedSnapshot => Self::OutdatedSnapshot as i64,
+            Self::FastSnapshot => Self::FastSnapshot as i64,
+            Self::FastUpdates => Self::FastUpdates as i64,
         })
     }
     #[inline]
@@ -211,7 +211,7 @@ impl EncodeMode {
     pub fn is_snapshot(self) -> bool {
         matches!(
             self,
-            EncodeMode::OutdatedSnapshot | EncodeMode::FastSnapshot
+            Self::OutdatedSnapshot | Self::FastSnapshot
         )
     }
 }
@@ -542,11 +542,11 @@ pub enum EncodedBlobMode {
 impl std::fmt::Display for EncodedBlobMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            EncodedBlobMode::OutdatedRle => "outdated-update",
-            EncodedBlobMode::OutdatedSnapshot => "outdated-snapshot",
-            EncodedBlobMode::Snapshot => "snapshot",
-            EncodedBlobMode::ShallowSnapshot => "shallow-snapshot",
-            EncodedBlobMode::Updates => "update",
+            Self::OutdatedRle => "outdated-update",
+            Self::OutdatedSnapshot => "outdated-snapshot",
+            Self::Snapshot => "snapshot",
+            Self::ShallowSnapshot => "shallow-snapshot",
+            Self::Updates => "update",
         })
     }
 }
@@ -555,9 +555,9 @@ impl EncodedBlobMode {
     pub fn is_snapshot(&self) -> bool {
         matches!(
             self,
-            EncodedBlobMode::Snapshot
-                | EncodedBlobMode::ShallowSnapshot
-                | EncodedBlobMode::OutdatedSnapshot
+            Self::Snapshot
+                | Self::ShallowSnapshot
+                | Self::OutdatedSnapshot
         )
     }
 }

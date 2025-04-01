@@ -28,7 +28,7 @@ pub enum InnerContent {
 impl InnerContent {
     pub fn visit_created_children(&self, arena: &SharedArena, f: &mut dyn FnMut(&ContainerID)) {
         match self {
-            InnerContent::List(l) => match l {
+            Self::List(l) => match l {
                 InnerListOp::Insert { slice, .. } => {
                     for v in arena.iter_value_slice(slice.to_range()) {
                         if let LoroValue::Container(c) = v {
@@ -48,16 +48,16 @@ impl InnerContent {
                 InnerListOp::StyleStart { .. } => {}
                 InnerListOp::StyleEnd => {}
             },
-            crate::op::InnerContent::Map(m) => {
+            Self::Map(m) => {
                 if let Some(LoroValue::Container(c)) = &m.value {
                     f(c);
                 }
             }
-            crate::op::InnerContent::Tree(t) => {
+            Self::Tree(t) => {
                 let id = t.target().associated_meta_container();
                 f(&id);
             }
-            crate::op::InnerContent::Future(f) => match &f {
+            Self::Future(f) => match &f {
                 #[cfg(feature = "counter")]
                 crate::op::FutureInnerContent::Counter(_) => {}
                 crate::op::FutureInnerContent::Unknown { .. } => {}
@@ -69,10 +69,10 @@ impl InnerContent {
 impl InnerContent {
     pub fn estimate_storage_size(&self, kind: ContainerType) -> usize {
         match self {
-            InnerContent::List(l) => l.estimate_storage_size(kind),
-            InnerContent::Map(_) => 3,
-            InnerContent::Tree(_) => 8,
-            InnerContent::Future(f) => f.estimate_storage_size(),
+            Self::List(l) => l.estimate_storage_size(kind),
+            Self::Map(_) => 3,
+            Self::Tree(_) => 8,
+            Self::Future(f) => f.estimate_storage_size(),
         }
     }
 }
@@ -90,8 +90,8 @@ impl FutureInnerContent {
     fn estimate_storage_size(&self) -> usize {
         match self {
             #[cfg(feature = "counter")]
-            FutureInnerContent::Counter(_) => 4,
-            FutureInnerContent::Unknown { .. } => 6,
+            Self::Counter(_) => 4,
+            Self::Unknown { .. } => 6,
         }
     }
 }
@@ -218,10 +218,10 @@ impl Mergable for RawOpContent<'_> {
 impl HasLength for InnerContent {
     fn content_len(&self) -> usize {
         match self {
-            InnerContent::List(list) => list.atom_len(),
-            InnerContent::Map(_) => 1,
-            InnerContent::Tree(_) => 1,
-            InnerContent::Future(_) => 1,
+            Self::List(list) => list.atom_len(),
+            Self::Map(_) => 1,
+            Self::Tree(_) => 1,
+            Self::Future(_) => 1,
         }
     }
 }
@@ -229,18 +229,18 @@ impl HasLength for InnerContent {
 impl Sliceable for InnerContent {
     fn slice(&self, from: usize, to: usize) -> Self {
         match self {
-            a @ InnerContent::Map(_) => {
+            a @ Self::Map(_) => {
                 assert!(from == 0 && to == 1);
                 a.clone()
             }
-            a @ InnerContent::Tree(_) => {
+            a @ Self::Tree(_) => {
                 assert!(from == 0 && to == 1);
                 a.clone()
             }
-            InnerContent::List(x) => InnerContent::List(x.slice(from, to)),
-            InnerContent::Future(f) => {
+            Self::List(x) => Self::List(x.slice(from, to)),
+            Self::Future(f) => {
                 assert!(from == 0 && to == 1);
-                InnerContent::Future(f.clone())
+                Self::Future(f.clone())
             }
         }
     }
@@ -252,7 +252,7 @@ impl Mergable for InnerContent {
         Self: Sized,
     {
         match (self, other) {
-            (InnerContent::List(x), InnerContent::List(y)) => x.is_mergable(y, &()),
+            (Self::List(x), Self::List(y)) => x.is_mergable(y, &()),
             _ => false,
         }
     }
@@ -262,8 +262,8 @@ impl Mergable for InnerContent {
         Self: Sized,
     {
         match self {
-            InnerContent::List(x) => match _other {
-                InnerContent::List(y) => x.merge(y, &()),
+            Self::List(x) => match _other {
+                Self::List(y) => x.merge(y, &()),
                 _ => unreachable!(),
             },
             _ => unreachable!(),

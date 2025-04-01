@@ -66,7 +66,7 @@ impl KvWrapper {
         self.kv.lock().unwrap().contains_key(key)
     }
 
-    pub(crate) fn remove_same(&self, old_kv: &KvWrapper) {
+    pub(crate) fn remove_same(&self, old_kv: &Self) {
         let other = old_kv.kv.lock().unwrap();
         let mut this = self.kv.lock().unwrap();
         for (k, v) in other.scan(Bound::Unbounded, Bound::Unbounded) {

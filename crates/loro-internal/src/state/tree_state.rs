@@ -83,12 +83,12 @@ impl From<Option<TreeID>> for TreeParentId {
         match id {
             Some(id) => {
                 if TreeID::is_deleted_root(&id) {
-                    TreeParentId::Deleted
+                    Self::Deleted
                 } else {
-                    TreeParentId::Node(id)
+                    Self::Node(id)
                 }
             }
-            None => TreeParentId::Root,
+            None => Self::Root,
         }
     }
 }
@@ -96,9 +96,9 @@ impl From<Option<TreeID>> for TreeParentId {
 impl From<TreeID> for TreeParentId {
     fn from(id: TreeID) -> Self {
         if TreeID::is_deleted_root(&id) {
-            TreeParentId::Deleted
+            Self::Deleted
         } else {
-            TreeParentId::Node(id)
+            Self::Node(id)
         }
     }
 }
@@ -106,9 +106,9 @@ impl From<TreeID> for TreeParentId {
 impl From<&TreeID> for TreeParentId {
     fn from(id: &TreeID) -> Self {
         if TreeID::is_deleted_root(id) {
-            TreeParentId::Deleted
+            Self::Deleted
         } else {
-            TreeParentId::Node(*id)
+            Self::Node(*id)
         }
     }
 }
@@ -116,10 +116,10 @@ impl From<&TreeID> for TreeParentId {
 impl TreeParentId {
     pub fn tree_id(&self) -> Option<TreeID> {
         match self {
-            TreeParentId::Node(id) => Some(*id),
-            TreeParentId::Root => None,
-            TreeParentId::Deleted => Some(DELETED_TREE_ROOT),
-            TreeParentId::Unexist => unreachable!(),
+            Self::Node(id) => Some(*id),
+            Self::Root => None,
+            Self::Deleted => Some(DELETED_TREE_ROOT),
+            Self::Unexist => unreachable!(),
         }
     }
 }
@@ -132,7 +132,7 @@ enum NodeChildren {
 
 impl Default for NodeChildren {
     fn default() -> Self {
-        NodeChildren::Vec(vec![])
+        Self::Vec(vec![])
     }
 }
 
@@ -140,8 +140,8 @@ impl NodeChildren {
     const MAX_SIZE_FOR_ARRAY: usize = 16;
     fn get_index_by_child_id(&self, target: &TreeID) -> Option<usize> {
         match self {
-            NodeChildren::Vec(v) => v.iter().position(|(_, id)| id == target),
-            NodeChildren::BTree(btree) => btree.id_to_index(target),
+            Self::Vec(v) => v.iter().position(|(_, id)| id == target),
+            Self::BTree(btree) => btree.id_to_index(target),
         }
     }
 
@@ -150,22 +150,22 @@ impl NodeChildren {
         node_position: &NodePosition,
     ) -> Result<usize, usize> {
         match self {
-            NodeChildren::Vec(v) => v.binary_search_by_key(&node_position, |x| &x.0),
-            NodeChildren::BTree(btree) => btree.get_index_by_node_position(node_position),
+            Self::Vec(v) => v.binary_search_by_key(&node_position, |x| &x.0),
+            Self::BTree(btree) => btree.get_index_by_node_position(node_position),
         }
     }
 
     fn get_node_position_at(&self, pos: usize) -> Option<&NodePosition> {
         match self {
-            NodeChildren::Vec(v) => v.get(pos).map(|x| &x.0),
-            NodeChildren::BTree(btree) => btree.get_elem_at(pos).map(|x| x.pos.as_ref()),
+            Self::Vec(v) => v.get(pos).map(|x| &x.0),
+            Self::BTree(btree) => btree.get_elem_at(pos).map(|x| x.pos.as_ref()),
         }
     }
 
     fn get_elem_at(&self, pos: usize) -> Option<(&NodePosition, &TreeID)> {
         match self {
-            NodeChildren::Vec(v) => v.get(pos).map(|x| (&x.0, &x.1)),
-            NodeChildren::BTree(btree) => btree.get_elem_at(pos).map(|x| (x.pos.as_ref(), &x.id)),
+            Self::Vec(v) => v.get(pos).map(|x| (&x.0, &x.1)),
+            Self::BTree(btree) => btree.get_elem_at(pos).map(|x| (x.pos.as_ref(), &x.id)),
         }
     }
 
@@ -231,17 +231,17 @@ impl NodeChildren {
 
     fn get_id_at(&self, pos: usize) -> Option<TreeID> {
         match self {
-            NodeChildren::Vec(v) => v.get(pos).map(|x| x.1),
-            NodeChildren::BTree(btree) => btree.get_elem_at(pos).map(|x| x.id),
+            Self::Vec(v) => v.get(pos).map(|x| x.1),
+            Self::BTree(btree) => btree.get_elem_at(pos).map(|x| x.id),
         }
     }
 
     fn delete_child(&mut self, target: &TreeID) {
         match self {
-            NodeChildren::Vec(v) => {
+            Self::Vec(v) => {
                 v.retain(|(_, id)| id != target);
             }
-            NodeChildren::BTree(v) => {
+            Self::BTree(v) => {
                 v.delete_child(target);
             }
         }
@@ -249,21 +249,21 @@ impl NodeChildren {
 
     fn upgrade(&mut self) {
         match self {
-            NodeChildren::Vec(v) => {
+            Self::Vec(v) => {
                 let mut btree = btree::ChildTree::new();
                 for (pos, id) in v.drain(..) {
                     btree.insert_child(pos, id);
                 }
 
-                *self = NodeChildren::BTree(btree);
+                *self = Self::BTree(btree);
             }
-            NodeChildren::BTree(_) => unreachable!(),
+            Self::BTree(_) => unreachable!(),
         }
     }
 
     fn insert_child(&mut self, pos: NodePosition, id: TreeID) {
         match self {
-            NodeChildren::Vec(v) => {
+            Self::Vec(v) => {
                 if v.len() >= Self::MAX_SIZE_FOR_ARRAY {
                     self.upgrade();
                     return self.insert_child(pos, id);
@@ -277,7 +277,7 @@ impl NodeChildren {
                     }
                 }
             }
-            NodeChildren::BTree(v) => {
+            Self::BTree(v) => {
                 v.insert_child(pos, id);
             }
         }
@@ -285,7 +285,7 @@ impl NodeChildren {
 
     fn push_child_in_order(&mut self, pos: NodePosition, id: TreeID) {
         match self {
-            NodeChildren::Vec(v) => {
+            Self::Vec(v) => {
                 if v.len() >= Self::MAX_SIZE_FOR_ARRAY {
                     self.upgrade();
                     return self.push_child_in_order(pos, id);
@@ -296,7 +296,7 @@ impl NodeChildren {
                 }
                 v.push((pos, id));
             }
-            NodeChildren::BTree(v) => {
+            Self::BTree(v) => {
                 v.push_child_in_order(pos, id);
             }
         }
@@ -304,24 +304,24 @@ impl NodeChildren {
 
     fn len(&self) -> usize {
         match self {
-            NodeChildren::Vec(v) => v.len(),
-            NodeChildren::BTree(v) => v.len(),
+            Self::Vec(v) => v.len(),
+            Self::BTree(v) => v.len(),
         }
     }
 
     fn has_child(&self, node_position: &NodePosition) -> bool {
         match self {
-            NodeChildren::Vec(v) => v
+            Self::Vec(v) => v
                 .binary_search_by(|(target, _)| target.cmp(node_position))
                 .is_ok(),
-            NodeChildren::BTree(v) => v.has_child(node_position),
+            Self::BTree(v) => v.has_child(node_position),
         }
     }
 
     fn iter(&self) -> impl Iterator<Item = (&NodePosition, &TreeID)> {
         match self {
-            NodeChildren::Vec(v) => Either::Left(v.iter().map(|x| (&x.0, &x.1))),
-            NodeChildren::BTree(t) => Either::Right(t.iter()),
+            Self::Vec(v) => Either::Left(v.iter().map(|x| (&x.0, &x.1))),
+            Self::BTree(t) => Either::Right(t.iter()),
         }
     }
 }
@@ -566,7 +566,7 @@ mod btree {
 
         #[inline(always)]
         fn init(_target: &Self::QueryArg) -> Self {
-            KeyQuery
+            Self
         }
 
         #[inline]
@@ -609,8 +609,8 @@ mod btree {
         }
     }
 
-    impl UseLengthFinder<ChildTreeTrait> for ChildTreeTrait {
-        fn get_len(cache: &<ChildTreeTrait as BTreeTrait>::Cache) -> usize {
+    impl UseLengthFinder<Self> for ChildTreeTrait {
+        fn get_len(cache: &<Self as BTreeTrait>::Cache) -> usize {
             cache.len
         }
     }
@@ -1756,7 +1756,7 @@ mod snapshot {
                 peers.push(PeerID::from_le_bytes(buf));
             }
 
-            let mut tree = TreeState::new(idx, ctx.peer);
+            let mut tree = Self::new(idx, ctx.peer);
             let encoded: EncodedTree = serde_columnar::from_bytes(bytes)?;
             let fractional_indexes = PositionArena::decode(&encoded.fractional_indexes).unwrap();
             let fractional_indexes = fractional_indexes.parse_to_positions();

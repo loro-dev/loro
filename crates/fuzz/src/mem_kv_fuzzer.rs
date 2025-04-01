@@ -26,16 +26,16 @@ pub enum Action {
 impl std::fmt::Debug for Action {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Action::Add { key, value } => {
+            Self::Add { key, value } => {
                 write!(
                     f,
                     "Add{{\n\tkey: vec!{:?}, \n\tvalue: vec!{:?}\n}}",
                     key, value
                 )
             }
-            Action::Get(index) => write!(f, "Get({})", index),
-            Action::Remove(index) => write!(f, "Remove({})", index),
-            Action::Scan {
+            Self::Get(index) => write!(f, "Get({})", index),
+            Self::Remove(index) => write!(f, "Remove({})", index),
+            Self::Scan {
                 start,
                 end,
                 start_include,
@@ -45,8 +45,8 @@ impl std::fmt::Debug for Action {
                 "Scan{{\n\tstart: {:?}, \n\tend: {:?}, \n\tstart_include: {:?}, \n\tend_include: {:?}\n}}",
                 start, end, start_include, end_include
             ),
-            Action::ExportAndImport => write!(f, "ExportAndImport"),
-            Action::Flush => write!(f, "Flush"),
+            Self::ExportAndImport => write!(f, "ExportAndImport"),
+            Self::Flush => write!(f, "Flush"),
         }
     }
 }

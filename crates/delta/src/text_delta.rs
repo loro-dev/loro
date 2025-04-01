@@ -95,7 +95,7 @@ impl TextChunk {
     }
 
     pub fn try_from_str(s: &str) -> Option<Self> {
-        Some(TextChunk(ArrayString::from(s).ok()?))
+        Some(Self(ArrayString::from(s).ok()?))
     }
 
     pub fn from_long_str(s: &str) -> impl Iterator<Item = Self> + '_ {
@@ -149,14 +149,14 @@ impl Sliceable for TextChunk {
     fn _slice(&self, range: std::ops::Range<usize>) -> Self {
         let mut new = ArrayString::new();
         new.push_str(&self.0.as_str()[range]);
-        TextChunk(new)
+        Self(new)
     }
 
     fn split(&mut self, pos: usize) -> Self {
         let mut right = ArrayString::new();
         right.push_str(&self.0.as_str()[pos..]);
         self.0.truncate(pos);
-        TextChunk(right)
+        Self(right)
     }
 }
 

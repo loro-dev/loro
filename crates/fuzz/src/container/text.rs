@@ -50,7 +50,7 @@ impl TextActor {
         )
         .detach();
         let root = loro.get_text("text");
-        TextActor {
+        Self {
             loro,
             containers: vec![root],
             tracker,
@@ -90,7 +90,7 @@ impl Actionable for TextAction {
         let actor = actor.as_text_actor_mut().unwrap();
         let text = actor.containers.get(container).unwrap();
         let length = text.len_unicode();
-        let TextAction { pos, len, action } = self;
+        let Self { pos, len, action } = self;
         if matches!(action, TextActionInner::Delete | TextActionInner::Mark(_)) && length == 0 {
             *action = TextActionInner::Insert;
         }
@@ -120,7 +120,7 @@ impl Actionable for TextAction {
     fn apply(&self, actor: &mut ActionExecutor, container: usize) -> Option<Container> {
         let actor = actor.as_text_actor_mut().unwrap();
         let text = actor.containers.get(container).unwrap();
-        let TextAction { pos, len, action } = self;
+        let Self { pos, len, action } = self;
         use super::unwrap;
         match action {
             TextActionInner::Insert => {
@@ -167,7 +167,7 @@ impl FromGenericAction for TextAction {
             _ => unreachable!(),
         };
 
-        TextAction {
+        Self {
             pos: action.pos,
             len: action.length,
             action: action_inner,

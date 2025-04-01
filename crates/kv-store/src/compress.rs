@@ -11,7 +11,7 @@ pub enum CompressionType {
 
 impl CompressionType {
     pub fn is_none(&self) -> bool {
-        matches!(self, CompressionType::None)
+        matches!(self, Self::None)
     }
 }
 
@@ -20,8 +20,8 @@ impl TryFrom<u8> for CompressionType {
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
-            0 => Ok(CompressionType::None),
-            1 => Ok(CompressionType::LZ4),
+            0 => Ok(Self::None),
+            1 => Ok(Self::LZ4),
             _ => Err(LoroError::DecodeError(
                 format!("Invalid compression type: {}", value).into(),
             )),

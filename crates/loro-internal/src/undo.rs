@@ -174,7 +174,7 @@ pub enum UndoOrRedo {
 }
 
 impl UndoOrRedo {
-    fn opposite(&self) -> UndoOrRedo {
+    fn opposite(&self) -> Self {
         match self {
             Self::Undo => Self::Redo,
             Self::Redo => Self::Undo,
@@ -277,7 +277,7 @@ impl Stack {
     pub fn new() -> Self {
         let mut stack = VecDeque::new();
         stack.push_back((VecDeque::new(), Arc::new(Mutex::new(Default::default()))));
-        Stack { stack, size: 0 }
+        Self { stack, size: 0 }
     }
 
     pub fn pop(&mut self) -> Option<(StackItem, Arc<Mutex<DiffBatch>>)> {
@@ -399,7 +399,7 @@ impl Stack {
 
 impl Default for Stack {
     fn default() -> Self {
-        Stack::new()
+        Self::new()
     }
 }
 
@@ -548,7 +548,7 @@ impl UndoManager {
             true
         }));
 
-        UndoManager {
+        Self {
             peer,
             container_remap: remap_containers,
             inner,

@@ -382,7 +382,7 @@ mod insert_set {
             counter: Counter,
         ) -> Box<dyn Iterator<Item = IterCursor> + '_> {
             match self {
-                InsertSet::Small(set) => {
+                Self::Small(set) => {
                     let mut offset = 0;
                     Box::new(set.set.iter().map(move |elem| {
                         let ans = IterCursor::Insert {
@@ -398,7 +398,7 @@ mod insert_set {
                         ans
                     }))
                 }
-                InsertSet::Large(set) => {
+                Self::Large(set) => {
                     let mut offset = 0;
                     Box::new(set.tree.iter().map(move |elem| {
                         let ans = IterCursor::Insert {
@@ -425,7 +425,7 @@ mod insert_set {
             target_end_counter: i32,
         ) -> Box<dyn Iterator<Item = IterCursor> + '_> {
             match self {
-                InsertSet::Small(set) => {
+                Self::Small(set) => {
                     let mut offset = 0;
                     Box::new(set.set.iter().filter_map(move |elem| {
                         let id_span = IdSpan::new(
@@ -451,7 +451,7 @@ mod insert_set {
                         Some(ans)
                     }))
                 }
-                InsertSet::Large(set) => {
+                Self::Large(set) => {
                     // let mut offset = 0;
                     // Box::new(set.tree.iter().filter_map(move |elem| {
                     //     let id_span = IdSpan::new(
@@ -525,16 +525,16 @@ mod insert_set {
 
         fn upgrade_if_needed(&mut self) {
             match self {
-                InsertSet::Small(set) => {
+                Self::Small(set) => {
                     if set.set.len() < SMALL_SET_MAX_LEN {
                         return;
                     }
 
                     let set = std::mem::take(&mut set.set);
                     let tree_set = LargeInsertSet::init_from_small(set);
-                    *self = InsertSet::Large(tree_set);
+                    *self = Self::Large(tree_set);
                 }
-                InsertSet::Large(_) => {}
+                Self::Large(_) => {}
             }
         }
     }
@@ -643,7 +643,7 @@ mod insert_set {
 
     impl generic_btree::rle::Sliceable for Insert {
         fn _slice(&self, range: std::ops::Range<usize>) -> Self {
-            Insert {
+            Self {
                 leaf: self.leaf,
                 len: range.len() as u32,
             }
@@ -699,7 +699,7 @@ mod insert_set {
         }
     }
 
-    impl UseLengthFinder<InsertSetBTreeTrait> for InsertSetBTreeTrait {
+    impl UseLengthFinder<Self> for InsertSetBTreeTrait {
         fn get_len(cache: &i32) -> usize {
             *cache as usize
         }
@@ -736,8 +736,8 @@ mod insert_set {
             Some(self.tree.get_elem(c.leaf)?.leaf)
         }
 
-        fn init_from_small(set: SmallVec<[Insert; 1]>) -> LargeInsertSet {
-            let mut tree_set = LargeInsertSet::new();
+        fn init_from_small(set: SmallVec<[Insert; 1]>) -> Self {
+            let mut tree_set = Self::new();
             for item in set.into_iter() {
                 tree_set.tree.push(item);
             }
@@ -797,12 +797,12 @@ impl Cursor {
         }
 
         match self {
-            Cursor::Insert(set) => set.get_insert(pos),
-            Cursor::Move { to, .. } => {
+            Self::Insert(set) => set.get_insert(pos),
+            Self::Move { to, .. } => {
                 assert!(pos == 0);
                 Some(*to)
             }
-            Cursor::Delete(_) => unreachable!(),
+            Self::Delete(_) => unreachable!(),
         }
     }
 }
@@ -810,9 +810,9 @@ impl Cursor {
 impl HasLength for Cursor {
     fn rle_len(&self) -> usize {
         match self {
-            Cursor::Insert(set) => set.len(),
-            Cursor::Delete(d) => d.atom_len(),
-            Cursor::Move { .. } => 1,
+            Self::Insert(set) => set.len(),
+            Self::Delete(d) => d.atom_len(),
+            Self::Move { .. } => 1,
         }
     }
 }

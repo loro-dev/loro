@@ -29,7 +29,7 @@ pub enum LockKind {
 impl LoroLockGroup {
     pub fn new() -> Self {
         let g = Arc::new(ThreadLocal::new());
-        LoroLockGroup { g }
+        Self { g }
     }
 
     pub fn new_lock<T>(&self, value: T, kind: LockKind) -> LoroMutex<T> {

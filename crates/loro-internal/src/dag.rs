@@ -289,7 +289,7 @@ enum NodeType {
 
 impl<'a> OrdIdSpan<'a> {
     #[inline]
-    fn from_dag_node<D, F>(id: ID, get: &'a F) -> Option<OrdIdSpan<'a>>
+    fn from_dag_node<D, F>(id: ID, get: &'a F) -> Option<Self>
     where
         D: DagNode + 'a,
         F: Fn(ID) -> Option<D>,
@@ -305,7 +305,7 @@ impl<'a> OrdIdSpan<'a> {
     }
 
     #[inline]
-    fn get_min(&self) -> OrdIdSpan<'a> {
+    fn get_min(&self) -> Self {
         OrdIdSpan {
             id: self.id,
             lamport: self.lamport,

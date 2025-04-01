@@ -35,18 +35,18 @@ const MAX_LEN: usize = 1000;
 impl ActionTrait for JsonAction {
     fn normalize(&mut self) {
         match self {
-            JsonAction::InsertMap { key: _, value } => {
+            Self::InsertMap { key: _, value } => {
                 normalize_value(value);
             }
 
-            JsonAction::InsertList { index: _, value } => {
+            Self::InsertList { index: _, value } => {
                 normalize_value(value);
             }
-            JsonAction::DeleteList { index } => {
+            Self::DeleteList { index } => {
                 *index %= MAX_LEN;
             }
-            JsonAction::InsertText { .. } => {}
-            JsonAction::DeleteText { .. } => {}
+            Self::InsertText { .. } => {}
+            Self::DeleteText { .. } => {}
         }
     }
 }

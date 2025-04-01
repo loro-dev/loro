@@ -1130,7 +1130,7 @@ impl LoroDoc {
         let mut pending = VersionRange::default();
         let mut meta_arr = bytes
             .iter()
-            .map(|b| Ok((LoroDoc::decode_import_blob_meta(b, false)?, b)))
+            .map(|b| Ok((Self::decode_import_blob_meta(b, false)?, b)))
             .collect::<LoroResult<Vec<(ImportBlobMetadata, &Vec<u8>)>>>()?;
         meta_arr.sort_by(|a, b| {
             a.0.mode
@@ -1423,7 +1423,7 @@ impl LoroDoc {
                     .unwrap();
 
                 // Step 2: Create a new document and import the initial snapshot.
-                let doc = LoroDoc::new();
+                let doc = Self::new();
                 doc.import(&initial_snapshot).unwrap();
                 self.checkout(&self.shallow_since_frontiers()).unwrap();
                 assert_eq!(self.get_deep_value(), doc.get_deep_value());

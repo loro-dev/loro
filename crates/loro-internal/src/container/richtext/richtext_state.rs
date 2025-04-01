@@ -611,11 +611,11 @@ impl RichtextStateChunk {
 
     pub(crate) fn get_id_lp_span(&self) -> IdLpSpan {
         match self {
-            RichtextStateChunk::Text(t) => {
+            Self::Text(t) => {
                 let id = t.idlp();
                 IdLpSpan::new(id.peer, id.lamport, id.lamport + t.unicode_len() as Lamport)
             }
-            RichtextStateChunk::Style { style, anchor_type } => match anchor_type {
+            Self::Style { style, anchor_type } => match anchor_type {
                 AnchorType::Start => style.idlp().into(),
                 AnchorType::End => {
                     let id = style.idlp();
@@ -627,11 +627,11 @@ impl RichtextStateChunk {
 
     pub(crate) fn get_id_span(&self) -> IdSpan {
         match self {
-            RichtextStateChunk::Text(t) => {
+            Self::Text(t) => {
                 let id = t.id();
                 IdSpan::new(id.peer, id.counter, id.counter + t.unicode_len() as Counter)
             }
-            RichtextStateChunk::Style { style, anchor_type } => match anchor_type {
+            Self::Style { style, anchor_type } => match anchor_type {
                 AnchorType::Start => style.id().into(),
                 AnchorType::End => {
                     let id = style.id();
@@ -643,8 +643,8 @@ impl RichtextStateChunk {
 
     pub(crate) fn counter(&self) -> Counter {
         match self {
-            RichtextStateChunk::Text(t) => t.id().counter,
-            RichtextStateChunk::Style { style, anchor_type } => match anchor_type {
+            Self::Text(t) => t.id().counter,
+            Self::Style { style, anchor_type } => match anchor_type {
                 AnchorType::Start => style.id().counter,
                 AnchorType::End => {
                     let id = style.id();
@@ -656,8 +656,8 @@ impl RichtextStateChunk {
 
     pub fn entity_range_to_event_range(&self, range: Range<usize>) -> Range<usize> {
         match self {
-            RichtextStateChunk::Text(t) => t.entity_range_to_event_range(range),
-            RichtextStateChunk::Style { .. } => {
+            Self::Text(t) => t.entity_range_to_event_range(range),
+            Self::Style { .. } => {
                 assert_eq!(range.start, 0);
                 assert_eq!(range.end, 1);
                 0..1
@@ -667,14 +667,14 @@ impl RichtextStateChunk {
 
     pub fn len_with(&self, pos_type: PosType) -> usize {
         match self {
-            RichtextStateChunk::Text(t) => match pos_type {
+            Self::Text(t) => match pos_type {
                 PosType::Bytes => t.utf8_len() as usize,
                 PosType::Utf16 => t.utf16_len() as usize,
                 PosType::Event => t.unicode_len() as usize,
                 PosType::Entity => t.unicode_len() as usize,
                 PosType::Unicode => t.unicode_len() as usize,
             },
-            RichtextStateChunk::Style { .. } => {
+            Self::Style { .. } => {
                 if let PosType::Entity = pos_type {
                     1
                 } else {
@@ -709,14 +709,14 @@ impl Serialize for RichtextStateChunk {
         S: serde::Serializer,
     {
         match self {
-            RichtextStateChunk::Text(text) => {
+            Self::Text(text) => {
                 let mut state = serializer.serialize_struct("RichtextStateChunk", 3)?;
                 state.serialize_field("type", "Text")?;
                 state.serialize_field("unicode_len", &text.unicode_len())?;
                 state.serialize_field("text", text.as_str())?;
                 state.end()
             }
-            RichtextStateChunk::Style { style, anchor_type } => {
+            Self::Style { style, anchor_type } => {
                 let mut state = serializer.serialize_struct("RichtextStateChunk", 3)?;
                 state.serialize_field("type", "Style")?;
                 state.serialize_field("style", &style.key)?;
@@ -730,7 +730,7 @@ impl Serialize for RichtextStateChunk {
 impl RichtextStateChunk {
     pub fn try_new(s: BytesSlice, id: IdFull) -> Result<Self, Utf8Error> {
         std::str::from_utf8(&s)?;
-        Ok(RichtextStateChunk::Text(TextChunk::new(s, id)))
+        Ok(Self::Text(TextChunk::new(s, id)))
     }
 
     pub fn from_style(style: Arc<StyleOp>, anchor_type: AnchorType) -> Self {
@@ -739,7 +739,7 @@ impl RichtextStateChunk {
 
     pub fn as_str(&self) -> Option<&str> {
         match self {
-            RichtextStateChunk::Text(text) => Some(text.as_str()),
+            Self::Text(text) => Some(text.as_str()),
             _ => None,
         }
     }
@@ -748,8 +748,8 @@ impl RichtextStateChunk {
 impl HasLength for RichtextStateChunk {
     fn rle_len(&self) -> usize {
         match self {
-            RichtextStateChunk::Text(s) => s.rle_len(),
-            RichtextStateChunk::Style { .. } => 1,
+            Self::Text(s) => s.rle_len(),
+            Self::Style { .. } => 1,
         }
     }
 }
@@ -757,21 +757,21 @@ impl HasLength for RichtextStateChunk {
 impl Mergeable for RichtextStateChunk {
     fn can_merge(&self, rhs: &Self) -> bool {
         match (self, rhs) {
-            (RichtextStateChunk::Text(l), RichtextStateChunk::Text(r)) => l.can_merge(r),
+            (Self::Text(l), Self::Text(r)) => l.can_merge(r),
             _ => false,
         }
     }
 
     fn merge_right(&mut self, rhs: &Self) {
         match (self, rhs) {
-            (RichtextStateChunk::Text(l), RichtextStateChunk::Text(r)) => l.merge_right(r),
+            (Self::Text(l), Self::Text(r)) => l.merge_right(r),
             _ => unreachable!(),
         }
     }
 
     fn merge_left(&mut self, left: &Self) {
         match (self, left) {
-            (RichtextStateChunk::Text(this), RichtextStateChunk::Text(left)) => {
+            (Self::Text(this), Self::Text(left)) => {
                 this.merge_left(left)
             }
             _ => unreachable!(),
@@ -782,11 +782,11 @@ impl Mergeable for RichtextStateChunk {
 impl Sliceable for RichtextStateChunk {
     fn _slice(&self, range: Range<usize>) -> Self {
         match self {
-            RichtextStateChunk::Text(s) => RichtextStateChunk::Text(s._slice(range)),
-            RichtextStateChunk::Style { style, anchor_type } => {
+            Self::Text(s) => Self::Text(s._slice(range)),
+            Self::Style { style, anchor_type } => {
                 assert_eq!(range.start, 0);
                 assert_eq!(range.end, 1);
-                RichtextStateChunk::Style {
+                Self::Style {
                     style: style.clone(),
                     anchor_type: *anchor_type,
                 }
@@ -796,8 +796,8 @@ impl Sliceable for RichtextStateChunk {
 
     fn split(&mut self, pos: usize) -> Self {
         match self {
-            RichtextStateChunk::Text(s) => RichtextStateChunk::Text(s.split(pos)),
-            RichtextStateChunk::Style { .. } => {
+            Self::Text(s) => Self::Text(s.split(pos)),
+            Self::Style { .. } => {
                 unreachable!()
             }
         }

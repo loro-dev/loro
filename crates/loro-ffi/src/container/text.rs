@@ -32,10 +32,10 @@ impl LoroText {
     }
 
     /// If a detached container is attached, this method will return its corresponding attached handler.
-    pub fn get_attached(&self) -> Option<Arc<LoroText>> {
+    pub fn get_attached(&self) -> Option<Arc<Self>> {
         self.inner
             .get_attached()
-            .map(|x| Arc::new(LoroText { inner: x }))
+            .map(|x| Arc::new(Self { inner: x }))
     }
 
     /// Get the [ContainerID]  of the text container.
