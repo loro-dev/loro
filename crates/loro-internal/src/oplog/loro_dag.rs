@@ -2,6 +2,7 @@ use crate::change::{Change, Lamport};
 use crate::dag::{Dag, DagNode};
 use crate::id::{Counter, ID};
 use crate::span::{HasId, HasLamport};
+use crate::sync::Mutex;
 use crate::version::{shrink_frontiers, Frontiers, ImVersionVector, VersionVector};
 use fxhash::FxHashSet;
 use loro_common::{HasCounter, HasCounterSpan, HasIdSpan, HasLamportSpan, PeerID};
@@ -12,7 +13,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
 use std::fmt::Display;
 use std::ops::{ControlFlow, Deref};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tracing::{instrument, trace};
 
 use super::change_store::BatchDecodeInfo;

@@ -1,7 +1,6 @@
-use std::sync::{atomic::AtomicBool, Arc, Mutex};
-
 use fxhash::FxHashMap;
 use loro_common::{ContainerID, ContainerType, LoroError, LoroResult, LoroValue, PeerID, ID};
+use loro_internal::sync::{AtomicBool, Mutex};
 use loro_internal::{
     delta::ResolvedMapValue,
     encoding::ImportStatus,
@@ -14,6 +13,7 @@ use loro_internal::{
     TreeParentId,
 };
 use serde_json::json;
+use std::sync::Arc;
 
 #[test]
 fn issue_502() -> LoroResult<()> {

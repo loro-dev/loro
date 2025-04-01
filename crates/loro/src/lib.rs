@@ -12,6 +12,7 @@ use loro_internal::cursor::Side;
 pub use loro_internal::encoding::ImportStatus;
 use loro_internal::handler::{HandlerTrait, ValueOrHandler};
 pub use loro_internal::loro::ChangeTravelError;
+pub use loro_internal::sync;
 pub use loro_internal::undo::{OnPop, UndoItemMeta, UndoOrRedo};
 use loro_internal::version::shrink_frontiers;
 pub use loro_internal::version::ImVersionVector;

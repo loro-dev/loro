@@ -9,11 +9,9 @@ use crate::{
 use fxhash::FxHashMap;
 use loro_common::{ContainerID, ID};
 use smallvec::SmallVec;
-use std::{
-    collections::VecDeque,
-    sync::{Arc, Mutex},
-};
+use std::{collections::VecDeque, sync::Arc};
 
+use crate::sync::Mutex;
 /// The callback of the local update.
 pub type LocalUpdateCallback = Box<dyn Fn(&Vec<u8>) -> bool + Send + Sync + 'static>;
 /// The callback of the peer id change. The second argument is the next counter for the peer.

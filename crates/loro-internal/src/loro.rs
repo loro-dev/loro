@@ -1,6 +1,7 @@
 pub use crate::encoding::ExportMode;
 use crate::lock::LoroMutexGuard;
 pub use crate::state::analyzer::{ContainerAnalysisInfo, DocAnalysis};
+use crate::sync::AtomicBool;
 pub(crate) use crate::LoroDocInner;
 use crate::{
     arena::SharedArena,
@@ -52,10 +53,7 @@ use std::{
     collections::{hash_map::Entry, BinaryHeap},
     ops::ControlFlow,
     sync::{
-        atomic::{
-            AtomicBool,
-            Ordering::{Acquire, Release},
-        },
+        atomic::Ordering::{Acquire, Release},
         Arc,
     },
 };
@@ -491,10 +489,14 @@ impl LoroDoc {
         origin: InternalString,
     ) -> Result<ImportStatus, LoroError> {
         let (options, txn) = self.commit_then_stop();
+        info!("committed_then_stop");
         assert!(txn.is_none());
         let ans = self._import_with(bytes, origin);
+        info!("imported");
         drop(txn);
+        info!("dropped txn");
         self.renew_txn_if_auto_commit(options);
+        info!("renewed");
         ans
     }
 
@@ -561,7 +563,9 @@ impl LoroDoc {
             }
         };
 
+        info!("emitting events");
         self.emit_events();
+
         result
     }
 
@@ -578,6 +582,7 @@ impl LoroDoc {
             let result = f(&mut oplog);
             if &old_vv != oplog.vv() {
                 let mut diff = DiffCalculator::new(false);
+                info!("diff calculator created");
                 let (diff, diff_mode) = diff.calc_diff_internal(
                     &oplog,
                     &old_vv,
@@ -586,6 +591,7 @@ impl LoroDoc {
                     oplog.dag.get_frontiers(),
                     None,
                 );
+                info!("diff calculated");
                 let mut state = self.state.lock().unwrap();
                 state.apply_diff(
                     InternalDocDiff {
@@ -596,6 +602,7 @@ impl LoroDoc {
                     },
                     diff_mode,
                 );
+                info!("state applied");
             }
             result
         } else {
@@ -1290,7 +1297,6 @@ impl LoroDoc {
 
         let oplog = self.oplog.lock().unwrap();
         if oplog.dag.is_before_shallow_root(frontiers) {
-            drop(oplog);
             return Err(LoroError::SwitchToVersionBeforeShallowRoot);
         }
 
@@ -1301,7 +1307,6 @@ impl LoroDoc {
             frontiers.clone()
         };
         if from_frontiers == frontiers {
-            drop(oplog);
             return Ok(());
         }
 
@@ -1309,16 +1314,12 @@ impl LoroDoc {
         let mut calc = self.diff_calculator.lock().unwrap();
         for i in frontiers.iter() {
             if !oplog.dag.contains(i) {
-                drop(oplog);
-                drop(state);
                 return Err(LoroError::FrontiersNotFound(i));
             }
         }
 
         let before = &oplog.dag.frontiers_to_vv(&state.frontiers).unwrap();
         let Some(after) = &oplog.dag.frontiers_to_vv(&frontiers) else {
-            drop(oplog);
-            drop(state);
             return Err(LoroError::NotFoundError(
                 format!("Cannot find the specified version {:?}", frontiers).into_boxed_str(),
             ));
@@ -1394,7 +1395,8 @@ impl LoroDoc {
     pub fn check_state_diff_calc_consistency_slow(&self) {
         // #[cfg(any(test, debug_assertions, feature = "test_utils"))]
         {
-            static IS_CHECKING: AtomicBool = AtomicBool::new(false);
+            static IS_CHECKING: std::sync::atomic::AtomicBool =
+                std::sync::atomic::AtomicBool::new(false);
             if IS_CHECKING.load(std::sync::atomic::Ordering::Acquire) {
                 return;
             }

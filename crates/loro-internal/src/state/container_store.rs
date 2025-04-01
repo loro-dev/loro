@@ -1,4 +1,5 @@
 use super::{ContainerCreationContext, State};
+use crate::sync::{AtomicU64, Mutex};
 use crate::{
     arena::SharedArena, configure::Configure, container::idx::ContainerIdx,
     utils::kv_wrapper::KvWrapper, version::Frontiers,
@@ -6,7 +7,7 @@ use crate::{
 use bytes::Bytes;
 use inner_store::InnerStore;
 use loro_common::{ContainerID, LoroResult, LoroValue};
-use std::sync::{atomic::AtomicU64, Arc, Mutex};
+use std::sync::Arc;
 
 pub(crate) use container_wrapper::ContainerWrapper;
 

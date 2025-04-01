@@ -2,9 +2,10 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     marker::PhantomData,
     ops::Bound,
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 
+use crate::sync::Mutex;
 use either::Either;
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;

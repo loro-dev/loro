@@ -2,12 +2,12 @@ mod change_store;
 pub(crate) mod loro_dag;
 mod pending_changes;
 
+use crate::sync::Mutex;
 use bytes::Bytes;
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::rc::Rc;
-use std::sync::Mutex;
 use tracing::{debug, trace, trace_span};
 
 use self::change_store::iter::MergedChangeIter;

@@ -1,6 +1,6 @@
-use std::sync::{Arc, RwLock};
-
 use loro::StyleConfig;
+use std::sync::Arc;
+use std::sync::RwLock;
 
 #[derive(Default)]
 pub struct Configure(loro::Configure);

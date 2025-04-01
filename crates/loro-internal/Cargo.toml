@@ -55,6 +55,12 @@ ensure-cov = { workspace = true }
 pretty_assertions = "1.4.1"
 thread_local = "1.1.8"
 
+[target.'cfg(loom)'.dependencies]
+loom = { version= "0.7", features = ["checkpoint"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
+
 [target.'cfg(target_arch = "wasm32")'.dependencies.getrandom]
 version = "0.2.15"
 features = ["js"]

@@ -148,7 +148,7 @@ impl Actionable for TextAction {
             TextActionInner::Delete => ["delete".into(), format!("{} ~ {}", pos, pos + len).into()],
             TextActionInner::Mark(i) => [
                 format!("mark {} ", STYLES_NAME[i]).into(),
-                format!("{} ~ {}", pos, pos + len).into(),
+                format!("{} with-len {}", pos, len).into(),
             ],
         }
     }

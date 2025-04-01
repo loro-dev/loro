@@ -1,11 +1,7 @@
-use std::{
-    collections::BTreeSet,
-    ops::Bound,
-    sync::{Arc, Mutex},
-};
-
+use crate::sync::Mutex;
 use bytes::Bytes;
 use loro_kv_store::{mem_store::MemKvConfig, MemKvStore};
+use std::{collections::BTreeSet, ops::Bound, sync::Arc};
 
 use crate::kv_store::KvStore;
 
