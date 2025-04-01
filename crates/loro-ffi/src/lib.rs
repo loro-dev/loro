@@ -68,9 +68,7 @@ impl ValueOrContainer for loro::ValueOrContainer {
     }
 
     fn as_value(&self) -> Option<LoroValue> {
-        Self::as_value(self)
-            .cloned()
-            .map(LoroValue::from)
+        Self::as_value(self).cloned().map(LoroValue::from)
     }
 
     // TODO: pass Container to Swift
@@ -89,18 +87,14 @@ impl ValueOrContainer for loro::ValueOrContainer {
 
     fn as_loro_text(&self) -> Option<Arc<LoroText>> {
         match self {
-            Self::Container(Container::Text(c)) => {
-                Some(Arc::new(LoroText { inner: c.clone() }))
-            }
+            Self::Container(Container::Text(c)) => Some(Arc::new(LoroText { inner: c.clone() })),
             _ => None,
         }
     }
 
     fn as_loro_map(&self) -> Option<Arc<LoroMap>> {
         match self {
-            Self::Container(Container::Map(c)) => {
-                Some(Arc::new(LoroMap { inner: c.clone() }))
-            }
+            Self::Container(Container::Map(c)) => Some(Arc::new(LoroMap { inner: c.clone() })),
             _ => None,
         }
     }
@@ -116,9 +110,7 @@ impl ValueOrContainer for loro::ValueOrContainer {
 
     fn as_loro_tree(&self) -> Option<Arc<LoroTree>> {
         match self {
-            Self::Container(Container::Tree(c)) => {
-                Some(Arc::new(LoroTree { inner: c.clone() }))
-            }
+            Self::Container(Container::Tree(c)) => Some(Arc::new(LoroTree { inner: c.clone() })),
             _ => None,
         }
     }

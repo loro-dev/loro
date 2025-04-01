@@ -58,9 +58,7 @@ impl TreeOp {
 
     pub(crate) fn fractional_index(&self) -> Option<FractionalIndex> {
         match self {
-            Self::Create { position, .. } | Self::Move { position, .. } => {
-                Some(position.clone())
-            }
+            Self::Create { position, .. } | Self::Move { position, .. } => Some(position.clone()),
             Self::Delete { .. } => None,
         }
     }

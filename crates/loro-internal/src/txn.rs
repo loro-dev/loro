@@ -292,10 +292,9 @@ impl generic_btree::rle::Mergeable for EventHint {
                 *len += *r_len;
                 *event_len += *r_event_len;
             }
-            (
-                Self::InsertList { len, pos: _ },
-                Self::InsertList { len: r_len, pos: _ },
-            ) => *len += *r_len,
+            (Self::InsertList { len, pos: _ }, Self::InsertList { len: r_len, pos: _ }) => {
+                *len += *r_len
+            }
             (Self::DeleteList(l), Self::DeleteList(r)) => l.merge(r, &()),
             (
                 Self::DeleteText { span, unicode_len },

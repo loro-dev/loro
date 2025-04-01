@@ -304,9 +304,7 @@ impl Frontiers {
             return;
         }
 
-        let Self::Map(map) = self else {
-            unreachable!()
-        };
+        let Self::Map(map) = self else { unreachable!() };
         let map = Arc::make_mut(&mut map.0);
         for id in other.iter() {
             map.entry(id.peer)

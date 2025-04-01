@@ -44,7 +44,8 @@ impl ListActor {
                 let mut list = list.lock().unwrap();
                 list.apply_diff(event);
             }),
-        ).detach();
+        )
+        .detach();
 
         let root = loro.get_list("list");
         Self {

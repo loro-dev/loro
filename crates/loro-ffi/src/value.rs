@@ -52,9 +52,7 @@ impl From<LoroValue> for loro::LoroValue {
             LoroValue::I64 { value } => Self::I64(value),
             LoroValue::Binary { value } => Self::Binary(value.into()),
             LoroValue::String { value } => Self::String(value.into()),
-            LoroValue::List { value } => {
-                Self::List(value.into_iter().map(Into::into).collect())
-            }
+            LoroValue::List { value } => Self::List(value.into_iter().map(Into::into).collect()),
             LoroValue::Map { value } => {
                 Self::Map(value.into_iter().map(|(k, v)| (k, v.into())).collect())
             }
@@ -72,9 +70,7 @@ impl From<&LoroValue> for loro::LoroValue {
             LoroValue::I64 { value } => Self::I64(*value),
             LoroValue::Binary { value } => Self::Binary(value.clone().into()),
             LoroValue::String { value } => Self::String(value.clone().into()),
-            LoroValue::List { value } => {
-                Self::List(value.iter().map(Into::into).collect())
-            }
+            LoroValue::List { value } => Self::List(value.iter().map(Into::into).collect()),
             LoroValue::Map { value } => {
                 Self::Map(value.iter().map(|(k, v)| (k.clone(), v.into())).collect())
             }

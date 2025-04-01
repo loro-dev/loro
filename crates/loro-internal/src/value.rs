@@ -555,12 +555,8 @@ pub mod wasm {
                         position,
                     } => {
                         js_sys::Reflect::set(&obj, &"action".into(), &"create".into()).unwrap();
-                        js_sys::Reflect::set(
-                            &obj,
-                            &"parent".into(),
-                            &Self::from(parent.tree_id()),
-                        )
-                        .unwrap();
+                        js_sys::Reflect::set(&obj, &"parent".into(), &Self::from(parent.tree_id()))
+                            .unwrap();
                         js_sys::Reflect::set(&obj, &"index".into(), &(*index).into()).unwrap();
                         js_sys::Reflect::set(
                             &obj,
@@ -591,12 +587,8 @@ pub mod wasm {
                         old_index,
                     } => {
                         js_sys::Reflect::set(&obj, &"action".into(), &"move".into()).unwrap();
-                        js_sys::Reflect::set(
-                            &obj,
-                            &"parent".into(),
-                            &Self::from(parent.tree_id()),
-                        )
-                        .unwrap();
+                        js_sys::Reflect::set(&obj, &"parent".into(), &Self::from(parent.tree_id()))
+                            .unwrap();
                         js_sys::Reflect::set(&obj, &"index".into(), &(*index).into()).unwrap();
                         js_sys::Reflect::set(
                             &obj,

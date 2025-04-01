@@ -699,9 +699,7 @@ impl Serialize for LoroValue {
             // binary type
             match self {
                 Self::Null => serializer.serialize_unit_variant("LoroValue", 0, "Null"),
-                Self::Bool(b) => {
-                    serializer.serialize_newtype_variant("LoroValue", 1, "Bool", b)
-                }
+                Self::Bool(b) => serializer.serialize_newtype_variant("LoroValue", 1, "Bool", b),
                 Self::Double(d) => {
                     serializer.serialize_newtype_variant("LoroValue", 2, "Double", d)
                 }
@@ -710,12 +708,8 @@ impl Serialize for LoroValue {
                     serializer.serialize_newtype_variant("LoroValue", 4, "String", &**s)
                 }
 
-                Self::List(l) => {
-                    serializer.serialize_newtype_variant("LoroValue", 5, "List", &**l)
-                }
-                Self::Map(m) => {
-                    serializer.serialize_newtype_variant("LoroValue", 6, "Map", &**m)
-                }
+                Self::List(l) => serializer.serialize_newtype_variant("LoroValue", 5, "List", &**l),
+                Self::Map(m) => serializer.serialize_newtype_variant("LoroValue", 6, "Map", &**m),
                 Self::Container(id) => {
                     serializer.serialize_newtype_variant("LoroValue", 7, "Container", id)
                 }
@@ -937,14 +931,10 @@ mod serde_json_impl {
                     }
                 }
                 Value::String(s) => Self::String(s.into()),
-                Value::Array(arr) => {
-                    Self::List(arr.into_iter().map(Self::from).collect())
+                Value::Array(arr) => Self::List(arr.into_iter().map(Self::from).collect()),
+                Value::Object(obj) => {
+                    Self::Map(obj.into_iter().map(|(k, v)| (k, Self::from(v))).collect())
                 }
-                Value::Object(obj) => Self::Map(
-                    obj.into_iter()
-                        .map(|(k, v)| (k, Self::from(v)))
-                        .collect(),
-                ),
             }
         }
     }

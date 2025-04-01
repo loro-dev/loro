@@ -371,9 +371,7 @@ impl ContainerTracker {
                     }
                     Index::Seq(idx) => {
                         value = match value {
-                            Self::List(l) => {
-                                l.get_mut(*idx).unwrap().as_container_mut().unwrap()
-                            }
+                            Self::List(l) => l.get_mut(*idx).unwrap().as_container_mut().unwrap(),
                             Self::MovableList(l) => {
                                 let item = l.get_mut(*idx).unwrap();
 

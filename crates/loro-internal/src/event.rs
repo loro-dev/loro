@@ -200,12 +200,8 @@ impl TryFrom<&str> for Index {
 impl DiffVariant {
     pub fn compose(self, other: Self) -> Result<Self, Self> {
         match (self, other) {
-            (Self::Internal(a), Self::Internal(b)) => {
-                Ok(Self::Internal(a.compose(b)?))
-            }
-            (Self::External(a), Self::External(b)) => {
-                Ok(Self::External(a.compose(b)?))
-            }
+            (Self::Internal(a), Self::Internal(b)) => Ok(Self::Internal(a.compose(b)?)),
+            (Self::External(a), Self::External(b)) => Ok(Self::External(a.compose(b)?)),
             (a, _) => Err(a),
         }
     }
@@ -367,9 +363,7 @@ impl InternalDiff {
     pub(crate) fn compose(self, diff: Self) -> Result<Self, Self> {
         // PERF: avoid clone
         match (self, diff) {
-            (Self::ListRaw(a), Self::ListRaw(b)) => {
-                Ok(Self::ListRaw(a.compose(b)))
-            }
+            (Self::ListRaw(a), Self::ListRaw(b)) => Ok(Self::ListRaw(a.compose(b))),
             (Self::RichtextRaw(a), Self::RichtextRaw(b)) => {
                 let mut ans = a.clone();
                 ans.compose(&b);

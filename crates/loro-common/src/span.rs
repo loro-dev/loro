@@ -524,14 +524,8 @@ mod wasm {
     impl From<CounterSpan> for JsValue {
         fn from(value: CounterSpan) -> Self {
             let obj = Object::new();
-            js_sys::Reflect::set(
-                &obj,
-                &Self::from_str("start"),
-                &Self::from(value.start),
-            )
-            .unwrap();
-            js_sys::Reflect::set(&obj, &Self::from_str("end"), &Self::from(value.end))
-                .unwrap();
+            js_sys::Reflect::set(&obj, &Self::from_str("start"), &Self::from(value.start)).unwrap();
+            js_sys::Reflect::set(&obj, &Self::from_str("end"), &Self::from(value.end)).unwrap();
             obj.into()
         }
     }

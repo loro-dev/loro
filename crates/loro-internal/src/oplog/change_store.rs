@@ -1493,9 +1493,7 @@ impl std::fmt::Debug for ChangesBlockContent {
                 .debug_tuple("ChangesBlockContent::Changes")
                 .field(changes)
                 .finish(),
-            Self::Bytes(_bytes) => {
-                f.debug_tuple("ChangesBlockContent::Bytes").finish()
-            }
+            Self::Bytes(_bytes) => f.debug_tuple("ChangesBlockContent::Bytes").finish(),
             Self::Both(changes, _bytes) => f
                 .debug_tuple("ChangesBlockContent::Both")
                 .field(changes)

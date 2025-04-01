@@ -65,9 +65,7 @@ impl PartialEq for JSONPathToken {
             (Self::RecursiveDescend, Self::RecursiveDescend) => true,
             (Self::Wildcard, Self::Wildcard) => true,
             (Self::Index(a), Self::Index(b)) => a == b,
-            (Self::Slice(a1, a2, a3), Self::Slice(b1, b2, b3)) => {
-                a1 == b1 && a2 == b2 && a3 == b3
-            }
+            (Self::Slice(a1, a2, a3), Self::Slice(b1, b2, b3)) => a1 == b1 && a2 == b2 && a3 == b3,
             (Self::Filter(_), Self::Filter(_)) => {
                 // We can't compare functions for equality, so we'll consider all filters unequal
                 false

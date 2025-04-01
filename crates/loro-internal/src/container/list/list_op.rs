@@ -527,9 +527,7 @@ impl Mergable for InnerListOp {
                     ..
                 },
             ) => pos + slice.content_len() == *other_pos && slice.is_mergable(other_slice, &()),
-            (Self::Delete(span), Self::Delete(other_span)) => {
-                span.is_mergable(other_span, &())
-            }
+            (Self::Delete(span), Self::Delete(other_span)) => span.is_mergable(other_span, &()),
             (
                 Self::InsertText {
                     unicode_start,
@@ -565,9 +563,7 @@ impl Mergable for InnerListOp {
             ) => {
                 slice.merge(other_slice, &());
             }
-            (Self::Delete(span), Self::Delete(other_span)) => {
-                span.merge(other_span, &())
-            }
+            (Self::Delete(span), Self::Delete(other_span)) => span.merge(other_span, &()),
             (
                 Self::InsertText {
                     slice,

@@ -28,19 +28,11 @@ impl FractionalIndex {
         Self(Arc::new(bytes))
     }
 
-    pub fn new_before_jitter<R: Rng>(
-        Self(bytes): &Self,
-        rng: &mut R,
-        jitter: u8,
-    ) -> Self {
+    pub fn new_before_jitter<R: Rng>(Self(bytes): &Self, rng: &mut R, jitter: u8) -> Self {
         Self::jitter(new_before(bytes), rng, jitter)
     }
 
-    pub fn new_after_jitter<R: Rng>(
-        Self(bytes): &Self,
-        rng: &mut R,
-        jitter: u8,
-    ) -> Self {
+    pub fn new_after_jitter<R: Rng>(Self(bytes): &Self, rng: &mut R, jitter: u8) -> Self {
         Self::jitter(new_after(bytes), rng, jitter)
     }
 

@@ -771,9 +771,7 @@ impl Mergeable for RichtextStateChunk {
 
     fn merge_left(&mut self, left: &Self) {
         match (self, left) {
-            (Self::Text(this), Self::Text(left)) => {
-                this.merge_left(left)
-            }
+            (Self::Text(this), Self::Text(left)) => this.merge_left(left),
             _ => unreachable!(),
         }
     }

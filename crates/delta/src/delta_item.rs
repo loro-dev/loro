@@ -53,9 +53,7 @@ impl<V: DeltaValue, Attr> HasLength for DeltaItem<V, Attr> {
 impl<V: Mergeable, Attr: PartialEq> Mergeable for DeltaItem<V, Attr> {
     fn can_merge(&self, rhs: &Self) -> bool {
         match (self, rhs) {
-            (Self::Retain { attr: attr1, .. }, Self::Retain { attr: attr2, .. }) => {
-                attr1 == attr2
-            }
+            (Self::Retain { attr: attr1, .. }, Self::Retain { attr: attr2, .. }) => attr1 == attr2,
             (
                 Self::Replace {
                     value: value1,
@@ -74,9 +72,7 @@ impl<V: Mergeable, Attr: PartialEq> Mergeable for DeltaItem<V, Attr> {
 
     fn merge_right(&mut self, rhs: &Self) {
         match (self, rhs) {
-            (Self::Retain { len: len1, .. }, Self::Retain { len: len2, .. }) => {
-                *len1 += len2
-            }
+            (Self::Retain { len: len1, .. }, Self::Retain { len: len2, .. }) => *len1 += len2,
             (
                 Self::Replace {
                     value: value1,
@@ -98,9 +94,7 @@ impl<V: Mergeable, Attr: PartialEq> Mergeable for DeltaItem<V, Attr> {
 
     fn merge_left(&mut self, left: &Self) {
         match (self, left) {
-            (Self::Retain { len: len1, .. }, Self::Retain { len: len2, .. }) => {
-                *len1 += len2
-            }
+            (Self::Retain { len: len1, .. }, Self::Retain { len: len2, .. }) => *len1 += len2,
             (
                 Self::Replace {
                     value: value1,

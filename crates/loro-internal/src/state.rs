@@ -339,9 +339,7 @@ impl State {
                 Self::MovableListState(movable_list_state.fork(config))
             }
             Self::MapState(map_state) => Self::MapState(map_state.fork(config)),
-            Self::RichtextState(richtext_state) => {
-                Self::RichtextState(richtext_state.fork(config))
-            }
+            Self::RichtextState(richtext_state) => Self::RichtextState(richtext_state.fork(config)),
             Self::TreeState(tree_state) => Self::TreeState(tree_state.fork(config)),
             #[cfg(feature = "counter")]
             Self::CounterState(counter_state) => Self::CounterState(counter_state.fork(config)),

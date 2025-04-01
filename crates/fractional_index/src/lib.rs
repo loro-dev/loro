@@ -140,10 +140,7 @@ impl FractionalIndex {
         Self::from_vec_unterminated(new_after(bytes))
     }
 
-    pub fn new_between(
-        Self(left): &Self,
-        Self(right): &Self,
-    ) -> Option<Self> {
+    pub fn new_between(Self(left): &Self, Self(right): &Self) -> Option<Self> {
         new_between(left, right, 1).map(Self::from_vec_unterminated)
     }
 

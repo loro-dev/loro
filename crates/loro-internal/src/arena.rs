@@ -156,11 +156,7 @@ impl SharedArena {
         if id.is_root() {
             self.inner.root_c_idx.lock().unwrap().push(idx);
             self.inner.parents.lock().unwrap().insert(idx, None);
-            self.inner
-                .depth
-                .lock()
-                .unwrap()
-                .push(NonZeroU16::new(1));
+            self.inner.depth.lock().unwrap().push(NonZeroU16::new(1));
         } else {
             self.inner.depth.lock().unwrap().push(None);
         }
@@ -330,12 +326,7 @@ impl SharedArena {
 
     #[inline]
     pub fn with_text_slice(&self, range: Range<usize>, mut f: impl FnMut(&str)) {
-        f(self
-            .inner
-            .str
-            .lock()
-            .unwrap()
-            .slice_str_by_unicode(range))
+        f(self.inner.str.lock().unwrap().slice_str_by_unicode(range))
     }
 
     #[inline]
@@ -361,8 +352,7 @@ impl SharedArena {
     }
 
     pub fn can_import_snapshot(&self) -> bool {
-        self.inner.str.lock().unwrap().is_empty()
-            && self.inner.values.lock().unwrap().is_empty()
+        self.inner.str.lock().unwrap().is_empty() && self.inner.values.lock().unwrap().is_empty()
     }
 
     fn inner_convert_op(

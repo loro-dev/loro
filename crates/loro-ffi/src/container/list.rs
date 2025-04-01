@@ -110,11 +110,7 @@ impl LoroList {
     //     Ok(())
     // }
     #[inline]
-    pub fn insert_list_container(
-        &self,
-        pos: u32,
-        child: Arc<Self>,
-    ) -> LoroResult<Arc<Self>> {
+    pub fn insert_list_container(&self, pos: u32, child: Arc<Self>) -> LoroResult<Arc<Self>> {
         let c = self
             .inner
             .insert_container(pos as usize, child.as_ref().clone().inner)?;

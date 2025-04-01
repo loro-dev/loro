@@ -196,11 +196,7 @@ impl LoroMovableList {
     }
 
     #[inline]
-    pub fn set_movable_list_container(
-        &self,
-        pos: u32,
-        child: Arc<Self>,
-    ) -> LoroResult<Arc<Self>> {
+    pub fn set_movable_list_container(&self, pos: u32, child: Arc<Self>) -> LoroResult<Arc<Self>> {
         let c = self
             .inner
             .set_container(pos as usize, child.as_ref().clone().inner)?;

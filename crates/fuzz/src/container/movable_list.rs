@@ -183,12 +183,8 @@ impl Actionable for MovableListAction {
             Self::Delete { pos, len } => {
                 ["delete".into(), format!("{} ~ {}", pos, pos + len).into()]
             }
-            Self::Move { from, to } => {
-                ["move".into(), format!("{} -> {}", from, to).into()]
-            }
-            Self::Set { pos, value } => {
-                [format!("set {}", pos).into(), value.to_string().into()]
-            }
+            Self::Move { from, to } => ["move".into(), format!("{} -> {}", from, to).into()],
+            Self::Set { pos, value } => [format!("set {}", pos).into(), value.to_string().into()],
         }
     }
 

@@ -209,10 +209,7 @@ impl EncodeMode {
     }
 
     pub fn is_snapshot(self) -> bool {
-        matches!(
-            self,
-            Self::OutdatedSnapshot | Self::FastSnapshot
-        )
+        matches!(self, Self::OutdatedSnapshot | Self::FastSnapshot)
     }
 }
 
@@ -555,9 +552,7 @@ impl EncodedBlobMode {
     pub fn is_snapshot(&self) -> bool {
         matches!(
             self,
-            Self::Snapshot
-                | Self::ShallowSnapshot
-                | Self::OutdatedSnapshot
+            Self::Snapshot | Self::ShallowSnapshot | Self::OutdatedSnapshot
         )
     }
 }

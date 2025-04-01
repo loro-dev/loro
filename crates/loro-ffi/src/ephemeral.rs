@@ -88,19 +88,15 @@ impl EphemeralStore {
     }
 
     pub fn subscribe(&self, listener: Arc<dyn EphemeralSubscriber>) -> Arc<Subscription> {
-        let s = self
-            .0
-            .lock()
-            .unwrap()
-            .subscribe(Box::new(move |update| {
-                listener.on_ephemeral_event(EphemeralStoreEvent {
-                    by: update.by,
-                    added: update.added.clone(),
-                    removed: update.removed.clone(),
-                    updated: update.updated.clone(),
-                });
-                true
-            }));
+        let s = self.0.lock().unwrap().subscribe(Box::new(move |update| {
+            listener.on_ephemeral_event(EphemeralStoreEvent {
+                by: update.by,
+                added: update.added.clone(),
+                removed: update.removed.clone(),
+                updated: update.updated.clone(),
+            });
+            true
+        }));
         Arc::new(Subscription(Mutex::new(Some(s))))
     }
 }

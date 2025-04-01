@@ -80,11 +80,7 @@ impl LoroMap {
         Ok(Arc::new(LoroText { inner: c }))
     }
 
-    pub fn get_or_create_map_container(
-        &self,
-        key: &str,
-        map: Arc<Self>,
-    ) -> LoroResult<Arc<Self>> {
+    pub fn get_or_create_map_container(&self, key: &str, map: Arc<Self>) -> LoroResult<Arc<Self>> {
         let c = self
             .inner
             .get_or_create_container(key, map.as_ref().clone().inner)?;
