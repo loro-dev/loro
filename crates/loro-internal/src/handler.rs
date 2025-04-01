@@ -4191,14 +4191,11 @@ mod test {
 
     #[test]
     fn richtext_handler_mark() {
-        let loro = LoroDoc::new();
-        let mut txn = loro.txn().unwrap();
+        let loro = LoroDoc::new_auto_commit();
         let handler = loro.get_text("richtext");
-        handler.insert_with_txn(&mut txn, 0, "hello world").unwrap();
-        handler
-            .mark_with_txn(&mut txn, 0, 5, "bold", true.into(), false)
-            .unwrap();
-        txn.commit().unwrap();
+        handler.insert(0, "hello world").unwrap();
+        handler.mark(0, 5, "bold", true.into()).unwrap();
+        loro.commit_then_renew();
 
         // assert has bold
         let value = handler.get_richtext_value();
@@ -4207,7 +4204,7 @@ mod test {
         assert_eq!(meta.len(), 1);
         meta.get("bold").unwrap();
 
-        let loro2 = LoroDoc::new();
+        let loro2 = LoroDoc::new_auto_commit();
         loro2
             .import(&loro.export_from(&Default::default()))
             .unwrap();
@@ -4223,10 +4220,7 @@ mod test {
 
         // insert after bold should be bold
         {
-            loro2
-                .with_txn(|txn| handler2.insert_with_txn(txn, 5, " new"))
-                .unwrap();
-
+            handler2.insert(5, " new").unwrap();
             let value = handler2.get_richtext_value();
             assert_eq!(
                 value.to_json_value(),
@@ -4263,31 +4257,15 @@ mod test {
 
     #[test]
     fn tree_meta() {
-        let loro = LoroDoc::new();
+        let loro = LoroDoc::new_auto_commit();
         loro.set_peer_id(1).unwrap();
         let tree = loro.get_tree("root");
-        let id = loro
-            .with_txn(|txn| {
-                tree.create_with_txn(
-                    txn,
-                    TreeParentId::Root,
-                    0,
-                    crate::state::FiIfNotConfigured::UseJitterZero,
-                )
-            })
-            .unwrap();
-        loro.with_txn(|txn| {
-            let meta = tree.get_meta(id)?;
-            meta.insert_with_txn(txn, "a", 123.into())
-        })
-        .unwrap();
-        let meta = loro
-            .with_txn(|_| {
-                let meta = tree.get_meta(id)?;
-                Ok(meta.get("a").unwrap())
-            })
-            .unwrap();
-        assert_eq!(meta, 123.into());
+        let id = tree.create(TreeParentId::Root).unwrap();
+        let meta = tree.get_meta(id).unwrap();
+        meta.insert("a", 123).unwrap();
+        loro.commit_then_renew();
+        let meta = tree.get_meta(id).unwrap();
+        assert_eq!(meta.get("a").unwrap(), 123.into());
         assert_eq!(
             r#"[{"parent":null,"meta":{"a":123},"id":"0@1","index":0,"children":[],"fractional_index":"80"}]"#,
             tree.get_deep_value().to_json()
@@ -4300,31 +4278,18 @@ mod test {
     #[test]
     fn tree_meta_event() {
         use std::sync::Arc;
-        let loro = LoroDoc::new();
+        let loro = LoroDoc::new_auto_commit();
         let tree = loro.get_tree("root");
         let text = loro.get_text("text");
-        loro.with_txn(|txn| {
-            let id = tree.create_with_txn(
-                txn,
-                TreeParentId::Root,
-                0,
-                crate::state::FiIfNotConfigured::UseJitterZero,
-            )?;
-            let meta = tree.get_meta(id)?;
-            meta.insert_with_txn(txn, "a", 1.into())?;
-            text.insert_with_txn(txn, 0, "abc")?;
-            let _id2 = tree.create_with_txn(
-                txn,
-                TreeParentId::Root,
-                0,
-                crate::state::FiIfNotConfigured::UseJitterZero,
-            )?;
-            meta.insert_with_txn(txn, "b", 2.into())?;
-            Ok(id)
-        })
-        .unwrap();
 
-        let loro2 = LoroDoc::new();
+        let id = tree.create(TreeParentId::Root).unwrap();
+        let meta = tree.get_meta(id).unwrap();
+        meta.insert("a", 1).unwrap();
+        text.insert(0, "abc").unwrap();
+        let _id2 = tree.create(TreeParentId::Root).unwrap();
+        meta.insert("b", 2).unwrap();
+
+        let loro2 = LoroDoc::new_auto_commit();
         let _g = loro2.subscribe_root(Arc::new(|e| {
             println!("{} {:?} ", e.event_meta.by, e.event_meta.diff)
         }));

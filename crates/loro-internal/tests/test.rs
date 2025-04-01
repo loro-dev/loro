@@ -1,14 +1,16 @@
 use std::sync::{atomic::AtomicBool, Arc, Mutex};
 
 use fxhash::FxHashMap;
-use loro_common::{ContainerID, ContainerType, LoroError, LoroResult, LoroValue, PeerID, ID};
+use loro_common::{
+    loro_value, ContainerID, ContainerType, IdSpan, LoroError, LoroResult, LoroValue, PeerID, ID,
+};
 use loro_internal::{
     delta::ResolvedMapValue,
     encoding::ImportStatus,
     event::{Diff, EventTriggerKind},
     fx_map,
     handler::{Handler, TextDelta, ValueOrHandler},
-    loro::ExportMode,
+    loro::{CommitOptions, ExportMode},
     version::{Frontiers, VersionRange},
     ApplyDiff, HandlerTrait, ListHandler, LoroDoc, MapHandler, TextHandler, ToJson, TreeHandler,
     TreeParentId,
@@ -425,9 +427,9 @@ fn test_pending() {
 
 #[test]
 fn test_checkout() {
-    let doc_0 = LoroDoc::new();
+    let doc_0 = LoroDoc::new_auto_commit();
     doc_0.set_peer_id(0).unwrap();
-    let doc_1 = LoroDoc::new();
+    let doc_1 = LoroDoc::new_auto_commit();
     doc_1.set_peer_id(1).unwrap();
 
     let value: Arc<Mutex<LoroValue>> = Arc::new(Mutex::new(LoroValue::Map(Default::default())));
@@ -444,19 +446,19 @@ fn test_checkout() {
     }));
 
     let map = doc_0.get_map("map");
-    doc_0
-        .with_txn(|txn| {
-            let handler =
-                map.insert_container_with_txn(txn, "text", TextHandler::new_detached())?;
-            let text = handler;
-            text.insert_with_txn(txn, 0, "123")
-        })
+    let handler = map
+        .insert_container("text", TextHandler::new_detached())
         .unwrap();
+    let text = handler;
+    text.insert(0, "123").unwrap();
 
     let map = doc_1.get_map("map");
-    doc_1
-        .with_txn(|txn| map.insert_with_txn(txn, "text", LoroValue::Double(1.0)))
+
+    let handler = map
+        .insert_container("text", TextHandler::new_detached())
         .unwrap();
+    let text = handler;
+    text.insert(0, "123").unwrap();
 
     doc_0
         .import(&doc_1.export_from(&Default::default()))
@@ -492,13 +494,12 @@ fn test_timestamp() {
 
 #[test]
 fn test_text_checkout() {
-    let doc = LoroDoc::new();
+    let doc = LoroDoc::new_auto_commit();
     doc.set_peer_id(1).unwrap();
     let text = doc.get_text("text");
-    let mut txn = doc.txn().unwrap();
-    text.insert_with_txn(&mut txn, 0, "你界").unwrap();
-    text.insert_with_txn(&mut txn, 1, "好世").unwrap();
-    txn.commit().unwrap();
+    text.insert(0, "你界").unwrap();
+    text.insert(1, "好世").unwrap();
+    doc.commit_then_renew();
     {
         doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 0)].as_slice()))
             .unwrap();
@@ -524,9 +525,9 @@ fn test_text_checkout() {
     assert_eq!(text.len_unicode(), 4);
 
     doc.checkout_to_latest();
-    doc.with_txn(|txn| text.delete_with_txn(txn, 3, 1)).unwrap();
+    text.delete(3, 1).unwrap();
     assert_eq!(text.get_value().as_string().unwrap().as_str(), "你好世");
-    doc.with_txn(|txn| text.delete_with_txn(txn, 2, 1)).unwrap();
+    text.delete(2, 1).unwrap();
     assert_eq!(text.get_value().as_string().unwrap().as_str(), "你好");
     doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 3)].as_slice()))
         .unwrap();
@@ -561,20 +562,12 @@ fn test_text_checkout() {
 
 #[test]
 fn map_checkout() {
-    let doc = LoroDoc::new();
+    let doc = LoroDoc::new_auto_commit();
     let meta = doc.get_map("meta");
     let v_empty = doc.oplog_frontiers();
-    doc.with_txn(|txn| {
-        meta.insert_with_txn(txn, "key", 0.into()).unwrap();
-        Ok(())
-    })
-    .unwrap();
+    meta.insert("key", 0).unwrap();
     let v0 = doc.oplog_frontiers();
-    doc.with_txn(|txn| {
-        meta.insert_with_txn(txn, "key", 1.into()).unwrap();
-        Ok(())
-    })
-    .unwrap();
+    meta.insert("key", 1).unwrap();
     let v1 = doc.oplog_frontiers();
     assert_eq!(meta.get_deep_value().to_json(), r#"{"key":1}"#);
     doc.checkout(&v0).unwrap();
@@ -587,62 +580,40 @@ fn map_checkout() {
 
 #[test]
 fn a_list_of_map_checkout() {
-    let doc = LoroDoc::new();
+    let doc = LoroDoc::new_auto_commit();
     let entry = doc.get_map("entry");
-    let (list, sub) = doc
-        .with_txn(|txn| {
-            let list = entry.insert_container_with_txn(txn, "list", ListHandler::new_detached())?;
-            let sub_map = list.insert_container_with_txn(txn, 0, MapHandler::new_detached())?;
-            sub_map.insert_with_txn(txn, "x", 100.into())?;
-            sub_map.insert_with_txn(txn, "y", 1000.into())?;
-            Ok((list, sub_map))
-        })
-        .unwrap();
+    let (list, sub) = {
+        let list = entry
+            .insert_container("list", ListHandler::new_detached())
+            .unwrap();
+        let sub_map = list
+            .insert_container(0, MapHandler::new_detached())
+            .unwrap();
+        sub_map.insert("x", 100).unwrap();
+        sub_map.insert("y", 1000).unwrap();
+        (list, sub_map)
+    };
     let v0 = doc.oplog_frontiers();
     let d0 = doc.get_deep_value().to_json();
-    doc.with_txn(|txn| {
-        list.insert_with_txn(txn, 0, 3.into())?;
-        list.push_with_txn(txn, 4.into())?;
-        list.insert_container_with_txn(txn, 2, MapHandler::new_detached())?;
-        list.insert_container_with_txn(txn, 3, TextHandler::new_detached())?;
-        Ok(())
-    })
-    .unwrap();
-    doc.with_txn(|txn| {
-        list.delete_with_txn(txn, 2, 1)?;
-        Ok(())
-    })
-    .unwrap();
-    doc.with_txn(|txn| {
-        sub.insert_with_txn(txn, "x", 9.into())?;
-        sub.insert_with_txn(txn, "y", 9.into())?;
-        Ok(())
-    })
-    .unwrap();
-    doc.with_txn(|txn| {
-        sub.insert_with_txn(txn, "z", 9.into())?;
-        Ok(())
-    })
-    .unwrap();
+
+    list.insert(0, 3).unwrap();
+    list.push(4).unwrap();
+    list.insert_container(2, MapHandler::new_detached())
+        .unwrap();
+    list.insert_container(3, TextHandler::new_detached())
+        .unwrap();
+
+    list.delete(2, 1).unwrap();
+    sub.insert("x", 9).unwrap();
+    sub.insert("y", 9).unwrap();
+    sub.insert("z", 9).unwrap();
     let v1 = doc.oplog_frontiers();
     let d1 = doc.get_deep_value().to_json();
-    doc.with_txn(|txn| {
-        sub.insert_with_txn(txn, "x", 77.into())?;
-        Ok(())
-    })
-    .unwrap();
-    doc.with_txn(|txn| {
-        sub.insert_with_txn(txn, "y", 88.into())?;
-        Ok(())
-    })
-    .unwrap();
-    doc.with_txn(|txn| {
-        list.delete_with_txn(txn, 0, 1)?;
-        list.insert_with_txn(txn, 0, 123.into())?;
-        list.push_with_txn(txn, 99.into())?;
-        Ok(())
-    })
-    .unwrap();
+    sub.insert("x", 77).unwrap();
+    sub.insert("y", 88).unwrap();
+    list.delete(0, 1).unwrap();
+    list.insert(0, 123).unwrap();
+    list.push(99).unwrap();
     let v2 = doc.oplog_frontiers();
     let d2 = doc.get_deep_value().to_json();
 
@@ -663,39 +634,19 @@ fn a_list_of_map_checkout() {
 
 #[test]
 fn map_concurrent_checkout() {
-    let doc_a = LoroDoc::new();
+    let doc_a = LoroDoc::new_auto_commit();
     let meta_a = doc_a.get_map("meta");
-    let doc_b = LoroDoc::new();
+    let doc_b = LoroDoc::new_auto_commit();
     let meta_b = doc_b.get_map("meta");
 
-    doc_a
-        .with_txn(|txn| {
-            meta_a.insert_with_txn(txn, "key", 0.into()).unwrap();
-            Ok(())
-        })
-        .unwrap();
+    meta_a.insert("key", 0).unwrap();
     let va = doc_a.oplog_frontiers();
-    doc_b
-        .with_txn(|txn| {
-            meta_b.insert_with_txn(txn, "s", 1.into()).unwrap();
-            Ok(())
-        })
-        .unwrap();
+    meta_b.insert("s", 1).unwrap();
     let vb_0 = doc_b.oplog_frontiers();
-    doc_b
-        .with_txn(|txn| {
-            meta_b.insert_with_txn(txn, "key", 1.into()).unwrap();
-            Ok(())
-        })
-        .unwrap();
+    meta_b.insert("key", 1).unwrap();
     let vb_1 = doc_b.oplog_frontiers();
     doc_a.import(&doc_b.export_snapshot().unwrap()).unwrap();
-    doc_a
-        .with_txn(|txn| {
-            meta_a.insert_with_txn(txn, "key", 2.into()).unwrap();
-            Ok(())
-        })
-        .unwrap();
+    meta_a.insert("key", 2).unwrap();
 
     let v_merged = doc_a.oplog_frontiers();
 
@@ -1298,4 +1249,199 @@ fn import_status() -> LoroResult<()> {
     );
 
     Ok(())
+}
+
+#[test]
+fn test_on_first_commit_from_peer() {
+    let doc = LoroDoc::new_auto_commit();
+    doc.set_peer_id(0).unwrap();
+    let p = Arc::new(Mutex::new(vec![]));
+    let p2 = Arc::clone(&p);
+    let sub = doc.subscribe_first_commit_from_peer(Box::new(move |e| {
+        p2.try_lock().unwrap().push(e.peer);
+        true
+    }));
+    doc.get_text("text").insert(0, "a").unwrap();
+    doc.commit_then_renew();
+    doc.get_text("text").insert(0, "b").unwrap();
+    doc.commit_then_renew();
+    doc.set_peer_id(1).unwrap();
+    doc.get_text("text").insert(0, "c").unwrap();
+    doc.commit_then_renew();
+    sub.unsubscribe();
+    assert_eq!(p.try_lock().unwrap().as_slice(), &[0, 1]);
+}
+
+#[test]
+fn test_on_first_commit_from_peer_when_drop_doc() {
+    let doc = LoroDoc::new_auto_commit();
+    doc.set_peer_id(0).unwrap();
+    let p = Arc::new(Mutex::new(vec![]));
+    let p2 = Arc::clone(&p);
+    let _sub = doc.subscribe_first_commit_from_peer(Box::new(move |e| {
+        p2.try_lock().unwrap().push(e.peer);
+        true
+    }));
+    doc.get_text("text").insert(0, "a").unwrap();
+    drop(doc);
+    assert_eq!(p.try_lock().unwrap().as_slice(), &[0]);
+}
+
+#[test]
+fn test_on_first_commit_from_peer_and_set_peer_id() {
+    let doc = LoroDoc::new_auto_commit();
+    doc.set_peer_id(0).unwrap();
+    let f = Arc::new(AtomicBool::new(false));
+    let f2 = Arc::clone(&f);
+    let sub = doc.subscribe_first_commit_from_peer(Box::new(move |_e| {
+        f2.store(true, std::sync::atomic::Ordering::Relaxed);
+        true
+    }));
+    doc.get_text("text").insert(0, "a").unwrap();
+    doc.set_peer_id(1).unwrap();
+    sub.unsubscribe();
+    assert!(f.load(std::sync::atomic::Ordering::Relaxed));
+}
+
+#[test]
+fn test_on_first_commit_from_peer_with_lock() {
+    let doc = LoroDoc::new_auto_commit();
+    doc.set_peer_id(0).unwrap();
+    let doc_clone = doc.clone();
+    let sub = doc.subscribe_first_commit_from_peer(Box::new(move |_e| {
+        doc_clone.get_text("text").insert(0, "b").unwrap();
+        true
+    }));
+    doc.get_text("text").insert(0, "a").unwrap();
+    doc.commit_then_renew();
+    sub.unsubscribe();
+    assert_eq!(doc.get_text("text").to_string(), "ba");
+    assert_eq!(
+        doc.export_json_updates(&Default::default(), &doc.oplog_vv(), false)
+            .changes
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn test_on_first_peer_commit_attach_user_id() {
+    let doc = LoroDoc::new_auto_commit();
+    doc.set_peer_id(0).unwrap();
+    let doc_clone = doc.clone();
+    let sub = doc.subscribe_first_commit_from_peer(Box::new(move |e| {
+        doc_clone
+            .get_map("::loro::user_id")
+            .insert(e.peer.to_string().as_str(), "user_bob")
+            .unwrap();
+        true
+    }));
+    doc.get_text("text").insert(0, "a").unwrap();
+    doc.commit_then_renew();
+    sub.unsubscribe();
+    assert_eq!(
+        doc.get_map("::loro::user_id").get_value(),
+        loro_value!({
+            "0": "user_bob"
+        })
+    );
+}
+
+#[test]
+fn test_pre_commit_with_lock() {
+    let doc = LoroDoc::new_auto_commit();
+    let doc_clone = doc.clone();
+    let sub = doc.subscribe_pre_commit(Box::new(move |_e| {
+        // state lock
+        doc_clone.get_deep_value();
+        // oplog lock
+        doc_clone.oplog_vv();
+        true
+    }));
+    doc.get_text("text").insert(0, "a").unwrap();
+    doc.commit_then_renew();
+    sub.unsubscribe();
+}
+
+#[test]
+fn test_pre_commit_with_hash() {
+    let doc = LoroDoc::new_auto_commit();
+    doc.set_peer_id(0).unwrap();
+    let doc_clone = doc.clone();
+    let sub = doc.subscribe_pre_commit(Box::new(move |e| {
+        let change_json = doc_clone
+            .change_to_json_schema_include_uncommit(e.change_meta.id.to_span(e.change_meta.len));
+        assert!(change_json.len() == 1);
+        let mut deps = vec![];
+        for dep in e.change_meta.deps.iter() {
+            let dep_msg = doc_clone
+                .oplog()
+                .lock()
+                .unwrap()
+                .get_change_at(dep)
+                .unwrap()
+                .message()
+                .cloned()
+                .unwrap_or(Arc::from(""));
+            deps.push(dep_msg);
+        }
+        e.modifier.set_timestamp(0).set_message(&format!(
+            "{:08x}\n{}",
+            // just for test example, should use sha256 or blake3 for hash
+            xxhash_rust::xxh32::xxh32(
+                serde_json::to_string(&(&change_json, &deps))
+                    .unwrap()
+                    .as_bytes(),
+                0
+            ),
+            e.change_meta.message()
+        ));
+        true
+    }));
+    doc.get_text("text").insert(0, "a").unwrap();
+    doc.commit_with(
+        CommitOptions::default()
+            .commit_msg("add a")
+            .immediate_renew(true),
+    );
+    doc.get_text("text").insert(0, "b").unwrap();
+    doc.commit_with(
+        CommitOptions::default()
+            .commit_msg("add b")
+            .immediate_renew(true),
+    );
+    sub.unsubscribe();
+    let changes = doc
+        .export_json_updates(&Default::default(), &doc.oplog_vv(), false)
+        .changes;
+    assert_eq!(changes.len(), 2);
+    for c in changes {
+        let mut msg = c.msg.as_ref().unwrap().lines();
+        assert_eq!(msg.next().unwrap().len(), 8);
+        assert!(msg.next().is_some());
+    }
+}
+
+#[test]
+fn test_change_to_json_schema_include_uncommit() {
+    let doc = LoroDoc::new_auto_commit();
+    doc.set_peer_id(0).unwrap();
+    doc.get_text("text").insert(0, "a").unwrap();
+    doc.commit_then_renew();
+    let doc_clone = doc.clone();
+    let _sub = doc.subscribe_pre_commit(Box::new(move |e| {
+        let changes = doc_clone.change_to_json_schema_include_uncommit(IdSpan::new(
+            0,
+            0,
+            e.change_meta.id.counter + e.change_meta.len as i32,
+        ));
+        assert_eq!(changes.len(), 2);
+        true
+    }));
+    doc.get_text("text").insert(0, "b").unwrap();
+    let changes = doc.change_to_json_schema_include_uncommit(IdSpan::new(0, 0, 2));
+    assert_eq!(changes.len(), 1);
+    doc.commit_then_renew();
+    // change merged
+    assert_eq!(changes.len(), 1);
 }

@@ -27,7 +27,7 @@ use crate::span::{HasCounterSpan, HasLamportSpan};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
 use change_store::BlockOpRef;
-use loro_common::{IdLp, IdSpan};
+use loro_common::{HasIdSpan, IdLp, IdSpan};
 use rle::{HasLength, RleVec, Sliceable};
 use smallvec::SmallVec;
 
@@ -54,6 +54,9 @@ pub struct OpLog {
     /// If so the Dag's frontiers won't be updated until the batch is finished.
     pub(crate) batch_importing: bool,
     pub(crate) configure: Configure,
+    /// The uncommitted change, it's a placeholder for the change
+    /// that is being edited in pre-commit callback.
+    pub(crate) uncommitted_change: Option<Change>,
 }
 
 impl std::fmt::Debug for OpLog {
@@ -79,6 +82,7 @@ impl OpLog {
             pending_changes: Default::default(),
             batch_importing: false,
             configure: cfg,
+            uncommitted_change: None,
         }
     }
 
@@ -295,6 +299,22 @@ impl OpLog {
         self.change_store.get_change(id)
     }
 
+    pub(crate) fn set_uncommitted_change(&mut self, change: Change) {
+        self.uncommitted_change = Some(change);
+    }
+
+    pub(crate) fn get_uncommitted_change_in_span(&self, id_span: IdSpan) -> Option<Cow<Change>> {
+        self.uncommitted_change.as_ref().and_then(|c| {
+            if c.id_span() == id_span {
+                Some(Cow::Borrowed(c))
+            } else if let Some((start, end)) = id_span.get_slice_range_on(&c.id_span()) {
+                Some(Cow::Owned(c.slice(start, end)))
+            } else {
+                None
+            }
+        })
+    }
+
     pub fn get_deps_of(&self, id: ID) -> Option<Frontiers> {
         self.get_change_at(id).map(|c| {
             if c.id.counter == id.counter {
@@ -500,7 +520,7 @@ impl OpLog {
 
     pub fn get_timestamp_for_next_txn(&self) -> Timestamp {
         if self.configure.record_timestamp() {
-            (get_sys_timestamp() as Timestamp + 500) / 1000
+            get_timestamp_now_txn()
         } else {
             0
         }
@@ -746,4 +766,8 @@ pub(crate) fn local_op_to_remote(
         })
     }
     ans
+}
+
+pub(crate) fn get_timestamp_now_txn() -> Timestamp {
+    (get_sys_timestamp() as Timestamp + 500) / 1000
 }

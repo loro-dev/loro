@@ -101,12 +101,6 @@ it("basic sync example", () => {
   expect(docA.toJSON()).toStrictEqual(docB.toJSON());
 });
 
-it("basic events", () => {
-  const doc = new LoroDoc();
-  doc.subscribe((event) => { });
-  const list = doc.getList("list");
-});
-
 describe("list", () => {
   it("insert containers", () => {
     const doc = new LoroDoc();
