@@ -143,7 +143,7 @@ mod loom_test {
     #[test]
     fn concurrent_document_checkout_with_modifications() {
         let mut builder = loom::model::Builder::new();
-        builder.max_branches = 2000;
+        builder.max_branches = 3000;
         builder.check(|| {
             let doc = LoroDoc::new();
             doc.set_detached_editing(true);

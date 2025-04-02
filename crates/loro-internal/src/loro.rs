@@ -225,21 +225,17 @@ impl LoroDoc {
 
     /// This method is called before the commit.
     /// It can be used to modify the change before it is committed.
-    fn before_commit(&self) {
-        let is_peer_first_appear = {
-            self.txn
-                .lock()
-                .unwrap()
-                .as_ref()
-                .map(|x| x.is_peer_first_appearance)
-                .unwrap_or(false)
+    ///
+    /// It return Some(txn) if the txn is None
+    fn before_commit(&self) -> Option<LoroMutexGuard<Option<Transaction>>> {
+        let mut txn_guard = self.txn.lock().unwrap();
+        let Some(txn) = txn_guard.as_mut() else {
+            return Some(txn_guard);
         };
-        if is_peer_first_appear {
-            {
-                let mut txn = self.txn.lock().unwrap();
-                let txn = txn.as_mut().unwrap();
-                txn.is_peer_first_appearance = false;
-            }
+
+        if txn.is_peer_first_appearance {
+            txn.is_peer_first_appearance = false;
+            drop(txn_guard);
             // First commit from a peer
             self.first_commit_from_peer_subs.emit(
                 &(),
@@ -248,6 +244,8 @@ impl LoroDoc {
                 },
             );
         }
+
+        None
     }
 
     /// Commit the cumulative auto commit transaction.
@@ -271,7 +269,10 @@ impl LoroDoc {
         }
 
         loop {
-            self.before_commit();
+            if let Some(txn_guard) = self.before_commit() {
+                return (None, Some(txn_guard));
+            }
+
             let mut txn_guard = self.txn.lock().unwrap();
             let txn = txn_guard.take();
             let Some(mut txn) = txn else {
