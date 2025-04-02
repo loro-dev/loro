@@ -275,7 +275,6 @@ pub fn encode_block(block: &[Change], arena: &SharedArena) -> Vec<u8> {
 
     diagnose_block(&out);
     let ans = postcard::to_allocvec(&out).unwrap();
-    info!("block size = {}", ans.len());
     ans
 }
 

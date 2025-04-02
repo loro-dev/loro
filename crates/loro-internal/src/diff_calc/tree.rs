@@ -169,7 +169,6 @@ impl TreeDiffCalculator {
             let s = tracing::span!(tracing::Level::INFO, "checkout", s = s);
             let _e = s.enter();
             if to == &tree_cache.current_vv {
-                tracing::info!("checkout: to == current_vv");
                 return;
             }
             let min_lamport = self.get_min_lamport_by_frontiers(to_frontiers, oplog);
@@ -185,7 +184,7 @@ impl TreeDiffCalculator {
                     }
                 }
             }
-            tracing::info!(msg="retreat ops", retreat_ops=?retreat_ops);
+
             for op in retreat_ops {
                 tree_cache.retreat_op(&op);
             }
@@ -216,7 +215,6 @@ impl TreeDiffCalculator {
                 }
             }
 
-            // tracing::info!("forward ops {:?}", forward_ops);
             for (id, op) in forward_ops {
                 let op = MoveLamportAndID {
                     id,
@@ -244,19 +242,10 @@ impl TreeDiffCalculator {
                 oplog.dag.find_common_ancestor(from_frontiers, to_frontiers);
             let lca_vv = oplog.dag.frontiers_to_vv(&common_ancestors).unwrap();
             let lca_frontiers = common_ancestors;
-            tracing::info!(
-                "from vv {:?} to vv {:?} current vv {:?} lca vv {:?}",
-                info.from_vv,
-                info.to_vv,
-                tree_cache.current_vv,
-                lca_vv
-            );
-
             let to_max_lamport = self.get_max_lamport_by_frontiers(to_frontiers, oplog);
             let lca_min_lamport = self.get_min_lamport_by_frontiers(&lca_frontiers, oplog);
 
             // retreat for diff
-            tracing::info!("start retreat");
             let mut diffs = vec![];
 
             if !(tree_cache.current_vv == lca_vv && &lca_vv == info.from_vv) {
@@ -272,7 +261,6 @@ impl TreeDiffCalculator {
                     }
                 }
 
-                // tracing::info!("retreat ops {:?}", retreat_ops);
                 for op in retreat_ops.into_iter().sorted().rev() {
                     tree_cache.retreat_op(&op);
                     let (old_parent, position, last_effective_move_op_id) =
@@ -330,7 +318,6 @@ impl TreeDiffCalculator {
             }
             tree_cache.current_vv = lca_vv;
             // forward
-            tracing::info!("forward");
             let group = h
                 .get_importing_cache(&self.container, mark)
                 .unwrap()

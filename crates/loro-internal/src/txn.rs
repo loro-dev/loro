@@ -59,21 +59,16 @@ impl crate::LoroDoc {
     /// The origin will be propagated to the events.
     /// There can only be one active transaction at a time for a [LoroDoc].
     pub fn txn_with_origin(&self, origin: &str) -> Result<Transaction, LoroError> {
-        info!("txn_with_origin");
         if !self.can_edit() {
             return Err(LoroError::TransactionError(
                 String::from("LoroDoc is in readonly detached mode. To make it writable in detached mode, call `set_detached_editing(true)`.").into_boxed_str(),
             ));
         }
 
-        info!("creating txn");
         let mut txn = Transaction::new_with_origin(self.inner.clone(), origin.into());
 
-        info!("setting on commit");
         let obs = self.observer.clone();
-        info!("getting local update subs");
         let local_update_subs_weak = self.local_update_subs.downgrade();
-        info!("setting on commit");
         txn.set_on_commit(Box::new(move |state, oplog, id_span| {
             let mut state = state.lock().unwrap();
             let events = state.take_events();
@@ -118,9 +113,7 @@ impl crate::LoroDoc {
                 return;
             }
 
-            info!("renewing txn");
             let mut txn = self.txn().unwrap();
-            info!("txn renewed");
             if let Some(options) = options {
                 txn.set_options(options);
             }
@@ -322,28 +315,22 @@ impl Transaction {
     }
 
     pub fn new_with_origin(doc: Arc<LoroDocInner>, origin: InternalString) -> Self {
-        info!("new_with_origin");
         let oplog_lock = doc.oplog.lock().unwrap();
         let mut state_lock = doc.state.lock().unwrap();
         if state_lock.is_in_txn() {
             panic!("Cannot start a transaction while another one is in progress");
         }
 
-        info!("starting txn");
         state_lock.start_txn(origin, crate::event::EventTriggerKind::Local);
-        info!("txn started");
         let arena = state_lock.arena.clone();
-        info!("arena cloned");
         let frontiers = state_lock.frontiers.clone();
         let peer = state_lock.peer.load(std::sync::atomic::Ordering::Relaxed);
         let next_counter = oplog_lock.next_id(peer).counter;
         let next_lamport = oplog_lock.dag.frontiers_to_next_lamport(&frontiers);
         let latest_timestamp = oplog_lock.get_greatest_timestamp(&frontiers);
-        info!("checking change");
         oplog_lock
             .check_change_greater_than_last_peer_id(peer, next_counter, &frontiers)
             .unwrap();
-        info!("change checked");
         drop(state_lock);
         drop(oplog_lock);
         Self {

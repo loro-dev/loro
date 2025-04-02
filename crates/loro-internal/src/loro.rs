@@ -521,14 +521,10 @@ impl LoroDoc {
         origin: InternalString,
     ) -> Result<ImportStatus, LoroError> {
         let (options, txn) = self.commit_then_stop();
-        info!("committed_then_stop");
         assert!(txn.is_none());
         let ans = self._import_with(bytes, origin);
-        info!("imported");
         drop(txn);
-        info!("dropped txn");
         self.renew_txn_if_auto_commit(options);
-        info!("renewed");
         ans
     }
 
@@ -595,7 +591,6 @@ impl LoroDoc {
             }
         };
 
-        info!("emitting events");
         self.emit_events();
 
         result
@@ -614,7 +609,6 @@ impl LoroDoc {
             let result = f(&mut oplog);
             if &old_vv != oplog.vv() {
                 let mut diff = DiffCalculator::new(false);
-                info!("diff calculator created");
                 let (diff, diff_mode) = diff.calc_diff_internal(
                     &oplog,
                     &old_vv,
@@ -623,7 +617,6 @@ impl LoroDoc {
                     oplog.dag.get_frontiers(),
                     None,
                 );
-                info!("diff calculated");
                 let mut state = self.state.lock().unwrap();
                 state.apply_diff(
                     InternalDocDiff {
@@ -634,7 +627,6 @@ impl LoroDoc {
                     },
                     diff_mode,
                 );
-                info!("state applied");
             }
             result
         } else {
@@ -1056,10 +1048,6 @@ impl LoroDoc {
         let mut ans: LoroResult<()> = Ok(());
         let mut missing_containers: Vec<ContainerID> = Vec::new();
         for (mut id, diff) in diff.into_iter() {
-            info!(
-                "id: {:?} diff: {:?} remap: {:?}",
-                &id, &diff, container_remap
-            );
             let mut remapped = false;
             while let Some(rid) = container_remap.get(&id) {
                 remapped = true;
