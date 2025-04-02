@@ -1,3 +1,4 @@
+#[cfg(loom)]
 mod loom_test {
 
     use loom::{explore, stop_exploring, sync::atomic::AtomicUsize, thread::yield_now};
