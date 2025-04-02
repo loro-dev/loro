@@ -1,10 +1,8 @@
-#[cfg(loom)]
 mod loom_test {
 
     use loom::{explore, stop_exploring, sync::atomic::AtomicUsize, thread::yield_now};
     use loro::{ExportMode, LoroDoc};
     use std::{sync::atomic::Ordering, thread::sleep, time::Duration};
-    use tracing::info;
 
     #[test]
     fn concurrently_inserting_text_content() {
@@ -77,7 +75,6 @@ mod loom_test {
         });
     }
 
-    #[ignore]
     #[test]
     fn concurrent_callbacks_modifying_same_doc() {
         loom::model(|| {
@@ -86,7 +83,7 @@ mod loom_test {
 
             // Set up a condition variable to control thread execution
             let pair =
-                std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+                std::sync::Arc::new((loom::sync::Mutex::new(false), loom::sync::Condvar::new()));
             let pair_clone1 = pair.clone();
             let pair_clone2 = pair.clone();
 
@@ -110,7 +107,6 @@ mod loom_test {
                     let mut started = lock.lock().unwrap();
                     *started = true;
                     cvar.notify_one();
-                    yield_now();
                 }
             }));
 
@@ -125,7 +121,6 @@ mod loom_test {
                 while !*started {
                     // Wait until the condition variable is signaled
                     started = cvar.wait(started).unwrap();
-                    yield_now();
                 }
 
                 drop(started);
@@ -133,10 +128,6 @@ mod loom_test {
                 doc2.get_text(text_id).insert(0, "B").unwrap();
                 doc2.commit();
 
-                // Sleep to increase chance of race condition
-                yield_now();
-
-                doc2.get_text(text_id).insert(0, "C").unwrap();
                 doc2.commit();
             });
 
@@ -145,16 +136,14 @@ mod loom_test {
             doc3.commit();
 
             h.join().unwrap();
-
-            let text = doc.get_text(text_id).to_string();
-            println!("Final text with concurrent callbacks: {}", text);
         });
     }
 
-    #[ignore]
     #[test]
     fn concurrent_document_checkout_with_modifications() {
-        loom::model(|| {
+        let mut builder = loom::model::Builder::new();
+        builder.max_branches = 2000;
+        builder.check(|| {
             let doc = LoroDoc::new();
             doc.set_detached_editing(true);
 
@@ -193,7 +182,7 @@ mod loom_test {
                 doc1.commit();
 
                 // Sleep to increase chance of race condition
-                sleep(Duration::from_millis(5));
+                yield_now();
 
                 // Checkout to a later state
                 doc1.checkout(&third_clone).unwrap();
@@ -206,8 +195,7 @@ mod loom_test {
             });
 
             let h2 = loom::thread::spawn(move || {
-                // Sleep to ensure operations interleave
-                sleep(Duration::from_millis(2));
+                yield_now();
 
                 // Checkout to the middle state
                 doc2.checkout(&second_clone).unwrap();
@@ -218,8 +206,7 @@ mod loom_test {
                     .unwrap();
                 doc2.commit();
 
-                // Sleep
-                sleep(Duration::from_millis(5));
+                yield_now();
 
                 // Checkout to latest
                 doc2.checkout_to_latest();
@@ -233,15 +220,14 @@ mod loom_test {
 
             h1.join().unwrap();
             h2.join().unwrap();
-
-            // Make sure we end up at latest
-            doc.checkout_to_latest();
         });
     }
 
     #[test]
     fn concurrently_import_export() {
-        loom::model(|| {
+        let mut builder = loom::model::Builder::new();
+        builder.max_branches = 2000;
+        builder.check(|| {
             let doc1 = LoroDoc::new();
             let doc1_clone = doc1.clone();
             let doc1_clone2 = doc1.clone();
@@ -253,26 +239,23 @@ mod loom_test {
             handlers.push(loom::thread::spawn(move || {
                 doc1_clone.get_text("text").insert(0, "1").unwrap();
                 doc1_clone.commit();
+                doc1_clone.get_text("text").insert(0, "1").unwrap();
+                doc1_clone.commit();
             }));
             handlers.push(loom::thread::spawn(move || {
                 doc2_clone.get_text("text").insert(0, "2").unwrap();
                 doc2_clone.commit();
             }));
             handlers.push(loom::thread::spawn(move || {
-                info!("exporting 1");
                 let e = &doc1_clone2
                     .export(ExportMode::updates(&doc2_clone2.oplog_vv()))
                     .unwrap();
-                info!("importing 1");
                 doc2_clone2.import(e).unwrap();
                 yield_now();
-                info!("exporting 2");
                 let e = &doc2_clone2
                     .export(ExportMode::updates(&doc1_clone2.oplog_vv()))
                     .unwrap();
-                info!("importing 2");
                 doc1_clone2.import(e).unwrap();
-                info!("all done");
             }));
 
             for h in handlers {

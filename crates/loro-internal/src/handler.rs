@@ -3927,9 +3927,9 @@ fn with_txn<R>(doc: &LoroDoc, f: impl FnOnce(&mut Transaction) -> LoroResult<R>)
             return Err(LoroError::AutoCommitNotStarted);
         } else {
             drop(txn);
-            doc.start_auto_commit();
             #[cfg(loom)]
             loom::thread::yield_now();
+            doc.start_auto_commit();
             txn = doc.txn.lock().unwrap();
         }
     }
