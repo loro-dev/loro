@@ -1,12 +1,10 @@
-use std::{
-    ops::Range,
-    sync::{Arc, RwLock, Weak},
-};
-
 use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::{rle::HasLength, Cursor};
 use loro_common::{ContainerID, InternalString, LoroError, LoroResult, LoroValue, ID};
 use loro_delta::DeltaRopeBuilder;
+use std::ops::Range;
+use std::sync::RwLock;
+use std::sync::{Arc, Weak};
 
 use crate::{
     container::{

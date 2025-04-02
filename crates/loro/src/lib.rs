@@ -15,6 +15,7 @@ pub use loro_internal::loro::ChangeTravelError;
 pub use loro_internal::pre_commit::{
     ChangeModifier, FirstCommitFromPeerCallback, PreCommitCallback,
 };
+pub use loro_internal::sync;
 pub use loro_internal::undo::{OnPop, UndoItemMeta, UndoOrRedo};
 use loro_internal::version::shrink_frontiers;
 pub use loro_internal::version::ImVersionVector;

@@ -1,11 +1,7 @@
-use std::{
-    borrow::Cow,
-    io::Write,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc, Mutex, RwLock, Weak,
-    },
-};
+use crate::sync::{AtomicU64, Mutex};
+use std::sync::RwLock;
+use std::sync::{Arc, Weak};
+use std::{borrow::Cow, io::Write, sync::atomic::Ordering};
 
 use container_store::ContainerStore;
 use dead_containers_cache::DeadContainersCache;

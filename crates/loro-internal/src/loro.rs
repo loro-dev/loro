@@ -2,6 +2,7 @@ use crate::encoding::json_schema::{encode_change, export_json_in_id_span};
 pub use crate::encoding::ExportMode;
 use crate::pre_commit::{FirstCommitFromPeerCallback, FirstCommitFromPeerPayload};
 pub use crate::state::analyzer::{ContainerAnalysisInfo, DocAnalysis};
+use crate::sync::AtomicBool;
 pub(crate) use crate::LoroDocInner;
 use crate::{
     arena::SharedArena,
@@ -54,10 +55,7 @@ use std::{
     collections::{hash_map::Entry, BinaryHeap},
     ops::ControlFlow,
     sync::{
-        atomic::{
-            AtomicBool,
-            Ordering::{Acquire, Release},
-        },
+        atomic::Ordering::{Acquire, Release},
         Arc,
     },
 };
@@ -227,21 +225,17 @@ impl LoroDoc {
 
     /// This method is called before the commit.
     /// It can be used to modify the change before it is committed.
-    fn before_commit(&self) {
-        let is_peer_first_appear = {
-            self.txn
-                .lock()
-                .unwrap()
-                .as_ref()
-                .map(|x| x.is_peer_first_appearance)
-                .unwrap_or(false)
+    ///
+    /// It return Some(txn) if the txn is None
+    fn before_commit(&self) -> Option<LoroMutexGuard<Option<Transaction>>> {
+        let mut txn_guard = self.txn.lock().unwrap();
+        let Some(txn) = txn_guard.as_mut() else {
+            return Some(txn_guard);
         };
-        if is_peer_first_appear {
-            {
-                let mut txn = self.txn.lock().unwrap();
-                let txn = txn.as_mut().unwrap();
-                txn.is_peer_first_appearance = false;
-            }
+
+        if txn.is_peer_first_appearance {
+            txn.is_peer_first_appearance = false;
+            drop(txn_guard);
             // First commit from a peer
             self.first_commit_from_peer_subs.emit(
                 &(),
@@ -250,6 +244,8 @@ impl LoroDoc {
                 },
             );
         }
+
+        None
     }
 
     /// Commit the cumulative auto commit transaction.
@@ -273,7 +269,10 @@ impl LoroDoc {
         }
 
         loop {
-            self.before_commit();
+            if let Some(txn_guard) = self.before_commit() {
+                return (None, Some(txn_guard));
+            }
+
             let mut txn_guard = self.txn.lock().unwrap();
             let txn = txn_guard.take();
             let Some(mut txn) = txn else {
@@ -594,6 +593,7 @@ impl LoroDoc {
         };
 
         self.emit_events();
+
         result
     }
 
@@ -1049,10 +1049,6 @@ impl LoroDoc {
         let mut ans: LoroResult<()> = Ok(());
         let mut missing_containers: Vec<ContainerID> = Vec::new();
         for (mut id, diff) in diff.into_iter() {
-            info!(
-                "id: {:?} diff: {:?} remap: {:?}",
-                &id, &diff, container_remap
-            );
             let mut remapped = false;
             while let Some(rid) = container_remap.get(&id) {
                 remapped = true;
@@ -1322,7 +1318,6 @@ impl LoroDoc {
 
         let oplog = self.oplog.lock().unwrap();
         if oplog.dag.is_before_shallow_root(frontiers) {
-            drop(oplog);
             return Err(LoroError::SwitchToVersionBeforeShallowRoot);
         }
 
@@ -1333,7 +1328,6 @@ impl LoroDoc {
             frontiers.clone()
         };
         if from_frontiers == frontiers {
-            drop(oplog);
             return Ok(());
         }
 
@@ -1341,16 +1335,12 @@ impl LoroDoc {
         let mut calc = self.diff_calculator.lock().unwrap();
         for i in frontiers.iter() {
             if !oplog.dag.contains(i) {
-                drop(oplog);
-                drop(state);
                 return Err(LoroError::FrontiersNotFound(i));
             }
         }
 
         let before = &oplog.dag.frontiers_to_vv(&state.frontiers).unwrap();
         let Some(after) = &oplog.dag.frontiers_to_vv(&frontiers) else {
-            drop(oplog);
-            drop(state);
             return Err(LoroError::NotFoundError(
                 format!("Cannot find the specified version {:?}", frontiers).into_boxed_str(),
             ));
@@ -1426,7 +1416,8 @@ impl LoroDoc {
     pub fn check_state_diff_calc_consistency_slow(&self) {
         // #[cfg(any(test, debug_assertions, feature = "test_utils"))]
         {
-            static IS_CHECKING: AtomicBool = AtomicBool::new(false);
+            static IS_CHECKING: std::sync::atomic::AtomicBool =
+                std::sync::atomic::AtomicBool::new(false);
             if IS_CHECKING.load(std::sync::atomic::Ordering::Acquire) {
                 return;
             }

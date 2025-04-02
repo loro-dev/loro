@@ -1,5 +1,6 @@
 use self::block_encode::{decode_block, decode_header, encode_block, ChangesBlockHeader};
 use super::{loro_dag::AppDagNodeInner, AppDagNode};
+use crate::sync::Mutex;
 use crate::{
     arena::SharedArena,
     change::Change,
@@ -20,14 +21,14 @@ use loro_common::{
 use loro_kv_store::{mem_store::MemKvConfig, MemKvStore};
 use once_cell::sync::OnceCell;
 use rle::{HasLength, Mergable, RlePush, RleVec, Sliceable};
+use std::sync::atomic::AtomicI64;
 use std::{
     cmp::Ordering,
     collections::{BTreeMap, VecDeque},
     ops::{Bound, Deref},
-    sync::{atomic::AtomicI64, Arc, Mutex},
+    sync::Arc,
 };
 use tracing::{debug, info_span, trace, warn};
-
 mod block_encode;
 mod block_meta_encode;
 pub(super) mod iter;

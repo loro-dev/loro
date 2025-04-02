@@ -1,9 +1,9 @@
+use crate::sync::ThreadLocal;
+use crate::sync::{AtomicU8, Mutex, MutexGuard};
 use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::Ordering;
-use std::sync::{atomic::AtomicU8, Mutex};
-use std::sync::{Arc, MutexGuard};
-use thread_local::ThreadLocal;
+use std::sync::Arc;
 
 #[derive(Debug)]
 pub struct LoroMutex<T> {

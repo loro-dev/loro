@@ -1,8 +1,6 @@
-use std::{
-    collections::VecDeque,
-    sync::{atomic::AtomicU64, Arc, Mutex},
-};
+use std::{collections::VecDeque, sync::Arc};
 
+use crate::sync::{AtomicU64, Mutex};
 use either::Either;
 use fxhash::FxHashMap;
 use loro_common::{
@@ -581,10 +579,7 @@ impl UndoManager {
     pub fn record_new_checkpoint(&mut self) -> LoroResult<()> {
         self.doc.commit_then_renew();
         let counter = get_counter_end(&self.doc, self.peer());
-        self.inner
-            .lock()
-            .unwrap()
-            .record_checkpoint(counter, None);
+        self.inner.lock().unwrap().record_checkpoint(counter, None);
         Ok(())
     }
 

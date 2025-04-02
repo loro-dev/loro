@@ -1,11 +1,9 @@
+use crate::sync::Mutex;
 use bytes::Bytes;
 pub use loro_kv_store::compress::CompressionType;
 pub use loro_kv_store::MemKvStore;
-use std::{
-    collections::BTreeMap,
-    ops::Bound,
-    sync::{Arc, Mutex},
-};
+use std::sync::Arc;
+use std::{collections::BTreeMap, ops::Bound};
 
 pub trait KvStore: std::fmt::Debug + Send + Sync {
     fn get(&self, key: &[u8]) -> Option<Bytes>;

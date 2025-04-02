@@ -1,4 +1,5 @@
 use super::{state::DocState, txn::Transaction};
+use crate::sync::Mutex;
 use crate::{
     container::{
         idx::ContainerIdx,
@@ -24,14 +25,7 @@ use loro_common::{
     TreeID, ID,
 };
 use serde::{Deserialize, Serialize};
-use std::{
-    borrow::Cow,
-    cmp::Reverse,
-    collections::BinaryHeap,
-    fmt::Debug,
-    ops::Deref,
-    sync::{Arc, Mutex},
-};
+use std::{borrow::Cow, cmp::Reverse, collections::BinaryHeap, fmt::Debug, ops::Deref, sync::Arc};
 use tracing::{error, info, instrument};
 
 pub use crate::diff::diff_impl::UpdateOptions;
@@ -3923,17 +3917,18 @@ impl MapHandler {
     }
 }
 
-#[inline(always)]
 fn with_txn<R>(doc: &LoroDoc, f: impl FnOnce(&mut Transaction) -> LoroResult<R>) -> LoroResult<R> {
     let txn = &doc.txn;
     let mut txn = txn.lock().unwrap();
     loop {
         if let Some(txn) = &mut *txn {
             return f(txn);
-        } else if cfg!(feature = "wasm") || !doc.can_edit() {
+        } else if cfg!(target_arch = "wasm32") || !doc.can_edit() {
             return Err(LoroError::AutoCommitNotStarted);
         } else {
             drop(txn);
+            #[cfg(loom)]
+            loom::thread::yield_now();
             doc.start_auto_commit();
             txn = doc.txn.lock().unwrap();
         }

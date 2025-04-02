@@ -227,12 +227,13 @@ Apache License
    END OF TERMS AND CONDITIONS
 
 */
+use crate::sync::{thread, AtomicBool, Mutex};
 use smallvec::SmallVec;
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, Weak};
-use std::thread::ThreadId;
-use std::{fmt::Debug, mem, sync::Arc};
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, Weak};
+use std::{fmt::Debug, mem};
+use thread::ThreadId;
 
 #[derive(Debug)]
 pub enum SubscriptionError {
@@ -361,7 +362,7 @@ where
 
     pub fn is_recursive_calling(&self, emitter: &EmitterKey) -> bool {
         if let Some(Either::Right(thread_id)) = self.0.lock().unwrap().subscribers.get(emitter) {
-            *thread_id == std::thread::current().id()
+            *thread_id == thread::current().id()
         } else {
             false
         }
@@ -382,15 +383,18 @@ where
                 };
                 match set {
                     Either::Left(_) => {
-                        break std::mem::replace(set, Either::Right(std::thread::current().id()))
+                        break std::mem::replace(set, Either::Right(thread::current().id()))
                             .unwrap_left();
                     }
                     Either::Right(lock_thread) => {
-                        if std::thread::current().id() == *lock_thread {
+                        if thread::current().id() == *lock_thread {
                             return Err(SubscriptionError::CannotEmitEventDueToRecursiveCall);
                         } else {
                             // return Ok(());
                             drop(subscriber_set_state);
+                            #[cfg(loom)]
+                            loom::thread::yield_now();
+                            #[cfg(not(loom))]
                             std::thread::sleep(std::time::Duration::from_millis(10));
                         }
                     }
