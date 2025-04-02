@@ -274,8 +274,7 @@ pub fn encode_block(block: &[Change], arena: &SharedArena) -> Vec<u8> {
     };
 
     diagnose_block(&out);
-    let ans = postcard::to_allocvec(&out).unwrap();
-    ans
+    postcard::to_allocvec(&out).unwrap()
 }
 
 fn encode_keys(keys: Vec<loro_common::InternalString>) -> Vec<u8> {
