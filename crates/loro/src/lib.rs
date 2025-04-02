@@ -12,6 +12,9 @@ use loro_internal::cursor::Side;
 pub use loro_internal::encoding::ImportStatus;
 use loro_internal::handler::{HandlerTrait, ValueOrHandler};
 pub use loro_internal::loro::ChangeTravelError;
+pub use loro_internal::pre_commit::{
+    ChangeModifier, FirstCommitFromPeerCallback, PreCommitCallback,
+};
 pub use loro_internal::sync;
 pub use loro_internal::undo::{OnPop, UndoItemMeta, UndoOrRedo};
 use loro_internal::version::shrink_frontiers;
@@ -1054,6 +1057,101 @@ impl LoroDoc {
     /// ```
     pub fn has_container(&self, container_id: &ContainerID) -> bool {
         self.doc.has_container(container_id)
+    }
+
+    /// Exports changes within the specified ID span to JSON schema format.
+    ///
+    /// The JSON schema format is identical to [`export_json_updates`] and produces deterministic output,
+    /// making it suitable for hash calculation and verification purposes.
+    ///
+    /// # Example
+    /// ```
+    /// use loro::{LoroDoc, IdSpan};
+    ///
+    /// let doc = LoroDoc::new();
+    /// doc.set_peer_id(0).unwrap();
+    /// doc.get_text("text").insert(0, "a").unwrap();
+    /// doc.commit();
+    /// let doc_clone = doc.clone();
+    /// let _sub = doc.subscribe_pre_commit(Box::new(move |e| {
+    ///     let changes = doc_clone.change_to_json_schema_include_uncommit(IdSpan::new(
+    ///         0,
+    ///         0,
+    ///         e.change_meta.id.counter + e.change_meta.len as i32,
+    ///     ));
+    ///     // 2 because commit one and the uncommit one
+    ///     assert_eq!(changes.len(), 2);
+    ///     true
+    /// }));
+    /// doc.get_text("text").insert(0, "b").unwrap();
+    /// let changes = doc.change_to_json_schema_include_uncommit(IdSpan::new(0, 0, 2));
+    /// assert_eq!(changes.len(), 1);
+    /// doc.commit();
+    /// // change merged
+    /// assert_eq!(changes.len(), 1);
+    /// ```
+    pub fn change_to_json_schema_include_uncommit(&self, id_span: IdSpan) -> Vec<JsonChange> {
+        self.doc.change_to_json_schema_include_uncommit(id_span)
+    }
+
+    /// Subscribe to the first commit from a peer. Operations performed on the `LoroDoc` within this callback
+    /// will be merged into the current commit.
+    ///
+    /// This is useful for managing the relationship between `PeerID` and user information.
+    /// For example, you could store user names in a `LoroMap` using `PeerID` as the key and the `UserID` as the value.
+    ///
+    /// # Example
+    /// ```
+    /// use loro::LoroDoc;
+    /// use std::sync::{Arc, Mutex};
+    ///
+    /// let doc = LoroDoc::new();
+    /// doc.set_peer_id(0).unwrap();
+    /// let p = Arc::new(Mutex::new(vec![]));
+    /// let p2 = Arc::clone(&p);
+    /// let sub = doc.subscribe_first_commit_from_peer(Box::new(move |e| {
+    ///     p2.try_lock().unwrap().push(e.peer);
+    ///     true
+    /// }));
+    /// doc.get_text("text").insert(0, "a").unwrap();
+    /// doc.commit();
+    /// doc.get_text("text").insert(0, "b").unwrap();
+    /// doc.commit();
+    /// doc.set_peer_id(1).unwrap();
+    /// doc.get_text("text").insert(0, "c").unwrap();
+    /// doc.commit();
+    /// sub.unsubscribe();
+    /// assert_eq!(p.try_lock().unwrap().as_slice(), &[0, 1]);
+    /// ```
+    pub fn subscribe_first_commit_from_peer(
+        &self,
+        callback: FirstCommitFromPeerCallback,
+    ) -> Subscription {
+        self.doc.subscribe_first_commit_from_peer(callback)
+    }
+
+    /// Subscribe to the pre-commit event.
+    ///
+    /// The callback will be called when the changes are committed but not yet applied to the OpLog.
+    /// You can modify the commit message and timestamp in the callback by [`ChangeModifier`].
+    ///
+    /// # Example
+    /// ```rust
+    /// use loro::LoroDoc;
+    ///
+    /// let doc = LoroDoc::new();
+    /// let doc_clone = doc.clone();
+    /// let sub = doc.subscribe_pre_commit(Box::new(move |e| {
+    ///     e.modifier
+    ///      .set_timestamp(e.change_meta.timestamp + 1)
+    ///      .set_message(&format!("prefix\n{}", e.change_meta.message()));
+    ///     true
+    /// }));
+    /// doc.get_text("text").insert(0, "a").unwrap();
+    /// doc.commit();
+    /// ```
+    pub fn subscribe_pre_commit(&self, callback: PreCommitCallback) -> Subscription {
+        self.doc.subscribe_pre_commit(callback)
     }
 }
 

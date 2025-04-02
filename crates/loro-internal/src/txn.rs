@@ -29,9 +29,10 @@ use crate::{
     lock::LoroMutex,
     loro::CommitOptions,
     op::{Op, RawOp, RawOpContent},
+    pre_commit::{ChangeModifier, PreCommitCallbackPayload},
     span::HasIdSpan,
     version::Frontiers,
-    InternalString, LoroDoc, LoroDocInner, LoroError, LoroValue,
+    ChangeMeta, InternalString, LoroDoc, LoroDocInner, LoroError, LoroValue,
 };
 
 use super::{
@@ -97,17 +98,6 @@ impl crate::LoroDoc {
         Ok(txn)
     }
 
-    #[inline(always)]
-    pub fn with_txn<F, R>(&self, f: F) -> LoroResult<R>
-    where
-        F: FnOnce(&mut Transaction) -> LoroResult<R>,
-    {
-        let mut txn = self.txn().unwrap();
-        let v = f(&mut txn)?;
-        txn.commit()?;
-        Ok(v)
-    }
-
     pub fn start_auto_commit(&self) {
         self.auto_commit
             .store(true, std::sync::atomic::Ordering::Release);
@@ -159,6 +149,7 @@ pub struct Transaction {
     timestamp: Option<Timestamp>,
     msg: Option<Arc<str>>,
     latest_timestamp: Timestamp,
+    pub(super) is_peer_first_appearance: bool,
 }
 
 impl std::fmt::Debug for Transaction {
@@ -372,6 +363,7 @@ impl Transaction {
             on_commit: None,
             msg: None,
             latest_timestamp,
+            is_peer_first_appearance: false,
         }
     }
 
@@ -432,9 +424,8 @@ impl Transaction {
             return Ok(None);
         };
         self.finished = true;
-        let mut oplog = doc.oplog.lock().unwrap();
-        let mut state = doc.state.lock().unwrap();
         if self.local_ops.is_empty() {
+            let mut state = doc.state.lock().unwrap();
             state.abort_txn();
             return Ok(Some(self.take_options()));
         }
@@ -448,11 +439,33 @@ impl Transaction {
             id: ID::new(self.peer, self.start_counter),
             timestamp: self.latest_timestamp.max(
                 self.timestamp
-                    .unwrap_or_else(|| oplog.get_timestamp_for_next_txn()),
+                    .unwrap_or_else(|| doc.oplog.lock().unwrap().get_timestamp_for_next_txn()),
             ),
             commit_msg: take(&mut self.msg),
         };
 
+        let change_meta = ChangeMeta::from_change(&change);
+        {
+            // add change to uncommit field of oplog
+            let mut oplog = doc.oplog.lock().unwrap();
+            oplog.set_uncommitted_change(change);
+        }
+
+        let modifier = ChangeModifier::default();
+        doc.pre_commit_subs.emit(
+            &(),
+            PreCommitCallbackPayload {
+                change_meta,
+                origin: self.origin.to_string(),
+                modifier: modifier.clone(),
+            },
+        );
+
+        let mut oplog = doc.oplog.lock().unwrap();
+        let mut state = doc.state.lock().unwrap();
+
+        let mut change = oplog.uncommitted_change.take().unwrap();
+        modifier.modify_change(&mut change);
         let diff = if state.is_recording() {
             Some(change_to_diff(
                 &change,
@@ -563,6 +576,9 @@ impl Transaction {
         let op = self.arena.convert_raw_op(&raw_op);
         state.apply_local_op(&raw_op, &op)?;
         {
+            if !self.is_peer_first_appearance && !oplog.dag.latest_vv_contains_peer(self.peer) {
+                self.is_peer_first_appearance = true;
+            }
             // update version info
             let dep_id = Frontiers::from_id(ID::new(self.peer, self.next_counter - 1));
             let start_id = ID::new(self.peer, self.next_counter);

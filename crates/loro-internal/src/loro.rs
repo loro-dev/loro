@@ -1,5 +1,6 @@
+use crate::encoding::json_schema::{encode_change, export_json_in_id_span};
 pub use crate::encoding::ExportMode;
-use crate::lock::LoroMutexGuard;
+use crate::pre_commit::{FirstCommitFromPeerCallback, FirstCommitFromPeerPayload};
 pub use crate::state::analyzer::{ContainerAnalysisInfo, DocAnalysis};
 use crate::sync::AtomicBool;
 pub(crate) use crate::LoroDocInner;
@@ -36,6 +37,7 @@ use crate::{
     VersionVector,
 };
 use crate::{change::ChangeRef, lock::LockKind};
+use crate::{lock::LoroMutexGuard, pre_commit::PreCommitCallback};
 use crate::{
     lock::{LoroLockGroup, LoroMutex},
     txn::Transaction,
@@ -98,9 +100,11 @@ impl LoroDoc {
                 arena,
                 local_update_subs: SubscriberSetWithQueue::new(),
                 peer_id_change_subs: SubscriberSetWithQueue::new(),
+                pre_commit_subs: SubscriberSetWithQueue::new(),
+                first_commit_from_peer_subs: SubscriberSetWithQueue::new(),
             }
         });
-        Self { inner }
+        LoroDoc { inner }
     }
 
     pub fn fork(&self) -> Self {
@@ -120,7 +124,6 @@ impl LoroDoc {
         self.renew_txn_if_auto_commit(options);
         doc
     }
-
     /// Enables editing of the document in detached mode.
     ///
     /// By default, the document cannot be edited in detached mode (after calling
@@ -220,6 +223,33 @@ impl LoroDoc {
             .0
     }
 
+    /// This method is called before the commit.
+    /// It can be used to modify the change before it is committed.
+    fn before_commit(&self) {
+        let is_peer_first_appear = {
+            self.txn
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|x| x.is_peer_first_appearance)
+                .unwrap_or(false)
+        };
+        if is_peer_first_appear {
+            {
+                let mut txn = self.txn.lock().unwrap();
+                let txn = txn.as_mut().unwrap();
+                txn.is_peer_first_appearance = false;
+            }
+            // First commit from a peer
+            self.first_commit_from_peer_subs.emit(
+                &(),
+                FirstCommitFromPeerPayload {
+                    peer: self.peer_id(),
+                },
+            );
+        }
+    }
+
     /// Commit the cumulative auto commit transaction.
     /// This method only has effect when `auto_commit` is true.
     /// If `immediate_renew` is true, a new transaction will be created after the old one is committed
@@ -233,14 +263,16 @@ impl LoroDoc {
         Option<CommitOptions>,
         Option<LoroMutexGuard<Option<Transaction>>>,
     ) {
-        let mut txn_guard = self.txn.lock().unwrap();
         if !self.auto_commit.load(Acquire) {
+            let txn_guard = self.txn.lock().unwrap();
             // if not auto_commit, nothing should happen
             // because the global txn is not used
             return (None, Some(txn_guard));
         }
 
         loop {
+            self.before_commit();
+            let mut txn_guard = self.txn.lock().unwrap();
             let txn = txn_guard.take();
             let Some(mut txn) = txn else {
                 return (None, Some(txn_guard));
@@ -1740,6 +1772,50 @@ impl LoroDoc {
     #[inline]
     pub fn find_id_spans_between(&self, from: &Frontiers, to: &Frontiers) -> VersionVectorDiff {
         self.oplog().lock().unwrap().dag.find_path(from, to)
+    }
+
+    /// Subscribe to the first commit from a peer. Operations performed on the `LoroDoc` within this callback
+    /// will be merged into the current commit.
+    ///
+    /// This is useful for managing the relationship between `PeerID` and user information.
+    /// For example, you could store user names in a `LoroMap` using `PeerID` as the key and the `UserID` as the value.
+    pub fn subscribe_first_commit_from_peer(
+        &self,
+        callback: FirstCommitFromPeerCallback,
+    ) -> Subscription {
+        let (s, enable) = self
+            .first_commit_from_peer_subs
+            .inner()
+            .insert((), callback);
+        enable();
+        s
+    }
+
+    /// Subscribe to the pre-commit event.
+    ///
+    /// The callback will be called when the changes are committed but not yet applied to the OpLog.
+    /// You can modify the commit message and timestamp in the callback by [`ChangeModifier`].
+    pub fn subscribe_pre_commit(&self, callback: PreCommitCallback) -> Subscription {
+        let (s, enable) = self.pre_commit_subs.inner().insert((), callback);
+        enable();
+        s
+    }
+
+    /// Exports changes within the specified ID span to JSON schema format.
+    ///
+    /// The JSON schema format is identical to [`export_json_updates`] and produces deterministic output,
+    /// making it suitable for hash calculation and verification purposes.
+    ///
+    /// This method includes both committed changes and pending changes that have not yet been
+    /// applied to the OpLog.
+    pub fn change_to_json_schema_include_uncommit(&self, id_span: IdSpan) -> Vec<JsonChange> {
+        let oplog = self.oplog.lock().unwrap();
+        let mut changes = export_json_in_id_span(&oplog, id_span);
+        if let Some(uncommit) = oplog.get_uncommitted_change_in_span(id_span) {
+            let change_json = encode_change(ChangeRef::from_change(&uncommit), &self.arena, None);
+            changes.push(change_json);
+        }
+        changes
     }
 }
 

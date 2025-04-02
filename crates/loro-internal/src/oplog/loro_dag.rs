@@ -31,7 +31,7 @@ pub struct AppDag {
     map: Mutex<BTreeMap<ID, AppDagNode>>,
     /// The latest known frontiers
     frontiers: Frontiers,
-    /// The latest known version vectorG
+    /// The latest known version vector
     vv: VersionVector,
     /// The earliest known frontiers
     shallow_since_frontiers: Frontiers,
@@ -693,6 +693,10 @@ impl AppDag {
                 self.pending_txn_node = Some(node);
             }
         }
+    }
+
+    pub(crate) fn latest_vv_contains_peer(&self, peer: PeerID) -> bool {
+        self.vv.contains_key(&peer) && *self.vv.get(&peer).unwrap() > 0
     }
 }
 

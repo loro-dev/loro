@@ -30,6 +30,10 @@ pub use handler::{
 };
 pub use loro_common;
 pub use oplog::OpLog;
+use pre_commit::{
+    FirstCommitFromPeerCallback, FirstCommitFromPeerPayload, PreCommitCallback,
+    PreCommitCallbackPayload,
+};
 pub use state::DocState;
 pub use state::{TreeNode, TreeNodeWithChildren, TreeParentId};
 use subscription::{LocalUpdateCallback, Observer, PeerIdUpdateCallback};
@@ -61,6 +65,7 @@ mod error;
 #[cfg(feature = "test_utils")]
 pub mod fuzz;
 mod parent;
+pub mod pre_commit;
 mod span;
 #[cfg(test)]
 pub mod tests;
@@ -158,7 +163,18 @@ pub struct LoroDocInner {
     detached: AtomicBool,
     local_update_subs: SubscriberSetWithQueue<(), LocalUpdateCallback, Vec<u8>>,
     peer_id_change_subs: SubscriberSetWithQueue<(), PeerIdUpdateCallback, ID>,
+    first_commit_from_peer_subs:
+        SubscriberSetWithQueue<(), FirstCommitFromPeerCallback, FirstCommitFromPeerPayload>,
+    pre_commit_subs: SubscriberSetWithQueue<(), PreCommitCallback, PreCommitCallbackPayload>,
 }
 
 /// The version of the loro crate
 pub const LORO_VERSION: &str = include_str!("../VERSION");
+
+impl Drop for LoroDoc {
+    fn drop(&mut self) {
+        if Arc::strong_count(&self.inner) == 1 {
+            let _ = self.commit_then_stop();
+        }
+    }
+}
