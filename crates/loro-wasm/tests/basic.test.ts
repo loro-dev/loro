@@ -1557,6 +1557,7 @@ it("can allow default config for text style", () => {
     text.mark({ start: 0, end: 5 }, "size", true);
   }
 })
+
 it("can get pending ops as json", () => {
   const doc = new LoroDoc();
   doc.setPeerId("1");
