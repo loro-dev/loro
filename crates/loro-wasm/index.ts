@@ -222,6 +222,9 @@ export class Awareness<T extends Value = Value> {
 /**
  * EphemeralStore is a structure that allows to track the ephemeral state of the peers.
  *
+ * It can be used to synchronize cursor positions, selections, and the names of the peers.
+ * Each entry uses timestamp-based LWW (Last-Write-Wins) for conflict resolution.
+ * 
  * If we don't receive a state update from a peer within the timeout, we will remove their state.
  * The timeout is in milliseconds. This can be used to handle the offline state of a peer.
  * 

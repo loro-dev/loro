@@ -183,7 +183,7 @@ pub type EphemeralSubscriber = Box<dyn Fn(&EphemeralStoreEvent) -> bool + Send +
 /// `EphemeralStore` is a structure that tracks the ephemeral state of peers.
 ///
 /// It can be used to synchronize cursor positions, selections, and the names of the peers.
-/// We use the latest timestamp as the tie-breaker for LWW (Last-Write-Wins) conflict resolution.
+/// Each entry uses timestamp-based LWW (Last-Write-Wins) for conflict resolution.
 ///
 /// # Example
 ///
