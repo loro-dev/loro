@@ -380,3 +380,11 @@ LoroDoc.prototype.toJsonWithReplacer = function (replacer: (key: string | number
     return run(layer);
 }
 
+
+export function idStrToId(idStr: `${number}@${PeerID}`): OpId {
+    const [counter, peer] = idStr.split("@");
+    return {
+        counter: parseInt(counter),
+        peer: peer as PeerID,
+    };
+}

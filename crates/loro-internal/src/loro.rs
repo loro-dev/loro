@@ -722,13 +722,13 @@ impl LoroDoc {
     }
 
     pub fn export_json_in_id_span(&self, id_span: IdSpan) -> Vec<JsonChange> {
-        let (options, txn) = self.commit_then_stop();
-        drop(txn);
         let oplog = self.oplog.lock().unwrap();
-        let json = crate::encoding::json_schema::export_json_in_id_span(&oplog, id_span);
-        drop(oplog);
-        self.renew_txn_if_auto_commit(options);
-        json
+        let mut changes = export_json_in_id_span(&oplog, id_span);
+        if let Some(uncommit) = oplog.get_uncommitted_change_in_span(id_span) {
+            let change_json = encode_change(ChangeRef::from_change(&uncommit), &self.arena, None);
+            changes.push(change_json);
+        }
+        changes
     }
 
     /// Get the version vector of the current OpLog
@@ -1788,23 +1788,6 @@ impl LoroDoc {
         let (s, enable) = self.pre_commit_subs.inner().insert((), callback);
         enable();
         s
-    }
-
-    /// Exports changes within the specified ID span to JSON schema format.
-    ///
-    /// The JSON schema format is identical to [`export_json_updates`] and produces deterministic output,
-    /// making it suitable for hash calculation and verification purposes.
-    ///
-    /// This method includes both committed changes and pending changes that have not yet been
-    /// applied to the OpLog.
-    pub fn change_to_json_schema_include_uncommit(&self, id_span: IdSpan) -> Vec<JsonChange> {
-        let oplog = self.oplog.lock().unwrap();
-        let mut changes = export_json_in_id_span(&oplog, id_span);
-        if let Some(uncommit) = oplog.get_uncommitted_change_in_span(id_span) {
-            let change_json = encode_change(ChangeRef::from_change(&uncommit), &self.arena, None);
-            changes.push(change_json);
-        }
-        changes
     }
 }
 

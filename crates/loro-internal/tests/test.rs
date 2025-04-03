@@ -1369,8 +1369,8 @@ fn test_pre_commit_with_hash() {
     doc.set_peer_id(0).unwrap();
     let doc_clone = doc.clone();
     let sub = doc.subscribe_pre_commit(Box::new(move |e| {
-        let change_json = doc_clone
-            .change_to_json_schema_include_uncommit(e.change_meta.id.to_span(e.change_meta.len));
+        let change_json =
+            doc_clone.export_json_in_id_span(e.change_meta.id.to_span(e.change_meta.len));
         assert!(change_json.len() == 1);
         let mut deps = vec![];
         for dep in e.change_meta.deps.iter() {
@@ -1430,7 +1430,7 @@ fn test_change_to_json_schema_include_uncommit() {
     doc.commit_then_renew();
     let doc_clone = doc.clone();
     let _sub = doc.subscribe_pre_commit(Box::new(move |e| {
-        let changes = doc_clone.change_to_json_schema_include_uncommit(IdSpan::new(
+        let changes = doc_clone.export_json_in_id_span(IdSpan::new(
             0,
             0,
             e.change_meta.id.counter + e.change_meta.len as i32,
@@ -1439,7 +1439,7 @@ fn test_change_to_json_schema_include_uncommit() {
         true
     }));
     doc.get_text("text").insert(0, "b").unwrap();
-    let changes = doc.change_to_json_schema_include_uncommit(IdSpan::new(0, 0, 2));
+    let changes = doc.export_json_in_id_span(IdSpan::new(0, 0, 2));
     assert_eq!(changes.len(), 1);
     doc.commit_then_renew();
     // change merged
