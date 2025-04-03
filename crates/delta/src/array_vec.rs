@@ -53,7 +53,7 @@ impl<V, const C: usize> ArrayVec<V, C> {
                 v = iter.next();
             }
 
-            if new.len() == 0 {
+            if new.is_empty() {
                 return None;
             }
 
