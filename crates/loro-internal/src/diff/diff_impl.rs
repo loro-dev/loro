@@ -121,7 +121,7 @@ pub(crate) fn diff<D: DiffHandler>(
     old: &[u32],
     new: &[u32],
 ) -> Result<(), UpdateTimeoutError> {
-    let max_d = (old.len() + new.len() + 1) / 2 + 1;
+    let max_d = (old.len() + new.len()).div_ceil(2) + 1;
     let mut vb = OffsetVec::new(max_d);
     let mut vf = OffsetVec::new(max_d);
     let start_time = if options.timeout_ms.is_some() {
@@ -197,7 +197,7 @@ fn find_middle_snake(
     let odd = delta & 1 != 0;
     vf[1] = 0;
     vb[1] = 0;
-    let d_max = (n + m + 1) / 2 + 1;
+    let d_max = (n + m).div_ceil(2) + 1;
     assert!(vf.len() >= d_max);
     assert!(vb.len() >= d_max);
 

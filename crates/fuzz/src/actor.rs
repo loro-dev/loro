@@ -252,7 +252,7 @@ impl Actor {
         let frontiers_num = self.rng.gen_range(1..5);
         let mut frontiers: Frontiers = Frontiers::default();
 
-        if vv.len() == 0 {
+        if vv.is_empty() {
             return frontiers;
         }
 
