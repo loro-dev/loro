@@ -11,27 +11,25 @@ mod map {
         b.bench_function("create 10^4 key", |b| {
             let size = 10000;
             b.iter(|| {
-                let loro = LoroDoc::default();
+                let loro = LoroDoc::new_auto_commit();
                 let map = loro.get_map("map");
                 for i in 0..size {
-                    loro.with_txn(|txn| map.insert_with_txn(txn, &i.to_string(), i.into()))
-                        .unwrap();
+                    map.insert(&i.to_string(), i).unwrap();
                 }
+                loro.commit_then_renew();
             })
         });
 
         b.bench_function("map checkout 10^3", |b| {
-            let loro = LoroDoc::default();
+            let loro = LoroDoc::new_auto_commit();
             let map = loro.get_map("map");
             let mut versions = vec![];
             let size = 10000;
             let mut rng: StdRng = rand::SeedableRng::seed_from_u64(0);
             for i in 0..size {
                 versions.push(loro.oplog_frontiers());
-                loro.with_txn(|txn| {
-                    map.insert_with_txn(txn, &rng.gen::<u8>().to_string(), i.into())
-                })
-                .unwrap();
+                map.insert(&rng.gen::<u8>().to_string(), i).unwrap();
+                loro.commit_then_renew();
             }
 
             b.iter(|| {

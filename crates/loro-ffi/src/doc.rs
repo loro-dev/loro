@@ -902,20 +902,20 @@ pub trait Unsubscriber: Sync + Send {
 
 /// A handle to a subscription created by GPUI. When dropped, the subscription
 /// is cancelled and the callback will no longer be invoked.
-pub struct Subscription(Mutex<Option<loro::Subscription>>);
+pub struct Subscription(pub(crate) Mutex<Option<loro::Subscription>>);
 
 impl Subscription {
     /// Detaches the subscription from this handle. The callback will
     /// continue to be invoked until the doc has been subscribed to
     /// are dropped
     pub fn detach(self: Arc<Self>) {
-        let s = self.0.try_lock().unwrap().take().unwrap();
+        let s = self.0.lock().unwrap().take().unwrap();
         s.detach();
     }
 
     /// Unsubscribes the subscription.
     pub fn unsubscribe(self: Arc<Self>) {
-        let s = self.0.try_lock().unwrap().take().unwrap();
+        let s = self.0.lock().unwrap().take().unwrap();
         s.unsubscribe();
     }
 }

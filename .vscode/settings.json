@@ -24,6 +24,7 @@
     "Leeeon",
     "Liangrun",
     "LOGSTORE",
+    "Merkle",
     "napi",
     "nextest",
     "opgroup",
@@ -57,7 +58,7 @@
   "rust-analyzer.cargo.features": [
     "jsonpath",
     "counter",
-    // "test_utils"
+    "test_utils"
   ],
   "editor.defaultFormatter": "rust-lang.rust-analyzer",
   "rust-analyzer.server.extraEnv": {

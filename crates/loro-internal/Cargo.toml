@@ -1,6 +1,6 @@
 [package]
 name = "loro-internal"
-version = "1.4.7"
+version = "1.5.1"
 edition = "2021"
 license = "MIT"
 description = "Loro internal library. Do not use it directly as it's not stable."
@@ -16,7 +16,7 @@ keywords = ["crdt", "local-first"]
 [dependencies]
 generic-btree = { version = "^0.10.5" }
 smallvec = { workspace = true }
-loro-delta = { path = "../delta", version = "1.3.1", package = "loro-delta" }
+loro-delta = { path = "../delta", version = "1.5.0", package = "loro-delta" }
 rle = { path = "../rle", version = "1.2.7", package = "loro-rle" }
 loro-common = { path = "../loro-common", version = "1.4.7" }
 fractional_index = { path = "../fractional_index", features = [
@@ -53,7 +53,20 @@ tracing = { version = "0.1" }
 nonmax = "0.5.5"
 ensure-cov = { workspace = true }
 pretty_assertions = "1.4.1"
+thread_local = "1.1.8"
 
+[target.'cfg(loom)'.dependencies]
+loom = { version= "0.7", features = ["checkpoint"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies.getrandom]
+version = "0.2.15"
+features = ["js"]
+
+[target.'cfg(all(target_arch = "wasm32", not(feature = "wasm")))'.dependencies]
+wasm-bindgen = "0.2.92"
 
 [dev-dependencies]
 arbitrary = { version = "1" }

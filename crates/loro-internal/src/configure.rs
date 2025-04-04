@@ -1,5 +1,8 @@
 pub use crate::container::richtext::config::{StyleConfig, StyleConfigMap};
 use crate::LoroDoc;
+use std::sync::atomic::{AtomicBool, AtomicI64};
+use std::sync::Arc;
+use std::sync::RwLock;
 
 #[derive(Clone, Debug)]
 pub struct Configure {
@@ -90,10 +93,6 @@ pub struct DefaultRandom;
 
 #[cfg(test)]
 use std::sync::atomic::AtomicU64;
-use std::sync::{
-    atomic::{AtomicBool, AtomicI64},
-    Arc, RwLock,
-};
 #[cfg(test)]
 static mut TEST_RANDOM: AtomicU64 = AtomicU64::new(0);
 

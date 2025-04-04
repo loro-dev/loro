@@ -54,7 +54,7 @@ impl<T: DagNode> Iterator for DagIterator<'_, T> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.visited.is_empty() {
-            if self.dag.vv().len() == 0 {
+            if self.dag.vv().is_empty() {
                 return None;
             }
 
@@ -108,7 +108,7 @@ impl<T: DagNode> Iterator for DagIteratorVV<'_, T> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.vv_map.is_empty() {
-            if self.dag.vv().len() == 0 {
+            if self.dag.vv().is_empty() {
                 return None;
             }
 

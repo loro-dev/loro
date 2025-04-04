@@ -1,12 +1,10 @@
-use std::{
-    ops::Range,
-    sync::{Arc, RwLock, Weak},
-};
-
 use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::{rle::HasLength, Cursor};
 use loro_common::{ContainerID, InternalString, LoroError, LoroResult, LoroValue, ID};
 use loro_delta::DeltaRopeBuilder;
+use std::ops::Range;
+use std::sync::RwLock;
+use std::sync::{Arc, Weak};
 
 use crate::{
     container::{
@@ -1182,7 +1180,7 @@ mod snapshot {
             text.delete(2, 5).unwrap();
             let mut bytes = Vec::new();
             doc.app_state()
-                .try_lock()
+                .lock()
                 .unwrap()
                 .get_text("text")
                 .unwrap()
@@ -1191,7 +1189,7 @@ mod snapshot {
 
             let delta = doc
                 .app_state()
-                .try_lock()
+                .lock()
                 .unwrap()
                 .get_text("text")
                 .unwrap()

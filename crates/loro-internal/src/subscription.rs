@@ -9,11 +9,9 @@ use crate::{
 use fxhash::FxHashMap;
 use loro_common::{ContainerID, ID};
 use smallvec::SmallVec;
-use std::{
-    collections::VecDeque,
-    sync::{Arc, Mutex},
-};
+use std::{collections::VecDeque, sync::Arc};
 
+use crate::sync::Mutex;
 /// The callback of the local update.
 pub type LocalUpdateCallback = Box<dyn Fn(&Vec<u8>) -> bool + Send + Sync + 'static>;
 /// The callback of the peer id change. The second argument is the next counter for the peer.
@@ -80,10 +78,10 @@ impl Observer {
     pub(crate) fn emit(&self, doc_diff: DocDiff) {
         let success = self.emit_inner(doc_diff);
         if success {
-            let mut e = self.inner.queue.try_lock().unwrap().pop_front();
+            let mut e = self.inner.queue.lock().unwrap().pop_front();
             while let Some(event) = e {
                 self.emit_inner(event);
-                e = self.inner.queue.try_lock().unwrap().pop_front();
+                e = self.inner.queue.lock().unwrap().pop_front();
             }
         }
     }
@@ -114,7 +112,7 @@ impl Observer {
                     .any(|x| inner.subscriber_set.is_recursive_calling(&Some(*x)))
             {
                 drop(container_events_map);
-                inner.queue.try_lock().unwrap().push_back(doc_diff);
+                inner.queue.lock().unwrap().push_back(doc_diff);
                 return false;
             }
         }

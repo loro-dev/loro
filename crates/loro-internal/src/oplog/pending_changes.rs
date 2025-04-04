@@ -187,30 +187,24 @@ mod test {
 
     #[test]
     fn import_pending() {
-        let a = LoroDoc::new();
+        let a = LoroDoc::new_auto_commit();
         a.set_peer_id(1).unwrap();
-        let b = LoroDoc::new();
+        let b = LoroDoc::new_auto_commit();
         b.set_peer_id(2).unwrap();
         let text_a = a.get_text("text");
-        a.with_txn(|txn| text_a.insert_with_txn(txn, 0, "a"))
-            .unwrap();
-
+        text_a.insert(0, "a").unwrap();
         let update1 = a.export_from(&VersionVector::default());
         let version1 = a.oplog_vv();
-        a.with_txn(|txn| text_a.insert_with_txn(txn, 0, "b"))
-            .unwrap();
+        text_a.insert(0, "b").unwrap();
         let update2 = a.export_from(&version1);
         let version2 = a.oplog_vv();
-        a.with_txn(|txn| text_a.insert_with_txn(txn, 0, "c"))
-            .unwrap();
+        text_a.insert(0, "c").unwrap();
         let update3 = a.export_from(&version2);
         let version3 = a.oplog_vv();
-        a.with_txn(|txn| text_a.insert_with_txn(txn, 0, "d"))
-            .unwrap();
+        text_a.insert(0, "d").unwrap();
         let update4 = a.export_from(&version3);
         // let version4 = a.oplog_vv();
-        a.with_txn(|txn| text_a.insert_with_txn(txn, 0, "e"))
-            .unwrap();
+        text_a.insert(0, "e").unwrap();
         let update3_5 = a.export_from(&version2);
         b.import(&update3_5).unwrap();
         b.import(&update4).unwrap();
@@ -222,17 +216,15 @@ mod test {
 
     #[test]
     fn pending_import_snapshot() {
-        let a = LoroDoc::new();
+        let a = LoroDoc::new_auto_commit();
         a.set_peer_id(1).unwrap();
-        let b = LoroDoc::new();
+        let b = LoroDoc::new_auto_commit();
         b.set_peer_id(2).unwrap();
         let text_a = a.get_text("text");
-        a.with_txn(|txn| text_a.insert_with_txn(txn, 0, "a"))
-            .unwrap();
+        text_a.insert(0, "a").unwrap();
         let update1 = a.export_snapshot().unwrap();
         let version1 = a.oplog_vv();
-        a.with_txn(|txn| text_a.insert_with_txn(txn, 1, "b"))
-            .unwrap();
+        text_a.insert(0, "b").unwrap();
         let update2 = a.export_from(&version1);
         let _version2 = a.oplog_vv();
         b.import(&update2).unwrap();
@@ -246,28 +238,25 @@ mod test {
         // a:   a1 <--- a2
         //        \    /
         // b:       b1
-        let a = LoroDoc::new();
+        let a = LoroDoc::new_auto_commit();
         a.set_peer_id(1).unwrap();
-        let b = LoroDoc::new();
+        let b = LoroDoc::new_auto_commit();
         b.set_peer_id(2).unwrap();
-        let c = LoroDoc::new();
+        let c = LoroDoc::new_auto_commit();
         c.set_peer_id(3).unwrap();
-        let d = LoroDoc::new();
+        let d = LoroDoc::new_auto_commit();
         d.set_peer_id(4).unwrap();
         let text_a = a.get_text("text");
         let text_b = b.get_text("text");
-        a.with_txn(|txn| text_a.insert_with_txn(txn, 0, "a"))
-            .unwrap();
+        text_a.insert(0, "a").unwrap();
         let version_a1 = a.oplog_vv();
         let update_a1 = a.export_from(&VersionVector::default());
         b.import(&update_a1).unwrap();
-        b.with_txn(|txn| text_b.insert_with_txn(txn, 1, "b"))
-            .unwrap();
+        text_b.insert(1, "b").unwrap();
         let update_b1 = b.export_from(&version_a1);
         a.import(&update_b1).unwrap();
         let version_a1b1 = a.oplog_vv();
-        a.with_txn(|txn| text_a.insert_with_txn(txn, 2, "c"))
-            .unwrap();
+        text_a.insert(2, "c").unwrap();
         let update_a2 = a.export_from(&version_a1b1);
         c.import(&update_a2).unwrap();
         assert_eq!(c.get_deep_value().to_json(), "{\"text\":\"\"}");
@@ -290,22 +279,19 @@ mod test {
         // 0@a <- 1@a, where 0@a and 1@a will be merged
         // In this case, c apply b's change first, then apply all the changes from a.
         // C is expected to have the same content as a, after a imported b's change
-        let a = LoroDoc::new();
+        let a = LoroDoc::new_auto_commit();
         a.set_peer_id(1).unwrap();
-        let b = LoroDoc::new();
+        let b = LoroDoc::new_auto_commit();
         b.set_peer_id(2).unwrap();
-        let c = LoroDoc::new();
+        let c = LoroDoc::new_auto_commit();
         c.set_peer_id(3).unwrap();
         let text_a = a.get_text("text");
         let text_b = b.get_text("text");
-        a.with_txn(|txn| text_a.insert_with_txn(txn, 0, "1"))
-            .unwrap();
+        text_a.insert(0, "1").unwrap();
         b.import(&a.export_snapshot().unwrap()).unwrap();
-        b.with_txn(|txn| text_b.insert_with_txn(txn, 0, "1"))
-            .unwrap();
+        text_b.insert(0, "1").unwrap();
         let b_change = b.export_from(&a.oplog_vv());
-        a.with_txn(|txn| text_a.insert_with_txn(txn, 0, "1"))
-            .unwrap();
+        text_a.insert(0, "1").unwrap();
         c.import(&b_change).unwrap();
         c.import(&a.export_snapshot().unwrap()).unwrap();
         a.import(&b_change).unwrap();

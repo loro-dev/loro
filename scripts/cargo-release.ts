@@ -69,10 +69,24 @@ const main = defineCommand({
     console.log(output);
 
     const noChangesCrates = parseNoChangesCrates(output);
-    if (noChangesCrates.length > 0) {
-      console.log("\nOptimized command:");
-      console.log(generateOptimizedCommand(version, noChangesCrates));
-    }
+    const excludeFlags = noChangesCrates.map((crate) => `--exclude ${crate}`).join(
+      " ",
+    );
+    console.log("\n 1. Run command to bump version:");
+    console.log(generateOptimizedCommand(version, noChangesCrates));
+    console.log("2. Then Commit the changes");
+    console.log("3. Run command to publish:");
+    console.log(
+      `cargo release publish --workspace ${excludeFlags}`,
+    );
+    console.log("4. Tag:");
+    console.log(
+      `cargo release tag --workspace ${excludeFlags}`,
+    );
+    console.log("5. Push:");
+    console.log(
+      `git push --tags && git push`,
+    );
   },
 });
 

@@ -43,7 +43,7 @@ mod awareness;
 mod log;
 
 use crate::convert::{handler_to_js_value, js_to_container, js_to_cursor};
-pub use awareness::AwarenessWasm;
+pub use awareness::{AwarenessWasm, EphemeralStoreWasm};
 
 mod convert;
 
@@ -199,6 +199,10 @@ extern "C" {
     pub type JsUndoConfig;
     #[wasm_bindgen(typescript_type = "JsonSchema")]
     pub type JsJsonSchema;
+    #[wasm_bindgen(typescript_type = "JsonChange")]
+    pub type JsJsonChange;
+    #[wasm_bindgen(typescript_type = "JsonChange[]")]
+    pub type JsJsonChanges;
     #[wasm_bindgen(typescript_type = "string | JsonSchema")]
     pub type JsJsonSchemaOrString;
     #[wasm_bindgen(typescript_type = "ExportMode")]
@@ -368,6 +372,25 @@ impl ChangeMeta {
     fn to_js(&self) -> JsValue {
         let s = serde_wasm_bindgen::Serializer::new();
         self.serialize(&s).unwrap()
+    }
+
+    fn from_loro(meta: &loro_internal::ChangeMeta) -> Self {
+        Self {
+            lamport: meta.lamport,
+            length: meta.len as u32,
+            peer: meta.id.peer.to_string(),
+            counter: meta.id.counter,
+            deps: meta
+                .deps
+                .iter()
+                .map(|id| StringID {
+                    peer: id.peer.to_string(),
+                    counter: id.counter,
+                })
+                .collect(),
+            timestamp: meta.timestamp as f64,
+            message: meta.message.clone(),
+        }
     }
 }
 
@@ -1643,14 +1666,14 @@ impl LoroDoc {
     #[wasm_bindgen(js_name = "debugHistory")]
     pub fn debug_history(&self) {
         let borrow_mut = &self.0;
-        let oplog = borrow_mut.oplog().try_lock().unwrap();
+        let oplog = borrow_mut.oplog().lock().unwrap();
         console_log!("{:#?}", oplog.diagnose_size());
     }
 
     /// Get the number of changes in the oplog.
     pub fn changeCount(&self) -> usize {
         let borrow_mut = &self.0;
-        let oplog = borrow_mut.oplog().try_lock().unwrap();
+        let oplog = borrow_mut.oplog().lock().unwrap();
         oplog.len_changes()
     }
 
@@ -1682,7 +1705,7 @@ impl LoroDoc {
     #[wasm_bindgen(js_name = "getAllChanges")]
     pub fn get_all_changes(&self) -> JsChanges {
         let borrow_mut = &self.0;
-        let oplog = borrow_mut.oplog().try_lock().unwrap();
+        let oplog = borrow_mut.oplog().lock().unwrap();
         let mut changes: FxHashMap<PeerID, Vec<ChangeMeta>> = FxHashMap::default();
         oplog.change_store().visit_all_changes(&mut |c| {
             let change_meta = ChangeMeta {
@@ -1722,7 +1745,7 @@ impl LoroDoc {
     pub fn get_change_at(&self, id: JsID) -> JsResult<JsChange> {
         let id = js_id_to_id(id)?;
         let borrow_mut = &self.0;
-        let oplog = borrow_mut.oplog().try_lock().unwrap();
+        let oplog = borrow_mut.oplog().lock().unwrap();
         let change = oplog
             .get_change_at(id)
             .ok_or_else(|| JsError::new(&format!("Change {:?} not found", id)))?;
@@ -1753,7 +1776,7 @@ impl LoroDoc {
         lamport: u32,
     ) -> JsResult<JsChangeOrUndefined> {
         let borrow_mut = &self.0;
-        let oplog = borrow_mut.oplog().try_lock().unwrap();
+        let oplog = borrow_mut.oplog().lock().unwrap();
         let Some(change) =
             oplog.get_change_with_lamport_lte(peer_id.parse().unwrap_throw(), lamport)
         else {
@@ -1784,7 +1807,7 @@ impl LoroDoc {
     pub fn get_ops_in_change(&self, id: JsID) -> JsResult<Vec<JsValue>> {
         let id = js_id_to_id(id)?;
         let borrow_mut = &self.0;
-        let oplog = borrow_mut.oplog().try_lock().unwrap();
+        let oplog = borrow_mut.oplog().lock().unwrap();
         let change = oplog
             .get_remote_change_at(id)
             .ok_or_else(|| JsError::new(&format!("Change {:?} not found", id)))?;
@@ -1814,7 +1837,7 @@ impl LoroDoc {
     pub fn frontiers_to_vv(&self, frontiers: Vec<JsID>) -> JsResult<VersionVector> {
         let frontiers = ids_to_frontiers(frontiers)?;
         let borrow_mut = &self.0;
-        let oplog = borrow_mut.oplog().try_lock().unwrap();
+        let oplog = borrow_mut.oplog().lock().unwrap();
         oplog
             .dag()
             .frontiers_to_vv(&frontiers)
@@ -1836,13 +1859,7 @@ impl LoroDoc {
     /// ```
     #[wasm_bindgen(js_name = "vvToFrontiers")]
     pub fn vv_to_frontiers(&self, vv: &VersionVector) -> JsResult<JsIDs> {
-        let f = self
-            .0
-            .oplog()
-            .try_lock()
-            .unwrap()
-            .dag()
-            .vv_to_frontiers(&vv.0);
+        let f = self.0.oplog().lock().unwrap().dag().vv_to_frontiers(&vv.0);
         Ok(frontiers_to_ids(&f))
     }
 
@@ -2076,6 +2093,52 @@ impl LoroDoc {
             .serialize(&s)
             .map_err(std::convert::Into::<JsValue>::into)?;
         Ok(Some(v.into()))
+    }
+
+    #[wasm_bindgen(js_name = "subscribeFirstCommitFromPeer", skip_typescript)]
+    pub fn subscribe_first_commit_from_peer(&self, f: js_sys::Function) -> JsValue {
+        let observer = observer::Observer::new(f);
+        let sub = self.0.subscribe_first_commit_from_peer(Box::new(move |e| {
+            let obj = js_sys::Object::new();
+            Reflect::set(&obj, &"peer".into(), &e.peer.to_string().into()).unwrap();
+            if let Err(e) = observer.call1(&obj.into()) {
+                console_error!("Error: {:?}", e);
+            }
+            true
+        }));
+
+        subscription_to_js_function_callback(sub)
+    }
+
+    /// Subscribe to the pre-commit event.
+    ///
+    /// The callback will be called when the changes are committed but not yet applied to the OpLog.
+    /// You can modify the commit message and timestamp in the callback by `ChangeModifier`.
+    #[wasm_bindgen(js_name = "subscribePreCommit", skip_typescript)]
+    pub fn subscribe_pre_commit(&self, f: js_sys::Function) -> JsValue {
+        let observer = observer::Observer::new(f);
+        let sub = self.0.subscribe_pre_commit(Box::new(move |e| {
+            let obj = js_sys::Object::new();
+            Reflect::set(
+                &obj,
+                &"changeMeta".into(),
+                &ChangeMeta::from_loro(&e.change_meta).to_js(),
+            )
+            .unwrap();
+            Reflect::set(&obj, &"origin".into(), &JsValue::from_str(&e.origin)).unwrap();
+            Reflect::set(
+                &obj,
+                &"modifier".into(),
+                &ChangeModifier(e.modifier.clone()).into(),
+            )
+            .unwrap();
+            if let Err(e) = observer.call1(&obj.into()) {
+                console_error!("Error: {:?}", e);
+            }
+            true
+        }));
+
+        subscription_to_js_function_callback(sub)
     }
 }
 
@@ -2487,8 +2550,6 @@ impl LoroText {
     /// > You should call `configTextStyle` before using `mark` and `unmark`.
     ///
     /// You can use it to create a highlight, make a range of text bold, or add a link to a range of text.
-    ///
-    /// Note: this is not suitable for unmergeable annotations like comments.
     ///
     /// @example
     /// ```ts
@@ -5158,6 +5219,22 @@ fn subscription_to_js_function_callback(sub: Subscription) -> JsValue {
     closure.into_js_value()
 }
 
+#[wasm_bindgen]
+pub struct ChangeModifier(loro_internal::pre_commit::ChangeModifier);
+
+#[wasm_bindgen]
+impl ChangeModifier {
+    #[wasm_bindgen(js_name = "setMessage")]
+    pub fn set_message(&self, message: &str) -> Self {
+        Self(self.0.set_message(message).clone())
+    }
+
+    #[wasm_bindgen(js_name = "setTimestamp")]
+    pub fn set_timestamp(&self, timestamp: f64) -> Self {
+        Self(self.0.set_timestamp(timestamp as i64).clone())
+    }
+}
+
 #[wasm_bindgen(typescript_custom_section)]
 const TYPES: &'static str = r#"
 /**
@@ -5281,6 +5358,126 @@ interface LoroDoc {
      * ```
      */
     subscribeLocalUpdates(f: (bytes: Uint8Array) => void): () => void
+
+    /**
+     * Subscribe to the first commit from a peer. Operations performed on the `LoroDoc` within this callback
+     * will be merged into the current commit.
+     *
+     * This is useful for managing the relationship between `PeerID` and user information.
+     * For example, you could store user names in a `LoroMap` using `PeerID` as the key and the `UserID` as the value.
+     *
+     * @param f - A callback function that receives a peer id.
+     *
+     * @example
+     * ```ts
+     * const doc = new LoroDoc();
+     * doc.setPeerId(0);
+     * const p = [];
+     * doc.subscribeFirstCommitFromPeer((peer) => {
+     *   p.push(peer);
+     *   doc.getMap("map").set(e.peer, "user-" + e.peer);
+     * });
+     * doc.getList("list").insert(0, 100);
+     * doc.commit();
+     * doc.getList("list").insert(0, 200);
+     * doc.commit();
+     * doc.setPeerId(1);
+     * doc.getList("list").insert(0, 300);
+     * doc.commit();
+     * expect(p).toEqual(["0", "1"]);
+     * expect(doc.getMap("map").get("0")).toBe("user-0");
+     * ```
+     **/
+    subscribeFirstCommitFromPeer(f: (e: { peer: PeerID }) => void): () => void
+
+    /**
+     * Subscribe to the pre-commit event.
+     *
+     * The callback will be called when the changes are committed but not yet applied to the OpLog.
+     * You can modify the commit message and timestamp in the callback by `ChangeModifier`.
+     *
+     * @example
+     * ```ts
+     * const doc = new LoroDoc();
+     * doc.subscribePreCommit((e) => {
+     *   e.modifier.setMessage("test").setTimestamp(Date.now());
+     * });
+     * doc.getList("list").insert(0, 100);
+     * doc.commit();
+     * expect(doc.getChangeAt({ peer: "0", counter: 0 }).message).toBe("test");
+     * ```
+     * 
+     * ### Advanced Example: Creating a Merkle DAG
+     * 
+     * By combining `doc.subscribePreCommit` with `doc.exportJsonInIdSpan`, you can implement advanced features like representing Loro's editing history as a Merkle DAG:
+     * 
+     * ```ts
+     * const doc = new LoroDoc();
+     * doc.setPeerId(0);
+     * doc.subscribePreCommit((e) => {
+     *   const changes = doc.exportJsonInIdSpan(e.changeMeta)
+     *   expect(changes).toHaveLength(1);
+     *   const hash = crypto.createHash('sha256');
+     *   const change = {
+     *     ...changes[0],
+     *     deps: changes[0].deps.map(d => {
+     *       const depChange = doc.getChangeAt(idStrToId(d))
+     *       return depChange.message;
+     *     })
+     *   }
+     *   console.log(change); // The output is shown below
+     *   hash.update(JSON.stringify(change));
+     *   const sha256Hash = hash.digest('hex');
+     *   e.modifier.setMessage(sha256Hash);
+     * });
+     * 
+     * doc.getList("list").insert(0, 100);
+     * doc.commit();
+     * // Change 0
+     * // {
+     * //   id: '0@0',
+     * //   timestamp: 0,
+     * //   deps: [],
+     * //   lamport: 0,
+     * //   msg: undefined,
+     * //   ops: [
+     * //     {
+     * //       container: 'cid:root-list:List',
+     * //       content: { type: 'insert', pos: 0, value: [100] },
+     * //       counter: 0
+     * //     }
+     * //   ]
+     * // }
+     * 
+     * 
+     * doc.getList("list").insert(0, 200);
+     * doc.commit();
+     * // Change 1
+     * // {
+     * //   id: '1@0',
+     * //   timestamp: 0,
+     * //   deps: [
+     * //     '2af99cf93869173984bcf6b1ce5412610b0413d027a5511a8f720a02a4432853'
+     * //   ],
+     * //   lamport: 1,
+     * //   msg: undefined,
+     * //   ops: [
+     * //     {
+     * //       container: 'cid:root-list:List',
+     * //       content: { type: 'insert', pos: 0, value: [200] },
+     * //       counter: 1
+     * //     }
+     * //   ]
+     * // }
+     * 
+     * expect(doc.getChangeAt({ peer: "0", counter: 0 }).message).toBe("2af99cf93869173984bcf6b1ce5412610b0413d027a5511a8f720a02a4432853");
+     * expect(doc.getChangeAt({ peer: "0", counter: 1 }).message).toBe("aedbb442c554ecf59090e0e8339df1d8febf647f25cc37c67be0c6e27071d37f");
+     * ```
+     * 
+     * @param f - A callback function that receives a pre commit event.
+     * 
+     **/
+    subscribePreCommit(f: (e: { changeMeta: Change, origin: string, modifier: ChangeModifier }) => void): () => void
 
     /**
      * Convert the document to a JSON value with a custom replacer function.
@@ -5881,7 +6078,6 @@ export type AwarenessListener = (
     origin: "local" | "timeout" | "remote" | string,
 ) => void;
 
-
 interface Listener {
     (event: LoroEventBatch): void;
 }
@@ -5978,10 +6174,15 @@ interface LoroDoc<T extends Record<string, Container> = Record<string, Container
      */
     exportJsonUpdates(start?: VersionVector, end?: VersionVector, withPeerCompression?: boolean): JsonSchema;
     /**
-     * Export the readable [`Change`]s in the given [`IdSpan`].
+     * Exports changes within the specified ID span to JSON schema format.
      *
-     * The peers are not compressed in the returned changes.
+     * The JSON schema format produced by this method is identical to the one generated by `export_json_updates`.
+     * It ensures deterministic output, making it ideal for hash calculations and integrity checks.
      *
+     * This method can also export pending changes from the uncommitted transaction that have not yet been applied to the OpLog.
+     * 
+     * This method will NOT trigger a new commit implicitly.
+     * 
      * @param idSpan - The id span to export.
      * @returns The changes in the given id span.
      */
@@ -6394,6 +6595,25 @@ interface AwarenessWasm<T extends Value = Value> {
     getAllStates(): Record<PeerID, T>;
     setLocalState(value: T): void;
     removeOutdated(): PeerID[];
+}
+
+type EphemeralListener = (event: EphemeralStoreEvent) => void;
+type EphemeralLocalListener = (bytes: Uint8Array) => void;
+
+interface EphemeralStoreWasm<T extends Value = Value> {
+    set(key: string, value: T): void;
+    get(key: string): T | undefined;
+    getAllStates(): Record<string, T>;
+    removeOutdated();
+    subscribeLocalUpdates(f: EphemeralLocalListener): () => void;
+    subscribe(f: EphemeralListener): () => void;
+}
+
+interface EphemeralStoreEvent {
+    by: "local" | "import" | "timeout";
+    added: string[];
+    updated: string[];
+    removed: string[];
 }
 
 "#;

@@ -1252,7 +1252,7 @@ fn test_loro_export_local_updates() {
 
     let updates_clone = updates.clone();
     let subscription = doc.subscribe_local_update(Box::new(move |bytes: &Vec<u8>| {
-        updates_clone.try_lock().unwrap().push(bytes.to_vec());
+        updates_clone.lock().unwrap().push(bytes.to_vec());
         true
     }));
 
@@ -1264,7 +1264,7 @@ fn test_loro_export_local_updates() {
 
     // Check that updates were recorded
     {
-        let recorded_updates = updates.try_lock().unwrap();
+        let recorded_updates = updates.lock().unwrap();
         assert_eq!(recorded_updates.len(), 2);
 
         // Verify the content of the updates
@@ -1283,7 +1283,7 @@ fn test_loro_export_local_updates() {
         text.insert(11, "!").unwrap();
         doc.commit();
         // Check that no new update was recorded
-        assert_eq!(updates.try_lock().unwrap().len(), 2);
+        assert_eq!(updates.lock().unwrap().len(), 2);
     }
 }
 
@@ -3273,5 +3273,36 @@ fn test_to_delta_on_detached_text() {
             insert: "Hello".to_string(),
             attributes: Some(fx_map! { "bold".into() => LoroValue::Bool(true) }),
         }]
+    );
+}
+
+#[test]
+fn test_apply_delta_on_the_end() {
+    let doc = LoroDoc::new();
+    doc.get_text("text").insert(0, "Hello").unwrap();
+    doc.get_text("text").apply_delta(&[
+        TextDelta::Retain {
+            retain: 5,
+            attributes: None,
+        },
+        TextDelta::Retain {
+            retain: 1,
+            attributes: Some(fx_map! { "bold".into() => LoroValue::Bool(true),  "italic".into() => LoroValue::Bool(true)  }),
+        },
+    ]).unwrap();
+    assert_eq!(
+        doc.get_text("text").to_delta(),
+        vec![
+            TextDelta::Insert {
+                insert: "Hello".to_string(),
+                attributes: None,
+            },
+            TextDelta::Insert {
+                insert: "\n".to_string(),
+                attributes: Some(
+                    fx_map! { "bold".into() => LoroValue::Bool(true), "italic".into() => LoroValue::Bool(true) }
+                ),
+            },
+        ]
     );
 }

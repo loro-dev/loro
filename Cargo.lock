@@ -174,7 +174,7 @@ dependencies = [
  "arbitrary",
  "enum-as-inner 0.5.1",
  "flate2",
- "loro-common 1.4.7",
+ "loro-common 1.4.6",
  "rand",
  "serde_json",
 ]
@@ -685,7 +685,7 @@ dependencies = [
  "dev-utils",
  "ensure-cov",
  "flate2",
- "loro 1.4.7",
+ "loro 1.5.0",
  "rand",
  "serde_json",
  "tabled 0.15.0",
@@ -742,7 +742,7 @@ dependencies = [
  "loro 0.16.12",
  "loro 0.16.2 (git+https://github.com/loro-dev/loro.git?tag=loro-crdt%400.16.7)",
  "loro 0.16.2 (git+https://github.com/loro-dev/loro.git?rev=90470658435ec4c62b5af59ebb82fe9e1f5aa761)",
- "loro 1.4.7",
+ "loro 1.5.0",
  "num_cpus",
  "pretty_assertions",
  "rand",
@@ -761,6 +761,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c31b6d751ae2c7f11320402d34e41349dd1016f8d5d45e48c4312bc8625af50c"
 dependencies = [
  "byteorder",
+]
+
+[[package]]
+name = "generator"
+version = "0.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cc6bd114ceda131d3b1d665eba35788690ad37f5916457286b32ab6fd3c438dd"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "log",
+ "rustversion",
+ "windows",
 ]
 
 [[package]]
@@ -904,7 +917,7 @@ dependencies = [
  "iana-time-zone-haiku",
  "js-sys",
  "wasm-bindgen",
- "windows-core",
+ "windows-core 0.52.0",
 ]
 
 [[package]]
@@ -1072,6 +1085,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04cbf5b083de1c7e0222a7a51dbfdba1cbe1c6ab0b15e29fff3f6c077fd9cd9f"
 
 [[package]]
+name = "loom"
+version = "0.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "419e0dc8046cb947daa77eb95ae174acfbddb7673b4151f56d1eed8e93fbfaca"
+dependencies = [
+ "cfg-if",
+ "generator",
+ "scoped-tls",
+ "serde",
+ "serde_json",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "loro"
 version = "0.16.2"
 source = "git+https://github.com/loro-dev/loro.git?tag=loro-crdt%400.16.7#d2b0520f8633f96146a49ec205bd5e7056880f1a"
@@ -1113,7 +1141,7 @@ dependencies = [
 
 [[package]]
 name = "loro"
-version = "1.4.7"
+version = "1.5.0"
 dependencies = [
  "anyhow",
  "ctor 0.2.9",
@@ -1121,10 +1149,11 @@ dependencies = [
  "enum-as-inner 0.6.1",
  "fxhash",
  "generic-btree",
- "loro-common 1.4.7",
- "loro-delta 1.3.1",
- "loro-internal 1.4.7",
- "loro-kv-store 1.4.7",
+ "loom",
+ "loro-common 1.4.6",
+ "loro-delta 1.5.0",
+ "loro-internal 1.5.0",
+ "loro-kv-store 1.4.6",
  "pretty_assertions",
  "rand",
  "serde_json",
@@ -1183,7 +1212,7 @@ dependencies = [
 
 [[package]]
 name = "loro-common"
-version = "1.4.7"
+version = "1.4.6"
 dependencies = [
  "arbitrary",
  "enum-as-inner 0.6.1",
@@ -1237,7 +1266,7 @@ dependencies = [
 
 [[package]]
 name = "loro-delta"
-version = "1.3.1"
+version = "1.5.0"
 dependencies = [
  "arrayvec",
  "color-backtrace",
@@ -1253,9 +1282,9 @@ dependencies = [
 
 [[package]]
 name = "loro-ffi"
-version = "1.4.6"
+version = "1.5.0"
 dependencies = [
- "loro 1.4.7",
+ "loro 1.5.0",
  "serde_json",
 ]
 
@@ -1372,7 +1401,7 @@ dependencies = [
 
 [[package]]
 name = "loro-internal"
-version = "1.4.7"
+version = "1.5.0"
 dependencies = [
  "append-only-bytes",
  "arbitrary",
@@ -1396,9 +1425,10 @@ dependencies = [
  "itertools 0.12.1",
  "js-sys",
  "leb128",
- "loro-common 1.4.7",
- "loro-delta 1.3.1",
- "loro-kv-store 1.4.7",
+ "loom",
+ "loro-common 1.4.6",
+ "loro-delta 1.5.0",
+ "loro-kv-store 1.4.6",
  "loro-rle 1.2.7",
  "loro_fractional_index 1.2.7",
  "md5",
@@ -1419,6 +1449,7 @@ dependencies = [
  "static_assertions",
  "tabled 0.10.0",
  "thiserror",
+ "thread_local",
  "tracing",
  "wasm-bindgen",
  "xxhash-rust",
@@ -1443,14 +1474,14 @@ dependencies = [
 
 [[package]]
 name = "loro-kv-store"
-version = "1.4.7"
+version = "1.4.6"
 dependencies = [
  "bytes",
  "ctor 0.2.9",
  "dev-utils",
  "ensure-cov",
  "fxhash",
- "loro-common 1.4.7",
+ "loro-common 1.4.6",
  "lz4_flex",
  "once_cell",
  "quick_cache",
@@ -1526,9 +1557,9 @@ dependencies = [
  "console_error_panic_hook",
  "getrandom",
  "js-sys",
- "loro-common 1.4.7",
- "loro-delta 1.3.1",
- "loro-internal 1.4.7",
+ "loro-common 1.4.6",
+ "loro-delta 1.5.0",
+ "loro-internal 1.5.0",
  "loro-rle 1.2.7",
  "serde",
  "serde-wasm-bindgen",
@@ -1592,6 +1623,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75761162ae2b0e580d7e7c390558127e5f01b4194debd6221fd8c207fc80e3f5"
 dependencies = [
  "twox-hash",
+]
+
+[[package]]
+name = "matchers"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8263075bb86c5a1b1427b5ae862e8889656f126e9f77c484496e8b47cf5c5558"
+dependencies = [
+ "regex-automata 0.1.10",
 ]
 
 [[package]]
@@ -1976,7 +2016,7 @@ dependencies = [
  "rand",
  "rand_chacha",
  "rand_xorshift",
- "regex-syntax",
+ "regex-syntax 0.8.5",
  "rusty-fork",
  "tempfile",
  "unarray",
@@ -2114,8 +2154,17 @@ checksum = "b544ef1b4eac5dc2db33ea63606ae9ffcfac26c1416a2806ae0bf5f56b201191"
 dependencies = [
  "aho-corasick",
  "memchr",
- "regex-automata",
- "regex-syntax",
+ "regex-automata 0.4.9",
+ "regex-syntax 0.8.5",
+]
+
+[[package]]
+name = "regex-automata"
+version = "0.1.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c230d73fb8d8c1b9c0b3135c5142a8acee3a0558fb8db5cf1cb65f8d7862132"
+dependencies = [
+ "regex-syntax 0.6.29",
 ]
 
 [[package]]
@@ -2126,8 +2175,14 @@ checksum = "809e8dc61f6de73b46c85f4c96486310fe304c434cfa43669d7b40f711150908"
 dependencies = [
  "aho-corasick",
  "memchr",
- "regex-syntax",
+ "regex-syntax 0.8.5",
 ]
+
+[[package]]
+name = "regex-syntax"
+version = "0.6.29"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f162c6dd7b008981e4d40210aca20b4bd0f9b60ca9271061b07f78537722f2e1"
 
 [[package]]
 name = "regex-syntax"
@@ -2170,6 +2225,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustversion"
+version = "1.0.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eded382c5f5f786b989652c49544c4877d9f015cc22e145a5ea8ea66c2921cd2"
+
+[[package]]
 name = "rusty-fork"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2195,6 +2256,12 @@ checksum = "93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502"
 dependencies = [
  "winapi-util",
 ]
+
+[[package]]
+name = "scoped-tls"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1cf6437eb19a8f4a6cc0f7dca544973b0b78843adbfeb3683d1a94a0024a294"
 
 [[package]]
 name = "scopeguard"
@@ -2230,9 +2297,9 @@ dependencies = [
 
 [[package]]
 name = "serde_columnar"
-version = "0.3.11"
+version = "0.3.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5910a00acc21b3f106b9e3977cabf8d4c15b62ea585664f08ec6fedb118d88e0"
+checksum = "6d4e3c0e46450edf7da174b610b9143eb8ca22059ace5016741fc9e20b88d1e7"
 dependencies = [
  "itertools 0.11.0",
  "postcard",
@@ -2243,9 +2310,9 @@ dependencies = [
 
 [[package]]
 name = "serde_columnar_derive"
-version = "0.3.6"
+version = "0.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44cea1995b758f1b344f484e77a02d9d85c8a62c9ce0e5f1850e27e2f7eebbc9"
+checksum = "42c5d47942b2a7e76118b697fc0f94516a5d8366a3c0fee8d0e2b713e952e306"
 dependencies = [
  "darling",
  "proc-macro2 1.0.93",
@@ -2584,10 +2651,14 @@ version = "0.3.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8189decb5ac0fa7bc8b96b7cb9b2701d60d48805aca84a238004d665fcc4008"
 dependencies = [
+ "matchers",
  "nu-ansi-term 0.46.0",
+ "once_cell",
+ "regex",
  "sharded-slab",
  "smallvec",
  "thread_local",
+ "tracing",
  "tracing-core",
  "tracing-log",
 ]
@@ -2810,11 +2881,75 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 
 [[package]]
+name = "windows"
+version = "0.58.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd04d41d93c4992d421894c18c8b43496aa748dd4c081bac0dc93eb0489272b6"
+dependencies = [
+ "windows-core 0.58.0",
+ "windows-targets",
+]
+
+[[package]]
 name = "windows-core"
 version = "0.52.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33ab640c8d7e35bf8ba19b884ba838ceb4fba93a4e8c65a9059d08afcfc683d9"
 dependencies = [
+ "windows-targets",
+]
+
+[[package]]
+name = "windows-core"
+version = "0.58.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ba6d44ec8c2591c134257ce647b7ea6b20335bf6379a27dac5f1641fcf59f99"
+dependencies = [
+ "windows-implement",
+ "windows-interface",
+ "windows-result",
+ "windows-strings",
+ "windows-targets",
+]
+
+[[package]]
+name = "windows-implement"
+version = "0.58.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bbd5b46c938e506ecbce286b6628a02171d56153ba733b6c741fc627ec9579b"
+dependencies = [
+ "proc-macro2 1.0.93",
+ "quote 1.0.38",
+ "syn 2.0.96",
+]
+
+[[package]]
+name = "windows-interface"
+version = "0.58.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "053c4c462dc91d3b1504c6fe5a726dd15e216ba718e84a0e46a88fbe5ded3515"
+dependencies = [
+ "proc-macro2 1.0.93",
+ "quote 1.0.38",
+ "syn 2.0.96",
+]
+
+[[package]]
+name = "windows-result"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d1043d8214f791817bab27572aaa8af63732e11bf84aa21a45a78d6c317ae0e"
+dependencies = [
+ "windows-targets",
+]
+
+[[package]]
+name = "windows-strings"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4cd9b125c486025df0eabcb585e62173c6c9eddcec5d117d3b6e8c30e2ee4d10"
+dependencies = [
+ "windows-result",
  "windows-targets",
 ]
 

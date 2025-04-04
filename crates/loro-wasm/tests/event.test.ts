@@ -1,16 +1,18 @@
 import { describe, expect, it } from "vitest";
+import crypto from "crypto";
 import {
   Delta,
   getType,
   ListDiff,
-  Loro,
   LoroDoc,
   LoroEventBatch,
   LoroList,
   LoroMap,
   LoroText,
   MapDiff,
+  PeerID,
   TextDiff,
+  idStrToId
 } from "../bundler/index";
 
 describe("event", () => {
@@ -376,7 +378,7 @@ describe("event", () => {
 
   describe("local updates events", () => {
     it("basic", () => {
-      const loro = new Loro();
+      const loro = new LoroDoc();
       const text = loro.getText("text");
       let updateReceived = false;
 
@@ -402,7 +404,7 @@ describe("event", () => {
     });
 
     it("multiple subscribers", () => {
-      const loro = new Loro();
+      const loro = new LoroDoc();
       const text = loro.getText("text");
       let count1 = 0;
       let count2 = 0;
@@ -433,7 +435,7 @@ describe("event", () => {
     });
 
     it("updates for different containers", () => {
-      const loro = new Loro();
+      const loro = new LoroDoc();
       const text = loro.getText("text");
       const list = loro.getList("list");
       const map = loro.getMap("map");
@@ -457,8 +459,8 @@ describe("event", () => {
     });
 
     it("can be used to sync", () => {
-      const loro1 = new Loro();
-      const loro2 = new Loro();
+      const loro1 = new LoroDoc();
+      const loro2 = new LoroDoc();
       const text1 = loro1.getText("text");
       const text2 = loro2.getText("text");
 
@@ -538,6 +540,99 @@ it("subscription for local updates works after timeout", async () => {
   }
 });
 
+it("subscribe first commit from peer", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId(0);
+  let p: PeerID[] = [];
+  doc.subscribeFirstCommitFromPeer((e) => {
+    p.push(e.peer);
+    doc.getMap("map").set(e.peer, "user-" + e.peer);
+  });
+  doc.getList("list").insert(0, 100);
+  doc.commit();
+  doc.getList("list").insert(0, 200);
+  doc.commit();
+  doc.setPeerId(1);
+  doc.getList("list").insert(0, 300);
+  doc.commit();
+  expect(p).toEqual(["0", "1"]);
+  expect(doc.getMap("map").get("0")).toBe("user-0");
+});
+
+it("subscribe pre commit", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId(0);
+  doc.subscribePreCommit((e) => {
+    e.modifier.setMessage("test").setTimestamp(Date.now());
+  });
+  doc.getList("list").insert(0, 100);
+  doc.commit();
+  expect(doc.getChangeAt({ peer: "0", counter: 0 }).message).toBe("test");
+});
+
 function oneMs(): Promise<void> {
   return new Promise((r) => setTimeout(r));
 }
+
+it("use precommit for storing hash", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId(0);
+  doc.subscribePreCommit((e) => {
+    const changes = doc.exportJsonInIdSpan(e.changeMeta)
+    expect(changes).toHaveLength(1);
+    const hash = crypto.createHash('sha256');
+    const change = {
+      ...changes[0],
+      deps: changes[0].deps.map(d => {
+        const depChange = doc.getChangeAt(idStrToId(d))
+        return depChange.message;
+      })
+    }
+    console.log(change); // The output is shown below
+    hash.update(JSON.stringify(change));
+    const sha256Hash = hash.digest('hex');
+    e.modifier.setMessage(sha256Hash);
+  });
+
+  doc.getList("list").insert(0, 100);
+  doc.commit();
+  // Change 0
+  // {
+  //   id: '0@0',
+  //   timestamp: 0,
+  //   deps: [],
+  //   lamport: 0,
+  //   msg: undefined,
+  //   ops: [
+  //     {
+  //       container: 'cid:root-list:List',
+  //       content: { type: 'insert', pos: 0, value: [100] },
+  //       counter: 0
+  //     }
+  //   ]
+  // }
+
+
+  doc.getList("list").insert(0, 200);
+  doc.commit();
+  // Change 1
+  // {
+  //   id: '1@0',
+  //   timestamp: 0,
+  //   deps: [
+  //     '2af99cf93869173984bcf6b1ce5412610b0413d027a5511a8f720a02a4432853'
+  //   ],
+  //   lamport: 1,
+  //   msg: undefined,
+  //   ops: [
+  //     {
+  //       container: 'cid:root-list:List',
+  //       content: { type: 'insert', pos: 0, value: [200] },
+  //       counter: 1
+  //     }
+  //   ]
+  // }
+
+  expect(doc.getChangeAt({ peer: "0", counter: 0 }).message).toBe("2af99cf93869173984bcf6b1ce5412610b0413d027a5511a8f720a02a4432853");
+  expect(doc.getChangeAt({ peer: "0", counter: 1 }).message).toBe("aedbb442c554ecf59090e0e8339df1d8febf647f25cc37c67be0c6e27071d37f");
+})

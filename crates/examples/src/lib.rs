@@ -183,7 +183,7 @@ pub fn minify_failed_tests_in_async_mode<T: ActorTrait>(
         let num_clone = Arc::clone(&num);
         let result = std::panic::catch_unwind(move || {
             let mut actors = ActorGroup::<T>::new(peer_num);
-            for action in actions_clone.try_lock().unwrap().iter_mut() {
+            for action in actions_clone.lock().unwrap().iter_mut() {
                 actors.apply_action(action);
                 num_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             }

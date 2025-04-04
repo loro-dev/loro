@@ -28,7 +28,7 @@ fn allow_editing_on_detached_mode_when_detached_editing_is_enabled() {
         for e in batch.events {
             match e.diff {
                 loro::event::Diff::Text(vec) => {
-                    let mut s = string_clone.try_lock().unwrap();
+                    let mut s = string_clone.lock().unwrap();
                     let mut index = 0;
                     for op in vec {
                         match op {
@@ -62,7 +62,7 @@ fn allow_editing_on_detached_mode_when_detached_editing_is_enabled() {
     doc.get_text("text").insert(5, " alice!").unwrap();
     doc.commit();
     assert_eq!(doc.get_text("text").to_string(), "Hello alice!");
-    assert_eq!(&**string.try_lock().unwrap(), "Hello alice!");
+    assert_eq!(&**string.lock().unwrap(), "Hello alice!");
     assert_ne!(doc.state_frontiers(), doc.oplog_frontiers());
     assert_ne!(doc.oplog_vv(), doc.state_vv());
     assert_eq!(doc.state_frontiers(), Frontiers::from(ID::new(2, 6)));
@@ -80,7 +80,7 @@ fn allow_editing_on_detached_mode_when_detached_editing_is_enabled() {
         "peer id should be changed after checkout in detached editing mode"
     );
     assert_eq!(doc.get_text("text").to_string(), "Hello world! alice!");
-    assert_eq!(&**string.try_lock().unwrap(), "Hello world! alice!");
+    assert_eq!(&**string.lock().unwrap(), "Hello world! alice!");
     assert_eq!(doc.state_frontiers(), doc.oplog_frontiers());
     assert_eq!(doc.oplog_vv(), doc.state_vv());
 
@@ -88,7 +88,7 @@ fn allow_editing_on_detached_mode_when_detached_editing_is_enabled() {
     doc.set_peer_id(1).unwrap();
     doc.get_text("text").insert(0, "Hi ").unwrap();
     doc.commit();
-    assert_eq!(&**string.try_lock().unwrap(), "Hi Hello world! alice!");
+    assert_eq!(&**string.lock().unwrap(), "Hi Hello world! alice!");
     assert_eq!(doc.get_text("text").to_string(), "Hi Hello world! alice!");
     assert_eq!(doc.state_frontiers(), doc.oplog_frontiers());
     assert_eq!(doc.oplog_vv(), doc.state_vv());
@@ -184,7 +184,7 @@ fn allow_editing_on_detached_mode_when_detached_editing_is_enabled_2() {
         for e in batch.events {
             match e.diff {
                 loro::event::Diff::Text(vec) => {
-                    let mut s = string_clone.try_lock().unwrap();
+                    let mut s = string_clone.lock().unwrap();
                     let mut index = 0;
                     for op in vec {
                         match op {
@@ -218,7 +218,7 @@ fn allow_editing_on_detached_mode_when_detached_editing_is_enabled_2() {
     doc.get_text("text").insert(5, " alice!").unwrap();
     doc.commit();
     assert_eq!(doc.get_text("text").to_string(), "Hello alice!");
-    assert_eq!(&**string.try_lock().unwrap(), "Hello alice!");
+    assert_eq!(&**string.lock().unwrap(), "Hello alice!");
     assert_ne!(doc.state_frontiers(), doc.oplog_frontiers());
     assert_ne!(doc.oplog_vv(), doc.state_vv());
     assert_eq!(doc.state_frontiers(), Frontiers::from(ID::new(0, 6)));
@@ -236,7 +236,7 @@ fn allow_editing_on_detached_mode_when_detached_editing_is_enabled_2() {
         "peer id should be changed after checkout in detached editing mode"
     );
     assert_eq!(doc.get_text("text").to_string(), "Hello alice! world!");
-    assert_eq!(&**string.try_lock().unwrap(), "Hello alice! world!");
+    assert_eq!(&**string.lock().unwrap(), "Hello alice! world!");
     assert_eq!(doc.state_frontiers(), doc.oplog_frontiers());
     assert_eq!(doc.oplog_vv(), doc.state_vv());
 }

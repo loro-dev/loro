@@ -420,8 +420,8 @@ fn encode_header_and_body(mode: EncodeMode, body: Vec<u8>) -> Vec<u8> {
 
 pub(crate) fn export_snapshot(doc: &LoroDoc) -> Vec<u8> {
     let body = outdated_encode_reordered::encode_snapshot(
-        &doc.oplog().try_lock().unwrap(),
-        &mut doc.app_state().try_lock().unwrap(),
+        &doc.oplog().lock().unwrap(),
+        &mut doc.app_state().lock().unwrap(),
         &Default::default(),
     );
 
@@ -474,7 +474,7 @@ pub(crate) fn export_shallow_snapshot(
 }
 
 fn check_target_version_reachable(doc: &LoroDoc, f: &Frontiers) -> Result<(), LoroEncodeError> {
-    let oplog = doc.oplog.try_lock().unwrap();
+    let oplog = doc.oplog.lock().unwrap();
     if !oplog.dag.can_export_shallow_snapshot_on(f) {
         return Err(LoroEncodeError::FrontiersNotFound(format!("{:?}", f)));
     }

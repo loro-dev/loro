@@ -54,7 +54,7 @@ impl Actor {
         let cb_tracker = tracker.clone();
         loro.subscribe_root(Arc::new(move |e| {
             info_span!("[Fuzz] tracker.apply_diff", id = id).in_scope(|| {
-                let mut tracker = cb_tracker.try_lock().unwrap();
+                let mut tracker = cb_tracker.lock().unwrap();
                 tracker.apply_diff(e)
             });
         }))
@@ -161,7 +161,7 @@ impl Actor {
     pub fn check_tracker(&self) {
         let loro = &self.loro;
         info_span!("Check tracker", "peer = {}", loro.peer_id()).in_scope(|| {
-            let tracker = self.tracker.try_lock().unwrap();
+            let tracker = self.tracker.lock().unwrap();
             let loro_value = loro.get_deep_value();
             let tracker_value = tracker.to_value();
             assert_value_eq(&loro_value, &tracker_value, None);
@@ -252,7 +252,7 @@ impl Actor {
         let frontiers_num = self.rng.gen_range(1..5);
         let mut frontiers: Frontiers = Frontiers::default();
 
-        if vv.len() == 0 {
+        if vv.is_empty() {
             return frontiers;
         }
 
@@ -286,108 +286,78 @@ impl Actor {
     pub fn register(&mut self, target: ContainerType) {
         match target {
             ContainerType::Map => {
-                self.tracker
-                    .try_lock()
-                    .unwrap()
-                    .as_map_mut()
-                    .unwrap()
-                    .insert(
-                        "map".to_string(),
-                        Value::empty_container(
-                            ContainerType::Map,
-                            ContainerID::new_root("map", ContainerType::Map),
-                        ),
-                    );
+                self.tracker.lock().unwrap().as_map_mut().unwrap().insert(
+                    "map".to_string(),
+                    Value::empty_container(
+                        ContainerType::Map,
+                        ContainerID::new_root("map", ContainerType::Map),
+                    ),
+                );
                 self.targets.insert(
                     target,
                     ActionExecutor::MapActor(MapActor::new(self.loro.clone())),
                 );
             }
             ContainerType::List => {
-                self.tracker
-                    .try_lock()
-                    .unwrap()
-                    .as_map_mut()
-                    .unwrap()
-                    .insert(
-                        "list".to_string(),
-                        Value::empty_container(
-                            ContainerType::List,
-                            ContainerID::new_root("list", ContainerType::List),
-                        ),
-                    );
+                self.tracker.lock().unwrap().as_map_mut().unwrap().insert(
+                    "list".to_string(),
+                    Value::empty_container(
+                        ContainerType::List,
+                        ContainerID::new_root("list", ContainerType::List),
+                    ),
+                );
                 self.targets.insert(
                     target,
                     ActionExecutor::ListActor(ListActor::new(self.loro.clone())),
                 );
             }
             ContainerType::MovableList => {
-                self.tracker
-                    .try_lock()
-                    .unwrap()
-                    .as_map_mut()
-                    .unwrap()
-                    .insert(
-                        "movable_list".to_string(),
-                        Value::empty_container(
-                            ContainerType::MovableList,
-                            ContainerID::new_root("movable_list", ContainerType::MovableList),
-                        ),
-                    );
+                self.tracker.lock().unwrap().as_map_mut().unwrap().insert(
+                    "movable_list".to_string(),
+                    Value::empty_container(
+                        ContainerType::MovableList,
+                        ContainerID::new_root("movable_list", ContainerType::MovableList),
+                    ),
+                );
                 self.targets.insert(
                     target,
                     ActionExecutor::MovableListActor(MovableListActor::new(self.loro.clone())),
                 );
             }
             ContainerType::Text => {
-                self.tracker
-                    .try_lock()
-                    .unwrap()
-                    .as_map_mut()
-                    .unwrap()
-                    .insert(
-                        "text".to_string(),
-                        Value::empty_container(
-                            ContainerType::Text,
-                            ContainerID::new_root("text", ContainerType::Text),
-                        ),
-                    );
+                self.tracker.lock().unwrap().as_map_mut().unwrap().insert(
+                    "text".to_string(),
+                    Value::empty_container(
+                        ContainerType::Text,
+                        ContainerID::new_root("text", ContainerType::Text),
+                    ),
+                );
                 self.targets.insert(
                     target,
                     ActionExecutor::TextActor(TextActor::new(self.loro.clone())),
                 );
             }
             ContainerType::Tree => {
-                self.tracker
-                    .try_lock()
-                    .unwrap()
-                    .as_map_mut()
-                    .unwrap()
-                    .insert(
-                        "tree".to_string(),
-                        Value::empty_container(
-                            ContainerType::Tree,
-                            ContainerID::new_root("tree", ContainerType::Tree),
-                        ),
-                    );
+                self.tracker.lock().unwrap().as_map_mut().unwrap().insert(
+                    "tree".to_string(),
+                    Value::empty_container(
+                        ContainerType::Tree,
+                        ContainerID::new_root("tree", ContainerType::Tree),
+                    ),
+                );
                 self.targets.insert(
                     target,
                     ActionExecutor::TreeActor(TreeActor::new(self.loro.clone())),
                 );
             }
             ContainerType::Counter => {
-                self.tracker
-                    .try_lock()
-                    .unwrap()
-                    .as_map_mut()
-                    .unwrap()
-                    .insert(
-                        "counter".to_string(),
-                        Value::empty_container(
-                            ContainerType::Counter,
-                            ContainerID::new_root("counter", ContainerType::Counter),
-                        ),
-                    );
+                self.tracker.lock().unwrap().as_map_mut().unwrap().insert(
+                    "counter".to_string(),
+                    Value::empty_container(
+                        ContainerType::Counter,
+                        ContainerID::new_root("counter", ContainerType::Counter),
+                    ),
+                );
                 self.targets.insert(
                     target,
                     ActionExecutor::CounterActor(CounterActor::new(self.loro.clone())),

@@ -33,10 +33,11 @@ impl MapActor {
         loro.subscribe(
             &ContainerID::new_root("map", ContainerType::Map),
             Arc::new(move |event| {
-                let mut map = map.try_lock().unwrap();
+                let mut map = map.lock().unwrap();
                 map.apply_diff(event);
             }),
-        ).detach();
+        )
+        .detach();
 
         let root = loro.get_map("map");
         MapActor {
@@ -65,7 +66,7 @@ impl ActorTrait for MapActor {
     fn check_tracker(&self) {
         let map = self.loro.get_map("map");
         let value_a = map.get_deep_value();
-        let value_b = self.tracker.try_lock().unwrap().to_value();
+        let value_b = self.tracker.lock().unwrap().to_value();
         assert_value_eq(
             &value_a,
             value_b.into_map().unwrap().get("map").unwrap(),

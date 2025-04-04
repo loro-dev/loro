@@ -34,7 +34,7 @@ pub(crate) fn export_shallow_snapshot_inner(
     doc: &LoroDoc,
     start_from: &Frontiers,
 ) -> Result<(Snapshot, Frontiers), LoroEncodeError> {
-    let oplog = doc.oplog().try_lock().unwrap();
+    let oplog = doc.oplog().lock().unwrap();
     let start_from = calc_shallow_doc_start(&oplog, start_from);
     let mut start_vv = oplog.dag().frontiers_to_vv(&start_from).unwrap();
     for id in start_from.iter() {
@@ -74,8 +74,9 @@ pub(crate) fn export_shallow_snapshot_inner(
     let latest_vv = oplog.vv();
     let ops_num: usize = latest_vv.sub_iter(&start_vv).map(|x| x.atom_len()).sum();
     drop(oplog);
-    doc.checkout_without_emitting(&start_from, false).unwrap();
-    let mut state = doc.app_state().try_lock().unwrap();
+    doc._checkout_without_emitting(&start_from, false, false)
+        .unwrap();
+    let mut state = doc.app_state().lock().unwrap();
     let alive_containers = state.ensure_all_alive_containers();
     if has_unknown_container(alive_containers.iter()) {
         return Err(LoroEncodeError::UnknownContainer);
@@ -85,10 +86,10 @@ pub(crate) fn export_shallow_snapshot_inner(
     state.store.flush();
     let shallow_root_state_kv = state.store.get_kv().clone();
     drop(state);
-    doc.checkout_without_emitting(&latest_frontiers, false)
+    doc._checkout_without_emitting(&latest_frontiers, false, false)
         .unwrap();
     let state_bytes = if ops_num > MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE {
-        let mut state = doc.app_state().try_lock().unwrap();
+        let mut state = doc.app_state().lock().unwrap();
         state.ensure_all_alive_containers();
         state.store.encode();
         // All the containers that are created after start_from need to be encoded
@@ -122,7 +123,7 @@ pub(crate) fn export_shallow_snapshot_inner(
     };
 
     if state_frontiers != latest_frontiers {
-        doc.checkout_without_emitting(&state_frontiers, false)
+        doc._checkout_without_emitting(&state_frontiers, false, false)
             .unwrap();
     }
 
@@ -143,7 +144,7 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
     start_from: &Frontiers,
     w: &mut W,
 ) -> Result<Frontiers, LoroEncodeError> {
-    let oplog = doc.oplog().try_lock().unwrap();
+    let oplog = doc.oplog().lock().unwrap();
     let start_from = calc_shallow_doc_start(&oplog, start_from);
     let mut start_vv = oplog.dag().frontiers_to_vv(&start_from).unwrap();
     for id in start_from.iter() {
@@ -166,8 +167,9 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
     let state_frontiers = doc.state_frontiers();
     let is_attached = !doc.is_detached();
     drop(oplog);
-    doc.checkout_without_emitting(&start_from, false).unwrap();
-    let mut state = doc.app_state().try_lock().unwrap();
+    doc._checkout_without_emitting(&start_from, false, false)
+        .unwrap();
+    let mut state = doc.app_state().lock().unwrap();
     let alive_containers = state.ensure_all_alive_containers();
     let alive_c_bytes = cids_to_bytes(alive_containers);
     state.store.flush();
@@ -186,7 +188,7 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
     _encode_snapshot(snapshot, w);
 
     if state_frontiers != start_from {
-        doc.checkout_without_emitting(&state_frontiers, false)
+        doc._checkout_without_emitting(&state_frontiers, false, false)
             .unwrap();
     }
 
@@ -255,10 +257,11 @@ pub(crate) fn encode_snapshot_at<W: std::io::Write>(
 ) -> Result<(), LoroEncodeError> {
     let was_detached = doc.is_detached();
     let version_before_start = doc.oplog_frontiers();
-    doc.checkout_without_emitting(frontiers, true).unwrap();
+    doc._checkout_without_emitting(frontiers, true, false)
+        .unwrap();
     let result = 'block: {
-        let mut state = doc.app_state().try_lock().unwrap();
-        let oplog = doc.oplog().try_lock().unwrap();
+        let oplog = doc.oplog().lock().unwrap();
+        let mut state = doc.app_state().lock().unwrap();
         let is_shallow = state.store.shallow_root_store().is_some();
         if is_shallow {
             unimplemented!()
@@ -300,7 +303,7 @@ pub(crate) fn encode_snapshot_at<W: std::io::Write>(
 
         Ok(())
     };
-    doc.checkout_without_emitting(&version_before_start, false)
+    doc._checkout_without_emitting(&version_before_start, false, false)
         .unwrap();
     if !was_detached {
         doc.set_detached(false);

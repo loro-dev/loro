@@ -2,7 +2,7 @@ use core::panic;
 use std::{
     borrow::Cow,
     mem::take,
-    sync::{Arc, Mutex, Weak},
+    sync::{Arc, Weak},
 };
 
 use enum_as_inner::EnumAsInner;
@@ -25,11 +25,13 @@ use crate::{
     event::{Diff, ListDeltaMeta, TextDiff},
     handler::{Handler, ValueOrHandler},
     id::{Counter, PeerID, ID},
+    lock::LoroMutex,
     loro::CommitOptions,
     op::{Op, RawOp, RawOpContent},
+    pre_commit::{ChangeModifier, PreCommitCallbackPayload},
     span::HasIdSpan,
     version::Frontiers,
-    InternalString, LoroDocInner, LoroError, LoroValue,
+    ChangeMeta, InternalString, LoroDoc, LoroDocInner, LoroError, LoroValue,
 };
 
 use super::{
@@ -67,7 +69,7 @@ impl crate::LoroDoc {
         let obs = self.observer.clone();
         let local_update_subs_weak = self.local_update_subs.downgrade();
         txn.set_on_commit(Box::new(move |state, oplog, id_span| {
-            let mut state = state.try_lock().unwrap();
+            let mut state = state.lock().unwrap();
             let events = state.take_events();
             drop(state);
             for event in events {
@@ -81,7 +83,7 @@ impl crate::LoroDoc {
             if let Some(local_update_subs) = local_update_subs_weak.upgrade() {
                 if !local_update_subs.inner().is_empty() {
                     let bytes =
-                        { export_fast_updates_in_range(&oplog.try_lock().unwrap(), &[id_span]) };
+                        { export_fast_updates_in_range(&oplog.lock().unwrap(), &[id_span]) };
                     local_update_subs.emit(&(), bytes);
                 }
             }
@@ -90,21 +92,10 @@ impl crate::LoroDoc {
         Ok(txn)
     }
 
-    #[inline(always)]
-    pub fn with_txn<F, R>(&self, f: F) -> LoroResult<R>
-    where
-        F: FnOnce(&mut Transaction) -> LoroResult<R>,
-    {
-        let mut txn = self.txn().unwrap();
-        let v = f(&mut txn)?;
-        txn.commit()?;
-        Ok(v)
-    }
-
     pub fn start_auto_commit(&self) {
         self.auto_commit
             .store(true, std::sync::atomic::Ordering::Release);
-        let mut self_txn = self.txn.try_lock().unwrap();
+        let mut self_txn = self.txn.lock().unwrap();
         if self_txn.is_some() || !self.can_edit() {
             return;
         }
@@ -116,7 +107,7 @@ impl crate::LoroDoc {
     #[inline]
     pub fn renew_txn_if_auto_commit(&self, options: Option<CommitOptions>) {
         if self.auto_commit.load(std::sync::atomic::Ordering::Acquire) && self.can_edit() {
-            let mut self_txn = self.txn.try_lock().unwrap();
+            let mut self_txn = self.txn.lock().unwrap();
             if self_txn.is_some() {
                 return;
             }
@@ -131,7 +122,7 @@ impl crate::LoroDoc {
 }
 
 pub(crate) type OnCommitFn =
-    Box<dyn FnOnce(&Arc<Mutex<DocState>>, &Arc<Mutex<OpLog>>, IdSpan) + Sync + Send>;
+    Box<dyn FnOnce(&Arc<LoroMutex<DocState>>, &Arc<LoroMutex<OpLog>>, IdSpan) + Sync + Send>;
 
 pub struct Transaction {
     peer: PeerID,
@@ -150,6 +141,7 @@ pub struct Transaction {
     timestamp: Option<Timestamp>,
     msg: Option<Arc<str>>,
     latest_timestamp: Timestamp,
+    pub(super) is_peer_first_appearance: bool,
 }
 
 impl std::fmt::Debug for Transaction {
@@ -322,12 +314,12 @@ impl Transaction {
     }
 
     pub fn new_with_origin(doc: Arc<LoroDocInner>, origin: InternalString) -> Self {
-        let mut state_lock = doc.state.try_lock().unwrap();
+        let oplog_lock = doc.oplog.lock().unwrap();
+        let mut state_lock = doc.state.lock().unwrap();
         if state_lock.is_in_txn() {
             panic!("Cannot start a transaction while another one is in progress");
         }
 
-        let oplog_lock = doc.oplog.try_lock().unwrap();
         state_lock.start_txn(origin, crate::event::EventTriggerKind::Local);
         let arena = state_lock.arena.clone();
         let frontiers = state_lock.frontiers.clone();
@@ -357,6 +349,7 @@ impl Transaction {
             on_commit: None,
             msg: None,
             latest_timestamp,
+            is_peer_first_appearance: false,
         }
     }
 
@@ -417,14 +410,13 @@ impl Transaction {
             return Ok(None);
         };
         self.finished = true;
-        let mut state = doc.state.try_lock().unwrap();
         if self.local_ops.is_empty() {
+            let mut state = doc.state.lock().unwrap();
             state.abort_txn();
             return Ok(Some(self.take_options()));
         }
 
         let ops = std::mem::take(&mut self.local_ops);
-        let mut oplog = doc.oplog.try_lock().unwrap();
         let deps = take(&mut self.frontiers);
         let change = Change {
             lamport: self.start_lamport,
@@ -433,11 +425,33 @@ impl Transaction {
             id: ID::new(self.peer, self.start_counter),
             timestamp: self.latest_timestamp.max(
                 self.timestamp
-                    .unwrap_or_else(|| oplog.get_timestamp_for_next_txn()),
+                    .unwrap_or_else(|| doc.oplog.lock().unwrap().get_timestamp_for_next_txn()),
             ),
             commit_msg: take(&mut self.msg),
         };
 
+        let change_meta = ChangeMeta::from_change(&change);
+        {
+            // add change to uncommit field of oplog
+            let mut oplog = doc.oplog.lock().unwrap();
+            oplog.set_uncommitted_change(change);
+        }
+
+        let modifier = ChangeModifier::default();
+        doc.pre_commit_subs.emit(
+            &(),
+            PreCommitCallbackPayload {
+                change_meta,
+                origin: self.origin.to_string(),
+                modifier: modifier.clone(),
+            },
+        );
+
+        let mut oplog = doc.oplog.lock().unwrap();
+        let mut state = doc.state.lock().unwrap();
+
+        let mut change = oplog.uncommitted_change.take().unwrap();
+        modifier.modify_change(&mut change);
         let diff = if state.is_recording() {
             Some(change_to_diff(
                 &change,
@@ -478,6 +492,7 @@ impl Transaction {
         drop(state);
         drop(oplog);
         if let Some(on_commit) = self.on_commit.take() {
+            assert!(!doc.txn.is_locked());
             on_commit(&doc.state.clone(), &doc.oplog.clone(), self.id_span());
         }
         Ok(None)
@@ -503,7 +518,7 @@ impl Transaction {
         content: RawOpContent,
         event: EventHint,
         // check whether context and txn are referring to the same state context
-        doc: &Arc<LoroDocInner>,
+        doc: &LoroDoc,
     ) -> LoroResult<()> {
         // TODO: need to check if the doc is the same
         let this_doc = self.doc.upgrade().unwrap();
@@ -511,13 +526,13 @@ impl Transaction {
             return Err(LoroError::UnmatchedContext {
                 expected: this_doc
                     .state
-                    .try_lock()
+                    .lock()
                     .unwrap()
                     .peer
                     .load(std::sync::atomic::Ordering::Relaxed),
                 found: doc
                     .state
-                    .try_lock()
+                    .lock()
                     .unwrap()
                     .peer
                     .load(std::sync::atomic::Ordering::Relaxed),
@@ -536,7 +551,8 @@ impl Transaction {
             content,
         };
 
-        let mut state = doc.state.try_lock().unwrap();
+        let mut oplog = doc.oplog.lock().unwrap();
+        let mut state = doc.state.lock().unwrap();
         if state.is_deleted(container) {
             return Err(LoroError::ContainerDeleted {
                 container: Box::new(state.arena.idx_to_id(container).unwrap()),
@@ -546,8 +562,10 @@ impl Transaction {
         let op = self.arena.convert_raw_op(&raw_op);
         state.apply_local_op(&raw_op, &op)?;
         {
+            if !self.is_peer_first_appearance && !oplog.dag.latest_vv_contains_peer(self.peer) {
+                self.is_peer_first_appearance = true;
+            }
             // update version info
-            let mut oplog = doc.oplog.try_lock().unwrap();
             let dep_id = Frontiers::from_id(ID::new(self.peer, self.next_counter - 1));
             let start_id = ID::new(self.peer, self.next_counter);
             self.next_counter += len as Counter;
@@ -567,6 +585,7 @@ impl Transaction {
             state.frontiers = Frontiers::from_id(last_id);
         };
         drop(state);
+        drop(oplog);
         debug_assert_eq!(
             event.rle_len(),
             op.atom_len(),
@@ -591,7 +610,7 @@ impl Transaction {
     /// if it's str it will use Root container, which will not be None
     pub fn get_text<I: IntoContainerId>(&self, id: I) -> TextHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Text);
-        Handler::new_attached(id, self.doc.upgrade().unwrap())
+        Handler::new_attached(id, LoroDoc::from_inner(self.doc.upgrade().unwrap()))
             .into_text()
             .unwrap()
     }
@@ -600,7 +619,7 @@ impl Transaction {
     /// if it's str it will use Root container, which will not be None
     pub fn get_list<I: IntoContainerId>(&self, id: I) -> ListHandler {
         let id = id.into_container_id(&self.arena, ContainerType::List);
-        Handler::new_attached(id, self.doc.upgrade().unwrap())
+        Handler::new_attached(id, LoroDoc::from_inner(self.doc.upgrade().unwrap()))
             .into_list()
             .unwrap()
     }
@@ -609,7 +628,7 @@ impl Transaction {
     /// if it's str it will use Root container, which will not be None
     pub fn get_map<I: IntoContainerId>(&self, id: I) -> MapHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Map);
-        Handler::new_attached(id, self.doc.upgrade().unwrap())
+        Handler::new_attached(id, LoroDoc::from_inner(self.doc.upgrade().unwrap()))
             .into_map()
             .unwrap()
     }
@@ -618,7 +637,7 @@ impl Transaction {
     /// if it's str it will use Root container, which will not be None
     pub fn get_tree<I: IntoContainerId>(&self, id: I) -> TreeHandler {
         let id = id.into_container_id(&self.arena, ContainerType::Tree);
-        Handler::new_attached(id, self.doc.upgrade().unwrap())
+        Handler::new_attached(id, LoroDoc::from_inner(self.doc.upgrade().unwrap()))
             .into_tree()
             .unwrap()
     }

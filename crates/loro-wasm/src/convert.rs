@@ -261,7 +261,7 @@ fn delta_item_to_js(item: ListDiffItem, for_json: bool) -> (JsValue, Option<JsVa
         } => {
             let mut a = None;
             let mut b: Option<JsValue> = None;
-            if value.len() > 0 {
+            if !value.is_empty() {
                 let obj = Object::new();
                 let arr = Array::new_with_length(value.len() as u32);
                 for (i, v) in value.into_iter().enumerate() {

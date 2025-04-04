@@ -10,3 +10,4 @@ node_modules/
 coverage/
 trace-*.json
 .loro
+loom_test.json

@@ -8,16 +8,18 @@
 #![warn(missing_debug_implementations)]
 
 pub mod arena;
-mod change_meta;
 pub mod diff;
 pub mod diff_calc;
 pub mod handler;
-use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex};
-
+pub mod sync;
+use crate::sync::AtomicBool;
+use std::sync::Arc;
+mod change_meta;
+pub(crate) mod lock;
 use arena::SharedArena;
 use configure::Configure;
 use diff_calc::DiffCalculator;
+use lock::LoroMutex;
 
 pub use change_meta::ChangeMeta;
 pub use event::{ContainerDiff, DiffEvent, DocDiff, ListDiff, ListDiffInsertItem, ListDiffItem};
@@ -28,6 +30,10 @@ pub use handler::{
 };
 pub use loro_common;
 pub use oplog::OpLog;
+use pre_commit::{
+    FirstCommitFromPeerCallback, FirstCommitFromPeerPayload, PreCommitCallback,
+    PreCommitCallbackPayload,
+};
 pub use state::DocState;
 pub use state::{TreeNode, TreeNodeWithChildren, TreeParentId};
 use subscription::{LocalUpdateCallback, Observer, PeerIdUpdateCallback};
@@ -59,6 +65,7 @@ mod error;
 #[cfg(feature = "test_utils")]
 pub mod fuzz;
 mod parent;
+pub mod pre_commit;
 mod span;
 #[cfg(test)]
 pub mod tests;
@@ -93,24 +100,25 @@ pub use value::wasm;
 pub use value::{ApplyDiff, LoroValue, ToJson};
 pub use version::VersionVector;
 
-/// `LoroApp` serves as the library's primary entry point.
-/// It's constituted by an [OpLog] and an [AppState].
+/// [`LoroDoc`] serves as the library's primary entry point.
+/// It's constituted by an [OpLog] and an [DocState].
 ///
 /// - [OpLog] encompasses all operations, signifying the document history.
-/// - [AppState] signifies the current document state.
+/// - [DocState] signifies the current document state.
 ///
 /// They will share a [super::arena::SharedArena]
 ///
 /// # Detached Mode
 ///
-/// This mode enables separate usage of [OpLog] and [AppState].
-/// It facilitates temporal navigation. [AppState] can be reverted to
+/// This mode enables separate usage of [OpLog] and [DocState].
+/// It facilitates temporal navigation. [DocState] can be reverted to
 /// any version contained within the [OpLog].
 ///
-/// `LoroApp::detach()` separates [AppState] from [OpLog]. In this mode,
-/// updates to [OpLog] won't affect [AppState], while updates to [AppState]
+/// `LoroDoc::detach()` separates [DocState] from [OpLog]. In this mode,
+/// updates to [OpLog] won't affect [DocState], while updates to [DocState]
 /// will continue to affect [OpLog].
 #[derive(Debug, Clone)]
+#[repr(transparent)]
 pub struct LoroDoc {
     inner: Arc<LoroDocInner>,
 }
@@ -130,19 +138,43 @@ impl std::ops::Deref for LoroDoc {
 }
 
 pub struct LoroDocInner {
-    oplog: Arc<Mutex<OpLog>>,
-    state: Arc<Mutex<DocState>>,
+    oplog: Arc<LoroMutex<OpLog>>,
+    state: Arc<LoroMutex<DocState>>,
     arena: SharedArena,
     config: Configure,
     observer: Arc<Observer>,
-    diff_calculator: Arc<Mutex<DiffCalculator>>,
-    // when dropping the doc, the txn will be committed
-    txn: Arc<Mutex<Option<Transaction>>>,
+    diff_calculator: Arc<LoroMutex<DiffCalculator>>,
+    /// When dropping the doc, the txn will be committed
+    ///
+    /// # Internal Notes
+    ///
+    /// Txn can be accessed by different threads. But for certain methods we need to lock the txn and ensure it's empty:
+    ///
+    /// - `import`
+    /// - `export`
+    /// - `checkout`
+    /// - `checkout_to_latest`
+    /// - ...
+    ///
+    /// We need to lock txn and keep it None because otherwise the DocState may change due to a parallel edit on a new Txn,
+    /// which may break the invariants of `import`, `export` and `checkout`.
+    txn: Arc<LoroMutex<Option<Transaction>>>,
     auto_commit: AtomicBool,
     detached: AtomicBool,
     local_update_subs: SubscriberSetWithQueue<(), LocalUpdateCallback, Vec<u8>>,
     peer_id_change_subs: SubscriberSetWithQueue<(), PeerIdUpdateCallback, ID>,
+    first_commit_from_peer_subs:
+        SubscriberSetWithQueue<(), FirstCommitFromPeerCallback, FirstCommitFromPeerPayload>,
+    pre_commit_subs: SubscriberSetWithQueue<(), PreCommitCallback, PreCommitCallbackPayload>,
 }
 
 /// The version of the loro crate
 pub const LORO_VERSION: &str = include_str!("../VERSION");
+
+impl Drop for LoroDoc {
+    fn drop(&mut self) {
+        if Arc::strong_count(&self.inner) == 1 {
+            let _ = self.commit_then_stop();
+        }
+    }
+}

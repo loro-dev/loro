@@ -45,7 +45,7 @@ impl TextActor {
         loro.subscribe(
             &ContainerID::new_root("text", ContainerType::Text),
             Arc::new(move |event| {
-                text.try_lock().unwrap().apply_diff(event);
+                text.lock().unwrap().apply_diff(event);
             }),
         )
         .detach();
@@ -68,7 +68,7 @@ impl ActorTrait for TextActor {
         let text = loro.get_text("text");
         // check delta
         let value = text.to_delta();
-        let tracker = self.tracker.try_lock().unwrap();
+        let tracker = self.tracker.lock().unwrap();
         let text = tracker.as_map().unwrap().get("text").unwrap();
         let text_h = text
             .as_container()
@@ -148,7 +148,7 @@ impl Actionable for TextAction {
             TextActionInner::Delete => ["delete".into(), format!("{} ~ {}", pos, pos + len).into()],
             TextActionInner::Mark(i) => [
                 format!("mark {} ", STYLES_NAME[i]).into(),
-                format!("{} ~ {}", pos, pos + len).into(),
+                format!("{} with-len {}", pos, len).into(),
             ],
         }
     }
