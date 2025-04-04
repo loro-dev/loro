@@ -13,7 +13,8 @@ pub use loro_internal::encoding::ImportStatus;
 use loro_internal::handler::{HandlerTrait, ValueOrHandler};
 pub use loro_internal::loro::ChangeTravelError;
 pub use loro_internal::pre_commit::{
-    ChangeModifier, FirstCommitFromPeerCallback, PreCommitCallback,
+    ChangeModifier, FirstCommitFromPeerCallback, FirstCommitFromPeerPayload, PreCommitCallback,
+    PreCommitCallbackPayload,
 };
 pub use loro_internal::sync;
 pub use loro_internal::undo::{OnPop, UndoItemMeta, UndoOrRedo};

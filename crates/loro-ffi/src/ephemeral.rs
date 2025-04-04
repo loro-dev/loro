@@ -1,13 +1,14 @@
 use crate::{LoroValue, LoroValueLike, Subscription};
-use loro::awareness::{EphemeralEventTrigger, EphemeralStore as InternalEphemeralStore};
+pub use loro::awareness::EphemeralEventTrigger;
+use loro::awareness::EphemeralStore as InternalEphemeralStore;
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone)]
 pub struct EphemeralStoreEvent {
     pub by: EphemeralEventTrigger,
-    pub added: Arc<Vec<String>>,
-    pub removed: Arc<Vec<String>>,
-    pub updated: Arc<Vec<String>>,
+    pub added: Vec<String>,
+    pub removed: Vec<String>,
+    pub updated: Vec<String>,
 }
 
 pub trait LocalEphemeralListener: Sync + Send {
@@ -88,19 +89,15 @@ impl EphemeralStore {
     }
 
     pub fn subscribe(&self, listener: Arc<dyn EphemeralSubscriber>) -> Arc<Subscription> {
-        let s = self
-            .0
-            .lock()
-            .unwrap()
-            .subscribe(Box::new(move |update| {
-                listener.on_ephemeral_event(EphemeralStoreEvent {
-                    by: update.by,
-                    added: update.added.clone(),
-                    removed: update.removed.clone(),
-                    updated: update.updated.clone(),
-                });
-                true
-            }));
+        let s = self.0.lock().unwrap().subscribe(Box::new(move |update| {
+            listener.on_ephemeral_event(EphemeralStoreEvent {
+                by: update.by,
+                added: update.added.to_vec(),
+                removed: update.removed.to_vec(),
+                updated: update.updated.to_vec(),
+            });
+            true
+        }));
         Arc::new(Subscription(Mutex::new(Some(s))))
     }
 }

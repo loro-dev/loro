@@ -780,6 +780,38 @@ impl LoroDoc {
     pub fn has_container(&self, id: &ContainerID) -> bool {
         self.doc.has_container(&id.into())
     }
+
+    /// Subscribe to the first commit from a peer. Operations performed on the `LoroDoc` within this callback
+    /// will be merged into the current commit.
+    ///
+    /// This is useful for managing the relationship between `PeerID` and user information.
+    /// For example, you could store user names in a `LoroMap` using `PeerID` as the key and the `UserID` as the value.
+    pub fn subscribe_first_commit_from_peer(
+        &self,
+        subscriber: Arc<dyn FirstCommitFromPeerCallback>,
+    ) -> Arc<Subscription> {
+        let subscriber: loro::FirstCommitFromPeerCallback = Box::new(move |e| {
+            subscriber.on_first_commit_from_peer(FirstCommitFromPeerPayload { peer: e.peer });
+            true
+        });
+        Arc::new(self.doc.subscribe_first_commit_from_peer(subscriber).into())
+    }
+
+    /// Subscribe to the pre-commit event.
+    ///
+    /// The callback will be called when the changes are committed but not yet applied to the OpLog.
+    /// You can modify the commit message and timestamp in the callback by [`ChangeModifier`].
+    pub fn subscribe_pre_commit(&self, callback: Arc<dyn PreCommitCallback>) -> Arc<Subscription> {
+        let subscriber: loro::PreCommitCallback = Box::new(move |e| {
+            callback.on_pre_commit(PreCommitCallbackPayload {
+                change_meta: e.change_meta.clone().into(),
+                origin: e.origin.clone(),
+                modifier: Arc::new(ChangeModifier(e.modifier.clone())),
+            });
+            true
+        });
+        Arc::new(self.doc.subscribe_pre_commit(subscriber).into())
+    }
 }
 
 pub trait ChangeAncestorsTraveler: Sync + Send {
@@ -894,6 +926,35 @@ impl<T: TryInto<JsonSchema> + Clone> JsonSchemaLike for T {
 
 pub trait LocalUpdateCallback: Sync + Send {
     fn on_local_update(&self, update: Vec<u8>);
+}
+
+pub trait FirstCommitFromPeerCallback: Sync + Send {
+    fn on_first_commit_from_peer(&self, e: FirstCommitFromPeerPayload);
+}
+
+pub struct FirstCommitFromPeerPayload {
+    pub peer: PeerID,
+}
+
+pub trait PreCommitCallback: Sync + Send {
+    fn on_pre_commit(&self, e: PreCommitCallbackPayload);
+}
+
+pub struct PreCommitCallbackPayload {
+    pub change_meta: ChangeMeta,
+    pub origin: String,
+    pub modifier: Arc<ChangeModifier>,
+}
+
+pub struct ChangeModifier(loro::ChangeModifier);
+
+impl ChangeModifier {
+    pub fn set_message(&self, msg: &str) {
+        self.0.set_message(msg);
+    }
+    pub fn set_timestamp(&self, timestamp: Timestamp) {
+        self.0.set_timestamp(timestamp);
+    }
 }
 
 pub trait Unsubscriber: Sync + Send {

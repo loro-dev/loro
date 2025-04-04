@@ -35,11 +35,7 @@ impl Awareness {
     }
 
     pub fn get_local_state(&self) -> Option<LoroValue> {
-        self.0
-            .lock()
-            .unwrap()
-            .get_local_state()
-            .map(|x| x.into())
+        self.0.lock().unwrap().get_local_state().map(|x| x.into())
     }
 
     pub fn remove_outdated(&self) -> Vec<PeerID> {
