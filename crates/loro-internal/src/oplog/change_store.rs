@@ -1308,7 +1308,7 @@ impl ChangesBlock {
         Ok(())
     }
 
-    fn to_bytes<'a>(self: &'a mut Arc<Self>, a: &SharedArena) -> ChangesBlockBytes {
+    fn to_bytes(self: &mut Arc<Self>, a: &SharedArena) -> ChangesBlockBytes {
         match &self.content {
             ChangesBlockContent::Bytes(bytes) => bytes.clone(),
             ChangesBlockContent::Both(_, bytes) => {

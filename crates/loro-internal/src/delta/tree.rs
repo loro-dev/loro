@@ -140,9 +140,9 @@ pub enum TreeInternalDiff {
 
 impl TreeDeltaItem {
     /// * `is_new_parent_deleted` and `is_old_parent_deleted`: we need to infer whether it's a `creation`.
-    ///    It's a creation if the old_parent is deleted but the new parent isn't.
-    ///    If it is a creation, we need to emit the `Create` event so that downstream event handler can
-    ///    handle the new containers easier.
+    ///   It's a creation if the old_parent is deleted but the new parent isn't.
+    ///   If it is a creation, we need to emit the `Create` event so that downstream event handler can
+    ///   handle the new containers easier.
     pub(crate) fn new(
         target: TreeID,
         parent: TreeParentId,

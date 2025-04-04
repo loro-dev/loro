@@ -597,7 +597,7 @@ impl HasLength for InnerListOp {
             } => *len as usize,
             InnerListOp::Delete(span) => span.atom_len(),
             InnerListOp::StyleStart { .. }
-            | InnerListOp::StyleEnd { .. }
+            | InnerListOp::StyleEnd
             | InnerListOp::Move { .. }
             | InnerListOp::Set { .. } => 1,
         }
@@ -632,7 +632,7 @@ impl Sliceable for InnerListOp {
             },
             InnerListOp::Delete(span) => InnerListOp::Delete(span.slice(from, to)),
             InnerListOp::StyleStart { .. }
-            | InnerListOp::StyleEnd { .. }
+            | InnerListOp::StyleEnd
             | InnerListOp::Move { .. }
             | InnerListOp::Set { .. } => {
                 assert!(from == 0 && to == 1);

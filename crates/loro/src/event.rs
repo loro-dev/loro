@@ -147,7 +147,7 @@ impl<'a> From<&'a DiffInner> for Diff<'a> {
                             delete,
                             attr,
                         } => {
-                            if value.len() > 0 {
+                            if !value.is_empty() {
                                 ans.push(ListDiffItem::Insert {
                                     insert: value
                                         .iter()
@@ -200,7 +200,7 @@ impl From<DiffInner> for Diff<'static> {
                             delete,
                             attr,
                         } => {
-                            if value.len() > 0 {
+                            if !value.is_empty() {
                                 ans.push(ListDiffItem::Insert {
                                     insert: value
                                         .iter()

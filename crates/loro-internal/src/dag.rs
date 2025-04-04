@@ -643,7 +643,7 @@ where
             }
         }
 
-        if node[0].deps.len() > 0 {
+        if !node[0].deps.is_empty() {
             if let Some(deps) = ids_to_ord_id_spans(node[0].deps.as_ref(), get) {
                 queue.push((deps, node_type));
             } else {
