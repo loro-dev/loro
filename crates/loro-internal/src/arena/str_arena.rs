@@ -191,7 +191,7 @@ mod test {
     fn slice_long_unicode_correctly() {
         let mut arena = StrArena::default();
         let src = "一二34567八九零";
-        for s in std::iter::repeat(src).take(100) {
+        for s in std::iter::repeat_n(src, 100) {
             arena.alloc(s);
         }
 

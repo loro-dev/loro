@@ -15,9 +15,11 @@ keywords = ["crdt", "local-first"]
 
 [dependencies]
 loro-internal = { path = "../loro-internal", version = "1.5.1" }
-loro-common = { path = "../loro-common", version = "1.4.7", features = ["serde_json"] }
+loro-common = { path = "../loro-common", version = "1.4.7", features = [
+    "serde_json",
+] }
 loro-kv-store = { path = "../kv-store", version = "1.4.7" }
-delta = { path = "../delta", package = "loro-delta", version = "1.5.1" }
+delta = { path = "../delta", package = "loro-delta", version = "1.5.0" }
 generic-btree = { version = "^0.10.5" }
 enum-as-inner = { workspace = true }
 tracing = { workspace = true }
