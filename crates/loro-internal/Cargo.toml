@@ -1,6 +1,6 @@
 [package]
 name = "loro-internal"
-version = "1.5.0"
+version = "1.5.1"
 edition = "2021"
 license = "MIT"
 description = "Loro internal library. Do not use it directly as it's not stable."
@@ -18,11 +18,11 @@ generic-btree = { version = "^0.10.5" }
 smallvec = { workspace = true }
 loro-delta = { path = "../delta", version = "1.5.0", package = "loro-delta" }
 rle = { path = "../rle", version = "1.2.7", package = "loro-rle" }
-loro-common = { path = "../loro-common", version = "1.4.6" }
+loro-common = { path = "../loro-common", version = "1.4.7" }
 fractional_index = { path = "../fractional_index", features = [
     "serde",
 ], version = "1.2.7", package = "loro_fractional_index" }
-loro-kv-store = { path = "../kv-store", version = "1.4.6" }
+loro-kv-store = { path = "../kv-store", version = "1.4.7" }
 fxhash = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
@@ -56,7 +56,7 @@ pretty_assertions = "1.4.1"
 thread_local = "1.1.8"
 
 [target.'cfg(loom)'.dependencies]
-loom = { version= "0.7", features = ["checkpoint"] }
+loom = { version = "0.7", features = ["checkpoint"] }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
