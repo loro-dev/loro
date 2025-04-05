@@ -1418,13 +1418,13 @@ impl LoroDoc {
         with_peer_compression: Option<bool>,
     ) -> JsResult<JsJsonSchema> {
         let mut json_start_vv: &InternalVersionVector = &Default::default();
-        let temp_start_vv: Option<wasm_bindgen::__rt::Ref<'static, VersionVector>>;
+        let temp_start_vv: Option<wasm_bindgen::__rt::RcRef<VersionVector>>;
         if !start_vv.is_null() && !start_vv.is_undefined() {
             temp_start_vv = Some(js_to_version_vector(start_vv)?);
             json_start_vv = &temp_start_vv.as_ref().unwrap().0;
         }
         let mut json_end_vv = &self.oplog_version().0;
-        let temp_end_vv: Option<wasm_bindgen::__rt::Ref<'static, VersionVector>>;
+        let temp_end_vv: Option<wasm_bindgen::__rt::RcRef<VersionVector>>;
         if !end_vv.is_null() && !end_vv.is_undefined() {
             temp_end_vv = Some(js_to_version_vector(end_vv)?);
             json_end_vv = &temp_end_vv.as_ref().unwrap().0;

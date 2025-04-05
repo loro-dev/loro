@@ -39,7 +39,7 @@ postcard = { version = "1", features = ["use-std"] }
 append-only-bytes = { version = "0.1.12", features = ["u32_range"] }
 im = { version = "15.1.0", features = ["serde"] }
 tabled = { version = "0.10.0", optional = true }
-wasm-bindgen = { version = "=0.2.92", optional = true }
+wasm-bindgen = { version = "=0.2.100", optional = true }
 js-sys = { version = "0.3.60", optional = true }
 num = "0.4.0"
 rand = { version = "0.8.5" }
@@ -66,7 +66,7 @@ version = "0.2.15"
 features = ["js"]
 
 [target.'cfg(all(target_arch = "wasm32", not(feature = "wasm")))'.dependencies]
-wasm-bindgen = "0.2.92"
+wasm-bindgen = "0.2.100"
 
 [dev-dependencies]
 arbitrary = { version = "1" }
