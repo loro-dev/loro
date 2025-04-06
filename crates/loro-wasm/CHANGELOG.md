@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.5.1
+
+### Patch Changes
+
+- 742cf7d: Fix memory leak caused by wasm-bindgen
+
+  - https://github.com/rustwasm/wasm-bindgen/issues/3854
+
 ## 1.5.0
 
 ### Minor Changes
