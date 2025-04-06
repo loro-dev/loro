@@ -867,7 +867,7 @@ impl LoroDoc {
     ///
     /// Note: use it with caution. You need to make sure there is not chance that two peers
     /// have the same peer ID. Otherwise, we cannot ensure the consistency of the document.
-    #[wasm_bindgen(js_name = "setPeerId", method)]
+    #[wasm_bindgen(js_name = "setPeerId")]
     pub fn set_peer_id(&self, peer_id: JsIntoPeerID) -> JsResult<()> {
         let id = js_peer_to_peer(peer_id.into())?;
         self.0.set_peer_id(id)?;
@@ -4997,7 +4997,7 @@ impl VersionVector {
     }
 
     /// Create a new version vector from a Map.
-    #[wasm_bindgen(js_name = "parseJSON", method)]
+    #[wasm_bindgen(js_name = "parseJSON")]
     pub fn from_json(version: JsVersionVectorMap) -> JsResult<VersionVector> {
         let map: JsValue = version.into();
         let map: js_sys::Map = map.into();
@@ -5020,7 +5020,7 @@ impl VersionVector {
     }
 
     /// Convert the version vector to a Map
-    #[wasm_bindgen(js_name = "toJSON", method)]
+    #[wasm_bindgen(js_name = "toJSON")]
     pub fn to_json(&self) -> JsVersionVectorMap {
         let vv = &self.0;
         let map = js_sys::Map::new();
