@@ -102,7 +102,7 @@ pub(crate) fn js_to_id_span(js: JsIdSpan) -> Result<IdSpan, JsValue> {
 
 pub(crate) fn js_to_version_vector(
     js: JsValue,
-) -> Result<wasm_bindgen::__rt::Ref<'static, VersionVector>, JsValue> {
+) -> Result<wasm_bindgen::__rt::RcRef<VersionVector>, JsValue> {
     if !js.is_object() {
         return Err(JsValue::from_str(&format!(
             "Value supplied is not an object, but {:?}",

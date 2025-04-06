@@ -40,7 +40,7 @@ impl LoroCounter {
     }
 
     /// The container id of this handler.
-    #[wasm_bindgen(js_name = "id", method, getter)]
+    #[wasm_bindgen(js_name = "id", getter)]
     pub fn id(&self) -> JsContainerID {
         let value: JsValue = (&self.handler.id()).into();
         value.into()

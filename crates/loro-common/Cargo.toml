@@ -18,7 +18,7 @@ rle = { path = "../rle", version = "1.2.7", package = "loro-rle" }
 serde = { workspace = true }
 serde_json = { workspace = true, optional=true }
 thiserror = "1.0.43"
-wasm-bindgen = { version = "=0.2.92", optional = true }
+wasm-bindgen = { version = "=0.2.100", optional = true }
 fxhash = "0.2.1"
 enum-as-inner = "0.6.0"
 arbitrary = { version = "1.3.0", features = ["derive"] }
