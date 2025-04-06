@@ -849,13 +849,13 @@ impl LoroDoc {
     }
 
     /// Peer ID of the current writer.
-    #[wasm_bindgen(js_name = "peerId", method, getter)]
+    #[wasm_bindgen(js_name = "peerId", getter)]
     pub fn peer_id(&self) -> u64 {
         self.0.peer_id()
     }
 
     /// Get peer id in decimal string.
-    #[wasm_bindgen(js_name = "peerIdStr", method, getter)]
+    #[wasm_bindgen(js_name = "peerIdStr", getter)]
     pub fn peer_id_str(&self) -> JsStrPeerID {
         let v: JsValue = format!("{}", self.0.peer_id()).into();
         v.into()
@@ -2635,14 +2635,14 @@ impl LoroText {
     }
 
     /// Get the container id of the text.
-    #[wasm_bindgen(js_name = "id", method, getter)]
+    #[wasm_bindgen(js_name = "id", getter)]
     pub fn id(&self) -> JsContainerID {
         let value: JsValue = (&self.handler.id()).into();
         value.into()
     }
 
     /// Get the length of text (utf-16 length).
-    #[wasm_bindgen(js_name = "length", method, getter)]
+    #[wasm_bindgen(js_name = "length", getter)]
     pub fn length(&self) -> usize {
         self.handler.len_utf16()
     }
@@ -2975,7 +2975,7 @@ impl LoroMap {
     }
 
     /// The container id of this handler.
-    #[wasm_bindgen(js_name = "id", method, getter)]
+    #[wasm_bindgen(js_name = "id", getter)]
     pub fn id(&self) -> JsContainerID {
         let value: JsValue = (&self.handler.id()).into();
         value.into()
@@ -3072,7 +3072,7 @@ impl LoroMap {
     /// map.set("foo", "bar");
     /// console.log(map.size);   // 1
     /// ```
-    #[wasm_bindgen(js_name = "size", method, getter)]
+    #[wasm_bindgen(js_name = "size", getter)]
     pub fn size(&self) -> usize {
         self.handler.len()
     }
@@ -3260,7 +3260,7 @@ impl LoroList {
     }
 
     /// Get the id of this container.
-    #[wasm_bindgen(js_name = "id", method, getter)]
+    #[wasm_bindgen(js_name = "id", getter)]
     pub fn id(&self) -> JsContainerID {
         let value: JsValue = (&self.handler.id()).into();
         value.into()
@@ -3281,7 +3281,7 @@ impl LoroList {
     /// list.insertContainer(3, new LoroText());
     /// console.log(list.value);  // [100, "foo", true, LoroText];
     /// ```
-    #[wasm_bindgen(js_name = "toArray", method, skip_typescript)]
+    #[wasm_bindgen(js_name = "toArray", skip_typescript)]
     pub fn to_array(&mut self) -> Vec<JsValueOrContainer> {
         let mut arr: Vec<JsValueOrContainer> = Vec::with_capacity(self.length());
         self.handler.for_each(|x| {
@@ -3396,7 +3396,7 @@ impl LoroList {
     /// list.insert(2, true);
     /// console.log(list.length);  // 3
     /// ```
-    #[wasm_bindgen(js_name = "length", method, getter)]
+    #[wasm_bindgen(js_name = "length", getter)]
     pub fn length(&self) -> usize {
         self.handler.len()
     }
@@ -3615,7 +3615,7 @@ impl LoroMovableList {
     }
 
     /// Get the id of this container.
-    #[wasm_bindgen(js_name = "id", method, getter)]
+    #[wasm_bindgen(js_name = "id", getter)]
     pub fn id(&self) -> JsContainerID {
         let value: JsValue = (&self.handler.id()).into();
         value.into()
@@ -3636,7 +3636,7 @@ impl LoroMovableList {
     /// list.insertContainer(3, new LoroText());
     /// console.log(list.value);  // [100, "foo", true, LoroText];
     /// ```
-    #[wasm_bindgen(js_name = "toArray", method, skip_typescript)]
+    #[wasm_bindgen(js_name = "toArray", skip_typescript)]
     pub fn to_array(&mut self) -> Vec<JsValueOrContainer> {
         let mut arr: Vec<JsValueOrContainer> = Vec::with_capacity(self.length());
         self.handler.for_each(|x| {
@@ -3752,7 +3752,7 @@ impl LoroMovableList {
     /// list.insert(2, true);
     /// console.log(list.length);  // 3
     /// ```
-    #[wasm_bindgen(js_name = "length", method, getter)]
+    #[wasm_bindgen(js_name = "length", getter)]
     pub fn length(&self) -> usize {
         self.handler.len()
     }
