@@ -137,6 +137,7 @@ pub(crate) fn decode_snapshot_inner(snapshot: Snapshot, doc: &LoroDoc) -> Result
         let shallow_root_state_frontiers = state.store.decode_gc(
             shallow_root_state_bytes.clone(),
             oplog.dag().shallow_since_frontiers().clone(),
+            doc.config.clone(),
         )?;
         state
             .store

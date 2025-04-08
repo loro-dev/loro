@@ -294,6 +294,20 @@ impl LoroValue {
             _ => {}
         }
     }
+
+    pub fn is_empty_collection(&self) -> bool {
+        match self {
+            LoroValue::Null => false,
+            LoroValue::Bool(_) => false,
+            LoroValue::Double(_) => false,
+            LoroValue::I64(_) => false,
+            LoroValue::Binary(loro_binary_value) => loro_binary_value.is_empty(),
+            LoroValue::String(loro_string_value) => loro_string_value.is_empty(),
+            LoroValue::List(loro_list_value) => loro_list_value.is_empty(),
+            LoroValue::Map(loro_map_value) => loro_map_value.is_empty(),
+            LoroValue::Container(_) => false,
+        }
+    }
 }
 
 impl Index<&str> for LoroValue {

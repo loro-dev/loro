@@ -2140,6 +2140,34 @@ impl LoroDoc {
 
         subscription_to_js_function_callback(sub)
     }
+
+    /// Delete all content from a root container and hide it from the document.
+    ///
+    /// When a root container is empty and hidden:
+    /// - It won't show up in `get_deep_value()` results
+    /// - It won't be included in document snapshots
+    ///
+    /// Only works on root containers (containers without parents).
+    pub fn deleteRootContainer(&self, cid: JsContainerID) -> JsResult<()> {
+        let cid: ContainerID = cid.to_owned().try_into()?;
+        self.0.delete_root_container(cid);
+        Ok(())
+    }
+
+    /// Set whether to hide empty root containers.
+    ///
+    /// @example
+    /// ```ts
+    /// const doc = new LoroDoc();
+    /// const map = doc.getMap("map");
+    /// console.log(doc.toJSON()); // { map: {} }
+    /// doc.setHideEmptyRootContainers(true);
+    /// console.log(doc.toJSON()); // {}
+    /// ```
+    pub fn setHideEmptyRootContainers(&self, hide: bool) -> JsResult<()> {
+        self.0.set_hide_empty_root_containers(hide);
+        Ok(())
+    }
 }
 
 #[allow(unused)]

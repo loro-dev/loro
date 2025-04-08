@@ -6,6 +6,7 @@ use bytes::Bytes;
 use fxhash::FxHashMap;
 use loro_common::ContainerID;
 use std::ops::Bound;
+use tracing::trace;
 
 use super::ContainerWrapper;
 
@@ -21,6 +22,7 @@ pub(crate) struct InnerStore {
     kv: KvWrapper,
     len: usize,
     all_loaded: bool,
+    config: Configure,
 }
 
 impl std::fmt::Debug for InnerStore {
@@ -104,6 +106,7 @@ impl InnerStore {
     }
 
     pub(crate) fn flush(&mut self) {
+        let deleted = self.config.deleted_root_containers.lock().unwrap();
         self.kv
             .set_all(self.store.iter_mut().filter_map(|(idx, c)| {
                 if c.is_flushed() {
@@ -111,6 +114,18 @@ impl InnerStore {
                 }
 
                 let cid = self.arena.get_container_id(*idx).unwrap();
+                trace!(
+                    "cid = {:?} is_empty = {:?} contained = {:?}",
+                    cid,
+                    c.is_state_empty(),
+                    deleted.contains(&cid)
+                );
+                if c.is_state_empty() && cid.is_root() && deleted.contains(&cid) {
+                    trace!("skipping cid = {:?}", cid);
+                    return None;
+                }
+
+                trace!("not skipping cid = {:?}", cid);
                 let cid: Bytes = cid.to_bytes().into();
                 let value = c.encode();
                 c.set_flushed(true);
@@ -232,20 +247,21 @@ impl InnerStore {
 }
 
 impl InnerStore {
-    pub(crate) fn new(arena: SharedArena) -> Self {
+    pub(crate) fn new(arena: SharedArena, config: Configure) -> Self {
         Self {
             arena,
             store: FxHashMap::default(),
             kv: KvWrapper::new_mem(),
             len: 0,
             all_loaded: true,
+            config,
         }
     }
 
-    pub(crate) fn fork(&mut self, arena: SharedArena, _config: &Configure) -> InnerStore {
+    pub(crate) fn fork(&mut self, arena: SharedArena, config: &Configure) -> InnerStore {
         // PERF: we can try to reuse
         let bytes = self.encode();
-        let mut new_store = Self::new(arena);
+        let mut new_store = Self::new(arena, config.clone());
         new_store.decode(bytes).unwrap();
         new_store
     }

@@ -16,8 +16,8 @@ use loro::{
     awareness::Awareness,
     event::{Diff, DiffBatch, ListDiffItem},
     loro_value, CommitOptions, ContainerID, ContainerTrait, ContainerType, ExportMode, Frontiers,
-    FrontiersNotIncluded, IdSpan, Index, LoroDoc, LoroError, LoroList, LoroMap, LoroStringValue,
-    LoroText, LoroValue, ToJson, TreeParentId,
+    FrontiersNotIncluded, IdSpan, Index, LoroDoc, LoroError, LoroList, LoroMap, LoroMapValue,
+    LoroStringValue, LoroText, LoroValue, ToJson, TreeParentId, UpdateOptions,
 };
 use loro_internal::{
     encoding::EncodedBlobMode, fx_map, handler::TextDelta, id::ID, version_range, vv, LoroResult,
@@ -3304,5 +3304,40 @@ fn test_apply_delta_on_the_end() {
                 ),
             },
         ]
+    );
+}
+
+#[test]
+fn test_delete_root_containers() {
+    let doc = LoroDoc::new();
+    let _map = doc.get_map("map");
+    doc.get_map("m");
+    let _text = doc.get_text("text");
+    doc.delete_root_container(ContainerID::new_root("map", ContainerType::Map));
+    doc.delete_root_container(ContainerID::new_root("text", ContainerType::Text));
+    let mut m = LoroMapValue::default();
+    m.make_mut()
+        .insert("m".into(), LoroValue::Map(LoroMapValue::default()));
+    assert_eq!(doc.get_deep_value(), LoroValue::Map(m.clone()));
+    let snapshot = doc.export(ExportMode::Snapshot).unwrap();
+    let new_doc = LoroDoc::new();
+    new_doc.import(&snapshot).unwrap();
+    assert_eq!(new_doc.get_deep_value(), LoroValue::Map(m.clone()));
+}
+
+#[test]
+fn test_hide_empty_root_containers() {
+    let doc = LoroDoc::new();
+    let _map = doc.get_map("map");
+    let mut expected = LoroMapValue::default();
+    expected
+        .make_mut()
+        .insert("map".into(), LoroValue::Map(LoroMapValue::default()));
+    assert_eq!(doc.get_deep_value(), LoroValue::Map(expected));
+
+    doc.set_hide_empty_root_containers(true);
+    assert_eq!(
+        doc.get_deep_value(),
+        LoroValue::Map(LoroMapValue::default())
     );
 }

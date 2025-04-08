@@ -1054,4 +1054,23 @@ impl TreeHandler {
             }),
         }
     }
+
+    pub fn clear(&self) -> LoroResult<()> {
+        match &self.inner {
+            MaybeDetached::Detached(t) => {
+                let mut t = t.lock().unwrap();
+                t.value.map.clear();
+                t.value.children_links.clear();
+                t.value.parent_links.clear();
+                Ok(())
+            }
+            MaybeDetached::Attached(_) => {
+                let nodes = self.get_nodes_under(TreeParentId::Root);
+                for node in nodes {
+                    self.delete(node.id)?;
+                }
+                Ok(())
+            }
+        }
+    }
 }

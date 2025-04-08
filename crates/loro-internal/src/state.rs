@@ -981,11 +981,24 @@ impl DocState {
     pub fn get_deep_value(&mut self) -> LoroValue {
         let roots = self.arena.root_containers();
         let mut ans = FxHashMap::with_capacity_and_hasher(roots.len(), Default::default());
+        let binding = self.config.deleted_root_containers.clone();
+        let deleted_root_container = binding.lock().unwrap();
+        let should_hide_empty_root_container = self
+            .config
+            .hide_empty_root_containers
+            .load(Ordering::Relaxed);
         for root_idx in roots {
             let id = self.arena.idx_to_id(root_idx).unwrap();
-            match id {
+            match &id {
                 loro_common::ContainerID::Root { name, .. } => {
-                    ans.insert(name.to_string(), self.get_container_deep_value(root_idx));
+                    let v = self.get_container_deep_value(root_idx);
+                    if (should_hide_empty_root_container || deleted_root_container.contains(&id))
+                        && v.is_empty_collection()
+                    {
+                        continue;
+                    }
+
+                    ans.insert(name.to_string(), v);
                 }
                 loro_common::ContainerID::Normal { .. } => {
                     unreachable!()

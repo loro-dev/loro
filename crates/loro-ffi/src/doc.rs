@@ -812,6 +812,22 @@ impl LoroDoc {
         });
         Arc::new(self.doc.subscribe_pre_commit(subscriber).into())
     }
+
+    /// Set whether to hide empty root containers.
+    pub fn set_hide_empty_root_containers(&self, hide: bool) {
+        self.doc.set_hide_empty_root_containers(hide);
+    }
+
+    /// Delete all content from a root container and hide it from the document.
+    ///
+    /// When a root container is empty and hidden:
+    /// - It won't show up in `get_deep_value()` results
+    /// - It won't be included in document snapshots
+    ///
+    /// Only works on root containers (containers without parents).
+    pub fn delete_root_container(&self, cid: ContainerID) {
+        self.doc.delete_root_container(cid.into());
+    }
 }
 
 pub trait ChangeAncestorsTraveler: Sync + Send {
