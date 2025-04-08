@@ -1158,6 +1158,7 @@ mod snapshot {
                 loader.push(chunk);
             }
             text.state = LazyLoad::Src(loader);
+            text.version_id = 1;
             Ok(text)
         }
     }
