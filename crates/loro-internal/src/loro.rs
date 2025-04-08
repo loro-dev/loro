@@ -1894,7 +1894,10 @@ impl LoroDoc {
             return;
         };
 
-        h.clear().unwrap();
+        if let Err(e) = h.clear() {
+            eprintln!("Failed to clear handler: {:?}", e);
+            return;
+        }
         self.config
             .deleted_root_containers
             .lock()
