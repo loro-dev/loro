@@ -2,6 +2,7 @@ use fxhash::FxHashMap;
 use loro_common::{
     loro_value, ContainerID, ContainerType, IdSpan, LoroError, LoroResult, LoroValue, PeerID, ID,
 };
+use loro_internal::awareness::EphemeralStore;
 use loro_internal::sync::{AtomicBool, Mutex};
 use loro_internal::{
     delta::ResolvedMapValue,
@@ -1444,4 +1445,17 @@ fn test_change_to_json_schema_include_uncommit() {
     doc.commit_then_renew();
     // change merged
     assert_eq!(changes.len(), 1);
+}
+
+#[test]
+fn test_ephemeral_store() {
+    let store = EphemeralStore::new(1000);
+    let store_clone = store.clone();
+    let _sub = store.subscribe(Box::new(move |_| {
+        store_clone.get_all_states();
+        true
+    }));
+    store.set("a", 1);
+    store.set("b", 2);
+    store.set("c", 3);
 }

@@ -185,11 +185,11 @@ impl EphemeralStoreWasm {
         }
     }
 
-    pub fn set(&mut self, key: &str, value: JsValue) {
+    pub fn set(&self, key: &str, value: JsValue) {
         self.inner.set(key, value);
     }
 
-    pub fn delete(&mut self, key: &str) {
+    pub fn delete(&self, key: &str) {
         self.inner.delete(key);
     }
 
@@ -291,11 +291,11 @@ impl EphemeralStoreWasm {
         self.inner.encode_all()
     }
 
-    pub fn apply(&mut self, data: &[u8]) {
+    pub fn apply(&self, data: &[u8]) {
         self.inner.apply(data);
     }
 
-    pub fn removeOutdated(&mut self) {
+    pub fn removeOutdated(&self) {
         self.inner.remove_outdated()
     }
 
@@ -305,6 +305,6 @@ impl EphemeralStoreWasm {
     }
 
     pub fn keys(&self) -> Vec<String> {
-        self.inner.keys().map(|s| s.to_string()).collect()
+        self.inner.keys()
     }
 }

@@ -115,4 +115,17 @@ describe("EphemeralStore", () => {
             b: Uint8Array.from([5, 6, 7, 8]),
         });
     });
-}); 
+
+    it("subscribe", () => {
+        const store = new EphemeralStore(10);
+        store.subscribe((update) => {
+            // Panics
+            const all = store.getAllStates();
+            console.log(all);
+        })
+        console.log("set a");
+        store.set("a", 1);
+        store.set("b", 2);
+        store.set("c", 3);
+    });
+});
