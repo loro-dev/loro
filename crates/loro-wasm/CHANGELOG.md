@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.2
+
+### Patch Changes
+
+- 81c7bb7: fix ephemeral store recursive use by adding mutex in the inner
+- bf94a03: feat: add functionality to delete and hide empty root containers #708
+
 ## 1.5.1
 
 ### Patch Changes
