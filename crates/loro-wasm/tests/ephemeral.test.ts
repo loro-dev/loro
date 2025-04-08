@@ -115,4 +115,34 @@ describe("EphemeralStore", () => {
             b: Uint8Array.from([5, 6, 7, 8]),
         });
     });
-}); 
+
+    it("subscribe", () => {
+        const store = new EphemeralStore(10);
+        let callTimes = 0;
+        store.subscribe((_update) => {
+            store.getAllStates();
+            callTimes += 1;
+        })
+        store.set("a", 1);
+        store.set("b", 2);
+        store.set("c", 3);
+        expect(callTimes).toBe(3);
+    });
+
+    it("subscribe nest", () => {
+        const store = new EphemeralStore(10);
+        let callTimes = 0;
+        store.subscribe((_update) => {
+            store.getAllStates();
+            if (callTimes === 0) {
+                store.set("a", 2);
+            }
+            callTimes += 1;
+        })
+        store.set("a", 1);
+        store.set("b", 2);
+        store.set("c", 3);
+        expect(callTimes).toBe(4);
+        expect(store.getAllStates()).toEqual({ "a": 2, "b": 2, "c": 3 });
+    });
+});

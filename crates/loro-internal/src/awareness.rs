@@ -1,4 +1,5 @@
-use std::sync::Arc;
+use std::sync::atomic::AtomicI64;
+use std::sync::{Arc, Mutex};
 
 use fxhash::FxHashMap;
 use loro_common::{LoroValue, PeerID};
@@ -201,14 +202,71 @@ pub type EphemeralSubscriber = Box<dyn Fn(&EphemeralStoreEvent) -> bool + Send +
 /// store2.apply(&encoded);
 /// assert_eq!(store2.get("key"), Some("value".into()));
 /// ```
+#[derive(Debug, Clone)]
 pub struct EphemeralStore {
-    states: FxHashMap<String, State>,
-    local_subs: SubscriberSetWithQueue<(), LocalEphemeralCallback, Vec<u8>>,
-    subscribers: SubscriberSetWithQueue<(), EphemeralSubscriber, EphemeralStoreEvent>,
-    timeout: i64,
+    inner: Arc<EphemeralStoreInner>,
 }
 
-impl std::fmt::Debug for EphemeralStore {
+impl EphemeralStore {
+    pub fn new(timeout: i64) -> Self {
+        Self {
+            inner: Arc::new(EphemeralStoreInner::new(timeout)),
+        }
+    }
+
+    pub fn encode(&self, key: &str) -> Vec<u8> {
+        self.inner.encode(key)
+    }
+
+    pub fn encode_all(&self) -> Vec<u8> {
+        self.inner.encode_all()
+    }
+
+    pub fn apply(&self, data: &[u8]) {
+        self.inner.apply(data)
+    }
+
+    pub fn set(&self, key: &str, value: impl Into<LoroValue>) {
+        self.inner.set(key, value)
+    }
+
+    pub fn delete(&self, key: &str) {
+        self.inner.delete(key)
+    }
+
+    pub fn get(&self, key: &str) -> Option<LoroValue> {
+        self.inner.get(key)
+    }
+
+    pub fn remove_outdated(&self) {
+        self.inner.remove_outdated()
+    }
+
+    pub fn get_all_states(&self) -> FxHashMap<String, LoroValue> {
+        self.inner.get_all_states()
+    }
+
+    pub fn keys(&self) -> Vec<String> {
+        self.inner.keys()
+    }
+
+    pub fn subscribe_local_updates(&self, callback: LocalEphemeralCallback) -> Subscription {
+        self.inner.subscribe_local_updates(callback)
+    }
+
+    pub fn subscribe(&self, callback: EphemeralSubscriber) -> Subscription {
+        self.inner.subscribe(callback)
+    }
+}
+
+struct EphemeralStoreInner {
+    states: Mutex<FxHashMap<String, State>>,
+    local_subs: SubscriberSetWithQueue<(), LocalEphemeralCallback, Vec<u8>>,
+    subscribers: SubscriberSetWithQueue<(), EphemeralSubscriber, EphemeralStoreEvent>,
+    timeout: AtomicI64,
+}
+
+impl std::fmt::Debug for EphemeralStoreInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -232,11 +290,11 @@ struct State {
     timestamp: i64,
 }
 
-impl EphemeralStore {
-    pub fn new(timeout: i64) -> EphemeralStore {
-        EphemeralStore {
-            timeout,
-            states: FxHashMap::default(),
+impl EphemeralStoreInner {
+    pub fn new(timeout: i64) -> EphemeralStoreInner {
+        EphemeralStoreInner {
+            timeout: AtomicI64::new(timeout),
+            states: Mutex::new(FxHashMap::default()),
             local_subs: SubscriberSetWithQueue::new(),
             subscribers: SubscriberSetWithQueue::new(),
         }
@@ -245,8 +303,10 @@ impl EphemeralStore {
     pub fn encode(&self, key: &str) -> Vec<u8> {
         let mut peers_info = Vec::new();
         let now = get_sys_timestamp() as Timestamp;
-        if let Some(peer_state) = self.states.get(key) {
-            if now - peer_state.timestamp > self.timeout {
+        let states = self.states.lock().unwrap();
+        if let Some(peer_state) = states.get(key) {
+            if now - peer_state.timestamp > self.timeout.load(std::sync::atomic::Ordering::Relaxed)
+            {
                 return vec![];
             }
             let encoded_peer_info = EncodedState {
@@ -263,8 +323,10 @@ impl EphemeralStore {
     pub fn encode_all(&self) -> Vec<u8> {
         let mut peers_info = Vec::new();
         let now = get_sys_timestamp() as Timestamp;
-        for (key, peer_state) in self.states.iter() {
-            if now - peer_state.timestamp > self.timeout {
+        let states = self.states.lock().unwrap();
+        for (key, peer_state) in states.iter() {
+            if now - peer_state.timestamp > self.timeout.load(std::sync::atomic::Ordering::Relaxed)
+            {
                 continue;
             }
             let encoded_peer_info = EncodedState {
@@ -277,24 +339,25 @@ impl EphemeralStore {
         postcard::to_allocvec(&peers_info).unwrap()
     }
 
-    pub fn apply(&mut self, data: &[u8]) {
+    pub fn apply(&self, data: &[u8]) {
         let peers_info: Vec<EncodedState> = postcard::from_bytes(data).unwrap();
         let mut updated_keys = Vec::new();
         let mut added_keys = Vec::new();
         let mut removed_keys = Vec::new();
         let now = get_sys_timestamp() as Timestamp;
+        let mut states = self.states.lock().unwrap();
         for EncodedState {
             key,
             value: record,
             timestamp,
         } in peers_info
         {
-            match self.states.get_mut(key) {
+            match states.get_mut(key) {
                 Some(peer_info) if peer_info.timestamp >= timestamp => {
                     // do nothing
                 }
                 _ => {
-                    let old = self.states.insert(
+                    let old = states.insert(
                         key.to_string(),
                         State {
                             state: record.clone(),
@@ -310,6 +373,8 @@ impl EphemeralStore {
                 }
             }
         }
+
+        drop(states);
         if !self.subscribers.inner().is_empty() {
             self.subscribers.emit(
                 &(),
@@ -323,24 +388,25 @@ impl EphemeralStore {
         }
     }
 
-    pub fn set(&mut self, key: &str, value: impl Into<LoroValue>) {
+    pub fn set(&self, key: &str, value: impl Into<LoroValue>) {
         self._set_local_state(key, Some(value.into()));
     }
 
-    pub fn delete(&mut self, key: &str) {
+    pub fn delete(&self, key: &str) {
         self._set_local_state(key, None);
     }
 
     pub fn get(&self, key: &str) -> Option<LoroValue> {
-        self.states.get(key).and_then(|x| x.state.clone())
+        let states = self.states.lock().unwrap();
+        states.get(key).and_then(|x| x.state.clone())
     }
 
-    pub fn remove_outdated(&mut self) {
+    pub fn remove_outdated(&self) {
         let now = get_sys_timestamp() as Timestamp;
         let mut removed = Vec::new();
-
-        self.states.retain(|key, state| {
-            if now - state.timestamp > self.timeout {
+        let mut states = self.states.lock().unwrap();
+        states.retain(|key, state| {
+            if now - state.timestamp > self.timeout.load(std::sync::atomic::Ordering::Relaxed) {
                 if state.state.is_some() {
                     removed.push(key.clone());
                 }
@@ -349,6 +415,7 @@ impl EphemeralStore {
                 true
             }
         });
+        drop(states);
         if !self.subscribers.inner().is_empty() {
             self.subscribers.emit(
                 &(),
@@ -363,18 +430,21 @@ impl EphemeralStore {
     }
 
     pub fn get_all_states(&self) -> FxHashMap<String, LoroValue> {
-        self.states
+        let states = self.states.lock().unwrap();
+        states
             .iter()
             .filter(|(_, v)| v.state.is_some())
             .map(|(k, v)| (k.clone(), v.state.clone().unwrap()))
             .collect()
     }
 
-    pub fn keys(&self) -> impl Iterator<Item = &str> {
-        self.states
+    pub fn keys(&self) -> Vec<String> {
+        let states = self.states.lock().unwrap();
+        states
             .keys()
-            .filter(|&k| self.states.get(k).unwrap().state.is_some())
-            .map(|s| s.as_str())
+            .filter(|&k| states.get(k).unwrap().state.is_some())
+            .map(|s| s.to_string())
+            .collect()
     }
 
     pub fn subscribe_local_updates(&self, callback: LocalEphemeralCallback) -> Subscription {
@@ -389,15 +459,18 @@ impl EphemeralStore {
         sub
     }
 
-    fn _set_local_state(&mut self, key: &str, value: Option<LoroValue>) {
+    fn _set_local_state(&self, key: &str, value: Option<LoroValue>) {
         let is_delete = value.is_none();
-        let old = self.states.insert(
+        let mut states = self.states.lock().unwrap();
+        let old = states.insert(
             key.to_string(),
             State {
                 state: value,
                 timestamp: get_sys_timestamp() as Timestamp,
             },
         );
+
+        drop(states);
         if !self.local_subs.inner().is_empty() {
             self.local_subs.emit(&(), self.encode(key));
         }
