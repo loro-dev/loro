@@ -373,6 +373,8 @@ impl EphemeralStoreInner {
                 }
             }
         }
+
+        drop(states);
         if !self.subscribers.inner().is_empty() {
             self.subscribers.emit(
                 &(),
@@ -467,6 +469,7 @@ impl EphemeralStoreInner {
                 timestamp: get_sys_timestamp() as Timestamp,
             },
         );
+
         drop(states);
         if !self.local_subs.inner().is_empty() {
             self.local_subs.emit(&(), self.encode(key));
