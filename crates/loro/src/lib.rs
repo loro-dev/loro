@@ -1153,6 +1153,33 @@ impl LoroDoc {
     pub fn subscribe_pre_commit(&self, callback: PreCommitCallback) -> Subscription {
         self.doc.subscribe_pre_commit(callback)
     }
+
+    /// Delete all content from a root container and hide it from the document.
+    ///
+    /// When a root container is empty and hidden:
+    /// - It won't show up in `get_deep_value()` results
+    /// - It won't be included in document snapshots
+    ///
+    /// Only works on root containers (containers without parents).
+    pub fn delete_root_container(&self, cid: ContainerID) {
+        self.doc.delete_root_container(cid);
+    }
+
+    /// Set whether to hide empty root containers.
+    ///
+    /// # Example
+    /// ```
+    /// use loro::LoroDoc;
+    ///
+    /// let doc = LoroDoc::new();
+    /// let map = doc.get_map("map");
+    /// dbg!(doc.get_deep_value()); // {"map": {}}
+    /// doc.set_hide_empty_root_containers(true);
+    /// dbg!(doc.get_deep_value()); // {}
+    /// ```
+    pub fn set_hide_empty_root_containers(&self, hide: bool) {
+        self.doc.set_hide_empty_root_containers(hide);
+    }
 }
 
 /// It's used to prevent the user from implementing the trait directly.

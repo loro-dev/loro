@@ -1879,6 +1879,34 @@ impl LoroDoc {
 
         set
     }
+
+    pub fn delete_root_container(&self, cid: ContainerID) {
+        if !cid.is_root() {
+            return;
+        }
+
+        if self.arena.id_to_idx(&cid).is_none() {
+            // if it's never used, skipped
+            return;
+        }
+
+        let Some(h) = self.get_handler(cid.clone()) else {
+            return;
+        };
+
+        h.clear().unwrap();
+        self.config
+            .deleted_root_containers
+            .lock()
+            .unwrap()
+            .insert(cid);
+    }
+
+    pub fn set_hide_empty_root_containers(&self, hide: bool) {
+        self.config
+            .hide_empty_root_containers
+            .store(hide, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 // FIXME: PERF: This method is quite slow because it iterates all the changes

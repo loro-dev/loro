@@ -1,8 +1,11 @@
+use fxhash::FxHashSet;
+use loro_common::ContainerID;
+
 pub use crate::container::richtext::config::{StyleConfig, StyleConfigMap};
 use crate::LoroDoc;
 use std::sync::atomic::{AtomicBool, AtomicI64};
-use std::sync::Arc;
 use std::sync::RwLock;
+use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Debug)]
 pub struct Configure {
@@ -10,6 +13,8 @@ pub struct Configure {
     record_timestamp: Arc<AtomicBool>,
     pub(crate) merge_interval_in_s: Arc<AtomicI64>,
     pub(crate) editable_detached_mode: Arc<AtomicBool>,
+    pub(crate) deleted_root_containers: Arc<Mutex<FxHashSet<ContainerID>>>,
+    pub(crate) hide_empty_root_containers: Arc<AtomicBool>,
 }
 
 impl LoroDoc {
@@ -28,6 +33,8 @@ impl Default for Configure {
             record_timestamp: Arc::new(AtomicBool::new(false)),
             editable_detached_mode: Arc::new(AtomicBool::new(false)),
             merge_interval_in_s: Arc::new(AtomicI64::new(1000)),
+            deleted_root_containers: Arc::new(Mutex::new(Default::default())),
+            hide_empty_root_containers: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -48,6 +55,13 @@ impl Configure {
             )),
             editable_detached_mode: Arc::new(AtomicBool::new(
                 self.editable_detached_mode
+                    .load(std::sync::atomic::Ordering::Relaxed),
+            )),
+            deleted_root_containers: Arc::new(Mutex::new(
+                self.deleted_root_containers.lock().unwrap().clone(),
+            )),
+            hide_empty_root_containers: Arc::new(AtomicBool::new(
+                self.hide_empty_root_containers
                     .load(std::sync::atomic::Ordering::Relaxed),
             )),
         }
@@ -85,6 +99,11 @@ impl Configure {
     pub fn set_merge_interval(&self, interval: i64) {
         self.merge_interval_in_s
             .store(interval, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn set_hide_empty_root_containers(&self, hide: bool) {
+        self.hide_empty_root_containers
+            .store(hide, std::sync::atomic::Ordering::Relaxed);
     }
 }
 

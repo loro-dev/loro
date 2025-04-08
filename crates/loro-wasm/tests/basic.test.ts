@@ -1592,3 +1592,33 @@ it("can get pending ops as json", () => {
     }],
   })
 });
+
+it("deleteRootContainers", () => {
+  const doc = new LoroDoc();
+  const _map = doc.getMap("map");
+  doc.getMap("m");
+  const _text = doc.getText("text");
+
+  doc.deleteRootContainer("cid:root-map:Map");
+  doc.deleteRootContainer("cid:root-text:Text");
+
+  expect(doc.toJSON()).toStrictEqual({
+    m: {}
+  });
+
+  const snapshot = doc.export({ mode: "snapshot" });
+  const newDoc = new LoroDoc();
+  newDoc.import(snapshot);
+
+  expect(newDoc.toJSON()).toStrictEqual({
+    m: {}
+  });
+});
+
+it("hideEmptyRootContainers", () => {
+  const doc = new LoroDoc();
+  const map = doc.getMap("map");
+  expect(doc.toJSON()).toStrictEqual({ map: {} });
+  doc.setHideEmptyRootContainers(true);
+  expect(doc.toJSON()).toStrictEqual({});
+});

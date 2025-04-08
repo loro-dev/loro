@@ -71,7 +71,7 @@ macro_rules! ctx {
 impl ContainerStore {
     pub fn new(arena: SharedArena, conf: Configure, peer: Arc<AtomicU64>) -> Self {
         ContainerStore {
-            store: InnerStore::new(arena.clone()),
+            store: InnerStore::new(arena.clone(), conf.clone()),
             arena,
             conf,
             shallow_root_store: None,
@@ -132,9 +132,10 @@ impl ContainerStore {
         &mut self,
         shallow_bytes: Bytes,
         start_frontiers: Frontiers,
+        config: Configure,
     ) -> LoroResult<Option<Frontiers>> {
         assert!(self.shallow_root_store.is_none());
-        let mut inner = InnerStore::new(self.arena.clone());
+        let mut inner = InnerStore::new(self.arena.clone(), config);
         let f = inner.decode(shallow_bytes)?;
         self.shallow_root_store = Some(Arc::new(GcStore {
             shallow_root_frontiers: start_frontiers,

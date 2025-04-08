@@ -217,7 +217,6 @@ impl BasicHandler {
     }
 
     pub fn get_value(&self) -> LoroValue {
-        tracing::trace!("get_value");
         self.doc
             .state
             .lock()
@@ -1281,7 +1280,21 @@ impl Handler {
                 // do nothing
             }
         }
+
         Ok(())
+    }
+
+    pub fn clear(&self) -> LoroResult<()> {
+        match self {
+            Handler::Text(text_handler) => text_handler.clear(),
+            Handler::Map(map_handler) => map_handler.clear(),
+            Handler::List(list_handler) => list_handler.clear(),
+            Handler::MovableList(movable_list_handler) => movable_list_handler.clear(),
+            Handler::Tree(tree_handler) => tree_handler.clear(),
+            #[cfg(feature = "counter")]
+            Handler::Counter(counter_handler) => counter_handler.clear(),
+            Handler::Unknown(_unknown_handler) => Ok(()),
+        }
     }
 }
 
@@ -2347,6 +2360,25 @@ impl TextHandler {
 
     pub fn push_str(&self, s: &str) -> LoroResult<()> {
         self.insert_utf8(self.len_utf8(), s)
+    }
+
+    pub fn clear(&self) -> LoroResult<()> {
+        match &self.inner {
+            MaybeDetached::Detached(mutex) => {
+                let mut t = mutex.lock().unwrap();
+                let len = t.value.len_unicode();
+                let ranges = t.value.get_text_entity_ranges(0, len, PosType::Unicode)?;
+                for range in ranges.iter().rev() {
+                    t.value
+                        .drain_by_entity_index(range.entity_start, range.entity_len(), None);
+                }
+                Ok(())
+            }
+            MaybeDetached::Attached(a) => a.with_txn(|txn| {
+                let len = a.with_state(|s| s.as_richtext_state_mut().unwrap().len_unicode());
+                self.delete_with_txn_inline(txn, 0, len, PosType::Unicode)
+            }),
+        }
     }
 }
 
@@ -3996,6 +4028,10 @@ pub mod counter {
                 MaybeDetached::Detached(_) => false,
                 MaybeDetached::Attached(a) => a.is_deleted(),
             }
+        }
+
+        pub fn clear(&self) -> LoroResult<()> {
+            self.decrement(self.get_value().into_double().unwrap())
         }
     }
 
