@@ -826,7 +826,7 @@ impl LoroDoc {
     ///
     /// Only works on root containers (containers without parents).
     pub fn delete_root_container(&self, cid: ContainerID) {
-        self.doc.delete_root_container(cid);
+        self.doc.delete_root_container(cid.into());
     }
 }
 
