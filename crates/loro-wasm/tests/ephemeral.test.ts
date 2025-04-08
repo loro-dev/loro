@@ -118,14 +118,14 @@ describe("EphemeralStore", () => {
 
     it("subscribe", () => {
         const store = new EphemeralStore(10);
-        store.subscribe((update) => {
-            // Panics
-            const all = store.getAllStates();
-            console.log(all);
+        let callTimes = 0;
+        store.subscribe((_update) => {
+            store.getAllStates();
+            callTimes += 1;
         })
-        console.log("set a");
         store.set("a", 1);
         store.set("b", 2);
         store.set("c", 3);
+        expect(callTimes).toBe(3);
     });
 });
