@@ -70,7 +70,6 @@ impl EphemeralStore {
         listener: Arc<dyn LocalEphemeralListener>,
     ) -> Arc<Subscription> {
         let s = self.0.subscribe_local_updates(Box::new(move |update| {
-            // TODO: should it be cloned?
             listener.on_ephemeral_update(update.to_vec());
             true
         }));
