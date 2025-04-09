@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.3
+
+### Patch Changes
+
+- ed4fe83: fix: from_snapshot with shallow snapshot err #712
+
 ## 1.5.2
 
 ### Patch Changes
