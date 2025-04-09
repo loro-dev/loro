@@ -349,4 +349,30 @@ describe("richtext", () => {
     text.update("Hello World Bro😊");
     expect(text.toString()).toStrictEqual("Hello World Bro😊");
   });
+
+  it("Delta cache", async () => {
+    const doc = new LoroDoc();
+    const text = doc.getText('t');
+    text.insert(0, "Hello 😊Bro");
+    const updates = doc.export({ mode: "snapshot" });
+    const docB = new LoroDoc();
+    const textB = docB.getText('t');
+    const promise = new Promise<void>((r, reject) => {
+      textB.subscribe((_e) => {
+        try {
+          expect(textB.toDelta()).toStrictEqual(text.toDelta());
+          r()
+        } catch (e) {
+          reject(e);
+        }
+
+      });
+    });
+
+    expect(textB.toDelta()).toStrictEqual([]);
+    docB.import(updates);
+    expect(textB.toDelta()).toStrictEqual(text.toDelta());
+    await promise;
+    expect(textB.toString()).toStrictEqual("Hello 😊Bro");
+  });
 });

@@ -1158,6 +1158,9 @@ mod snapshot {
                 loader.push(chunk);
             }
             text.state = LazyLoad::Src(loader);
+            // NOTE: We need to ensure the invariance that the version id is always increased when the richtext state is changed
+            // This is used to avoid the version_id to be the same as the previous zero version
+            text.version_id = 1;
             Ok(text)
         }
     }
