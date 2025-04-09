@@ -416,9 +416,12 @@ impl LoroDoc {
     }
     pub fn from_snapshot(bytes: &[u8]) -> LoroResult<Self> {
         let doc = Self::new();
+        let (options, _guard) = doc.commit_then_stop();
         let ParsedHeaderAndBody { mode, body, .. } = parse_header_and_body(bytes, true)?;
         if mode.is_snapshot() {
             decode_snapshot(&doc, mode, body)?;
+            drop(_guard);
+            doc.renew_txn_if_auto_commit(options);
             Ok(doc)
         } else {
             Err(LoroError::DecodeError(

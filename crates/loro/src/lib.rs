@@ -472,6 +472,12 @@ impl LoroDoc {
         self.doc.is_detached()
     }
 
+    /// Create a new `LoroDoc` from a snapshot.
+    pub fn from_snapshot(bytes: &[u8]) -> LoroResult<Self> {
+        let inner = InnerLoroDoc::from_snapshot(bytes)?;
+        Ok(Self::_new(inner))
+    }
+
     /// Import updates/snapshot exported by [`LoroDoc::export_snapshot`] or [`LoroDoc::export_from`].
     #[inline]
     pub fn import(&self, bytes: &[u8]) -> Result<ImportStatus, LoroError> {

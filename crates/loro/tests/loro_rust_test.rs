@@ -17,7 +17,7 @@ use loro::{
     event::{Diff, DiffBatch, ListDiffItem},
     loro_value, CommitOptions, ContainerID, ContainerTrait, ContainerType, ExportMode, Frontiers,
     FrontiersNotIncluded, IdSpan, Index, LoroDoc, LoroError, LoroList, LoroMap, LoroMapValue,
-    LoroStringValue, LoroText, LoroValue, ToJson, TreeParentId, UpdateOptions,
+    LoroStringValue, LoroText, LoroValue, ToJson, TreeParentId,
 };
 use loro_internal::{
     encoding::EncodedBlobMode, fx_map, handler::TextDelta, id::ID, version_range, vv, LoroResult,
@@ -3340,4 +3340,21 @@ fn test_hide_empty_root_containers() {
         doc.get_deep_value(),
         LoroValue::Map(LoroMapValue::default())
     );
+}
+
+#[test]
+fn test_from_shallow_snapshot() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    doc.get_text("text").insert(0, "Hello").unwrap();
+    doc.commit();
+    let snapshot = doc
+        .export(ExportMode::shallow_snapshot_owned(doc.state_frontiers()))
+        .unwrap();
+    let new_doc = LoroDoc::from_snapshot(&snapshot).unwrap();
+    let mut expected = LoroMapValue::default();
+    expected
+        .make_mut()
+        .insert("text".into(), LoroValue::String("Hello".into()));
+    assert_eq!(new_doc.get_deep_value(), LoroValue::Map(expected));
 }
