@@ -1622,3 +1622,15 @@ it("hideEmptyRootContainers", () => {
   doc.setHideEmptyRootContainers(true);
   expect(doc.toJSON()).toStrictEqual({});
 });
+
+it("fromShallowSnapshot", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId("1");
+  doc.getText("text").insert(0, "Hello");
+  doc.commit();
+  const snapshot = doc.export({ mode: "shallow-snapshot", frontiers: doc.frontiers() });
+  const newDoc = LoroDoc.fromSnapshot(snapshot);
+  expect(newDoc.toJSON()).toStrictEqual({
+    text: "Hello"
+  });
+})

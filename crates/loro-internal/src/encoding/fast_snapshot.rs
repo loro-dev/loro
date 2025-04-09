@@ -94,6 +94,14 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: Bytes) -> LoroResult<()> {
 }
 
 pub(crate) fn decode_snapshot_inner(snapshot: Snapshot, doc: &LoroDoc) -> Result<(), LoroError> {
+    let (options, guard) = doc.commit_then_stop();
+    _decode_snapshot_inner(snapshot, doc)?;
+    drop(guard);
+    doc.renew_txn_if_auto_commit(options);
+    Ok(())
+}
+
+fn _decode_snapshot_inner(snapshot: Snapshot, doc: &LoroDoc) -> Result<(), LoroError> {
     let Snapshot {
         oplog_bytes,
         state_bytes,
