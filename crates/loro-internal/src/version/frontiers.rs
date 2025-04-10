@@ -217,7 +217,8 @@ impl Frontiers {
 
     #[inline]
     pub fn encode(&self) -> Vec<u8> {
-        let vec: Vec<ID> = self.iter().collect();
+        let mut vec: Vec<ID> = self.iter().collect();
+        vec.sort();
         postcard::to_allocvec(&vec).unwrap()
     }
 
