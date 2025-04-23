@@ -1325,8 +1325,7 @@ impl LoroDoc {
         }
 
         let frontiers = if to_shrink_frontiers {
-            shrink_frontiers(frontiers, &oplog.dag)
-                .map_err(|_| LoroError::SwitchToVersionBeforeShallowRoot)?
+            shrink_frontiers(frontiers, &oplog.dag).map_err(LoroError::FrontiersNotFound)?
         } else {
             frontiers.clone()
         };

@@ -3358,3 +3358,16 @@ fn test_from_shallow_snapshot() {
         .insert("text".into(), LoroValue::String("Hello".into()));
     assert_eq!(new_doc.get_deep_value(), LoroValue::Map(expected));
 }
+
+#[test]
+fn test_checkout_to_unknown_version() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    doc.get_text("text").insert(0, "Hello").unwrap();
+    let result = doc.checkout(&Frontiers::from([ID::new(2, 2), ID::new(1, 1)]));
+    assert!(result.is_err());
+    assert!(matches!(
+        result.err().unwrap(),
+        LoroError::FrontiersNotFound(..)
+    ));
+}
