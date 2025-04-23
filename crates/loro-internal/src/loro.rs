@@ -1293,6 +1293,8 @@ impl LoroDoc {
         if self.config.detached_editing() {
             self.renew_peer_id();
             self.renew_txn_if_auto_commit(options);
+        } else if !self.is_detached() {
+            self.renew_txn_if_auto_commit(options);
         }
 
         Ok(())
@@ -1329,6 +1331,7 @@ impl LoroDoc {
         } else {
             frontiers.clone()
         };
+
         if from_frontiers == frontiers {
             return Ok(());
         }
