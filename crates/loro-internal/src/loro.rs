@@ -1290,7 +1290,7 @@ impl LoroDoc {
         self._checkout_without_emitting(frontiers, true, true)?;
         self.emit_events();
         drop(guard);
-        if self.config.detached_editing() {
+        if self.config.detached_editing() || !self.is_detached() {
             self.renew_peer_id();
             self.renew_txn_if_auto_commit(options);
         }
@@ -1330,6 +1330,7 @@ impl LoroDoc {
         } else {
             frontiers.clone()
         };
+
         if from_frontiers == frontiers {
             return Ok(());
         }
