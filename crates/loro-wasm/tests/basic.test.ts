@@ -1646,7 +1646,7 @@ it("fromShallowSnapshot", () => {
   });
 });
 
-it.only("update text after switching to a version", () => {
+it("update text after switching to a version", () => {
   const doc = new LoroDoc();
   doc.setPeerId(1);
   doc.getText("text").insert(0, "abc");
