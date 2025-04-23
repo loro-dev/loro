@@ -1290,8 +1290,10 @@ impl LoroDoc {
         self._checkout_without_emitting(frontiers, true, true)?;
         self.emit_events();
         drop(guard);
-        if self.config.detached_editing() || !self.is_detached() {
+        if self.config.detached_editing() {
             self.renew_peer_id();
+            self.renew_txn_if_auto_commit(options);
+        } else if !self.is_detached() {
             self.renew_txn_if_auto_commit(options);
         }
 
