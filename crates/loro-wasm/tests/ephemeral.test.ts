@@ -123,13 +123,6 @@ describe("EphemeralStore", () => {
         store.set("foo", "bar");
         store.set("bar", 1);
 
-        // @ts-expect-error - This should fail type checking as "foo" expects string
-        store.set("foo", 123);
-        // @ts-expect-error - This should fail type checking as "bar" expects number
-        store.set("bar", "string");
-        // @ts-expect-error - This should fail type checking as "baz" is not in the type
-        store.set("baz", "value");
-
         // Verify runtime values are correct
         expect(store.get("foo")).toBe("bar");
         expect(store.get("bar")).toBe(1);
@@ -139,6 +132,13 @@ describe("EphemeralStore", () => {
         const bar: number | undefined = store.get("bar");
         expect(foo).toBe("bar");
         expect(bar).toBe(1);
+
+        // @ts-expect-error - This should fail type checking as "foo" expects string
+        store.set("foo", 123);
+        // @ts-expect-error - This should fail type checking as "bar" expects number
+        store.set("bar", "string");
+        // @ts-expect-error - This should fail type checking as "baz" is not in the type
+        store.set("baz", "value");
     });
 
     it("subscribe", () => {
