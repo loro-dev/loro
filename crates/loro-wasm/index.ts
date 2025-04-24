@@ -249,8 +249,8 @@ export class Awareness<T extends Value = Value> {
  * store2.apply(encoded);
  * ```
  */
-export class EphemeralStore<T extends Value = Value> {
-    inner: EphemeralStoreWasm<T>;
+export class EphemeralStore<T extends Record<string, Value> = Record<string, Value>> {
+    inner: EphemeralStoreWasm;
     private timer: number | undefined;
     private timeout: number;
     constructor(timeout: number = 30000) {
@@ -263,21 +263,21 @@ export class EphemeralStore<T extends Value = Value> {
         this.startTimerIfNotEmpty();
     }
 
-    set(key: string, value: T) {
-        this.inner.set(key, value);
+    set<K extends keyof T>(key: K, value: T[K]) {
+        this.inner.set(key as string, value);
         this.startTimerIfNotEmpty();
     }
 
-    get(key: string): T | undefined {
-        return this.inner.get(key);
+    get<K extends keyof T>(key: K): T[K] | undefined {
+        return this.inner.get(key as string);
     }
 
-    getAllStates(): Record<string, T> {
+    getAllStates(): Partial<T> {
         return this.inner.getAllStates();
     }
 
-    encode(key: string): Uint8Array {
-        return this.inner.encode(key);
+    encode<K extends keyof T>(key: K): Uint8Array {
+        return this.inner.encode(key as string);
     }
 
     encodeAll(): Uint8Array {
