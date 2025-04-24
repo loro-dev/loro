@@ -268,6 +268,10 @@ export class EphemeralStore<T extends Record<string, Value> = Record<string, Val
         this.startTimerIfNotEmpty();
     }
 
+    delete<K extends keyof T>(key: K) {
+        this.inner.delete(key as string);
+    }
+
     get<K extends keyof T>(key: K): T[K] | undefined {
         return this.inner.get(key as string);
     }
