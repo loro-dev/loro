@@ -4940,7 +4940,7 @@ impl UndoManager {
                         }
                     }
 
-                    Some(undo_item_meta)
+                    undo_item_meta
                 })));
         } else {
             self.undo.set_on_push(None);
@@ -5680,7 +5680,7 @@ export type UndoConfig = {
     excludeOriginPrefixes?: string[],
     /** If true, the undo manager will not automatically record checkpoints on `doc.commit()` */
     manualCheckpoint?: boolean,
-    onPush?: (isUndo: boolean, counterRange: { start: number, end: number }, event?: LoroEventBatch) => { value: Value, cursors: Cursor[] } | undefined,
+    onPush?: (isUndo: boolean, counterRange: { start: number, end: number }, event?: LoroEventBatch) => { value: Value, cursors: Cursor[] },
     onPop?: (isUndo: boolean, value: { value: Value, cursors: Cursor[] }, counterRange: { start: number, end: number }) => void
 };
 export type Container = LoroList | LoroMap | LoroText | LoroTree | LoroMovableList | LoroCounter;

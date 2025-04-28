@@ -183,9 +183,7 @@ impl UndoOrRedo {
 /// When a undo/redo item is pushed, the undo manager will call the on_push callback to get the meta data of the undo item.
 /// The returned cursors will be recorded for a new pushed undo item.
 pub type OnPush = Box<
-    dyn for<'a> Fn(UndoOrRedo, CounterSpan, Option<DiffEvent<'a>>) -> Option<UndoItemMeta>
-        + Send
-        + Sync,
+    dyn for<'a> Fn(UndoOrRedo, CounterSpan, Option<DiffEvent<'a>>) -> UndoItemMeta + Send + Sync,
 >;
 pub type OnPop = Box<dyn Fn(UndoOrRedo, CounterSpan, UndoItemMeta) + Send + Sync>;
 
@@ -441,10 +439,10 @@ impl UndoManagerInner {
 
         if !self.undo_stack.is_empty() && now - self.last_undo_time < self.merge_interval_in_ms {
             self.undo_stack
-                .push_with_merge(span, meta.unwrap_or_default(), true);
+                .push_with_merge(span, meta, true);
         } else {
             self.last_undo_time = now;
-            self.undo_stack.push(span, meta.unwrap_or_default());
+            self.undo_stack.push(span, meta);
         }
 
         self.next_counter = Some(latest_counter);
@@ -736,7 +734,6 @@ impl UndoManager {
                             None,
                         )
                     })
-                    .unwrap_or_default()
                     .unwrap_or_default();
 
                 if matches!(kind, UndoOrRedo::Undo) && get_opposite(&mut inner).is_empty() {

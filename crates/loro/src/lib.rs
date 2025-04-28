@@ -3070,4 +3070,4 @@ impl UndoManager {
 /// When a undo/redo item is pushed, the undo manager will call the on_push callback to get the meta data of the undo item.
 /// The returned cursors will be recorded for a new pushed undo item.
 pub type OnPush =
-    Box<dyn for<'a> Fn(UndoOrRedo, CounterSpan, Option<DiffEvent>) -> Option<UndoItemMeta> + Send + Sync>;
+    Box<dyn for<'a> Fn(UndoOrRedo, CounterSpan, Option<DiffEvent>) -> UndoItemMeta + Send + Sync>;

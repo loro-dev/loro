@@ -1,6 +1,7 @@
 use std::sync::{atomic::AtomicU64, Arc};
 
-use loro_internal::{handler::UpdateOptions, LoroDoc, UndoManager};
+use loro_common::LoroValue;
+use loro_internal::{handler::UpdateOptions, undo::UndoItemMeta, LoroDoc, UndoManager};
 
 #[test]
 fn undo_default_checkpoint() {
@@ -13,7 +14,10 @@ fn undo_default_checkpoint() {
     let counter_clone = Arc::clone(&counter);
     undo_manager.set_on_push(Some(Box::new(move |_, _, _| {
         counter_clone.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        None
+        UndoItemMeta {
+            value: LoroValue::Null,
+            cursors: Default::default(),
+        }
     })));
 
     text.update("hello", UpdateOptions::default()).unwrap();
@@ -34,7 +38,10 @@ fn undo_manual_checkpoint() {
     let counter_clone = Arc::clone(&counter);
     undo_manager.set_on_push(Some(Box::new(move |_, _, _| {
         counter_clone.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        None
+        UndoItemMeta {
+            value: LoroValue::Null,
+            cursors: Default::default(),
+        }
     })));
 
     text.update("hello", UpdateOptions::default()).unwrap();
