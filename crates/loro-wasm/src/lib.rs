@@ -4791,6 +4791,12 @@ impl UndoManager {
             .unwrap_or(JsValue::from_f64(1000.0))
             .as_f64()
             .unwrap_or(1000.0) as i64;
+
+        let manual_checkpoint = Reflect::get(&config, &JsValue::from_str("manualCheckpoint"))
+            .unwrap_or(JsValue::from_bool(false))
+            .as_bool()
+            .unwrap_or(false);
+
         let exclude_origin_prefixes =
             Reflect::get(&config, &JsValue::from_str("excludeOriginPrefixes"))
                 .ok()
@@ -4804,7 +4810,12 @@ impl UndoManager {
         let on_push = Reflect::get(&config, &JsValue::from_str("onPush")).ok();
         let on_pop = Reflect::get(&config, &JsValue::from_str("onPop")).ok();
 
-        let mut undo = InnerUndoManager::new(&doc.0);
+        let mut undo = if manual_checkpoint {
+            InnerUndoManager::new_with_manual_checkpoint(&doc.0)
+        } else {
+            InnerUndoManager::new(&doc.0)
+        };
+
         undo.set_max_undo_steps(max_undo_steps);
         undo.set_merge_interval(merge_interval);
         for prefix in exclude_origin_prefixes {
@@ -5659,6 +5670,7 @@ export type UndoConfig = {
     mergeInterval?: number,
     maxUndoSteps?: number,
     excludeOriginPrefixes?: string[],
+    manualCheckpoint?: boolean,
     onPush?: (isUndo: boolean, counterRange: { start: number, end: number }, event?: LoroEventBatch) => { value: Value, cursors: Cursor[] },
     onPop?: (isUndo: boolean, value: { value: Value, cursors: Cursor[] }, counterRange: { start: number, end: number }) => void
 };
