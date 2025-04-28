@@ -4932,7 +4932,7 @@ impl UndoManager {
                         }
                     }
 
-                    undo_item_meta
+                    Some(undo_item_meta)
                 })));
         } else {
             self.undo.set_on_push(None);
