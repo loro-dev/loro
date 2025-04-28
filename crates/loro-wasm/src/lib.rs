@@ -4875,6 +4875,14 @@ impl UndoManager {
         self.undo.add_exclude_origin_prefix(&prefix)
     }
 
+    /// Record a checkpoint to the undo stack.
+    /// Pushes the changes since the last checkpoint to the undo stack.
+    /// Should only be used if initialized with `manualCheckpoint`
+    pub fn recordCheckpoint(&mut self) -> JsResult<()> {
+        self.undo.record_new_checkpoint()?;
+        Ok(())
+    }
+
     /// Set the on push event listener.
     ///
     /// Every time an undo step or redo step is pushed, the on push event listener will be called.
@@ -5671,7 +5679,7 @@ export type UndoConfig = {
     maxUndoSteps?: number,
     excludeOriginPrefixes?: string[],
     manualCheckpoint?: boolean,
-    onPush?: (isUndo: boolean, counterRange: { start: number, end: number }, event?: LoroEventBatch) => { value: Value, cursors: Cursor[] },
+    onPush?: (isUndo: boolean, counterRange: { start: number, end: number }, event?: LoroEventBatch) => { value: Value, cursors: Cursor[] } | undefined,
     onPop?: (isUndo: boolean, value: { value: Value, cursors: Cursor[] }, counterRange: { start: number, end: number }) => void
 };
 export type Container = LoroList | LoroMap | LoroText | LoroTree | LoroMovableList | LoroCounter;

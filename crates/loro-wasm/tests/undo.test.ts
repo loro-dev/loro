@@ -249,4 +249,43 @@ describe("undo", () => {
     await new Promise((r) => setTimeout(r, 1));
     expect(ran).toBeTruthy();
   })
+
+  test('should automatically push to undo stack', async () => {
+    const doc = new LoroDoc();
+    let counter = 0;
+    const undo = new UndoManager(doc, {
+      onPush: () => {
+        counter += 1;
+        return { value: null, cursors: [] };
+      }
+    });
+
+    doc.getText("text").insert(0, "hello");
+    doc.commit();
+    expect(counter).toBe(1);
+
+    doc.getText("text").insert(0, "world");
+    doc.commit();
+    expect(counter).toBe(2);
+  });
+
+  test('should not automatically push when manual undo', async () => {
+    const doc = new LoroDoc();
+    let counter = 0;
+    const undo = new UndoManager(doc, {
+      manualCheckpoint: true,
+      onPush: () => {
+        counter += 1;
+        return { value: null, cursors: [] };
+      }
+    });
+
+    doc.getText("text").insert(0, "hello");
+    doc.commit();
+    expect(counter).toBe(0);
+
+    undo.recordCheckpoint();
+    expect(counter).toBe(1);
+  });
+
 });
