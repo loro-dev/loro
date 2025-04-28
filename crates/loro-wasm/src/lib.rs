@@ -5678,6 +5678,7 @@ export type UndoConfig = {
     mergeInterval?: number,
     maxUndoSteps?: number,
     excludeOriginPrefixes?: string[],
+    /** If true, the undo manager will not automatically record checkpoints on `doc.commit()` */
     manualCheckpoint?: boolean,
     onPush?: (isUndo: boolean, counterRange: { start: number, end: number }, event?: LoroEventBatch) => { value: Value, cursors: Cursor[] } | undefined,
     onPop?: (isUndo: boolean, value: { value: Value, cursors: Cursor[] }, counterRange: { start: number, end: number }) => void
@@ -6149,6 +6150,14 @@ interface UndoManager {
      * @param listener - The callback function.
      */
     setOnPop(listener?: UndoConfig["onPop"]): void;
+
+    /**
+     * Manually record a checkpoint to the undo stack.
+     * All changes since the last checkpoint will be pushed to the undo stack.
+     *
+     * Should only be used if initialized with `manualCheckpoint`
+     */
+    recordCheckpoint(): void;
 }
 interface LoroDoc<T extends Record<string, Container> = Record<string, Container>> {
     /**

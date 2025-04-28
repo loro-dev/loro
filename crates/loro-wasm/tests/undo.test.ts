@@ -253,7 +253,7 @@ describe("undo", () => {
   test('should automatically push to undo stack', async () => {
     const doc = new LoroDoc();
     let counter = 0;
-    const undo = new UndoManager(doc, {
+    new UndoManager(doc, {
       onPush: () => {
         counter += 1;
         return { value: null, cursors: [] };
