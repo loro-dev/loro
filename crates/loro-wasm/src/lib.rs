@@ -4781,6 +4781,8 @@ impl UndoManager {
     /// - `onPop`: Optional. A callback function that is called when an undo/redo step is popped.
     ///    The function will have a meta data value that was attached to the given stack item when
     ///   `onPush` was called.
+    /// - `manualCheckpoint`: Optional. Whether to manually record checkpoints. Default is false, which will
+    ///    record a checkpoint after each commit.
     #[wasm_bindgen(constructor)]
     pub fn new(doc: &LoroDoc, config: JsUndoConfig) -> Self {
         let max_undo_steps = Reflect::get(&config, &JsValue::from_str("maxUndoSteps"))
