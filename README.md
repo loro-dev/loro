@@ -131,9 +131,14 @@ test("sync example", () => {
 });
 ```
 
-https://github.com/user-attachments/assets/1087d5be-3011-4ce5-9088-889a1901ad55
+# DevTools
 
-> You can use [Loro inspector](https://inspector.loro.dev) to inspect the state and the history of a Loro docuemnt
+## Loro Inspector
+
+You can use the [Loro Inspector](https://inspector.loro.dev) to inspect the state and history of a Loro document.
+
+https://github.com/user-attachments/assets/ceeb7450-80ce-42f2-aef4-2e08fa2d1f1b
+
 
 # Blog
 
