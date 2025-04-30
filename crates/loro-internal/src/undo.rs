@@ -438,7 +438,8 @@ impl UndoManagerInner {
             .unwrap_or_default();
 
         if !self.undo_stack.is_empty() && now - self.last_undo_time < self.merge_interval_in_ms {
-            self.undo_stack.push_with_merge(span, meta, true);
+            self.undo_stack
+                .push_with_merge(span, meta, true);
         } else {
             self.last_undo_time = now;
             self.undo_stack.push(span, meta);
@@ -464,6 +465,14 @@ fn get_counter_end(doc: &LoroDoc, peer: PeerID) -> Counter {
 
 impl UndoManager {
     pub fn new(doc: &LoroDoc) -> Self {
+        Self::new_with_options(doc, false)
+    }
+
+    pub fn new_with_manual_checkpoint(doc: &LoroDoc) -> Self {
+        Self::new_with_options(doc, true)
+    }
+
+    fn new_with_options(doc: &LoroDoc, manual_checkpoint: bool) -> Self {
         let peer = Arc::new(AtomicU64::new(doc.peer_id()));
         let peer_clone = peer.clone();
         let peer_clone2 = peer.clone();
@@ -502,7 +511,7 @@ impl UndoManager {
                         inner.undo_stack.compose_remote_event(event.events);
                         inner.redo_stack.compose_remote_event(event.events);
                         inner.next_counter = Some(id.counter + 1);
-                    } else {
+                    } else if !manual_checkpoint {
                         inner.record_checkpoint(id.counter + 1, Some(event));
                     }
                 }
@@ -726,6 +735,7 @@ impl UndoManager {
                         )
                     })
                     .unwrap_or_default();
+
                 if matches!(kind, UndoOrRedo::Undo) && get_opposite(&mut inner).is_empty() {
                     // If it's the first undo, we use the cursors from the users
                 } else if let Some(inner) = next_push_selection.take() {
