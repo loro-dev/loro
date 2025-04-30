@@ -70,11 +70,11 @@ Loro is a [CRDTs(Conflict-free Replicated Data Types)](https://crdt.tech/) libra
 - 🚀 [Fast Document Loading](https://loro.dev/blog/v1.0)
 - ⏱️ Fast [Time Travel](https://loro.dev/docs/tutorial/time_travel) Through History
 - 🏛️ [Version Control with Real-Time Collaboration](https://loro.dev/blog/v1.0#version-control)
-- 📦 [Shallow Snapshot](https://loro.dev/docs/advanced/shallow_snapshot) that Works like Git Shallow Clone 
+- 📦 [Shallow Snapshot](https://loro.dev/docs/advanced/shallow_snapshot) that Works like Git Shallow Clone
 
 https://github.com/user-attachments/assets/68e0017a-4987-4f71-b2cf-4ed28a210987
 
-> In this example, we demonstrate importing an entire Loro codebase into a Loro-powered 
+> In this example, we demonstrate importing an entire Loro codebase into a Loro-powered
 > version controller, preserving the complete Git DAG history while enabling fast version switching.
 
 # Example
@@ -82,21 +82,21 @@ https://github.com/user-attachments/assets/68e0017a-4987-4f71-b2cf-4ed28a210987
 [![Open in StackBlitz](https://developer.stackblitz.com/img/open_in_stackblitz.svg)](https://stackblitz.com/edit/loro-basic-test?file=test%2Floro-sync.test.ts)
 
 ```ts
-import { expect, test } from 'vitest';
-import { LoroDoc, LoroList } from 'loro-crdt';
+import { expect, test } from "vitest";
+import { LoroDoc, LoroList } from "loro-crdt";
 
-test('sync example', () => {
+test("sync example", () => {
   // Sync two docs with two rounds of exchanges
 
   // Initialize document A
   const docA = new LoroDoc();
-  const listA: LoroList = docA.getList('list');
-  listA.insert(0, 'A');
-  listA.insert(1, 'B');
-  listA.insert(2, 'C');
+  const listA: LoroList = docA.getList("list");
+  listA.insert(0, "A");
+  listA.insert(1, "B");
+  listA.insert(2, "C");
 
   // Export all updates from docA
-  const bytes: Uint8Array = docA.export({ mode: 'update' });
+  const bytes: Uint8Array = docA.export({ mode: "update" });
 
   // Simulate sending `bytes` across the network to another peer, B
 
@@ -106,18 +106,18 @@ test('sync example', () => {
 
   // B's state matches A's state
   expect(docB.toJSON()).toStrictEqual({
-    list: ['A', 'B', 'C'],
+    list: ["A", "B", "C"],
   });
 
   // Get the current version of docB
   const version = docB.oplogVersion();
 
   // Simulate editing at B: delete item 'B'
-  const listB: LoroList = docB.getList('list');
+  const listB: LoroList = docB.getList("list");
   listB.delete(1, 1);
 
   // Export the updates from B since the last sync point
-  const bytesB: Uint8Array = docB.export({ mode: 'update', from: version });
+  const bytesB: Uint8Array = docB.export({ mode: "update", from: version });
 
   // Simulate sending `bytesB` back across the network to A
 
@@ -126,10 +126,19 @@ test('sync example', () => {
 
   // A has the same state as B
   expect(docA.toJSON()).toStrictEqual({
-    list: ['A', 'C'],
+    list: ["A", "C"],
   });
 });
 ```
+
+# DevTools
+
+## Loro Inspector
+
+You can use the [Loro Inspector](https://inspector.loro.dev) to inspect the state and history of a Loro document.
+
+https://github.com/user-attachments/assets/ceeb7450-80ce-42f2-aef4-2e08fa2d1f1b
+
 
 # Blog
 
@@ -147,7 +156,6 @@ Loro draws inspiration from the innovative work of the following projects and in
 - [Yjs](https://github.com/yjs/yjs): We have incorporated a similar algorithm for effectively merging collaborative editing operations, thanks to their pioneering work.
 - [Matthew Weidner](https://mattweidner.com/): His work on the [Fugue](https://arxiv.org/abs/2305.00583) algorithm has been invaluable, enhancing our text editing capabilities.
 - [Martin Kleppmann](https://martin.kleppmann.com/): His work on CRDTs has significantly influenced our comprehension of the field.
- 
 
 [local-first]: https://www.inkandswitch.com/local-first/
 [Fugue]: https://arxiv.org/abs/2305.00583
