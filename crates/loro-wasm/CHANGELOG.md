@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.4
+
+### Patch Changes
+
+- 37c2a17: fix: checkout should renew txn if not detached
+
 ## 1.5.3
 
 ### Patch Changes

@@ -116,6 +116,31 @@ describe("EphemeralStore", () => {
         });
     });
 
+    it("generic type", () => {
+        // Define a type to test type inference
+        const store = new EphemeralStore<{ foo: string, bar: number }>(10);
+        // This should compile correctly
+        store.set("foo", "bar");
+        store.set("bar", 1);
+
+        // Verify runtime values are correct
+        expect(store.get("foo")).toBe("bar");
+        expect(store.get("bar")).toBe(1);
+
+        // Type inference for get should work too
+        const foo: string | undefined = store.get("foo");
+        const bar: number | undefined = store.get("bar");
+        expect(foo).toBe("bar");
+        expect(bar).toBe(1);
+
+        // @ts-expect-error - This should fail type checking as "foo" expects string
+        store.set("foo", 123);
+        // @ts-expect-error - This should fail type checking as "bar" expects number
+        store.set("bar", "string");
+        // @ts-expect-error - This should fail type checking as "baz" is not in the type
+        store.set("baz", "value");
+    });
+
     it("subscribe", () => {
         const store = new EphemeralStore(10);
         let callTimes = 0;

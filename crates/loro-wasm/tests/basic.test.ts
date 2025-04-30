@@ -615,7 +615,11 @@ it("can set next commit options", () => {
   const doc = new LoroDoc();
   doc.setPeerId("1");
   doc.getText("text").insert(0, "123");
-  doc.setNextCommitOptions({ message: "test message", origin: "test origin", timestamp: 123 });
+  doc.setNextCommitOptions({
+    message: "test message",
+    origin: "test origin",
+    timestamp: 123,
+  });
   doc.commit();
   const change = doc.getChangeAt({ peer: "1", counter: 0 });
   expect(change.message).toBe("test message");
@@ -632,7 +636,7 @@ it("can set next commit origin", async () => {
   doc.getText("text").insert(0, "123");
   doc.setNextCommitOrigin("test origin");
   doc.commit();
-  await Promise.resolve()
+  await Promise.resolve();
   expect(eventOrigin).toBe("test origin");
 });
 
@@ -650,7 +654,11 @@ it("can clear next commit options", () => {
   const doc = new LoroDoc();
   doc.setPeerId("1");
   doc.getText("text").insert(0, "123");
-  doc.setNextCommitOptions({ message: "test message", origin: "test origin", timestamp: 123 });
+  doc.setNextCommitOptions({
+    message: "test message",
+    origin: "test origin",
+    timestamp: 123,
+  });
   doc.clearNextCommitOptions();
   doc.commit();
   const change = doc.getChangeAt({ peer: "1", counter: 0 });
@@ -1347,13 +1355,13 @@ it("diff two version with serialization", () => {
   text.insert(0, "Hello");
   doc.commit();
   const diff = doc.diff([], doc.frontiers(), true);
-  expectTypeOf(diff).toEqualTypeOf<[ContainerID, JsonDiff][]>()
+  expectTypeOf(diff).toEqualTypeOf<[ContainerID, JsonDiff][]>();
   const newDiff = JSON.parse(JSON.stringify(diff));
   console.dir(newDiff, { depth: 100 });
   const newDoc = new LoroDoc();
   newDoc.applyDiff(newDiff);
   expect(newDoc.toJSON()).toStrictEqual(doc.toJSON());
-})
+});
 
 it("apply diff without for_json should work", () => {
   const doc = new LoroDoc();
@@ -1365,7 +1373,7 @@ it("apply diff without for_json should work", () => {
   const newDoc = new LoroDoc();
   newDoc.applyDiff(diff);
   expect(newDoc.toJSON()).toStrictEqual(doc.toJSON());
-})
+});
 
 it("the diff will deduplication", () => {
   const doc = new LoroDoc();
@@ -1495,13 +1503,13 @@ it("should return map for get_path_by_str", () => {
   const child = root.createNode();
   const grandChild = child.createNode();
   grandChild.data.set("type", "grandChild");
-  console.log(doc.getByPath("tree/0/0/0"))
-  expect(isContainer(doc.getByPath("tree/0/0/0"))).toBe(true)
+  console.log(doc.getByPath("tree/0/0/0"));
+  expect(isContainer(doc.getByPath("tree/0/0/0"))).toBe(true);
   expect((doc.getByPath("tree/0/0/0") as LoroMap).toJSON()).toStrictEqual({
-    "type": "grandChild"
-  })
-  expect(doc.getByPath("tree/0/0/0/type")).toBe("grandChild")
-})
+    type: "grandChild",
+  });
+  expect(doc.getByPath("tree/0/0/0/type")).toBe("grandChild");
+});
 
 it("test container existence", () => {
   const doc = new LoroDoc();
@@ -1517,15 +1525,13 @@ it("test container existence", () => {
   expect(doc2.hasContainer("cid:root-map:Map")).toBe(true);
   expect(doc2.hasContainer("cid:0@1:Text")).toBe(true);
   expect(doc2.hasContainer("cid:1@1:List")).toBe(true);
-})
-
-
+});
 
 it("text mark on LoroText", () => {
   const text = new LoroText();
   text.insert(0, "Hello");
   text.mark({ start: 0, end: 5 }, "bold", true);
-})
+});
 
 it("call toDelta on detached text", () => {
   const text = new LoroText();
@@ -1533,7 +1539,7 @@ it("call toDelta on detached text", () => {
   text.mark({ start: 0, end: 5 }, "bold", true);
   const d = text.toDelta();
   expect(d).toMatchSnapshot();
-})
+});
 
 it("can allow default config for text style", () => {
   {
@@ -1542,11 +1548,11 @@ it("can allow default config for text style", () => {
     text.insert(0, "Hello");
     expect(() => {
       text.mark({ start: 0, end: 5 }, "size", true);
-    }).toThrow()
+    }).toThrow();
   }
   {
     const doc = new LoroDoc();
-    doc.configDefaultTextStyle({ expand: "before" })
+    doc.configDefaultTextStyle({ expand: "before" });
     const text = doc.getText("text");
     text.insert(0, "Hello");
     text.mark({ start: 0, end: 5 }, "size", true);
@@ -1556,7 +1562,7 @@ it("can allow default config for text style", () => {
     text.insert(0, "Hello");
     text.mark({ start: 0, end: 5 }, "size", true);
   }
-})
+});
 
 it("can get pending ops as json", () => {
   const doc = new LoroDoc();
@@ -1564,33 +1570,35 @@ it("can get pending ops as json", () => {
   expect(doc.getUncommittedOpsAsJson()).toBeUndefined();
   const text = doc.getText("text");
   text.insert(0, "Hello");
-  const pendingOps = doc.getUncommittedOpsAsJson()
+  const pendingOps = doc.getUncommittedOpsAsJson();
   expect(pendingOps).toBeDefined();
   expect(JSON.stringify(pendingOps)).toContain("insert");
   expect(JSON.stringify(pendingOps)).toContain("Hello");
   expect(pendingOps).toEqual({
-    "peers": undefined,
-    "schema_version": 1,
-    "start_version": {},
-    changes: [{
-      "id": "0@1",
-      "deps": [],
-      "msg": undefined,
-      "lamport": 0,
-      "ops": [
-        {
-          "container": "cid:root-text:Text",
-          "counter": 0,
-          "content": {
-            "type": "insert",
-            "pos": 0,
-            "text": "Hello"
-          }
-        }
-      ],
-      "timestamp": 0,
-    }],
-  })
+    peers: undefined,
+    schema_version: 1,
+    start_version: {},
+    changes: [
+      {
+        id: "0@1",
+        deps: [],
+        msg: undefined,
+        lamport: 0,
+        ops: [
+          {
+            container: "cid:root-text:Text",
+            counter: 0,
+            content: {
+              type: "insert",
+              pos: 0,
+              text: "Hello",
+            },
+          },
+        ],
+        timestamp: 0,
+      },
+    ],
+  });
 });
 
 it("deleteRootContainers", () => {
@@ -1603,7 +1611,7 @@ it("deleteRootContainers", () => {
   doc.deleteRootContainer("cid:root-text:Text");
 
   expect(doc.toJSON()).toStrictEqual({
-    m: {}
+    m: {},
   });
 
   const snapshot = doc.export({ mode: "snapshot" });
@@ -1611,7 +1619,7 @@ it("deleteRootContainers", () => {
   newDoc.import(snapshot);
 
   expect(newDoc.toJSON()).toStrictEqual({
-    m: {}
+    m: {},
   });
 });
 
@@ -1628,9 +1636,24 @@ it("fromShallowSnapshot", () => {
   doc.setPeerId("1");
   doc.getText("text").insert(0, "Hello");
   doc.commit();
-  const snapshot = doc.export({ mode: "shallow-snapshot", frontiers: doc.frontiers() });
+  const snapshot = doc.export({
+    mode: "shallow-snapshot",
+    frontiers: doc.frontiers(),
+  });
   const newDoc = LoroDoc.fromSnapshot(snapshot);
   expect(newDoc.toJSON()).toStrictEqual({
-    text: "Hello"
+    text: "Hello",
   });
-})
+});
+
+it("update text after switching to a version", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId(1);
+  doc.getText("text").insert(0, "abc");
+  const bytes = doc.export({ mode: "snapshot" });
+  const newDoc = new LoroDoc();
+  newDoc.import(bytes);
+  newDoc.checkout([{ peer: "1", counter: 2 }]);
+  newDoc.setDetachedEditing(true);
+  newDoc.getText("text").update("123");
+});
