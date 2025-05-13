@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.5
+
+### Patch Changes
+
+- 0bfbb3b: fix: update EphemeralStore to support generic types (#718)
+
 ## 1.5.4
 
 ### Patch Changes
