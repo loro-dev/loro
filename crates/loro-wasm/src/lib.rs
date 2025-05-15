@@ -4781,8 +4781,6 @@ impl UndoManager {
     /// - `onPop`: Optional. A callback function that is called when an undo/redo step is popped.
     ///    The function will have a meta data value that was attached to the given stack item when
     ///   `onPush` was called.
-    /// - `manualCheckpoint`: Optional. Whether to manually record checkpoints. Default is false, which will
-    ///    record a checkpoint after each commit.
     #[wasm_bindgen(constructor)]
     pub fn new(doc: &LoroDoc, config: JsUndoConfig) -> Self {
         let max_undo_steps = Reflect::get(&config, &JsValue::from_str("maxUndoSteps"))
@@ -4793,11 +4791,6 @@ impl UndoManager {
             .unwrap_or(JsValue::from_f64(1000.0))
             .as_f64()
             .unwrap_or(1000.0) as i64;
-
-        let manual_checkpoint = Reflect::get(&config, &JsValue::from_str("manualCheckpoint"))
-            .unwrap_or(JsValue::from_bool(false))
-            .as_bool()
-            .unwrap_or(false);
 
         let exclude_origin_prefixes =
             Reflect::get(&config, &JsValue::from_str("excludeOriginPrefixes"))
@@ -4812,11 +4805,7 @@ impl UndoManager {
         let on_push = Reflect::get(&config, &JsValue::from_str("onPush")).ok();
         let on_pop = Reflect::get(&config, &JsValue::from_str("onPop")).ok();
 
-        let mut undo = if manual_checkpoint {
-            InnerUndoManager::new_with_manual_checkpoint(&doc.0)
-        } else {
-            InnerUndoManager::new(&doc.0)
-        };
+        let mut undo = InnerUndoManager::new(&doc.0);
 
         undo.set_max_undo_steps(max_undo_steps);
         undo.set_merge_interval(merge_interval);
@@ -4876,15 +4865,6 @@ impl UndoManager {
     pub fn addExcludeOriginPrefix(&mut self, prefix: String) {
         self.undo.add_exclude_origin_prefix(&prefix)
     }
-
-    /// Record a checkpoint to the undo stack.
-    /// Pushes the changes since the last checkpoint to the undo stack.
-    /// Should only be used if initialized with `manualCheckpoint`
-    pub fn recordCheckpoint(&mut self) -> JsResult<()> {
-        self.undo.record_new_checkpoint()?;
-        Ok(())
-    }
-
     /// Set the on push event listener.
     ///
     /// Every time an undo step or redo step is pushed, the on push event listener will be called.
@@ -5680,8 +5660,6 @@ export type UndoConfig = {
     mergeInterval?: number,
     maxUndoSteps?: number,
     excludeOriginPrefixes?: string[],
-    /** If true, the undo manager will not automatically record checkpoints on `doc.commit()` */
-    manualCheckpoint?: boolean,
     onPush?: (isUndo: boolean, counterRange: { start: number, end: number }, event?: LoroEventBatch) => { value: Value, cursors: Cursor[] },
     onPop?: (isUndo: boolean, value: { value: Value, cursors: Cursor[] }, counterRange: { start: number, end: number }) => void
 };
@@ -6152,14 +6130,6 @@ interface UndoManager {
      * @param listener - The callback function.
      */
     setOnPop(listener?: UndoConfig["onPop"]): void;
-
-    /**
-     * Manually record a checkpoint to the undo stack.
-     * All changes since the last checkpoint will be pushed to the undo stack.
-     *
-     * Should only be used if initialized with `manualCheckpoint`
-     */
-    recordCheckpoint(): void;
 }
 interface LoroDoc<T extends Record<string, Container> = Record<string, Container>> {
     /**

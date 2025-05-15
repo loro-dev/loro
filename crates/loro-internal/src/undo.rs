@@ -4,7 +4,7 @@ use crate::sync::{AtomicU64, Mutex};
 use either::Either;
 use fxhash::FxHashMap;
 use loro_common::{
-    ContainerID, Counter, CounterSpan, HasIdSpan, IdSpan, LoroResult, LoroValue, PeerID,
+    ContainerID, Counter, CounterSpan, HasIdSpan, IdSpan, LoroError, LoroResult, LoroValue, PeerID,
 };
 use tracing::{debug_span, info_span, instrument};
 
@@ -199,6 +199,8 @@ struct UndoManagerInner {
     last_popped_selection: Option<Vec<CursorWithPos>>,
     on_push: Option<OnPush>,
     on_pop: Option<OnPop>,
+    group_active: bool,
+    group_start_counter: Option<Counter>,
 }
 
 impl std::fmt::Debug for UndoManagerInner {
@@ -212,6 +214,8 @@ impl std::fmt::Debug for UndoManagerInner {
             .field("merge_interval", &self.merge_interval_in_ms)
             .field("max_stack_size", &self.max_stack_size)
             .field("exclude_origin_prefixes", &self.exclude_origin_prefixes)
+            .field("group_active", &self.group_active)
+            .field("group_start_counter", &self.group_start_counter)
             .finish()
     }
 }
@@ -415,10 +419,19 @@ impl UndoManagerInner {
             last_popped_selection: None,
             on_pop: None,
             on_push: None,
+            group_active: false,
+            group_start_counter: None,
         }
     }
 
+    fn reset_group(&mut self) {
+        self.group_active = false;
+        self.group_start_counter = None;
+    }
+
     fn record_checkpoint(&mut self, latest_counter: Counter, event: Option<DiffEvent>) {
+        let previous_counter = self.next_counter;
+
         if Some(latest_counter) == self.next_counter {
             return;
         }
@@ -437,9 +450,21 @@ impl UndoManagerInner {
             .map(|x| x(UndoOrRedo::Undo, span, event))
             .unwrap_or_default();
 
-        if !self.undo_stack.is_empty() && now - self.last_undo_time < self.merge_interval_in_ms {
-            self.undo_stack
-                .push_with_merge(span, meta, true);
+        // Wether the change is within the accepted merge interval
+        let in_merge_interval = now - self.last_undo_time < self.merge_interval_in_ms;
+
+        // We should merge the group if the group is active and if this is not the first push in
+        // the group
+        let group_should_merge = self.group_active
+            && match (previous_counter, self.group_start_counter) {
+                (Some(previous), Some(active)) => previous != active,
+                _ => true,
+            };
+
+        let should_merge = !self.undo_stack.is_empty() && (in_merge_interval || group_should_merge);
+
+        if should_merge {
+            self.undo_stack.push_with_merge(span, meta, true);
         } else {
             self.last_undo_time = now;
             self.undo_stack.push(span, meta);
@@ -465,14 +490,6 @@ fn get_counter_end(doc: &LoroDoc, peer: PeerID) -> Counter {
 
 impl UndoManager {
     pub fn new(doc: &LoroDoc) -> Self {
-        Self::new_with_options(doc, false)
-    }
-
-    pub fn new_with_manual_checkpoint(doc: &LoroDoc) -> Self {
-        Self::new_with_options(doc, true)
-    }
-
-    fn new_with_options(doc: &LoroDoc, manual_checkpoint: bool) -> Self {
         let peer = Arc::new(AtomicU64::new(doc.peer_id()));
         let peer_clone = peer.clone();
         let peer_clone2 = peer.clone();
@@ -511,7 +528,7 @@ impl UndoManager {
                         inner.undo_stack.compose_remote_event(event.events);
                         inner.redo_stack.compose_remote_event(event.events);
                         inner.next_counter = Some(id.counter + 1);
-                    } else if !manual_checkpoint {
+                    } else {
                         inner.record_checkpoint(id.counter + 1, Some(event));
                     }
                 }
@@ -533,6 +550,12 @@ impl UndoManager {
                             }
                         }
                     }
+                }
+
+                // Is it possible to not reset the group if the
+                // new diff's affected containerID's are not in the last group's changes ?
+                if inner.group_active {
+                    inner.reset_group();
                 }
 
                 inner.undo_stack.compose_remote_event(event.events);
@@ -563,6 +586,22 @@ impl UndoManager {
             _undo_sub: undo_sub,
             doc: doc.clone(),
         }
+    }
+    pub fn group_start(&mut self) -> LoroResult<()> {
+        let mut inner = self.inner.lock().unwrap();
+
+        if inner.group_active {
+            return Err(LoroError::UndoGroupAlreadyStarted);
+        }
+
+        inner.group_active = true;
+        inner.group_start_counter = Some(inner.next_counter.unwrap());
+
+        Ok(())
+    }
+
+    pub fn group_end(&mut self) {
+        self.inner.lock().unwrap().reset_group();
     }
 
     pub fn peer(&self) -> PeerID {

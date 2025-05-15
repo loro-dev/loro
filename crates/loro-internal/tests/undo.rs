@@ -1,58 +1,43 @@
-use std::sync::{atomic::AtomicU64, Arc};
-
-use loro_common::LoroValue;
-use loro_internal::{handler::UpdateOptions, undo::UndoItemMeta, LoroDoc, UndoManager};
+use loro_internal::{handler::UpdateOptions, LoroDoc, UndoManager};
 
 #[test]
-fn undo_default_checkpoint() {
+fn test_basic_undo_group_checkpoint() {
     let doc = LoroDoc::new();
-    let undo_manager = UndoManager::new(&doc);
+    let mut undo_manager = UndoManager::new(&doc);
     let text = doc.get_text("text");
 
-    let counter = Arc::new(AtomicU64::new(0));
+    text.update("0", UpdateOptions::default()).unwrap();
+    doc.commit_then_renew();
 
-    let counter_clone = Arc::clone(&counter);
-    undo_manager.set_on_push(Some(Box::new(move |_, _, _| {
-        counter_clone.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        UndoItemMeta {
-            value: LoroValue::Null,
-            cursors: Default::default(),
-        }
-    })));
+    undo_manager.group_start().unwrap();
 
-    text.update("hello", UpdateOptions::default()).unwrap();
+    text.update("1", UpdateOptions::default()).unwrap();
 
     doc.commit_then_renew();
 
-    // assert only one thing was pushed to the stack
-    assert_eq!(counter.load(std::sync::atomic::Ordering::Relaxed), 1);
+    text.update("12", UpdateOptions::default()).unwrap();
+
+    doc.commit_then_renew();
+
+    undo_manager.group_end();
+
+    undo_manager.undo().unwrap();
+
+    assert_eq!(text.to_string(), "0", "undo should undo the grouped updates");
+
+    undo_manager.redo().unwrap();
+
+    assert_eq!(text.to_string(), "12", "redo should redo the grouped updates");
 }
 
 #[test]
-fn undo_manual_checkpoint() {
+fn test_invalid_nested_group() {
     let doc = LoroDoc::new();
-    let mut undo_manager = UndoManager::new_with_manual_checkpoint(&doc);
-    let text = doc.get_text("text");
 
-    let counter = Arc::new(AtomicU64::new(0));
-    let counter_clone = Arc::clone(&counter);
-    undo_manager.set_on_push(Some(Box::new(move |_, _, _| {
-        counter_clone.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        UndoItemMeta {
-            value: LoroValue::Null,
-            cursors: Default::default(),
-        }
-    })));
+    let mut undo_manager = UndoManager::new(&doc);
 
-    text.update("hello", UpdateOptions::default()).unwrap();
-
-    doc.commit_then_renew();
-
-    // Nothing should have been pushed to the stack
-    assert_eq!(counter.load(std::sync::atomic::Ordering::Relaxed), 0);
-
-    undo_manager.record_new_checkpoint().unwrap();
-
-    // assert only one thing was pushed to the stack
-    assert_eq!(counter.load(std::sync::atomic::Ordering::Relaxed), 1);
+    assert!(undo_manager.group_start().is_ok(), "group start should succeed");
+    assert!(undo_manager.group_start().is_err(), "nested group start should fail");
+    undo_manager.group_end();
+    assert!(undo_manager.group_start().is_ok(), "nested group end should fail");
 }
