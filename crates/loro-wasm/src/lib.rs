@@ -4837,13 +4837,13 @@ impl UndoManager {
     }
 
     // Start a new grouping of undo operations.
-    pub fn group_start(&mut self) -> JsResult<()> {
+    pub fn groupStart(&mut self) -> JsResult<()> {
         self.undo.group_start()?;
         Ok(())
     }
 
     // End the current grouping of undo operations.
-    pub fn group_end(&mut self) {
+    pub fn groupEnd(&mut self) {
         self.undo.group_end()
     }
 

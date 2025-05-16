@@ -268,4 +268,91 @@ describe("undo", () => {
     doc.commit();
     expect(counter).toBe(2);
   });
+
+  test('should group together local changes', async () => {
+    const doc = new LoroDoc()
+    const undoManager = new UndoManager(doc, {});
+    const text = doc.getText("text");
+
+    undoManager.groupStart();
+
+    text.update("hello", undefined);
+    doc.commit();
+
+    text.update("world", undefined);
+    doc.commit();
+
+    undoManager.groupEnd();
+
+    undoManager.undo();
+
+    expect(text.toString()).toBe("");
+  })
+
+
+  test('should groups should split on conflicting remote changes', async () => {
+    const doc = new LoroDoc();
+    const undoManager = new UndoManager(doc, {});
+
+    undoManager.groupStart();
+
+    let text = doc.getText("text");
+    text.update("hello", undefined);
+    doc.commit();
+    text.update("hello world", undefined);
+    doc.commit();
+
+    let snapshot = doc.export({ mode: "snapshot"});
+
+    const doc2 = new LoroDoc();
+    doc2.import(snapshot);
+    doc2.getText("text").update("hello world world", undefined);
+    doc2.commit();
+    const update = doc2.export({ mode: "update"});
+
+    doc.import(update);
+
+    doc.getText("text").update("hello world world world", undefined);
+
+    doc.commit();
+
+    undoManager.groupEnd();
+
+    undoManager.undo();
+
+    expect(text.toString()).toBe("hello world world");
+  })
+
+  test('should groups should not split on non-conflicting remote changes', async () => {
+    const doc = new LoroDoc();
+    const undoManager = new UndoManager(doc, {});
+    undoManager.groupStart();
+
+    let text = doc.getText("text");
+    text.update("hello", undefined);
+    doc.commit();
+    text.update("hello world", undefined);
+    doc.commit();
+
+    let snapshot = doc.export({ mode: "snapshot"});
+
+    const doc2 = new LoroDoc();
+    doc2.import(snapshot);
+    doc2.getText("text2").update("hello world world", undefined);
+    doc2.commit();
+    const update = doc2.export({ mode: "update"});
+
+    doc.import(update);
+
+    doc.getText("text").update("hello world world world", undefined);
+
+    doc.commit();
+
+    undoManager.groupEnd();
+
+    undoManager.undo();
+
+    expect(text.toString()).toBe("");
+  })
+
 });
