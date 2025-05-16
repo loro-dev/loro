@@ -12,7 +12,7 @@ pub fn main() {
 
     let mut undo_manager = UndoManager::new(&doc);
 
-    undo_manager.group_start().unwrap();c wk
+    undo_manager.group_start().unwrap();
 
     doc.get_text("content")
         .update("1", UpdateOptions::default())

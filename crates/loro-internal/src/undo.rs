@@ -2,7 +2,7 @@ use std::{collections::VecDeque, sync::Arc};
 
 use crate::sync::{AtomicU64, Mutex};
 use either::Either;
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{
     ContainerID, Counter, CounterSpan, HasIdSpan, IdSpan, LoroError, LoroResult, LoroValue, PeerID,
 };
@@ -201,6 +201,7 @@ struct UndoManagerInner {
     on_pop: Option<OnPop>,
     group_active: bool,
     group_start_counter: Option<Counter>,
+    group_affected_cids: FxHashSet<ContainerID>,
 }
 
 impl std::fmt::Debug for UndoManagerInner {
@@ -319,6 +320,7 @@ impl Stack {
         let last = self.stack.back_mut().unwrap();
         let last_remote_diff = last.1.lock().unwrap();
         if !last_remote_diff.cid_to_events.is_empty() {
+            println!("push_with_merge, doing a ");
             // If the remote diff is not empty, we cannot merge
             drop(last_remote_diff);
             let mut v = VecDeque::new();
@@ -328,6 +330,7 @@ impl Stack {
 
             self.size += 1;
         } else {
+            println!("push_with_merge, doing b {can_merge}");
             if can_merge {
                 if let Some(last_span) = last.0.back_mut() {
                     if last_span.span.end == span.start {
@@ -421,12 +424,24 @@ impl UndoManagerInner {
             on_push: None,
             group_active: false,
             group_start_counter: None,
+            group_affected_cids: Default::default(),
         }
     }
 
     fn reset_group(&mut self) {
         self.group_active = false;
         self.group_start_counter = None;
+        self.group_affected_cids.clear();
+    }
+
+    fn is_disjoint_with_group(&self, diff: &[&ContainerDiff]) -> bool {
+        let incoming_cids: FxHashSet<ContainerID> = diff.iter().map(|d| d.id.clone()).collect();
+
+        if self.group_active {
+            return self.group_affected_cids.is_disjoint(&incoming_cids);
+        }
+
+        true
     }
 
     fn record_checkpoint(&mut self, latest_counter: Counter, event: Option<DiffEvent>) {
@@ -439,6 +454,14 @@ impl UndoManagerInner {
         if self.next_counter.is_none() {
             self.next_counter = Some(latest_counter);
             return;
+        }
+
+        if self.group_active {
+            let affected_cids: FxHashSet<_> = event
+                .iter()
+                .flat_map(|e| e.events.iter().map(|e| e.id.clone()).collect::<Vec<_>>())
+                .collect();
+            self.group_affected_cids.extend(affected_cids);
         }
 
         assert!(self.next_counter.unwrap() < latest_counter);
@@ -501,6 +524,7 @@ impl UndoManager {
         let inner_clone2 = inner.clone();
         let remap_containers = Arc::new(Mutex::new(FxHashMap::default()));
         let remap_containers_clone = remap_containers.clone();
+        println!("subscribe root");
         let undo_sub = doc.subscribe_root(Arc::new(move |event| match event.event_meta.by {
             EventTriggerKind::Local => {
                 // TODO: PERF undo can be significantly faster if we can get
@@ -534,6 +558,7 @@ impl UndoManager {
                 }
             }
             EventTriggerKind::Import => {
+                println!("import event");
                 let mut inner = inner_clone.lock().unwrap();
 
                 for e in event.events {
@@ -552,14 +577,18 @@ impl UndoManager {
                     }
                 }
 
-                // Is it possible to not reset the group if the
-                // new diff's affected containerID's are not in the last group's changes ?
-                if inner.group_active {
-                    inner.reset_group();
+                let is_import_disjoint = inner.is_disjoint_with_group(event.events);
+
+                let should_compose = !inner.group_active || !is_import_disjoint;
+
+                if should_compose {
+                    inner.undo_stack.compose_remote_event(event.events);
+                    inner.redo_stack.compose_remote_event(event.events);
                 }
 
-                inner.undo_stack.compose_remote_event(event.events);
-                inner.redo_stack.compose_remote_event(event.events);
+                if !is_import_disjoint {
+                    inner.reset_group();
+                }
             }
             EventTriggerKind::Checkout => {
                 let mut inner = inner_clone.lock().unwrap();
@@ -587,6 +616,7 @@ impl UndoManager {
             doc: doc.clone(),
         }
     }
+
     pub fn group_start(&mut self) -> LoroResult<()> {
         let mut inner = self.inner.lock().unwrap();
 
