@@ -34,7 +34,7 @@ jobs:
         with:
           tool: nextest
 
-      - run: rustup toolchain install stable --profile minimal
+      - run: rustup toolchain install stable --toolchain 1.85.0 --profile minimal
       - run: rustup target add wasm32-unknown-unknown
       - uses: jetli/wasm-bindgen-action@v0.2.0
         with:
