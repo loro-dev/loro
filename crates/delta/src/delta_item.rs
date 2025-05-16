@@ -168,7 +168,6 @@ impl<V: DeltaValue, Attr: DeltaAttr> Sliceable for DeltaItem<V, Attr> {
         *self = self.slice(range);
     }
 
-    #[must_use]
     fn split(&mut self, pos: usize) -> Self {
         match self {
             DeltaItem::Retain { len, attr } => {
