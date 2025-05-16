@@ -4836,6 +4836,17 @@ impl UndoManager {
         Ok(executed)
     }
 
+    // Start a new grouping of undo operations.
+    pub fn group_start(&mut self) -> JsResult<()> {
+        self.undo.group_start()?;
+        Ok(())
+    }
+
+    // End the current grouping of undo operations.
+    pub fn group_end(&mut self) {
+        self.undo.group_end()
+    }
+
     /// Can undo the last operation.
     pub fn canUndo(&self) -> bool {
         self.undo.can_undo()
@@ -6130,6 +6141,24 @@ interface UndoManager {
      * @param listener - The callback function.
      */
     setOnPop(listener?: UndoConfig["onPop"]): void;
+
+    /**
+     * Starts a new grouping of undo operations.
+     * All changes/commits made after this call will be grouped/merged together.
+     * to end the group, call `groupEnd`.
+     *
+     * If a remote import is received within the group, its possible that the undo item will be
+     * split and the gruop will be automatically ended.
+     *
+     * Calling `groupStart` within an active group will throw but have no effect.
+     *
+     */
+    groupStart(): void;
+
+    /**
+     * Ends the current grouping of undo operations.
+     */
+    groupEnd(): void;
 }
 interface LoroDoc<T extends Record<string, Container> = Record<string, Container>> {
     /**
