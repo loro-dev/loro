@@ -10,29 +10,19 @@ fn test_basic_undo_group_checkpoint() {
 
     text.update("0", UpdateOptions::default()).unwrap();
     doc.commit_then_renew();
-
     undo_manager.group_start().unwrap();
-
     text.update("1", UpdateOptions::default()).unwrap();
-
     doc.commit_then_renew();
-
     text.update("12", UpdateOptions::default()).unwrap();
-
     doc.commit_then_renew();
-
     undo_manager.group_end();
-
     undo_manager.undo().unwrap();
-
     assert_eq!(
         text.to_string(),
         "0",
         "undo should undo the grouped updates"
     );
-
     undo_manager.redo().unwrap();
-
     assert_eq!(
         text.to_string(),
         "12",
