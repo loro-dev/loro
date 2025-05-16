@@ -298,7 +298,6 @@ impl DiffCalculator {
                                 InternalContainerDiff {
                                     idx: container_idx,
                                     bring_back,
-                                    is_container_deleted: false,
                                     diff: diff.into(),
                                     diff_mode,
                                 },
@@ -326,7 +325,6 @@ impl DiffCalculator {
                         InternalContainerDiff {
                             idx,
                             bring_back: true,
-                            is_container_deleted: false,
                             diff: DiffVariant::None,
                             diff_mode: DiffMode::Checkout,
                         },
