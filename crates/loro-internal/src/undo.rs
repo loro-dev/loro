@@ -756,6 +756,14 @@ impl UndoManager {
         !self.inner.lock().unwrap().redo_stack.is_empty()
     }
 
+    pub fn undo_count(&self) -> usize {
+        self.inner.lock().unwrap().undo_stack.len()
+    }
+
+    pub fn redo_count(&self) -> usize {
+        self.inner.lock().unwrap().redo_stack.len()
+    }
+
     pub fn set_on_push(&self, on_push: Option<OnPush>) {
         self.inner.lock().unwrap().on_push = on_push;
     }
