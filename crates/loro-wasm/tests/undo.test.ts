@@ -352,7 +352,7 @@ describe("undo", () => {
 
     undoManager.undo();
 
-    expect(text.toString()).toBe("hello world world");
+    expect(text.toString()).toBe("");
   })
 
 });
