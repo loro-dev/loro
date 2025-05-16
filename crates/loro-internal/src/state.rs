@@ -584,7 +584,6 @@ impl DocState {
                     diffs.push(InternalContainerDiff {
                         idx: new,
                         bring_back: true,
-                        is_container_deleted: false,
                         diff: external_diff.into(),
                         diff_mode: DiffMode::Checkout,
                     });
@@ -688,7 +687,6 @@ impl DocState {
                     diffs.push(InternalContainerDiff {
                         idx: new,
                         bring_back: true,
-                        is_container_deleted: false,
                         diff: external_diff.into(),
                         diff_mode: DiffMode::Checkout,
                     });
@@ -861,7 +859,6 @@ impl DocState {
                 .map(|(&idx, state)| InternalContainerDiff {
                     idx,
                     bring_back: false,
-                    is_container_deleted: false,
                     diff: state
                         .get_state_mut(
                             idx,
@@ -1248,10 +1245,6 @@ impl DocState {
         for diff in diffs {
             #[allow(clippy::unnecessary_to_owned)]
             for container_diff in diff.diff.into_owned() {
-                if container_diff.is_container_deleted {
-                    // omit event form deleted container
-                    continue;
-                }
                 let Some((last_container_diff, _)) = containers.get_mut(&container_diff.idx) else {
                     if let Some(path) = self.get_path(container_diff.idx) {
                         containers.insert(container_diff.idx, (container_diff.diff, path));
