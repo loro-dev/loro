@@ -217,6 +217,7 @@ impl std::fmt::Debug for UndoManagerInner {
             .field("exclude_origin_prefixes", &self.exclude_origin_prefixes)
             .field("group_active", &self.group_active)
             .field("group_start_counter", &self.group_start_counter)
+            .field("group_affected_cids", &self.group_affected_cids)
             .finish()
     }
 }
@@ -320,7 +321,6 @@ impl Stack {
         let last = self.stack.back_mut().unwrap();
         let last_remote_diff = last.1.lock().unwrap();
         if !last_remote_diff.cid_to_events.is_empty() {
-            println!("push_with_merge, doing a ");
             // If the remote diff is not empty, we cannot merge
             drop(last_remote_diff);
             let mut v = VecDeque::new();
@@ -330,7 +330,6 @@ impl Stack {
 
             self.size += 1;
         } else {
-            println!("push_with_merge, doing b {can_merge}");
             if can_merge {
                 if let Some(last_span) = last.0.back_mut() {
                     if last_span.span.end == span.start {
@@ -428,12 +427,15 @@ impl UndoManagerInner {
         }
     }
 
+    /// Resets the current group to have no active group.
     fn reset_group(&mut self) {
         self.group_active = false;
         self.group_start_counter = None;
         self.group_affected_cids.clear();
     }
 
+    /// Returns true if a given container diff is disjoint with the current group.
+    /// They are disjoint if they have no ovrlap in changed container ids.
     fn is_disjoint_with_group(&self, diff: &[&ContainerDiff]) -> bool {
         let incoming_cids: FxHashSet<ContainerID> = diff.iter().map(|d| d.id.clone()).collect();
 
@@ -476,8 +478,8 @@ impl UndoManagerInner {
         // Wether the change is within the accepted merge interval
         let in_merge_interval = now - self.last_undo_time < self.merge_interval_in_ms;
 
-        // We should merge the group if the group is active and if this is not the first push in
-        // the group
+        // If group is active, but there is nothing in the group, don't merge
+        // If the group is active and it's not the first push in the group, merge
         let group_should_merge = self.group_active
             && match (previous_counter, self.group_start_counter) {
                 (Some(previous), Some(active)) => previous != active,
@@ -524,7 +526,6 @@ impl UndoManager {
         let inner_clone2 = inner.clone();
         let remap_containers = Arc::new(Mutex::new(FxHashMap::default()));
         let remap_containers_clone = remap_containers.clone();
-        println!("subscribe root");
         let undo_sub = doc.subscribe_root(Arc::new(move |event| match event.event_meta.by {
             EventTriggerKind::Local => {
                 // TODO: PERF undo can be significantly faster if we can get
@@ -558,7 +559,6 @@ impl UndoManager {
                 }
             }
             EventTriggerKind::Import => {
-                println!("import event");
                 let mut inner = inner_clone.lock().unwrap();
 
                 for e in event.events {
@@ -578,7 +578,6 @@ impl UndoManager {
                 }
 
                 let is_import_disjoint = inner.is_disjoint_with_group(event.events);
-
                 let should_compose = !inner.group_active || !is_import_disjoint;
 
                 if should_compose {
@@ -586,6 +585,8 @@ impl UndoManager {
                     inner.redo_stack.compose_remote_event(event.events);
                 }
 
+                // If the import is not disjoint, we end the active group
+                // all subsequent changes will be new undo items
                 if !is_import_disjoint {
                     inner.reset_group();
                 }

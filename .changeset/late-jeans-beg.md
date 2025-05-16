@@ -2,4 +2,4 @@
 "loro-crdt": patch
 ---
 
-Feat: support optional manual checkpointing for UndoManager #720
+Feat: support `group_start` and `group_end` for UndoManager #720 
