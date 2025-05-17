@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 mod error;
 mod id;
 mod internal_string;
+mod logging;
 mod macros;
 mod span;
 mod value;
@@ -17,6 +18,7 @@ pub use error::{LoroEncodeError, LoroError, LoroResult, LoroTreeError};
 #[doc(hidden)]
 pub use fxhash::FxHashMap;
 pub use internal_string::InternalString;
+pub use logging::log::*;
 pub use span::*;
 pub use value::{
     to_value, LoroBinaryValue, LoroListValue, LoroMapValue, LoroStringValue, LoroValue,

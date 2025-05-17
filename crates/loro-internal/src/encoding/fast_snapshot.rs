@@ -20,7 +20,6 @@ use crate::{
 };
 use bytes::{Buf, Bytes};
 use loro_common::{HasCounterSpan, IdSpan, LoroError, LoroResult};
-use tracing::trace;
 
 use super::{EncodedBlobMode, ImportBlobMetadata, ParsedHeaderAndBody};
 pub(crate) const EMPTY_MARK: &[u8] = b"E";
@@ -269,7 +268,6 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, body: Bytes) -> Result<Vec<Chang
         let len = leb128::read::unsigned(&mut reader).unwrap() as usize;
         index += old_reader_len - reader.len();
         let block_bytes = body.slice(index..index + len);
-        trace!("decoded block_bytes = {:?}", &block_bytes);
         let new_changes = ChangeStore::decode_block_bytes(block_bytes, &oplog.arena, self_vv)?;
         changes.extend(new_changes);
         index += len;

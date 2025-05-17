@@ -26,7 +26,7 @@ use loro_common::{
 };
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, cmp::Reverse, collections::BinaryHeap, fmt::Debug, ops::Deref, sync::Arc};
-use tracing::{error, info, instrument};
+use tracing::{error, instrument};
 
 pub use crate::diff::diff_impl::UpdateOptions;
 pub use tree::TreeHandler;
@@ -3247,7 +3247,7 @@ impl MovableListHandler {
             Ok((ids, poses))
         })?;
 
-        info!(?pos, ?len, ?ids, ?new_poses, "delete_with_txn");
+        loro_common::info!(?pos, ?len, ?ids, ?new_poses, "delete_with_txn");
         let user_pos = pos;
         let inner = self.inner.try_attached_state()?;
         for (id, op_pos) in ids.into_iter().zip(new_poses.into_iter()) {

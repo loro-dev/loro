@@ -1,6 +1,5 @@
 use loro_common::{ContainerID, LoroValue};
 use thiserror::Error;
-use tracing::trace;
 
 use crate::handler::{
     Handler, ListHandler, MapHandler, MovableListHandler, TextHandler, TreeHandler, ValueOrHandler,
@@ -217,7 +216,6 @@ pub fn evaluate_jsonpath(
     path: &str,
 ) -> Result<Vec<ValueOrHandler>, JsonPathError> {
     let tokens = parse_jsonpath(path)?;
-    trace!("tokens: {:#?}", tokens);
     let mut results = Vec::new();
 
     // Start with the root

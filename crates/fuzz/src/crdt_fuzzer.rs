@@ -10,7 +10,7 @@ use arbitrary::Arbitrary;
 use fxhash::FxHashSet;
 use loro::{ContainerType, Frontiers, ImportStatus, LoroError, LoroResult};
 use tabled::TableIteratorExt;
-use tracing::{info, info_span, trace};
+use tracing::{info, info_span};
 
 use crate::{actions::ActionWrapper, array_mut_ref};
 
@@ -409,11 +409,9 @@ pub fn test_multi_sites_with_gc(
                 match (i + j) % 4 {
                     0 => {
                         info_span!("Updates", from = j, to = i).in_scope(|| {
-                            trace!("a.vv = {:?}", a_doc.oplog_vv());
                             a_doc.import(&b_doc.export_from(&a_doc.oplog_vv())).unwrap();
                         });
                         info_span!("Updates", from = i, to = j).in_scope(|| {
-                            trace!("b.vv = {:?}", b_doc.oplog_vv());
                             b_doc.import(&a_doc.export_from(&b_doc.oplog_vv())).unwrap();
                         });
                     }
@@ -456,11 +454,9 @@ pub fn test_multi_sites_with_gc(
                     let a_doc = &mut a.loro;
                     let b_doc = &mut b.loro;
                     info_span!("Updates", from = j, to = i).in_scope(|| {
-                        trace!("a.vv = {:?}", a_doc.oplog_vv());
                         a_doc.import(&b_doc.export_from(&a_doc.oplog_vv())).unwrap();
                     });
                     info_span!("Updates", from = i, to = j).in_scope(|| {
-                        trace!("b.vv = {:?}", b_doc.oplog_vv());
                         b_doc.import(&a_doc.export_from(&b_doc.oplog_vv())).unwrap();
                     });
                 }
@@ -480,10 +476,6 @@ pub fn test_multi_sites_with_gc(
                     .import(&a.loro.export_from(&b.loro.oplog_vv()))
                     .unwrap();
             });
-            let json = b
-                .loro
-                .export_json_updates(&Default::default(), &b.loro.oplog_vv());
-            trace!("Changes on 1 = {:#?}", json);
             let result = info_span!("1 => 0")
                 .in_scope(|| a.loro.import(&b.loro.export_from(&a.loro.oplog_vv())));
             match result {

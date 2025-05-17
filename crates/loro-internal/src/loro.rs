@@ -59,7 +59,7 @@ use std::{
         Arc,
     },
 };
-use tracing::{debug_span, info, info_span, instrument, warn};
+use tracing::{debug_span, info_span, instrument, warn};
 
 impl Default for LoroDoc {
     fn default() -> Self {
@@ -540,7 +540,7 @@ impl LoroDoc {
     ) -> Result<ImportStatus, LoroError> {
         ensure_cov::notify_cov("loro_internal::import");
         let parsed = parse_header_and_body(bytes, true)?;
-        info!("Importing with mode={:?}", &parsed.mode);
+        loro_common::info!("Importing with mode={:?}", &parsed.mode);
         let result = match parsed.mode {
             EncodeMode::OutdatedRle => {
                 if self.state.lock().unwrap().is_in_txn() {
@@ -560,7 +560,7 @@ impl LoroDoc {
             }
             EncodeMode::OutdatedSnapshot => {
                 if self.can_reset_with_snapshot() {
-                    tracing::info!("Init by snapshot {}", self.peer_id());
+                    loro_common::info!("Init by snapshot {}", self.peer_id());
                     decode_snapshot(self, parsed.mode, parsed.body)
                 } else {
                     self.update_oplog_and_apply_delta_to_state_if_needed(
@@ -572,7 +572,7 @@ impl LoroDoc {
             EncodeMode::FastSnapshot => {
                 if self.can_reset_with_snapshot() {
                     ensure_cov::notify_cov("loro_internal::import::snapshot");
-                    tracing::info!("Init by fast snapshot {}", self.peer_id());
+                    loro_common::info!("Init by fast snapshot {}", self.peer_id());
                     decode_snapshot(self, parsed.mode, parsed.body)
                 } else {
                     self.update_oplog_and_apply_delta_to_state_if_needed(
@@ -1310,7 +1310,7 @@ impl LoroDoc {
     ) -> Result<(), LoroError> {
         assert!(self.txn.is_locked());
         let from_frontiers = self.state_frontiers();
-        info!(
+        loro_common::info!(
             "checkout from={:?} to={:?} cur_vv={:?}",
             from_frontiers,
             frontiers,

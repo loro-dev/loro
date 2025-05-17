@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
 use std::fmt::Display;
 use std::ops::{ControlFlow, Deref};
 use std::sync::Arc;
-use tracing::{instrument, trace};
+use tracing::instrument;
 
 use super::change_store::BatchDecodeInfo;
 use super::ChangeStore;
@@ -579,9 +579,9 @@ impl AppDag {
     }
 
     pub(crate) fn is_before_shallow_root(&self, deps: &Frontiers) -> bool {
-        trace!("Is on shallow history? deps={:?}", deps);
-        trace!("self.shallow_since_vv {:?}", &self.shallow_since_vv);
-        trace!("self.shallow_frontiers {:?}", &self.shallow_since_frontiers);
+        // trace!("Is on shallow history? deps={:?}", deps);
+        // trace!("self.shallow_since_vv {:?}", &self.shallow_since_vv);
+        // trace!("self.shallow_frontiers {:?}", &self.shallow_since_frontiers);
 
         if self.shallow_since_vv.is_empty() {
             return false;

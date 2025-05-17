@@ -3,7 +3,6 @@ use rle::HasLength;
 use std::collections::BTreeSet;
 
 use loro_common::{ContainerID, ContainerType, LoroEncodeError, ID};
-use tracing::debug;
 
 use crate::{
     container::list::list_op::InnerListOp,
@@ -62,9 +61,10 @@ pub(crate) fn export_shallow_snapshot_inner(
         }
     }
 
-    debug!(
+    loro_common::debug!(
         "start version vv={:?} frontiers={:?}",
-        &start_vv, &start_from,
+        &start_vv,
+        &start_from,
     );
 
     let latest_frontiers = oplog.frontiers().clone();
@@ -152,9 +152,10 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
         start_vv.insert(id.peer, id.counter);
     }
 
-    debug!(
+    loro_common::debug!(
         "start version vv={:?} frontiers={:?}",
-        &start_vv, &start_from,
+        &start_vv,
+        &start_from,
     );
 
     let mut to_vv = start_vv.clone();

@@ -1225,6 +1225,7 @@ dependencies = [
  "serde_columnar",
  "serde_json",
  "thiserror",
+ "tracing",
  "wasm-bindgen",
 ]
 

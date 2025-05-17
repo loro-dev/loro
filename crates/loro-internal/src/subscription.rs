@@ -152,8 +152,6 @@ impl Observer {
 mod test {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use tracing::trace;
-
     use super::*;
     use crate::{handler::HandlerTrait, LoroDoc};
 
@@ -168,13 +166,10 @@ mod test {
             let mut txn = loro.txn().unwrap();
             let text = loro.get_text("id");
             if text.get_value().as_string().unwrap().len() > 10 {
-                trace!("Skip");
                 return;
             }
             text.insert_with_txn(&mut txn, 0, "123").unwrap();
-            trace!("PRE Another commit");
             txn.commit().unwrap();
-            trace!("AFTER Another commit");
         }));
 
         let loro = loro_cp;

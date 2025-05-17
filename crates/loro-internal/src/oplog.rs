@@ -8,7 +8,7 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::rc::Rc;
-use tracing::{debug, trace, trace_span};
+use tracing::trace_span;
 
 use self::change_store::iter::MergedChangeIter;
 use self::pending_changes::PendingChanges;
@@ -420,7 +420,7 @@ impl OpLog {
     ) {
         let mut merged_vv = from.clone();
         merged_vv.merge(to);
-        debug!("to_frontiers={:?} vv={:?}", &to_frontiers, to);
+        loro_common::debug!("to_frontiers={:?} vv={:?}", &to_frontiers, to);
         let (common_ancestors, mut diff_mode) =
             self.dag.find_common_ancestor(from_frontiers, to_frontiers);
         if diff_mode == DiffMode::Checkout && to > from {
@@ -452,7 +452,6 @@ impl OpLog {
                         .max(common_ancestors_vv.get(&peer).copied().unwrap_or(0));
                     let dag_node_end = (inner.data.cnt + inner.data.len as Counter)
                         .min(merged_vv.get(&peer).copied().unwrap_or(0));
-                    trace!("vv: {:?}", self.dag.vv());
                     let change = self.change_store.get_change(ID::new(peer, cnt)).unwrap();
 
                     if change.ctr_end() < dag_node_end {
