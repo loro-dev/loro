@@ -2,9 +2,9 @@ use std::{collections::VecDeque, sync::Arc};
 
 use crate::sync::{AtomicU64, Mutex};
 use either::Either;
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{
-    ContainerID, Counter, CounterSpan, HasIdSpan, IdSpan, LoroResult, LoroValue, PeerID,
+    ContainerID, Counter, CounterSpan, HasIdSpan, IdSpan, LoroError, LoroResult, LoroValue, PeerID,
 };
 use tracing::{debug_span, info_span, instrument};
 
@@ -199,6 +199,9 @@ struct UndoManagerInner {
     last_popped_selection: Option<Vec<CursorWithPos>>,
     on_push: Option<OnPush>,
     on_pop: Option<OnPop>,
+    group_active: bool,
+    group_start_counter: Option<Counter>,
+    group_affected_cids: FxHashSet<ContainerID>,
 }
 
 impl std::fmt::Debug for UndoManagerInner {
@@ -212,6 +215,9 @@ impl std::fmt::Debug for UndoManagerInner {
             .field("merge_interval", &self.merge_interval_in_ms)
             .field("max_stack_size", &self.max_stack_size)
             .field("exclude_origin_prefixes", &self.exclude_origin_prefixes)
+            .field("group_active", &self.group_active)
+            .field("group_start_counter", &self.group_start_counter)
+            .field("group_affected_cids", &self.group_affected_cids)
             .finish()
     }
 }
@@ -415,10 +421,34 @@ impl UndoManagerInner {
             last_popped_selection: None,
             on_pop: None,
             on_push: None,
+            group_active: false,
+            group_start_counter: None,
+            group_affected_cids: Default::default(),
         }
     }
 
+    /// Resets the current group to have no active group.
+    fn reset_group(&mut self) {
+        self.group_active = false;
+        self.group_start_counter = None;
+        self.group_affected_cids.clear();
+    }
+
+    /// Returns true if a given container diff is disjoint with the current group.
+    /// They are disjoint if they have no ovrlap in changed container ids.
+    fn is_disjoint_with_group(&self, diff: &[&ContainerDiff]) -> bool {
+        let incoming_cids: FxHashSet<ContainerID> = diff.iter().map(|d| d.id.clone()).collect();
+
+        if self.group_active {
+            return self.group_affected_cids.is_disjoint(&incoming_cids);
+        }
+
+        true
+    }
+
     fn record_checkpoint(&mut self, latest_counter: Counter, event: Option<DiffEvent>) {
+        let previous_counter = self.next_counter;
+
         if Some(latest_counter) == self.next_counter {
             return;
         }
@@ -426,6 +456,14 @@ impl UndoManagerInner {
         if self.next_counter.is_none() {
             self.next_counter = Some(latest_counter);
             return;
+        }
+
+        if self.group_active {
+            let affected_cids: FxHashSet<_> = event
+                .iter()
+                .flat_map(|e| e.events.iter().map(|e| e.id.clone()).collect::<Vec<_>>())
+                .collect();
+            self.group_affected_cids.extend(affected_cids);
         }
 
         assert!(self.next_counter.unwrap() < latest_counter);
@@ -437,7 +475,20 @@ impl UndoManagerInner {
             .map(|x| x(UndoOrRedo::Undo, span, event))
             .unwrap_or_default();
 
-        if !self.undo_stack.is_empty() && now - self.last_undo_time < self.merge_interval_in_ms {
+        // Wether the change is within the accepted merge interval
+        let in_merge_interval = now - self.last_undo_time < self.merge_interval_in_ms;
+
+        // If group is active, but there is nothing in the group, don't merge
+        // If the group is active and it's not the first push in the group, merge
+        let group_should_merge = self.group_active
+            && match (previous_counter, self.group_start_counter) {
+                (Some(previous), Some(active)) => previous != active,
+                _ => true,
+            };
+
+        let should_merge = !self.undo_stack.is_empty() && (in_merge_interval || group_should_merge);
+
+        if should_merge {
             self.undo_stack.push_with_merge(span, meta, true);
         } else {
             self.last_undo_time = now;
@@ -526,8 +577,19 @@ impl UndoManager {
                     }
                 }
 
-                inner.undo_stack.compose_remote_event(event.events);
-                inner.redo_stack.compose_remote_event(event.events);
+                let is_import_disjoint = inner.is_disjoint_with_group(event.events);
+                let should_compose = !inner.group_active || !is_import_disjoint;
+
+                if should_compose {
+                    inner.undo_stack.compose_remote_event(event.events);
+                    inner.redo_stack.compose_remote_event(event.events);
+                }
+
+                // If the import is not disjoint, we end the active group
+                // all subsequent changes will be new undo items
+                if !is_import_disjoint {
+                    inner.reset_group();
+                }
             }
             EventTriggerKind::Checkout => {
                 let mut inner = inner_clone.lock().unwrap();
@@ -554,6 +616,23 @@ impl UndoManager {
             _undo_sub: undo_sub,
             doc: doc.clone(),
         }
+    }
+
+    pub fn group_start(&mut self) -> LoroResult<()> {
+        let mut inner = self.inner.lock().unwrap();
+
+        if inner.group_active {
+            return Err(LoroError::UndoGroupAlreadyStarted);
+        }
+
+        inner.group_active = true;
+        inner.group_start_counter = Some(inner.next_counter.unwrap());
+
+        Ok(())
+    }
+
+    pub fn group_end(&mut self) {
+        self.inner.lock().unwrap().reset_group();
     }
 
     pub fn peer(&self) -> PeerID {
@@ -726,6 +805,7 @@ impl UndoManager {
                         )
                     })
                     .unwrap_or_default();
+
                 if matches!(kind, UndoOrRedo::Undo) && get_opposite(&mut inner).is_empty() {
                     // If it's the first undo, we use the cursors from the users
                 } else if let Some(inner) = next_push_selection.take() {
