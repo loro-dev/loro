@@ -14,7 +14,7 @@ use loro::{
 };
 use pretty_assertions::assert_eq;
 use rand::{rngs::StdRng, Rng, SeedableRng};
-use tracing::info_span;
+use tracing::{info, info_span};
 
 use crate::{
     container::{CounterActor, ListActor, MovableListActor, TextActor, TreeActor},
@@ -373,7 +373,7 @@ impl Actor {
             .loro
             .export_json_updates(&Default::default(), &self.loro.oplog_vv());
         let string = serde_json::to_string_pretty(&json).unwrap();
-        tracing::info!("vv={:?} json = {}", self.loro.oplog_vv(), string);
+        info!("vv={:?} json = {}", self.loro.oplog_vv(), string);
     }
 }
 

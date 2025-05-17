@@ -6,7 +6,6 @@ use bytes::Bytes;
 use fxhash::FxHashMap;
 use loro_common::ContainerID;
 use std::ops::Bound;
-use tracing::trace;
 
 use super::ContainerWrapper;
 
@@ -114,18 +113,10 @@ impl InnerStore {
                 }
 
                 let cid = self.arena.get_container_id(*idx).unwrap();
-                trace!(
-                    "cid = {:?} is_empty = {:?} contained = {:?}",
-                    cid,
-                    c.is_state_empty(),
-                    deleted.contains(&cid)
-                );
                 if c.is_state_empty() && cid.is_root() && deleted.contains(&cid) {
-                    trace!("skipping cid = {:?}", cid);
                     return None;
                 }
 
-                trace!("not skipping cid = {:?}", cid);
                 let cid: Bytes = cid.to_bytes().into();
                 let value = c.encode();
                 c.set_flushed(true);

@@ -789,13 +789,9 @@ impl DocState {
     }
 
     pub(crate) fn get_value_by_idx(&mut self, container_idx: ContainerIdx) -> LoroValue {
-        tracing::trace!("get_value_by_idx");
-        let v = self
-            .store
+        self.store
             .get_value(container_idx)
-            .unwrap_or_else(|| container_idx.get_type().default_value());
-        tracing::trace!("get_value_by_idx: {:?}", v);
-        v
+            .unwrap_or_else(|| container_idx.get_type().default_value())
     }
 
     /// Set the state of the container with the given container idx.
@@ -1251,7 +1247,7 @@ impl DocState {
                     } else {
                         // if we cannot find the path to the container, the container must be overwritten afterwards.
                         // So we can ignore the diff from it.
-                        tracing::warn!(
+                        loro_common::warn!(
                             "⚠️ WARNING: ignore event because cannot find its path {:#?} container id:{}",
                             &container_diff,
                             self.arena.idx_to_id(container_diff.idx).unwrap()

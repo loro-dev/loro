@@ -28,7 +28,7 @@ use std::{
     ops::{Bound, Deref},
     sync::Arc,
 };
-use tracing::{debug, info_span, trace, warn};
+use tracing::{info_span, warn};
 mod block_encode;
 mod block_meta_encode;
 pub(super) mod iter;
@@ -168,9 +168,10 @@ impl ChangeStore {
             }
         }
 
-        debug!(
+        loro_common::debug!(
             "start_vv={:?} start_frontiers={:?}",
-            &start_vv, start_frontiers
+            &start_vv,
+            start_frontiers
         );
         new_store.encode_from(start_vv, start_frontiers, latest_vv, latest_frontiers)
     }
@@ -844,7 +845,6 @@ mod mut_inner_kv {
                                 iter = inner.mem_parsed_kv.range_mut(
                                     ID::new(idlp.peer, 0)..ID::new(idlp.peer, mid_bound),
                                 );
-                                trace!("Use binary search");
                                 is_binary_searching = true;
                             }
 
@@ -853,7 +853,6 @@ mod mut_inner_kv {
                     }
                     None => {
                         if !is_binary_searching {
-                            trace!("No parsed block found, break");
                             break;
                         }
 
@@ -877,11 +876,6 @@ mod mut_inner_kv {
 
             let counter_end = upper_bound;
             let scan_end = ID::new(idlp.peer, counter_end).to_bytes();
-            trace!(
-                "Scanning from {:?} to {:?}",
-                &ID::new(idlp.peer, 0),
-                &counter_end
-            );
 
             let (id, bytes) = 'block_scan: {
                 let kv_store = &self.external_kv.lock().unwrap();
@@ -894,12 +888,6 @@ mod mut_inner_kv {
 
                 for (id, bytes) in iter {
                     let mut block = ChangesBlockBytes::new(bytes.clone());
-                    trace!(
-                        "Scanning block counter_range={:?} lamport_range={:?} id={:?}",
-                        &block.counter_range(),
-                        &block.lamport_range(),
-                        &ID::from_bytes(&id)
-                    );
                     let (lamport_start, _lamport_end) = block.lamport_range();
                     if lamport_start <= idlp.lamport {
                         break 'block_scan (id, bytes);
@@ -1013,7 +1001,6 @@ mod mut_inner_kv {
 
         fn get_parsed_block(&self, id: ID) -> Option<Arc<ChangesBlock>> {
             let mut inner = self.inner.lock().unwrap();
-            // trace!("inner: {:#?}", &inner);
             if let Some((_id, block)) = inner.mem_parsed_kv.range_mut(..=id).next_back() {
                 if block.peer == id.peer && block.counter_range.1 > id.counter {
                     block
@@ -1041,12 +1028,6 @@ mod mut_inner_kv {
             let (b_id, b_bytes) = iter.next_back()?;
             let block_id: ID = ID::from_bytes(&b_id[..]);
             let block = ChangesBlock::from_bytes(b_bytes).unwrap();
-            trace!(
-                "block_id={:?} id={:?} counter_range={:?}",
-                block_id,
-                id,
-                block.counter_range
-            );
             if block_id.peer == id.peer
                 && block_id.counter <= id.counter
                 && block.counter_range.1 > id.counter

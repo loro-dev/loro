@@ -16,7 +16,6 @@ use fxhash::{FxHashMap, FxHashSet};
 use loro_common::IdSpanVector;
 use rle::{HasLength, Sliceable};
 use smallvec::SmallVec;
-use tracing::trace;
 mod iter;
 mod mermaid;
 #[cfg(feature = "test_utils")]
@@ -345,7 +344,6 @@ where
     F: Fn(ID) -> Option<D>,
     G: FnMut(IdSpan, NodeType),
 {
-    trace!("a {:?} b {:?}", a_ids, b_ids);
     let mut ans: FxHashMap<PeerID, Counter> = Default::default();
     let mut queue: BinaryHeap<(OrdIdSpan, NodeType)> = BinaryHeap::new();
     for id in a_ids.iter() {
@@ -495,7 +493,6 @@ where
     D: DagNode + 'a,
     F: Fn(ID) -> Option<D>,
 {
-    trace!("find_common_ancestor_new left={:?} right={:?}", left, right);
     if right.is_empty() {
         return (Default::default(), DiffMode::Checkout);
     }
@@ -554,7 +551,6 @@ where
         ids: &Frontiers,
         get: &'a F,
     ) -> Option<SmallVec<[OrdIdSpan<'a>; 1]>> {
-        trace!("ids_to_ord_id_spans {:?}", ids);
         let mut ans: SmallVec<[OrdIdSpan<'a>; 1]> = SmallVec::with_capacity(ids.len());
         for id in ids.iter() {
             if let Some(node) = OrdIdSpan::from_dag_node(id, get) {
@@ -574,13 +570,7 @@ where
     queue.push((ids_to_ord_id_spans(left, get).unwrap(), NodeType::A));
     queue.push((ids_to_ord_id_spans(right, get).unwrap(), NodeType::B));
     while let Some((mut node, mut node_type)) = queue.pop() {
-        trace!(
-            "find_common_ancestor_new queue pop {:?} {:?}",
-            node,
-            node_type
-        );
         while let Some((other_node, other_type)) = queue.peek() {
-            trace!("find_common_ancestor_new queue peek {:?}", other_node);
             if node == *other_node
                 || (node.len() == 1
                     && other_node.len() == 1
@@ -607,7 +597,6 @@ where
             break;
         }
 
-        trace!("find_common_ancestor_new node_type {:?}", node_type);
         // if node_type is A, then the left side is greater or parallel to the right side
         if node_type == NodeType::A {
             is_right_greater = false;

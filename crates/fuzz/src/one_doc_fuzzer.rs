@@ -1,6 +1,6 @@
 use loro::{ContainerType, Frontiers, LoroDoc, LoroError, TreeID};
 use tabled::TableIteratorExt;
-use tracing::{info, info_span, trace};
+use tracing::{info, info_span};
 
 use crate::{actions::ActionWrapper, crdt_fuzzer::FuzzValue, Action};
 
@@ -365,7 +365,6 @@ impl OneDocFuzzer {
                 }
             }
             Action::Sync { from, to } => {
-                trace!("vv={:?}", self.doc.oplog_vv());
                 let mut f = self.branches[*from as usize].frontiers.clone();
                 f.merge_with_greater(&self.branches[*to as usize].frontiers);
                 self.branches[*to as usize].frontiers = self.doc.minimize_frontiers(&f).unwrap();

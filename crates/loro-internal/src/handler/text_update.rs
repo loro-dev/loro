@@ -2,7 +2,6 @@ use std::{char, sync::Arc};
 
 use fxhash::FxHashMap;
 use itertools::Itertools;
-use tracing::trace;
 
 use crate::diff::DiffHandler;
 
@@ -28,7 +27,6 @@ impl<'a> DiffHook<'a> {
 
 impl DiffHandler for DiffHook<'_> {
     fn insert(&mut self, old_index: usize, new_index: usize, new_len: usize) {
-        trace!("insert {old_index} {new_index} {new_len}");
         if old_index > self.last_old_index {
             self.current_index += old_index - self.last_old_index;
             self.last_old_index = old_index;
@@ -47,7 +45,6 @@ impl DiffHandler for DiffHook<'_> {
     }
 
     fn delete(&mut self, old_index: usize, old_len: usize) {
-        trace!("delete {old_index} {old_len}");
         self.current_index += old_index - self.last_old_index;
         self.text
             .delete_unicode(self.current_index, old_len)
@@ -92,7 +89,6 @@ impl<'a> DiffHookForLine<'a> {
             this.new.push(id as u32);
         }
 
-        trace!("{:#?}", &this.lines);
         this
     }
 
@@ -117,13 +113,7 @@ impl<'a> DiffHookForLine<'a> {
 
 impl DiffHandler for DiffHookForLine<'_> {
     fn insert(&mut self, old_index: usize, new_index: usize, new_len: usize) {
-        trace!("insert line {old_index} {new_index} {new_len}");
         if self.last_old_index < old_index {
-            trace!(
-                "current_index: {} last_old_index: {} old_index: {old_index}",
-                self.current_index,
-                self.last_old_index
-            );
             assert!(self.last_old_index < old_index);
             self.current_index += (self.last_old_index..old_index)
                 .map(|x| self.lines[self.old[x] as usize].chars().count())
@@ -135,13 +125,11 @@ impl DiffHandler for DiffHookForLine<'_> {
             .iter()
             .map(|x| self.lines[*x as usize].clone())
             .join("");
-        trace!("insert at {} {:?}", self.current_index, &s);
         self.text.insert_unicode(self.current_index, &s).unwrap();
         self.current_index += s.chars().count();
     }
 
     fn delete(&mut self, old_index: usize, old_len: usize) {
-        trace!("delete line {old_index} {old_len}");
         if self.last_old_index != old_index {
             assert!(self.last_old_index < old_index);
             self.current_index += (self.last_old_index..old_index)
@@ -154,7 +142,6 @@ impl DiffHandler for DiffHookForLine<'_> {
             .map(|x| self.lines[self.old[x] as usize].chars().count())
             .sum::<usize>();
 
-        trace!("delete at {} with len {}", self.current_index, delete_len);
         self.text
             .delete_unicode(self.current_index, delete_len)
             .unwrap();

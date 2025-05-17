@@ -15,7 +15,6 @@ use loro_common::{
     ContainerType, Counter, HasLamport, IdFull, IdLp, InternalString, LoroValue, PeerID, ID,
 };
 use rle::HasLength;
-use tracing::trace;
 
 use crate::{
     change::{Change, Lamport},
@@ -198,9 +197,7 @@ impl ContainerHistoryCache {
             peer: 0,
         };
 
-        trace!("init_cache_by_visit_all_change_slow");
         if let Some(state) = self.shallow_root_state.as_ref() {
-            trace!("init_cache_by_visit_all_change_slow with gc");
             ensure_cov::notify_cov(
                 "loro_internal::history_cache::init_cache_by_visit_all_change_slow::visit_gc",
             );

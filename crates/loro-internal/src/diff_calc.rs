@@ -170,7 +170,7 @@ impl DiffCalculator {
         }
 
         let affected_set = {
-            tracing::debug!("LCA: {:?} mode={:?}", &lca, diff_mode);
+            loro_common::debug!("LCA: {:?} mode={:?}", &lca, diff_mode);
             let mut started_set = FxHashSet::default();
             for (change, (start_counter, end_counter), vv) in iter {
                 let iter_start = change
