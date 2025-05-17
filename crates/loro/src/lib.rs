@@ -3028,6 +3028,16 @@ impl UndoManager {
         self.0.can_redo()
     }
 
+    /// How many times the undo manager can undo.
+    pub fn undo_count(&self) -> usize {
+        self.0.undo_count()
+    }
+
+    /// How many times the undo manager can redo.
+    pub fn redo_count(&self) -> usize {
+        self.0.redo_count()
+    }
+
     /// If a local event's origin matches the given prefix, it will not be recorded in the
     /// undo stack.
     pub fn add_exclude_origin_prefix(&mut self, prefix: &str) {
