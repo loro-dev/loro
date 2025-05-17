@@ -16,7 +16,7 @@ keywords = ["crdt", "local-first"]
 [dependencies]
 rle = { path = "../rle", version = "1.2.7", package = "loro-rle" }
 serde = { workspace = true }
-serde_json = { workspace = true, optional=true }
+serde_json = { workspace = true, optional = true }
 thiserror = "1.0.43"
 wasm-bindgen = { version = "=0.2.100", optional = true }
 fxhash = "0.2.1"
@@ -26,7 +26,9 @@ js-sys = { version = "0.3.60", optional = true }
 serde_columnar = { workspace = true }
 nonmax = "0.5.5"
 leb128 = "0.2.5"
+tracing = { workspace = true, optional =  true}
 
 [features]
 wasm = ["wasm-bindgen", "js-sys"]
+logging = ["tracing"]
 counter = []

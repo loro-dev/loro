@@ -97,6 +97,7 @@ wasm = ["wasm-bindgen", "js-sys", "loro-common/wasm"]
 test_utils = ["arbitrary", "tabled"]
 # whether enable the counter container
 counter = ["loro-common/counter"]
+logging = ["loro-common/logging"]
 jsonpath = []
 
 [[bench]]

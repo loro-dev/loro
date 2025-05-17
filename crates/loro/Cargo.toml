@@ -37,6 +37,7 @@ loom = "0.7"
 [features]
 counter = ["loro-internal/counter"]
 jsonpath = ["loro-internal/jsonpath"]
+logging =  ["loro-internal/logging"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }

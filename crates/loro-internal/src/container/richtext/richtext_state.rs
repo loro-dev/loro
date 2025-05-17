@@ -903,13 +903,13 @@ pub(crate) fn utf16_to_unicode_index(s: &str, utf16_index: usize) -> Result<usiz
             return Ok(i + 1);
         }
         if current_utf16_index > utf16_index {
-            tracing::info!("WARNING: UTF16 MISMATCHED!");
+            loro_common::info!("WARNING: UTF16 MISMATCHED!");
             return Err(i);
         }
         current_unicode_index = i + 1;
     }
 
-    tracing::info!("WARNING: UTF16 MISMATCHED!");
+    loro_common::info!("WARNING: UTF16 MISMATCHED!");
     Err(current_unicode_index)
 }
 
@@ -929,7 +929,7 @@ pub(crate) fn utf8_to_unicode_index(s: &str, utf8_index: usize) -> Result<usize,
         }
 
         if utf8_index < current_utf8_index {
-            tracing::info!("WARNING: UTF-8 index is in the middle of a codepoint!");
+            loro_common::info!("WARNING: UTF-8 index is in the middle of a codepoint!");
             return Err(i);
         }
         current_unicode_index = i + 1;

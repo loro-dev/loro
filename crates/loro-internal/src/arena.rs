@@ -540,7 +540,7 @@ impl SharedArena {
     pub(crate) fn log_all_values(&self) {
         let values = self.inner.values.lock().unwrap();
         for (i, v) in values.iter().enumerate() {
-            tracing::trace!("value {} {:?}", i, v);
+            loro_common::debug!("value {} {:?}", i, v);
         }
     }
 }

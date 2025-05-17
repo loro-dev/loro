@@ -196,8 +196,6 @@ pub(crate) struct IterReturn<T> {
 
 impl<'a, T: DagNode, D: Dag<Node = T> + Debug> DagCausalIter<'a, D> {
     pub fn new(dag: &'a D, from: Frontiers, target: IdSpanVector) -> Self {
-        trace!("from: {:?}", &from);
-        trace!("target: {:?}", &target);
         let mut out_degrees: FxHashMap<ID, usize> = FxHashMap::default();
         let mut succ: BTreeMap<ID, Vec<ID>> = BTreeMap::default();
         let mut stack = Vec::new();
