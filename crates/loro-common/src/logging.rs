@@ -1,15 +1,25 @@
 #[cfg(not(feature = "logging"))]
 pub mod log {
     #[macro_export]
-    macro_rules! info { $($(t:tt)*) => {}}
+    macro_rules! info {
+        ($($t:tt)*) => {};
+    }
     #[macro_export]
-    macro_rules! trace { $($(t:tt)*) => {}}
+    macro_rules! trace {
+        ($($t:tt)*) => {};
+    }
     #[macro_export]
-    macro_rules! debug { $($(t:tt)*) => {}}
+    macro_rules! debug {
+        ($($t:tt)*) => {};
+    }
     #[macro_export]
-    macro_rules! error { $($(t:tt)*) => {}}
+    macro_rules! error {
+        ($($t:tt)*) => {};
+    }
     #[macro_export]
-    macro_rules! warn { $($(t:tt)*) => {}}
+    macro_rules! warn {
+        ($($t:tt)*) => {};
+    }
 }
 
 #[cfg(feature = "logging")]
