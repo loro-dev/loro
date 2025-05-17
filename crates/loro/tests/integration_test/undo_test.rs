@@ -302,8 +302,10 @@ fn undo_id_span_that_contains_remote_deps_inside() -> Result<(), LoroError> {
         })
     );
     while undo_a.can_undo() {
+        assert!(undo_a.undo_count() > 0);
         undo_a.undo()?;
     }
+    assert_eq!(undo_a.undo_count(), 0);
     assert_eq!(
         doc_a.get_deep_value().to_json_value(),
         json!({
@@ -336,8 +338,10 @@ fn undo_id_span_that_contains_remote_deps_inside_many_times() -> Result<(), Loro
 
     // Undo all ops from A
     while undo.can_undo() {
+        assert!(undo.undo_count() > 0);
         undo.undo()?;
     }
+    assert_eq!(undo.undo_count(), 0);
     assert_eq!(
         doc_a.get_deep_value().to_json_value(),
         json!({
@@ -764,6 +768,7 @@ fn collab_undo() -> anyhow::Result<()> {
     for j in 0..3 {
         debug_span!("round A", j).in_scope(|| {
             assert!(!undo_a.can_redo(), "{:#?}", &undo_a);
+            assert_eq!(undo_a.redo_count(), 0);
             assert_eq!(
                 doc_a.get_text("text").get_richtext_value().to_json_value(),
                 json!([
@@ -774,6 +779,7 @@ fn collab_undo() -> anyhow::Result<()> {
             );
             undo_a.undo()?;
             assert!(undo_a.can_redo());
+            assert_eq!(undo_a.redo_count(), 1);
             assert_eq!(
                 doc_a.get_text("text").get_richtext_value().to_json_value(),
                 json!([
@@ -798,6 +804,8 @@ fn collab_undo() -> anyhow::Result<()> {
             );
 
             assert!(!undo_a.can_undo());
+            assert_eq!(undo_a.undo_count(), 0);
+            assert!(undo_a.redo_count() > 0);
             undo_a.redo()?;
             assert_eq!(
                 doc_a.get_text("text").get_richtext_value().to_json_value(),
@@ -806,6 +814,7 @@ fn collab_undo() -> anyhow::Result<()> {
                 ])
             );
 
+            assert!(undo_a.redo_count() > 0);
             undo_a.redo()?;
             assert_eq!(
                 doc_a.get_text("text").get_richtext_value().to_json_value(),
@@ -815,6 +824,7 @@ fn collab_undo() -> anyhow::Result<()> {
                     {"insert": " fox jumped."}
                 ])
             );
+            assert!(undo_a.redo_count() > 0);
             undo_a.redo()?;
             Ok::<(), LoroError>(())
         })?;
@@ -859,7 +869,9 @@ fn collab_undo() -> anyhow::Result<()> {
             ])
         );
         assert!(!undo_b.can_undo());
+        assert_eq!(undo_b.undo_count(), 0);
         assert!(undo_b.can_redo());
+        assert!(undo_b.redo_count() > 0);
         undo_b.redo()?;
         assert_eq!(
             doc_b.get_text("text").get_richtext_value().to_json_value(),
@@ -1360,6 +1372,7 @@ fn undo_list_move() -> anyhow::Result<()> {
     doc.commit();
     for _ in 0..3 {
         assert!(!undo.can_redo());
+        assert_eq!(undo.redo_count(), 0);
         assert_eq!(
             doc.get_deep_value().to_json_value(),
             json!({
@@ -1368,6 +1381,7 @@ fn undo_list_move() -> anyhow::Result<()> {
         );
         undo.undo()?;
         assert!(undo.can_redo());
+        assert!(undo.redo_count() > 0);
         assert_eq!(
             doc.get_deep_value().to_json_value(),
             json!({
@@ -1392,10 +1406,15 @@ fn undo_list_move() -> anyhow::Result<()> {
         undo.undo()?;
         undo.undo()?;
         assert!(!undo.can_undo());
+        assert_eq!(undo.undo_count(), 0);
+        assert!(undo.redo_count() > 0);
         undo.redo()?;
         assert!(undo.can_undo());
+        assert!(undo.undo_count() > 0);
+        assert!(undo.redo_count() > 0);
         undo.redo()?;
 
+        assert!(undo.redo_count() > 0);
         undo.redo()?;
         assert_eq!(
             doc.get_deep_value().to_json_value(),
@@ -1403,6 +1422,7 @@ fn undo_list_move() -> anyhow::Result<()> {
                 "list": ["0", "1", "2"]
             })
         );
+        assert!(undo.redo_count() > 0);
         undo.redo()?;
         assert_eq!(
             doc.get_deep_value().to_json_value(),
@@ -1410,6 +1430,7 @@ fn undo_list_move() -> anyhow::Result<()> {
                 "list": ["1", "2", "0"]
             })
         );
+        assert!(undo.redo_count() > 0);
         undo.redo()?;
         assert_eq!(
             doc.get_deep_value().to_json_value(),
@@ -1418,6 +1439,7 @@ fn undo_list_move() -> anyhow::Result<()> {
             })
         );
         assert!(!undo.can_redo());
+        assert_eq!(undo.redo_count(), 0);
     }
     Ok(())
 }
@@ -1484,6 +1506,7 @@ fn exclude_certain_local_ops_from_undo() -> anyhow::Result<()> {
         })
     );
     assert!(!undo.can_undo());
+    assert_eq!(undo.undo_count(), 0);
     undo.redo()?;
     assert_eq!(
         doc.get_deep_value().to_json_value(),
