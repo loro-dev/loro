@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.6
+
+### Patch Changes
+
+- 60876bb: Feat: redact
+
 ## 1.5.5
 
 ### Patch Changes
