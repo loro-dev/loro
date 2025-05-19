@@ -348,7 +348,7 @@ impl LoroDoc {
         serde_json::to_string(
             &self
                 .doc
-                .export_json(&start_vv.into(), &end_vv.into(), false),
+                .export_json_updates_without_peer_compression(&start_vv.into(), &end_vv.into()),
         )
         .unwrap()
     }
@@ -368,10 +368,12 @@ impl LoroDoc {
     pub fn redact_json_updates(
         &self,
         json: &str,
-        version_range: &VersionRange,
+        version_range: VersionRange,
     ) -> Result<String, LoroError> {
-        let mut schema: JsonSchema = serde_json::from_str(json)?;
-        loro::encoding::json_schema::json::redact(&mut schema, version_range.clone())?;
+        let mut schema: JsonSchema =
+            serde_json::from_str(json).map_err(|_e| LoroError::InvalidJsonSchema)?;
+        loro::json::redact(&mut schema, version_range)
+            .map_err(|e| LoroError::Unknown(e.to_string().into_boxed_str()))?;
         Ok(serde_json::to_string(&schema).unwrap())
     }
 

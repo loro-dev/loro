@@ -21,7 +21,6 @@ use loro_internal::{
         ValueOrHandler,
     },
     id::{Counter, PeerID, TreeID, ID},
-    json::JsonSchema,
     loro::{CommitOptions, ExportMode},
     loro_common::{check_root_container_name, IdSpanVector},
     undo::{DiffBatch, UndoItemMeta, UndoOrRedo},
@@ -2076,7 +2075,7 @@ impl LoroDoc {
     /// ```
     pub fn getUncommittedOpsAsJson(&self) -> JsResult<Option<JsJsonSchema>> {
         let json_schema = self.0.get_uncommitted_ops_as_json();
-        Ok(json_schema.and_then(|json| Some(loro_json_schema_to_js_json_schema(json))))
+        Ok(json_schema.map(loro_json_schema_to_js_json_schema))
     }
 
     #[wasm_bindgen(js_name = "subscribeFirstCommitFromPeer", skip_typescript)]
@@ -5487,11 +5486,11 @@ interface LoroDoc {
      * doc.commit();
      * expect(doc.getChangeAt({ peer: "0", counter: 0 }).message).toBe("test");
      * ```
-     * 
+     *
      * ### Advanced Example: Creating a Merkle DAG
-     * 
+     *
      * By combining `doc.subscribePreCommit` with `doc.exportJsonInIdSpan`, you can implement advanced features like representing Loro's editing history as a Merkle DAG:
-     * 
+     *
      * ```ts
      * const doc = new LoroDoc();
      * doc.setPeerId(0);
@@ -5511,7 +5510,7 @@ interface LoroDoc {
      *   const sha256Hash = hash.digest('hex');
      *   e.modifier.setMessage(sha256Hash);
      * });
-     * 
+     *
      * doc.getList("list").insert(0, 100);
      * doc.commit();
      * // Change 0
@@ -5529,8 +5528,8 @@ interface LoroDoc {
      * //     }
      * //   ]
      * // }
-     * 
-     * 
+     *
+     *
      * doc.getList("list").insert(0, 200);
      * doc.commit();
      * // Change 1
@@ -5550,13 +5549,13 @@ interface LoroDoc {
      * //     }
      * //   ]
      * // }
-     * 
+     *
      * expect(doc.getChangeAt({ peer: "0", counter: 0 }).message).toBe("2af99cf93869173984bcf6b1ce5412610b0413d027a5511a8f720a02a4432853");
      * expect(doc.getChangeAt({ peer: "0", counter: 1 }).message).toBe("aedbb442c554ecf59090e0e8339df1d8febf647f25cc37c67be0c6e27071d37f");
      * ```
-     * 
+     *
      * @param f - A callback function that receives a pre commit event.
-     * 
+     *
      **/
     subscribePreCommit(f: (e: { changeMeta: Change, origin: string, modifier: ChangeModifier }) => void): () => void
 
@@ -6257,9 +6256,9 @@ interface LoroDoc<T extends Record<string, Container> = Record<string, Container
      * It ensures deterministic output, making it ideal for hash calculations and integrity checks.
      *
      * This method can also export pending changes from the uncommitted transaction that have not yet been applied to the OpLog.
-     * 
+     *
      * This method will NOT trigger a new commit implicitly.
-     * 
+     *
      * @param idSpan - The id span to export.
      * @returns The changes in the given id span.
      */

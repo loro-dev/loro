@@ -1085,7 +1085,7 @@ impl LoroDoc {
     /// assert!(doc.has_container(&"cid:root-map:Map".try_into().unwrap()));
     /// // Text container exists
     /// assert!(doc.has_container(&"cid:0@1:Text".try_into().unwrap()));
-    /// // List container exists  
+    /// // List container exists
     /// assert!(doc.has_container(&"cid:1@1:List".try_into().unwrap()));
     ///
     /// let doc2 = LoroDoc::new();

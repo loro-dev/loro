@@ -1240,6 +1240,7 @@ impl ChangesBlock {
         self.estimated_size > MAX_BLOCK_SIZE
     }
 
+    #[allow(clippy::result_large_err)]
     fn push_change(
         self: &mut Arc<Self>,
         change: Change,
