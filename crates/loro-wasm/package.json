@@ -42,6 +42,7 @@
     "@rollup/plugin-wasm": "^6.2.2",
     "@typescript-eslint/parser": "^6.2.0",
     "@vitest/ui": "^1.0.4",
+    "brotli-wasm": "^3.0.1",
     "esbuild": "^0.18.20",
     "eslint": "^8.46.0",
     "loro-crdt-alpha-4": "npm:loro-crdt@=1.0.0-alpha.4",

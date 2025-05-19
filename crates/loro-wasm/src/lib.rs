@@ -5,8 +5,8 @@
 // #![warn(missing_docs)]
 
 use convert::{
-    import_status_to_js_value, js_diff_to_inner_diff, js_to_id_span, js_to_version_vector,
-    resolved_diff_to_js,
+    import_status_to_js_value, js_diff_to_inner_diff, js_json_schema_to_loro_json_schema,
+    js_to_id_span, js_to_version_vector, loro_json_schema_to_js_json_schema, resolved_diff_to_js,
 };
 use js_sys::{Array, Object, Promise, Reflect, Uint8Array};
 use loro_internal::{
@@ -25,7 +25,7 @@ use loro_internal::{
     loro::{CommitOptions, ExportMode},
     loro_common::{check_root_container_name, IdSpanVector},
     undo::{DiffBatch, UndoItemMeta, UndoOrRedo},
-    version::Frontiers,
+    version::{Frontiers, VersionRange},
     ContainerType, DiffEvent, FxHashMap, HandlerTrait, IdSpan, LoroDoc as LoroDocInner, LoroResult,
     LoroValue, MovableListHandler, Subscription, TreeNodeWithChildren, TreeParentId,
     UndoManager as InnerUndoManager, VersionVector as InternalVersionVector,
@@ -1434,11 +1434,8 @@ impl LoroDoc {
             json_end_vv,
             with_peer_compression.unwrap_or(true),
         );
-        let s = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
-        let v = json_schema
-            .serialize(&s)
-            .map_err(std::convert::Into::<JsValue>::into)?;
-        Ok(v.into())
+
+        Ok(loro_json_schema_to_js_json_schema(json_schema))
     }
 
     #[wasm_bindgen(js_name = "exportJsonInIdSpan", skip_typescript)]
@@ -1457,16 +1454,7 @@ impl LoroDoc {
     /// only supports backward compatibility but not forward compatibility.
     #[wasm_bindgen(js_name = "importJsonUpdates")]
     pub fn import_json_updates(&self, json: JsJsonSchemaOrString) -> JsResult<JsImportStatus> {
-        let json: JsValue = json.into();
-        if JsValue::is_string(&json) {
-            let json_str = json.as_string().unwrap();
-            let status = self
-                .0
-                .import_json_updates(json_str.as_str())
-                .map_err(JsValue::from)?;
-            return Ok(import_status_to_js_value(status).into());
-        }
-        let json_schema: JsonSchema = serde_wasm_bindgen::from_value(json)?;
+        let json_schema = js_json_schema_to_loro_json_schema(json)?;
         let status = self.0.import_json_updates(json_schema)?;
         Ok(import_status_to_js_value(status).into())
     }
@@ -2088,11 +2076,7 @@ impl LoroDoc {
     /// ```
     pub fn getUncommittedOpsAsJson(&self) -> JsResult<Option<JsJsonSchema>> {
         let json_schema = self.0.get_uncommitted_ops_as_json();
-        let s = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
-        let v = json_schema
-            .serialize(&s)
-            .map_err(std::convert::Into::<JsValue>::into)?;
-        Ok(Some(v.into()))
+        Ok(json_schema.and_then(|json| Some(loro_json_schema_to_js_json_schema(json))))
     }
 
     #[wasm_bindgen(js_name = "subscribeFirstCommitFromPeer", skip_typescript)]
@@ -5263,6 +5247,75 @@ impl ChangeModifier {
     }
 }
 
+fn js_value_to_version_range(value: JsValue) -> JsResult<VersionRange> {
+    let obj = js_sys::Object::from(value);
+    let entries = js_sys::Object::entries(&obj);
+    let mut range = VersionRange::new();
+
+    for i in 0..entries.length() {
+        let entry = entries.get(i);
+        let key_value = js_sys::Array::from(&entry);
+
+        let peer_str = key_value
+            .get(0)
+            .as_string()
+            .ok_or_else(|| JsValue::from_str("Version range peer key must be a string"))?;
+
+        let range_array = js_sys::Array::from(&key_value.get(1));
+        if range_array.length() != 2 {
+            return Err(JsValue::from_str("Version range must be [start, end]"));
+        }
+
+        let start = range_array
+            .get(0)
+            .as_f64()
+            .ok_or_else(|| JsValue::from_str("Range start must be a number"))?
+            as Counter;
+
+        let end = range_array
+            .get(1)
+            .as_f64()
+            .ok_or_else(|| JsValue::from_str("Range end must be a number"))?
+            as Counter;
+
+        let peer_id = js_peer_to_peer(JsValue::from_str(&peer_str))?;
+        range.insert(peer_id, start, end);
+    }
+
+    Ok(range)
+}
+
+/// Redacts sensitive content in JSON updates within the specified version range.
+///
+/// This function allows you to share document history while removing potentially sensitive content.
+/// It preserves the document structure and collaboration capabilities while replacing content with
+/// placeholders according to these redaction rules:
+///
+/// - Preserves delete and move operations
+/// - Replaces text insertion content with the Unicode replacement character
+/// - Substitutes list and map insert values with null
+/// - Maintains structure of child containers
+/// - Replaces text mark values with null
+/// - Preserves map keys and text annotation keys
+///
+/// @param {Object|string} jsonUpdates - The JSON updates to redact (object or JSON string)
+/// @param {Object} versionRange - Version range defining what content to redact,
+///                  format: { peerId: [startCounter, endCounter], ... }
+/// @returns {Object} The redacted JSON updates
+#[wasm_bindgen(js_name = "redactJsonUpdates")]
+pub fn redact_json_updates(
+    json_updates: JsJsonSchemaOrString,
+    version_range: JsValue,
+) -> JsResult<JsJsonSchema> {
+    let mut loro_json = js_json_schema_to_loro_json_schema(json_updates)?;
+    let version_range = js_value_to_version_range(version_range)?;
+
+    loro_internal::json::redact(&mut loro_json, version_range)
+        .map_err(|e| JsValue::from_str(&format!("Failed to redact JSON: {}", e)))?;
+
+    Ok(loro_json_schema_to_js_json_schema(loro_json))
+}
+
 #[wasm_bindgen(typescript_custom_section)]
 const TYPES: &'static str = r#"
 /**
@@ -5827,10 +5880,6 @@ interface LoroMovableList {
 }
 
 export type Side = -1 | 0 | 1;
-"#;
-
-#[wasm_bindgen(typescript_custom_section)]
-const JSON_SCHEMA_TYPES: &'static str = r#"
 export type JsonOpID = `${number}@${PeerID}`;
 export type JsonContainerID =  `🦜:${ContainerID}` ;
 export type JsonValue  =
@@ -6172,7 +6221,7 @@ interface LoroDoc<T extends Record<string, Container> = Record<string, Container
      * import { LoroDoc } from "loro-crdt";
      *
      * const doc = new LoroDoc();
-     * const list = doc.getList("list");
+     * const list = doc.getMovableList("list");
      * ```
      */
     getMovableList<Key extends keyof T | ContainerID>(name: Key): T[Key] extends LoroMovableList ? T[Key] : LoroMovableList;

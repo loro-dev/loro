@@ -1,5 +1,6 @@
 import * as path from "https://deno.land/std@0.105.0/path/mod.ts";
 import { gunzip, gzip } from "https://deno.land/x/compress@v0.4.5/mod.ts";
+import brotliPromise from "npm:brotli-wasm";
 const __dirname = path.dirname(path.fromFileUrl(import.meta.url));
 
 // deno run -A build.ts debug
@@ -62,6 +63,11 @@ async function build() {
     console.log("Wasm size: ", (wasm.length / 1024).toFixed(2), "KB");
     const gzipped = await gzip(wasm);
     console.log("Gzipped size: ", (gzipped.length / 1024).toFixed(2), "KB");
+
+    // Use brotli-wasm for brotli compression
+    const brotli = await brotliPromise;
+    const brotliCompressed = brotli.compress(wasm);
+    console.log("Brotli size: ", (brotliCompressed.length / 1024).toFixed(2), "KB");
   }
 }
 

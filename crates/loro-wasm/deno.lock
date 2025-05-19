@@ -1,5 +1,5 @@
 {
-  "version": "4",
+  "version": "5",
   "redirects": {
     "https://deno.land/std/archive/mod.ts": "https://deno.land/std@0.224.0/archive/mod.ts",
     "https://deno.land/std/encoding/base64.ts": "https://deno.land/std@0.224.0/encoding/base64.ts",
@@ -216,6 +216,7 @@
         "npm:@rollup/plugin-wasm@^6.2.2",
         "npm:@typescript-eslint/parser@^6.2.0",
         "npm:@vitest/ui@^1.0.4",
+        "npm:brotli-wasm@^3.0.1",
         "npm:esbuild@~0.18.20",
         "npm:eslint@^8.46.0",
         "npm:loro-crdt@0.16.0",
