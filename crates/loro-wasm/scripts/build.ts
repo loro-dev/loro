@@ -18,11 +18,10 @@ const TARGETS = ["bundler", "nodejs", "web"];
 const startTime = performance.now();
 const LoroWasmDir = path.resolve(__dirname, "..");
 
-// Check if running in CI
-const isCI = Deno.env.get("CI") === "true";
 const githubToken = Deno.env.get("GITHUB_TOKEN");
 const githubEventPath = Deno.env.get("GITHUB_EVENT_PATH");
 
+console.log({ githubToken, githubEventPath });
 console.log(LoroWasmDir);
 async function build() {
   await cargoBuild();
@@ -82,7 +81,7 @@ async function build() {
     console.log("Brotli size: ", brotliSize, "KB");
 
     // Report sizes to PR if in CI
-    if (isCI && githubToken && githubEventPath) {
+    if (githubToken && githubEventPath) {
       try {
         // Parse GitHub event data
         const event = JSON.parse(await Deno.readTextFile(githubEventPath));
