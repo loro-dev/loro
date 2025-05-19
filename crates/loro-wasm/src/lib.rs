@@ -4837,12 +4837,14 @@ impl UndoManager {
     }
 
     // Start a new grouping of undo operations.
+    #[wasm_bindgen(skip_typescript)]
     pub fn groupStart(&mut self) -> JsResult<()> {
         self.undo.group_start()?;
         Ok(())
     }
 
     // End the current grouping of undo operations.
+    #[wasm_bindgen(skip_typescript)]
     pub fn groupEnd(&mut self) {
         self.undo.group_end()
     }

@@ -321,6 +321,7 @@ impl Stack {
         let last = self.stack.back_mut().unwrap();
         let last_remote_diff = last.1.lock().unwrap();
         if !last_remote_diff.cid_to_events.is_empty() {
+            dbg!(&last_remote_diff.cid_to_events);
             // If the remote diff is not empty, we cannot merge
             drop(last_remote_diff);
             let mut v = VecDeque::new();
@@ -345,7 +346,8 @@ impl Stack {
         }
     }
 
-    pub fn compose_remote_event(&mut self, diff: &[&ContainerDiff]) {
+
+    pub fn compose_remote_event(&mut self, diff: &[&ContainerDiff], disjoint: bool) {
         if self.is_empty() {
             return;
         }
@@ -355,7 +357,7 @@ impl Stack {
         for e in diff {
             if let Some(d) = remote_diff.cid_to_events.get_mut(&e.id) {
                 d.compose_ref(&e.diff);
-            } else {
+            } else if !disjoint {
                 remote_diff
                     .cid_to_events
                     .insert(e.id.clone(), e.diff.clone());
@@ -437,13 +439,12 @@ impl UndoManagerInner {
     /// Returns true if a given container diff is disjoint with the current group.
     /// They are disjoint if they have no ovrlap in changed container ids.
     fn is_disjoint_with_group(&self, diff: &[&ContainerDiff]) -> bool {
-        let incoming_cids: FxHashSet<ContainerID> = diff.iter().map(|d| d.id.clone()).collect();
-
-        if self.group_active {
-            return self.group_affected_cids.is_disjoint(&incoming_cids);
+        if !self.group_active {
+            return false;
         }
 
-        true
+        let incoming_cids: FxHashSet<ContainerID> = diff.iter().map(|d| d.id.clone()).collect();
+        self.group_affected_cids.is_disjoint(&incoming_cids)
     }
 
     fn record_checkpoint(&mut self, latest_counter: Counter, event: Option<DiffEvent>) {
@@ -459,14 +460,13 @@ impl UndoManagerInner {
         }
 
         if self.group_active {
-            let affected_cids: FxHashSet<_> = event
-                .iter()
-                .flat_map(|e| e.events.iter().map(|e| e.id.clone()).collect::<Vec<_>>())
-                .collect();
-            self.group_affected_cids.extend(affected_cids);
+            event.iter().for_each(|e| {
+                e.events.iter().for_each(|e| {
+                    self.group_affected_cids.insert(e.id.clone());
+                })
+            });
         }
 
-        assert!(self.next_counter.unwrap() < latest_counter);
         let now = get_sys_timestamp() as Timestamp;
         let span = CounterSpan::new(self.next_counter.unwrap(), latest_counter);
         let meta = self
@@ -550,8 +550,8 @@ impl UndoManager {
                         // If the event is from the excluded origin, we don't record it
                         // in the undo stack. But we need to record its effect like it's
                         // a remote event.
-                        inner.undo_stack.compose_remote_event(event.events);
-                        inner.redo_stack.compose_remote_event(event.events);
+                        inner.undo_stack.compose_remote_event(event.events, false);
+                        inner.redo_stack.compose_remote_event(event.events, false);
                         inner.next_counter = Some(id.counter + 1);
                     } else {
                         inner.record_checkpoint(id.counter + 1, Some(event));
@@ -578,12 +578,9 @@ impl UndoManager {
                 }
 
                 let is_import_disjoint = inner.is_disjoint_with_group(event.events);
-                let should_compose = !inner.group_active || !is_import_disjoint;
 
-                if should_compose {
-                    inner.undo_stack.compose_remote_event(event.events);
-                    inner.redo_stack.compose_remote_event(event.events);
-                }
+                inner.undo_stack.compose_remote_event(event.events, is_import_disjoint);
+                inner.redo_stack.compose_remote_event(event.events, is_import_disjoint);
 
                 // If the import is not disjoint, we end the active group
                 // all subsequent changes will be new undo items
