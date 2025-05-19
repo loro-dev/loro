@@ -1,13 +1,16 @@
 import * as path from "https://deno.land/std@0.105.0/path/mod.ts";
 import { gzip } from "https://deno.land/x/compress@v0.4.5/mod.ts";
 import brotliPromise from "npm:brotli-wasm";
-import { getOctokit } from "npm:@actions/github";
+import { context, getOctokit } from "npm:@actions/github";
+import * as core from "npm:@actions/core";
 const __dirname = path.dirname(path.fromFileUrl(import.meta.url));
 
 // deno run -A build.ts debug
 // deno run -A build.ts release
 // deno run -A build.ts release web
 // deno run -A build.ts release nodejs
+
+const githubToken: string = core.getInput("github-token");
 let profile = "dev";
 let profileDir = "debug";
 if (Deno.args[0] == "release") {
@@ -18,10 +21,6 @@ const TARGETS = ["bundler", "nodejs", "web"];
 const startTime = performance.now();
 const LoroWasmDir = path.resolve(__dirname, "..");
 
-const githubToken = Deno.env.get("GITHUB_TOKEN");
-const githubEventPath = Deno.env.get("GITHUB_EVENT_PATH");
-
-console.log({ githubToken, githubEventPath });
 console.log(LoroWasmDir);
 async function build() {
   await cargoBuild();
@@ -81,15 +80,12 @@ async function build() {
     console.log("Brotli size: ", brotliSize, "KB");
 
     // Report sizes to PR if in CI
-    if (githubToken && githubEventPath) {
+    if (githubToken) {
       try {
+        const prNumber: string = core.getInput("pr-number");
+        console.log("Creating comment for PR", prNumber);
         // Parse GitHub event data
-        const event = JSON.parse(await Deno.readTextFile(githubEventPath));
-        if (event.pull_request) {
-          const prNumber = event.pull_request.number;
-          const repo = event.repository.full_name;
-          const [owner, repoName] = repo.split("/");
-
+        if (prNumber !== "") {
           const commentBody = `## WASM Size Report
 <!-- loro-wasm-size-report -->
 - Original size: ${wasmSize} KB
@@ -101,9 +97,9 @@ async function build() {
 
           // Find if we already have a comment with our marker
           const { data: comments } = await octokit.rest.issues.listComments({
-            owner,
-            repo: repoName,
-            issue_number: prNumber,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: parseInt(prNumber),
           });
 
           const sizeReportMarker = "<!-- loro-wasm-size-report -->";
@@ -114,8 +110,8 @@ async function build() {
           if (existingComment) {
             // Update existing comment
             await octokit.rest.issues.updateComment({
-              owner,
-              repo: repoName,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
               comment_id: existingComment.id,
               body: commentBody,
             });
@@ -123,9 +119,9 @@ async function build() {
           } else {
             // Create new comment
             await octokit.rest.issues.createComment({
-              owner,
-              repo: repoName,
-              issue_number: prNumber,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: parseInt(prNumber),
               body: commentBody,
             });
             console.log("Created new WASM size report comment");
