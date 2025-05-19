@@ -1,6 +1,7 @@
 import * as path from "https://deno.land/std@0.105.0/path/mod.ts";
 import { gunzip, gzip } from "https://deno.land/x/compress@v0.4.5/mod.ts";
 import brotliPromise from "npm:brotli-wasm";
+import { comment, getOctokit } from "npm:@actions/github";
 const __dirname = path.dirname(path.fromFileUrl(import.meta.url));
 
 // deno run -A build.ts debug
@@ -85,28 +86,44 @@ async function build() {
         if (event.pull_request) {
           const prNumber = event.pull_request.number;
           const repo = event.repository.full_name;
+          const [owner, repoName] = repo.split("/");
 
-          const comment = `## WASM Size Report
+          const commentBody = `## WASM Size Report
+<!-- loro-wasm-size-report -->
 - Original size: ${wasmSize} KB
 - Gzipped size: ${gzipSize} KB
 - Brotli size: ${brotliSize} KB`;
 
-          // Create or update comment
-          const response = await fetch(
-            `https://api.github.com/repos/${repo}/issues/${prNumber}/comments`,
-            {
-              method: "POST",
-              headers: {
-                "Authorization": `Bearer ${githubToken}`,
-                "Accept": "application/vnd.github.v3+json",
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({ body: comment }),
-            }
+          // Get existing comments
+          const octokit = getOctokit(githubToken);
+          const { data: comments } = await octokit.rest.issues.listComments({
+            owner,
+            repo: repoName,
+            issue_number: prNumber,
+          });
+
+          // Find our comment
+          const existingComment = comments.find(comment =>
+            comment.body?.includes("<!-- loro-wasm-size-report -->")
           );
 
-          if (!response.ok) {
-            console.error("Failed to create PR comment:", await response.text());
+          if (existingComment) {
+            // Update existing comment
+            await octokit.rest.issues.updateComment({
+              owner,
+              repo: repoName,
+              comment_id: existingComment.id,
+              body: commentBody,
+            });
+          } else {
+            // Create new comment
+            await comment({
+              token: githubToken,
+              owner,
+              repo: repoName,
+              issue_number: prNumber,
+              body: commentBody,
+            });
           }
         }
       } catch (error) {
