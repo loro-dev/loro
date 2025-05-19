@@ -65,7 +65,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
 version = "0.2.15"
 features = ["js"]
 
-[target.'cfg(all(target_arch = "wasm32", not(feature = "wasm")))'.dependencies]
+[target.'cfg(all(target_arch = "wasm32", not(features = "wasm")))'.dependencies]
 wasm-bindgen = "0.2.100"
 
 [dev-dependencies]

@@ -345,10 +345,36 @@ impl LoroDoc {
         start_vv: &VersionVector,
         end_vv: &VersionVector,
     ) -> String {
-        let json = self
-            .doc
-            .export_json_updates_without_peer_compression(&start_vv.into(), &end_vv.into());
-        serde_json::to_string(&json).unwrap()
+        serde_json::to_string(
+            &self
+                .doc
+                .export_json_updates_without_peer_compression(&start_vv.into(), &end_vv.into()),
+        )
+        .unwrap()
+    }
+
+    /// Redacts sensitive content in JSON updates within the specified version range.
+    ///
+    /// This function allows you to share document history while removing potentially sensitive content.
+    /// It preserves the document structure and collaboration capabilities while replacing content with
+    /// placeholders according to these redaction rules:
+    ///
+    /// - Preserves delete and move operations
+    /// - Replaces text insertion content with the Unicode replacement character
+    /// - Substitutes list and map insert values with null
+    /// - Maintains structure of child containers
+    /// - Replaces text mark values with null
+    /// - Preserves map keys and text annotation keys
+    pub fn redact_json_updates(
+        &self,
+        json: &str,
+        version_range: VersionRange,
+    ) -> Result<String, LoroError> {
+        let mut schema: JsonSchema =
+            serde_json::from_str(json).map_err(|_e| LoroError::InvalidJsonSchema)?;
+        loro::json::redact(&mut schema, version_range)
+            .map_err(|e| LoroError::Unknown(e.to_string().into_boxed_str()))?;
+        Ok(serde_json::to_string(&schema).unwrap())
     }
 
     /// Export the readable [`Change`]s in the given [`IdSpan`]
