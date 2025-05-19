@@ -340,13 +340,17 @@ impl Stack {
 
         let is_disjoint_group = group
             .map(|g| {
-                g.affected_cids
-                    .is_disjoint(&last_remote_diff.cid_to_events.keys().cloned().collect())
+                g.affected_cids.iter().all(|cid| {
+                    last_remote_diff
+                        .cid_to_events
+                        .get(cid)
+                        .map(|diff| diff.is_empty())
+                        .unwrap_or(true)
+                })
             })
             .unwrap_or(false);
 
         if !last_remote_diff.cid_to_events.is_empty() && !is_disjoint_group {
-            dbg!(&last_remote_diff.cid_to_events);
             // If the remote diff is not empty, we cannot merge
             drop(last_remote_diff);
             let mut v = VecDeque::new();
@@ -510,7 +514,8 @@ impl UndoManagerInner {
         let should_merge = !self.undo_stack.is_empty() && (in_merge_interval || group_should_merge);
 
         if should_merge {
-            self.undo_stack.push_with_merge(span, meta, true, self.group.as_ref());
+            self.undo_stack
+                .push_with_merge(span, meta, true, self.group.as_ref());
         } else {
             self.last_undo_time = now;
             self.undo_stack.push(span, meta);
