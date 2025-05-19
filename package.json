@@ -8,7 +8,7 @@
     "check-all": "cargo hack check --each-feature",
     "build": "cargo build",
     "test": "cargo nextest run --features=test_utils,jsonpath --no-fail-fast && cargo test --doc",
-    "test-all": "pnpm test && pnpm test-wasm && pnpm test-loom",
+    "test-all": "pnpm test && pnpm release-wasm && pnpm test-loom",
     "test-wasm": "cd crates/loro-wasm && pnpm i && pnpm build-dev",
     "test-loom": "LOOM_MAX_PREEMPTIONS=2 RUSTFLAGS='--cfg loom' cargo test -p loro --test multi_thread_test --release",
     "test-loom-reproduce": "LOOM_MAX_PREEMPTIONS=2 LOOM_LOG=info LOOM_LOCATION=1 LOOM_CHECKPOINT_INTERVAL=1 LOOM_CHECKPOINT_FILE=loom_test.json RUSTFLAGS='--cfg loom' cargo test -p loro --test multi_thread_test --release",

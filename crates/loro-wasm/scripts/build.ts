@@ -17,6 +17,11 @@ const TARGETS = ["bundler", "nodejs", "web"];
 const startTime = performance.now();
 const LoroWasmDir = path.resolve(__dirname, "..");
 
+// Check if running in CI
+const isCI = Deno.env.get("CI") === "true";
+const githubToken = Deno.env.get("GITHUB_TOKEN");
+const githubEventPath = Deno.env.get("GITHUB_EVENT_PATH");
+
 console.log(LoroWasmDir);
 async function build() {
   await cargoBuild();
@@ -60,14 +65,54 @@ async function build() {
 
   if (profile === "release") {
     const wasm = await Deno.readFile(path.resolve(LoroWasmDir, "bundler", "loro_wasm_bg.wasm"));
-    console.log("Wasm size: ", (wasm.length / 1024).toFixed(2), "KB");
+    const wasmSize = (wasm.length / 1024).toFixed(2);
+    console.log("Wasm size: ", wasmSize, "KB");
+
     const gzipped = await gzip(wasm);
-    console.log("Gzipped size: ", (gzipped.length / 1024).toFixed(2), "KB");
+    const gzipSize = (gzipped.length / 1024).toFixed(2);
+    console.log("Gzipped size: ", gzipSize, "KB");
 
     // Use brotli-wasm for brotli compression
     const brotli = await brotliPromise;
     const brotliCompressed = brotli.compress(wasm);
-    console.log("Brotli size: ", (brotliCompressed.length / 1024).toFixed(2), "KB");
+    const brotliSize = (brotliCompressed.length / 1024).toFixed(2);
+    console.log("Brotli size: ", brotliSize, "KB");
+
+    // Report sizes to PR if in CI
+    if (isCI && githubToken && githubEventPath) {
+      try {
+        const event = JSON.parse(await Deno.readTextFile(githubEventPath));
+        if (event.pull_request) {
+          const prNumber = event.pull_request.number;
+          const repo = event.repository.full_name;
+
+          const comment = `## WASM Size Report
+- Original size: ${wasmSize} KB
+- Gzipped size: ${gzipSize} KB
+- Brotli size: ${brotliSize} KB`;
+
+          // Create or update comment
+          const response = await fetch(
+            `https://api.github.com/repos/${repo}/issues/${prNumber}/comments`,
+            {
+              method: "POST",
+              headers: {
+                "Authorization": `Bearer ${githubToken}`,
+                "Accept": "application/vnd.github.v3+json",
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ body: comment }),
+            }
+          );
+
+          if (!response.ok) {
+            console.error("Failed to create PR comment:", await response.text());
+          }
+        }
+      } catch (error) {
+        console.error("Failed to report sizes to PR:", error);
+      }
+    }
   }
 }
 
