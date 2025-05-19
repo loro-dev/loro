@@ -1,5 +1,7 @@
 import * as path from "https://deno.land/std@0.105.0/path/mod.ts";
-import { gunzip, gzip } from "https://deno.land/x/compress@v0.4.5/mod.ts";
+import { gzip } from "https://deno.land/x/compress@v0.4.5/mod.ts";
+import brotliPromise from "npm:brotli-wasm";
+import { getOctokit } from "npm:@actions/github";
 const __dirname = path.dirname(path.fromFileUrl(import.meta.url));
 
 // deno run -A build.ts debug
@@ -16,7 +18,16 @@ const TARGETS = ["bundler", "nodejs", "web"];
 const startTime = performance.now();
 const LoroWasmDir = path.resolve(__dirname, "..");
 
-console.log(LoroWasmDir);
+// Check if running in CI
+const isCI = Deno.env.get("CI") === "true";
+const githubToken = Deno.env.get("GITHUB_TOKEN");
+const githubEventPath = Deno.env.get("GITHUB_EVENT_PATH");
+
+console.log({
+  isCI,
+  githubToken: !!githubToken,
+  githubEventPath: githubEventPath,
+});
 async function build() {
   await cargoBuild();
   const target = Deno.args[1];
@@ -58,15 +69,85 @@ async function build() {
   );
 
   if (profile === "release") {
-    const wasm = await Deno.readFile(path.resolve(LoroWasmDir, "bundler", "loro_wasm_bg.wasm"));
-    console.log("Wasm size: ", (wasm.length / 1024).toFixed(2), "KB");
+    const wasm = await Deno.readFile(
+      path.resolve(LoroWasmDir, "bundler", "loro_wasm_bg.wasm"),
+    );
+    const wasmSize = (wasm.length / 1024).toFixed(2);
+    console.log("Wasm size: ", wasmSize, "KB");
+
     const gzipped = await gzip(wasm);
-    console.log("Gzipped size: ", (gzipped.length / 1024).toFixed(2), "KB");
+    const gzipSize = (gzipped.length / 1024).toFixed(2);
+    console.log("Gzipped size: ", gzipSize, "KB");
+
+    // Use brotli-wasm for brotli compression
+    const brotli = await brotliPromise;
+    const brotliCompressed = brotli.compress(wasm);
+    const brotliSize = (brotliCompressed.length / 1024).toFixed(2);
+    console.log("Brotli size: ", brotliSize, "KB");
+
+    // Report sizes to PR if in CI
+    if (isCI && githubToken && githubEventPath) {
+      console.log("Creating comment for PR");
+      try {
+        // Parse GitHub event data
+        const event = JSON.parse(await Deno.readTextFile(githubEventPath));
+        console.log("event", event);
+        if (event.pull_request) {
+          const prNumber = event.pull_request.number;
+          const repo = event.repository.full_name;
+          const [owner, repoName] = repo.split("/");
+
+          const commentBody = `## WASM Size Report
+<!-- loro-wasm-size-report -->
+- Original size: ${wasmSize} KB
+- Gzipped size: ${gzipSize} KB
+- Brotli size: ${brotliSize} KB`;
+
+          // Initialize Octokit client
+          const octokit = getOctokit(githubToken);
+
+          // Find if we already have a comment with our marker
+          const { data: comments } = await octokit.rest.issues.listComments({
+            owner,
+            repo: repoName,
+            issue_number: prNumber,
+          });
+
+          const sizeReportMarker = "<!-- loro-wasm-size-report -->";
+          const existingComment = comments.find((comment) =>
+            comment.body?.includes(sizeReportMarker)
+          );
+
+          if (existingComment) {
+            // Update existing comment
+            await octokit.rest.issues.updateComment({
+              owner,
+              repo: repoName,
+              comment_id: existingComment.id,
+              body: commentBody,
+            });
+            console.log("Updated existing WASM size report comment");
+          } else {
+            // Create new comment
+            await octokit.rest.issues.createComment({
+              owner,
+              repo: repoName,
+              issue_number: prNumber,
+              body: commentBody,
+            });
+            console.log("Created new WASM size report comment");
+          }
+        }
+      } catch (error) {
+        console.error("Failed to report sizes to PR:", error);
+      }
+    }
   }
 }
 
 async function cargoBuild() {
-  const cmd = `cargo build --target wasm32-unknown-unknown --profile ${profile}`;
+  const cmd =
+    `cargo build --target wasm32-unknown-unknown --profile ${profile}`;
   console.log(cmd);
   const status = await Deno.run({
     cmd: cmd.split(" "),
@@ -94,7 +175,8 @@ async function buildTarget(target: string) {
   }
 
   // TODO: polyfill FinalizationRegistry
-  const cmd = `wasm-bindgen --weak-refs --target ${target} --out-dir ${target} ../../target/wasm32-unknown-unknown/${profileDir}/loro_wasm.wasm`;
+  const cmd =
+    `wasm-bindgen --weak-refs --target ${target} --out-dir ${target} ../../target/wasm32-unknown-unknown/${profileDir}/loro_wasm.wasm`;
   console.log(">", cmd);
   await Deno.run({ cmd: cmd.split(" "), cwd: LoroWasmDir }).status();
   console.log();

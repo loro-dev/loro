@@ -220,7 +220,6 @@ impl Tracker {
         self.applied_vv.extend_to_include_end_id(end_id);
     }
 
-    #[must_use]
     fn skip_applied(
         &mut self,
         op_id: ID,

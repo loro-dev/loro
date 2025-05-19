@@ -38,7 +38,6 @@ impl ContainerState for CounterState {
         false
     }
 
-    #[must_use]
     fn apply_diff_and_convert(&mut self, diff: InternalDiff, _ctx: DiffApplyContext) -> Diff {
         if let InternalDiff::Counter(diff) = diff {
             self.value += diff;

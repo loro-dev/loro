@@ -5,14 +5,17 @@ use loro_internal::delta::{ResolvedMapDelta, ResolvedMapValue};
 use loro_internal::encoding::{ImportBlobMetadata, ImportStatus};
 use loro_internal::event::{Diff, ListDeltaMeta, ListDiff, TextDiff, TextMeta};
 use loro_internal::handler::{Handler, ValueOrHandler};
+use loro_internal::json::JsonSchema;
 use loro_internal::version::VersionRange;
 use loro_internal::StringSlice;
 use loro_internal::{Counter, CounterSpan, FxHashMap, IdSpan, ListDiffItem};
+use serde::Serialize;
 use wasm_bindgen::{JsCast, JsValue};
 
 use crate::{
-    frontiers_to_ids, Container, Cursor, JsContainer, JsIdSpan, JsImportBlobMetadata, JsResult,
-    LoroCounter, LoroList, LoroMap, LoroMovableList, LoroText, LoroTree, VersionVector,
+    frontiers_to_ids, Container, Cursor, JsContainer, JsIdSpan, JsImportBlobMetadata, JsJsonSchema,
+    JsJsonSchemaOrString, JsResult, LoroCounter, LoroList, LoroMap, LoroMovableList, LoroText,
+    LoroTree, VersionVector,
 };
 use wasm_bindgen::__rt::IntoJsResult;
 use wasm_bindgen::convert::RefFromWasmAbi;
@@ -640,4 +643,30 @@ pub(crate) fn js_value_to_loro_value(js: &JsValue) -> LoroValue {
     } else {
         LoroValue::Null
     }
+}
+
+/// Convert a JavaScript JsonSchema (or string) to Loro's internal JsonSchema
+pub(crate) fn js_json_schema_to_loro_json_schema(
+    json: JsJsonSchemaOrString,
+) -> JsResult<JsonSchema> {
+    let js_value: JsValue = json.into();
+
+    if js_value.is_string() {
+        let json_str = js_value.as_string().unwrap();
+        JsonSchema::try_from(json_str.as_str())
+            .map_err(|e| JsValue::from_str(&format!("Invalid JSON format: {}", e)))
+    } else {
+        serde_wasm_bindgen::from_value(js_value)
+            .map_err(|e| JsValue::from_str(&format!("Failed to parse JsonSchema: {}", e)))
+    }
+}
+
+/// Convert Loro's internal JsonSchema to JavaScript JsonSchema
+pub(crate) fn loro_json_schema_to_js_json_schema(json_schema: JsonSchema) -> JsJsonSchema {
+    let s = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+    let value = json_schema
+        .serialize(&s)
+        .map_err(std::convert::Into::<JsValue>::into)
+        .unwrap();
+    value.into()
 }

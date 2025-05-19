@@ -19,6 +19,7 @@ import {
   ContainerID,
   LoroCounter,
   JsonDiff,
+  redactJsonUpdates,
 } from "../bundler/index";
 
 it("basic example", () => {
@@ -1525,6 +1526,56 @@ it("test container existence", () => {
   expect(doc2.hasContainer("cid:root-map:Map")).toBe(true);
   expect(doc2.hasContainer("cid:0@1:Text")).toBe(true);
   expect(doc2.hasContainer("cid:1@1:List")).toBe(true);
+});
+
+it("redactJsonUpdates removes sensitive content", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId("1");
+
+  // Create some content to be redacted
+  const text = doc.getText("text");
+  text.insert(0, "Sensitive information");
+  doc.commit();
+
+  const map = doc.getMap("map");
+  map.set("password", "secret123");
+  map.set("public", "public information");
+  doc.commit();
+
+  // Export JSON updates
+  const jsonUpdates = doc.exportJsonUpdates();
+
+  // Define version range to redact (redact the text content)
+  const versionRange = {
+    "1": [0, 21]  // Redact the "Sensitive information"
+  };
+
+  // Apply redaction
+  const redactedJson = redactJsonUpdates(jsonUpdates, versionRange);
+
+  // Verify redacted content is replaced
+  const redactedDoc = new LoroDoc();
+  redactedDoc.importJsonUpdates(redactedJson);
+
+  // Text should be redacted with replacement character
+  expect(redactedDoc.getText("text").toString()).toBe("���������������������");
+
+  // Map operations after counter 5 should be intact
+  expect(redactedDoc.getMap("map").get("password")).toBe("secret123");
+  expect(redactedDoc.getMap("map").get("public")).toBe("public information");
+
+  // Now redact the map content
+  const versionRange2 = {
+    "1": [21, 22]  // Redact the "secret123"
+  };
+
+  const redactedJson2 = redactJsonUpdates(jsonUpdates, versionRange2);
+  const redactedDoc2 = new LoroDoc();
+  redactedDoc2.importJsonUpdates(redactedJson2);
+
+  expect(redactedDoc.getText("text").toString()).toBe("���������������������");
+  expect(redactedDoc2.getMap("map").get("password")).toBe(null);
+  expect(redactedDoc.getMap("map").get("public")).toBe("public information");
 });
 
 it("text mark on LoroText", () => {
