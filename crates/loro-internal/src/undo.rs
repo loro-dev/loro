@@ -199,9 +199,7 @@ struct UndoManagerInner {
     last_popped_selection: Option<Vec<CursorWithPos>>,
     on_push: Option<OnPush>,
     on_pop: Option<OnPop>,
-    group_active: bool,
-    group_start_counter: Option<Counter>,
-    group_affected_cids: FxHashSet<ContainerID>,
+    group: Option<UndoGroup>,
 }
 
 impl std::fmt::Debug for UndoManagerInner {
@@ -215,10 +213,23 @@ impl std::fmt::Debug for UndoManagerInner {
             .field("merge_interval", &self.merge_interval_in_ms)
             .field("max_stack_size", &self.max_stack_size)
             .field("exclude_origin_prefixes", &self.exclude_origin_prefixes)
-            .field("group_active", &self.group_active)
-            .field("group_start_counter", &self.group_start_counter)
-            .field("group_affected_cids", &self.group_affected_cids)
+            .field("group", &self.group)
             .finish()
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct UndoGroup {
+    start_counter: Counter,
+    affected_cids: FxHashSet<ContainerID>,
+}
+
+impl UndoGroup {
+    pub fn new(start_counter: Counter) -> Self {
+        Self {
+            start_counter,
+            affected_cids: Default::default(),
+        }
     }
 }
 
@@ -314,13 +325,27 @@ impl Stack {
     }
 
     pub fn push(&mut self, span: CounterSpan, meta: UndoItemMeta) {
-        self.push_with_merge(span, meta, false)
+        self.push_with_merge(span, meta, false, None)
     }
 
-    pub fn push_with_merge(&mut self, span: CounterSpan, meta: UndoItemMeta, can_merge: bool) {
+    pub fn push_with_merge(
+        &mut self,
+        span: CounterSpan,
+        meta: UndoItemMeta,
+        can_merge: bool,
+        group: Option<&UndoGroup>,
+    ) {
         let last = self.stack.back_mut().unwrap();
         let last_remote_diff = last.1.lock().unwrap();
-        if !last_remote_diff.cid_to_events.is_empty() {
+
+        let is_disjoint_group = group
+            .map(|g| {
+                g.affected_cids
+                    .is_disjoint(&last_remote_diff.cid_to_events.keys().cloned().collect())
+            })
+            .unwrap_or(false);
+
+        if !last_remote_diff.cid_to_events.is_empty() && !is_disjoint_group {
             dbg!(&last_remote_diff.cid_to_events);
             // If the remote diff is not empty, we cannot merge
             drop(last_remote_diff);
@@ -346,8 +371,7 @@ impl Stack {
         }
     }
 
-
-    pub fn compose_remote_event(&mut self, diff: &[&ContainerDiff], disjoint: bool) {
+    pub fn compose_remote_event(&mut self, diff: &[&ContainerDiff]) {
         if self.is_empty() {
             return;
         }
@@ -357,7 +381,7 @@ impl Stack {
         for e in diff {
             if let Some(d) = remote_diff.cid_to_events.get_mut(&e.id) {
                 d.compose_ref(&e.diff);
-            } else if !disjoint {
+            } else {
                 remote_diff
                     .cid_to_events
                     .insert(e.id.clone(), e.diff.clone());
@@ -423,28 +447,22 @@ impl UndoManagerInner {
             last_popped_selection: None,
             on_pop: None,
             on_push: None,
-            group_active: false,
-            group_start_counter: None,
-            group_affected_cids: Default::default(),
+            group: None,
         }
-    }
-
-    /// Resets the current group to have no active group.
-    fn reset_group(&mut self) {
-        self.group_active = false;
-        self.group_start_counter = None;
-        self.group_affected_cids.clear();
     }
 
     /// Returns true if a given container diff is disjoint with the current group.
     /// They are disjoint if they have no ovrlap in changed container ids.
     fn is_disjoint_with_group(&self, diff: &[&ContainerDiff]) -> bool {
-        if !self.group_active {
+        if self.group.is_none() {
             return false;
         }
 
         let incoming_cids: FxHashSet<ContainerID> = diff.iter().map(|d| d.id.clone()).collect();
-        self.group_affected_cids.is_disjoint(&incoming_cids)
+        self.group
+            .as_ref()
+            .map(|g| g.affected_cids.is_disjoint(&incoming_cids))
+            .unwrap_or(false)
     }
 
     fn record_checkpoint(&mut self, latest_counter: Counter, event: Option<DiffEvent>) {
@@ -459,10 +477,10 @@ impl UndoManagerInner {
             return;
         }
 
-        if self.group_active {
+        if let Some(group) = &mut self.group {
             event.iter().for_each(|e| {
                 e.events.iter().for_each(|e| {
-                    self.group_affected_cids.insert(e.id.clone());
+                    group.affected_cids.insert(e.id.clone());
                 })
             });
         }
@@ -480,8 +498,11 @@ impl UndoManagerInner {
 
         // If group is active, but there is nothing in the group, don't merge
         // If the group is active and it's not the first push in the group, merge
-        let group_should_merge = self.group_active
-            && match (previous_counter, self.group_start_counter) {
+        let group_should_merge = self.group.is_some()
+            && match (
+                previous_counter,
+                self.group.as_ref().map(|g| g.start_counter),
+            ) {
                 (Some(previous), Some(active)) => previous != active,
                 _ => true,
             };
@@ -489,7 +510,7 @@ impl UndoManagerInner {
         let should_merge = !self.undo_stack.is_empty() && (in_merge_interval || group_should_merge);
 
         if should_merge {
-            self.undo_stack.push_with_merge(span, meta, true);
+            self.undo_stack.push_with_merge(span, meta, true, self.group.as_ref());
         } else {
             self.last_undo_time = now;
             self.undo_stack.push(span, meta);
@@ -550,8 +571,8 @@ impl UndoManager {
                         // If the event is from the excluded origin, we don't record it
                         // in the undo stack. But we need to record its effect like it's
                         // a remote event.
-                        inner.undo_stack.compose_remote_event(event.events, false);
-                        inner.redo_stack.compose_remote_event(event.events, false);
+                        inner.undo_stack.compose_remote_event(event.events);
+                        inner.redo_stack.compose_remote_event(event.events);
                         inner.next_counter = Some(id.counter + 1);
                     } else {
                         inner.record_checkpoint(id.counter + 1, Some(event));
@@ -579,13 +600,13 @@ impl UndoManager {
 
                 let is_import_disjoint = inner.is_disjoint_with_group(event.events);
 
-                inner.undo_stack.compose_remote_event(event.events, is_import_disjoint);
-                inner.redo_stack.compose_remote_event(event.events, is_import_disjoint);
+                inner.undo_stack.compose_remote_event(event.events);
+                inner.redo_stack.compose_remote_event(event.events);
 
                 // If the import is not disjoint, we end the active group
                 // all subsequent changes will be new undo items
                 if !is_import_disjoint {
-                    inner.reset_group();
+                    inner.group = None;
                 }
             }
             EventTriggerKind::Checkout => {
@@ -618,18 +639,17 @@ impl UndoManager {
     pub fn group_start(&mut self) -> LoroResult<()> {
         let mut inner = self.inner.lock().unwrap();
 
-        if inner.group_active {
+        if inner.group.is_some() {
             return Err(LoroError::UndoGroupAlreadyStarted);
         }
 
-        inner.group_active = true;
-        inner.group_start_counter = Some(inner.next_counter.unwrap());
+        inner.group = Some(UndoGroup::new(inner.next_counter.unwrap()));
 
         Ok(())
     }
 
     pub fn group_end(&mut self) {
-        self.inner.lock().unwrap().reset_group();
+        self.inner.lock().unwrap().group = None;
     }
 
     pub fn peer(&self) -> PeerID {
