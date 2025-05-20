@@ -72,7 +72,9 @@ pub enum LoroError {
     UndoInvalidIdSpan(ID),
     #[error("PeerID cannot be changed. Expected: {expected:?}, Actual: {actual:?}")]
     UndoWithDifferentPeerId { expected: PeerID, actual: PeerID },
-    #[error("The input JSON schema is invalid")]
+    #[error("There is already an active undo group, call `group_end` first")]
+    UndoGroupAlreadyStarted,
+    #[error("There is no active undo group, call `group_start` first")]
     InvalidJsonSchema,
     #[error("Cannot insert or delete utf-8 in the middle of the codepoint in Unicode")]
     UTF8InUnicodeCodePoint { pos: usize },
