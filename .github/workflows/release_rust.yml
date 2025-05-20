@@ -1,0 +1,90 @@
+name: Release Rust Crates
+
+on:
+  push:
+    tags:
+      - 'loro-crdt@*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/loro-crdt@}
+          echo "version=$VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Create Release PR
+        run: |
+          cargo install cargo-release
+          git checkout -b release-${{ steps.version.outputs.version }}
+          # Run cargo release and capture the output
+          echo "Starting release process..."
+          echo "Running deno script with version: ${{ steps.version.outputs.version }}"
+          deno run -A scripts/cargo-release-cli.ts ${{ steps.version.outputs.version }} 2>&1 | tee debug_output.log
+          RELEASE_OUTPUT=$(tail -n 1 debug_output.log)
+          echo "Full debug output:"
+          cat debug_output.log
+          echo "Last line output: $RELEASE_OUTPUT"
+          echo "excluded_flags=$RELEASE_OUTPUT"
+          echo "excluded_flags=$RELEASE_OUTPUT" >> $GITHUB_OUTPUT
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+          git add .
+          git commit -m "chore: bump version to ${{ steps.version.outputs.version }}"
+          git push origin HEAD:refs/heads/release-${{ steps.version.outputs.version }}
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          title: "Release v${{ steps.version.outputs.version }}"
+          body: |
+            This PR is automatically created to release version ${{ steps.version.outputs.version }}.
+            Please review the changes and merge to trigger the release.
+          branch: release-${{ steps.version.outputs.version }}
+          base: test-rust-ci
+
+      
+
+  publish:
+    needs: release
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/loro-crdt@}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Publish to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          cargo release publish --workspace ${{ needs.release.outputs.excluded_flags }} --execute --no-confirm
+          cargo release tag --workspace ${{ needs.release.outputs.excluded_flags }} --execute --no-confirm
+          git push --tags
