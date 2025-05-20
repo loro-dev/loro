@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - 'loro-crdt@*'
+  pull_request:
+    types: [closed]
 
 jobs:
   release:
@@ -45,7 +47,7 @@ jobs:
         uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          title: "Release v${{ steps.version.outputs.version }}"
+          title: "chore: release rust crates v${{ steps.version.outputs.version }}"
           body: |
             This PR is automatically created to release version ${{ steps.version.outputs.version }}.
             Please review the changes and merge to trigger the release.
@@ -58,7 +60,11 @@ jobs:
   publish:
     needs: release
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true
+    if: |
+      github.event_name == 'pull_request' && 
+      github.event.action == 'closed' && 
+      github.event.pull_request.merged == true &&
+      startsWith(github.event.pull_request.title, 'chore: release rust crates v')
     steps:
       - uses: actions/checkout@v4
 
