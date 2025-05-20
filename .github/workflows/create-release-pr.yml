@@ -31,6 +31,7 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Create Release PR
+        id: release
         run: |
           cargo install cargo-release
           # Run cargo release and capture the output
@@ -50,7 +51,7 @@ jobs:
             This PR is automatically created to release version ${{ steps.version.outputs.version }}.
             Please review the changes and merge to trigger the release.
             
-            <!-- RELEASE_FLAGS: ${{ steps.version.outputs.EXCLUDED_FLAGS }} -->
+            <!-- RELEASE_FLAGS: ${{ steps.release.outputs.EXCLUDED_FLAGS }} -->
           branch: release-rust
           add-paths: |
             .
