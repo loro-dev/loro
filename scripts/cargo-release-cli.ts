@@ -57,45 +57,22 @@ const main = defineCommand({
   },
   async run({ args }) {
     const version = args.version;
-    // console.log(version);
-
     if (!isValidVersion(version)) {
       throw new Error("Version must be in format x.y.z (e.g., 1.2.3)");
     }
-    // TODO: for test now
-    // runSyncLoroVersion(version);
+    runSyncLoroVersion(version);
     const output = await runCargoRelease(version);
     const noChangesCrates = parseNoChangesCrates(output);
-    console.log("noChangesCrates:", noChangesCrates);
     const excludeFlags = noChangesCrates.map((crate) => `--exclude ${crate}`).join(
       " ",
     );
-    // console.log("\n Run command to bump version:");
-    // console.log(generateOptimizedCommand(version, noChangesCrates));
-    // Execute the command to bump version
     const cmd = generateOptimizedCommand(version, noChangesCrates);
-    console.log(cmd);
     const p1 = new Deno.Command("cargo", {
       args: cmd.split(" ").slice(1),
     });
     const p1Output = await p1.output();
     console.log(new TextDecoder().decode(p1Output.stderr));
-    // const bumpOutput = await bumpProcess.output();
-    // console.log(new TextDecoder().decode(bumpOutput.stderr));
     console.log(excludeFlags);
-    // console.log("2. Then Commit the changes");
-    // console.log("3. Run command to publish:");
-    // console.log(
-    //   `cargo release publish--workspace ${ excludeFlags }`,
-    // );
-    // console.log("4. Tag:");
-    // console.log(
-    //   `cargo release tag--workspace ${ excludeFlags }`,
-    // );
-    // console.log("5. Push:");
-    // console.log(
-    //   `git push--tags && git push`,
-    // );
   },
 });
 
