@@ -41,11 +41,6 @@ jobs:
           RELEASE_OUTPUT=$(tail -n 1 debug_output.log)
           echo "excluded_flags=$RELEASE_OUTPUT"
           echo "excluded_flags=$RELEASE_OUTPUT" >> $GITHUB_OUTPUT
-          git config --global user.name "GitHub Actions"
-          git config --global user.email "actions@github.com"
-          git add .
-          git commit -m "chore: bump version to ${{ steps.version.outputs.version }}"
-          git push --set-upstream origin release-${{ steps.version.outputs.version }}
 
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v5
@@ -57,6 +52,7 @@ jobs:
             Please review the changes and merge to trigger the release.
           branch: release-${{ steps.version.outputs.version }}
           base: test-rust-ci
+          commit-message: "chore: bump version to ${{ steps.version.outputs.version }}"
 
   publish:
     needs: release
