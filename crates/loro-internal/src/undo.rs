@@ -339,12 +339,12 @@ impl Stack {
         let last_remote_diff = last.1.lock().unwrap();
 
         // Check if the remote diff is disjoint with the current undo group
-        let is_disjoint_group = group.map_or(false, |g| {
+        let is_disjoint_group = group.is_some_and(|g| {
             g.affected_cids.iter().all(|cid| {
                 last_remote_diff
                     .cid_to_events
                     .get(cid)
-                    .map_or(true, |diff| diff.is_empty())
+                    .is_none_or(|diff| diff.is_empty())
             })
         });
 
