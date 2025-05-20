@@ -67,16 +67,9 @@ jobs:
         with:
           components: rustfmt
 
-      - name: Extract version
-        id: version
-        run: |
-          VERSION=${GITHUB_REF#refs/tags/loro-crdt@}
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
       - name: Publish to crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
-          cargo release publish --workspace ${{ needs.release.outputs.excluded_flags }} --execute --no-confirm
-          cargo release tag --workspace ${{ needs.release.outputs.excluded_flags }} --execute --no-confirm
-          git push --tags
+          echo "${{ needs.release.outputs.excluded_flags }}"
+          echo "cargo release publish --workspace ${{ needs.release.outputs.excluded_flags }} --execute --no-confirm"
