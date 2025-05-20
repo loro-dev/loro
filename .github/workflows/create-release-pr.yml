@@ -51,7 +51,7 @@ jobs:
             Please review the changes and merge to trigger the release.
             
             <!-- RELEASE_FLAGS: ${{ steps.version.outputs.EXCLUDED_FLAGS }} -->
-          branch: release-rust-${{ steps.version.outputs.version }}
+          branch: release-rust
           add-paths: |
             .
           base: test-rust-ci
