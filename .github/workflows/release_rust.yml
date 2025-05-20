@@ -33,7 +33,6 @@ jobs:
       - name: Create Release PR
         run: |
           cargo install cargo-release
-          git checkout -b release-${{ steps.version.outputs.version }}
           # Run cargo release and capture the output
           echo "Starting release process..."
           echo "Running deno script with version: ${{ steps.version.outputs.version }}"
