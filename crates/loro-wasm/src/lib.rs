@@ -6150,7 +6150,7 @@ interface UndoManager {
      * to end the group, call `groupEnd`.
      *
      * If a remote import is received within the group, its possible that the undo item will be
-     * split and the gruop will be automatically ended.
+     * split and the group will be automatically ended.
      *
      * Calling `groupStart` within an active group will throw but have no effect.
      *

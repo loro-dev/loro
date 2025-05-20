@@ -338,41 +338,45 @@ impl Stack {
         let last = self.stack.back_mut().unwrap();
         let last_remote_diff = last.1.lock().unwrap();
 
-        let is_disjoint_group = group
-            .map(|g| {
-                g.affected_cids.iter().all(|cid| {
-                    last_remote_diff
-                        .cid_to_events
-                        .get(cid)
-                        .map(|diff| diff.is_empty())
-                        .unwrap_or(true)
-                })
+        // Check if the remote diff is disjoint with the current undo group
+        let is_disjoint_group = group.map_or(false, |g| {
+            g.affected_cids.iter().all(|cid| {
+                last_remote_diff
+                    .cid_to_events
+                    .get(cid)
+                    .map_or(true, |diff| diff.is_empty())
             })
-            .unwrap_or(false);
+        });
 
-        if !last_remote_diff.cid_to_events.is_empty() && !is_disjoint_group {
-            // If the remote diff is not empty, we cannot merge
+        // Can't merge if remote diffs exist and it's not disjoint with the current undo group
+        let should_create_new_entry =
+            !last_remote_diff.cid_to_events.is_empty() && !is_disjoint_group;
+
+        if should_create_new_entry {
+            // Create a new entry in the stack
             drop(last_remote_diff);
             let mut v = VecDeque::new();
             v.push_back(StackItem { span, meta });
             self.stack
                 .push_back((v, Arc::new(Mutex::new(DiffBatch::default()))));
-
             self.size += 1;
-        } else {
-            if can_merge {
-                if let Some(last_span) = last.0.back_mut() {
-                    if last_span.span.end == span.start {
-                        // merge the span
-                        last_span.span.end = span.end;
-                        return;
-                    }
+            return;
+        }
+
+        // Try to merge with the previous entry if allowed
+        if can_merge {
+            if let Some(last_span) = last.0.back_mut() {
+                if last_span.span.end == span.start {
+                    // Merge spans by extending the end of the last span
+                    last_span.span.end = span.end;
+                    return;
                 }
             }
-
-            self.size += 1;
-            last.0.push_back(StackItem { span, meta });
         }
+
+        // Add as a new item to the existing entry
+        self.size += 1;
+        last.0.push_back(StackItem { span, meta });
     }
 
     pub fn compose_remote_event(&mut self, diff: &[&ContainerDiff]) {
@@ -456,17 +460,13 @@ impl UndoManagerInner {
     }
 
     /// Returns true if a given container diff is disjoint with the current group.
-    /// They are disjoint if they have no ovrlap in changed container ids.
+    /// They are disjoint if they have no overlap in changed container ids.
     fn is_disjoint_with_group(&self, diff: &[&ContainerDiff]) -> bool {
-        if self.group.is_none() {
+        let Some(group) = &self.group else {
             return false;
-        }
+        };
 
-        let incoming_cids: FxHashSet<ContainerID> = diff.iter().map(|d| d.id.clone()).collect();
-        self.group
-            .as_ref()
-            .map(|g| g.affected_cids.is_disjoint(&incoming_cids))
-            .unwrap_or(false)
+        diff.iter().all(|d| !group.affected_cids.contains(&d.id))
     }
 
     fn record_checkpoint(&mut self, latest_counter: Counter, event: Option<DiffEvent>) {

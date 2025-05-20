@@ -108,7 +108,7 @@ fn test_simulate_non_intersecting_remote_undo() {
     let snapshot = doc.export(ExportMode::Snapshot).unwrap();
     // At the point the first doc has state of "12" in the "text" container
 
-    // Doc 2 makes changes to a seperate container
+    // Doc 2 makes changes to a separate container
     // The doc 2 has state of "123" in the "text2" container
     let doc2 = LoroDoc::from_snapshot(&snapshot).unwrap();
     let text2 = doc2.get_text("text2");
@@ -122,13 +122,38 @@ fn test_simulate_non_intersecting_remote_undo() {
         .unwrap();
     doc.import(&update).unwrap();
 
-
     text.update("123", UpdateOptions::default()).unwrap();
     doc.commit_then_renew();
     undo_manager.group_end();
 
-
     undo_manager.undo().unwrap();
 
     assert_eq!(text.to_string(), "");
+}
+
+#[test]
+fn test_undo_group_start_with_remote_ops() {
+    let doc = LoroDoc::new();
+    let doc2 = LoroDoc::new();
+    let mut undo_manager = UndoManager::new(&doc);
+    doc.get_text("text").insert(0, "hi").unwrap();
+    doc2.import(&doc.export(ExportMode::Snapshot).unwrap())
+        .unwrap();
+    doc2.get_text("text").insert(0, "test").unwrap();
+    doc.import(&doc2.export(ExportMode::Snapshot).unwrap())
+        .unwrap();
+    undo_manager.group_start().unwrap();
+    doc.get_text("text").insert(0, "t").unwrap();
+    undo_manager.undo().unwrap();
+    assert_eq!(doc.get_text("text").to_string(), "testhi");
+    undo_manager.undo().unwrap();
+    assert_eq!(doc.get_text("text").to_string(), "test");
+    undo_manager.redo().unwrap();
+    assert_eq!(doc.get_text("text").to_string(), "testhi");
+    undo_manager.redo().unwrap();
+    assert_eq!(doc.get_text("text").to_string(), "ttesthi");
+    undo_manager.undo().unwrap();
+    assert_eq!(doc.get_text("text").to_string(), "testhi");
+    undo_manager.undo().unwrap();
+    assert_eq!(doc.get_text("text").to_string(), "test");
 }
