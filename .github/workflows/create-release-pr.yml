@@ -1,11 +1,9 @@
-name: Release Rust Crates
+name: Create Release PR
 
 on:
   push:
     tags:
       - 'loro-crdt@*'
-  pull_request:
-    types: [closed]
 
 jobs:
   release:
@@ -40,8 +38,8 @@ jobs:
           echo "Running deno script with version: ${{ steps.version.outputs.version }}"
           deno run -A scripts/cargo-release-cli.ts ${{ steps.version.outputs.version }} 2>&1 | tee debug_output.log
           RELEASE_OUTPUT=$(tail -n 1 debug_output.log)
-          echo "excluded_flags=$RELEASE_OUTPUT"
-          echo "excluded_flags=$RELEASE_OUTPUT" >> $GITHUB_OUTPUT
+          echo "EXCLUDED_FLAGS=$RELEASE_OUTPUT"
+          echo "EXCLUDED_FLAGS=$RELEASE_OUTPUT" >> $GITHUB_OUTPUT
 
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v7
@@ -51,31 +49,10 @@ jobs:
           body: |
             This PR is automatically created to release version ${{ steps.version.outputs.version }}.
             Please review the changes and merge to trigger the release.
+            
+            <!-- RELEASE_FLAGS: ${{ steps.version.outputs.EXCLUDED_FLAGS }} -->
           branch: release-rust-${{ steps.version.outputs.version }}
           add-paths: |
             .
           base: test-rust-ci
-          commit-message: "chore: bump version to ${{ steps.version.outputs.version }}"
-
-  publish:
-    needs: release
-    runs-on: ubuntu-latest
-    if: |
-      github.event_name == 'pull_request' && 
-      github.event.action == 'closed' && 
-      github.event.pull_request.merged == true &&
-      startsWith(github.event.pull_request.title, 'chore: release rust crates v')
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-
-      - name: Publish to crates.io
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          echo "${{ needs.release.outputs.excluded_flags }}"
-          echo "cargo release publish --workspace ${{ needs.release.outputs.excluded_flags }} --execute --no-confirm"
+          commit-message: "chore: bump version to ${{ steps.version.outputs.version }}" 
