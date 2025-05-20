@@ -80,23 +80,8 @@ const main = defineCommand({
     });
     const p1Output = await p1.output();
     console.log(new TextDecoder().decode(p1Output.stderr));
-    console.log("done");
-    console.log("cargo release version");
     // const bumpOutput = await bumpProcess.output();
     // console.log(new TextDecoder().decode(bumpOutput.stderr));
-    const bumpProcess = new Deno.Command("cargo", {
-      args: [
-        "release",
-        "version",
-        "--workspace",
-        version,
-        ...excludeFlags.split(" "),
-        "--execute",
-        "--no-confirm"
-      ]
-    });
-    const bumpOutput = await bumpProcess.output();
-    console.log(new TextDecoder().decode(bumpOutput.stderr));
     console.log(excludeFlags);
     // console.log("2. Then Commit the changes");
     // console.log("3. Run command to publish:");

@@ -39,16 +39,13 @@ jobs:
           echo "Running deno script with version: ${{ steps.version.outputs.version }}"
           deno run -A scripts/cargo-release-cli.ts ${{ steps.version.outputs.version }} 2>&1 | tee debug_output.log
           RELEASE_OUTPUT=$(tail -n 1 debug_output.log)
-          echo "Full debug output:"
-          cat debug_output.log
-          echo "Last line output: $RELEASE_OUTPUT"
           echo "excluded_flags=$RELEASE_OUTPUT"
           echo "excluded_flags=$RELEASE_OUTPUT" >> $GITHUB_OUTPUT
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
           git add .
           git commit -m "chore: bump version to ${{ steps.version.outputs.version }}"
-          git push origin HEAD:refs/heads/release-${{ steps.version.outputs.version }}
+          git push --set-upstream origin release-${{ steps.version.outputs.version }}
 
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v5
@@ -60,8 +57,6 @@ jobs:
             Please review the changes and merge to trigger the release.
           branch: release-${{ steps.version.outputs.version }}
           base: test-rust-ci
-
-      
 
   publish:
     needs: release
