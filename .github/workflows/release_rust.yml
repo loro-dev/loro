@@ -43,14 +43,16 @@ jobs:
           echo "excluded_flags=$RELEASE_OUTPUT" >> $GITHUB_OUTPUT
 
       - name: Create Pull Request
-        uses: peter-evans/create-pull-request@v5
+        uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           title: "Release v${{ steps.version.outputs.version }}"
           body: |
             This PR is automatically created to release version ${{ steps.version.outputs.version }}.
             Please review the changes and merge to trigger the release.
-          branch: release-${{ steps.version.outputs.version }}
+          branch: release-rust-${{ steps.version.outputs.version }}
+          add-paths: |
+            .
           base: test-rust-ci
           commit-message: "chore: bump version to ${{ steps.version.outputs.version }}"
 
