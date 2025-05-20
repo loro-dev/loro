@@ -1,6 +1,6 @@
 [package]
 name = "loro-delta"
-version = "1.5.0"
+version = "1.5.6"
 edition = "2021"
 license = "MIT"
 description = "Loro internal library. It's used as a delta between two versions of text or lists. It's also an efficient Rope."
