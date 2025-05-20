@@ -854,10 +854,6 @@ impl LoroDoc {
     pub fn delete_root_container(&self, cid: ContainerID) {
         self.doc.delete_root_container(cid.into());
     }
-
-    fn new_api(&self) {
-        println!("new api");
-    }
 }
 
 pub trait ChangeAncestorsTraveler: Sync + Send {

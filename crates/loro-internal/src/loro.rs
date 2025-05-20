@@ -1915,10 +1915,6 @@ impl LoroDoc {
             .hide_empty_root_containers
             .store(hide, std::sync::atomic::Ordering::Relaxed);
     }
-
-    fn new_api(&self) {
-        println!("new api");
-    }
 }
 
 // FIXME: PERF: This method is quite slow because it iterates all the changes
