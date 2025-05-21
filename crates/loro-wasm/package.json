@@ -1,6 +1,6 @@
 {
   "name": "loro-crdt",
-  "version": "1.5.6",
+  "version": "1.5.7",
   "description": "Loro CRDTs is a high-performance CRDT framework that makes your app state synchronized, collaborative and maintainable effortlessly.",
   "keywords": [
     "crdt",
