@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.7
+
+### Patch Changes
+
+- 70a3bf3: Feat: support `group_start` and `group_end` for UndoManager #720
+
 ## 1.5.6
 
 ### Patch Changes
