@@ -403,4 +403,38 @@ describe("toJsonWithReplacer", () => {
     });
     expect(json).toMatchSnapshot()
   })
+
+  it("should include id and travel child containers in replacer output", () => {
+    const doc = new LoroDoc();
+    // root list containing a nested map
+    const list = doc.getList("list");
+    const nestedMap = list.pushContainer(new LoroMap());
+    nestedMap.set("field", "value");
+
+    const json = doc.toJsonWithReplacer((_key, value) => {
+      if (isContainer(value)) {
+        // Attach id but keep shallow value so that the algorithm keeps traversing
+        return {
+          id: value.id,
+          body: value.getShallowValue(),
+        };
+      }
+      return value;
+    });
+
+    // Expect that the id is present and that the algorithm has descended into the nested map
+    expect(json).toEqual({
+      list: {
+        id: expect.stringMatching(/^cid:/),
+        body: [
+          {
+            id: expect.stringMatching(/^cid:/),
+            body: {
+              field: "value",
+            },
+          },
+        ],
+      },
+    });
+  });
 });
