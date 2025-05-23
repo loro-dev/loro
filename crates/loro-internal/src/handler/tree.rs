@@ -111,14 +111,16 @@ impl TreeInner {
     fn get_value(&self, deep: bool) -> LoroValue {
         let mut ans = vec![];
 
+        let empty_vec = vec![];
         let mut q = VecDeque::from_iter(
             self.children_links
                 .get(&None)
-                .unwrap()
+                .unwrap_or(&empty_vec)
                 .iter()
                 .enumerate()
                 .zip(std::iter::repeat(None::<TreeID>)),
         );
+
         while let Some(((idx, target), parent)) = q.pop_front() {
             let map = self.map.get(target).unwrap();
             let mut loro_map_value = FxHashMap::default();
