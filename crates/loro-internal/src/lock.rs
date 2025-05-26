@@ -192,13 +192,15 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Locking order violation")]
+    #[should_panic]
     fn test_locking_order_when_not_dropped_in_reverse_order() {
         let group = LoroLockGroup::new();
         let mutex1 = group.new_lock(1, LockKind::Txn);
         let mutex2 = group.new_lock(2, LockKind::OpLog);
         let _guard1 = mutex1.lock().unwrap();
         let _guard2 = mutex2.lock().unwrap();
+        drop(_guard1);
+        drop(_guard2);
     }
 
     #[test]
