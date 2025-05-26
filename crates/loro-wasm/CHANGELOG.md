@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.7
+
+### Patch Changes
+
+- 70a3bf3: Feat: support `group_start` and `group_end` for UndoManager #720
+- 24a7f53: fix: panic when calling get_deep_value with an empty tree #740
+
 ## 1.5.6
 
 ### Patch Changes
