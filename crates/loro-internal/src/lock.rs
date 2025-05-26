@@ -2,7 +2,7 @@ use crate::sync::ThreadLocal;
 use crate::sync::{Mutex, MutexGuard};
 use std::backtrace::Backtrace;
 use std::cell::Cell;
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 use std::ops::{Deref, DerefMut};
 use std::panic::Location;
 use std::sync::Arc;
@@ -20,17 +20,18 @@ struct LockInfo {
     caller_location: Option<&'static Location<'static>>,
 }
 
-impl LockInfo {
-    fn to_string(&self) -> String {
+impl Display for LockInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.caller_location {
-            Some(location) => format!(
+            Some(location) => write!(
+                f,
                 "LockInfo(kind: {}, location: {}:{}:{})",
                 self.kind,
                 location.file(),
                 location.line(),
                 location.column()
             ),
-            None => format!("LockInfo(kind: {}, location: None)", self.kind),
+            None => write!(f, "LockInfo(kind: {}, location: None)", self.kind),
         }
     }
 }
@@ -83,8 +84,7 @@ impl<T> LoroMutex<T> {
         if last.kind >= self.kind {
             panic!(
                 "Locking order violation. Current lock: {}, New lock: {}",
-                last.to_string(),
-                this.to_string()
+                last, this
             );
         }
 
@@ -153,9 +153,9 @@ impl<T> Drop for LoroMutexGuardInner<'_, T> {
             eprintln!("Locking release order violation callstack:\n{}", bt);
             panic!(
                 "Locking release order violation. self.this: {}, self.last: {}, current: {}",
-                self.this.to_string(),
-                self.last.to_string(),
-                cur.get().to_string()
+                self.this,
+                self.last,
+                cur.get()
             );
         }
 
