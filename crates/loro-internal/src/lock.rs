@@ -1,7 +1,6 @@
 use crate::sync::ThreadLocal;
 use crate::sync::{Mutex, MutexGuard};
 use std::backtrace::Backtrace;
-use std::cell::Cell;
 use std::fmt::{Debug, Display};
 use std::ops::{Deref, DerefMut};
 use std::panic::Location;
@@ -11,7 +10,7 @@ use std::sync::Arc;
 pub struct LoroMutex<T> {
     lock: Mutex<T>,
     kind: u8,
-    currently_locked_in_this_thread: Arc<ThreadLocal<Cell<LockInfo>>>,
+    currently_locked_in_this_thread: Arc<ThreadLocal<Mutex<LockInfo>>>,
 }
 
 #[derive(Debug, Copy, Clone, Default)]
@@ -38,7 +37,7 @@ impl Display for LockInfo {
 
 #[derive(Debug)]
 pub struct LoroLockGroup {
-    g: Arc<ThreadLocal<Cell<LockInfo>>>,
+    g: Arc<ThreadLocal<Mutex<LockInfo>>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -76,7 +75,7 @@ impl<T> LoroMutex<T> {
     pub fn lock(&self) -> Result<LoroMutexGuard<T>, std::sync::PoisonError<MutexGuard<T>>> {
         let caller = Location::caller();
         let v = self.currently_locked_in_this_thread.get_or_default();
-        let last = v.get();
+        let last = *v.lock().unwrap_or_else(|e| e.into_inner());
         let this = LockInfo {
             kind: self.kind,
             caller_location: Some(caller),
@@ -89,7 +88,7 @@ impl<T> LoroMutex<T> {
         }
 
         let ans = self.lock.lock()?;
-        v.set(this);
+        *v.lock().unwrap_or_else(|e| e.into_inner()) = this;
         let ans = LoroMutexGuard {
             guard: ans,
             _inner: LoroMutexGuardInner {
@@ -148,18 +147,17 @@ impl<'a, T> LoroMutexGuard<'a, T> {
 impl<T> Drop for LoroMutexGuardInner<'_, T> {
     fn drop(&mut self) {
         let cur = self.inner.currently_locked_in_this_thread.get_or_default();
-        if cur.get().kind != self.this.kind {
+        let current_lock_info = *cur.lock().unwrap_or_else(|e| e.into_inner());
+        if current_lock_info.kind != self.this.kind {
             let bt = Backtrace::capture();
             eprintln!("Locking release order violation callstack:\n{}", bt);
             panic!(
                 "Locking release order violation. self.this: {}, self.last: {}, current: {}",
-                self.this,
-                self.last,
-                cur.get()
+                self.this, self.last, current_lock_info
             );
         }
 
-        cur.set(self.last);
+        *cur.lock().unwrap_or_else(|e| e.into_inner()) = self.last;
     }
 }
 
