@@ -475,6 +475,7 @@ impl LoroDoc {
     /// Create a new `LoroDoc` from a snapshot.
     pub fn from_snapshot(bytes: &[u8]) -> LoroResult<Self> {
         let inner = InnerLoroDoc::from_snapshot(bytes)?;
+        inner.start_auto_commit();
         Ok(Self::_new(inner))
     }
 
@@ -1275,7 +1276,10 @@ impl ContainerTrait for LoroList {
     }
 
     fn doc(&self) -> Option<LoroDoc> {
-        self.handler.doc().map(LoroDoc::_new)
+        self.handler.doc().map(|doc| {
+            doc.start_auto_commit();
+            LoroDoc::_new(doc)
+        })
     }
 }
 
@@ -1547,7 +1551,10 @@ impl ContainerTrait for LoroMap {
     }
 
     fn doc(&self) -> Option<LoroDoc> {
-        self.handler.doc().map(LoroDoc::_new)
+        self.handler.doc().map(|doc| {
+            doc.start_auto_commit();
+            LoroDoc::_new(doc)
+        })
     }
 }
 
@@ -1718,7 +1725,10 @@ impl ContainerTrait for LoroText {
     }
 
     fn doc(&self) -> Option<LoroDoc> {
-        self.handler.doc().map(LoroDoc::_new)
+        self.handler.doc().map(|doc| {
+            doc.start_auto_commit();
+            LoroDoc::_new(doc)
+        })
     }
 }
 
@@ -2084,7 +2094,10 @@ impl ContainerTrait for LoroTree {
         self.handler.is_deleted()
     }
     fn doc(&self) -> Option<LoroDoc> {
-        self.handler.doc().map(LoroDoc::_new)
+        self.handler.doc().map(|doc| {
+            doc.start_auto_commit();
+            LoroDoc::_new(doc)
+        })
     }
 }
 
@@ -2494,8 +2507,12 @@ impl ContainerTrait for LoroMovableList {
     fn is_deleted(&self) -> bool {
         self.handler.is_deleted()
     }
+
     fn doc(&self) -> Option<LoroDoc> {
-        self.handler.doc().map(LoroDoc::_new)
+        self.handler.doc().map(|doc| {
+            doc.start_auto_commit();
+            LoroDoc::_new(doc)
+        })
     }
 }
 
@@ -2772,8 +2789,12 @@ impl ContainerTrait for LoroUnknown {
     fn is_deleted(&self) -> bool {
         self.handler.is_deleted()
     }
+
     fn doc(&self) -> Option<LoroDoc> {
-        self.handler.doc().map(LoroDoc::_new)
+        self.handler.doc().map(|doc| {
+            doc.start_auto_commit();
+            LoroDoc::_new(doc)
+        })
     }
 }
 
