@@ -2,6 +2,12 @@ import * as path from "https://deno.land/std@0.105.0/path/mod.ts";
 import { gzip } from "https://deno.land/x/compress@v0.4.5/mod.ts";
 import brotliPromise from "npm:brotli-wasm";
 import { getOctokit } from "npm:@actions/github";
+
+// Polyfill for missing performance.markResourceTiming function in Deno
+if (typeof performance !== 'undefined' && !(performance as any).markResourceTiming) {
+  (performance as any).markResourceTiming = () => { };
+}
+
 const __dirname = path.dirname(path.fromFileUrl(import.meta.url));
 
 // deno run -A build.ts debug
