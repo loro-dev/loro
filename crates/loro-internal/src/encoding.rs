@@ -15,7 +15,9 @@ use crate::op::OpWithId;
 use crate::version::{Frontiers, VersionRange};
 use crate::LoroDoc;
 use crate::{oplog::OpLog, LoroError, VersionVector};
-use loro_common::{HasIdSpan, IdLpSpan, IdSpan, LoroEncodeError, LoroResult, PeerID, ID};
+use loro_common::{
+    HasIdSpan, IdLpSpan, IdSpan, InternalString, LoroEncodeError, LoroResult, PeerID, ID,
+};
 use num_traits::{FromPrimitive, ToPrimitive};
 use rle::{HasLength, Sliceable};
 use std::borrow::Cow;
@@ -518,10 +520,15 @@ pub(crate) fn decode_snapshot(
     doc: &LoroDoc,
     mode: EncodeMode,
     body: &[u8],
+    origin: InternalString,
 ) -> Result<ImportStatus, LoroError> {
     match mode {
-        EncodeMode::OutdatedSnapshot => outdated_encode_reordered::decode_snapshot(doc, body)?,
-        EncodeMode::FastSnapshot => fast_snapshot::decode_snapshot(doc, body.to_vec().into())?,
+        EncodeMode::OutdatedSnapshot => {
+            outdated_encode_reordered::decode_snapshot(doc, body, origin)?
+        }
+        EncodeMode::FastSnapshot => {
+            fast_snapshot::decode_snapshot(doc, body.to_vec().into(), origin)?
+        }
         _ => unreachable!(),
     };
     Ok(ImportStatus {

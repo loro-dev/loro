@@ -806,6 +806,7 @@ impl DocState {
         oplog: &OpLog,
         unknown_containers: Vec<ContainerIdx>,
         need_to_register_parent: bool,
+        origin: InternalString,
     ) {
         self.pre_txn(Default::default(), EventTriggerKind::Import);
         if need_to_register_parent {
@@ -839,7 +840,7 @@ impl DocState {
             );
             self.apply_diff(
                 InternalDocDiff {
-                    origin: Default::default(),
+                    origin: origin.clone(),
                     by: EventTriggerKind::Import,
                     diff: unknown_diffs.into(),
                     new_version: Cow::Owned(frontiers.clone()),
@@ -870,7 +871,7 @@ impl DocState {
                 .collect();
 
             self.record_diff(InternalDocDiff {
-                origin: Default::default(),
+                origin,
                 by: EventTriggerKind::Import,
                 diff: diff.into(),
                 new_version: Cow::Borrowed(&frontiers),

@@ -116,7 +116,7 @@ impl LoroDoc {
         drop(txn);
         let snapshot = encoding::fast_snapshot::encode_snapshot_inner(self);
         let doc = Self::new();
-        encoding::fast_snapshot::decode_snapshot_inner(snapshot, &doc).unwrap();
+        encoding::fast_snapshot::decode_snapshot_inner(snapshot, &doc, Default::default()).unwrap();
         doc.set_config(&self.config);
         if self.auto_commit.load(std::sync::atomic::Ordering::Relaxed) {
             doc.start_auto_commit();
@@ -419,7 +419,7 @@ impl LoroDoc {
         let (options, _guard) = doc.commit_then_stop();
         let ParsedHeaderAndBody { mode, body, .. } = parse_header_and_body(bytes, true)?;
         if mode.is_snapshot() {
-            decode_snapshot(&doc, mode, body)?;
+            decode_snapshot(&doc, mode, body, Default::default())?;
             drop(_guard);
             doc.renew_txn_if_auto_commit(options);
             Ok(doc)
@@ -561,7 +561,7 @@ impl LoroDoc {
             EncodeMode::OutdatedSnapshot => {
                 if self.can_reset_with_snapshot() {
                     loro_common::info!("Init by snapshot {}", self.peer_id());
-                    decode_snapshot(self, parsed.mode, parsed.body)
+                    decode_snapshot(self, parsed.mode, parsed.body, origin)
                 } else {
                     self.update_oplog_and_apply_delta_to_state_if_needed(
                         |oplog| oplog.decode(parsed),
@@ -573,7 +573,7 @@ impl LoroDoc {
                 if self.can_reset_with_snapshot() {
                     ensure_cov::notify_cov("loro_internal::import::snapshot");
                     loro_common::info!("Init by fast snapshot {}", self.peer_id());
-                    decode_snapshot(self, parsed.mode, parsed.body)
+                    decode_snapshot(self, parsed.mode, parsed.body, origin)
                 } else {
                     self.update_oplog_and_apply_delta_to_state_if_needed(
                         |oplog| oplog.decode(parsed),

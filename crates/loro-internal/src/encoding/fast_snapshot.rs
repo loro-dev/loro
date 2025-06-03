@@ -19,7 +19,7 @@ use crate::{
     change::Change, encoding::shallow_snapshot, oplog::ChangeStore, LoroDoc, OpLog, VersionVector,
 };
 use bytes::{Buf, Bytes};
-use loro_common::{HasCounterSpan, IdSpan, LoroError, LoroResult};
+use loro_common::{HasCounterSpan, IdSpan, InternalString, LoroError, LoroResult};
 
 use super::{EncodedBlobMode, ImportBlobMetadata, ParsedHeaderAndBody};
 pub(crate) const EMPTY_MARK: &[u8] = b"E";
@@ -87,12 +87,20 @@ fn read_u32_le(r: &mut bytes::buf::Reader<Bytes>) -> u32 {
     u32::from_le_bytes(buf)
 }
 
-pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: Bytes) -> LoroResult<()> {
+pub(crate) fn decode_snapshot(
+    doc: &LoroDoc,
+    bytes: Bytes,
+    origin: InternalString,
+) -> LoroResult<()> {
     let snapshot = _decode_snapshot_bytes(bytes)?;
-    decode_snapshot_inner(snapshot, doc)
+    decode_snapshot_inner(snapshot, doc, origin)
 }
 
-pub(crate) fn decode_snapshot_inner(snapshot: Snapshot, doc: &LoroDoc) -> Result<(), LoroError> {
+pub(crate) fn decode_snapshot_inner(
+    snapshot: Snapshot,
+    doc: &LoroDoc,
+    origin: InternalString,
+) -> Result<(), LoroError> {
     let Snapshot {
         oplog_bytes,
         state_bytes,
@@ -159,7 +167,7 @@ pub(crate) fn decode_snapshot_inner(snapshot: Snapshot, doc: &LoroDoc) -> Result
     // FIXME: we may need to extract the unknown containers here?
     // Or we should lazy load it when the time comes?
 
-    state.init_with_states_and_version(state_frontiers, &oplog, vec![], false);
+    state.init_with_states_and_version(state_frontiers, &oplog, vec![], false, origin);
     drop(state);
     drop(oplog);
     if need_calc {
