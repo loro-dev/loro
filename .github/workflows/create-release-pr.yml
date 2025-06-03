@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - 'loro-crdt@*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag name (e.g., loro-crdt@1.0.0)'
+        required: true
+        type: string
 
 jobs:
   release:
