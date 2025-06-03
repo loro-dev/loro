@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.8
+
+### Patch Changes
+
+- 19c064a: fix: snapshot origin of event
+
 ## 1.5.7
 
 ### Patch Changes
