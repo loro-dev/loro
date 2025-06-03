@@ -5,8 +5,8 @@ use fxhash::{FxHashMap, FxHashSet};
 use generic_btree::rle::Sliceable;
 use itertools::Itertools;
 use loro_common::{
-    ContainerID, ContainerType, Counter, HasCounterSpan, HasId, HasIdSpan, IdLp, LoroError,
-    LoroResult, PeerID, TreeID, ID,
+    ContainerID, ContainerType, Counter, HasCounterSpan, HasId, HasIdSpan, IdLp, InternalString,
+    LoroError, LoroResult, PeerID, TreeID, ID,
 };
 use rle::HasLength;
 use serde_columnar::{columnar, ColumnarError};
@@ -643,7 +643,11 @@ fn calc_sorted_ops_for_snapshot<'a>(
     ops
 }
 
-pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
+pub(crate) fn decode_snapshot(
+    doc: &LoroDoc,
+    bytes: &[u8],
+    origin: InternalString,
+) -> LoroResult<()> {
     let mut oplog = doc.oplog().lock().map_err(|_| {
         LoroError::DecodeError(
             "decode_snapshot: failed to lock oplog"
@@ -718,6 +722,7 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
         ops,
         &oplog,
         &peer_ids,
+        origin.clone(),
     )
     .unwrap();
 
@@ -727,7 +732,6 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
     if !oplog.pending_changes.is_empty() {
         drop(state);
         drop(oplog);
-        // TODO: Fix this origin value
         doc.update_oplog_and_apply_delta_to_state_if_needed(
             |oplog| {
                 oplog.try_apply_pending(latest_ids, None);
@@ -737,7 +741,7 @@ pub(crate) fn decode_snapshot(doc: &LoroDoc, bytes: &[u8]) -> LoroResult<()> {
                     pending: None,
                 })
             },
-            "".into(),
+            origin,
         )?;
     }
 
@@ -848,6 +852,7 @@ fn decode_snapshot_states(
     ops: Vec<OpWithId>,
     oplog: &OpLog,
     peers: &PeerIdArena,
+    origin: InternalString,
 ) -> LoroResult<()> {
     let mut state_blob_index: usize = 0;
     let mut ops_index: usize = 0;
@@ -922,7 +927,7 @@ fn decode_snapshot_states(
         )?;
     }
 
-    state.init_with_states_and_version(frontiers, oplog, unknown_containers, true);
+    state.init_with_states_and_version(frontiers, oplog, unknown_containers, true, origin);
     Ok(())
 }
 

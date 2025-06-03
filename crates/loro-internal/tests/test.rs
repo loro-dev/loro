@@ -1459,3 +1459,23 @@ fn test_ephemeral_store() {
     store.set("b", 2);
     store.set("c", 3);
 }
+
+#[test]
+fn test_origin() {
+    let doc = LoroDoc::new_auto_commit();
+    doc.set_peer_id(0).unwrap();
+    let remote = LoroDoc::new_auto_commit();
+    remote.set_peer_id(1).unwrap();
+    doc.get_map("map").insert("a", 1).unwrap();
+    doc.commit_then_renew();
+    let snapshot = doc.export_snapshot().unwrap();
+    let expected_origin_string = "expectedOriginString";
+
+    let sub = remote.subscribe_root(Arc::new(move |e| {
+        assert_eq!(e.event_meta.origin, expected_origin_string.into());
+    }));
+    remote
+        .import_with(&snapshot, expected_origin_string.into())
+        .unwrap();
+    sub.unsubscribe();
+}
