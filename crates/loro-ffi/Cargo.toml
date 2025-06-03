@@ -1,6 +1,6 @@
 [package]
 name = "loro-ffi"
-version = "1.5.6"
+version = "1.5.8"
 edition = "2021"
 description = "FFI bindings for Loro"
 authors = ["Liang Zhao", "Zixuan Chen"]
@@ -15,5 +15,5 @@ keywords = ["crdt", "local-first"]
 loro = { path = "../loro", features = [
     "counter",
     "jsonpath",
-], version = "1.5.6" }
+], version = "1.5.8" }
 serde_json = { workspace = true }
