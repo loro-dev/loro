@@ -33,4 +33,6 @@ jobs:
           cargo install cargo-release
           cargo release publish --workspace ${{ steps.extract_flags.outputs.EXCLUDED_FLAGS }} --execute --no-confirm
           cargo release tag --workspace ${{ steps.extract_flags.outputs.EXCLUDED_FLAGS }} --execute --no-confirm
+          git config --global user.email "action@github.com"
+          git config --global user.name "GitHub Action"
           git push --tags
