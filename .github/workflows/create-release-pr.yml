@@ -32,7 +32,16 @@ jobs:
       - name: Extract version
         id: version
         run: |
-          VERSION=${GITHUB_REF#refs/tags/loro-crdt@}
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # Extract version from manual input
+            TAG="${{ github.event.inputs.tag }}"
+            VERSION=${TAG#loro-crdt@}
+            echo "Manual trigger detected, using input tag: $TAG"
+          else
+            # Extract version from pushed tag
+            VERSION=${GITHUB_REF#refs/tags/loro-crdt@}
+            echo "Tag push detected, using pushed tag"
+          fi
           echo "version=$VERSION"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
