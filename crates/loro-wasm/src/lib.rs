@@ -5117,9 +5117,6 @@ impl VersionVector {
     }
 }
 
-
-
-
 const ID_CONVERT_ERROR: &str = "Invalid peer id. It must be a number, a BigInt, or a decimal string that can be parsed to a unsigned 64-bit integer";
 fn js_peer_to_peer(value: JsValue) -> JsResult<u64> {
     if value.is_bigint() {
