@@ -1795,14 +1795,19 @@ impl LoroDoc {
         let id = js_id_to_id(id)?;
         let borrow_mut = &self.0;
         let oplog = borrow_mut.oplog().lock().unwrap();
+
+        let serializer =
+            serde_wasm_bindgen::Serializer::new().serialize_large_number_types_as_bigints(true);
+
         let change = oplog
             .get_remote_change_at(id)
             .ok_or_else(|| JsError::new(&format!("Change {:?} not found", id)))?;
         let ops = change
             .ops()
             .iter()
-            .map(|op| serde_wasm_bindgen::to_value(op).unwrap())
+            .map(|op| op.serialize(&serializer).unwrap())
             .collect::<Vec<_>>();
+
         Ok(ops)
     }
 
