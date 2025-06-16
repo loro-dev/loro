@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.9
+
+### Patch Changes
+
+- c2e6d49: fix(wasm): serialize op with bigint support @synoet
+
 ## 1.5.8
 
 ### Patch Changes
