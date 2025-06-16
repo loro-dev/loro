@@ -12,7 +12,6 @@ members = [
     "crates/dev-utils",
     "crates/delta",
     "crates/kv-store",
-    "crates/loro-ffi",
 ]
 resolver = "2"
 

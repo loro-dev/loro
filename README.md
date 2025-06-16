@@ -139,6 +139,9 @@ You can use the [Loro Inspector](https://inspector.loro.dev) to inspect the stat
 
 https://github.com/user-attachments/assets/ceeb7450-80ce-42f2-aef4-2e08fa2d1f1b
 
+# Bindings
+
+You can find bindings for other programming languages in [loro-ffi](https://github.com/loro-dev/loro-ffi).
 
 # Blog
 

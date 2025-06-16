@@ -1282,14 +1282,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "loro-ffi"
-version = "1.5.8"
-dependencies = [
- "loro 1.5.8",
- "serde_json",
-]
-
-[[package]]
 name = "loro-internal"
 version = "0.16.2"
 source = "git+https://github.com/loro-dev/loro.git?tag=loro-crdt%400.16.7#d2b0520f8633f96146a49ec205bd5e7056880f1a"
