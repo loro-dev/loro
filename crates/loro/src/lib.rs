@@ -732,6 +732,7 @@ impl LoroDoc {
     ///
     /// ```
     /// # use loro::LoroDoc;
+    /// # use loro::ContainerTrait;
     /// # use std::sync::{atomic::AtomicBool, Arc};
     /// # use loro::{event::DiffEvent, LoroResult, TextDelta};
     /// #
@@ -1199,6 +1200,8 @@ trait SealedTrait {}
 pub trait ContainerTrait: SealedTrait {
     /// The handler of the container.
     type Handler: HandlerTrait;
+    /// Get the ID of the container.
+    fn id(&self) -> ContainerID;
     /// Convert the container to a [Container].
     fn to_container(&self) -> Container;
     /// Convert the container to a handler.
@@ -1219,6 +1222,12 @@ pub trait ContainerTrait: SealedTrait {
     fn is_deleted(&self) -> bool;
     /// Get the doc of the container.
     fn doc(&self) -> Option<LoroDoc>;
+    /// Subscribe to the container.
+    ///
+    /// If the Container is detached, this method will return `None`.
+    fn subscribe(&self, callback: Subscriber) -> Option<Subscription> {
+        self.doc().map(|doc| doc.subscribe(&self.id(), callback))
+    }
 }
 
 /// LoroList container. It's used to model array.
@@ -1247,6 +1256,11 @@ pub struct LoroList {
 impl SealedTrait for LoroList {}
 impl ContainerTrait for LoroList {
     type Handler = InnerListHandler;
+
+    fn id(&self) -> ContainerID {
+        self.handler.id()
+    }
+
     fn to_container(&self) -> Container {
         Container::List(self.clone())
     }
@@ -1331,12 +1345,6 @@ impl LoroList {
     #[inline]
     pub fn get_value(&self) -> LoroValue {
         self.handler.get_value()
-    }
-
-    /// Get the ID of the container.
-    #[inline]
-    pub fn id(&self) -> ContainerID {
-        self.handler.id().clone()
     }
 
     /// Pop the last element of the list.
@@ -1522,6 +1530,10 @@ impl SealedTrait for LoroMap {}
 impl ContainerTrait for LoroMap {
     type Handler = InnerMapHandler;
 
+    fn id(&self) -> ContainerID {
+        self.handler.id()
+    }
+
     fn to_container(&self) -> Container {
         Container::Map(self.clone())
     }
@@ -1600,11 +1612,6 @@ impl LoroMap {
     /// Get the length of the map.
     pub fn len(&self) -> usize {
         self.handler.len()
-    }
-
-    /// Get the ID of the map.
-    pub fn id(&self) -> ContainerID {
-        self.handler.id().clone()
     }
 
     /// Whether the map is empty.
@@ -1696,6 +1703,10 @@ impl SealedTrait for LoroText {}
 impl ContainerTrait for LoroText {
     type Handler = InnerTextHandler;
 
+    fn id(&self) -> ContainerID {
+        self.handler.id()
+    }
+
     fn to_container(&self) -> Container {
         Container::Text(self.clone())
     }
@@ -1749,11 +1760,6 @@ impl LoroText {
     /// To attach the container to the document, please insert it into an attached container.
     pub fn is_attached(&self) -> bool {
         self.handler.is_attached()
-    }
-
-    /// Get the [ContainerID]  of the text container.
-    pub fn id(&self) -> ContainerID {
-        self.handler.id().clone()
     }
 
     /// Iterate each span(internal storage unit) of the text.
@@ -2066,6 +2072,10 @@ impl SealedTrait for LoroTree {}
 impl ContainerTrait for LoroTree {
     type Handler = InnerTreeHandler;
 
+    fn id(&self) -> ContainerID {
+        self.handler.id()
+    }
+
     fn to_container(&self) -> Container {
         Container::Tree(self.clone())
     }
@@ -2375,11 +2385,6 @@ impl LoroTree {
         self.handler.children_num(&parent)
     }
 
-    /// Return container id of the tree.
-    pub fn id(&self) -> ContainerID {
-        self.handler.id()
-    }
-
     /// Return the fractional index of the target node with hex format.
     pub fn fractional_index(&self, target: TreeID) -> Option<String> {
         self.handler
@@ -2471,6 +2476,10 @@ impl SealedTrait for LoroMovableList {}
 impl ContainerTrait for LoroMovableList {
     type Handler = InnerMovableListHandler;
 
+    fn id(&self) -> ContainerID {
+        self.handler.id()
+    }
+
     fn to_container(&self) -> Container {
         Container::MovableList(self.clone())
     }
@@ -2525,11 +2534,6 @@ impl LoroMovableList {
         Self {
             handler: InnerMovableListHandler::new_detached(),
         }
-    }
-
-    /// Get the container id.
-    pub fn id(&self) -> ContainerID {
-        self.handler.id().clone()
     }
 
     /// Whether the container is attached to a document
@@ -2742,16 +2746,13 @@ pub struct LoroUnknown {
     handler: InnerUnknownHandler,
 }
 
-impl LoroUnknown {
-    /// Get the container id.
-    pub fn id(&self) -> ContainerID {
-        self.handler.id().clone()
-    }
-}
-
 impl SealedTrait for LoroUnknown {}
 impl ContainerTrait for LoroUnknown {
     type Handler = InnerUnknownHandler;
+
+    fn id(&self) -> ContainerID {
+        self.handler.id()
+    }
 
     fn to_container(&self) -> Container {
         Container::Unknown(self.clone())
@@ -2823,6 +2824,19 @@ pub enum Container {
 impl SealedTrait for Container {}
 impl ContainerTrait for Container {
     type Handler = loro_internal::handler::Handler;
+
+    fn id(&self) -> ContainerID {
+        match self {
+            Container::List(x) => x.id(),
+            Container::Map(x) => x.id(),
+            Container::Text(x) => x.id(),
+            Container::Tree(x) => x.id(),
+            Container::MovableList(x) => x.id(),
+            #[cfg(feature = "counter")]
+            Container::Counter(x) => x.id(),
+            Container::Unknown(x) => x.id(),
+        }
+    }
 
     fn to_container(&self) -> Container {
         self.clone()
@@ -2943,20 +2957,6 @@ impl Container {
             #[cfg(feature = "counter")]
             Container::Counter(_) => ContainerType::Counter,
             Container::Unknown(x) => x.handler.id().container_type(),
-        }
-    }
-
-    /// Get the id of the container.
-    pub fn id(&self) -> ContainerID {
-        match self {
-            Container::List(x) => x.id(),
-            Container::MovableList(x) => x.id(),
-            Container::Map(x) => x.id(),
-            Container::Text(x) => x.id(),
-            Container::Tree(x) => x.id(),
-            #[cfg(feature = "counter")]
-            Container::Counter(x) => x.id(),
-            Container::Unknown(x) => x.handler.id(),
         }
     }
 }

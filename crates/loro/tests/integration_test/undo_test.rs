@@ -4,8 +4,8 @@ use std::sync::{
 };
 
 use loro::{
-    undo::UndoItemMeta, LoroDoc, LoroError, LoroList, LoroMap, LoroResult, LoroText, LoroValue,
-    StyleConfigMap, ToJson, UndoManager,
+    undo::UndoItemMeta, ContainerTrait as _, LoroDoc, LoroError, LoroList, LoroMap, LoroResult,
+    LoroText, LoroValue, StyleConfigMap, ToJson, UndoManager,
 };
 use loro_internal::{configure::StyleConfig, id::ID, loro::CommitOptions};
 use serde_json::json;

@@ -24,11 +24,6 @@ impl LoroCounter {
         }
     }
 
-    /// Return container id of the Counter.
-    pub fn id(&self) -> ContainerID {
-        self.handler.id().clone()
-    }
-
     /// Increment the counter by the given value.
     pub fn increment(&self, value: f64) -> LoroResult<()> {
         self.handler.increment(value)
@@ -53,6 +48,10 @@ impl LoroCounter {
 impl SealedTrait for LoroCounter {}
 impl ContainerTrait for LoroCounter {
     type Handler = CounterHandler;
+
+    fn id(&self) -> ContainerID {
+        self.handler.id()
+    }
 
     fn to_container(&self) -> Container {
         Container::Counter(self.clone())

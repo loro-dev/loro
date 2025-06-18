@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use bench_utils::{draw::DrawAction, Action};
-use loro::{ContainerID, LoroList, LoroMap, LoroText};
+use loro::{ContainerID, ContainerTrait, LoroList, LoroMap, LoroText};
 
 use crate::{run_actions_fuzz_in_async_mode, ActorTrait};
 
