@@ -732,6 +732,7 @@ impl LoroDoc {
     ///
     /// ```
     /// # use loro::LoroDoc;
+    /// # use loro::ContainerTrait;
     /// # use std::sync::{atomic::AtomicBool, Arc};
     /// # use loro::{event::DiffEvent, LoroResult, TextDelta};
     /// #
