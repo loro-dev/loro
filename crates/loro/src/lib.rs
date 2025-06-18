@@ -1223,6 +1223,8 @@ pub trait ContainerTrait: SealedTrait {
     /// Get the doc of the container.
     fn doc(&self) -> Option<LoroDoc>;
     /// Subscribe to the container.
+    ///
+    /// If the Container is detached, this method will return `None`.
     fn subscribe(&self, callback: Subscriber) -> Option<Subscription> {
         self.doc().map(|doc| doc.subscribe(&self.id(), callback))
     }
