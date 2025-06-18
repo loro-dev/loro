@@ -9,7 +9,7 @@ use loro::{
 };
 
 use crate::container::TreeTracker;
-use loro::ContainerID;
+use loro::{ContainerID, ContainerTrait};
 
 use crate::container::CounterTracker;
 
