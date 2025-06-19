@@ -1372,6 +1372,7 @@ impl LoroDoc {
     /// @param mode - The export mode to use. Can be one of:
     ///   - `{ mode: "snapshot" }`: Export a full snapshot of the document.
     ///   - `{ mode: "update", from?: VersionVector }`: Export updates from the given version vector.
+    ///     If `from` is not provided, it will export the whole history of the document.
     ///   - `{ mode: "updates-in-range", spans: { id: ID, len: number }[] }`: Export updates within the specified ID spans.
     ///   - `{ mode: "shallow-snapshot", frontiers: Frontiers }`: Export a garbage-collected snapshot up to the given frontiers.
     ///
