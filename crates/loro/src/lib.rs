@@ -1143,6 +1143,9 @@ impl LoroDoc {
     /// The callback will be called when the changes are committed but not yet applied to the OpLog.
     /// You can modify the commit message and timestamp in the callback by [`ChangeModifier`].
     ///
+    /// If the callback returns `false` it will be unsubscribed and will not be run on future
+    /// commits.
+    ///
     /// # Example
     /// ```rust
     /// use loro::LoroDoc;
