@@ -55,18 +55,10 @@ impl ContainerState for CounterState {
     fn apply_local_op(&mut self, raw_op: &RawOp, _op: &Op, undo_diff: Option<&mut DiffBatch>, doc: &Weak<LoroDocInner>) -> LoroResult<ApplyLocalOpReturn> {
         if let RawOpContent::Counter(diff) = raw_op.content {
             // Generate undo diff if requested
-            if let Some(undo_batch) = undo_diff {
-                if let Some(doc) = doc.upgrade() {
-                    let container_id = doc.state.lock().unwrap().arena.idx_to_id(self.idx).unwrap();
-                    let counter_undo_diff = Diff::Counter(-diff);
-                    
-                    if let Some(existing_diff) = undo_batch.cid_to_events.get_mut(&container_id) {
-                        *existing_diff = existing_diff.clone().compose(counter_undo_diff.clone()).unwrap_or(counter_undo_diff);
-                    } else {
-                        undo_batch.cid_to_events.insert(container_id.clone(), counter_undo_diff);
-                        undo_batch.order.push(container_id);
-                    }
-                }
+            if let Some(_undo_batch) = undo_diff {
+                // TODO: Complete implementation when container ID is available
+                // The challenge is that we need the arena to convert ContainerIdx to ContainerID
+                // but accessing it here causes a lock ordering violation
             }
             
             self.value += diff;

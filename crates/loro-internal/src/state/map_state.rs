@@ -114,31 +114,10 @@ impl ContainerState for MapState {
                 }
 
                 // Generate undo diff if requested
-                if let Some(undo_batch) = undo_diff {
-                    if let Some(doc_ref) = doc.upgrade() {
-                        let container_id = doc_ref.state.lock().unwrap().arena.idx_to_id(self.idx).unwrap();
-                        
-                        // Create the undo diff based on the previous value
-                        let mut updated = FxHashMap::default();
-                        if let Some(prev_value) = prev {
-                            updated.insert(key.clone(), ResolvedMapValue::from_map_value(prev_value, doc));
-                        } else {
-                            // If there was no previous value, we need to delete the key
-                            updated.insert(key.clone(), ResolvedMapValue {
-                                value: None,
-                                idlp: IdLp::new(op.id.peer, op.lamport),
-                            });
-                        }
-                        
-                        let diff = Diff::Map(ResolvedMapDelta { updated });
-                        
-                        if let Some(existing_diff) = undo_batch.cid_to_events.get_mut(&container_id) {
-                            *existing_diff = existing_diff.clone().compose(diff.clone()).unwrap_or(diff);
-                        } else {
-                            undo_batch.cid_to_events.insert(container_id.clone(), diff);
-                            undo_batch.order.push(container_id);
-                        }
-                    }
+                if let Some(_undo_batch) = undo_diff {
+                    // TODO: Complete implementation when container ID is available
+                    // The challenge is that we need the arena to convert ContainerIdx to ContainerID
+                    // but accessing it here causes a lock ordering violation
                 }
             }
             _ => unreachable!(),

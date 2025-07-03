@@ -27,6 +27,15 @@ impl LoroDoc {
         enable();
         s
     }
+    
+    /// Subscribe to undo diff batches generated during local operations.
+    /// This is an internal API used by the UndoManager.
+    #[doc(hidden)]
+    pub fn subscribe_undo_diffs(&self, callback: UndoCallback) -> Subscription {
+        let (s, enable) = self.inner.undo_subs.inner().insert((), callback);
+        enable();
+        s
+    }
 }
 
 struct ObserverInner {

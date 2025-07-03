@@ -143,6 +143,7 @@ pub struct Transaction {
     msg: Option<Arc<str>>,
     latest_timestamp: Timestamp,
     pub(super) is_peer_first_appearance: bool,
+    undo_diff: DiffBatch,
 }
 
 impl std::fmt::Debug for Transaction {
@@ -161,6 +162,7 @@ impl std::fmt::Debug for Transaction {
             .field("finished", &self.finished)
             .field("on_commit", &self.on_commit.is_some())
             .field("timestamp", &self.timestamp)
+            .field("undo_diff", &self.undo_diff)
             .finish()
     }
 }
@@ -351,6 +353,7 @@ impl Transaction {
             msg: None,
             latest_timestamp,
             is_peer_first_appearance: false,
+            undo_diff: DiffBatch::default(),
         }
     }
 
@@ -491,6 +494,12 @@ impl Transaction {
         );
         drop(state);
         drop(oplog);
+        
+        // Emit the undo diff batch if it contains any diffs
+        if !self.undo_diff.cid_to_events.is_empty() {
+            doc.undo_subs.emit(&(), std::mem::take(&mut self.undo_diff));
+        }
+        
         if let Some(on_commit) = self.on_commit.take() {
             assert!(!doc.txn.is_locked());
             on_commit(&doc.state.clone(), &doc.oplog.clone(), self.id_span());
@@ -561,7 +570,7 @@ impl Transaction {
         }
 
         let op = self.arena.convert_raw_op(&raw_op);
-        state.apply_local_op(&raw_op, &op, undo_diff)?;
+        state.apply_local_op(&raw_op, &op, Some(&mut self.undo_diff))?;
         {
             if !self.is_peer_first_appearance && !oplog.dag.latest_vv_contains_peer(self.peer) {
                 self.is_peer_first_appearance = true;

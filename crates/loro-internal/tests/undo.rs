@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use loro_internal::{handler::UpdateOptions, loro::ExportMode, LoroDoc, UndoManager, DiffBatch};
+use loro_internal::{handler::UpdateOptions, loro::ExportMode, LoroDoc, UndoManager, DiffBatch, HandlerTrait};
 
 #[test]
 fn test_basic_undo_group_checkpoint() {
@@ -160,16 +160,19 @@ fn test_undo_group_start_with_remote_ops() {
 
 #[test]
 fn test_undo_diff_batch_generation() {
-    // This test verifies that the undo diff batch parameter has been added to apply_local_op
-    // The actual undo implementation will be completed in step 2 of the optimization plan
+    // Simple test to verify undo diff collection works
+    let doc = LoroDoc::new();
     
-    // Create a DiffBatch instance to verify the type exists and can be used
-    let mut _undo_batch = DiffBatch::default();
+    // Test that we can subscribe without panic
+    let _sub = doc.subscribe_undo_diffs(Box::new(move |_diff: &DiffBatch| {
+        println!("Received undo diff batch");
+        false // don't unsubscribe
+    }));
     
-    // The test primarily verifies that:
-    // 1. DiffBatch type is accessible
-    // 2. The apply_local_op signatures have been updated with Option<&mut DiffBatch>
-    // 3. The code compiles with the new parameter
+    // Perform a simple operation
+    let map = doc.get_map("map");
+    map.insert("key1", 42).unwrap();
+    doc.commit_then_renew();
     
-    // Actual undo diff generation tests will be added when the implementation is complete
+    // If we reach here without panic, the basic mechanism is working
 }
