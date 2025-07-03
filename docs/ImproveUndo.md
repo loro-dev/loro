@@ -86,11 +86,12 @@
 - 与 undo manager 配合工作
 - 各个容器类型在 apply 本地操作时需要支持该 subscriber
 
-**具体要求**：
+**详细的拆解**：
 
-- 当有 undo subscriber 订阅时，容器在执行本地操作时发出 undo event
-- 外部能够接收并汇集这些 event，发送给 subscriber
-- 实现测试：验证每次文档 commit 时能收到对应的 undo diff batch，并能通过执行该 batch 撤销 commit
+- 在 crates/loro-internal/src/lib.rs 中的 LoroDocInner 上添加 undo_subs fields，类型为 SubscriberSetWithQueue<(), UndoCallback, UndoDiffBatch>
+- 在 crates/loro-internal/src/state.rs 中，给 apply_local_op 添加一个参数，标明是否要生成 undo 这次操作的 diff batch。可以直接用 Option<&mut DiffBatch> 来表达到位
+- 针对每个 ContainerState 的实现，调整 apply_local_op 的实现，使其在需要生成 undo diff batch 时，按照 ContainerState 的类型，生成对应的 diff batch，并存储到 Option<&mut DiffBatch> 中
+- 在 crates/loro-internal/tests/undo.rs 中添加新的测试用例，验证 undo diff batch 会正常生成，并且生成的 diff 如果通过 apply_diff 应用，能够将文档状态恢复到 commit 之前的状态
 
 ### 第二步：修改 Undo Manager
 
