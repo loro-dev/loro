@@ -1316,6 +1316,21 @@ impl ContainerState for TreeState {
             _ => unreachable!(),
         }
         // self.check_tree_integrity();
+        
+        // TODO: Implement undo diff generation for TreeState
+        // For Create operations:
+        //   - Generate a Delete operation for the created node
+        // For Delete operations:
+        //   - Generate a Create operation to restore the node with its original parent and position
+        // For Move operations:
+        //   - Generate a Move operation to restore the node to its previous parent and position
+        //   - Need to track the previous parent and position before the move
+        if let Some(_undo_batch) = _undo_diff {
+            if let Some(_doc) = _doc.upgrade() {
+                // Implementation needed
+            }
+        }
+        
         Ok(ApplyLocalOpReturn { deleted_containers })
     }
 

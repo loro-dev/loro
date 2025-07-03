@@ -639,6 +639,20 @@ impl ContainerState for RichtextState {
         }
 
         // self.check_consistency_between_content_and_style_ranges();
+        
+        // TODO: Implement undo diff generation for RichtextState
+        // For Insert operations:
+        //   - Generate a Delete operation for the inserted text range
+        // For Delete operations:
+        //   - Generate an Insert operation with the deleted text content
+        // For StyleStart/StyleEnd operations:
+        //   - Generate inverse style operations to restore previous styles
+        if let Some(_undo_batch) = _undo_diff {
+            if let Some(_doc) = _doc.upgrade() {
+                // Implementation needed
+            }
+        }
+        
         Ok(Default::default())
     }
 

@@ -1340,6 +1340,23 @@ impl ContainerState for MovableListState {
             ListOp::StyleStart { .. } | ListOp::StyleEnd => unreachable!(),
         }
 
+        // TODO: Implement undo diff generation for MovableListState
+        // For Insert operations:
+        //   - Generate a Delete operation for the inserted items
+        // For Delete operations:
+        //   - Generate an Insert operation with the deleted content
+        // For Move operations:
+        //   - Generate a Move operation to restore the item to its previous position
+        //   - Need to track the original position before the move
+        // For Set operations:
+        //   - Generate a Set operation with the previous value
+        //   - Need to retrieve the old value before it's replaced
+        if let Some(_undo_batch) = _undo_diff {
+            if let Some(_doc) = _doc.upgrade() {
+                // Implementation needed
+            }
+        }
+
         Ok(ans)
     }
 

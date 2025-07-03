@@ -453,7 +453,7 @@ impl ContainerState for ListState {
         }
     }
 
-    fn apply_local_op(&mut self, op: &RawOp, _: &Op, _undo_diff: Option<&mut DiffBatch>, _doc: &Weak<LoroDocInner>) -> LoroResult<ApplyLocalOpReturn> {
+    fn apply_local_op(&mut self, op: &RawOp, _: &Op, undo_diff: Option<&mut DiffBatch>, doc: &Weak<LoroDocInner>) -> LoroResult<ApplyLocalOpReturn> {
         let mut ans: ApplyLocalOpReturn = Default::default();
         match &op.content {
             RawOpContent::List(list) => match list {
@@ -482,6 +482,19 @@ impl ContainerState for ListState {
             },
             _ => unreachable!(),
         }
+        
+        // TODO: Implement undo diff generation for ListState
+        // For Insert operations:
+        //   - Generate a Delete operation for the inserted range
+        // For Delete operations:
+        //   - Generate an Insert operation with the deleted content
+        //   - Need to retrieve the deleted values from the list
+        if let Some(_undo_batch) = undo_diff {
+            if let Some(_doc) = doc.upgrade() {
+                // Implementation needed
+            }
+        }
+        
         Ok(ans)
     }
 
