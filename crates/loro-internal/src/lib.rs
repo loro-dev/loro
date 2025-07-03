@@ -36,9 +36,9 @@ use pre_commit::{
 };
 pub use state::DocState;
 pub use state::{TreeNode, TreeNodeWithChildren, TreeParentId};
-use subscription::{LocalUpdateCallback, Observer, PeerIdUpdateCallback};
+use subscription::{LocalUpdateCallback, Observer, PeerIdUpdateCallback, UndoCallback};
 use txn::Transaction;
-pub use undo::UndoManager;
+pub use undo::{DiffBatch, UndoManager};
 use utils::subscription::SubscriberSetWithQueue;
 pub use utils::subscription::Subscription;
 pub mod allocation;
@@ -166,6 +166,7 @@ pub struct LoroDocInner {
     first_commit_from_peer_subs:
         SubscriberSetWithQueue<(), FirstCommitFromPeerCallback, FirstCommitFromPeerPayload>,
     pre_commit_subs: SubscriberSetWithQueue<(), PreCommitCallback, PreCommitCallbackPayload>,
+    undo_subs: SubscriberSetWithQueue<(), UndoCallback, DiffBatch>,
 }
 
 /// The version of the loro crate

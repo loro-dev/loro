@@ -1828,7 +1828,7 @@ impl TextHandler {
                 unicode_len: unicode_len as u32,
                 event_len: event_len as u32,
             },
-            &inner.doc,
+            &inner.doc, None,
         )?;
 
         Ok(override_styles)
@@ -1911,7 +1911,7 @@ impl TextHandler {
                     },
                     unicode_len: range.entity_len(),
                 },
-                &inner.doc,
+                &inner.doc, None,
             )?;
             event_end = event_start;
         }
@@ -2100,14 +2100,14 @@ impl TextHandler {
                 end: end as u32,
                 style: crate::container::richtext::Style { key, data: value },
             },
-            &inner.doc,
+            &inner.doc, None,
         )?;
 
         txn.apply_local_op(
             inner.container_idx,
             crate::op::RawOpContent::List(ListOp::StyleEnd),
             EventHint::MarkEnd,
-            &inner.doc,
+            &inner.doc, None,
         )?;
 
         Ok(())
@@ -2443,7 +2443,7 @@ impl ListHandler {
                 pos,
             }),
             EventHint::InsertList { len: 1, pos },
-            &inner.doc,
+            &inner.doc, None,
         )
     }
 
@@ -2527,7 +2527,7 @@ impl ListHandler {
                 pos,
             }),
             EventHint::InsertList { len: 1, pos },
-            &inner.doc,
+            &inner.doc, None,
         )?;
         let ans = child.attach(txn, inner, container_id)?;
         Ok(ans)
@@ -2574,7 +2574,7 @@ impl ListHandler {
                     1,
                 ))),
                 EventHint::DeleteList(DeleteSpan::new(pos as isize, 1)),
-                &inner.doc,
+                &inner.doc, None,
             )?;
         }
 
@@ -2906,7 +2906,7 @@ impl MovableListHandler {
                 pos: op_index,
             }),
             EventHint::InsertList { len: 1, pos },
-            &inner.doc,
+            &inner.doc, None,
         )
     }
 
@@ -2988,7 +2988,7 @@ impl MovableListHandler {
                 from: from as u32,
                 to: to as u32,
             },
-            &inner.doc,
+            &inner.doc, None,
         )
     }
 
@@ -3101,7 +3101,7 @@ impl MovableListHandler {
                 pos: op_index,
             }),
             EventHint::InsertList { len: 1, pos },
-            &inner.doc,
+            &inner.doc, None,
         )?;
         child.attach(txn, inner, container_id)
     }
@@ -3155,7 +3155,7 @@ impl MovableListHandler {
         });
 
         let hint = EventHint::SetList { index, value };
-        txn.apply_local_op(inner.container_idx, op, hint, &inner.doc)
+        txn.apply_local_op(inner.container_idx, op, hint, &inner.doc, None)
     }
 
     pub fn set_container<H: HandlerTrait>(&self, pos: usize, child: H) -> LoroResult<H> {
@@ -3198,7 +3198,7 @@ impl MovableListHandler {
                 index: pos,
                 value: v,
             },
-            &inner.doc,
+            &inner.doc, None,
         )?;
 
         child.attach(txn, inner, container_id)
@@ -3259,7 +3259,7 @@ impl MovableListHandler {
                     1,
                 ))),
                 EventHint::DeleteList(DeleteSpan::new(user_pos as isize, 1)),
-                &inner.doc,
+                &inner.doc, None,
             )?;
         }
 
@@ -3599,7 +3599,7 @@ impl MapHandler {
                         key: key.into(),
                         value: Some(value.clone()),
                     },
-                    &inner.doc,
+                    &inner.doc, None,
                 )
             }),
         }
@@ -3635,7 +3635,7 @@ impl MapHandler {
                 key: key.into(),
                 value: Some(value.clone()),
             },
-            &inner.doc,
+            &inner.doc, None,
         )
     }
 
@@ -3673,7 +3673,7 @@ impl MapHandler {
                 key: key.into(),
                 value: Some(LoroValue::Container(container_id.clone())),
             },
-            &inner.doc,
+            &inner.doc, None,
         )?;
 
         child.attach(txn, inner, container_id)
@@ -3702,7 +3702,7 @@ impl MapHandler {
                 key: key.into(),
                 value: None,
             },
-            &inner.doc,
+            &inner.doc, None,
         )
     }
 
@@ -4019,7 +4019,7 @@ pub mod counter {
                 inner.container_idx,
                 crate::op::RawOpContent::Counter(n),
                 EventHint::Counter(n),
-                &inner.doc,
+                &inner.doc, None,
             )
         }
 

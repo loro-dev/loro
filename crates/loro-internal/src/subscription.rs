@@ -16,6 +16,8 @@ use crate::sync::Mutex;
 pub type LocalUpdateCallback = Box<dyn Fn(&Vec<u8>) -> bool + Send + Sync + 'static>;
 /// The callback of the peer id change. The second argument is the next counter for the peer.
 pub type PeerIdUpdateCallback = Box<dyn Fn(&ID) -> bool + Send + Sync + 'static>;
+/// The callback for undo diff batch generation.
+pub type UndoCallback = Box<dyn Fn(&crate::undo::DiffBatch) -> bool + Send + Sync + 'static>;
 pub type Subscriber = Arc<dyn (for<'a> Fn(DiffEvent<'a>)) + Send + Sync>;
 
 impl LoroDoc {

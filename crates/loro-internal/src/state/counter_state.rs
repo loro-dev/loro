@@ -8,6 +8,7 @@ use crate::{
     encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff},
     op::{Op, RawOp, RawOpContent},
+    undo::DiffBatch,
     LoroDocInner,
 };
 
@@ -51,8 +52,14 @@ impl ContainerState for CounterState {
         let _ = self.apply_diff_and_convert(diff, ctx);
     }
 
-    fn apply_local_op(&mut self, raw_op: &RawOp, _op: &Op) -> LoroResult<ApplyLocalOpReturn> {
+    fn apply_local_op(&mut self, raw_op: &RawOp, _op: &Op, undo_diff: Option<&mut DiffBatch>) -> LoroResult<ApplyLocalOpReturn> {
         if let RawOpContent::Counter(diff) = raw_op.content {
+            // Generate undo diff if requested
+            if let Some(_undo_batch) = undo_diff {
+                // TODO: Implement undo for counter operations
+                // The implementation requires access to arena to convert ContainerIdx to ContainerID
+            }
+            
             self.value += diff;
             Ok(Default::default())
         } else {

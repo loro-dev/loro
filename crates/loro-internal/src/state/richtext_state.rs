@@ -23,6 +23,7 @@ use crate::{
     event::{Diff, Index, InternalDiff, TextDiff},
     handler::TextDelta,
     op::{Op, RawOp},
+    undo::DiffBatch,
     utils::{lazy::LazyLoad, string_slice::StringSlice},
     LoroDocInner,
 };
@@ -576,7 +577,7 @@ impl ContainerState for RichtextState {
         // self.check_consistency_between_content_and_style_ranges()
     }
 
-    fn apply_local_op(&mut self, r_op: &RawOp, op: &Op) -> LoroResult<ApplyLocalOpReturn> {
+    fn apply_local_op(&mut self, r_op: &RawOp, op: &Op, _undo_diff: Option<&mut DiffBatch>) -> LoroResult<ApplyLocalOpReturn> {
         self.update_version();
         match &op.content {
             crate::op::InnerContent::List(l) => match l {

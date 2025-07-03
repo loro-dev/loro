@@ -102,6 +102,7 @@ impl LoroDoc {
                 peer_id_change_subs: SubscriberSetWithQueue::new(),
                 pre_commit_subs: SubscriberSetWithQueue::new(),
                 first_commit_from_peer_subs: SubscriberSetWithQueue::new(),
+                undo_subs: SubscriberSetWithQueue::new(),
             }
         });
         LoroDoc { inner }

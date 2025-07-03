@@ -8,6 +8,7 @@ use crate::{
     event::{Diff, Index, InternalDiff, ListDiff},
     handler::ValueOrHandler,
     op::{ListSlice, Op, RawOp, RawOpContent},
+    undo::DiffBatch,
     LoroDocInner, LoroValue,
 };
 
@@ -452,7 +453,7 @@ impl ContainerState for ListState {
         }
     }
 
-    fn apply_local_op(&mut self, op: &RawOp, _: &Op) -> LoroResult<ApplyLocalOpReturn> {
+    fn apply_local_op(&mut self, op: &RawOp, _: &Op, _undo_diff: Option<&mut DiffBatch>) -> LoroResult<ApplyLocalOpReturn> {
         let mut ans: ApplyLocalOpReturn = Default::default();
         match &op.content {
             RawOpContent::List(list) => match list {

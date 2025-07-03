@@ -18,6 +18,7 @@ use crate::{
     handler::ValueOrHandler,
     op::{ListSlice, Op, RawOp},
     state::movable_list_state::inner::PushElemInfo,
+    undo::DiffBatch,
     ListDiff, LoroDocInner,
 };
 
@@ -1292,7 +1293,7 @@ impl ContainerState for MovableListState {
     }
 
     #[instrument(skip_all)]
-    fn apply_local_op(&mut self, op: &RawOp, _: &Op) -> LoroResult<ApplyLocalOpReturn> {
+    fn apply_local_op(&mut self, op: &RawOp, _: &Op, _undo_diff: Option<&mut DiffBatch>) -> LoroResult<ApplyLocalOpReturn> {
         let mut ans: ApplyLocalOpReturn = Default::default();
         match op.content.as_list().unwrap() {
             ListOp::Insert { slice, pos } => match slice {

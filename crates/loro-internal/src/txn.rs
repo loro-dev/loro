@@ -30,6 +30,7 @@ use crate::{
     op::{Op, RawOp, RawOpContent},
     pre_commit::{ChangeModifier, PreCommitCallbackPayload},
     span::HasIdSpan,
+    undo::DiffBatch,
     version::Frontiers,
     ChangeMeta, InternalString, LoroDoc, LoroDocInner, LoroError, LoroValue,
 };
@@ -518,6 +519,7 @@ impl Transaction {
         event: EventHint,
         // check whether context and txn are referring to the same state context
         doc: &LoroDoc,
+        undo_diff: Option<&mut DiffBatch>,
     ) -> LoroResult<()> {
         // TODO: need to check if the doc is the same
         let this_doc = self.doc.upgrade().unwrap();
@@ -559,7 +561,7 @@ impl Transaction {
         }
 
         let op = self.arena.convert_raw_op(&raw_op);
-        state.apply_local_op(&raw_op, &op)?;
+        state.apply_local_op(&raw_op, &op, undo_diff)?;
         {
             if !self.is_peer_first_appearance && !oplog.dag.latest_vv_contains_peer(self.peer) {
                 self.is_peer_first_appearance = true;

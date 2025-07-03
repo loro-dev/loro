@@ -8,6 +8,7 @@ use crate::{
     encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff},
     op::{Op, RawOp},
+    undo::DiffBatch,
     LoroDocInner,
 };
 
@@ -45,7 +46,7 @@ impl ContainerState for UnknownState {
         unreachable!()
     }
 
-    fn apply_local_op(&mut self, _raw_op: &RawOp, _op: &Op) -> LoroResult<ApplyLocalOpReturn> {
+    fn apply_local_op(&mut self, _raw_op: &RawOp, _op: &Op, _undo_diff: Option<&mut DiffBatch>) -> LoroResult<ApplyLocalOpReturn> {
         unreachable!()
     }
 

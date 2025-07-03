@@ -26,6 +26,7 @@ use crate::{
     id::PeerID,
     lock::{LoroLockGroup, LoroMutex},
     op::{Op, RawOp},
+    undo::DiffBatch,
     version::Frontiers,
     ContainerDiff, ContainerType, DocDiff, InternalString, LoroDocInner, LoroValue, OpLog,
 };
@@ -126,7 +127,7 @@ pub(crate) trait ContainerState {
 
     fn apply_diff(&mut self, diff: InternalDiff, ctx: DiffApplyContext);
 
-    fn apply_local_op(&mut self, raw_op: &RawOp, op: &Op) -> LoroResult<ApplyLocalOpReturn>;
+    fn apply_local_op(&mut self, raw_op: &RawOp, op: &Op, undo_diff: Option<&mut DiffBatch>) -> LoroResult<ApplyLocalOpReturn>;
     /// Convert a state to a diff, such that an empty state will be transformed into the same as this state when it's applied.
     fn to_diff(&mut self, doc: &Weak<LoroDocInner>) -> Diff;
 
@@ -196,8 +197,8 @@ impl<T: ContainerState> ContainerState for Box<T> {
         self.as_mut().apply_diff(diff, ctx)
     }
 
-    fn apply_local_op(&mut self, raw_op: &RawOp, op: &Op) -> LoroResult<ApplyLocalOpReturn> {
-        self.as_mut().apply_local_op(raw_op, op)
+    fn apply_local_op(&mut self, raw_op: &RawOp, op: &Op, undo_diff: Option<&mut DiffBatch>) -> LoroResult<ApplyLocalOpReturn> {
+        self.as_mut().apply_local_op(raw_op, op, undo_diff)
     }
 
     #[doc = r" Convert a state to a diff, such that an empty state will be transformed into the same as this state when it's applied."]
@@ -703,14 +704,14 @@ impl DocState {
         }
     }
 
-    pub fn apply_local_op(&mut self, raw_op: &RawOp, op: &Op) -> LoroResult<()> {
+    pub fn apply_local_op(&mut self, raw_op: &RawOp, op: &Op, undo_diff: Option<&mut DiffBatch>) -> LoroResult<()> {
         // set parent first, `MapContainer` will only be created for TreeID that does not contain
         self.set_container_parent_by_raw_op(raw_op);
         let state = self.store.get_or_create_mut(op.container);
         if self.in_txn {
             self.changed_idx_in_txn.insert(op.container);
         }
-        let ret = state.apply_local_op(raw_op, op)?;
+        let ret = state.apply_local_op(raw_op, op, undo_diff)?;
         if !ret.deleted_containers.is_empty() {
             self.dead_containers_cache.clear_alive();
         }

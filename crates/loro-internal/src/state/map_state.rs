@@ -13,6 +13,7 @@ use crate::{
     event::{Diff, Index, InternalDiff},
     handler::ValueOrHandler,
     op::{Op, RawOp, RawOpContent},
+    undo::DiffBatch,
     InternalString, LoroDocInner, LoroValue,
 };
 
@@ -91,7 +92,7 @@ impl ContainerState for MapState {
         let _ = self.apply_diff_and_convert(diff, ctx);
     }
 
-    fn apply_local_op(&mut self, op: &RawOp, _: &Op) -> LoroResult<ApplyLocalOpReturn> {
+    fn apply_local_op(&mut self, op: &RawOp, _: &Op, undo_diff: Option<&mut DiffBatch>) -> LoroResult<ApplyLocalOpReturn> {
         let mut ans: ApplyLocalOpReturn = Default::default();
         match &op.content {
             RawOpContent::Map(MapSet { key, value }) => {
@@ -107,9 +108,16 @@ impl ContainerState for MapState {
                 if let Some(MapValue {
                     value: Some(LoroValue::Container(c)),
                     ..
-                }) = prev
+                }) = &prev
                 {
-                    ans.deleted_containers.push(c);
+                    ans.deleted_containers.push(c.clone());
+                }
+
+                // Generate undo diff if requested
+                if let Some(_undo_batch) = undo_diff {
+                    // TODO: Implement undo for map operations
+                    // The implementation requires access to arena to convert ContainerIdx to ContainerID
+                    // and proper conversion from LoroValue to ValueOrHandler
                 }
             }
             _ => unreachable!(),

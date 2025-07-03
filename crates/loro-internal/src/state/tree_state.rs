@@ -28,6 +28,7 @@ use crate::{
     delta::TreeInternalDiff,
     event::{Diff, Index},
     op::RawOp,
+    undo::DiffBatch,
 };
 use crate::{DocState, LoroDocInner};
 
@@ -1280,7 +1281,7 @@ impl ContainerState for TreeState {
         // self.check_tree_integrity();
     }
 
-    fn apply_local_op(&mut self, raw_op: &RawOp, _op: &Op) -> LoroResult<ApplyLocalOpReturn> {
+    fn apply_local_op(&mut self, raw_op: &RawOp, _op: &Op, _undo_diff: Option<&mut DiffBatch>) -> LoroResult<ApplyLocalOpReturn> {
         let mut deleted_containers = vec![];
         match &raw_op.content {
             crate::op::RawOpContent::Tree(tree) => match &**tree {
