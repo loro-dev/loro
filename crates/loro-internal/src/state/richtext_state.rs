@@ -577,7 +577,7 @@ impl ContainerState for RichtextState {
         // self.check_consistency_between_content_and_style_ranges()
     }
 
-    fn apply_local_op(&mut self, r_op: &RawOp, op: &Op, _undo_diff: Option<&mut DiffBatch>) -> LoroResult<ApplyLocalOpReturn> {
+    fn apply_local_op(&mut self, r_op: &RawOp, op: &Op, _undo_diff: Option<&mut DiffBatch>, _doc: &Weak<LoroDocInner>) -> LoroResult<ApplyLocalOpReturn> {
         self.update_version();
         match &op.content {
             crate::op::InnerContent::List(l) => match l {

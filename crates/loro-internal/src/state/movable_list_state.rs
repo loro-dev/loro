@@ -1293,7 +1293,7 @@ impl ContainerState for MovableListState {
     }
 
     #[instrument(skip_all)]
-    fn apply_local_op(&mut self, op: &RawOp, _: &Op, _undo_diff: Option<&mut DiffBatch>) -> LoroResult<ApplyLocalOpReturn> {
+    fn apply_local_op(&mut self, op: &RawOp, _: &Op, _undo_diff: Option<&mut DiffBatch>, _doc: &Weak<LoroDocInner>) -> LoroResult<ApplyLocalOpReturn> {
         let mut ans: ApplyLocalOpReturn = Default::default();
         match op.content.as_list().unwrap() {
             ListOp::Insert { slice, pos } => match slice {

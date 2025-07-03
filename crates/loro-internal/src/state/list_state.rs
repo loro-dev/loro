@@ -453,7 +453,7 @@ impl ContainerState for ListState {
         }
     }
 
-    fn apply_local_op(&mut self, op: &RawOp, _: &Op, _undo_diff: Option<&mut DiffBatch>) -> LoroResult<ApplyLocalOpReturn> {
+    fn apply_local_op(&mut self, op: &RawOp, _: &Op, _undo_diff: Option<&mut DiffBatch>, _doc: &Weak<LoroDocInner>) -> LoroResult<ApplyLocalOpReturn> {
         let mut ans: ApplyLocalOpReturn = Default::default();
         match &op.content {
             RawOpContent::List(list) => match list {

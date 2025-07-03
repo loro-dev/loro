@@ -46,7 +46,7 @@ impl ContainerState for UnknownState {
         unreachable!()
     }
 
-    fn apply_local_op(&mut self, _raw_op: &RawOp, _op: &Op, _undo_diff: Option<&mut DiffBatch>) -> LoroResult<ApplyLocalOpReturn> {
+    fn apply_local_op(&mut self, _raw_op: &RawOp, _op: &Op, _undo_diff: Option<&mut DiffBatch>, _doc: &Weak<LoroDocInner>) -> LoroResult<ApplyLocalOpReturn> {
         unreachable!()
     }
 
