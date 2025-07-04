@@ -802,8 +802,8 @@ impl UndoManager {
             let use_precalculated_diff = !span.undo_diff.cid_to_events.is_empty();
             
             if use_precalculated_diff {
-                // Optimized path: use precalculated diff
-                debug_span!("Using precalculated undo diff").in_scope(|| {
+                // Optimized path: use precalculated diff (avoids checkouts!)
+                debug_span!("Using precalculated undo diff - no checkouts").in_scope(|| {
                     // Transform the undo diff based on remote changes
                     let mut undo_diff = span.undo_diff.clone();
                     let remote_change_clone = remote_diff.lock().unwrap().clone();

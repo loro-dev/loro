@@ -34,8 +34,8 @@
 
 2. **实现了优化的 perform 方法**
    - 检查 `span.undo_diff.cid_to_events.is_empty()` 来决定使用哪个路径
-   - 优化路径：使用 `doc._apply_diff` 直接应用预计算的 diff
-   - 回退路径：使用 `undo_internal` 并收集 redo diff
+   - 优化路径：使用 `doc._apply_diff` 直接应用预计算的 diff，**完全避免了 checkout 操作**
+   - 回退路径：使用 `undo_internal` 并收集 redo diff（仍需要 checkout，用于向后兼容）
    - 两种路径都支持 redo diff 收集
 
 3. **性能提升验证**
@@ -45,9 +45,22 @@
 
 ## 性能优化收益
 
-1. **时间复杂度降低**：从 O(n²) 降至 O(n)
-2. **响应速度提升**：大文档的 undo/redo 操作更加流畅
-3. **内存效率**：预计算的 diff 避免了重复计算
+1. **避免了 checkout 操作**：优化路径完全不需要 checkout，直接应用预计算的 diff
+2. **时间复杂度降低**：从 O(n²) 降至 O(n)
+3. **响应速度提升**：大文档的 undo/redo 操作更加流畅
+4. **内存效率**：预计算的 diff 避免了重复计算
+
+### 关键优化点
+
+- **优化前**：`undo_internal` 需要多次 checkout 来计算 diff
+  - 从当前版本 checkout 到目标版本
+  - 从目标版本 checkout 到前一版本来计算 diff
+  - 再 checkout 回当前版本
+  - 最后应用 diff
+
+- **优化后**：使用预计算的 diff 时
+  - 直接应用 diff，无需任何 checkout
+  - 显著减少了计算开销
 
 ## 后续可能的优化
 
