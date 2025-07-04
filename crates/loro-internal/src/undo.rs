@@ -215,6 +215,7 @@ struct UndoManagerInner {
     on_push: Option<OnPush>,
     on_pop: Option<OnPop>,
     group: Option<UndoGroup>,
+    pending_undo_diff: DiffBatch,
 }
 
 impl std::fmt::Debug for UndoManagerInner {
@@ -258,6 +259,7 @@ struct Stack {
 struct StackItem {
     span: CounterSpan,
     meta: UndoItemMeta,
+    undo_diff: DiffBatch,
 }
 
 /// The metadata of an undo item.
@@ -339,14 +341,15 @@ impl Stack {
         // Cursor position transformation relies on the remote diff in the same row.
     }
 
-    pub fn push(&mut self, span: CounterSpan, meta: UndoItemMeta) {
-        self.push_with_merge(span, meta, false, None)
+    pub fn push(&mut self, span: CounterSpan, meta: UndoItemMeta, undo_diff: DiffBatch) {
+        self.push_with_merge(span, meta, undo_diff, false, None)
     }
 
     pub fn push_with_merge(
         &mut self,
         span: CounterSpan,
         meta: UndoItemMeta,
+        undo_diff: DiffBatch,
         can_merge: bool,
         group: Option<&UndoGroup>,
     ) {
@@ -371,7 +374,7 @@ impl Stack {
             // Create a new entry in the stack
             drop(last_remote_diff);
             let mut v = VecDeque::new();
-            v.push_back(StackItem { span, meta });
+            v.push_back(StackItem { span, meta, undo_diff });
             self.stack
                 .push_back((v, Arc::new(Mutex::new(DiffBatch::default()))));
             self.size += 1;
@@ -384,6 +387,8 @@ impl Stack {
                 if last_span.span.end == span.start {
                     // Merge spans by extending the end of the last span
                     last_span.span.end = span.end;
+                    // Compose the undo diffs
+                    last_span.undo_diff.compose(&undo_diff);
                     return;
                 }
             }
@@ -391,7 +396,7 @@ impl Stack {
 
         // Add as a new item to the existing entry
         self.size += 1;
-        last.0.push_back(StackItem { span, meta });
+        last.0.push_back(StackItem { span, meta, undo_diff });
     }
 
     pub fn compose_remote_event(&mut self, diff: &[&ContainerDiff]) {
@@ -471,6 +476,7 @@ impl UndoManagerInner {
             on_pop: None,
             on_push: None,
             group: None,
+            pending_undo_diff: Default::default(),
         }
     }
 
@@ -528,12 +534,15 @@ impl UndoManagerInner {
 
         let should_merge = !self.undo_stack.is_empty() && (in_merge_interval || group_should_merge);
 
+        // Take the pending undo diff
+        let undo_diff = std::mem::take(&mut self.pending_undo_diff);
+
         if should_merge {
             self.undo_stack
-                .push_with_merge(span, meta, true, self.group.as_ref());
+                .push_with_merge(span, meta, undo_diff, true, self.group.as_ref());
         } else {
             self.last_undo_time = now;
-            self.undo_stack.push(span, meta);
+            self.undo_stack.push(span, meta, undo_diff);
         }
 
         self.next_counter = Some(latest_counter);
@@ -788,10 +797,70 @@ impl UndoManager {
         let mut executed = false;
         while let Some((mut span, remote_diff)) = top {
             let mut next_push_selection = None;
-            {
+            
+            // Check if we have a precalculated undo diff
+            let use_precalculated_diff = !span.undo_diff.cid_to_events.is_empty();
+            
+            if use_precalculated_diff {
+                // Optimized path: use precalculated diff
+                debug_span!("Using precalculated undo diff").in_scope(|| {
+                    // Transform the undo diff based on remote changes
+                    let mut undo_diff = span.undo_diff.clone();
+                    let remote_change_clone = remote_diff.lock().unwrap().clone();
+                    undo_diff.transform(&remote_change_clone, true);
+                    
+                    // Clear pending_undo_diff before applying to capture redo diff
+                    {
+                        let mut inner = self.inner.lock().unwrap();
+                        inner.pending_undo_diff.clear();
+                    }
+                    
+                    // Apply the transformed undo diff
+                    doc._apply_diff(
+                        undo_diff,
+                        &mut self.container_remap.lock().unwrap(),
+                        true
+                    ).unwrap();
+                    
+                    // Transform the stack based on the generated diff
+                    let inner = self.inner.clone();
+                    let pending_diff = inner.lock().unwrap().pending_undo_diff.clone();
+                    if !pending_diff.cid_to_events.is_empty() {
+                        info_span!("transform remote diff").in_scope(|| {
+                            let mut inner = inner.lock().unwrap();
+                            get_stack(&mut inner).transform_based_on_this_delta(&pending_diff);
+                        });
+                    }
+                });
+                
+                let mut inner = self.inner.lock().unwrap();
+                if let Some(x) = inner.on_pop.as_ref() {
+                    for cursor in span.meta.cursors.iter_mut() {
+                        transform_cursor(
+                            cursor,
+                            &remote_diff.lock().unwrap(),
+                            doc,
+                            &self.container_remap.lock().unwrap(),
+                        );
+                    }
+
+                    x(kind, span.span, span.meta.clone());
+                    let take = inner.last_popped_selection.take();
+                    next_push_selection = take;
+                    inner.last_popped_selection = Some(span.meta.cursors);
+                }
+            } else {
+                // Fallback path: use undo_internal
                 let inner = self.inner.clone();
                 // We need to clone this because otherwise <transform_delta> will be applied to the same remote diff
                 let remote_change_clone = remote_diff.lock().unwrap().clone();
+                
+                // Clear pending_undo_diff before undo_internal to capture redo diff
+                {
+                    let mut inner = self.inner.lock().unwrap();
+                    inner.pending_undo_diff.clear();
+                }
+                
                 let commit = doc.undo_internal(
                     IdSpan {
                         peer: self.peer(),
@@ -850,7 +919,16 @@ impl UndoManager {
                     meta.cursors = inner;
                 }
 
-                get_opposite(&mut inner).push(CounterSpan::new(end_counter, new_counter), meta);
+                // Take the redo diff that was collected during the undo operation
+                let redo_diff = if !inner.pending_undo_diff.cid_to_events.is_empty() {
+                    std::mem::take(&mut inner.pending_undo_diff)
+                } else {
+                    // If no redo diff was collected (using old path), create an empty one
+                    // The old path will still work but won't benefit from the optimization
+                    Default::default()
+                };
+                
+                get_opposite(&mut inner).push(CounterSpan::new(end_counter, new_counter), meta, redo_diff);
                 inner.next_counter = Some(new_counter);
                 executed = true;
                 break;
