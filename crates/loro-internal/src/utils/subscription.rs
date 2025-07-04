@@ -558,9 +558,12 @@ where
         while let Some(payload) = pending_events.pop() {
             let result = self
                 .subscriber_set
-                .retain(key, &mut |callback| (callback)(&payload));
+                .retain(key, &mut |callback| {
+                    let keep = (callback)(&payload);
+                    keep
+                });
             match result {
-                Ok(_) => {
+                Ok(()) => {
                     let mut queue = self.queue.lock().unwrap();
                     if let Some(new_pending_events) = queue.remove(key) {
                         pending_events.extend(new_pending_events);

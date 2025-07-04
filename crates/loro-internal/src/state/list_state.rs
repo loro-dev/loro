@@ -455,6 +455,84 @@ impl ContainerState for ListState {
 
     fn apply_local_op(&mut self, op: &RawOp, _: &Op, undo_diff: Option<&mut DiffBatch>, doc: &Weak<LoroDocInner>) -> LoroResult<ApplyLocalOpReturn> {
         let mut ans: ApplyLocalOpReturn = Default::default();
+        
+        // Collect undo diff if needed
+        if let Some(undo_batch) = undo_diff {
+            if let Some(doc) = doc.upgrade() {
+                let container_id = doc.arena.get_container_id(self.idx).unwrap();
+                
+                match &op.content {
+                    RawOpContent::List(list) => match list {
+                        ListOp::Insert { slice, pos } => {
+                            // For insert, the undo is a delete of the same length
+                            let len = match slice {
+                                ListSlice::RawData(list) => list.len(),
+                                _ => unreachable!(),
+                            };
+                            
+                            // Create delete diff
+                            let mut diff: ListDiff = ListDiff::default();
+                            diff.push_retain(*pos, Default::default());
+                            diff.push_delete(len);
+                            
+                            // Add to batch or compose with existing
+                            if let Some(existing_diff) = undo_batch.cid_to_events.get_mut(&container_id) {
+                                // Compose with existing diff
+                                if let Diff::List(existing_list_diff) = existing_diff {
+                                    existing_list_diff.compose(&diff);
+                                }
+                            } else {
+                                undo_batch.order.push(container_id.clone());
+                                undo_batch.cid_to_events.insert(container_id, Diff::List(diff));
+                            }
+                        }
+                        ListOp::Delete(del) => {
+                            // For delete, the undo is an insert of the deleted values
+                            let range = del.span.to_urange();
+                            let mut deleted_values = Vec::new();
+                            
+                            // Collect the values that will be deleted
+                            for i in range.clone() {
+                                if let Some(value) = self.get(i) {
+                                    deleted_values.push(value.clone());
+                                }
+                            }
+                            
+                            
+                            // Create insert diff
+                            let mut diff: ListDiff = ListDiff::default();
+                            if range.start > 0 {
+                                diff.push_retain(range.start, Default::default());
+                            }
+                            
+                            // Convert values to ValueOrHandler and insert them
+                            for arr in ArrayVec::from_many(
+                                deleted_values
+                                    .into_iter()
+                                    .map(|v| ValueOrHandler::from_value(v, &doc)),
+                            ) {
+                                diff.push_insert(arr, Default::default());
+                            }
+                            
+                            // Add to batch or compose with existing
+                            if let Some(existing_diff) = undo_batch.cid_to_events.get_mut(&container_id) {
+                                // Compose with existing diff
+                                if let Diff::List(existing_list_diff) = existing_diff {
+                                    existing_list_diff.compose(&diff);
+                                }
+                            } else {
+                                undo_batch.order.push(container_id.clone());
+                                undo_batch.cid_to_events.insert(container_id.clone(), Diff::List(diff));
+                            }
+                        }
+                        _ => {} // Other operations not supported yet
+                    },
+                    _ => unreachable!(),
+                }
+            }
+        }
+        
+        // Apply the operation
         match &op.content {
             RawOpContent::List(list) => match list {
                 ListOp::Insert { slice, pos } => match slice {
@@ -481,18 +559,6 @@ impl ContainerState for ListState {
                 }
             },
             _ => unreachable!(),
-        }
-        
-        // TODO: Implement undo diff generation for ListState
-        // For Insert operations:
-        //   - Generate a Delete operation for the inserted range
-        // For Delete operations:
-        //   - Generate an Insert operation with the deleted content
-        //   - Need to retrieve the deleted values from the list
-        if let Some(_undo_batch) = undo_diff {
-            if let Some(_doc) = doc.upgrade() {
-                // Implementation needed
-            }
         }
         
         Ok(ans)

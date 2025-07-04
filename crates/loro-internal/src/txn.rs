@@ -497,7 +497,8 @@ impl Transaction {
         
         // Emit the undo diff batch if it contains any diffs
         if !self.undo_diff.cid_to_events.is_empty() {
-            doc.undo_subs.emit(&(), std::mem::take(&mut self.undo_diff));
+            let diff = std::mem::take(&mut self.undo_diff);
+            doc.undo_subs.emit(&(), diff);
         }
         
         if let Some(on_commit) = self.on_commit.take() {

@@ -165,7 +165,6 @@ fn test_undo_diff_batch_generation() {
     
     // Test that we can subscribe without panic
     let _sub = doc.subscribe_undo_diffs(Box::new(move |_diff: &DiffBatch| {
-        println!("Received undo diff batch");
         false // don't unsubscribe
     }));
     
@@ -189,7 +188,7 @@ fn test_counter_undo_diff_generation() {
     
     let _sub = doc.subscribe_undo_diffs(Box::new(move |diff: &DiffBatch| {
         received_diffs_clone.lock().unwrap().push(diff.clone());
-        false
+        true // true means keep the subscription active
     }));
     
     // Test counter increment
@@ -225,7 +224,7 @@ fn test_map_undo_diff_generation() {
     
     let _sub = doc.subscribe_undo_diffs(Box::new(move |diff: &DiffBatch| {
         received_diffs_clone.lock().unwrap().push(diff.clone());
-        false
+        true // true means keep the subscription active
     }));
     
     let map = doc.get_map("map");
@@ -304,6 +303,99 @@ fn test_map_undo_diff_generation() {
                 }
             }
             _ => panic!("Expected Map diff"),
+        }
+    }
+}
+
+#[test]
+fn test_list_undo_diff_generation() {
+    use std::sync::{Arc, Mutex};
+    use loro_internal::event::Diff;
+    
+    // Test 1: Insert operation
+    {
+        let doc = LoroDoc::new();
+        let received_diffs = Arc::new(Mutex::new(Vec::new()));
+        let received_diffs_clone = received_diffs.clone();
+        
+        let _sub = doc.subscribe_undo_diffs(Box::new(move |diff: &DiffBatch| {
+            received_diffs_clone.lock().unwrap().push(diff.clone());
+            false
+        }));
+        
+        let list = doc.get_list("list");
+        list.push(42).unwrap();
+        doc.commit_then_renew();
+        
+        let diffs = received_diffs.lock().unwrap();
+        assert_eq!(diffs.len(), 1, "Should receive one diff batch for insert");
+        let diff_batch = &diffs[0];
+        let list_id = doc.get_list("list").id();
+        let list_diff = diff_batch.cid_to_events.get(&list_id).unwrap();
+        
+        match list_diff {
+            Diff::List(list_diff) => {
+                // Should have a single delete operation of length 1
+                let items: Vec<_> = list_diff.iter().collect();
+                assert_eq!(items.len(), 1);
+                match &items[0] {
+                    loro_internal::loro_delta::DeltaItem::Replace { delete, value, .. } => {
+                        assert_eq!(*delete, 1, "Undo of insert should delete 1 element");
+                        assert!(value.is_empty(), "Should not have any insert values");
+                    }
+                    _ => panic!("Expected Replace operation with delete"),
+                }
+            }
+            _ => panic!("Expected List diff"),
+        }
+    }
+    
+    // Test 2: Delete operation
+    {
+        let doc = LoroDoc::new();
+        let received_diffs = Arc::new(Mutex::new(Vec::new()));
+        let received_diffs_clone = received_diffs.clone();
+        
+        let _sub = doc.subscribe_undo_diffs(Box::new(move |diff: &DiffBatch| {
+            received_diffs_clone.lock().unwrap().push(diff.clone());
+            true // true means keep the subscription active
+        }));
+        
+        let list = doc.get_list("list");
+        // First insert some data
+        list.push(42).unwrap();
+        list.push("hello").unwrap();
+        doc.commit_then_renew();
+        
+        // Clear the diffs from inserts
+        received_diffs.lock().unwrap().clear();
+        
+        // Now delete the first element
+        list.delete(0, 1).unwrap();
+        doc.commit_then_renew();
+        
+        let diffs = received_diffs.lock().unwrap();
+        assert_eq!(diffs.len(), 1, "Should receive one diff batch for delete");
+        let diff_batch = &diffs[0];
+        let list_id = doc.get_list("list").id();
+        let list_diff = diff_batch.cid_to_events.get(&list_id).unwrap();
+        
+        match list_diff {
+            Diff::List(list_diff) => {
+                // Should have insert(42) at position 0
+                let items: Vec<_> = list_diff.iter().collect();
+                assert_eq!(items.len(), 1);
+                match &items[0] {
+                    loro_internal::loro_delta::DeltaItem::Replace { value, delete, .. } => {
+                        assert_eq!(*delete, 0, "Should not delete any elements");
+                        assert_eq!(value.len(), 1, "Should insert 1 element");
+                        // Check that the inserted value is 42
+                        assert_eq!(*value[0].as_value().unwrap().as_i64().unwrap(), 42);
+                    }
+                    _ => panic!("Expected Replace operation with insert"),
+                }
+            }
+            _ => panic!("Expected List diff"),
         }
     }
 }
