@@ -850,7 +850,12 @@ impl UndoManager {
                     inner.last_popped_selection = Some(span.meta.cursors);
                 }
             } else {
-                // Fallback path: use undo_internal
+                // Fallback path: use undo_internal for backward compatibility
+                // This path is needed for:
+                // 1. Operations created before UndoManager initialization
+                // 2. Operations imported from other peers
+                // 3. Legacy documents without precalculated diffs
+                // NOTE: This path performs checkouts and is slower (O(n²) complexity)
                 let inner = self.inner.clone();
                 // We need to clone this because otherwise <transform_delta> will be applied to the same remote diff
                 let remote_change_clone = remote_diff.lock().unwrap().clone();
