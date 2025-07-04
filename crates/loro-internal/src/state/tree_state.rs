@@ -1281,8 +1281,29 @@ impl ContainerState for TreeState {
         // self.check_tree_integrity();
     }
 
-    fn apply_local_op(&mut self, raw_op: &RawOp, _op: &Op, _undo_diff: Option<&mut DiffBatch>, _doc: &Weak<LoroDocInner>) -> LoroResult<ApplyLocalOpReturn> {
+    fn apply_local_op(&mut self, raw_op: &RawOp, _op: &Op, undo_diff: Option<&mut DiffBatch>, doc: &Weak<LoroDocInner>) -> LoroResult<ApplyLocalOpReturn> {
         let mut deleted_containers = vec![];
+        
+        // Track the old state for undo diff generation
+        let (old_parent, old_position) = match &raw_op.content {
+            crate::op::RawOpContent::Tree(tree) => match &**tree {
+                TreeOp::Create { .. } => {
+                    // For create, there's no old parent/position
+                    (None, None)
+                }
+                TreeOp::Move { target, .. } | TreeOp::Delete { target } => {
+                    // Get current parent and position before the operation
+                    if let Some(node) = self.trees.get(target) {
+                        (Some(node.parent), node.position.clone())
+                    } else {
+                        (None, None)
+                    }
+                }
+            },
+            _ => unreachable!(),
+        };
+        
+        // Apply the operation
         match &raw_op.content {
             crate::op::RawOpContent::Tree(tree) => match &**tree {
                 TreeOp::Create {
@@ -1317,17 +1338,98 @@ impl ContainerState for TreeState {
         }
         // self.check_tree_integrity();
         
-        // TODO: Implement undo diff generation for TreeState
-        // For Create operations:
-        //   - Generate a Delete operation for the created node
-        // For Delete operations:
-        //   - Generate a Create operation to restore the node with its original parent and position
-        // For Move operations:
-        //   - Generate a Move operation to restore the node to its previous parent and position
-        //   - Need to track the previous parent and position before the move
-        if let Some(_undo_batch) = _undo_diff {
-            if let Some(_doc) = _doc.upgrade() {
-                // Implementation needed
+        // Generate undo diff if requested
+        if let Some(undo_batch) = undo_diff {
+            if let Some(doc) = doc.upgrade() {
+                if let Some(container_id) = doc.arena.get_container_id(self.idx) {
+                    let mut diff_items = vec![];
+                    
+                    match &raw_op.content {
+                        crate::op::RawOpContent::Tree(tree) => match &**tree {
+                            TreeOp::Create { target, .. } => {
+                                // Undo a create by deleting the node
+                                let current_parent = self.trees.get(target).map(|n| n.parent).unwrap_or(TreeParentId::Unexist);
+                                let current_index = self.get_index_by_tree_id(target).unwrap_or(0);
+                                
+                                diff_items.push(TreeDiffItem {
+                                    target: *target,
+                                    action: TreeExternalDiff::Delete {
+                                        old_parent: current_parent,
+                                        old_index: current_index,
+                                    },
+                                });
+                            }
+                            TreeOp::Delete { target } => {
+                                // Undo a delete by recreating the node at its original position
+                                if let (Some(parent), position) = (old_parent, old_position) {
+                                    // Calculate the index where it should be restored
+                                    let index = if let Some(children) = self.children.get(&parent) {
+                                        // Find where to insert based on the original position
+                                        let node_position = NodePosition::new(
+                                            position.clone().unwrap_or_default(),
+                                            raw_op.id_full().idlp()
+                                        );
+                                        match children.get_last_insert_index_by_position(&node_position) {
+                                            Ok(i) => i,
+                                            Err(i) => i,
+                                        }
+                                    } else {
+                                        0
+                                    };
+                                    
+                                    diff_items.push(TreeDiffItem {
+                                        target: *target,
+                                        action: TreeExternalDiff::Create {
+                                            parent,
+                                            index,
+                                            position: position.unwrap_or_default(),
+                                        },
+                                    });
+                                }
+                            }
+                            TreeOp::Move { target, .. } => {
+                                // Undo a move by moving back to the original position
+                                if let (Some(parent), position) = (old_parent, old_position) {
+                                    // Calculate the old index
+                                    let old_index = if let Some(children) = self.children.get(&parent) {
+                                        let node_position = NodePosition::new(
+                                            position.clone().unwrap_or_default(),
+                                            raw_op.id_full().idlp()
+                                        );
+                                        match children.get_last_insert_index_by_position(&node_position) {
+                                            Ok(i) => i,
+                                            Err(i) => i,
+                                        }
+                                    } else {
+                                        0
+                                    };
+                                    
+                                    // Get current state
+                                    let current_parent = self.trees.get(target).map(|n| n.parent).unwrap_or(parent);
+                                    let current_index = self.get_index_by_tree_id(target).unwrap_or(0);
+                                    
+                                    diff_items.push(TreeDiffItem {
+                                        target: *target,
+                                        action: TreeExternalDiff::Move {
+                                            parent,
+                                            index: old_index,
+                                            position: position.unwrap_or_default(),
+                                            old_parent: current_parent,
+                                            old_index: current_index,
+                                        },
+                                    });
+                                }
+                            }
+                        },
+                        _ => unreachable!(),
+                    }
+                    
+                    if !diff_items.is_empty() {
+                        let undo_diff = Diff::Tree(TreeDiff { diff: diff_items });
+                        undo_batch.cid_to_events.insert(container_id.clone(), undo_diff);
+                        undo_batch.order.push(container_id);
+                    }
+                }
             }
         }
         

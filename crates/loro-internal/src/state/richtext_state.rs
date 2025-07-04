@@ -577,8 +577,126 @@ impl ContainerState for RichtextState {
         // self.check_consistency_between_content_and_style_ranges()
     }
 
-    fn apply_local_op(&mut self, r_op: &RawOp, op: &Op, _undo_diff: Option<&mut DiffBatch>, _doc: &Weak<LoroDocInner>) -> LoroResult<ApplyLocalOpReturn> {
+    fn apply_local_op(&mut self, r_op: &RawOp, op: &Op, undo_diff: Option<&mut DiffBatch>, doc: &Weak<LoroDocInner>) -> LoroResult<ApplyLocalOpReturn> {
         self.update_version();
+        
+        // Generate undo diff if requested - must be done BEFORE applying the operation
+        if let Some(undo_batch) = undo_diff {
+            if let Some(doc) = doc.upgrade() {
+                if let Some(container_id) = doc.arena.get_container_id(self.idx) {
+                    match &op.content {
+                        crate::op::InnerContent::List(l) => match l {
+                            list_op::InnerListOp::InsertText {
+                                slice: _,
+                                unicode_len,
+                                unicode_start: _,
+                                pos,
+                            } => {
+                                // For text insertion, generate a delete operation
+                                let mut delta = TextDiff::new();
+                                // Calculate the event index for the insertion position
+                                let event_index = self.state.get_mut().entity_index_to_event_index(*pos as usize);
+                                if event_index > 0 {
+                                    delta.push_retain(event_index, Default::default());
+                                }
+                                // Delete the text that will be inserted
+                                delta.push_delete(*unicode_len as usize);
+                                
+                                let undo_diff = Diff::Text(delta);
+                                undo_batch.cid_to_events.insert(container_id.clone(), undo_diff);
+                                undo_batch.order.push(container_id.clone());
+                            }
+                            list_op::InnerListOp::Delete(del) => {
+                                // For text deletion, we need to capture the deleted content BEFORE deletion
+                                let start = del.start() as usize;
+                                let len = rle::HasLength::atom_len(&del);
+                                
+                                // Get the event index and the actual text before deletion
+                                let event_start = self.state.get_mut().entity_index_to_event_index(start);
+                                
+                                // Calculate how many event units we're deleting
+                                let event_end = self.state.get_mut().entity_index_to_event_index(start + len);
+                                let event_len = event_end - event_start;
+                                
+                                // Get the actual text content that will be deleted
+                                let deleted_text = self.get_text_slice_by_event_index(event_start, event_len)?;
+                                
+                                // Get the styles at the deletion point
+                                let styles = self.get_styles_at_entity_index(start);
+                                
+                                let mut delta = TextDiff::new();
+                                if event_start > 0 {
+                                    delta.push_retain(event_start, Default::default());
+                                }
+                                
+                                // Insert the deleted content back for undo
+                                delta.push_insert(
+                                    StringSlice::from(deleted_text),
+                                    styles.to_option_map().unwrap_or_default().into()
+                                );
+                                
+                                let undo_diff = Diff::Text(delta);
+                                undo_batch.cid_to_events.insert(container_id.clone(), undo_diff);
+                                undo_batch.order.push(container_id.clone());
+                            }
+                            list_op::InnerListOp::StyleStart {
+                                start,
+                                end,
+                                key,
+                                value: _,
+                                info: _,
+                            } => {
+                                // For style operations, we need to capture the previous styles
+                                // and generate operations to restore them
+                                let mut delta = TextDiff::new();
+                                let event_start = self.state.get_mut().entity_index_to_event_index(*start as usize);
+                                let event_end = self.state.get_mut().entity_index_to_event_index(*end as usize);
+                                
+                                if event_start > 0 {
+                                    delta.push_retain(event_start, Default::default());
+                                }
+                                
+                                // Iterate through the range and capture current styles
+                                let event_len = event_end - event_start;
+                                if event_len > 0 {
+                                    // Get current styles at the range
+                                    let styles = self.get_styles_at_entity_index(*start as usize);
+                                    
+                                    // For undo, we need to capture the current state before the style is applied
+                                    // If the style key doesn't exist in current styles, undo should set it to null
+                                    // If it exists, undo should restore the previous value
+                                    let undo_value = if styles.contains_key(key) {
+                                        // Get the current value to restore on undo
+                                        // We need to extract it from the styles
+                                        styles.to_option_map()
+                                            .and_then(|map| map.get(&key.to_string()).cloned())
+                                            .unwrap_or(LoroValue::Null)
+                                    } else {
+                                        // No existing style, undo should remove it by setting to null
+                                        LoroValue::Null
+                                    };
+                                    
+                                    let mut style_map = FxHashMap::default();
+                                    style_map.insert(key.to_string(), undo_value);
+                                    delta.push_retain(
+                                        event_len,
+                                        style_map.into()
+                                    );
+                                }
+                                
+                                let undo_diff = Diff::Text(delta);
+                                undo_batch.cid_to_events.insert(container_id.clone(), undo_diff);
+                                undo_batch.order.push(container_id.clone());
+                            }
+                            _ => {}
+                        },
+                        _ => unreachable!(),
+                    }
+                }
+            }
+        }
+        
+        // Now apply the operation
         match &op.content {
             crate::op::InnerContent::List(l) => match l {
                 list_op::InnerListOp::Insert { slice: _, pos: _ } => {
@@ -639,19 +757,6 @@ impl ContainerState for RichtextState {
         }
 
         // self.check_consistency_between_content_and_style_ranges();
-        
-        // TODO: Implement undo diff generation for RichtextState
-        // For Insert operations:
-        //   - Generate a Delete operation for the inserted text range
-        // For Delete operations:
-        //   - Generate an Insert operation with the deleted text content
-        // For StyleStart/StyleEnd operations:
-        //   - Generate inverse style operations to restore previous styles
-        if let Some(_undo_batch) = _undo_diff {
-            if let Some(_doc) = _doc.upgrade() {
-                // Implementation needed
-            }
-        }
         
         Ok(Default::default())
     }
