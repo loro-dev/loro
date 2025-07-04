@@ -528,7 +528,7 @@ impl Transaction {
         event: EventHint,
         // check whether context and txn are referring to the same state context
         doc: &LoroDoc,
-        undo_diff: Option<&mut DiffBatch>,
+        _undo_diff: Option<&mut DiffBatch>,
     ) -> LoroResult<()> {
         // TODO: need to check if the doc is the same
         let this_doc = self.doc.upgrade().unwrap();

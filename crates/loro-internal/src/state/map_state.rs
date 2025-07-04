@@ -114,10 +114,34 @@ impl ContainerState for MapState {
                 }
 
                 // Generate undo diff if requested
-                if let Some(_undo_batch) = undo_diff {
-                    // TODO: Complete implementation when container ID is available
-                    // The challenge is that we need the arena to convert ContainerIdx to ContainerID
-                    // but accessing it here causes a lock ordering violation
+                if let Some(undo_batch) = undo_diff {
+                    if let Some(doc) = doc.upgrade() {
+                        if let Some(container_id) = doc.arena.get_container_id(self.idx) {
+                            // Create undo diff based on the operation type
+                            let mut updated = FxHashMap::default();
+                            
+                            if let Some(prev_value) = prev {
+                                // This was an update or delete, restore the previous value
+                                updated.insert(
+                                    key.clone(),
+                                    ResolvedMapValue {
+                                        value: prev_value.value.as_ref().map(|v| ValueOrHandler::from_value(v.clone(), &doc)),
+                                        idlp: IdLp::new(prev_value.peer, prev_value.lamp),
+                                    }
+                                );
+                            } else {
+                                // This was an insert, undo by removing the key
+                                updated.insert(
+                                    key.clone(),
+                                    ResolvedMapValue::new_unset()
+                                );
+                            }
+                            
+                            let undo_diff = Diff::Map(ResolvedMapDelta { updated });
+                            undo_batch.cid_to_events.insert(container_id.clone(), undo_diff);
+                            undo_batch.order.push(container_id);
+                        }
+                    }
                 }
             }
             _ => unreachable!(),
