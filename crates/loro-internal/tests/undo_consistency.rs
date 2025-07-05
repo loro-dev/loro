@@ -1,4 +1,4 @@
-use loro_internal::{LoroDoc, undo::UndoManager, TreeParentId};
+use loro_internal::{LoroDoc, undo::UndoManager, TreeParentId, HandlerTrait};
 
 /// Test that the new undo implementation behaves identically to the old one
 /// by comparing document states after various undo/redo operations
@@ -314,23 +314,23 @@ fn test_undo_consistency_counter_operations() {
         counter.increment(3.0).unwrap();
         doc.commit_then_renew();
         
-        assert_eq!(counter.get(), 6.0);
+        assert_eq!(counter.get_value(), loro_internal::LoroValue::Double(6.0));
         
         // Undo operations
         assert!(undo.undo().unwrap());
-        assert_eq!(counter.get(), 3.0);
+        assert_eq!(counter.get_value(), loro_internal::LoroValue::Double(3.0));
         
         assert!(undo.undo().unwrap());
-        assert_eq!(counter.get(), 5.0);
+        assert_eq!(counter.get_value(), loro_internal::LoroValue::Double(5.0));
         
         assert!(undo.undo().unwrap());
-        assert_eq!(counter.get(), 0.0);
+        assert_eq!(counter.get_value(), loro_internal::LoroValue::Double(0.0));
         
         // Redo all
         for _ in 0..3 {
             assert!(undo.redo().unwrap());
         }
-        assert_eq!(counter.get(), 6.0);
+        assert_eq!(counter.get_value(), loro_internal::LoroValue::Double(6.0));
     }
 }
 

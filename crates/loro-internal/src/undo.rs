@@ -13,16 +13,19 @@ use crate::{
     cursor::{AbsolutePosition, Cursor},
     delta::TreeExternalDiff,
     event::{Diff, EventTriggerKind},
+    loro::{CommitOptions, CommitWhenDrop},
     version::Frontiers,
     ContainerDiff, DiffEvent, DocDiff, LoroDoc, Subscription,
 };
 
-/// A batch of diffs.
-///
-/// You can use `loroDoc.apply_diff(diff)` to apply the diff to the document.
+/// A batch of diffs that can be applied to a document.
+/// 
+/// This is an internal type used by the undo system to track changes.
 #[derive(Debug, Clone, Default)]
 pub struct DiffBatch {
+    #[doc(hidden)]
     pub cid_to_events: FxHashMap<ContainerID, Diff>,
+    #[doc(hidden)]
     pub order: Vec<ContainerID>,
 }
 
@@ -124,43 +127,37 @@ fn transform_cursor(
     };
 
     let new_pos = cursor_with_pos.pos.pos;
-    match doc.get_handler(cid.clone()).unwrap() {
-        crate::handler::Handler::Text(h) => {
-            let Some(new_cursor) = h.get_cursor_internal(new_pos, cursor_with_pos.pos.side, false)
-            else {
-                return;
-            };
-
-            cursor_with_pos.cursor = new_cursor;
-        }
-        crate::handler::Handler::List(h) => {
-            let Some(new_cursor) = h.get_cursor(new_pos, cursor_with_pos.pos.side) else {
-                return;
-            };
-
-            cursor_with_pos.cursor = new_cursor;
-        }
-        crate::handler::Handler::MovableList(h) => {
-            let Some(new_cursor) = h.get_cursor(new_pos, cursor_with_pos.pos.side) else {
-                return;
-            };
-
-            cursor_with_pos.cursor = new_cursor;
-        }
-        crate::handler::Handler::Map(_) => {}
-        crate::handler::Handler::Tree(_) => {}
-        crate::handler::Handler::Unknown(_) => {}
-        #[cfg(feature = "counter")]
-        crate::handler::Handler::Counter(_) => {}
+    let side = cursor_with_pos.pos.side;
+    
+    // Update cursor for containers that support cursor operations
+    let new_cursor = match doc.get_handler(cid.clone()).unwrap() {
+        crate::handler::Handler::Text(h) => h.get_cursor_internal(new_pos, side, false),
+        crate::handler::Handler::List(h) => h.get_cursor(new_pos, side),
+        crate::handler::Handler::MovableList(h) => h.get_cursor(new_pos, side),
+        // Other container types don't support cursors
+        _ => None,
+    };
+    
+    if let Some(cursor) = new_cursor {
+        cursor_with_pos.cursor = cursor;
     }
 }
 
-/// UndoManager is responsible for managing undo/redo from the current peer's perspective.
+/// UndoManager provides local undo/redo functionality for a specific peer.
 ///
-/// Undo/local is local: it cannot be used to undone the changes made by other peers.
-/// If you want to undo changes made by other peers, you may need to use the time travel feature.
+/// Key features:
+/// - Tracks local changes only (not remote operations)
+/// - Supports grouping multiple operations into a single undo item
+/// - Automatically merges consecutive operations within a time interval
+/// - Handles cursor position transformation during undo/redo
 ///
-/// PeerID cannot be changed during the lifetime of the UndoManager
+/// # Example
+/// ```rust,ignore
+/// let mut undo_manager = UndoManager::new(&doc);
+/// // Make some changes...
+/// undo_manager.undo(); // Undo the last change
+/// undo_manager.redo(); // Redo the change
+/// ```
 pub struct UndoManager {
     peer: Arc<AtomicU64>,
     container_remap: Arc<Mutex<FxHashMap<ContainerID, ContainerID>>>,
@@ -250,6 +247,8 @@ impl UndoGroup {
 }
 
 #[derive(Debug)]
+/// Internal stack implementation for undo/redo operations.
+/// Each entry contains a list of operations and their associated remote diffs.
 struct Stack {
     stack: VecDeque<(VecDeque<StackItem>, Arc<Mutex<DiffBatch>>)>,
     size: usize,
@@ -262,17 +261,19 @@ struct StackItem {
     undo_diff: DiffBatch,
 }
 
-/// The metadata of an undo item.
+/// Metadata associated with an undo item, including cursor positions.
 ///
-/// The cursors inside the metadata will be transformed by remote operations as well.
-/// So that when the item is popped, users can restore the cursors position correctly.
+/// The cursors are automatically transformed when remote operations occur,
+/// ensuring they remain valid when the undo item is applied.
 #[derive(Debug, Default, Clone)]
 pub struct UndoItemMeta {
     pub value: LoroValue,
+    #[doc(hidden)]
     pub cursors: Vec<CursorWithPos>,
 }
 
 #[derive(Debug, Clone)]
+#[doc(hidden)]
 pub struct CursorWithPos {
     pub cursor: Cursor,
     pub pos: AbsolutePosition,
@@ -286,10 +287,8 @@ impl UndoItemMeta {
         }
     }
 
-    /// It's assumed that the cursor is just acquired before the ops that
-    /// need to be undo/redo.
-    ///
-    /// We need to rely on the validity of the original pos value
+    /// Add a cursor position to track during undo/redo.
+    /// The cursor position will be automatically transformed by remote operations.
     pub fn add_cursor(&mut self, cursor: &Cursor) {
         self.cursors.push(CursorWithPos {
             cursor: cursor.clone(),
@@ -306,13 +305,13 @@ impl UndoItemMeta {
 }
 
 impl Stack {
-    pub fn new() -> Self {
+    fn new() -> Self {
         let mut stack = VecDeque::new();
         stack.push_back((VecDeque::new(), Arc::new(Mutex::new(Default::default()))));
         Stack { stack, size: 0 }
     }
 
-    pub fn pop(&mut self) -> Option<(StackItem, Arc<Mutex<DiffBatch>>)> {
+    fn pop(&mut self) -> Option<(StackItem, Arc<Mutex<DiffBatch>>)> {
         while self.stack.back().unwrap().0.is_empty() && self.stack.len() > 1 {
             let (_, diff) = self.stack.pop_back().unwrap();
             let diff = diff.lock().unwrap();
@@ -341,11 +340,11 @@ impl Stack {
         // Cursor position transformation relies on the remote diff in the same row.
     }
 
-    pub fn push(&mut self, span: CounterSpan, meta: UndoItemMeta, undo_diff: DiffBatch) {
+    fn push(&mut self, span: CounterSpan, meta: UndoItemMeta, undo_diff: DiffBatch) {
         self.push_with_merge(span, meta, undo_diff, false, None)
     }
 
-    pub fn push_with_merge(
+    fn push_with_merge(
         &mut self,
         span: CounterSpan,
         meta: UndoItemMeta,
@@ -399,7 +398,7 @@ impl Stack {
         last.0.push_back(StackItem { span, meta, undo_diff });
     }
 
-    pub fn compose_remote_event(&mut self, diff: &[&ContainerDiff]) {
+    fn compose_remote_event(&mut self, diff: &[&ContainerDiff]) {
         if self.is_empty() {
             return;
         }
@@ -418,7 +417,7 @@ impl Stack {
         }
     }
 
-    pub fn transform_based_on_this_delta(&mut self, diff: &DiffBatch) {
+    fn transform_based_on_this_delta(&mut self, diff: &DiffBatch) {
         if self.is_empty() {
             return;
         }
@@ -426,17 +425,17 @@ impl Stack {
         remote_diff.lock().unwrap().transform(diff, false);
     }
 
-    pub fn clear(&mut self) {
+    fn clear(&mut self) {
         self.stack = VecDeque::new();
         self.stack.push_back((VecDeque::new(), Default::default()));
         self.size = 0;
     }
 
-    pub fn is_empty(&self) -> bool {
+    fn is_empty(&self) -> bool {
         self.size == 0
     }
 
-    pub fn len(&self) -> usize {
+    fn len(&self) -> usize {
         self.size
     }
 
@@ -563,6 +562,88 @@ fn get_counter_end(doc: &LoroDoc, peer: PeerID) -> Counter {
         .unwrap_or(0)
 }
 
+impl LoroDoc {
+    /// Internal undo implementation that reverts operations in the given id_span.
+    /// 
+    /// This method:
+    /// 1. Splits the id_span based on dependencies
+    /// 2. Calculates the diff needed to undo the operations
+    /// 3. Applies the diff to revert the changes
+    /// 
+    /// The container_remap is used to handle deleted containers that may be recreated.
+    pub(crate) fn undo_internal(
+        &self,
+        id_span: IdSpan,
+        container_remap: &mut FxHashMap<ContainerID, ContainerID>,
+        post_transform_base: Option<&DiffBatch>,
+        before_diff: &mut dyn FnMut(&DiffBatch),
+    ) -> LoroResult<CommitWhenDrop> {
+        if !self.can_edit() {
+            return Err(LoroError::EditWhenDetached);
+        }
+
+        let (options, txn) = self.commit_then_stop();
+        if !self
+            .oplog()
+            .lock()
+            .unwrap()
+            .vv()
+            .includes_id(id_span.id_last())
+        {
+            self.renew_txn_if_auto_commit(options);
+            return Err(LoroError::UndoInvalidIdSpan(id_span.id_last()));
+        }
+
+        let (was_recording, latest_frontiers) = {
+            let mut state = self.state.lock().unwrap();
+            let was_recording = state.is_recording();
+            state.stop_and_clear_recording();
+            (was_recording, state.frontiers.clone())
+        };
+
+        let spans = self.oplog.lock().unwrap().split_span_based_on_deps(id_span);
+        let diff = undo(
+            spans,
+            match post_transform_base {
+                Some(d) => Either::Right(d),
+                None => Either::Left(&latest_frontiers),
+            },
+            |from, to| {
+                self._checkout_without_emitting(from, false, false).unwrap();
+                self.state.lock().unwrap().start_recording();
+                self._checkout_without_emitting(to, false, false).unwrap();
+                let mut state = self.state.lock().unwrap();
+                let e = state.take_events();
+                state.stop_and_clear_recording();
+                DiffBatch::new(e)
+            },
+            before_diff,
+        );
+
+        self._checkout_without_emitting(&latest_frontiers, false, false)?;
+        self.set_detached(false);
+        if was_recording {
+            self.state.lock().unwrap().start_recording();
+        }
+        drop(txn);
+        self.start_auto_commit();
+        // Try applying the diff, but ignore the error if it happens.
+        // MovableList's undo behavior is too tricky to handle in a collaborative env
+        // so in edge cases this may be an Error
+        if let Err(e) = self._apply_diff(diff, container_remap, true) {
+            tracing::warn!("Undo Failed {:?}", e);
+        }
+
+        if let Some(options) = options {
+            self.set_next_commit_options(options);
+        }
+        Ok(CommitWhenDrop::new(
+            self,
+            CommitOptions::new().origin("undo"),
+        ))
+    }
+}
+
 impl UndoManager {
     pub fn new(doc: &LoroDoc) -> Self {
         let peer = Arc::new(AtomicU64::new(doc.peer_id()));
@@ -665,23 +746,57 @@ impl UndoManager {
         }
     }
 
-    pub fn group_start(&mut self) -> LoroResult<()> {
+    /// Execute operations within an undo group.
+    /// All operations performed within the closure will be grouped into a single undo item.
+    /// 
+    /// # Example
+    /// ```rust,ignore
+    /// undo_manager.with_group(|| {
+    ///     // Multiple operations here will be undone together
+    ///     doc.get_text("text").insert(0, "Hello")?;
+    ///     doc.get_text("text").insert(5, " World")?;
+    ///     Ok(())
+    /// })?;
+    /// ```
+    pub fn with_group<F, R>(&mut self, f: F) -> LoroResult<R>
+    where
+        F: FnOnce() -> LoroResult<R>,
+    {
         let mut inner = self.inner.lock().unwrap();
-
         if inner.group.is_some() {
             return Err(LoroError::UndoGroupAlreadyStarted);
         }
-
         inner.group = Some(UndoGroup::new(inner.next_counter.unwrap()));
+        drop(inner);
+        
+        let result = f();
+        
+        self.inner.lock().unwrap().group = None;
+        result
+    }
 
+    /// Start a new undo group. All operations until `group_end()` will be grouped.
+    /// 
+    /// **Deprecated**: Use `with_group()` instead for better ergonomics and safety.
+    #[doc(hidden)]
+    pub fn group_start(&mut self) -> LoroResult<()> {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.group.is_some() {
+            return Err(LoroError::UndoGroupAlreadyStarted);
+        }
+        inner.group = Some(UndoGroup::new(inner.next_counter.unwrap()));
         Ok(())
     }
 
+    /// End the current undo group.
+    /// 
+    /// **Deprecated**: Use `with_group()` instead for better ergonomics and safety.
+    #[doc(hidden)]
     pub fn group_end(&mut self) {
         self.inner.lock().unwrap().group = None;
     }
 
-    pub fn peer(&self) -> PeerID {
+    fn peer(&self) -> PeerID {
         self.peer.load(std::sync::atomic::Ordering::Relaxed)
     }
 
@@ -701,10 +816,18 @@ impl UndoManager {
             .push(prefix.into());
     }
 
-    pub fn record_new_checkpoint(&mut self) -> LoroResult<()> {
+    /// Force creation of a new undo checkpoint.
+    /// This is useful when you want to ensure the next operation starts a new undo item.
+    pub fn checkpoint(&mut self) {
         self.doc.commit_then_renew();
         let counter = get_counter_end(&self.doc, self.peer());
         self.inner.lock().unwrap().record_checkpoint(counter, None);
+    }
+
+    /// Record a new checkpoint.
+    #[doc(hidden)]
+    pub fn record_new_checkpoint(&mut self) -> LoroResult<()> {
+        self.checkpoint();
         Ok(())
     }
 
@@ -724,6 +847,35 @@ impl UndoManager {
             |x| &mut x.undo_stack,
             UndoOrRedo::Redo,
         )
+    }
+
+    /// Handle the on_pop callback and cursor transformation
+    fn handle_on_pop_callback(
+        &self,
+        span: &mut StackItem,
+        kind: UndoOrRedo,
+        remote_diff: &Arc<Mutex<DiffBatch>>,
+        doc: &LoroDoc,
+    ) -> Option<Vec<CursorWithPos>> {
+        let mut inner = self.inner.lock().unwrap();
+        if let Some(on_pop) = inner.on_pop.as_ref() {
+            // Transform cursors based on remote changes
+            for cursor in span.meta.cursors.iter_mut() {
+                transform_cursor(
+                    cursor,
+                    &remote_diff.lock().unwrap(),
+                    doc,
+                    &self.container_remap.lock().unwrap(),
+                );
+            }
+
+            on_pop(kind, span.span, span.meta.clone());
+            let selection = inner.last_popped_selection.take();
+            inner.last_popped_selection = Some(span.meta.cursors.clone());
+            selection
+        } else {
+            None
+        }
     }
 
     fn perform(
@@ -786,7 +938,7 @@ impl UndoManager {
         // Because users may change the selections during the undo/redo loop, it's
         // more stable to keep the selection stored in the last stack item
         // rather than using the current selection directly.
-        self.record_new_checkpoint()?;
+        self.checkpoint();
         let end_counter = get_counter_end(doc, self.peer());
         let mut top = {
             let mut inner = self.inner.lock().unwrap();
@@ -796,7 +948,7 @@ impl UndoManager {
 
         let mut executed = false;
         while let Some((mut span, remote_diff)) = top {
-            let mut next_push_selection = None;
+            let mut next_push_selection;
             
             // Check if we have a precalculated undo diff
             let use_precalculated_diff = !span.undo_diff.cid_to_events.is_empty();
@@ -833,22 +985,12 @@ impl UndoManager {
                     }
                 });
                 
-                let mut inner = self.inner.lock().unwrap();
-                if let Some(x) = inner.on_pop.as_ref() {
-                    for cursor in span.meta.cursors.iter_mut() {
-                        transform_cursor(
-                            cursor,
-                            &remote_diff.lock().unwrap(),
-                            doc,
-                            &self.container_remap.lock().unwrap(),
-                        );
-                    }
-
-                    x(kind, span.span, span.meta.clone());
-                    let take = inner.last_popped_selection.take();
-                    next_push_selection = take;
-                    inner.last_popped_selection = Some(span.meta.cursors);
-                }
+                next_push_selection = self.handle_on_pop_callback(
+                    &mut span,
+                    kind,
+                    &remote_diff,
+                    doc,
+                );
             } else {
                 // Fallback path: use undo_internal for backward compatibility
                 // This path is needed for:
@@ -882,25 +1024,12 @@ impl UndoManager {
                     },
                 )?;
                 drop(commit);
-                let mut inner = self.inner.lock().unwrap();
-                if let Some(x) = inner.on_pop.as_ref() {
-                    for cursor in span.meta.cursors.iter_mut() {
-                        // <cursor_transform> We need to transform cursor here.
-                        // Note that right now <transform_delta> is already done,
-                        // remote_diff is also transformed by it now (that's what we need).
-                        transform_cursor(
-                            cursor,
-                            &remote_diff.lock().unwrap(),
-                            doc,
-                            &self.container_remap.lock().unwrap(),
-                        );
-                    }
-
-                    x(kind, span.span, span.meta.clone());
-                    let take = inner.last_popped_selection.take();
-                    next_push_selection = take;
-                    inner.last_popped_selection = Some(span.meta.cursors);
-                }
+                next_push_selection = self.handle_on_pop_callback(
+                    &mut span,
+                    kind,
+                    &remote_diff,
+                    doc,
+                );
             }
             let new_counter = get_counter_end(doc, self.peer());
             if end_counter != new_counter {
@@ -964,10 +1093,24 @@ impl UndoManager {
         self.inner.lock().unwrap().redo_stack.len()
     }
 
+    /// Set callbacks for undo/redo events.
+    /// 
+    /// The `on_push` callback is invoked when a new undo item is added.
+    /// The `on_pop` callback is invoked when an undo/redo operation is performed.
+    pub fn set_callbacks(&self, on_push: Option<OnPush>, on_pop: Option<OnPop>) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.on_push = on_push;
+        inner.on_pop = on_pop;
+    }
+
+    /// Set the on_push callback.
+    #[doc(hidden)]
     pub fn set_on_push(&self, on_push: Option<OnPush>) {
         self.inner.lock().unwrap().on_push = on_push;
     }
 
+    /// Set the on_pop callback.
+    #[doc(hidden)]
     pub fn set_on_pop(&self, on_pop: Option<OnPop>) {
         self.inner.lock().unwrap().on_pop = on_pop;
     }

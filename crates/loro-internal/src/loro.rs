@@ -42,10 +42,9 @@ use crate::{
     lock::{LoroLockGroup, LoroMutex},
     txn::Transaction,
 };
-use either::Either;
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{
-    ContainerID, ContainerType, HasIdSpan, HasLamportSpan, IdSpan, LoroEncodeError, LoroResult,
+    ContainerID, ContainerType, HasLamportSpan, IdSpan, LoroEncodeError, LoroResult,
     LoroValue, ID,
 };
 use rle::HasLength;
@@ -880,84 +879,6 @@ impl LoroDoc {
     /// from the end of id_span to the beginning of the id_span. Then it will convert the diff to
     /// operations and apply them to the OpLog with a dep on the last id of the given id_span.
     ///
-    /// This implementation is kinda slow, but it's simple and maintainable. We can optimize it
-    /// further when it's needed. The time complexity is O(n + m), n is the ops in the id_span, m is the
-    /// distance from id_span to the current latest version.
-    #[instrument(level = "info", skip_all)]
-    pub fn undo_internal(
-        &self,
-        id_span: IdSpan,
-        container_remap: &mut FxHashMap<ContainerID, ContainerID>,
-        post_transform_base: Option<&DiffBatch>,
-        before_diff: &mut dyn FnMut(&DiffBatch),
-    ) -> LoroResult<CommitWhenDrop> {
-        if !self.can_edit() {
-            return Err(LoroError::EditWhenDetached);
-        }
-
-        let (options, txn) = self.commit_then_stop();
-        if !self
-            .oplog()
-            .lock()
-            .unwrap()
-            .vv()
-            .includes_id(id_span.id_last())
-        {
-            self.renew_txn_if_auto_commit(options);
-            return Err(LoroError::UndoInvalidIdSpan(id_span.id_last()));
-        }
-
-        let (was_recording, latest_frontiers) = {
-            let mut state = self.state.lock().unwrap();
-            let was_recording = state.is_recording();
-            state.stop_and_clear_recording();
-            (was_recording, state.frontiers.clone())
-        };
-
-        let spans = self.oplog.lock().unwrap().split_span_based_on_deps(id_span);
-        let diff = crate::undo::undo(
-            spans,
-            match post_transform_base {
-                Some(d) => Either::Right(d),
-                None => Either::Left(&latest_frontiers),
-            },
-            |from, to| {
-                self._checkout_without_emitting(from, false, false).unwrap();
-                self.state.lock().unwrap().start_recording();
-                self._checkout_without_emitting(to, false, false).unwrap();
-                let mut state = self.state.lock().unwrap();
-                let e = state.take_events();
-                state.stop_and_clear_recording();
-                DiffBatch::new(e)
-            },
-            before_diff,
-        );
-
-        // println!("\nundo_internal: diff: {:?}", diff);
-        // println!("container remap: {:?}", container_remap);
-
-        self._checkout_without_emitting(&latest_frontiers, false, false)?;
-        self.set_detached(false);
-        if was_recording {
-            self.state.lock().unwrap().start_recording();
-        }
-        drop(txn);
-        self.start_auto_commit();
-        // Try applying the diff, but ignore the error if it happens.
-        // MovableList's undo behavior is too tricky to handle in a collaborative env
-        // so in edge cases this may be an Error
-        if let Err(e) = self._apply_diff(diff, container_remap, true) {
-            warn!("Undo Failed {:?}", e);
-        }
-
-        if let Some(options) = options {
-            self.set_next_commit_options(options);
-        }
-        Ok(CommitWhenDrop {
-            doc: self,
-            default_options: CommitOptions::new().origin("undo"),
-        })
-    }
 
     /// Generate a series of local operations that can revert the current doc to the target
     /// version.
@@ -1944,6 +1865,12 @@ fn find_last_delete_op(oplog: &OpLog, id: ID, idx: ContainerIdx) -> Option<ID> {
 pub struct CommitWhenDrop<'a> {
     doc: &'a LoroDoc,
     default_options: CommitOptions,
+}
+
+impl<'a> CommitWhenDrop<'a> {
+    pub(crate) fn new(doc: &'a LoroDoc, default_options: CommitOptions) -> Self {
+        Self { doc, default_options }
+    }
 }
 
 impl Drop for CommitWhenDrop<'_> {
