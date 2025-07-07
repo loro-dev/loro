@@ -105,7 +105,7 @@ name = "text_r"
 harness = false
 
 [[bench]]
-name = "list"
+name = "list_internal"
 harness = false
 
 [[bench]]

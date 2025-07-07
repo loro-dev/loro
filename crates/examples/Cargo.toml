@@ -27,7 +27,7 @@ color-backtrace = { version = "0.6" }
 ctor = "0.2"
 
 [[bench]]
-name = "list"
+name = "list_examples"
 harness = false
 
 [[bench]]
