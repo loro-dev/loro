@@ -991,7 +991,7 @@ impl UndoManager {
                 use_optimized_path = !undo_diff.cid_to_events.is_empty();
                 
                 if use_optimized_path {
-                    debug_span!("Using precalculated undo diff - no checkouts").in_scope(|| {
+                    let _ = debug_span!("Using precalculated undo diff - no checkouts").in_scope(|| {
                         // Clear pending_undo_diff before applying to capture redo diff
                         {
                             let mut inner = self.inner.lock().unwrap();
@@ -999,11 +999,15 @@ impl UndoManager {
                         }
                         
                         // Apply the transformed undo diff
-                        doc._apply_diff(
-                            undo_diff,
+                        if let Err(e) = doc._apply_diff(
+                            undo_diff.clone(),
                             &mut self.container_remap.lock().unwrap(),
                             true
-                        ).unwrap();
+                        ) {
+                            eprintln!("Failed to apply undo diff: {:?}", e);
+                            eprintln!("Undo diff was: {:?}", undo_diff);
+                            return Err(e);
+                        }
                     
                         // Transform the stack based on the generated diff
                         let inner = self.inner.clone();
@@ -1014,6 +1018,8 @@ impl UndoManager {
                                 get_stack(&mut inner).transform_based_on_this_delta(&pending_diff);
                             });
                         }
+                        
+                        Ok(())
                     });
                     
                     next_push_selection = self.handle_on_pop_callback(
