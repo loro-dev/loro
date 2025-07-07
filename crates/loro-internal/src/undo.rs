@@ -639,6 +639,9 @@ impl LoroDoc {
         if let Some(options) = options {
             self.set_next_commit_options(options);
         }
+        
+        // CommitWhenDrop will use set_default_options, which only sets options that aren't already set.
+        // So we pass "undo" as a default origin, but it won't override any custom origin that was already set.
         Ok(CommitWhenDrop::new(
             self,
             CommitOptions::new().origin("undo"),
