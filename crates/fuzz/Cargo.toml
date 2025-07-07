@@ -28,6 +28,7 @@ bytes = "1"
 ensure-cov = { workspace = true }
 pretty_assertions = "1.4.0"
 loro-alpha-4 = { git = "https://github.com/loro-dev/loro.git", tag = "loro-crdt@1.0.0-alpha.4", package = "loro" }
+loro-v159 = { git = "https://github.com/loro-dev/loro.git", tag = "loro-crdt@1.5.9", package = "loro" }
 
 [dev-dependencies]
 ctor = "0.2"
@@ -37,3 +38,8 @@ tracing-subscriber = "0.3.18"
 tracing-chrome = "0.7.1"
 color-backtrace = "0.6.1"
 serde_json = "1"
+criterion = "0.5"
+
+[[bench]]
+name = "undo_comparison"
+harness = false
