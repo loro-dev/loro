@@ -164,6 +164,7 @@ pub struct UndoManager {
     inner: Arc<Mutex<UndoManagerInner>>,
     _peer_id_change_sub: Subscription,
     _undo_sub: Subscription,
+    _undo_diff_sub: Subscription,
     doc: LoroDoc,
 }
 
@@ -735,6 +736,17 @@ impl UndoManager {
             peer_clone2.store(id.peer, std::sync::atomic::Ordering::Relaxed);
             true
         }));
+        
+        // Subscribe to undo diffs to receive pre-calculated inverse operations
+        let inner_clone3 = inner.clone();
+        let undo_diff_sub = doc.subscribe_undo_diffs(Box::new(move |diff_batch| {
+            let Ok(mut inner) = inner_clone3.lock() else {
+                return true;
+            };
+            // Store the received diff batch in pending_undo_diff
+            inner.pending_undo_diff.compose(diff_batch);
+            true
+        }));
 
         UndoManager {
             peer,
@@ -742,6 +754,7 @@ impl UndoManager {
             inner,
             _peer_id_change_sub: sub,
             _undo_sub: undo_sub,
+            _undo_diff_sub: undo_diff_sub,
             doc: doc.clone(),
         }
     }
