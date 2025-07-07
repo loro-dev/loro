@@ -964,8 +964,12 @@ impl UndoManager {
             
             // Check if we have a precalculated undo diff
             // Don't use optimization if we have excluded origins (incompatible with precalculated diffs)
+            // Also don't use optimization if there are remote changes (collaborative scenarios)
             let has_excluded_origins = !self.inner.lock().unwrap().exclude_origin_prefixes.is_empty();
-            let mut use_optimized_path = !span.undo_diff.cid_to_events.is_empty() && !has_excluded_origins;
+            let has_remote_changes = !remote_diff.lock().unwrap().cid_to_events.is_empty();
+            let mut use_optimized_path = !span.undo_diff.cid_to_events.is_empty() 
+                && !has_excluded_origins
+                && !has_remote_changes;
             
             // Check if this might be part of a grouped operation
             // Grouped operations have empty undo_diffs and we may see multiple in succession
