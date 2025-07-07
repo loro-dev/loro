@@ -971,8 +971,12 @@ impl UndoManager {
             let has_excluded_origins = !self.inner.lock().unwrap().exclude_origin_prefixes.is_empty();
             let has_remote_changes = !remote_diff.lock().unwrap().cid_to_events.is_empty();
             
-            // Check if the undo diff involves container restoration
-            let involves_container_restoration = span.undo_diff.cid_to_events.values().any(|diff| {
+            // Check if the undo diff involves container restoration that requires content copying
+            // The current precalculated diff approach creates empty containers when restoring,
+            // because the undo diff only contains container references, not their full content.
+            // For correctness, we fall back to the checkout-based approach for these cases.
+            // TODO: Enhance undo diff generation to capture full container state for optimization
+            let requires_content_restoration = span.undo_diff.cid_to_events.values().any(|diff| {
                 match diff {
                     Diff::Map(map_diff) => {
                         map_diff.updated.values().any(|v| {
@@ -990,11 +994,10 @@ impl UndoManager {
                 }
             });
             
-            // We can now transform all cases with the enhanced transformer
-            // But we need to fall back for container restoration cases
+            // Use optimized path for most cases, but fall back for container content restoration
             let mut use_optimized_path = !span.undo_diff.cid_to_events.is_empty() 
                 && !has_excluded_origins
-                && !involves_container_restoration;
+                && !requires_content_restoration;
             
             // Check if this might be part of a grouped operation
             // Grouped operations have empty undo_diffs and we may see multiple in succession
