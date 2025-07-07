@@ -13,6 +13,7 @@ use crate::{
     cursor::{AbsolutePosition, Cursor},
     delta::TreeExternalDiff,
     event::{Diff, EventTriggerKind},
+    handler::ValueOrHandler,
     loro::{CommitOptions, CommitWhenDrop},
     version::Frontiers,
     ContainerDiff, DiffEvent, DocDiff, LoroDoc, Subscription,
@@ -967,9 +968,30 @@ impl UndoManager {
             let has_excluded_origins = !self.inner.lock().unwrap().exclude_origin_prefixes.is_empty();
             let has_remote_changes = !remote_diff.lock().unwrap().cid_to_events.is_empty();
             
+            // Check if the undo diff involves container restoration
+            let involves_container_restoration = span.undo_diff.cid_to_events.values().any(|diff| {
+                match diff {
+                    Diff::Map(map_diff) => {
+                        map_diff.updated.values().any(|v| {
+                            matches!(&v.value, Some(ValueOrHandler::Handler(_)))
+                        })
+                    }
+                    Diff::List(list_diff) => {
+                        list_diff.iter().any(|item| {
+                            matches!(item, loro_delta::DeltaItem::Replace { value, .. } if {
+                                value.iter().any(|v| matches!(v.as_value(), Some(LoroValue::Container(_))))
+                            })
+                        })
+                    }
+                    _ => false,
+                }
+            });
+            
             // We can now transform all cases with the enhanced transformer
+            // But we need to fall back for container restoration cases
             let mut use_optimized_path = !span.undo_diff.cid_to_events.is_empty() 
-                && !has_excluded_origins;
+                && !has_excluded_origins
+                && !involves_container_restoration;
             
             // Check if this might be part of a grouped operation
             // Grouped operations have empty undo_diffs and we may see multiple in succession

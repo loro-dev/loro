@@ -234,18 +234,19 @@ impl EnhancedUndoTransformer {
                 (DeltaItem::Replace { value: local_value, attr: local_attr, delete: local_delete }, 
                  DeltaItem::Replace { value: remote_value, delete: remote_delete, .. }) => {
                     // Both are operations at the same position
-                    if remote_value.rle_len() > 0 {
-                        // Remote insert - retain over it
-                        result.push(DeltaItem::Retain { len: remote_value.rle_len(), attr: Default::default() });
-                    }
-                    
+                    // For inserts at the same position, local goes first (left priority)
                     if local_value.rle_len() > 0 {
-                        // Our insert
+                        // Our insert goes first
                         result.push(DeltaItem::Replace { 
                             value: local_value.clone(), 
                             attr: local_attr.clone(), 
                             delete: 0 
                         });
+                    }
+                    
+                    if remote_value.rle_len() > 0 {
+                        // Then retain over remote insert
+                        result.push(DeltaItem::Retain { len: remote_value.rle_len(), attr: Default::default() });
                     }
                     
                     // Handle deletes
