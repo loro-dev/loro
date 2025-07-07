@@ -1,0 +1,7 @@
+[package]
+name = "undo_performance"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+loro = { path = "../../crates/loro" }
