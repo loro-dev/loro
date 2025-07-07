@@ -963,7 +963,9 @@ impl UndoManager {
             let mut next_push_selection = None;
             
             // Check if we have a precalculated undo diff
-            let mut use_optimized_path = !span.undo_diff.cid_to_events.is_empty();
+            // Don't use optimization if we have excluded origins (incompatible with precalculated diffs)
+            let has_excluded_origins = !self.inner.lock().unwrap().exclude_origin_prefixes.is_empty();
+            let mut use_optimized_path = !span.undo_diff.cid_to_events.is_empty() && !has_excluded_origins;
             
             // Check if this might be part of a grouped operation
             // Grouped operations have empty undo_diffs and we may see multiple in succession
