@@ -1,0 +1,21 @@
+   Compiling loro-internal v1.5.8 (/home/ec2-user/loro/crates/loro-internal)
+error[E0308]: mismatched types
+    --> crates/loro-internal/src/undo.rs:1015:67
+     |
+1015 |                           if !pending_diff.cid_to_events.is_empty() {
+     |  ___________________________________________________________________^
+1016 | |                             info_span!("transform remote diff").in_scope(|| {
+1017 | |                                 let mut inner = inner.lock().unwrap();
+1018 | |                                 get_stack(&mut inner).transform_based_on_this_delta(&pending_diff);
+1019 | |                             });
+1020 | |                         }
+     | |_________________________^ expected `Result<_, LoroError>`, found `()`
+     |
+     = note:   expected enum `Result<_, loro_common::LoroError>`
+             found unit type `()`
+
+For more information about this error, try `rustc --explain E0308`.
+error: could not compile `loro-internal` (lib) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `loro-internal` (lib test) due to 1 previous error
+error: command `/home/ec2-user/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo test --no-run --message-format json-render-diagnostics --features test_utils,jsonpath` exited with code 101
