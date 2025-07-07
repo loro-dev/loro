@@ -125,70 +125,150 @@ impl EnhancedUndoTransformer {
     
     /// Core transformation algorithm for text operations
     fn transform_delta_items<A: Clone + Default>(
-        local_ops: Vec<DeltaItem<StringSlice, A>>,
-        remote_ops: Vec<DeltaItem<StringSlice, A>>
+        mut local_ops: Vec<DeltaItem<StringSlice, A>>,
+        mut remote_ops: Vec<DeltaItem<StringSlice, A>>
     ) -> Vec<DeltaItem<StringSlice, A>> {
         let mut result = Vec::new();
-        let mut local_pos = 0;
-        let _remote_pos = 0;
-        let mut output_pos = 0;
+        let mut local_idx = 0;
+        let mut remote_idx = 0;
         
-        // Build position map from remote operations
-        let remote_effects = Self::calculate_position_effects(&remote_ops);
         
-        for local_op in local_ops {
-            match local_op {
-                DeltaItem::Retain { len, attr } => {
-                    // Retain operations just move position
-                    let adjusted_len = Self::adjust_length_for_remote_changes(
-                        local_pos, len, &remote_effects
-                    );
-                    if adjusted_len > 0 {
-                        result.push(DeltaItem::Retain { len: adjusted_len, attr });
+        while local_idx < local_ops.len() || remote_idx < remote_ops.len() {
+            if local_idx >= local_ops.len() {
+                // No more local ops, we're done
+                break;
+            }
+            
+            if remote_idx >= remote_ops.len() {
+                // No more remote ops, just append remaining local ops
+                result.push(local_ops[local_idx].clone());
+                local_idx += 1;
+                continue;
+            }
+            
+            let local_op = local_ops[local_idx].clone();
+            let remote_op = remote_ops[remote_idx].clone();
+            
+            
+            match (local_op, remote_op) {
+                (DeltaItem::Retain { len: local_len, attr }, DeltaItem::Retain { len: remote_len, .. }) => {
+                    let min_len = local_len.min(remote_len);
+                    result.push(DeltaItem::Retain { len: min_len, attr: attr.clone() });
+                    
+                    if local_len > min_len {
+                        local_ops[local_idx] = DeltaItem::Retain { len: local_len - min_len, attr };
+                    } else {
+                        local_idx += 1;
                     }
-                    local_pos += len;
+                    
+                    if remote_len > min_len {
+                        remote_ops[remote_idx] = DeltaItem::Retain { len: remote_len - min_len, attr: Default::default() };
+                    } else {
+                        remote_idx += 1;
+                    }
                 }
-                DeltaItem::Replace { value, attr, delete } => {
+                (DeltaItem::Retain { len, attr }, DeltaItem::Replace { value, delete, .. }) => {
+                    // Remote operation happens before our retain
                     if value.rle_len() > 0 {
-                        // Insert operation
-                        result.push(DeltaItem::Replace { value, attr: attr.clone(), delete: 0 });
+                        // Remote insert - we need to retain over it
+                        result.push(DeltaItem::Retain { len: value.rle_len(), attr: Default::default() });
+                        remote_idx += 1;
                     } else if delete > 0 {
-                        // Delete operation - handle overlapping deletes
-                        let local_range = Range::new(local_pos, local_pos + delete);
-                        let adjusted_delete = Self::calculate_adjusted_delete(
-                            &local_range, &remote_effects
-                        );
-                        
-                        if adjusted_delete.len > 0 {
-                            // Adjust position for any remote insertions before this point
-                            let position_shift = Self::calculate_position_shift(
-                                adjusted_delete.start, &remote_effects
-                            );
-                            
-                            // Add retains to reach the correct position
-                            let target_pos = if position_shift >= 0 {
-                                adjusted_delete.start + position_shift as usize
-                            } else {
-                                adjusted_delete.start.saturating_sub((-position_shift) as usize)
+                        // Remote delete - adjust our retain length
+                        let overlap = len.min(delete);
+                        if len > overlap {
+                            local_ops[local_idx] = DeltaItem::Retain { len: len - overlap, attr };
+                        } else {
+                            local_idx += 1;
+                        }
+                        if delete > overlap {
+                            remote_ops[remote_idx] = DeltaItem::Replace { 
+                                value: Default::default(), 
+                                attr: Default::default(), 
+                                delete: delete - overlap 
                             };
-                            
-                            if target_pos > output_pos {
-                                result.push(DeltaItem::Retain {
-                                    len: target_pos - output_pos,
-                                    attr: Default::default()
-                                });
-                                output_pos = target_pos;
-                            }
-                            
+                        } else {
+                            remote_idx += 1;
+                        }
+                    }
+                }
+                (DeltaItem::Replace { value, attr, delete }, DeltaItem::Retain { len: remote_len, .. }) => {
+                    // Our operation happens before remote retain
+                    if value.rle_len() > 0 {
+                        // Our insert - just output it
+                        result.push(DeltaItem::Replace { 
+                            value: value.clone(), 
+                            attr: attr.clone(), 
+                            delete: 0 
+                        });
+                        local_idx += 1;
+                    } else if delete > 0 {
+                        // Our delete
+                        let overlap = delete.min(remote_len);
+                        result.push(DeltaItem::Replace {
+                            value: Default::default(),
+                            attr: attr.clone(),
+                            delete: overlap
+                        });
+                        
+                        if delete > overlap {
+                            local_ops[local_idx] = DeltaItem::Replace {
+                                value: Default::default(),
+                                attr,
+                                delete: delete - overlap
+                            };
+                        } else {
+                            local_idx += 1;
+                        }
+                        
+                        if remote_len > overlap {
+                            remote_ops[remote_idx] = DeltaItem::Retain { 
+                                len: remote_len - overlap, 
+                                attr: Default::default() 
+                            };
+                        } else {
+                            remote_idx += 1;
+                        }
+                    }
+                }
+                (DeltaItem::Replace { value: local_value, attr: local_attr, delete: local_delete }, 
+                 DeltaItem::Replace { value: remote_value, delete: remote_delete, .. }) => {
+                    // Both are operations at the same position
+                    if remote_value.rle_len() > 0 {
+                        // Remote insert - retain over it
+                        result.push(DeltaItem::Retain { len: remote_value.rle_len(), attr: Default::default() });
+                    }
+                    
+                    if local_value.rle_len() > 0 {
+                        // Our insert
+                        result.push(DeltaItem::Replace { 
+                            value: local_value.clone(), 
+                            attr: local_attr.clone(), 
+                            delete: 0 
+                        });
+                    }
+                    
+                    // Handle deletes
+                    if local_delete > 0 && remote_delete > 0 {
+                        // Overlapping deletes
+                        let overlap = local_delete.min(remote_delete);
+                        if local_delete > overlap {
                             result.push(DeltaItem::Replace {
                                 value: Default::default(),
-                                attr: attr.clone(),
-                                delete: adjusted_delete.len
+                                attr: local_attr.clone(),
+                                delete: local_delete - overlap
                             });
-                            output_pos += adjusted_delete.len;
                         }
-                        local_pos += delete;
+                    } else if local_delete > 0 {
+                        result.push(DeltaItem::Replace {
+                            value: Default::default(),
+                            attr: local_attr.clone(),
+                            delete: local_delete
+                        });
                     }
+                    
+                    local_idx += 1;
+                    remote_idx += 1;
                 }
             }
         }
