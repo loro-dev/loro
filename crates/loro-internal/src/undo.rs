@@ -390,7 +390,7 @@ impl Stack {
 
         // Add as a new item to the existing entry
         self.size += 1;
-        // For grouped operations, clear undo_diff to force fallback path
+        // For grouped operations, use empty undo_diff to force fallback path
         let undo_diff = if group.is_some() {
             DiffBatch::default()
         } else {
@@ -959,50 +959,59 @@ impl UndoManager {
 
         let mut executed = false;
         while let Some((mut span, remote_diff)) = top {
-            let mut next_push_selection;
+            let mut next_push_selection = None;
             
             // Check if we have a precalculated undo diff
-            let use_precalculated_diff = !span.undo_diff.cid_to_events.is_empty();
+            let mut use_optimized_path = !span.undo_diff.cid_to_events.is_empty();
+            // Track if this is a grouped operation (has empty diff due to grouping)
+            let is_grouped_operation = span.undo_diff.cid_to_events.is_empty();
             
-            if use_precalculated_diff {
-                // Optimized path: use precalculated diff (avoids checkouts!)
-                debug_span!("Using precalculated undo diff - no checkouts").in_scope(|| {
-                    // Transform the undo diff based on remote changes
-                    let mut undo_diff = span.undo_diff.clone();
-                    let remote_change_clone = remote_diff.lock().unwrap().clone();
-                    undo_diff.transform(&remote_change_clone, true);
-                    
-                    // Clear pending_undo_diff before applying to capture redo diff
-                    {
-                        let mut inner = self.inner.lock().unwrap();
-                        inner.pending_undo_diff.clear();
-                    }
-                    
-                    // Apply the transformed undo diff
-                    doc._apply_diff(
-                        undo_diff,
-                        &mut self.container_remap.lock().unwrap(),
-                        true
-                    ).unwrap();
-                    
-                    // Transform the stack based on the generated diff
-                    let inner = self.inner.clone();
-                    let pending_diff = inner.lock().unwrap().pending_undo_diff.clone();
-                    if !pending_diff.cid_to_events.is_empty() {
-                        info_span!("transform remote diff").in_scope(|| {
-                            let mut inner = inner.lock().unwrap();
-                            get_stack(&mut inner).transform_based_on_this_delta(&pending_diff);
-                        });
-                    }
-                });
+            if use_optimized_path {
+                // Try optimized path: use precalculated diff (avoids checkouts!)
+                // Transform the undo diff based on remote changes
+                let mut undo_diff = span.undo_diff.clone();
+                let remote_change_clone = remote_diff.lock().unwrap().clone();
+                undo_diff.transform(&remote_change_clone, true);
                 
-                next_push_selection = self.handle_on_pop_callback(
-                    &mut span,
-                    kind,
-                    &remote_diff,
-                    doc,
-                );
-            } else {
+                // Check if we still have a valid diff after transformation
+                use_optimized_path = !undo_diff.cid_to_events.is_empty();
+                
+                if use_optimized_path {
+                    debug_span!("Using precalculated undo diff - no checkouts").in_scope(|| {
+                        // Clear pending_undo_diff before applying to capture redo diff
+                        {
+                            let mut inner = self.inner.lock().unwrap();
+                            inner.pending_undo_diff.clear();
+                        }
+                        
+                        // Apply the transformed undo diff
+                        doc._apply_diff(
+                            undo_diff,
+                            &mut self.container_remap.lock().unwrap(),
+                            true
+                        ).unwrap();
+                    
+                        // Transform the stack based on the generated diff
+                        let inner = self.inner.clone();
+                        let pending_diff = inner.lock().unwrap().pending_undo_diff.clone();
+                        if !pending_diff.cid_to_events.is_empty() {
+                            info_span!("transform remote diff").in_scope(|| {
+                                let mut inner = inner.lock().unwrap();
+                                get_stack(&mut inner).transform_based_on_this_delta(&pending_diff);
+                            });
+                        }
+                    });
+                    
+                    next_push_selection = self.handle_on_pop_callback(
+                        &mut span,
+                        kind,
+                        &remote_diff,
+                        doc,
+                    );
+                }
+            }
+            
+            if !use_optimized_path {
                 // Fallback path: use undo_internal for backward compatibility
                 // This path is needed for:
                 // 1. Operations created before UndoManager initialization
@@ -1065,11 +1074,15 @@ impl UndoManager {
                 }
 
                 // Take the redo diff that was collected during the undo operation
-                let redo_diff = if !inner.pending_undo_diff.cid_to_events.is_empty() {
+                // For grouped operations, we should store an empty redo diff to force the fallback path on redo too
+                let redo_diff = if is_grouped_operation {
+                    // Grouped operations should always use fallback path for redo
+                    Default::default()
+                } else if !inner.pending_undo_diff.cid_to_events.is_empty() {
+                    // For non-grouped operations, use the collected redo diff
                     std::mem::take(&mut inner.pending_undo_diff)
                 } else {
-                    // If no redo diff was collected (using old path), create an empty one
-                    // The old path will still work but won't benefit from the optimization
+                    // If no redo diff was collected, create an empty one
                     Default::default()
                 };
                 
