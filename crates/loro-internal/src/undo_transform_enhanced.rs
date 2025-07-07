@@ -64,18 +64,11 @@ struct AdjustedDelete {
 impl EnhancedUndoTransformer {
     /// Transform a DiffBatch against remote operations
     pub fn transform_diff_batch(local: &mut DiffBatch, remote: &DiffBatch) {
-        eprintln!("=== Enhanced Transform ===");
-        eprintln!("Local diff before: {:?}", local);
-        eprintln!("Remote diff: {:?}", remote);
-        
         for (cid, local_diff) in local.cid_to_events.iter_mut() {
             if let Some(remote_diff) = remote.cid_to_events.get(cid) {
                 Self::transform_diff(local_diff, remote_diff);
             }
         }
-        
-        eprintln!("Local diff after: {:?}", local);
-        eprintln!("========================");
     }
     
     /// Transform a single diff against remote operations
@@ -419,7 +412,6 @@ impl EnhancedUndoTransformer {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     
     #[test]
     fn test_overlapping_delete_transformation() {
