@@ -54,22 +54,9 @@ impl DiffBatch {
 
         for (id, diff) in other.iter() {
             if let Some(this_diff) = self.cid_to_events.get_mut(id) {
-                // Special handling for text diffs to avoid empty results
-                if let (Diff::Text(_), Diff::Text(_)) = (this_diff.clone(), diff) {
-                    // Clone to check if composition would result in empty diff
-                    let mut test_diff = this_diff.clone();
-                    test_diff.compose_ref(diff);
-                    if test_diff.is_empty() {
-                        // If composition would be empty, replace with the new diff
-                        // This handles the case where insert + delete cancel out
-                        *this_diff = diff.clone();
-                    } else {
-                        // Normal composition
-                        this_diff.compose_ref(diff);
-                    }
-                } else {
-                    this_diff.compose_ref(diff);
-                }
+                // For undo diffs, we need to compose them in a way that maintains correctness
+                // When composing undo diffs from grouped operations, positions may need adjustment
+                this_diff.compose_ref(diff);
             } else {
                 self.cid_to_events.insert(id.clone(), diff.clone());
                 self.order.push(id.clone());
@@ -387,8 +374,15 @@ impl Stack {
                 if last_span.span.end == span.start {
                     // Merge spans by extending the end of the last span
                     last_span.span.end = span.end;
-                    // Compose the undo diffs
-                    last_span.undo_diff.compose(&undo_diff);
+                    // For grouped operations, clear the undo_diff to force fallback path
+                    // This is because composing undo diffs from different operations
+                    // requires complex position transformations that aren't implemented yet
+                    if group.is_some() {
+                        last_span.undo_diff.clear();
+                    } else {
+                        // Only compose diffs for non-grouped operations
+                        last_span.undo_diff.compose(&undo_diff);
+                    }
                     return;
                 }
             }
@@ -396,6 +390,12 @@ impl Stack {
 
         // Add as a new item to the existing entry
         self.size += 1;
+        // For grouped operations, clear undo_diff to force fallback path
+        let undo_diff = if group.is_some() {
+            DiffBatch::default()
+        } else {
+            undo_diff
+        };
         last.0.push_back(StackItem { span, meta, undo_diff });
     }
 

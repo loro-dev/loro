@@ -35,11 +35,11 @@ fn main() {
         let doc1 = LoroDoc::new();
         let text1 = doc1.get_text("text");
         text1.insert(0, &content).unwrap();
-        doc1.commit();
+        doc1.commit_then_renew();
         
         let start = Instant::now();
         text1.delete(0, content.len()).unwrap();
-        doc1.commit();
+        doc1.commit_then_renew();
         let time_without_undo = start.elapsed();
         
         // Test with UndoManager
@@ -47,11 +47,11 @@ fn main() {
         let _undo = UndoManager::new(&doc2);
         let text2 = doc2.get_text("text");
         text2.insert(0, &content).unwrap();
-        doc2.commit();
+        doc2.commit_then_renew();
         
         let start = Instant::now();
         text2.delete(0, content.len()).unwrap();
-        doc2.commit();
+        doc2.commit_then_renew();
         let time_with_undo = start.elapsed();
         
         let overhead = time_with_undo.saturating_sub(time_without_undo);
@@ -79,13 +79,13 @@ fn main() {
         let chunk = format!("Chunk {}: {}\n", i, "x".repeat(chunk_size));
         text1.insert(text1.len_unicode() as usize, &chunk).unwrap();
     }
-    doc1.commit();
+    doc1.commit_then_renew();
     
     println!("Deleting {} chunks of {} bytes each WITHOUT UndoManager...", num_chunks, chunk_size);
     let start = Instant::now();
     for _ in 0..num_chunks {
         text1.delete(0, chunk_size + 20).unwrap(); // +20 for "Chunk N: " prefix
-        doc1.commit();
+        doc1.commit_then_renew();
     }
     let time_without = start.elapsed();
     println!("Time: {:?}", time_without);
@@ -100,13 +100,13 @@ fn main() {
         let chunk = format!("Chunk {}: {}\n", i, "x".repeat(chunk_size));
         text2.insert(text2.len_unicode() as usize, &chunk).unwrap();
     }
-    doc2.commit();
+    doc2.commit_then_renew();
     
     println!("\nDeleting {} chunks of {} bytes each WITH UndoManager...", num_chunks, chunk_size);
     let start = Instant::now();
     for _ in 0..num_chunks {
         text2.delete(0, chunk_size + 20).unwrap();
-        doc2.commit();
+        doc2.commit_then_renew();
     }
     let time_with = start.elapsed();
     println!("Time: {:?}", time_with);
@@ -129,9 +129,9 @@ fn main() {
     
     for i in 0..num_operations {
         text.insert(0, &format!("Operation {}: {}", i, large_content)).unwrap();
-        doc.commit();
+        doc.commit_then_renew();
         text.delete(0, large_content.len() + 15).unwrap(); // +15 for prefix
-        doc.commit();
+        doc.commit_then_renew();
     }
     
     println!("Performed {} insert/delete pairs with 100KB content each", num_operations);
