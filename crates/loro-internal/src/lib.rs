@@ -82,6 +82,7 @@ pub(crate) mod macros;
 pub(crate) mod state;
 pub mod undo;
 pub(crate) mod undo_transform;
+pub(crate) mod undo_transform_enhanced;
 pub(crate) mod value;
 
 // TODO: rename as Key?

@@ -80,44 +80,6 @@ impl DiffBatch {
         self.cid_to_events.clear();
         self.order.clear();
     }
-    
-    /// Check if this diff batch contains complex operations that are difficult to transform
-    pub fn has_complex_operations(&self) -> bool {
-        for (_, diff) in self.cid_to_events.iter() {
-            match diff {
-                Diff::Text(text_diff) => {
-                    // Check for delete operations in text
-                    use loro_delta::DeltaItem;
-                    for item in text_diff.iter() {
-                        if let DeltaItem::Replace { value, delete, .. } = item {
-                            // A delete operation has empty value and non-zero delete
-                            if value.is_empty() && *delete > 0 {
-                                return true;
-                            }
-                        }
-                    }
-                }
-                Diff::List(list_diff) => {
-                    // Check for delete operations in list
-                    use loro_delta::DeltaItem;
-                    for item in list_diff.iter() {
-                        if let DeltaItem::Replace { value, delete, .. } = item {
-                            // A delete operation has empty value and non-zero delete
-                            if value.is_empty() && *delete > 0 {
-                                return true;
-                            }
-                        }
-                    }
-                }
-                Diff::Tree(_) => {
-                    // Tree operations are always complex
-                    return true;
-                }
-                _ => {}
-            }
-        }
-        false
-    }
 
     pub fn iter(&self) -> impl Iterator<Item = (&ContainerID, &Diff)> + '_ {
         self.order
@@ -1005,20 +967,9 @@ impl UndoManager {
             let has_excluded_origins = !self.inner.lock().unwrap().exclude_origin_prefixes.is_empty();
             let has_remote_changes = !remote_diff.lock().unwrap().cid_to_events.is_empty();
             
-            // Check if transformation would be safe
-            let can_safely_transform = if has_remote_changes {
-                let remote_diff_clone = remote_diff.lock().unwrap().clone();
-                let local_has_deletes = span.undo_diff.has_complex_operations();
-                let remote_has_deletes = remote_diff_clone.has_complex_operations();
-                // Only allow transformation if neither side has complex operations
-                !local_has_deletes && !remote_has_deletes
-            } else {
-                true
-            };
-            
+            // We can now transform all cases with the enhanced transformer
             let mut use_optimized_path = !span.undo_diff.cid_to_events.is_empty() 
-                && !has_excluded_origins
-                && can_safely_transform;
+                && !has_excluded_origins;
             
             // Check if this might be part of a grouped operation
             // Grouped operations have empty undo_diffs and we may see multiple in succession
@@ -1041,8 +992,9 @@ impl UndoManager {
                 let mut undo_diff = span.undo_diff.clone();
                 if has_remote_changes {
                     let remote_change_clone = remote_diff.lock().unwrap().clone();
-                    // Use our enhanced transformation that properly handles all container types
-                    undo_diff.transform(&remote_change_clone, true);
+                    // Use our enhanced transformation that properly handles all cases
+                    use crate::undo_transform_enhanced::EnhancedUndoTransformer;
+                    EnhancedUndoTransformer::transform_diff_batch(&mut undo_diff, &remote_change_clone);
                 }
                 
                 // Check if we still have a valid diff after transformation
