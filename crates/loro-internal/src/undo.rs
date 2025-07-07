@@ -1030,7 +1030,7 @@ impl UndoManager {
                 
                 if use_optimized_path {
                     let _ = debug_span!("Using precalculated undo diff - no checkouts").in_scope(|| {
-                        // Clear pending_undo_diff before applying to capture redo diff
+                        // Clear pending_undo_diff and prepare to capture the redo diff
                         {
                             let mut inner = self.inner.lock().unwrap();
                             inner.pending_undo_diff.clear();
@@ -1047,7 +1047,11 @@ impl UndoManager {
                             return Err(e);
                         }
                     
-                        // Transform the stack based on the generated diff
+                        // The redo diff is automatically captured by the undo subscriber during _apply_diff
+                        // When we apply the undo diff, the subscriber captures the operations being performed,
+                        // which are exactly the operations needed to redo (restore the original state)
+                        
+                        // Transform the stack based on the redo diff we generated
                         let inner = self.inner.clone();
                         let pending_diff = inner.lock().unwrap().pending_undo_diff.clone();
                         if !pending_diff.cid_to_events.is_empty() {
