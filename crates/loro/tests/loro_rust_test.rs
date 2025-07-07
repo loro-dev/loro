@@ -16,7 +16,7 @@ use loro::{
     awareness::Awareness,
     event::{Diff, DiffBatch, ListDiffItem},
     loro_value, CommitOptions, ContainerID, ContainerTrait, ContainerType, ExportMode, Frontiers,
-    FrontiersNotIncluded, IdSpan, Index, LoroCounter, LoroDoc, LoroError, LoroList, LoroMap,
+    FrontiersNotIncluded, IdSpan, Index, LoroDoc, LoroError, LoroList, LoroMap,
     LoroMapValue, LoroMovableList, LoroStringValue, LoroText, LoroTree, LoroValue, ToJson,
     TreeParentId,
 };

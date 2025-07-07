@@ -584,6 +584,20 @@ impl LoroDoc {
             return Err(LoroError::EditWhenDetached);
         }
 
+        // Capture any pending commit origin before stopping the transaction
+        let pending_origin = {
+            let txn = self.txn.lock().unwrap();
+            if let Some(txn) = txn.as_ref() {
+                if !txn.origin.is_empty() {
+                    Some(txn.origin.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+
         let (options, txn) = self.commit_then_stop();
         if !self
             .oplog()
@@ -636,16 +650,27 @@ impl LoroDoc {
             tracing::warn!("Undo Failed {:?}", e);
         }
 
-        if let Some(options) = options {
-            self.set_next_commit_options(options);
-        }
+        // Prepare the default commit options for CommitWhenDrop
+        // Priority: pending transaction origin > previous options origin > "undo" default
+        let default_options = if let Some(pending_origin) = pending_origin {
+            // Use the pending origin from the current transaction
+            CommitOptions::new().origin(pending_origin.as_str())
+        } else if let Some(mut options) = options {
+            // Restore the previous commit options first
+            self.set_next_commit_options(options.clone());
+            // If no origin was set, use "undo" as default
+            if options.origin.is_none() {
+                options.origin = Some("undo".into());
+            }
+            options
+        } else {
+            // No previous options, use "undo" as default
+            CommitOptions::new().origin("undo")
+        };
         
         // CommitWhenDrop will use set_default_options, which only sets options that aren't already set.
-        // So we pass "undo" as a default origin, but it won't override any custom origin that was already set.
-        Ok(CommitWhenDrop::new(
-            self,
-            CommitOptions::new().origin("undo"),
-        ))
+        // The default_options will be used as fallback for any unset fields in the current transaction.
+        Ok(CommitWhenDrop::new(self, default_options))
     }
 }
 
