@@ -958,11 +958,27 @@ impl UndoManager {
         };
 
         let mut executed = false;
+        let mut in_grouped_undo = false;
         while let Some((mut span, remote_diff)) = top {
             let mut next_push_selection = None;
             
             // Check if we have a precalculated undo diff
             let mut use_optimized_path = !span.undo_diff.cid_to_events.is_empty();
+            
+            // Check if this might be part of a grouped operation
+            // Grouped operations have empty undo_diffs and we may see multiple in succession
+            if !use_optimized_path && !in_grouped_undo {
+                // Check if there are more spans to process (indicating grouped operation)
+                let inner = self.inner.lock().unwrap();
+                let has_more = match kind {
+                    UndoOrRedo::Undo => !inner.undo_stack.stack.back().unwrap().0.is_empty(),
+                    UndoOrRedo::Redo => !inner.redo_stack.stack.back().unwrap().0.is_empty(),
+                };
+                if has_more {
+                    in_grouped_undo = true;
+                }
+                drop(inner);
+            }
             
             if use_optimized_path {
                 // Try optimized path: use precalculated diff (avoids checkouts!)
@@ -1072,7 +1088,11 @@ impl UndoManager {
                 }
 
                 // Take the redo diff that was collected during the undo operation
-                let redo_diff = if !inner.pending_undo_diff.cid_to_events.is_empty() {
+                // For grouped operations, we should use an empty redo diff to force fallback path
+                let redo_diff = if in_grouped_undo {
+                    // Grouped operations should use fallback path for redo
+                    Default::default()
+                } else if !inner.pending_undo_diff.cid_to_events.is_empty() {
                     std::mem::take(&mut inner.pending_undo_diff)
                 } else {
                     // If no redo diff was collected, create an empty one
