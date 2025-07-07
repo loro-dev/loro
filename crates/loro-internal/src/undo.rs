@@ -963,8 +963,6 @@ impl UndoManager {
             
             // Check if we have a precalculated undo diff
             let mut use_optimized_path = !span.undo_diff.cid_to_events.is_empty();
-            // Track if this is a grouped operation (has empty diff due to grouping)
-            let is_grouped_operation = span.undo_diff.cid_to_events.is_empty();
             
             if use_optimized_path {
                 // Try optimized path: use precalculated diff (avoids checkouts!)
@@ -1074,15 +1072,11 @@ impl UndoManager {
                 }
 
                 // Take the redo diff that was collected during the undo operation
-                // For grouped operations, we should store an empty redo diff to force the fallback path on redo too
-                let redo_diff = if is_grouped_operation {
-                    // Grouped operations should always use fallback path for redo
-                    Default::default()
-                } else if !inner.pending_undo_diff.cid_to_events.is_empty() {
-                    // For non-grouped operations, use the collected redo diff
+                let redo_diff = if !inner.pending_undo_diff.cid_to_events.is_empty() {
                     std::mem::take(&mut inner.pending_undo_diff)
                 } else {
                     // If no redo diff was collected, create an empty one
+                    // The fallback path will still work but won't benefit from the optimization
                     Default::default()
                 };
                 
