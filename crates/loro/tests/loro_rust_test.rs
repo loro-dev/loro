@@ -20,6 +20,8 @@ use loro::{
     LoroMapValue, LoroMovableList, LoroStringValue, LoroText, LoroTree, LoroValue, ToJson,
     TreeParentId,
 };
+#[cfg(feature = "counter")]
+use loro::LoroCounter;
 use loro_internal::{
     encoding::EncodedBlobMode, fx_map, handler::TextDelta, id::ID, version_range, vv, LoroResult,
 };
@@ -3387,6 +3389,7 @@ fn test_tree_with_movable_list() {
     list.insert_container(0, first).unwrap();
 
     // Insert various container types at subsequent indices
+    #[cfg(feature = "counter")]
     list.insert_container(1, LoroCounter::new()).unwrap();
     list.insert_container(2, LoroList::new()).unwrap();
     list.insert_container(3, LoroMovableList::new()).unwrap();
