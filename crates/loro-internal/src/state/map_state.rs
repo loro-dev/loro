@@ -144,7 +144,7 @@ impl ContainerState for MapState {
                             }
 
                             let undo_diff = Diff::Map(ResolvedMapDelta { updated });
-                            undo_batch.push_with_transform(&container_id, undo_diff);
+                            undo_batch.prepend(&container_id, undo_diff);
                         }
                     }
                 }

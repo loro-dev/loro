@@ -612,7 +612,7 @@ impl ContainerState for RichtextState {
                                 delta.push_delete(*unicode_len as usize);
 
                                 let undo_diff = Diff::Text(delta);
-                                undo_batch.push_with_transform(&container_id, undo_diff);
+                                undo_batch.prepend(&container_id, undo_diff);
                             }
                             list_op::InnerListOp::Delete(del) => {
                                 // For text deletion, we need to capture the deleted content BEFORE deletion
@@ -649,7 +649,7 @@ impl ContainerState for RichtextState {
                                 );
 
                                 let undo_diff = Diff::Text(delta);
-                                undo_batch.push_with_transform(&container_id, undo_diff);
+                                undo_batch.prepend(&container_id, undo_diff);
                             }
                             list_op::InnerListOp::StyleStart {
                                 start,
@@ -674,34 +674,53 @@ impl ContainerState for RichtextState {
                                     delta.push_retain(event_start, Default::default());
                                 }
 
-                                // Iterate through the range and capture current styles
+                                // Iterate through the range and capture current styles for each segment
                                 let event_len = event_end - event_start;
                                 if event_len > 0 {
-                                    // Get current styles at the range
-                                    let styles = self.get_styles_at_entity_index(*start as usize);
+                                    // Iterate through the range to get current styles at each text segment
+                                    let entity_range = *start as usize..*end as usize;
+                                    let mut current_event_pos = event_start;
 
-                                    // For undo, we need to capture the current state before the style is applied
-                                    // If the style key doesn't exist in current styles, undo should set it to null
-                                    // If it exists, undo should restore the previous value
-                                    let undo_value = if styles.contains_key(key) {
-                                        // Get the current value to restore on undo
-                                        // We need to extract it from the styles
-                                        styles
-                                            .to_option_map()
-                                            .and_then(|map| map.get(&key.to_string()).cloned())
-                                            .unwrap_or(LoroValue::Null)
-                                    } else {
-                                        // No existing style, undo should remove it by setting to null
-                                        LoroValue::Null
-                                    };
+                                    for item in
+                                        self.state.get_mut().iter_range(entity_range.clone())
+                                    {
+                                        if let RichtextStateChunk::Text(_) = item.chunk {
+                                            if item.event_len > 0 {
+                                                // Get current styles for this segment
+                                                let current_styles: StyleMeta =
+                                                    item.styles.clone().into();
+                                                let style_map = current_styles.to_map();
 
-                                    let mut style_map = FxHashMap::default();
-                                    style_map.insert(key.to_string(), undo_value);
-                                    delta.push_retain(event_len, style_map.into());
+                                                // Determine what the undo value should be for this key
+                                                let undo_value = if let Some(current_value) =
+                                                    style_map.get(&key.to_string())
+                                                {
+                                                    // Style exists, restore the current value
+                                                    current_value.clone()
+                                                } else {
+                                                    // Style doesn't exist, undo should remove it
+                                                    LoroValue::Null
+                                                };
+
+                                                let mut style_map = FxHashMap::default();
+                                                style_map.insert(key.to_string(), undo_value);
+                                                delta.push_retain(item.event_len, style_map.into());
+                                                current_event_pos += item.event_len;
+                                            }
+                                        }
+                                    }
+
+                                    // If we haven't covered the full range, fill the rest
+                                    if current_event_pos < event_end {
+                                        let remaining = event_end - current_event_pos;
+                                        let mut style_map = FxHashMap::default();
+                                        style_map.insert(key.to_string(), LoroValue::Null);
+                                        delta.push_retain(remaining, style_map.into());
+                                    }
                                 }
 
                                 let undo_diff = Diff::Text(delta);
-                                undo_batch.push_with_transform(&container_id, undo_diff);
+                                undo_batch.prepend(&container_id, undo_diff);
                             }
                             _ => {}
                         },

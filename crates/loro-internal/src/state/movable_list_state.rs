@@ -1343,7 +1343,7 @@ impl ContainerState for MovableListState {
                                 diff.push_insert(deleted_values, ListDeltaMeta::default());
 
                                 let undo_diff = Diff::List(diff);
-                                undo_batch.push_with_transform(&container_id, undo_diff);
+                                undo_batch.prepend(&container_id, undo_diff);
                             }
                         }
                         ListOp::Move { from, elem_id, .. } => {
@@ -1367,7 +1367,7 @@ impl ContainerState for MovableListState {
                                 diff.push_insert(arr, ListDeltaMeta::default());
 
                                 let undo_diff = Diff::List(diff);
-                                undo_batch.push_with_transform(&container_id, undo_diff);
+                                undo_batch.prepend(&container_id, undo_diff);
                             }
                         }
                         ListOp::Set {

@@ -1624,7 +1624,7 @@ fn undo_transform_cursor_position() -> anyhow::Result<()> {
     })));
     text.insert(0, "Hello world!")?;
     doc.commit();
-    
+
     cursors
         .lock()
         .unwrap()
@@ -1635,7 +1635,7 @@ fn undo_transform_cursor_position() -> anyhow::Result<()> {
         .push(text.get_cursor(4, loro::cursor::Side::Right).unwrap());
     text.delete(1, 4)?;
     doc.commit();
-    
+
     {
         let doc_b = LoroDoc::new();
         doc_b.import(&doc.export_snapshot())?;

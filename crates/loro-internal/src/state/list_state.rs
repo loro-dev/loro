@@ -480,7 +480,7 @@ impl ContainerState for ListState {
                             let mut diff: ListDiff = ListDiff::default();
                             diff.push_retain(*pos, Default::default());
                             diff.push_delete(len);
-                            undo_batch.push_with_transform(&container_id, Diff::List(diff));
+                            undo_batch.prepend(&container_id, Diff::List(diff));
                         }
                         ListOp::Delete(del) => {
                             // For delete, the undo is an insert of the deleted values

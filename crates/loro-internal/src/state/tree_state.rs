@@ -1443,7 +1443,7 @@ impl ContainerState for TreeState {
 
                     if !diff_items.is_empty() {
                         let undo_diff = Diff::Tree(TreeDiff { diff: diff_items });
-                        undo_batch.push_with_transform(&container_id, undo_diff);
+                        undo_batch.prepend(&container_id, undo_diff);
                     }
                 }
             }

@@ -66,7 +66,7 @@ impl ContainerState for CounterState {
                     if let Some(container_id) = doc.arena.get_container_id(self.idx) {
                         // To undo a counter increment/decrement, we need to apply the opposite diff
                         let undo_diff = Diff::Counter(-diff);
-                        undo_batch.push_with_transform(&container_id, undo_diff);
+                        undo_batch.prepend(&container_id, undo_diff);
                     }
                 }
             }
