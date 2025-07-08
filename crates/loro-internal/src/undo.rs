@@ -1,21 +1,15 @@
 use std::{collections::VecDeque, sync::Arc};
 
 use crate::sync::{AtomicU64, Mutex};
-use either::Either;
 use fxhash::{FxHashMap, FxHashSet};
-use loro_common::{
-    ContainerID, Counter, CounterSpan, HasIdSpan, IdSpan, LoroError, LoroResult, LoroValue, PeerID,
-};
-use tracing::{debug_span, info_span, instrument};
+use loro_common::{ContainerID, Counter, CounterSpan, LoroError, LoroResult, LoroValue, PeerID};
+use tracing::{debug_span, instrument, trace};
 
 use crate::{
     change::{get_sys_timestamp, Timestamp},
     cursor::{AbsolutePosition, Cursor},
     delta::TreeExternalDiff,
     event::{Diff, EventTriggerKind},
-    handler::ValueOrHandler,
-    loro::{CommitOptions, CommitWhenDrop},
-    version::Frontiers,
     ContainerDiff, DiffEvent, DocDiff, LoroDoc, Subscription,
 };
 
@@ -45,6 +39,13 @@ impl DiffBatch {
         Self {
             cid_to_events: map,
             order,
+        }
+    }
+
+    pub fn take(&mut self) -> Self {
+        Self {
+            cid_to_events: std::mem::take(&mut self.cid_to_events),
+            order: std::mem::take(&mut self.order),
         }
     }
 
@@ -558,99 +559,6 @@ fn get_counter_end(doc: &LoroDoc, peer: PeerID) -> Counter {
         .unwrap_or(0)
 }
 
-impl LoroDoc {
-    /// Internal undo implementation that reverts operations in the given id_span.
-    ///
-    /// This method:
-    /// 1. Splits the id_span based on dependencies
-    /// 2. Calculates the diff needed to undo the operations
-    /// 3. Applies the diff to revert the changes
-    ///
-    /// The container_remap is used to handle deleted containers that may be recreated.
-    pub(crate) fn undo_internal(
-        &self,
-        id_span: IdSpan,
-        container_remap: &mut FxHashMap<ContainerID, ContainerID>,
-        post_transform_base: Option<&DiffBatch>,
-        before_diff: &mut dyn FnMut(&DiffBatch),
-    ) -> LoroResult<CommitWhenDrop> {
-        if !self.can_edit() {
-            return Err(LoroError::EditWhenDetached);
-        }
-
-        let (options, txn) = self.commit_then_stop();
-        if !self
-            .oplog()
-            .lock()
-            .unwrap()
-            .vv()
-            .includes_id(id_span.id_last())
-        {
-            self.renew_txn_if_auto_commit(options);
-            return Err(LoroError::UndoInvalidIdSpan(id_span.id_last()));
-        }
-
-        let (was_recording, latest_frontiers) = {
-            let mut state = self.state.lock().unwrap();
-            let was_recording = state.is_recording();
-            state.stop_and_clear_recording();
-            (was_recording, state.frontiers.clone())
-        };
-
-        let spans = self.oplog.lock().unwrap().split_span_based_on_deps(id_span);
-        let diff = undo(
-            spans,
-            match post_transform_base {
-                Some(d) => Either::Right(d),
-                None => Either::Left(&latest_frontiers),
-            },
-            |from, to| {
-                self._checkout_without_emitting(from, false, false).unwrap();
-                self.state.lock().unwrap().start_recording();
-                self._checkout_without_emitting(to, false, false).unwrap();
-                let mut state = self.state.lock().unwrap();
-                let e = state.take_events();
-                state.stop_and_clear_recording();
-                DiffBatch::new(e)
-            },
-            before_diff,
-        );
-
-        self._checkout_without_emitting(&latest_frontiers, false, false)?;
-        self.set_detached(false);
-        if was_recording {
-            self.state.lock().unwrap().start_recording();
-        }
-        drop(txn);
-        self.start_auto_commit();
-        // Try applying the diff, but ignore the error if it happens.
-        // MovableList's undo behavior is too tricky to handle in a collaborative env
-        // so in edge cases this may be an Error
-        if let Err(e) = self._apply_diff(diff, container_remap, true) {
-            tracing::warn!("Undo Failed {:?}", e);
-        }
-
-        // Prepare the default commit options for CommitWhenDrop
-        // If there were previously set options, preserve them and use "undo" as fallback
-        let default_options = if let Some(mut options) = options {
-            // Restore the previous commit options first
-            self.set_next_commit_options(options.clone());
-            // If no origin was set, use "undo" as default
-            if options.origin.is_none() {
-                options.origin = Some("undo".into());
-            }
-            options
-        } else {
-            // No previous options, use "undo" as default
-            CommitOptions::new().origin("undo")
-        };
-
-        // CommitWhenDrop will use set_default_options, which only sets options that aren't already set.
-        // The default_options will be used as fallback for any unset fields in the current transaction.
-        Ok(CommitWhenDrop::new(self, default_options))
-    }
-}
-
 impl UndoManager {
     pub fn new(doc: &LoroDoc) -> Self {
         let peer = Arc::new(AtomicU64::new(doc.peer_id()));
@@ -973,160 +881,49 @@ impl UndoManager {
         };
 
         let mut executed = false;
-        let mut in_grouped_undo = false;
         while let Some((mut span, remote_diff)) = top {
-            let mut next_push_selection = None;
-
-            // Check if we have a precalculated undo diff
-            // Don't use optimization if we have excluded origins (incompatible with precalculated diffs)
-            let has_excluded_origins = !self
-                .inner
-                .lock()
-                .unwrap()
-                .exclude_origin_prefixes
-                .is_empty();
+            let mut next_push_selection;
             let has_remote_changes = !remote_diff.lock().unwrap().cid_to_events.is_empty();
-
-            // Check if the undo diff involves container restoration that requires content copying
-            // The current precalculated diff approach creates empty containers when restoring,
-            // because the undo diff only contains container references, not their full content.
-            // For correctness, we fall back to the checkout-based approach for these cases.
-            // TODO: Enhance undo diff generation to capture full container state for optimization
-            let requires_content_restoration = span.undo_diff.cid_to_events.values().any(|diff| {
-                match diff {
-                    Diff::Map(map_diff) => {
-                        map_diff.updated.values().any(|v| {
-                            matches!(&v.value, Some(ValueOrHandler::Handler(_)))
-                        })
-                    }
-                    Diff::List(list_diff) => {
-                        list_diff.iter().any(|item| {
-                            matches!(item, loro_delta::DeltaItem::Replace { value, .. } if {
-                                value.iter().any(|v| matches!(v.as_value(), Some(LoroValue::Container(_))))
-                            })
-                        })
-                    }
-                    _ => false,
-                }
-            });
-
-            // Use optimized path for most cases, but fall back for container content restoration
-            let mut use_optimized_path = !span.undo_diff.cid_to_events.is_empty()
-                && !has_excluded_origins
-                && !requires_content_restoration;
-
-            // Check if this might be part of a grouped operation
-            // Grouped operations have empty undo_diffs and we may see multiple in succession
-            if !use_optimized_path && !in_grouped_undo {
-                // Check if there are more spans to process (indicating grouped operation)
-                let inner = self.inner.lock().unwrap();
-                let has_more = match kind {
-                    UndoOrRedo::Undo => !inner.undo_stack.stack.back().unwrap().0.is_empty(),
-                    UndoOrRedo::Redo => !inner.redo_stack.stack.back().unwrap().0.is_empty(),
-                };
-                if has_more {
-                    in_grouped_undo = true;
-                }
-                drop(inner);
-            }
-
-            if use_optimized_path {
-                // Try optimized path: use precalculated diff (avoids checkouts!)
-                // Transform the undo diff based on remote changes
-                let mut undo_diff = span.undo_diff.clone();
-                if has_remote_changes {
-                    let remote_change_clone = remote_diff.lock().unwrap().clone();
-                    // Use our enhanced transformation that properly handles all cases
-                    use crate::undo_transform_enhanced::EnhancedUndoTransformer;
-                    EnhancedUndoTransformer::transform_diff_batch(
-                        &mut undo_diff,
-                        &remote_change_clone,
-                    );
-                }
-
-                // Check if we still have a valid diff after transformation
-                use_optimized_path = !undo_diff.cid_to_events.is_empty();
-
-                if use_optimized_path {
-                    let _ = debug_span!("Using precalculated undo diff - no checkouts").in_scope(
-                        || {
-                            // Clear pending_undo_diff and prepare to capture the redo diff
-                            {
-                                let mut inner = self.inner.lock().unwrap();
-                                inner.pending_undo_diff.clear();
-                            }
-
-                            // Apply the transformed undo diff
-                            if let Err(e) = doc._apply_diff(
-                                undo_diff.clone(),
-                                &mut self.container_remap.lock().unwrap(),
-                                true,
-                            ) {
-                                eprintln!("Failed to apply undo diff: {:?}", e);
-                                eprintln!("Undo diff was: {:?}", undo_diff);
-                                return Err(e);
-                            }
-
-                            // The redo diff is automatically captured by the undo subscriber during _apply_diff
-                            // When we apply the undo diff, the subscriber captures the operations being performed,
-                            // which are exactly the operations needed to redo (restore the original state)
-
-                            // Transform the stack based on the redo diff we generated
-                            let inner = self.inner.clone();
-                            let pending_diff = inner.lock().unwrap().pending_undo_diff.clone();
-                            if !pending_diff.cid_to_events.is_empty() {
-                                info_span!("transform remote diff").in_scope(|| {
-                                    let mut inner = inner.lock().unwrap();
-                                    get_stack(&mut inner)
-                                        .transform_based_on_this_delta(&pending_diff);
-                                });
-                            }
-
-                            Ok(())
-                        },
-                    );
-
-                    next_push_selection =
-                        self.handle_on_pop_callback(&mut span, kind, &remote_diff, doc);
-                }
-            }
-
-            if !use_optimized_path {
-                // Fallback path: use undo_internal for backward compatibility
-                // This path is needed for:
-                // 1. Operations created before UndoManager initialization
-                // 2. Operations imported from other peers
-                // 3. Legacy documents without precalculated diffs
-                // NOTE: This path performs checkouts and is slower (O(n²) complexity)
-                let inner = self.inner.clone();
-                // We need to clone this because otherwise <transform_delta> will be applied to the same remote diff
+            let mut undo_diff = span.undo_diff.clone();
+            if has_remote_changes {
                 let remote_change_clone = remote_diff.lock().unwrap().clone();
-
-                // Clear pending_undo_diff before undo_internal to capture redo diff
-                {
-                    let mut inner = self.inner.lock().unwrap();
-                    inner.pending_undo_diff.clear();
-                }
-
-                let commit = doc.undo_internal(
-                    IdSpan {
-                        peer: self.peer(),
-                        counter: span.span,
-                    },
-                    &mut self.container_remap.lock().unwrap(),
-                    Some(&remote_change_clone),
-                    &mut |diff| {
-                        info_span!("transform remote diff").in_scope(|| {
-                            let mut inner = inner.lock().unwrap();
-                            // <transform_delta>
-                            get_stack(&mut inner).transform_based_on_this_delta(diff);
-                        });
-                    },
-                )?;
-                drop(commit);
-                next_push_selection =
-                    self.handle_on_pop_callback(&mut span, kind, &remote_diff, doc);
+                // Use our enhanced transformation that properly handles all cases
+                use crate::undo_transform_enhanced::EnhancedUndoTransformer;
+                EnhancedUndoTransformer::transform_diff_batch(&mut undo_diff, &remote_change_clone);
             }
+
+            let redo_diff =
+                debug_span!("Using precalculated undo diff - no checkouts").in_scope(|| {
+                    // Clear pending_undo_diff and prepare to capture the redo diff
+                    {
+                        let mut inner = self.inner.lock().unwrap();
+                        inner.pending_undo_diff.clear();
+                    }
+
+                    // Apply the transformed undo diff
+                    if let Err(e) = doc._apply_diff(
+                        undo_diff.clone(),
+                        &mut self.container_remap.lock().unwrap(),
+                        true,
+                    ) {
+                        eprintln!("Failed to apply undo diff: {:?}", e);
+                        eprintln!("Undo diff was: {:?}", undo_diff);
+                        return Err(e);
+                    }
+
+                    doc.set_next_commit_origin("undo");
+                    doc.commit_then_renew();
+
+                    // The redo diff is automatically captured by the undo subscriber during _apply_diff
+                    // When we apply the undo diff, the subscriber captures the operations being performed,
+                    // which are exactly the operations needed to redo (restore the original state)
+                    let inner = self.inner.clone();
+                    let pending_diff = inner.lock().unwrap().pending_undo_diff.take();
+                    Ok(pending_diff)
+                })?;
+
+            next_push_selection = self.handle_on_pop_callback(&mut span, kind, &remote_diff, doc);
+
             let new_counter = get_counter_end(doc, self.peer());
             if end_counter != new_counter {
                 let mut inner = self.inner.lock().unwrap();
@@ -1148,19 +945,6 @@ impl UndoManager {
                     // Otherwise, we use the cursors from the undo/redo loop
                     meta.cursors = inner;
                 }
-
-                // Take the redo diff that was collected during the undo operation
-                // For grouped operations, we should use an empty redo diff to force fallback path
-                let redo_diff = if in_grouped_undo {
-                    // Grouped operations should use fallback path for redo
-                    Default::default()
-                } else if !inner.pending_undo_diff.cid_to_events.is_empty() {
-                    std::mem::take(&mut inner.pending_undo_diff)
-                } else {
-                    // If no redo diff was collected, create an empty one
-                    // The fallback path will still work but won't benefit from the optimization
-                    Default::default()
-                };
 
                 get_opposite(&mut inner).push(
                     CounterSpan::new(end_counter, new_counter),
@@ -1223,103 +1007,4 @@ impl UndoManager {
         self.inner.lock().unwrap().undo_stack.clear();
         self.inner.lock().unwrap().redo_stack.clear();
     }
-}
-
-/// Undo the given spans of operations.
-///
-/// # Parameters
-///
-/// - `spans`: A vector of tuples where each tuple contains an `IdSpan` and its associated `Frontiers`.
-///   - `IdSpan`: Represents a span of operations identified by an ID.
-///   - `Frontiers`: Represents the deps of the given id_span
-/// - `latest_frontiers`: The latest frontiers of the document
-/// - `calc_diff`: A closure that takes two `Frontiers` and calculates the difference between them, returning a `DiffBatch`.
-///
-/// # Returns
-///
-/// - `DiffBatch`: Applying this batch on the `latest_frontiers` will undo the ops in the given spans.
-pub(crate) fn undo(
-    spans: Vec<(IdSpan, Frontiers)>,
-    last_frontiers_or_last_bi: Either<&Frontiers, &DiffBatch>,
-    calc_diff: impl Fn(&Frontiers, &Frontiers) -> DiffBatch,
-    on_last_event_a: &mut dyn FnMut(&DiffBatch),
-) -> DiffBatch {
-    // The process of performing undo is:
-    //
-    // 0. Split the span into a series of continuous spans. There is no external dep within each continuous span.
-    //
-    // For each continuous span_i:
-    //
-    // 1. a. Calculate the event of checkout from id_span.last to id_span.deps, call it Ai. It undo the ops in the current span.
-    //    b. Calculate A'i = Ai + T(Ci-1, Ai) if i > 0, otherwise A'i = Ai.
-    //       NOTE: A'i can undo the ops in the current span and the previous spans, if it's applied on the id_span.last version.
-    // 2. Calculate the event of checkout from id_span.last to [the next span's last id] or [the latest version], call it Bi.
-    // 3. Transform event A'i based on Bi, call it Ci
-    // 4. If span_i is the last span, apply Ci to the current state.
-
-    // -------------------------------------------------------
-    // 0. Split the span into a series of continuous spans
-    // -------------------------------------------------------
-
-    let mut last_ci: Option<DiffBatch> = None;
-    for i in 0..spans.len() {
-        debug_span!("Undo", ?i, "Undo span {:?}", &spans[i]).in_scope(|| {
-            let (this_id_span, this_deps) = &spans[i];
-            // ---------------------------------------
-            // 1.a Calc event A_i
-            // ---------------------------------------
-            let mut event_a_i = debug_span!("1. Calc event A_i").in_scope(|| {
-                // Checkout to the last id of the id_span
-                calc_diff(&this_id_span.id_last().into(), this_deps)
-            });
-
-            // println!("event_a_i: {:?}", event_a_i);
-
-            // ---------------------------------------
-            // 2. Calc event B_i
-            // ---------------------------------------
-            let stack_diff_batch;
-            let event_b_i = 'block: {
-                let next = if i + 1 < spans.len() {
-                    spans[i + 1].0.id_last().into()
-                } else {
-                    match last_frontiers_or_last_bi {
-                        Either::Left(last_frontiers) => last_frontiers.clone(),
-                        Either::Right(right) => break 'block right,
-                    }
-                };
-                stack_diff_batch = Some(calc_diff(&this_id_span.id_last().into(), &next));
-                stack_diff_batch.as_ref().unwrap()
-            };
-
-            // println!("event_b_i: {:?}", event_b_i);
-
-            // event_a_prime can undo the ops in the current span and the previous spans
-            let mut event_a_prime = if let Some(mut last_ci) = last_ci.take() {
-                // ------------------------------------------------------------------------------
-                // 1.b Transform and apply Ci-1 based on Ai, call it A'i
-                // ------------------------------------------------------------------------------
-                last_ci.transform(&event_a_i, true);
-
-                event_a_i.compose(&last_ci);
-                event_a_i
-            } else {
-                event_a_i
-            };
-            if i == spans.len() - 1 {
-                on_last_event_a(&event_a_prime);
-            }
-            // --------------------------------------------------
-            // 3. Transform event A'_i based on B_i, call it C_i
-            // --------------------------------------------------
-            event_a_prime.transform(event_b_i, true);
-
-            // println!("event_a_prime: {:?}", event_a_prime);
-
-            let c_i = event_a_prime;
-            last_ci = Some(c_i);
-        });
-    }
-
-    last_ci.unwrap()
 }
