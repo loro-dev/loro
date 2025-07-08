@@ -584,20 +584,6 @@ impl LoroDoc {
             return Err(LoroError::EditWhenDetached);
         }
 
-        // Capture any pending commit origin before stopping the transaction
-        let pending_origin = {
-            let txn = self.txn.lock().unwrap();
-            if let Some(txn) = txn.as_ref() {
-                if !txn.origin.is_empty() {
-                    Some(txn.origin.clone())
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        };
-
         let (options, txn) = self.commit_then_stop();
         if !self
             .oplog()
@@ -651,11 +637,8 @@ impl LoroDoc {
         }
 
         // Prepare the default commit options for CommitWhenDrop
-        // Priority: pending transaction origin > previous options origin > "undo" default
-        let default_options = if let Some(pending_origin) = pending_origin {
-            // Use the pending origin from the current transaction
-            CommitOptions::new().origin(pending_origin.as_str())
-        } else if let Some(mut options) = options {
+        // If there were previously set options, preserve them and use "undo" as fallback
+        let default_options = if let Some(mut options) = options {
             // Restore the previous commit options first
             self.set_next_commit_options(options.clone());
             // If no origin was set, use "undo" as default
