@@ -92,7 +92,13 @@ impl ContainerState for MapState {
         let _ = self.apply_diff_and_convert(diff, ctx);
     }
 
-    fn apply_local_op(&mut self, op: &RawOp, _: &Op, undo_diff: Option<&mut DiffBatch>, doc: &Weak<LoroDocInner>) -> LoroResult<ApplyLocalOpReturn> {
+    fn apply_local_op(
+        &mut self,
+        op: &RawOp,
+        _: &Op,
+        undo_diff: Option<&mut DiffBatch>,
+        doc: &Weak<LoroDocInner>,
+    ) -> LoroResult<ApplyLocalOpReturn> {
         let mut ans: ApplyLocalOpReturn = Default::default();
         match &op.content {
             RawOpContent::Map(MapSet { key, value }) => {
@@ -119,27 +125,26 @@ impl ContainerState for MapState {
                         if let Some(container_id) = doc.arena.get_container_id(self.idx) {
                             // Create undo diff based on the operation type
                             let mut updated = FxHashMap::default();
-                            
+
                             if let Some(prev_value) = prev {
                                 // This was an update or delete, restore the previous value
                                 updated.insert(
                                     key.clone(),
                                     ResolvedMapValue {
-                                        value: prev_value.value.as_ref().map(|v| ValueOrHandler::from_value(v.clone(), &doc)),
+                                        value: prev_value
+                                            .value
+                                            .as_ref()
+                                            .map(|v| ValueOrHandler::from_value(v.clone(), &doc)),
                                         idlp: IdLp::new(prev_value.peer, prev_value.lamp),
-                                    }
+                                    },
                                 );
                             } else {
                                 // This was an insert, undo by removing the key
-                                updated.insert(
-                                    key.clone(),
-                                    ResolvedMapValue::new_unset()
-                                );
+                                updated.insert(key.clone(), ResolvedMapValue::new_unset());
                             }
-                            
+
                             let undo_diff = Diff::Map(ResolvedMapDelta { updated });
-                            undo_batch.cid_to_events.insert(container_id.clone(), undo_diff);
-                            undo_batch.order.push(container_id);
+                            undo_batch.push_with_transform(&container_id, undo_diff);
                         }
                     }
                 }

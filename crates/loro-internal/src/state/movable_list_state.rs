@@ -1293,9 +1293,15 @@ impl ContainerState for MovableListState {
     }
 
     #[instrument(skip_all)]
-    fn apply_local_op(&mut self, op: &RawOp, _: &Op, undo_diff: Option<&mut DiffBatch>, doc: &Weak<LoroDocInner>) -> LoroResult<ApplyLocalOpReturn> {
+    fn apply_local_op(
+        &mut self,
+        op: &RawOp,
+        _: &Op,
+        undo_diff: Option<&mut DiffBatch>,
+        doc: &Weak<LoroDocInner>,
+    ) -> LoroResult<ApplyLocalOpReturn> {
         let mut ans: ApplyLocalOpReturn = Default::default();
-        
+
         // Generate undo diff if requested
         if let Some(undo_batch) = undo_diff {
             if let Some(doc) = doc.upgrade() {
@@ -1307,47 +1313,49 @@ impl ContainerState for MovableListState {
                                 ListSlice::RawData(list) => list.len(),
                                 _ => unreachable!(),
                             };
-                            
+
                             let mut diff = ListDiff::default();
                             diff.push_retain(*pos as usize, Default::default());
                             diff.push_delete(len);
-                            
+
                             let undo_diff = Diff::List(diff);
-                            undo_batch.cid_to_events.insert(container_id.clone(), undo_diff);
+                            undo_batch
+                                .cid_to_events
+                                .insert(container_id.clone(), undo_diff);
                             undo_batch.order.push(container_id.clone());
                         }
                         ListOp::Delete(span) => {
                             // For delete, undo is to insert the deleted values back
                             let range = span.start() as usize..span.end() as usize;
                             let mut deleted_values = ArrayVec::new();
-                            
+
                             // Collect the values that will be deleted
                             for i in range.clone() {
                                 if let Some(value) = self.get(i, IndexType::ForOp) {
-                                    let _ = deleted_values.push(ValueOrHandler::from_value(value.clone(), &doc));
+                                    let _ = deleted_values
+                                        .push(ValueOrHandler::from_value(value.clone(), &doc));
                                 }
                             }
-                            
+
                             if !deleted_values.is_empty() {
                                 let mut diff = ListDiff::default();
                                 diff.push_retain(range.start, Default::default());
                                 diff.push_insert(deleted_values, ListDeltaMeta::default());
-                                
+
                                 let undo_diff = Diff::List(diff);
-                                undo_batch.cid_to_events.insert(container_id.clone(), undo_diff);
-                                undo_batch.order.push(container_id.clone());
+                                undo_batch.push_with_transform(&container_id, undo_diff);
                             }
                         }
                         ListOp::Move { from, elem_id, .. } => {
                             // For move, undo is to move back to the original position
                             // We'll generate the undo move operation with from and to swapped
                             let mut diff = ListDiff::default();
-                            
+
                             // Find the element's current position (which will be its new position after the move)
                             // and generate a move back to the original position
                             if let Some(elem) = self.inner.elements().get(&elem_id.compact()) {
                                 let value = elem.value.clone();
-                                
+
                                 // The undo operation needs to track that this element should be moved back
                                 // For now, we'll use a delete + insert pattern to simulate the move
                                 // First retain to the current position (which will be after the move)
@@ -1357,18 +1365,20 @@ impl ContainerState for MovableListState {
                                 let mut arr = ArrayVec::new();
                                 let _ = arr.push(ValueOrHandler::from_value(value, &doc));
                                 diff.push_insert(arr, ListDeltaMeta::default());
-                                
+
                                 let undo_diff = Diff::List(diff);
-                                undo_batch.cid_to_events.insert(container_id.clone(), undo_diff);
-                                undo_batch.order.push(container_id.clone());
+                                undo_batch.push_with_transform(&container_id, undo_diff);
                             }
                         }
-                        ListOp::Set { elem_id, value: _new_value } => {
+                        ListOp::Set {
+                            elem_id,
+                            value: _new_value,
+                        } => {
                             // For set, undo is to restore the old value
                             // Get the old value before it's replaced
                             if let Some(elem) = self.inner.elements().get(&elem_id.compact()) {
                                 let old_value = elem.value.clone();
-                                
+
                                 // For set operation, we want to generate a replace operation that restores the old value
                                 // We don't need to find the index as the element stays at the same position
                                 let mut diff = ListDiff::default();
@@ -1377,9 +1387,11 @@ impl ContainerState for MovableListState {
                                 let mut arr = ArrayVec::new();
                                 let _ = arr.push(ValueOrHandler::from_value(old_value, &doc));
                                 diff.push_replace(arr, ListDeltaMeta::default(), 0);
-                                
+
                                 let undo_diff = Diff::List(diff);
-                                undo_batch.cid_to_events.insert(container_id.clone(), undo_diff);
+                                undo_batch
+                                    .cid_to_events
+                                    .insert(container_id.clone(), undo_diff);
                                 undo_batch.order.push(container_id.clone());
                             }
                         }
@@ -1388,7 +1400,7 @@ impl ContainerState for MovableListState {
                 }
             }
         }
-        
+
         // Apply the operation
         match op.content.as_list().unwrap() {
             ListOp::Insert { slice, pos } => match slice {

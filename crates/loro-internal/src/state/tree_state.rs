@@ -1281,9 +1281,15 @@ impl ContainerState for TreeState {
         // self.check_tree_integrity();
     }
 
-    fn apply_local_op(&mut self, raw_op: &RawOp, _op: &Op, undo_diff: Option<&mut DiffBatch>, doc: &Weak<LoroDocInner>) -> LoroResult<ApplyLocalOpReturn> {
+    fn apply_local_op(
+        &mut self,
+        raw_op: &RawOp,
+        _op: &Op,
+        undo_diff: Option<&mut DiffBatch>,
+        doc: &Weak<LoroDocInner>,
+    ) -> LoroResult<ApplyLocalOpReturn> {
         let mut deleted_containers = vec![];
-        
+
         // Track the old state for undo diff generation
         let (old_parent, old_position) = match &raw_op.content {
             crate::op::RawOpContent::Tree(tree) => match &**tree {
@@ -1302,7 +1308,7 @@ impl ContainerState for TreeState {
             },
             _ => unreachable!(),
         };
-        
+
         // Apply the operation
         match &raw_op.content {
             crate::op::RawOpContent::Tree(tree) => match &**tree {
@@ -1337,20 +1343,24 @@ impl ContainerState for TreeState {
             _ => unreachable!(),
         }
         // self.check_tree_integrity();
-        
+
         // Generate undo diff if requested
         if let Some(undo_batch) = undo_diff {
             if let Some(doc) = doc.upgrade() {
                 if let Some(container_id) = doc.arena.get_container_id(self.idx) {
                     let mut diff_items = vec![];
-                    
+
                     match &raw_op.content {
                         crate::op::RawOpContent::Tree(tree) => match &**tree {
                             TreeOp::Create { target, .. } => {
                                 // Undo a create by deleting the node
-                                let current_parent = self.trees.get(target).map(|n| n.parent).unwrap_or(TreeParentId::Unexist);
+                                let current_parent = self
+                                    .trees
+                                    .get(target)
+                                    .map(|n| n.parent)
+                                    .unwrap_or(TreeParentId::Unexist);
                                 let current_index = self.get_index_by_tree_id(target).unwrap_or(0);
-                                
+
                                 diff_items.push(TreeDiffItem {
                                     target: *target,
                                     action: TreeExternalDiff::Delete {
@@ -1367,16 +1377,18 @@ impl ContainerState for TreeState {
                                         // Find where to insert based on the original position
                                         let node_position = NodePosition::new(
                                             position.clone().unwrap_or_default(),
-                                            raw_op.id_full().idlp()
+                                            raw_op.id_full().idlp(),
                                         );
-                                        match children.get_last_insert_index_by_position(&node_position) {
+                                        match children
+                                            .get_last_insert_index_by_position(&node_position)
+                                        {
                                             Ok(i) => i,
                                             Err(i) => i,
                                         }
                                     } else {
                                         0
                                     };
-                                    
+
                                     diff_items.push(TreeDiffItem {
                                         target: *target,
                                         action: TreeExternalDiff::Create {
@@ -1391,23 +1403,28 @@ impl ContainerState for TreeState {
                                 // Undo a move by moving back to the original position
                                 if let (Some(parent), position) = (old_parent, old_position) {
                                     // Calculate the old index
-                                    let old_index = if let Some(children) = self.children.get(&parent) {
-                                        let node_position = NodePosition::new(
-                                            position.clone().unwrap_or_default(),
-                                            raw_op.id_full().idlp()
-                                        );
-                                        match children.get_last_insert_index_by_position(&node_position) {
-                                            Ok(i) => i,
-                                            Err(i) => i,
-                                        }
-                                    } else {
-                                        0
-                                    };
-                                    
+                                    let old_index =
+                                        if let Some(children) = self.children.get(&parent) {
+                                            let node_position = NodePosition::new(
+                                                position.clone().unwrap_or_default(),
+                                                raw_op.id_full().idlp(),
+                                            );
+                                            match children
+                                                .get_last_insert_index_by_position(&node_position)
+                                            {
+                                                Ok(i) => i,
+                                                Err(i) => i,
+                                            }
+                                        } else {
+                                            0
+                                        };
+
                                     // Get current state
-                                    let current_parent = self.trees.get(target).map(|n| n.parent).unwrap_or(parent);
-                                    let current_index = self.get_index_by_tree_id(target).unwrap_or(0);
-                                    
+                                    let current_parent =
+                                        self.trees.get(target).map(|n| n.parent).unwrap_or(parent);
+                                    let current_index =
+                                        self.get_index_by_tree_id(target).unwrap_or(0);
+
                                     diff_items.push(TreeDiffItem {
                                         target: *target,
                                         action: TreeExternalDiff::Move {
@@ -1423,16 +1440,15 @@ impl ContainerState for TreeState {
                         },
                         _ => unreachable!(),
                     }
-                    
+
                     if !diff_items.is_empty() {
                         let undo_diff = Diff::Tree(TreeDiff { diff: diff_items });
-                        undo_batch.cid_to_events.insert(container_id.clone(), undo_diff);
-                        undo_batch.order.push(container_id);
+                        undo_batch.push_with_transform(&container_id, undo_diff);
                     }
                 }
             }
         }
-        
+
         Ok(ApplyLocalOpReturn { deleted_containers })
     }
 
