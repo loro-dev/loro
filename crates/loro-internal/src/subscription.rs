@@ -7,7 +7,7 @@ use crate::{
     Subscription,
 };
 use fxhash::FxHashMap;
-use loro_common::{ContainerID, ID};
+use loro_common::{ContainerID, InternalString, ID};
 use smallvec::SmallVec;
 use std::{collections::VecDeque, sync::Arc};
 
@@ -17,8 +17,14 @@ pub type LocalUpdateCallback = Box<dyn Fn(&Vec<u8>) -> bool + Send + Sync + 'sta
 /// The callback of the peer id change. The second argument is the next counter for the peer.
 pub type PeerIdUpdateCallback = Box<dyn Fn(&ID) -> bool + Send + Sync + 'static>;
 /// The callback for undo diff batch generation.
-pub type UndoCallback = Box<dyn Fn(&crate::undo::DiffBatch) -> bool + Send + Sync + 'static>;
+pub type UndoCallback = Box<dyn Fn(&UndoCallbackArgs) -> bool + Send + Sync + 'static>;
 pub type Subscriber = Arc<dyn (for<'a> Fn(DiffEvent<'a>)) + Send + Sync>;
+
+#[derive(Debug, Clone)]
+pub struct UndoCallbackArgs {
+    pub diff: crate::undo::DiffBatch,
+    pub origin: InternalString,
+}
 
 impl LoroDoc {
     /// Subscribe to the changes of the peer id.
@@ -27,7 +33,7 @@ impl LoroDoc {
         enable();
         s
     }
-    
+
     /// Subscribe to undo diff batches generated during local operations.
     /// This is an internal API used by the UndoManager.
     #[doc(hidden)]

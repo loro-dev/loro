@@ -12,6 +12,7 @@ pub mod diff;
 pub mod diff_calc;
 pub mod handler;
 pub mod sync;
+use crate::subscription::UndoCallbackArgs;
 use crate::sync::AtomicBool;
 use std::sync::Arc;
 mod change_meta;
@@ -168,7 +169,7 @@ pub struct LoroDocInner {
     first_commit_from_peer_subs:
         SubscriberSetWithQueue<(), FirstCommitFromPeerCallback, FirstCommitFromPeerPayload>,
     pre_commit_subs: SubscriberSetWithQueue<(), PreCommitCallback, PreCommitCallbackPayload>,
-    undo_subs: SubscriberSetWithQueue<(), UndoCallback, DiffBatch>,
+    undo_subs: SubscriberSetWithQueue<(), UndoCallback, UndoCallbackArgs>,
 }
 
 /// The version of the loro crate

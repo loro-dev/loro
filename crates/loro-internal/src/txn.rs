@@ -30,6 +30,7 @@ use crate::{
     op::{Op, RawOp, RawOpContent},
     pre_commit::{ChangeModifier, PreCommitCallbackPayload},
     span::HasIdSpan,
+    subscription::UndoCallbackArgs,
     undo::DiffBatch,
     version::Frontiers,
     ChangeMeta, InternalString, LoroDoc, LoroDocInner, LoroError, LoroValue,
@@ -494,13 +495,19 @@ impl Transaction {
         );
         drop(state);
         drop(oplog);
-        
+
         // Emit the undo diff batch if it contains any diffs
         if !self.undo_diff.cid_to_events.is_empty() {
             let diff = std::mem::take(&mut self.undo_diff);
-            doc.undo_subs.emit(&(), diff);
+            doc.undo_subs.emit(
+                &(),
+                UndoCallbackArgs {
+                    diff,
+                    origin: self.origin.clone(),
+                },
+            );
         }
-        
+
         if let Some(on_commit) = self.on_commit.take() {
             assert!(!doc.txn.is_locked());
             on_commit(&doc.state.clone(), &doc.oplog.clone(), self.id_span());
