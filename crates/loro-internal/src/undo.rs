@@ -3,7 +3,7 @@ use std::{collections::VecDeque, sync::Arc};
 use crate::sync::{AtomicU64, Mutex};
 use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{ContainerID, Counter, CounterSpan, LoroError, LoroResult, LoroValue, PeerID};
-use tracing::{debug_span, instrument, trace};
+use tracing::{debug_span, instrument};
 
 use crate::{
     change::{get_sys_timestamp, Timestamp},

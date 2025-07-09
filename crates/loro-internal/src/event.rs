@@ -376,6 +376,21 @@ impl InternalDiff {
             }
             (InternalDiff::Map(a), InternalDiff::Map(b)) => Ok(InternalDiff::Map(a.compose(b))),
             (InternalDiff::Tree(a), InternalDiff::Tree(b)) => Ok(InternalDiff::Tree(a.compose(b))),
+            (InternalDiff::MovableList(mut a), InternalDiff::MovableList(b)) => {
+                // Compose the list deltas
+                a.list = a.list.compose(b.list);
+                
+                // Merge the element deltas
+                for (id, elem_delta) in b.elements {
+                    a.elements.insert(id, elem_delta);
+                }
+                
+                Ok(InternalDiff::MovableList(a))
+            }
+            #[cfg(feature = "counter")]
+            (InternalDiff::Counter(a), InternalDiff::Counter(b)) => {
+                Ok(InternalDiff::Counter(a + b))
+            }
             (a, _) => Err(a),
         }
     }

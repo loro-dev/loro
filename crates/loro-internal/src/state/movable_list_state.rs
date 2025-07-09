@@ -1346,26 +1346,49 @@ impl ContainerState for MovableListState {
                                 undo_batch.prepend(&container_id, undo_diff);
                             }
                         }
-                        ListOp::Move { from, elem_id, .. } => {
+                        ListOp::Move { from, to, elem_id } => {
                             // For move, undo is to move back to the original position
-                            // We'll generate the undo move operation with from and to swapped
-                            let mut diff = ListDiff::default();
-
-                            // Find the element's current position (which will be its new position after the move)
-                            // and generate a move back to the original position
+                            // Important: When this code runs, the move hasn't happened yet!
+                            // The element is still at position 'from', and will be moved to 'to'
+                            // So to undo, we need to move from 'to' back to 'from'
+                            
                             if let Some(elem) = self.inner.elements().get(&elem_id.compact()) {
                                 let value = elem.value.clone();
-
-                                // The undo operation needs to track that this element should be moved back
-                                // For now, we'll use a delete + insert pattern to simulate the move
-                                // First retain to the current position (which will be after the move)
-                                let current_pos = *from as usize;
-                                diff.push_retain(current_pos, Default::default());
-                                diff.push_delete(1);
+                                
+                                // Create the value array for insertion
                                 let mut arr = ArrayVec::new();
                                 let _ = arr.push(ValueOrHandler::from_value(value, &doc));
-                                diff.push_insert(arr, ListDeltaMeta::default());
-
+                                
+                                // Build undo diff based on the direction of the original move
+                                // The key insight: after the move, element is at 'to' position
+                                // To undo, we need to move it from 'to' back to 'from'
+                                let diff = if *from < *to {
+                                    // Original move was forward (e.g., from 0 to 2)
+                                    // Element is now at position 'to'
+                                    // To move it back: insert at 'from', then delete from 'to + 1'
+                                    DeltaRopeBuilder::new()
+                                        .retain(*from as usize, Default::default())
+                                        .insert(arr, ListDeltaMeta { from_move: false })
+                                        .retain((*to - *from) as usize, Default::default())
+                                        .delete(1)
+                                        .build()
+                                } else if *from > *to {
+                                    // Original move was backward (e.g., from 2 to 0)
+                                    // Element is now at position 'to'
+                                    // To move it back: delete from 'to', then insert at original position
+                                    // After delete, cursor is at 'to', need to insert at position 'from'
+                                    // Since we want final position 'from', we retain 'from - to'
+                                    DeltaRopeBuilder::new()
+                                        .retain(*to as usize, Default::default())
+                                        .delete(1)
+                                        .retain((*from - *to) as usize, Default::default())
+                                        .insert(arr, ListDeltaMeta { from_move: false })
+                                        .build()
+                                } else {
+                                    // from == to, no operation needed
+                                    ListDiff::default()
+                                };
+                                
                                 let undo_diff = Diff::List(diff);
                                 undo_batch.prepend(&container_id, undo_diff);
                             }
