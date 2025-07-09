@@ -85,7 +85,7 @@ impl DiffBatch {
         }
     }
 
-    pub fn prepend(&mut self, id: &ContainerID, mut diff: Diff) {
+    pub fn prepend(&mut self, id: &ContainerID, diff: Diff) {
         if diff.is_empty() {
             return;
         }
@@ -344,7 +344,7 @@ impl Stack {
         meta: UndoItemMeta,
         undo_diff: DiffBatch,
         can_merge: bool,
-        group: Option<&UndoGroup>,
+        _group: Option<&UndoGroup>,
     ) {
         let Some(last) = self.stack.back_mut() else {
             self.stack.push_back(StackItem {
@@ -740,12 +740,12 @@ impl UndoManager {
         &self,
         span: &mut StackItem,
         kind: UndoOrRedo,
-        doc: &LoroDoc,
+        _doc: &LoroDoc,
     ) -> Option<Vec<CursorWithPos>> {
         let mut inner = self.inner.lock().unwrap();
         if let Some(on_pop) = inner.on_pop.as_ref() {
             // Transform cursors based on remote changes
-            for cursor in span.meta.cursors.iter_mut() {
+            for _cursor in span.meta.cursors.iter_mut() {
                 // transform_cursor(
                 //     cursor,
                 //     &remote_diff.lock().unwrap(),
