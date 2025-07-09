@@ -3389,18 +3389,29 @@ fn test_tree_with_movable_list() {
     list.insert_container(0, first).unwrap();
 
     // Insert various container types at subsequent indices
+    let mut idx = 1;
+    
     #[cfg(feature = "counter")]
-    list.insert_container(1, LoroCounter::new()).unwrap();
-    list.insert_container(2, LoroList::new()).unwrap();
-    list.insert_container(3, LoroMovableList::new()).unwrap();
-    list.insert_container(4, LoroText::new()).unwrap();
-    list.insert_container(5, LoroTree::new()).unwrap();
-    list.insert_container(6, LoroMap::new()).unwrap();
+    {
+        list.insert_container(idx, LoroCounter::new()).unwrap();
+        idx += 1;
+    }
+    
+    list.insert_container(idx, LoroList::new()).unwrap();
+    idx += 1;
+    list.insert_container(idx, LoroMovableList::new()).unwrap();
+    idx += 1;
+    list.insert_container(idx, LoroText::new()).unwrap();
+    idx += 1;
+    list.insert_container(idx, LoroTree::new()).unwrap();
+    idx += 1;
+    list.insert_container(idx, LoroMap::new()).unwrap();
+    idx += 1;
 
-    // Insert another map at index 7
+    // Insert another map at the last index
     let last = LoroMap::new();
     last.insert("int64__13", LoroValue::I64(i64::MAX)).unwrap();
-    list.insert_container(7, last).unwrap();
+    list.insert_container(idx, last).unwrap();
 
     // Insert the list as a movable list container into the map
     let connected_list = map.insert_container("complex_array__1", list).unwrap();
