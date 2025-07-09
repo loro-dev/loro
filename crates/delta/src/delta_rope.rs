@@ -262,16 +262,17 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
                 let _ = this_iter.next_with(length);
                 let _ = other_iter.next_with(length);
                 if other_op_peek.map(|x| x.is_delete()).unwrap_or(false) {
-                    // When other is a delete operation, we need to check if our retain has attributes
-                    // If it does, we should keep the retain operation because attributes are important
+                    // When other is a delete operation:
+                    // - Delete operations are redundant (both are deleting)
+                    // - Retain operations without attributes are redundant
+                    // - Retain operations with attributes should be preserved as they modify remaining content
                     if let Some(DeltaItem::Retain { len: _, attr }) = this_op_peek.as_ref() {
                         if !attr.attr_is_empty() {
-                            // Keep the retain operation with attributes
+                            // This retain has attributes that need to be applied to the remaining content
+                            // after the other delete operation
                             transformed_delta.push_retain(length, attr.clone());
                         }
-                        // Otherwise, skip it (the delete makes it redundant)
                     }
-                    // For delete operations, they are indeed redundant when other is also delete
                     continue;
                 } else if this_op_peek
                     .as_ref()
