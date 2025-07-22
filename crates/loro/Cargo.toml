@@ -1,6 +1,6 @@
 [package]
 name = "loro"
-version = "1.5.9"
+version = "1.5.10"
 edition = "2021"
 license = "MIT"
 documentation = "https://docs.rs/loro/"
@@ -37,7 +37,7 @@ loom = "0.7"
 [features]
 counter = ["loro-internal/counter"]
 jsonpath = ["loro-internal/jsonpath"]
-logging =  ["loro-internal/logging"]
+logging = ["loro-internal/logging"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
