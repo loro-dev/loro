@@ -132,6 +132,7 @@
 //!
 //! Note: In this crate, the empty value is regarded as deleted. **only** [MemStoreIterator] will filter empty value.
 //! Other iterators will still return empty value.
+#![allow(clippy::uninlined_format_args)]
 pub mod block;
 pub mod compress;
 pub mod iter;

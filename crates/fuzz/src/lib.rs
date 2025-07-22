@@ -1,4 +1,5 @@
 #![allow(deprecated)]
+#![allow(clippy::uninlined_format_args)]
 pub mod actions;
 pub mod actor;
 pub mod container;

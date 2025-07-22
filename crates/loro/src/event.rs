@@ -21,6 +21,7 @@ use std::sync::Arc;
 use crate::ValueOrContainer;
 
 /// A subscriber to the event.
+#[allow(clippy::unused_unit)]
 pub type Subscriber = Arc<dyn (for<'a> Fn(DiffEvent<'a>)) + Send + Sync>;
 
 /// An event that is triggered by a change in the state of a [super::LoroDoc].

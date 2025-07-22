@@ -656,7 +656,7 @@ pub mod wasm {
 
                 LoroValue::Map(map.into())
             } else {
-                panic!("Fail to convert JsValue {:?} to LoroValue ", js_value)
+                panic!("Fail to convert JsValue {js_value:?} to LoroValue ")
             }
         }
     }
@@ -680,7 +680,7 @@ pub mod wasm {
             let s = value.as_string().unwrap();
             ContainerID::try_from(s.as_str()).map_err(|_| {
                 LoroError::DecodeError(
-                    format!("Given ContainerId is not a valid ContainerID: {}", s).into(),
+                    format!("Given ContainerId is not a valid ContainerID: {s}").into(),
                 )
             })
         }
@@ -706,7 +706,7 @@ impl Serialize for LoroValue {
                 LoroValue::List(l) => serializer.collect_seq(l.iter()),
                 LoroValue::Map(m) => serializer.collect_map(m.iter()),
                 LoroValue::Container(id) => {
-                    serializer.serialize_str(&format!("{}{}", LORO_CONTAINER_ID_PREFIX, id))
+                    serializer.serialize_str(&format!("{LORO_CONTAINER_ID_PREFIX}{id}"))
                 }
             }
         } else {
@@ -979,7 +979,7 @@ mod serde_json_impl {
                         .collect(),
                 ),
                 LoroValue::Container(id) => {
-                    Value::String(format!("{}{}", LORO_CONTAINER_ID_PREFIX, id))
+                    Value::String(format!("{LORO_CONTAINER_ID_PREFIX}{id}"))
                 }
                 LoroValue::Binary(b) => Value::Array(b.iter().copied().map(Value::from).collect()),
             }

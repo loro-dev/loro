@@ -1,5 +1,6 @@
 //! Loro WASM bindings.
 #![allow(non_snake_case)]
+#![allow(clippy::uninlined_format_args)]
 #![allow(clippy::empty_docs)]
 #![allow(clippy::doc_lazy_continuation)]
 // #![warn(missing_docs)]
@@ -4823,6 +4824,12 @@ impl UndoManager {
     pub fn redo(&mut self) -> JsResult<bool> {
         let executed = self.undo.redo()?;
         Ok(executed)
+    }
+
+    /// Get the peer id of the undo manager.
+    pub fn peer(&self) -> JsStrPeerID {
+        let peer = self.undo.peer();
+        peer_id_to_js(peer)
     }
 
     // Start a new grouping of undo operations.

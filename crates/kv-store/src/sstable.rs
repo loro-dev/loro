@@ -351,9 +351,7 @@ impl SsTable {
             _ => {
                 return Err(LoroError::DecodeError(
                     format!(
-                        "Invalid schema version {}, 
-            current support max version is {}",
-                        schema_version, CURRENT_SCHEMA_VERSION
+                        "Invalid schema version {schema_version}, current support max version is {CURRENT_SCHEMA_VERSION}"
                     )
                     .into(),
                 ))

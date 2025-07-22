@@ -274,14 +274,14 @@ impl std::fmt::Debug for ContainerID {
                 name,
                 container_type,
             } => {
-                write!(f, "Root(\"{}\" {:?})", &name, container_type)
+                write!(f, "Root(\"{name}\" {container_type:?})")
             }
             Self::Normal {
                 peer,
                 counter,
                 container_type,
             } => {
-                write!(f, "Normal({:?} {}@{})", container_type, counter, peer,)
+                write!(f, "Normal({container_type:?} {counter}@{peer})")
             }
         }
     }
@@ -377,7 +377,7 @@ mod container {
                 ContainerType::Tree => "Tree",
                 #[cfg(feature = "counter")]
                 ContainerType::Counter => "Counter",
-                ContainerType::Unknown(k) => return f.write_fmt(format_args!("Unknown({})", k)),
+                ContainerType::Unknown(k) => return f.write_fmt(format_args!("Unknown({k})")),
             })
         }
     }
@@ -388,15 +388,15 @@ mod container {
                 ContainerID::Root {
                     name,
                     container_type,
-                } => f.write_fmt(format_args!("cid:root-{}:{}", name, container_type))?,
+                } => f.write_fmt(format_args!("cid:root-{name}:{container_type}"))?,
                 ContainerID::Normal {
                     peer,
                     counter,
                     container_type,
                 } => f.write_fmt(format_args!(
-                    "cid:{}:{}",
-                    ID::new(*peer, *counter),
-                    container_type
+                    "cid:{id}:{container_type}",
+                    id = ID::new(*peer, *counter),
+                    container_type = container_type
                 ))?,
             };
             Ok(())
@@ -505,12 +505,12 @@ mod container {
                     if a.ends_with(')') {
                         let start = a.find('(').ok_or_else(|| {
                             LoroError::DecodeError(
-                                format!("Invalid container type string \"{}\"", value).into(),
+                                format!("Invalid container type string \"{value}\"").into(),
                             )
                         })?;
                         let k = a[start+1..a.len() - 1].parse().map_err(|_| {
                             LoroError::DecodeError(
-                    format!("Unknown container type \"{}\". The valid options are Map|List|Text|Tree|MovableList.", value).into(),
+                    format!("Unknown container type \"{value}\". The valid options are Map|List|Text|Tree|MovableList.").into(),
                 )
                         })?;
                         match ContainerType::try_from_u8(k) {
@@ -519,7 +519,7 @@ mod container {
                         }
                     } else {
                         Err(LoroError::DecodeError(
-                    format!("Unknown container type \"{}\". The valid options are Map|List|Text|Tree|MovableList.", value).into(),
+                    format!("Unknown container type \"{value}\". The valid options are Map|List|Text|Tree|MovableList.").into(),
                 ))
                     }
                 }
@@ -611,7 +611,7 @@ pub mod wasm {
     use wasm_bindgen::JsValue;
     impl From<TreeID> for JsValue {
         fn from(value: TreeID) -> Self {
-            JsValue::from_str(&format!("{}", value.id()))
+            JsValue::from_str(&format!("{value}"))
         }
     }
 
