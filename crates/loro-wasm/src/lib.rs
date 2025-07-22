@@ -4825,6 +4825,12 @@ impl UndoManager {
         Ok(executed)
     }
 
+    /// Get the peer id of the undo manager.
+    pub fn peer(&self) -> JsStrPeerID {
+        let peer = self.undo.peer();
+        peer_id_to_js(peer)
+    }
+
     // Start a new grouping of undo operations.
     #[wasm_bindgen(skip_typescript)]
     pub fn groupStart(&mut self) -> JsResult<()> {
