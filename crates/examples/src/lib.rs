@@ -1,4 +1,5 @@
 #![allow(deprecated)]
+#![allow(clippy::uninlined_format_args)]
 use bench_utils::{
     create_seed, gen_async_actions, gen_realtime_actions, make_actions_async, Action, ActionTrait,
 };

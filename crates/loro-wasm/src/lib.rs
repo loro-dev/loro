@@ -1,5 +1,6 @@
 //! Loro WASM bindings.
 #![allow(non_snake_case)]
+#![allow(clippy::uninlined_format_args)]
 #![allow(clippy::empty_docs)]
 #![allow(clippy::doc_lazy_continuation)]
 // #![warn(missing_docs)]
