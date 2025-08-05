@@ -174,7 +174,7 @@ dependencies = [
  "arbitrary",
  "enum-as-inner 0.5.1",
  "flate2",
- "loro-common 1.5.8",
+ "loro-common 1.5.10",
  "rand",
  "serde_json",
 ]
@@ -1150,10 +1150,10 @@ dependencies = [
  "fxhash",
  "generic-btree",
  "loom",
- "loro-common 1.5.8",
+ "loro-common 1.5.10",
  "loro-delta 1.5.6",
- "loro-internal 1.5.8",
- "loro-kv-store 1.5.8",
+ "loro-internal 1.5.10",
+ "loro-kv-store 1.5.10",
  "pretty_assertions",
  "rand",
  "serde_json",
@@ -1212,7 +1212,7 @@ dependencies = [
 
 [[package]]
 name = "loro-common"
-version = "1.5.8"
+version = "1.5.10"
 dependencies = [
  "arbitrary",
  "enum-as-inner 0.6.1",
@@ -1394,7 +1394,7 @@ dependencies = [
 
 [[package]]
 name = "loro-internal"
-version = "1.5.8"
+version = "1.5.10"
 dependencies = [
  "append-only-bytes",
  "arbitrary",
@@ -1419,9 +1419,9 @@ dependencies = [
  "js-sys",
  "leb128",
  "loom",
- "loro-common 1.5.8",
+ "loro-common 1.5.10",
  "loro-delta 1.5.6",
- "loro-kv-store 1.5.8",
+ "loro-kv-store 1.5.10",
  "loro-rle 1.2.7",
  "loro_fractional_index 1.2.7",
  "md5",
@@ -1467,14 +1467,14 @@ dependencies = [
 
 [[package]]
 name = "loro-kv-store"
-version = "1.5.8"
+version = "1.5.10"
 dependencies = [
  "bytes",
  "ctor 0.2.9",
  "dev-utils",
  "ensure-cov",
  "fxhash",
- "loro-common 1.5.8",
+ "loro-common 1.5.10",
  "lz4_flex",
  "once_cell",
  "quick_cache",
@@ -1550,9 +1550,9 @@ dependencies = [
  "console_error_panic_hook",
  "getrandom",
  "js-sys",
- "loro-common 1.5.8",
+ "loro-common 1.5.10",
  "loro-delta 1.5.6",
- "loro-internal 1.5.8",
+ "loro-internal 1.5.10",
  "loro-rle 1.2.7",
  "serde",
  "serde-wasm-bindgen",
