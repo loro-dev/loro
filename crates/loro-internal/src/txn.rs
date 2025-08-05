@@ -134,7 +134,7 @@ pub struct Transaction {
     doc: Weak<LoroDocInner>,
     frontiers: Frontiers,
     local_ops: RleVec<[Op; 1]>, // TODO: use a more efficient data structure
-    event_hints: Vec<EventHint>,
+    event_hints: Vec<EventHintWithContainer>,
     pub(super) arena: SharedArena,
     finished: bool,
     on_commit: Option<OnCommitFn>,
@@ -162,6 +162,13 @@ impl std::fmt::Debug for Transaction {
             .field("timestamp", &self.timestamp)
             .finish()
     }
+}
+
+/// Wrapper for EventHint that includes the container index to prevent cross-container merging
+#[derive(Debug, Clone)]
+pub(super) struct EventHintWithContainer {
+    pub container_idx: ContainerIdx,
+    pub hint: EventHint,
 }
 
 /// We can infer local events directly from the local behavior. This enum is used to
@@ -593,12 +600,17 @@ impl Transaction {
             &op
         );
 
+        let hint_with_container = EventHintWithContainer {
+            container_idx: container,
+            hint: event,
+        };
+        
         match self.event_hints.last_mut() {
-            Some(last) if last.can_merge(&event) => {
-                last.merge_right(&event);
+            Some(last) if last.container_idx == container && last.hint.can_merge(&hint_with_container.hint) => {
+                last.hint.merge_right(&hint_with_container.hint);
             }
             _ => {
-                self.event_hints.push(event);
+                self.event_hints.push(hint_with_container);
             }
         }
         self.local_ops.push(op);
@@ -707,7 +719,7 @@ pub(crate) struct TxnContainerDiff {
 fn change_to_diff(
     change: &Change,
     doc: Arc<LoroDocInner>,
-    event_hints: Vec<EventHint>,
+    event_hints: Vec<EventHintWithContainer>,
 ) -> Vec<TxnContainerDiff> {
     let mut ans: Vec<TxnContainerDiff> = Vec::with_capacity(change.ops.len());
     let peer = change.id.peer;
@@ -721,23 +733,23 @@ fn change_to_diff(
         };
 
         let mut ops: SmallVec<[&Op; 1]> = smallvec![op];
-        let hint = match op.atom_len().cmp(&hint.rle_len()) {
+        let hint = match op.atom_len().cmp(&hint.hint.rle_len()) {
             std::cmp::Ordering::Less => {
                 let mut len = op.atom_len();
-                while len < hint.rle_len() {
+                while len < hint.hint.rle_len() {
                     let next = op_iter.next().unwrap();
                     len += next.atom_len();
                     ops.push(next);
                 }
-                assert!(len == hint.rle_len());
+                assert!(len == hint.hint.rle_len());
                 match event_hint_iter.next() {
-                    Some(n) => o_hint.replace(n).unwrap(),
-                    None => o_hint.take().unwrap(),
+                    Some(n) => o_hint.replace(n).unwrap().hint,
+                    None => o_hint.take().unwrap().hint,
                 }
             }
             std::cmp::Ordering::Equal => match event_hint_iter.next() {
-                Some(n) => o_hint.replace(n).unwrap(),
-                None => o_hint.take().unwrap(),
+                Some(n) => o_hint.replace(n).unwrap().hint,
+                None => o_hint.take().unwrap().hint,
             },
             std::cmp::Ordering::Greater => {
                 unreachable!("{:#?}", &op)
