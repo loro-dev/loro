@@ -16,9 +16,8 @@ use loro::{
     awareness::Awareness,
     event::{Diff, DiffBatch, ListDiffItem},
     loro_value, CommitOptions, ContainerID, ContainerTrait, ContainerType, ExportMode, Frontiers,
-    FrontiersNotIncluded, IdSpan, Index, LoroCounter, LoroDoc, LoroError, LoroList, LoroMap,
-    LoroMapValue, LoroMovableList, LoroStringValue, LoroText, LoroTree, LoroValue, ToJson,
-    TreeParentId,
+    FrontiersNotIncluded, IdSpan, Index, LoroDoc, LoroError, LoroList, LoroMap, LoroMapValue,
+    LoroMovableList, LoroStringValue, LoroText, LoroTree, LoroValue, ToJson, TreeParentId,
 };
 use loro_internal::{
     encoding::EncodedBlobMode, fx_map, handler::TextDelta, id::ID, version_range, vv, LoroResult,
@@ -3387,12 +3386,11 @@ fn test_tree_with_movable_list() {
     list.insert_container(0, first).unwrap();
 
     // Insert various container types at subsequent indices
-    list.insert_container(1, LoroCounter::new()).unwrap();
-    list.insert_container(2, LoroList::new()).unwrap();
-    list.insert_container(3, LoroMovableList::new()).unwrap();
-    list.insert_container(4, LoroText::new()).unwrap();
-    list.insert_container(5, LoroTree::new()).unwrap();
-    list.insert_container(6, LoroMap::new()).unwrap();
+    list.insert_container(1, LoroList::new()).unwrap();
+    list.insert_container(2, LoroMovableList::new()).unwrap();
+    list.insert_container(3, LoroText::new()).unwrap();
+    list.insert_container(4, LoroTree::new()).unwrap();
+    list.insert_container(5, LoroMap::new()).unwrap();
 
     // Insert another map at index 7
     let last = LoroMap::new();
