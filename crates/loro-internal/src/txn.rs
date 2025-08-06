@@ -6,6 +6,7 @@ use std::{
 };
 
 use enum_as_inner::EnumAsInner;
+use fxhash::FxHashMap;
 use generic_btree::rle::{HasLength as RleHasLength, Mergeable as GBSliceable};
 use loro_common::{ContainerType, IdLp, IdSpan, LoroResult};
 use loro_delta::{array_vec::ArrayVec, DeltaRopeBuilder};
@@ -134,7 +135,7 @@ pub struct Transaction {
     doc: Weak<LoroDocInner>,
     frontiers: Frontiers,
     local_ops: RleVec<[Op; 1]>, // TODO: use a more efficient data structure
-    event_hints: Vec<EventHintWithContainer>,
+    event_hints: FxHashMap<ContainerIdx, Vec<EventHint>>,
     pub(super) arena: SharedArena,
     finished: bool,
     on_commit: Option<OnCommitFn>,
@@ -600,17 +601,14 @@ impl Transaction {
             &op
         );
 
-        let hint_with_container = EventHintWithContainer {
-            container_idx: container,
-            hint: event,
-        };
+        let container_hints = self.event_hints.entry(container).or_insert_with(Vec::new);
         
-        match self.event_hints.last_mut() {
-            Some(last) if last.container_idx == container && last.hint.can_merge(&hint_with_container.hint) => {
-                last.hint.merge_right(&hint_with_container.hint);
+        match container_hints.last_mut() {
+            Some(last) if last.can_merge(&event) => {
+                last.merge_right(&event);
             }
             _ => {
-                self.event_hints.push(hint_with_container);
+                container_hints.push(event);
             }
         }
         self.local_ops.push(op);
@@ -719,12 +717,24 @@ pub(crate) struct TxnContainerDiff {
 fn change_to_diff(
     change: &Change,
     doc: Arc<LoroDocInner>,
-    event_hints: Vec<EventHintWithContainer>,
+    event_hints: FxHashMap<ContainerIdx, Vec<EventHint>>,
 ) -> Vec<TxnContainerDiff> {
     let mut ans: Vec<TxnContainerDiff> = Vec::with_capacity(change.ops.len());
     let peer = change.id.peer;
     let mut lamport = change.lamport;
-    let mut event_hint_iter = event_hints.into_iter();
+    
+    // Flatten the HashMap back to a Vec for processing
+    let mut flattened_hints = Vec::new();
+    for (container_idx, hints) in event_hints {
+        for hint in hints {
+            flattened_hints.push(EventHintWithContainer {
+                container_idx,
+                hint,
+            });
+        }
+    }
+    
+    let mut event_hint_iter = flattened_hints.into_iter();
     let mut o_hint = event_hint_iter.next();
     let mut op_iter = change.ops.iter();
     while let Some(op) = op_iter.next() {
