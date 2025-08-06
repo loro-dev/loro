@@ -594,7 +594,7 @@ impl Transaction {
             &op
         );
 
-        let container_hints = self.event_hints.entry(container).or_insert_with(Vec::new);
+        let container_hints = self.event_hints.entry(container).or_default();
 
         match container_hints.last_mut() {
             Some(last) if last.can_merge(&event) => {
