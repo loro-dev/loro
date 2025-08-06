@@ -14,11 +14,11 @@ keywords = ["crdt", "local-first"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-loro-internal = { path = "../loro-internal", version = "1.5.8" }
-loro-common = { path = "../loro-common", version = "1.5.8", features = [
+loro-internal = { path = "../loro-internal", version = "1.5.10" }
+loro-common = { path = "../loro-common", version = "1.5.10", features = [
     "serde_json",
 ] }
-loro-kv-store = { path = "../kv-store", version = "1.5.8" }
+loro-kv-store = { path = "../kv-store", version = "1.5.10" }
 delta = { path = "../delta", package = "loro-delta", version = "1.5.6" }
 generic-btree = { version = "^0.10.5" }
 enum-as-inner = { workspace = true }

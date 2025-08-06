@@ -165,13 +165,6 @@ impl std::fmt::Debug for Transaction {
     }
 }
 
-/// Wrapper for EventHint that includes the container index to prevent cross-container merging
-#[derive(Debug, Clone)]
-pub(super) struct EventHintWithContainer {
-    pub container_idx: ContainerIdx,
-    pub hint: EventHint,
-}
-
 /// We can infer local events directly from the local behavior. This enum is used to
 /// record them, so that we can avoid recalculate them when we commit the transaction.
 ///
@@ -602,7 +595,7 @@ impl Transaction {
         );
 
         let container_hints = self.event_hints.entry(container).or_insert_with(Vec::new);
-        
+
         match container_hints.last_mut() {
             Some(last) if last.can_merge(&event) => {
                 last.merge_right(&event);
@@ -722,197 +715,197 @@ fn change_to_diff(
     let mut ans: Vec<TxnContainerDiff> = Vec::with_capacity(change.ops.len());
     let peer = change.id.peer;
     let mut lamport = change.lamport;
-    
+
     // Group ops by container first to match our new structure
     let mut ops_by_container: FxHashMap<ContainerIdx, Vec<&Op>> = FxHashMap::default();
     for op in change.ops.iter() {
         ops_by_container.entry(op.container).or_default().push(op);
     }
-    
+
     // Process each container's hints and ops together
     for (container_idx, hints) in event_hints {
         let Some(container_ops) = ops_by_container.get(&container_idx) else {
             continue;
         };
-        
+
         let mut op_iter = container_ops.iter();
         let mut hint_iter = hints.into_iter();
         let mut current_hint = hint_iter.next();
-        
+
         while let Some(&op) = op_iter.next() {
             let Some(hint) = current_hint.take() else {
                 unreachable!("Missing hint for op");
             };
-            
+
             // Collect ops that belong to this hint
             let mut ops_for_hint: SmallVec<[&Op; 1]> = smallvec![op];
             let mut total_len = op.atom_len();
-            
+
             // If hint spans multiple ops, collect them
             while total_len < hint.rle_len() {
                 let next_op = op_iter.next().expect("Missing op for hint");
                 total_len += next_op.atom_len();
                 ops_for_hint.push(next_op);
             }
-            
+
             assert_eq!(total_len, hint.rle_len(), "Op/hint length mismatch");
-            
+
             // Move to next hint
             current_hint = hint_iter.next();
-            
+
             // Generate diff based on hint type
             match hint {
-            EventHint::Mark { start, end, style } => {
-                let mut meta = StyleMeta::default();
-                meta.insert(
-                    style.key.clone(),
-                    StyleMetaItem {
-                        lamport,
-                        peer: change.id.peer,
-                        value: style.data,
-                    },
-                );
-                let diff = DeltaRopeBuilder::new()
-                    .retain(start as usize, Default::default())
-                    .retain(
-                        (end - start) as usize,
-                        meta.to_option_map().unwrap_or_default().into(),
-                    )
-                    .build();
-                ans.push(TxnContainerDiff {
-                    idx: container_idx,
-                    diff: Diff::Text(diff),
-                });
-            }
-            EventHint::InsertText { styles, pos, .. } => {
-                let mut delta: TextDiff = DeltaRopeBuilder::new()
-                    .retain(pos as usize, Default::default())
-                    .build();
-                for op in ops_for_hint.iter() {
-                    let InnerListOp::InsertText { slice, .. } = op.content.as_list().unwrap()
-                    else {
-                        unreachable!()
-                    };
-
-                    delta.push_insert(
-                        slice.clone().into(),
-                        styles.to_option_map().unwrap_or_default().into(),
+                EventHint::Mark { start, end, style } => {
+                    let mut meta = StyleMeta::default();
+                    meta.insert(
+                        style.key.clone(),
+                        StyleMetaItem {
+                            lamport,
+                            peer: change.id.peer,
+                            value: style.data,
+                        },
                     );
+                    let diff = DeltaRopeBuilder::new()
+                        .retain(start as usize, Default::default())
+                        .retain(
+                            (end - start) as usize,
+                            meta.to_option_map().unwrap_or_default().into(),
+                        )
+                        .build();
+                    ans.push(TxnContainerDiff {
+                        idx: container_idx,
+                        diff: Diff::Text(diff),
+                    });
                 }
-                ans.push(TxnContainerDiff {
+                EventHint::InsertText { styles, pos, .. } => {
+                    let mut delta: TextDiff = DeltaRopeBuilder::new()
+                        .retain(pos as usize, Default::default())
+                        .build();
+                    for op in ops_for_hint.iter() {
+                        let InnerListOp::InsertText { slice, .. } = op.content.as_list().unwrap()
+                        else {
+                            unreachable!()
+                        };
+
+                        delta.push_insert(
+                            slice.clone().into(),
+                            styles.to_option_map().unwrap_or_default().into(),
+                        );
+                    }
+                    ans.push(TxnContainerDiff {
+                        idx: container_idx,
+                        diff: Diff::Text(delta),
+                    })
+                }
+                EventHint::DeleteText {
+                    span,
+                    unicode_len: _,
+                    // we don't need to iter over ops here, because we already
+                    // know what the events should be
+                } => ans.push(TxnContainerDiff {
                     idx: container_idx,
-                    diff: Diff::Text(delta),
-                })
-            }
-            EventHint::DeleteText {
-                span,
-                unicode_len: _,
-                // we don't need to iter over ops here, because we already
-                // know what the events should be
-            } => ans.push(TxnContainerDiff {
-                idx: container_idx,
-                diff: Diff::Text(
-                    DeltaRopeBuilder::new()
-                        .retain(span.start() as usize, Default::default())
-                        .delete(span.len())
-                        .build(),
-                ),
-            }),
-            EventHint::InsertList { pos, .. } => {
-                // We should use pos from event hint because index in op may
-                // be using op index for the MovableList
-                for op in ops_for_hint.iter() {
-                    let (range, _) = op.content.as_list().unwrap().as_insert().unwrap();
-                    let values = doc
-                        .arena
-                        .get_values(range.to_range())
-                        .into_iter()
-                        .map(|v| ValueOrHandler::from_value(v, &doc));
+                    diff: Diff::Text(
+                        DeltaRopeBuilder::new()
+                            .retain(span.start() as usize, Default::default())
+                            .delete(span.len())
+                            .build(),
+                    ),
+                }),
+                EventHint::InsertList { pos, .. } => {
+                    // We should use pos from event hint because index in op may
+                    // be using op index for the MovableList
+                    for op in ops_for_hint.iter() {
+                        let (range, _) = op.content.as_list().unwrap().as_insert().unwrap();
+                        let values = doc
+                            .arena
+                            .get_values(range.to_range())
+                            .into_iter()
+                            .map(|v| ValueOrHandler::from_value(v, &doc));
+                        ans.push(TxnContainerDiff {
+                            idx: container_idx,
+                            diff: Diff::List(
+                                DeltaRopeBuilder::new()
+                                    .retain(pos, Default::default())
+                                    .insert_many(values, Default::default())
+                                    .build(),
+                            ),
+                        })
+                    }
+                }
+                EventHint::DeleteList(s) => {
                     ans.push(TxnContainerDiff {
                         idx: container_idx,
                         diff: Diff::List(
                             DeltaRopeBuilder::new()
-                                .retain(pos, Default::default())
-                                .insert_many(values, Default::default())
+                                .retain(s.start() as usize, Default::default())
+                                .delete(s.len())
                                 .build(),
                         ),
-                    })
+                    });
                 }
-            }
-            EventHint::DeleteList(s) => {
-                ans.push(TxnContainerDiff {
+                EventHint::Map { key, value } => ans.push(TxnContainerDiff {
                     idx: container_idx,
-                    diff: Diff::List(
-                        DeltaRopeBuilder::new()
-                            .retain(s.start() as usize, Default::default())
-                            .delete(s.len())
-                            .build(),
-                    ),
-                });
-            }
-            EventHint::Map { key, value } => ans.push(TxnContainerDiff {
-                idx: container_idx,
-                diff: Diff::Map(ResolvedMapDelta::new().with_entry(
-                    key,
-                    ResolvedMapValue {
-                        value: value.map(|v| ValueOrHandler::from_value(v, &doc)),
-                        idlp: IdLp::new(peer, lamport),
-                    },
-                )),
-            }),
-            EventHint::Tree(tree_diff) => {
-                let mut diff = TreeDiff::default();
-                diff.diff.extend(tree_diff.into_iter());
-                ans.push(TxnContainerDiff {
-                    idx: container_idx,
-                    diff: Diff::Tree(diff),
-                });
-            }
-            EventHint::Move { from, to, value } => {
-                let mut a = DeltaRopeBuilder::new()
-                    .retain(from as usize, Default::default())
-                    .delete(1)
-                    .build();
-                a.compose(
-                    &DeltaRopeBuilder::new()
-                        .retain(to as usize, Default::default())
-                        .insert(
-                            ArrayVec::from([ValueOrHandler::from_value(value, &doc)]),
-                            ListDeltaMeta { from_move: true },
-                        )
-                        .build(),
-                );
-                ans.push(TxnContainerDiff {
-                    idx: container_idx,
-                    diff: Diff::List(a),
-                });
-            }
-            EventHint::SetList { index, value } => {
-                ans.push(TxnContainerDiff {
-                    idx: container_idx,
-                    diff: Diff::List(
-                        DeltaRopeBuilder::new()
-                            .retain(index, Default::default())
-                            .delete(1)
+                    diff: Diff::Map(ResolvedMapDelta::new().with_entry(
+                        key,
+                        ResolvedMapValue {
+                            value: value.map(|v| ValueOrHandler::from_value(v, &doc)),
+                            idlp: IdLp::new(peer, lamport),
+                        },
+                    )),
+                }),
+                EventHint::Tree(tree_diff) => {
+                    let mut diff = TreeDiff::default();
+                    diff.diff.extend(tree_diff.into_iter());
+                    ans.push(TxnContainerDiff {
+                        idx: container_idx,
+                        diff: Diff::Tree(diff),
+                    });
+                }
+                EventHint::Move { from, to, value } => {
+                    let mut a = DeltaRopeBuilder::new()
+                        .retain(from as usize, Default::default())
+                        .delete(1)
+                        .build();
+                    a.compose(
+                        &DeltaRopeBuilder::new()
+                            .retain(to as usize, Default::default())
                             .insert(
                                 ArrayVec::from([ValueOrHandler::from_value(value, &doc)]),
-                                Default::default(),
+                                ListDeltaMeta { from_move: true },
                             )
                             .build(),
-                    ),
-                });
+                    );
+                    ans.push(TxnContainerDiff {
+                        idx: container_idx,
+                        diff: Diff::List(a),
+                    });
+                }
+                EventHint::SetList { index, value } => {
+                    ans.push(TxnContainerDiff {
+                        idx: container_idx,
+                        diff: Diff::List(
+                            DeltaRopeBuilder::new()
+                                .retain(index, Default::default())
+                                .delete(1)
+                                .insert(
+                                    ArrayVec::from([ValueOrHandler::from_value(value, &doc)]),
+                                    Default::default(),
+                                )
+                                .build(),
+                        ),
+                    });
+                }
+                EventHint::MarkEnd => {
+                    // do nothing
+                }
+                #[cfg(feature = "counter")]
+                EventHint::Counter(diff) => {
+                    ans.push(TxnContainerDiff {
+                        idx: container_idx,
+                        diff: Diff::Counter(diff),
+                    });
+                }
             }
-            EventHint::MarkEnd => {
-                // do nothing
-            }
-            #[cfg(feature = "counter")]
-            EventHint::Counter(diff) => {
-                ans.push(TxnContainerDiff {
-                    idx: container_idx,
-                    diff: Diff::Counter(diff),
-                });
-            }
-        }
 
             // Update lamport for this hint's operations
             lamport += ops_for_hint
@@ -921,6 +914,6 @@ fn change_to_diff(
                 .sum::<Lamport>();
         }
     }
-    
+
     ans
 }
