@@ -17,7 +17,7 @@ use loro::{
     event::{Diff, DiffBatch, ListDiffItem},
     loro_value, CommitOptions, ContainerID, ContainerTrait, ContainerType, ExportMode, Frontiers,
     FrontiersNotIncluded, IdSpan, Index, LoroDoc, LoroError, LoroList, LoroMap, LoroMapValue,
-    LoroMovableList, LoroStringValue, LoroText, LoroTree, LoroValue, ToJson, TreeParentId,
+    LoroStringValue, LoroText, LoroValue, ToJson, TreeParentId,
 };
 use loro_internal::{
     encoding::EncodedBlobMode, fx_map, handler::TextDelta, id::ID, version_range, vv, LoroResult,
