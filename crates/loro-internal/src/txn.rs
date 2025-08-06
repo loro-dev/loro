@@ -723,59 +723,45 @@ fn change_to_diff(
     let peer = change.id.peer;
     let mut lamport = change.lamport;
     
-    // Flatten the HashMap back to a Vec for processing
-    let mut flattened_hints = Vec::new();
-    for (container_idx, hints) in event_hints {
-        for hint in hints {
-            flattened_hints.push(EventHintWithContainer {
-                container_idx,
-                hint,
-            });
-        }
+    // Group ops by container first to match our new structure
+    let mut ops_by_container: FxHashMap<ContainerIdx, Vec<&Op>> = FxHashMap::default();
+    for op in change.ops.iter() {
+        ops_by_container.entry(op.container).or_default().push(op);
     }
     
-    let mut event_hint_iter = flattened_hints.into_iter();
-    let mut o_hint = event_hint_iter.next();
-    let mut op_iter = change.ops.iter();
-    while let Some(op) = op_iter.next() {
-        let Some(hint) = o_hint.as_mut() else {
-            unreachable!()
+    // Process each container's hints and ops together
+    for (container_idx, hints) in event_hints {
+        let Some(container_ops) = ops_by_container.get(&container_idx) else {
+            continue;
         };
-
-        let mut ops: SmallVec<[&Op; 1]> = smallvec![op];
-        let hint = match op.atom_len().cmp(&hint.hint.rle_len()) {
-            std::cmp::Ordering::Less => {
-                let mut len = op.atom_len();
-                while len < hint.hint.rle_len() {
-                    let next = op_iter.next().unwrap();
-                    len += next.atom_len();
-                    ops.push(next);
-                }
-                assert!(len == hint.hint.rle_len());
-                match event_hint_iter.next() {
-                    Some(n) => o_hint.replace(n).unwrap().hint,
-                    None => o_hint.take().unwrap().hint,
-                }
+        
+        let mut op_iter = container_ops.iter();
+        let mut hint_iter = hints.into_iter();
+        let mut current_hint = hint_iter.next();
+        
+        while let Some(&op) = op_iter.next() {
+            let Some(hint) = current_hint.take() else {
+                unreachable!("Missing hint for op");
+            };
+            
+            // Collect ops that belong to this hint
+            let mut ops_for_hint: SmallVec<[&Op; 1]> = smallvec![op];
+            let mut total_len = op.atom_len();
+            
+            // If hint spans multiple ops, collect them
+            while total_len < hint.rle_len() {
+                let next_op = op_iter.next().expect("Missing op for hint");
+                total_len += next_op.atom_len();
+                ops_for_hint.push(next_op);
             }
-            std::cmp::Ordering::Equal => match event_hint_iter.next() {
-                Some(n) => o_hint.replace(n).unwrap().hint,
-                None => o_hint.take().unwrap().hint,
-            },
-            std::cmp::Ordering::Greater => {
-                unreachable!("{:#?}", &op)
-            }
-        };
-
-        match &hint {
-            EventHint::InsertText { .. }
-            | EventHint::InsertList { .. }
-            | EventHint::DeleteText { .. }
-            | EventHint::DeleteList(_) => {}
-            _ => {
-                assert_eq!(ops.len(), 1);
-            }
-        }
-        match hint {
+            
+            assert_eq!(total_len, hint.rle_len(), "Op/hint length mismatch");
+            
+            // Move to next hint
+            current_hint = hint_iter.next();
+            
+            // Generate diff based on hint type
+            match hint {
             EventHint::Mark { start, end, style } => {
                 let mut meta = StyleMeta::default();
                 meta.insert(
@@ -794,7 +780,7 @@ fn change_to_diff(
                     )
                     .build();
                 ans.push(TxnContainerDiff {
-                    idx: op.container,
+                    idx: container_idx,
                     diff: Diff::Text(diff),
                 });
             }
@@ -802,7 +788,7 @@ fn change_to_diff(
                 let mut delta: TextDiff = DeltaRopeBuilder::new()
                     .retain(pos as usize, Default::default())
                     .build();
-                for op in ops.iter() {
+                for op in ops_for_hint.iter() {
                     let InnerListOp::InsertText { slice, .. } = op.content.as_list().unwrap()
                     else {
                         unreachable!()
@@ -814,7 +800,7 @@ fn change_to_diff(
                     );
                 }
                 ans.push(TxnContainerDiff {
-                    idx: op.container,
+                    idx: container_idx,
                     diff: Diff::Text(delta),
                 })
             }
@@ -824,7 +810,7 @@ fn change_to_diff(
                 // we don't need to iter over ops here, because we already
                 // know what the events should be
             } => ans.push(TxnContainerDiff {
-                idx: op.container,
+                idx: container_idx,
                 diff: Diff::Text(
                     DeltaRopeBuilder::new()
                         .retain(span.start() as usize, Default::default())
@@ -835,7 +821,7 @@ fn change_to_diff(
             EventHint::InsertList { pos, .. } => {
                 // We should use pos from event hint because index in op may
                 // be using op index for the MovableList
-                for op in ops.iter() {
+                for op in ops_for_hint.iter() {
                     let (range, _) = op.content.as_list().unwrap().as_insert().unwrap();
                     let values = doc
                         .arena
@@ -843,7 +829,7 @@ fn change_to_diff(
                         .into_iter()
                         .map(|v| ValueOrHandler::from_value(v, &doc));
                     ans.push(TxnContainerDiff {
-                        idx: op.container,
+                        idx: container_idx,
                         diff: Diff::List(
                             DeltaRopeBuilder::new()
                                 .retain(pos, Default::default())
@@ -855,7 +841,7 @@ fn change_to_diff(
             }
             EventHint::DeleteList(s) => {
                 ans.push(TxnContainerDiff {
-                    idx: op.container,
+                    idx: container_idx,
                     diff: Diff::List(
                         DeltaRopeBuilder::new()
                             .retain(s.start() as usize, Default::default())
@@ -865,7 +851,7 @@ fn change_to_diff(
                 });
             }
             EventHint::Map { key, value } => ans.push(TxnContainerDiff {
-                idx: op.container,
+                idx: container_idx,
                 diff: Diff::Map(ResolvedMapDelta::new().with_entry(
                     key,
                     ResolvedMapValue {
@@ -878,7 +864,7 @@ fn change_to_diff(
                 let mut diff = TreeDiff::default();
                 diff.diff.extend(tree_diff.into_iter());
                 ans.push(TxnContainerDiff {
-                    idx: op.container,
+                    idx: container_idx,
                     diff: Diff::Tree(diff),
                 });
             }
@@ -897,13 +883,13 @@ fn change_to_diff(
                         .build(),
                 );
                 ans.push(TxnContainerDiff {
-                    idx: op.container,
+                    idx: container_idx,
                     diff: Diff::List(a),
                 });
             }
             EventHint::SetList { index, value } => {
                 ans.push(TxnContainerDiff {
-                    idx: op.container,
+                    idx: container_idx,
                     diff: Diff::List(
                         DeltaRopeBuilder::new()
                             .retain(index, Default::default())
@@ -922,16 +908,19 @@ fn change_to_diff(
             #[cfg(feature = "counter")]
             EventHint::Counter(diff) => {
                 ans.push(TxnContainerDiff {
-                    idx: op.container,
+                    idx: container_idx,
                     diff: Diff::Counter(diff),
                 });
             }
         }
 
-        lamport += ops
-            .iter()
-            .map(|x| x.content_len() as Lamport)
-            .sum::<Lamport>();
+            // Update lamport for this hint's operations
+            lamport += ops_for_hint
+                .iter()
+                .map(|x| x.content_len() as Lamport)
+                .sum::<Lamport>();
+        }
     }
+    
     ans
 }
