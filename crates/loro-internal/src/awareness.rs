@@ -270,7 +270,7 @@ impl EphemeralStore {
     /// use loro_internal::awareness::EphemeralStore;
     /// use std::sync::{Arc, Mutex};
     ///
-    /// let store = EphemeralStore::new(42, 30000);
+    /// let store = EphemeralStore::new(30000);
     /// let update_count = Arc::new(Mutex::new(0));
     /// let count_clone = update_count.clone();
     ///
@@ -282,7 +282,7 @@ impl EphemeralStore {
     ///     *count < 3  // Auto-unsubscribe after 3 updates
     /// }));
     ///
-    /// store.set_local_state("cursor", Some(42.into()));
+    /// store.set("cursor", 42);
     /// ```
     pub fn subscribe_local_updates(&self, callback: LocalEphemeralCallback) -> Subscription {
         self.inner.subscribe_local_updates(callback)
