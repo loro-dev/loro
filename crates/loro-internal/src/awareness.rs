@@ -250,6 +250,40 @@ impl EphemeralStore {
         self.inner.keys()
     }
 
+    /// Subscribe to local ephemeral/awareness updates.
+    ///
+    /// The callback receives encoded update bytes whenever local ephemeral state changes.
+    /// This is useful for syncing awareness information like cursor positions, selections,
+    /// or presence data to other peers in real-time.
+    ///
+    /// **Auto-unsubscription**: If the callback returns `false`, the subscription will be
+    /// automatically removed, providing a convenient way to implement one-time or conditional
+    /// subscriptions in Rust.
+    ///
+    /// # Parameters
+    /// - `callback`: Function that receives `&Vec<u8>` (encoded ephemeral updates) and returns `bool`
+    ///   - Return `true` to keep the subscription active
+    ///   - Return `false` to automatically unsubscribe
+    ///
+    /// # Example
+    /// ```rust
+    /// use loro_internal::awareness::EphemeralStore;
+    /// use std::sync::{Arc, Mutex};
+    ///
+    /// let store = EphemeralStore::new(30000);
+    /// let update_count = Arc::new(Mutex::new(0));
+    /// let count_clone = update_count.clone();
+    ///
+    /// // Subscribe and collect first 3 updates, then auto-unsubscribe
+    /// let sub = store.subscribe_local_updates(Box::new(move |bytes| {
+    ///     println!("Received {} bytes of ephemeral data", bytes.len());
+    ///     let mut count = count_clone.lock().unwrap();
+    ///     *count += 1;
+    ///     *count < 3  // Auto-unsubscribe after 3 updates
+    /// }));
+    ///
+    /// store.set("cursor", 42);
+    /// ```
     pub fn subscribe_local_updates(&self, callback: LocalEphemeralCallback) -> Subscription {
         self.inner.subscribe_local_updates(callback)
     }
@@ -447,6 +481,22 @@ impl EphemeralStoreInner {
             .collect()
     }
 
+    /// Subscribe to local ephemeral state updates.
+    ///
+    /// The callback receives encoded update bytes whenever the local peer's ephemeral state
+    /// is modified. This enables real-time synchronization of awareness data like cursor
+    /// positions, user presence, or temporary collaborative state.
+    ///
+    /// **Auto-unsubscription**: If the callback returns `false`, the subscription will be
+    /// automatically removed, making it easy to implement conditional or temporary subscriptions.
+    ///
+    /// # Parameters
+    /// - `callback`: Function that receives `&Vec<u8>` and returns `bool`
+    ///   - Return `true` to maintain the subscription
+    ///   - Return `false` to automatically unsubscribe
+    ///
+    /// # Returns
+    /// A `Subscription` that can be used to manually unsubscribe if needed.
     pub fn subscribe_local_updates(&self, callback: LocalEphemeralCallback) -> Subscription {
         let (sub, activate) = self.local_subs.inner().insert((), callback);
         activate();

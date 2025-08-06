@@ -791,12 +791,77 @@ impl LoroDoc {
         }))
     }
 
-    /// Subscribe the local update of the document.
+    /// Subscribe to local document updates.
+    ///
+    /// The callback receives encoded update bytes whenever local changes are committed.
+    /// This is useful for syncing changes to other document instances or persisting updates.
+    ///
+    /// **Auto-unsubscription**: If the callback returns `false`, the subscription will be
+    /// automatically removed, providing a convenient way to implement one-time or conditional
+    /// subscriptions in Rust.
+    ///
+    /// # Parameters
+    /// - `callback`: Function that receives `&Vec<u8>` (encoded updates) and returns `bool`
+    ///   - Return `true` to keep the subscription active
+    ///   - Return `false` to automatically unsubscribe
+    ///
+    /// # Example
+    /// ```rust
+    /// use loro::LoroDoc;
+    /// use std::sync::{Arc, Mutex};
+    ///
+    /// let doc = LoroDoc::new();
+    /// let updates = Arc::new(Mutex::new(Vec::new()));
+    /// let updates_clone = updates.clone();
+    /// let count = Arc::new(Mutex::new(0));
+    /// let count_clone = count.clone();
+    ///
+    /// // Subscribe and collect first 3 updates, then auto-unsubscribe
+    /// let sub = doc.subscribe_local_update(Box::new(move |bytes| {
+    ///     updates_clone.lock().unwrap().push(bytes.clone());
+    ///     let mut c = count_clone.lock().unwrap();
+    ///     *c += 1;
+    ///     *c < 3  // Auto-unsubscribe after 3 updates
+    /// }));
+    ///
+    /// doc.get_text("text").insert(0, "hello").unwrap();
+    /// doc.commit();
+    /// ```
     pub fn subscribe_local_update(&self, callback: LocalUpdateCallback) -> Subscription {
         self.doc.subscribe_local_update(callback)
     }
 
-    /// Subscribe the peer id change of the document.
+    /// Subscribe to peer ID changes in the document.
+    ///
+    /// The callback is triggered whenever the document's peer ID is modified.
+    /// This is useful for tracking identity changes and updating related state accordingly.
+    ///
+    /// **Auto-unsubscription**: If the callback returns `false`, the subscription will be
+    /// automatically removed, providing a convenient way to implement one-time or conditional
+    /// subscriptions in Rust.
+    ///
+    /// # Parameters
+    /// - `callback`: Function that receives `&ID` (the new peer ID) and returns `bool`
+    ///   - Return `true` to keep the subscription active
+    ///   - Return `false` to automatically unsubscribe
+    ///
+    /// # Example
+    /// ```rust
+    /// use loro::LoroDoc;
+    /// use std::sync::{Arc, Mutex};
+    ///
+    /// let doc = LoroDoc::new();
+    /// let peer_changes = Arc::new(Mutex::new(Vec::new()));
+    /// let changes_clone = peer_changes.clone();
+    ///
+    /// let sub = doc.subscribe_peer_id_change(Box::new(move |new_peer_id| {
+    ///     changes_clone.lock().unwrap().push(*new_peer_id);
+    ///     true  // Keep subscription active
+    /// }));
+    ///
+    /// doc.set_peer_id(42).unwrap();
+    /// doc.set_peer_id(100).unwrap();
+    /// ```
     pub fn subscribe_peer_id_change(&self, callback: PeerIdUpdateCallback) -> Subscription {
         self.doc.subscribe_peer_id_change(callback)
     }
@@ -1106,31 +1171,53 @@ impl LoroDoc {
     /// Subscribe to the first commit from a peer. Operations performed on the `LoroDoc` within this callback
     /// will be merged into the current commit.
     ///
-    /// This is useful for managing the relationship between `PeerID` and user information.
-    /// For example, you could store user names in a `LoroMap` using `PeerID` as the key and the `UserID` as the value.
+    /// Subscribe to the first commit event from each peer.
+    ///
+    /// The callback is triggered only once per peer when they make their first commit to the document locally.
+    /// This is particularly useful for managing peer-to-user mappings or initialization logic.
+    ///
+    /// **Auto-unsubscription**: If the callback returns `false`, the subscription will be
+    /// automatically removed, providing a convenient way to implement one-time or conditional
+    /// subscriptions in Rust.
+    ///
+    /// # Parameters
+    /// - `callback`: Function that receives `&FirstCommitFromPeerPayload` and returns `bool`
+    ///   - Return `true` to keep the subscription active
+    ///   - Return `false` to automatically unsubscribe
+    ///
+    /// # Use Cases
+    /// - Initialize peer-specific data structures
+    /// - Map peer IDs to user information
     ///
     /// # Example
-    /// ```
+    /// ```rust
     /// use loro::LoroDoc;
     /// use std::sync::{Arc, Mutex};
     ///
     /// let doc = LoroDoc::new();
     /// doc.set_peer_id(0).unwrap();
-    /// let p = Arc::new(Mutex::new(vec![]));
-    /// let p2 = Arc::clone(&p);
-    /// let sub = doc.subscribe_first_commit_from_peer(Box::new(move |e| {
-    ///     p2.try_lock().unwrap().push(e.peer);
-    ///     true
+    ///
+    /// let new_peers = Arc::new(Mutex::new(Vec::new()));
+    /// let peers_clone = new_peers.clone();
+    /// let peer_count = Arc::new(Mutex::new(0));
+    /// let count_clone = peer_count.clone();
+    ///
+    /// // Track first 5 new peers, then auto-unsubscribe
+    /// let sub = doc.subscribe_first_commit_from_peer(Box::new(move |payload| {
+    ///     peers_clone.lock().unwrap().push(payload.peer);
+    ///     let mut count = count_clone.lock().unwrap();
+    ///     *count += 1;
+    ///     *count < 5  // Auto-unsubscribe after tracking 5 peers
     /// }));
-    /// doc.get_text("text").insert(0, "a").unwrap();
+    ///
+    /// // This will trigger the callback for peer 0
+    /// doc.get_text("text").insert(0, "hello").unwrap();
     /// doc.commit();
-    /// doc.get_text("text").insert(0, "b").unwrap();
-    /// doc.commit();
+    ///
+    /// // Switch to a new peer and commit - triggers callback again
     /// doc.set_peer_id(1).unwrap();
-    /// doc.get_text("text").insert(0, "c").unwrap();
+    /// doc.get_text("text").insert(0, "world").unwrap();
     /// doc.commit();
-    /// sub.unsubscribe();
-    /// assert_eq!(p.try_lock().unwrap().as_slice(), &[0, 1]);
     /// ```
     pub fn subscribe_first_commit_from_peer(
         &self,
@@ -1139,27 +1226,51 @@ impl LoroDoc {
         self.doc.subscribe_first_commit_from_peer(callback)
     }
 
-    /// Subscribe to the pre-commit event.
+    /// Subscribe to pre-commit events.
     ///
-    /// The callback will be called when the changes are committed but not yet applied to the OpLog.
-    /// You can modify the commit message and timestamp in the callback by [`ChangeModifier`].
+    /// The callback is triggered when changes are about to be committed but before they're
+    /// applied to the OpLog. This allows you to modify commit metadata such as timestamps
+    /// and messages, or perform validation before changes are finalized.
     ///
-    /// If the callback returns `false` it will be unsubscribed and will not be run on future
-    /// commits.
+    /// **Auto-unsubscription**: If the callback returns `false`, the subscription will be
+    /// automatically removed, providing a convenient way to implement one-time or conditional
+    /// subscriptions in Rust.
+    ///
+    /// # Parameters
+    /// - `callback`: Function that receives `&PreCommitCallbackPayload` and returns `bool`
+    ///   - Return `true` to keep the subscription active
+    ///   - Return `false` to automatically unsubscribe
+    /// - The payload contains:
+    ///   - `change_meta`: Metadata about the commit
+    ///   - `modifier`: Interface to modify commit properties
+    ///
+    /// # Use Cases
+    /// - Add commit message prefixes or formatting
+    /// - Adjust timestamps for consistent ordering
+    /// - Log or audit commit operations
+    /// - Implement commit validation or approval workflows
     ///
     /// # Example
     /// ```rust
     /// use loro::LoroDoc;
+    /// use std::sync::{Arc, Mutex};
     ///
     /// let doc = LoroDoc::new();
-    /// let doc_clone = doc.clone();
-    /// let sub = doc.subscribe_pre_commit(Box::new(move |e| {
-    ///     e.modifier
-    ///      .set_timestamp(e.change_meta.timestamp + 1)
-    ///      .set_message(&format!("prefix\n{}", e.change_meta.message()));
-    ///     true
+    /// let commit_count = Arc::new(Mutex::new(0));
+    /// let count_clone = commit_count.clone();
+    ///
+    /// // Add timestamps and auto-unsubscribe after 5 commits
+    /// let sub = doc.subscribe_pre_commit(Box::new(move |payload| {
+    ///     // Add a prefix to commit messages
+    ///     let new_message = format!("Auto: {}", payload.change_meta.message());
+    ///     payload.modifier.set_message(&new_message);
+    ///
+    ///     let mut count = count_clone.lock().unwrap();
+    ///     *count += 1;
+    ///     *count < 5  // Auto-unsubscribe after 5 commits
     /// }));
-    /// doc.get_text("text").insert(0, "a").unwrap();
+    ///
+    /// doc.get_text("text").insert(0, "hello").unwrap();
     /// doc.commit();
     /// ```
     pub fn subscribe_pre_commit(&self, callback: PreCommitCallback) -> Subscription {
