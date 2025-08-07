@@ -685,7 +685,7 @@ dependencies = [
  "dev-utils",
  "ensure-cov",
  "flate2",
- "loro 1.5.10",
+ "loro 1.5.11",
  "rand",
  "serde_json",
  "tabled 0.15.0",
@@ -742,7 +742,7 @@ dependencies = [
  "loro 0.16.12",
  "loro 0.16.2 (git+https://github.com/loro-dev/loro.git?tag=loro-crdt%400.16.7)",
  "loro 0.16.2 (git+https://github.com/loro-dev/loro.git?rev=90470658435ec4c62b5af59ebb82fe9e1f5aa761)",
- "loro 1.5.10",
+ "loro 1.5.11",
  "num_cpus",
  "pretty_assertions",
  "rand",
@@ -1141,7 +1141,7 @@ dependencies = [
 
 [[package]]
 name = "loro"
-version = "1.5.10"
+version = "1.5.11"
 dependencies = [
  "anyhow",
  "ctor 0.2.9",

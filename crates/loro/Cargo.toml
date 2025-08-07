@@ -1,6 +1,6 @@
 [package]
 name = "loro"
-version = "1.5.10"
+version = "1.5.11"
 edition = "2021"
 license = "MIT"
 documentation = "https://docs.rs/loro/"
