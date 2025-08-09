@@ -3428,7 +3428,7 @@ impl MovableListHandler {
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
                 let a = state.as_movable_list_state().unwrap();
-                format!("{:#?}", a)
+                format!("{a:#?}")
             }),
         }
     }

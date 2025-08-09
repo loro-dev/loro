@@ -5,10 +5,7 @@ pub fn main() {
     let doc = LoroDoc::new();
     const N: usize = 100_000;
     let text = doc.get_text("text");
-    println!(
-        "Task: Insert {} random strings (length 10) at random positions into text",
-        N
-    );
+    println!("Task: Insert {N} random strings (length 10) at random positions into text");
 
     for _ in 0..N {
         let random_string: String = (0..10)

@@ -7,7 +7,7 @@ pub fn main() {
     let doc = LoroDoc::new();
     let list = doc.get_movable_list("list");
     let n: u32 = 100_000;
-    println!("N = {}", n);
+    println!("N = {n}");
 
     let start = Instant::now();
     for i in 0..n {
@@ -61,7 +61,7 @@ pub fn main() {
     doc.free_history_cache();
     println!("Memory cost after free history cache {}", get_mem_usage());
     let used = before - get_mem_usage();
-    println!("History cache size {}", used);
+    println!("History cache size {used}");
     println!("Time cost {:?}", start.elapsed());
 
     let start = Instant::now();

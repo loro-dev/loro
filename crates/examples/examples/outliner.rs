@@ -13,10 +13,10 @@ pub fn main() {
     let max_depth = 10;
     let avg_peer_edits = 1000;
     let peers = (n * k / avg_peer_edits).max(1);
-    println!("Number of nodes: {}", n);
-    println!("Number of moves per node: {}", k);
-    println!("Average number of peer edits: {}", avg_peer_edits);
-    println!("Number of peers: {}", peers);
+    println!("Number of nodes: {n}");
+    println!("Number of moves per node: {k}");
+    println!("Average number of peer edits: {avg_peer_edits}");
+    println!("Number of peers: {peers}");
 
     let doc = LoroDoc::new();
     let tree = doc.get_tree("tree");
@@ -82,14 +82,11 @@ pub fn main() {
 
     println!("Time taken to move {} nodes: {:?}", n * k, start.elapsed());
     let mem = get_mem_usage();
-    println!("Memory usage after moving {} nodes: {}", n, mem);
+    println!("Memory usage after moving {n} nodes: {mem}");
 
     doc.compact_change_store();
     let mem_after_compact = get_mem_usage();
-    println!(
-        "Memory usage after compacting change store: {}",
-        mem_after_compact
-    );
+    println!("Memory usage after compacting change store: {mem_after_compact}");
 
     doc.free_diff_calculator();
     println!(

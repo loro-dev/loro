@@ -11,7 +11,7 @@ fn main() {
         let map = doc.get_map("map");
         for i in 0..1000 {
             for j in 0..1000 {
-                let key = format!("0000{}:0000{}", i, j);
+                let key = format!("0000{i}:0000{j}");
                 map.insert(&key, i + j).unwrap();
             }
         }

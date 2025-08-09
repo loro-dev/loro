@@ -88,7 +88,7 @@ fn test_event_hint_bug_reproduction() {
 
                 for delta in text_diff.iter() {
                     total_ops += 1;
-                    let delta_str = format!("{:?}", delta);
+                    let delta_str = format!("{delta:?}");
                     if delta_str.contains("Delete") {
                         delete_ops += 1;
                     } else if delta_str.contains("Retain") {
@@ -144,8 +144,7 @@ fn test_event_hint_bug_reproduction() {
     if let Some((_, total_ops, delete_ops, retain_ops)) = text_b_events.first() {
         // text_b might have a retain operation if the bug manifests
         println!(
-            "text_b operations - total: {}, deletes: {}, retains: {}",
-            total_ops, delete_ops, retain_ops
+            "text_b operations - total: {total_ops}, deletes: {delete_ops}, retains: {retain_ops}"
         );
         // If the bug exists, text_b might show unexpected operations
     }
@@ -179,12 +178,12 @@ fn test_event_hint_merge_bug_clear_demonstration() {
 
         for (idx, event) in event_batch.events.iter().enumerate() {
             let container_name = event.target.name().as_str().to_string();
-            println!("Event #{}: Container '{}'", idx, container_name);
+            println!("Event #{idx}: Container '{container_name}'");
 
             if let Some(text_diff) = event.diff.as_text() {
                 println!("  Diff operations:");
                 for (i, delta) in text_diff.iter().enumerate() {
-                    println!("    Operation #{}: {:?}", i, delta);
+                    println!("    Operation #{i}: {delta:?}");
                 }
             }
 

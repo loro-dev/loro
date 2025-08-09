@@ -634,7 +634,7 @@ pub mod wasm {
             for i in 0..array.length() {
                 let item = array.get(i);
                 if !item.is_object() {
-                    return Err(format!("Item at index {} is not an object", i));
+                    return Err(format!("Item at index {i} is not an object"));
                 }
 
                 let obj = js_sys::Object::from(item);
@@ -761,7 +761,7 @@ pub mod wasm {
                             old_index,
                         }
                     }
-                    action => Err(format!("Unknown tree diff action: {}", action))?,
+                    action => Err(format!("Unknown tree diff action: {action}"))?,
                 };
 
                 diff.push(TreeDiffItem { target, action });

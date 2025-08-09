@@ -94,7 +94,7 @@ fn allow_editing_on_detached_mode_when_detached_editing_is_enabled() {
     assert_eq!(doc.oplog_vv(), doc.state_vv());
     assert_eq!(doc.state_frontiers(), Frontiers::from_id(ID::new(1, 14)));
     let json = doc.export_json_updates(&Default::default(), &doc.oplog_vv());
-    let actual = format!("{:#?}", json);
+    let actual = format!("{json:#?}");
     let expected = r#"JsonSchema {
     schema_version: 1,
     start_version: Frontiers(

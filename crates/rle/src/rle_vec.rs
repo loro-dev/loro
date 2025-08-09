@@ -675,7 +675,7 @@ mod test {
         assert_eq!(&*ans, &vec![3..8, 10..13]);
         assert_eq!(*a.last().unwrap(), 10..13);
         for k in a.iter() {
-            println!("{:?}", k);
+            println!("{k:?}");
         }
     }
 }

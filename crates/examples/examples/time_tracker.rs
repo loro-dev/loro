@@ -20,9 +20,9 @@ pub fn main() {
 
     for i in 0..n {
         let project = projects
-            .insert_container(&format!("project_{}", i), LoroMap::new())
+            .insert_container(&format!("project_{i}"), LoroMap::new())
             .unwrap();
-        project.insert("name", format!("project_{}", i)).unwrap();
+        project.insert("name", format!("project_{i}")).unwrap();
         let counter = project
             .insert_container("used_time", LoroCounter::new())
             .unwrap();
@@ -47,7 +47,7 @@ pub fn main() {
         total_time += project.c.get();
     }
 
-    println!("total_time: {}", total_time);
+    println!("total_time: {total_time}");
     println!("mem: {}", get_mem_usage());
     let snapshot = doc.export(loro::ExportMode::Snapshot);
     println!("Snapshot Size {}", ByteSize(snapshot.unwrap().len()));

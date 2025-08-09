@@ -1,23 +1,31 @@
-use std::{fmt::Debug, io::Write, ops::{Bound, Range}, sync::Arc};
+use std::{
+    fmt::Debug,
+    io::Write,
+    ops::{Bound, Range},
+    sync::Arc,
+};
 
-use bytes::{Buf,  Bytes};
+use bytes::{Buf, Bytes};
 use loro_common::LoroResult;
 use once_cell::sync::OnceCell;
 
-use crate::{compress::{compress, decompress, CompressionType}, iter::KvIterator, sstable::{get_common_prefix_len_and_strip,  SIZE_OF_U32, XXH_SEED}};
+use crate::{
+    compress::{compress, decompress, CompressionType},
+    iter::KvIterator,
+    sstable::{get_common_prefix_len_and_strip, SIZE_OF_U32, XXH_SEED},
+};
 
-use super::sstable::{ SIZE_OF_U16, SIZE_OF_U8};
-
+use super::sstable::{SIZE_OF_U16, SIZE_OF_U8};
 
 #[derive(Debug, Clone)]
-pub struct LargeValueBlock{
+pub struct LargeValueBlock {
     // without checksum
     pub value_bytes: Bytes,
     pub encoded_bytes: OnceCell<(Bytes, CompressionType)>,
     pub key: Bytes,
 }
 
-impl LargeValueBlock{
+impl LargeValueBlock {
     /// ┌──────────────────────────┐
     /// │Large Block               │
     /// │┌ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ─ ─ ─ │
@@ -35,7 +43,7 @@ impl LargeValueBlock{
 
         let origin_len = w.len();
         compress(w, &self.value_bytes, compression_type);
-        if !compression_type.is_none() && w.len() - origin_len > self.value_bytes.len(){
+        if !compression_type.is_none() && w.len() - origin_len > self.value_bytes.len() {
             w.truncate(origin_len);
             compress(w, &self.value_bytes, CompressionType::None);
             ensure_cov::notify_cov("kv_store::block::LargeValueBlock::encode::compress_fallback");
@@ -46,10 +54,14 @@ impl LargeValueBlock{
         compression_type
     }
 
-    fn decode(bytes: Bytes, key: Bytes, compression_type: CompressionType)->LoroResult<Self>{
+    fn decode(bytes: Bytes, key: Bytes, compression_type: CompressionType) -> LoroResult<Self> {
         let mut value_bytes = vec![];
-        decompress(&mut value_bytes, bytes.slice(..bytes.len() - SIZE_OF_U32), compression_type)?;
-        Ok(LargeValueBlock{
+        decompress(
+            &mut value_bytes,
+            bytes.slice(..bytes.len() - SIZE_OF_U32),
+            compression_type,
+        )?;
+        Ok(LargeValueBlock {
             value_bytes: Bytes::from(value_bytes),
             encoded_bytes: OnceCell::with_value((bytes, compression_type)),
             key,
@@ -73,9 +85,9 @@ impl NormalBlock {
     /// ││     bytes     │      │     bytes     │  u16   │      │  u16  │  u16   │     u32       │
     /// │ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ─ ─ ┘│
     /// └────────────────────────────────────────────────────────────────────────────────────────┘
-    /// 
+    ///
     /// The block body may be compressed then we calculate its checksum (the checksum is not compressed).
-    fn encode(&self, w: &mut Vec<u8>, mut compression_type: CompressionType) -> CompressionType  {
+    fn encode(&self, w: &mut Vec<u8>, mut compression_type: CompressionType) -> CompressionType {
         if let Some((encoded_data, encoded_compression_type)) = self.encoded_data.get() {
             if encoded_compression_type == &compression_type {
                 w.extend_from_slice(encoded_data);
@@ -90,7 +102,7 @@ impl NormalBlock {
         }
         buf.extend_from_slice(&(self.offsets.len() as u16).to_le_bytes());
         compress(w, &buf, compression_type);
-        if !compression_type.is_none() && w.len() - origin_len > buf.len(){
+        if !compression_type.is_none() && w.len() - origin_len > buf.len() {
             w.truncate(origin_len);
             compress(w, &buf, CompressionType::None);
             ensure_cov::notify_cov("kv_store::block::NormalBlock::encode::compress_fallback");
@@ -101,15 +113,22 @@ impl NormalBlock {
         compression_type
     }
 
-    fn decode(raw_block_and_check: Bytes, first_key: Bytes, compression_type: CompressionType)-> LoroResult<NormalBlock>{
+    fn decode(
+        raw_block_and_check: Bytes,
+        first_key: Bytes,
+        compression_type: CompressionType,
+    ) -> LoroResult<NormalBlock> {
         let buf = raw_block_and_check.slice(..raw_block_and_check.len() - SIZE_OF_U32);
         let mut data = vec![];
         decompress(&mut data, buf, compression_type)?;
         let offsets_len = (&data[data.len() - SIZE_OF_U16..]).get_u16_le() as usize;
         let data_end = data.len() - SIZE_OF_U16 * (offsets_len + 1);
         let offsets = &data[data_end..data.len() - SIZE_OF_U16];
-        let offsets = offsets.chunks(SIZE_OF_U16).map(|mut chunk| chunk.get_u16_le()).collect();
-        Ok(NormalBlock{
+        let offsets = offsets
+            .chunks(SIZE_OF_U16)
+            .map(|mut chunk| chunk.get_u16_le())
+            .collect();
+        Ok(NormalBlock {
             data: Bytes::copy_from_slice(&data[..data_end]),
             encoded_data: OnceCell::with_value((raw_block_and_check, compression_type)),
             offsets,
@@ -119,33 +138,33 @@ impl NormalBlock {
 }
 
 #[derive(Debug, Clone)]
-pub enum Block{
+pub enum Block {
     Normal(NormalBlock),
     Large(LargeValueBlock),
 }
 
-impl Block{
-    pub fn is_large(&self)->bool{
+impl Block {
+    pub fn is_large(&self) -> bool {
         matches!(self, Block::Large(_))
     }
 
-    pub fn data(&self)->Bytes{
+    pub fn data(&self) -> Bytes {
         match self {
             Block::Normal(block) => block.data.clone(),
             Block::Large(block) => block.value_bytes.clone(),
         }
     }
 
-    pub fn first_key(&self) -> Bytes{
-        match self { 
-            Block::Normal(block)=>block.first_key.clone(),
-            Block::Large(block)=>block.key.clone(),
+    pub fn first_key(&self) -> Bytes {
+        match self {
+            Block::Normal(block) => block.first_key.clone(),
+            Block::Large(block) => block.key.clone(),
         }
     }
 
-    pub fn last_key(&self) -> Bytes{
+    pub fn last_key(&self) -> Bytes {
         match self {
-            Block::Normal(block)=>{
+            Block::Normal(block) => {
                 if block.offsets.len() == 1 {
                     return block.first_key.clone();
                 }
@@ -159,36 +178,45 @@ impl Block{
                 last_key.extend_from_slice(&bytes[..key_suffix_len]);
                 last_key.into()
             }
-            Block::Large(block)=>block.key.clone(),
+            Block::Large(block) => block.key.clone(),
         }
     }
 
-    pub fn encode(&self,  w: &mut Vec<u8>, compression_type: CompressionType)->CompressionType{
-        match self{
-            Block::Normal(block) => block.encode(w,compression_type),
-            Block::Large(block) => block.encode(w,compression_type),
+    pub fn encode(&self, w: &mut Vec<u8>, compression_type: CompressionType) -> CompressionType {
+        match self {
+            Block::Normal(block) => block.encode(w, compression_type),
+            Block::Large(block) => block.encode(w, compression_type),
         }
     }
 
-    pub fn decode(raw_block_and_check: Bytes, is_large: bool, key: Bytes, compression_type: CompressionType)->Self{
+    pub fn decode(
+        raw_block_and_check: Bytes,
+        is_large: bool,
+        key: Bytes,
+        compression_type: CompressionType,
+    ) -> Self {
         // we have checked the checksum, so the block should be valid when decompressing
-        if is_large{
-            return LargeValueBlock::decode(raw_block_and_check, key, compression_type).map(Block::Large).unwrap()
+        if is_large {
+            return LargeValueBlock::decode(raw_block_and_check, key, compression_type)
+                .map(Block::Large)
+                .unwrap();
         }
-        NormalBlock::decode(raw_block_and_check, key, compression_type).map(Block::Normal).unwrap()
+        NormalBlock::decode(raw_block_and_check, key, compression_type)
+            .map(Block::Normal)
+            .unwrap()
     }
 
-    pub fn len(&self)->usize{
-        match self{
-            Block::Normal(block)=>block.offsets.len(),
-            Block::Large(_)=>1,
+    pub fn len(&self) -> usize {
+        match self {
+            Block::Normal(block) => block.offsets.len(),
+            Block::Large(_) => 1,
         }
     }
 
-    pub fn is_empty(&self)->bool{
-        match self{
-            Block::Normal(block)=>block.offsets.is_empty(),
-            Block::Large(_)=>false,
+    pub fn is_empty(&self) -> bool {
+        match self {
+            Block::Normal(block) => block.offsets.is_empty(),
+            Block::Large(_) => false,
         }
     }
 }
@@ -210,18 +238,18 @@ impl BlockBuilder {
             offsets: Vec::new(),
             block_size,
             first_key: Bytes::new(),
-            is_large:false
+            is_large: false,
         }
     }
 
     pub fn estimated_size(&self) -> usize {
-        if self.is_large{
+        if self.is_large {
             self.data.len()
-        }else{
+        } else {
             // key-value pairs number
             SIZE_OF_U16 +
-            // offsets 
-            self.offsets.len() * SIZE_OF_U16 + 
+            // offsets
+            self.offsets.len() * SIZE_OF_U16 +
             // key-value pairs data
             self.data.len() +
             // checksum
@@ -229,13 +257,13 @@ impl BlockBuilder {
         }
     }
 
-    pub fn is_empty(&self)->bool{
+    pub fn is_empty(&self) -> bool {
         !self.is_large && self.offsets.is_empty()
     }
 
     /// Add a key-value pair to the block.
     /// Returns true if the key-value pair is added successfully, false the block is full.
-    /// 
+    ///
     /// ┌─────────────────────────────────────────────────────┐
     /// │  Key Value Chunk                                    │
     /// │┌ ─ ─ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ─ ─┌ ─ ─ ─ ─ ─┬ ─ ─ ─ ┐│
@@ -243,10 +271,10 @@ impl BlockBuilder {
     /// ││       u8        │     u16      │  bytes   │ bytes ││
     /// │ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘─ ─ ─ ─ ─ ┘ ─ ─ ─ ┘│
     /// └─────────────────────────────────────────────────────┘
-    /// 
+    ///
     pub fn add(&mut self, key: &[u8], value: &[u8]) -> bool {
         debug_assert!(!key.is_empty(), "key cannot be empty");
-        if  self.first_key.is_empty() {
+        if self.first_key.is_empty() {
             if value.len() > self.block_size {
                 self.data.extend_from_slice(value);
                 self.is_large = true;
@@ -261,13 +289,15 @@ impl BlockBuilder {
         }
 
         // whether the block is full
-        if self.estimated_size() + key.len() + value.len() + SIZE_OF_U8 + SIZE_OF_U16 > self.block_size {
+        if self.estimated_size() + key.len() + value.len() + SIZE_OF_U8 + SIZE_OF_U16
+            > self.block_size
+        {
             return false;
         }
 
         self.offsets.push(self.data.len() as u16);
         let (common, suffix) = get_common_prefix_len_and_strip(key, &self.first_key);
-        let key_len = suffix.len() ;
+        let key_len = suffix.len();
         self.data.push(common);
         self.data.extend_from_slice(&(key_len as u16).to_le_bytes());
         self.data.extend_from_slice(suffix);
@@ -275,16 +305,16 @@ impl BlockBuilder {
         true
     }
 
-    pub fn build(self)->Block{
-        if self.is_large{
-            return Block::Large(LargeValueBlock{
+    pub fn build(self) -> Block {
+        if self.is_large {
+            return Block::Large(LargeValueBlock {
                 value_bytes: Bytes::from(self.data),
                 key: self.first_key,
                 encoded_bytes: OnceCell::new(),
             });
         }
         debug_assert!(!self.offsets.is_empty(), "block is empty");
-        Block::Normal(NormalBlock{
+        Block::Normal(NormalBlock {
             data: Bytes::from(self.data),
             offsets: self.offsets,
             first_key: self.first_key,
@@ -293,9 +323,8 @@ impl BlockBuilder {
     }
 }
 
-
 /// Block iterator
-/// 
+///
 /// If the key is empty, it means the iterator is invalid.
 #[derive(Clone)]
 pub struct BlockIter {
@@ -404,17 +433,17 @@ impl BlockIter {
     }
 
     pub fn peek_next_curr_key(&self) -> Option<Bytes> {
-        if self.has_next(){
+        if self.has_next() {
             Some(Bytes::copy_from_slice(&self.next_key))
-        }else{
+        } else {
             None
         }
     }
 
     pub fn peek_next_curr_value(&self) -> Option<Bytes> {
-        if self.has_next(){
+        if self.has_next() {
             Some(self.block.data().slice(self.next_value_range.clone()))
-        }else{
+        } else {
             None
         }
     }
@@ -424,17 +453,17 @@ impl BlockIter {
     }
 
     pub fn peek_back_curr_key(&self) -> Option<Bytes> {
-        if self.has_next_back(){
+        if self.has_next_back() {
             Some(Bytes::copy_from_slice(&self.prev_key))
-        }else{
+        } else {
             None
         }
     }
 
     pub fn peek_back_curr_value(&self) -> Option<Bytes> {
-        if self.has_next_back(){
+        if self.has_next_back() {
             Some(self.block.data().slice(self.prev_value_range.clone()))
-        }else{
+        } else {
             None
         }
     }
@@ -596,7 +625,7 @@ impl BlockIter {
     fn seek_to_offset(&mut self, offset: usize, offset_end: usize, is_first: bool) {
         match self.block.as_ref() {
             Block::Normal(block) => {
-                if is_first{
+                if is_first {
                     self.next_key = self.first_key.clone();
                     self.next_value_range = offset..offset_end;
                     return;
@@ -620,7 +649,7 @@ impl BlockIter {
     fn back_to_offset(&mut self, offset: usize, offset_end: usize, is_first: bool) {
         match self.block.as_ref() {
             Block::Normal(block) => {
-                if is_first{
+                if is_first {
                     self.prev_key = self.first_key.clone();
                     self.prev_value_range = offset..offset_end;
                     return;
@@ -645,7 +674,7 @@ impl BlockIter {
         &self.block
     }
 
-    pub fn finish(&mut self){
+    pub fn finish(&mut self) {
         self.next_key.clear();
         self.next_value_range = 0..0;
         self.prev_key.clear();
@@ -653,7 +682,7 @@ impl BlockIter {
     }
 }
 
-impl KvIterator for BlockIter{
+impl KvIterator for BlockIter {
     fn peek_next_key(&self) -> Option<Bytes> {
         self.peek_next_curr_key()
     }
@@ -663,7 +692,7 @@ impl KvIterator for BlockIter{
     }
 
     fn next_(&mut self) {
-        self.next();    
+        self.next();
     }
 
     fn has_next(&self) -> bool {
@@ -675,7 +704,7 @@ impl KvIterator for BlockIter{
     }
 
     fn peek_next_back_value(&self) -> Option<Bytes> {
-      self.peek_back_curr_value()
+        self.peek_back_curr_value()
     }
 
     fn next_back_(&mut self) {

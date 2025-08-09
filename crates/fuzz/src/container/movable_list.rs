@@ -178,7 +178,7 @@ impl Actionable for MovableListAction {
     fn table_fields(&self) -> [std::borrow::Cow<'_, str>; 2] {
         match self {
             MovableListAction::Insert { pos, value } => {
-                [format!("insert {}", pos).into(), value.to_string().into()]
+                [format!("insert {pos}").into(), value.to_string().into()]
             }
             MovableListAction::Delete { pos, len } => {
                 ["delete".into(), format!("{} ~ {}", pos, pos + len).into()]
@@ -187,7 +187,7 @@ impl Actionable for MovableListAction {
                 ["move".into(), format!("{} -> {}", from, to).into()]
             }
             MovableListAction::Set { pos, value } => {
-                [format!("set {}", pos).into(), value.to_string().into()]
+                [format!("set {pos}").into(), value.to_string().into()]
             }
         }
     }

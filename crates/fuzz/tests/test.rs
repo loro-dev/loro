@@ -9800,7 +9800,7 @@ fn shallow_arb_test() {
             test_multi_sites_with_gc(site_num, vec![FuzzTarget::All], &mut xs.clone());
         }) {
             dbg!(xs);
-            println!("{:?}", e);
+            println!("{e:?}");
             panic!()
         } else {
             Ok(())
@@ -11183,7 +11183,7 @@ fn detached_editing_arb_test() {
             test_multi_sites_on_one_doc(site_num, &mut xs.clone());
         }) {
             dbg!(xs);
-            println!("{:?}", e);
+            println!("{e:?}");
             panic!()
         } else {
             Ok(())

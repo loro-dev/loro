@@ -108,7 +108,7 @@ fn main() -> LoroResult<()> {
         Kind::Counter,
     ] {
         println!("=============================");
-        println!("{:?}", kind);
+        println!("{kind:?}");
         println!("=============================");
 
         for (title, bytes) in [
