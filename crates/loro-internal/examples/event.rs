@@ -33,7 +33,7 @@ fn main() {
                                         }
                                     }
                                     ValueOrHandler::Value(value) => {
-                                        println!("insert value {:?}", value);
+                                        println!("insert value {value:?}");
                                     }
                                 }
                             }

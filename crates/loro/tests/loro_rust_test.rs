@@ -699,9 +699,9 @@ fn get_container_by_str_path() {
     let node = tree.create(None).unwrap();
     tree.get_meta(node).unwrap().insert("key", "value").unwrap();
 
-    let node_value = doc.get_by_str_path(&format!("tree/{}", node)).unwrap();
+    let node_value = doc.get_by_str_path(&format!("tree/{node}")).unwrap();
     assert!(node_value.into_container().unwrap().is_map());
-    let node_map = doc.get_by_str_path(&format!("tree/{}/key", node)).unwrap();
+    let node_map = doc.get_by_str_path(&format!("tree/{node}/key")).unwrap();
     assert_eq!(
         node_map
             .into_value()
@@ -874,7 +874,7 @@ fn awareness() {
 fn len_and_is_empty_inconsistency() {
     let doc = LoroDoc::new();
     let map = doc.get_map("map");
-    println!("{:#?}", map);
+    println!("{map:#?}");
     assert!(map.is_empty());
     map.insert("leaf", 42i64).unwrap();
     println!("{:#?}", map.get("leaf"));
@@ -1808,7 +1808,7 @@ fn test_travel_change_ancestors() {
     })
     .unwrap();
 
-    let dbg_str = format!("{:#?}", changes);
+    let dbg_str = format!("{changes:#?}");
     pretty_assertions::assert_eq!(
         dbg_str,
         r#"[
@@ -1882,7 +1882,7 @@ fn test_travel_change_ancestors() {
         ControlFlow::Continue(())
     })
     .unwrap();
-    let dbg_str = format!("{:#?}", changes);
+    let dbg_str = format!("{changes:#?}");
     assert_eq!(
         dbg_str,
         r#"[
@@ -2253,7 +2253,7 @@ fn change_count() {
     let n = 1024 * 5;
     for i in 0..n {
         doc.get_text("text").insert(0, "H").unwrap();
-        doc.set_next_commit_message(&format!("{}", i));
+        doc.set_next_commit_message(&format!("{i}"));
         doc.commit();
     }
 
@@ -2397,14 +2397,12 @@ fn test_rust_get_value_by_path() {
         .unwrap();
 
     // Test getting values by path
-    let root_meta = doc.get_by_str_path(&format!("tree/{}", root)).unwrap();
-    let root_name = doc.get_by_str_path(&format!("tree/{}/name", root)).unwrap();
-    let child1_meta = doc.get_by_str_path(&format!("tree/{}", child1)).unwrap();
-    let child1_name = doc
-        .get_by_str_path(&format!("tree/{}/name", child1))
-        .unwrap();
+    let root_meta = doc.get_by_str_path(&format!("tree/{root}")).unwrap();
+    let root_name = doc.get_by_str_path(&format!("tree/{root}/name")).unwrap();
+    let child1_meta = doc.get_by_str_path(&format!("tree/{child1}")).unwrap();
+    let child1_name = doc.get_by_str_path(&format!("tree/{child1}/name")).unwrap();
     let grandchild_name = doc
-        .get_by_str_path(&format!("tree/{}/name", grandchild))
+        .get_by_str_path(&format!("tree/{grandchild}/name"))
         .unwrap();
 
     // Verify the values
@@ -2426,7 +2424,7 @@ fn test_rust_get_value_by_path() {
     // Test non-existent paths
     assert!(doc.get_by_str_path("tree/nonexistent").is_none());
     assert!(doc
-        .get_by_str_path(&format!("tree/{}/nonexistent", root))
+        .get_by_str_path(&format!("tree/{root}/nonexistent"))
         .is_none());
 
     // Verify values accessed by index
@@ -2802,7 +2800,7 @@ fn test_diff_and_apply_on_another_doc() -> LoroResult<()> {
         json!({"list": [1, 2], "map": {}})
     );
 
-    let diff_str = format!("{:#?}", diff);
+    let diff_str = format!("{diff:#?}");
     assert_eq!(
         diff_str,
         r#"[
@@ -2884,7 +2882,7 @@ fn test_diff_and_apply_on_another_doc_with_child_container() -> LoroResult<()> {
         json!({"list": [1, 2], "map": {}})
     );
 
-    let diff_str = format!("{:#?}", diff);
+    let diff_str = format!("{diff:#?}");
     assert_eq!(
         diff_str,
         r#"[

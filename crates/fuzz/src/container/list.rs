@@ -44,7 +44,8 @@ impl ListActor {
                 let mut list = list.lock().unwrap();
                 list.apply_diff(event);
             }),
-        ).detach();
+        )
+        .detach();
 
         let root = loro.get_list("list");
         Self {
@@ -136,7 +137,7 @@ impl Actionable for ListAction {
     fn table_fields(&self) -> [std::borrow::Cow<'_, str>; 2] {
         match self {
             ListAction::Insert { pos, value } => {
-                [format!("insert {}", pos).into(), value.to_string().into()]
+                [format!("insert {pos}").into(), value.to_string().into()]
             }
             ListAction::Delete { pos, len } => {
                 ["delete".into(), format!("{} ~ {}", pos, pos + len).into()]

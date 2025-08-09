@@ -59,14 +59,11 @@ pub fn main() {
     let mut table = Table::new(ans);
     let style = Style::markdown();
     table.with(style);
-    println!("{}", table);
+    println!("{table}");
 }
 
 fn run_async(peer_num: usize, action_num: usize, seed: u64) -> BenchResult {
-    eprintln!(
-        "run_async(peer_num: {}, action_num: {})",
-        peer_num, action_num
-    );
+    eprintln!("run_async(peer_num: {peer_num}, action_num: {action_num})");
     let (mut actors, start) =
         run_async_workflow::<DrawActor>(peer_num, action_num, 200, seed, |action| {
             if let bench_utils::Action::Sync { kind, .. } = action {
@@ -119,10 +116,7 @@ fn run_async(peer_num: usize, action_num: usize, seed: u64) -> BenchResult {
 }
 
 fn run_realtime_collab(peer_num: usize, action_num: usize, seed: u64) -> BenchResult {
-    eprintln!(
-        "run_realtime_collab(peer_num: {}, action_num: {})",
-        peer_num, action_num
-    );
+    eprintln!("run_realtime_collab(peer_num: {peer_num}, action_num: {action_num})");
     let (mut actors, start) =
         run_realtime_collab_workflow::<DrawActor>(peer_num, action_num, seed, |action| {
             if let bench_utils::Action::Sync { kind, .. } = action {

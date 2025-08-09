@@ -241,7 +241,7 @@ pub(crate) fn js_diff_to_inner_diff(js: JsValue) -> JsResult<Diff> {
             let list_diff = js_value_to_list_diff(&diff)?;
             Ok(Diff::List(list_diff))
         }
-        _ => Err(format!("Unknown diff type: {}", diff_type).into()),
+        _ => Err(format!("Unknown diff type: {diff_type}").into()),
     }
 }
 
@@ -654,10 +654,10 @@ pub(crate) fn js_json_schema_to_loro_json_schema(
     if js_value.is_string() {
         let json_str = js_value.as_string().unwrap();
         JsonSchema::try_from(json_str.as_str())
-            .map_err(|e| JsValue::from_str(&format!("Invalid JSON format: {}", e)))
+            .map_err(|e| JsValue::from_str(&format!("Invalid JSON format: {e}")))
     } else {
         serde_wasm_bindgen::from_value(js_value)
-            .map_err(|e| JsValue::from_str(&format!("Failed to parse JsonSchema: {}", e)))
+            .map_err(|e| JsValue::from_str(&format!("Failed to parse JsonSchema: {e}")))
     }
 }
 

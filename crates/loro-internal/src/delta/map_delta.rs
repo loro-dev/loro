@@ -1,14 +1,12 @@
-use std::{
-    hash::Hash,
-    sync::Weak,
-};
+use std::{hash::Hash, sync::Weak};
 
 use fxhash::FxHashMap;
 use loro_common::IdLp;
 use serde::{ser::SerializeStruct, Serialize};
 
 use crate::{
-    change::Lamport, handler::ValueOrHandler, id::PeerID, span::HasLamport, InternalString, LoroDocInner, LoroValue,
+    change::Lamport, handler::ValueOrHandler, id::PeerID, span::HasLamport, InternalString,
+    LoroDocInner, LoroValue,
 };
 
 #[derive(Default, Debug, Clone, Serialize)]

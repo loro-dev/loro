@@ -5049,7 +5049,7 @@ impl VersionVector {
             vv.insert(
                 peer_id
                     .parse()
-                    .expect_throw(&format!("{} cannot be parsed as u64", peer_id)),
+                    .expect_throw(&format!("{peer_id} cannot be parsed as u64")),
                 counter,
             );
         }
@@ -5337,7 +5337,7 @@ pub fn redact_json_updates(
     let version_range = js_value_to_version_range(version_range)?;
 
     loro_internal::json::redact(&mut loro_json, version_range)
-        .map_err(|e| JsValue::from_str(&format!("Failed to redact JSON: {}", e)))?;
+        .map_err(|e| JsValue::from_str(&format!("Failed to redact JSON: {e}")))?;
 
     Ok(loro_json_schema_to_js_json_schema(loro_json))
 }
