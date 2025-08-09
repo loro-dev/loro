@@ -3185,7 +3185,16 @@ impl MovableListHandler {
             Ok(list.get_elem_id_at(pos, IndexType::ForUser))
         })?
         else {
-            unreachable!()
+            let len = self.len();
+            if pos >= len {
+                return LoroError::OutOfBound {
+                    pos,
+                    len,
+                    info: Box::new(""),
+                };
+            } else {
+                unreachable!()
+            }
         };
         let inner = self.inner.try_attached_state()?;
         txn.apply_local_op(
