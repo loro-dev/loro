@@ -1583,10 +1583,20 @@ impl RichtextState {
             } else {
                 let s = str.as_str().unwrap();
                 let utf16offset = unicode_to_utf16_index(s, cursor.offset).unwrap();
-                match s.encode_utf16().nth(utf16offset) {
-                    Some(c) => Ok(std::char::from_u32(c as u32).unwrap()),
-                    None => Err(()),
+                // Convert utf16 offset to actual character by finding the character at that position
+                let char_iter = s.chars();
+                let mut current_utf16_offset = 0;
+
+                for c in char_iter {
+                    if current_utf16_offset == utf16offset {
+                        return Ok(c);
+                    }
+                    current_utf16_offset += c.len_utf16();
+                    if current_utf16_offset > utf16offset {
+                        return Err(());
+                    }
                 }
+                Err(())
             }
         };
         self.check_cache();
