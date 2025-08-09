@@ -3176,7 +3176,7 @@ impl MovableListHandler {
         txn: &mut Transaction,
         pos: usize,
         child: H,
-    ) -> Result<H, LoroError> {
+    ) -> LoroResult<H> {
         let id = txn.next_id();
         let container_id = ContainerID::new_normal(id, child.kind());
         let v = LoroValue::Container(container_id.clone());
@@ -3187,11 +3187,11 @@ impl MovableListHandler {
         else {
             let len = self.len();
             if pos >= len {
-                return LoroError::OutOfBound {
+                return Err(LoroError::OutOfBound {
                     pos,
                     len,
-                    info: Box::new(""),
-                };
+                    info: "".into(),
+                });
             } else {
                 unreachable!()
             }

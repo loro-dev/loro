@@ -1584,7 +1584,7 @@ impl RichtextState {
                 let s = str.as_str().unwrap();
                 let utf16offset = unicode_to_utf16_index(s, cursor.offset).unwrap();
                 // Convert utf16 offset to actual character by finding the character at that position
-                let mut char_iter = s.chars();
+                let char_iter = s.chars();
                 let mut current_utf16_offset = 0;
 
                 for c in char_iter {
