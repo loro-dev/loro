@@ -142,8 +142,8 @@ impl Tabled for Action {
             Action::SyncAll => vec!["sync all".into(), "".into(), "".into()],
             Action::Checkout { site, to } => vec![
                 "checkout".into(),
-                format!("{}", site).into(),
-                format!("to {}", to).into(),
+                format!("{site}").into(),
+                format!("to {to}").into(),
                 "".into(),
             ],
             Action::Handle {
@@ -154,22 +154,22 @@ impl Tabled for Action {
             } => {
                 let mut fields = vec![
                     action.as_action().unwrap().type_name().into(),
-                    format!("{}", site).into(),
-                    format!("{}", container).into(),
+                    format!("{site}").into(),
+                    format!("{container}").into(),
                 ];
                 fields.extend(action.as_action().unwrap().table_fields());
                 fields
             }
             Action::Undo { site, op_len } => vec![
                 "undo".into(),
-                format!("{}", site).into(),
-                format!("{} op len", op_len).into(),
+                format!("{site}").into(),
+                format!("{op_len} op len").into(),
                 "".into(),
             ],
             Action::SyncAllUndo { site, op_len } => vec![
                 "sync all undo".into(),
-                format!("{}", site).into(),
-                format!("{} op len", op_len).into(),
+                format!("{site}").into(),
+                format!("{op_len} op len").into(),
                 "".into(),
             ],
         }

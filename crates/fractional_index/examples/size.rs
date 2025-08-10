@@ -19,9 +19,6 @@ fn main() {
                 new.as_bytes().len() - find_common_prefix(new.as_bytes(), n.as_bytes()) + 1;
             n = new;
         }
-        println!(
-            "size = {} compress {} with jitter {}",
-            size, compress_size, jitter
-        );
+        println!("size = {size} compress {compress_size} with jitter {jitter}");
     }
 }

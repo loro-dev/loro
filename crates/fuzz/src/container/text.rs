@@ -124,7 +124,7 @@ impl Actionable for TextAction {
         use super::unwrap;
         match action {
             TextActionInner::Insert => {
-                unwrap(text.insert(*pos, &format!("[{}]", len)));
+                unwrap(text.insert(*pos, &format!("[{len}]")));
             }
             TextActionInner::Delete => {
                 unwrap(text.delete(*pos, *len));
