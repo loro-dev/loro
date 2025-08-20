@@ -183,6 +183,17 @@ impl LoroDoc {
     }
 
     /// Decodes the metadata for an imported blob from the provided bytes.
+    ///
+    /// # Example
+    /// ```
+    /// use loro::{LoroDoc, ExportMode};
+    ///
+    /// let doc = LoroDoc::new();
+    /// doc.get_text("t").insert(0, "Hello").unwrap();
+    /// let updates = doc.export(ExportMode::all_updates()).unwrap();
+    /// let meta = LoroDoc::decode_import_blob_meta(&updates, true).unwrap();
+    /// assert!(meta.change_num >= 1);
+    /// ```
     #[inline]
     pub fn decode_import_blob_meta(
         bytes: &[u8],
@@ -194,12 +205,22 @@ impl LoroDoc {
     /// Set whether to record the timestamp of each change. Default is `false`.
     ///
     /// If enabled, the Unix timestamp will be recorded for each change automatically.
+    /// You can also set a timestamp explicitly via [`set_next_commit_timestamp`].
     ///
-    /// You can set each timestamp manually when committing a change.
+    /// Important: this is a runtime configuration. It is not serialized into updates or
+    /// snapshots. You must reapply it for each new `LoroDoc` you create or load.
     ///
-    /// NOTE: Timestamps are forced to be in ascending order.
-    /// If you commit a new change with a timestamp that is less than the existing one,
-    /// the largest existing timestamp will be used instead.
+    /// NOTE: Timestamps are forced to be in ascending order. If you commit a new change with
+    /// a timestamp earlier than the latest, the largest existing timestamp will be used instead.
+    ///
+    /// # Example
+    /// ```
+    /// use loro::LoroDoc;
+    /// let doc = LoroDoc::new();
+    /// doc.set_record_timestamp(true);
+    /// doc.get_text("t").insert(0, "hi").unwrap();
+    /// doc.commit();
+    /// ```
     #[inline]
     pub fn set_record_timestamp(&self, record: bool) {
         self.doc.set_record_timestamp(record);
@@ -215,6 +236,25 @@ impl LoroDoc {
     /// - Ensure no concurrent operations share the same PeerID if set manually.
     /// - Importing does not affect the document's state or version; changes are
     ///   recorded in the [OpLog] only. Call `checkout` to apply changes.
+    ///
+    /// # Example
+    /// ```
+    /// use loro::LoroDoc;
+    ///
+    /// let doc = LoroDoc::new();
+    /// let v0 = doc.state_frontiers();
+    /// // Make some edits…
+    /// doc.get_text("t").insert(0, "Hello").unwrap();
+    /// doc.commit();
+    ///
+    /// // Travel back and enable detached editing
+    /// doc.checkout(&v0).unwrap();
+    /// assert!(doc.is_detached());
+    /// doc.set_detached_editing(true);
+    /// doc.get_text("t").insert(0, "old").unwrap();
+    /// // Later, re-attach to see latest again
+    /// doc.attach();
+    /// ```
     #[inline]
     pub fn set_detached_editing(&self, enable: bool) {
         self.doc.set_detached_editing(enable);
@@ -242,7 +282,7 @@ impl LoroDoc {
     /// The default value is 1000 seconds.
     ///
     /// By default, we record timestamps in seconds for each change. So if the merge interval is 1, and changes A and B
-    /// have timestamps of 3 and 4 respectively, then they will be merged into one change
+    /// have timestamps of 3 and 4 respectively, then they will be merged into one change.
     #[inline]
     pub fn set_change_merge_interval(&self, interval: i64) {
         self.doc.set_change_merge_interval(interval);
@@ -250,11 +290,22 @@ impl LoroDoc {
 
     /// Set the rich text format configuration of the document.
     ///
-    /// You need to config it if you use rich text `mark` method.
-    /// Specifically, you need to config the `expand` property of each style.
+    /// Configure the `expand` behavior for marks used by [`LoroText::mark`]/[`LoroText::unmark`].
+    /// This controls how marks grow when text is inserted at their boundaries.
     ///
-    /// Expand is used to specify the behavior of expanding when new text is inserted at the
-    /// beginning or end of the style.
+    /// - `after` (default): inserts just after the range expand the mark
+    /// - `before`: inserts just before the range expand the mark
+    /// - `both`: inserts on either side expand the mark
+    /// - `none`: do not expand at boundaries
+    ///
+    /// # Example
+    /// ```
+    /// use loro::{LoroDoc, StyleConfigMap, StyleConfig, ExpandType};
+    /// let doc = LoroDoc::new();
+    /// let mut styles = StyleConfigMap::new();
+    /// styles.insert("bold".into(), StyleConfig { expand: ExpandType::After });
+    /// doc.config_text_style(styles);
+    /// ```
     #[inline]
     pub fn config_text_style(&self, text_style: StyleConfigMap) {
         self.doc.config_text_style(text_style)
@@ -268,6 +319,13 @@ impl LoroDoc {
     /// # Parameters
     ///
     /// - `text_style`: The style configuration to set as the default. `None` to reset.
+    ///
+    /// # Example
+    /// ```
+    /// use loro::{LoroDoc, StyleConfig, ExpandType};
+    /// let doc = LoroDoc::new();
+    /// doc.config_default_text_style(Some(StyleConfig { expand: ExpandType::After }));
+    /// ```
     pub fn config_default_text_style(&self, text_style: Option<StyleConfig>) {
         self.doc.config_default_text_style(text_style);
     }
@@ -344,6 +402,21 @@ impl LoroDoc {
     /// Import a batch of updates/snapshot.
     ///
     /// The data can be in arbitrary order. The import result will be the same.
+    /// Auto-commit: same as [`import`], this finalizes the current transaction first.
+    ///
+    /// # Example
+    /// ```
+    /// use loro::{LoroDoc, ExportMode};
+    /// let a = LoroDoc::new();
+    /// a.get_text("t").insert(0, "A").unwrap();
+    /// let u1 = a.export(ExportMode::all_updates()).unwrap();
+    /// a.get_text("t").insert(1, "B").unwrap();
+    /// let u2 = a.export(ExportMode::all_updates()).unwrap();
+    ///
+    /// let b = LoroDoc::new();
+    /// let status = b.import_batch(&[u2, u1]).unwrap(); // arbitrary order
+    /// assert!(status.pending.is_none());
+    /// ```
     #[inline]
     pub fn import_batch(&self, bytes: &[Vec<u8>]) -> LoroResult<ImportStatus> {
         self.doc.import_batch(bytes)
@@ -362,6 +435,8 @@ impl LoroDoc {
     /// Get a [LoroList] by container id.
     ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
+    /// Note: creating/accessing a root container does not record history; creating nested
+    /// containers (e.g., `Map::insert_container`) does.
     #[inline]
     pub fn get_list<I: IntoContainerId>(&self, id: I) -> LoroList {
         LoroList {
@@ -372,6 +447,8 @@ impl LoroDoc {
     /// Get a [LoroMap] by container id.
     ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
+    /// Note: creating/accessing a root container does not record history; creating nested
+    /// containers (e.g., `Map::insert_container`) does.
     #[inline]
     pub fn get_map<I: IntoContainerId>(&self, id: I) -> LoroMap {
         LoroMap {
@@ -382,6 +459,8 @@ impl LoroDoc {
     /// Get a [LoroText] by container id.
     ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
+    /// Note: creating/accessing a root container does not record history; creating nested
+    /// containers (e.g., `Map::insert_container`) does.
     #[inline]
     pub fn get_text<I: IntoContainerId>(&self, id: I) -> LoroText {
         LoroText {
@@ -392,6 +471,8 @@ impl LoroDoc {
     /// Get a [LoroTree] by container id.
     ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
+    /// Note: creating/accessing a root container does not record history; creating nested
+    /// containers (e.g., `Map::insert_container`) does.
     #[inline]
     pub fn get_tree<I: IntoContainerId>(&self, id: I) -> LoroTree {
         LoroTree {
@@ -419,16 +500,24 @@ impl LoroDoc {
     /// - `doc.export(mode)` is called.
     /// - `doc.import(data)` is called.
     /// - `doc.checkout(version)` is called.
+    ///
+    /// Note: Loro transactions are not ACID database transactions. There is no rollback or
+    /// isolation; they are a grouping mechanism for events/history. For interactive undo/redo,
+    /// use [`UndoManager`].
     #[inline]
     pub fn commit(&self) {
         self.doc.commit_then_renew();
     }
 
-    /// Commit the cumulative auto commit transaction with custom configure.
+    /// Commit the cumulative auto commit transaction with custom options.
     ///
     /// There is a transaction behind every operation.
     /// It will automatically commit when users invoke export or import.
     /// The event will be sent after a transaction is committed
+    ///
+    /// See also: [`set_next_commit_message`], [`set_next_commit_origin`],
+    /// [`set_next_commit_timestamp`]. Commit messages are persisted and replicate to peers;
+    /// origins are local-only metadata.
     #[inline]
     pub fn commit_with(&self, options: CommitOptions) {
         self.doc.commit_with(options);
@@ -459,6 +548,15 @@ impl LoroDoc {
     /// Set the options of the next commit.
     ///
     /// It will be used when the next commit is performed.
+    ///
+    /// # Example
+    /// ```
+    /// use loro::{LoroDoc, CommitOptions};
+    /// let doc = LoroDoc::new();
+    /// doc.set_next_commit_options(CommitOptions::new().origin("ui").commit_msg("tagged"));
+    /// doc.get_text("t").insert(0, "x").unwrap();
+    /// doc.commit();
+    /// ```
     pub fn set_next_commit_options(&self, options: CommitOptions) {
         self.doc.set_next_commit_options(options);
     }
@@ -517,6 +615,7 @@ impl LoroDoc {
     /// Pitfalls:
     /// - Missing dependencies: check the returned [`ImportStatus`]. If `pending` is non-empty,
     ///   fetch those missing ranges (e.g., using `export(ExportMode::updates(&doc.oplog_vv()))`) and re-import.
+    /// - Auto-commit: `import` finalizes the current transaction before applying incoming data.
     #[inline]
     pub fn import(&self, bytes: &[u8]) -> Result<ImportStatus, LoroError> {
         self.doc.import_with(bytes, "".into())
@@ -535,8 +634,18 @@ impl LoroDoc {
 
     /// Import the json schema updates.
     ///
-    /// Compatibility:
-    ///   For general syncing and storage across versions, prefer binary `export`/`import`.
+    /// # Example
+    /// ```
+    /// use loro::{LoroDoc, VersionVector};
+    /// let a = LoroDoc::new();
+    /// a.get_text("t").insert(0, "hi").unwrap();
+    /// a.commit();
+    /// let json = a.export_json_updates(&VersionVector::default(), &a.oplog_vv());
+    ///
+    /// let b = LoroDoc::new();
+    /// b.import_json_updates(json).unwrap();
+    /// assert_eq!(a.get_deep_value(), b.get_deep_value());
+    /// ```
     #[inline]
     pub fn import_json_updates<T: TryInto<JsonSchema>>(
         &self,
@@ -546,6 +655,15 @@ impl LoroDoc {
     }
 
     /// Export the current state with json-string format of the document.
+    ///
+    /// # Example
+    /// ```
+    /// use loro::{LoroDoc, VersionVector};
+    /// let doc = LoroDoc::new();
+    /// let start = VersionVector::default();
+    /// let end = doc.oplog_vv();
+    /// let json = doc.export_json_updates(&start, &end);
+    /// ```
     #[inline]
     pub fn export_json_updates(
         &self,
@@ -559,6 +677,15 @@ impl LoroDoc {
     ///
     /// Compared to [`export_json_updates`], this method does not compress the peer IDs in the updates.
     /// So the operations are easier to be processed by application code.
+    ///
+    /// # Example
+    /// ```
+    /// use loro::{LoroDoc, VersionVector};
+    /// let doc = LoroDoc::new();
+    /// let start = VersionVector::default();
+    /// let end = doc.oplog_vv();
+    /// let json = doc.export_json_updates_without_peer_compression(&start, &end);
+    /// ```
     #[inline]
     pub fn export_json_updates_without_peer_compression(
         &self,
@@ -628,12 +755,33 @@ impl LoroDoc {
     }
 
     /// Convert `Frontiers` into `VersionVector`
+    ///
+    /// Returns `None` if the frontiers are not included by this doc's OpLog.
+    ///
+    /// # Example
+    /// ```
+    /// use loro::LoroDoc;
+    /// let doc = LoroDoc::new();
+    /// let f = doc.state_frontiers();
+    /// let vv = doc.frontiers_to_vv(&f);
+    /// assert!(vv.is_some());
+    /// ```
     #[inline]
     pub fn frontiers_to_vv(&self, frontiers: &Frontiers) -> Option<VersionVector> {
         self.doc.frontiers_to_vv(frontiers)
     }
 
     /// Minimize the frontiers by removing the unnecessary entries.
+    ///
+    /// Returns `Err(ID)` if any frontier is not included by this doc's history.
+    ///
+    /// # Example
+    /// ```
+    /// use loro::LoroDoc;
+    /// let doc = LoroDoc::new();
+    /// let f = doc.state_frontiers();
+    /// let _minimized = doc.minimize_frontiers(&f).unwrap();
+    /// ```
     pub fn minimize_frontiers(&self, frontiers: &Frontiers) -> Result<Frontiers, ID> {
         self.with_oplog(|oplog| shrink_frontiers(frontiers, oplog.dag()))
     }
@@ -646,7 +794,8 @@ impl LoroDoc {
 
     /// Access the `OpLog`.
     ///
-    /// NOTE: Please be ware that the API in `OpLog` is unstable
+    /// NOTE: The API in `OpLog` is unstable. Keep the closure short; avoid calling methods
+    /// that might re-enter the document while holding the lock.
     #[inline]
     pub fn with_oplog<R>(&self, f: impl FnOnce(&OpLog) -> R) -> R {
         let oplog = self.doc.oplog().lock().unwrap();
@@ -655,7 +804,8 @@ impl LoroDoc {
 
     /// Access the `DocState`.
     ///
-    /// NOTE: Please be ware that the API in `DocState` is unstable
+    /// NOTE: The API in `DocState` is unstable. Keep the closure short; avoid calling methods
+    /// that might re-enter the document while holding the lock.
     #[inline]
     pub fn with_state<R>(&self, f: impl FnOnce(&mut DocState) -> R) -> R {
         let mut state = self.doc.app_state().lock().unwrap();
@@ -727,15 +877,26 @@ impl LoroDoc {
             .get_deep_value_with_id()
     }
 
-    /// Get the `Frontiers` version of `OpLog`
+    /// Get the `Frontiers` version of `OpLog`.
     #[inline]
     pub fn oplog_frontiers(&self) -> Frontiers {
         self.doc.oplog_frontiers()
     }
 
-    /// Get the `Frontiers` version of `DocState`
+    /// Get the `Frontiers` version of `DocState`.
     ///
-    /// Learn more about [`Frontiers`](https://loro.dev/docs/advanced/version_deep_dive)
+    /// When detached or during checkout, `state_frontiers()` may differ from `oplog_frontiers()`.
+    /// Learn more about [`Frontiers`](https://loro.dev/docs/advanced/version_deep_dive).
+    ///
+    /// # Example
+    /// ```
+    /// use loro::LoroDoc;
+    /// let doc = LoroDoc::new();
+    /// let before = doc.state_frontiers();
+    /// doc.get_text("t").insert(0, "x").unwrap();
+    /// let after = doc.state_frontiers();
+    /// assert_ne!(before, after);
+    /// ```
     #[inline]
     pub fn state_frontiers(&self) -> Frontiers {
         self.doc.state_frontiers()
@@ -752,8 +913,8 @@ impl LoroDoc {
     /// Pitfalls:
     /// - Never reuse the same PeerID across concurrent writers (multiple tabs/devices). Duplicate
     ///   PeerIDs can produce conflicting OpIDs and corrupt the document.
-    /// - If you use an `UndoManager`, keep the PeerID stable for its lifetime. Changing the peer
-    ///   identity while undo/redo stacks exist can invalidate expectations.
+    /// - Do not assign a fixed PeerID to a user or device without strict single-ownership locking.
+    ///   Prefer the default random PeerID per process/session.
     #[inline]
     pub fn set_peer_id(&self, peer: PeerID) -> LoroResult<()> {
         self.doc.set_peer_id(peer)
@@ -1055,6 +1216,11 @@ impl LoroDoc {
     /// - [`ExportMode::shallow_snapshot(..)`]: GC’d snapshot starting at frontiers
     /// - [`ExportMode::updates_in_range(..)`]: ops in specific ID spans
     ///
+    /// Important notes:
+    /// - Auto-commit: `export` finalizes the current transaction before producing bytes.
+    /// - Shallow snapshots: peers cannot import updates from before the shallow start.
+    /// - Performance: exporting fresh snapshots periodically can reduce import time for new peers.
+    ///
     /// # Examples
     /// ```
     /// use loro::{ExportMode, LoroDoc};
@@ -1174,6 +1340,20 @@ impl LoroDoc {
     }
 
     /// Find the operation id spans that between the `from` version and the `to` version.
+    ///
+    /// Useful for exporting just the changes in a range, e.g., in response to a subscription.
+    ///
+    /// # Example
+    /// ```
+    /// use loro::LoroDoc;
+    /// let doc = LoroDoc::new();
+    /// let a = doc.state_frontiers();
+    /// doc.get_text("t").insert(0, "x").unwrap();
+    /// doc.commit();
+    /// let b = doc.state_frontiers();
+    /// let spans = doc.find_id_spans_between(&a, &b);
+    /// assert!(!spans.forward.is_empty());
+    /// ```
     #[inline]
     pub fn find_id_spans_between(&self, from: &Frontiers, to: &Frontiers) -> VersionVectorDiff {
         self.doc.find_id_spans_between(from, to)
@@ -1188,6 +1368,19 @@ impl LoroDoc {
     /// Pitfalls:
     /// - The target frontiers must be included by the document's history. If the document
     ///   is shallow and the target is before the shallow start, revert will fail.
+    ///
+    /// # Example
+    /// ```
+    /// use loro::LoroDoc;
+    /// let doc = LoroDoc::new();
+    /// let t = doc.get_text("text");
+    /// t.insert(0, "Hello").unwrap();
+    /// let v0 = doc.state_frontiers();
+    /// t.insert(5, ", world").unwrap();
+    /// doc.commit();
+    /// doc.revert_to(&v0).unwrap();
+    /// assert_eq!(t.to_string(), "Hello");
+    /// ```
     #[inline]
     pub fn revert_to(&self, version: &Frontiers) -> LoroResult<()> {
         self.doc.revert_to(version)
@@ -1201,7 +1394,19 @@ impl LoroDoc {
         self.doc.apply_diff(diff.into())
     }
 
-    /// Calculate the diff between two versions
+    /// Calculate the diff between two versions.
+    ///
+    /// # Example
+    /// ```
+    /// use loro::{LoroDoc};
+    /// let doc = LoroDoc::new();
+    /// let t = doc.get_text("text");
+    /// let a = doc.state_frontiers();
+    /// t.insert(0, "a").unwrap();
+    /// let b = doc.state_frontiers();
+    /// let diff = doc.diff(&a, &b).unwrap();
+    /// assert!(diff.iter().next().is_some());
+    /// ```
     #[inline]
     pub fn diff(&self, a: &Frontiers, b: &Frontiers) -> LoroResult<DiffBatch> {
         self.doc.diff(a, b).map(|x| x.into())
@@ -1308,6 +1513,10 @@ impl LoroDoc {
     /// **Auto-unsubscription**: If the callback returns `false`, the subscription will be
     /// automatically removed, providing a convenient way to implement one-time or conditional
     /// subscriptions in Rust.
+    ///
+    /// Pitfall: `commit()` can be triggered implicitly by `import`, `export`, and `checkout`.
+    /// This hook still runs for those commits, which is helpful for annotating metadata
+    /// even for implicit commits.
     ///
     /// # Parameters
     /// - `callback`: Function that receives `&PreCommitCallbackPayload` and returns `bool`
@@ -1418,9 +1627,26 @@ pub trait ContainerTrait: SealedTrait {
     }
 }
 
-/// LoroList container. It's used to model array.
+/// LoroList container. It's used to model arrays.
 ///
 /// It can have sub containers.
+///
+/// Important: choose the right structure.
+/// - Use `LoroList` for ordered collections where elements are appended/inserted/deleted.
+/// - Use `LoroMovableList` when frequent reordering (drag-and-drop) is needed.
+/// - Use `LoroMap` for keyed records and coordinates.
+///
+/// ```no_run
+/// // Bad: coordinates in a list can diverge under concurrency
+/// // let coord = doc.get_list("coord");
+/// // coord.insert(0, 10).unwrap(); // x
+/// // coord.insert(1, 20).unwrap(); // y
+///
+/// // Good: use a map for labeled fields
+/// // let coord = doc.get_map("coord");
+/// // coord.insert("x", 10).unwrap();
+/// // coord.insert("y", 20).unwrap();
+/// ```
 ///
 /// ```
 /// # use loro::{LoroDoc, ContainerType, ToJson};
@@ -1891,6 +2117,25 @@ impl Default for LoroMap {
 }
 
 /// LoroText container. It's used to model plaintext/richtext.
+///
+/// Indexing and lengths:
+/// - Rust APIs default to Unicode scalar positions for `insert`/`delete` and `slice`.
+/// - For byte-based integration, use `insert_utf8`/`delete_utf8`.
+/// - You can inspect `len_unicode`, `len_utf8`, and `len_utf16` depending on your needs.
+///
+/// # Example (emoji)
+/// ```
+/// use loro::LoroDoc;
+/// let doc = LoroDoc::new();
+/// let text = doc.get_text("text");
+/// text.insert(0, "Hello 😀 World").unwrap();
+/// assert_eq!(text.len_unicode(), 13); // visible characters
+/// assert!(text.len_utf16() >= text.len_unicode()); // emoji may count as 2 in UTF-16
+/// // Delete the emoji safely by Unicode indices
+/// let start = 6; // after "Hello "
+/// text.delete(start, 1).unwrap();
+/// assert_eq!(text.to_string(), "Hello  World");
+/// ```
 #[derive(Clone, Debug)]
 pub struct LoroText {
     handler: InnerTextHandler,
@@ -1959,9 +2204,11 @@ impl LoroText {
         self.handler.is_attached()
     }
 
-    /// Iterate each span(internal storage unit) of the text.
+    /// Iterate over contiguous text chunks.
     ///
-    /// The callback function will be called for each character in the text.
+    /// The callback function will be called for each contiguous text segment (internal span),
+    /// not necessarily a single character. If you need per-character iteration, iterate the
+    /// returned `&str` within the callback.
     /// If the callback returns `false`, the iteration will stop.
     ///
     /// Limitation: you cannot access or alter the doc state when iterating.
@@ -2242,6 +2489,18 @@ impl LoroText {
     }
 
     /// Get the editor of the text at the given position.
+    ///
+    /// Returns `None` if the position is out of bounds or attribution is unavailable.
+    ///
+    /// # Example
+    /// ```
+    /// use loro::LoroDoc;
+    /// let doc = LoroDoc::new();
+    /// let t = doc.get_text("t");
+    /// t.insert(0, "hi").unwrap();
+    /// let who = t.get_editor_at_unicode_pos(0);
+    /// assert!(who.is_some());
+    /// ```
     pub fn get_editor_at_unicode_pos(&self, pos: usize) -> Option<PeerID> {
         self.handler
             .get_cursor(pos, Side::Middle)
@@ -2801,11 +3060,35 @@ impl LoroMovableList {
     }
 
     /// Set the value at the given position.
+    ///
+    /// # Example
+    /// ```
+    /// use loro::{LoroDoc, ToJson};
+    /// use serde_json::json;
+    /// let doc = LoroDoc::new();
+    /// let ml = doc.get_movable_list("ml");
+    /// ml.insert(0, "a").unwrap();
+    /// ml.set(0, "b").unwrap();
+    /// assert_eq!(ml.get_deep_value().to_json_value(), json!(["b"]));
+    /// ```
     pub fn set(&self, pos: usize, value: impl Into<LoroValue>) -> LoroResult<()> {
         self.handler.set(pos, value.into())
     }
 
     /// Move the value at the given position to the given position.
+    ///
+    /// # Example
+    /// ```
+    /// use loro::{LoroDoc, ToJson};
+    /// use serde_json::json;
+    /// let doc = LoroDoc::new();
+    /// let ml = doc.get_movable_list("ml");
+    /// ml.insert(0, "a").unwrap();
+    /// ml.insert(1, "b").unwrap();
+    /// ml.insert(2, "c").unwrap();
+    /// ml.mov(0, 2).unwrap();
+    /// assert_eq!(ml.get_deep_value().to_json_value(), json!(["b","c","a"]));
+    /// ```
     pub fn mov(&self, from: usize, to: usize) -> LoroResult<()> {
         self.handler.mov(from, to)
     }
