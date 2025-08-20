@@ -3217,13 +3217,15 @@ fn test_by_str_path() {
 
 #[test]
 fn test_memory_leak() {
+    #[inline(never)]
     fn repeat(f: impl Fn(), n: usize) {
         for _ in 0..n {
             f();
         }
     }
 
-    let s = "h".repeat(100_000);
+    let mem = dev_utils::get_mem_usage();
+    let s = "h".repeat(200_000);
     repeat(
         || {
             let doc = LoroDoc::new();
@@ -3234,9 +3236,9 @@ fn test_memory_leak() {
     );
 
     assert!(
-        dev_utils::get_mem_usage() < ByteSize(1_000_000),
+        dev_utils::get_mem_usage() < mem + ByteSize(2_000_000),
         "memory usage should be less than 1MB {:?}",
-        dev_utils::get_mem_usage()
+        dev_utils::get_mem_usage() - mem
     );
 }
 

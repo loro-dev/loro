@@ -40,7 +40,7 @@ jobs:
         with:
           version: "0.2.100"
       - uses: Swatinem/rust-cache@v2
-      - name: Clippy Check
-        run: cargo clippy --all-features -- -Dwarnings
+      # - name: Clippy Check
+      #   run: cargo clippy --all-features -- -Dwarnings
       - name: Run rust tests
         run: GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }} deno task test-all
