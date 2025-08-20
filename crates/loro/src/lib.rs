@@ -92,7 +92,7 @@ mod counter;
 pub use counter::LoroCounter;
 
 /// `LoroDoc` is the entry for the whole document.
-/// When it's dropped, all the associated [`Handler`]s will be invalidated.
+/// When it's dropped, all the associated [`Container`]s will be invalidated.
 ///
 /// **Important:** Loro is a pure library and does not handle network protocols.
 /// It is the responsibility of the user to manage the storage, loading, and synchronization
@@ -290,7 +290,9 @@ impl LoroDoc {
     /// In a detached state, the document is not editable, and any `import` operations will be
     /// recorded in the `OpLog` without being applied to the `DocState`.
     ///
-    /// You should call `attach` to attach the `DocState` to the latest version of `OpLog`.
+    /// You should call `attach` (or `checkout_to_latest`) to reattach the `DocState` to the latest version of `OpLog`.
+    /// If you need to edit while detached, enable [`set_detached_editing(true)`], but note it uses a different
+    /// PeerID per checkout.
     #[inline]
     pub fn checkout(&self, frontiers: &Frontiers) -> LoroResult<()> {
         self.doc.checkout(frontiers)
@@ -331,7 +333,7 @@ impl LoroDoc {
 
     /// Force the document enter the detached mode.
     ///
-    /// In this mode, when you importing new updates, the [loro_internal::DocState] will not be changed.
+    /// In this mode, importing new updates only records them in the OpLog; the [loro_internal::DocState] is not updated until you reattach.
     ///
     /// Learn more at https://loro.dev/docs/advanced/doc_state_and_oplog#attacheddetached-status
     #[inline]
@@ -474,22 +476,58 @@ impl LoroDoc {
     }
 
     /// Create a new `LoroDoc` from a snapshot.
+    ///
+    /// The snapshot is created via [`LoroDoc::export`] with [`ExportMode::Snapshot`].
+    ///
+    /// # Example
+    /// ```
+    /// use loro::{LoroDoc, ExportMode};
+    ///
+    /// let doc = LoroDoc::new();
+    /// let text = doc.get_text("text");
+    /// text.insert(0, "Hello").unwrap();
+    /// let snapshot = doc.export(ExportMode::Snapshot).unwrap();
+    ///
+    /// let restored = LoroDoc::from_snapshot(&snapshot).unwrap();
+    /// assert_eq!(restored.get_deep_value(), doc.get_deep_value());
+    /// ```
     pub fn from_snapshot(bytes: &[u8]) -> LoroResult<Self> {
         let inner = InnerLoroDoc::from_snapshot(bytes)?;
         inner.start_auto_commit();
         Ok(Self::_new(inner))
     }
 
-    /// Import updates/snapshot exported by [`LoroDoc::export_snapshot`] or [`LoroDoc::export_from`].
+    /// Import data exported by [`LoroDoc::export`].
+    ///
+    /// Use [`ExportMode::Snapshot`] for full-state snapshots, or
+    /// [`ExportMode::all_updates`] / [`ExportMode::updates`] for updates.
+    ///
+    /// # Example
+    /// ```
+    /// use loro::{LoroDoc, ExportMode};
+    ///
+    /// let a = LoroDoc::new();
+    /// a.get_text("text").insert(0, "Hello").unwrap();
+    /// let updates = a.export(ExportMode::all_updates()).unwrap();
+    ///
+    /// let b = LoroDoc::new();
+    /// b.import(&updates).unwrap();
+    /// assert_eq!(a.get_deep_value(), b.get_deep_value());
+    /// ```
+    /// Pitfalls:
+    /// - Missing dependencies: check the returned [`ImportStatus`]. If `pending` is non-empty,
+    ///   fetch those missing ranges (e.g., using `export(ExportMode::updates(&doc.oplog_vv()))`) and re-import.
     #[inline]
     pub fn import(&self, bytes: &[u8]) -> Result<ImportStatus, LoroError> {
         self.doc.import_with(bytes, "".into())
     }
 
-    /// Import updates/snapshot exported by [`LoroDoc::export_snapshot`] or [`LoroDoc::export_from`].
+    /// Import data exported by [`LoroDoc::export`] and mark it with a custom origin.
     ///
-    /// It marks the import with a custom `origin` string. It can be used to track the import source
-    /// in the generated events.
+    /// The `origin` string will be attached to the ensuing change event, which is handy
+    /// for telemetry or filtering.
+    /// Pitfalls:
+    /// - Same as [`import`]: verify `ImportStatus.pending` and fetch dependencies if needed.
     #[inline]
     pub fn import_with(&self, bytes: &[u8], origin: &str) -> Result<ImportStatus, LoroError> {
         self.doc.import_with(bytes, origin.into())
@@ -497,7 +535,8 @@ impl LoroDoc {
 
     /// Import the json schema updates.
     ///
-    /// only supports backward compatibility but not forward compatibility.
+    /// Compatibility:
+    ///   For general syncing and storage across versions, prefer binary `export`/`import`.
     #[inline]
     pub fn import_json_updates<T: TryInto<JsonSchema>>(
         &self,
@@ -710,8 +749,11 @@ impl LoroDoc {
 
     /// Change the PeerID
     ///
-    /// NOTE: You need to make sure there is no chance two peer have the same PeerID.
-    /// If it happens, the document will be corrupted.
+    /// Pitfalls:
+    /// - Never reuse the same PeerID across concurrent writers (multiple tabs/devices). Duplicate
+    ///   PeerIDs can produce conflicting OpIDs and corrupt the document.
+    /// - If you use an `UndoManager`, keep the PeerID stable for its lifetime. Changing the peer
+    ///   identity while undo/redo stacks exist can invalidate expectations.
     #[inline]
     pub fn set_peer_id(&self, peer: PeerID) -> LoroResult<()> {
         self.doc.set_peer_id(peer)
@@ -1005,6 +1047,32 @@ impl LoroDoc {
     }
 
     /// Export the document in the given mode.
+    ///
+    /// Common modes:
+    /// - [`ExportMode::Snapshot`]: full state + history
+    /// - [`ExportMode::all_updates()`]: all known ops
+    /// - [`ExportMode::updates(&VersionVector)`]: ops since a specific version
+    /// - [`ExportMode::shallow_snapshot(..)`]: GC’d snapshot starting at frontiers
+    /// - [`ExportMode::updates_in_range(..)`]: ops in specific ID spans
+    ///
+    /// # Examples
+    /// ```
+    /// use loro::{ExportMode, LoroDoc};
+    ///
+    /// let doc = LoroDoc::new();
+    /// doc.get_text("text").insert(0, "Hello").unwrap();
+    ///
+    /// // 1) Full snapshot
+    /// let snapshot = doc.export(ExportMode::Snapshot).unwrap();
+    ///
+    /// // 2) All updates
+    /// let all = doc.export(ExportMode::all_updates()).unwrap();
+    ///
+    /// // 3) Updates from another peer’s version vector
+    /// let vv = doc.oplog_vv();
+    /// let delta = doc.export(ExportMode::updates(&vv)).unwrap();
+    /// assert!(!delta.is_empty());
+    /// ```
     pub fn export(&self, mode: ExportMode) -> Result<Vec<u8>, LoroEncodeError> {
         self.doc.export(mode)
     }
@@ -1091,7 +1159,8 @@ impl LoroDoc {
 
     /// Gets container IDs modified in the given ID range.
     ///
-    /// **NOTE:** This method will implicitly commit.
+    /// Pitfalls:
+    /// - This method will implicitly commit the current transaction to ensure the change range is finalized.
     ///
     /// This method can be used in conjunction with `doc.travel_change_ancestors()` to traverse
     /// the history and identify all changes that affected specific containers.
@@ -1115,6 +1184,10 @@ impl LoroDoc {
     /// Internally, it will generate a series of local operations that can revert the
     /// current doc to the target version. It will calculate the diff between the current
     /// state and the target state, and apply the diff to the current state.
+    ///
+    /// Pitfalls:
+    /// - The target frontiers must be included by the document's history. If the document
+    ///   is shallow and the target is before the shallow start, revert will fail.
     #[inline]
     pub fn revert_to(&self, version: &Frontiers) -> LoroResult<()> {
         self.doc.revert_to(version)
@@ -1753,6 +1826,11 @@ impl LoroMap {
     /// text.insert(0, "0");
     /// assert_eq!(doc.get_deep_value().to_json_value(), json!({"m": {"t": "012"}}));
     /// ```
+    ///
+    /// Pitfalls:
+    /// - Concurrently inserting different containers at the same map key on different peers
+    ///   can result in one overwriting the other rather than merging. Prefer initializing
+    ///   heavy/primary child containers when initializing the map.
     pub fn insert_container<C: ContainerTrait>(&self, key: &str, child: C) -> LoroResult<C> {
         Ok(C::from_handler(
             self.handler.insert_container(key, child.to_handler())?,
@@ -1774,6 +1852,10 @@ impl LoroMap {
     }
 
     /// Get or create a container with the given key.
+    ///
+    /// Pitfalls:
+    /// - If other peers concurrently create a different container at the same key, their state
+    ///   may be overwritten. See the note in [`insert_container`].
     pub fn get_or_create_container<C: ContainerTrait>(&self, key: &str, child: C) -> LoroResult<C> {
         Ok(C::from_handler(
             self.handler
@@ -3127,6 +3209,13 @@ impl ValueOrContainer {
 }
 
 /// UndoManager can be used to undo and redo the changes made to the document with a certain peer.
+///
+/// Notes & pitfalls:
+/// - Local-only: undo/redo affects only local operations from the bound peer; it does not revert
+///   remote edits. For global rollback, use time travel (`checkout`/`revert_to`).
+/// - Peer identity: keep the `peer_id` stable while an `UndoManager` is in use. Changing peer IDs
+///   can disrupt undo grouping/semantics.
+/// - Grouping: you may want to tune the merge interval and exclude origins to group related edits.
 #[derive(Debug)]
 #[repr(transparent)]
 pub struct UndoManager(InnerUndoManager);
