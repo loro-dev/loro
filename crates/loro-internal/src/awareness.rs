@@ -222,7 +222,7 @@ impl EphemeralStore {
         self.inner.encode_all()
     }
 
-    pub fn apply(&self, data: &[u8]) {
+    pub fn apply(&self, data: &[u8]) -> Result<(), Box<str>> {
         self.inner.apply(data)
     }
 
