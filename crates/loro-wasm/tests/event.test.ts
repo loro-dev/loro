@@ -12,7 +12,7 @@ import {
   MapDiff,
   PeerID,
   TextDiff,
-  idStrToId
+  idStrToId,
 } from "../bundler/index";
 
 describe("event", () => {
@@ -578,19 +578,19 @@ it("use precommit for storing hash", () => {
   const doc = new LoroDoc();
   doc.setPeerId(0);
   doc.subscribePreCommit((e) => {
-    const changes = doc.exportJsonInIdSpan(e.changeMeta)
+    const changes = doc.exportJsonInIdSpan(e.changeMeta);
     expect(changes).toHaveLength(1);
-    const hash = crypto.createHash('sha256');
+    const hash = crypto.createHash("sha256");
     const change = {
       ...changes[0],
-      deps: changes[0].deps.map(d => {
-        const depChange = doc.getChangeAt(idStrToId(d))
+      deps: changes[0].deps.map((d) => {
+        const depChange = doc.getChangeAt(idStrToId(d));
         return depChange.message;
-      })
-    }
+      }),
+    };
     console.log(change); // The output is shown below
     hash.update(JSON.stringify(change));
-    const sha256Hash = hash.digest('hex');
+    const sha256Hash = hash.digest("hex");
     e.modifier.setMessage(sha256Hash);
   });
 
@@ -612,7 +612,6 @@ it("use precommit for storing hash", () => {
   //   ]
   // }
 
-
   doc.getList("list").insert(0, 200);
   doc.commit();
   // Change 1
@@ -633,6 +632,35 @@ it("use precommit for storing hash", () => {
   //   ]
   // }
 
-  expect(doc.getChangeAt({ peer: "0", counter: 0 }).message).toBe("2af99cf93869173984bcf6b1ce5412610b0413d027a5511a8f720a02a4432853");
-  expect(doc.getChangeAt({ peer: "0", counter: 1 }).message).toBe("aedbb442c554ecf59090e0e8339df1d8febf647f25cc37c67be0c6e27071d37f");
-})
+  expect(doc.getChangeAt({ peer: "0", counter: 0 }).message).toBe(
+    "2af99cf93869173984bcf6b1ce5412610b0413d027a5511a8f720a02a4432853",
+  );
+  expect(doc.getChangeAt({ peer: "0", counter: 1 }).message).toBe(
+    "aedbb442c554ecf59090e0e8339df1d8febf647f25cc37c67be0c6e27071d37f",
+  );
+});
+
+it("should emit undefined for deleting an entry in LoroMap", async () => {
+  const doc = new LoroDoc();
+  doc.getMap("map").set("0", 0);
+  doc.getMap("map").set("1", 0);
+  doc.commit();
+
+  const p = new Promise((resolve, reject) => {
+    doc.subscribe((e) => {
+      const event = e.events[0];
+      if (event.diff.type === "map") {
+        const u = event.diff.updated;
+        expect(u["0"]).toBeNull();
+        expect(u["1"]).toBeUndefined();
+        resolve(0);
+      } else {
+        reject(new Error());
+      }
+    });
+  });
+  doc.getMap("map").set("0", null);
+  doc.getMap("map").delete("1");
+  doc.commit();
+  await p;
+});
