@@ -181,10 +181,21 @@ pub struct EphemeralStoreEvent {
 pub type LocalEphemeralCallback = Box<dyn Fn(&Vec<u8>) -> bool + Send + Sync + 'static>;
 pub type EphemeralSubscriber = Box<dyn Fn(&EphemeralStoreEvent) -> bool + Send + Sync + 'static>;
 
-/// `EphemeralStore` is a structure that tracks the ephemeral state of peers.
+/// `EphemeralStore` is a structure that tracks ephemeral key-value state across peers.
 ///
-/// It can be used to synchronize cursor positions, selections, and the names of the peers.
-/// Each entry uses timestamp-based LWW (Last-Write-Wins) for conflict resolution.
+/// - Use it for syncing lightweight presence/state like cursors, selections, and UI hints.
+/// - Each key uses timestamp-based LWW (Last-Write-Wins) conflict resolution.
+/// - Timeout unit: milliseconds.
+/// - After timeout: entries are considered expired. They are omitted from
+///   `encode`/`encode_all`, and calling [`remove_outdated`] will purge them and
+///   notify subscribers with `EphemeralEventTrigger::Timeout`.
+///
+/// In Rust, you are responsible for periodically calling [`remove_outdated`]
+/// if you want timed-out entries to be removed and corresponding events to be
+/// emitted. In the WASM/TS wrapper, a timer runs automatically while the store
+/// is non-empty.
+///
+/// See: https://loro.dev/docs/tutorial/ephemeral
 ///
 /// # Example
 ///
@@ -208,20 +219,37 @@ pub struct EphemeralStore {
 }
 
 impl EphemeralStore {
+    /// Create a new `EphemeralStore`.
+    ///
+    /// - `timeout`: inactivity timeout in milliseconds. If a key does not
+    ///   receive updates within this duration, it is considered expired. It
+    ///   will be skipped by `encode`/`encode_all`, and removed when
+    ///   [`remove_outdated`] is called (triggering a `Timeout` event to
+    ///   subscribers).
     pub fn new(timeout: i64) -> Self {
         Self {
             inner: Arc::new(EphemeralStoreInner::new(timeout)),
         }
     }
 
+    /// Encode the latest value of `key`.
+    ///
+    /// Expired keys (past timeout) are omitted and produce an empty payload.
     pub fn encode(&self, key: &str) -> Vec<u8> {
         self.inner.encode(key)
     }
 
+    /// Encode all non-expired keys.
+    ///
+    /// Entries that have exceeded the timeout are not included in the payload.
     pub fn encode_all(&self) -> Vec<u8> {
         self.inner.encode_all()
     }
-
+    
+    /// Apply encoded updates imported from another peer/process.
+    ///
+    /// Subscribers receive an event with `by = Import` and the lists of
+    /// `added`/`updated`/`removed` keys as appropriate.
     pub fn apply(&self, data: &[u8]) -> Result<(), Box<str>> {
         self.inner.apply(data)
     }
@@ -238,6 +266,11 @@ impl EphemeralStore {
         self.inner.get(key)
     }
 
+    /// Remove entries whose last update timestamp has exceeded the timeout.
+    ///
+    /// If any keys are removed, subscribers receive an event with
+    /// `by = Timeout` and the `removed` keys. This does not run automatically
+    /// in Rust; call it on your own schedule.
     pub fn remove_outdated(&self) {
         self.inner.remove_outdated()
     }

@@ -220,27 +220,34 @@ export class Awareness<T extends Value = Value> {
 }
 
 /**
- * EphemeralStore is a structure that allows to track the ephemeral state of the peers.
+ * EphemeralStore tracks ephemeral key-value state across peers.
  *
- * It can be used to synchronize cursor positions, selections, and the names of the peers.
- * Each entry uses timestamp-based LWW (Last-Write-Wins) for conflict resolution.
- * 
- * If we don't receive a state update from a peer within the timeout, we will remove their state.
- * The timeout is in milliseconds. This can be used to handle the offline state of a peer.
- * 
+ * - Use it for lightweight presence/state like cursors, selections, and UI hints.
+ * - Conflict resolution is timestamp-based LWW (Last-Write-Wins) per key.
+ * - Timeout unit: milliseconds.
+ * - After timeout: keys are considered expired. They are omitted from
+ *   `encode(key)`, `encodeAll()` and `getAllStates()`. A periodic cleanup runs
+ *   while the store is non-empty and removes expired keys; when removals happen
+ *   subscribers receive an event with `by: "timeout"` and the `removed` keys.
+ *
+ * See: https://loro.dev/docs/tutorial/ephemeral
+ *
+ * @param timeout Inactivity timeout in milliseconds (default: 30000). If a key
+ * doesn't receive updates within this duration, it will expire and be removed
+ * on the next cleanup tick.
+ *
  * @example
- * 
  * ```ts
  * const store = new EphemeralStore();
  * const store2 = new EphemeralStore();
- * // Subscribe to local updates
- * store.subscribeLocalUpdates((data)=>{
- *     store2.apply(data);
- * })
- * // Subscribe to all updates
- * store2.subscribe((event)=>{
- *     console.log("event: ", event);
- * })
+ * // Subscribe to local updates and forward over the wire
+ * store.subscribeLocalUpdates((data) => {
+ *   store2.apply(data);
+ * });
+ * // Subscribe to all updates (including removals by timeout)
+ * store2.subscribe((event) => {
+ *   console.log("event:", event);
+ * });
  * // Set a value
  * store.set("key", "value");
  * // Encode the value
