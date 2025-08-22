@@ -1491,12 +1491,6 @@ impl LoroDoc {
         }
     }
 
-    #[inline]
-    pub fn log_estimated_size(&self) {
-        let state = self.state.lock().unwrap();
-        state.log_estimated_size();
-    }
-
     pub fn query_pos(&self, pos: &Cursor) -> Result<PosQueryResult, CannotFindRelativePosition> {
         self.query_pos_internal(pos, true)
     }

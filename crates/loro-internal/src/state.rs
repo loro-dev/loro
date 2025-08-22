@@ -953,8 +953,9 @@ impl DocState {
         !self.in_txn && self.arena.can_import_snapshot() && self.store.can_import_snapshot()
     }
 
-    pub fn get_value(&self) -> LoroValue {
-        let roots = self.arena.root_containers();
+    pub fn get_value(&mut self) -> LoroValue {
+        let flag = self.store.load_all();
+        let roots = self.arena.root_containers(flag);
         let ans: loro_common::LoroMapValue = roots
             .into_iter()
             .map(|idx| {
@@ -973,7 +974,8 @@ impl DocState {
     }
 
     pub fn get_deep_value(&mut self) -> LoroValue {
-        let roots = self.arena.root_containers();
+        let flag = self.store.load_all();
+        let roots = self.arena.root_containers(flag);
         let mut ans = FxHashMap::with_capacity_and_hasher(roots.len(), Default::default());
         let binding = self.config.deleted_root_containers.clone();
         let deleted_root_container = binding.lock().unwrap();
@@ -1004,7 +1006,8 @@ impl DocState {
     }
 
     pub fn get_deep_value_with_id(&mut self) -> LoroValue {
-        let roots = self.arena.root_containers();
+        let flag = self.store.load_all();
+        let roots = self.arena.root_containers(flag);
         let mut ans = FxHashMap::with_capacity_and_hasher(roots.len(), Default::default());
         for root_idx in roots {
             let id = self.arena.idx_to_id(root_idx).unwrap();
@@ -1166,10 +1169,11 @@ impl DocState {
     }
 
     pub(crate) fn get_all_alive_containers(&mut self) -> FxHashSet<ContainerID> {
+        let flag = self.store.load_all();
         let mut ans = FxHashSet::default();
         let mut to_visit = self
             .arena
-            .root_containers()
+            .root_containers(flag)
             .iter()
             .map(|x| self.arena.get_container_id(*x).unwrap())
             .collect_vec();
@@ -1459,20 +1463,6 @@ impl DocState {
         if !other_id_to_states.is_empty() {
             panic!("other has more states {:#?}", &other_id_to_states);
         }
-    }
-
-    pub fn log_estimated_size(&self) {
-        let state_entries_size =
-            self.store.len() * (std::mem::size_of::<State>() + std::mem::size_of::<ContainerIdx>());
-        let mut state_size_sum = 0;
-        state_size_sum += self.store.estimate_size();
-
-        eprintln!(
-            "ContainerNum: {}\nEstimated state size: \nEntries: {} \nSum: {}",
-            self.store.len(),
-            state_entries_size,
-            state_size_sum
-        );
     }
 
     pub fn create_state(&self, idx: ContainerIdx) -> State {

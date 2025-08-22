@@ -1,16 +1,6 @@
 mod str_arena;
-
-use std::{
-    num::NonZeroU16,
-    ops::{Range, RangeBounds},
-    sync::Arc,
-};
-
+use self::str_arena::StrArena;
 use crate::sync::{Mutex, MutexGuard};
-use append_only_bytes::BytesSlice;
-use fxhash::FxHashMap;
-use loro_common::PeerID;
-
 use crate::{
     change::Lamport,
     container::{
@@ -23,10 +13,17 @@ use crate::{
     op::{InnerContent, ListSlice, Op, RawOp, RawOpContent, SliceRange},
     LoroValue,
 };
-
-use self::str_arena::StrArena;
+use append_only_bytes::BytesSlice;
+use fxhash::FxHashMap;
+use loro_common::PeerID;
 use std::fmt;
+use std::{
+    num::NonZeroU16,
+    ops::{Range, RangeBounds},
+    sync::Arc,
+};
 
+pub(crate) struct LoadAllFlag;
 type ParentResolver = dyn Fn(ContainerID) -> Option<ContainerID> + Send + Sync + 'static;
 
 #[derive(Default)]
@@ -527,8 +524,12 @@ impl SharedArena {
             .collect()
     }
 
+    /// Returns all the possible root containers of the docs
+    ///
+    /// We need to load all the cached kv in DocState before we can ensure all root contains are covered.
+    /// So we need the flag type here.
     #[inline]
-    pub fn root_containers(&self) -> Vec<ContainerIdx> {
+    pub fn root_containers(&self, _f: LoadAllFlag) -> Vec<ContainerIdx> {
         self.inner.root_c_idx.lock().unwrap().clone()
     }
 

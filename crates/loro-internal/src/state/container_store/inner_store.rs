@@ -11,15 +11,12 @@ use super::ContainerWrapper;
 
 /// The invariants about this struct:
 ///
-/// - `len` is the number of containers in the store. If a container is in both kv and store,
-///   it should only take 1 space in `len`.
 /// - `kv` is either the same or older than `store`.
 /// - if `all_loaded` is true, then `store` contains all the entries from `kv`
 pub(crate) struct InnerStore {
     arena: SharedArena,
     store: FxHashMap<ContainerIdx, ContainerWrapper>,
     kv: KvWrapper,
-    len: usize,
     all_loaded: bool,
     config: Configure,
 }
@@ -49,7 +46,6 @@ impl InnerStore {
                 }
 
                 let c = f();
-                self.len += 1;
                 e.insert(c)
             }
             std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
@@ -77,7 +73,6 @@ impl InnerStore {
 
         let c = f();
         self.store.insert(idx, c);
-        self.len += 1;
     }
 
     pub(crate) fn get_mut(&mut self, idx: ContainerIdx) -> Option<&mut ContainerWrapper> {
@@ -131,7 +126,6 @@ impl InnerStore {
                 let cid: Bytes = cid.to_bytes().into();
                 let value = c.encode();
                 c.set_flushed(true);
-                // println!("cid.len = {} value.len = {}", cid.len(), value.len());
                 Some((cid, value))
             }));
     }
@@ -145,7 +139,6 @@ impl InnerStore {
         bytes: bytes::Bytes,
     ) -> Result<Option<Frontiers>, loro_common::LoroError> {
         assert!(self.kv.is_empty());
-        assert_eq!(self.len, self.store.len());
         let mut fr = None;
         self.kv.import(bytes);
         if let Some(f) = self.kv.remove(FRONTIERS_KEY) {
@@ -161,26 +154,7 @@ impl InnerStore {
                 c.parent().cloned()
             }));
 
-        self.kv.with_kv(|kv| {
-            let mut count = self.len;
-            self.arena.with_guards(|guards| {
-                let iter = kv.scan(Bound::Unbounded, Bound::Unbounded);
-                // TODO: PERF: add a .keys() mode to speed up
-                for (k, _v) in iter {
-                    count += 1;
-                    let cid = ContainerID::from_bytes(&k);
-                    let idx = guards.register_container(&cid);
-                    if let Some(v) = self.store.remove(&idx) {
-                        // it must be in empty state
-                        count -= 1;
-                        debug_assert!(v.is_state_empty());
-                    }
-                }
-            });
-
-            self.len = count;
-        });
-
+        self.store.clear();
         self.all_loaded = false;
         Ok(fr)
     }
@@ -191,37 +165,30 @@ impl InnerStore {
         bytes_b: bytes::Bytes,
     ) -> Result<(), loro_common::LoroError> {
         assert!(self.kv.is_empty());
-        assert_eq!(self.len, self.store.len());
         // TODO: add assert that all containers in the store should be empty right now
         self.kv.import(bytes_a);
         self.kv.import(bytes_b);
         self.kv.remove(FRONTIERS_KEY);
         self.kv.with_kv(|kv| {
-            let mut count = self.len;
             self.arena.with_guards(|guards| {
                 let iter = kv.scan(Bound::Unbounded, Bound::Unbounded);
                 for (k, v) in iter {
-                    count += 1;
                     let cid = ContainerID::from_bytes(&k);
                     let c = ContainerWrapper::new_from_bytes(v);
                     let parent = c.parent();
                     let idx = guards.register_container(&cid);
                     let p = parent.as_ref().map(|p| guards.register_container(p));
                     guards.set_parent(idx, p);
-                    if self.store.insert(idx, c).is_some() {
-                        count -= 1;
-                    }
+                    if self.store.insert(idx, c).is_some() {}
                 }
             });
-
-            self.len = count;
         });
 
         self.all_loaded = true;
         Ok(())
     }
 
-    fn load_all(&mut self) {
+    pub fn load_all(&mut self) {
         if self.all_loaded {
             return;
         }
@@ -262,7 +229,6 @@ impl InnerStore {
             arena,
             store: FxHashMap::default(),
             kv: KvWrapper::new_mem(),
-            len: 0,
             all_loaded: true,
             config,
         }
@@ -274,15 +240,6 @@ impl InnerStore {
         let mut new_store = Self::new(arena, config.clone());
         new_store.decode(bytes).unwrap();
         new_store
-    }
-
-    pub(crate) fn len(&self) -> usize {
-        self.len
-    }
-
-    #[allow(unused)]
-    pub(crate) fn is_empty(&self) -> bool {
-        self.len == 0
     }
 
     pub(crate) fn estimate_size(&self) -> usize {
