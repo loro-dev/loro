@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.12
+
+### Patch Changes
+
+- ec95b50: Fix local event error
+
 ## 1.5.11
 
 ### Patch Changes
