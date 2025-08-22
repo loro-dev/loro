@@ -197,6 +197,7 @@ impl<T: Dag + ?Sized> DagUtils for T {
     }
 }
 
+#[allow(dead_code)]
 fn get_version_vector<'a, Get, D>(get: &'a Get, id: ID) -> VersionVector
 where
     Get: Fn(ID) -> Option<D>,

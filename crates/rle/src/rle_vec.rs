@@ -377,7 +377,7 @@ where
         &self,
         from: <A::Item as HasIndex>::Int,
         to: <A::Item as HasIndex>::Int,
-    ) -> SliceIterator<A::Item> {
+    ) -> SliceIterator<'_, A::Item> {
         if from == to || self.merged_len() == 0 {
             return SliceIterator::new_empty();
         }

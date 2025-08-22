@@ -1,4 +1,5 @@
 use super::*;
+#[allow(dead_code)]
 struct BreakPoints {
     break_points: FxHashMap<PeerID, FxHashSet<Counter>>,
     /// start ID to ID. The target ID may be in the middle of an op.
@@ -7,6 +8,7 @@ struct BreakPoints {
     links: FxHashMap<ID, Vec<ID>>,
 }
 
+#[allow(dead_code)]
 struct Output {
     clients: FxHashMap<PeerID, Vec<IdSpan>>,
     /// start ID to start ID.
@@ -15,6 +17,7 @@ struct Output {
     links: FxHashMap<ID, Vec<ID>>,
 }
 
+#[allow(dead_code)]
 fn to_str(output: Output) -> String {
     let mut s = String::new();
     let mut indent_level = 0;
@@ -70,6 +73,7 @@ fn to_str(output: Output) -> String {
     s
 }
 
+#[allow(dead_code)]
 fn break_points_to_output(input: BreakPoints) -> Output {
     let mut output = Output {
         clients: FxHashMap::default(),
@@ -112,6 +116,7 @@ fn break_points_to_output(input: BreakPoints) -> Output {
     output
 }
 
+#[allow(dead_code)]
 fn get_dag_break_points<T: DagNode>(dag: &impl Dag<Node = T>) -> BreakPoints {
     let mut break_points = BreakPoints {
         break_points: FxHashMap::default(),
@@ -140,6 +145,7 @@ fn get_dag_break_points<T: DagNode>(dag: &impl Dag<Node = T>) -> BreakPoints {
     break_points
 }
 
+#[allow(dead_code)]
 pub(crate) fn dag_to_mermaid<T: DagNode>(dag: &impl Dag<Node = T>) -> String {
     to_str(break_points_to_output(get_dag_break_points(dag)))
 }

@@ -213,7 +213,7 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
     /// - You can peek the next item.
     ///
     /// It's useful to implement algorithms related to Delta
-    pub fn iter_with_len(&self) -> Iter<V, Attr> {
+    pub fn iter_with_len(&self) -> Iter<'_, V, Attr> {
         Iter::new(self)
     }
 
