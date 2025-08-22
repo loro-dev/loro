@@ -441,7 +441,7 @@ fn test_checkout() {
         for container_diff in event.events {
             root_value.apply(
                 &container_diff.path.iter().map(|x| x.1.clone()).collect(),
-                &[container_diff.diff.clone()],
+                std::slice::from_ref(&container_diff.diff),
             );
         }
     }));

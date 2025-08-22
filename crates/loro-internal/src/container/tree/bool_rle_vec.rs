@@ -113,7 +113,7 @@ impl BoolRleVec {
         self.len == 0
     }
 
-    pub fn iter(&self) -> BoolRleVecIter {
+    pub fn iter(&self) -> BoolRleVecIter<'_> {
         BoolRleVecIter {
             rle_vec: self,
             index: 0,

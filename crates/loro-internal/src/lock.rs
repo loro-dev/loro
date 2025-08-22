@@ -72,7 +72,7 @@ impl Default for LoroLockGroup {
 
 impl<T> LoroMutex<T> {
     #[track_caller]
-    pub fn lock(&self) -> Result<LoroMutexGuard<T>, std::sync::PoisonError<MutexGuard<T>>> {
+    pub fn lock(&self) -> Result<LoroMutexGuard<'_, T>, std::sync::PoisonError<MutexGuard<'_, T>>> {
         let caller = Location::caller();
         let v = self.currently_locked_in_this_thread.get_or_default();
         let last = *v.lock().unwrap_or_else(|e| e.into_inner());
