@@ -814,7 +814,7 @@ fn change_to_diff(
                 EventHint::InsertList { pos, .. } => {
                     // We should use pos from event hint because index in op may
                     // be using op index for the MovableList
-                    for op in ops_for_hint.iter() {
+                    for (i, op) in ops_for_hint.iter().enumerate() {
                         let (range, _) = op.content.as_list().unwrap().as_insert().unwrap();
                         let values = doc
                             .arena
@@ -825,7 +825,7 @@ fn change_to_diff(
                             idx: container_idx,
                             diff: Diff::List(
                                 DeltaRopeBuilder::new()
-                                    .retain(pos, Default::default())
+                                    .retain(pos + i, Default::default())
                                     .insert_many(values, Default::default())
                                     .build(),
                             ),
