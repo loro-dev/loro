@@ -10,8 +10,9 @@ use fxhash::FxHashMap;
 use generic_btree::rle::{HasLength as RleHasLength, Mergeable as GBSliceable};
 use loro_common::{ContainerType, IdLp, IdSpan, LoroResult};
 use loro_delta::{array_vec::ArrayVec, DeltaRopeBuilder};
-use rle::{HasLength, Mergable, RleVec};
+use rle::{HasLength, Mergable, RleVec, Sliceable};
 use smallvec::{smallvec, SmallVec};
+use tracing::trace;
 
 use crate::{
     change::{Change, Lamport, Timestamp},
@@ -717,37 +718,53 @@ fn change_to_diff(
     let mut lamport = change.lamport;
 
     // Group ops by container first to match our new structure
-    let mut ops_by_container: FxHashMap<ContainerIdx, Vec<&Op>> = FxHashMap::default();
+    let mut ops_by_container: FxHashMap<ContainerIdx, Vec<Op>> = FxHashMap::default();
     for op in change.ops.iter() {
-        ops_by_container.entry(op.container).or_default().push(op);
+        ops_by_container
+            .entry(op.container)
+            .or_default()
+            .push(op.clone());
     }
 
     // Process each container's hints and ops together
     for (container_idx, hints) in event_hints {
-        let Some(container_ops) = ops_by_container.get(&container_idx) else {
+        let Some(container_ops) = ops_by_container.get_mut(&container_idx) else {
             continue;
         };
 
-        let mut op_iter = container_ops.iter();
+        let mut op_index = 0;
         let mut hint_iter = hints.into_iter();
         let mut current_hint = hint_iter.next();
 
-        while let Some(&op) = op_iter.next() {
+        while op_index < container_ops.len() {
             let Some(hint) = current_hint.take() else {
                 unreachable!("Missing hint for op");
             };
 
             // Collect ops that belong to this hint
-            let mut ops_for_hint: SmallVec<[&Op; 1]> = smallvec![op];
-            let mut total_len = op.atom_len();
+            let mut ops_for_hint: SmallVec<[Op; 1]> = smallvec![container_ops[op_index].clone()];
+            let mut total_len = container_ops[op_index].atom_len();
 
             // If hint spans multiple ops, collect them
             while total_len < hint.rle_len() {
-                let next_op = op_iter.next().expect("Missing op for hint");
-                total_len += next_op.atom_len();
-                ops_for_hint.push(next_op);
+                op_index += 1;
+                let next_op_len = container_ops[op_index].atom_len();
+                let op = if next_op_len + total_len > hint.rle_len() {
+                    let new_len = hint.rle_len() - total_len;
+                    let left = container_ops[op_index].slice(0, new_len);
+                    let right = container_ops[op_index].slice(new_len, next_op_len);
+                    container_ops[op_index] = right;
+                    op_index -= 1;
+                    left
+                } else {
+                    container_ops[op_index].clone()
+                };
+
+                total_len += op.atom_len();
+                ops_for_hint.push(op);
             }
 
+            op_index += 1;
             assert_eq!(total_len, hint.rle_len(), "Op/hint length mismatch");
 
             // Move to next hint
