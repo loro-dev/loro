@@ -14,6 +14,7 @@ export function syncLoroVersion(
   const versionFileVersion = versionFileContent.trim();
 
   // Compare versions
+  console.log(`Comparing versions: ${newVersion} and ${versionFileVersion}`);
   const comparison = semverCompare(newVersion, versionFileVersion);
 
   if (comparison > 0) {
