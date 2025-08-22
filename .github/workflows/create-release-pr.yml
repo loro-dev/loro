@@ -3,11 +3,11 @@ name: Create Release PR
 on:
   push:
     tags:
-      - 'loro-crdt@*'
+      - 'rust-pre-release@*'
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag name (e.g., loro-crdt@1.0.0)'
+        description: 'Tag name (e.g., rust-pre-release@1.0.0)'
         required: true
         type: string
 
@@ -35,11 +35,11 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             # Extract version from manual input
             TAG="${{ github.event.inputs.tag }}"
-            VERSION=${TAG#loro-crdt@}
+            VERSION=${TAG#rust-pre-release@}
             echo "Manual trigger detected, using input tag: $TAG"
           else
             # Extract version from pushed tag
-            VERSION=${GITHUB_REF#refs/tags/loro-crdt@}
+            VERSION=${GITHUB_REF#refs/tags/rust-pre-release@}
             echo "Tag push detected, using pushed tag"
           fi
           echo "version=$VERSION"
