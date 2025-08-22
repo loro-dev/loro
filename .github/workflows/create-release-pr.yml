@@ -54,6 +54,12 @@ jobs:
           echo "Running deno script with version: ${{ steps.version.outputs.version }}"
           deno run -A scripts/cargo-release-cli.ts ${{ steps.version.outputs.version }} 2>&1 | tee debug_output.log
           RELEASE_OUTPUT=$(tail -n 1 debug_output.log)
+          # Check if the output contains any error messages
+          if echo "$RELEASE_OUTPUT" | grep -i "error" > /dev/null; then
+            echo "Error detected in release output"
+            echo "$RELEASE_OUTPUT"
+            exit 1
+          fi
           echo "EXCLUDED_FLAGS=$RELEASE_OUTPUT"
           echo "EXCLUDED_FLAGS=$RELEASE_OUTPUT" >> $GITHUB_OUTPUT
 
