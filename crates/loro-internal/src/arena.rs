@@ -25,8 +25,11 @@ use crate::{
 };
 
 use self::str_arena::StrArena;
+use std::fmt;
 
-#[derive(Default, Debug)]
+type ParentResolver = dyn Fn(ContainerIdx) -> Option<ContainerID> + Send + Sync + 'static;
+
+#[derive(Default)]
 struct InnerSharedArena {
     // The locks should not be exposed outside this file.
     // It might be better to use RwLock in the future
@@ -39,6 +42,24 @@ struct InnerSharedArena {
     values: Mutex<Vec<LoroValue>>,
     root_c_idx: Mutex<Vec<ContainerIdx>>,
     str: Arc<Mutex<StrArena>>,
+    /// Optional resolver used when querying parent for a container that has not been registered yet.
+    /// If set, `get_parent` will try this resolver to lazily fetch and register the parent.
+    parent_resolver: Mutex<Option<Arc<ParentResolver>>>,
+}
+
+impl fmt::Debug for InnerSharedArena {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("InnerSharedArena")
+            .field("container_idx_to_id", &"<Mutex<_>>")
+            .field("depth", &"<Mutex<_>>")
+            .field("container_id_to_idx", &"<Mutex<_>>")
+            .field("parents", &"<Mutex<_>>")
+            .field("values", &"<Mutex<_>>")
+            .field("root_c_idx", &"<Mutex<_>>")
+            .field("str", &"<Arc<Mutex<_>>>")
+            .field("parent_resolver", &"<Mutex<Option<...>>>")
+            .finish()
+    }
 }
 
 /// This is shared between [OpLog] and [AppState].
@@ -124,6 +145,9 @@ impl SharedArena {
                 values: Mutex::new(self.inner.values.lock().unwrap().clone()),
                 root_c_idx: Mutex::new(self.inner.root_c_idx.lock().unwrap().clone()),
                 str: self.inner.str.clone(),
+                parent_resolver: Mutex::new(
+                    self.inner.parent_resolver.lock().unwrap().clone(),
+                ),
             }),
         }
     }
@@ -283,14 +307,29 @@ impl SharedArena {
             // whether the target is a root container
             return None;
         }
-
-        self.inner
+        // Try fast path first
+        if let Some(p) = self
+            .inner
             .parents
             .lock()
             .unwrap()
             .get(&child)
             .copied()
-            .expect("InternalError: Parent is not registered")
+        {
+            return p;
+        }
+
+        // Fallback: try to resolve parent lazily via the resolver if provided.
+        let resolver = self.inner.parent_resolver.lock().unwrap().clone();
+        if let Some(resolver) = resolver {
+            if let Some(parent_id) = resolver(child) {
+                let parent_idx = self.register_container(&parent_id);
+                self.set_parent(child, Some(parent_idx));
+                return Some(parent_idx);
+            }
+        }
+
+        panic!("InternalError: Parent is not registered")
     }
 
     /// Call `f` on each ancestor of `container`, including `container` itself.
@@ -610,4 +649,19 @@ fn get_depth(
     }
 
     d
+}
+
+impl SharedArena {
+    /// Register or clear a resolver to lazily determine a container's parent when missing.
+    ///
+    /// - The resolver receives the child `ContainerIdx` and returns an optional `ContainerID` of its parent.
+    /// - If the resolver returns `Some`, `SharedArena` will register the parent in the arena and link it.
+    /// - If the resolver is `None` or returns `None`, `get_parent` will panic for non-root containers as before.
+    pub fn set_parent_resolver<F>(&self, resolver: Option<F>)
+    where
+        F: Fn(ContainerIdx) -> Option<ContainerID> + Send + Sync + 'static,
+    {
+        let mut slot = self.inner.parent_resolver.lock().unwrap();
+        *slot = resolver.map(|f| Arc::new(f) as Arc<ParentResolver>);
+    }
 }
