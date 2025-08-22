@@ -3,7 +3,6 @@ use std::sync::{atomic::AtomicU64, Arc};
 use crate::Action;
 
 use loro::ContainerType;
-use tracing::trace;
 
 use crate::{actions::ActionWrapper, actor::Actor};
 
@@ -35,7 +34,7 @@ pub fn fuzz_local_events(actions: Vec<Action>) {
 
     let count = Arc::new(AtomicU64::new(0));
     let count_clone = Arc::clone(&count);
-    let _sub = actor.loro.subscribe_root(Arc::new(move |e| {
+    let _sub = actor.loro.subscribe_root(Arc::new(move |_e| {
         count_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }));
 
