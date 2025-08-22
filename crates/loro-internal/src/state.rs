@@ -1339,7 +1339,7 @@ impl DocState {
             if let Some(parent_idx) = self.arena.get_parent(idx) {
                 let parent_state = self.store.get_container_mut(parent_idx)?;
                 let Some(prop) = parent_state.get_child_index(&id) else {
-                    tracing::info!("Missing in parent children");
+                    tracing::warn!("Missing in parent's children");
                     return None;
                 };
                 ans.push((id, prop));

@@ -27,7 +27,7 @@ use crate::{
 use self::str_arena::StrArena;
 use std::fmt;
 
-type ParentResolver = dyn Fn(ContainerIdx) -> Option<ContainerID> + Send + Sync + 'static;
+type ParentResolver = dyn Fn(ContainerID) -> Option<ContainerID> + Send + Sync + 'static;
 
 #[derive(Default)]
 struct InnerSharedArena {
@@ -145,9 +145,7 @@ impl SharedArena {
                 values: Mutex::new(self.inner.values.lock().unwrap().clone()),
                 root_c_idx: Mutex::new(self.inner.root_c_idx.lock().unwrap().clone()),
                 str: self.inner.str.clone(),
-                parent_resolver: Mutex::new(
-                    self.inner.parent_resolver.lock().unwrap().clone(),
-                ),
+                parent_resolver: Mutex::new(self.inner.parent_resolver.lock().unwrap().clone()),
             }),
         }
     }
@@ -307,22 +305,17 @@ impl SharedArena {
             // whether the target is a root container
             return None;
         }
+
         // Try fast path first
-        if let Some(p) = self
-            .inner
-            .parents
-            .lock()
-            .unwrap()
-            .get(&child)
-            .copied()
-        {
+        if let Some(p) = self.inner.parents.lock().unwrap().get(&child).copied() {
             return p;
         }
 
         // Fallback: try to resolve parent lazily via the resolver if provided.
         let resolver = self.inner.parent_resolver.lock().unwrap().clone();
         if let Some(resolver) = resolver {
-            if let Some(parent_id) = resolver(child) {
+            let child_id = self.get_container_id(child).unwrap();
+            if let Some(parent_id) = resolver(child_id.clone()) {
                 let parent_idx = self.register_container(&parent_id);
                 self.set_parent(child, Some(parent_idx));
                 return Some(parent_idx);
@@ -659,7 +652,7 @@ impl SharedArena {
     /// - If the resolver is `None` or returns `None`, `get_parent` will panic for non-root containers as before.
     pub fn set_parent_resolver<F>(&self, resolver: Option<F>)
     where
-        F: Fn(ContainerIdx) -> Option<ContainerID> + Send + Sync + 'static,
+        F: Fn(ContainerID) -> Option<ContainerID> + Send + Sync + 'static,
     {
         let mut slot = self.inner.parent_resolver.lock().unwrap();
         *slot = resolver.map(|f| Arc::new(f) as Arc<ParentResolver>);

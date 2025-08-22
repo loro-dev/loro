@@ -47,6 +47,7 @@ impl InnerStore {
                         return e.insert(c);
                     }
                 }
+
                 let c = f();
                 self.len += 1;
                 e.insert(c)
@@ -62,6 +63,16 @@ impl InnerStore {
     ) {
         if self.store.contains_key(&idx) {
             return;
+        }
+
+        if !self.all_loaded {
+            let id = self.arena.get_container_id(idx).unwrap();
+            let key = id.to_bytes();
+            if let Some(v) = self.kv.get(&key) {
+                let c = ContainerWrapper::new_from_bytes(v);
+                self.store.insert(idx, c);
+                return;
+            }
         }
 
         let c = f();
@@ -141,20 +152,28 @@ impl InnerStore {
             fr = Some(Frontiers::decode(&f)?);
         }
 
+        let kv = self.kv.arc_clone();
+        self.arena
+            .set_parent_resolver(Some(move |child_id: ContainerID| {
+                let k = child_id.to_bytes();
+                let v = kv.get(&k)?;
+                let c = ContainerWrapper::new_from_bytes(v);
+                c.parent().cloned()
+            }));
+
         self.kv.with_kv(|kv| {
             let mut count = self.len;
             self.arena.with_guards(|guards| {
                 let iter = kv.scan(Bound::Unbounded, Bound::Unbounded);
-                for (k, v) in iter {
+                // TODO: PERF: add a .keys() mode to speed up
+                for (k, _v) in iter {
                     count += 1;
                     let cid = ContainerID::from_bytes(&k);
-                    let c = ContainerWrapper::new_from_bytes(v);
-                    let parent = c.parent();
                     let idx = guards.register_container(&cid);
-                    let p = parent.as_ref().map(|p| guards.register_container(p));
-                    guards.set_parent(idx, p);
-                    if self.store.insert(idx, c).is_some() {
+                    if let Some(v) = self.store.remove(&idx) {
+                        // it must be in empty state
                         count -= 1;
+                        debug_assert!(v.is_state_empty());
                     }
                 }
             });
@@ -162,7 +181,7 @@ impl InnerStore {
             self.len = count;
         });
 
-        self.all_loaded = true;
+        self.all_loaded = false;
         Ok(fr)
     }
 

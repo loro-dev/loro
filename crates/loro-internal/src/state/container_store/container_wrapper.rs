@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue};
+use tracing::trace;
 
 #[cfg(feature = "counter")]
 use crate::state::counter_state::CounterState;
@@ -82,14 +83,17 @@ impl ContainerWrapper {
 
     pub fn get_value(&mut self, idx: ContainerIdx, ctx: ContainerCreationContext) -> LoroValue {
         if let Some(v) = self.value.as_ref() {
+            trace!("value");
             return v.clone();
         }
 
         self.decode_value(idx, ctx).unwrap();
         if self.value.is_none() {
+            trace!("state");
             return self.state.as_mut().unwrap().get_value();
         }
 
+        trace!("devalue");
         self.value.as_ref().unwrap().clone()
     }
 
