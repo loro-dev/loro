@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.11
+
+### Patch Changes
+
+- 34180e7: Fix(js): delete an entry in map should emit an event that set the field as undefined instead of null
+- 0bb9786: Fix: avoid panic when importing data to ephemeral store
+
 ## 1.5.10
 
 ### Patch Changes
