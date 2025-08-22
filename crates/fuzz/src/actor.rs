@@ -14,7 +14,7 @@ use loro::{
 };
 use pretty_assertions::assert_eq;
 use rand::{rngs::StdRng, Rng, SeedableRng};
-use tracing::{info, info_span};
+use tracing::{info, info_span, trace};
 
 use crate::{
     container::{CounterActor, ListActor, MovableListActor, TextActor, TreeActor},
@@ -54,6 +54,7 @@ impl Actor {
         let cb_tracker = tracker.clone();
         loro.subscribe_root(Arc::new(move |e| {
             info_span!("[Fuzz] tracker.apply_diff", id = id).in_scope(|| {
+                trace!("[Fuzz.tracker] diff {:?}", e);
                 let mut tracker = cb_tracker.lock().unwrap();
                 tracker.apply_diff(e)
             });
@@ -110,10 +111,43 @@ impl Actor {
         action.pre_process(actor, *container as usize);
     }
 
+    pub fn pre_process_without_commit(&mut self, action: &mut ActionInner, container: &mut u8) {
+        let ty = action.ty();
+        let mut targets = self.targets.keys().copied().collect::<Vec<_>>();
+        targets.sort();
+        if let Some(add_container_ty) = action.pre_process_container_value() {
+            if !targets.contains(add_container_ty) {
+                *add_container_ty =
+                    targets.remove(add_container_ty.to_u8() as usize % targets.len());
+            }
+        }
+        let actor = self.targets.get_mut(&ty).unwrap();
+        *container %= actor.container_len().max(1);
+        action.pre_process(actor, *container as usize);
+    }
+
     pub fn apply(&mut self, action: &ActionInner, container: u8) {
         let ty = action.ty();
         let actor = self.targets.get_mut(&ty).unwrap();
         self.loro.attach();
+        let idx = action.apply(actor, container as usize);
+
+        if self.undo_manager.last_container != container {
+            self.undo_manager.last_container = container;
+            self.undo_manager.can_undo_length += 1;
+        }
+
+        if let Some(idx) = idx {
+            if let Container::Tree(tree) = &idx {
+                tree.enable_fractional_index(0);
+            }
+            self.add_new_container(idx);
+        }
+    }
+
+    pub fn apply_without_commit(&mut self, action: &ActionInner, container: u8) {
+        let ty = action.ty();
+        let actor = self.targets.get_mut(&ty).unwrap();
         let idx = action.apply(actor, container as usize);
 
         if self.undo_manager.last_container != container {

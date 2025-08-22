@@ -50,7 +50,7 @@ mod convert;
 /// Get the version of Loro
 #[wasm_bindgen]
 pub fn LORO_VERSION() -> String {
-    loro_internal::LORO_VERSION.to_string()
+    include_str!("../VERSION").trim().to_string()
 }
 
 #[wasm_bindgen(start)]
