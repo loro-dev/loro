@@ -814,22 +814,25 @@ fn change_to_diff(
                 EventHint::InsertList { pos, .. } => {
                     // We should use pos from event hint because index in op may
                     // be using op index for the MovableList
-                    for (i, op) in ops_for_hint.iter().enumerate() {
+                    let mut index = pos;
+                    for op in ops_for_hint.iter() {
                         let (range, _) = op.content.as_list().unwrap().as_insert().unwrap();
                         let values = doc
                             .arena
                             .get_values(range.to_range())
                             .into_iter()
                             .map(|v| ValueOrHandler::from_value(v, &doc));
+                        let len = values.len();
                         ans.push(TxnContainerDiff {
                             idx: container_idx,
                             diff: Diff::List(
                                 DeltaRopeBuilder::new()
-                                    .retain(pos + i, Default::default())
+                                    .retain(index, Default::default())
                                     .insert_many(values, Default::default())
                                     .build(),
                             ),
-                        })
+                        });
+                        index += len;
                     }
                 }
                 EventHint::DeleteList(s) => {
