@@ -22,6 +22,7 @@ impl Ord for IdHeapItem {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn iter_dag_with_vv<T, D: Dag<Node = T>>(dag: &D) -> DagIteratorVV<'_, T> {
     DagIteratorVV {
         dag,
@@ -30,6 +31,7 @@ pub(crate) fn iter_dag_with_vv<T, D: Dag<Node = T>>(dag: &D) -> DagIteratorVV<'_
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn iter_dag<T>(dag: &dyn Dag<Node = T>) -> DagIterator<'_, T> {
     DagIterator {
         dag,

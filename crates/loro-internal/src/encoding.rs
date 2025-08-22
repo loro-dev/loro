@@ -377,7 +377,7 @@ const MIN_HEADER_SIZE: usize = 22;
 pub(crate) fn parse_header_and_body(
     bytes: &[u8],
     check_checksum: bool,
-) -> Result<ParsedHeaderAndBody, LoroError> {
+) -> Result<ParsedHeaderAndBody<'_>, LoroError> {
     let reader = &bytes;
     if bytes.len() < MIN_HEADER_SIZE {
         return Err(LoroError::DecodeError("Invalid import data".into()));

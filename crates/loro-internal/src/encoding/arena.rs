@@ -129,7 +129,7 @@ impl ValueDecodedArenasTrait for DecodedArenas<'_> {
     }
 }
 
-pub fn decode_arena(bytes: &[u8]) -> LoroResult<DecodedArenas> {
+pub fn decode_arena(bytes: &[u8]) -> LoroResult<DecodedArenas<'_>> {
     let arenas = EncodedArenas::decode_arenas(bytes)?;
     Ok(DecodedArenas {
         peer_ids: PeerIdArena::decode(arenas.peer_id_arena)?,
@@ -174,7 +174,7 @@ impl EncodedArenas<'_> {
         ans
     }
 
-    fn decode_arenas(bytes: &[u8]) -> LoroResult<EncodedArenas> {
+    fn decode_arenas(bytes: &[u8]) -> LoroResult<EncodedArenas<'_>> {
         let (peer_id_arena, rest) = read_arena(bytes)?;
         let (container_arena, rest) = read_arena(rest)?;
         let (key_arena, rest) = read_arena(rest)?;

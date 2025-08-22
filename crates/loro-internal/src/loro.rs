@@ -208,7 +208,7 @@ impl LoroDoc {
     /// It only returns Some(options_of_the_empty_txn) when the txn is empty
     #[inline]
     #[must_use]
-    pub fn commit_then_stop(&self) -> (Option<CommitOptions>, LoroMutexGuard<Option<Transaction>>) {
+    pub fn commit_then_stop(&self) -> (Option<CommitOptions>, LoroMutexGuard<'_, Option<Transaction>>) {
         let (a, b) = self.commit_with(CommitOptions::new().immediate_renew(false));
         (a, b.unwrap())
     }
@@ -227,7 +227,7 @@ impl LoroDoc {
     /// It can be used to modify the change before it is committed.
     ///
     /// It return Some(txn) if the txn is None
-    fn before_commit(&self) -> Option<LoroMutexGuard<Option<Transaction>>> {
+    fn before_commit(&self) -> Option<LoroMutexGuard<'_, Option<Transaction>>> {
         let mut txn_guard = self.txn.lock().unwrap();
         let Some(txn) = txn_guard.as_mut() else {
             return Some(txn_guard);
@@ -259,7 +259,7 @@ impl LoroDoc {
         config: CommitOptions,
     ) -> (
         Option<CommitOptions>,
-        Option<LoroMutexGuard<Option<Transaction>>>,
+        Option<LoroMutexGuard<'_, Option<Transaction>>>,
     ) {
         if !self.auto_commit.load(Acquire) {
             let txn_guard = self.txn.lock().unwrap();
@@ -889,7 +889,7 @@ impl LoroDoc {
         container_remap: &mut FxHashMap<ContainerID, ContainerID>,
         post_transform_base: Option<&DiffBatch>,
         before_diff: &mut dyn FnMut(&DiffBatch),
-    ) -> LoroResult<CommitWhenDrop> {
+    ) -> LoroResult<CommitWhenDrop<'_>> {
         if !self.can_edit() {
             return Err(LoroError::EditWhenDetached);
         }

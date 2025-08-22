@@ -1640,7 +1640,7 @@ mod snapshot {
         state: &TreeState,
         input: Vec<TreeNode>,
         deleted_nodes: Vec<TreeNode>,
-    ) -> (ValueRegister<PeerID>, EncodedTree) {
+    ) -> (ValueRegister<PeerID>, EncodedTree<'_>) {
         let mut peers: ValueRegister<PeerID> = ValueRegister::new();
         let mut position_set = BTreeSet::default();
         let mut nodes = Vec::with_capacity(input.len());
