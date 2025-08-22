@@ -245,12 +245,12 @@ impl EphemeralStore {
     pub fn encode_all(&self) -> Vec<u8> {
         self.inner.encode_all()
     }
-
+    
     /// Apply encoded updates imported from another peer/process.
     ///
     /// Subscribers receive an event with `by = Import` and the lists of
     /// `added`/`updated`/`removed` keys as appropriate.
-    pub fn apply(&self, data: &[u8]) {
+    pub fn apply(&self, data: &[u8]) -> Result<(), Box<str>> {
         self.inner.apply(data)
     }
 
@@ -406,8 +406,12 @@ impl EphemeralStoreInner {
         postcard::to_allocvec(&peers_info).unwrap()
     }
 
-    pub fn apply(&self, data: &[u8]) {
-        let peers_info: Vec<EncodedState> = postcard::from_bytes(data).unwrap();
+    pub fn apply(&self, data: &[u8]) -> Result<(), Box<str>> {
+        let peers_info = match postcard::from_bytes::<Vec<EncodedState>>(data) {
+            Ok(ans) => ans,
+            Err(err) => return Err(format!("Failed to decode data: {}", err).into()),
+        };
+
         let mut updated_keys = Vec::new();
         let mut added_keys = Vec::new();
         let mut removed_keys = Vec::new();
@@ -453,6 +457,8 @@ impl EphemeralStoreInner {
                 },
             );
         }
+
+        Ok(())
     }
 
     pub fn set(&self, key: &str, value: impl Into<LoroValue>) {
