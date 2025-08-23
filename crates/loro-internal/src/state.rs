@@ -737,9 +737,18 @@ impl DocState {
         self.store.iter_all_containers()
     }
 
-    pub fn does_container_exist(&self, id: &ContainerID) -> bool {
-        // TODO: we may need a better way to handle this in the future when we need to enable fully lazy loading on state
-        self.arena.id_to_idx(id).is_some()
+    pub fn does_container_exist(&mut self, id: &ContainerID) -> bool {
+        // A container may exist even if not yet registered in the arena.
+        // Check arena first, then fall back to KV presence in the store.
+        if id.is_root() {
+            return true;
+        }
+
+        if self.arena.id_to_idx(id).is_some() {
+            return true;
+        }
+
+        self.store.contains_id(id)
     }
 
     pub(crate) fn init_container(
@@ -918,7 +927,8 @@ impl DocState {
             }
             ContainerIdRaw::Normal { id: _ } => {
                 cid = id.with_type(kind);
-                self.arena.id_to_idx(&cid)
+                // For normal IDs, registration can be lazy; ensure it's registered.
+                Some(self.arena.register_container(&cid))
             }
         };
 
@@ -953,8 +963,9 @@ impl DocState {
         !self.in_txn && self.arena.can_import_snapshot() && self.store.can_import_snapshot()
     }
 
-    pub fn get_value(&self) -> LoroValue {
-        let roots = self.arena.root_containers();
+    pub fn get_value(&mut self) -> LoroValue {
+        let flag = self.store.load_all();
+        let roots = self.arena.root_containers(flag);
         let ans: loro_common::LoroMapValue = roots
             .into_iter()
             .map(|idx| {
@@ -973,7 +984,8 @@ impl DocState {
     }
 
     pub fn get_deep_value(&mut self) -> LoroValue {
-        let roots = self.arena.root_containers();
+        let flag = self.store.load_all();
+        let roots = self.arena.root_containers(flag);
         let mut ans = FxHashMap::with_capacity_and_hasher(roots.len(), Default::default());
         let binding = self.config.deleted_root_containers.clone();
         let deleted_root_container = binding.lock().unwrap();
@@ -1004,7 +1016,8 @@ impl DocState {
     }
 
     pub fn get_deep_value_with_id(&mut self) -> LoroValue {
-        let roots = self.arena.root_containers();
+        let flag = self.store.load_all();
+        let roots = self.arena.root_containers(flag);
         let mut ans = FxHashMap::with_capacity_and_hasher(roots.len(), Default::default());
         for root_idx in roots {
             let id = self.arena.idx_to_id(root_idx).unwrap();
@@ -1166,10 +1179,11 @@ impl DocState {
     }
 
     pub(crate) fn get_all_alive_containers(&mut self) -> FxHashSet<ContainerID> {
+        let flag = self.store.load_all();
         let mut ans = FxHashSet::default();
         let mut to_visit = self
             .arena
-            .root_containers()
+            .root_containers(flag)
             .iter()
             .map(|x| self.arena.get_container_id(*x).unwrap())
             .collect_vec();
@@ -1307,9 +1321,16 @@ impl DocState {
             return true;
         }
 
-        let Some(mut idx) = self.arena.id_to_idx(id) else {
-            return false;
-        };
+        // If not registered yet, check KV presence, then register lazily
+        if self.arena.id_to_idx(id).is_none() {
+            if !self.does_container_exist(id) {
+                return false;
+            }
+            // Ensure it is registered so ancestor walk can resolve parents via resolver
+            self.arena.register_container(id);
+        }
+
+        let mut idx = self.arena.id_to_idx(id).unwrap();
         loop {
             let id = self.arena.idx_to_id(idx).unwrap();
             if let Some(parent_idx) = self.arena.get_parent(idx) {
@@ -1339,7 +1360,7 @@ impl DocState {
             if let Some(parent_idx) = self.arena.get_parent(idx) {
                 let parent_state = self.store.get_container_mut(parent_idx)?;
                 let Some(prop) = parent_state.get_child_index(&id) else {
-                    tracing::info!("Missing in parent children");
+                    tracing::warn!("Missing in parent's children");
                     return None;
                 };
                 ans.push((id, prop));
@@ -1459,20 +1480,6 @@ impl DocState {
         if !other_id_to_states.is_empty() {
             panic!("other has more states {:#?}", &other_id_to_states);
         }
-    }
-
-    pub fn log_estimated_size(&self) {
-        let state_entries_size =
-            self.store.len() * (std::mem::size_of::<State>() + std::mem::size_of::<ContainerIdx>());
-        let mut state_size_sum = 0;
-        state_size_sum += self.store.estimate_size();
-
-        eprintln!(
-            "ContainerNum: {}\nEstimated state size: \nEntries: {} \nSum: {}",
-            self.store.len(),
-            state_entries_size,
-            state_size_sum
-        );
     }
 
     pub fn create_state(&self, idx: ContainerIdx) -> State {
@@ -1749,7 +1756,8 @@ fn trigger_on_new_container(
             for item in tree.iter() {
                 if matches!(item.action, TreeExternalDiff::Create { .. }) {
                     let id = item.target.associated_meta_container();
-                    listener(arena.id_to_idx(&id).unwrap());
+                    // Ensure registration instead of assuming it's already in arena
+                    listener(arena.register_container(&id));
                 }
             }
         }

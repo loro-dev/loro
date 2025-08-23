@@ -1,4 +1,5 @@
 use super::{ContainerCreationContext, State};
+use crate::arena::LoadAllFlag;
 use crate::sync::{AtomicU64, Mutex};
 use crate::{
     arena::SharedArena, configure::Configure, container::idx::ContainerIdx,
@@ -166,17 +167,12 @@ impl ContainerStore {
         })
     }
 
-    pub fn get_kv(&self) -> &KvWrapper {
-        self.store.get_kv()
+    pub fn get_kv_clone(&self) -> KvWrapper {
+        self.store.get_kv_clone()
     }
 
-    #[allow(unused)]
-    pub fn is_empty(&self) -> bool {
-        self.store.is_empty()
-    }
-
-    pub fn len(&self) -> usize {
-        self.store.len()
+    pub fn contains_id(&mut self, id: &ContainerID) -> bool {
+        self.store.contains_id(id)
     }
 
     pub fn iter_all_containers(
@@ -187,6 +183,11 @@ impl ContainerStore {
 
     pub fn iter_all_container_ids(&mut self) -> impl Iterator<Item = ContainerID> + '_ {
         self.store.iter_all_container_ids()
+    }
+
+    pub fn load_all(&mut self) -> LoadAllFlag {
+        self.store.load_all();
+        LoadAllFlag
     }
 
     pub(super) fn get_or_create_mut(&mut self, idx: ContainerIdx) -> &mut State {
@@ -248,10 +249,6 @@ impl ContainerStore {
 
     #[allow(unused)]
     fn check_eq_after_parsing(&mut self, other: &mut ContainerStore) {
-        if self.store.len() != other.store.len() {
-            panic!("store len mismatch");
-        }
-
         for (idx, container) in self.store.iter_all_containers_mut() {
             let id = self.arena.get_container_id(*idx).unwrap();
             let other_idx = other.arena.register_container(&id);

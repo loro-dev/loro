@@ -1059,8 +1059,14 @@ impl LoroDoc {
             }
 
             if matches!(&id, ContainerID::Normal { .. }) && self.arena.id_to_idx(&id).is_none() {
-                missing_containers.push(id);
-                continue;
+                // Not in arena does not imply non-existent; consult state/kv and register lazily
+                let exists = self.state.lock().unwrap().does_container_exist(&id);
+                if !exists {
+                    missing_containers.push(id);
+                    continue;
+                }
+                // Ensure registration so handlers can be created
+                self.state.lock().unwrap().ensure_container(&id);
             }
 
             if skip_unreachable && !remapped && !self.state.lock().unwrap().get_reachable(&id) {
@@ -1491,12 +1497,6 @@ impl LoroDoc {
         }
     }
 
-    #[inline]
-    pub fn log_estimated_size(&self) {
-        let state = self.state.lock().unwrap();
-        state.log_estimated_size();
-    }
-
     pub fn query_pos(&self, pos: &Cursor) -> Result<PosQueryResult, CannotFindRelativePosition> {
         self.query_pos_internal(pos, true)
     }
@@ -1533,10 +1533,16 @@ impl LoroDoc {
             let oplog = self.oplog().lock().unwrap();
             // TODO: assert pos.id is not unknown
             if let Some(id) = pos.id {
-                let idx = oplog
-                    .arena
-                    .id_to_idx(&pos.container)
-                    .ok_or(CannotFindRelativePosition::ContainerDeleted)?;
+                // Ensure the container is registered if it exists lazily
+                if oplog.arena.id_to_idx(&pos.container).is_none() {
+                    let mut s = self.state.lock().unwrap();
+                    if !s.does_container_exist(&pos.container) {
+                        return Err(CannotFindRelativePosition::ContainerDeleted);
+                    }
+                    s.ensure_container(&pos.container);
+                    drop(s);
+                }
+                let idx = oplog.arena.id_to_idx(&pos.container).unwrap();
                 // We know where the target id is when we trace back to the delete_op_id.
                 let Some(delete_op_id) = find_last_delete_op(&oplog, id, idx) else {
                     if oplog.shallow_since_vv().includes_id(id) {
@@ -1703,7 +1709,13 @@ impl LoroDoc {
     /// Get the path from the root to the container
     pub fn get_path_to_container(&self, id: &ContainerID) -> Option<Vec<(ContainerID, Index)>> {
         let mut state = self.state.lock().unwrap();
-        let idx = state.arena.id_to_idx(id)?;
+        if state.arena.id_to_idx(id).is_none() {
+            if !state.does_container_exist(id) {
+                return None;
+            }
+            state.ensure_container(id);
+        }
+        let idx = state.arena.id_to_idx(id).unwrap();
         state.get_path(idx)
     }
 
@@ -1890,8 +1902,8 @@ impl LoroDoc {
             return;
         }
 
-        if self.arena.id_to_idx(&cid).is_none() {
-            // if it's never used, skipped
+        // Do not treat "not in arena" as non-existence; consult state/kv
+        if !self.has_container(&cid) {
             return;
         }
 

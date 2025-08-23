@@ -392,8 +392,9 @@ impl PathValue for LoroDoc {
     }
 
     fn for_each_for_path(&self, f: &mut dyn FnMut(ValueOrHandler) -> ControlFlow<()>) {
+        let x = self.state.lock().unwrap().store.load_all();
         let arena = self.arena();
-        for c in arena.root_containers() {
+        for c in arena.root_containers(x) {
             let cid = arena.idx_to_id(c).unwrap();
             let h = self.get_handler(cid).unwrap();
             if f(ValueOrHandler::Handler(h)) == ControlFlow::Break(()) {
@@ -403,8 +404,9 @@ impl PathValue for LoroDoc {
     }
 
     fn length_for_path(&self) -> usize {
+        let x = self.state.lock().unwrap().store.load_all();
         let state = self.app_state().lock().unwrap();
-        state.arena.root_containers().len()
+        state.arena.root_containers(x).len()
     }
 
     fn get_child_by_id(&self, id: ContainerID) -> Option<Handler> {

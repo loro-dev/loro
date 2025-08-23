@@ -310,10 +310,8 @@ impl DiffCalculator {
 
         while !new_containers.is_empty() {
             for id in std::mem::take(&mut new_containers) {
-                let Some(idx) = oplog.arena.id_to_idx(&id) else {
-                    continue;
-                };
-
+                // Registration can be lazy; ensure it is registered so we can proceed
+                let idx = oplog.arena.register_container(&id);
                 if ans.contains_key(&idx) {
                     continue;
                 }
