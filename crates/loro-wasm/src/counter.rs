@@ -8,7 +8,7 @@ use wasm_bindgen::prelude::*;
 
 use crate::{
     call_after_micro_task, convert::handler_to_js_value, observer, JsContainerID,
-    JsContainerOrUndefined, JsCounterStr, JsLoroTreeOrUndefined, JsResult,
+    JsContainerOrUndefined, JsCounterStr, JsLoroCounterOrUndefined, JsResult,
 };
 
 /// The handler of a counter container.
@@ -105,7 +105,7 @@ impl LoroCounter {
     ///
     /// Returns an attached `Container` that equals to this or created by this, otherwise `undefined`.
     #[wasm_bindgen(js_name = "getAttached")]
-    pub fn get_attached(&self) -> JsLoroTreeOrUndefined {
+    pub fn get_attached(&self) -> JsLoroCounterOrUndefined {
         if self.is_attached() {
             let value: JsValue = self.clone().into();
             return value.into();
@@ -122,5 +122,16 @@ impl LoroCounter {
     #[wasm_bindgen(js_name = "getShallowValue")]
     pub fn get_shallow_value(&self) -> f64 {
         self.handler.get_value().into_double().unwrap()
+    }
+
+    /// Get the JSON representation (deep value) of the counter.
+    #[wasm_bindgen(js_name = "toJSON")]
+    pub fn to_json(&self) -> JsValue {
+        JsValue::from_f64(self.get_value())
+    }
+
+    /// Check if the container is deleted
+    pub fn isDeleted(&self) -> bool {
+        self.handler.is_deleted()
     }
 }

@@ -165,6 +165,8 @@ extern "C" {
     pub type JsLoroListOrUndefined;
     #[wasm_bindgen(typescript_type = "LoroTree | undefined")]
     pub type JsLoroTreeOrUndefined;
+    #[wasm_bindgen(typescript_type = "LoroCounter | undefined")]
+    pub type JsLoroCounterOrUndefined;
     #[wasm_bindgen(typescript_type = "[string, Value | Container]")]
     pub type MapEntry;
     #[wasm_bindgen(typescript_type = "{[key: string]: { expand: 'before'|'after'|'none'|'both' }}")]
