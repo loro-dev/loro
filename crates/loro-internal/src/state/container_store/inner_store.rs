@@ -130,8 +130,8 @@ impl InnerStore {
             }));
     }
 
-    pub(crate) fn get_kv(&self) -> &KvWrapper {
-        &self.kv
+    pub(crate) fn get_kv_clone(&self) -> KvWrapper {
+        self.kv.clone()
     }
 
     pub(crate) fn decode(

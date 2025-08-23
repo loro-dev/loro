@@ -167,8 +167,8 @@ impl ContainerStore {
         })
     }
 
-    pub fn get_kv(&self) -> &KvWrapper {
-        self.store.get_kv()
+    pub fn get_kv_clone(&self) -> KvWrapper {
+        self.store.get_kv_clone()
     }
 
     pub fn iter_all_containers(

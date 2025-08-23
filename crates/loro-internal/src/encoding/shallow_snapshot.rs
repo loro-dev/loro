@@ -84,7 +84,7 @@ pub(crate) fn export_shallow_snapshot_inner(
     let mut alive_c_bytes: BTreeSet<Vec<u8>> =
         alive_containers.iter().map(|x| x.to_bytes()).collect();
     state.store.flush();
-    let shallow_root_state_kv = state.store.get_kv().clone();
+    let shallow_root_state_kv = state.store.get_kv_clone();
     drop(state);
     doc._checkout_without_emitting(&latest_frontiers, false, false)
         .unwrap();
@@ -104,7 +104,7 @@ pub(crate) fn export_shallow_snapshot_inner(
             }
         }
 
-        let new_kv = state.store.get_kv().clone();
+        let new_kv = state.store.get_kv_clone();
         new_kv.remove_same(&shallow_root_state_kv);
         new_kv.retain_keys(&alive_c_bytes);
         Some(new_kv.export())
@@ -174,7 +174,7 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
     let alive_containers = state.ensure_all_alive_containers();
     let alive_c_bytes = cids_to_bytes(alive_containers);
     state.store.flush();
-    let shallow_state_kv = state.store.get_kv().clone();
+    let shallow_state_kv = state.store.get_kv_clone();
     drop(state);
     shallow_state_kv.retain_keys(&alive_c_bytes);
     shallow_state_kv.insert(FRONTIERS_KEY, start_from.encode().into());
@@ -290,7 +290,7 @@ pub(crate) fn encode_snapshot_at<W: std::io::Write>(
 
         let alive_c_bytes = cids_to_bytes(alive_containers);
         state.store.flush();
-        let state_kv = state.store.get_kv().clone();
+        let state_kv = state.store.get_kv_clone();
         state_kv.retain_keys(&alive_c_bytes);
         let bytes = state_kv.export();
         _encode_snapshot(
