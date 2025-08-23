@@ -80,6 +80,7 @@ pub(crate) struct ArenaGuards<'a> {
     depth: MutexGuard<'a, Vec<Option<NonZeroU16>>>,
     parents: MutexGuard<'a, FxHashMap<ContainerIdx, Option<ContainerIdx>>>,
     root_c_idx: MutexGuard<'a, Vec<ContainerIdx>>,
+    parent_resolver: MutexGuard<'a, Option<Arc<ParentResolver>>>,
 }
 
 impl ArenaGuards<'_> {
@@ -107,7 +108,14 @@ impl ArenaGuards<'_> {
 
         match parent {
             Some(p) => {
-                if let Some(d) = get_depth(p, &mut self.depth, &self.parents) {
+                if let Some(d) = get_depth(
+                    p,
+                    &mut self.depth,
+                    &self.parents,
+                    &self.parent_resolver,
+                    &self.container_idx_to_id,
+                    &self.container_id_to_idx,
+                ) {
                     self.depth[child.to_index() as usize] = NonZeroU16::new(d.get() + 1);
                 } else {
                     self.depth[child.to_index() as usize] = None;
@@ -159,6 +167,7 @@ impl SharedArena {
             depth: self.inner.depth.lock().unwrap(),
             parents: self.inner.parents.lock().unwrap(),
             root_c_idx: self.inner.root_c_idx.lock().unwrap(),
+            parent_resolver: self.inner.parent_resolver.lock().unwrap(),
         }
     }
 
@@ -251,7 +260,14 @@ impl SharedArena {
 
         match parent {
             Some(p) => {
-                if let Some(d) = get_depth(p, &mut depth, parents) {
+                if let Some(d) = get_depth(
+                    p,
+                    &mut depth,
+                    parents,
+                    &self.inner.parent_resolver.lock().unwrap(),
+                    &self.inner.container_idx_to_id.lock().unwrap(),
+                    &self.inner.container_id_to_idx.lock().unwrap(),
+                ) {
                     depth[child.to_index() as usize] = NonZeroU16::new(d.get() + 1);
                 } else {
                     depth[child.to_index() as usize] = None;
@@ -529,7 +545,7 @@ impl SharedArena {
     /// We need to load all the cached kv in DocState before we can ensure all root contains are covered.
     /// So we need the flag type here.
     #[inline]
-    pub fn root_containers(&self, _f: LoadAllFlag) -> Vec<ContainerIdx> {
+    pub(crate) fn root_containers(&self, _f: LoadAllFlag) -> Vec<ContainerIdx> {
         self.inner.root_c_idx.lock().unwrap().clone()
     }
 
@@ -539,6 +555,9 @@ impl SharedArena {
             container,
             &mut self.inner.depth.lock().unwrap(),
             &self.inner.parents.lock().unwrap(),
+            &self.inner.parent_resolver.lock().unwrap(),
+            &self.inner.container_idx_to_id.lock().unwrap(),
+            &self.inner.container_id_to_idx.lock().unwrap(),
         )
     }
 
@@ -624,16 +643,35 @@ fn get_depth(
     target: ContainerIdx,
     depth: &mut Vec<Option<NonZeroU16>>,
     parents: &FxHashMap<ContainerIdx, Option<ContainerIdx>>,
+    parent_resolver: &Option<Arc<ParentResolver>>,
+    idx_to_id: &Vec<ContainerID>,
+    id_to_idx: &FxHashMap<ContainerID, ContainerIdx>,
 ) -> Option<NonZeroU16> {
     let mut d = depth[target.to_index() as usize];
     if d.is_some() {
         return d;
     }
 
-    let parent = parents.get(&target)?;
+    let parent: Option<ContainerIdx> = if let Some(p) = parents.get(&target) {
+        *p
+    } else {
+        let id = idx_to_id.get(target.to_index() as usize).unwrap();
+        if id.is_root() {
+            None
+        } else if let Some(parent_resolver) = parent_resolver.as_ref() {
+            let parent_id = parent_resolver(id.clone())?;
+            let parent_idx = id_to_idx.get(&parent_id).unwrap();
+            Some(*parent_idx)
+        } else {
+            return None;
+        }
+    };
+
     match parent {
         Some(p) => {
-            d = NonZeroU16::new(get_depth(*p, depth, parents)?.get() + 1);
+            d = NonZeroU16::new(
+                get_depth(p, depth, parents, parent_resolver, idx_to_id, id_to_idx)?.get() + 1,
+            );
             depth[target.to_index() as usize] = d;
         }
         None => {
