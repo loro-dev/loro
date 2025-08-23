@@ -5236,6 +5236,9 @@ fn js_to_export_mode(js_mode: JsExportMode) -> JsResult<ExportMode<'static>> {
             let spans: js_sys::Array = spans.dyn_into()?;
             let mut rust_spans = Vec::new();
             for span in spans.iter() {
+                if !span.is_object() {
+                    return Err(JsError::new("Each span must be an object").into());
+                }
                 let id = js_sys::Reflect::get(&span, &JsValue::from_str("id"))?;
                 let len = js_sys::Reflect::get(&span, &JsValue::from_str("len"))?
                     .as_f64()

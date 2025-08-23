@@ -89,6 +89,9 @@ pub(crate) fn js_to_container(js: JsContainer) -> Result<Container, JsValue> {
 
 pub(crate) fn js_to_id_span(js: JsIdSpan) -> Result<IdSpan, JsValue> {
     let value: JsValue = js.into();
+    if !value.is_object() {
+        return Err(JsValue::from_str("IdSpan must be an object"));
+    }
     let peer = Reflect::get(&value, &JsValue::from_str("peer"))?
         .as_string()
         .unwrap()
