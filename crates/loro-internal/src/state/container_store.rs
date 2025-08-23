@@ -171,6 +171,10 @@ impl ContainerStore {
         self.store.get_kv_clone()
     }
 
+    pub fn contains_id(&mut self, id: &ContainerID) -> bool {
+        self.store.contains_id(id)
+    }
+
     pub fn iter_all_containers(
         &mut self,
     ) -> impl Iterator<Item = (&ContainerIdx, &mut ContainerWrapper)> {

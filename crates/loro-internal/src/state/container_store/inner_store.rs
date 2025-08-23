@@ -77,9 +77,9 @@ impl InnerStore {
 
     pub(crate) fn get_mut(&mut self, idx: ContainerIdx) -> Option<&mut ContainerWrapper> {
         if let std::collections::hash_map::Entry::Vacant(e) = self.store.entry(idx) {
-            let id = self.arena.get_container_id(idx).unwrap();
-            let key = id.to_bytes();
             if !self.all_loaded {
+                let id = self.arena.get_container_id(idx).unwrap();
+                let key = id.to_bytes();
                 if let Some(v) = self.kv.get(&key) {
                     let c = ContainerWrapper::new_from_bytes(v);
                     e.insert(c);
@@ -88,6 +88,26 @@ impl InnerStore {
         }
 
         self.store.get_mut(&idx)
+    }
+
+    pub(crate) fn contains_id(&mut self, id: &ContainerID) -> bool {
+        if let Some(idx) = self.arena.id_to_idx(id) {
+            if self.store.contains_key(&idx) {
+                return true;
+            }
+        }
+
+        if !self.all_loaded {
+            let key = id.to_bytes();
+            if let Some(v) = self.kv.get(&key) {
+                let idx = self.arena.register_container(id);
+                let c = ContainerWrapper::new_from_bytes(v);
+                self.store.insert(idx, c);
+                return true;
+            }
+        }
+
+        false
     }
 
     pub(crate) fn iter_all_containers_mut(

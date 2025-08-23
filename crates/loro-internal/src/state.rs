@@ -737,9 +737,18 @@ impl DocState {
         self.store.iter_all_containers()
     }
 
-    pub fn does_container_exist(&self, id: &ContainerID) -> bool {
-        // TODO: we may need a better way to handle this in the future when we need to enable fully lazy loading on state
-        self.arena.id_to_idx(id).is_some()
+    pub fn does_container_exist(&mut self, id: &ContainerID) -> bool {
+        // A container may exist even if not yet registered in the arena.
+        // Check arena first, then fall back to KV presence in the store.
+        if id.is_root() {
+            return true;
+        }
+
+        if self.arena.id_to_idx(id).is_some() {
+            return true;
+        }
+
+        self.store.contains_id(id)
     }
 
     pub(crate) fn init_container(
@@ -918,7 +927,8 @@ impl DocState {
             }
             ContainerIdRaw::Normal { id: _ } => {
                 cid = id.with_type(kind);
-                self.arena.id_to_idx(&cid)
+                // For normal IDs, registration can be lazy; ensure it's registered.
+                Some(self.arena.register_container(&cid))
             }
         };
 
@@ -1311,9 +1321,16 @@ impl DocState {
             return true;
         }
 
-        let Some(mut idx) = self.arena.id_to_idx(id) else {
-            return false;
-        };
+        // If not registered yet, check KV presence, then register lazily
+        if self.arena.id_to_idx(id).is_none() {
+            if !self.does_container_exist(id) {
+                return false;
+            }
+            // Ensure it is registered so ancestor walk can resolve parents via resolver
+            self.arena.register_container(id);
+        }
+
+        let mut idx = self.arena.id_to_idx(id).unwrap();
         loop {
             let id = self.arena.idx_to_id(idx).unwrap();
             if let Some(parent_idx) = self.arena.get_parent(idx) {
