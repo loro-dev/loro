@@ -714,31 +714,37 @@ impl LoroDoc {
                     .map(|id| js_id_to_id(id).unwrap())
                     .collect::<Vec<_>>(),
                 &mut |meta| {
-                    let res = observer
-                        .call1(
-                            &ChangeMeta {
-                                lamport: meta.lamport,
-                                length: meta.len as u32,
-                                peer: meta.id.peer.to_string(),
-                                counter: meta.id.counter,
-                                deps: meta
-                                    .deps
-                                    .iter()
-                                    .map(|id| StringID {
-                                        peer: id.peer.to_string(),
-                                        counter: id.counter,
-                                    })
-                                    .collect(),
-                                timestamp: meta.timestamp as f64,
-                                message: meta.message,
-                            }
-                            .to_js(),
-                        )
-                        .unwrap();
-                    if res.as_bool().unwrap() {
-                        ControlFlow::Continue(())
-                    } else {
-                        ControlFlow::Break(())
+                    let res = observer.call1(
+                        &ChangeMeta {
+                            lamport: meta.lamport,
+                            length: meta.len as u32,
+                            peer: meta.id.peer.to_string(),
+                            counter: meta.id.counter,
+                            deps: meta
+                                .deps
+                                .iter()
+                                .map(|id| StringID {
+                                    peer: id.peer.to_string(),
+                                    counter: id.counter,
+                                })
+                                .collect(),
+                            timestamp: meta.timestamp as f64,
+                            message: meta.message,
+                        }
+                        .to_js(),
+                    );
+
+                    match res {
+                        Ok(v) => match v.as_bool() {
+                            Some(true) => ControlFlow::Continue(()),
+                            Some(false) => ControlFlow::Break(()),
+                            None => ControlFlow::Continue(()),
+                        },
+                        Err(e) => {
+                            // Defer the exception to avoid breaking invariants/panicking
+                            throw_error_after_micro_task(e);
+                            ControlFlow::Continue(())
+                        }
                     }
                 },
             )
@@ -2362,11 +2368,17 @@ impl LoroText {
         };
         let context = JsValue::NULL;
         self.handler.iter(|c| {
-            let result = callback.call1(&context, &JsValue::from(c)).unwrap();
-            match result.as_bool() {
-                Some(true) => true,
-                Some(false) => false,
-                None => true,
+            match callback.call1(&context, &JsValue::from(c)) {
+                Ok(result) => match result.as_bool() {
+                    Some(true) => true,
+                    Some(false) => false,
+                    None => true,
+                },
+                Err(e) => {
+                    // Defer the exception and continue iteration by default
+                    throw_error_after_micro_task(e);
+                    true
+                }
             }
         });
         Ok(())
