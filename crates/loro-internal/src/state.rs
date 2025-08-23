@@ -1756,7 +1756,8 @@ fn trigger_on_new_container(
             for item in tree.iter() {
                 if matches!(item.action, TreeExternalDiff::Create { .. }) {
                     let id = item.target.associated_meta_container();
-                    listener(arena.id_to_idx(&id).unwrap());
+                    // Ensure registration instead of assuming it's already in arena
+                    listener(arena.register_container(&id));
                 }
             }
         }
