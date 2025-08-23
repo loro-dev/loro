@@ -15,7 +15,7 @@ use fuzz::{
         FuzzTarget,
         FuzzValue::*,
     },
-    test_multi_sites_on_one_doc, test_multi_sites_with_gc,
+    fuzz_local_events, test_multi_sites_on_one_doc, test_multi_sites_with_gc,
 };
 use loro::{ContainerType::*, LoroCounter, LoroDoc};
 use std::sync::Arc;
@@ -28,6 +28,103 @@ fn init() {
 #[test]
 fn test_empty() {
     test_multi_sites(5, vec![FuzzTarget::All], &mut [])
+}
+
+#[test]
+fn test_local_events() {
+    fuzz_local_events(vec![
+        Handle {
+            site: 0,
+            target: 41,
+            container: 41,
+            action: Generic(GenericAction {
+                value: I32(690563369),
+                bool: false,
+                key: 690563369,
+                pos: 2965947086361143609,
+                length: 18099404129232824617,
+                prop: 2968762758841575935,
+            }),
+        },
+        Handle {
+            site: 41,
+            target: 41,
+            container: 41,
+            action: Generic(GenericAction {
+                value: Container(Map),
+                bool: true,
+                key: 690563369,
+                pos: 2965947086361143593,
+                length: 2965102661431011625,
+                prop: 2965955882468245289,
+            }),
+        },
+        Handle {
+            site: 41,
+            target: 41,
+            container: 41,
+            action: Generic(GenericAction {
+                value: I32(690563377),
+                bool: true,
+                key: 690563369,
+                pos: 13630471003437607209,
+                length: 3314694582505646377,
+                prop: 2968480364755879931,
+            }),
+        },
+        Handle {
+            site: 41,
+            target: 41,
+            container: 41,
+            action: Generic(GenericAction {
+                value: Container(Unknown(248)),
+                bool: true,
+                key: 13642025,
+                pos: 2965947086361143595,
+                length: 2965947086361143593,
+                prop: 2965102661431011625,
+            }),
+        },
+        Handle {
+            site: 41,
+            target: 41,
+            container: 41,
+            action: Generic(GenericAction {
+                value: I32(690563369),
+                bool: false,
+                key: 4294966062,
+                pos: 2965947086495361535,
+                length: 18446507855493802281,
+                prop: 2965947086361667881,
+            }),
+        },
+        Handle {
+            site: 41,
+            target: 41,
+            container: 41,
+            action: Generic(GenericAction {
+                value: I32(2697513),
+                bool: false,
+                key: 4294967291,
+                pos: 2965947086361667881,
+                length: 3026418026865568041,
+                prop: 2965947086361145641,
+            }),
+        },
+        Handle {
+            site: 41,
+            target: 41,
+            container: 9,
+            action: Generic(GenericAction {
+                value: Container(Text),
+                bool: false,
+                key: 0,
+                pos: 2097833001424519168,
+                length: 2422243613,
+                prop: 0,
+            }),
+        },
+    ])
 }
 
 #[test]

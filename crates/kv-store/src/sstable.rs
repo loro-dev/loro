@@ -325,7 +325,7 @@ impl SsTable {
         self.data.clone()
     }
 
-    pub fn iter(&self) -> SsTableIter {
+    pub fn iter(&self) -> SsTableIter<'_> {
         SsTableIter::new(self)
     }
 

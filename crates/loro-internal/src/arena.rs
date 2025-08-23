@@ -152,7 +152,7 @@ impl SharedArena {
         f(&mut guards);
     }
 
-    fn get_arena_guards(&self) -> ArenaGuards {
+    fn get_arena_guards(&self) -> ArenaGuards<'_> {
         ArenaGuards {
             container_id_to_idx: self.inner.container_id_to_idx.lock().unwrap(),
             container_idx_to_id: self.inner.container_idx_to_id.lock().unwrap(),

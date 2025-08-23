@@ -34,7 +34,9 @@ export function syncLoroVersion(
     writeFileSync(versionFilePath, packageVersion);
     console.log(`Updated version file to ${packageVersion}`);
     if (checkVersion && checkVersion !== packageVersion) {
-      throw new Error(`Version mismatch: Expected version ${checkVersion} but found ${packageVersion} in package.json and ${versionFileVersion} in VERSION file`)
+      throw new Error(
+        `Version mismatch: Expected version ${checkVersion} but found ${packageVersion} in package.json and ${versionFileVersion} in VERSION file`,
+      );
     }
   } else if (comparison < 0) {
     // version file version is higher
@@ -42,12 +44,16 @@ export function syncLoroVersion(
     writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2) + "\n");
     console.log(`Updated package.json to ${versionFileVersion}`);
     if (checkVersion && checkVersion !== versionFileVersion) {
-      throw new Error(`Version mismatch: Expected version ${checkVersion} but found ${packageVersion} in package.json and ${versionFileVersion} in VERSION file`)
+      throw new Error(
+        `Version mismatch: Expected version ${checkVersion} but found ${packageVersion} in package.json and ${versionFileVersion} in VERSION file`,
+      );
     }
   } else {
     console.log("Versions are already in sync");
     if (checkVersion && checkVersion !== versionFileVersion) {
-      throw new Error(`Version mismatch: Expected version ${checkVersion} but found ${packageVersion} in package.json and ${versionFileVersion} in VERSION file`)
+      throw new Error(
+        `Version mismatch: Expected version ${checkVersion} but found ${packageVersion} in package.json and ${versionFileVersion} in VERSION file`,
+      );
     }
   }
 }
@@ -55,8 +61,8 @@ export function syncLoroVersion(
 export function runSyncLoroVersion(checkVersion: string = "") {
   syncLoroVersion(
     "./crates/loro-wasm/package.json",
-    "./crates/loro-internal/VERSION",
-    checkVersion
+    "./crates/loro-wasm/VERSION",
+    checkVersion,
   );
 }
 

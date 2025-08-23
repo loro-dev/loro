@@ -291,8 +291,8 @@ impl EphemeralStoreWasm {
         self.inner.encode_all()
     }
 
-    pub fn apply(&self, data: &[u8]) {
-        self.inner.apply(data);
+    pub fn apply(&self, data: &[u8]) -> Result<(), JsValue> {
+        self.inner.apply(data).map_err(|e| JsValue::from_str(&e))
     }
 
     pub fn removeOutdated(&self) {

@@ -303,7 +303,7 @@ impl OpLog {
         self.uncommitted_change = Some(change);
     }
 
-    pub(crate) fn get_uncommitted_change_in_span(&self, id_span: IdSpan) -> Option<Cow<Change>> {
+    pub(crate) fn get_uncommitted_change_in_span(&self, id_span: IdSpan) -> Option<Cow<'_, Change>> {
         self.uncommitted_change.as_ref().and_then(|c| {
             if c.id_span() == id_span {
                 Some(Cow::Borrowed(c))

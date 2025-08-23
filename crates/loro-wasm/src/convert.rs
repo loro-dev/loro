@@ -410,7 +410,7 @@ fn map_delta_to_js(value: &ResolvedMapDelta, for_json: bool) -> JsValue {
                 ValueOrHandler::Handler(h) => handler_to_js_value(h, for_json),
             }
         } else {
-            JsValue::null()
+            JsValue::undefined()
         };
 
         js_sys::Reflect::set(&obj, &JsValue::from_str(key), &value).unwrap();

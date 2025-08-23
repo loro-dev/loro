@@ -49,6 +49,12 @@ test = false
 doc = false
 
 [[bin]]
+name = "local_events"
+path = "fuzz_targets/local_events.rs"
+test = false
+doc = false
+
+[[bin]]
 name = "tree"
 path = "fuzz_targets/tree.rs"
 test = false

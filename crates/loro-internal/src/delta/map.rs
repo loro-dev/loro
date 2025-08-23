@@ -79,6 +79,7 @@ impl<T> MapDiff<T> {
 }
 
 #[derive(Clone, Debug, Serialize)]
+#[allow(dead_code)]
 pub struct MapDiffRaw<T> {
     pub(crate) added: FxHashMap<InternalString, T>,
     pub(crate) deleted: FxHashSet<InternalString>,
