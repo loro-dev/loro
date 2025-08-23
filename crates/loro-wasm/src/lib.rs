@@ -313,6 +313,9 @@ fn peer_id_to_js(peer: PeerID) -> JsStrPeerID {
 }
 
 fn js_id_to_id(id: JsID) -> Result<ID, JsValue> {
+    if !id.is_object() {
+        return Err(JsError::new("ID must be an object with { peer, counter }").into());
+    }
     let peer = js_peer_to_peer(Reflect::get(&id, &"peer".into())?)?;
     let counter = Reflect::get(&id, &"counter".into())?.as_f64().unwrap() as Counter;
     let id = ID::new(peer, counter);
@@ -503,6 +506,9 @@ impl LoroDoc {
     /// ```
     #[wasm_bindgen(js_name = "configTextStyle")]
     pub fn config_text_style(&self, styles: JsTextStyles) -> JsResult<()> {
+        if !styles.is_object() {
+            return Err(JsError::new("Text style config must be an object").into());
+        }
         let mut style_config = StyleConfigMap::new();
         // read key value pair in styles
         for key in Reflect::own_keys(&styles)?.iter() {
@@ -4347,7 +4353,11 @@ impl LoroTree {
         let with_deleted = if options.is_undefined() {
             false
         } else {
-            Reflect::get(&options.into(), &JsValue::from_str("withDeleted"))?
+            let obj_val: JsValue = options.into();
+            if !obj_val.is_object() {
+                return Err(JsError::new("getNodes options must be an object").into());
+            }
+            Reflect::get(&obj_val, &JsValue::from_str("withDeleted"))?
                 .as_bool()
                 .unwrap_or(false)
         };
@@ -5192,6 +5202,9 @@ pub fn decode_import_blob_meta(
 
 fn js_to_export_mode(js_mode: JsExportMode) -> JsResult<ExportMode<'static>> {
     let js_value: JsValue = js_mode.into();
+    if !js_value.is_object() {
+        return Err(JsError::new("export options must be an object").into());
+    }
     let mode = js_sys::Reflect::get(&js_value, &JsValue::from_str("mode"))?
         .as_string()
         .ok_or_else(|| JsError::new("Invalid mode"))?;
