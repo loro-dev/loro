@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.13
+
+### Patch Changes
+
+- 578bfe3: fix(undo): should not transform cursors w/o id #785
+
 ## 1.5.12
 
 ### Patch Changes
