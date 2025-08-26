@@ -98,9 +98,19 @@ fn transform_cursor(
     doc: &LoroDoc,
     container_remap: &FxHashMap<ContainerID, ContainerID>,
 ) {
+    let mut container_changed = false;
     let mut cid = &cursor_with_pos.cursor.container;
     while let Some(new_cid) = container_remap.get(cid) {
         cid = new_cid;
+        container_changed = true;
+    }
+
+    if cursor_with_pos.cursor.id.is_none() {
+        // We don't need to transform a cursor that always points to the leftmost or rightmost position
+        if container_changed {
+            cursor_with_pos.cursor.container = cid.clone();
+        }
+        return;
     }
 
     if let Some(diff) = remote_diff.cid_to_events.get(cid) {
