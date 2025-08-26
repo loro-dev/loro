@@ -197,6 +197,15 @@ impl SharedArena {
         lock.get(idx.to_index() as usize).cloned()
     }
 
+    /// Fast map from `ContainerID` to `ContainerIdx` for containers already registered
+    /// in the arena.
+    ///
+    /// Important: This is not an existence check. Absence here does not imply that a
+    /// container does not exist, since registration can be lazy and containers may
+    /// be persisted only in the state KV store until first use.
+    ///
+    /// For existence-aware lookup that consults persisted state and performs lazy
+    /// registration, prefer `DocState::resolve_idx`.
     pub fn id_to_idx(&self, id: &ContainerID) -> Option<ContainerIdx> {
         self.inner
             .container_id_to_idx
