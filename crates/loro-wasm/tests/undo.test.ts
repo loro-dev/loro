@@ -205,11 +205,11 @@ describe("undo", () => {
     const undo = new UndoManager(doc, {
       mergeInterval: 0,
       onPop: (isUndo, value, counterRange) => {
-        poppedCursors = value.cursors
+        poppedCursors = value.cursors;
       },
       onPush: () => {
         return { value: null, cursors: cursors };
-      }
+      },
     });
 
     doc.getText("text").insert(0, "hello world");
@@ -217,17 +217,19 @@ describe("undo", () => {
     cursors = [
       doc.getText("text").getCursor(0)!,
       doc.getText("text").getCursor(5)!,
+      doc.getText("text").getCursor(100)!,
     ];
     doc.getText("text").delete(0, 6);
     doc.commit();
     expect(poppedCursors.length).toBe(0);
     undo.undo();
-    expect(poppedCursors.length).toBe(2);
+    expect(poppedCursors.length).toBe(3);
     expect(doc.toJSON()).toStrictEqual({
       text: "hello world",
     });
     expect(doc.getCursorPos(poppedCursors[0]).offset).toBe(0);
     expect(doc.getCursorPos(poppedCursors[1]).offset).toBe(5);
+    expect(doc.getCursorPos(poppedCursors[2]).offset).toBe(11);
   });
 
   test("it can retrieve event in onPush event", async () => {
@@ -241,23 +243,23 @@ describe("undo", () => {
         expect(event?.origin).toBe("test");
         ran = true;
         return { value: null, cursors: [] };
-      }
+      },
     });
 
     doc.getText("text").insert(0, "hello");
     doc.commit({ origin: "test" });
     await new Promise((r) => setTimeout(r, 1));
     expect(ran).toBeTruthy();
-  })
+  });
 
-  test('should automatically push to undo stack', async () => {
+  test("should automatically push to undo stack", async () => {
     const doc = new LoroDoc();
     let counter = 0;
     new UndoManager(doc, {
       onPush: () => {
         counter += 1;
         return { value: null, cursors: [] };
-      }
+      },
     });
 
     doc.getText("text").insert(0, "hello");
@@ -269,8 +271,8 @@ describe("undo", () => {
     expect(counter).toBe(2);
   });
 
-  test('should group together local changes', async () => {
-    const doc = new LoroDoc()
+  test("should group together local changes", async () => {
+    const doc = new LoroDoc();
     const undoManager = new UndoManager(doc, {});
     const text = doc.getText("text");
 
@@ -287,10 +289,9 @@ describe("undo", () => {
     undoManager.undo();
 
     expect(text.toString()).toBe("");
-  })
+  });
 
-
-  test('should groups should split on conflicting remote changes', async () => {
+  test("should groups should split on conflicting remote changes", async () => {
     const doc = new LoroDoc();
     const undoManager = new UndoManager(doc, {});
 
@@ -302,13 +303,13 @@ describe("undo", () => {
     text.update("hello world", undefined);
     doc.commit();
 
-    let snapshot = doc.export({ mode: "snapshot"});
+    let snapshot = doc.export({ mode: "snapshot" });
 
     const doc2 = new LoroDoc();
     doc2.import(snapshot);
     doc2.getText("text").update("hello world world", undefined);
     doc2.commit();
-    const update = doc2.export({ mode: "update"});
+    const update = doc2.export({ mode: "update" });
 
     doc.import(update);
 
@@ -321,9 +322,9 @@ describe("undo", () => {
     undoManager.undo();
 
     expect(text.toString()).toBe("hello world world");
-  })
+  });
 
-  test('should groups should not split on non-conflicting remote changes', async () => {
+  test("should groups should not split on non-conflicting remote changes", async () => {
     const doc = new LoroDoc();
     const undoManager = new UndoManager(doc, {});
     undoManager.groupStart();
@@ -334,13 +335,13 @@ describe("undo", () => {
     text.update("hello world", undefined);
     doc.commit();
 
-    let snapshot = doc.export({ mode: "snapshot"});
+    let snapshot = doc.export({ mode: "snapshot" });
 
     const doc2 = new LoroDoc();
     doc2.import(snapshot);
     doc2.getText("text2").update("hello world world", undefined);
     doc2.commit();
-    const update = doc2.export({ mode: "update"});
+    const update = doc2.export({ mode: "update" });
 
     doc.import(update);
 
@@ -353,6 +354,5 @@ describe("undo", () => {
     undoManager.undo();
 
     expect(text.toString()).toBe("");
-  })
-
+  });
 });
