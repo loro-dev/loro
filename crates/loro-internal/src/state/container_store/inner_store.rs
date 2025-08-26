@@ -13,6 +13,8 @@ use super::ContainerWrapper;
 ///
 /// - `kv` is either the same or older than `store`.
 /// - if `all_loaded` is true, then `store` contains all the entries from `kv`
+///
+/// Invariants: it should be agnostic to the users of this struct whether a container is stored in `kv` or `store`
 pub(crate) struct InnerStore {
     arena: SharedArena,
     store: FxHashMap<ContainerIdx, ContainerWrapper>,
