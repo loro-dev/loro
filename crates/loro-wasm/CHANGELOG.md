@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.6.0
+
+### Minor Changes
+
+- 8c898ee: Perf: faster snapshot import speed
+
 ## 1.5.13
 
 ### Patch Changes
