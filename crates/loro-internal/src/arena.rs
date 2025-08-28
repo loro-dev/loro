@@ -1,16 +1,6 @@
 mod str_arena;
-
-use std::{
-    num::NonZeroU16,
-    ops::{Range, RangeBounds},
-    sync::Arc,
-};
-
+use self::str_arena::StrArena;
 use crate::sync::{Mutex, MutexGuard};
-use append_only_bytes::BytesSlice;
-use fxhash::FxHashMap;
-use loro_common::PeerID;
-
 use crate::{
     change::Lamport,
     container::{
@@ -23,10 +13,20 @@ use crate::{
     op::{InnerContent, ListSlice, Op, RawOp, RawOpContent, SliceRange},
     LoroValue,
 };
+use append_only_bytes::BytesSlice;
+use fxhash::FxHashMap;
+use loro_common::PeerID;
+use std::fmt;
+use std::{
+    num::NonZeroU16,
+    ops::{Range, RangeBounds},
+    sync::Arc,
+};
 
-use self::str_arena::StrArena;
+pub(crate) struct LoadAllFlag;
+type ParentResolver = dyn Fn(ContainerID) -> Option<ContainerID> + Send + Sync + 'static;
 
-#[derive(Default, Debug)]
+#[derive(Default)]
 struct InnerSharedArena {
     // The locks should not be exposed outside this file.
     // It might be better to use RwLock in the future
@@ -39,6 +39,24 @@ struct InnerSharedArena {
     values: Mutex<Vec<LoroValue>>,
     root_c_idx: Mutex<Vec<ContainerIdx>>,
     str: Arc<Mutex<StrArena>>,
+    /// Optional resolver used when querying parent for a container that has not been registered yet.
+    /// If set, `get_parent` will try this resolver to lazily fetch and register the parent.
+    parent_resolver: Mutex<Option<Arc<ParentResolver>>>,
+}
+
+impl fmt::Debug for InnerSharedArena {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("InnerSharedArena")
+            .field("container_idx_to_id", &"<Mutex<_>>")
+            .field("depth", &"<Mutex<_>>")
+            .field("container_id_to_idx", &"<Mutex<_>>")
+            .field("parents", &"<Mutex<_>>")
+            .field("values", &"<Mutex<_>>")
+            .field("root_c_idx", &"<Mutex<_>>")
+            .field("str", &"<Arc<Mutex<_>>>")
+            .field("parent_resolver", &"<Mutex<Option<...>>>")
+            .finish()
+    }
 }
 
 /// This is shared between [OpLog] and [AppState].
@@ -62,6 +80,7 @@ pub(crate) struct ArenaGuards<'a> {
     depth: MutexGuard<'a, Vec<Option<NonZeroU16>>>,
     parents: MutexGuard<'a, FxHashMap<ContainerIdx, Option<ContainerIdx>>>,
     root_c_idx: MutexGuard<'a, Vec<ContainerIdx>>,
+    parent_resolver: MutexGuard<'a, Option<Arc<ParentResolver>>>,
 }
 
 impl ArenaGuards<'_> {
@@ -89,7 +108,14 @@ impl ArenaGuards<'_> {
 
         match parent {
             Some(p) => {
-                if let Some(d) = get_depth(p, &mut self.depth, &self.parents) {
+                if let Some(d) = get_depth(
+                    p,
+                    &mut self.depth,
+                    &self.parents,
+                    &self.parent_resolver,
+                    &self.container_idx_to_id,
+                    &self.container_id_to_idx,
+                ) {
                     self.depth[child.to_index() as usize] = NonZeroU16::new(d.get() + 1);
                 } else {
                     self.depth[child.to_index() as usize] = None;
@@ -124,6 +150,7 @@ impl SharedArena {
                 values: Mutex::new(self.inner.values.lock().unwrap().clone()),
                 root_c_idx: Mutex::new(self.inner.root_c_idx.lock().unwrap().clone()),
                 str: self.inner.str.clone(),
+                parent_resolver: Mutex::new(self.inner.parent_resolver.lock().unwrap().clone()),
             }),
         }
     }
@@ -140,6 +167,7 @@ impl SharedArena {
             depth: self.inner.depth.lock().unwrap(),
             parents: self.inner.parents.lock().unwrap(),
             root_c_idx: self.inner.root_c_idx.lock().unwrap(),
+            parent_resolver: self.inner.parent_resolver.lock().unwrap(),
         }
     }
 
@@ -169,6 +197,15 @@ impl SharedArena {
         lock.get(idx.to_index() as usize).cloned()
     }
 
+    /// Fast map from `ContainerID` to `ContainerIdx` for containers already registered
+    /// in the arena.
+    ///
+    /// Important: This is not an existence check. Absence here does not imply that a
+    /// container does not exist, since registration can be lazy and containers may
+    /// be persisted only in the state KV store until first use.
+    ///
+    /// For existence-aware lookup that consults persisted state and performs lazy
+    /// registration, prefer `DocState::resolve_idx`.
     pub fn id_to_idx(&self, id: &ContainerID) -> Option<ContainerIdx> {
         self.inner
             .container_id_to_idx
@@ -232,7 +269,14 @@ impl SharedArena {
 
         match parent {
             Some(p) => {
-                if let Some(d) = get_depth(p, &mut depth, parents) {
+                if let Some(d) = get_depth(
+                    p,
+                    &mut depth,
+                    parents,
+                    &self.inner.parent_resolver.lock().unwrap(),
+                    &self.inner.container_idx_to_id.lock().unwrap(),
+                    &self.inner.container_id_to_idx.lock().unwrap(),
+                ) {
                     depth[child.to_index() as usize] = NonZeroU16::new(d.get() + 1);
                 } else {
                     depth[child.to_index() as usize] = None;
@@ -284,13 +328,23 @@ impl SharedArena {
             return None;
         }
 
-        self.inner
-            .parents
-            .lock()
-            .unwrap()
-            .get(&child)
-            .copied()
-            .expect("InternalError: Parent is not registered")
+        // Try fast path first
+        if let Some(p) = self.inner.parents.lock().unwrap().get(&child).copied() {
+            return p;
+        }
+
+        // Fallback: try to resolve parent lazily via the resolver if provided.
+        let resolver = self.inner.parent_resolver.lock().unwrap().clone();
+        if let Some(resolver) = resolver {
+            let child_id = self.get_container_id(child).unwrap();
+            if let Some(parent_id) = resolver(child_id.clone()) {
+                let parent_idx = self.register_container(&parent_id);
+                self.set_parent(child, Some(parent_idx));
+                return Some(parent_idx);
+            }
+        }
+
+        panic!("InternalError: Parent is not registered")
     }
 
     /// Call `f` on each ancestor of `container`, including `container` itself.
@@ -495,8 +549,12 @@ impl SharedArena {
             .collect()
     }
 
+    /// Returns all the possible root containers of the docs
+    ///
+    /// We need to load all the cached kv in DocState before we can ensure all root contains are covered.
+    /// So we need the flag type here.
     #[inline]
-    pub fn root_containers(&self) -> Vec<ContainerIdx> {
+    pub(crate) fn root_containers(&self, _f: LoadAllFlag) -> Vec<ContainerIdx> {
         self.inner.root_c_idx.lock().unwrap().clone()
     }
 
@@ -506,6 +564,9 @@ impl SharedArena {
             container,
             &mut self.inner.depth.lock().unwrap(),
             &self.inner.parents.lock().unwrap(),
+            &self.inner.parent_resolver.lock().unwrap(),
+            &self.inner.container_idx_to_id.lock().unwrap(),
+            &self.inner.container_id_to_idx.lock().unwrap(),
         )
     }
 
@@ -591,16 +652,35 @@ fn get_depth(
     target: ContainerIdx,
     depth: &mut Vec<Option<NonZeroU16>>,
     parents: &FxHashMap<ContainerIdx, Option<ContainerIdx>>,
+    parent_resolver: &Option<Arc<ParentResolver>>,
+    idx_to_id: &Vec<ContainerID>,
+    id_to_idx: &FxHashMap<ContainerID, ContainerIdx>,
 ) -> Option<NonZeroU16> {
     let mut d = depth[target.to_index() as usize];
     if d.is_some() {
         return d;
     }
 
-    let parent = parents.get(&target)?;
+    let parent: Option<ContainerIdx> = if let Some(p) = parents.get(&target) {
+        *p
+    } else {
+        let id = idx_to_id.get(target.to_index() as usize).unwrap();
+        if id.is_root() {
+            None
+        } else if let Some(parent_resolver) = parent_resolver.as_ref() {
+            let parent_id = parent_resolver(id.clone())?;
+            let parent_idx = id_to_idx.get(&parent_id).unwrap();
+            Some(*parent_idx)
+        } else {
+            return None;
+        }
+    };
+
     match parent {
         Some(p) => {
-            d = NonZeroU16::new(get_depth(*p, depth, parents)?.get() + 1);
+            d = NonZeroU16::new(
+                get_depth(p, depth, parents, parent_resolver, idx_to_id, id_to_idx)?.get() + 1,
+            );
             depth[target.to_index() as usize] = d;
         }
         None => {
@@ -610,4 +690,19 @@ fn get_depth(
     }
 
     d
+}
+
+impl SharedArena {
+    /// Register or clear a resolver to lazily determine a container's parent when missing.
+    ///
+    /// - The resolver receives the child `ContainerIdx` and returns an optional `ContainerID` of its parent.
+    /// - If the resolver returns `Some`, `SharedArena` will register the parent in the arena and link it.
+    /// - If the resolver is `None` or returns `None`, `get_parent` will panic for non-root containers as before.
+    pub fn set_parent_resolver<F>(&self, resolver: Option<F>)
+    where
+        F: Fn(ContainerID) -> Option<ContainerID> + Send + Sync + 'static,
+    {
+        let mut slot = self.inner.parent_resolver.lock().unwrap();
+        *slot = resolver.map(|f| Arc::new(f) as Arc<ParentResolver>);
+    }
 }

@@ -1069,12 +1069,6 @@ impl LoroDoc {
         self.doc.subscribe_peer_id_change(callback)
     }
 
-    /// Estimate the size of the document states in memory.
-    #[inline]
-    pub fn log_estimate_size(&self) {
-        self.doc.log_estimated_size();
-    }
-
     /// Check the correctness of the document state by comparing it with the state
     /// calculated by applying all the history.
     #[inline]

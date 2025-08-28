@@ -336,7 +336,7 @@ impl SsTable {
     /// - [LoroError::DecodeError]
     ///    - "Invalid magic number"
     ///    - "Invalid schema version"
-    pub fn import_all(bytes: Bytes) -> LoroResult<Self> {
+    pub fn import_all(bytes: Bytes, check_checksum: bool) -> LoroResult<Self> {
         // magic number + schema version + meta offset
         if bytes.len() < SIZE_OF_U32 + SIZE_OF_U8 + SIZE_OF_U32 {
             return Err(LoroError::DecodeError("Invalid sstable bytes".into()));
@@ -364,7 +364,9 @@ impl SsTable {
         }
         let raw_meta = &bytes[meta_offset..data_len - SIZE_OF_U32];
         let meta = BlockMeta::decode_meta(raw_meta)?;
-        Self::check_block_checksum(&meta, &bytes, meta_offset)?;
+        if check_checksum {
+            Self::check_block_checksum(&meta, &bytes, meta_offset)?;
+        }
         let first_key = meta
             .first()
             .map(|m| m.first_key.clone())
@@ -1125,6 +1127,6 @@ mod test {
         let original_table = builder.build();
         let mut buffer = original_table.export_all().to_vec();
         buffer[11] = 123;
-        assert!(SsTable::import_all(buffer.into()).is_err());
+        assert!(SsTable::import_all(buffer.into(), true).is_err());
     }
 }

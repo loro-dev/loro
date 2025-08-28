@@ -12,6 +12,7 @@ pub(crate) struct KvWrapper {
 }
 
 impl Clone for KvWrapper {
+    /// Deep clone the inner kv store.
     fn clone(&self) -> Self {
         Self {
             kv: self.kv.lock().unwrap().clone_store(),
@@ -27,6 +28,12 @@ impl KvWrapper {
                 // set false because it's depended by GC snapshot's import & export
                 MemKvConfig::default().should_encode_none(false),
             ))),
+        }
+    }
+
+    pub fn arc_clone(&self) -> Self {
+        Self {
+            kv: self.kv.clone(),
         }
     }
 

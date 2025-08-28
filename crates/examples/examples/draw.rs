@@ -148,7 +148,6 @@ fn run_realtime_collab(peer_num: usize, action_num: usize, seed: u64) -> BenchRe
     doc.import(&updates).unwrap();
     let decode_update_duration = start.elapsed().as_secs_f64() * 1000.;
     let json_len = doc.get_deep_value().to_json().len();
-    doc.log_estimate_size();
 
     BenchResult {
         task: "realtime draw",
