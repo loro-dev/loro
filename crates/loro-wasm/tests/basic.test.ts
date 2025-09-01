@@ -1708,3 +1708,17 @@ it("update text after switching to a version", () => {
   newDoc.setDetachedEditing(true);
   newDoc.getText("text").update("123");
 });
+
+it("tree deleted node to json", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId(1);
+  const tree = doc.getTree("tree");
+  const root = tree.createNode();
+  tree.delete(root.id);
+  doc.commit();
+  const node = tree.getNodes({ withDeleted: true })[0].toJSON();
+  expect(node.parent).toBe('2147483647@18446744073709551615');
+  // default value
+  expect(node.fractionalIndex).toBe('80');
+  expect(node.index).toBe(0);
+});
