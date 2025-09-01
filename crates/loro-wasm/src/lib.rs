@@ -4120,8 +4120,11 @@ impl LoroTreeNode {
         let node = TreeNodeWithChildren {
             id: self.id,
             parent: self.tree.get_node_parent(&self.id).unwrap(),
-            fractional_index: self.tree.get_position_by_tree_id(&self.id).unwrap(),
-            index: self.tree.get_index_by_tree_id(&self.id).unwrap(),
+            fractional_index: self
+                .tree
+                .get_position_by_tree_id(&self.id)
+                .unwrap_or_default(),
+            index: self.tree.get_index_by_tree_id(&self.id).unwrap_or(0),
             children: value,
         };
         LoroTree {
