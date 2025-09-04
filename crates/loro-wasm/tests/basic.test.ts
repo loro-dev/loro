@@ -20,6 +20,7 @@ import {
   LoroCounter,
   JsonDiff,
   redactJsonUpdates,
+  UndoManager,
 } from "../bundler/index";
 
 it("basic example", () => {
@@ -143,6 +144,46 @@ describe("map", () => {
     map.set("key", 2147483699);
     expect(map.get("key")).toBe(2147483699);
   });
+});
+
+it("top undo/redo values", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId(1);
+
+  let lastCommitLabel: string | null = null;
+  let lastPoppedLabel: string | null = null;
+
+  const undo = new UndoManager(doc, {
+    mergeInterval: 0,
+    onPush: (isUndo: boolean) => {
+      // For normal commits (Undo stack), use the label set before commit.
+      // For opposite pushes (Redo stack), reuse the last popped label.
+      const value = isUndo ? lastCommitLabel : lastPoppedLabel;
+      return { value, cursors: [] };
+    },
+    onPop: (_isUndo: boolean, meta: { value: unknown }) => {
+      // Remember last popped label so we can assign it to the opposite stack item.
+      lastPoppedLabel = meta.value as string | null;
+    },
+  });
+
+  // 1st commit
+  doc.getText("text").insert(0, "A");
+  lastCommitLabel = 'Insert "A"';
+  doc.commit();
+  expect(undo.topUndoValue()).toBe('Insert "A"');
+  expect(undo.topRedoValue()).toBe(undefined);
+
+  // 2nd commit
+  doc.getText("text").insert(1, "B");
+  lastCommitLabel = 'Insert "B"';
+  doc.commit();
+  expect(undo.topUndoValue()).toBe('Insert "B"');
+
+  // Undo once: the popped undo label should appear as the redo top value
+  undo.undo();
+  expect(undo.topRedoValue()).toBe('Insert "B"');
+  expect(undo.topUndoValue()).toBe('Insert "A"');
 });
 
 describe("import", () => {
