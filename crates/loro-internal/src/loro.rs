@@ -208,7 +208,12 @@ impl LoroDoc {
     /// It only returns Some(options_of_the_empty_txn) when the txn is empty
     #[inline]
     #[must_use]
-    pub fn commit_then_stop(&self) -> (Option<CommitOptions>, LoroMutexGuard<'_, Option<Transaction>>) {
+    pub fn commit_then_stop(
+        &self,
+    ) -> (
+        Option<CommitOptions>,
+        LoroMutexGuard<'_, Option<Transaction>>,
+    ) {
         let (a, b) = self.commit_with(CommitOptions::new().immediate_renew(false));
         (a, b.unwrap())
     }
@@ -1176,13 +1181,12 @@ impl LoroDoc {
         });
 
         let (options, txn) = self.commit_then_stop();
-        drop(txn);
         let is_detached = self.is_detached();
-        self.detach();
+        self.set_detached(true);
         self.oplog.lock().unwrap().batch_importing = true;
         let mut err = None;
         for (_meta, data) in meta_arr {
-            match self.import(data) {
+            match self._import_with(data, Default::default()) {
                 Ok(s) => {
                     for (peer, (start, end)) in s.success.iter() {
                         match success.0.entry(*peer) {
@@ -1218,9 +1222,10 @@ impl LoroDoc {
         let mut oplog = self.oplog.lock().unwrap();
         oplog.batch_importing = false;
         drop(oplog);
-
         if !is_detached {
-            self.checkout_to_latest();
+            self._checkout_to_latest_with_guard(txn);
+        } else {
+            drop(txn);
         }
 
         self.renew_txn_if_auto_commit(options);
@@ -1267,6 +1272,16 @@ impl LoroDoc {
         self._checkout_to_latest_without_commit(true);
         drop(_guard);
         self.renew_txn_if_auto_commit(options);
+    }
+
+    fn _checkout_to_latest_with_guard(&self, guard: LoroMutexGuard<Option<Transaction>>) {
+        if !self.is_detached() {
+            self._renew_txn_if_auto_commit_with_guard(None, guard);
+            return;
+        }
+
+        self._checkout_to_latest_without_commit(true);
+        self._renew_txn_if_auto_commit_with_guard(None, guard);
     }
 
     /// NOTE: The caller of this method should ensure the txn is locked and set to None

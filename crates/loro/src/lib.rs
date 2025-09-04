@@ -112,6 +112,10 @@ impl Default for LoroDoc {
 }
 
 impl Clone for LoroDoc {
+    /// This creates a reference clone, not a deep clone. The cloned doc will share the same
+    /// underlying doc as the original one.
+    ///
+    /// For deep clone, please use the `.fork()` method.
     fn clone(&self) -> Self {
         let doc = self.doc.clone();
         LoroDoc::_new(doc)
