@@ -1,6 +1,6 @@
 [package]
 name = "loro"
-version = "1.6.0"
+version = "1.6.1"
 edition = "2021"
 license = "MIT"
 documentation = "https://docs.rs/loro/"
@@ -14,7 +14,7 @@ keywords = ["crdt", "local-first"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-loro-internal = { path = "../loro-internal", version = "1.6.0" }
+loro-internal = { path = "../loro-internal", version = "1.6.1" }
 loro-common = { path = "../loro-common", version = "1.6.0", features = [
     "serde_json",
 ] }
