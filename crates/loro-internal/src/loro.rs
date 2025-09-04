@@ -1181,6 +1181,29 @@ impl LoroDoc {
         });
 
         let (options, txn) = self.commit_then_stop();
+        // Why we should keep locking `txn` here
+        //
+        // In a multi-threaded environment, `import_batch` used to drop the txn lock
+        // (via `commit_then_stop` + `drop(txn)`) and call `detach()`/`checkout_to_latest()`
+        // around the batch import. That created a race where another thread could
+        // start or renew the auto-commit txn and perform local edits while we were
+        // importing and temporarily detached. Those interleaved local edits could
+        // violate invariants between `OpLog` and `DocState` (e.g., state being
+        // updated when we expect it not to, missed events, or inconsistent
+        // frontiers), as exposed by the loom test `local_edits_during_batch_import`.
+        //
+        // The fix is to hold the txn mutex for the entire critical section:
+        // - Stop the current txn and keep the mutex guard.
+        // - Force-detach with `set_detached(true)` (avoids `detach()` side effects),
+        //   then run each `_import_with(...)` while detached so imports only touch
+        //   the `OpLog`.
+        // - After importing, reattach by checking out to latest and renew the txn
+        //   using `_checkout_to_latest_with_guard`, which keeps the mutex held while
+        //   (re)starting the auto-commit txn.
+        //
+        // Holding the lock ensures no concurrent thread can create/renew a txn and
+        // do local edits in the middle of the batch import, making the whole
+        // operation atomic with respect to local edits.
         let is_detached = self.is_detached();
         self.set_detached(true);
         self.oplog.lock().unwrap().batch_importing = true;
