@@ -208,7 +208,12 @@ impl LoroDoc {
     /// It only returns Some(options_of_the_empty_txn) when the txn is empty
     #[inline]
     #[must_use]
-    pub fn commit_then_stop(&self) -> (Option<CommitOptions>, LoroMutexGuard<'_, Option<Transaction>>) {
+    pub fn commit_then_stop(
+        &self,
+    ) -> (
+        Option<CommitOptions>,
+        LoroMutexGuard<'_, Option<Transaction>>,
+    ) {
         let (a, b) = self.commit_with(CommitOptions::new().immediate_renew(false));
         (a, b.unwrap())
     }
@@ -1176,13 +1181,35 @@ impl LoroDoc {
         });
 
         let (options, txn) = self.commit_then_stop();
-        drop(txn);
+        // Why we should keep locking `txn` here
+        //
+        // In a multi-threaded environment, `import_batch` used to drop the txn lock
+        // (via `commit_then_stop` + `drop(txn)`) and call `detach()`/`checkout_to_latest()`
+        // around the batch import. That created a race where another thread could
+        // start or renew the auto-commit txn and perform local edits while we were
+        // importing and temporarily detached. Those interleaved local edits could
+        // violate invariants between `OpLog` and `DocState` (e.g., state being
+        // updated when we expect it not to, missed events, or inconsistent
+        // frontiers), as exposed by the loom test `local_edits_during_batch_import`.
+        //
+        // The fix is to hold the txn mutex for the entire critical section:
+        // - Stop the current txn and keep the mutex guard.
+        // - Force-detach with `set_detached(true)` (avoids `detach()` side effects),
+        //   then run each `_import_with(...)` while detached so imports only touch
+        //   the `OpLog`.
+        // - After importing, reattach by checking out to latest and renew the txn
+        //   using `_checkout_to_latest_with_guard`, which keeps the mutex held while
+        //   (re)starting the auto-commit txn.
+        //
+        // Holding the lock ensures no concurrent thread can create/renew a txn and
+        // do local edits in the middle of the batch import, making the whole
+        // operation atomic with respect to local edits.
         let is_detached = self.is_detached();
-        self.detach();
+        self.set_detached(true);
         self.oplog.lock().unwrap().batch_importing = true;
         let mut err = None;
         for (_meta, data) in meta_arr {
-            match self.import(data) {
+            match self._import_with(data, Default::default()) {
                 Ok(s) => {
                     for (peer, (start, end)) in s.success.iter() {
                         match success.0.entry(*peer) {
@@ -1218,9 +1245,10 @@ impl LoroDoc {
         let mut oplog = self.oplog.lock().unwrap();
         oplog.batch_importing = false;
         drop(oplog);
-
         if !is_detached {
-            self.checkout_to_latest();
+            self._checkout_to_latest_with_guard(txn);
+        } else {
+            drop(txn);
         }
 
         self.renew_txn_if_auto_commit(options);
@@ -1267,6 +1295,16 @@ impl LoroDoc {
         self._checkout_to_latest_without_commit(true);
         drop(_guard);
         self.renew_txn_if_auto_commit(options);
+    }
+
+    fn _checkout_to_latest_with_guard(&self, guard: LoroMutexGuard<Option<Transaction>>) {
+        if !self.is_detached() {
+            self._renew_txn_if_auto_commit_with_guard(None, guard);
+            return;
+        }
+
+        self._checkout_to_latest_without_commit(true);
+        self._renew_txn_if_auto_commit_with_guard(None, guard);
     }
 
     /// NOTE: The caller of this method should ensure the txn is locked and set to None

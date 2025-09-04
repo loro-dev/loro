@@ -2,7 +2,7 @@
 mod loom_test {
 
     use loom::{explore, stop_exploring, sync::atomic::AtomicUsize, thread::yield_now};
-    use loro::{ExportMode, LoroDoc};
+    use loro::{ExportMode, LoroDoc, UpdateOptions};
     use std::{sync::atomic::Ordering, thread::sleep, time::Duration};
 
     #[test]
@@ -259,6 +259,39 @@ mod loom_test {
                 doc1_clone2.import(e).unwrap();
             }));
 
+            for h in handlers {
+                h.join().unwrap();
+            }
+        });
+    }
+
+    #[test]
+    fn local_edits_during_batch_import() {
+        let mut builder = loom::model::Builder::new();
+        builder.max_branches = 3000;
+        builder.check(move || {
+            let doc = LoroDoc::new();
+            doc.get_text("text").insert(0, "hello").unwrap();
+            let update_a = doc.export(ExportMode::all_updates()).unwrap();
+            doc.get_text("text")
+                .update("yo! hello", UpdateOptions::default())
+                .unwrap();
+            let update_b = doc.export(ExportMode::all_updates()).unwrap();
+
+            let mut handlers = vec![];
+            let doc = LoroDoc::new();
+            let doc_clone = doc.clone();
+
+            handlers.push(loom::thread::spawn(move || {
+                doc_clone.get_text("text").insert(0, "1").unwrap();
+                doc_clone.commit();
+                doc_clone.get_text("text").insert(0, "1").unwrap();
+                doc_clone.commit();
+            }));
+
+            handlers.push(loom::thread::spawn(move || {
+                doc.import_batch(&[update_a, update_b]).unwrap();
+            }));
             for h in handlers {
                 h.join().unwrap();
             }

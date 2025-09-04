@@ -26,7 +26,7 @@ use crate::{
     event::{Diff, ListDeltaMeta, TextDiff},
     handler::{Handler, ValueOrHandler},
     id::{Counter, PeerID, ID},
-    lock::LoroMutex,
+    lock::{LoroMutex, LoroMutexGuard},
     loro::CommitOptions,
     op::{Op, RawOp, RawOpContent},
     pre_commit::{ChangeModifier, PreCommitCallbackPayload},
@@ -118,6 +118,25 @@ impl crate::LoroDoc {
                 txn.set_options(options);
             }
             self_txn.replace(txn);
+        }
+    }
+
+    #[inline]
+    pub(crate) fn _renew_txn_if_auto_commit_with_guard(
+        &self,
+        options: Option<CommitOptions>,
+        mut guard: LoroMutexGuard<Option<Transaction>>,
+    ) {
+        if self.auto_commit.load(std::sync::atomic::Ordering::Acquire) && self.can_edit() {
+            if guard.is_some() {
+                return;
+            }
+
+            let mut txn = self.txn().unwrap();
+            if let Some(options) = options {
+                txn.set_options(options);
+            }
+            guard.replace(txn);
         }
     }
 }
