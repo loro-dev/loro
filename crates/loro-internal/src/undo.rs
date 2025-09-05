@@ -305,6 +305,23 @@ impl Stack {
         Stack { stack, size: 0 }
     }
 
+    /// Peek the top-most StackItem's metadata without modifying the stack.
+    ///
+    /// Returns None if the stack is empty.
+    fn peek_top_meta(&self) -> Option<UndoItemMeta> {
+        if self.is_empty() {
+            return None;
+        }
+
+        for (items, _) in self.stack.iter().rev() {
+            if let Some(item) = items.back() {
+                return Some(item.meta.clone());
+            }
+        }
+
+        None
+    }
+
     pub fn pop(&mut self) -> Option<(StackItem, Arc<Mutex<DiffBatch>>)> {
         while self.stack.back().unwrap().0.is_empty() && self.stack.len() > 1 {
             let (_, diff) = self.stack.pop_back().unwrap();
@@ -874,6 +891,26 @@ impl UndoManager {
 
     pub fn redo_count(&self) -> usize {
         self.inner.lock().unwrap().redo_stack.len()
+    }
+
+    /// Get the metadata of the top undo stack item, if any.
+    pub fn top_undo_meta(&self) -> Option<UndoItemMeta> {
+        self.inner.lock().unwrap().undo_stack.peek_top_meta()
+    }
+
+    /// Get the metadata of the top redo stack item, if any.
+    pub fn top_redo_meta(&self) -> Option<UndoItemMeta> {
+        self.inner.lock().unwrap().redo_stack.peek_top_meta()
+    }
+
+    /// Get the value associated with the top undo stack item, if any.
+    pub fn top_undo_value(&self) -> Option<LoroValue> {
+        self.top_undo_meta().map(|m| m.value)
+    }
+
+    /// Get the value associated with the top redo stack item, if any.
+    pub fn top_redo_value(&self) -> Option<LoroValue> {
+        self.top_redo_meta().map(|m| m.value)
     }
 
     pub fn set_on_push(&self, on_push: Option<OnPush>) {

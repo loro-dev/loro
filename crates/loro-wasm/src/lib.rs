@@ -4858,6 +4858,28 @@ impl UndoManager {
         self.undo.can_redo()
     }
 
+    /// Get the value associated with the top undo stack item, if any.
+    /// Returns `undefined` if there is no undo item.
+    pub fn topUndoValue(&self) -> Option<JsLoroValue> {
+        self.undo
+            .top_undo_value()
+            .map(|v| {
+                let js: JsValue = v.into();
+                js.into()
+            })
+    }
+
+    /// Get the value associated with the top redo stack item, if any.
+    /// Returns `undefined` if there is no redo item.
+    pub fn topRedoValue(&self) -> Option<JsLoroValue> {
+        self.undo
+            .top_redo_value()
+            .map(|v| {
+                let js: JsValue = v.into();
+                js.into()
+            })
+    }
+
     /// The number of max undo steps.
     /// If the number of undo steps exceeds this number, the oldest undo step will be removed.
     pub fn setMaxUndoSteps(&mut self, steps: usize) {
