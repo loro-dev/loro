@@ -1,6 +1,6 @@
 # Loro Binary Encoding Formats
 
-Status: implementer-focused outline for Fast modes. Grounded in current code. Blocks encode fields with uLEB varints and length‑prefixed byte slices; columnar segments use serde_columnar.
+Status: implementer-focused outline for Fast modes. Grounded in current code. Blocks encode fields with uLEB varints and length‑prefixed byte slices; columnar segments use the codecs defined below.
 
 ## Requirements
 
@@ -10,9 +10,9 @@ Status: implementer-focused outline for Fast modes. Grounded in current code. Bl
 - Include a primer on LEB128 varints used throughout.
 - Call out limits and safety considerations for decoders.
 - Track unresolved spec items as a markdown checklist.
-- Do not reference specific serialization libraries in normative text (no mentions of "postcard").
+- Do not reference specific serialization libraries in normative text.
 - Specify EncodedBlock in library-agnostic terms (uLEB integers + length‑prefixed byte slices) so it’s implementable without library knowledge.
-- Where serde_columnar is used in code, list per-field strategies to aid reimplementation; do not require serde_columnar to understand the on-wire format.
+- Where columnar encoding is used in code, list per-field strategies to aid reimplementation; do not require any specific library to understand the on‑wire format.
 
 ## Introduction
 
@@ -67,16 +67,37 @@ Parsing and checksum verification: `parse_header_and_body` in `encoding.rs`.
   - Implementations SHOULD cap decoded sizes (collection lengths, column run counts, arena byte lengths) to defend against malformed inputs.
   - Decoders MUST validate that reported lengths do not exceed remaining buffer size.
 
-### Column Codecs (serde_columnar)
+### Column Codecs
 
-Columns in blocks use serde_columnar encoders/decoders. Strategies used in code:
+Columns in blocks use compact, self‑contained codecs. The strategies used are:
 
-- Rle: run-length encoding for repeated scalars.
+- Rle: run‑length encoding for repeated scalars.
 - DeltaRle: deltas (signed) over absolute values, then RLE.
-- BoolRle: run-length encoding specialized for booleans.
-- DeltaOfDelta: second-difference encoding for near-constant steps (timestamps/lamports/deps counters in headers).
+- BoolRle: run‑length encoding specialized for booleans.
+- DeltaOfDelta: second‑difference encoding for near‑constant steps (timestamps/lamports/deps counters in headers).
 
-Note: This document does not restate the byte-level algorithm of these strategies; interop requires a serde_columnar-compatible implementation.
+The following sections specify their on‑wire formats so you can implement decoders without relying on any particular library.
+
+RLE (strategy = "Rle")
+
+- Bytes are a concatenation of runs. Each run begins with a ZigZag+varint `count: isize`.
+- If `count > 0`: a repeated run containing one encoded value `T`, repeated `count` times.
+- If `count < 0`: a literal run containing exactly `-count` encoded values of `T` back‑to‑back.
+- `count = 0` is invalid. Implementations should cap counts to a large, safe limit.
+
+Delta‑RLE (strategy = "DeltaRle")
+
+- Maintains an `absolute` accumulator (start `0`). For each value `v`: append `delta = v - absolute` to an RLE stream of signed integers, then set `absolute = v`.
+- Decoding reconstructs `absolute += delta` and yields `absolute` each time; error on overflow for the target integer type.
+
+Bool‑RLE (strategy = "BoolRle")
+
+- Bytes are a concatenation of unsigned varint counts. Decoding toggles a boolean `last` each time a count is read and emits that value `count` times. Start with `last = true` and emit a leading `0` run when the first run is `true`.
+
+Delta‑of‑Delta (strategy = "DeltaOfDelta")
+
+- Optimized for `i64` series with approximately constant step. Store the first element verbatim as `Option<i64>`, then bit‑pack Δ² (second differences) MSB‑first across octets.
+- Trailer includes one octet `U` giving the number of valid bits in the final data octet (0–8). See code for class prefixes and ranges.
 
 ### Column Packaging (vectors of rows)
 
@@ -155,12 +176,12 @@ Fields and framing (in order):
 - `header: [uLEB len][len bytes]`: produced by `encode_changes` (see below).
 - `change_meta: [uLEB len][len bytes]`: produced by `encode_changes` (timestamps + commit messages).
 - Ops payloads (all as length‑prefixed byte slices):
-  - `cids`: serde_columnar bytes for `ContainerArena`.
-  - `keys`: concatenation of `[uLEB len][utf8]` entries.
-  - `positions`: serde_columnar bytes for `PositionArena::encode_v2()`; may be empty to mean zero rows.
-  - `ops`: serde_columnar bytes for `EncodedOps` (ops columns).
-  - `delete_start_ids`: serde_columnar bytes for `EncodedDeleteStartIds`; may be empty if none.
-  - `values`: contiguous value stream consumed in op order (see Value Encoding).
+- `cids`: column‑vec bytes for `ContainerArena`.
+- `keys`: concatenation of `[uLEB len][utf8]` entries.
+- `positions`: column‑vec bytes for `PositionArena::encode_v2()`; may be empty to mean zero rows.
+- `ops`: column‑vec bytes for `EncodedOps` (ops columns).
+- `delete_start_ids`: column‑vec bytes for `EncodedDeleteStartIds`; may be empty if none.
+- `values`: contiguous value stream consumed in op order (see Value Encoding).
 
 Header bytes (`header`):
 
@@ -178,7 +199,7 @@ Change meta bytes (`change_meta`):
 - `DeltaOfDelta<i64>` timestamps (exactly `n_changes`).
 - `AnyRle<u32>` commit message lengths (n_changes), followed by concatenated UTF‑8 bytes.
 
-Serde-columnar segments and field strategies:
+Column segments and strategies:
 
 - `EncodedOps` rows:
   - `container_index: DeltaRle u32`
@@ -192,7 +213,7 @@ Serde-columnar segments and field strategies:
 - `ContainerArena` rows:
   - `is_root: BoolRle`, `kind: Rle u8`, `peer_idx: Rle usize`, `key_idx_or_counter: DeltaRle i32`
 - `PositionArena` rows:
-  - `common_prefix_length: Rle usize`, `rest: bytes` (prefix-compressed fractional index suffix)
+  - `common_prefix_length: Rle usize`, `rest: bytes` (prefix‑compressed fractional index suffix)
 
 Notes:
 - Quick range checks should use `block_len` to skip entire blocks efficiently.
@@ -230,22 +251,22 @@ Operation payloads are encoded into a compact, typed stream. The per-op `value_t
 
 Code: `encoding/value.rs`.
 
-## Column Layouts (serde_columnar)
+## Column Layouts
 
-This section lists the serde_columnar strategies used by each column in EncodedBlock. See code for exact serialization; interoperable implementations should match serde_columnar’s on-wire format.
+This section lists the column strategies used by each column in EncodedBlock. See code for exact serialization; interoperable implementations should match the on‑wire formats defined in Column Codecs.
 
 - EncodedOp: `container_index: DeltaRle u32`, `prop: DeltaRle i32`, `value_type: Rle u8`, `len: Rle u32`.
 - ContainerArena: `is_root: BoolRle`, `kind: Rle u8`, `peer_idx: Rle usize`, `key_idx_or_counter: DeltaRle i32`.
 - EncodedDeleteStartId: `peer_idx: DeltaRle usize`, `counter: DeltaRle i32`, `len: DeltaRle isize`.
-- PositionArena: `common_prefix_length: Rle usize`, `rest: bytes` (prefix-compressed suffix).
+- PositionArena: `common_prefix_length: Rle usize`, `rest: bytes` (prefix‑compressed suffix).
 
 ## Arenas and Registers
 
 Blocks deduplicate repeated items across columns via arenas. For Fast Updates blocks:
 
-- ContainerArena: serde_columnar-encoded `EncodedContainer` rows. Decoders reconstruct `ContainerID` using the peer list from the block header and the key strings from `keys`.
+- ContainerArena: column‑encoded `EncodedContainer` rows. Decoders reconstruct `ContainerID` using the peer list from the block header and the key strings from `keys`.
 - Key strings (`keys` field): concatenation of `[uLEB len][bytes]` (UTF‑8).
-- PositionArena: serde_columnar-encoded prefix-compressed positions; empty bytes means zero rows.
+- PositionArena: column‑encoded prefix‑compressed positions; empty bytes means zero rows.
 
 Other arenas (PeerIdArena, TreeIDArena, DepsArena) are used elsewhere in the codebase but are not serialized inside Fast Updates blocks.
 
@@ -277,7 +298,7 @@ Code: `encoding/shallow_snapshot.rs`.
 - Envelope checksum:
   - Fast modes: `xxhash32(body, seed = "LORO")` in last 4 checksum bytes LE; preceding 12 bytes are zero.
   - Outdated modes: full 16-byte MD5 of body.
-- Block version: the block payload begins with an unsigned LEB128 version field; current value is `0`. Importers MUST reject unknown block versions.
+// Note: Blocks do not currently carry an explicit version field in the payload; the envelope mode versioning and field layout are the compatibility gates.
 
 ## LEB128 Primer
 
