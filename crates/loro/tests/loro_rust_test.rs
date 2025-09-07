@@ -415,8 +415,10 @@ fn tree() {
     let root_meta = tree.get_meta(root).unwrap();
     root_meta.insert("color", "red").unwrap();
     assert_eq!(
-        tree.get_value_with_meta().to_json(),
-        r#"[{"parent":null,"meta":{"color":"red"},"id":"0@1","index":0,"children":[{"parent":"0@1","meta":{},"id":"1@1","index":0,"children":[],"fractional_index":"80"}],"fractional_index":"80"}]"#
+        tree.get_value_with_meta().to_json_value(),
+        serde_json::json!(
+            [{"parent":null,"meta":{"color":"red"},"id":"0@1","index":0,"children":[{"parent":"0@1","meta":{},"id":"1@1","index":0,"children":[],"fractional_index":"80"}],"fractional_index":"80"}]
+        )
     )
 }
 
@@ -474,7 +476,7 @@ fn sync() {
 
 #[test]
 fn save() {
-use loro::LoroDoc;
+    use loro::LoroDoc;
 
     let doc = LoroDoc::new();
     let text = doc.get_text("text");
@@ -1819,8 +1821,8 @@ fn test_travel_change_ancestors() {
         message: None,
         deps: Frontiers(
             [
-                11@1,
                 6@2,
+                11@1,
             ],
         ),
         len: 1,
@@ -1845,8 +1847,8 @@ fn test_travel_change_ancestors() {
         message: None,
         deps: Frontiers(
             [
-                10@1,
                 5@2,
+                10@1,
             ],
         ),
         len: 1,
@@ -2202,7 +2204,10 @@ fn get_editor() {
 
 #[test]
 fn origin_does_not_persist_across_empty_commits() {
-    use std::sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex};
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    };
 
     let doc = LoroDoc::new();
     doc.set_peer_id(0).unwrap();

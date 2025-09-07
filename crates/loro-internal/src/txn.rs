@@ -6,7 +6,7 @@ use std::{
 };
 
 use enum_as_inner::EnumAsInner;
-use fxhash::FxHashMap;
+use rustc_hash::FxHashMap;
 use generic_btree::rle::{HasLength as RleHasLength, Mergeable as GBSliceable};
 use loro_common::{ContainerType, IdLp, IdSpan, LoroResult};
 use loro_delta::{array_vec::ArrayVec, DeltaRopeBuilder};

@@ -6,7 +6,7 @@ use std::{
 
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
-use fxhash::{FxHashMap, FxHashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
 use loro::{
     Container, ContainerID, ContainerType, Frontiers, LoroDoc, LoroError, LoroValue, PeerID,

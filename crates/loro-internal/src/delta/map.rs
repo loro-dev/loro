@@ -1,4 +1,4 @@
-use fxhash::{FxHashMap, FxHashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 use serde::Serialize;
 use std::fmt::Debug;
 

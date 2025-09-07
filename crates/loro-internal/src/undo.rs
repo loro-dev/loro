@@ -2,7 +2,7 @@ use std::{collections::VecDeque, sync::Arc};
 
 use crate::sync::{AtomicU64, Mutex};
 use either::Either;
-use fxhash::{FxHashMap, FxHashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 use loro_common::{
     ContainerID, Counter, CounterSpan, HasIdSpan, IdSpan, LoroError, LoroResult, LoroValue, PeerID,
 };

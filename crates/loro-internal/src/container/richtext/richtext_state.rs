@@ -1,5 +1,5 @@
 use append_only_bytes::BytesSlice;
-use fxhash::{FxHashMap, FxHashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 use generic_btree::{
     rle::{CanRemove, HasLength, Mergeable, Sliceable, TryInsert},
     BTree, BTreeTrait, Cursor, LeafIndex,

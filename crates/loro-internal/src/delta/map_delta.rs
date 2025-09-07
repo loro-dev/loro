@@ -1,6 +1,6 @@
 use std::{hash::Hash, sync::Weak};
 
-use fxhash::FxHashMap;
+use rustc_hash::FxHashMap;
 use loro_common::IdLp;
 use serde::{ser::SerializeStruct, Serialize};
 

@@ -4,7 +4,7 @@ use crate::id::{Counter, ID};
 use crate::span::{HasId, HasLamport};
 use crate::sync::Mutex;
 use crate::version::{shrink_frontiers, Frontiers, ImVersionVector, VersionVector};
-use fxhash::FxHashSet;
+use rustc_hash::FxHashSet;
 use loro_common::{HasCounter, HasCounterSpan, HasIdSpan, HasLamportSpan, PeerID};
 use once_cell::sync::OnceCell;
 use rle::{HasIndex, HasLength, Mergable, Sliceable};

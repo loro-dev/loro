@@ -15,7 +15,7 @@
 //! The implementation of this algorithm is based on the implementation by
 //! Brandon Williams.
 use crate::change::get_sys_timestamp;
-use fxhash::FxHashMap;
+use rustc_hash::FxHashMap;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::iter::zip;

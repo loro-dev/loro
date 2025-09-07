@@ -23,7 +23,7 @@ fractional_index = { path = "../fractional_index", features = [
     "serde",
 ], version = "1.6.0", package = "loro_fractional_index" }
 loro-kv-store = { path = "../kv-store", version = "1.6.0" }
-fxhash = { workspace = true }
+rustc-hash = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 enum-as-inner = { workspace = true }

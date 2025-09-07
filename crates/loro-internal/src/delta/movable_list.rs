@@ -1,4 +1,4 @@
-use fxhash::FxHashMap;
+use rustc_hash::FxHashMap;
 use loro_common::{CompactIdLp, IdFull, IdLp, LoroValue};
 use smallvec::SmallVec;
 

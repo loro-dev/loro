@@ -1,7 +1,7 @@
 use std::{collections::BTreeSet, sync::Arc};
 
 use fractional_index::FractionalIndex;
-use fxhash::FxHashMap;
+use rustc_hash::FxHashMap;
 use itertools::Itertools;
 use loro_common::{ContainerID, IdFull, IdLp, Lamport, PeerID, TreeID, ID};
 

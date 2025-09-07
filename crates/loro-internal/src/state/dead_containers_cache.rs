@@ -1,6 +1,6 @@
 use super::{ContainerState, DocState};
 use crate::container::idx::ContainerIdx;
-use fxhash::FxHashMap;
+use rustc_hash::FxHashMap;
 
 #[derive(Default, Debug, Clone)]
 pub(super) struct DeadContainersCache {

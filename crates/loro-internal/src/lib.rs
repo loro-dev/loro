@@ -24,7 +24,7 @@ use lock::LoroMutex;
 
 pub use change_meta::ChangeMeta;
 pub use event::{ContainerDiff, DiffEvent, DocDiff, ListDiff, ListDiffInsertItem, ListDiffItem};
-pub use fxhash::FxHashMap;
+pub use rustc_hash::FxHashMap;
 pub use handler::{
     BasicHandler, HandlerTrait, ListHandler, MapHandler, MovableListHandler, TextHandler,
     TreeHandler, UnknownHandler,

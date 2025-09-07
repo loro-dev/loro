@@ -108,7 +108,7 @@ describe("Awareness", () => {
     expect(b.getState("1")).toBe(1);
     expect(b.peers()).toStrictEqual(["1"]);
     b.setLocalState(2);
-    expect(b.peers()).toStrictEqual(["1", "2"]);
+    expect(b.peers()).toStrictEqual(["2", "1"]);
   });
 
   it("encode binary", () => {

@@ -43,12 +43,12 @@ use crate::{
     txn::Transaction,
 };
 use either::Either;
-use fxhash::{FxHashMap, FxHashSet};
 use loro_common::{
     ContainerID, ContainerType, HasIdSpan, HasLamportSpan, IdSpan, LoroEncodeError, LoroResult,
     LoroValue, ID,
 };
 use rle::HasLength;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::{
     borrow::Cow,
     cmp::Ordering,
@@ -2153,27 +2153,36 @@ mod test {
         loro.checkout(&Frontiers::default()).unwrap();
         {
             let json = &loro.get_deep_value();
-            assert_eq!(json.to_json(), r#"{"text":"","list":[],"map":{}}"#);
+            assert_eq!(
+                json.to_json_value(),
+                serde_json::json!({"text":"","list":[],"map":{}})
+            );
         }
 
         b.checkout(&ID::new(1, 2).into()).unwrap();
         {
             let json = &b.get_deep_value();
-            assert_eq!(json.to_json(), r#"{"text":"0","list":[0],"map":{"key":0}}"#);
+            assert_eq!(
+                json.to_json_value(),
+                serde_json::json!({"text":"0","list":[0],"map":{"key":0}})
+            );
         }
 
         loro.checkout(&ID::new(1, 3).into()).unwrap();
         {
             let json = &loro.get_deep_value();
-            assert_eq!(json.to_json(), r#"{"text":"0","list":[0],"map":{"key":1}}"#);
+            assert_eq!(
+                json.to_json_value(),
+                serde_json::json!({"text":"0","list":[0],"map":{"key":1}})
+            );
         }
 
         b.checkout(&ID::new(1, 29).into()).unwrap();
         {
             let json = &b.get_deep_value();
             assert_eq!(
-                json.to_json(),
-                r#"{"text":"9876543210","list":[9,8,7,6,5,4,3,2,1,0],"map":{"key":9}}"#
+                json.to_json_value(),
+                serde_json::json!({"text":"9876543210","list":[9,8,7,6,5,4,3,2,1,0],"map":{"key":9}})
             );
         }
     }

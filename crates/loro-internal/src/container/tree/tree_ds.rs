@@ -1,6 +1,6 @@
 #![allow(unused)]
 
-use fxhash::FxHashMap;
+use rustc_hash::FxHashMap;
 use loro_common::{IdFull, IdLp, TreeID};
 
 use crate::VersionVector;

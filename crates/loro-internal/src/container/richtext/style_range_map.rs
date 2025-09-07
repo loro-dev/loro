@@ -7,7 +7,7 @@ use std::{
     sync::Arc,
 };
 
-use fxhash::FxHashMap;
+use rustc_hash::FxHashMap;
 use generic_btree::{
     rle::{CanRemove, HasLength, Mergeable, Sliceable, TryInsert},
     BTree, BTreeTrait, ElemSlice, LengthFinder, UseLengthFinder,

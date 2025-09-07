@@ -7,7 +7,7 @@ use container_store::ContainerStore;
 use dead_containers_cache::DeadContainersCache;
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
-use fxhash::{FxHashMap, FxHashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
 use loro_common::{ContainerID, LoroError, LoroResult, TreeID};
 use loro_delta::DeltaItem;

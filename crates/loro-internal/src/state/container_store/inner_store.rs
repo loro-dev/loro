@@ -3,7 +3,7 @@ use crate::{
     state::container_store::FRONTIERS_KEY, utils::kv_wrapper::KvWrapper, version::Frontiers,
 };
 use bytes::Bytes;
-use fxhash::FxHashMap;
+use rustc_hash::FxHashMap;
 use loro_common::ContainerID;
 use std::ops::Bound;
 

@@ -23,7 +23,7 @@ delta = { path = "../delta", package = "loro-delta", version = "1.6.0" }
 generic-btree = { version = "^0.10.5" }
 enum-as-inner = { workspace = true }
 tracing = { workspace = true }
-fxhash = { workspace = true }
+rustc-hash = { workspace = true }
 
 [dev-dependencies]
 serde_json = "1.0.87"

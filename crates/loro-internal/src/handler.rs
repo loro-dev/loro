@@ -18,12 +18,12 @@ use crate::{
 };
 use append_only_bytes::BytesSlice;
 use enum_as_inner::EnumAsInner;
-use fxhash::FxHashMap;
 use generic_btree::rle::HasLength;
 use loro_common::{
     ContainerID, ContainerType, IdFull, InternalString, LoroError, LoroResult, LoroValue, PeerID,
     TreeID, ID,
 };
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, cmp::Reverse, collections::BinaryHeap, fmt::Debug, ops::Deref, sync::Arc};
 use tracing::{error, instrument};
@@ -4307,8 +4307,8 @@ mod test {
         let meta = tree.get_meta(id).unwrap();
         assert_eq!(meta.get("a").unwrap(), 123.into());
         assert_eq!(
-            r#"[{"parent":null,"meta":{"a":123},"id":"0@1","index":0,"children":[],"fractional_index":"80"}]"#,
-            tree.get_deep_value().to_json()
+            json!([{"parent":null,"meta":{"a":123},"id":"0@1","index":0,"children":[],"fractional_index":"80"}]),
+            tree.get_deep_value().to_json_value()
         );
         let bytes = loro.export_snapshot().unwrap();
         let loro2 = LoroDoc::new();

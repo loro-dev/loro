@@ -1,5 +1,5 @@
 use enum_as_inner::EnumAsInner;
-use fxhash::FxHashMap;
+use rustc_hash::FxHashMap;
 use itertools::Itertools;
 use loro_delta::{array_vec::ArrayVec, delta_trait::DeltaAttr, DeltaItem, DeltaRope};
 use serde::{Deserialize, Serialize};

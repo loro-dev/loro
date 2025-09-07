@@ -1,6 +1,6 @@
 use enum_as_inner::EnumAsInner;
 use fractional_index::FractionalIndex;
-use fxhash::FxHashMap;
+use rustc_hash::FxHashMap;
 use loro_common::{
     ContainerID, ContainerType, Counter, InternalString, LoroError, LoroResult, LoroValue, PeerID,
     TreeID, ID,

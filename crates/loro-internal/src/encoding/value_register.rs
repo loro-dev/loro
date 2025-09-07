@@ -1,4 +1,4 @@
-use fxhash::FxHashMap;
+use rustc_hash::FxHashMap;
 
 #[derive(Debug)]
 pub struct ValueRegister<T> {

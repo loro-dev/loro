@@ -2,7 +2,7 @@ use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
 
 use enum_as_inner::EnumAsInner;
-use fxhash::FxHashMap;
+use rustc_hash::FxHashMap;
 use loro::{
     event::{Diff, DiffEvent, ListDiffItem},
     ContainerType, Index, LoroDoc, LoroText, LoroValue, ValueOrContainer,

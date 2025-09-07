@@ -28,19 +28,6 @@ exports[`can diff two versions 1`] = `
     },
   ],
   [
-    "cid:root-list:List",
-    {
-      "diff": [
-        {
-          "insert": [
-            "item1",
-          ],
-        },
-      ],
-      "type": "list",
-    },
-  ],
-  [
     "cid:root-map:Map",
     {
       "type": "map",
@@ -72,6 +59,19 @@ exports[`can diff two versions 1`] = `
       "type": "tree",
     },
   ],
+  [
+    "cid:root-list:List",
+    {
+      "diff": [
+        {
+          "insert": [
+            "item1",
+          ],
+        },
+      ],
+      "type": "list",
+    },
+  ],
 ]
 `;
 
@@ -91,14 +91,14 @@ exports[`can diff two versions 2`] = `
         {
           "children": [],
           "fractional_index": "80",
-          "id": "11@2",
+          "id": "10@2",
           "index": 0,
           "meta": {},
-          "parent": "10@2",
+          "parent": "9@2",
         },
       ],
       "fractional_index": "80",
-      "id": "10@2",
+      "id": "9@2",
       "index": 0,
       "meta": {},
       "parent": null,

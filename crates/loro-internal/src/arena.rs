@@ -14,7 +14,7 @@ use crate::{
     LoroValue,
 };
 use append_only_bytes::BytesSlice;
-use fxhash::FxHashMap;
+use rustc_hash::FxHashMap;
 use loro_common::PeerID;
 use std::fmt;
 use std::{
