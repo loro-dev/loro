@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.7.0
+
+### Minor Changes
+
+- 3a0db5b: feat: add APIs to fetch values associated with the top Undo and Redo stack entries (#790)
+  - JS/WASM: `undo.topUndoValue()` and `undo.topRedoValue()` return the `value` from the top undo/redo item (or `undefined` when empty).
+  - Rust: `UndoManager::{top_undo_meta, top_redo_meta, top_undo_value, top_redo_value}` to inspect top-of-stack metadata and values.
+  - Internal: stack now supports peeking the top item metadata without mutation.
+
+  This enables attaching human-readable labels via `onPush`/`onPop` and retrieving them to keep Undo/Redo menu items up to date.
+
+- 9a98e8d: Distinguish explicit vs implicit empty commit behavior for commit options.
+  - Explicit commits (user-invoked `commit()` / `commit_with(...)`): if the transaction is empty, commit options (message/timestamp/origin) are swallowed and will NOT carry over.
+  - Implicit commits (e.g., `export`, `checkout` internal barriers): if the transaction is empty, message/timestamp/origin are preserved for the next transaction.
+
+  Rationale: align behavior with intent. Explicit commits “finalize now”, so empty commits should not leak options. Implicit commits act as processing barriers and should not destroy user-provided options for the next real change.
+
+  Note: This refines behavior without changing the API.
+
+### Patch Changes
+
+- 0fe9681: fix: handle default values for fractionalIndex and index in LoroTreeNode
+
 ## 1.6.0
 
 ### Minor Changes
