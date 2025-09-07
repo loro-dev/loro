@@ -146,6 +146,17 @@ it("json decoding", () => {
   // console.log(doc.exportJsonUpdates());
 });
 
+it("export json update with undefined value should be null", () => {
+  const doc = new LoroDoc();
+  doc.getMap("map").set("key", undefined);
+  const json = doc.exportJsonUpdates();
+  expect(json.changes[0].ops[0].content).toStrictEqual({
+    type: "insert",
+    key: "key",
+    value: null,
+  });
+});
+
 it("test some type correctness", () => {
   const doc = new LoroDoc();
   doc.setPeerId(0);

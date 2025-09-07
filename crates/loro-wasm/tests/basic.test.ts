@@ -1709,14 +1709,14 @@ it("can get pending ops as json", () => {
   expect(JSON.stringify(pendingOps)).toContain("insert");
   expect(JSON.stringify(pendingOps)).toContain("Hello");
   expect(pendingOps).toEqual({
-    peers: undefined,
+    peers: null,
     schema_version: 1,
     start_version: {},
     changes: [
       {
         id: "0@1",
         deps: [],
-        msg: undefined,
+        msg: null,
         lamport: 0,
         ops: [
           {
