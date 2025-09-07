@@ -78,6 +78,25 @@ impl std::fmt::Debug for LoroDocInner {
 }
 
 impl LoroDoc {
+    /// Run the provided closure within a commit barrier.
+    ///
+    /// This finalizes any pending auto-commit transaction first (preserving
+    /// options across an empty txn), executes `f`, then renews the transaction
+    /// (carrying preserved options) if auto-commit is enabled. This is the
+    /// common implicit-commit pattern used by internal operations such as
+    /// import/export/checkouts.
+    #[inline]
+    pub fn with_barrier<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        let (options, guard) = self.implicit_commit_then_stop();
+        let result = f();
+        drop(guard);
+        self.renew_txn_if_auto_commit(options);
+        result
+    }
+
     pub fn new() -> Self {
         let oplog = OpLog::new();
         let arena = oplog.arena.clone();
@@ -112,16 +131,13 @@ impl LoroDoc {
             return self.fork_at(&self.state_frontiers());
         }
 
-        let (options, txn) = self.commit_then_stop();
-        drop(txn);
-        let snapshot = encoding::fast_snapshot::encode_snapshot_inner(self);
+        let snapshot = self.with_barrier(|| encoding::fast_snapshot::encode_snapshot_inner(self));
         let doc = Self::new();
         encoding::fast_snapshot::decode_snapshot_inner(snapshot, &doc, Default::default()).unwrap();
         doc.set_config(&self.config);
         if self.auto_commit.load(std::sync::atomic::Ordering::Relaxed) {
             doc.start_auto_commit();
         }
-        self.renew_txn_if_auto_commit(options);
         doc
     }
     /// Enables editing of the document in detached mode.
@@ -142,10 +158,9 @@ impl LoroDoc {
     pub fn set_detached_editing(&self, enable: bool) {
         self.config.set_detached_editing(enable);
         if enable && self.is_detached() {
-            let (options, txn) = self.commit_then_stop();
-            drop(txn);
-            self.renew_peer_id();
-            self.renew_txn_if_auto_commit(options);
+            self.with_barrier(|| {
+                self.renew_peer_id();
+            });
         }
     }
 
@@ -172,9 +187,7 @@ impl LoroDoc {
             if doc_state.is_in_txn() {
                 drop(doc_state);
                 // Use implicit-style barrier to avoid swallowing next-commit options
-                let (options, guard) = self.commit_then_stop();
-                drop(guard);
-                self.renew_txn_if_auto_commit(options);
+                self.with_barrier(|| {});
             }
             self.peer_id_change_subs.emit(&(), next_id);
             return Ok(());
@@ -203,22 +216,27 @@ impl LoroDoc {
         self.set_peer_id(peer_id).unwrap();
     }
 
-    /// Commit the cumulative auto commit transaction.
+    /// Implicitly commit the cumulative auto-commit transaction.
     /// This method only has effect when `auto_commit` is true.
     ///
-    /// Afterwards, the users need to call `self.renew_txn_after_commit()` to resume the continuous transaction.
+    /// Follow-ups: the caller is responsible for renewing the transaction
+    /// as needed (e.g., via `renew_txn_if_auto_commit`). Prefer using
+    /// `with_barrier(...)` for most internal flows to handle this safely.
     ///
-    /// It only returns Some(options_of_the_empty_txn) when the txn is empty
+    /// Empty-commit behavior: if the pending transaction is empty, the returned
+    /// `Some(CommitOptions)` preserves next-commit options such as message and
+    /// timestamp so they can carry into the renewed transaction. Transient
+    /// labels like `origin` do not carry across an empty commit.
     #[inline]
     #[must_use]
-    pub fn commit_then_stop(
+    pub fn implicit_commit_then_stop(
         &self,
     ) -> (
         Option<CommitOptions>,
         LoroMutexGuard<'_, Option<Transaction>>,
     ) {
         // Implicit commit: preserve options on empty commit
-        let (a, b) = self.commit_with_mode(CommitOptions::new().immediate_renew(false), true);
+        let (a, b) = self.commit_internal(CommitOptions::new().immediate_renew(false), true);
         (a, b.unwrap())
     }
 
@@ -229,7 +247,7 @@ impl LoroDoc {
     #[inline]
     pub fn commit_then_renew(&self) -> Option<CommitOptions> {
         // Explicit commit: swallow options on empty commit
-        self.commit_with_mode(CommitOptions::new().immediate_renew(true), false)
+        self.commit_internal(CommitOptions::new().immediate_renew(true), false)
             .0
     }
 
@@ -266,7 +284,7 @@ impl LoroDoc {
     /// - When `preserve_on_empty` is false (explicit commits), commit options from an
     ///   empty transaction are swallowed and NOT carried over.
     #[instrument(skip_all)]
-    fn commit_with_mode(
+    fn commit_internal(
         &self,
         config: CommitOptions,
         preserve_on_empty: bool,
@@ -359,7 +377,7 @@ impl LoroDoc {
         Option<CommitOptions>,
         Option<LoroMutexGuard<'_, Option<Transaction>>>,
     ) {
-        self.commit_with_mode(config, false)
+        self.commit_internal(config, false)
     }
 
     /// Set the commit message of the next commit
@@ -455,12 +473,12 @@ impl LoroDoc {
     }
     pub fn from_snapshot(bytes: &[u8]) -> LoroResult<Self> {
         let doc = Self::new();
-        let (options, _guard) = doc.commit_then_stop();
         let ParsedHeaderAndBody { mode, body, .. } = parse_header_and_body(bytes, true)?;
         if mode.is_snapshot() {
-            decode_snapshot(&doc, mode, body, Default::default())?;
-            drop(_guard);
-            doc.renew_txn_if_auto_commit(options);
+            doc.with_barrier(|| -> Result<(), LoroError> {
+                decode_snapshot(&doc, mode, body, Default::default())?;
+                Ok(())
+            })?;
             Ok(doc)
         } else {
             Err(LoroError::DecodeError(
@@ -509,10 +527,7 @@ impl LoroDoc {
 
     #[inline(always)]
     pub fn detach(&self) {
-        let (options, txn) = self.commit_then_stop();
-        drop(txn);
-        self.set_detached(true);
-        self.renew_txn_if_auto_commit(options);
+        self.with_barrier(|| self.set_detached(true));
     }
 
     #[inline(always)]
@@ -544,11 +559,7 @@ impl LoroDoc {
     }
 
     pub fn export_from(&self, vv: &VersionVector) -> Vec<u8> {
-        let (options, txn) = self.commit_then_stop();
-        let ans = self.oplog.lock().unwrap().export_from(vv);
-        drop(txn);
-        self.renew_txn_if_auto_commit(options);
-        ans
+        self.with_barrier(|| self.oplog.lock().unwrap().export_from(vv))
     }
 
     #[inline(always)]
@@ -564,12 +575,7 @@ impl LoroDoc {
         bytes: &[u8],
         origin: InternalString,
     ) -> Result<ImportStatus, LoroError> {
-        let (options, txn) = self.commit_then_stop();
-        assert!(txn.is_none());
-        let ans = self._import_with(bytes, origin);
-        drop(txn);
-        self.renew_txn_if_auto_commit(options);
-        ans
+        self.with_barrier(|| self._import_with(bytes, origin))
     }
 
     #[tracing::instrument(skip_all)]
@@ -699,10 +705,7 @@ impl LoroDoc {
         if self.is_shallow() {
             return Err(LoroEncodeError::ShallowSnapshotIncompatibleWithOldFormat);
         }
-        let (options, txn) = self.commit_then_stop();
-        drop(txn);
-        let ans = export_snapshot(self);
-        self.renew_txn_if_auto_commit(options);
+        let ans = self.with_barrier(|| export_snapshot(self));
         Ok(ans)
     }
 
@@ -712,15 +715,14 @@ impl LoroDoc {
     #[tracing::instrument(skip_all)]
     pub fn import_json_updates<T: TryInto<JsonSchema>>(&self, json: T) -> LoroResult<ImportStatus> {
         let json = json.try_into().map_err(|_| LoroError::InvalidJsonSchema)?;
-        let (options, txn) = self.commit_then_stop();
-        let result = self.update_oplog_and_apply_delta_to_state_if_needed(
-            |oplog| crate::encoding::json_schema::import_json(oplog, json),
-            Default::default(),
-        );
-        self.emit_events();
-        drop(txn);
-        self.renew_txn_if_auto_commit(options);
-        result
+        self.with_barrier(|| {
+            let result = self.update_oplog_and_apply_delta_to_state_if_needed(
+                |oplog| crate::encoding::json_schema::import_json(oplog, json),
+                Default::default(),
+            );
+            self.emit_events();
+            result
+        })
     }
 
     pub fn export_json_updates(
@@ -729,39 +731,36 @@ impl LoroDoc {
         end_vv: &VersionVector,
         with_peer_compression: bool,
     ) -> JsonSchema {
-        let (options, txn) = self.commit_then_stop();
-        drop(txn);
-        let oplog = self.oplog.lock().unwrap();
-        let mut start_vv = start_vv;
-        let _temp: Option<VersionVector>;
-        if !oplog.dag.shallow_since_vv().is_empty() {
-            // Make sure that start_vv >= shallow_since_vv
-            let mut include_all = true;
-            for (peer, counter) in oplog.dag.shallow_since_vv().iter() {
-                if start_vv.get(peer).unwrap_or(&0) < counter {
-                    include_all = false;
-                    break;
+        self.with_barrier(|| {
+            let oplog = self.oplog.lock().unwrap();
+            let mut start_vv = start_vv;
+            let _temp: Option<VersionVector>;
+            if !oplog.dag.shallow_since_vv().is_empty() {
+                // Make sure that start_vv >= shallow_since_vv
+                let mut include_all = true;
+                for (peer, counter) in oplog.dag.shallow_since_vv().iter() {
+                    if start_vv.get(peer).unwrap_or(&0) < counter {
+                        include_all = false;
+                        break;
+                    }
+                }
+                if !include_all {
+                    let mut vv = start_vv.clone();
+                    for (&peer, &counter) in oplog.dag.shallow_since_vv().iter() {
+                        vv.extend_to_include_end_id(ID::new(peer, counter));
+                    }
+                    _temp = Some(vv);
+                    start_vv = _temp.as_ref().unwrap();
                 }
             }
-            if !include_all {
-                let mut vv = start_vv.clone();
-                for (&peer, &counter) in oplog.dag.shallow_since_vv().iter() {
-                    vv.extend_to_include_end_id(ID::new(peer, counter));
-                }
-                _temp = Some(vv);
-                start_vv = _temp.as_ref().unwrap();
-            }
-        }
 
-        let json = crate::encoding::json_schema::export_json(
-            &oplog,
-            start_vv,
-            end_vv,
-            with_peer_compression,
-        );
-        drop(oplog);
-        self.renew_txn_if_auto_commit(options);
-        json
+            crate::encoding::json_schema::export_json(
+                &oplog,
+                start_vv,
+                end_vv,
+                with_peer_compression,
+            )
+        })
     }
 
     pub fn export_json_in_id_span(&self, id_span: IdSpan) -> Vec<JsonChange> {
@@ -934,7 +933,7 @@ impl LoroDoc {
             return Err(LoroError::EditWhenDetached);
         }
 
-        let (options, txn) = self.commit_then_stop();
+        let (options, txn) = self.implicit_commit_then_stop();
         if !self
             .oplog()
             .lock()
@@ -1031,7 +1030,7 @@ impl LoroDoc {
             }
         }
 
-        let (options, txn) = self.commit_then_stop();
+        let (options, txn) = self.implicit_commit_then_stop();
         let was_detached = self.is_detached();
         let old_frontiers = self.state_frontiers();
         let was_recording = {
@@ -1215,7 +1214,7 @@ impl LoroDoc {
                 .then(b.0.change_num.cmp(&a.0.change_num))
         });
 
-        let (options, txn) = self.commit_then_stop();
+        let (options, txn) = self.implicit_commit_then_stop();
         // Why we should keep locking `txn` here
         //
         // In a multi-threaded environment, `import_batch` used to drop the txn lock
@@ -1320,7 +1319,7 @@ impl LoroDoc {
     }
 
     pub fn checkout_to_latest(&self) {
-        let (options, _guard) = self.commit_then_stop();
+        let (options, _guard) = self.implicit_commit_then_stop();
         if !self.is_detached() {
             drop(_guard);
             self.renew_txn_if_auto_commit(options);
@@ -1365,7 +1364,7 @@ impl LoroDoc {
     /// This will make the current [DocState] detached from the latest version of [OpLog].
     /// Any further import will not be reflected on the [DocState], until user call [LoroDoc::attach()]
     pub fn checkout(&self, frontiers: &Frontiers) -> LoroResult<()> {
-        let (options, guard) = self.commit_then_stop();
+        let (options, guard) = self.implicit_commit_then_stop();
         self._checkout_without_emitting(frontiers, true, true)?;
         self.emit_events();
         drop(guard);
@@ -1510,7 +1509,7 @@ impl LoroDoc {
             let peer_id = self.peer_id();
             let s = info_span!("CheckStateDiffCalcConsistencySlow", ?peer_id);
             let _g = s.enter();
-            let options = self.commit_then_stop().0;
+            let options = self.implicit_commit_then_stop().0;
             self.oplog.lock().unwrap().check_dag_correctness();
             if self.is_shallow() {
                 // For shallow documents, we cannot replay from the beginning as the history is not complete.
@@ -1602,148 +1601,145 @@ impl LoroDoc {
 
             // commit the txn to make sure we can query the history correctly, preserving options
             drop(state);
-            let (options, txn) = self.commit_then_stop();
-            let result = (|| {
+            let result = self.with_barrier(|| {
                 let oplog = self.oplog().lock().unwrap();
-            // TODO: assert pos.id is not unknown
-            if let Some(id) = pos.id {
-                // Ensure the container is registered if it exists lazily
-                if oplog.arena.id_to_idx(&pos.container).is_none() {
-                    let mut s = self.state.lock().unwrap();
-                    if !s.does_container_exist(&pos.container) {
+                // TODO: assert pos.id is not unknown
+                if let Some(id) = pos.id {
+                    // Ensure the container is registered if it exists lazily
+                    if oplog.arena.id_to_idx(&pos.container).is_none() {
+                        let mut s = self.state.lock().unwrap();
+                        if !s.does_container_exist(&pos.container) {
                             return Err(CannotFindRelativePosition::ContainerDeleted);
+                        }
+                        s.ensure_container(&pos.container);
+                        drop(s);
                     }
-                    s.ensure_container(&pos.container);
-                    drop(s);
-                }
-                let idx = oplog.arena.id_to_idx(&pos.container).unwrap();
-                // We know where the target id is when we trace back to the delete_op_id.
-                let Some(delete_op_id) = find_last_delete_op(&oplog, id, idx) else {
-                    if oplog.shallow_since_vv().includes_id(id) {
-                                return Err(CannotFindRelativePosition::HistoryCleared);
-                    }
+                    let idx = oplog.arena.id_to_idx(&pos.container).unwrap();
+                    // We know where the target id is when we trace back to the delete_op_id.
+                    let Some(delete_op_id) = find_last_delete_op(&oplog, id, idx) else {
+                        if oplog.shallow_since_vv().includes_id(id) {
+                            return Err(CannotFindRelativePosition::HistoryCleared);
+                        }
 
                         tracing::error!("Cannot find id {}", id);
                         return Err(CannotFindRelativePosition::IdNotFound);
-                };
-                // Should use persist mode so that it will force all the diff calculators to use the `checkout` mode
-                let mut diff_calc = DiffCalculator::new(true);
-                let before_frontiers: Frontiers = oplog.dag.find_deps_of_id(delete_op_id);
-                let before = &oplog.dag.frontiers_to_vv(&before_frontiers).unwrap();
-                // TODO: PERF: it doesn't need to calc the effects here
-                diff_calc.calc_diff_internal(
-                    &oplog,
-                    before,
-                    &before_frontiers,
-                    oplog.vv(),
-                    oplog.frontiers(),
-                    Some(&|target| idx == target),
-                );
-                // TODO: remove depth info
-                let depth = self.arena.get_depth(idx);
-                let (_, diff_calc) = &mut diff_calc.get_or_create_calc(idx, depth);
-                match diff_calc {
-                    crate::diff_calc::ContainerDiffCalculator::Richtext(text) => {
-                        let c = text.get_id_latest_pos(id).unwrap();
-                        let new_pos = c.pos;
-                        let handler = self.get_text(&pos.container);
-                        let current_pos = handler.convert_entity_index_to_event_index(new_pos);
-                                Ok(PosQueryResult {
-                            update: handler.get_cursor(current_pos, c.side),
-                            current: AbsolutePosition {
-                                pos: current_pos,
-                                side: c.side,
-                            },
-                        })
+                    };
+                    // Should use persist mode so that it will force all the diff calculators to use the `checkout` mode
+                    let mut diff_calc = DiffCalculator::new(true);
+                    let before_frontiers: Frontiers = oplog.dag.find_deps_of_id(delete_op_id);
+                    let before = &oplog.dag.frontiers_to_vv(&before_frontiers).unwrap();
+                    // TODO: PERF: it doesn't need to calc the effects here
+                    diff_calc.calc_diff_internal(
+                        &oplog,
+                        before,
+                        &before_frontiers,
+                        oplog.vv(),
+                        oplog.frontiers(),
+                        Some(&|target| idx == target),
+                    );
+                    // TODO: remove depth info
+                    let depth = self.arena.get_depth(idx);
+                    let (_, diff_calc) = &mut diff_calc.get_or_create_calc(idx, depth);
+                    match diff_calc {
+                        crate::diff_calc::ContainerDiffCalculator::Richtext(text) => {
+                            let c = text.get_id_latest_pos(id).unwrap();
+                            let new_pos = c.pos;
+                            let handler = self.get_text(&pos.container);
+                            let current_pos = handler.convert_entity_index_to_event_index(new_pos);
+                            Ok(PosQueryResult {
+                                update: handler.get_cursor(current_pos, c.side),
+                                current: AbsolutePosition {
+                                    pos: current_pos,
+                                    side: c.side,
+                                },
+                            })
+                        }
+                        crate::diff_calc::ContainerDiffCalculator::List(list) => {
+                            let c = list.get_id_latest_pos(id).unwrap();
+                            let new_pos = c.pos;
+                            let handler = self.get_list(&pos.container);
+                            Ok(PosQueryResult {
+                                update: handler.get_cursor(new_pos, c.side),
+                                current: AbsolutePosition {
+                                    pos: new_pos,
+                                    side: c.side,
+                                },
+                            })
+                        }
+                        crate::diff_calc::ContainerDiffCalculator::MovableList(list) => {
+                            let c = list.get_id_latest_pos(id).unwrap();
+                            let new_pos = c.pos;
+                            let handler = self.get_movable_list(&pos.container);
+                            let new_pos = handler.op_pos_to_user_pos(new_pos);
+                            Ok(PosQueryResult {
+                                update: handler.get_cursor(new_pos, c.side),
+                                current: AbsolutePosition {
+                                    pos: new_pos,
+                                    side: c.side,
+                                },
+                            })
+                        }
+                        crate::diff_calc::ContainerDiffCalculator::Tree(_) => unreachable!(),
+                        crate::diff_calc::ContainerDiffCalculator::Map(_) => unreachable!(),
+                        #[cfg(feature = "counter")]
+                        crate::diff_calc::ContainerDiffCalculator::Counter(_) => unreachable!(),
+                        crate::diff_calc::ContainerDiffCalculator::Unknown(_) => unreachable!(),
                     }
-                    crate::diff_calc::ContainerDiffCalculator::List(list) => {
-                        let c = list.get_id_latest_pos(id).unwrap();
-                        let new_pos = c.pos;
-                        let handler = self.get_list(&pos.container);
-                                Ok(PosQueryResult {
-                            update: handler.get_cursor(new_pos, c.side),
-                            current: AbsolutePosition {
-                                pos: new_pos,
-                                side: c.side,
-                            },
-                        })
+                } else {
+                    match pos.container.container_type() {
+                        ContainerType::Text => {
+                            let text = self.get_text(&pos.container);
+                            Ok(PosQueryResult {
+                                update: Some(Cursor {
+                                    id: None,
+                                    container: text.id(),
+                                    side: pos.side,
+                                    origin_pos: text.len_unicode(),
+                                }),
+                                current: AbsolutePosition {
+                                    pos: text.len_event(),
+                                    side: pos.side,
+                                },
+                            })
+                        }
+                        ContainerType::List => {
+                            let list = self.get_list(&pos.container);
+                            Ok(PosQueryResult {
+                                update: Some(Cursor {
+                                    id: None,
+                                    container: list.id(),
+                                    side: pos.side,
+                                    origin_pos: list.len(),
+                                }),
+                                current: AbsolutePosition {
+                                    pos: list.len(),
+                                    side: pos.side,
+                                },
+                            })
+                        }
+                        ContainerType::MovableList => {
+                            let list = self.get_movable_list(&pos.container);
+                            Ok(PosQueryResult {
+                                update: Some(Cursor {
+                                    id: None,
+                                    container: list.id(),
+                                    side: pos.side,
+                                    origin_pos: list.len(),
+                                }),
+                                current: AbsolutePosition {
+                                    pos: list.len(),
+                                    side: pos.side,
+                                },
+                            })
+                        }
+                        ContainerType::Map | ContainerType::Tree | ContainerType::Unknown(_) => {
+                            unreachable!()
+                        }
+                        #[cfg(feature = "counter")]
+                        ContainerType::Counter => unreachable!(),
                     }
-                    crate::diff_calc::ContainerDiffCalculator::MovableList(list) => {
-                        let c = list.get_id_latest_pos(id).unwrap();
-                        let new_pos = c.pos;
-                        let handler = self.get_movable_list(&pos.container);
-                        let new_pos = handler.op_pos_to_user_pos(new_pos);
-                                Ok(PosQueryResult {
-                            update: handler.get_cursor(new_pos, c.side),
-                            current: AbsolutePosition {
-                                pos: new_pos,
-                                side: c.side,
-                            },
-                        })
-                    }
-                    crate::diff_calc::ContainerDiffCalculator::Tree(_) => unreachable!(),
-                    crate::diff_calc::ContainerDiffCalculator::Map(_) => unreachable!(),
-                    #[cfg(feature = "counter")]
-                    crate::diff_calc::ContainerDiffCalculator::Counter(_) => unreachable!(),
-                    crate::diff_calc::ContainerDiffCalculator::Unknown(_) => unreachable!(),
                 }
-            } else {
-                match pos.container.container_type() {
-                    ContainerType::Text => {
-                        let text = self.get_text(&pos.container);
-                                Ok(PosQueryResult {
-                            update: Some(Cursor {
-                                id: None,
-                                container: text.id(),
-                                side: pos.side,
-                                origin_pos: text.len_unicode(),
-                            }),
-                            current: AbsolutePosition {
-                                pos: text.len_event(),
-                                side: pos.side,
-                            },
-                        })
-                    }
-                    ContainerType::List => {
-                        let list = self.get_list(&pos.container);
-                                Ok(PosQueryResult {
-                            update: Some(Cursor {
-                                id: None,
-                                container: list.id(),
-                                side: pos.side,
-                                origin_pos: list.len(),
-                            }),
-                            current: AbsolutePosition {
-                                pos: list.len(),
-                                side: pos.side,
-                            },
-                        })
-                    }
-                    ContainerType::MovableList => {
-                        let list = self.get_movable_list(&pos.container);
-                                Ok(PosQueryResult {
-                            update: Some(Cursor {
-                                id: None,
-                                container: list.id(),
-                                side: pos.side,
-                                origin_pos: list.len(),
-                            }),
-                            current: AbsolutePosition {
-                                pos: list.len(),
-                                side: pos.side,
-                            },
-                        })
-                    }
-                    ContainerType::Map | ContainerType::Tree | ContainerType::Unknown(_) => {
-                        unreachable!()
-                    }
-                    #[cfg(feature = "counter")]
-                    ContainerType::Counter => unreachable!(),
-                }
-            }
-            })();
-            drop(txn);
-            self.renew_txn_if_auto_commit(options);
+            });
             result
         }
     }
@@ -1772,10 +1768,9 @@ impl LoroDoc {
     /// The parsed ops will be dropped
     #[inline]
     pub fn compact_change_store(&self) {
-        let (options, guard) = self.commit_then_stop();
-        drop(guard);
-        self.oplog.lock().unwrap().compact_change_store();
-        self.renew_txn_if_auto_commit(options);
+        self.with_barrier(|| {
+            self.oplog.lock().unwrap().compact_change_store();
+        });
     }
 
     /// Analyze the container info of the doc
@@ -1801,24 +1796,22 @@ impl LoroDoc {
 
     #[instrument(skip(self))]
     pub fn export(&self, mode: ExportMode) -> Result<Vec<u8>, LoroEncodeError> {
-        let (options, txn) = self.commit_then_stop();
-        let ans = match mode {
-            ExportMode::Snapshot => export_fast_snapshot(self),
-            ExportMode::Updates { from } => export_fast_updates(self, &from),
-            ExportMode::UpdatesInRange { spans } => {
-                export_fast_updates_in_range(&self.oplog.lock().unwrap(), spans.as_ref())
-            }
-            ExportMode::ShallowSnapshot(f) => export_shallow_snapshot(self, &f)?,
-            ExportMode::StateOnly(f) => match f {
-                Some(f) => export_state_only_snapshot(self, &f)?,
-                None => export_state_only_snapshot(self, &self.oplog_frontiers())?,
-            },
-            ExportMode::SnapshotAt { version } => export_snapshot_at(self, &version)?,
-        };
-
-        drop(txn);
-        self.renew_txn_if_auto_commit(options);
-        Ok(ans)
+        self.with_barrier(|| {
+            let ans = match mode {
+                ExportMode::Snapshot => export_fast_snapshot(self),
+                ExportMode::Updates { from } => export_fast_updates(self, &from),
+                ExportMode::UpdatesInRange { spans } => {
+                    export_fast_updates_in_range(&self.oplog.lock().unwrap(), spans.as_ref())
+                }
+                ExportMode::ShallowSnapshot(f) => export_shallow_snapshot(self, &f)?,
+                ExportMode::StateOnly(f) => match f {
+                    Some(f) => export_state_only_snapshot(self, &f)?,
+                    None => export_state_only_snapshot(self, &self.oplog_frontiers())?,
+                },
+                ExportMode::SnapshotAt { version } => export_snapshot_at(self, &version)?,
+            };
+            Ok(ans)
+        })
     }
 
     /// The doc only contains the history since the shallow history start version vector.
@@ -1902,7 +1895,7 @@ impl LoroDoc {
         ids: &[ID],
         f: &mut dyn FnMut(ChangeMeta) -> ControlFlow<()>,
     ) -> Result<(), ChangeTravelError> {
-        let (options, guard) = self.commit_then_stop();
+        let (options, guard) = self.implicit_commit_then_stop();
         drop(guard);
         struct PendingNode(ChangeMeta);
         impl PartialEq for PendingNode {
@@ -1969,19 +1962,17 @@ impl LoroDoc {
     }
 
     pub fn get_changed_containers_in(&self, id: ID, len: usize) -> FxHashSet<ContainerID> {
-        let (options, guard) = self.commit_then_stop();
-        drop(guard);
-        let mut set = FxHashSet::default();
-        {
-            let oplog = self.oplog().lock().unwrap();
-            for op in oplog.iter_ops(id.to_span(len)) {
-                let id = oplog.arena.get_container_id(op.container()).unwrap();
-                set.insert(id);
+        self.with_barrier(|| {
+            let mut set = FxHashSet::default();
+            {
+                let oplog = self.oplog().lock().unwrap();
+                for op in oplog.iter_ops(id.to_span(len)) {
+                    let id = oplog.arena.get_container_id(op.container()).unwrap();
+                    set.insert(id);
+                }
             }
-        }
-        // ensure OpLog lock dropped before renewing txn (Txn lock)
-        self.renew_txn_if_auto_commit(options);
-        set
+            set
+        })
     }
 
     pub fn delete_root_container(&self, cid: ContainerID) {

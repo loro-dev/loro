@@ -225,7 +225,7 @@ fn richtext_mark_event() {
     a.get_text("text")
         .mark(2, 4, "bold", LoroValue::Null)
         .unwrap();
-    let _ = a.commit_then_stop();
+    let _ = a.implicit_commit_then_stop();
     let b = LoroDoc::new_auto_commit();
     let _g = b.subscribe(
         &a.get_text("text").id(),
@@ -318,7 +318,7 @@ fn concurrent_richtext_mark_event() {
         }),
     );
     a.get_text("text").insert(2, "A").unwrap();
-    let _ = a.commit_then_stop();
+    let _ = a.implicit_commit_then_stop();
 }
 
 #[test]
