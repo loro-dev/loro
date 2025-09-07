@@ -705,7 +705,9 @@ impl UndoManager {
     }
 
     pub fn record_new_checkpoint(&mut self) -> LoroResult<()> {
-        self.doc.commit_then_renew();
+        // Use implicit-style barrier to preserve next-commit options across
+        // an empty commit before undo/redo processing.
+        self.doc.with_barrier(|| {});
         let counter = get_counter_end(&self.doc, self.peer());
         self.inner.lock().unwrap().record_checkpoint(counter, None);
         Ok(())

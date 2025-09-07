@@ -1,6 +1,53 @@
 use loro::{CommitOptions, LoroDoc, VersionVector, ID};
 
 #[test]
+fn explicit_empty_commit_swallow_options() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+
+    // Set options but do an explicit empty commit; options should be swallowed.
+    doc.set_next_commit_message("will be swallowed");
+    doc.set_next_commit_timestamp(123);
+    doc.commit();
+
+    // Next real commit should NOT carry the previous options.
+    let text = doc.get_text("text");
+    text.insert(0, "x").unwrap();
+    doc.commit();
+
+    let change = doc.get_change(ID::new(1, 0)).unwrap();
+    assert_eq!(change.message(), "");
+    assert_eq!(change.timestamp(), 0);
+}
+
+#[test]
+fn implicit_empty_commit_preserves_options() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+
+    // First real commit just to move the counter
+    let text = doc.get_text("text");
+    text.insert(0, "123").unwrap();
+    doc.commit_with(CommitOptions::new().commit_msg("first commit").timestamp(100));
+
+    // Set options and trigger an implicit empty commit via export
+    doc.set_next_commit_message("second commit");
+    doc.set_next_commit_timestamp(200);
+    let _ = doc.export(loro::ExportMode::Snapshot).unwrap();
+
+    // Next real commit should carry the preserved options
+    text.insert(3, "456").unwrap();
+    doc.commit();
+
+    let first_change = doc.get_change(ID::new(1, 0)).unwrap();
+    let second_change = doc.get_change(ID::new(1, 3)).unwrap();
+    assert_eq!(first_change.message(), "first commit");
+    assert_eq!(first_change.timestamp(), 100);
+    assert_eq!(second_change.message(), "second commit");
+    assert_eq!(second_change.timestamp(), 200);
+}
+
+#[test]
 fn test_commit_message() {
     let doc = LoroDoc::new();
     let text = doc.get_text("text");

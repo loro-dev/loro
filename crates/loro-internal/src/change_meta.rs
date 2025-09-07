@@ -90,4 +90,9 @@ impl ChangeMeta {
             None => "",
         }
     }
+
+    /// Get the commit timestamp in seconds since Unix epoch.
+    pub fn timestamp(&self) -> crate::change::Timestamp {
+        self.timestamp
+    }
 }
