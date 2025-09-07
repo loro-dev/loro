@@ -1,3 +1,20 @@
+//! Lock-order-checked mutexes.
+//!
+//! This module provides a small utility to prevent deadlocks by enforcing a
+//! strict, per-thread lock acquisition order across a set of related locks.
+//!
+//! Core ideas:
+//! - Locks are created from a [`LoroLockGroup`]. Locks in the same group share
+//!   a per-thread stack that tracks the last acquired lock kind.
+//! - Each lock has an associated [`LockKind`]. A thread may only acquire locks
+//!   in strictly increasing kind order (e.g. `Txn` → `OpLog` → `DocState` → `DiffCalculator`).
+//! - Locks must be released in the reverse order they were acquired (LIFO).
+//! - Violations are detected and reported with helpful panics that include the
+//!   callsite (via `#[track_caller]`) and a backtrace on release-order errors.
+//!
+//! The actual locking is backed by [`crate::sync::Mutex`], which resolves to
+//! `std::sync::Mutex` in normal builds and `loom::sync::Mutex` under loom. This
+//! keeps the code testable with loom while maintaining the same API.
 use crate::sync::ThreadLocal;
 use crate::sync::{Mutex, MutexGuard};
 use std::backtrace::Backtrace;
@@ -6,6 +23,16 @@ use std::ops::{Deref, DerefMut};
 use std::panic::Location;
 use std::sync::Arc;
 
+/// A mutex that verifies lock acquisition and release order against a group-wide
+/// strict ordering by [`LockKind`].
+///
+/// Create instances via [`LoroLockGroup::new_lock`]. Calling [`LoroMutex::lock`]
+/// will panic if the current thread has already acquired a lock with a kind that
+/// is greater than or equal to this lock’s kind. Release order is also checked;
+/// dropping the guard out of LIFO order results in a panic.
+///
+/// This type wraps [`crate::sync::Mutex`], so it remains compatible with loom-based
+/// concurrency testing.
 #[derive(Debug)]
 pub struct LoroMutex<T> {
     lock: Mutex<T>,
@@ -13,6 +40,7 @@ pub struct LoroMutex<T> {
     currently_locked_in_this_thread: Arc<ThreadLocal<Mutex<LockInfo>>>,
 }
 
+/// Internal per-thread lock information used for diagnostics and order checks.
 #[derive(Debug, Copy, Clone, Default)]
 struct LockInfo {
     kind: u8,
@@ -36,11 +64,24 @@ impl Display for LockInfo {
 }
 
 #[derive(Debug)]
+/// A group that defines a shared locking order domain.
+///
+/// All [`LoroMutex`] created from the same group participate in a single,
+/// per-thread lock-order stack. Locks from different groups are independent and
+/// do not affect each other’s ordering checks.
+///
+/// Use [`LoroLockGroup::new_lock`] to create locks of specific [`LockKind`].
 pub struct LoroLockGroup {
     g: Arc<ThreadLocal<Mutex<LockInfo>>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// Logical lock kinds that define the allowed acquisition order.
+///
+/// Kinds with smaller numeric values must be acquired before larger ones, and
+/// they must be released in reverse order. The specific variants reflect the
+/// high-level components in the system; extend this enum carefully to preserve
+/// a consistent global ordering.
 pub enum LockKind {
     None = 0,
     Txn = 1,
@@ -50,11 +91,18 @@ pub enum LockKind {
 }
 
 impl LoroLockGroup {
+    /// Create a new lock group.
+    ///
+    /// Cloning the returned group is cheap. All locks created from clones of
+    /// the same group still share the same ordering domain.
     pub fn new() -> Self {
         let g = Arc::new(ThreadLocal::new());
         LoroLockGroup { g }
     }
 
+    /// Create a new lock associated with this group and [`LockKind`].
+    ///
+    /// The created lock participates in this group’s order checks.
     pub fn new_lock<T>(&self, value: T, kind: LockKind) -> LoroMutex<T> {
         LoroMutex {
             lock: Mutex::new(value),
@@ -72,6 +120,18 @@ impl Default for LoroLockGroup {
 
 impl<T> LoroMutex<T> {
     #[track_caller]
+    /// Acquire the lock, enforcing strict increasing [`LockKind`] order.
+    ///
+    /// Returns a guard that unlocks when dropped and verifies that it is being
+    /// released in the reverse acquisition order (LIFO). The callsite is
+    /// recorded to improve panic diagnostics.
+    ///
+    /// Errors:
+    /// - Propagates [`std::sync::PoisonError`] from the underlying mutex.
+    ///
+    /// Panics:
+    /// - If the current thread already holds a lock with kind `>= self.kind`.
+    /// - If the guard is later dropped out of acquisition order.
     pub fn lock(&self) -> Result<LoroMutexGuard<'_, T>, std::sync::PoisonError<MutexGuard<'_, T>>> {
         let caller = Location::caller();
         let v = self.currently_locked_in_this_thread.get_or_default();
@@ -100,16 +160,29 @@ impl<T> LoroMutex<T> {
         Ok(ans)
     }
 
+    /// Returns whether the mutex appears locked at this instant.
+    ///
+    /// This is implemented via `try_lock().is_err()` and is intended only for
+    /// diagnostics. It is race-prone and should not be used to implement logic
+    /// that depends on the lock state.
     pub fn is_locked(&self) -> bool {
         self.lock.try_lock().is_err()
     }
 }
 
+/// Guard returned by [`LoroMutex::lock`].
+///
+/// Dereferences to the protected data and enforces release-order checks on drop.
+/// In most cases, you should keep using this guard type so order tracking remains
+/// intact for the duration of the critical section.
 pub struct LoroMutexGuard<'a, T> {
     guard: MutexGuard<'a, T>,
     _inner: LoroMutexGuardInner<'a, T>,
 }
 
+/// RAII helper that updates the per-thread lock info on drop.
+///
+/// This is an implementation detail of [`LoroMutexGuard`].
 struct LoroMutexGuardInner<'a, T> {
     inner: &'a LoroMutex<T>,
     this: LockInfo,
@@ -139,6 +212,16 @@ impl<T: Debug> std::fmt::Debug for LoroMutexGuard<'_, T> {
 }
 
 impl<'a, T> LoroMutexGuard<'a, T> {
+    /// Extract the underlying [`MutexGuard`], detaching order tracking.
+    ///
+    /// This consumes `self`, performs the release-order bookkeeping immediately
+    /// (making the thread-local lock info revert to the previous state), and
+    /// returns the raw guard. Subsequent lock acquisitions in this thread will no
+    /// longer consider this guard as held, which means order violations will not
+    /// be detected relative to it.
+    ///
+    /// Prefer to keep using [`LoroMutexGuard`] unless integrating with APIs that
+    /// require a plain [`MutexGuard`]. Misuse can lead to missing diagnostics.
     pub fn take_guard(self) -> MutexGuard<'a, T> {
         self.guard
     }

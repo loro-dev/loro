@@ -895,6 +895,13 @@ impl LoroDoc {
     /// the largest existing timestamp will be used instead.
     ///
     /// NOTE: The `origin` will not be persisted, but the `message` will.
+    ///
+    /// Behavior on empty commits:
+    /// - This method is an explicit commit. If the pending transaction is empty, any provided
+    ///   options (message/timestamp/origin) are swallowed and will not carry over to the next commit.
+    /// - Implicit commits triggered by `export`/`checkout` act as processing barriers. If the
+    ///   transaction is empty in those cases, `message`/`timestamp`/`origin` are preserved for the
+    ///   next commit.
     pub fn commit(&self, options: Option<JsCommitOption>) -> JsResult<()> {
         if let Some(options) = options {
             let options = js_commit_option_to_commit_options(options)?;

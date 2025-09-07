@@ -1679,7 +1679,6 @@ fn undo_with_custom_commit_options() -> anyhow::Result<()> {
         assert_eq!(e.origin, "undo_then_redo");
     }));
     doc.set_next_commit_origin("undo_then_redo");
-    doc.commit();
     undo.undo()?;
     assert_eq!(doc.get_text("text").to_string(), "");
     doc.set_next_commit_origin("undo_then_redo");

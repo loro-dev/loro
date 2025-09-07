@@ -171,7 +171,10 @@ impl LoroDoc {
 
             if doc_state.is_in_txn() {
                 drop(doc_state);
-                self.commit_then_renew();
+                // Use implicit-style barrier to avoid swallowing next-commit options
+                let (options, guard) = self.commit_then_stop();
+                drop(guard);
+                self.renew_txn_if_auto_commit(options);
             }
             self.peer_id_change_subs.emit(&(), next_id);
             return Ok(());
@@ -214,7 +217,8 @@ impl LoroDoc {
         Option<CommitOptions>,
         LoroMutexGuard<'_, Option<Transaction>>,
     ) {
-        let (a, b) = self.commit_with(CommitOptions::new().immediate_renew(false));
+        // Implicit commit: preserve options on empty commit
+        let (a, b) = self.commit_with_mode(CommitOptions::new().immediate_renew(false), true);
         (a, b.unwrap())
     }
 
@@ -224,7 +228,8 @@ impl LoroDoc {
     /// It only returns Some(options_of_the_empty_txn) when the txn is empty
     #[inline]
     pub fn commit_then_renew(&self) -> Option<CommitOptions> {
-        self.commit_with(CommitOptions::new().immediate_renew(true))
+        // Explicit commit: swallow options on empty commit
+        self.commit_with_mode(CommitOptions::new().immediate_renew(true), false)
             .0
     }
 
@@ -253,15 +258,18 @@ impl LoroDoc {
         None
     }
 
-    /// Commit the cumulative auto commit transaction.
-    /// This method only has effect when `auto_commit` is true.
-    /// If `immediate_renew` is true, a new transaction will be created after the old one is committed
+    /// Core implementation for committing the cumulative auto-commit transaction.
     ///
-    /// It only returns Some(options_of_the_empty_txn) when the txn is empty
+    /// - When `preserve_on_empty` is true (implicit commits like export/checkout),
+    ///   commit options from an empty transaction are carried over to the next transaction
+    ///   (except `origin`, which never carries across an empty commit).
+    /// - When `preserve_on_empty` is false (explicit commits), commit options from an
+    ///   empty transaction are swallowed and NOT carried over.
     #[instrument(skip_all)]
-    pub fn commit_with(
+    fn commit_with_mode(
         &self,
         config: CommitOptions,
+        preserve_on_empty: bool,
     ) -> (
         Option<CommitOptions>,
         Option<LoroMutexGuard<'_, Option<Transaction>>>,
@@ -297,7 +305,18 @@ impl LoroDoc {
             }
 
             let id_span = txn.id_span();
-            let options = txn.commit().unwrap();
+            let mut options = txn.commit().unwrap();
+            // Empty commit returns Some(options). We may preserve parts of it for implicit commits.
+            if let Some(opts) = options.as_mut() {
+                // `origin` is an event-only label and never carries across an empty commit
+                if config.origin.is_some() {
+                    opts.set_origin(None);
+                }
+                // For explicit commits, swallow options from empty commit entirely
+                if !preserve_on_empty {
+                    options = None;
+                }
+            }
             if config.immediate_renew {
                 assert!(self.can_edit());
                 let mut t = self.txn().unwrap();
@@ -326,6 +345,21 @@ impl LoroDoc {
                 },
             );
         }
+    }
+
+    /// Commit the cumulative auto commit transaction (explicit API).
+    ///
+    /// This is used by user-facing explicit commits. If the transaction is empty,
+    /// any provided commit options are swallowed and will NOT carry over.
+    #[instrument(skip_all)]
+    pub fn commit_with(
+        &self,
+        config: CommitOptions,
+    ) -> (
+        Option<CommitOptions>,
+        Option<LoroMutexGuard<'_, Option<Transaction>>>,
+    ) {
+        self.commit_with_mode(config, false)
     }
 
     /// Set the commit message of the next commit
@@ -489,8 +523,9 @@ impl LoroDoc {
     /// Get the timestamp of the current state.
     /// It's the last edit time of the [DocState].
     pub fn state_timestamp(&self) -> Timestamp {
-        let f = &self.state.lock().unwrap().frontiers;
-        self.oplog.lock().unwrap().get_timestamp_of_version(f)
+        // Acquire locks in correct order: read frontiers first, then query OpLog.
+        let f = { self.state.lock().unwrap().frontiers.clone() };
+        self.oplog.lock().unwrap().get_timestamp_of_version(&f)
     }
 
     #[inline(always)]
@@ -1565,17 +1600,18 @@ impl LoroDoc {
             // What we need is to trace back to the latest version that deletes the target
             // id.
 
-            // commit the txn to make sure we can query the history correctly
+            // commit the txn to make sure we can query the history correctly, preserving options
             drop(state);
-            self.commit_then_renew();
-            let oplog = self.oplog().lock().unwrap();
+            let (options, txn) = self.commit_then_stop();
+            let result = (|| {
+                let oplog = self.oplog().lock().unwrap();
             // TODO: assert pos.id is not unknown
             if let Some(id) = pos.id {
                 // Ensure the container is registered if it exists lazily
                 if oplog.arena.id_to_idx(&pos.container).is_none() {
                     let mut s = self.state.lock().unwrap();
                     if !s.does_container_exist(&pos.container) {
-                        return Err(CannotFindRelativePosition::ContainerDeleted);
+                            return Err(CannotFindRelativePosition::ContainerDeleted);
                     }
                     s.ensure_container(&pos.container);
                     drop(s);
@@ -1584,11 +1620,11 @@ impl LoroDoc {
                 // We know where the target id is when we trace back to the delete_op_id.
                 let Some(delete_op_id) = find_last_delete_op(&oplog, id, idx) else {
                     if oplog.shallow_since_vv().includes_id(id) {
-                        return Err(CannotFindRelativePosition::HistoryCleared);
+                                return Err(CannotFindRelativePosition::HistoryCleared);
                     }
 
-                    tracing::error!("Cannot find id {}", id);
-                    return Err(CannotFindRelativePosition::IdNotFound);
+                        tracing::error!("Cannot find id {}", id);
+                        return Err(CannotFindRelativePosition::IdNotFound);
                 };
                 // Should use persist mode so that it will force all the diff calculators to use the `checkout` mode
                 let mut diff_calc = DiffCalculator::new(true);
@@ -1612,7 +1648,7 @@ impl LoroDoc {
                         let new_pos = c.pos;
                         let handler = self.get_text(&pos.container);
                         let current_pos = handler.convert_entity_index_to_event_index(new_pos);
-                        Ok(PosQueryResult {
+                                Ok(PosQueryResult {
                             update: handler.get_cursor(current_pos, c.side),
                             current: AbsolutePosition {
                                 pos: current_pos,
@@ -1624,7 +1660,7 @@ impl LoroDoc {
                         let c = list.get_id_latest_pos(id).unwrap();
                         let new_pos = c.pos;
                         let handler = self.get_list(&pos.container);
-                        Ok(PosQueryResult {
+                                Ok(PosQueryResult {
                             update: handler.get_cursor(new_pos, c.side),
                             current: AbsolutePosition {
                                 pos: new_pos,
@@ -1637,7 +1673,7 @@ impl LoroDoc {
                         let new_pos = c.pos;
                         let handler = self.get_movable_list(&pos.container);
                         let new_pos = handler.op_pos_to_user_pos(new_pos);
-                        Ok(PosQueryResult {
+                                Ok(PosQueryResult {
                             update: handler.get_cursor(new_pos, c.side),
                             current: AbsolutePosition {
                                 pos: new_pos,
@@ -1655,7 +1691,7 @@ impl LoroDoc {
                 match pos.container.container_type() {
                     ContainerType::Text => {
                         let text = self.get_text(&pos.container);
-                        Ok(PosQueryResult {
+                                Ok(PosQueryResult {
                             update: Some(Cursor {
                                 id: None,
                                 container: text.id(),
@@ -1670,7 +1706,7 @@ impl LoroDoc {
                     }
                     ContainerType::List => {
                         let list = self.get_list(&pos.container);
-                        Ok(PosQueryResult {
+                                Ok(PosQueryResult {
                             update: Some(Cursor {
                                 id: None,
                                 container: list.id(),
@@ -1685,7 +1721,7 @@ impl LoroDoc {
                     }
                     ContainerType::MovableList => {
                         let list = self.get_movable_list(&pos.container);
-                        Ok(PosQueryResult {
+                                Ok(PosQueryResult {
                             update: Some(Cursor {
                                 id: None,
                                 container: list.id(),
@@ -1705,6 +1741,10 @@ impl LoroDoc {
                     ContainerType::Counter => unreachable!(),
                 }
             }
+            })();
+            drop(txn);
+            self.renew_txn_if_auto_commit(options);
+            result
         }
     }
 
@@ -1732,8 +1772,10 @@ impl LoroDoc {
     /// The parsed ops will be dropped
     #[inline]
     pub fn compact_change_store(&self) {
-        self.commit_then_renew();
+        let (options, guard) = self.commit_then_stop();
+        drop(guard);
         self.oplog.lock().unwrap().compact_change_store();
+        self.renew_txn_if_auto_commit(options);
     }
 
     /// Analyze the container info of the doc
@@ -1860,7 +1902,8 @@ impl LoroDoc {
         ids: &[ID],
         f: &mut dyn FnMut(ChangeMeta) -> ControlFlow<()>,
     ) -> Result<(), ChangeTravelError> {
-        self.commit_then_renew();
+        let (options, guard) = self.commit_then_stop();
+        drop(guard);
         struct PendingNode(ChangeMeta);
         impl PartialEq for PendingNode {
             fn eq(&self, other: &Self) -> bool {
@@ -1920,18 +1963,24 @@ impl LoroDoc {
             }
         }
 
-        Ok(())
+        let ans = Ok(());
+        self.renew_txn_if_auto_commit(options);
+        ans
     }
 
     pub fn get_changed_containers_in(&self, id: ID, len: usize) -> FxHashSet<ContainerID> {
-        self.commit_then_renew();
+        let (options, guard) = self.commit_then_stop();
+        drop(guard);
         let mut set = FxHashSet::default();
-        let oplog = &self.oplog().lock().unwrap();
-        for op in oplog.iter_ops(id.to_span(len)) {
-            let id = oplog.arena.get_container_id(op.container()).unwrap();
-            set.insert(id);
+        {
+            let oplog = self.oplog().lock().unwrap();
+            for op in oplog.iter_ops(id.to_span(len)) {
+                let id = oplog.arena.get_container_id(op.container()).unwrap();
+                set.insert(id);
+            }
         }
-
+        // ensure OpLog lock dropped before renewing txn (Txn lock)
+        self.renew_txn_if_auto_commit(options);
         set
     }
 

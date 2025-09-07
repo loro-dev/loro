@@ -508,6 +508,10 @@ impl LoroDoc {
     /// Note: Loro transactions are not ACID database transactions. There is no rollback or
     /// isolation; they are a grouping mechanism for events/history. For interactive undo/redo,
     /// use [`UndoManager`].
+    ///
+    /// Empty-commit behavior: this method is an explicit commit. If the pending
+    /// transaction is empty, any previously set next-commit options (message/timestamp/origin)
+    /// are swallowed and will not carry over.
     #[inline]
     pub fn commit(&self) {
         self.doc.commit_then_renew();
@@ -522,6 +526,11 @@ impl LoroDoc {
     /// See also: [`set_next_commit_message`], [`set_next_commit_origin`],
     /// [`set_next_commit_timestamp`]. Commit messages are persisted and replicate to peers;
     /// origins are local-only metadata.
+    ///
+    /// Empty-commit behavior: this method is an explicit commit. If the pending
+    /// transaction is empty, the provided options are swallowed and will not carry over.
+    /// For implicit commits triggered by `export`/`checkout` (commit barriers),
+    /// message/timestamp/origin from an empty transaction are preserved for the next commit.
     #[inline]
     pub fn commit_with(&self, options: CommitOptions) {
         self.doc.commit_with(options);

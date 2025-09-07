@@ -474,7 +474,7 @@ fn sync() {
 
 #[test]
 fn save() {
-    use loro::LoroDoc;
+use loro::LoroDoc;
 
     let doc = LoroDoc::new();
     let text = doc.get_text("text");
@@ -2198,6 +2198,35 @@ fn get_editor() {
     tree.mov(node_0, node_1).unwrap();
     let mov_id = tree.get_last_move_id(&node_0).unwrap();
     assert_eq!(mov_id.peer, 2);
+}
+
+#[test]
+fn origin_does_not_persist_across_empty_commits() {
+    use std::sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex};
+
+    let doc = LoroDoc::new();
+    doc.set_peer_id(0).unwrap();
+
+    let got = Arc::new(AtomicBool::new(false));
+    let got2 = got.clone();
+    let origin_capture = Arc::new(Mutex::new(String::new()));
+    let origin_capture2 = origin_capture.clone();
+
+    let _sub = doc.subscribe_root(Arc::new(move |e| {
+        if !got2.swap(true, Ordering::SeqCst) {
+            *origin_capture2.lock().unwrap() = e.origin.to_string();
+        }
+    }));
+
+    // Empty commit with origin should not affect the next commit
+    doc.commit_with(loro::CommitOptions::new().origin("A"));
+
+    // Make a real change and commit
+    doc.get_text("text").insert(0, "x").unwrap();
+    doc.commit();
+
+    assert!(got.load(Ordering::SeqCst));
+    assert_eq!(origin_capture.lock().unwrap().as_str(), "");
 }
 
 #[test]

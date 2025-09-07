@@ -667,7 +667,7 @@ it("can clear next commit options", () => {
   expect(change.timestamp).toBe(0);
 });
 
-it("commit options persist across empty commits", () => {
+it("commit options persist across implicit empty commits", () => {
   const doc = new LoroDoc();
   doc.setPeerId("1");
 
@@ -676,8 +676,10 @@ it("commit options persist across empty commits", () => {
   doc.setNextCommitOptions({ message: "first commit", timestamp: 100 });
   doc.commit();
 
+  // Set options again; do NOT explicitly commit.
+  // Trigger an implicit commit via export, which should preserve
+  // options across the empty commit boundary.
   doc.setNextCommitOptions({ message: "second commit", timestamp: 200 });
-  doc.commit();
   doc.export({ mode: "snapshot" });
   // Options should persist for second commit
   doc.getText("text").insert(3, "456");
@@ -690,6 +692,46 @@ it("commit options persist across empty commits", () => {
   expect(firstChange.timestamp).toBe(100);
   expect(secondChange.message).toBe("second commit");
   expect(secondChange.timestamp).toBe(200);
+});
+
+it("origin does not persist across empty commits", async () => {
+  const doc = new LoroDoc();
+  doc.setPeerId("1");
+
+  let firstOrigin = "<unset>";
+  let count = 0;
+  const unsubscribe = doc.subscribe((e) => {
+    if (count === 0) {
+      firstOrigin = e.origin ?? "";
+      count++;
+    }
+  });
+
+  // Empty commit with an origin should not leak to the next commit
+  doc.commit({ origin: "A" });
+
+  // Make a real change and commit
+  doc.getText("text").insert(0, "x");
+  doc.commit();
+  await Promise.resolve();
+  expect(firstOrigin).toBe("");
+  unsubscribe();
+});
+
+it("explicit empty commit swallows next commit options", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId("1");
+
+  // Set options and perform an explicit empty commit
+  doc.setNextCommitOptions({ message: "swallow", timestamp: 123 });
+  doc.commit();
+
+  // Next real commit should NOT carry those options
+  doc.getText("text").insert(0, "x");
+  doc.commit();
+  const change = doc.getChangeAt({ peer: "1", counter: 0 });
+  expect(change.message).toBeUndefined();
+  expect(change.timestamp).toBe(0);
 });
 
 it("can query pending txn length", () => {
@@ -1547,7 +1589,7 @@ it("redactJsonUpdates removes sensitive content", () => {
 
   // Define version range to redact (redact the text content)
   const versionRange = {
-    "1": [0, 21]  // Redact the "Sensitive information"
+    "1": [0, 21], // Redact the "Sensitive information"
   };
 
   // Apply redaction
@@ -1566,7 +1608,7 @@ it("redactJsonUpdates removes sensitive content", () => {
 
   // Now redact the map content
   const versionRange2 = {
-    "1": [21, 22]  // Redact the "secret123"
+    "1": [21, 22], // Redact the "secret123"
   };
 
   const redactedJson2 = redactJsonUpdates(jsonUpdates, versionRange2);
@@ -1717,8 +1759,8 @@ it("tree deleted node to json", () => {
   tree.delete(root.id);
   doc.commit();
   const node = tree.getNodes({ withDeleted: true })[0].toJSON();
-  expect(node.parent).toBe('2147483647@18446744073709551615');
+  expect(node.parent).toBe("2147483647@18446744073709551615");
   // default value
-  expect(node.fractionalIndex).toBe('80');
+  expect(node.fractionalIndex).toBe("80");
   expect(node.index).toBe(0);
 });
