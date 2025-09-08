@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.7.1
+
+### Patch Changes
+
+- 6d308d1: fix: use null when export json update with undefined value
+- 1aad1d5: Add toJSON to LoroCounter
+
 ## 1.7.0
 
 ### Minor Changes
