@@ -1805,3 +1805,8 @@ it("tree deleted node to json", () => {
   expect(node.fractionalIndex).toBe("80");
   expect(node.index).toBe(0);
 });
+
+it("counter toJSON", () => {
+  const doc = new LoroDoc();
+  expect(doc.getCounter("c").toJSON()).toBe(0);
+});

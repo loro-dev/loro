@@ -123,4 +123,8 @@ impl LoroCounter {
     pub fn get_shallow_value(&self) -> f64 {
         self.handler.get_value().into_double().unwrap()
     }
+
+    pub fn toJSON(&self) -> f64 {
+        self.handler.get_value().into_double().unwrap()
+    }
 }
