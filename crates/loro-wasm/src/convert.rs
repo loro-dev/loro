@@ -663,7 +663,9 @@ pub(crate) fn js_json_schema_to_loro_json_schema(
 
 /// Convert Loro's internal JsonSchema to JavaScript JsonSchema
 pub(crate) fn loro_json_schema_to_js_json_schema(json_schema: JsonSchema) -> JsJsonSchema {
-    let s = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+    let s = serde_wasm_bindgen::Serializer::new()
+        .serialize_maps_as_objects(true)
+        .serialize_missing_as_null(true);
     let value = json_schema
         .serialize(&s)
         .map_err(std::convert::Into::<JsValue>::into)
