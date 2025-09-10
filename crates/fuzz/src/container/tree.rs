@@ -4,7 +4,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use fxhash::FxHashMap;
+use rustc_hash::FxHashMap;
 use loro::{
     event::Diff, Container, ContainerID, ContainerType, LoroDoc, LoroError, LoroTree, LoroValue,
     TreeExternalDiff, TreeID,

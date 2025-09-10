@@ -8,8 +8,8 @@ use crate::{
     span::{CounterSpan, IdSpan},
     LoroError, PeerID,
 };
-use fxhash::FxHashMap;
 use loro_common::{HasCounter, HasCounterSpan, HasIdSpan, HasLamportSpan, IdFull, IdSpanVector};
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{
@@ -33,7 +33,7 @@ pub struct VersionRange(pub(crate) FxHashMap<PeerID, (Counter, Counter)>);
 #[macro_export]
 macro_rules! version_range {
     ($($peer:expr => ($start:expr, $end:expr)),* $(,)?) => {{
-        let mut map = ::fxhash::FxHashMap::default();
+        let mut map = ::rustc_hash::FxHashMap::default();
         $(
             map.insert($peer, ($start, $end));
         )*
@@ -155,7 +155,7 @@ impl VersionRange {
 /// can be created from cloning and modifying other similar version vectors.
 #[repr(transparent)]
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ImVersionVector(im::HashMap<PeerID, Counter, fxhash::FxBuildHasher>);
+pub struct ImVersionVector(im::HashMap<PeerID, Counter, rustc_hash::FxBuildHasher>);
 
 impl ImVersionVector {
     pub fn new() -> Self {

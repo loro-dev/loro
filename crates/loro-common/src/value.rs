@@ -2,7 +2,7 @@ use std::{collections::HashMap, hash::Hash, ops::Index, sync::Arc};
 
 use arbitrary::Arbitrary;
 use enum_as_inner::EnumAsInner;
-use fxhash::FxHashMap;
+use rustc_hash::FxHashMap;
 use serde::{de::VariantAccess, Deserialize, Serialize};
 
 use crate::ContainerID;
@@ -563,7 +563,7 @@ impl From<ContainerID> for LoroValue {
 
 #[cfg(feature = "wasm")]
 pub mod wasm {
-    use fxhash::FxHashMap;
+    use rustc_hash::FxHashMap;
     use js_sys::{Array, Object, Uint8Array};
     use wasm_bindgen::{JsCast, JsValue, __rt::IntoJsResult};
 

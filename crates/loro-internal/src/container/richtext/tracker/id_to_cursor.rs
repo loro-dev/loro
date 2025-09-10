@@ -1,4 +1,4 @@
-use fxhash::FxHashMap;
+use rustc_hash::FxHashMap;
 use generic_btree::{
     rle::{HasLength, Mergeable},
     LeafIndex,

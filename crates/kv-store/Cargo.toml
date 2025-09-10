@@ -18,7 +18,7 @@ quick_cache = { version = "0.6.2" }
 [dependencies]
 loro-common = { path = "../loro-common", version = "1.6.0" }
 bytes = { workspace = true }
-fxhash = { workspace = true }
+rustc-hash = { workspace = true }
 once_cell = { workspace = true }
 lz4_flex = { version = "0.11" }
 xxhash-rust = { workspace = true }

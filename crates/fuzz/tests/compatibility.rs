@@ -1,5 +1,6 @@
 #![allow(deprecated)]
 #![allow(unexpected_cfgs)]
+use assert_unordered::assert_eq_unordered;
 use std::sync::Arc;
 
 use loro::{ToJson as _, ID};
@@ -36,7 +37,7 @@ fn updates_with_commit_message_can_be_imported_to_016() {
         doc1.get_text("text").to_string()
     );
 
-    assert_eq!(
+    assert_eq_unordered!(
         doc2.get_tree("tree")
             .nodes()
             .into_iter()
@@ -102,8 +103,8 @@ fn snapshot_from_016_can_be_imported_in_cur_version() {
 
     // Verify that the imported data matches the original
     assert_eq!(
-        doc_current.get_deep_value().to_json(),
-        doc_016.get_deep_value().to_json()
+        doc_current.get_deep_value().to_json_value(),
+        doc_016.get_deep_value().to_json_value()
     );
 
     // Perform additional operations on the current version doc
@@ -146,8 +147,8 @@ fn snapshot_from_016_can_be_imported_in_cur_version() {
 
     // Verify that the reimported data in loro-016 matches the current version
     assert_eq!(
-        doc_016_reimport.get_deep_value().to_json(),
-        doc_current.get_deep_value().to_json()
+        doc_016_reimport.get_deep_value().to_json_value(),
+        doc_current.get_deep_value().to_json_value()
     );
 }
 

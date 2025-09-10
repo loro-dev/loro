@@ -1,4 +1,4 @@
-use fxhash::FxHashMap;
+use rustc_hash::FxHashMap;
 use loro_common::InternalString;
 
 use super::{ExpandType, TextStyleInfoFlag};

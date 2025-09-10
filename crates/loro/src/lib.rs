@@ -4,7 +4,7 @@
 #![warn(missing_debug_implementations)]
 use event::DiffBatch;
 use event::{DiffEvent, Subscriber};
-use fxhash::FxHashSet;
+use rustc_hash::FxHashSet;
 pub use loro_common::InternalString;
 pub use loro_internal::cursor::CannotFindRelativePosition;
 use loro_internal::cursor::Cursor;
@@ -2365,7 +2365,7 @@ impl LoroText {
     /// ```
     /// use loro::{LoroDoc, ToJson, ExpandType, TextDelta};
     /// use serde_json::json;
-    /// use fxhash::FxHashMap;
+    /// use rustc_hash::FxHashMap;
     ///
     /// let doc = LoroDoc::new();
     /// let text = doc.get_text("text");

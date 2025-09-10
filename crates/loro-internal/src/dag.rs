@@ -12,7 +12,7 @@ use std::{
     fmt::Debug,
 };
 
-use fxhash::{FxHashMap, FxHashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 use loro_common::IdSpanVector;
 use rle::{HasLength, Sliceable};
 use smallvec::SmallVec;

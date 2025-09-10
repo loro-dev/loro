@@ -1,4 +1,4 @@
-use fxhash::FxHashSet;
+use rustc_hash::FxHashSet;
 use loro_common::ContainerID;
 
 pub use crate::container::richtext::config::{StyleConfig, StyleConfigMap};

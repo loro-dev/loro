@@ -1,4 +1,4 @@
-use fxhash::FxHashSet;
+use rustc_hash::FxHashSet;
 use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
 use std::slice;

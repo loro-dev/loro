@@ -5,7 +5,7 @@ use crate::{
     version::Frontiers,
 };
 
-use fxhash::FxHashSet;
+use rustc_hash::FxHashSet;
 use std::collections::BinaryHeap;
 
 #[derive(Debug, PartialEq, Eq)]

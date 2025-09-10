@@ -24,7 +24,7 @@ mod my_thread_local {
 
     use super::thread;
     use super::Mutex;
-    use fxhash::FxHashMap;
+    use rustc_hash::FxHashMap;
 
     #[derive(Debug)]
     pub(crate) struct ThreadLocal<T> {

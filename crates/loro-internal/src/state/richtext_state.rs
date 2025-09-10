@@ -1,4 +1,4 @@
-use fxhash::{FxHashMap, FxHashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 use generic_btree::{rle::HasLength, Cursor};
 use loro_common::{ContainerID, InternalString, LoroError, LoroResult, LoroValue, ID};
 use loro_delta::DeltaRopeBuilder;
@@ -934,7 +934,7 @@ impl RichtextStateLoader {
 }
 
 mod snapshot {
-    use fxhash::FxHashMap;
+    use rustc_hash::FxHashMap;
     use loro_common::{IdFull, InternalString, LoroValue, PeerID};
     use serde_columnar::columnar;
     use std::{io::Read, sync::Arc};

@@ -6,7 +6,7 @@ use crate::{
     container::idx::ContainerIdx, utils::subscription::SubscriberSet, ContainerDiff, LoroDoc,
     Subscription,
 };
-use fxhash::FxHashMap;
+use rustc_hash::FxHashMap;
 use loro_common::{ContainerID, ID};
 use smallvec::SmallVec;
 use std::{collections::VecDeque, sync::Arc};

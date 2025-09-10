@@ -1,6 +1,6 @@
 use std::{char, sync::Arc};
 
-use fxhash::FxHashMap;
+use rustc_hash::FxHashMap;
 use itertools::Itertools;
 
 use crate::diff::DiffHandler;

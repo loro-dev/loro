@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, mem, sync::Weak};
 
-use fxhash::FxHashMap;
+use rustc_hash::FxHashMap;
 use loro_common::{ContainerID, IdLp, LoroResult, PeerID};
 use rle::HasLength;
 
@@ -282,7 +282,7 @@ impl MapState {
 
 mod snapshot {
 
-    use fxhash::{FxHashMap, FxHashSet};
+    use rustc_hash::{FxHashMap, FxHashSet};
     use loro_common::{InternalString, LoroValue};
     use serde_columnar::Itertools;
 

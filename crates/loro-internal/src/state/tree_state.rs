@@ -1,7 +1,7 @@
 use either::Either;
 use enum_as_inner::EnumAsInner;
 use fractional_index::FractionalIndex;
-use fxhash::{FxHashMap, FxHashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
 use loro_common::{
     ContainerID, IdFull, IdLp, LoroError, LoroResult, LoroTreeError, LoroValue, PeerID, TreeID,
@@ -332,7 +332,7 @@ struct TreeChildrenCache(FxHashMap<TreeParentId, NodeChildren>);
 mod btree {
     use std::{cmp::Ordering, ops::Range, sync::Arc};
 
-    use fxhash::FxHashMap;
+    use rustc_hash::FxHashMap;
     use generic_btree::{
         rle::{CanRemove, HasLength, Mergeable, Sliceable, TryInsert},
         BTree, BTreeTrait, Cursor, FindResult, LeafIndex, LengthFinder, Query, UseLengthFinder,
@@ -1587,7 +1587,7 @@ mod snapshot {
     use std::{borrow::Cow, collections::BTreeSet, io::Read};
 
     use fractional_index::FractionalIndex;
-    use fxhash::FxHashMap;
+    use rustc_hash::FxHashMap;
     use itertools::Itertools;
     use loro_common::{IdFull, Lamport, PeerID, TreeID};
 

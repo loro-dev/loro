@@ -1,7 +1,7 @@
 use either::Either;
 pub(crate) use encode::{encode_op, get_op_prop};
 use fractional_index::FractionalIndex;
-use fxhash::{FxHashMap, FxHashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 use generic_btree::rle::Sliceable;
 use itertools::Itertools;
 use loro_common::{
@@ -935,7 +935,7 @@ mod encode {
     #[allow(unused_imports)]
     use crate::encoding::value::FutureValue;
     use either::Either;
-    use fxhash::FxHashMap;
+    use rustc_hash::FxHashMap;
     use loro_common::{ContainerType, HasId, PeerID, ID};
     use rle::{HasLength, Sliceable};
     use std::{borrow::Cow, ops::Deref};

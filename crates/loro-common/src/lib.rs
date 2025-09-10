@@ -16,7 +16,7 @@ mod value;
 
 pub use error::{LoroEncodeError, LoroError, LoroResult, LoroTreeError};
 #[doc(hidden)]
-pub use fxhash::FxHashMap;
+pub use rustc_hash::FxHashMap;
 pub use internal_string::InternalString;
 pub use logging::log::*;
 pub use span::*;
@@ -362,7 +362,7 @@ impl ContainerType {
     }
 }
 
-pub type IdSpanVector = fxhash::FxHashMap<PeerID, CounterSpan>;
+pub type IdSpanVector = rustc_hash::FxHashMap<PeerID, CounterSpan>;
 
 mod container {
     use super::*;

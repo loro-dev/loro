@@ -1,5 +1,5 @@
 /// ```no_run
-/// use fxhash::FxHashMap;
+/// use rustc_hash::FxHashMap;
 /// use loro_internal::fx_map;
 ///
 /// let mut expected = FxHashMap::default();
@@ -12,7 +12,7 @@
 macro_rules! fx_map {
     ($($key:expr => $value:expr),*) => {
         {
-            let mut m = fxhash::FxHashMap::default();
+            let mut m = rustc_hash::FxHashMap::default();
             $(
                 m.insert($key, $value);
             )*

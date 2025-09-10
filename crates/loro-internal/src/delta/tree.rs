@@ -1,5 +1,5 @@
 use fractional_index::FractionalIndex;
-use fxhash::{FxHashMap, FxHashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
 use loro_common::{IdFull, TreeID};
 use std::fmt::Debug;

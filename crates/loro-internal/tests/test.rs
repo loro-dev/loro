@@ -1,4 +1,3 @@
-use fxhash::FxHashMap;
 use loro_common::{
     loro_value, ContainerID, ContainerType, IdSpan, LoroError, LoroResult, LoroValue, PeerID, ID,
 };
@@ -15,6 +14,7 @@ use loro_internal::{
     ApplyDiff, HandlerTrait, ListHandler, LoroDoc, MapHandler, TextHandler, ToJson, TreeHandler,
     TreeParentId,
 };
+use rustc_hash::FxHashMap;
 use serde_json::json;
 use std::sync::Arc;
 
@@ -652,13 +652,19 @@ fn map_concurrent_checkout() {
     let v_merged = doc_a.oplog_frontiers();
 
     doc_a.checkout(&va).unwrap();
-    assert_eq!(meta_a.get_deep_value().to_json(), r#"{"key":0}"#);
+    assert_eq!(meta_a.get_deep_value().to_json_value(), json!({"key":0}));
     doc_a.checkout(&vb_0).unwrap();
-    assert_eq!(meta_a.get_deep_value().to_json(), r#"{"s":1}"#);
+    assert_eq!(meta_a.get_deep_value().to_json_value(), json!({"s":1}));
     doc_a.checkout(&vb_1).unwrap();
-    assert_eq!(meta_a.get_deep_value().to_json(), r#"{"s":1,"key":1}"#);
+    assert_eq!(
+        meta_a.get_deep_value().to_json_value(),
+        json!({"s":1,"key":1})
+    );
     doc_a.checkout(&v_merged).unwrap();
-    assert_eq!(meta_a.get_deep_value().to_json(), r#"{"s":1,"key":2}"#);
+    assert_eq!(
+        meta_a.get_deep_value().to_json_value(),
+        json!({"s":1,"key":2})
+    );
 }
 
 #[test]

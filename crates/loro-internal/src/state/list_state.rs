@@ -11,7 +11,7 @@ use crate::{
     LoroDocInner, LoroValue,
 };
 
-use fxhash::FxHashMap;
+use rustc_hash::FxHashMap;
 use generic_btree::{
     iter,
     rle::{CanRemove, HasLength, Mergeable, Sliceable, TryInsert},

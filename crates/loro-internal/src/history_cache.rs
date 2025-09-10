@@ -9,7 +9,7 @@ use crate::sync::Mutex;
 use either::Either;
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
-use fxhash::FxHashMap;
+use rustc_hash::FxHashMap;
 use generic_btree::rle::Sliceable;
 use loro_common::{
     ContainerType, Counter, HasLamport, IdFull, IdLp, InternalString, LoroValue, PeerID, ID,

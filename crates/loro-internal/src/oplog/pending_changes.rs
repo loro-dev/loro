@@ -5,7 +5,7 @@ use crate::{
     version::{ImVersionVector, VersionRange},
     OpLog, VersionVector,
 };
-use fxhash::FxHashMap;
+use rustc_hash::FxHashMap;
 use loro_common::{Counter, CounterSpan, HasCounterSpan, HasIdSpan, LoroResult, PeerID, ID};
 
 #[derive(Debug)]

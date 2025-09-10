@@ -202,10 +202,7 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
 }
 
 fn cids_to_bytes(
-    alive_containers: std::collections::HashSet<
-        ContainerID,
-        std::hash::BuildHasherDefault<fxhash::FxHasher>,
-    >,
+    alive_containers: std::collections::HashSet<ContainerID, rustc_hash::FxBuildHasher>,
 ) -> BTreeSet<Vec<u8>> {
     let alive_c_bytes: BTreeSet<Vec<u8>> = alive_containers.iter().map(|x| x.to_bytes()).collect();
     alive_c_bytes
