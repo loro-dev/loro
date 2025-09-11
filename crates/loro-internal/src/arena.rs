@@ -113,8 +113,8 @@ impl ArenaGuards<'_> {
                     &mut self.depth,
                     &self.parents,
                     &self.parent_resolver,
-                    &self.container_idx_to_id,
-                    &self.container_id_to_idx,
+                    &mut self.container_idx_to_id,
+                    &mut self.container_id_to_idx,
                 ) {
                     self.depth[child.to_index() as usize] = NonZeroU16::new(d.get() + 1);
                 } else {
@@ -269,13 +269,17 @@ impl SharedArena {
 
         match parent {
             Some(p) => {
+                // Acquire the two maps as mutable guards so we can lazily register
+                // unknown parents while computing depth.
+                let mut idx_to_id_guard = self.inner.container_idx_to_id.lock().unwrap();
+                let mut id_to_idx_guard = self.inner.container_id_to_idx.lock().unwrap();
                 if let Some(d) = get_depth(
                     p,
                     &mut depth,
                     parents,
                     &self.inner.parent_resolver.lock().unwrap(),
-                    &self.inner.container_idx_to_id.lock().unwrap(),
-                    &self.inner.container_id_to_idx.lock().unwrap(),
+                    &mut idx_to_id_guard,
+                    &mut id_to_idx_guard,
                 ) {
                     depth[child.to_index() as usize] = NonZeroU16::new(d.get() + 1);
                 } else {
@@ -560,14 +564,21 @@ impl SharedArena {
 
     // TODO: this can return a u16 directly now, since the depths are always valid
     pub(crate) fn get_depth(&self, container: ContainerIdx) -> Option<NonZeroU16> {
-        get_depth(
-            container,
-            &mut self.inner.depth.lock().unwrap(),
-            &self.inner.parents.lock().unwrap(),
-            &self.inner.parent_resolver.lock().unwrap(),
-            &self.inner.container_idx_to_id.lock().unwrap(),
-            &self.inner.container_id_to_idx.lock().unwrap(),
-        )
+        {
+            let mut depth_guard = self.inner.depth.lock().unwrap();
+            let parents_guard = self.inner.parents.lock().unwrap();
+            let resolver_guard = self.inner.parent_resolver.lock().unwrap();
+            let mut idx_to_id_guard = self.inner.container_idx_to_id.lock().unwrap();
+            let mut id_to_idx_guard = self.inner.container_id_to_idx.lock().unwrap();
+            get_depth(
+                container,
+                &mut depth_guard,
+                &parents_guard,
+                &resolver_guard,
+                &mut idx_to_id_guard,
+                &mut id_to_idx_guard,
+            )
+        }
     }
 
     pub(crate) fn iter_value_slice(
@@ -653,8 +664,8 @@ fn get_depth(
     depth: &mut Vec<Option<NonZeroU16>>,
     parents: &FxHashMap<ContainerIdx, Option<ContainerIdx>>,
     parent_resolver: &Option<Arc<ParentResolver>>,
-    idx_to_id: &Vec<ContainerID>,
-    id_to_idx: &FxHashMap<ContainerID, ContainerIdx>,
+    idx_to_id: &mut Vec<ContainerID>,
+    id_to_idx: &mut FxHashMap<ContainerID, ContainerIdx>,
 ) -> Option<NonZeroU16> {
     let mut d = depth[target.to_index() as usize];
     if d.is_some() {
@@ -669,8 +680,24 @@ fn get_depth(
             None
         } else if let Some(parent_resolver) = parent_resolver.as_ref() {
             let parent_id = parent_resolver(id.clone())?;
-            let parent_idx = id_to_idx.get(&parent_id).unwrap();
-            Some(*parent_idx)
+            // If the parent is not registered yet, register it lazily instead of unwrapping.
+            let parent_idx = if let Some(idx) = id_to_idx.get(&parent_id).copied() {
+                idx
+            } else {
+                let new_index = idx_to_id.len();
+                idx_to_id.push(parent_id.clone());
+                let new_idx =
+                    ContainerIdx::from_index_and_type(new_index as u32, parent_id.container_type());
+                id_to_idx.insert(parent_id.clone(), new_idx);
+                // Keep depth vector in sync with containers list.
+                if parent_id.is_root() {
+                    depth.push(NonZeroU16::new(1));
+                } else {
+                    depth.push(None);
+                }
+                new_idx
+            };
+            Some(parent_idx)
         } else {
             return None;
         }
