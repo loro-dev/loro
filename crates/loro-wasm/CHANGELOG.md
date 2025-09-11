@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.2
+
+### Patch Changes
+
+- 20d8309: fix: a get_dpeth issue that may be triggered when importing snapshot #805
+
 ## 1.7.1
 
 ### Patch Changes
