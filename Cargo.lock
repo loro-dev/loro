@@ -1193,6 +1193,7 @@ name = "loro"
 version = "1.6.1"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "ctor 0.2.9",
  "dev-utils",
  "enum-as-inner 0.6.1",
