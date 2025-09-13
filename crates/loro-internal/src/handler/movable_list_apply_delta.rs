@@ -122,9 +122,7 @@ impl MovableListHandler {
                 }
 
                 // Apply any remaining deletions.
-                self.apply_remaining_deletions(delta_change, &mut deleted_indices)
-                    .unwrap();
-
+                self.apply_remaining_deletions(delta_change, &mut deleted_indices)?;
                 Ok(())
             }
         }

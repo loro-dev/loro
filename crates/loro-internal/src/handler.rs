@@ -289,7 +289,7 @@ impl HandlerTrait for TextHandler {
                 let ans = new_inner.into_text().unwrap();
 
                 let delta = self.get_delta();
-                ans.apply_delta_with_txn(txn, &delta).unwrap();
+                ans.apply_delta_with_txn(txn, &delta)?;
                 Ok(ans)
             }
         }
@@ -539,10 +539,9 @@ impl HandlerTrait for MapHandler {
 
                 for (k, v) in self.get_value().into_map().unwrap().iter() {
                     if let LoroValue::Container(id) = v {
-                        ans.insert_container_with_txn(txn, k, create_handler(a, id.clone()))
-                            .unwrap();
+                        ans.insert_container_with_txn(txn, k, create_handler(a, id.clone()))?;
                     } else {
-                        ans.insert_with_txn(txn, k, v.clone()).unwrap();
+                        ans.insert_with_txn(txn, k, v.clone())?;
                     }
                 }
 
@@ -671,10 +670,9 @@ impl HandlerTrait for MovableListHandler {
 
                 for (i, v) in self.get_value().into_list().unwrap().iter().enumerate() {
                     if let LoroValue::Container(id) = v {
-                        ans.insert_container_with_txn(txn, i, create_handler(a, id.clone()))
-                            .unwrap();
+                        ans.insert_container_with_txn(txn, i, create_handler(a, id.clone()))?;
                     } else {
-                        ans.insert_with_txn(txn, i, v.clone()).unwrap();
+                        ans.insert_with_txn(txn, i, v.clone())?;
                     }
                 }
 
@@ -782,10 +780,9 @@ impl HandlerTrait for ListHandler {
 
                 for (i, v) in self.get_value().into_list().unwrap().iter().enumerate() {
                     if let LoroValue::Container(id) = v {
-                        ans.insert_container_with_txn(txn, i, create_handler(a, id.clone()))
-                            .unwrap();
+                        ans.insert_container_with_txn(txn, i, create_handler(a, id.clone()))?;
                     } else {
-                        ans.insert_with_txn(txn, i, v.clone()).unwrap();
+                        ans.insert_with_txn(txn, i, v.clone())?;
                     }
                 }
 
