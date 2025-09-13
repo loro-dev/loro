@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.3
+
+### Patch Changes
+
+- 4ccf048: fix: propagate errors instead of unwrap #808
+
 ## 1.7.2
 
 ### Patch Changes
