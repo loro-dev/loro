@@ -504,21 +504,27 @@ impl LoroDoc {
         let mut style_config = StyleConfigMap::new();
         // read key value pair in styles
         for key in Reflect::own_keys(&styles)?.iter() {
-            let value = Reflect::get(&styles, &key).unwrap();
-            let key = key.as_string().unwrap();
+            let value = Reflect::get(&styles, &key)?;
+            let key = key
+                .as_string()
+                .ok_or_else(|| JsError::new("Text style key must be a string"))?;
             // Assert value is an object, otherwise throw an error with desc
             if !value.is_object() {
                 return Err("Text style config format error".into());
             }
             // read expand value from value
-            let expand = Reflect::get(&value, &"expand".into()).expect("`expand` not specified");
-            let expand_str = expand.as_string().unwrap();
+            let expand = Reflect::get(&value, &"expand".into())
+                .map_err(|_| JsError::new("`expand` not specified"))?;
+            let expand_str = expand
+                .as_string()
+                .ok_or_else(|| JsError::new("`expand` must be a string"))?;
             // read allowOverlap value from value
             style_config.insert(
                 key.into(),
                 StyleConfig {
-                    expand: ExpandType::try_from_str(&expand_str)
-                        .expect("`expand` must be one of `none`, `start`, `end`, `both`"),
+                    expand: ExpandType::try_from_str(&expand_str).ok_or_else(|| {
+                        JsError::new("`expand` must be one of `none`, `start`, `end`, `both`")
+                    })?,
                 },
             );
         }
@@ -538,11 +544,15 @@ impl LoroDoc {
             self.0.config_default_text_style(None);
         } else {
             let value = style.obj;
-            let expand = Reflect::get(&value, &"expand".into()).expect("`expand` not specified");
-            let expand_str = expand.as_string().unwrap();
+            let expand = Reflect::get(&value, &"expand".into())
+                .map_err(|_| JsError::new("`expand` not specified"))?;
+            let expand_str = expand
+                .as_string()
+                .ok_or_else(|| JsError::new("`expand` must be a string"))?;
 
-            style_config.expand = ExpandType::try_from_str(&expand_str)
-                .expect("`expand` must be one of `none`, `start`, `end`, `both`");
+            style_config.expand = ExpandType::try_from_str(&expand_str).ok_or_else(|| {
+                JsError::new("`expand` must be one of `none`, `start`, `end`, `both`")
+            })?;
 
             self.0.config_default_text_style(Some(style_config));
         }
@@ -700,40 +710,38 @@ impl LoroDoc {
             Err(_) => return Err(JsValue::from_str("Expected a function")),
         };
         let observer = observer::Observer::new(f);
+        let ids: Result<Vec<_>, _> = ids.into_iter().map(js_id_to_id).collect();
+        let ids = ids?;
         self.0
-            .travel_change_ancestors(
-                &ids.into_iter()
-                    .map(|id| js_id_to_id(id).unwrap())
-                    .collect::<Vec<_>>(),
-                &mut |meta| {
-                    let res = observer
-                        .call1(
-                            &ChangeMeta {
-                                lamport: meta.lamport,
-                                length: meta.len as u32,
-                                peer: meta.id.peer.to_string(),
-                                counter: meta.id.counter,
-                                deps: meta
-                                    .deps
-                                    .iter()
-                                    .map(|id| StringID {
-                                        peer: id.peer.to_string(),
-                                        counter: id.counter,
-                                    })
-                                    .collect(),
-                                timestamp: meta.timestamp as f64,
-                                message: meta.message,
-                            }
-                            .to_js(),
-                        )
-                        .unwrap();
-                    if res.as_bool().unwrap() {
-                        ControlFlow::Continue(())
-                    } else {
-                        ControlFlow::Break(())
+            .travel_change_ancestors(&ids, &mut |meta| {
+                let res = match observer.call1(
+                    &ChangeMeta {
+                        lamport: meta.lamport,
+                        length: meta.len as u32,
+                        peer: meta.id.peer.to_string(),
+                        counter: meta.id.counter,
+                        deps: meta
+                            .deps
+                            .iter()
+                            .map(|id| StringID {
+                                peer: id.peer.to_string(),
+                                counter: id.counter,
+                            })
+                            .collect(),
+                        timestamp: meta.timestamp as f64,
+                        message: meta.message,
                     }
-                },
-            )
+                    .to_js(),
+                ) {
+                    Ok(v) => v,
+                    Err(_) => return ControlFlow::Continue(()),
+                };
+                if res.as_bool().unwrap_or(true) {
+                    ControlFlow::Continue(())
+                } else {
+                    ControlFlow::Break(())
+                }
+            })
             .map_err(|e| JsValue::from(e.to_string()))
     }
 
@@ -1814,8 +1822,8 @@ impl LoroDoc {
         let ops = change
             .ops()
             .iter()
-            .map(|op| op.serialize(&serializer).unwrap())
-            .collect::<Vec<_>>();
+            .map(|op| op.serialize(&serializer))
+            .collect::<Result<Vec<_>, _>>()?;
 
         Ok(ops)
     }
@@ -2361,7 +2369,10 @@ impl LoroText {
         };
         let context = JsValue::NULL;
         self.handler.iter(|c| {
-            let result = callback.call1(&context, &JsValue::from(c)).unwrap();
+            let result = match callback.call1(&context, &JsValue::from(c)) {
+                Ok(v) => v,
+                Err(_) => return true,
+            };
             match result.as_bool() {
                 Some(true) => true,
                 Some(false) => false,
@@ -4126,7 +4137,10 @@ impl LoroTreeNode {
             .get_all_hierarchy_nodes_under(TreeParentId::Node(self.id));
         let node = TreeNodeWithChildren {
             id: self.id,
-            parent: self.tree.get_node_parent(&self.id).unwrap(),
+            parent: self
+                .tree
+                .get_node_parent(&self.id)
+                .ok_or_else(|| JsError::new("Tree node parent not found"))?,
             fractional_index: self
                 .tree
                 .get_position_by_tree_id(&self.id)
@@ -4323,14 +4337,17 @@ impl LoroTree {
     #[wasm_bindgen(js_name = "has")]
     pub fn contains(&self, target: &JsTreeID) -> bool {
         let target: JsValue = target.into();
-        self.handler.contains(target.try_into().unwrap())
+        match TreeID::try_from(target) {
+            Ok(id) => self.handler.contains(id),
+            Err(_) => false,
+        }
     }
 
     /// Return `None` if the node is not exist, otherwise return `Some(true)` if the node is deleted.
     #[wasm_bindgen(js_name = "isNodeDeleted")]
     pub fn is_node_deleted(&self, target: &JsTreeID) -> JsResult<bool> {
         let target: JsValue = target.into();
-        let target = TreeID::try_from(target).unwrap();
+        let target = TreeID::try_from(target)?;
         let ans = self.handler.is_node_deleted(&target)?;
         Ok(ans)
     }
@@ -4398,7 +4415,10 @@ impl LoroTree {
             .unwrap_or(JsValue::undefined());
         let index = v.index;
         let position = v.fractional_index.to_string();
-        let map: LoroMap = self.get_node_by_id(&id).unwrap().data()?;
+        let map: LoroMap = self
+            .get_node_by_id(&id)
+            .ok_or_else(|| JsError::new("Tree node not found"))?
+            .data()?;
         let obj = Object::new();
         js_sys::Reflect::set(&obj, &"id".into(), &id)?;
         js_sys::Reflect::set(&obj, &"parent".into(), &parent)?;
