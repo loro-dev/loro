@@ -1,6 +1,6 @@
 name: Generate sponsors.svg
 on:
-  schedule: [{ cron: '0 2 * * 1' }]
+  schedule: [{ cron: "0 2 * * 1" }]
   workflow_dispatch:
 permissions:
   contents: write
@@ -12,7 +12,7 @@ jobs:
       - uses: actions/checkout@v4
       - run: npx sponsorkit
         env:
-          SPONSORKIT_GITHUB_TOKEN: ${{ secrets.PAT }}
+          SPONSORKIT_GITHUB_TOKEN: ${{ secrets.SPONSOR_PAT }}
           SPONSORKIT_GITHUB_LOGIN: loro-dev
       - name: Commit SVG
         run: |
