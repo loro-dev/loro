@@ -150,6 +150,10 @@ You can find bindings for other programming languages in [loro-ffi](https://gith
 - [Introduction to Loro's Rich Text CRDT](https://loro.dev/blog/loro-richtext)
 - [Loro: Reimagine State Management with CRDTs](https://loro.dev/blog/loro-now-open-source)
 
+# Sponsors
+
+[![Sponsors](./sponsorkit/sponsors.svg)](https://github.com/sponsors/loro-dev)
+
 # Credits
 
 Loro draws inspiration from the innovative work of the following projects and individuals:
