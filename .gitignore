@@ -12,3 +12,4 @@ trace-*.json
 .loro
 loom_test.json
 .env
+sponsorkit/.cache.json
