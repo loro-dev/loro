@@ -7,7 +7,7 @@ use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 
 use crate::{
-    call_after_micro_task, convert::handler_to_js_value, observer, JsContainerID,
+    convert::handler_to_js_value, observer, put_event_in_pending_queue, JsContainerID,
     JsContainerOrUndefined, JsCounterStr, JsLoroTreeOrUndefined, JsResult,
 };
 
@@ -73,8 +73,8 @@ impl LoroCounter {
             .ok_or_else(|| JsError::new("Document is not attached"))?;
         let sub = doc.subscribe(
             &self.handler.id(),
-            Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e);
+            Arc::new(move |event| {
+                put_event_in_pending_queue(observer.clone(), event);
             }),
         );
         Ok(subscription_to_js_function_callback(sub))
