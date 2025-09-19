@@ -422,7 +422,7 @@ export function idStrToId(idStr: `${number}@${PeerID}`): OpId {
 
 const CALL_PENDING_EVENTS_WRAPPED = Symbol("loro.callPendingEventsWrapped");
 
-function decorateMethod(prototype: Record<string, unknown>, method: string) {
+function decorateMethod(prototype: object, method: PropertyKey) {
   const descriptor = Object.getOwnPropertyDescriptor(prototype, method);
   if (!descriptor || typeof descriptor.value !== "function") {
     return;
@@ -457,31 +457,39 @@ function decorateMethod(prototype: Record<string, unknown>, method: string) {
   });
 }
 
-function decorateMethods(
-  prototype: Record<string, unknown>,
-  methods: string[],
-) {
+function decorateMethods(prototype: object, methods: PropertyKey[]) {
   for (const method of methods) {
     decorateMethod(prototype, method);
   }
 }
 
-decorateMethods(LoroDoc.prototype as any, [
-  "attach",
-  "detach",
-  "checkoutToLatest",
-  "checkout",
-  "commit",
-  "import",
-  "importBatch",
-  "importUpdateBatch",
-  "importJsonUpdates",
-  "export",
-  "exportJsonUpdates",
-  "exportJsonInIdSpan",
-  "revertTo",
-  "setPeerId",
-  "applyDiff",
-]);
+function decorateAllPrototypeMethods(prototype: object) {
+  const visited = new Set<PropertyKey>();
+  let current: object | null = prototype;
+  while (
+    current &&
+    current !== Object.prototype &&
+    current !== Function.prototype
+  ) {
+    for (const property of Object.getOwnPropertyNames(current)) {
+      if (property === "constructor" || visited.has(property)) {
+        continue;
+      }
+      visited.add(property);
+      decorateMethod(current, property);
+    }
 
-decorateMethods(UndoManager.prototype as any, ["undo", "redo"]);
+    for (const symbol of Object.getOwnPropertySymbols(current)) {
+      if (visited.has(symbol)) {
+        continue;
+      }
+      visited.add(symbol);
+      decorateMethod(current, symbol);
+    }
+
+    current = Object.getPrototypeOf(current) as object | null;
+  }
+}
+
+decorateAllPrototypeMethods(LoroDoc.prototype);
+decorateMethods(UndoManager.prototype, ["undo", "redo"]);

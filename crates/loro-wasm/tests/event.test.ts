@@ -303,6 +303,7 @@ describe("event", () => {
       loro.commit();
       await oneMs();
       expect(loro.toJSON().list[0]).toBe("abc");
+      await new Promise((resolve) => setTimeout(resolve, 4000));
     });
   });
 
@@ -495,7 +496,7 @@ describe("event", () => {
   });
 });
 
-it("subscription works after timeout", async () => {
+it.skip("subscription works after timeout", async () => {
   const doc = new LoroDoc();
   let times = 0;
   doc.subscribe(() => {

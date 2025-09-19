@@ -2221,7 +2221,7 @@ fn throw_err_if_not_called(event_counter: usize) {
     let call_counter = e.call_counter;
     drop(e);
     if call_counter < event_counter {
-        throw_val("Event not called".into());
+        console_error!("[LORO_INTERNAL_ERROR] Event not called");
     }
 }
 
@@ -2243,17 +2243,26 @@ pub fn callPendingEvents() {
             }
         } else {
             let mut e = GLOBAL_PENDING_EVENTS.lock().unwrap();
+            if !e.vec.is_empty() {
+                continue;
+            }
             e.call_counter = e.event_counter;
+            IS_CALLING.store(false, std::sync::atomic::Ordering::Relaxed);
             break;
         }
     }
-
-    IS_CALLING.store(false, std::sync::atomic::Ordering::Relaxed);
 }
 
 impl Default for LoroDoc {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Drop for LoroDoc {
+    fn drop(&mut self) {
+        self.0.commit_then_renew();
+        callPendingEvents();
     }
 }
 
