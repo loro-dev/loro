@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.8.0
+
+### Minor Changes
+
+- be09e65: feat!: events are not async anymore
+
 ## 1.7.3
 
 ### Patch Changes
