@@ -492,4 +492,6 @@ function decorateAllPrototypeMethods(prototype: object) {
 }
 
 decorateAllPrototypeMethods(LoroDoc.prototype);
+decorateAllPrototypeMethods(EphemeralStoreWasm.prototype);
+decorateAllPrototypeMethods(AwarenessWasm.prototype);
 decorateMethods(UndoManager.prototype, ["undo", "redo"]);

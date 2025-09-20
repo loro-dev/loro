@@ -242,6 +242,7 @@ extern "C" {
 }
 
 mod observer {
+    use js_sys::Array;
     use std::thread::ThreadId;
 
     use wasm_bindgen::JsValue;
@@ -286,6 +287,18 @@ mod observer {
         pub fn call3(&self, arg1: &JsValue, arg2: &JsValue, arg3: &JsValue) -> JsResult<JsValue> {
             if std::thread::current().id() == self.thread {
                 self.f.call3(&JsValue::NULL, arg1, arg2, arg3)
+            } else {
+                Err(JsValue::from_str("Observer called from different thread"))
+            }
+        }
+
+        pub fn call_with_args(&self, args: &[SafeJsValue]) -> JsResult<JsValue> {
+            if std::thread::current().id() == self.thread {
+                let array = Array::new_with_length(args.len() as u32);
+                for (idx, arg) in args.iter().enumerate() {
+                    array.set(idx as u32, arg.0.clone());
+                }
+                self.f.apply(&JsValue::NULL, &array)
             } else {
                 Err(JsValue::from_str("Observer called from different thread"))
             }
@@ -1667,9 +1680,8 @@ impl LoroDoc {
         let sub = self.0.subscribe_local_update(Box::new(move |e| {
             let arr = js_sys::Uint8Array::new_with_length(e.len() as u32);
             arr.copy_from(e);
-            if let Err(e) = observer.call1(&arr.into()) {
-                console_error!("Error: {:?}", e);
-            }
+            let js_value: JsValue = arr.into();
+            put_js_value_in_pending_queue(observer.clone(), js_value);
             true
         }));
 
@@ -2116,9 +2128,8 @@ impl LoroDoc {
         let sub = self.0.subscribe_first_commit_from_peer(Box::new(move |e| {
             let obj = js_sys::Object::new();
             Reflect::set(&obj, &"peer".into(), &e.peer.to_string().into()).unwrap();
-            if let Err(e) = observer.call1(&obj.into()) {
-                console_error!("Error: {:?}", e);
-            }
+            let js_value: JsValue = obj.into();
+            put_js_value_in_pending_queue(observer.clone(), js_value);
             true
         }));
 
@@ -2185,8 +2196,23 @@ impl LoroDoc {
     }
 }
 
+struct PendingCall {
+    observer: observer::Observer,
+    args: Vec<SafeJsValue>,
+}
+
+impl PendingCall {
+    fn new(observer: observer::Observer, args: Vec<JsValue>) -> Self {
+        let args = args.into_iter().map(SafeJsValue).collect();
+        Self { observer, args }
+    }
+}
+
+unsafe impl Send for PendingCall {}
+unsafe impl Sync for PendingCall {}
+
 struct PendingEvent {
-    vec: VecDeque<(observer::Observer, SafeJsValue)>,
+    vec: VecDeque<PendingCall>,
     event_counter: usize,
     call_counter: usize,
 }
@@ -2197,13 +2223,7 @@ static GLOBAL_PENDING_EVENTS: Mutex<PendingEvent> = Mutex::new(PendingEvent {
     call_counter: 0,
 });
 
-fn put_event_in_pending_queue(ob: observer::Observer, event: DiffEvent) {
-    let event = diff_event_to_js_value(event, false);
-    let mut e = GLOBAL_PENDING_EVENTS.lock().unwrap();
-    e.vec.push_back((ob, SafeJsValue(event)));
-    e.event_counter += 1;
-    let event_counter = e.event_counter;
-    drop(e);
+fn schedule_pending_event_check(event_counter: usize) {
     let promise = Promise::resolve(&JsValue::NULL);
     type C = Closure<dyn FnMut(JsValue)>;
     let drop_handler: Rc<RefCell<Option<C>>> = Rc::new(RefCell::new(None));
@@ -2214,6 +2234,24 @@ fn put_event_in_pending_queue(ob: observer::Observer, event: DiffEvent) {
     });
     let _ = promise.then(&closure);
     drop_handler.borrow_mut().replace(closure);
+}
+
+fn enqueue_pending_call(observer: observer::Observer, args: Vec<JsValue>) {
+    let mut e = GLOBAL_PENDING_EVENTS.lock().unwrap();
+    e.vec.push_back(PendingCall::new(observer, args));
+    e.event_counter += 1;
+    let event_counter = e.event_counter;
+    drop(e);
+    schedule_pending_event_check(event_counter);
+}
+
+pub(crate) fn put_js_value_in_pending_queue(observer: observer::Observer, value: JsValue) {
+    enqueue_pending_call(observer, vec![value]);
+}
+
+fn put_event_in_pending_queue(ob: observer::Observer, event: DiffEvent) {
+    let event = diff_event_to_js_value(event, false);
+    put_js_value_in_pending_queue(ob, event);
 }
 
 fn throw_err_if_not_called(event_counter: usize) {
@@ -2237,8 +2275,8 @@ pub fn callPendingEvents() {
         let mut e = GLOBAL_PENDING_EVENTS.lock().unwrap();
         let front = e.vec.pop_front();
         drop(e);
-        if let Some((obj, event)) = front {
-            if let Err(e) = obj.call1(&event.0) {
+        if let Some(PendingCall { observer, args }) = front {
+            if let Err(e) = observer.call_with_args(&args) {
                 throw_error_after_micro_task(e);
             }
         } else {
