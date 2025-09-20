@@ -32,19 +32,25 @@ use loro_internal::{
 };
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
-use std::{cell::RefCell, cmp::Ordering, ops::ControlFlow, rc::Rc, sync::Arc};
+use std::{
+    cell::RefCell,
+    cmp::Ordering,
+    collections::VecDeque,
+    ops::ControlFlow,
+    rc::Rc,
+    sync::{atomic::AtomicBool, Arc, Mutex},
+};
 use wasm_bindgen::{__rt::IntoJsResult, prelude::*, throw_val};
 use wasm_bindgen_derive::TryFromJsValue;
-
 mod counter;
 pub use counter::LoroCounter;
-
 mod awareness;
 mod log;
-
-use crate::convert::{handler_to_js_value, js_to_container, js_to_cursor};
+use crate::{
+    convert::{handler_to_js_value, js_to_container, js_to_cursor},
+    observer::SafeJsValue,
+};
 pub use awareness::{AwarenessWasm, EphemeralStoreWasm};
-
 mod convert;
 
 /// Get the version of Loro
@@ -236,6 +242,7 @@ extern "C" {
 }
 
 mod observer {
+    use js_sys::Array;
     use std::thread::ThreadId;
 
     use wasm_bindgen::JsValue;
@@ -249,6 +256,9 @@ mod observer {
         f: js_sys::Function,
         thread: ThreadId,
     }
+
+    #[derive(Clone)]
+    pub(crate) struct SafeJsValue(pub JsValue);
 
     impl Observer {
         pub fn new(f: js_sys::Function) -> Self {
@@ -281,10 +291,24 @@ mod observer {
                 Err(JsValue::from_str("Observer called from different thread"))
             }
         }
+
+        pub fn call_with_args(&self, args: &[SafeJsValue]) -> JsResult<JsValue> {
+            if std::thread::current().id() == self.thread {
+                let array = Array::new_with_length(args.len() as u32);
+                for (idx, arg) in args.iter().enumerate() {
+                    array.set(idx as u32, arg.0.clone());
+                }
+                self.f.apply(&JsValue::NULL, &array)
+            } else {
+                Err(JsValue::from_str("Observer called from different thread"))
+            }
+        }
     }
 
     unsafe impl Send for Observer {}
     unsafe impl Sync for Observer {}
+    unsafe impl Send for SafeJsValue {}
+    unsafe impl Sync for SafeJsValue {}
 }
 
 fn ids_to_frontiers(ids: Vec<JsID>) -> JsResult<Frontiers> {
@@ -1644,8 +1668,7 @@ impl LoroDoc {
     pub fn subscribe(&self, f: js_sys::Function) -> JsValue {
         let observer = observer::Observer::new(f);
         let sub = self.0.subscribe_root(Arc::new(move |e| {
-            call_after_micro_task(observer.clone(), e)
-            // call_subscriber(observer.clone(), e);
+            put_event_in_pending_queue(observer.clone(), e);
         }));
         subscription_to_js_function_callback(sub)
     }
@@ -1657,9 +1680,8 @@ impl LoroDoc {
         let sub = self.0.subscribe_local_update(Box::new(move |e| {
             let arr = js_sys::Uint8Array::new_with_length(e.len() as u32);
             arr.copy_from(e);
-            if let Err(e) = observer.call1(&arr.into()) {
-                console_error!("Error: {:?}", e);
-            }
+            let js_value: JsValue = arr.into();
+            put_js_value_in_pending_queue(observer.clone(), js_value);
             true
         }));
 
@@ -2106,9 +2128,8 @@ impl LoroDoc {
         let sub = self.0.subscribe_first_commit_from_peer(Box::new(move |e| {
             let obj = js_sys::Object::new();
             Reflect::set(&obj, &"peer".into(), &e.peer.to_string().into()).unwrap();
-            if let Err(e) = observer.call1(&obj.into()) {
-                console_error!("Error: {:?}", e);
-            }
+            let js_value: JsValue = obj.into();
+            put_js_value_in_pending_queue(observer.clone(), js_value);
             true
         }));
 
@@ -2175,42 +2196,111 @@ impl LoroDoc {
     }
 }
 
-#[allow(unused)]
-fn call_subscriber(ob: observer::Observer, e: DiffEvent) {
-    // We convert the event to js object here, so that we don't need to worry about GC.
-    // In the future, when FinalizationRegistry[1] is stable, we can use `--weak-ref`[2] feature
-    // in wasm-bindgen to avoid this.
-    //
-    // [1]: https://caniuse.com/?search=FinalizationRegistry
-    // [2]: https://rustwasm.github.io/wasm-bindgen/reference/weak-references.html
-    let event = diff_event_to_js_value(e, false);
-    if let Err(e) = ob.call1(&event) {
-        throw_error_after_micro_task(e);
+struct PendingCall {
+    observer: observer::Observer,
+    args: Vec<SafeJsValue>,
+}
+
+impl PendingCall {
+    fn new(observer: observer::Observer, args: Vec<JsValue>) -> Self {
+        let args = args.into_iter().map(SafeJsValue).collect();
+        Self { observer, args }
     }
 }
 
-#[allow(unused)]
-fn call_after_micro_task(ob: observer::Observer, event: DiffEvent) {
+unsafe impl Send for PendingCall {}
+unsafe impl Sync for PendingCall {}
+
+struct PendingEvent {
+    vec: VecDeque<PendingCall>,
+    event_counter: usize,
+    call_counter: usize,
+}
+
+static GLOBAL_PENDING_EVENTS: Mutex<PendingEvent> = Mutex::new(PendingEvent {
+    vec: VecDeque::new(),
+    event_counter: 0,
+    call_counter: 0,
+});
+
+fn schedule_pending_event_check(event_counter: usize) {
     let promise = Promise::resolve(&JsValue::NULL);
     type C = Closure<dyn FnMut(JsValue)>;
     let drop_handler: Rc<RefCell<Option<C>>> = Rc::new(RefCell::new(None));
     let copy = drop_handler.clone();
-    let event = diff_event_to_js_value(event, false);
     let closure = Closure::once(move |_: JsValue| {
-        let ans = ob.call1(&event);
         drop(copy);
-        if let Err(e) = ans {
-            throw_error_after_micro_task(e)
-        }
+        throw_err_if_not_called(event_counter);
     });
-
     let _ = promise.then(&closure);
     drop_handler.borrow_mut().replace(closure);
+}
+
+fn enqueue_pending_call(observer: observer::Observer, args: Vec<JsValue>) {
+    let mut e = GLOBAL_PENDING_EVENTS.lock().unwrap();
+    e.vec.push_back(PendingCall::new(observer, args));
+    e.event_counter += 1;
+    let event_counter = e.event_counter;
+    drop(e);
+    schedule_pending_event_check(event_counter);
+}
+
+pub(crate) fn put_js_value_in_pending_queue(observer: observer::Observer, value: JsValue) {
+    enqueue_pending_call(observer, vec![value]);
+}
+
+fn put_event_in_pending_queue(ob: observer::Observer, event: DiffEvent) {
+    let event = diff_event_to_js_value(event, false);
+    put_js_value_in_pending_queue(ob, event);
+}
+
+fn throw_err_if_not_called(event_counter: usize) {
+    let e = GLOBAL_PENDING_EVENTS.lock().unwrap();
+    let call_counter = e.call_counter;
+    drop(e);
+    if call_counter < event_counter {
+        console_error!("[LORO_INTERNAL_ERROR] Event not called");
+    }
+}
+
+static IS_CALLING: AtomicBool = AtomicBool::new(false);
+
+#[wasm_bindgen]
+pub fn callPendingEvents() {
+    if IS_CALLING.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    IS_CALLING.store(true, std::sync::atomic::Ordering::Relaxed);
+    loop {
+        let mut e = GLOBAL_PENDING_EVENTS.lock().unwrap();
+        let front = e.vec.pop_front();
+        drop(e);
+        if let Some(PendingCall { observer, args }) = front {
+            if let Err(e) = observer.call_with_args(&args) {
+                throw_error_after_micro_task(e);
+            }
+        } else {
+            let mut e = GLOBAL_PENDING_EVENTS.lock().unwrap();
+            if !e.vec.is_empty() {
+                continue;
+            }
+            e.call_counter = e.event_counter;
+            IS_CALLING.store(false, std::sync::atomic::Ordering::Relaxed);
+            break;
+        }
+    }
 }
 
 impl Default for LoroDoc {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Drop for LoroDoc {
+    fn drop(&mut self) {
+        self.0.commit_then_renew();
+        callPendingEvents();
     }
 }
 
@@ -2703,7 +2793,7 @@ impl LoroText {
         let ans = doc.subscribe(
             &self.handler.id(),
             Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e);
+                put_event_in_pending_queue(observer.clone(), e);
             }),
         );
 
@@ -3090,7 +3180,7 @@ impl LoroMap {
         let sub = doc.subscribe(
             &self.handler.id(),
             Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e);
+                put_event_in_pending_queue(observer.clone(), e);
             }),
         );
 
@@ -3413,7 +3503,7 @@ impl LoroList {
         let sub = doc.subscribe(
             &self.handler.id(),
             Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e);
+                put_event_in_pending_queue(observer.clone(), e);
             }),
         );
         Ok(subscription_to_js_function_callback(sub))
@@ -3769,7 +3859,7 @@ impl LoroMovableList {
         let sub = loro.subscribe(
             &self.handler.id(),
             Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e);
+                put_event_in_pending_queue(observer.clone(), e);
             }),
         );
         Ok(subscription_to_js_function_callback(sub))
@@ -4533,7 +4623,7 @@ impl LoroTree {
         let ans = doc.subscribe(
             &self.handler.id(),
             Arc::new(move |e| {
-                call_after_micro_task(observer.clone(), e);
+                put_event_in_pending_queue(observer.clone(), e);
             }),
         );
         Ok(subscription_to_js_function_callback(ans))
@@ -4888,23 +4978,19 @@ impl UndoManager {
     /// Get the value associated with the top undo stack item, if any.
     /// Returns `undefined` if there is no undo item.
     pub fn topUndoValue(&self) -> Option<JsLoroValue> {
-        self.undo
-            .top_undo_value()
-            .map(|v| {
-                let js: JsValue = v.into();
-                js.into()
-            })
+        self.undo.top_undo_value().map(|v| {
+            let js: JsValue = v.into();
+            js.into()
+        })
     }
 
     /// Get the value associated with the top redo stack item, if any.
     /// Returns `undefined` if there is no redo item.
     pub fn topRedoValue(&self) -> Option<JsLoroValue> {
-        self.undo
-            .top_redo_value()
-            .map(|v| {
-                let js: JsValue = v.into();
-                js.into()
-            })
+        self.undo.top_redo_value().map(|v| {
+            let js: JsValue = v.into();
+            js.into()
+        })
     }
 
     /// The number of max undo steps.

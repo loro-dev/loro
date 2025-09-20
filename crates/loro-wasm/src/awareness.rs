@@ -10,8 +10,8 @@ use loro_internal::{
 use wasm_bindgen::prelude::*;
 
 use crate::{
-    console_error, js_peer_to_peer, observer, subscription_to_js_function_callback, JsIntoPeerID,
-    JsResult, JsStrPeerID,
+    js_peer_to_peer, observer, put_js_value_in_pending_queue, subscription_to_js_function_callback,
+    JsIntoPeerID, JsResult, JsStrPeerID,
 };
 
 /// `Awareness` is a structure that tracks the ephemeral state of peers.
@@ -215,9 +215,8 @@ impl EphemeralStoreWasm {
         let sub = self.inner.subscribe_local_updates(Box::new(move |e| {
             let arr = js_sys::Uint8Array::new_with_length(e.len() as u32);
             arr.copy_from(e);
-            if let Err(e) = observer.call1(&arr.into()) {
-                console_error!("EphemeralStore subscribeLocalUpdate: Error: {:?}", e);
-            }
+            let js_value: JsValue = arr.into();
+            put_js_value_in_pending_queue(observer.clone(), js_value);
             true
         }));
 
@@ -275,7 +274,8 @@ impl EphemeralStoreWasm {
                     },
                 )
                 .unwrap();
-                observer.call1(&obj.into()).unwrap();
+                let js_value: JsValue = obj.into();
+                put_js_value_in_pending_queue(observer.clone(), js_value);
                 true
             },
         ));
