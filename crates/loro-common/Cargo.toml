@@ -1,6 +1,6 @@
 [package]
 name = "loro-common"
-version = "1.8.0"
+version = "1.8.1"
 edition = "2021"
 license = "MIT"
 description = "Common types and functions for Loro. This is an internal lib of Loro."
@@ -26,7 +26,7 @@ js-sys = { version = "0.3.60", optional = true }
 serde_columnar = { workspace = true }
 nonmax = "0.5.5"
 leb128 = "0.2.5"
-tracing = { workspace = true, optional =  true}
+tracing = { workspace = true, optional = true }
 
 [features]
 wasm = ["wasm-bindgen", "js-sys"]

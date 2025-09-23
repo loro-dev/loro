@@ -192,7 +192,7 @@ dependencies = [
  "arbitrary",
  "enum-as-inner 0.5.1",
  "flate2",
- "loro-common 1.8.0",
+ "loro-common 1.8.1",
  "rand 0.8.5",
  "serde_json",
 ]
@@ -707,7 +707,7 @@ dependencies = [
  "dev-utils",
  "ensure-cov",
  "flate2",
- "loro 1.8.0",
+ "loro 1.8.1",
  "rand 0.8.5",
  "serde_json",
  "tabled 0.15.0",
@@ -770,7 +770,7 @@ dependencies = [
  "loro 0.16.12",
  "loro 0.16.2 (git+https://github.com/loro-dev/loro.git?tag=loro-crdt%400.16.7)",
  "loro 0.16.2 (git+https://github.com/loro-dev/loro.git?rev=90470658435ec4c62b5af59ebb82fe9e1f5aa761)",
- "loro 1.8.0",
+ "loro 1.8.1",
  "num_cpus",
  "pretty_assertions",
  "rand 0.8.5",
@@ -1190,7 +1190,7 @@ dependencies = [
 
 [[package]]
 name = "loro"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1199,10 +1199,10 @@ dependencies = [
  "enum-as-inner 0.6.1",
  "generic-btree",
  "loom",
- "loro-common 1.8.0",
+ "loro-common 1.8.1",
  "loro-delta 1.6.0",
- "loro-internal 1.8.0",
- "loro-kv-store 1.8.0",
+ "loro-internal 1.8.1",
+ "loro-kv-store 1.8.1",
  "pretty_assertions",
  "rand 0.8.5",
  "rustc-hash 2.1.1",
@@ -1262,7 +1262,7 @@ dependencies = [
 
 [[package]]
 name = "loro-common"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "arbitrary",
  "enum-as-inner 0.6.1",
@@ -1444,7 +1444,7 @@ dependencies = [
 
 [[package]]
 name = "loro-internal"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "append-only-bytes",
  "arbitrary",
@@ -1468,9 +1468,9 @@ dependencies = [
  "js-sys",
  "leb128",
  "loom",
- "loro-common 1.8.0",
+ "loro-common 1.8.1",
  "loro-delta 1.6.0",
- "loro-kv-store 1.8.0",
+ "loro-kv-store 1.8.1",
  "loro-rle 1.6.0",
  "loro_fractional_index 1.6.0",
  "md5",
@@ -1517,13 +1517,13 @@ dependencies = [
 
 [[package]]
 name = "loro-kv-store"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "bytes",
  "ctor 0.2.9",
  "dev-utils",
  "ensure-cov",
- "loro-common 1.8.0",
+ "loro-common 1.8.1",
  "lz4_flex",
  "once_cell",
  "quick_cache",
@@ -1600,9 +1600,9 @@ dependencies = [
  "console_error_panic_hook",
  "getrandom 0.2.16",
  "js-sys",
- "loro-common 1.8.0",
+ "loro-common 1.8.1",
  "loro-delta 1.6.0",
- "loro-internal 1.8.0",
+ "loro-internal 1.8.1",
  "loro-rle 1.6.0",
  "serde",
  "serde-wasm-bindgen",
