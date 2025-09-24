@@ -27,8 +27,8 @@ use loro_internal::{
     undo::{DiffBatch, UndoItemMeta, UndoOrRedo},
     version::{Frontiers, VersionRange},
     ContainerType, DiffEvent, FxHashMap, HandlerTrait, IdSpan, LoroDoc as LoroDocInner, LoroResult,
-    LoroValue, MovableListHandler, Subscription, TreeNodeWithChildren, TreeParentId,
-    UndoManager as InnerUndoManager, VersionVector as InternalVersionVector,
+    LoroValue, MovableListHandler, SubscriberSetWithQueue, Subscription, TreeNodeWithChildren,
+    TreeParentId, UndoManager as InnerUndoManager, VersionVector as InternalVersionVector,
 };
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
@@ -85,6 +85,7 @@ pub fn set_debug() {
 }
 
 type JsResult<T> = Result<T, JsValue>;
+type EventCallback = Box<dyn Fn(&SafeJsValue) -> bool + Send + Sync + 'static>;
 
 /// The CRDTs document. Loro supports different CRDTs include [**List**](LoroList),
 /// [**RichText**](LoroText), [**Map**](LoroMap) and [**Movable Tree**](LoroTree),
@@ -105,7 +106,10 @@ type JsResult<T> = Result<T, JsValue>;
 /// const tree = loro.getTree("tree");
 /// ```
 #[wasm_bindgen]
-pub struct LoroDoc(LoroDocInner);
+pub struct LoroDoc {
+    doc: LoroDocInner,
+    root_event_sub: Arc<Mutex<Option<SubscriberSetWithQueue<(), EventCallback, SafeJsValue>>>>,
+}
 
 #[wasm_bindgen]
 extern "C" {
@@ -257,7 +261,7 @@ mod observer {
         thread: ThreadId,
     }
 
-    #[derive(Clone)]
+    #[derive(Clone, Debug)]
     pub(crate) struct SafeJsValue(pub JsValue);
 
     impl Observer {
@@ -427,7 +431,10 @@ impl LoroDoc {
     pub fn new() -> Self {
         let doc = LoroDocInner::new();
         doc.start_auto_commit();
-        Self(doc)
+        Self {
+            doc,
+            root_event_sub: Arc::new(Mutex::new(None)),
+        }
     }
 
     /// Enables editing in detached mode, which is disabled by default.
@@ -442,7 +449,7 @@ impl LoroDoc {
     ///   recorded in the [OpLog] only. Call `checkout` to apply changes.
     #[wasm_bindgen(js_name = "setDetachedEditing")]
     pub fn set_detached_editing(&self, enable: bool) {
-        self.0.set_detached_editing(enable);
+        self.doc.set_detached_editing(enable);
     }
 
     /// Whether the editing is enabled in detached mode.
@@ -457,7 +464,7 @@ impl LoroDoc {
     ///   recorded in the [OpLog] only. Call `checkout` to apply changes.
     #[wasm_bindgen(js_name = "isDetachedEditingEnabled")]
     pub fn is_detached_editing_enabled(&self) -> bool {
-        self.0.is_detached_editing_enabled()
+        self.doc.is_detached_editing_enabled()
     }
 
     /// Set whether to record the timestamp of each change. Default is `false`.
@@ -472,7 +479,7 @@ impl LoroDoc {
     /// the largest existing timestamp will be used instead.
     #[wasm_bindgen(js_name = "setRecordTimestamp")]
     pub fn set_record_timestamp(&self, auto_record: bool) {
-        self.0.set_record_timestamp(auto_record);
+        self.doc.set_record_timestamp(auto_record);
     }
 
     /// If two continuous local changes are within (<=) the interval(**in seconds**), they will be merged into one change.
@@ -483,7 +490,7 @@ impl LoroDoc {
     /// have timestamps of 3 and 4 respectively, then they will be merged into one change
     #[wasm_bindgen(js_name = "setChangeMergeInterval")]
     pub fn set_change_merge_interval(&self, interval: f64) {
-        self.0.set_change_merge_interval(interval as i64);
+        self.doc.set_change_merge_interval(interval as i64);
     }
 
     /// Set the rich text format configuration of the document.
@@ -553,7 +560,7 @@ impl LoroDoc {
             );
         }
 
-        self.0.config_text_style(style_config);
+        self.doc.config_text_style(style_config);
         Ok(())
     }
 
@@ -565,7 +572,7 @@ impl LoroDoc {
     pub fn config_default_text_style(&self, style: JsTextStyle) -> JsResult<()> {
         let mut style_config = StyleConfig::new();
         if style.is_undefined() {
-            self.0.config_default_text_style(None);
+            self.doc.config_default_text_style(None);
         } else {
             let value = style.obj;
             let expand = Reflect::get(&value, &"expand".into())
@@ -578,7 +585,7 @@ impl LoroDoc {
                 JsError::new("`expand` must be one of `none`, `start`, `end`, `both`")
             })?;
 
-            self.0.config_default_text_style(Some(style_config));
+            self.doc.config_default_text_style(Some(style_config));
         }
         Ok(())
     }
@@ -600,7 +607,10 @@ impl LoroDoc {
     pub fn from_snapshot(snapshot: &[u8]) -> JsResult<LoroDoc> {
         let doc = LoroDocInner::from_snapshot(snapshot)?;
         doc.start_auto_commit();
-        Ok(Self(doc))
+        Ok(Self {
+            doc,
+            root_event_sub: Arc::new(Mutex::new(None)),
+        })
     }
 
     /// Attach the document state to the latest known version.
@@ -626,7 +636,7 @@ impl LoroDoc {
     /// text.insert(0, "Hi");
     /// ```
     pub fn attach(&mut self) {
-        self.0.attach();
+        self.doc.attach();
     }
 
     /// `detached` indicates that the `DocState` is not synchronized with the latest version of `OpLog`.
@@ -653,7 +663,7 @@ impl LoroDoc {
     ///
     #[wasm_bindgen(js_name = "isDetached")]
     pub fn is_detached(&self) -> bool {
-        self.0.is_detached()
+        self.doc.is_detached()
     }
 
     /// Detach the document state from the latest known version.
@@ -670,7 +680,7 @@ impl LoroDoc {
     /// console.log(doc.isDetached());  // true
     /// ```
     pub fn detach(&self) {
-        self.0.detach()
+        self.doc.detach()
     }
 
     /// Duplicate the document with a different PeerID
@@ -680,7 +690,10 @@ impl LoroDoc {
     /// When called in detached mode, it will fork at the current state frontiers.
     /// It will have the same effect as `forkAt(&self.frontiers())`.
     pub fn fork(&self) -> Self {
-        Self(self.0.fork())
+        Self {
+            doc: self.doc.fork(),
+            root_event_sub: Arc::new(Mutex::new(None)),
+        }
     }
 
     /// Creates a new LoroDoc at a specified version (Frontiers)
@@ -688,7 +701,10 @@ impl LoroDoc {
     /// The created doc will only contain the history before the specified frontiers.
     #[wasm_bindgen(js_name = "forkAt")]
     pub fn fork_at(&self, frontiers: Vec<JsID>) -> JsResult<LoroDoc> {
-        Ok(Self(self.0.fork_at(&ids_to_frontiers(frontiers)?)))
+        Ok(Self {
+            doc: self.doc.fork_at(&ids_to_frontiers(frontiers)?),
+            root_event_sub: Arc::new(Mutex::new(None)),
+        })
     }
 
     /// Checkout the `DocState` to the latest version of `OpLog`.
@@ -715,7 +731,7 @@ impl LoroDoc {
     /// ```
     #[wasm_bindgen(js_name = "checkoutToLatest")]
     pub fn checkout_to_latest(&mut self) -> JsResult<()> {
-        self.0.checkout_to_latest();
+        self.doc.checkout_to_latest();
         Ok(())
     }
 
@@ -736,7 +752,7 @@ impl LoroDoc {
         let observer = observer::Observer::new(f);
         let ids: Result<Vec<_>, _> = ids.into_iter().map(js_id_to_id).collect();
         let ids = ids?;
-        self.0
+        self.doc
             .travel_change_ancestors(&ids, &mut |meta| {
                 let res = match observer.call1(
                     &ChangeMeta {
@@ -844,7 +860,7 @@ impl LoroDoc {
 
         let from = ids_to_frontiers(from)?;
         let to = ids_to_frontiers(to)?;
-        let diff = self.0.find_id_spans_between(&from, &to);
+        let diff = self.doc.find_id_spans_between(&from, &to);
         let obj = Object::new();
 
         js_sys::Reflect::set(&obj, &"retreat".into(), &id_span_vector_to_js(diff.retreat)).unwrap();
@@ -876,20 +892,20 @@ impl LoroDoc {
     /// console.log(doc.toJSON()); // {"text": ""}
     /// ```
     pub fn checkout(&mut self, frontiers: Vec<JsID>) -> JsResult<()> {
-        self.0.checkout(&ids_to_frontiers(frontiers)?)?;
+        self.doc.checkout(&ids_to_frontiers(frontiers)?)?;
         Ok(())
     }
 
     /// Peer ID of the current writer.
     #[wasm_bindgen(js_name = "peerId", getter)]
     pub fn peer_id(&self) -> u64 {
-        self.0.peer_id()
+        self.doc.peer_id()
     }
 
     /// Get peer id in decimal string.
     #[wasm_bindgen(js_name = "peerIdStr", getter)]
     pub fn peer_id_str(&self) -> JsStrPeerID {
-        let v: JsValue = format!("{}", self.0.peer_id()).into();
+        let v: JsValue = format!("{}", self.doc.peer_id()).into();
         v.into()
     }
 
@@ -902,7 +918,7 @@ impl LoroDoc {
     #[wasm_bindgen(js_name = "setPeerId")]
     pub fn set_peer_id(&self, peer_id: JsIntoPeerID) -> JsResult<()> {
         let id = js_peer_to_peer(peer_id.into())?;
-        self.0.set_peer_id(id)?;
+        self.doc.set_peer_id(id)?;
         Ok(())
     }
 
@@ -937,9 +953,9 @@ impl LoroDoc {
     pub fn commit(&self, options: Option<JsCommitOption>) -> JsResult<()> {
         if let Some(options) = options {
             let options = js_commit_option_to_commit_options(options)?;
-            self.0.commit_with(options);
+            self.doc.commit_with(options);
         } else {
-            self.0.commit_with(CommitOptions::default());
+            self.doc.commit_with(CommitOptions::default());
         }
         Ok(())
     }
@@ -950,7 +966,7 @@ impl LoroDoc {
     /// automatically after calling `doc.commit()`, `doc.export(mode)` or `doc.checkout(version)`.
     #[wasm_bindgen(js_name = "getPendingTxnLength")]
     pub fn get_pending_txn_len(&self) -> usize {
-        self.0.get_pending_txn_len()
+        self.doc.get_pending_txn_len()
     }
 
     /// Get a LoroText by container id.
@@ -970,11 +986,11 @@ impl LoroDoc {
     #[wasm_bindgen(js_name = "getText")]
     pub fn get_text(&self, cid: &JsIntoContainerID) -> JsResult<LoroText> {
         let container_id = js_value_to_container_id(cid, ContainerType::Text)?;
-        if !self.0.has_container(&container_id) {
+        if !self.doc.has_container(&container_id) {
             return Err(JsValue::from_str("The container does not exist in the doc"));
         }
         Ok(LoroText {
-            handler: self.0.get_text(container_id),
+            handler: self.doc.get_text(container_id),
             delta_cache: None,
         })
     }
@@ -996,11 +1012,11 @@ impl LoroDoc {
     #[wasm_bindgen(js_name = "getMap", skip_typescript)]
     pub fn get_map(&self, cid: &JsIntoContainerID) -> JsResult<LoroMap> {
         let container_id = js_value_to_container_id(cid, ContainerType::Map)?;
-        if !self.0.has_container(&container_id) {
+        if !self.doc.has_container(&container_id) {
             return Err(JsValue::from_str("The container does not exist in the doc"));
         }
         Ok(LoroMap {
-            handler: self.0.get_map(container_id),
+            handler: self.doc.get_map(container_id),
         })
     }
 
@@ -1021,11 +1037,11 @@ impl LoroDoc {
     #[wasm_bindgen(js_name = "getList", skip_typescript)]
     pub fn get_list(&self, cid: &JsIntoContainerID) -> JsResult<LoroList> {
         let container_id = js_value_to_container_id(cid, ContainerType::List)?;
-        if !self.0.has_container(&container_id) {
+        if !self.doc.has_container(&container_id) {
             return Err(JsValue::from_str("The container does not exist in the doc"));
         }
         Ok(LoroList {
-            handler: self.0.get_list(container_id),
+            handler: self.doc.get_list(container_id),
         })
     }
 
@@ -1046,11 +1062,11 @@ impl LoroDoc {
     #[wasm_bindgen(skip_typescript)]
     pub fn getMovableList(&self, cid: &JsIntoContainerID) -> JsResult<LoroMovableList> {
         let container_id = js_value_to_container_id(cid, ContainerType::MovableList)?;
-        if !self.0.has_container(&container_id) {
+        if !self.doc.has_container(&container_id) {
             return Err(JsValue::from_str("The container does not exist in the doc"));
         }
         Ok(LoroMovableList {
-            handler: self.0.get_movable_list(container_id),
+            handler: self.doc.get_movable_list(container_id),
         })
     }
 
@@ -1061,11 +1077,11 @@ impl LoroDoc {
     #[wasm_bindgen(js_name = "getCounter")]
     pub fn get_counter(&self, cid: &JsIntoContainerID) -> JsResult<LoroCounter> {
         let container_id = js_value_to_container_id(cid, ContainerType::Counter)?;
-        if !self.0.has_container(&container_id) {
+        if !self.doc.has_container(&container_id) {
             return Err(JsValue::from_str("The container does not exist in the doc"));
         }
         Ok(LoroCounter {
-            handler: self.0.get_counter(container_id),
+            handler: self.doc.get_counter(container_id),
         })
     }
 
@@ -1086,11 +1102,11 @@ impl LoroDoc {
     #[wasm_bindgen(js_name = "getTree", skip_typescript)]
     pub fn get_tree(&self, cid: &JsIntoContainerID) -> JsResult<LoroTree> {
         let container_id = js_value_to_container_id(cid, ContainerType::Tree)?;
-        if !self.0.has_container(&container_id) {
+        if !self.doc.has_container(&container_id) {
             return Err(JsValue::from_str("The container does not exist in the doc"));
         }
         Ok(LoroTree {
-            handler: self.0.get_tree(container_id),
+            handler: self.doc.get_tree(container_id),
         })
     }
 
@@ -1124,7 +1140,7 @@ impl LoroDoc {
             Ok(id) => id,
             Err(_) => return false,
         };
-        self.0.has_container(&container_id)
+        self.doc.has_container(&container_id)
     }
 
     /// Get the container corresponding to the container id.
@@ -1143,22 +1159,22 @@ impl LoroDoc {
     #[wasm_bindgen(skip_typescript, js_name = "getContainerById")]
     pub fn get_container_by_id(&self, container_id: JsContainerID) -> JsResult<JsValue> {
         let container_id: ContainerID = container_id.to_owned().try_into()?;
-        if !self.0.has_container(&container_id) {
+        if !self.doc.has_container(&container_id) {
             return Ok(JsValue::UNDEFINED);
         }
 
         let ty = container_id.container_type();
         Ok(match ty {
             ContainerType::Map => {
-                let map = self.0.get_map(container_id);
+                let map = self.doc.get_map(container_id);
                 LoroMap { handler: map }.into()
             }
             ContainerType::List => {
-                let list = self.0.get_list(container_id);
+                let list = self.doc.get_list(container_id);
                 LoroList { handler: list }.into()
             }
             ContainerType::Text => {
-                let richtext = self.0.get_text(container_id);
+                let richtext = self.doc.get_text(container_id);
                 LoroText {
                     handler: richtext,
 
@@ -1167,15 +1183,15 @@ impl LoroDoc {
                 .into()
             }
             ContainerType::Tree => {
-                let tree = self.0.get_tree(container_id);
+                let tree = self.doc.get_tree(container_id);
                 LoroTree { handler: tree }.into()
             }
             ContainerType::MovableList => {
-                let list = self.0.get_movable_list(container_id);
+                let list = self.doc.get_movable_list(container_id);
                 LoroMovableList { handler: list }.into()
             }
             ContainerType::Counter => {
-                let counter = self.0.get_counter(container_id);
+                let counter = self.doc.get_counter(container_id);
                 LoroCounter { handler: counter }.into()
             }
             ContainerType::Unknown(_) => {
@@ -1189,39 +1205,39 @@ impl LoroDoc {
     /// Set the commit message of the next commit
     #[wasm_bindgen(js_name = "setNextCommitMessage")]
     pub fn set_next_commit_message(&self, msg: &str) {
-        self.0.set_next_commit_message(msg);
+        self.doc.set_next_commit_message(msg);
     }
 
     /// Set the origin of the next commit
     #[wasm_bindgen(js_name = "setNextCommitOrigin")]
     pub fn set_next_commit_origin(&self, origin: &str) {
-        self.0.set_next_commit_origin(origin);
+        self.doc.set_next_commit_origin(origin);
     }
 
     /// Set the timestamp of the next commit
     #[wasm_bindgen(js_name = "setNextCommitTimestamp")]
     pub fn set_next_commit_timestamp(&self, timestamp: f64) {
-        self.0.set_next_commit_timestamp(timestamp as i64);
+        self.doc.set_next_commit_timestamp(timestamp as i64);
     }
 
     /// Set the options of the next commit
     #[wasm_bindgen(js_name = "setNextCommitOptions")]
     pub fn set_next_commit_options(&self, options: JsCommitOption) -> JsResult<()> {
         let options = js_commit_option_to_commit_options(options)?;
-        self.0.set_next_commit_options(options);
+        self.doc.set_next_commit_options(options);
         Ok(())
     }
 
     /// Clear the options of the next commit
     #[wasm_bindgen(js_name = "clearNextCommitOptions")]
     pub fn clear_next_commit_options(&self) {
-        self.0.clear_next_commit_options();
+        self.doc.clear_next_commit_options();
     }
 
     /// Get deep value of the document with container id
     #[wasm_bindgen(js_name = "getDeepValueWithID")]
     pub fn get_deep_value_with_id(&self) -> JsValue {
-        self.0.get_deep_value_with_id().into()
+        self.doc.get_deep_value_with_id().into()
     }
 
     /// Get the path from the root to the container
@@ -1229,7 +1245,7 @@ impl LoroDoc {
     pub fn get_path_to_container(&self, id: JsContainerID) -> JsResult<Option<JsContainerPath>> {
         let id: ContainerID = id.to_owned().try_into()?;
         let ans = self
-            .0
+            .doc
             .get_path_to_container(&id)
             .map(|p| convert_container_path_to_js_value(&p));
         Ok(ans)
@@ -1240,7 +1256,7 @@ impl LoroDoc {
     pub fn json_path(&self, jsonpath: &str) -> JsResult<Array> {
         let ans = Array::new();
         for v in self
-            .0
+            .doc
             .jsonpath(jsonpath)
             .map_err(|e| JsValue::from(e.to_string()))?
             .into_iter()
@@ -1258,7 +1274,7 @@ impl LoroDoc {
     /// If you checkout to a specific version, the version vector will change.
     #[inline(always)]
     pub fn version(&self) -> VersionVector {
-        VersionVector(self.0.state_vv())
+        VersionVector(self.doc.state_vv())
     }
 
     /// The doc only contains the history since this version
@@ -1269,14 +1285,14 @@ impl LoroDoc {
     #[wasm_bindgen(js_name = "shallowSinceVV")]
     pub fn shallow_since_vv(&self) -> VersionVector {
         VersionVector(InternalVersionVector::from_im_vv(
-            &self.0.shallow_since_vv(),
+            &self.doc.shallow_since_vv(),
         ))
     }
 
     /// Check if the doc contains the full history.
     #[wasm_bindgen(js_name = "isShallow")]
     pub fn is_shallow(&self) -> bool {
-        self.0.is_shallow()
+        self.doc.is_shallow()
     }
 
     /// The doc only contains the history since this version
@@ -1286,7 +1302,7 @@ impl LoroDoc {
     /// The ops included by the shallow history start frontiers are not in the doc.
     #[wasm_bindgen(js_name = "shallowSinceFrontiers")]
     pub fn shallow_since_frontiers(&self) -> JsIDs {
-        frontiers_to_ids(&self.0.shallow_since_frontiers())
+        frontiers_to_ids(&self.doc.shallow_since_frontiers())
     }
 
     /// Get the version vector of the latest known version in OpLog.
@@ -1294,7 +1310,7 @@ impl LoroDoc {
     /// If you checkout to a specific version, this version vector will not change.
     #[wasm_bindgen(js_name = "oplogVersion")]
     pub fn oplog_version(&self) -> VersionVector {
-        VersionVector(self.0.oplog_vv())
+        VersionVector(self.doc.oplog_vv())
     }
 
     /// Get the [frontiers](https://loro.dev/docs/advanced/version_deep_dive) of the current document state.
@@ -1302,7 +1318,7 @@ impl LoroDoc {
     /// If you checkout to a specific version, this value will change.
     #[inline]
     pub fn frontiers(&self) -> JsIDs {
-        frontiers_to_ids(&self.0.state_frontiers())
+        frontiers_to_ids(&self.doc.state_frontiers())
     }
 
     /// Get the [frontiers](https://loro.dev/docs/advanced/version_deep_dive) of the latest version in OpLog.
@@ -1311,7 +1327,7 @@ impl LoroDoc {
     #[inline(always)]
     #[wasm_bindgen(js_name = "oplogFrontiers")]
     pub fn oplog_frontiers(&self) -> JsIDs {
-        frontiers_to_ids(&self.0.oplog_frontiers())
+        frontiers_to_ids(&self.doc.oplog_frontiers())
     }
 
     /// Compare the version of the OpLog with the specified frontiers.
@@ -1333,7 +1349,7 @@ impl LoroDoc {
     #[wasm_bindgen(js_name = "cmpWithFrontiers")]
     pub fn cmp_with_frontiers(&self, frontiers: Vec<JsID>) -> JsResult<i32> {
         let frontiers = ids_to_frontiers(frontiers)?;
-        Ok(match self.0.cmp_with_frontiers(&frontiers) {
+        Ok(match self.doc.cmp_with_frontiers(&frontiers) {
             Ordering::Less => -1,
             Ordering::Greater => 1,
             Ordering::Equal => 0,
@@ -1355,7 +1371,7 @@ impl LoroDoc {
         let a = ids_to_frontiers(a)?;
         let b = ids_to_frontiers(b)?;
         let c = self
-            .0
+            .doc
             .cmp_frontiers(&a, &b)
             .map_err(|e| JsError::new(&e.to_string()))?;
         if let Some(c) = c {
@@ -1377,7 +1393,7 @@ impl LoroDoc {
     /// @deprecated Use `export({mode: "snapshot"})` instead
     #[wasm_bindgen(js_name = "exportSnapshot")]
     pub fn export_snapshot(&self) -> JsResult<Vec<u8>> {
-        Ok(self.0.export_snapshot()?)
+        Ok(self.doc.export_snapshot()?)
     }
 
     /// Export updates from the specific version to the current version
@@ -1399,11 +1415,11 @@ impl LoroDoc {
     #[wasm_bindgen(skip_typescript, js_name = "exportFrom")]
     pub fn export_from(&self, vv: JsValue) -> JsResult<Vec<u8>> {
         if vv.is_null() || vv.is_undefined() {
-            Ok(self.0.export_from(&Default::default()))
+            Ok(self.doc.export_from(&Default::default()))
         } else {
             let vv = js_to_version_vector(vv)?;
             // `version` may be null or undefined
-            Ok(self.0.export_from(&vv.0))
+            Ok(self.doc.export_from(&vv.0))
         }
     }
 
@@ -1446,7 +1462,7 @@ impl LoroDoc {
     pub fn export(&self, mode: JsExportMode) -> JsResult<Vec<u8>> {
         let export_mode = js_to_export_mode(mode)
             .map_err(|e| JsValue::from_str(&format!("Invalid export mode. Error: {:?}", e)))?;
-        Ok(self.0.export(export_mode)?)
+        Ok(self.doc.export(export_mode)?)
     }
 
     /// Export updates in the given range in JSON format.
@@ -1469,7 +1485,7 @@ impl LoroDoc {
             temp_end_vv = Some(js_to_version_vector(end_vv)?);
             json_end_vv = &temp_end_vv.as_ref().unwrap().0;
         }
-        let json_schema = self.0.export_json_updates(
+        let json_schema = self.doc.export_json_updates(
             json_start_vv,
             json_end_vv,
             with_peer_compression.unwrap_or(true),
@@ -1481,7 +1497,7 @@ impl LoroDoc {
     #[wasm_bindgen(js_name = "exportJsonInIdSpan", skip_typescript)]
     pub fn exportJsonInIdSpan(&self, idSpan: JsIdSpan) -> JsResult<JsValue> {
         let id_span = js_to_id_span(idSpan)?;
-        let json = self.0.export_json_in_id_span(id_span);
+        let json = self.doc.export_json_in_id_span(id_span);
         let s = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
         let v = json
             .serialize(&s)
@@ -1495,7 +1511,7 @@ impl LoroDoc {
     #[wasm_bindgen(js_name = "importJsonUpdates")]
     pub fn import_json_updates(&self, json: JsJsonSchemaOrString) -> JsResult<JsImportStatus> {
         let json_schema = js_json_schema_to_loro_json_schema(json)?;
-        let status = self.0.import_json_updates(json_schema)?;
+        let status = self.doc.import_json_updates(json_schema)?;
         Ok(import_status_to_js_value(status).into())
     }
 
@@ -1522,7 +1538,7 @@ impl LoroDoc {
     /// doc2.import(updates);
     /// ```
     pub fn import(&self, update_or_snapshot: &[u8]) -> JsResult<JsImportStatus> {
-        let status = self.0.import(update_or_snapshot)?;
+        let status = self.doc.import(update_or_snapshot)?;
         Ok(import_status_to_js_value(status).into())
     }
 
@@ -1576,7 +1592,7 @@ impl LoroDoc {
             })
             .collect::<Vec<_>>();
 
-        let status = self.0.import_batch(&data)?;
+        let status = self.doc.import_batch(&data)?;
         Ok(import_status_to_js_value(status).into())
     }
 
@@ -1606,7 +1622,7 @@ impl LoroDoc {
     /// ```
     #[wasm_bindgen(js_name = "getShallowValue")]
     pub fn get_shallow_value(&self) -> JsResult<JsLoroRootShallowValue> {
-        let json = self.0.get_value();
+        let json = self.doc.get_value();
         let v: JsValue = json.into();
         Ok(v.into())
     }
@@ -1632,7 +1648,7 @@ impl LoroDoc {
     /// ```
     #[wasm_bindgen(js_name = "toJSON")]
     pub fn to_json(&self) -> JsResult<JsValue> {
-        let json = self.0.get_deep_value();
+        let json = self.doc.get_deep_value();
         Ok(json.into())
     }
 
@@ -1667,9 +1683,35 @@ impl LoroDoc {
     #[wasm_bindgen(skip_typescript)]
     pub fn subscribe(&self, f: js_sys::Function) -> JsValue {
         let observer = observer::Observer::new(f);
-        let sub = self.0.subscribe_root(Arc::new(move |e| {
-            put_event_in_pending_queue(observer.clone(), e);
-        }));
+        let mut sub_set = self.root_event_sub.lock().unwrap();
+        if sub_set.is_none() {
+            let root_sub_set_clone = Arc::clone(&self.root_event_sub);
+            let set = SubscriberSetWithQueue::new();
+            let set_weak = set.downgrade();
+            *sub_set = Some(set);
+            let sub = self.doc.subscribe_root(Arc::new(move |e| {
+                let Some(set) = set_weak.clone().upgrade() else {
+                    return;
+                };
+                if set.inner().is_empty() {
+                    *root_sub_set_clone.lock().unwrap() = None;
+                }
+                let event = diff_event_to_js_value(e, false);
+                set.emit(&(), SafeJsValue(event));
+            }));
+            sub.detach();
+        }
+
+        let sub_set = sub_set.as_mut().unwrap();
+        let (sub, activate) = sub_set.inner().insert(
+            (),
+            Box::new(move |e| {
+                let ob = observer.clone();
+                put_js_value_in_pending_queue(ob, e.0.clone());
+                true
+            }),
+        );
+        activate();
         subscription_to_js_function_callback(sub)
     }
 
@@ -1677,7 +1719,7 @@ impl LoroDoc {
     #[wasm_bindgen(js_name = "subscribeLocalUpdates", skip_typescript)]
     pub fn subscribe_local_updates(&self, f: js_sys::Function) -> JsValue {
         let observer = observer::Observer::new(f);
-        let sub = self.0.subscribe_local_update(Box::new(move |e| {
+        let sub = self.doc.subscribe_local_update(Box::new(move |e| {
             let arr = js_sys::Uint8Array::new_with_length(e.len() as u32);
             arr.copy_from(e);
             let js_value: JsValue = arr.into();
@@ -1691,21 +1733,21 @@ impl LoroDoc {
     /// Debug the size of the history
     #[wasm_bindgen(js_name = "debugHistory")]
     pub fn debug_history(&self) {
-        let borrow_mut = &self.0;
+        let borrow_mut = &self.doc;
         let oplog = borrow_mut.oplog().lock().unwrap();
         console_log!("{:#?}", oplog.diagnose_size());
     }
 
     /// Get the number of changes in the oplog.
     pub fn changeCount(&self) -> usize {
-        let borrow_mut = &self.0;
+        let borrow_mut = &self.doc;
         let oplog = borrow_mut.oplog().lock().unwrap();
         oplog.len_changes()
     }
 
     /// Get the number of ops in the oplog.
     pub fn opCount(&self) -> usize {
-        self.0.len_ops()
+        self.doc.len_ops()
     }
 
     /// Get all of changes in the oplog.
@@ -1730,7 +1772,7 @@ impl LoroDoc {
     /// ```
     #[wasm_bindgen(js_name = "getAllChanges")]
     pub fn get_all_changes(&self) -> JsChanges {
-        let borrow_mut = &self.0;
+        let borrow_mut = &self.doc;
         let oplog = borrow_mut.oplog().lock().unwrap();
         let mut changes: FxHashMap<PeerID, Vec<ChangeMeta>> = FxHashMap::default();
         oplog.change_store().visit_all_changes(&mut |c| {
@@ -1770,7 +1812,7 @@ impl LoroDoc {
     #[wasm_bindgen(js_name = "getChangeAt")]
     pub fn get_change_at(&self, id: JsID) -> JsResult<JsChange> {
         let id = js_id_to_id(id)?;
-        let borrow_mut = &self.0;
+        let borrow_mut = &self.doc;
         let oplog = borrow_mut.oplog().lock().unwrap();
         let change = oplog
             .get_change_at(id)
@@ -1801,7 +1843,7 @@ impl LoroDoc {
         peer_id: &str,
         lamport: u32,
     ) -> JsResult<JsChangeOrUndefined> {
-        let borrow_mut = &self.0;
+        let borrow_mut = &self.doc;
         let oplog = borrow_mut.oplog().lock().unwrap();
         let Some(change) =
             oplog.get_change_with_lamport_lte(peer_id.parse().unwrap_throw(), lamport)
@@ -1832,7 +1874,7 @@ impl LoroDoc {
     #[wasm_bindgen(js_name = "getOpsInChange")]
     pub fn get_ops_in_change(&self, id: JsID) -> JsResult<Vec<JsValue>> {
         let id = js_id_to_id(id)?;
-        let borrow_mut = &self.0;
+        let borrow_mut = &self.doc;
         let oplog = borrow_mut.oplog().lock().unwrap();
 
         let serializer =
@@ -1867,7 +1909,7 @@ impl LoroDoc {
     #[wasm_bindgen(js_name = "frontiersToVV")]
     pub fn frontiers_to_vv(&self, frontiers: Vec<JsID>) -> JsResult<VersionVector> {
         let frontiers = ids_to_frontiers(frontiers)?;
-        let borrow_mut = &self.0;
+        let borrow_mut = &self.doc;
         let oplog = borrow_mut.oplog().lock().unwrap();
         oplog
             .dag()
@@ -1890,7 +1932,13 @@ impl LoroDoc {
     /// ```
     #[wasm_bindgen(js_name = "vvToFrontiers")]
     pub fn vv_to_frontiers(&self, vv: &VersionVector) -> JsResult<JsIDs> {
-        let f = self.0.oplog().lock().unwrap().dag().vv_to_frontiers(&vv.0);
+        let f = self
+            .doc
+            .oplog()
+            .lock()
+            .unwrap()
+            .dag()
+            .vv_to_frontiers(&vv.0);
         Ok(frontiers_to_ids(&f))
     }
 
@@ -1923,7 +1971,7 @@ impl LoroDoc {
     /// ```
     #[wasm_bindgen(js_name = "getByPath")]
     pub fn get_by_path(&self, path: &str) -> JsValueOrContainerOrUndefined {
-        let ans = self.0.get_by_str_path(path);
+        let ans = self.doc.get_by_str_path(path);
         let v: JsValue = match ans {
             Some(ValueOrHandler::Handler(h)) => handler_to_js_value(h, false),
             Some(ValueOrHandler::Value(v)) => v.into(),
@@ -1952,7 +2000,7 @@ impl LoroDoc {
     /// ```
     pub fn getCursorPos(&self, cursor: &Cursor) -> JsResult<JsCursorQueryAns> {
         let ans = self
-            .0
+            .doc
             .query_pos(&cursor.pos)
             .map_err(|e| JsError::new(&e.to_string()))?;
 
@@ -1989,7 +2037,7 @@ impl LoroDoc {
     pub fn getChangedContainersIn(&self, id: JsID, len: usize) -> JsResult<Vec<JsContainerID>> {
         let id = js_id_to_id(id)?;
         Ok(self
-            .0
+            .doc
             .get_changed_containers_in(id, len)
             .into_iter()
             .map(|cid| {
@@ -2017,7 +2065,7 @@ impl LoroDoc {
     #[wasm_bindgen(js_name = "revertTo")]
     pub fn revert_to(&self, frontiers: Vec<JsID>) -> JsResult<()> {
         let frontiers = ids_to_frontiers(frontiers)?;
-        self.0.revert_to(&frontiers)?;
+        self.doc.revert_to(&frontiers)?;
         Ok(())
     }
 
@@ -2066,7 +2114,7 @@ impl LoroDoc {
             order.push(cid.clone());
             cid_to_events.insert(cid, diff);
         }
-        self.0.apply_diff(DiffBatch {
+        self.doc.apply_diff(DiffBatch {
             cid_to_events,
             order,
         })?;
@@ -2086,7 +2134,7 @@ impl LoroDoc {
     ) -> JsResult<JsDiffBatch> {
         let from = ids_to_frontiers(from)?;
         let to = ids_to_frontiers(to)?;
-        let diff = self.0.diff(&from, &to)?;
+        let diff = self.doc.diff(&from, &to)?;
         let arr = js_sys::Array::new();
         for (id, d) in diff.iter() {
             let entry = js_sys::Array::new();
@@ -2118,20 +2166,22 @@ impl LoroDoc {
     /// const emptyOps = doc.getPendingOpsFromCurrentTxnAsJson(); // this is undefined
     /// ```
     pub fn getUncommittedOpsAsJson(&self) -> JsResult<Option<JsJsonSchema>> {
-        let json_schema = self.0.get_uncommitted_ops_as_json();
+        let json_schema = self.doc.get_uncommitted_ops_as_json();
         Ok(json_schema.map(loro_json_schema_to_js_json_schema))
     }
 
     #[wasm_bindgen(js_name = "subscribeFirstCommitFromPeer", skip_typescript)]
     pub fn subscribe_first_commit_from_peer(&self, f: js_sys::Function) -> JsValue {
         let observer = observer::Observer::new(f);
-        let sub = self.0.subscribe_first_commit_from_peer(Box::new(move |e| {
-            let obj = js_sys::Object::new();
-            Reflect::set(&obj, &"peer".into(), &e.peer.to_string().into()).unwrap();
-            let js_value: JsValue = obj.into();
-            put_js_value_in_pending_queue(observer.clone(), js_value);
-            true
-        }));
+        let sub = self
+            .doc
+            .subscribe_first_commit_from_peer(Box::new(move |e| {
+                let obj = js_sys::Object::new();
+                Reflect::set(&obj, &"peer".into(), &e.peer.to_string().into()).unwrap();
+                let js_value: JsValue = obj.into();
+                put_js_value_in_pending_queue(observer.clone(), js_value);
+                true
+            }));
 
         subscription_to_js_function_callback(sub)
     }
@@ -2143,7 +2193,7 @@ impl LoroDoc {
     #[wasm_bindgen(js_name = "subscribePreCommit", skip_typescript)]
     pub fn subscribe_pre_commit(&self, f: js_sys::Function) -> JsValue {
         let observer = observer::Observer::new(f);
-        let sub = self.0.subscribe_pre_commit(Box::new(move |e| {
+        let sub = self.doc.subscribe_pre_commit(Box::new(move |e| {
             let obj = js_sys::Object::new();
             Reflect::set(
                 &obj,
@@ -2176,7 +2226,7 @@ impl LoroDoc {
     /// Only works on root containers (containers without parents).
     pub fn deleteRootContainer(&self, cid: JsContainerID) -> JsResult<()> {
         let cid: ContainerID = cid.to_owned().try_into()?;
-        self.0.delete_root_container(cid);
+        self.doc.delete_root_container(cid);
         Ok(())
     }
 
@@ -2191,7 +2241,7 @@ impl LoroDoc {
     /// console.log(doc.toJSON()); // {}
     /// ```
     pub fn setHideEmptyRootContainers(&self, hide: bool) -> JsResult<()> {
-        self.0.set_hide_empty_root_containers(hide);
+        self.doc.set_hide_empty_root_containers(hide);
         Ok(())
     }
 }
@@ -2299,7 +2349,7 @@ impl Default for LoroDoc {
 
 impl Drop for LoroDoc {
     fn drop(&mut self) {
-        self.0.commit_then_renew();
+        self.doc.commit_then_renew();
         callPendingEvents();
     }
 }
@@ -4915,7 +4965,7 @@ impl UndoManager {
         let on_push = Reflect::get(&config, &JsValue::from_str("onPush")).ok();
         let on_pop = Reflect::get(&config, &JsValue::from_str("onPop")).ok();
 
-        let mut undo = InnerUndoManager::new(&doc.0);
+        let mut undo = InnerUndoManager::new(&doc.doc);
 
         undo.set_max_undo_steps(max_undo_steps);
         undo.set_merge_interval(merge_interval);

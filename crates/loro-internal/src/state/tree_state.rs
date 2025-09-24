@@ -1049,10 +1049,6 @@ impl ContainerState for TreeState {
         self.idx
     }
 
-    fn estimate_size(&self) -> usize {
-        self.trees.len() * (std::mem::size_of::<(TreeID, TreeStateNode)>())
-    }
-
     fn is_state_empty(&self) -> bool {
         self.nodes().is_empty()
     }

@@ -435,11 +435,6 @@ impl StyleRangeMap {
     pub(crate) fn has_style(&self) -> bool {
         self.has_style
     }
-
-    pub(crate) fn estimate_size(&self) -> usize {
-        // TODO: this is inaccurate
-        self.tree.node_len() * std::mem::size_of::<Elem>()
-    }
 }
 
 pub(super) struct IterAnchorItem {

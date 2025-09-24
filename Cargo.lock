@@ -808,16 +808,16 @@ dependencies = [
 
 [[package]]
 name = "generic-btree"
-version = "0.10.6"
+version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b13a097f720b8275947f5bf0f499a5a08f13341fc4c74bb87fb111b95db6e63"
+checksum = "a0c1bce85c110ab718fd139e0cc89c51b63bd647b14a767e24bdfc77c83df79b"
 dependencies = [
  "arref",
- "fxhash",
  "heapless 0.9.1",
  "itertools 0.11.0",
  "loro-thunderdome",
  "proc-macro2 1.0.101",
+ "rustc-hash 2.1.1",
 ]
 
 [[package]]

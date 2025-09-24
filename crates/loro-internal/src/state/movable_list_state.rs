@@ -1009,10 +1009,6 @@ impl ContainerState for MovableListState {
         self.idx
     }
 
-    fn estimate_size(&self) -> usize {
-        self.len() * 8
-    }
-
     fn is_state_empty(&self) -> bool {
         self.list().is_empty() && self.elements().is_empty()
     }

@@ -263,13 +263,4 @@ impl InnerStore {
         new_store.decode(bytes).unwrap();
         new_store
     }
-
-    pub(crate) fn estimate_size(&self) -> usize {
-        self.kv.with_kv(|kv| kv.size())
-            + self
-                .store
-                .values()
-                .map(|c| if c.is_flushed() { 0 } else { c.estimate_size() })
-                .sum::<usize>()
-    }
 }

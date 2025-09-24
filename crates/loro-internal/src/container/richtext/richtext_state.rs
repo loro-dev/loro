@@ -2378,16 +2378,6 @@ impl RichtextState {
         );
     }
 
-    pub(crate) fn estimate_size(&self) -> usize {
-        // TODO: this is inaccurate
-        self.tree.node_len() * std::mem::size_of::<RichtextStateChunk>()
-            + self
-                .style_ranges
-                .as_ref()
-                .map(|x| x.estimate_size())
-                .unwrap_or(0)
-    }
-
     /// Iter style ranges in the given range in entity index
     pub(crate) fn iter_range(
         &self,

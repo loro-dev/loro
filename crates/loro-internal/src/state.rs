@@ -117,7 +117,6 @@ pub(crate) struct ApplyLocalOpReturn {
 #[enum_dispatch]
 pub(crate) trait ContainerState {
     fn container_idx(&self) -> ContainerIdx;
-    fn estimate_size(&self) -> usize;
 
     fn is_state_empty(&self) -> bool;
 
@@ -178,10 +177,6 @@ impl<T: FastStateSnapshot> FastStateSnapshot for Box<T> {
 impl<T: ContainerState> ContainerState for Box<T> {
     fn container_idx(&self) -> ContainerIdx {
         self.as_ref().container_idx()
-    }
-
-    fn estimate_size(&self) -> usize {
-        self.as_ref().estimate_size()
     }
 
     fn is_state_empty(&self) -> bool {

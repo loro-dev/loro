@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, mem, sync::Weak};
+use std::{collections::BTreeMap, sync::Weak};
 
 use rustc_hash::FxHashMap;
 use loro_common::{ContainerID, IdLp, LoroResult, PeerID};
@@ -29,10 +29,6 @@ pub struct MapState {
 impl ContainerState for MapState {
     fn container_idx(&self) -> ContainerIdx {
         self.idx
-    }
-
-    fn estimate_size(&self) -> usize {
-        self.map.len() * (mem::size_of::<MapValue>() + mem::size_of::<InternalString>())
     }
 
     fn is_state_empty(&self) -> bool {

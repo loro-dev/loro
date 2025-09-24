@@ -30,10 +30,6 @@ impl ContainerState for CounterState {
         self.idx
     }
 
-    fn estimate_size(&self) -> usize {
-        std::mem::size_of::<i64>()
-    }
-
     fn is_state_empty(&self) -> bool {
         false
     }

@@ -246,7 +246,7 @@ impl std::fmt::Display for Subscription {
     }
 }
 
-pub(crate) struct SubscriberSet<EmitterKey, Callback>(
+pub struct SubscriberSet<EmitterKey, Callback>(
     Arc<Mutex<SubscriberSetState<EmitterKey, Callback>>>,
 );
 
@@ -282,10 +282,12 @@ where
         })))
     }
 
-    /// Inserts a new [`Subscription`] for the given `emitter_key`. By default, subscriptions
-    /// are inert, meaning that they won't be listed when calling `[SubscriberSet::remove]` or `[SubscriberSet::retain]`.
-    /// This method returns a tuple of a [`Subscription`] and an `impl FnOnce`, and you can use the latter
-    /// to activate the [`Subscription`].
+    /// Inserts a new [`Subscription`] for the given `emitter_key`.
+    ///
+    /// By default, subscriptions are inert, meaning that they won't be listed when calling
+    /// `[SubscriberSet::remove]` or `[SubscriberSet::retain]`. This method returns a tuple
+    /// of a [`Subscription`] and an `impl FnOnce`, and you can use the latter to activate
+    /// the [`Subscription`].
     pub fn insert(
         &self,
         emitter_key: EmitterKey,
@@ -442,6 +444,31 @@ where
     }
 }
 
+impl<EmitterKey, Callback> Default for SubscriberSet<EmitterKey, Callback>
+where
+    EmitterKey: 'static + Ord + Clone + Debug + Send + Sync,
+    Callback: 'static + Send + Sync,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<EmitterKey, Callback> std::fmt::Debug for SubscriberSet<EmitterKey, Callback>
+where
+    EmitterKey: 'static + Ord + Clone + Debug + Send + Sync,
+    Callback: 'static + Send + Sync,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let lock = self.0.lock().unwrap();
+        f.debug_struct("SubscriberSet")
+            .field("subscriber_count", &lock.subscribers.len())
+            .field("dropped_subscribers_count", &lock.dropped_subscribers.len())
+            .field("next_subscriber_id", &lock.next_subscriber_id)
+            .finish()
+    }
+}
+
 fn post_inc(next_subscriber_id: &mut usize) -> usize {
     let ans = *next_subscriber_id;
     *next_subscriber_id += 1;
@@ -509,14 +536,54 @@ impl Drop for InnerSubscription {
 ///
 /// This behavior ensures that all events are processed in the order they were emitted, even in cases
 /// where recursive event emission would normally cause an error.
-pub(crate) struct SubscriberSetWithQueue<EmitterKey, Callback, Payload> {
+#[derive(Clone)]
+pub struct SubscriberSetWithQueue<EmitterKey, Callback, Payload> {
     subscriber_set: SubscriberSet<EmitterKey, Callback>,
     queue: Arc<Mutex<BTreeMap<EmitterKey, Vec<Payload>>>>,
 }
 
-pub(crate) struct WeakSubscriberSetWithQueue<EmitterKey, Callback, Payload> {
+impl<EmitterKey, Callback, Payload> Debug
+    for SubscriberSetWithQueue<EmitterKey, Callback, Payload>
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SubscriberSetWithQueue").finish()
+    }
+}
+
+impl<EmitterKey, Callback, Payload> Default
+    for SubscriberSetWithQueue<EmitterKey, Callback, Payload>
+where
+    EmitterKey: 'static + Ord + Clone + Debug + Send + Sync,
+    Callback: 'static + Send + Sync + for<'a> FnMut(&'a Payload) -> bool,
+    Payload: Send + Sync + Debug,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub struct WeakSubscriberSetWithQueue<EmitterKey, Callback, Payload> {
     subscriber_set: Weak<Mutex<SubscriberSetState<EmitterKey, Callback>>>,
     queue: Weak<Mutex<BTreeMap<EmitterKey, Vec<Payload>>>>,
+}
+
+impl<EmitterKey, Callback, Payload> Debug
+    for WeakSubscriberSetWithQueue<EmitterKey, Callback, Payload>
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WeakSubscriberSetWithQueue").finish()
+    }
+}
+
+impl<EmitterKey, Callback, Payload> Clone
+    for WeakSubscriberSetWithQueue<EmitterKey, Callback, Payload>
+{
+    fn clone(&self) -> Self {
+        Self {
+            subscriber_set: self.subscriber_set.clone(),
+            queue: self.queue.clone(),
+        }
+    }
 }
 
 impl<EmitterKey, Callback, Payload> WeakSubscriberSetWithQueue<EmitterKey, Callback, Payload> {
@@ -552,7 +619,7 @@ where
         &self.subscriber_set
     }
 
-    pub(crate) fn emit(&self, key: &EmitterKey, payload: Payload) {
+    pub fn emit(&self, key: &EmitterKey, payload: Payload) {
         let mut pending_events: SmallVec<[Payload; 1]> = SmallVec::new();
         pending_events.push(payload);
         while let Some(payload) = pending_events.pop() {

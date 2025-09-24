@@ -29,10 +29,6 @@ impl ContainerState for UnknownState {
         self.idx
     }
 
-    fn estimate_size(&self) -> usize {
-        0
-    }
-
     fn is_state_empty(&self) -> bool {
         false
     }
