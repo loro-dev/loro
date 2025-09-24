@@ -444,6 +444,31 @@ where
     }
 }
 
+impl<EmitterKey, Callback> Default for SubscriberSet<EmitterKey, Callback>
+where
+    EmitterKey: 'static + Ord + Clone + Debug + Send + Sync,
+    Callback: 'static + Send + Sync,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<EmitterKey, Callback> std::fmt::Debug for SubscriberSet<EmitterKey, Callback>
+where
+    EmitterKey: 'static + Ord + Clone + Debug + Send + Sync,
+    Callback: 'static + Send + Sync,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let lock = self.0.lock().unwrap();
+        f.debug_struct("SubscriberSet")
+            .field("subscriber_count", &lock.subscribers.len())
+            .field("dropped_subscribers_count", &lock.dropped_subscribers.len())
+            .field("next_subscriber_id", &lock.next_subscriber_id)
+            .finish()
+    }
+}
+
 fn post_inc(next_subscriber_id: &mut usize) -> usize {
     let ans = *next_subscriber_id;
     *next_subscriber_id += 1;

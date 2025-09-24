@@ -282,13 +282,6 @@ impl ContainerState for RichtextState {
         self.idx
     }
 
-    fn estimate_size(&self) -> usize {
-        match &self.state {
-            LazyLoad::Src(s) => s.elements.len() * std::mem::size_of::<RichtextStateChunk>(),
-            LazyLoad::Dst(s) => s.estimate_size(),
-        }
-    }
-
     fn is_state_empty(&self) -> bool {
         match &self.state {
             LazyLoad::Src(s) => s.is_empty(),

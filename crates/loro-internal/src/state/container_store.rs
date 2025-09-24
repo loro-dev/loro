@@ -228,10 +228,6 @@ impl ContainerStore {
             .get_state(idx, ctx!(self))
     }
 
-    pub(crate) fn estimate_size(&self) -> usize {
-        self.store.estimate_size()
-    }
-
     pub(crate) fn fork(
         &mut self,
         arena: SharedArena,

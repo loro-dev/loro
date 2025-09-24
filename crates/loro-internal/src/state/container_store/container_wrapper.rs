@@ -245,14 +245,6 @@ impl ContainerWrapper {
         Ok(())
     }
 
-    pub fn estimate_size(&self) -> usize {
-        if let Some(bytes) = self.bytes.as_ref() {
-            return bytes.len();
-        }
-
-        self.state.as_ref().unwrap().estimate_size()
-    }
-
     #[allow(unused)]
     pub(crate) fn is_state_empty(&self) -> bool {
         if let Some(state) = self.state.as_ref() {

@@ -357,13 +357,6 @@ impl ContainerState for ListState {
         self.idx
     }
 
-    fn estimate_size(&self) -> usize {
-        // TODO: this is inaccurate
-        self.list.node_len() * std::mem::size_of::<isize>()
-            + self.len() * std::mem::size_of::<Elem>()
-            + self.child_container_to_leaf.len() * std::mem::size_of::<(ContainerID, LeafIndex)>()
-    }
-
     fn is_state_empty(&self) -> bool {
         self.list.is_empty()
     }
