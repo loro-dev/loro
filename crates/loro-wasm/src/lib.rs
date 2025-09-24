@@ -108,7 +108,7 @@ type EventCallback = Box<dyn Fn(&SafeJsValue) -> bool + Send + Sync + 'static>;
 #[wasm_bindgen]
 pub struct LoroDoc {
     doc: LoroDocInner,
-    root_event_sub: Mutex<Option<SubscriberSetWithQueue<(), EventCallback, SafeJsValue>>>,
+    root_event_sub: Arc<Mutex<Option<SubscriberSetWithQueue<(), EventCallback, SafeJsValue>>>>,
 }
 
 #[wasm_bindgen]
@@ -433,7 +433,7 @@ impl LoroDoc {
         doc.start_auto_commit();
         Self {
             doc,
-            root_event_sub: Mutex::new(None),
+            root_event_sub: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -609,7 +609,7 @@ impl LoroDoc {
         doc.start_auto_commit();
         Ok(Self {
             doc,
-            root_event_sub: Mutex::new(None),
+            root_event_sub: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -692,7 +692,7 @@ impl LoroDoc {
     pub fn fork(&self) -> Self {
         Self {
             doc: self.doc.fork(),
-            root_event_sub: Mutex::new(None),
+            root_event_sub: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -703,7 +703,7 @@ impl LoroDoc {
     pub fn fork_at(&self, frontiers: Vec<JsID>) -> JsResult<LoroDoc> {
         Ok(Self {
             doc: self.doc.fork_at(&ids_to_frontiers(frontiers)?),
-            root_event_sub: Mutex::new(None),
+            root_event_sub: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -1685,6 +1685,7 @@ impl LoroDoc {
         let observer = observer::Observer::new(f);
         let mut sub_set = self.root_event_sub.lock().unwrap();
         if sub_set.is_none() {
+            let root_sub_set_clone = Arc::clone(&self.root_event_sub);
             let set = SubscriberSetWithQueue::new();
             let set_weak = set.downgrade();
             *sub_set = Some(set);
@@ -1692,6 +1693,9 @@ impl LoroDoc {
                 let Some(set) = set_weak.clone().upgrade() else {
                     return;
                 };
+                if set.inner().is_empty() {
+                    *root_sub_set_clone.lock().unwrap() = None;
+                }
                 let event = diff_event_to_js_value(e, false);
                 set.emit(&(), SafeJsValue(event));
             }));
