@@ -24,7 +24,6 @@ use lock::LoroMutex;
 
 pub use change_meta::ChangeMeta;
 pub use event::{ContainerDiff, DiffEvent, DocDiff, ListDiff, ListDiffInsertItem, ListDiffItem};
-pub use rustc_hash::FxHashMap;
 pub use handler::{
     BasicHandler, HandlerTrait, ListHandler, MapHandler, MovableListHandler, TextHandler,
     TreeHandler, UnknownHandler,
@@ -35,12 +34,13 @@ use pre_commit::{
     FirstCommitFromPeerCallback, FirstCommitFromPeerPayload, PreCommitCallback,
     PreCommitCallbackPayload,
 };
+pub use rustc_hash::FxHashMap;
 pub use state::DocState;
 pub use state::{TreeNode, TreeNodeWithChildren, TreeParentId};
 use subscription::{LocalUpdateCallback, Observer, PeerIdUpdateCallback};
 use txn::Transaction;
 pub use undo::UndoManager;
-use utils::subscription::SubscriberSetWithQueue;
+pub use utils::subscription::SubscriberSetWithQueue;
 pub use utils::subscription::Subscription;
 pub mod allocation;
 pub mod awareness;
