@@ -324,7 +324,7 @@ describe("undo", () => {
     expect(text.toString()).toBe("hello world world");
   });
 
-  test("should groups should not split on non-conflicting remote changes", async () => {
+  test("should groups should not split on non-conflicting remote changes", () => {
     const doc = new LoroDoc();
     const undoManager = new UndoManager(doc, {});
     undoManager.groupStart();
@@ -354,5 +354,31 @@ describe("undo", () => {
     undoManager.undo();
 
     expect(text.toString()).toBe("");
+  });
+
+  test("undo tree move", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    const undo = new UndoManager(doc, {
+      mergeInterval: 0,
+      maxUndoSteps: 100,
+    });
+
+    const tree = doc.getTree("1");
+    tree.enableFractionalIndex(3);
+
+    const a = tree.createNode(undefined, 0);
+    a.data.set("title", "a");
+    doc.commit();
+
+    const b = tree.createNode(undefined, 1);
+    b.data.set("title", "b");
+    doc.commit();
+    const docJson = doc.toJSON();
+    tree.move(a.id, undefined, 1);
+    doc.commit();
+    undo.undo();
+    const docJson1 = doc.toJSON();
+    expect(docJson).toStrictEqual(docJson1);
   });
 });
