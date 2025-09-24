@@ -14,7 +14,7 @@ keywords = ["crdt", "local-first"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-generic-btree = { version = "^0.10.5" }
+generic-btree = { version = "^0.10.7" }
 smallvec = { workspace = true }
 loro-delta = { path = "../delta", version = "1.6.0", package = "loro-delta" }
 rle = { path = "../rle", version = "1.6.0", package = "loro-rle" }

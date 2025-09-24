@@ -20,7 +20,7 @@ loro-common = { path = "../loro-common", version = "1.8.1", features = [
 ] }
 loro-kv-store = { path = "../kv-store", version = "1.8.1" }
 delta = { path = "../delta", package = "loro-delta", version = "1.6.0" }
-generic-btree = { version = "^0.10.5" }
+generic-btree = { version = "^0.10.7" }
 enum-as-inner = { workspace = true }
 tracing = { workspace = true }
 rustc-hash = { workspace = true }
