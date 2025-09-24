@@ -1,5 +1,5 @@
 #![allow(unexpected_cfgs)]
-use loro::LoroDoc;
+use loro::{LoroDoc, UndoManager};
 use std::sync::{Arc, Mutex};
 
 #[ctor::ctor]
@@ -232,4 +232,22 @@ fn import_twice() {
     let decoded_bytes = base64::decode(base64).expect("base64 decode error");
     doc.import(&decoded_bytes).unwrap();
     doc.import(&decoded_bytes).unwrap();
+}
+
+#[test]
+fn undo_tree_mov_between_children() {
+    let doc = LoroDoc::new();
+    let mut undo = UndoManager::new(&doc);
+    let tree = doc.get_tree("tree");
+    let a = tree.create(None).unwrap();
+    tree.get_meta(a).unwrap().insert("title", "A").unwrap();
+    doc.commit();
+    let b = tree.create(None).unwrap();
+    tree.get_meta(b).unwrap().insert("title", "B").unwrap();
+    doc.commit();
+    let doc_value_0 = doc.get_deep_value();
+    tree.mov_after(a, b).unwrap();
+    undo.undo().unwrap();
+    let doc_value_1 = doc.get_deep_value();
+    assert_eq!(doc_value_0, doc_value_1);
 }

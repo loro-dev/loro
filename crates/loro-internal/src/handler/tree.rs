@@ -1,11 +1,11 @@
 use std::{collections::VecDeque, sync::Arc};
 
 use fractional_index::FractionalIndex;
-use rustc_hash::FxHashMap;
 use loro_common::{
     ContainerID, ContainerType, Counter, IdLp, LoroError, LoroResult, LoroTreeError, LoroValue,
     PeerID, TreeID, ID,
 };
+use rustc_hash::FxHashMap;
 use smallvec::smallvec;
 
 use crate::{
@@ -453,8 +453,11 @@ impl TreeHandler {
         //     return self.create_at_with_target_for_apply_diff(parent, position, target);
         // }
 
-        if let Some(p) = self.get_node_parent(&target) {
-            if p == parent {
+        if let (Some(p), Some(fi)) = (
+            self.get_node_parent(&target),
+            self.get_position_by_tree_id(&target),
+        ) {
+            if p == parent && position == fi {
                 return Ok(false);
             }
         }
