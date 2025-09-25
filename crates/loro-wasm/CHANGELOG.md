@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.8.1
+
+### Patch Changes
+
+- 60287cd: perf(js): optimize js event calling speed by only converting event once (#820)
+- 338c2ce: fix: serde compatibility
+- 60287cd: fix: undo tree move between siblings (#821)
+
 ## 1.8.0
 
 ### Minor Changes
