@@ -224,7 +224,7 @@ pub(crate) fn encode_snapshot_inner(doc: &LoroDoc) -> Snapshot {
             .unwrap();
         state = doc.app_state().lock().unwrap();
     }
-    state.ensure_all_alive_containers();
+    let _ = state.ensure_all_alive_containers();
     let state_bytes = state.store.encode();
     let snapshot = Snapshot {
         oplog_bytes,

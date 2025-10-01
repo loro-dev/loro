@@ -1,8 +1,5 @@
 use crate::sync::{AtomicU64, Mutex};
-use std::sync::RwLock;
-use std::sync::{Arc, Weak};
-use std::{borrow::Cow, io::Write, sync::atomic::Ordering};
-
+use bytes::Bytes;
 use container_store::ContainerStore;
 use dead_containers_cache::DeadContainersCache;
 use enum_as_inner::EnumAsInner;
@@ -11,6 +8,12 @@ use itertools::Itertools;
 use loro_common::{ContainerID, LoroError, LoroResult, TreeID};
 use loro_delta::DeltaItem;
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::BTreeSet;
+use std::sync::RwLock;
+use std::sync::{Arc, Weak};
+use std::{borrow::Cow, io::Write, sync::atomic::Ordering};
+
+use crate::utils::kv_wrapper::KvWrapper;
 use tracing::{info_span, instrument, warn};
 
 use crate::{
@@ -112,6 +115,28 @@ pub(crate) trait FastStateSnapshot {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ApplyLocalOpReturn {
     pub deleted_containers: Vec<ContainerID>,
+}
+
+#[derive(Default)]
+pub(crate) struct AliveContainers {
+    pub ids: FxHashSet<ContainerID>,
+    pub gc_keys: BTreeSet<Vec<u8>>,
+}
+
+impl AliveContainers {
+    pub(crate) fn all_bytes(&self) -> BTreeSet<Vec<u8>> {
+        self.ids.iter().map(|id| id.to_bytes()).collect()
+    }
+
+    pub(crate) fn contains(&self, id: &ContainerID) -> bool {
+        self.ids.contains(id)
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ContainerStorage {
+    Primary,
+    Gc,
 }
 
 #[enum_dispatch]
@@ -781,25 +806,15 @@ impl DocState {
     }
 
     /// Ensure all alive containers are created in DocState and will be encoded in the next `encode` call
-    pub(crate) fn ensure_all_alive_containers(&mut self) -> FxHashSet<ContainerID> {
+    pub(crate) fn ensure_all_alive_containers(&mut self) -> AliveContainers {
         // TODO: PERF This can be optimized because we shouldn't need to call get_value for
         // all the containers every time we export
         let ans = self.get_all_alive_containers();
-        for id in ans.iter() {
+        for id in ans.ids.iter() {
             self.ensure_container(id);
         }
 
         ans
-    }
-
-    pub(crate) fn gc_store_container_ids(&self) -> Vec<ContainerID> {
-        self.store
-            .shallow_root_store()
-            .map(|gc_store| {
-                let mut store = gc_store.store.lock().unwrap();
-                store.iter_all_container_ids().collect()
-            })
-            .unwrap_or_default()
     }
 
     pub(crate) fn get_value_by_idx(&mut self, container_idx: ContainerIdx) -> LoroValue {
@@ -1134,7 +1149,7 @@ impl DocState {
     }
 
     pub fn get_container_deep_value(&mut self, container: ContainerIdx) -> LoroValue {
-        let Some(value) = self.store.get_value(container) else {
+        let Some((value, _)) = self.get_value_from_stores(container) else {
             return container.get_type().default_value();
         };
         match value {
@@ -1183,30 +1198,53 @@ impl DocState {
         }
     }
 
-    pub(crate) fn get_all_alive_containers(&mut self) -> FxHashSet<ContainerID> {
+    pub(crate) fn get_all_alive_containers(&mut self) -> AliveContainers {
         let flag = self.store.load_all();
-        let mut ans = FxHashSet::default();
+        let mut gc_roots = Vec::new();
+        if let Some(gc_store) = self.store.shallow_root_store() {
+            let mut store = gc_store.store.lock().unwrap();
+            store.load_all();
+            gc_roots = store
+                .iter_all_container_ids()
+                .filter(|cid| cid.is_root())
+                .collect();
+        }
+
+        let mut result = AliveContainers::default();
         let mut to_visit = self
             .arena
             .root_containers(flag)
             .iter()
-            .map(|x| self.arena.get_container_id(*x).unwrap())
+            .filter_map(|idx| self.arena.get_container_id(*idx))
             .collect_vec();
+        to_visit.extend(gc_roots);
 
         while let Some(id) = to_visit.pop() {
-            self.get_alive_children_of(&id, &mut to_visit);
-            ans.insert(id);
+            if !result.ids.insert(id.clone()) {
+                continue;
+            }
+
+            let idx = self.arena.register_container(&id);
+            let Some((value, storage)) = self.get_value_from_stores(idx) else {
+                continue;
+            };
+
+            if matches!(storage, ContainerStorage::Gc) {
+                result.gc_keys.insert(id.to_bytes());
+            }
+
+            self.collect_alive_children(idx, value, &mut to_visit);
         }
 
-        ans
+        result
     }
 
-    pub(crate) fn get_alive_children_of(&mut self, id: &ContainerID, ans: &mut Vec<ContainerID>) {
-        let idx = self.arena.register_container(id);
-        let Some(value) = self.store.get_value(idx) else {
-            return;
-        };
-
+    fn collect_alive_children(
+        &mut self,
+        idx: ContainerIdx,
+        value: LoroValue,
+        to_visit: &mut Vec<ContainerID>,
+    ) {
         match value {
             LoroValue::Container(_) => unreachable!(),
             LoroValue::List(list) => {
@@ -1220,7 +1258,7 @@ impl DocState {
                         let map = node.as_map().unwrap();
                         let meta = map.get("meta").unwrap();
                         let id = meta.as_container().unwrap();
-                        ans.push(id.clone());
+                        to_visit.push(id.clone());
                         let children = map.get("children").unwrap();
                         let children = children.as_list().unwrap();
                         for child in children.iter() {
@@ -1230,7 +1268,7 @@ impl DocState {
                 } else {
                     for item in list.iter() {
                         if let LoroValue::Container(id) = item {
-                            ans.push(id.clone());
+                            to_visit.push(id.clone());
                         }
                     }
                 }
@@ -1238,11 +1276,57 @@ impl DocState {
             LoroValue::Map(map) => {
                 for (_key, value) in map.iter() {
                     if let LoroValue::Container(id) = value {
-                        ans.push(id.clone());
+                        to_visit.push(id.clone());
                     }
                 }
             }
             _ => {}
+        }
+    }
+
+    fn get_value_from_stores(
+        &mut self,
+        idx: ContainerIdx,
+    ) -> Option<(LoroValue, ContainerStorage)> {
+        if let Some(value) = self.store.get_value(idx) {
+            return Some((value, ContainerStorage::Primary));
+        }
+
+        let gc_store = self.store.shallow_root_store()?;
+        let mut store = gc_store.store.lock().unwrap();
+        let ctx = ContainerCreationContext {
+            configure: &self.config,
+            peer: self.peer.load(Ordering::Relaxed),
+        };
+        store
+            .get_mut(idx)
+            .map(|c| (c.get_value(idx, ctx), ContainerStorage::Gc))
+    }
+
+    pub(crate) fn merge_gc_into_kv(&mut self, gc_keys: &BTreeSet<Vec<u8>>, target_kv: &KvWrapper) {
+        if gc_keys.is_empty() {
+            return;
+        }
+
+        let Some(gc_store) = self.store.shallow_root_store() else {
+            return;
+        };
+
+        let mut store = gc_store.store.lock().unwrap();
+        store.flush();
+        let gc_kv = store.get_kv_clone();
+        let entries = gc_keys
+            .iter()
+            .filter_map(|key| {
+                gc_kv
+                    .get(key)
+                    .map(|value| (Bytes::copy_from_slice(key), value))
+            })
+            .collect::<Vec<_>>();
+        drop(store);
+
+        if !entries.is_empty() {
+            target_kv.set_all(entries.into_iter());
         }
     }
 
