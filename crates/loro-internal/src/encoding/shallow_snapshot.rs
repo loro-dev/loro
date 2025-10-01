@@ -77,7 +77,8 @@ pub(crate) fn export_shallow_snapshot_inner(
     doc._checkout_without_emitting(&start_from, false, false)
         .unwrap();
     let mut state = doc.app_state().lock().unwrap();
-    let alive_containers = state.ensure_all_alive_containers();
+    let mut alive_containers = state.ensure_all_alive_containers();
+    alive_containers.extend(state.gc_store_container_ids());
     if has_unknown_container(alive_containers.iter()) {
         return Err(LoroEncodeError::UnknownContainer);
     }
@@ -102,6 +103,10 @@ pub(crate) fn export_shallow_snapshot_inner(
             } else {
                 alive_c_bytes.insert(cid.to_bytes());
             }
+        }
+
+        for cid in state.gc_store_container_ids() {
+            alive_c_bytes.insert(cid.to_bytes());
         }
 
         let new_kv = state.store.get_kv_clone();
@@ -171,7 +176,8 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
     doc._checkout_without_emitting(&start_from, false, false)
         .unwrap();
     let mut state = doc.app_state().lock().unwrap();
-    let alive_containers = state.ensure_all_alive_containers();
+    let mut alive_containers = state.ensure_all_alive_containers();
+    alive_containers.extend(state.gc_store_container_ids());
     let alive_c_bytes = cids_to_bytes(alive_containers);
     state.store.flush();
     let shallow_state_kv = state.store.get_kv_clone();
@@ -280,7 +286,8 @@ pub(crate) fn encode_snapshot_at<W: std::io::Write>(
             );
         }
 
-        let alive_containers = state.ensure_all_alive_containers();
+        let mut alive_containers = state.ensure_all_alive_containers();
+        alive_containers.extend(state.gc_store_container_ids());
         if has_unknown_container(alive_containers.iter()) {
             break 'block Err(LoroEncodeError::UnknownContainer);
         }

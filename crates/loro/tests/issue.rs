@@ -1,5 +1,5 @@
 #![allow(unexpected_cfgs)]
-use loro::{LoroDoc, UndoManager};
+use loro::{EncodedBlobMode, ExportMode, LoroDoc, UndoManager};
 use std::sync::{Arc, Mutex};
 
 #[ctor::ctor]
@@ -223,6 +223,54 @@ fn test_event_hint_merge_bug_clear_demonstration() {
     // Verify the final state is correct
     assert_eq!(text_a.to_string(), "2345");
     assert_eq!(text_b.to_string(), "bcde");
+}
+
+#[test]
+fn issue_822_tree_shallow_snapshot_roundtrip() {
+    let snapshot_bytes = include_bytes!("./issue_822.bin");
+    let doc = LoroDoc::new();
+    doc.import(snapshot_bytes).expect("import snapshot blob");
+
+    let tree = doc.get_tree("nodes");
+    let tree_before = tree.get_value();
+    let doc_before = doc.get_value();
+
+    let snapshot_meta =
+        LoroDoc::decode_import_blob_meta(snapshot_bytes, false).expect("decode snapshot meta");
+    assert!(snapshot_meta.mode.is_snapshot());
+    let imported_is_shallow = snapshot_meta.mode == EncodedBlobMode::ShallowSnapshot;
+
+    let frontiers = doc.state_frontiers();
+    let shallow_bytes = doc
+        .export(ExportMode::shallow_snapshot(&frontiers))
+        .expect("export shallow snapshot");
+
+    let snapshot_meta_1 = LoroDoc::decode_import_blob_meta(&shallow_bytes, false).unwrap();
+    assert!(matches!(
+        snapshot_meta_1.mode,
+        EncodedBlobMode::ShallowSnapshot
+    ));
+
+    let shallow_meta =
+        LoroDoc::decode_import_blob_meta(&shallow_bytes, false).expect("decode shallow meta");
+    assert_eq!(shallow_meta.mode, EncodedBlobMode::ShallowSnapshot);
+
+    let shallow_doc = LoroDoc::new();
+    shallow_doc
+        .import(&shallow_bytes)
+        .expect("import shallow snapshot");
+
+    assert!(shallow_doc.is_shallow());
+    assert_eq!(doc.is_shallow(), imported_is_shallow);
+
+    let tree_after = shallow_doc.get_tree("nodes").get_value();
+    let doc_after = shallow_doc.get_value();
+
+    assert_eq!(
+        tree_before, tree_after,
+        "tree shallow value should roundtrip"
+    );
+    assert_eq!(doc_before, doc_after, "doc shallow value should roundtrip");
 }
 
 #[test]

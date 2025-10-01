@@ -7,10 +7,10 @@ use container_store::ContainerStore;
 use dead_containers_cache::DeadContainersCache;
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
-use rustc_hash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
 use loro_common::{ContainerID, LoroError, LoroResult, TreeID};
 use loro_delta::DeltaItem;
+use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::{info_span, instrument, warn};
 
 use crate::{
@@ -790,6 +790,16 @@ impl DocState {
         }
 
         ans
+    }
+
+    pub(crate) fn gc_store_container_ids(&self) -> Vec<ContainerID> {
+        self.store
+            .shallow_root_store()
+            .map(|gc_store| {
+                let mut store = gc_store.store.lock().unwrap();
+                store.iter_all_container_ids().collect()
+            })
+            .unwrap_or_default()
     }
 
     pub(crate) fn get_value_by_idx(&mut self, container_idx: ContainerIdx) -> LoroValue {
