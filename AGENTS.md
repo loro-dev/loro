@@ -20,3 +20,7 @@ Add unit tests alongside the impacted crate (`crates/*/tests` or inline `mod tes
 
 ## Commit & Pull Request Guidelines
 Follow the conventional commit prefixes used in history (`feat:`, `fix:`, `chore:`). Include concise scopes when touching specific crates (e.g., `feat(loro-wasm): …`). PR descriptions should summarize intent, list key commands executed, link related issues, and call out performance or compatibility impacts. Attach screenshots or short clips for UI-oriented examples under `examples/`. Request maintainer review only after CI is green.
+
+## Don't
+
+- DO NOT RUN `cargo fmt`!!!!!
