@@ -28,7 +28,11 @@ fn implicit_empty_commit_preserves_options() {
     // First real commit just to move the counter
     let text = doc.get_text("text");
     text.insert(0, "123").unwrap();
-    doc.commit_with(CommitOptions::new().commit_msg("first commit").timestamp(100));
+    doc.commit_with(
+        CommitOptions::new()
+            .commit_msg("first commit")
+            .timestamp(100),
+    );
 
     // Set options and trigger an implicit empty commit via export
     doc.set_next_commit_message("second commit");

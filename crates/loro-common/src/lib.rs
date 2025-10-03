@@ -15,10 +15,10 @@ mod span;
 mod value;
 
 pub use error::{LoroEncodeError, LoroError, LoroResult, LoroTreeError};
-#[doc(hidden)]
-pub use rustc_hash::FxHashMap;
 pub use internal_string::InternalString;
 pub use logging::log::*;
+#[doc(hidden)]
+pub use rustc_hash::FxHashMap;
 pub use span::*;
 pub use value::{
     to_value, LoroBinaryValue, LoroListValue, LoroMapValue, LoroStringValue, LoroValue,

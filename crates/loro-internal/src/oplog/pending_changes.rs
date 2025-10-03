@@ -5,8 +5,8 @@ use crate::{
     version::{ImVersionVector, VersionRange},
     OpLog, VersionVector,
 };
-use rustc_hash::FxHashMap;
 use loro_common::{Counter, CounterSpan, HasCounterSpan, HasIdSpan, LoroResult, PeerID, ID};
+use rustc_hash::FxHashMap;
 
 #[derive(Debug)]
 pub enum PendingChange {

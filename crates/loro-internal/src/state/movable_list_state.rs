@@ -4,9 +4,9 @@ use serde_columnar::columnar;
 use std::sync::Weak;
 use tracing::{instrument, warn};
 
-use rustc_hash::FxHashMap;
 use generic_btree::BTree;
 use loro_common::{CompactIdLp, ContainerID, IdFull, IdLp, LoroResult, LoroValue, PeerID, ID};
+use rustc_hash::FxHashMap;
 
 use crate::{
     configure::Configure,
@@ -287,9 +287,9 @@ mod list_item_tree {
 /// - `id_to_list_leaf` must be consistent with the list.
 /// - `child_container_to_elem` must be consistent with the element.
 mod inner {
-    use rustc_hash::{FxHashMap, FxHashSet};
     use generic_btree::{BTree, Cursor, LeafIndex, Query};
     use loro_common::{CompactIdLp, ContainerID, IdFull, IdLp, LoroValue, PeerID};
+    use rustc_hash::{FxHashMap, FxHashSet};
     use tracing::error;
 
     use super::{

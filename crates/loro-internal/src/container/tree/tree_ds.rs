@@ -1,7 +1,7 @@
 #![allow(unused)]
 
-use rustc_hash::FxHashMap;
 use loro_common::{IdFull, IdLp, TreeID};
+use rustc_hash::FxHashMap;
 
 use crate::VersionVector;
 

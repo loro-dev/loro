@@ -1,7 +1,7 @@
 use std::{char, sync::Arc};
 
-use rustc_hash::FxHashMap;
 use itertools::Itertools;
+use rustc_hash::FxHashMap;
 
 use crate::diff::DiffHandler;
 

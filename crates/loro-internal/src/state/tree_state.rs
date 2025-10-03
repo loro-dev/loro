@@ -1,7 +1,6 @@
 use either::Either;
 use enum_as_inner::EnumAsInner;
 use fractional_index::FractionalIndex;
-use rustc_hash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
 use loro_common::{
     ContainerID, IdFull, IdLp, LoroError, LoroResult, LoroTreeError, LoroValue, PeerID, TreeID,
@@ -9,6 +8,7 @@ use loro_common::{
 };
 use rand::SeedableRng;
 use rle::HasLength;
+use rustc_hash::{FxHashMap, FxHashSet};
 use serde::Serialize;
 use std::collections::VecDeque;
 use std::fmt::Debug;
@@ -332,12 +332,12 @@ struct TreeChildrenCache(FxHashMap<TreeParentId, NodeChildren>);
 mod btree {
     use std::{cmp::Ordering, ops::Range, sync::Arc};
 
-    use rustc_hash::FxHashMap;
     use generic_btree::{
         rle::{CanRemove, HasLength, Mergeable, Sliceable, TryInsert},
         BTree, BTreeTrait, Cursor, FindResult, LeafIndex, LengthFinder, Query, UseLengthFinder,
     };
     use loro_common::TreeID;
+    use rustc_hash::FxHashMap;
 
     use super::NodePosition;
 
@@ -1583,9 +1583,9 @@ mod snapshot {
     use std::{borrow::Cow, collections::BTreeSet, io::Read};
 
     use fractional_index::FractionalIndex;
-    use rustc_hash::FxHashMap;
     use itertools::Itertools;
     use loro_common::{IdFull, Lamport, PeerID, TreeID};
+    use rustc_hash::FxHashMap;
 
     use serde_columnar::columnar;
 

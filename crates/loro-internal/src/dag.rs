@@ -12,9 +12,9 @@ use std::{
     fmt::Debug,
 };
 
-use rustc_hash::{FxHashMap, FxHashSet};
 use loro_common::IdSpanVector;
 use rle::{HasLength, Sliceable};
+use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 mod iter;
 mod mermaid;

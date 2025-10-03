@@ -11,7 +11,6 @@ use crate::{
     LoroDocInner, LoroValue,
 };
 
-use rustc_hash::FxHashMap;
 use generic_btree::{
     iter,
     rle::{CanRemove, HasLength, Mergeable, Sliceable, TryInsert},
@@ -19,6 +18,7 @@ use generic_btree::{
 };
 use loro_common::{IdFull, IdLpSpan, LoroResult, ID};
 use loro_delta::array_vec::ArrayVec;
+use rustc_hash::FxHashMap;
 
 #[derive(Debug)]
 pub struct ListState {

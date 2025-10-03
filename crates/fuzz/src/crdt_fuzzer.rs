@@ -7,8 +7,8 @@ use std::{
 };
 
 use arbitrary::Arbitrary;
-use rustc_hash::FxHashSet;
 use loro::{ContainerType, Frontiers, ImportStatus, LoroError, LoroResult};
+use rustc_hash::FxHashSet;
 use tabled::TableIteratorExt;
 use tracing::{info, info_span};
 

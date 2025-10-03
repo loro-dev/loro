@@ -1,9 +1,9 @@
 use std::{borrow::Cow, ops::Deref};
 
 use crate::InternalString;
-use rustc_hash::FxHashSet;
 use itertools::Itertools;
 use loro_common::{ContainerID, ContainerType, Counter, LoroError, LoroResult, PeerID, ID};
+use rustc_hash::FxHashSet;
 use serde::{Deserialize, Serialize};
 use serde_columnar::{columnar, ColumnarError};
 

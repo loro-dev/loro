@@ -6,7 +6,6 @@ use std::{
 
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
-use rustc_hash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
 use loro::{
     Container, ContainerID, ContainerType, Frontiers, LoroDoc, LoroError, LoroValue, PeerID,
@@ -14,6 +13,7 @@ use loro::{
 };
 use pretty_assertions::assert_eq;
 use rand::{rngs::StdRng, Rng, SeedableRng};
+use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::{info, info_span, trace};
 
 use crate::{

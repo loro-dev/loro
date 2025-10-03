@@ -1,5 +1,4 @@
 use append_only_bytes::BytesSlice;
-use rustc_hash::{FxHashMap, FxHashSet};
 use generic_btree::{
     rle::{CanRemove, HasLength, Mergeable, Sliceable, TryInsert},
     BTree, BTreeTrait, Cursor, LeafIndex,
@@ -8,6 +7,7 @@ use loro_common::{
     Counter, IdFull, IdLpSpan, IdSpan, Lamport, LoroError, LoroResult, LoroValue, ID,
 };
 use query::{ByteQuery, ByteQueryT};
+use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{ser::SerializeStruct, Serialize};
 use std::{
     fmt::{Display, Formatter},

@@ -1,5 +1,5 @@
-use rustc_hash::FxHashMap;
 use loro_common::InternalString;
+use rustc_hash::FxHashMap;
 
 use super::{ExpandType, TextStyleInfoFlag};
 

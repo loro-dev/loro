@@ -1,7 +1,7 @@
 use fractional_index::FractionalIndex;
-use rustc_hash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
 use loro_common::{IdFull, TreeID};
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
 

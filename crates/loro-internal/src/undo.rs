@@ -2,10 +2,10 @@ use std::{collections::VecDeque, sync::Arc};
 
 use crate::sync::{AtomicU64, Mutex};
 use either::Either;
-use rustc_hash::{FxHashMap, FxHashSet};
 use loro_common::{
     ContainerID, Counter, CounterSpan, HasIdSpan, IdSpan, LoroError, LoroResult, LoroValue, PeerID,
 };
+use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::{debug_span, info_span, instrument};
 
 use crate::{

@@ -1,5 +1,5 @@
-use rustc_hash::FxHashMap;
 use loro_common::{CompactIdLp, IdFull, IdLp, LoroValue};
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 use super::{Delta, DeltaValue};
