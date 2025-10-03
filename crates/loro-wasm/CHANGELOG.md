@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.8.2
+
+### Patch Changes
+
+- b72a759: fix: register container id err when using shallow snapshot #823
+
 ## 1.8.1
 
 ### Patch Changes
