@@ -15,9 +15,6 @@ Use the latest stable Rust toolchain with the `wasm32-unknown-unknown` target in
 - `pnpm coverage` – write `coverage/lcov-nextest.info` using `cargo llvm-cov`.
 Run these from the repository root; keep Loom retries and environment overrides local to reproduction efforts.
 
-## Coding Style & Naming Conventions
-Format Rust with `cargo fmt --all` (default rustfmt spacing) before committing. Treat Clippy warnings as errors, prefer explicit types in public APIs, and gate new features behind cargo features where practical. Use `snake_case` for files and modules, `CamelCase` for types, and `SCREAMING_SNAKE_CASE` for constants. TypeScript tests in `crates/loro-wasm/tests` follow the lowercase `*.test.ts` pattern—mirror that when adding coverage.
-
 ## Testing Guidelines
 Add unit tests alongside the impacted crate (`crates/*/tests` or inline `mod tests`). Cover new CRDT behaviors with deterministic Nextest cases; concurrency paths should also gain Loom scenarios when feasible. For WASM bindings, extend the Vitest/Deno suites under `crates/loro-wasm/tests` or `deno_tests`. Always run `pnpm test` before opening a PR, and include `pnpm test-wasm` whenever touching JS/WASM surfaces.
 
