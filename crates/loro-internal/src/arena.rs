@@ -14,8 +14,8 @@ use crate::{
     LoroValue,
 };
 use append_only_bytes::BytesSlice;
-use rustc_hash::FxHashMap;
 use loro_common::PeerID;
+use rustc_hash::FxHashMap;
 use std::fmt;
 use std::{
     num::NonZeroU16,
@@ -111,10 +111,11 @@ impl ArenaGuards<'_> {
                 if let Some(d) = get_depth(
                     p,
                     &mut self.depth,
-                    &self.parents,
+                    &mut self.parents,
                     &self.parent_resolver,
                     &mut self.container_idx_to_id,
                     &mut self.container_id_to_idx,
+                    &mut self.root_c_idx,
                 ) {
                     self.depth[child.to_index() as usize] = NonZeroU16::new(d.get() + 1);
                 } else {
@@ -263,9 +264,10 @@ impl SharedArena {
 
     #[inline]
     pub fn set_parent(&self, child: ContainerIdx, parent: Option<ContainerIdx>) {
-        let parents = &mut self.inner.parents.lock().unwrap();
+        let mut parents = self.inner.parents.lock().unwrap();
         parents.insert(child, parent);
         let mut depth = self.inner.depth.lock().unwrap();
+        let mut root_c_idx = self.inner.root_c_idx.lock().unwrap();
 
         match parent {
             Some(p) => {
@@ -273,13 +275,15 @@ impl SharedArena {
                 // unknown parents while computing depth.
                 let mut idx_to_id_guard = self.inner.container_idx_to_id.lock().unwrap();
                 let mut id_to_idx_guard = self.inner.container_id_to_idx.lock().unwrap();
+                let parent_resolver_guard = self.inner.parent_resolver.lock().unwrap();
                 if let Some(d) = get_depth(
                     p,
                     &mut depth,
-                    parents,
-                    &self.inner.parent_resolver.lock().unwrap(),
+                    &mut parents,
+                    &parent_resolver_guard,
                     &mut idx_to_id_guard,
                     &mut id_to_idx_guard,
+                    &mut root_c_idx,
                 ) {
                     depth[child.to_index() as usize] = NonZeroU16::new(d.get() + 1);
                 } else {
@@ -564,21 +568,21 @@ impl SharedArena {
 
     // TODO: this can return a u16 directly now, since the depths are always valid
     pub(crate) fn get_depth(&self, container: ContainerIdx) -> Option<NonZeroU16> {
-        {
-            let mut depth_guard = self.inner.depth.lock().unwrap();
-            let parents_guard = self.inner.parents.lock().unwrap();
-            let resolver_guard = self.inner.parent_resolver.lock().unwrap();
-            let mut idx_to_id_guard = self.inner.container_idx_to_id.lock().unwrap();
-            let mut id_to_idx_guard = self.inner.container_id_to_idx.lock().unwrap();
-            get_depth(
-                container,
-                &mut depth_guard,
-                &parents_guard,
-                &resolver_guard,
-                &mut idx_to_id_guard,
-                &mut id_to_idx_guard,
-            )
-        }
+        let mut depth_guard = self.inner.depth.lock().unwrap();
+        let mut parents_guard = self.inner.parents.lock().unwrap();
+        let mut root_c_idx_guard = self.inner.root_c_idx.lock().unwrap();
+        let resolver_guard = self.inner.parent_resolver.lock().unwrap();
+        let mut idx_to_id_guard = self.inner.container_idx_to_id.lock().unwrap();
+        let mut id_to_idx_guard = self.inner.container_id_to_idx.lock().unwrap();
+        get_depth(
+            container,
+            &mut depth_guard,
+            &mut parents_guard,
+            &resolver_guard,
+            &mut idx_to_id_guard,
+            &mut id_to_idx_guard,
+            &mut root_c_idx_guard,
+        )
     }
 
     pub(crate) fn iter_value_slice(
@@ -662,10 +666,11 @@ fn _slice_str(range: Range<usize>, s: &mut StrArena) -> String {
 fn get_depth(
     target: ContainerIdx,
     depth: &mut Vec<Option<NonZeroU16>>,
-    parents: &FxHashMap<ContainerIdx, Option<ContainerIdx>>,
+    parents: &mut FxHashMap<ContainerIdx, Option<ContainerIdx>>,
     parent_resolver: &Option<Arc<ParentResolver>>,
     idx_to_id: &mut Vec<ContainerID>,
     id_to_idx: &mut FxHashMap<ContainerID, ContainerIdx>,
+    root_c_idx: &mut Vec<ContainerIdx>,
 ) -> Option<NonZeroU16> {
     let mut d = depth[target.to_index() as usize];
     if d.is_some() {
@@ -680,6 +685,8 @@ fn get_depth(
             None
         } else if let Some(parent_resolver) = parent_resolver.as_ref() {
             let parent_id = parent_resolver(id.clone())?;
+            let parent_is_root = parent_id.is_root();
+            let mut parent_was_new = false;
             // If the parent is not registered yet, register it lazily instead of unwrapping.
             let parent_idx = if let Some(idx) = id_to_idx.get(&parent_id).copied() {
                 idx
@@ -690,13 +697,27 @@ fn get_depth(
                     ContainerIdx::from_index_and_type(new_index as u32, parent_id.container_type());
                 id_to_idx.insert(parent_id.clone(), new_idx);
                 // Keep depth vector in sync with containers list.
-                if parent_id.is_root() {
+                if parent_is_root {
                     depth.push(NonZeroU16::new(1));
                 } else {
                     depth.push(None);
                 }
+                parent_was_new = true;
                 new_idx
             };
+
+            if parent_is_root {
+                if parent_was_new {
+                    parents.insert(parent_idx, None);
+                    root_c_idx.push(parent_idx);
+                } else {
+                    parents.entry(parent_idx).or_insert(None);
+                }
+                if depth[parent_idx.to_index() as usize].is_none() {
+                    depth[parent_idx.to_index() as usize] = NonZeroU16::new(1);
+                }
+            }
+
             Some(parent_idx)
         } else {
             return None;
@@ -706,7 +727,17 @@ fn get_depth(
     match parent {
         Some(p) => {
             d = NonZeroU16::new(
-                get_depth(p, depth, parents, parent_resolver, idx_to_id, id_to_idx)?.get() + 1,
+                get_depth(
+                    p,
+                    depth,
+                    parents,
+                    parent_resolver,
+                    idx_to_id,
+                    id_to_idx,
+                    root_c_idx,
+                )?
+                .get()
+                    + 1,
             );
             depth[target.to_index() as usize] = d;
         }
