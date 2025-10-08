@@ -520,6 +520,11 @@ pub(crate) fn js_to_map_delta(js: &JsValue) -> Result<ResolvedMapDelta, JsValue>
         let key = entry_arr.get(0).as_string().unwrap();
         let value = entry_arr.get(1);
 
+        if value.is_undefined() {
+            delta = delta.with_entry(key.into(), ResolvedMapValue::new_unset());
+            continue;
+        }
+
         if value.is_object() && !value.is_null() {
             let obj = value.dyn_ref::<Object>().unwrap();
             if let Ok(kind) = Reflect::get(obj, &JsValue::from_str("kind")) {
