@@ -1459,6 +1459,36 @@ it("apply diff without for_json should work", () => {
   expect(newDoc.toJSON()).toStrictEqual(doc.toJSON());
 });
 
+it("applyDiff should remove deleted map entries", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId("1");
+  const map = doc.getMap("map");
+  map.set("foo", "bar");
+  doc.commit();
+  const frontiers = doc.frontiers();
+
+  map.delete("foo");
+  doc.commit();
+  const diff = doc.diff(frontiers, doc.frontiers(), false);
+
+  const newDoc = new LoroDoc();
+  newDoc.applyDiff(diff);
+
+  expect(newDoc.getMap("map").entries()).toStrictEqual([]);
+  expect(newDoc.toJSON()).toStrictEqual({ map: {} });
+});
+
+it("map entries", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId("1");
+  const map = doc.getMap("map");
+  map.set("foo", "bar");
+  doc.commit();
+  map.delete("foo");
+  expect(map.entries()).toStrictEqual([]);
+  expect(doc.toJSON()).toStrictEqual({ map: {} });
+});
+
 it("the diff will deduplication", () => {
   const doc = new LoroDoc();
   const list = doc.getList("list");
