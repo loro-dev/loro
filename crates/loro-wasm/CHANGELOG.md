@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.8.3
+
+### Patch Changes
+
+- 3afc4d5: fix: LoroMap entries showing null after applyDiff #825
+
 ## 1.8.2
 
 ### Patch Changes
