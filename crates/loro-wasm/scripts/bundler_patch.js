@@ -6,7 +6,14 @@ import * as imports from "./loro_wasm_bg.js";
 if (wasm.__wbindgen_start) {
     imports.__wbg_set_wasm(wasm);
     wasm.__wbindgen_start();
-} else if (!('Bun' in globalThis)) {
+} else if ('Bun' in globalThis) {
+    const bytes = await Bun.file(wasm.default).bytes();
+    const wasmModule = new WebAssembly.Module(bytes);
+    const instance = new WebAssembly.Instance(wasmModule, {
+        "./loro_wasm_bg.js": imports,
+    });
+    imports.__wbg_set_wasm(instance.exports);
+} else {
     const wkmod = await import("./loro_wasm_bg.wasm");
     const instance = new WebAssembly.Instance(wkmod.default, {
         "./loro_wasm_bg.js": imports,
