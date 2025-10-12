@@ -434,18 +434,18 @@ function decorateMethod(prototype: object, method: PropertyKey) {
   }
 
   const wrapped = function (this: unknown, ...args: unknown[]) {
+    let result;
     try {
-      const result = original.apply(this, args);
+      result = original.apply(this, args);
+      return result;
+    } finally {
       if (result && typeof (result as Promise<unknown>).then === "function") {
-        return (result as Promise<unknown>).finally(() => {
+        (result as Promise<unknown>).finally(() => {
           callPendingEvents();
         });
+      } else {
+        callPendingEvents();
       }
-      callPendingEvents();
-      return result;
-    } catch (error) {
-      callPendingEvents();
-      throw error;
     }
   };
 

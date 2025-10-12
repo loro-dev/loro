@@ -1,4 +1,4 @@
-import { configDefaults, defineConfig } from 'vitest/config'
+import { configDefaults, defineConfig } from "vitest/config";
 import wasm from "vite-plugin-wasm";
 
 export default defineConfig({
@@ -7,7 +7,8 @@ export default defineConfig({
     exclude: [
       ...configDefaults.exclude,
       "deno/*",
-      "deno_tests/*"
-    ]
+      "deno_tests/*",
+      "bun_tests/*",
+    ],
   },
 });
