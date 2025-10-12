@@ -236,6 +236,17 @@ fn import_twice() {
 }
 
 #[test]
+fn import_doc_err() {
+    let base64 = include_bytes!("./issue_import.base64.txt");
+    let base64 = str::from_utf8(base64).unwrap();
+    let decoded_bytes = base64::decode(base64).expect("base64 decode error");
+
+    let doc = LoroDoc::new();
+    doc.import(&decoded_bytes).unwrap();
+    dbg!(doc.get_deep_value());
+}
+
+#[test]
 fn undo_tree_mov_between_children() {
     let doc = LoroDoc::new();
     let mut undo = UndoManager::new(&doc);

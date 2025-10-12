@@ -6,7 +6,8 @@ target
 dhat-heap.json
 .DS_Store
 node_modules/
-deno_test/
+deno_tests/
+bun_tests/
 src/
 wasm-size/
 web-test/
