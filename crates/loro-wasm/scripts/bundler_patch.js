@@ -12,9 +12,7 @@ if (wasm.__wbindgen_start) {
     }
     wasm.__wbindgen_start();
 } else if ('Bun' in globalThis) {
-    const bytes = await Bun.file(wasm.default).bytes();
-    const wasmModule = new WebAssembly.Module(bytes);
-    const instance = new WebAssembly.Instance(wasmModule, {
+    const { instance } = await WebAssembly.instantiateStreaming(fetch(Bun.pathToFileURL(wasm.default)), {
         "./loro_wasm_bg.js": imports,
     });
     imports.__wbg_set_wasm(instance.exports);
