@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.8.4
+
+### Patch Changes
+
+- cf12345: fix: seed wasm externref table for Bun and integrate bun tests #828
+
 ## 1.8.3
 
 ### Patch Changes
