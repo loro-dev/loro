@@ -5070,15 +5070,22 @@ impl UndoManager {
     pub fn setOnPush(&mut self, on_push: JsValue) {
         let on_push = on_push.dyn_into::<js_sys::Function>().ok();
         if let Some(on_push) = on_push {
-            let undo_inner = self.undo.clone();
+            let undo_inner = Arc::downgrade(&self.undo);
             let on_push = observer::Observer::new(on_push);
             self.undo
                 .lock()
                 .set_on_push(Some(Box::new(move |kind, span, event| {
-                    let count = match kind {
-                        UndoOrRedo::Undo => undo_inner.lock().undo_count(),
-                        UndoOrRedo::Redo => undo_inner.lock().redo_count(),
+                    let Some(inner_arc) = undo_inner.upgrade() else {
+                        return UndoItemMeta::new();
                     };
+                    let count = {
+                        let manager = inner_arc.lock();
+                        match kind {
+                            UndoOrRedo::Undo => manager.undo_count(),
+                            UndoOrRedo::Redo => manager.redo_count(),
+                        }
+                    };
+                    drop(inner_arc);
                     let is_undo = JsValue::from_bool(matches!(kind, UndoOrRedo::Undo));
                     let counter_range = js_sys::Object::new();
                     js_sys::Reflect::set(
@@ -5106,10 +5113,17 @@ impl UndoManager {
                     let undo_inner = undo_inner.clone();
                     let on_push = on_push.clone();
                     let closure = Closure::wrap(Box::new(move || {
+                        let Some(manager_arc) = undo_inner.upgrade() else {
+                            drop_handler_clone.borrow_mut().take();
+                            return;
+                        };
                         // Custom logic: log the undo count when operations are pushed
-                        let new_count = match kind {
-                            UndoOrRedo::Undo => undo_inner.lock().undo_count(),
-                            UndoOrRedo::Redo => undo_inner.lock().redo_count(),
+                        let new_count = {
+                            let manager = manager_arc.lock();
+                            match kind {
+                                UndoOrRedo::Undo => manager.undo_count(),
+                                UndoOrRedo::Redo => manager.redo_count(),
+                            }
                         };
                         let r = if let Some(e) = js_event.clone() {
                             on_push.call3(&is_undo, &counter_range, &e)
@@ -5147,10 +5161,10 @@ impl UndoManager {
 
                             match kind {
                                 UndoOrRedo::Undo => {
-                                    undo_inner.lock().set_top_undo_meta(undo_item_meta);
+                                    manager_arc.lock().set_top_undo_meta(undo_item_meta);
                                 }
                                 UndoOrRedo::Redo => {
-                                    undo_inner.lock().set_top_redo_meta(undo_item_meta);
+                                    manager_arc.lock().set_top_redo_meta(undo_item_meta);
                                 }
                             }
                         }
@@ -5207,10 +5221,7 @@ impl UndoManager {
                     .unwrap();
                     let meta_js: JsValue = meta.into();
                     let counter_range_js: JsValue = counter_range.into();
-                    enqueue_pending_call(
-                        on_pop.clone(),
-                        vec![is_undo, meta_js, counter_range_js],
-                    );
+                    enqueue_pending_call(on_pop.clone(), vec![is_undo, meta_js, counter_range_js]);
                 })));
         } else {
             self.undo.lock().set_on_pop(None);
