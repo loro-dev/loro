@@ -381,4 +381,15 @@ describe("undo", () => {
     const docJson1 = doc.toJSON();
     expect(docJson).toStrictEqual(docJson1);
   });
+
+  test("avoid rust recursive use error", () => {
+    const doc = new LoroDoc();
+    const undoManager = new UndoManager(doc, {});
+    undoManager.setOnPush(() => {
+      undoManager.canUndo();
+      return { cursors: [], value: null };
+    });
+    doc.getText("text").insert(0, "hello");
+    doc.commit();
+  });
 });

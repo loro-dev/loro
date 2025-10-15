@@ -30,6 +30,7 @@ use loro_internal::{
     LoroValue, MovableListHandler, SubscriberSetWithQueue, Subscription, TreeNodeWithChildren,
     TreeParentId, UndoManager as InnerUndoManager, VersionVector as InternalVersionVector,
 };
+use parking_lot::lock_api::ReentrantMutex;
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -1272,7 +1273,6 @@ impl LoroDoc {
     /// Get the version vector of the current document state.
     ///
     /// If you checkout to a specific version, the version vector will change.
-    #[inline(always)]
     pub fn version(&self) -> VersionVector {
         VersionVector(self.doc.state_vv())
     }
@@ -1316,7 +1316,6 @@ impl LoroDoc {
     /// Get the [frontiers](https://loro.dev/docs/advanced/version_deep_dive) of the current document state.
     ///
     /// If you checkout to a specific version, this value will change.
-    #[inline]
     pub fn frontiers(&self) -> JsIDs {
         frontiers_to_ids(&self.doc.state_frontiers())
     }
@@ -4916,7 +4915,7 @@ fn loro_value_to_js_value_or_container(value: ValueOrHandler, for_json: bool) ->
 #[wasm_bindgen]
 #[derive(Debug)]
 pub struct UndoManager {
-    undo: InnerUndoManager,
+    undo: Arc<parking_lot::ReentrantMutex<InnerUndoManager>>,
 }
 
 #[wasm_bindgen]
@@ -4965,7 +4964,7 @@ impl UndoManager {
         let on_push = Reflect::get(&config, &JsValue::from_str("onPush")).ok();
         let on_pop = Reflect::get(&config, &JsValue::from_str("onPop")).ok();
 
-        let mut undo = InnerUndoManager::new(&doc.doc);
+        let undo = InnerUndoManager::new(&doc.doc);
 
         undo.set_max_undo_steps(max_undo_steps);
         undo.set_merge_interval(merge_interval);
@@ -4973,7 +4972,9 @@ impl UndoManager {
             undo.add_exclude_origin_prefix(&prefix);
         }
 
-        let mut ans = UndoManager { undo };
+        let mut ans = UndoManager {
+            undo: Arc::new(ReentrantMutex::new(undo)),
+        };
 
         if let Some(on_push) = on_push {
             ans.setOnPush(on_push);
@@ -4986,49 +4987,49 @@ impl UndoManager {
 
     /// Undo the last operation.
     pub fn undo(&mut self) -> JsResult<bool> {
-        let executed = self.undo.undo()?;
+        let executed = self.undo.lock().undo()?;
         Ok(executed)
     }
 
     /// Redo the last undone operation.
     pub fn redo(&mut self) -> JsResult<bool> {
-        let executed = self.undo.redo()?;
+        let executed = self.undo.lock().redo()?;
         Ok(executed)
     }
 
     /// Get the peer id of the undo manager.
     pub fn peer(&self) -> JsStrPeerID {
-        let peer = self.undo.peer();
+        let peer = self.undo.lock().peer();
         peer_id_to_js(peer)
     }
 
     // Start a new grouping of undo operations.
     #[wasm_bindgen(skip_typescript)]
     pub fn groupStart(&mut self) -> JsResult<()> {
-        self.undo.group_start()?;
+        self.undo.lock().group_start()?;
         Ok(())
     }
 
     // End the current grouping of undo operations.
     #[wasm_bindgen(skip_typescript)]
     pub fn groupEnd(&mut self) {
-        self.undo.group_end()
+        self.undo.lock().group_end()
     }
 
     /// Can undo the last operation.
     pub fn canUndo(&self) -> bool {
-        self.undo.can_undo()
+        self.undo.lock().can_undo()
     }
 
     /// Can redo the last operation.
     pub fn canRedo(&self) -> bool {
-        self.undo.can_redo()
+        self.undo.lock().can_redo()
     }
 
     /// Get the value associated with the top undo stack item, if any.
     /// Returns `undefined` if there is no undo item.
     pub fn topUndoValue(&self) -> Option<JsLoroValue> {
-        self.undo.top_undo_value().map(|v| {
+        self.undo.lock().top_undo_value().map(|v| {
             let js: JsValue = v.into();
             js.into()
         })
@@ -5037,7 +5038,7 @@ impl UndoManager {
     /// Get the value associated with the top redo stack item, if any.
     /// Returns `undefined` if there is no redo item.
     pub fn topRedoValue(&self) -> Option<JsLoroValue> {
-        self.undo.top_redo_value().map(|v| {
+        self.undo.lock().top_redo_value().map(|v| {
             let js: JsValue = v.into();
             js.into()
         })
@@ -5046,7 +5047,7 @@ impl UndoManager {
     /// The number of max undo steps.
     /// If the number of undo steps exceeds this number, the oldest undo step will be removed.
     pub fn setMaxUndoSteps(&mut self, steps: usize) {
-        self.undo.set_max_undo_steps(steps);
+        self.undo.lock().set_max_undo_steps(steps);
     }
 
     /// Set the merge interval (in ms).
@@ -5054,13 +5055,13 @@ impl UndoManager {
     /// If the interval is set to 0, the undo steps will not be merged.
     /// Otherwise, the undo steps will be merged if the interval between the two steps is less than the given interval.
     pub fn setMergeInterval(&mut self, interval: f64) {
-        self.undo.set_merge_interval(interval as i64);
+        self.undo.lock().set_merge_interval(interval as i64);
     }
 
     /// If a local event's origin matches the given prefix, it will not be recorded in the
     /// undo stack.
     pub fn addExcludeOriginPrefix(&mut self, prefix: String) {
-        self.undo.add_exclude_origin_prefix(&prefix)
+        self.undo.lock().add_exclude_origin_prefix(&prefix)
     }
     /// Set the on push event listener.
     ///
@@ -5069,9 +5070,15 @@ impl UndoManager {
     pub fn setOnPush(&mut self, on_push: JsValue) {
         let on_push = on_push.dyn_into::<js_sys::Function>().ok();
         if let Some(on_push) = on_push {
+            let undo_inner = self.undo.clone();
             let on_push = observer::Observer::new(on_push);
             self.undo
+                .lock()
                 .set_on_push(Some(Box::new(move |kind, span, event| {
+                    let count = match kind {
+                        UndoOrRedo::Undo => undo_inner.lock().undo_count(),
+                        UndoOrRedo::Redo => undo_inner.lock().redo_count(),
+                    };
                     let is_undo = JsValue::from_bool(matches!(kind, UndoOrRedo::Undo));
                     let counter_range = js_sys::Object::new();
                     js_sys::Reflect::set(
@@ -5086,43 +5093,80 @@ impl UndoManager {
                         &JsValue::from_f64(span.end as f64),
                     )
                     .unwrap();
-
-                    let mut undo_item_meta = UndoItemMeta::new();
-                    let r = if let Some(e) = event {
+                    let js_event = if let Some(e) = event {
                         let diff = diff_event_to_js_value(e, false);
-                        on_push.call3(&is_undo, &counter_range, &diff)
+                        Some(diff)
                     } else {
-                        on_push.call2(&is_undo, &counter_range)
+                        None
                     };
-                    match r {
-                        Ok(v) => {
-                            if let Ok(obj) = v.dyn_into::<js_sys::Object>() {
-                                if let Ok(value) =
-                                    js_sys::Reflect::get(&obj, &JsValue::from_str("value"))
-                                {
-                                    let value: LoroValue = value.into();
-                                    undo_item_meta.value = value;
-                                }
-                                if let Ok(cursors) =
-                                    js_sys::Reflect::get(&obj, &JsValue::from_str("cursors"))
-                                {
-                                    let cursors: js_sys::Array = cursors.into();
-                                    for cursor in cursors.iter() {
-                                        let cursor = js_to_cursor(cursor).unwrap_throw();
-                                        undo_item_meta.add_cursor(&cursor.pos);
+
+                    let drop_handler: Rc<RefCell<Option<Closure<dyn FnMut()>>>> =
+                        Rc::new(RefCell::new(None));
+                    let drop_handler_clone = drop_handler.clone();
+                    let undo_inner = undo_inner.clone();
+                    let on_push = on_push.clone();
+                    let closure = Closure::wrap(Box::new(move || {
+                        // Custom logic: log the undo count when operations are pushed
+                        let new_count = match kind {
+                            UndoOrRedo::Undo => undo_inner.lock().undo_count(),
+                            UndoOrRedo::Redo => undo_inner.lock().redo_count(),
+                        };
+                        let r = if let Some(e) = js_event.clone() {
+                            on_push.call3(&is_undo, &counter_range, &e)
+                        } else {
+                            on_push.call2(&is_undo, &counter_range)
+                        };
+
+                        if new_count > count {
+                            let mut undo_item_meta = UndoItemMeta::new();
+                            match r {
+                                Ok(v) => {
+                                    if let Ok(obj) = v.dyn_into::<js_sys::Object>() {
+                                        if let Ok(value) =
+                                            js_sys::Reflect::get(&obj, &JsValue::from_str("value"))
+                                        {
+                                            let value: LoroValue = value.into();
+                                            undo_item_meta.value = value;
+                                        }
+                                        if let Ok(cursors) = js_sys::Reflect::get(
+                                            &obj,
+                                            &JsValue::from_str("cursors"),
+                                        ) {
+                                            let cursors: js_sys::Array = cursors.into();
+                                            for cursor in cursors.iter() {
+                                                let cursor = js_to_cursor(cursor).unwrap_throw();
+                                                undo_item_meta.add_cursor(&cursor.pos);
+                                            }
+                                        }
                                     }
+                                }
+                                Err(e) => {
+                                    throw_error_after_micro_task(e);
+                                }
+                            }
+
+                            match kind {
+                                UndoOrRedo::Undo => {
+                                    undo_inner.lock().set_top_undo_meta(undo_item_meta);
+                                }
+                                UndoOrRedo::Redo => {
+                                    undo_inner.lock().set_top_redo_meta(undo_item_meta);
                                 }
                             }
                         }
-                        Err(e) => {
-                            throw_error_after_micro_task(e);
-                        }
-                    }
 
-                    undo_item_meta
+                        drop_handler_clone.borrow_mut().take();
+                    }) as Box<dyn FnMut()>);
+                    let observer = observer::Observer::new(
+                        closure.as_ref().unchecked_ref::<js_sys::Function>().clone(),
+                    );
+                    drop_handler.borrow_mut().replace(closure);
+                    enqueue_pending_call(observer, vec![]);
+
+                    UndoItemMeta::new()
                 })));
         } else {
-            self.undo.set_on_push(None);
+            self.undo.lock().set_on_push(None);
         }
     }
 
@@ -5135,6 +5179,7 @@ impl UndoManager {
         if let Some(on_pop) = on_pop {
             let on_pop = observer::Observer::new(on_pop);
             self.undo
+                .lock()
                 .set_on_pop(Some(Box::new(move |kind, span, value| {
                     let is_undo = JsValue::from_bool(matches!(kind, UndoOrRedo::Undo));
                     let meta = js_sys::Object::new();
@@ -5160,20 +5205,20 @@ impl UndoManager {
                         &JsValue::from_f64(span.end as f64),
                     )
                     .unwrap();
-                    match on_pop.call3(&is_undo, &meta.into(), &counter_range) {
-                        Ok(_) => {}
-                        Err(e) => {
-                            throw_error_after_micro_task(e);
-                        }
-                    }
+                    let meta_js: JsValue = meta.into();
+                    let counter_range_js: JsValue = counter_range.into();
+                    enqueue_pending_call(
+                        on_pop.clone(),
+                        vec![is_undo, meta_js, counter_range_js],
+                    );
                 })));
         } else {
-            self.undo.set_on_pop(None);
+            self.undo.lock().set_on_pop(None);
         }
     }
 
     pub fn clear(&self) {
-        self.undo.clear();
+        self.undo.lock().clear();
     }
 }
 
