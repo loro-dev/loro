@@ -54,6 +54,7 @@ nonmax = "0.5.5"
 ensure-cov = { workspace = true }
 pretty_assertions = "1.4.1"
 thread_local = "1.1.8"
+parking_lot = "0.12.5"
 
 [target.'cfg(loom)'.dependencies]
 loom = { version = "0.7", features = ["checkpoint"] }

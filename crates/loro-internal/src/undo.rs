@@ -1,11 +1,12 @@
-use std::{collections::VecDeque, sync::Arc};
+use std::{cell::RefCell, collections::VecDeque, sync::Arc};
 
 use crate::sync::{AtomicU64, Mutex};
 use either::Either;
-use rustc_hash::{FxHashMap, FxHashSet};
 use loro_common::{
     ContainerID, Counter, CounterSpan, HasIdSpan, IdSpan, LoroError, LoroResult, LoroValue, PeerID,
 };
+use parking_lot::lock_api::ReentrantMutex;
+use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::{debug_span, info_span, instrument};
 
 use crate::{
@@ -159,7 +160,7 @@ fn transform_cursor(
 pub struct UndoManager {
     peer: Arc<AtomicU64>,
     container_remap: Arc<Mutex<FxHashMap<ContainerID, ContainerID>>>,
-    inner: Arc<Mutex<UndoManagerInner>>,
+    inner: Arc<parking_lot::ReentrantMutex<RefCell<UndoManagerInner>>>,
     _peer_id_change_sub: Subscription,
     _undo_sub: Subscription,
     doc: LoroDoc,
@@ -460,6 +461,16 @@ impl Stack {
             self.stack.pop_front();
         }
     }
+
+    fn set_top_meta(&mut self, meta: UndoItemMeta) {
+        let Some(top) = self.stack.back_mut() else {
+            return;
+        };
+        let Some(last) = top.0.back_mut() else {
+            return;
+        };
+        last.meta = meta;
+    }
 }
 
 impl Default for Stack {
@@ -496,19 +507,19 @@ impl UndoManagerInner {
         diff.iter().all(|d| !group.affected_cids.contains(&d.id))
     }
 
-    fn record_checkpoint(&mut self, latest_counter: Counter, event: Option<DiffEvent>) {
-        let previous_counter = self.next_counter;
+    fn record_checkpoint(this: &RefCell<Self>, latest_counter: Counter, event: Option<DiffEvent>) {
+        let previous_counter = this.borrow().next_counter;
 
-        if Some(latest_counter) == self.next_counter {
+        if Some(latest_counter) == this.borrow().next_counter {
             return;
         }
 
-        if self.next_counter.is_none() {
-            self.next_counter = Some(latest_counter);
+        if this.borrow().next_counter.is_none() {
+            this.borrow_mut().next_counter = Some(latest_counter);
             return;
         }
 
-        if let Some(group) = &mut self.group {
+        if let Some(group) = &mut this.borrow_mut().group {
             event.iter().for_each(|e| {
                 e.events.iter().for_each(|e| {
                     group.affected_cids.insert(e.id.clone());
@@ -517,41 +528,44 @@ impl UndoManagerInner {
         }
 
         let now = get_sys_timestamp() as Timestamp;
-        let span = CounterSpan::new(self.next_counter.unwrap(), latest_counter);
-        let meta = self
+        let span = CounterSpan::new(this.borrow().next_counter.unwrap(), latest_counter);
+        let meta = this
+            .borrow()
             .on_push
             .as_ref()
             .map(|x| x(UndoOrRedo::Undo, span, event))
             .unwrap_or_default();
 
+        let mut this = this.borrow_mut();
+        let this: &mut Self = &mut this;
         // Wether the change is within the accepted merge interval
-        let in_merge_interval = now - self.last_undo_time < self.merge_interval_in_ms;
+        let in_merge_interval = now - this.last_undo_time < this.merge_interval_in_ms;
 
         // If group is active, but there is nothing in the group, don't merge
         // If the group is active and it's not the first push in the group, merge
-        let group_should_merge = self.group.is_some()
+        let group_should_merge = this.group.is_some()
             && match (
                 previous_counter,
-                self.group.as_ref().map(|g| g.start_counter),
+                this.group.as_ref().map(|g| g.start_counter),
             ) {
                 (Some(previous), Some(active)) => previous != active,
                 _ => true,
             };
 
-        let should_merge = !self.undo_stack.is_empty() && (in_merge_interval || group_should_merge);
+        let should_merge = !this.undo_stack.is_empty() && (in_merge_interval || group_should_merge);
 
         if should_merge {
-            self.undo_stack
-                .push_with_merge(span, meta, true, self.group.as_ref());
+            this.undo_stack
+                .push_with_merge(span, meta, true, this.group.as_ref());
         } else {
-            self.last_undo_time = now;
-            self.undo_stack.push(span, meta);
+            this.last_undo_time = now;
+            this.undo_stack.push(span, meta);
         }
 
-        self.next_counter = Some(latest_counter);
-        self.redo_stack.clear();
-        while self.undo_stack.len() > self.max_stack_size {
-            self.undo_stack.pop_front();
+        this.next_counter = Some(latest_counter);
+        this.redo_stack.clear();
+        while this.undo_stack.len() > this.max_stack_size {
+            this.undo_stack.pop_front();
         }
     }
 }
@@ -571,9 +585,8 @@ impl UndoManager {
         let peer = Arc::new(AtomicU64::new(doc.peer_id()));
         let peer_clone = peer.clone();
         let peer_clone2 = peer.clone();
-        let inner = Arc::new(Mutex::new(UndoManagerInner::new(get_counter_end(
-            doc,
-            doc.peer_id(),
+        let inner = Arc::new(ReentrantMutex::new(RefCell::new(UndoManagerInner::new(
+            get_counter_end(doc, doc.peer_id()),
         ))));
         let inner_clone = inner.clone();
         let inner_clone2 = inner.clone();
@@ -583,10 +596,8 @@ impl UndoManager {
             EventTriggerKind::Local => {
                 // TODO: PERF undo can be significantly faster if we can get
                 // the DiffBatch for undo here
-                let Ok(mut inner) = inner_clone.lock() else {
-                    return;
-                };
-                if inner.processing_undo {
+                let lock = inner_clone.lock();
+                if lock.borrow().processing_undo {
                     return;
                 }
                 if let Some(id) = event
@@ -595,24 +606,27 @@ impl UndoManager {
                     .iter()
                     .find(|x| x.peer == peer_clone.load(std::sync::atomic::Ordering::Relaxed))
                 {
-                    if inner
+                    let should_exclude = lock
+                        .borrow()
                         .exclude_origin_prefixes
                         .iter()
-                        .any(|x| event.event_meta.origin.starts_with(&**x))
-                    {
+                        .any(|x| event.event_meta.origin.starts_with(&**x));
+                    if should_exclude {
                         // If the event is from the excluded origin, we don't record it
                         // in the undo stack. But we need to record its effect like it's
                         // a remote event.
+                        let mut inner = lock.borrow_mut();
                         inner.undo_stack.compose_remote_event(event.events);
                         inner.redo_stack.compose_remote_event(event.events);
                         inner.next_counter = Some(id.counter + 1);
                     } else {
-                        inner.record_checkpoint(id.counter + 1, Some(event));
+                        UndoManagerInner::record_checkpoint(&lock, id.counter + 1, Some(event));
                     }
                 }
             }
             EventTriggerKind::Import => {
-                let mut inner = inner_clone.lock().unwrap();
+                let lock = inner_clone.lock();
+                let mut inner = lock.borrow_mut();
 
                 for e in event.events {
                     if let Diff::Tree(tree) = &e.diff {
@@ -642,7 +656,8 @@ impl UndoManager {
                 }
             }
             EventTriggerKind::Checkout => {
-                let mut inner = inner_clone.lock().unwrap();
+                let lock = inner_clone.lock();
+                let mut inner = lock.borrow_mut();
                 inner.undo_stack.clear();
                 inner.redo_stack.clear();
                 inner.next_counter = None;
@@ -650,7 +665,8 @@ impl UndoManager {
         }));
 
         let sub = doc.subscribe_peer_id_change(Box::new(move |id| {
-            let mut inner = inner_clone2.lock().unwrap();
+            let lock = inner_clone2.lock();
+            let mut inner = lock.borrow_mut();
             inner.undo_stack.clear();
             inner.redo_stack.clear();
             inner.next_counter = Some(id.counter);
@@ -668,8 +684,9 @@ impl UndoManager {
         }
     }
 
-    pub fn group_start(&mut self) -> LoroResult<()> {
-        let mut inner = self.inner.lock().unwrap();
+    pub fn group_start(&self) -> LoroResult<()> {
+        let lock = self.inner.lock();
+        let mut inner = lock.borrow_mut();
 
         if inner.group.is_some() {
             return Err(LoroError::UndoGroupAlreadyStarted);
@@ -680,41 +697,41 @@ impl UndoManager {
         Ok(())
     }
 
-    pub fn group_end(&mut self) {
-        self.inner.lock().unwrap().group = None;
+    pub fn group_end(&self) {
+        self.inner.lock().borrow_mut().group = None;
     }
 
     pub fn peer(&self) -> PeerID {
         self.peer.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    pub fn set_merge_interval(&mut self, interval: i64) {
-        self.inner.lock().unwrap().merge_interval_in_ms = interval;
+    pub fn set_merge_interval(&self, interval: i64) {
+        self.inner.lock().borrow_mut().merge_interval_in_ms = interval;
     }
 
-    pub fn set_max_undo_steps(&mut self, size: usize) {
-        self.inner.lock().unwrap().max_stack_size = size;
+    pub fn set_max_undo_steps(&self, size: usize) {
+        self.inner.lock().borrow_mut().max_stack_size = size;
     }
 
-    pub fn add_exclude_origin_prefix(&mut self, prefix: &str) {
+    pub fn add_exclude_origin_prefix(&self, prefix: &str) {
         self.inner
             .lock()
-            .unwrap()
+            .borrow_mut()
             .exclude_origin_prefixes
             .push(prefix.into());
     }
 
-    pub fn record_new_checkpoint(&mut self) -> LoroResult<()> {
+    pub fn record_new_checkpoint(&self) -> LoroResult<()> {
         // Use implicit-style barrier to preserve next-commit options across
         // an empty commit before undo/redo processing.
         self.doc.with_barrier(|| {});
         let counter = get_counter_end(&self.doc, self.peer());
-        self.inner.lock().unwrap().record_checkpoint(counter, None);
+        UndoManagerInner::record_checkpoint(&self.inner.lock(), counter, None);
         Ok(())
     }
 
     #[instrument(skip_all)]
-    pub fn undo(&mut self) -> LoroResult<bool> {
+    pub fn undo(&self) -> LoroResult<bool> {
         self.perform(
             |x| &mut x.undo_stack,
             |x| &mut x.redo_stack,
@@ -723,7 +740,7 @@ impl UndoManager {
     }
 
     #[instrument(skip_all)]
-    pub fn redo(&mut self) -> LoroResult<bool> {
+    pub fn redo(&self) -> LoroResult<bool> {
         self.perform(
             |x| &mut x.redo_stack,
             |x| &mut x.undo_stack,
@@ -732,7 +749,7 @@ impl UndoManager {
     }
 
     fn perform(
-        &mut self,
+        &self,
         get_stack: impl Fn(&mut UndoManagerInner) -> &mut Stack,
         get_opposite: impl Fn(&mut UndoManagerInner) -> &mut Stack,
         kind: UndoOrRedo,
@@ -794,7 +811,8 @@ impl UndoManager {
         self.record_new_checkpoint()?;
         let end_counter = get_counter_end(doc, self.peer());
         let mut top = {
-            let mut inner = self.inner.lock().unwrap();
+            let lock = self.inner.lock();
+            let mut inner = lock.borrow_mut();
             inner.processing_undo = true;
             get_stack(&mut inner).pop()
         };
@@ -815,15 +833,18 @@ impl UndoManager {
                     Some(&remote_change_clone),
                     &mut |diff| {
                         info_span!("transform remote diff").in_scope(|| {
-                            let mut inner = inner.lock().unwrap();
+                            let mut inner = inner.lock();
                             // <transform_delta>
-                            get_stack(&mut inner).transform_based_on_this_delta(diff);
+                            get_stack(&mut inner.borrow_mut()).transform_based_on_this_delta(diff);
                         });
                     },
                 )?;
                 drop(commit);
-                let mut inner = self.inner.lock().unwrap();
-                if let Some(x) = inner.on_pop.as_ref() {
+                let mut inner = self.inner.lock();
+                let mut is_some = false;
+
+                if let Some(on_pop) = inner.borrow().on_pop.as_ref() {
+                    is_some = true;
                     for cursor in span.meta.cursors.iter_mut() {
                         // <cursor_transform> We need to transform cursor here.
                         // Note that right now <transform_delta> is already done,
@@ -836,16 +857,19 @@ impl UndoManager {
                         );
                     }
 
-                    x(kind, span.span, span.meta.clone());
-                    let take = inner.last_popped_selection.take();
+                    on_pop(kind, span.span, span.meta.clone());
+                }
+                if is_some {
+                    let take = inner.borrow_mut().last_popped_selection.take();
                     next_push_selection = take;
-                    inner.last_popped_selection = Some(span.meta.cursors);
+                    inner.borrow_mut().last_popped_selection = Some(span.meta.cursors);
                 }
             }
             let new_counter = get_counter_end(doc, self.peer());
             if end_counter != new_counter {
-                let mut inner = self.inner.lock().unwrap();
+                let mut inner = self.inner.lock();
                 let mut meta = inner
+                    .borrow()
                     .on_push
                     .as_ref()
                     .map(|x| {
@@ -857,52 +881,55 @@ impl UndoManager {
                     })
                     .unwrap_or_default();
 
-                if matches!(kind, UndoOrRedo::Undo) && get_opposite(&mut inner).is_empty() {
+                if matches!(kind, UndoOrRedo::Undo)
+                    && get_opposite(&mut inner.borrow_mut()).is_empty()
+                {
                     // If it's the first undo, we use the cursors from the users
                 } else if let Some(inner) = next_push_selection.take() {
                     // Otherwise, we use the cursors from the undo/redo loop
                     meta.cursors = inner;
                 }
 
-                get_opposite(&mut inner).push(CounterSpan::new(end_counter, new_counter), meta);
-                inner.next_counter = Some(new_counter);
+                get_opposite(&mut inner.borrow_mut())
+                    .push(CounterSpan::new(end_counter, new_counter), meta);
+                inner.borrow_mut().next_counter = Some(new_counter);
                 executed = true;
                 break;
             } else {
                 // continue to pop the undo item as this undo is a no-op
-                top = get_stack(&mut self.inner.lock().unwrap()).pop();
+                top = get_stack(&mut self.inner.lock().borrow_mut()).pop();
                 continue;
             }
         }
 
-        self.inner.lock().unwrap().processing_undo = false;
+        self.inner.lock().borrow_mut().processing_undo = false;
         Ok(executed)
     }
 
     pub fn can_undo(&self) -> bool {
-        !self.inner.lock().unwrap().undo_stack.is_empty()
+        !self.inner.lock().borrow().undo_stack.is_empty()
     }
 
     pub fn can_redo(&self) -> bool {
-        !self.inner.lock().unwrap().redo_stack.is_empty()
+        !self.inner.lock().borrow().redo_stack.is_empty()
     }
 
     pub fn undo_count(&self) -> usize {
-        self.inner.lock().unwrap().undo_stack.len()
+        self.inner.lock().borrow().undo_stack.len()
     }
 
     pub fn redo_count(&self) -> usize {
-        self.inner.lock().unwrap().redo_stack.len()
+        self.inner.lock().borrow().redo_stack.len()
     }
 
     /// Get the metadata of the top undo stack item, if any.
     pub fn top_undo_meta(&self) -> Option<UndoItemMeta> {
-        self.inner.lock().unwrap().undo_stack.peek_top_meta()
+        self.inner.lock().borrow().undo_stack.peek_top_meta()
     }
 
     /// Get the metadata of the top redo stack item, if any.
     pub fn top_redo_meta(&self) -> Option<UndoItemMeta> {
-        self.inner.lock().unwrap().redo_stack.peek_top_meta()
+        self.inner.lock().borrow().redo_stack.peek_top_meta()
     }
 
     /// Get the value associated with the top undo stack item, if any.
@@ -916,16 +943,24 @@ impl UndoManager {
     }
 
     pub fn set_on_push(&self, on_push: Option<OnPush>) {
-        self.inner.lock().unwrap().on_push = on_push;
+        self.inner.lock().borrow_mut().on_push = on_push;
     }
 
     pub fn set_on_pop(&self, on_pop: Option<OnPop>) {
-        self.inner.lock().unwrap().on_pop = on_pop;
+        self.inner.lock().borrow_mut().on_pop = on_pop;
     }
 
     pub fn clear(&self) {
-        self.inner.lock().unwrap().undo_stack.clear();
-        self.inner.lock().unwrap().redo_stack.clear();
+        self.inner.lock().borrow_mut().undo_stack.clear();
+        self.inner.lock().borrow_mut().redo_stack.clear();
+    }
+
+    pub fn set_top_undo_meta(&self, meta: UndoItemMeta) {
+        self.inner.lock().borrow_mut().undo_stack.set_top_meta(meta);
+    }
+
+    pub fn set_top_redo_meta(&self, meta: UndoItemMeta) {
+        self.inner.lock().borrow_mut().redo_stack.set_top_meta(meta);
     }
 }
 
