@@ -1,7 +1,7 @@
 use loro_common::{ContainerID, LoroValue, LoroListValue};
 use thiserror::Error;
 use crate::handler::{Handler, ListHandler, MapHandler, MovableListHandler, TextHandler, TreeHandler, ValueOrHandler};
-use crate::LoroDoc;
+use crate::{HandlerTrait, LoroDoc};
 use std::ops::ControlFlow;
 use std::sync::Arc;
 
@@ -69,7 +69,7 @@ impl PartialEq for JSONPathToken {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum Op {
     Eq, Neq, Lt, Le, Gt, Ge, In, Contains, Matches,
 }
@@ -86,12 +86,14 @@ enum JSONFilterExpr {
         op: Op,
         right: Box<JSONFilterExpr>,
     },
+    Exists(Box<JSONFilterExpr>),
 }
 
 fn values_equal(a: &LoroValue, b: &LoroValue) -> bool {
     match (a, b) {
         (LoroValue::I64(x), LoroValue::I64(y)) => x == y,
         (LoroValue::Double(x), LoroValue::Double(y)) => (x - y).abs() < f64::EPSILON,
+        (LoroValue::I64(x), LoroValue::Double(y)) | (LoroValue::Double(y), LoroValue::I64(x)) => ((*x) as f64 - *y).abs() < f64::EPSILON,
         (LoroValue::String(x), LoroValue::String(y)) => x.as_str() == y.as_str(),
         (LoroValue::Bool(x), LoroValue::Bool(y)) => x == y,
         (LoroValue::Null, LoroValue::Null) => true,
@@ -123,69 +125,65 @@ fn values_equal(a: &LoroValue, b: &LoroValue) -> bool {
 
 fn compare(a: &LoroValue, b: &LoroValue, op: Op) -> bool {
     use LoroValue::*;
-    match (a, b, op) {
-        (I64(x), I64(y), _) => match op {
-            Op::Eq => x == y,
-            Op::Neq => x != y,
+    match (a, b) {
+        (I64(x), I64(y)) => match op {
             Op::Lt => x < y,
             Op::Le => x <= y,
             Op::Gt => x > y,
             Op::Ge => x >= y,
             _ => false,
         },
-        (Double(x), Double(y), _) => match op {
-            Op::Eq => (x - y).abs() < f64::EPSILON,
-            Op::Neq => (x - y).abs() >= f64::EPSILON,
+        (Double(x), Double(y)) => match op {
             Op::Lt => x < y,
             Op::Le => x <= y,
             Op::Gt => x > y,
             Op::Ge => x >= y,
             _ => false,
         },
-        (String(x), String(y), op) => {
+        (I64(x), Double(y)) => {
+            let xa = *x as f64;
+            let ya = *y;
+            match op {
+                Op::Lt => xa < ya,
+                Op::Le => xa <= ya,
+                Op::Gt => xa > ya,
+                Op::Ge => xa >= ya,
+                _ => false,
+            }
+        },
+        (Double(x), I64(y)) => {
+            let xa = *x;
+            let ya = *y as f64;
+            match op {
+                Op::Lt => xa < ya,
+                Op::Le => xa <= ya,
+                Op::Gt => xa > ya,
+                Op::Ge => xa >= ya,
+                _ => false,
+            }
+        },
+        (String(x), String(y)) => {
             let x_str = x.as_str();
             let y_str = y.as_str();
             match op {
-                Op::Eq => x_str == y_str,
-                Op::Neq => x_str != y_str,
                 Op::Lt => x_str < y_str,
                 Op::Le => x_str <= y_str,
                 Op::Gt => x_str > y_str,
                 Op::Ge => x_str >= y_str,
                 Op::Contains => x_str.contains(y_str),
                 Op::In => y_str.contains(x_str),
-                Op::Matches => false, // regex matching would go here
+                Op::Matches => false, // TODO: Implement regex matching if desired
                 _ => false,
             }
         }
-        (String(x), List(list), Op::In) => {
-            list.iter().any(|v| matches!(v, String(s) if s.as_str() == x.as_str()))
+        (x, List(list)) if op == Op::In => {
+            list.iter().any(|v| values_equal(x, v))
         }
-        (List(list), String(y), Op::Contains) => {
-            list.iter().any(|v| matches!(v, String(s) if s.as_str() == y.as_str()))
+        (List(list), y) if op == Op::Contains => {
+            list.iter().any(|v| values_equal(v, y))
         }
-        (I64(x), List(list), Op::In) => {
-            list.iter().any(|v| matches!(v, I64(n) if n == x))
-        }
-        (Double(x), List(list), Op::In) => {
-            list.iter().any(|v| matches!(v, Double(n) if (n - x).abs() < f64::EPSILON))
-        }
-        (Null, List(list), Op::In) => {
-            list.iter().any(|v| matches!(v, Null))
-        }
-        (Bool(x), List(list), Op::In) => {
-            list.iter().any(|v| matches!(v, Bool(b) if b == x))
-        }
-        (Bool(x), Bool(y), _) => match op {
-            Op::Eq => x == y,
-            Op::Neq => x != y,
-            _ => false,
-        },
-        (Null, Null, _) => match op {
-            Op::Eq => true,
-            Op::Neq => false,
-            _ => false,
-        },
+        (Bool(x), Bool(y)) => false, // Eq Neq handled separately
+        (Null, Null) => false, // Eq Neq handled separately
         _ => false,
     }
 }
@@ -224,7 +222,38 @@ fn unescape_string(inner: &str) -> Result<String, JsonPathError> {
                         if let Some(ch) = char::from_u32(code) {
                             result.push(ch);
                         } else {
-                            return Err(JsonPathError::InvalidJsonPath(format!("Invalid Unicode code point: {}", code)));
+                            // Check for surrogate pairs
+                            if (0xD800..=0xDBFF).contains(&code) {
+                                if chars.next() == Some('\\') && chars.next() == Some('u') {
+                                    let mut low_hex = String::with_capacity(4);
+                                    for _ in 0..4 {
+                                        if let Some(h) = chars.next() {
+                                            if h.is_ascii_hexdigit() {
+                                                low_hex.push(h);
+                                            } else {
+                                                return Err(JsonPathError::InvalidJsonPath(format!("Invalid hex digit in low surrogate: {}", h)));
+                                            }
+                                        } else {
+                                            return Err(JsonPathError::InvalidJsonPath("Incomplete low surrogate".to_string()));
+                                        }
+                                    }
+                                    let low_code = u32::from_str_radix(&low_hex, 16).map_err(|_| JsonPathError::InvalidJsonPath("Invalid low surrogate code".to_string()))?;
+                                    if (0xDC00..=0xDFFF).contains(&low_code) {
+                                        let scalar = ((code - 0xD800) << 10) + (low_code - 0xDC00) + 0x10000;
+                                        if let Some(ch) = char::from_u32(scalar) {
+                                            result.push(ch);
+                                        } else {
+                                            return Err(JsonPathError::InvalidJsonPath(format!("Invalid surrogate pair: \\u{:04x}\\u{:04x}", code, low_code)));
+                                        }
+                                    } else {
+                                        return Err(JsonPathError::InvalidJsonPath("Invalid low surrogate".to_string()));
+                                    }
+                                } else {
+                                    return Err(JsonPathError::InvalidJsonPath("Missing low surrogate".to_string()));
+                                }
+                            } else {
+                                return Err(JsonPathError::InvalidJsonPath(format!("Invalid Unicode code point: {}", code)));
+                            }
                         }
                     }
                     _ => return Err(JsonPathError::InvalidJsonPath(format!("Invalid escape: \\{}", next))),
@@ -521,7 +550,14 @@ fn parse_array(s: &str) -> Result<LoroValue, JsonPathError> {
                 current.push(c);
             }
             ',' if !in_quotes && bracket_depth == 0 => {
-                items.push(parse_literal(&current.trim())?);
+                let trimmed = current.trim().to_string();
+                if !trimmed.is_empty() {
+                    if trimmed.starts_with('[') && trimmed.ends_with(']') {
+                        items.push(parse_array(&trimmed)?);
+                    } else {
+                        items.push(parse_literal(&trimmed)?);
+                    }
+                }
                 current.clear();
             }
             _ => {
@@ -538,7 +574,12 @@ fn parse_array(s: &str) -> Result<LoroValue, JsonPathError> {
         return Err(JsonPathError::InvalidJsonPath("Unclosed quote in array".to_string()));
     }
     if !current.is_empty() {
-        items.push(parse_literal(&current.trim())?);
+        let trimmed = current.trim().to_string();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            items.push(parse_array(&trimmed)?);
+        } else {
+            items.push(parse_literal(&trimmed)?);
+        }
     }
 
     Ok(LoroValue::List(LoroListValue::from(items)))
@@ -574,28 +615,32 @@ fn parse_filter_expression(predicate: &str) -> Result<JSONFilterExpr, JsonPathEr
         return Ok(JSONFilterExpr::Not(Box::new(inner_expr)));
     }
     // Handle comparisons
-    match parse_comparison(predicate) {
-        Ok((left, op_str, right)) => {
-            let left_expr = parse_path_or_literal(left)?;
-            let right_expr = parse_path_or_literal(right)?;
-            if let JSONFilterExpr::Path(ref tokens) = left_expr {
-                if !is_singular(tokens) {
-                    return Err(JsonPathError::InvalidJsonPath("Non-singular query in comparison left".to_string()));
-                }
+    if let Ok((left, op_str, right)) = parse_comparison(predicate) {
+        let left_expr = parse_path_or_literal(left)?;
+        let right_expr = parse_path_or_literal(right)?;
+        if let JSONFilterExpr::Path(ref tokens) = left_expr {
+            if !is_singular(tokens) {
+                return Err(JsonPathError::InvalidJsonPath("Non-singular query in comparison left".to_string()));
             }
-            if let JSONFilterExpr::Path(ref tokens) = right_expr {
-                if !is_singular(tokens) {
-                    return Err(JsonPathError::InvalidJsonPath("Non-singular query in comparison right".to_string()));
-                }
-            }
-            let op = parse_operator(op_str)?;
-            Ok(JSONFilterExpr::Comparison {
-                left: Box::new(left_expr),
-                op,
-                right: Box::new(right_expr),
-            })
         }
-        Err(e) => Err(e),
+        if let JSONFilterExpr::Path(ref tokens) = right_expr {
+            if !is_singular(tokens) {
+                return Err(JsonPathError::InvalidJsonPath("Non-singular query in comparison right".to_string()));
+            }
+        }
+        let op = parse_operator(op_str)?;
+        Ok(JSONFilterExpr::Comparison {
+            left: Box::new(left_expr),
+            op,
+            right: Box::new(right_expr),
+        })
+    } else {
+        // Existence test
+        let expr = parse_path_or_literal(predicate)?;
+        match expr {
+            JSONFilterExpr::Path(path) => Ok(JSONFilterExpr::Exists(Box::new(JSONFilterExpr::Path(path)))),
+            _ => Err(JsonPathError::InvalidJsonPath(format!("Invalid filter expression: {}", predicate))),
+        }
     }
 }
 
@@ -682,7 +727,9 @@ fn parse_operator(op_str: &str) -> Result<Op, JsonPathError> {
 
 fn parse_path_or_literal(s: &str) -> Result<JSONFilterExpr, JsonPathError> {
     let s = s.trim();
-    if s.starts_with('@') {
+    if s.starts_with('[') && s.ends_with(']') {
+        Ok(JSONFilterExpr::Literal(parse_array(s)?))
+    } else if s.starts_with('@') {
         let relative = &s[1..];
         let path_tokens = parse_relative_jsonpath(relative)?;
         Ok(JSONFilterExpr::Path(path_tokens))
@@ -690,16 +737,13 @@ fn parse_path_or_literal(s: &str) -> Result<JSONFilterExpr, JsonPathError> {
         let path_tokens = parse_jsonpath(s)?;
         Ok(JSONFilterExpr::Path(path_tokens))
     } else {
-        let literal = parse_literal(s)?;
-        Ok(JSONFilterExpr::Literal(literal))
+        Ok(JSONFilterExpr::Literal(parse_literal(s)?))
     }
 }
 
 fn parse_literal(s: &str) -> Result<LoroValue, JsonPathError> {
     let s = s.trim();
-    if s.starts_with('[') && s.ends_with(']') {
-        parse_array(s)
-    } else if s.starts_with('\'') && s.ends_with('\'') {
+    if s.starts_with('\'') && s.ends_with('\'') {
         let inner = &s[1..s.len() - 1];
         let unescaped = unescape_string(inner)?;
         Ok(LoroValue::String(unescaped.into()))
@@ -730,7 +774,7 @@ fn create_filter_predicate(expr: JSONFilterExpr) -> impl Fn(&dyn PathValue, &Val
 
 fn eval_filter_expr(root: &dyn PathValue, current: &ValueOrHandler, expr: &JSONFilterExpr) -> bool {
     match expr {
-        JSONFilterExpr::Literal(val) => current.as_value().map_or(false, |v| values_equal(v, val)),
+        JSONFilterExpr::Literal(_) => false, // Literals not used alone
         JSONFilterExpr::Path(path) => {
             let mut results = Vec::new();
             let target = if !path.is_empty() && matches!(path[0], JSONPathToken::Root) {
@@ -752,16 +796,24 @@ fn eval_filter_expr(root: &dyn PathValue, current: &ValueOrHandler, expr: &JSONF
         JSONFilterExpr::Comparison { left, op, right } => {
             let left_val = eval_filter_to_value(root, current, left);
             let right_val = eval_filter_to_value(root, current, right);
-            match (left_val, right_val) {
-                (Some(a), Some(b)) => compare(&a, &b, *op),
-                (None, None) => match op {
-                    Op::Eq => true,
-                    Op::Neq => false,
+            match *op {
+                Op::Eq => match (&left_val, &right_val) {
+                    (Some(a), Some(b)) => values_equal(a, b),
+                    (None, None) => true,
                     _ => false,
                 },
-                _ => false,
+                Op::Neq => match (&left_val, &right_val) {
+                    (Some(a), Some(b)) => !values_equal(a, b),
+                    (None, None) => false,
+                    _ => true,
+                },
+                _ => match (&left_val, &right_val) {
+                    (Some(a), Some(b)) => compare(a, b, *op),
+                    _ => false,
+                },
             }
         }
+        JSONFilterExpr::Exists(inner) => eval_filter_expr(root, current, inner),
     }
 }
 
@@ -778,7 +830,10 @@ fn eval_filter_to_value(root: &dyn PathValue, current: &ValueOrHandler, expr: &J
             let path_slice = if !path.is_empty() && matches!(path[0], JSONPathToken::Root) { &path[1..] } else { path };
             evaluate_tokens(root, target, path_slice, &mut results);
             if results.len() == 1 {
-                results[0].as_value().cloned()
+                match &results[0] {
+                    ValueOrHandler::Value(v) => Some(v.clone()),
+                    ValueOrHandler::Handler(h) => Some(h.get_value()),
+                }
             } else {
                 None
             }
@@ -825,11 +880,17 @@ fn evaluate_tokens(root: &dyn PathValue, value: &dyn PathValue, tokens: &[JSONPa
             });
         }
         JSONPathToken::Union(parts) => {
+            let len = value.length_for_path() as isize;
             for part in parts {
                 match part {
-                    UnionPart::Index(idx) => {
-                        if let Some(child) = value.get_by_index(*idx) {
-                            evaluate_tokens(root, &child, &tokens[1..], results);
+                    UnionPart::Index(mut idx) => {
+                        if idx < 0 {
+                            idx += len;
+                        }
+                        if idx >= 0 && idx < len {
+                            if let Some(child) = value.get_by_index(idx) {
+                                evaluate_tokens(root, &child, &tokens[1..], results);
+                            }
                         }
                     }
                     UnionPart::Key(key) => {
@@ -1285,6 +1346,7 @@ mod tests {
         book.insert("author", "George Orwell").unwrap();
         book.insert("price", 10).unwrap();
         book.insert("available", true).unwrap();
+        book.insert("isbn", "978-0451524935").unwrap();
 
         // Book 2: Animal Farm
         let book = books.insert_container(1, MapHandler::new_detached()).unwrap();
@@ -1299,6 +1361,7 @@ mod tests {
         book.insert("author", "Aldous Huxley").unwrap();
         book.insert("price", 12).unwrap();
         book.insert("available", false).unwrap();
+        book.insert("isbn", "978-0060850524").unwrap();
 
         // Book 4: Fahrenheit 451
         let book = books.insert_container(3, MapHandler::new_detached()).unwrap();
@@ -1306,6 +1369,7 @@ mod tests {
         book.insert("author", "Ray Bradbury").unwrap();
         book.insert("price", 9).unwrap();
         book.insert("available", true).unwrap();
+        book.insert("isbn", "978-1451673319").unwrap();
 
         // Book 5: The Great Gatsby
         let book = books.insert_container(4, MapHandler::new_detached()).unwrap();
@@ -1343,7 +1407,6 @@ mod tests {
         book.insert("available", true).unwrap();
 
         // Book 10: The Hobbit
-        // Book 10: The Hobbit
         let book = books.insert_container(9, MapHandler::new_detached()).unwrap();
         book.insert("title", "The Hobbit").unwrap();
         book.insert("author", "J.R.R. Tolkien").unwrap();
@@ -1354,10 +1417,9 @@ mod tests {
         store.insert("featured_author", "George Orwell").unwrap();
         let featured_authors = store.insert_container("featured_authors", ListHandler::new_detached()).unwrap();
         featured_authors.push("George Orwell").unwrap();
-        featured_authors.push( "Aldous Huxley").unwrap();
-        featured_authors.push( "Ray Bradbury").unwrap();
+        featured_authors.push("Aldous Huxley").unwrap();
+        featured_authors.push("Ray Bradbury").unwrap();
         store.insert("min_price", 10).unwrap();
-
         doc
     }
 
@@ -1922,22 +1984,22 @@ mod tests {
             Ok(())
         }
 
-        // #[test]
-        // fn filters_with_root_list_in() -> Result<(), JsonPathError> {
-        //     let doc = setup_test_doc();
-        //     let path = "$.store.books[?(@.author in $.store.featured_authors)].title";
-        //     let result = evaluate_jsonpath(&doc, path)?;
-        //     assert_eq!(result.len(), 3);
-        //     let mut titles: Vec<&str> = result
-        //         .iter()
-        //         .map(|v| v.as_value().unwrap().as_string().unwrap().as_str())
-        //         .collect();
-        //     titles.sort();
-        //     let mut expected = vec!["1984", "Animal Farm", "Pride and Prejudice"];
-        //     expected.sort();
-        //     assert_eq!(titles, expected);
-        //     Ok(())
-        // }
+        #[test]
+        fn filters_with_root_list_in() -> Result<(), JsonPathError> {
+            let doc = setup_test_doc();
+            let path = "$.store.books[?(@.author in $.store.featured_authors)].title";
+            let result = evaluate_jsonpath(&doc, path)?;
+            assert_eq!(result.len(), 4);
+            let mut titles: Vec<&str> = result
+                .iter()
+                .map(|v| v.as_value().unwrap().as_string().unwrap().as_str())
+                .collect();
+            titles.sort();
+            let mut expected = vec!["1984", "Animal Farm", "Brave New World", "Fahrenheit 451"];
+            expected.sort();
+            assert_eq!(titles, expected);
+            Ok(())
+        }
 
         #[test]
         fn filters_with_root_not_equal() -> Result<(), JsonPathError> {
@@ -1979,6 +2041,78 @@ mod tests {
             let mut expected = vec!["1984", "Animal Farm"];
             expected.sort();
             assert_eq!(titles, expected);
+            Ok(())
+        }
+    }
+
+    mod existence_filters {
+        use super::*;
+        #[test]
+        fn filters_by_existence_of_isbn() -> Result<(), JsonPathError> {
+            let doc = setup_test_doc();
+            let path = "$.store.books[?(@.isbn)].title";
+            let result = evaluate_jsonpath(&doc, path)?;
+            assert_eq!(result.len(), 3);
+            let mut titles: Vec<&str> = result
+                .iter()
+                .map(|v| v.as_value().unwrap().as_string().unwrap().as_str())
+                .collect();
+            titles.sort();
+            let mut expected = vec!["1984", "Brave New World", "Fahrenheit 451"];
+            expected.sort();
+            assert_eq!(titles, expected);
+            Ok(())
+        }
+
+        #[test]
+        fn filters_by_non_existence_of_isbn() -> Result<(), JsonPathError> {
+            let doc = setup_test_doc();
+            let path = "$.store.books[?(!@.isbn)].title";
+            let result = evaluate_jsonpath(&doc, path)?;
+            assert_eq!(result.len(), 7);
+            let mut titles: Vec<&str> = result
+                .iter()
+                .map(|v| v.as_value().unwrap().as_string().unwrap().as_str())
+                .collect();
+            titles.sort();
+            let mut expected = vec![
+                "Animal Farm",
+                "The Great Gatsby",
+                "To Kill a Mockingbird",
+                "The Catcher in the Rye",
+                "Lord of the Flies",
+                "Pride and Prejudice",
+                "The Hobbit",
+            ];
+            expected.sort();
+            assert_eq!(titles, expected);
+            Ok(())
+        }
+
+        #[test]
+        fn filters_by_existence_of_price() -> Result<(), JsonPathError> {
+            let doc = setup_test_doc();
+            let path = "$.store.books[?(@.price)].title";
+            let result = evaluate_jsonpath(&doc, path)?;
+            assert_eq!(result.len(), 10);
+            Ok(())
+        }
+
+        #[test]
+        fn filters_by_non_existence_of_price() -> Result<(), JsonPathError> {
+            let doc = setup_test_doc();
+            let path = "$.store.books[?(!@.price)].title";
+            let result = evaluate_jsonpath(&doc, path)?;
+            assert_eq!(result.len(), 0);
+            Ok(())
+        }
+
+        #[test]
+        fn filters_by_non_existence_of_root_path() -> Result<(), JsonPathError> {
+            let doc = setup_test_doc();
+            let path = "$.store.books[?($.store.nonexistent)].title";
+            let result = evaluate_jsonpath(&doc, path)?;
+            assert_eq!(result.len(), 0);
             Ok(())
         }
     }
