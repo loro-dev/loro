@@ -76,6 +76,8 @@ pub fn standard_functions() -> HashMap<String, FunctionSignature> {
 
     functions
 }
+
+#[derive(Debug)]
 pub struct JSONPathParser {
     pub index_range: RangeInclusive<i64>,
     pub function_signatures: HashMap<String, FunctionSignature>

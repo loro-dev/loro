@@ -29,7 +29,7 @@ enum ExprValue {
 }
 
 fn evaluate_jsonpath(root: &dyn PathValue, jsonpath: &str) -> Result<Vec<ValueOrHandler>, JsonPathError> {
-    let mut parser = JSONPathParser::new();
+    let parser = JSONPathParser::new();
     let query = parser.parse(jsonpath).map_err(|e| JsonPathError::InvalidJsonPath(e.to_string()))?;
     evaluate_query(root, &query)
 }
