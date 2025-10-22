@@ -18,12 +18,14 @@ use crate::jsonpath::Query;
 #[grammar = "jsonpath/jsonpath.pest"]
 struct JSONPath;
 
+#[derive(Debug)]
 pub enum ExpressionType {
     Logical,
     Nodes,
     Value,
 }
 
+#[derive(Debug)]
 pub struct FunctionSignature {
     pub param_types: Vec<ExpressionType>,
     pub return_type: ExpressionType,

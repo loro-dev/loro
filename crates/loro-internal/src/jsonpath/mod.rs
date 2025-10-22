@@ -1,7 +1,7 @@
 pub mod ast;
 pub mod errors;
 pub mod parser;
-mod evaluator;
+pub mod jsonpath;
 
 pub use ast::Query;
 pub use parser::JSONPathParser;
