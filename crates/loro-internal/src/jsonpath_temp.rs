@@ -1,3 +1,5 @@
+mod ast;
+
 use loro_common::{ContainerID, LoroValue, LoroListValue};
 use thiserror::Error;
 use crate::handler::{Handler, ListHandler, MapHandler, MovableListHandler, TextHandler, TreeHandler, ValueOrHandler};

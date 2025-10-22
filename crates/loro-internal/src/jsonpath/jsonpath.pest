@@ -1,0 +1,182 @@
+jsonpath = _{ SOI ~ jsonpath_query ~ EOI }
+
+jsonpath_query = _{ root_identifier ~ segments }
+segments       = _{ (S ~ segment)* }
+
+B = _{ "\x20" | "\x09" | "\x0A" | "\x0D" }
+S = _{ B* }
+
+root_identifier = _{ "$" }
+
+selector = _{
+    name_selector
+  | wildcard_selector
+  | slice_selector
+  | index_selector
+  | filter_selector
+}
+
+name_selector = _{ string_literal }
+
+string_literal = _{
+    ("\x22" ~ double_quoted ~ "\x22")
+  | ("\x27" ~ single_quoted ~ "\x27")
+}
+
+double_quoted = { double_quoted_char* }
+single_quoted = { single_quoted_char* }
+
+double_quoted_char = _{
+    unescaped
+  | "\x27"
+  | (ESC ~ "\x22")
+  | (ESC ~ escapable)
+}
+
+single_quoted_char = _{
+    unescaped
+  | "\x22"
+  | (ESC ~ "\x27")
+  | (ESC ~ escapable)
+}
+
+ESC = _{ "\x5C" }
+
+unescaped = _{
+    '\u{20}'..'\u{21}'
+  | '\u{23}'..'\u{26}'
+  | '\u{28}'..'\u{5B}'
+  | '\u{5D}'..'\u{D7FF}'
+  | '\u{E000}'..'\u{10FFFF}'
+}
+
+escapable = _{
+    "\x62"
+  | "\x66"
+  | "\x6E"
+  | "\x72"
+  | "\x74"
+  | "/"
+  | "\\"
+  | ("\x75" ~ hexchar)
+}
+
+hexchar = _{
+    non_surrogate
+  | (high_surrogate ~ "\\u" ~ low_surrogate)
+}
+
+non_surrogate = _{
+    ((ASCII_DIGIT | ^"A" | ^"B" | ^"C" | ^"E" | ^"F") ~ ASCII_HEX_DIGIT{3})
+  | (^"D" ~ '\u{30}'..'\u{37}' ~ ASCII_HEX_DIGIT{2})
+}
+
+high_surrogate    = _{ ^"D" ~ ("8" | "9" | ^"A" | ^"B") ~ ASCII_HEX_DIGIT{2} }
+low_surrogate     = _{ ^"D" ~ (^"C" | ^"D" | ^"E" | ^"F") ~ ASCII_HEX_DIGIT{2} }
+wildcard_selector =  { "*" }
+index_selector    = @{ int }
+int               =  { "0" | ("-"? ~ ASCII_NONZERO_DIGIT ~ ASCII_DIGIT*) }
+slice_selector    =  { (start ~ S)? ~ ":" ~ S ~ (stop ~ S)? ~ (":" ~ (S ~ step)?)? }
+start             = @{ int }
+stop              = @{ int }
+step              = @{ int }
+filter_selector   =  { "?" ~ S ~ logical_expr }
+logical_expr      = _{ logical_or_expr }
+logical_or_expr   =  { logical_and_expr ~ (S ~ "||" ~ S ~ logical_and_expr)* }
+logical_and_expr  =  { basic_expr ~ (S ~ "&&" ~ S ~ basic_expr)* }
+
+basic_expr = _{
+    paren_expr
+  | comparison_expr
+  | test_expr
+}
+
+paren_expr              =  { (logical_not_op ~ S)? ~ "(" ~ S ~ logical_expr ~ S ~ ")" }
+logical_not_op          =  { "!" }
+test_expr               =  { (logical_not_op ~ S)? ~ (filter_query | function_expr) }
+filter_query            = _{ rel_query | root_query }
+root_query              =  { jsonpath_query }
+rel_query               =  { current_node_identifier ~ segments }
+current_node_identifier = _{ "@" }
+comparison_expr         =  { comparable ~ S ~ comparison_op ~ S ~ comparable }
+
+literal = _{
+    number
+  | string_literal
+  | true_literal
+  | false_literal
+  | null
+}
+
+comparable = _{
+    literal
+  | singular_query
+  | function_expr
+}
+
+comparison_op = {
+    "=="
+  | "!="
+  | "<="
+  | ">="
+  | "<"
+  | ">"
+}
+
+singular_query          = _{ rel_singular_query | abs_singular_query }
+rel_singular_query      =  { current_node_identifier ~ singular_query_segments }
+abs_singular_query      =  { root_identifier ~ singular_query_segments }
+singular_query_segments = _{ (S ~ (name_segment | index_segment))* }
+
+name_segment = {
+    ("[" ~ name_selector ~ "]")
+  | ("." ~ member_name_shorthand)
+}
+
+index_segment       =  { "[" ~ index_selector ~ "]" }
+number              =  { (int | "-0") ~ frac? ~ exp? }
+frac                =  { "." ~ ASCII_DIGIT+ }
+exp                 =  { ^"e" ~ ("-" | "+")? ~ ASCII_DIGIT+ }
+true_literal        =  { "true" }
+false_literal       =  { "false" }
+null                =  { "null" }
+function_name       =  { function_name_first ~ function_name_char* }
+function_name_first = _{ ASCII_ALPHA_LOWER }
+function_name_char  = _{ function_name_first | "_" | ASCII_DIGIT }
+
+function_expr = {
+    function_name ~ "(" ~ S ~ (function_argument ~ (S ~ "," ~ S ~ function_argument)*)? ~ S ~ ")"
+}
+
+function_argument = _{
+    filter_query
+  | logical_expr
+  | function_expr
+  | literal
+}
+
+segment = _{
+    child_segment
+  | descendant_segment
+}
+
+child_segment = {
+    bracketed_selection
+  | ("." ~ (wildcard_selector | member_name_shorthand))
+}
+
+bracketed_selection   = { "[" ~ S ~ selector ~ (S ~ "," ~ S ~ selector)* ~ S ~ "]" }
+member_name_shorthand = { name_first ~ name_char* }
+
+name_first = _{
+    ASCII_ALPHA
+  | "_"
+  | '\u{80}'..'\u{D7FF}'
+  | '\u{E000}'..'\u{10FFFF}'
+}
+
+name_char = _{ name_first | ASCII_DIGIT }
+
+descendant_segment = {
+    ".." ~ (bracketed_selection | wildcard_selector | member_name_shorthand)
+}
