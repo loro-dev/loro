@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.8.5
+
+### Patch Changes
+
+- a39daf8: fix: call callbacks on undoManager non-recursively to avoid Rust alias issue #831
+- 865bccb: fix: rm useless patch for wasm loading #834
+
 ## 1.8.4
 
 ### Patch Changes
