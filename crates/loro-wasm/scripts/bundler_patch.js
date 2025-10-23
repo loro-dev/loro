@@ -4,30 +4,21 @@ import * as wasm from "./loro_wasm_bg.wasm";
 import * as imports from "./loro_wasm_bg.js";
 
 if (wasm.__wbindgen_start) {
-    imports.__wbg_set_wasm(wasm);
-    // Seed wasm-bindgen's externref table so constants like `true`/`false`
-    // don't alias arbitrary externrefs when we instantiate manually.
-    if (typeof imports.__wbindgen_init_externref_table === "function") {
-        imports.__wbindgen_init_externref_table();
-    }
-    wasm.__wbindgen_start();
-} else if ('Bun' in globalThis) {
-    const { instance } = await WebAssembly.instantiateStreaming(fetch(Bun.pathToFileURL(wasm.default)), {
-        "./loro_wasm_bg.js": imports,
-    });
-    imports.__wbg_set_wasm(instance.exports);
-    // Bun path needs the same externref initialisation.
-    if (typeof imports.__wbindgen_init_externref_table === "function") {
-        imports.__wbindgen_init_externref_table();
-    }
+  imports.__wbg_set_wasm(wasm);
+  wasm.__wbindgen_start();
+} else if ("Bun" in globalThis) {
+  const { instance } = await WebAssembly.instantiateStreaming(
+    fetch(Bun.pathToFileURL(wasm.default)),
+    {
+      "./loro_wasm_bg.js": imports,
+    },
+  );
+  imports.__wbg_set_wasm(instance.exports);
 } else {
-    const wkmod = await import("./loro_wasm_bg.wasm");
-    const instance = new WebAssembly.Instance(wkmod.default, {
-        "./loro_wasm_bg.js": imports,
-    });
-    imports.__wbg_set_wasm(instance.exports);
-    if (typeof imports.__wbindgen_init_externref_table === "function") {
-        imports.__wbindgen_init_externref_table();
-    }
+  const wkmod = await import("./loro_wasm_bg.wasm");
+  const instance = new WebAssembly.Instance(wkmod.default, {
+    "./loro_wasm_bg.js": imports,
+  });
+  imports.__wbg_set_wasm(instance.exports);
 }
 export * from "./loro_wasm_bg.js";
