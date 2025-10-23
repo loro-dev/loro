@@ -92,6 +92,7 @@ pub enum ComparisonOperator {
     Gt,
     Le,
     Lt,
+    Contains
 }
 
 
@@ -259,6 +260,7 @@ impl fmt::Display for ComparisonOperator {
             ComparisonOperator::Gt => f.write_str(">"),
             ComparisonOperator::Le => f.write_str("<="),
             ComparisonOperator::Lt => f.write_str("<"),
+            ComparisonOperator::Contains => f.write_str("contains"),
         }
     }
 }

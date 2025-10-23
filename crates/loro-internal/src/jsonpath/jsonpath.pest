@@ -76,7 +76,7 @@ rel_query = { current_node_identifier ~ segments }
 
 // Comparison Expressions
 comparison_expr = { comparable ~ S ~ comparison_op ~ S ~ comparable }
-comparison_op = { "==" | "!=" | "<=" | ">=" | "<" | ">" }
+comparison_op = { "==" | "!=" | "<=" | ">=" | "<" | ">" | "contains" }
 comparable = _{ literal | singular_query | function_expr }
 
 // Literals

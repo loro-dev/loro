@@ -297,6 +297,7 @@ impl JSONPathParser {
             ">=" => ComparisonOperator::Ge,
             "<" => ComparisonOperator::Lt,
             ">" => ComparisonOperator::Gt,
+            "contains" => ComparisonOperator::Contains,
             _ => unreachable!(),
         };
 
