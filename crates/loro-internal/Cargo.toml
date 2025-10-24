@@ -80,6 +80,7 @@ ctor = "0.1.23"
 bench-utils = { path = "../bench-utils" }
 dev-utils = { path = "../dev-utils" }
 zstd = "0.13.0"
+criterion = { version = "0.7.0", features = ["html_reports"] }
 
 # See https://matklad.github.io/2021/02/27/delete-cargo-integration-tests.html
 [lib]
@@ -122,4 +123,8 @@ harness = false
 
 [[bench]]
 name = "tree"
+harness = false
+
+[[bench]]
+name = "jsonpath"
 harness = false

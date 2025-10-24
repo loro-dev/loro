@@ -83,8 +83,6 @@ pub use loro_kv_store as kv_store;
 
 #[cfg(feature = "jsonpath")]
 pub use loro_internal::jsonpath;
-#[cfg(feature = "jsonpath")]
-pub use loro_internal::jsonpath::JsonPathError;
 
 #[cfg(feature = "counter")]
 mod counter;
@@ -3287,6 +3285,7 @@ impl ContainerTrait for LoroUnknown {
 }
 
 use enum_as_inner::EnumAsInner;
+use loro_internal::jsonpath::jsonpath::JsonPathError;
 
 /// All the CRDT containers supported by Loro.
 #[derive(Clone, Debug, EnumAsInner)]
