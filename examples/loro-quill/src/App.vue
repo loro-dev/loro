@@ -5,7 +5,7 @@
   import "quill/dist/quill.bubble.css";
   import "quill/dist/quill.snow.css";
   import { QuillBinding } from "./binding";
-  import { LoroDoc } from "loro-crdt/base64";
+  import { LoroDoc } from "loro-crdt";
 
   const editor1 = ref<null | HTMLDivElement>(null);
   const editor2 = ref<null | HTMLDivElement>(null);
