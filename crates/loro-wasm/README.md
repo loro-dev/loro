@@ -72,6 +72,15 @@ Loro is a [CRDTs(Conflict-free Replicated Data Types)](https://crdt.tech/) libra
 > In this example, we demonstrate importing an entire Loro codebase into a Loro-powered 
 > version controller, preserving the complete Git DAG history while enabling fast version switching.
 
+## Debugging the Wasm build
+
+The standard build pipeline (`deno run -A ./scripts/build.ts dev|release`) now keeps DWARF debugging information through `wasm-bindgen` and emits two helper files alongside every `loro_wasm_bg.wasm` artifact:
+
+- `loro_wasm_bg.wasm.map` &mdash; a v3 source map derived from DWARF so that Chrome, Edge, and Firefox can show original Rust locations when inspecting stack traces.
+- `loro_wasm_bg.debug.wasm` &mdash; a companion module containing the stripped DWARF sections. The primary Wasm binary references it through the `external_debug_info` custom section, which keeps release bundles slim while still enabling on-demand debugging.
+
+Load the source map in browser devtools; when devtools fetches the debug companion it can map instructions back to Rust source files and line numbers without inflating the shipped `.wasm`.
+
 # Example
 
 [![Open in StackBlitz](https://developer.stackblitz.com/img/open_in_stackblitz.svg)](https://stackblitz.com/edit/loro-basic-test?file=test%2Floro-sync.test.ts)

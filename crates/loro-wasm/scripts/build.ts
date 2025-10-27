@@ -4,8 +4,10 @@ import brotliPromise from "npm:brotli-wasm";
 import { getOctokit } from "npm:@actions/github";
 
 // Polyfill for missing performance.markResourceTiming function in Deno
-if (typeof performance !== 'undefined' && !(performance as any).markResourceTiming) {
-  (performance as any).markResourceTiming = () => { };
+if (
+  typeof performance !== "undefined" && !(performance as any).markResourceTiming
+) {
+  (performance as any).markResourceTiming = () => {};
 }
 
 const __dirname = path.dirname(path.fromFileUrl(import.meta.url));
@@ -23,6 +25,10 @@ if (Deno.args[0] == "release") {
 const TARGETS = ["bundler", "nodejs", "web"];
 const startTime = performance.now();
 const LoroWasmDir = path.resolve(__dirname, "..");
+const WorkspaceCargoToml = path.resolve(__dirname, "../../../Cargo.toml");
+const WASM_DEBUG_RELATIVE = "./loro_wasm_bg.debug.wasm";
+const WASM_SOURCEMAP_RELATIVE = "./loro_wasm_bg.wasm.map";
+const textDecoder = new TextDecoder();
 
 // Check if running in CI
 const isCI = Deno.env.get("CI") === "true";
@@ -42,15 +48,13 @@ async function build() {
       throw new Error(`Invalid target ${target}`);
     }
 
-    buildTarget(target);
+    await buildTarget(target);
     return;
   }
 
-  await Promise.all(
-    TARGETS.map((target) => {
-      return buildTarget(target);
-    }),
-  );
+  for (const t of TARGETS) {
+    await buildTarget(t);
+  }
 
   if (profile !== "dev") {
     await Promise.all(
@@ -152,12 +156,33 @@ async function build() {
 }
 
 async function cargoBuild() {
-  const cmd =
-    `cargo build --target wasm32-unknown-unknown --profile ${profile}`;
-  console.log(cmd);
+  const cmd = [
+    "cargo",
+    "build",
+    "--target",
+    "wasm32-unknown-unknown",
+    "--profile",
+    profile,
+  ];
+  console.log(cmd.join(" "));
+  const env: Record<string, string> | undefined = profile === "release"
+    ? (() => {
+      const existing = Deno.env.get("RUSTFLAGS");
+      const next = ["-C debuginfo=2"];
+      if (existing && existing.length > 0) {
+        next.unshift(existing);
+      }
+      return {
+        RUSTFLAGS: next.join(" "),
+        CARGO_PROFILE_RELEASE_DEBUG: "true",
+        CARGO_PROFILE_RELEASE_STRIP: "none",
+      };
+    })()
+    : undefined;
   const status = await Deno.run({
-    cmd: cmd.split(" "),
+    cmd,
     cwd: LoroWasmDir,
+    env,
   }).status();
   if (!status.success) {
     console.log(
@@ -182,10 +207,12 @@ async function buildTarget(target: string) {
 
   // TODO: polyfill FinalizationRegistry
   const cmd =
-    `wasm-bindgen --weak-refs --target ${target} --out-dir ${target} ../../target/wasm32-unknown-unknown/${profileDir}/loro_wasm.wasm`;
+    `wasm-bindgen --keep-debug --weak-refs --target ${target} --out-dir ${target} ../../target/wasm32-unknown-unknown/${profileDir}/loro_wasm.wasm`;
   console.log(">", cmd);
   await Deno.run({ cmd: cmd.split(" "), cwd: LoroWasmDir }).status();
   console.log();
+
+  await postProcessWasm(targetDirPath);
 
   if (target === "nodejs") {
     console.log("🔨  Patching nodejs target");
@@ -208,6 +235,67 @@ async function buildTarget(target: string) {
     await Deno.writeTextFile(
       path.resolve(targetDirPath, "loro_wasm.js"),
       patch,
+    );
+  }
+}
+
+async function postProcessWasm(targetDirPath: string) {
+  const wasmPath = path.resolve(targetDirPath, "loro_wasm_bg.wasm");
+  try {
+    await Deno.stat(wasmPath);
+  } catch (_err) {
+    console.warn(`⚠️  Skipping post-processing, missing ${wasmPath}`);
+    return;
+  }
+
+  const sourcemapPath = path.resolve(targetDirPath, "loro_wasm_bg.wasm.map");
+  await runWasmTools([
+    "sourcemap",
+    wasmPath,
+    sourcemapPath,
+    WASM_SOURCEMAP_RELATIVE,
+  ]);
+
+  if (profile === "release") {
+    const debugPath = path.resolve(targetDirPath, "loro_wasm_bg.debug.wasm");
+    await runWasmTools([
+      "split-debug",
+      wasmPath,
+      wasmPath,
+      debugPath,
+      WASM_DEBUG_RELATIVE,
+    ]);
+  }
+}
+
+async function runWasmTools(args: string[]) {
+  const command = new Deno.Command("cargo", {
+    args: [
+      "run",
+      "--quiet",
+      "--manifest-path",
+      WorkspaceCargoToml,
+      "-p",
+      "loro-wasm-tools",
+      "--",
+      ...args,
+    ],
+    cwd: LoroWasmDir,
+    stdout: "piped",
+    stderr: "piped",
+  });
+  const { code, stdout, stderr } = await command.output();
+  const stdoutText = stdout.length ? textDecoder.decode(stdout) : "";
+  const stderrText = stderr.length ? textDecoder.decode(stderr) : "";
+  if (stdoutText.trim().length > 0) {
+    console.log(stdoutText);
+  }
+  if (stderrText.trim().length > 0) {
+    console.log(stderrText);
+  }
+  if (code !== 0) {
+    throw new Error(
+      `loro-wasm-tools ${args.join(" ")} failed with code ${code}`,
     );
   }
 }

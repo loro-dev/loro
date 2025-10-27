@@ -1,0 +1,12 @@
+[package]
+name = "loro-wasm-tools"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+anyhow = "1.0.89"
+clap = { version = "4.5.4", features = ["derive"] }
+wasm2map = "0.1"
+wasmparser = "0.215.0"
+wasm-encoder = "0.215.0"
