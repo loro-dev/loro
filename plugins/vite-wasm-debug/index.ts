@@ -4,11 +4,12 @@ import { fileURLToPath } from "node:url";
 import type { Plugin } from "vite";
 
 /**
- * Vite plug-in that keeps wasm-bindgen sourcemaps and DWARF debug companions
- * working seamlessly in both dev and production builds. It detects `.wasm`
- * binaries automatically, serves the corresponding `.wasm.map` and `.debug.wasm`
- * files, and optionally inlines Rust source code into the sourcemap so browser
- * devtools can display it without filesystem access.
+ * Vite plug-in that keeps wasm-bindgen sourcemaps (and optional DWARF debug
+ * companions) working seamlessly in both dev and production builds. It detects
+ * `.wasm` binaries automatically, serves the corresponding `.wasm.map` files,
+ * mirrors `.debug.wasm` when present, and optionally inlines Rust source code
+ * into the sourcemap so browser devtools can display it without filesystem
+ * access.
  */
 
 export interface WasmArtifact {
@@ -337,11 +338,13 @@ const registerArtifact = (wasmPath: string, mapPath?: string, debugPath?: string
     },
     generateBundle(_options, bundle) {
       for (const artifact of artifactMap.values()) {
-        if (!fs.existsSync(artifact.map) || !fs.existsSync(artifact.debug)) {
+        const hasMap = fs.existsSync(artifact.map);
+        const hasDebug = fs.existsSync(artifact.debug);
+        if (!hasMap && !hasDebug) {
           continue;
         }
-        const mapSource = loadMapBuffer(artifact);
-        const debugSource = loadDebugBuffer(artifact);
+        const mapSource = hasMap ? loadMapBuffer(artifact) : undefined;
+        const debugSource = hasDebug ? loadDebugBuffer(artifact) : undefined;
 
         let emitted = false;
         for (const chunk of Object.values(bundle)) {
@@ -354,29 +357,37 @@ const registerArtifact = (wasmPath: string, mapPath?: string, debugPath?: string
           ) {
             emitted = true;
             const base = chunk.fileName.replace(/\.wasm$/, "");
-            this.emitFile({
-              type: "asset",
-              fileName: `${base}.wasm.map`,
-              source: mapSource,
-            });
-            this.emitFile({
-              type: "asset",
-              fileName: `${base}.debug.wasm`,
-              source: debugSource,
-            });
+            if (hasMap && mapSource) {
+              this.emitFile({
+                type: "asset",
+                fileName: `${base}.wasm.map`,
+                source: mapSource,
+              });
+            }
+            if (hasDebug && debugSource) {
+              this.emitFile({
+                type: "asset",
+                fileName: `${base}.debug.wasm`,
+                source: debugSource,
+              });
+            }
           }
         }
         if (!emitted) {
-          this.emitFile({
-            type: "asset",
-            fileName: `assets/${artifact.mapBase}`,
-            source: mapSource,
-          });
-          this.emitFile({
-            type: "asset",
-            fileName: `assets/${artifact.debugBase}`,
-            source: debugSource,
-          });
+          if (hasMap && mapSource) {
+            this.emitFile({
+              type: "asset",
+              fileName: `assets/${artifact.mapBase}`,
+              source: mapSource,
+            });
+          }
+          if (hasDebug && debugSource) {
+            this.emitFile({
+              type: "asset",
+              fileName: `assets/${artifact.debugBase}`,
+              source: debugSource,
+            });
+          }
         }
       }
     },

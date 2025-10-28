@@ -1,4 +1,5 @@
 use std::fs;
+use std::ops::Range;
 use std::path::PathBuf;
 
 use anyhow::{ensure, Context, Result};
@@ -35,6 +36,13 @@ enum Command {
         /// Relative URL to the debug companion to embed via `external_debug_info`.
         url: String,
     },
+    /// Strip DWARF sections without producing a companion module.
+    StripDebug {
+        /// Input Wasm file to strip.
+        input: PathBuf,
+        /// Output Wasm file path.
+        output: PathBuf,
+    },
 }
 
 fn main() -> Result<()> {
@@ -47,6 +55,7 @@ fn main() -> Result<()> {
             debug_output,
             url,
         } => split_debug(input, output, debug_output, url),
+        Command::StripDebug { input, output } => strip_debug(input, output),
     }
 }
 
@@ -82,10 +91,85 @@ fn split_debug(input: PathBuf, output: PathBuf, debug_output: PathBuf, url: Stri
         input.display()
     );
 
+    let (remove_ranges, debug_ranges) = collect_debug_sections(&bytes)?;
+    ensure!(
+        !debug_ranges.is_empty(),
+        "no DWARF custom sections found in {}; build with debuginfo enabled",
+        input.display()
+    );
+
+    let mut stripped = strip_custom_sections(&bytes, &remove_ranges)?;
+
+    append_custom_section(&mut stripped, "external_debug_info", url.as_bytes());
+
+    let mut debug =
+        Vec::with_capacity(8 + debug_ranges.iter().map(|r| r.end - r.start).sum::<usize>());
+    debug.extend_from_slice(&bytes[..8]);
+    for range in debug_ranges {
+        debug.extend_from_slice(&bytes[range]);
+    }
+
+    if let Some(parent) = output.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create directory {}", parent.display()))?;
+    }
+    fs::write(&output, &stripped)
+        .with_context(|| format!("failed to write stripped Wasm {}", output.display()))?;
+
+    if let Some(parent) = debug_output.parent() {
+        fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "failed to create debug artifact directory {}",
+                parent.display()
+            )
+        })?;
+    }
+    fs::write(&debug_output, &debug)
+        .with_context(|| format!("failed to write debug Wasm {}", debug_output.display()))?;
+
+    Ok(())
+}
+
+fn strip_debug(input: PathBuf, output: PathBuf) -> Result<()> {
+    let bytes = fs::read(&input)
+        .with_context(|| format!("failed to read Wasm module {}", input.display()))?;
+    ensure!(
+        bytes.starts_with(&[0x00, 0x61, 0x73, 0x6d]),
+        "input {} is not a valid WebAssembly binary",
+        input.display()
+    );
+
+    let (remove_ranges, _debug_ranges) = collect_debug_sections(&bytes)?;
+    if remove_ranges.is_empty() {
+        // Nothing to strip; just copy input to output if they differ.
+        if input != output {
+            if let Some(parent) = output.parent() {
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("failed to create directory {}", parent.display()))?;
+            }
+            fs::write(&output, &bytes)
+                .with_context(|| format!("failed to write Wasm {}", output.display()))?;
+        }
+        return Ok(());
+    }
+
+    let stripped = strip_custom_sections(&bytes, &remove_ranges)?;
+
+    if let Some(parent) = output.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create directory {}", parent.display()))?;
+    }
+    fs::write(&output, &stripped)
+        .with_context(|| format!("failed to write stripped Wasm {}", output.display()))?;
+
+    Ok(())
+}
+
+fn collect_debug_sections(bytes: &[u8]) -> Result<(Vec<Range<usize>>, Vec<Range<usize>>)> {
     let mut remove_ranges = Vec::new();
     let mut debug_ranges = Vec::new();
 
-    for payload in WasmParser::new(0).parse_all(&bytes) {
+    for payload in WasmParser::new(0).parse_all(bytes) {
         let payload = payload.context("failed to parse Wasm payload")?;
         if let Payload::CustomSection(section) = payload {
             let payload_range = section.range();
@@ -118,16 +202,14 @@ fn split_debug(input: PathBuf, output: PathBuf, debug_output: PathBuf, url: Stri
         }
     }
 
-    ensure!(
-        !debug_ranges.is_empty(),
-        "no DWARF custom sections found in {}; build with debuginfo enabled",
-        input.display()
-    );
-
     remove_ranges.sort_by_key(|r| r.start);
+    Ok((remove_ranges, debug_ranges))
+}
+
+fn strip_custom_sections(bytes: &[u8], remove_ranges: &[Range<usize>]) -> Result<Vec<u8>> {
     let mut stripped = Vec::with_capacity(bytes.len());
     let mut cursor = 0;
-    for range in &remove_ranges {
+    for range in remove_ranges {
         ensure!(
             range.start >= cursor,
             "overlapping custom section ranges encountered"
@@ -136,35 +218,7 @@ fn split_debug(input: PathBuf, output: PathBuf, debug_output: PathBuf, url: Stri
         cursor = range.end;
     }
     stripped.extend_from_slice(&bytes[cursor..]);
-
-    append_custom_section(&mut stripped, "external_debug_info", url.as_bytes());
-
-    let mut debug =
-        Vec::with_capacity(8 + debug_ranges.iter().map(|r| r.end - r.start).sum::<usize>());
-    debug.extend_from_slice(&bytes[..8]);
-    for range in debug_ranges {
-        debug.extend_from_slice(&bytes[range]);
-    }
-
-    if let Some(parent) = output.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create directory {}", parent.display()))?;
-    }
-    fs::write(&output, &stripped)
-        .with_context(|| format!("failed to write stripped Wasm {}", output.display()))?;
-
-    if let Some(parent) = debug_output.parent() {
-        fs::create_dir_all(parent).with_context(|| {
-            format!(
-                "failed to create debug artifact directory {}",
-                parent.display()
-            )
-        })?;
-    }
-    fs::write(&debug_output, &debug)
-        .with_context(|| format!("failed to write debug Wasm {}", debug_output.display()))?;
-
-    Ok(())
+    Ok(stripped)
 }
 
 fn append_custom_section(buf: &mut Vec<u8>, name: &str, payload: &[u8]) {

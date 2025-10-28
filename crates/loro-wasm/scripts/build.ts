@@ -26,7 +26,6 @@ const TARGETS = ["bundler", "nodejs", "web"];
 const startTime = performance.now();
 const LoroWasmDir = path.resolve(__dirname, "..");
 const WorkspaceCargoToml = path.resolve(__dirname, "../../../Cargo.toml");
-const WASM_DEBUG_RELATIVE = "./loro_wasm_bg.debug.wasm";
 const WASM_SOURCEMAP_RELATIVE = "./loro_wasm_bg.wasm.map";
 const textDecoder = new TextDecoder();
 
@@ -257,13 +256,10 @@ async function postProcessWasm(targetDirPath: string) {
   ]);
 
   if (profile === "release") {
-    const debugPath = path.resolve(targetDirPath, "loro_wasm_bg.debug.wasm");
     await runWasmTools([
-      "split-debug",
+      "strip-debug",
       wasmPath,
       wasmPath,
-      debugPath,
-      WASM_DEBUG_RELATIVE,
     ]);
   }
 }
