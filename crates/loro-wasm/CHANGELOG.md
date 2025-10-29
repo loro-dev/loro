@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.8.6
+
+### Patch Changes
+
+- e97e605: fix: should not panic when getting unknown cursor #835
+
 ## 1.8.5
 
 ### Patch Changes
