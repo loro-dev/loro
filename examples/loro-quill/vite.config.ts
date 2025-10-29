@@ -12,7 +12,7 @@ export default defineConfig({
     vue(),
     wasm(),
     topLevelAwait(),
-    viteWasmDebug(),
+    viteWasmDebug({ readSourcesFromDisk: false }),
   ],
   build: {
     rollupOptions: {
