@@ -1,9 +1,14 @@
 #!/usr/bin/env node
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+
+const VIRTUAL_SCHEME = "loro";
+const VIRTUAL_PREFIX = `${VIRTUAL_SCHEME}:///`;
+const ABSOLUTE_PREFIX = "__abs__";
 
 const resolveArgPath = (value) =>
   value ? path.resolve(process.cwd(), value) : undefined;
@@ -12,9 +17,7 @@ const parseArgs = (argv) => {
   const result = new Map();
   for (let i = 0; i < argv.length; i++) {
     const raw = argv[i];
-    if (!raw.startsWith("--")) {
-      continue;
-    }
+    if (!raw.startsWith("--")) continue;
     const [flag, inline] = raw.slice(2).split("=", 2);
     if (inline !== undefined) {
       result.set(flag, inline);
@@ -40,20 +43,23 @@ const wasmPath =
 const workspaceRoot =
   resolveArgPath(args.get("workspace-root")) ?? process.cwd();
 const outPath = resolveArgPath(args.get("out")) ?? mapPath;
-const baseArg = args.get("base") ?? args.get("scheme") ?? "@loro-source";
-const absBaseArg =
-  args.get("abs-base") ?? args.get("abs-scheme") ?? `${baseArg}-abs`;
-
-const normalizeVirtualBase = (value) => {
-  const trimmed = value.trim();
-  if (!trimmed) return "/@loro-source";
-  const withoutSlashes = trimmed.replace(/^\/+|\/+$/g, "");
-  return `/${withoutSlashes}`;
-};
 
 const sanitizePathSeparators = (value) => value.replace(/\\/g, "/");
-const virtualSourceBase = normalizeVirtualBase(baseArg);
-const virtualAbsoluteBase = normalizeVirtualBase(absBaseArg);
+const stripLeadingSlashes = (value) => value.replace(/^\/+/, "");
+const stripLeadingDotSegments = (value) => {
+  let output = value;
+  while (output.startsWith("./")) {
+    output = output.slice(2);
+  }
+  while (output.startsWith("../")) {
+    output = output.slice(3);
+  }
+  return output;
+};
+
+const homeDir = typeof os.homedir === "function" ? os.homedir() : undefined;
+const homeDirSanitized = homeDir ? sanitizePathSeparators(homeDir) : undefined;
+const driveLetterPattern = /^[A-Za-z]:\//;
 
 if (!fs.existsSync(mapPath)) {
   console.error(`sourcemap not found: ${mapPath}`);
@@ -72,9 +78,7 @@ const computeSearchBases = (wasmFile, rootDir) => {
   while (!bases.has(current)) {
     bases.add(current);
     const parent = path.dirname(current);
-    if (parent === current) {
-      break;
-    }
+    if (parent === current) break;
     current = parent;
   }
   return Array.from(bases);
@@ -82,17 +86,64 @@ const computeSearchBases = (wasmFile, rootDir) => {
 
 const searchBases = computeSearchBases(wasmPath, workspaceRoot);
 
-const resolveSource = (source) => {
-  let candidate = sanitizePathSeparators(source);
-  if (candidate === virtualSourceBase) {
-    candidate = "";
-  } else if (candidate.startsWith(`${virtualSourceBase}/`)) {
-    candidate = candidate.slice(virtualSourceBase.length + 1);
-  } else if (candidate === virtualAbsoluteBase) {
-    candidate = "/";
-  } else if (candidate.startsWith(`${virtualAbsoluteBase}/`)) {
-    candidate = `/${candidate.slice(virtualAbsoluteBase.length + 1)}`;
+const makeVirtualUrl = (payload) => {
+  const sanitized = sanitizePathSeparators(payload ?? "");
+  const trimmed = sanitized.startsWith("/")
+    ? sanitized.slice(1)
+    : sanitized;
+  return `${VIRTUAL_PREFIX}${trimmed}`;
+};
+
+const resolveAbsolutePayload = (payload) => {
+  let cleaned = stripLeadingSlashes(sanitizePathSeparators(payload));
+  cleaned = stripLeadingDotSegments(cleaned);
+  if (!cleaned) return null;
+  if (cleaned.startsWith("~/")) {
+    if (!homeDir) return null;
+    const tail = cleaned.slice(2);
+    const parts = tail ? tail.split("/") : [];
+    return path.resolve(homeDir, ...parts);
   }
+  if (driveLetterPattern.test(cleaned)) {
+    return path.normalize(cleaned);
+  }
+  const root =
+    path.parse(workspaceRoot).root ||
+    path.parse(process.cwd()).root ||
+    path.sep;
+  const parts = cleaned.split("/");
+  return path.resolve(root, ...parts);
+};
+
+const resolveVirtualSource = (value) => {
+  if (!value.startsWith(VIRTUAL_PREFIX)) {
+    return null;
+  }
+  return value.slice(VIRTUAL_PREFIX.length);
+};
+
+const resolveSource = (source) => {
+  if (typeof source !== "string") {
+    return null;
+  }
+
+  let candidate = sanitizePathSeparators(source);
+  const virtualPayload = resolveVirtualSource(candidate);
+  if (virtualPayload != null) {
+    if (virtualPayload.startsWith(`${ABSOLUTE_PREFIX}/`)) {
+      const absolutePayload = virtualPayload.slice(ABSOLUTE_PREFIX.length + 1);
+      return resolveAbsolutePayload(absolutePayload);
+    }
+    const relative = stripLeadingDotSegments(
+      stripLeadingSlashes(virtualPayload),
+    );
+    if (!relative) {
+      return null;
+    }
+    const parts = relative.split("/").filter(Boolean);
+    return path.resolve(workspaceRoot, ...parts);
+  }
+
   if (candidate.startsWith("file://")) {
     try {
       candidate = fileURLToPath(candidate);
@@ -114,8 +165,7 @@ const resolveSource = (source) => {
 
 let map;
 try {
-  const raw = fs.readFileSync(mapPath, "utf8");
-  map = JSON.parse(raw);
+  map = JSON.parse(fs.readFileSync(mapPath, "utf8"));
 } catch (error) {
   console.error(`failed to read sourcemap ${mapPath}: ${error}`);
   process.exitCode = 1;
@@ -128,30 +178,72 @@ if (!Array.isArray(map.sources)) {
   process.exit();
 }
 
-const result = [];
-const existing = Array.isArray(map.sourcesContent) ? map.sourcesContent : [];
+const sourcesContent = Array.isArray(map.sourcesContent)
+  ? map.sourcesContent
+  : [];
+const nextSources = new Array(map.sources.length);
+const nextSourcesContent = new Array(map.sources.length).fill(null);
+
+const virtualizeWorkspacePath = (resolvedPath) => {
+  const relative = path.relative(workspaceRoot, resolvedPath);
+  const inside =
+    relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+  if (!inside) {
+    return null;
+  }
+  const payload = relative === ""
+    ? sanitizePathSeparators(path.basename(resolvedPath))
+    : sanitizePathSeparators(relative);
+  return makeVirtualUrl(payload || path.basename(resolvedPath));
+};
+
+const virtualizeAbsolutePath = (resolvedPath) => {
+  let sanitized = sanitizePathSeparators(resolvedPath);
+  if (homeDirSanitized) {
+    if (sanitized === homeDirSanitized) {
+      sanitized = "~";
+    } else if (sanitized.startsWith(`${homeDirSanitized}/`)) {
+      sanitized = `~/${sanitized.slice(homeDirSanitized.length + 1)}`;
+    }
+  }
+  return makeVirtualUrl(`${ABSOLUTE_PREFIX}/${sanitized}`);
+};
+
+const fallbackVirtualSource = (source) => {
+  if (typeof source !== "string") {
+    return makeVirtualUrl("unknown");
+  }
+  const cleaned = stripLeadingDotSegments(sanitizePathSeparators(source));
+  return makeVirtualUrl(cleaned || "unknown");
+};
 
 let missed = 0;
 for (let i = 0; i < map.sources.length; i++) {
-  const resolved = resolveSource(map.sources[i]);
-  if (!resolved) {
-    result[i] = existing[i] ?? null;
-    if (result[i] == null) {
-      missed += 1;
-    }
-    continue;
+  const originalSource = map.sources[i];
+  const resolved = resolveSource(originalSource);
+
+  if (resolved) {
+    const workspaceVirtual = virtualizeWorkspacePath(resolved);
+    nextSources[i] = workspaceVirtual ?? virtualizeAbsolutePath(resolved);
+  } else {
+    nextSources[i] = fallbackVirtualSource(originalSource);
   }
-  try {
-    result[i] = fs.readFileSync(resolved, "utf8");
-  } catch {
-    result[i] = existing[i] ?? null;
-    if (result[i] == null) {
-      missed += 1;
+
+  if (resolved) {
+    try {
+      nextSourcesContent[i] = fs.readFileSync(resolved, "utf8");
+    } catch {
+      nextSourcesContent[i] = sourcesContent[i] ?? null;
+      if (nextSourcesContent[i] == null) missed += 1;
     }
+  } else {
+    nextSourcesContent[i] = sourcesContent[i] ?? null;
+    if (nextSourcesContent[i] == null) missed += 1;
   }
 }
 
-map.sourcesContent = result;
+map.sources = nextSources;
+map.sourcesContent = nextSourcesContent;
 map.sourceRoot = "";
 
 try {
@@ -162,7 +254,7 @@ try {
   process.exit();
 }
 
-const inlined = result.length - missed;
+const inlined = nextSourcesContent.length - missed;
 console.log(
-  `embedded sources for ${inlined}/${result.length} entries into ${outPath}`,
+  `embedded sources for ${inlined}/${nextSourcesContent.length} entries into ${outPath}`,
 );

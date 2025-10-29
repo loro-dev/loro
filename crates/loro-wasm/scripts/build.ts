@@ -271,7 +271,11 @@ async function postProcessWasm(targetDirPath: string) {
 }
 
 async function embedSourcemap(target: string) {
-  const sourcemapPath = path.resolve(target, "loro_wasm_bg.wasm.map");
+  const sourcemapPath = path.resolve(
+    LoroWasmDir,
+    target,
+    "loro_wasm_bg.wasm.map",
+  );
   try {
     await Deno.stat(sourcemapPath);
   } catch (_err) {

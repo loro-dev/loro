@@ -3,7 +3,6 @@ import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 import wasm from "vite-plugin-wasm";
 import topLevelAwait from "vite-plugin-top-level-await";
-import { viteWasmDebug } from "../../plugins/vite-wasm-debug";
 
 const workspaceRoot = fileURLToPath(new URL("../../", import.meta.url));
 
@@ -12,7 +11,6 @@ export default defineConfig({
     vue(),
     wasm(),
     topLevelAwait(),
-    viteWasmDebug({ readSourcesFromDisk: false }),
   ],
   build: {
     rollupOptions: {
