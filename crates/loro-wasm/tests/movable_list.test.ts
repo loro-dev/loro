@@ -9,6 +9,7 @@ import {
   LoroText,
   TextDiff,
 } from "../bundler/index";
+import { expectDefined } from "./helpers";
 
 describe("movable list", () => {
   it("should work like list", () => {
@@ -73,14 +74,14 @@ describe("movable list", () => {
     list.push("c");
     expect(list.toArray()).toEqual(["a", "b", "c"]);
     const cursor = list.getCursor(1)!;
-    const ans = doc.getCursorPos(cursor);
+    const ans = expectDefined(doc.getCursorPos(cursor), "cursor pos missing");
     expect(ans.offset).toBe(1);
     expect(ans.update).toBeFalsy();
 
     // cursor position should not be affected by set and move
     list.set(1, "d");
     list.move(1, 2);
-    const ans2 = doc.getCursorPos(cursor);
+    const ans2 = expectDefined(doc.getCursorPos(cursor), "cursor pos missing");
     expect(ans2.offset).toBe(1);
     expect(ans2.update).toBeTruthy();
     const pos = ans2.update?.pos();

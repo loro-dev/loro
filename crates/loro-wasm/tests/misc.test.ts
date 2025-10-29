@@ -7,6 +7,7 @@ import {
   VersionVector,
 } from "../bundler/index";
 import { expectTypeOf } from "vitest";
+import { expectDefined } from "./helpers";
 
 function assertEquals(a: any, b: any) {
   expect(a).toStrictEqual(b);
@@ -257,21 +258,21 @@ describe("list stable position", () => {
     const pos0 = list.getCursor(0);
     list.insert(1, "b");
     {
-      const ans = loro.getCursorPos(pos0!);
+      const ans = expectDefined(loro.getCursorPos(pos0!), "cursor pos missing");
       expect(ans.offset).toEqual(0);
       expect(ans.side).toEqual(0);
       expect(ans.update).toBeUndefined();
     }
     list.insert(0, "c");
     {
-      const ans = loro.getCursorPos(pos0!);
+      const ans = expectDefined(loro.getCursorPos(pos0!), "cursor pos missing");
       expect(ans.offset).toEqual(1);
       expect(ans.side).toEqual(0);
       expect(ans.update).toBeUndefined();
     }
     list.delete(1, 1);
     {
-      const ans = loro.getCursorPos(pos0!);
+      const ans = expectDefined(loro.getCursorPos(pos0!), "cursor pos missing");
       expect(ans.offset).toEqual(1);
       expect(ans.side).toEqual(-1);
       expect(ans.update).toBeDefined();
