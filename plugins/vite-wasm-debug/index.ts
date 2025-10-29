@@ -41,14 +41,6 @@ export interface ViteWasmDebugOptions {
    * DevTools does not attempt to fetch local filesystem paths.
    */
   virtualizeSources?: boolean;
-  /**
-   * Base path used for virtualized project sources (default: `/@loro-source`).
-   */
-  virtualSourceBase?: string;
-  /**
-   * Base path used for virtualized absolute/registry sources (default: `/@loro-source-abs`).
-   */
-  virtualAbsoluteBase?: string;
 }
 
 interface ResolvedArtifact {
@@ -68,42 +60,6 @@ const DEFAULT_DEBUG_SUFFIX = ".debug.wasm";
 type CacheEntry = { mtime: number; buffer: Buffer };
 
 type ArtifactKind = "map" | "debug";
-
-const isUrlLike = (value: string): boolean =>
-  /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(value);
-
-const normalizeVirtualBase = (value: string): string => {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return "/@loro-source";
-  }
-  const withoutSlashes = trimmed.replace(/^\/+|\/+$/g, "");
-  return `/${withoutSlashes}`;
-};
-
-const sanitizePathSeparators = (value: string): string =>
-  value.replace(/\\/g, "/");
-
-const stripDotPrefix = (value: string): string =>
-  value.replace(/^(?:\.\/)+/, "");
-
-const sanitizeRelativeSource = (value: string): string => {
-  const sanitized = stripDotPrefix(sanitizePathSeparators(value));
-  return sanitized.startsWith("/") ? sanitized.slice(1) : sanitized;
-};
-
-const sanitizeAbsoluteSource = (value: string): string => {
-  const sanitized = sanitizePathSeparators(value);
-  if (/^[a-zA-Z]:\//.test(sanitized)) {
-    return sanitized.replace(/^([a-zA-Z]):\//, "$1/");
-  }
-  return sanitized.replace(/^\/+/, "");
-};
-
-const joinVirtualPath = (base: string, suffix: string): string => {
-  const trimmedSuffix = suffix.replace(/^\/+/, "");
-  return `${base}/${trimmedSuffix}`.replace(/\/{2,}/g, "/");
-};
 
 /**
  * Normalise Vite module ids (e.g. `\0`, `file://`, `@fs/`) into absolute file
@@ -160,7 +116,10 @@ const resolveSidecarPaths = (
 
   const resolvedDebug = debugPath
     ? path.resolve(rootDir, debugPath)
-    : path.join(path.dirname(wasmPath), `${path.basename(wasmPath, ".wasm")}${DEFAULT_DEBUG_SUFFIX}`);
+    : path.join(
+        path.dirname(wasmPath),
+        `${path.basename(wasmPath, ".wasm")}${DEFAULT_DEBUG_SUFFIX}`,
+      );
 
   return { map: resolvedMap, debug: resolvedDebug };
 };
@@ -184,10 +143,6 @@ export function viteWasmDebug(options: ViteWasmDebugOptions = {}): Plugin {
   const embedSources = options.embedSources ?? true;
   const readSourcesFromDisk = options.readSourcesFromDisk ?? embedSources;
   const virtualizeSources = options.virtualizeSources ?? true;
-  const sourceBaseName = options.virtualSourceBase ?? "@loro-source";
-  const absBaseName = options.virtualAbsoluteBase ?? `${sourceBaseName}-abs`;
-  const virtualSourceBase = normalizeVirtualBase(sourceBaseName);
-  const virtualAbsoluteBase = normalizeVirtualBase(absBaseName);
   let workspaceRoot = options.workspaceRoot
     ? path.resolve(options.workspaceRoot)
     : process.cwd();
@@ -235,7 +190,10 @@ export function viteWasmDebug(options: ViteWasmDebugOptions = {}): Plugin {
     return artifact;
   };
 
-  const resolveSource = (artifact: ResolvedArtifact, source: string): string | null => {
+  const resolveSource = (
+    artifact: ResolvedArtifact,
+    source: string,
+  ): string | null => {
     if (!readSourcesFromDisk) {
       return null;
     }
@@ -275,21 +233,23 @@ export function viteWasmDebug(options: ViteWasmDebugOptions = {}): Plugin {
         if (!Array.isArray(parsed.sourcesContent)) {
           parsed.sourcesContent = new Array(parsed.sources.length).fill(null);
         }
-        parsed.sourcesContent = parsed.sources.map((source: string, idx: number) => {
-          const existing = parsed.sourcesContent[idx];
-          if (typeof existing === "string") {
-            return existing;
-          }
-          const resolved = resolveSource(artifact, source);
-          if (!resolved) {
-            return null;
-          }
-          try {
-            return fs.readFileSync(resolved, "utf8");
-          } catch {
-            return null;
-          }
-        });
+        parsed.sourcesContent = parsed.sources.map(
+          (source: string, idx: number) => {
+            const existing = parsed.sourcesContent[idx];
+            if (typeof existing === "string") {
+              return existing;
+            }
+            const resolved = resolveSource(artifact, source);
+            if (!resolved) {
+              return null;
+            }
+            try {
+              return fs.readFileSync(resolved, "utf8");
+            } catch {
+              return null;
+            }
+          },
+        );
         if (virtualizeSources) {
           parsed.sourceRoot = "";
           for (const key of artifact.virtualSourceKeys) {
@@ -297,86 +257,31 @@ export function viteWasmDebug(options: ViteWasmDebugOptions = {}): Plugin {
           }
           artifact.virtualSourceKeys.clear();
         }
-        parsed.sources = parsed.sources.map((source: string, idx: number) => {
-          const normalized = sanitizePathSeparators(source);
-          if (!virtualizeSources || isUrlLike(normalized)) {
-            return normalized;
-          }
-          const content = parsed.sourcesContent[idx];
-          if (
-            normalized === virtualSourceBase ||
-            normalized.startsWith(`${virtualSourceBase}/`)
-          ) {
-            if (typeof content === "string") {
-              virtualSourceCache.set(normalized, content);
-            }
-            artifact.virtualSourceKeys.add(normalized);
-            return normalized;
-          }
-          if (
-            normalized === virtualAbsoluteBase ||
-            normalized.startsWith(`${virtualAbsoluteBase}/`)
-          ) {
-            if (typeof content === "string") {
-              virtualSourceCache.set(normalized, content);
-            }
-            artifact.virtualSourceKeys.add(normalized);
-            return normalized;
-          }
-          if (normalized.startsWith("loro://")) {
-            const legacy = sanitizeRelativeSource(normalized.slice("loro://".length));
-            const suffix = legacy || `${artifact.stem}/${idx}.rs`;
-            const virtualPath = joinVirtualPath(virtualSourceBase, suffix);
-            if (typeof content === "string") {
-              virtualSourceCache.set(virtualPath, content);
-            }
-            artifact.virtualSourceKeys.add(virtualPath);
-            return virtualPath;
-          }
-          if (normalized.startsWith("loro-abs://")) {
-            const legacy = sanitizeAbsoluteSource(normalized.slice("loro-abs://".length));
-            const suffix = legacy || `${artifact.stem}/${idx}.rs`;
-            const virtualPath = joinVirtualPath(virtualAbsoluteBase, suffix);
-            if (typeof content === "string") {
-              virtualSourceCache.set(virtualPath, content);
-            }
-            artifact.virtualSourceKeys.add(virtualPath);
-            return virtualPath;
-          }
-          let virtualPath: string;
-          if (/^[a-zA-Z]:\//.test(normalized) || normalized.startsWith("/")) {
-            const absolute = sanitizeAbsoluteSource(normalized);
-            const suffix = absolute || `${artifact.stem}/${idx}.rs`;
-            virtualPath = joinVirtualPath(virtualAbsoluteBase, suffix);
-          } else {
-            const relative = sanitizeRelativeSource(normalized);
-            const suffix = relative || `${artifact.stem}/${idx}.rs`;
-            virtualPath = joinVirtualPath(virtualSourceBase, suffix);
-          }
-          if (typeof content === "string") {
-            virtualSourceCache.set(virtualPath, content);
-          }
-          artifact.virtualSourceKeys.add(virtualPath);
-          return virtualPath;
-        });
       }
       return Buffer.from(JSON.stringify(parsed));
     });
 
   const loadDebugBuffer = (artifact: ResolvedArtifact): Buffer =>
-    readWithCache(artifact.debug, debugCache, () => fs.readFileSync(artifact.debug));
+    readWithCache(artifact.debug, debugCache, () =>
+      fs.readFileSync(artifact.debug),
+    );
 
   const matchArtifact = (
     filePath: string,
   ): { artifact: ResolvedArtifact; kind: ArtifactKind } | undefined => {
     const name = path.basename(filePath);
     for (const artifact of artifacts.values()) {
-      if (name === artifact.mapBase ||
-        (name.startsWith(`${artifact.stem}-`) && name.endsWith(".wasm.map"))) {
+      if (
+        name === artifact.mapBase ||
+        (name.startsWith(`${artifact.stem}-`) && name.endsWith(".wasm.map"))
+      ) {
         return { artifact, kind: "map" };
       }
-      if (name === artifact.debugBase ||
-        (name.startsWith(`${artifact.stem}-`) && name.endsWith(DEFAULT_DEBUG_SUFFIX))) {
+      if (
+        name === artifact.debugBase ||
+        (name.startsWith(`${artifact.stem}-`) &&
+          name.endsWith(DEFAULT_DEBUG_SUFFIX))
+      ) {
         return { artifact, kind: "debug" };
       }
     }
@@ -389,7 +294,10 @@ export function viteWasmDebug(options: ViteWasmDebugOptions = {}): Plugin {
     }
     if (filePath.endsWith(".wasm.map")) {
       const wasmCandidate = filePath.replace(/\.wasm\.map$/, ".wasm");
-      const debugCandidate = filePath.replace(/\.wasm\.map$/, DEFAULT_DEBUG_SUFFIX);
+      const debugCandidate = filePath.replace(
+        /\.wasm\.map$/,
+        DEFAULT_DEBUG_SUFFIX,
+      );
       registerArtifact(
         wasmCandidate,
         filePath,
@@ -418,19 +326,6 @@ export function viteWasmDebug(options: ViteWasmDebugOptions = {}): Plugin {
       return;
     }
     const pathname = decodeURIComponent(url.split("?")[0] ?? "");
-    if (
-      virtualizeSources &&
-      (pathname.startsWith(`${virtualSourceBase}/`) ||
-        pathname.startsWith(`${virtualAbsoluteBase}/`))
-    ) {
-      const cachedSource = virtualSourceCache.get(pathname);
-      if (cachedSource != null) {
-        res.statusCode = 200;
-        res.setHeader("content-type", "text/plain; charset=utf-8");
-        res.end(cachedSource);
-        return;
-      }
-    }
     let match = matchArtifact(pathname);
     if (!match) {
       const normalized = normalizePath(pathname);

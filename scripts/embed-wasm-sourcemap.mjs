@@ -36,13 +36,13 @@ const mapPath =
   resolveArgPath(args.get("map")) ??
   path.resolve("crates/loro-wasm/bundler/loro_wasm_bg.wasm.map");
 const wasmPath =
-  resolveArgPath(args.get("wasm")) ??
-  mapPath.replace(/\.wasm\.map$/, ".wasm");
+  resolveArgPath(args.get("wasm")) ?? mapPath.replace(/\.wasm\.map$/, ".wasm");
 const workspaceRoot =
   resolveArgPath(args.get("workspace-root")) ?? process.cwd();
 const outPath = resolveArgPath(args.get("out")) ?? mapPath;
 const baseArg = args.get("base") ?? args.get("scheme") ?? "@loro-source";
-const absBaseArg = args.get("abs-base") ?? args.get("abs-scheme") ?? `${baseArg}-abs`;
+const absBaseArg =
+  args.get("abs-base") ?? args.get("abs-scheme") ?? `${baseArg}-abs`;
 
 const normalizeVirtualBase = (value) => {
   const trimmed = value.trim();
@@ -52,23 +52,6 @@ const normalizeVirtualBase = (value) => {
 };
 
 const sanitizePathSeparators = (value) => value.replace(/\\/g, "/");
-const stripDotPrefix = (value) => value.replace(/^(?:\.\/)+/, "");
-const sanitizeRelativeSource = (value) => {
-  const sanitized = stripDotPrefix(sanitizePathSeparators(value));
-  return sanitized.startsWith("/") ? sanitized.slice(1) : sanitized;
-};
-const sanitizeAbsoluteSource = (value) => {
-  const sanitized = sanitizePathSeparators(value);
-  if (/^[a-zA-Z]:\//.test(sanitized)) {
-    return sanitized.replace(/^([a-zA-Z]):\//, "$1/");
-  }
-  return sanitized.replace(/^\/+/, "");
-};
-const joinVirtualPath = (base, suffix) => {
-  const trimmedSuffix = suffix.replace(/^\/+/, "");
-  return `${base}/${trimmedSuffix}`.replace(/\/{2,}/g, "/");
-};
-
 const virtualSourceBase = normalizeVirtualBase(baseArg);
 const virtualAbsoluteBase = normalizeVirtualBase(absBaseArg);
 
@@ -146,9 +129,7 @@ if (!Array.isArray(map.sources)) {
 }
 
 const result = [];
-const existing = Array.isArray(map.sourcesContent)
-  ? map.sourcesContent
-  : [];
+const existing = Array.isArray(map.sourcesContent) ? map.sourcesContent : [];
 
 let missed = 0;
 for (let i = 0; i < map.sources.length; i++) {
@@ -172,38 +153,6 @@ for (let i = 0; i < map.sources.length; i++) {
 
 map.sourcesContent = result;
 map.sourceRoot = "";
-map.sources = map.sources.map((source, idx) => {
-  const normalized = sanitizePathSeparators(source);
-  if (
-    normalized === virtualSourceBase ||
-    normalized.startsWith(`${virtualSourceBase}/`) ||
-    normalized === virtualAbsoluteBase ||
-    normalized.startsWith(`${virtualAbsoluteBase}/`)
-  ) {
-    return normalized;
-  }
-  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(normalized)) {
-    if (normalized.startsWith("loro://")) {
-      const legacy = sanitizeRelativeSource(normalized.slice("loro://".length));
-      const suffix = legacy || `artifact/${idx}.rs`;
-      return joinVirtualPath(virtualSourceBase, suffix);
-    }
-    if (normalized.startsWith("loro-abs://")) {
-      const legacy = sanitizeAbsoluteSource(normalized.slice("loro-abs://".length));
-      const suffix = legacy || `artifact/${idx}.rs`;
-      return joinVirtualPath(virtualAbsoluteBase, suffix);
-    }
-    return normalized;
-  }
-  if (/^[a-zA-Z]:\//.test(normalized) || normalized.startsWith("/")) {
-    const absolute = sanitizeAbsoluteSource(normalized);
-    const suffix = absolute || `artifact/${idx}.rs`;
-    return joinVirtualPath(virtualAbsoluteBase, suffix);
-  }
-  const relative = sanitizeRelativeSource(normalized);
-  const suffix = relative || `artifact/${idx}.rs`;
-  return joinVirtualPath(virtualSourceBase, suffix);
-});
 
 try {
   fs.writeFileSync(outPath, JSON.stringify(map));
