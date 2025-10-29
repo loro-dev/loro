@@ -2,7 +2,7 @@
  *  The skeleton of this binding is learned from https://github.com/yjs/y-quill
  */
 
-import { Delta, LoroDoc, LoroText } from "loro-crdt/base64";
+import { Delta, LoroDoc, LoroText } from "loro-crdt";
 import Quill, { DeltaOperation, DeltaStatic, Sources } from "quill";
 // @ts-ignore
 import isEqual from "is-equal";
@@ -12,13 +12,13 @@ const Delta = Quill.import("delta");
 // setDebug("*");
 
 const EXPAND_CONFIG: { [key in string]: "before" | "after" | "both" | "none" } =
-{
-  bold: "after",
-  italic: "after",
-  underline: "after",
-  link: "none",
-  header: "none",
-};
+  {
+    bold: "after",
+    italic: "after",
+    underline: "after",
+    link: "none",
+    header: "none",
+  };
 
 export class QuillBinding {
   private richtext: LoroText;
