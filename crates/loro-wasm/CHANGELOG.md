@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.8.7
+
+### Patch Changes
+
+- 6f98702: Add WASM sourcemap support #836
+
 ## 1.8.6
 
 ### Patch Changes
