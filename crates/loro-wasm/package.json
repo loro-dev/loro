@@ -29,7 +29,7 @@
   ],
   "scripts": {
     "build-dev": "deno run -A ./scripts/build.ts dev && rollup -c && deno run -A ./scripts/post-rollup.ts && npm run test",
-    "build-release": "deno run -A ./scripts/build.ts release && rollup -c && deno run -A ./scripts/post-rollup.ts && npm run test && node ../../scripts/embed-wasm-sourcemap.mjs --map bundler/loro_wasm_bg.wasm.map --workspace-root ..",
+    "build-release": "deno run -A ./scripts/build.ts release && rollup -c && deno run -A ./scripts/post-rollup.ts && npm run test",
     "test": "node --expose-gc ./node_modules/vitest/vitest.mjs run && npx tsc --noEmit && cd ./deno_tests && deno test -A && cd ../bun_tests && bun test"
   },
   "homepage": "https://loro.dev",

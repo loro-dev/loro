@@ -27,6 +27,10 @@ const startTime = performance.now();
 const LoroWasmDir = path.resolve(__dirname, "..");
 const WorkspaceCargoToml = path.resolve(__dirname, "../../../Cargo.toml");
 const WASM_SOURCEMAP_RELATIVE = "./loro_wasm_bg.wasm.map";
+const EMBED_SCRIPT = path.resolve(
+  __dirname,
+  "../../../scripts/embed-wasm-sourcemap.mjs",
+);
 const textDecoder = new TextDecoder();
 
 // Check if running in CI
@@ -48,11 +52,13 @@ async function build() {
     }
 
     await buildTarget(target);
+    await embedSourcemap(target);
     return;
   }
 
   for (const t of TARGETS) {
     await buildTarget(t);
+    await embedSourcemap(t);
   }
 
   if (profile !== "dev") {
@@ -261,6 +267,32 @@ async function postProcessWasm(targetDirPath: string) {
       wasmPath,
       wasmPath,
     ]);
+  }
+}
+
+async function embedSourcemap(target: string) {
+  const sourcemapPath = path.resolve(target, "loro_wasm_bg.wasm.map");
+  try {
+    await Deno.stat(sourcemapPath);
+  } catch (_err) {
+    return;
+  }
+  const workspaceRoot = path.resolve(LoroWasmDir, "..", "..");
+  const cmd = [
+    "node",
+    EMBED_SCRIPT,
+    "--map",
+    sourcemapPath,
+    "--workspace-root",
+    workspaceRoot,
+  ];
+  console.log(">", cmd.join(" "));
+  const status = await Deno.run({
+    cmd,
+    cwd: LoroWasmDir,
+  }).status();
+  if (!status.success) {
+    throw new Error("embed-wasm-sourcemap failed");
   }
 }
 
