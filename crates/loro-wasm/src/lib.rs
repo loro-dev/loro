@@ -14,7 +14,7 @@ use loro_internal::{
     change::Lamport,
     configure::{StyleConfig, StyleConfigMap},
     container::{richtext::ExpandType, ContainerID},
-    cursor::{self, Side},
+    cursor::{self, CannotFindRelativePosition, Side},
     encoding::ImportBlobMetadata,
     event::Index,
     handler::{
@@ -204,7 +204,7 @@ extern "C" {
     pub type JsImportBlobMetadata;
     #[wasm_bindgen(typescript_type = "Side")]
     pub type JsSide;
-    #[wasm_bindgen(typescript_type = "{ update?: Cursor, offset: number, side: Side }")]
+    #[wasm_bindgen(typescript_type = "{ update?: Cursor, offset: number, side: Side } | undefined")]
     pub type JsCursorQueryAns;
     #[wasm_bindgen(typescript_type = "UndoConfig")]
     pub type JsUndoConfig;
@@ -1998,10 +1998,21 @@ impl LoroDoc {
     /// }
     /// ```
     pub fn getCursorPos(&self, cursor: &Cursor) -> JsResult<JsCursorQueryAns> {
-        let ans = self
-            .doc
-            .query_pos(&cursor.pos)
-            .map_err(|e| JsError::new(&e.to_string()))?;
+        let cursor = self.doc.query_pos(&cursor.pos);
+        let ans = match cursor {
+            Ok(ans) => ans,
+            Err(
+                CannotFindRelativePosition::ContainerDeleted
+                | CannotFindRelativePosition::IdNotFound,
+            ) => return Ok(JsValue::UNDEFINED.into()),
+            Err(CannotFindRelativePosition::HistoryCleared) => {
+                console_warn!(
+                    "Cannot find cursor position of {:?} because the related history is cleared.",
+                    cursor
+                );
+                return Ok(JsValue::UNDEFINED.into());
+            }
+        };
 
         let obj = Object::new();
         let update = ans.update.map(|u| Cursor { pos: u });

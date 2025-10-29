@@ -1,5 +1,5 @@
 #![allow(unexpected_cfgs)]
-use loro::{EncodedBlobMode, ExportMode, LoroDoc, UndoManager};
+use loro::{cursor::Cursor, ContainerID, EncodedBlobMode, ExportMode, LoroDoc, UndoManager};
 use std::sync::{Arc, Mutex};
 use tracing::{trace, trace_span};
 
@@ -314,4 +314,20 @@ fn issue_822_tree_shallow_snapshot_roundtrip() {
         "tree shallow value should roundtrip"
     );
     assert_eq!(doc_before, doc_after, "doc shallow value should roundtrip");
+}
+
+#[test]
+fn fix_get_unknown_cursor_position() {
+    let doc = LoroDoc::new();
+    let pos = doc.get_cursor_pos(&Cursor::new(
+        None,
+        ContainerID::Normal {
+            peer: 10,
+            counter: 0,
+            container_type: loro::ContainerType::List,
+        },
+        loro::cursor::Side::Left,
+        0,
+    ));
+    assert!(matches!(pos, Err(..)));
 }

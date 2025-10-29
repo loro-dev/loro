@@ -1579,6 +1579,10 @@ impl LoroDoc {
         pos: &Cursor,
         ret_event_index: bool,
     ) -> Result<PosQueryResult, CannotFindRelativePosition> {
+        if !self.has_container(&pos.container) {
+            return Err(CannotFindRelativePosition::IdNotFound);
+        }
+
         let mut state = self.state.lock().unwrap();
         if let Some(ans) = state.get_relative_position(pos, ret_event_index) {
             Ok(PosQueryResult {
