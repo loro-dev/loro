@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.8.8
+
+### Patch Changes
+
+- 35d9064: Fix several places that may panic #840
+
 ## 1.8.7
 
 ### Patch Changes
