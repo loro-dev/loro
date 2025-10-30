@@ -118,7 +118,6 @@ impl JSONPathParser {
             .try_fold(Segment::Root {}, |acc, segment| {
                 self.parse_segment(acc, segment)
             })?;
-
         Ok(Query { segments })
     }
 
@@ -152,7 +151,7 @@ impl JSONPathParser {
             }
             Rule::wildcard_selector => vec![Selector::Wild {}],
             Rule::member_name_shorthand => vec![Selector::Name {
-                // for child_segment
+                // for child_segment name:
                 name: segment.as_str().to_owned(),
             }],
             _ => unreachable!(),
@@ -174,7 +173,7 @@ impl JSONPathParser {
             },
             Rule::filter_selector => self.parse_filter_selector(selector)?,
             Rule::member_name_shorthand => Selector::Name {
-                // for name_segment
+                // for name_segment name:
                 name: selector.as_str().to_owned(),
             },
             _ => unreachable!(),
@@ -213,11 +212,9 @@ impl JSONPathParser {
     ) -> Result<FilterExpression, JSONPathError> {
         let mut it = expr.into_inner();
         let mut or_expr = self.parse_logical_and_expression(it.next().unwrap(), assert_compared)?;
-
         if assert_compared {
             self.assert_compared(&or_expr)?;
         }
-
         for and_expr in it {
             let right = self.parse_logical_and_expression(and_expr, assert_compared)?;
             if assert_compared {
@@ -229,7 +226,6 @@ impl JSONPathParser {
                 right: Box::new(right),
             };
         }
-
         Ok(or_expr)
     }
 
@@ -240,25 +236,20 @@ impl JSONPathParser {
     ) -> Result<FilterExpression, JSONPathError> {
         let mut it = expr.into_inner();
         let mut and_expr = self.parse_basic_expression(it.next().unwrap())?;
-
         if assert_compared {
             self.assert_compared(&and_expr)?;
         }
-
         for basic_expr in it {
             let right = self.parse_basic_expression(basic_expr)?;
-
             if assert_compared {
                 self.assert_compared(&right)?;
             }
-
             and_expr = FilterExpression::Logical {
                 left: Box::new(and_expr),
                 operator: LogicalOperator::And,
                 right: Box::new(right),
             };
         }
-
         Ok(and_expr)
     }
 
@@ -289,7 +280,6 @@ impl JSONPathParser {
     ) -> Result<FilterExpression, JSONPathError> {
         let mut it = expr.into_inner();
         let left = self.parse_comparable(it.next().unwrap())?;
-
         let operator = match it.next().unwrap().as_str() {
             "==" => ComparisonOperator::Eq,
             "!=" => ComparisonOperator::Ne,
@@ -298,13 +288,12 @@ impl JSONPathParser {
             "<" => ComparisonOperator::Lt,
             ">" => ComparisonOperator::Gt,
             "contains" => ComparisonOperator::Contains,
+            "in" => ComparisonOperator::In,
             _ => unreachable!(),
         };
-
         let right = self.parse_comparable(it.next().unwrap())?;
         self.assert_comparable(&left)?;
         self.assert_comparable(&right)?;
-
         Ok(FilterExpression::Comparison {
             left: Box::new(left),
             operator,
@@ -324,13 +313,13 @@ impl JSONPathParser {
             Rule::true_literal => FilterExpression::True_ {},
             Rule::false_literal => FilterExpression::False_ {},
             Rule::null => FilterExpression::Null {},
+            Rule::array_literal => self.parse_array_literal(expr)?,
             Rule::rel_singular_query => {
                 let segments = expr
                     .into_inner()
                     .try_fold(Segment::Root {}, |acc, segment| {
                         self.parse_segment(acc, segment)
                     });
-
                 FilterExpression::RelativeQuery {
                     query: Box::new(Query { segments: segments? }),
                 }
@@ -341,7 +330,6 @@ impl JSONPathParser {
                     .try_fold(Segment::Root {}, |acc, segment| {
                         self.parse_segment(acc, segment)
                     });
-
                 FilterExpression::RootQuery {
                     query: Box::new(Query { segments: segments? }),
                 }
@@ -355,12 +343,10 @@ impl JSONPathParser {
         if expr.as_str() == "-0" {
             return Ok(FilterExpression::Int { value: 0 });
         }
-
         // TODO: change pest grammar to indicate positive or negative exponent?
         let mut it = expr.into_inner();
         let mut is_float = false;
         let mut n = it.next().unwrap().as_str().to_string(); // int
-
         if let Some(pair) = it.next() {
             match pair.as_rule() {
                 Rule::frac => {
@@ -377,7 +363,6 @@ impl JSONPathParser {
                 _ => unreachable!(),
             }
         }
-
         if let Some(pair) = it.next() {
             let exp_str = pair.as_str();
             if exp_str.contains('-') {
@@ -385,7 +370,6 @@ impl JSONPathParser {
             }
             n.push_str(exp_str);
         }
-
         if is_float {
             Ok(FilterExpression::Float {
                 value: n
@@ -400,6 +384,16 @@ impl JSONPathParser {
                     as i64,
             })
         }
+    }
+
+    fn parse_array_literal(&self, expr: Pair<Rule>) -> Result<FilterExpression, JSONPathError> {
+        let values: Result<Vec<_>, _> = expr
+            .into_inner()
+            .map(|p| self.parse_comparable(p))
+            .collect();
+        Ok(FilterExpression::Array {
+            values: values?,
+        })
     }
 
     fn parse_test_expression(&self, expr: Pair<Rule>) -> Result<FilterExpression, JSONPathError> {
@@ -424,7 +418,6 @@ impl JSONPathParser {
                     .try_fold(Segment::Root {}, |acc, segment| {
                         self.parse_segment(acc, segment)
                     });
-
                 FilterExpression::RelativeQuery {
                     query: Box::new(Query { segments: segments? }),
                 }
@@ -435,7 +428,6 @@ impl JSONPathParser {
                     .try_fold(Segment::Root {}, |acc, segment| {
                         self.parse_segment(acc, segment)
                     });
-
                 FilterExpression::RootQuery {
                     query: Box::new(Query { segments: segments? }),
                 }
@@ -452,7 +444,6 @@ impl JSONPathParser {
         let mut it = expr.into_inner();
         let name = it.next().unwrap().as_str();
         let args: Result<Vec<_>, _> = it.map(|ex| self.parse_function_argument(ex)).collect();
-
         Ok(FilterExpression::Function {
             name: name.to_string(),
             args: self.assert_well_typed(name, args?)?,
@@ -471,13 +462,13 @@ impl JSONPathParser {
             Rule::true_literal => FilterExpression::True_ {},
             Rule::false_literal => FilterExpression::False_ {},
             Rule::null => FilterExpression::Null {},
+            Rule::array_literal => self.parse_array_literal(expr)?,
             Rule::rel_query => {
                 let segments = expr
                     .into_inner()
                     .try_fold(Segment::Root {}, |acc, segment| {
                         self.parse_segment(acc, segment)
                     });
-
                 FilterExpression::RelativeQuery {
                     query: Box::new(Query { segments: segments? }),
                 }
@@ -488,7 +479,6 @@ impl JSONPathParser {
                     .try_fold(Segment::Root {}, |acc, segment| {
                         self.parse_segment(acc, segment)
                     });
-
                 FilterExpression::RootQuery {
                     query: Box::new(Query { segments: segments? }),
                 }
@@ -503,14 +493,12 @@ impl JSONPathParser {
         let i = value
             .parse::<i64>()
             .map_err(|_| JSONPathError::syntax(format!("index out of range `{}`", value)))?;
-
         if !self.index_range.contains(&i) {
             return Err(JSONPathError::syntax(format!(
                 "index out of range `{}`",
                 value
             )));
         }
-
         Ok(i)
     }
 
@@ -529,9 +517,9 @@ impl JSONPathParser {
             }
             FilterExpression::Function { name, .. } => {
                 if let Some(FunctionSignature {
-                    return_type: ExpressionType::Value,
-                    ..
-                }) = self.function_signatures.get(name)
+                                return_type: ExpressionType::Value,
+                                ..
+                            }) = self.function_signatures.get(name)
                 {
                     Ok(())
                 } else {
@@ -549,9 +537,9 @@ impl JSONPathParser {
         match expr {
             FilterExpression::Function { name, .. } => {
                 if let Some(FunctionSignature {
-                    return_type: ExpressionType::Value,
-                    ..
-                }) = self.function_signatures.get(name)
+                                return_type: ExpressionType::Value,
+                                ..
+                            }) = self.function_signatures.get(name)
                 {
                     Err(JSONPathError::typ(format!(
                         "result of {}() must be compared",
@@ -582,11 +570,7 @@ impl JSONPathParser {
                 "{}() takes {} argument{} but {} were given",
                 func_name,
                 signature.param_types.len(),
-                if signature.param_types.len() > 1 {
-                    "s"
-                } else {
-                    ""
-                },
+                if signature.param_types.len() > 1 { "s" } else { "" },
                 args.len()
             )));
         }
@@ -656,6 +640,7 @@ impl JSONPathParser {
                     })
                 )
             }
+            FilterExpression::Array { .. } => true,
             _ => false,
         }
     }
@@ -687,7 +672,6 @@ fn unescape_string(value: &str) -> String {
         match chars[index] {
             '\\' => {
                 index += 1;
-
                 match chars[index] {
                     '"' => rv.push('"'),
                     '\\' => rv.push('\\'),
@@ -699,28 +683,21 @@ fn unescape_string(value: &str) -> String {
                     't' => rv.push('\t'),
                     'u' => {
                         index += 1;
-
                         let digits = chars
                             .get(index..index + 4)
                             .unwrap()
                             .iter()
                             .collect::<String>();
-
                         let mut codepoint = u32::from_str_radix(&digits, 16).unwrap();
 
-                        if index + 5 < length && chars[index + 4] == '\\' && chars[index + 5] == 'u'
-                        {
+                        if index + 5 < length && chars[index + 4] == '\\' && chars[index + 5] == 'u' {
                             let digits = &chars
                                 .get(index + 6..index + 10)
                                 .unwrap()
                                 .iter()
                                 .collect::<String>();
-
                             let low_surrogate = u32::from_str_radix(digits, 16).unwrap();
-
-                            codepoint =
-                                0x10000 + (((codepoint & 0x03FF) << 10) | (low_surrogate & 0x03FF));
-
+                            codepoint = 0x10000 + (((codepoint & 0x03FF) << 10) | (low_surrogate & 0x03FF));
                             index += 6;
                         }
 
@@ -735,7 +712,6 @@ fn unescape_string(value: &str) -> String {
                 rv.push(c);
             }
         }
-
         index += 1;
     }
 

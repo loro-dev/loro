@@ -76,17 +76,18 @@ rel_query = { current_node_identifier ~ segments }
 
 // Comparison Expressions
 comparison_expr = { comparable ~ S ~ comparison_op ~ S ~ comparable }
-comparison_op = { "==" | "!=" | "<=" | ">=" | "<" | ">" | "contains" }
+comparison_op = { "==" | "!=" | "<=" | ">=" | "<" | ">" | "contains" | "in" }
 comparable = _{ literal | singular_query | function_expr }
 
 // Literals
-literal = _{ number | string_literal | true_literal | false_literal | null }
+literal = _{ number | string_literal | array_literal | true_literal | false_literal | null }
 true_literal = { "true" }
 false_literal = { "false" }
 null = { "null" }
 number = { (int | "-0") ~ frac? ~ exp? }
 frac = { "." ~ ASCII_DIGIT+ }
 exp = { ^"e" ~ ("-" | "+")? ~ ASCII_DIGIT+ }
+array_literal = { "[" ~ S ~ (literal ~ (S ~ "," ~ S ~ literal)*)? ~ S ~ "]" }
 
 // Singular Queries
 singular_query = _{ rel_singular_query | abs_singular_query }

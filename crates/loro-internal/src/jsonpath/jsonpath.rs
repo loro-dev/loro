@@ -147,6 +147,17 @@ fn eval_expr(root: &dyn PathValue, current: &ValueOrHandler, expr: &FilterExpres
         FilterExpression::StringLiteral { value } => ExprValue::Value(LoroValue::String(value.clone().into())),
         FilterExpression::Int { value } => ExprValue::Value(LoroValue::I64(*value)),
         FilterExpression::Float { value } => ExprValue::Value(LoroValue::Double(*value)),
+        FilterExpression::Array { values } => {
+            let mut list = Vec::new();
+            for val in values {
+                match eval_expr(root, current, val) {
+                    ExprValue::Value(v) => list.push(v),
+                    ExprValue::Bool(b) => list.push(LoroValue::Bool(b)),
+                    ExprValue::Nodes(_) => return ExprValue::Value(LoroValue::Null),
+                }
+            }
+            ExprValue::Value(LoroValue::List(list.into()))
+        }
         FilterExpression::Not { expression } => ExprValue::Bool(!to_logical(eval_expr(root, current, expression))),
         FilterExpression::Logical { left, operator, right } => {
             let l = to_logical(eval_expr(root, current, left));
@@ -275,19 +286,28 @@ fn compare_expr(l: ExprValue, op: &ComparisonOperator, r: ExprValue) -> bool {
 }
 
 fn compare_values(l: &LoroValue, op: &ComparisonOperator, r: &LoroValue) -> bool {
-    match (l, r) {
-        (LoroValue::Double(a), LoroValue::Double(b)) => compare_nums(*a, op, *b),
-        (LoroValue::I64(a), LoroValue::I64(b)) => compare_nums(*a as f64, op, *b as f64),
-        (LoroValue::Double(a), LoroValue::I64(b)) => compare_nums(*a, op, *b as f64),
-        (LoroValue::I64(a), LoroValue::Double(b)) => compare_nums(*a as f64, op, *b),
-        (LoroValue::String(a), LoroValue::String(b)) => compare_strs(a.as_ref(), op, b.as_ref()),
-        (LoroValue::Bool(a), LoroValue::Bool(b)) => compare_bools(*a, op, *b),
-        (LoroValue::Null, LoroValue::Null) => match op {
-            ComparisonOperator::Eq => true,
-            ComparisonOperator::Ne => false,
+    match op {
+        ComparisonOperator::In => {
+            if let LoroValue::List(list) = r {
+                list.iter().any(|item| compare_values(l, &ComparisonOperator::Eq, item))
+            } else {
+                false
+            }
+        }
+        _ => match (l, r) {
+            (LoroValue::Double(a), LoroValue::Double(b)) => compare_nums(*a, op, *b),
+            (LoroValue::I64(a), LoroValue::I64(b)) => compare_nums(*a as f64, op, *b as f64),
+            (LoroValue::Double(a), LoroValue::I64(b)) => compare_nums(*a, op, *b as f64),
+            (LoroValue::I64(a), LoroValue::Double(b)) => compare_nums(*a as f64, op, *b),
+            (LoroValue::String(a), LoroValue::String(b)) => compare_strs(a.as_ref(), op, b.as_ref()),
+            (LoroValue::Bool(a), LoroValue::Bool(b)) => compare_bools(*a, op, *b),
+            (LoroValue::Null, LoroValue::Null) => match op {
+                ComparisonOperator::Eq => true,
+                ComparisonOperator::Ne => false,
+                _ => false,
+            },
             _ => false,
         },
-        _ => false,
     }
 }
 
@@ -311,7 +331,8 @@ fn compare_strs(a: &str, op: &ComparisonOperator, b: &str) -> bool {
         ComparisonOperator::Le => a <= b,
         ComparisonOperator::Gt => a > b,
         ComparisonOperator::Ge => a >= b,
-        ComparisonOperator::Contains => a.contains(b)
+        ComparisonOperator::Contains => a.contains(b),
+        _ => false,
     }
 }
 
@@ -1011,94 +1032,94 @@ mod tests {
         }
     }
 
-    // mod in_operator {
-    //     use super::*;
-    //
-    //     #[test]
-    //     fn filters_by_author_in_list() -> Result<(), JsonPathError> {
-    //         let doc = setup_test_doc();
-    //         let path = "$.store.books[?(@.author in ['George Orwell', 'Jane Austen'])].title";
-    //         let result = evaluate_jsonpath(&doc, path)?;
-    //         assert_eq!(result.len(), 3);
-    //         let mut titles: Vec<&str> = result
-    //             .iter()
-    //             .map(|v| v.as_value().unwrap().as_string().unwrap().as_str())
-    //             .collect();
-    //         titles.sort();
-    //         let mut expected = vec!["1984", "Animal Farm", "Pride and Prejudice"];
-    //         expected.sort();
-    //         assert_eq!(titles, expected);
-    //         Ok(())
-    //     }
-    //
-    //     #[test]
-    //     fn filters_by_price_in_list() -> Result<(), JsonPathError> {
-    //         let doc = setup_test_doc();
-    //         let path = "$.store.books[?(@.price in [7, 10, 14])].title";
-    //         let result = evaluate_jsonpath(&doc, path)?;
-    //         assert_eq!(result.len(), 4);
-    //         let mut titles: Vec<&str> = result
-    //             .iter()
-    //             .map(|v| v.as_value().unwrap().as_string().unwrap().as_str())
-    //             .collect();
-    //         titles.sort();
-    //         let mut expected = vec!["1984", "Pride and Prejudice", "The Catcher in the Rye", "The Hobbit"];
-    //         expected.sort();
-    //         assert_eq!(titles, expected);
-    //         Ok(())
-    //     }
-    //
-    //     #[test]
-    //     fn filters_with_in_operator_and_null_values() -> Result<(), JsonPathError> {
-    //         let doc = setup_test_doc();
-    //         let path = "$.store.books[?(@.price in [null, 9])].title";
-    //         let result = evaluate_jsonpath(&doc, path)?;
-    //         assert_eq!(result.len(), 3);
-    //         let mut titles: Vec<&str> = result
-    //             .iter()
-    //             .map(|v| v.as_value().unwrap().as_string().unwrap().as_str())
-    //             .collect();
-    //         titles.sort();
-    //         let mut expected = vec!["Fahrenheit 451", "Lord of the Flies", "The Great Gatsby"];
-    //         expected.sort();
-    //         assert_eq!(titles, expected);
-    //         Ok(())
-    //     }
-    //
-    //     #[test]
-    //     fn filters_with_in_operator_in_recursive_descent() -> Result<(), JsonPathError> {
-    //         let doc = setup_test_doc();
-    //         let path = "$..[?(@.author in ['George Orwell', 'Ray Bradbury'])].title";
-    //         let result = evaluate_jsonpath(&doc, path)?;
-    //         assert_eq!(result.len(), 3);
-    //         let mut titles: Vec<&str> = result
-    //             .iter()
-    //             .map(|v| v.as_value().unwrap().as_string().unwrap().as_str())
-    //             .collect();
-    //         titles.sort();
-    //         let mut expected = vec!["1984", "Animal Farm", "Fahrenheit 451"];
-    //         expected.sort();
-    //         assert_eq!(titles, expected);
-    //         Ok(())
-    //     }
-    //
-    //     #[test]
-    //     fn filters_with_root_list_in() -> Result<(), JsonPathError> {
-    //         let doc = setup_test_doc();
-    //         let path = "$.store.books[?(@.author in $.store.featured_authors)].title";
-    //         let result = evaluate_jsonpath(&doc, path)?;
-    //         assert_eq!(result.len(), 4);
-    //         let mut titles: Vec<&str> = result
-    //             .iter()
-    //             .map(|v| v.as_value().unwrap().as_string().unwrap().as_str())
-    //             .collect();
-    //         titles.sort();
-    //         let mut expected = vec!["1984", "Animal Farm", "Brave New World", "Fahrenheit 451"];
-    //         expected.sort();
-    //         assert_eq!(titles, expected);
-    //         Ok(())
-    //     }
-    // }
+    mod in_operator {
+        use super::*;
+
+        #[test]
+        fn filters_by_author_in_list() -> Result<(), JsonPathError> {
+            let doc = setup_test_doc();
+            let path = "$.store.books[?(@.author in ['George Orwell', 'Jane Austen'])].title";
+            let result = evaluate_jsonpath(&doc, path)?;
+            assert_eq!(result.len(), 3);
+            let mut titles: Vec<&str> = result
+                .iter()
+                .map(|v| v.as_value().unwrap().as_string().unwrap().as_str())
+                .collect();
+            titles.sort();
+            let mut expected = vec!["1984", "Animal Farm", "Pride and Prejudice"];
+            expected.sort();
+            assert_eq!(titles, expected);
+            Ok(())
+        }
+
+        #[test]
+        fn filters_by_price_in_list() -> Result<(), JsonPathError> {
+            let doc = setup_test_doc();
+            let path = "$.store.books[?(@.price in [7, 10, 14])].title";
+            let result = evaluate_jsonpath(&doc, path)?;
+            assert_eq!(result.len(), 4);
+            let mut titles: Vec<&str> = result
+                .iter()
+                .map(|v| v.as_value().unwrap().as_string().unwrap().as_str())
+                .collect();
+            titles.sort();
+            let mut expected = vec!["1984", "Pride and Prejudice", "The Catcher in the Rye", "The Hobbit"];
+            expected.sort();
+            assert_eq!(titles, expected);
+            Ok(())
+        }
+
+        #[test]
+        fn filters_with_in_operator_and_null_values() -> Result<(), JsonPathError> {
+            let doc = setup_test_doc();
+            let path = "$.store.books[?(@.price in [null, 9])].title";
+            let result = evaluate_jsonpath(&doc, path)?;
+            assert_eq!(result.len(), 3);
+            let mut titles: Vec<&str> = result
+                .iter()
+                .map(|v| v.as_value().unwrap().as_string().unwrap().as_str())
+                .collect();
+            titles.sort();
+            let mut expected = vec!["Fahrenheit 451", "Lord of the Flies", "The Great Gatsby"];
+            expected.sort();
+            assert_eq!(titles, expected);
+            Ok(())
+        }
+
+        #[test]
+        fn filters_with_in_operator_in_recursive_descent() -> Result<(), JsonPathError> {
+            let doc = setup_test_doc();
+            let path = "$..[?(@.author in ['George Orwell', 'Ray Bradbury'])].title";
+            let result = evaluate_jsonpath(&doc, path)?;
+            assert_eq!(result.len(), 3);
+            let mut titles: Vec<&str> = result
+                .iter()
+                .map(|v| v.as_value().unwrap().as_string().unwrap().as_str())
+                .collect();
+            titles.sort();
+            let mut expected = vec!["1984", "Animal Farm", "Fahrenheit 451"];
+            expected.sort();
+            assert_eq!(titles, expected);
+            Ok(())
+        }
+
+        #[test]
+        fn filters_with_root_list_in() -> Result<(), JsonPathError> {
+            let doc = setup_test_doc();
+            let path = "$.store.books[?(@.author in $.store.featured_authors)].title";
+            let result = evaluate_jsonpath(&doc, path)?;
+            assert_eq!(result.len(), 4);
+            let mut titles: Vec<&str> = result
+                .iter()
+                .map(|v| v.as_value().unwrap().as_string().unwrap().as_str())
+                .collect();
+            titles.sort();
+            let mut expected = vec!["1984", "Animal Farm", "Brave New World", "Fahrenheit 451"];
+            expected.sort();
+            assert_eq!(titles, expected);
+            Ok(())
+        }
+    }
 
     mod union_and_slice_operations {
         use super::*;

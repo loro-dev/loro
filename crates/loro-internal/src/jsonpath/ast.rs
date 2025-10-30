@@ -44,6 +44,9 @@ pub enum FilterExpression {
     True_ {},
     False_ {},
     Null {},
+    Array {
+        values: Vec<FilterExpression>,
+    },
     StringLiteral {
         value: String,
     },
@@ -92,7 +95,8 @@ pub enum ComparisonOperator {
     Gt,
     Le,
     Lt,
-    Contains
+    Contains,
+    In,
 }
 
 
@@ -133,6 +137,7 @@ impl FilterExpression {
                 | FilterExpression::StringLiteral { .. }
                 | FilterExpression::Int { .. }
                 | FilterExpression::Float { .. }
+                | FilterExpression::Array { .. }
         )
     }
 }
@@ -206,6 +211,17 @@ impl fmt::Display for FilterExpression {
             FilterExpression::False_ { .. } => f.write_str("false"),
             FilterExpression::Null { .. } => f.write_str("null"),
             FilterExpression::StringLiteral { value, .. } => write!(f, "'{value}'"),
+            FilterExpression::Array { values, .. } => {
+                write!(
+                    f,
+                    "[{}]",
+                    values
+                        .iter()
+                        .map(|e| e.to_string())
+                        .collect::<Vec<String>>()
+                        .join(", ")
+                )
+            }
             FilterExpression::Int { value, .. } => write!(f, "{value}"),
             FilterExpression::Float { value, .. } => write!(f, "{value}"),
             FilterExpression::Not { expression, .. } => write!(f, "!{expression}"),
@@ -261,6 +277,7 @@ impl fmt::Display for ComparisonOperator {
             ComparisonOperator::Le => f.write_str("<="),
             ComparisonOperator::Lt => f.write_str("<"),
             ComparisonOperator::Contains => f.write_str("contains"),
+            ComparisonOperator::In => f.write_str("in"),
         }
     }
 }
