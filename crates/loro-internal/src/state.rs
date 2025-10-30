@@ -739,6 +739,12 @@ impl DocState {
             return true;
         }
 
+        if let Some(idx) = self.arena.id_to_idx(id) {
+            if self.arena.get_depth(idx).is_some() {
+                return true;
+            }
+        }
+
         self.store.contains_id(id)
     }
 
