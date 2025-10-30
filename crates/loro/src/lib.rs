@@ -4,7 +4,6 @@
 #![warn(missing_debug_implementations)]
 use event::DiffBatch;
 use event::{DiffEvent, Subscriber};
-use rustc_hash::FxHashSet;
 pub use loro_common::InternalString;
 pub use loro_internal::cursor::CannotFindRelativePosition;
 use loro_internal::cursor::Cursor;
@@ -30,6 +29,7 @@ use loro_internal::{
     TextHandler as InnerTextHandler, TreeHandler as InnerTreeHandler,
     UnknownHandler as InnerUnknownHandler,
 };
+use rustc_hash::FxHashSet;
 use std::cmp::Ordering;
 use std::ops::ControlFlow;
 use std::ops::Deref;
@@ -424,6 +424,12 @@ impl LoroDoc {
     #[inline]
     pub fn import_batch(&self, bytes: &[Vec<u8>]) -> LoroResult<ImportStatus> {
         self.doc.import_batch(bytes)
+    }
+
+    /// Get a [Container] by container id.
+    #[inline]
+    pub fn get_container(&self, id: ContainerID) -> Option<Container> {
+        self.doc.get_handler(id).map(Container::from_handler)
     }
 
     /// Get a [LoroMovableList] by container id.

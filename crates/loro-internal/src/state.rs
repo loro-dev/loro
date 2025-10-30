@@ -7,10 +7,10 @@ use container_store::ContainerStore;
 use dead_containers_cache::DeadContainersCache;
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
-use rustc_hash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
 use loro_common::{ContainerID, LoroError, LoroResult, TreeID};
 use loro_delta::DeltaItem;
+use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::{info_span, instrument, warn};
 
 use crate::{
@@ -739,8 +739,10 @@ impl DocState {
             return true;
         }
 
-        if self.arena.id_to_idx(id).is_some() {
-            return true;
+        if let Some(idx) = self.arena.id_to_idx(id) {
+            if self.arena.get_depth(idx).is_some() {
+                return true;
+            }
         }
 
         self.store.contains_id(id)
@@ -883,51 +885,6 @@ impl DocState {
         }
 
         self.frontiers = frontiers;
-    }
-
-    /// id can be a str, ContainerID, or ContainerIdRaw.
-    /// if it's str it will use Root container, which will not be None
-    pub fn get_text<I: Into<ContainerIdRaw>>(
-        &mut self,
-        id: I,
-    ) -> Option<&mut richtext_state::RichtextState> {
-        let idx = self.id_to_idx(id, ContainerType::Text);
-        self.store
-            .get_or_create_mut(idx)
-            .as_richtext_state_mut()
-            .map(|x| &mut **x)
-    }
-
-    /// id can be a str, ContainerID, or ContainerIdRaw.
-    /// if it's str it will use Root container, which will not be None
-    #[allow(unused)]
-    pub(crate) fn get_tree<I: Into<ContainerIdRaw>>(&mut self, id: I) -> Option<&mut TreeState> {
-        let idx = self.id_to_idx(id, ContainerType::Tree);
-        self.store
-            .get_or_create_mut(idx)
-            .as_tree_state_mut()
-            .map(|x| &mut **x)
-    }
-
-    fn id_to_idx<I: Into<ContainerIdRaw>>(&mut self, id: I, kind: ContainerType) -> ContainerIdx {
-        let id: ContainerIdRaw = id.into();
-        let cid;
-        let idx = match id {
-            ContainerIdRaw::Root { name } => {
-                cid = crate::container::ContainerID::Root {
-                    name,
-                    container_type: kind,
-                };
-                Some(self.arena.register_container(&cid))
-            }
-            ContainerIdRaw::Normal { id: _ } => {
-                cid = id.with_type(kind);
-                // For normal IDs, registration can be lazy; ensure it's registered.
-                Some(self.arena.register_container(&cid))
-            }
-        };
-
-        idx.unwrap()
     }
 
     #[inline(always)]

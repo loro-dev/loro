@@ -380,6 +380,35 @@ fn js_value_to_container_id(
     }
 }
 
+fn container_type_to_str(ty: ContainerType) -> &'static str {
+    match ty {
+        ContainerType::Text => "Text",
+        ContainerType::Map => "Map",
+        ContainerType::List => "List",
+        ContainerType::MovableList => "MovableList",
+        ContainerType::Tree => "Tree",
+        ContainerType::Counter => "Counter",
+        ContainerType::Unknown(_) => "Unknown",
+    }
+}
+
+fn ensure_expected_container_type(
+    container_id: &ContainerID,
+    expected: ContainerType,
+) -> Result<(), JsValue> {
+    let actual = container_id.container_type();
+    if actual == expected {
+        return Ok(());
+    }
+
+    let msg = format!(
+        "Container type mismatch. Expected `{}` but found `{}`",
+        container_type_to_str(expected),
+        container_type_to_str(actual),
+    );
+    Err(JsValue::from_str(&msg))
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct StringID {
     peer: String,
@@ -990,6 +1019,7 @@ impl LoroDoc {
         if !self.doc.has_container(&container_id) {
             return Err(JsValue::from_str("The container does not exist in the doc"));
         }
+        ensure_expected_container_type(&container_id, ContainerType::Text)?;
         Ok(LoroText {
             handler: self.doc.get_text(container_id),
             delta_cache: None,
@@ -1016,6 +1046,7 @@ impl LoroDoc {
         if !self.doc.has_container(&container_id) {
             return Err(JsValue::from_str("The container does not exist in the doc"));
         }
+        ensure_expected_container_type(&container_id, ContainerType::Map)?;
         Ok(LoroMap {
             handler: self.doc.get_map(container_id),
         })
@@ -1041,6 +1072,7 @@ impl LoroDoc {
         if !self.doc.has_container(&container_id) {
             return Err(JsValue::from_str("The container does not exist in the doc"));
         }
+        ensure_expected_container_type(&container_id, ContainerType::List)?;
         Ok(LoroList {
             handler: self.doc.get_list(container_id),
         })
@@ -1066,6 +1098,7 @@ impl LoroDoc {
         if !self.doc.has_container(&container_id) {
             return Err(JsValue::from_str("The container does not exist in the doc"));
         }
+        ensure_expected_container_type(&container_id, ContainerType::MovableList)?;
         Ok(LoroMovableList {
             handler: self.doc.get_movable_list(container_id),
         })
@@ -1081,6 +1114,7 @@ impl LoroDoc {
         if !self.doc.has_container(&container_id) {
             return Err(JsValue::from_str("The container does not exist in the doc"));
         }
+        ensure_expected_container_type(&container_id, ContainerType::Counter)?;
         Ok(LoroCounter {
             handler: self.doc.get_counter(container_id),
         })
@@ -1106,6 +1140,7 @@ impl LoroDoc {
         if !self.doc.has_container(&container_id) {
             return Err(JsValue::from_str("The container does not exist in the doc"));
         }
+        ensure_expected_container_type(&container_id, ContainerType::Tree)?;
         Ok(LoroTree {
             handler: self.doc.get_tree(container_id),
         })
