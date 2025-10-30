@@ -1,11 +1,10 @@
-use std::collections::VecDeque;
 use loro_common::{ContainerID, LoroValue};
 use thiserror::Error;
 use crate::handler::{Handler, ListHandler, MapHandler, MovableListHandler, TextHandler, TreeHandler, ValueOrHandler};
 use crate::{HandlerTrait, LoroDoc};
 use std::ops::ControlFlow;
 use crate::jsonpath::ast::{ComparisonOperator, FilterExpression, LogicalOperator, Segment, Selector};
-use crate::jsonpath::{JSONPathParser, Query};
+use crate::jsonpath::{JSONPathParser};
 
 #[derive(Error, Debug)]
 pub enum JsonPathError {
@@ -28,53 +27,73 @@ enum ExprValue {
     Nodes(Vec<ValueOrHandler>),
 }
 
-fn evaluate_jsonpath(root: &dyn PathValue, jsonpath: &str) -> Result<Vec<ValueOrHandler>, JsonPathError> {
+pub fn evaluate_jsonpath(
+    root: &dyn PathValue,
+    jsonpath: &str,
+) -> Result<Vec<ValueOrHandler>, JsonPathError> {
     let parser = JSONPathParser::new();
-    let query = parser.parse(jsonpath).map_err(|e| JsonPathError::InvalidJsonPath(e.to_string()))?;
-    evaluate_query(root, &query)
+    let query = parser
+        .parse(jsonpath)
+        .map_err(|e| JsonPathError::InvalidJsonPath(e.to_string()))?;
+
+    let mut results = Vec::new();
+    evaluate_segment(root, root, &query.segments, &mut results);
+    Ok(results)
 }
 
-fn evaluate_query(root: &dyn PathValue, query: &Query) -> Result<Vec<ValueOrHandler>, JsonPathError> {
-    let current: Vec<ValueOrHandler> = vec![root.clone_this()?];
-    apply_segment(root, current, &query.segments)
-}
-
-fn apply_segment(root: &dyn PathValue, mut current: Vec<ValueOrHandler>, segment: &Segment) -> Result<Vec<ValueOrHandler>, JsonPathError> {
+fn evaluate_segment(
+    root: &dyn PathValue,
+    value: &dyn PathValue,
+    segment: &Segment,
+    results: &mut Vec<ValueOrHandler>,
+) {
     match segment {
-        Segment::Root {} => Ok(current),
-        Segment::Child { left, selectors } => {
-            current = apply_segment(root, current, left)?;
-            let mut new_current = vec![];
-            for node in current {
-                apply_selectors(root, &node, selectors, &mut new_current)?;
+        Segment::Root {} => {
+            // `$` – start again from the document root
+            // (no more segments after a lone `$`, but we keep the API generic)
+            if let Ok(cloned) = root.clone_this() {
+                results.push(cloned);
             }
-            Ok(new_current)
         }
-        Segment::Recursive { left, selectors } => {
-            current = apply_segment(root, current, left)?;
-            let mut new_current = vec![];
-            let mut queue: VecDeque<ValueOrHandler> = current.into_iter().collect();
-            while !queue.is_empty() {
-                let node = queue.pop_front().unwrap();
-                apply_selectors(root, &node, selectors, &mut new_current)?;
-                node.for_each_for_path(&mut |child| {
-                    queue.push_back(child);
-                    ControlFlow::Continue(())
-                });
+
+        Segment::Child { left, selectors } => {
+            // 1. evaluate the left part → intermediate nodes
+            let mut intermediate = Vec::new();
+            evaluate_segment(root, value, left, &mut intermediate);
+
+            // 2. apply selectors to every intermediate node
+            for node in intermediate {
+                apply_selectors(root, &node, selectors, results);
             }
-            Ok(new_current)
+        }
+
+        Segment::Recursive { left, selectors } => {
+            // 1. evaluate the left part → starting points
+            let mut starts = Vec::new();
+            evaluate_segment(root, value, left, &mut starts);
+
+            // 2. BFS-style recursive descent from every start
+            for start in starts {
+                recursive_descent(root, &start, selectors, results);
+            }
         }
     }
 }
 
-fn apply_selectors(root: &dyn PathValue, node: &ValueOrHandler, selectors: &[Selector], results: &mut Vec<ValueOrHandler>) -> Result<(), JsonPathError> {
-    for selector in selectors {
-        match selector {
+fn apply_selectors(
+    root: &dyn PathValue,
+    node: &dyn PathValue,
+    selectors: &[Selector],
+    results: &mut Vec<ValueOrHandler>,
+) {
+    for sel in selectors {
+        match sel {
             Selector::Name { name } => {
                 if let Some(child) = node.get_by_key(name) {
                     results.push(child);
                 }
             }
+
             Selector::Index { index } => {
                 let mut idx = *index;
                 if idx < 0 {
@@ -86,18 +105,22 @@ fn apply_selectors(root: &dyn PathValue, node: &ValueOrHandler, selectors: &[Sel
                     }
                 }
             }
+
             Selector::Slice { start, stop, step } => {
                 let len = node.length_for_path() as i64;
                 let eff_start = start.unwrap_or(if step.unwrap_or(1) > 0 { 0 } else { len - 1 });
                 let eff_stop = stop.unwrap_or(if step.unwrap_or(1) > 0 { len } else { -len - 1 });
                 let eff_step = step.unwrap_or(1);
+
                 if eff_step == 0 {
                     continue;
                 }
+
                 let mut start_idx = if eff_start < 0 { eff_start + len } else { eff_start };
                 let mut stop_idx = if eff_stop < 0 { eff_stop + len } else { eff_stop };
                 start_idx = start_idx.max(0).min(len);
                 stop_idx = stop_idx.max(-1).min(len);
+
                 if eff_step > 0 {
                     let mut i = start_idx;
                     while i < stop_idx {
@@ -116,12 +139,14 @@ fn apply_selectors(root: &dyn PathValue, node: &ValueOrHandler, selectors: &[Sel
                     }
                 }
             }
+
             Selector::Wild {} => {
                 node.for_each_for_path(&mut |child| {
                     results.push(child);
                     ControlFlow::Continue(())
                 });
             }
+
             Selector::Filter { expression } => {
                 node.for_each_for_path(&mut |child| {
                     if eval_filter_expr(root, &child, expression) {
@@ -132,19 +157,36 @@ fn apply_selectors(root: &dyn PathValue, node: &ValueOrHandler, selectors: &[Sel
             }
         }
     }
-    Ok(())
 }
 
-fn eval_filter_expr(root: &dyn PathValue, current: &ValueOrHandler, expr: &FilterExpression) -> bool {
+fn recursive_descent(
+    root: &dyn PathValue,
+    node: &dyn PathValue,
+    selectors: &[Selector],
+    results: &mut Vec<ValueOrHandler>,
+) {
+    // 1. apply selectors to the *current* node
+    apply_selectors(root, node, selectors, results);
+
+    // 2. recurse into children
+    node.for_each_for_path(&mut |child| {
+        recursive_descent(root, &child, selectors, results);
+        ControlFlow::Continue(())
+    });
+}
+
+fn eval_filter_expr(root: &dyn PathValue, current: &dyn PathValue, expr: &FilterExpression) -> bool {
     to_logical(eval_expr(root, current, expr))
 }
 
-fn eval_expr(root: &dyn PathValue, current: &ValueOrHandler, expr: &FilterExpression) -> ExprValue {
+fn eval_expr(root: &dyn PathValue, current: &dyn PathValue, expr: &FilterExpression) -> ExprValue {
     match expr {
         FilterExpression::True_ {} => ExprValue::Bool(true),
         FilterExpression::False_ {} => ExprValue::Bool(false),
         FilterExpression::Null {} => ExprValue::Value(LoroValue::Null),
-        FilterExpression::StringLiteral { value } => ExprValue::Value(LoroValue::String(value.clone().into())),
+        FilterExpression::StringLiteral { value } => {
+            ExprValue::Value(LoroValue::String(value.clone().into()))
+        }
         FilterExpression::Int { value } => ExprValue::Value(LoroValue::I64(*value)),
         FilterExpression::Float { value } => ExprValue::Value(LoroValue::Double(*value)),
         FilterExpression::Array { values } => {
@@ -158,7 +200,9 @@ fn eval_expr(root: &dyn PathValue, current: &ValueOrHandler, expr: &FilterExpres
             }
             ExprValue::Value(LoroValue::List(list.into()))
         }
-        FilterExpression::Not { expression } => ExprValue::Bool(!to_logical(eval_expr(root, current, expression))),
+        FilterExpression::Not { expression } => {
+            ExprValue::Bool(!to_logical(eval_expr(root, current, expression)))
+        }
         FilterExpression::Logical { left, operator, right } => {
             let l = to_logical(eval_expr(root, current, left));
             let r = to_logical(eval_expr(root, current, right));
@@ -173,12 +217,16 @@ fn eval_expr(root: &dyn PathValue, current: &ValueOrHandler, expr: &FilterExpres
             ExprValue::Bool(compare_expr(l, operator, r))
         }
         FilterExpression::RelativeQuery { query } => {
-            let res = evaluate_query(current as &dyn PathValue, query).unwrap_or_default();
-            ExprValue::Nodes(res)
+            // Use current node as root for relative query
+            let mut query_results = Vec::new();
+            evaluate_segment(current, current, &query.segments, &mut query_results);
+            ExprValue::Nodes(query_results)
         }
         FilterExpression::RootQuery { query } => {
-            let res = evaluate_query(root, query).unwrap_or_default();
-            ExprValue::Nodes(res)
+            // Use root for absolute query
+            let mut query_results = Vec::new();
+            evaluate_segment(root, root, &query.segments, &mut query_results);
+            ExprValue::Nodes(query_results)
         }
         FilterExpression::Function { name, args } => {
             let mut eval_args = vec![];
@@ -186,28 +234,6 @@ fn eval_expr(root: &dyn PathValue, current: &ValueOrHandler, expr: &FilterExpres
                 eval_args.push(eval_expr(root, current, arg));
             }
             match name.as_str() {
-                // "search" => {
-                //     if eval_args.len() == 2 {
-                //         if let (ExprValue::Value(LoroValue::String(l)), ExprValue::Value(LoroValue::String(r))) = (eval_args[0], eval_args[1]) {
-                //             ExprValue::Bool(l.contains(&*r))
-                //         } else {
-                //             ExprValue::Bool(false)
-                //         }
-                //     } else {
-                //         ExprValue::Bool(false)
-                //     }
-                // }
-                // "match" => {
-                //     if eval_args.len() == 2 {
-                //         if let (ExprValue::Value(LoroValue::String(l)), ExprValue::Value(LoroValue::String(r))) = (eval_args[0], eval_args[1]) {
-                //             ExprValue::Bool(l.as_str() == r.as_str())
-                //         } else {
-                //             ExprValue::Bool(false)
-                //         }
-                //     } else {
-                //         ExprValue::Bool(false)
-                //     }
-                // }
                 "count" => {
                     if eval_args.len() == 1 {
                         if let ExprValue::Nodes(ns) = &eval_args[0] {
@@ -240,7 +266,11 @@ fn eval_expr(root: &dyn PathValue, current: &ValueOrHandler, expr: &FilterExpres
                     if eval_args.len() == 1 {
                         if let ExprValue::Nodes(ns) = &eval_args[0] {
                             if ns.len() == 1 {
-                                ExprValue::Value(get_value(&ns[0]))
+                                // Extract value from single result
+                                match &ns[0] {
+                                    ValueOrHandler::Value(v) => ExprValue::Value(v.clone()),
+                                    ValueOrHandler::Handler(h) => ExprValue::Value(h.get_value()),
+                                }
                             } else {
                                 ExprValue::Value(LoroValue::Null)
                             }
