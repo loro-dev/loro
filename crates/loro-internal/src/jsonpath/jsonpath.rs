@@ -1,10 +1,14 @@
-use loro_common::{ContainerID, LoroValue};
-use thiserror::Error;
-use crate::handler::{Handler, ListHandler, MapHandler, MovableListHandler, TextHandler, TreeHandler, ValueOrHandler};
+use crate::handler::{
+    Handler, ListHandler, MapHandler, MovableListHandler, TextHandler, TreeHandler, ValueOrHandler,
+};
+use crate::jsonpath::ast::{
+    ComparisonOperator, FilterExpression, LogicalOperator, Segment, Selector,
+};
+use crate::jsonpath::JSONPathParser;
 use crate::{HandlerTrait, LoroDoc};
+use loro_common::{ContainerID, LoroValue};
 use std::ops::ControlFlow;
-use crate::jsonpath::ast::{ComparisonOperator, FilterExpression, LogicalOperator, Segment, Selector};
-use crate::jsonpath::{JSONPathParser};
+use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum JsonPathError {
@@ -57,24 +61,33 @@ fn evaluate_segment(
         }
 
         Segment::Child { left, selectors } => {
-            // 1. evaluate the left part → intermediate nodes
-            let mut intermediate = Vec::new();
-            evaluate_segment(root, value, left, &mut intermediate);
+            if left.is_singular() && matches!(**left, Segment::Root {}) {
+                apply_selectors(root, root, selectors, results);
+            } else {
+                // 1. Evaluate the left part → intermediate nodes
+                let mut intermediate = Vec::new();
+                evaluate_segment(root, value, left, &mut intermediate);
 
-            // 2. apply selectors to every intermediate node
-            for node in intermediate {
-                apply_selectors(root, &node, selectors, results);
+                // 2. Apply selectors to every intermediate node
+                for node in intermediate {
+                    apply_selectors(root, &node, selectors, results);
+                }
             }
         }
 
         Segment::Recursive { left, selectors } => {
-            // 1. evaluate the left part → starting points
-            let mut starts = Vec::new();
-            evaluate_segment(root, value, left, &mut starts);
+            if left.is_singular() && matches!(**left, Segment::Root {}) {
+                // Start recursive descent from root
+                recursive_descent(root, root, selectors, results);
+            } else {
+                // 1. Evaluate the left part → intermediate nodes
+                let mut intermediate = Vec::new();
+                evaluate_segment(root, value, left, &mut intermediate);
 
-            // 2. BFS-style recursive descent from every start
-            for start in starts {
-                recursive_descent(root, &start, selectors, results);
+                // 2. For each intermediate node, do recursive descent
+                for node in intermediate {
+                    recursive_descent(root, &node, selectors, results);
+                }
             }
         }
     }
@@ -116,8 +129,16 @@ fn apply_selectors(
                     continue;
                 }
 
-                let mut start_idx = if eff_start < 0 { eff_start + len } else { eff_start };
-                let mut stop_idx = if eff_stop < 0 { eff_stop + len } else { eff_stop };
+                let mut start_idx = if eff_start < 0 {
+                    eff_start + len
+                } else {
+                    eff_start
+                };
+                let mut stop_idx = if eff_stop < 0 {
+                    eff_stop + len
+                } else {
+                    eff_stop
+                };
                 start_idx = start_idx.max(0).min(len);
                 stop_idx = stop_idx.max(-1).min(len);
 
@@ -175,7 +196,11 @@ fn recursive_descent(
     });
 }
 
-fn eval_filter_expr(root: &dyn PathValue, current: &dyn PathValue, expr: &FilterExpression) -> bool {
+fn eval_filter_expr(
+    root: &dyn PathValue,
+    current: &dyn PathValue,
+    expr: &FilterExpression,
+) -> bool {
     to_logical(eval_expr(root, current, expr))
 }
 
@@ -203,7 +228,11 @@ fn eval_expr(root: &dyn PathValue, current: &dyn PathValue, expr: &FilterExpress
         FilterExpression::Not { expression } => {
             ExprValue::Bool(!to_logical(eval_expr(root, current, expression)))
         }
-        FilterExpression::Logical { left, operator, right } => {
+        FilterExpression::Logical {
+            left,
+            operator,
+            right,
+        } => {
             let l = to_logical(eval_expr(root, current, left));
             let r = to_logical(eval_expr(root, current, right));
             ExprValue::Bool(match operator {
@@ -211,7 +240,11 @@ fn eval_expr(root: &dyn PathValue, current: &dyn PathValue, expr: &FilterExpress
                 LogicalOperator::Or => l || r,
             })
         }
-        FilterExpression::Comparison { left, operator, right } => {
+        FilterExpression::Comparison {
+            left,
+            operator,
+            right,
+        } => {
             let l = eval_expr(root, current, left);
             let r = eval_expr(root, current, right);
             ExprValue::Bool(compare_expr(l, operator, r))
@@ -307,9 +340,16 @@ fn to_logical(v: ExprValue) -> bool {
 
 fn compare_expr(l: ExprValue, op: &ComparisonOperator, r: ExprValue) -> bool {
     match (l, r) {
-        (ExprValue::Nodes(ls), ExprValue::Nodes(rs)) => ls.iter().any(|a| rs.iter().any(|b| compare_values(&get_value(a), op, &get_value(b)))),
-        (ExprValue::Nodes(ls), v) => ls.iter().any(|a| compare_values(&get_value(a), op, &get_other_value(&v))),
-        (v, ExprValue::Nodes(rs)) => rs.iter().any(|b| compare_values(&get_other_value(&v), op, &get_value(b))),
+        (ExprValue::Nodes(ls), ExprValue::Nodes(rs)) => ls.iter().any(|a| {
+            rs.iter()
+                .any(|b| compare_values(&get_value(a), op, &get_value(b)))
+        }),
+        (ExprValue::Nodes(ls), v) => ls
+            .iter()
+            .any(|a| compare_values(&get_value(a), op, &get_other_value(&v))),
+        (v, ExprValue::Nodes(rs)) => rs
+            .iter()
+            .any(|b| compare_values(&get_other_value(&v), op, &get_value(b))),
         (ExprValue::Value(l), ExprValue::Value(r)) => compare_values(&l, op, &r),
         _ => false,
     }
@@ -319,7 +359,8 @@ fn compare_values(l: &LoroValue, op: &ComparisonOperator, r: &LoroValue) -> bool
     match op {
         ComparisonOperator::In => {
             if let LoroValue::List(list) = r {
-                list.iter().any(|item| compare_values(l, &ComparisonOperator::Eq, item))
+                list.iter()
+                    .any(|item| compare_values(l, &ComparisonOperator::Eq, item))
             } else {
                 false
             }
@@ -329,7 +370,9 @@ fn compare_values(l: &LoroValue, op: &ComparisonOperator, r: &LoroValue) -> bool
             (LoroValue::I64(a), LoroValue::I64(b)) => compare_nums(*a as f64, op, *b as f64),
             (LoroValue::Double(a), LoroValue::I64(b)) => compare_nums(*a, op, *b as f64),
             (LoroValue::I64(a), LoroValue::Double(b)) => compare_nums(*a as f64, op, *b),
-            (LoroValue::String(a), LoroValue::String(b)) => compare_strs(a.as_ref(), op, b.as_ref()),
+            (LoroValue::String(a), LoroValue::String(b)) => {
+                compare_strs(a.as_ref(), op, b.as_ref())
+            }
             (LoroValue::Bool(a), LoroValue::Bool(b)) => compare_bools(*a, op, *b),
             (LoroValue::Null, LoroValue::Null) => match op {
                 ComparisonOperator::Eq => true,
@@ -778,10 +821,14 @@ mod tests {
         let doc = LoroDoc::new();
         doc.start_auto_commit();
         let store = doc.get_map("store");
-        let books = store.insert_container("books", ListHandler::new_detached()).unwrap();
+        let books = store
+            .insert_container("books", ListHandler::new_detached())
+            .unwrap();
 
         // Book 1: 1984
-        let book = books.insert_container(0, MapHandler::new_detached()).unwrap();
+        let book = books
+            .insert_container(0, MapHandler::new_detached())
+            .unwrap();
         book.insert("title", "1984").unwrap();
         book.insert("author", "George Orwell").unwrap();
         book.insert("price", 10).unwrap();
@@ -789,14 +836,18 @@ mod tests {
         book.insert("isbn", "978-0451524935").unwrap();
 
         // Book 2: Animal Farm
-        let book = books.insert_container(1, MapHandler::new_detached()).unwrap();
+        let book = books
+            .insert_container(1, MapHandler::new_detached())
+            .unwrap();
         book.insert("title", "Animal Farm").unwrap();
         book.insert("author", "George Orwell").unwrap();
         book.insert("price", 8).unwrap();
         book.insert("available", true).unwrap();
 
         // Book 3: Brave New World
-        let book = books.insert_container(2, MapHandler::new_detached()).unwrap();
+        let book = books
+            .insert_container(2, MapHandler::new_detached())
+            .unwrap();
         book.insert("title", "Brave New World").unwrap();
         book.insert("author", "Aldous Huxley").unwrap();
         book.insert("price", 12).unwrap();
@@ -804,7 +855,9 @@ mod tests {
         book.insert("isbn", "978-0060850524").unwrap();
 
         // Book 4: Fahrenheit 451
-        let book = books.insert_container(3, MapHandler::new_detached()).unwrap();
+        let book = books
+            .insert_container(3, MapHandler::new_detached())
+            .unwrap();
         book.insert("title", "Fahrenheit 451").unwrap();
         book.insert("author", "Ray Bradbury").unwrap();
         book.insert("price", 9).unwrap();
@@ -812,42 +865,54 @@ mod tests {
         book.insert("isbn", "978-1451673319").unwrap();
 
         // Book 5: The Great Gatsby
-        let book = books.insert_container(4, MapHandler::new_detached()).unwrap();
+        let book = books
+            .insert_container(4, MapHandler::new_detached())
+            .unwrap();
         book.insert("title", "The Great Gatsby").unwrap();
         book.insert("author", "F. Scott Fitzgerald").unwrap();
         book.insert("price", LoroValue::Null).unwrap();
         book.insert("available", true).unwrap();
 
         // Book 6: To Kill a Mockingbird
-        let book = books.insert_container(5, MapHandler::new_detached()).unwrap();
+        let book = books
+            .insert_container(5, MapHandler::new_detached())
+            .unwrap();
         book.insert("title", "To Kill a Mockingbird").unwrap();
         book.insert("author", "Harper Lee").unwrap();
         book.insert("price", 11).unwrap();
         book.insert("available", true).unwrap();
 
         // Book 7: The Catcher in the Rye
-        let book = books.insert_container(6, MapHandler::new_detached()).unwrap();
+        let book = books
+            .insert_container(6, MapHandler::new_detached())
+            .unwrap();
         book.insert("title", "The Catcher in the Rye").unwrap();
         book.insert("author", "J.D. Salinger").unwrap();
         book.insert("price", 10).unwrap();
         book.insert("available", false).unwrap();
 
         // Book 8: Lord of the Flies
-        let book = books.insert_container(7, MapHandler::new_detached()).unwrap();
+        let book = books
+            .insert_container(7, MapHandler::new_detached())
+            .unwrap();
         book.insert("title", "Lord of the Flies").unwrap();
         book.insert("author", "William Golding").unwrap();
         book.insert("price", 9).unwrap();
         book.insert("available", true).unwrap();
 
         // Book 9: Pride and Prejudice
-        let book = books.insert_container(8, MapHandler::new_detached()).unwrap();
+        let book = books
+            .insert_container(8, MapHandler::new_detached())
+            .unwrap();
         book.insert("title", "Pride and Prejudice").unwrap();
         book.insert("author", "Jane Austen").unwrap();
         book.insert("price", 7).unwrap();
         book.insert("available", true).unwrap();
 
         // Book 10: The Hobbit
-        let book = books.insert_container(9, MapHandler::new_detached()).unwrap();
+        let book = books
+            .insert_container(9, MapHandler::new_detached())
+            .unwrap();
         book.insert("title", "The Hobbit").unwrap();
         book.insert("author", "J.R.R. Tolkien").unwrap();
         book.insert("price", 14).unwrap();
@@ -855,14 +920,15 @@ mod tests {
 
         // Additional metadata
         store.insert("featured_author", "George Orwell").unwrap();
-        let featured_authors = store.insert_container("featured_authors", ListHandler::new_detached()).unwrap();
+        let featured_authors = store
+            .insert_container("featured_authors", ListHandler::new_detached())
+            .unwrap();
         featured_authors.push("George Orwell").unwrap();
         featured_authors.push("Aldous Huxley").unwrap();
         featured_authors.push("Ray Bradbury").unwrap();
         store.insert("min_price", 10).unwrap();
         doc
     }
-
 
     mod jsonpath_selectors {
         use super::*;
@@ -1093,7 +1159,12 @@ mod tests {
                 .map(|v| v.as_value().unwrap().as_string().unwrap().as_str())
                 .collect();
             titles.sort();
-            let mut expected = vec!["1984", "Pride and Prejudice", "The Catcher in the Rye", "The Hobbit"];
+            let mut expected = vec![
+                "1984",
+                "Pride and Prejudice",
+                "The Catcher in the Rye",
+                "The Hobbit",
+            ];
             expected.sort();
             assert_eq!(titles, expected);
             Ok(())
@@ -1229,10 +1300,7 @@ mod tests {
                 .iter()
                 .map(|v| v.as_value().unwrap().as_string().unwrap().as_str())
                 .collect();
-            assert_eq!(
-                titles,
-                vec!["1984", "Brave New World", "The Great Gatsby"]
-            );
+            assert_eq!(titles, vec!["1984", "Brave New World", "The Great Gatsby"]);
             Ok(())
         }
 
