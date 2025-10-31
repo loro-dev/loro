@@ -14,6 +14,7 @@
     "test-loom-reproduce": "LOOM_MAX_PREEMPTIONS=2 LOOM_LOG=info LOOM_LOCATION=1 LOOM_CHECKPOINT_INTERVAL=1 LOOM_CHECKPOINT_FILE=loom_test.json RUSTFLAGS='--cfg loom' cargo test -p loro --test multi_thread_test --release",
     "watch-loom": "RUSTFLAGS='--cfg loom' bacon",
     "coverage": "mkdir -p coverage && cargo llvm-cov nextest --features test_utils,jsonpath --lcov > coverage/lcov-nextest.info && cargo llvm-cov report",
+    "bench": "cargo bench --package loro-internal --features \"test_utils jsonpath\" --bench jsonpath",
     "release-wasm": "deno run -A ./scripts/sync-loro-version.ts && cd crates/loro-wasm && pnpm i && pnpm build-release",
     "check": "cargo clippy --all-features -- -Dwarnings",
     "run-fuzz-corpus": "cd crates/fuzz && cargo +nightly fuzz run all -- -max_total_time=1",
@@ -28,5 +29,6 @@
     "@changesets/changelog-git": "^0.2.0",
     "@changesets/cli": "^2.27.1",
     "sponsorkit": "^17.0.0"
-  }
+  },
+  "packageManager": "pnpm@10.10.0+sha512.d615db246fe70f25dcfea6d8d73dee782ce23e2245e3c4f6f888249fb568149318637dca73c2c5c8ef2a4ca0d5657fb9567188bfab47f566d1ee6ce987815c39"
 }

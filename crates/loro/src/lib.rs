@@ -83,8 +83,6 @@ pub use loro_kv_store as kv_store;
 
 #[cfg(feature = "jsonpath")]
 pub use loro_internal::jsonpath;
-#[cfg(feature = "jsonpath")]
-pub use loro_internal::jsonpath::JsonPathError;
 
 #[cfg(feature = "counter")]
 mod counter;
@@ -3287,6 +3285,7 @@ impl ContainerTrait for LoroUnknown {
 }
 
 use enum_as_inner::EnumAsInner;
+use loro_internal::jsonpath::jsonpath::JsonPathError;
 
 /// All the CRDT containers supported by Loro.
 #[derive(Clone, Debug, EnumAsInner)]
@@ -3513,7 +3512,7 @@ pub struct UndoManager(InnerUndoManager);
 impl UndoManager {
     /// Create a new UndoManager.
     pub fn new(doc: &LoroDoc) -> Self {
-        let mut inner = InnerUndoManager::new(&doc.doc);
+        let inner = InnerUndoManager::new(&doc.doc);
         inner.set_max_undo_steps(100);
         Self(inner)
     }
