@@ -17,11 +17,10 @@ pub enum JsonPathError {
     #[error("JSONPath evaluation error: {0}")]
     EvaluationError(String),
 }
-
 impl LoroDoc {
     #[inline]
     pub fn jsonpath(&self, jsonpath: &str) -> Result<Vec<ValueOrHandler>, JsonPathError> {
-        evaluate_jsonpath(self, &jsonpath)
+        evaluate_jsonpath(self, jsonpath)
     }
 }
 
@@ -53,38 +52,27 @@ fn evaluate_segment(
 ) {
     match segment {
         Segment::Root {} => {
-            // `$` – start again from the document root
-            // (no more segments after a lone `$`, but we keep the API generic)
             if let Ok(cloned) = root.clone_this() {
                 results.push(cloned);
             }
         }
-
         Segment::Child { left, selectors } => {
             if left.is_singular() && matches!(**left, Segment::Root {}) {
                 apply_selectors(root, root, selectors, results);
             } else {
-                // 1. Evaluate the left part → intermediate nodes
                 let mut intermediate = Vec::new();
                 evaluate_segment(root, value, left, &mut intermediate);
-
-                // 2. Apply selectors to every intermediate node
                 for node in intermediate {
                     apply_selectors(root, &node, selectors, results);
                 }
             }
         }
-
         Segment::Recursive { left, selectors } => {
             if left.is_singular() && matches!(**left, Segment::Root {}) {
-                // Start recursive descent from root
                 recursive_descent(root, root, selectors, results);
             } else {
-                // 1. Evaluate the left part → intermediate nodes
                 let mut intermediate = Vec::new();
                 evaluate_segment(root, value, left, &mut intermediate);
-
-                // 2. For each intermediate node, do recursive descent
                 for node in intermediate {
                     recursive_descent(root, &node, selectors, results);
                 }
@@ -106,7 +94,6 @@ fn apply_selectors(
                     results.push(child);
                 }
             }
-
             Selector::Index { index } => {
                 let mut idx = *index;
                 if idx < 0 {
@@ -118,7 +105,6 @@ fn apply_selectors(
                     }
                 }
             }
-
             Selector::Slice { start, stop, step } => {
                 let len = node.length_for_path() as i64;
                 let eff_start = start.unwrap_or(if step.unwrap_or(1) > 0 { 0 } else { len - 1 });
@@ -142,7 +128,10 @@ fn apply_selectors(
                 start_idx = start_idx.max(0).min(len);
                 stop_idx = stop_idx.max(-1).min(len);
 
+                // Pre-allocate if positive step for better perf
                 if eff_step > 0 {
+                    let approx_count = ((stop_idx - start_idx) / eff_step).max(0) as usize;
+                    results.reserve(approx_count);
                     let mut i = start_idx;
                     while i < stop_idx {
                         if let Some(child) = node.get_by_index(i as isize) {
@@ -151,6 +140,8 @@ fn apply_selectors(
                         i += eff_step;
                     }
                 } else {
+                    let approx_count = ((start_idx - stop_idx) / -eff_step).max(0) as usize;
+                    results.reserve(approx_count);
                     let mut i = start_idx;
                     while i > stop_idx {
                         if let Some(child) = node.get_by_index(i as isize) {
@@ -160,14 +151,12 @@ fn apply_selectors(
                     }
                 }
             }
-
             Selector::Wild {} => {
                 node.for_each_for_path(&mut |child| {
                     results.push(child);
                     ControlFlow::Continue(())
                 });
             }
-
             Selector::Filter { expression } => {
                 node.for_each_for_path(&mut |child| {
                     if eval_filter_expr(root, &child, expression) {
@@ -199,7 +188,7 @@ fn recursive_descent(
 fn eval_filter_expr(
     root: &dyn PathValue,
     current: &dyn PathValue,
-    expr: &FilterExpression,
+    expr: &FilterExpression
 ) -> bool {
     to_logical(eval_expr(root, current, expr))
 }
@@ -215,7 +204,7 @@ fn eval_expr(root: &dyn PathValue, current: &dyn PathValue, expr: &FilterExpress
         FilterExpression::Int { value } => ExprValue::Value(LoroValue::I64(*value)),
         FilterExpression::Float { value } => ExprValue::Value(LoroValue::Double(*value)),
         FilterExpression::Array { values } => {
-            let mut list = Vec::new();
+            let mut list = Vec::with_capacity(values.len());
             for val in values {
                 match eval_expr(root, current, val) {
                     ExprValue::Value(v) => list.push(v),
@@ -233,12 +222,22 @@ fn eval_expr(root: &dyn PathValue, current: &dyn PathValue, expr: &FilterExpress
             operator,
             right,
         } => {
+            // Short-circuit evaluation
             let l = to_logical(eval_expr(root, current, left));
-            let r = to_logical(eval_expr(root, current, right));
-            ExprValue::Bool(match operator {
-                LogicalOperator::And => l && r,
-                LogicalOperator::Or => l || r,
-            })
+            match operator {
+                LogicalOperator::And => {
+                    if !l {
+                        return ExprValue::Bool(false);
+                    }
+                    ExprValue::Bool(to_logical(eval_expr(root, current, right)))
+                }
+                LogicalOperator::Or => {
+                    if l {
+                        return ExprValue::Bool(true);
+                    }
+                    ExprValue::Bool(to_logical(eval_expr(root, current, right)))
+                }
+            }
         }
         FilterExpression::Comparison {
             left,
@@ -250,76 +249,71 @@ fn eval_expr(root: &dyn PathValue, current: &dyn PathValue, expr: &FilterExpress
             ExprValue::Bool(compare_expr(l, operator, r))
         }
         FilterExpression::RelativeQuery { query } => {
-            // Use current node as root for relative query
             let mut query_results = Vec::new();
             evaluate_segment(current, current, &query.segments, &mut query_results);
             ExprValue::Nodes(query_results)
         }
         FilterExpression::RootQuery { query } => {
-            // Use root for absolute query
             let mut query_results = Vec::new();
             evaluate_segment(root, root, &query.segments, &mut query_results);
             ExprValue::Nodes(query_results)
         }
         FilterExpression::Function { name, args } => {
-            let mut eval_args = vec![];
-            for arg in args {
-                eval_args.push(eval_expr(root, current, arg));
-            }
-            match name.as_str() {
-                "count" => {
-                    if eval_args.len() == 1 {
-                        if let ExprValue::Nodes(ns) = &eval_args[0] {
-                            ExprValue::Value(LoroValue::I64(ns.len() as i64))
-                        } else {
-                            ExprValue::Value(LoroValue::I64(0))
-                        }
-                    } else {
-                        ExprValue::Value(LoroValue::I64(0))
-                    }
-                }
-                "length" => {
-                    if eval_args.len() == 1 {
-                        if let ExprValue::Value(v) = &eval_args[0] {
-                            let len = match v {
-                                LoroValue::List(l) => l.len(),
-                                LoroValue::Map(m) => m.len(),
-                                LoroValue::String(s) => s.len(),
-                                _ => 0,
-                            };
-                            ExprValue::Value(LoroValue::I64(len as i64))
-                        } else {
-                            ExprValue::Value(LoroValue::I64(0))
-                        }
-                    } else {
-                        ExprValue::Value(LoroValue::I64(0))
-                    }
-                }
-                "value" => {
-                    if eval_args.len() == 1 {
-                        if let ExprValue::Nodes(ns) = &eval_args[0] {
-                            if ns.len() == 1 {
-                                // Extract value from single result
-                                match &ns[0] {
-                                    ValueOrHandler::Value(v) => ExprValue::Value(v.clone()),
-                                    ValueOrHandler::Handler(h) => ExprValue::Value(h.get_value()),
-                                }
-                            } else {
-                                ExprValue::Value(LoroValue::Null)
-                            }
-                        } else {
-                            ExprValue::Value(LoroValue::Null)
-                        }
-                    } else {
-                        ExprValue::Value(LoroValue::Null)
-                    }
-                }
-                _ => ExprValue::Bool(false),
-            }
+            eval_function(root, current, name, args)
         }
     }
 }
 
+#[inline]
+fn eval_function(
+    root: &dyn PathValue,
+    current: &dyn PathValue,
+    name: &str,
+    args: &[FilterExpression],
+) -> ExprValue {
+    match name {
+        "count" if args.len() == 1 => {
+            let arg = eval_expr(root, current, &args[0]);
+            if let ExprValue::Nodes(ns) = arg {
+                ExprValue::Value(LoroValue::I64(ns.len() as i64))
+            } else {
+                ExprValue::Value(LoroValue::I64(0))
+            }
+        }
+        "length" if args.len() == 1 => {
+            let arg = eval_expr(root, current, &args[0]);
+            if let ExprValue::Value(v) = arg {
+                let len = match v {
+                    LoroValue::List(l) => l.len(),
+                    LoroValue::Map(m) => m.len(),
+                    LoroValue::String(s) => s.len(),
+                    _ => 0,
+                };
+                ExprValue::Value(LoroValue::I64(len as i64))
+            } else {
+                ExprValue::Value(LoroValue::I64(0))
+            }
+        }
+        "value" if args.len() == 1 => {
+            let arg = eval_expr(root, current, &args[0]);
+            if let ExprValue::Nodes(ns) = arg {
+                if ns.len() == 1 {
+                    match &ns[0] {
+                        ValueOrHandler::Value(v) => ExprValue::Value(v.clone()),
+                        ValueOrHandler::Handler(h) => ExprValue::Value(h.get_value()),
+                    }
+                } else {
+                    ExprValue::Value(LoroValue::Null)
+                }
+            } else {
+                ExprValue::Value(LoroValue::Null)
+            }
+        }
+        _ => ExprValue::Bool(false),
+    }
+}
+
+#[inline(always)]
 fn to_logical(v: ExprValue) -> bool {
     match v {
         ExprValue::Bool(b) => b,
@@ -329,7 +323,7 @@ fn to_logical(v: ExprValue) -> bool {
             LoroValue::String(s) => !s.is_empty(),
             LoroValue::I64(0) => false,
             LoroValue::I64(_) => true,
-            LoroValue::Double(f) => (f - 0.0).abs() > f64::EPSILON,
+            LoroValue::Double(f) => f != 0.0 && !f.is_nan(),
             LoroValue::List(l) => !l.is_empty(),
             LoroValue::Map(m) => !m.is_empty(),
             _ => false,
@@ -338,23 +332,39 @@ fn to_logical(v: ExprValue) -> bool {
     }
 }
 
+#[inline]
 fn compare_expr(l: ExprValue, op: &ComparisonOperator, r: ExprValue) -> bool {
     match (l, r) {
-        (ExprValue::Nodes(ls), ExprValue::Nodes(rs)) => ls.iter().any(|a| {
-            rs.iter()
-                .any(|b| compare_values(&get_value(a), op, &get_value(b)))
-        }),
-        (ExprValue::Nodes(ls), v) => ls
-            .iter()
-            .any(|a| compare_values(&get_value(a), op, &get_other_value(&v))),
-        (v, ExprValue::Nodes(rs)) => rs
-            .iter()
-            .any(|b| compare_values(&get_other_value(&v), op, &get_value(b))),
         (ExprValue::Value(l), ExprValue::Value(r)) => compare_values(&l, op, &r),
+        (ExprValue::Nodes(ls), ExprValue::Nodes(rs)) => {
+            // Optimized: check if either is empty first
+            if ls.is_empty() || rs.is_empty() {
+                return false;
+            }
+            ls.iter().any(|a| {
+                let a_val = get_value(a);
+                rs.iter().any(|b| compare_values(&a_val, op, &get_value(b)))
+            })
+        }
+        (ExprValue::Nodes(ls), v) => {
+            if ls.is_empty() {
+                return false;
+            }
+            let r_val = get_other_value(&v);
+            ls.iter().any(|a| compare_values(&get_value(a), op, &r_val))
+        }
+        (v, ExprValue::Nodes(rs)) => {
+            if rs.is_empty() {
+                return false;
+            }
+            let l_val = get_other_value(&v);
+            rs.iter().any(|b| compare_values(&l_val, op, &get_value(b)))
+        }
         _ => false,
     }
 }
 
+#[inline(always)]
 fn compare_values(l: &LoroValue, op: &ComparisonOperator, r: &LoroValue) -> bool {
     match op {
         ComparisonOperator::In => {
@@ -367,23 +377,33 @@ fn compare_values(l: &LoroValue, op: &ComparisonOperator, r: &LoroValue) -> bool
         }
         _ => match (l, r) {
             (LoroValue::Double(a), LoroValue::Double(b)) => compare_nums(*a, op, *b),
-            (LoroValue::I64(a), LoroValue::I64(b)) => compare_nums(*a as f64, op, *b as f64),
+            (LoroValue::I64(a), LoroValue::I64(b)) => compare_i64(*a, op, *b),
             (LoroValue::Double(a), LoroValue::I64(b)) => compare_nums(*a, op, *b as f64),
             (LoroValue::I64(a), LoroValue::Double(b)) => compare_nums(*a as f64, op, *b),
             (LoroValue::String(a), LoroValue::String(b)) => {
                 compare_strs(a.as_ref(), op, b.as_ref())
             }
             (LoroValue::Bool(a), LoroValue::Bool(b)) => compare_bools(*a, op, *b),
-            (LoroValue::Null, LoroValue::Null) => match op {
-                ComparisonOperator::Eq => true,
-                ComparisonOperator::Ne => false,
-                _ => false,
-            },
+            (LoroValue::Null, LoroValue::Null) => matches!(op, ComparisonOperator::Eq),
             _ => false,
         },
     }
 }
 
+#[inline(always)]
+fn compare_i64(a: i64, op: &ComparisonOperator, b: i64) -> bool {
+    match op {
+        ComparisonOperator::Eq => a == b,
+        ComparisonOperator::Ne => a != b,
+        ComparisonOperator::Lt => a < b,
+        ComparisonOperator::Le => a <= b,
+        ComparisonOperator::Gt => a > b,
+        ComparisonOperator::Ge => a >= b,
+        _ => false,
+    }
+}
+
+#[inline(always)]
 fn compare_nums(a: f64, op: &ComparisonOperator, b: f64) -> bool {
     match op {
         ComparisonOperator::Eq => (a - b).abs() < f64::EPSILON,
@@ -396,6 +416,7 @@ fn compare_nums(a: f64, op: &ComparisonOperator, b: f64) -> bool {
     }
 }
 
+#[inline(always)]
 fn compare_strs(a: &str, op: &ComparisonOperator, b: &str) -> bool {
     match op {
         ComparisonOperator::Eq => a == b,
@@ -409,6 +430,7 @@ fn compare_strs(a: &str, op: &ComparisonOperator, b: &str) -> bool {
     }
 }
 
+#[inline(always)]
 fn compare_bools(a: bool, op: &ComparisonOperator, b: bool) -> bool {
     match op {
         ComparisonOperator::Eq => a == b,
@@ -417,6 +439,7 @@ fn compare_bools(a: bool, op: &ComparisonOperator, b: bool) -> bool {
     }
 }
 
+#[inline(always)]
 fn get_value(node: &ValueOrHandler) -> LoroValue {
     match node {
         ValueOrHandler::Value(v) => v.clone(),
@@ -424,6 +447,7 @@ fn get_value(node: &ValueOrHandler) -> LoroValue {
     }
 }
 
+#[inline(always)]
 fn get_other_value(v: &ExprValue) -> LoroValue {
     match v {
         ExprValue::Value(v) => v.clone(),
