@@ -4,7 +4,6 @@
 #![warn(missing_debug_implementations)]
 use event::DiffBatch;
 use event::{DiffEvent, Subscriber};
-use rustc_hash::FxHashSet;
 pub use loro_common::InternalString;
 pub use loro_internal::cursor::CannotFindRelativePosition;
 use loro_internal::cursor::Cursor;
@@ -30,6 +29,7 @@ use loro_internal::{
     TextHandler as InnerTextHandler, TreeHandler as InnerTreeHandler,
     UnknownHandler as InnerUnknownHandler,
 };
+use rustc_hash::FxHashSet;
 use std::cmp::Ordering;
 use std::ops::ControlFlow;
 use std::ops::Deref;
@@ -3285,6 +3285,7 @@ impl ContainerTrait for LoroUnknown {
 }
 
 use enum_as_inner::EnumAsInner;
+#[cfg(feature = "jsonpath")]
 use loro_internal::jsonpath::jsonpath::JsonPathError;
 
 /// All the CRDT containers supported by Loro.
