@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.8.8
+
+### Patch Changes
+
+- 35d9064: Fix several places that may panic #840
+
+## 1.8.7
+
+### Patch Changes
+
+- 6f98702: Add WASM sourcemap support #836
+
+## 1.8.6
+
+### Patch Changes
+
+- e97e605: fix: should not panic when getting unknown cursor #835
+
+## 1.8.5
+
+### Patch Changes
+
+- a39daf8: fix: call callbacks on undoManager non-recursively to avoid Rust alias issue #831
+- 865bccb: fix: rm useless patch for wasm loading #834
+
 ## 1.8.4
 
 ### Patch Changes

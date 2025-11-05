@@ -3405,3 +3405,20 @@ fn test_checkout_to_unknown_version() {
         LoroError::FrontiersNotFound(..)
     ));
 }
+
+#[test]
+fn has_container_test() {
+    let doc = LoroDoc::new();
+    let text = doc.get_text("text");
+    assert!(doc.has_container(&text.id()));
+    let text = doc
+        .get_map("map")
+        .insert_container("text", LoroText::new())
+        .unwrap();
+    let list = doc
+        .get_map("map")
+        .insert_container("list", LoroList::new())
+        .unwrap();
+    assert!(doc.has_container(&text.id()));
+    assert!(doc.has_container(&list.id()));
+}

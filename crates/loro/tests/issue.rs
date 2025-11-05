@@ -1,5 +1,8 @@
 #![allow(unexpected_cfgs)]
-use loro::{EncodedBlobMode, ExportMode, LoroDoc, UndoManager};
+use loro::{
+    cursor::Cursor, ContainerID, ContainerTrait, EncodedBlobMode, ExportMode, LoroDoc, LoroList,
+    LoroText, UndoManager,
+};
 use std::sync::{Arc, Mutex};
 use tracing::{trace, trace_span};
 
@@ -314,4 +317,42 @@ fn issue_822_tree_shallow_snapshot_roundtrip() {
         "tree shallow value should roundtrip"
     );
     assert_eq!(doc_before, doc_after, "doc shallow value should roundtrip");
+}
+
+#[test]
+fn fix_get_unknown_cursor_position() {
+    let doc = LoroDoc::new();
+    let pos = doc.get_cursor_pos(&Cursor::new(
+        None,
+        ContainerID::Normal {
+            peer: 10,
+            counter: 0,
+            container_type: loro::ContainerType::List,
+        },
+        loro::cursor::Side::Left,
+        0,
+    ));
+    assert!(matches!(pos, Err(..)));
+}
+
+#[test]
+fn get_unknown_cursor_position_but_its_in_pending() {
+    let doc_0 = LoroDoc::new();
+    let list = doc_0
+        .get_map("map")
+        .insert_container("list", LoroList::new())
+        .unwrap();
+    let v = doc_0.oplog_vv();
+    let text = list.insert_container(0, LoroText::new()).unwrap();
+    text.insert(0, "h").unwrap();
+    doc_0.commit();
+    text.insert(1, "heihei").unwrap();
+    let updates = doc_0.export(ExportMode::updates_owned(v)).unwrap();
+
+    let doc_1 = LoroDoc::new();
+    let import_status = doc_1.import(&updates).unwrap();
+    assert!(import_status.pending.is_some());
+    assert!(doc_1.get_container(text.id()).is_none());
+    assert!(!doc_1.has_container(&text.id()));
+    assert_eq!(doc_1.get_path_to_container(&text.id()), None);
 }

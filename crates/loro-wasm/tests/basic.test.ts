@@ -1840,3 +1840,11 @@ it("counter toJSON", () => {
   const doc = new LoroDoc();
   expect(doc.getCounter("c").toJSON()).toBe(0);
 });
+
+it("returns undefined when getting a non-existent cursor", () => {
+  const doc = new LoroDoc();
+  doc.getText("text").insert(0, "hello");
+  const cursor = doc.getText("text").getCursor(2)!;
+  const newDoc = new LoroDoc();
+  expect(newDoc.getCursorPos(cursor)).toBeUndefined();
+});

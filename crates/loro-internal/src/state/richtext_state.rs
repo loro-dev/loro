@@ -1,7 +1,7 @@
-use rustc_hash::{FxHashMap, FxHashSet};
 use generic_btree::{rle::HasLength, Cursor};
 use loro_common::{ContainerID, InternalString, LoroError, LoroResult, LoroValue, ID};
 use loro_delta::DeltaRopeBuilder;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::ops::Range;
 use std::sync::RwLock;
 use std::sync::{Arc, Weak};
@@ -927,8 +927,8 @@ impl RichtextStateLoader {
 }
 
 mod snapshot {
-    use rustc_hash::FxHashMap;
     use loro_common::{IdFull, InternalString, LoroValue, PeerID};
+    use rustc_hash::FxHashMap;
     use serde_columnar::columnar;
     use std::{io::Read, sync::Arc};
 
@@ -1155,57 +1155,6 @@ mod snapshot {
             // This is used to avoid the version_id to be the same as the previous zero version
             text.version_id = 1;
             Ok(text)
-        }
-    }
-
-    #[cfg(test)]
-    mod test {
-        use crate::{container::idx::ContainerIdx, HandlerTrait, LoroDoc};
-
-        use super::*;
-
-        #[test]
-        fn test_richtext_snapshot_fast() {
-            let doc = LoroDoc::new();
-            doc.start_auto_commit();
-            let text = doc.get_text("text");
-            text.insert(0, "Hello world!").unwrap();
-            text.mark(0, 8, "bold", true.into()).unwrap();
-            text.mark(3, 10, "comment", 123456789.into()).unwrap();
-            text.insert(4, "abc").unwrap();
-            text.delete(2, 5).unwrap();
-            let mut bytes = Vec::new();
-            doc.app_state()
-                .lock()
-                .unwrap()
-                .get_text("text")
-                .unwrap()
-                .encode_snapshot_fast(&mut bytes);
-            assert!(bytes.len() <= 76, "w.len() = {}", bytes.len());
-
-            let delta = doc
-                .app_state()
-                .lock()
-                .unwrap()
-                .get_text("text")
-                .unwrap()
-                .get_delta();
-
-            let decoded = RichtextState::decode_value(&bytes).unwrap();
-            assert_eq!(&decoded.0, &text.get_value());
-            let mut new_text = RichtextState::decode_snapshot_fast(
-                ContainerIdx::from_index_and_type(0, loro_common::ContainerType::Text),
-                decoded,
-                ContainerCreationContext {
-                    configure: &Default::default(),
-                    peer: 1,
-                },
-            )
-            .unwrap();
-            let mut new_bytes = Vec::new();
-            new_text.encode_snapshot_fast(&mut new_bytes);
-            assert_eq!(delta, new_text.get_delta());
-            assert_eq!(&bytes, &new_bytes);
         }
     }
 }

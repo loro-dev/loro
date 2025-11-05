@@ -1,5 +1,6 @@
 import { Cursor, LoroDoc, UndoManager } from "../bundler/index";
 import { describe, expect, test } from "vitest";
+import { expectDefined } from "./helpers";
 
 describe("undo", () => {
   test("basic text undo", () => {
@@ -227,9 +228,21 @@ describe("undo", () => {
     expect(doc.toJSON()).toStrictEqual({
       text: "hello world",
     });
-    expect(doc.getCursorPos(poppedCursors[0]).offset).toBe(0);
-    expect(doc.getCursorPos(poppedCursors[1]).offset).toBe(5);
-    expect(doc.getCursorPos(poppedCursors[2]).offset).toBe(11);
+    const cursor0 = expectDefined(
+      doc.getCursorPos(poppedCursors[0]),
+      "cursor pos missing",
+    );
+    const cursor1 = expectDefined(
+      doc.getCursorPos(poppedCursors[1]),
+      "cursor pos missing",
+    );
+    const cursor2 = expectDefined(
+      doc.getCursorPos(poppedCursors[2]),
+      "cursor pos missing",
+    );
+    expect(cursor0.offset).toBe(0);
+    expect(cursor1.offset).toBe(5);
+    expect(cursor2.offset).toBe(11);
   });
 
   test("it can retrieve event in onPush event", async () => {

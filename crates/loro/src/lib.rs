@@ -424,6 +424,12 @@ impl LoroDoc {
         self.doc.import_batch(bytes)
     }
 
+    /// Get a [Container] by container id.
+    #[inline]
+    pub fn get_container(&self, id: ContainerID) -> Option<Container> {
+        self.doc.get_handler(id).map(Container::from_handler)
+    }
+
     /// Get a [LoroMovableList] by container id.
     ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.

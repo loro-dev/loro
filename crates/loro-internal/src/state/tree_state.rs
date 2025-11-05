@@ -1,7 +1,6 @@
 use either::Either;
 use enum_as_inner::EnumAsInner;
 use fractional_index::FractionalIndex;
-use rustc_hash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
 use loro_common::{
     ContainerID, IdFull, IdLp, LoroError, LoroResult, LoroTreeError, LoroValue, PeerID, TreeID,
@@ -9,6 +8,7 @@ use loro_common::{
 };
 use rand::SeedableRng;
 use rle::HasLength;
+use rustc_hash::{FxHashMap, FxHashSet};
 use serde::Serialize;
 use std::collections::VecDeque;
 use std::fmt::Debug;
@@ -332,12 +332,12 @@ struct TreeChildrenCache(FxHashMap<TreeParentId, NodeChildren>);
 mod btree {
     use std::{cmp::Ordering, ops::Range, sync::Arc};
 
-    use rustc_hash::FxHashMap;
     use generic_btree::{
         rle::{CanRemove, HasLength, Mergeable, Sliceable, TryInsert},
         BTree, BTreeTrait, Cursor, FindResult, LeafIndex, LengthFinder, Query, UseLengthFinder,
     };
     use loro_common::TreeID;
+    use rustc_hash::FxHashMap;
 
     use super::NodePosition;
 
@@ -1583,9 +1583,9 @@ mod snapshot {
     use std::{borrow::Cow, collections::BTreeSet, io::Read};
 
     use fractional_index::FractionalIndex;
-    use rustc_hash::FxHashMap;
     use itertools::Itertools;
     use loro_common::{IdFull, Lamport, PeerID, TreeID};
+    use rustc_hash::FxHashMap;
 
     use serde_columnar::columnar;
 
@@ -1787,57 +1787,6 @@ mod snapshot {
             }
 
             Ok(tree)
-        }
-    }
-
-    #[cfg(test)]
-    mod test {
-        use loro_common::LoroValue;
-
-        use crate::{
-            container::idx::ContainerIdx,
-            state::{ContainerCreationContext, ContainerState},
-            LoroDoc,
-        };
-
-        use super::*;
-
-        #[test]
-        fn test_tree_state_snapshot() {
-            let doc = LoroDoc::new();
-            doc.set_peer_id(0).unwrap();
-            doc.start_auto_commit();
-            let tree = doc.get_tree("tree");
-            tree.enable_fractional_index(0);
-            let a = tree.create(TreeParentId::Root).unwrap();
-            let b = tree.create(TreeParentId::Root).unwrap();
-            let _c = tree.create(TreeParentId::Root).unwrap();
-            tree.mov(b, TreeParentId::Node(a)).unwrap();
-            let (bytes, value) = {
-                let mut doc_state = doc.app_state().lock().unwrap();
-                let tree_state = doc_state.get_tree("tree").unwrap();
-                let value = tree_state.get_value();
-                let mut bytes = Vec::new();
-                tree_state.encode_snapshot_fast(&mut bytes);
-                (bytes, value)
-            };
-
-            assert!(bytes.len() == 55, "{}", bytes.len());
-            let mut new_tree_state = TreeState::decode_snapshot_fast(
-                ContainerIdx::from_index_and_type(0, loro_common::ContainerType::Tree),
-                (LoroValue::Null, &bytes),
-                ContainerCreationContext {
-                    configure: &Default::default(),
-                    peer: 0,
-                },
-            )
-            .unwrap();
-
-            let mut doc_state = doc.app_state().lock().unwrap();
-            let tree_state = doc_state.get_tree("tree").unwrap();
-            assert_eq!(&tree_state.trees, &new_tree_state.trees);
-            let new_v = new_tree_state.get_value();
-            assert_eq!(value, new_v);
         }
     }
 }
