@@ -31,6 +31,12 @@ jobs:
           registry-url: https://registry.npmjs.org
           always-auth: true
 
+      - name: Upgrade npm for trusted publishing
+        run: |
+          corepack enable
+          corepack prepare npm@latest --activate
+          npm --version
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
