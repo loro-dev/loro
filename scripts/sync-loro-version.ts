@@ -6,95 +6,112 @@ import { readFileSync, writeFileSync } from "node:fs";
  * using a provided target version when specified, otherwise the higher
  * version number between the two sources.
  */
-export function syncLoroVersion(
-  packageJsonPath: string,
-  versionFilePath: string,
-  checkVersion: string = "",
-) {
-  // Read package.json
-  const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8"));
-  const packageVersion = packageJson.version;
-
-  // Read version file
-  const versionFileContent = readFileSync(versionFilePath, "utf-8");
-  const versionFileVersion = versionFileContent.trim();
-
-  // Parse and compare versions
-  const parsedPackageVersion = semverParse(packageVersion);
-  const parsedFileVersion = semverParse(versionFileVersion);
-
-  if (!parsedPackageVersion || !parsedFileVersion) {
-    throw new Error("Invalid version format found");
+function ensureSemver(version: string, label: string) {
+  if (!semverParse(version)) {
+    throw new Error(`Invalid ${label} version ${version}`);
   }
 
-  if (checkVersion) {
-    const parsedCheckVersion = semverParse(checkVersion);
-    if (!parsedCheckVersion) {
-      throw new Error(`Invalid target version ${checkVersion}`);
+  return version;
+}
+
+function writePackageJson(path: string, json: unknown) {
+  writeFileSync(path, JSON.stringify(json, null, 2) + "\n");
+}
+
+function syncCargoVersion(cargoTomlPath: string, targetVersion: string) {
+  const contents = readFileSync(cargoTomlPath, "utf-8");
+  const lines = contents.split(/\r?\n/);
+  let inPackageSection = false;
+  let updated = false;
+  let foundVersion = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    if (trimmed.startsWith("[")) {
+      inPackageSection = trimmed === "[package]";
+      continue;
     }
 
-    let updated = false;
-    if (packageVersion !== checkVersion) {
-      packageJson.version = checkVersion;
-      writeFileSync(
-        packageJsonPath,
-        JSON.stringify(packageJson, null, 2) + "\n",
-      );
-      updated = true;
+    if (!inPackageSection || !trimmed.startsWith("version")) {
+      continue;
     }
 
-    if (versionFileVersion !== checkVersion) {
-      writeFileSync(versionFilePath, checkVersion);
-      updated = true;
+    foundVersion = true;
+    const match = line.match(/^(\s*version\s*=\s*")([^"]+)(".*)$/);
+    if (!match) {
+      throw new Error(`Unable to parse version line in ${cargoTomlPath}`);
     }
 
-    if (updated) {
-      console.log(
-        `Synchronized ${packageJsonPath} and ${versionFilePath} to ${checkVersion}`,
-      );
-    } else {
-      console.log(
-        `Versions already match the target ${checkVersion} for ${packageJsonPath} and ${versionFilePath}`,
-      );
+    const currentVersion = ensureSemver(match[2], cargoTomlPath);
+    if (currentVersion === targetVersion) {
+      break;
     }
 
-    return;
+    lines[i] = `${match[1]}${targetVersion}${match[3]}`;
+    updated = true;
+    break;
   }
 
-  // Compare versions
-  const comparison = semverCompare(packageVersion, versionFileVersion);
+  if (!foundVersion) {
+    throw new Error(`Could not locate package version in ${cargoTomlPath}`);
+  }
 
-  if (comparison > 0) {
-    // package.json version is higher
-    writeFileSync(versionFilePath, packageVersion);
-    console.log(`Updated version file to ${packageVersion}`);
-  } else if (comparison < 0) {
-    // version file version is higher
-    packageJson.version = versionFileVersion;
-    writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2) + "\n");
-    console.log(`Updated package.json to ${versionFileVersion}`);
+  if (updated) {
+    writeFileSync(cargoTomlPath, lines.join("\n"));
+    console.log(`Synchronized to ${targetVersion}: updated ${cargoTomlPath}`);
   } else {
-    console.log("Versions are already in sync");
+    console.log(`Versions already match ${targetVersion} for ${cargoTomlPath}`);
   }
 }
 
+/**
+ * @param packageJsonPath path to the package.json file whose version may change
+ * @param checkVersion optional explicit version to force across both sources
+ */
+export function syncLoroVersion(
+  packageJsonPath: string,
+  checkVersion: string = "",
+) {
+  const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8"));
+  const packageVersion = ensureSemver(
+    (packageJson as { version: string }).version,
+    packageJsonPath,
+  );
+
+  const targetVersion = checkVersion
+    ? ensureSemver(checkVersion, "target")
+    : packageVersion;
+
+  if (packageVersion === targetVersion) {
+    console.log(`Versions already match ${targetVersion} for ${packageJsonPath}`);
+    return targetVersion;
+  }
+
+  (packageJson as { version: string }).version = targetVersion;
+  writePackageJson(packageJsonPath, packageJson);
+  console.log(`Synchronized to ${targetVersion}: updated ${packageJsonPath}`);
+
+  return targetVersion;
+}
+
 export function runSyncLoroVersion(checkVersion: string = "") {
-  syncLoroVersion(
+  const wasmVersion = syncLoroVersion(
     "./crates/loro-wasm/package.json",
-    "./crates/loro-wasm/VERSION",
     checkVersion,
   );
-  const wasmVersion = readFileSync("./crates/loro-wasm/VERSION", "utf-8").trim();
 
   if (checkVersion && checkVersion !== wasmVersion) {
     throw new Error(
-      `Expected version ${checkVersion} but found ${wasmVersion} in ./crates/loro-wasm/VERSION`,
+      `Expected version ${checkVersion} but found ${wasmVersion} in ./crates/loro-wasm/package.json`,
     );
   }
 
+  syncCargoVersion("./crates/loro-wasm/Cargo.toml", wasmVersion);
+
   syncLoroVersion(
     "./crates/loro-wasm-map/package.json",
-    "./crates/loro-wasm-map/VERSION",
     wasmVersion,
   );
 }

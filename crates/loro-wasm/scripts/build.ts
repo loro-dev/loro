@@ -26,9 +26,10 @@ const TARGETS = ["bundler", "nodejs", "web"];
 const startTime = performance.now();
 const LoroWasmDir = path.resolve(__dirname, "..");
 const WorkspaceCargoToml = path.resolve(__dirname, "../../../Cargo.toml");
-const LoroWasmVersion = (
-  await Deno.readTextFile(path.resolve(LoroWasmDir, "VERSION"))
-).trim();
+const wasmPackageJson = JSON.parse(
+  await Deno.readTextFile(path.resolve(LoroWasmDir, "package.json")),
+);
+const LoroWasmVersion = (wasmPackageJson as { version: string }).version;
 const MapPackageDir = path.resolve(__dirname, "../../loro-wasm-map");
 const WASM_SOURCEMAP_BASE =
   `https://unpkg.com/loro-crdt-map@${LoroWasmVersion}`;

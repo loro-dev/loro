@@ -90,6 +90,8 @@ importers:
         specifier: ^1.4.0
         version: 1.6.0(@vitest/ui@1.6.0)
 
+  crates/loro-wasm-map: {}
+
   examples/loro-quill:
     dependencies:
       is-equal:
