@@ -23,13 +23,12 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: 8
-
-      - name: Setup Node.js 22.x
-        uses: actions/setup-node@v4
+      - name: Setup node
+        uses: actions/setup-node@v6
         with:
-          node-version: 22.x
-          registry-url: https://registry.npmjs.org
-          always-auth: true
+          node-version: 24
+          cache: pnpm
+          registry-url: "https://registry.npmjs.org"
 
       - name: Upgrade npm for trusted publishing
         run: |
