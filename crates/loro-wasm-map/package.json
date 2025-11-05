@@ -1,0 +1,29 @@
+{
+  "name": "loro-crdt-map",
+  "version": "1.8.8",
+  "description": "Source maps for the loro-crdt WebAssembly bundles.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/loro-dev/loro.git"
+  },
+  "keywords": [
+    "loro",
+    "crdt",
+    "wasm",
+    "sourcemap"
+  ],
+  "author": "Loro contributors",
+  "license": "MIT",
+  "files": [
+    "bundler",
+    "nodejs",
+    "web",
+    "README.md",
+    "LICENSE",
+    "package.json"
+  ],
+  "publishConfig": {
+    "provenance": true
+  },
+  "homepage": "https://loro.dev"
+}
