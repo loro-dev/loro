@@ -65,7 +65,7 @@ jobs:
         with:
           title: "chore: version packages"
           commit: "chore: version packages"
-          version: pnpm changeset version && deno run -A ./scripts/sync-loro-version.ts
+          version: pnpm run release-wasm-version
           publish: pnpm release-wasm && pnpm changeset publish --provenance
         env:
           GITHUB_TOKEN: ${{ github.token }}
