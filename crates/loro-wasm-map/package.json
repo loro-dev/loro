@@ -20,9 +20,10 @@
     "web",
     "README.md",
     "LICENSE",
-    "VERSION",
     "package.json"
   ],
+  "publishConfig": {
+    "provenance": true
+  },
   "homepage": "https://loro.dev"
 }
-
