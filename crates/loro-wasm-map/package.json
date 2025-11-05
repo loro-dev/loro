@@ -22,8 +22,5 @@
     "LICENSE",
     "package.json"
   ],
-  "publishConfig": {
-    "provenance": true
-  },
   "homepage": "https://loro.dev"
 }

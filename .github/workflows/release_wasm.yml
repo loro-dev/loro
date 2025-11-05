@@ -75,4 +75,3 @@ jobs:
           publish: pnpm run ci-release-wasm-publish
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          NPM_CONFIG_PROVENANCE: true

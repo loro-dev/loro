@@ -27,9 +27,6 @@
     "LICENSE",
     "package.json"
   ],
-  "publishConfig": {
-    "provenance": true
-  },
   "scripts": {
     "build-dev": "deno run -A ./scripts/build.ts dev && rollup -c && deno run -A ./scripts/post-rollup.ts && npm run test",
     "build-release": "deno run -A ./scripts/build.ts release && rollup -c && deno run -A ./scripts/post-rollup.ts && npm run test",
