@@ -3,7 +3,12 @@
   "changelog": "@changesets/changelog-git",
   "commit": false,
   "fixed": [],
-  "linked": [],
+  "linked": [
+    [
+      "loro-crdt",
+      "loro-crdt-map"
+    ]
+  ],
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
