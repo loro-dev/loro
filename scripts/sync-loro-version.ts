@@ -64,6 +64,11 @@ export function runSyncLoroVersion(checkVersion: string = "") {
     "./crates/loro-wasm/VERSION",
     checkVersion,
   );
+  syncLoroVersion(
+    "./crates/loro-wasm-map/package.json",
+    "./crates/loro-wasm-map/VERSION",
+    checkVersion,
+  );
 }
 
 if (import.meta.main) {

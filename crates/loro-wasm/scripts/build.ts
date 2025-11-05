@@ -26,7 +26,12 @@ const TARGETS = ["bundler", "nodejs", "web"];
 const startTime = performance.now();
 const LoroWasmDir = path.resolve(__dirname, "..");
 const WorkspaceCargoToml = path.resolve(__dirname, "../../../Cargo.toml");
-const WASM_SOURCEMAP_RELATIVE = "./loro_wasm_bg.wasm.map";
+const LoroWasmVersion = (
+  await Deno.readTextFile(path.resolve(LoroWasmDir, "VERSION"))
+).trim();
+const MapPackageDir = path.resolve(__dirname, "../../loro-wasm-map");
+const WASM_SOURCEMAP_BASE =
+  `https://unpkg.com/loro-crdt-map@${LoroWasmVersion}`;
 const EMBED_SCRIPT = path.resolve(
   __dirname,
   "../../../scripts/embed-wasm-sourcemap.mjs",
@@ -217,7 +222,7 @@ async function buildTarget(target: string) {
   await Deno.run({ cmd: cmd.split(" "), cwd: LoroWasmDir }).status();
   console.log();
 
-  await postProcessWasm(targetDirPath);
+  await postProcessWasm(targetDirPath, target);
 
   if (target === "nodejs") {
     console.log("🔨  Patching nodejs target");
@@ -244,7 +249,14 @@ async function buildTarget(target: string) {
   }
 }
 
-async function postProcessWasm(targetDirPath: string) {
+const resolveSourcemapReference = (target: string): string => {
+  if (profile === "release") {
+    return `${WASM_SOURCEMAP_BASE}/${target}/loro_wasm_bg.wasm.map`;
+  }
+  return "./loro_wasm_bg.wasm.map";
+};
+
+async function postProcessWasm(targetDirPath: string, target: string) {
   const wasmPath = path.resolve(targetDirPath, "loro_wasm_bg.wasm");
   try {
     await Deno.stat(wasmPath);
@@ -258,7 +270,7 @@ async function postProcessWasm(targetDirPath: string) {
     "sourcemap",
     wasmPath,
     sourcemapPath,
-    WASM_SOURCEMAP_RELATIVE,
+    resolveSourcemapReference(target),
   ]);
 
   if (profile === "release") {
@@ -298,6 +310,32 @@ async function embedSourcemap(target: string) {
   if (!status.success) {
     throw new Error("embed-wasm-sourcemap failed");
   }
+
+  await exportSourcemap(target, sourcemapPath);
+}
+
+async function exportSourcemap(target: string, sourcemapPath: string) {
+  if (profile !== "release") {
+    return;
+  }
+
+  try {
+    await Deno.stat(sourcemapPath);
+  } catch (_err) {
+    console.warn(`⚠️  Skipping sourcemap export, missing ${sourcemapPath}`);
+    return;
+  }
+
+  const targetDir = path.resolve(MapPackageDir, target);
+  await Deno.mkdir(targetDir, { recursive: true });
+
+  const destination = path.resolve(targetDir, "loro_wasm_bg.wasm.map");
+  await Deno.copyFile(sourcemapPath, destination);
+  console.log(
+    `📦  Copied ${target} sourcemap to loro-crdt-map package: ${destination}`,
+  );
+
+  await Deno.remove(sourcemapPath);
 }
 
 async function runWasmTools(args: string[]) {
