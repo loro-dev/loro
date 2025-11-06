@@ -340,50 +340,21 @@ impl JSONPathParser {
     }
 
     fn parse_number(&self, expr: Pair<Rule>) -> Result<FilterExpression, JSONPathError> {
-        if expr.as_str() == "-0" {
+        let raw = expr.as_str();
+        if raw == "-0" {
             return Ok(FilterExpression::Int { value: 0 });
         }
-        // TODO: change pest grammar to indicate positive or negative exponent?
-        let mut it = expr.into_inner();
-        let mut is_float = false;
-        let mut n = it.next().unwrap().as_str().to_string(); // int
-        if let Some(pair) = it.next() {
-            match pair.as_rule() {
-                Rule::frac => {
-                    is_float = true;
-                    n.push_str(pair.as_str());
-                }
-                Rule::exp => {
-                    let exp_str = pair.as_str();
-                    if exp_str.contains('-') {
-                        is_float = true;
-                    }
-                    n.push_str(exp_str);
-                }
-                _ => unreachable!(),
+        let is_float = raw.contains('.') || raw.contains('e') || raw.contains('E');
+        if !is_float {
+            if let Ok(value) = raw.parse::<i64>() {
+                return Ok(FilterExpression::Int { value });
             }
         }
-        if let Some(pair) = it.next() {
-            let exp_str = pair.as_str();
-            if exp_str.contains('-') {
-                is_float = true;
-            }
-            n.push_str(exp_str);
-        }
-        if is_float {
-            Ok(FilterExpression::Float {
-                value: n
-                    .parse::<f64>()
-                    .map_err(|_| JSONPathError::syntax(String::from("invalid float literal")))?,
-            })
-        } else {
-            Ok(FilterExpression::Int {
-                value: n
-                    .parse::<f64>()
-                    .map_err(|_| JSONPathError::syntax(String::from("invalid integer literal")))?
-                    as i64,
-            })
-        }
+        Ok(FilterExpression::Float {
+            value: raw
+                .parse::<f64>()
+                .map_err(|_| JSONPathError::syntax(String::from("invalid float literal")))?,
+        })
     }
 
     fn parse_array_literal(&self, expr: Pair<Rule>) -> Result<FilterExpression, JSONPathError> {
