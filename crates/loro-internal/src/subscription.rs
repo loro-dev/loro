@@ -17,7 +17,7 @@ pub type LocalUpdateCallback = Box<dyn Fn(&Vec<u8>) -> bool + Send + Sync + 'sta
 /// The callback of the peer id change. The second argument is the next counter for the peer.
 pub type PeerIdUpdateCallback = Box<dyn Fn(&ID) -> bool + Send + Sync + 'static>;
 #[allow(clippy::unused_unit)]
-pub type Subscriber = Arc<dyn (for<'a> Fn(DiffEvent<'a>)) + Send + Sync>;
+pub type Subscriber = Arc<dyn for<'a> Fn(DiffEvent<'a>) + Send + Sync>;
 
 impl LoroDoc {
     /// Subscribe to the changes of the peer id.

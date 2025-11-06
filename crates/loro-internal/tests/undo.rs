@@ -5,7 +5,7 @@ use loro_internal::{handler::UpdateOptions, loro::ExportMode, LoroDoc, UndoManag
 #[test]
 fn test_basic_undo_group_checkpoint() {
     let doc = LoroDoc::new();
-    let mut undo_manager = UndoManager::new(&doc);
+    let undo_manager = UndoManager::new(&doc);
     let text = doc.get_text("text");
 
     text.update("0", UpdateOptions::default()).unwrap();
@@ -34,7 +34,7 @@ fn test_basic_undo_group_checkpoint() {
 fn test_invalid_nested_group() {
     let doc = LoroDoc::new();
 
-    let mut undo_manager = UndoManager::new(&doc);
+    let undo_manager = UndoManager::new(&doc);
 
     assert!(
         undo_manager.group_start().is_ok(),
@@ -54,7 +54,7 @@ fn test_invalid_nested_group() {
 #[test]
 fn test_simulate_intersecting_remote_undo() {
     let doc = LoroDoc::new();
-    let mut undo_manager = UndoManager::new(&doc);
+    let undo_manager = UndoManager::new(&doc);
     let text = doc.get_text("text");
     undo_manager.group_start().unwrap();
     println!("pushing 1");
@@ -98,7 +98,7 @@ fn test_simulate_intersecting_remote_undo() {
 #[test]
 fn test_simulate_non_intersecting_remote_undo() {
     let doc = LoroDoc::new();
-    let mut undo_manager = UndoManager::new(&doc);
+    let undo_manager = UndoManager::new(&doc);
     let text = doc.get_text("text");
     undo_manager.group_start().unwrap();
     text.update("1", UpdateOptions::default()).unwrap();
@@ -135,7 +135,7 @@ fn test_simulate_non_intersecting_remote_undo() {
 fn test_undo_group_start_with_remote_ops() {
     let doc = LoroDoc::new();
     let doc2 = LoroDoc::new();
-    let mut undo_manager = UndoManager::new(&doc);
+    let undo_manager = UndoManager::new(&doc);
     doc.get_text("text").insert(0, "hi").unwrap();
     doc2.import(&doc.export(ExportMode::Snapshot).unwrap())
         .unwrap();
