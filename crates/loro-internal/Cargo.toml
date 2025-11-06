@@ -1,6 +1,6 @@
 [package]
 name = "loro-internal"
-version = "1.8.1"
+version = "1.8.2"
 edition = "2021"
 license = "MIT"
 description = "Loro internal library. Do not use it directly as it's not stable."
@@ -74,19 +74,13 @@ wasm-bindgen = "0.2.100"
 [dev-dependencies]
 arbitrary = { version = "1" }
 miniz_oxide = "0.7.1"
-dhat = "0.3.1"
 rand = { version = "0.8.5" }
-base64 = "0.21.5"
-proptest = "1.0.0"
-proptest-derive = "0.3.0"
-static_assertions = "1.1.0"
 tabled = "0.10.0"
 ctor = "0.1.23"
-criterion = "0.5.0"
-arbtest = "0.2.0"
 bench-utils = { path = "../bench-utils" }
 dev-utils = { path = "../dev-utils" }
 zstd = "0.13.0"
+criterion = { version = "0.7.0", features = ["html_reports"] }
 
 # See https://matklad.github.io/2021/02/27/delete-cargo-integration-tests.html
 [lib]
@@ -129,4 +123,8 @@ harness = false
 
 [[bench]]
 name = "tree"
+harness = false
+
+[[bench]]
+name = "jsonpath"
 harness = false

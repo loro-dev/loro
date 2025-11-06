@@ -17,7 +17,6 @@ pub enum JsonPathError {
     #[error("JSONPath evaluation error: {0}")]
     EvaluationError(String),
 }
-
 impl LoroDoc {
     #[inline]
     pub fn jsonpath(&self, jsonpath: &str) -> Result<Vec<ValueOrHandler>, JsonPathError> {
@@ -259,9 +258,7 @@ fn eval_expr(root: &dyn PathValue, current: &dyn PathValue, expr: &FilterExpress
             evaluate_segment(root, root, &query.segments, &mut query_results);
             ExprValue::Nodes(query_results)
         }
-        FilterExpression::Function { name, args } => {
-            eval_function(root, current, name, args)
-        }
+        FilterExpression::Function { name, args } => eval_function(root, current, name, args),
     }
 }
 
@@ -310,7 +307,18 @@ fn eval_function(
                 ExprValue::Value(LoroValue::Null)
             }
         }
-        _ => ExprValue::Bool(false),
+        "match" => {
+            unimplemented!("JSONPath function `match()` is declared but not implemented");
+        }
+        "search" => {
+            unimplemented!("JSONPath function `search()` is declared but not implemented");
+        }
+        other => {
+            unimplemented!(
+                "JSONPath function `{}` is declared but does not have an evaluator",
+                other
+            );
+        }
     }
 }
 

@@ -833,14 +833,14 @@ impl UndoManager {
                     Some(&remote_change_clone),
                     &mut |diff| {
                         info_span!("transform remote diff").in_scope(|| {
-                            let mut inner = inner.lock();
+                            let inner = inner.lock();
                             // <transform_delta>
                             get_stack(&mut inner.borrow_mut()).transform_based_on_this_delta(diff);
                         });
                     },
                 )?;
                 drop(commit);
-                let mut inner = self.inner.lock();
+                let inner = self.inner.lock();
                 let mut is_some = false;
 
                 if let Some(on_pop) = inner.borrow().on_pop.as_ref() {
@@ -867,7 +867,7 @@ impl UndoManager {
             }
             let new_counter = get_counter_end(doc, self.peer());
             if end_counter != new_counter {
-                let mut inner = self.inner.lock();
+                let inner = self.inner.lock();
                 let mut meta = inner
                     .borrow()
                     .on_push
