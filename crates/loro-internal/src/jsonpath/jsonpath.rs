@@ -307,7 +307,18 @@ fn eval_function(
                 ExprValue::Value(LoroValue::Null)
             }
         }
-        _ => ExprValue::Bool(false),
+        "match" => {
+            unimplemented!("JSONPath function `match()` is declared but not implemented");
+        }
+        "search" => {
+            unimplemented!("JSONPath function `search()` is declared but not implemented");
+        }
+        other => {
+            unimplemented!(
+                "JSONPath function `{}` is declared but does not have an evaluator",
+                other
+            );
+        }
     }
 }
 
