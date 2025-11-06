@@ -5,8 +5,8 @@ use crate::{
     version::{ImVersionVector, VersionRange},
     OpLog, VersionVector,
 };
-use rustc_hash::FxHashMap;
 use loro_common::{Counter, CounterSpan, HasCounterSpan, HasIdSpan, LoroResult, PeerID, ID};
+use rustc_hash::FxHashMap;
 
 #[derive(Debug)]
 pub enum PendingChange {
@@ -31,12 +31,6 @@ impl Deref for PendingChange {
 #[derive(Debug, Default)]
 pub(crate) struct PendingChanges {
     changes: FxHashMap<PeerID, BTreeMap<Counter, Vec<PendingChange>>>,
-}
-
-impl PendingChanges {
-    pub fn is_empty(&self) -> bool {
-        self.changes.is_empty()
-    }
 }
 
 impl OpLog {
@@ -193,7 +187,9 @@ mod test {
         b.set_peer_id(2).unwrap();
         let text_a = a.get_text("text");
         text_a.insert(0, "a").unwrap();
-        let update1 = a.export(ExportMode::updates(&VersionVector::default())).unwrap();
+        let update1 = a
+            .export(ExportMode::updates(&VersionVector::default()))
+            .unwrap();
         let version1 = a.oplog_vv();
         text_a.insert(0, "b").unwrap();
         let update2 = a.export(ExportMode::updates(&version1)).unwrap();
@@ -250,7 +246,9 @@ mod test {
         let text_b = b.get_text("text");
         text_a.insert(0, "a").unwrap();
         let version_a1 = a.oplog_vv();
-        let update_a1 = a.export(ExportMode::updates(&VersionVector::default())).unwrap();
+        let update_a1 = a
+            .export(ExportMode::updates(&VersionVector::default()))
+            .unwrap();
         b.import(&update_a1).unwrap();
         text_b.insert(1, "b").unwrap();
         let update_b1 = b.export(ExportMode::updates(&version_a1)).unwrap();

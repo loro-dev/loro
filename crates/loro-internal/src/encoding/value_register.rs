@@ -37,10 +37,6 @@ impl<T: std::hash::Hash + Clone + PartialEq + Eq> ValueRegister<T> {
         self.map_value_to_index.get(key).copied()
     }
 
-    pub fn contains(&self, key: &T) -> bool {
-        self.map_value_to_index.contains_key(key)
-    }
-
     pub fn unwrap_vec(self) -> Vec<T> {
         self.vec
     }

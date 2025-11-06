@@ -2,7 +2,6 @@ mod frontiers;
 pub use frontiers::Frontiers;
 
 use crate::{
-    change::Lamport,
     id::{Counter, ID},
     oplog::AppDag,
     span::{CounterSpan, IdSpan},
@@ -845,16 +844,6 @@ impl VersionVector {
     #[inline(always)]
     pub fn decode(bytes: &[u8]) -> Result<Self, LoroError> {
         postcard::from_bytes(bytes).map_err(|_| LoroError::DecodeVersionVectorError)
-    }
-
-    pub(crate) fn trim(&self, vv: &VersionVector) -> VersionVector {
-        let mut ans = VersionVector::new();
-        for (client_id, &counter) in self.iter() {
-            if let Some(&other_counter) = vv.get(client_id) {
-                ans.insert(*client_id, counter.min(other_counter));
-            }
-        }
-        ans
     }
 
     pub fn to_im_vv(&self) -> ImVersionVector {

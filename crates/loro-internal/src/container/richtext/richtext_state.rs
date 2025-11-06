@@ -1,5 +1,4 @@
 use append_only_bytes::BytesSlice;
-use rustc_hash::{FxHashMap, FxHashSet};
 use generic_btree::{
     rle::{CanRemove, HasLength, Mergeable, Sliceable, TryInsert},
     BTree, BTreeTrait, Cursor, LeafIndex,
@@ -8,6 +7,7 @@ use loro_common::{
     Counter, IdFull, IdLpSpan, IdSpan, Lamport, LoroError, LoroResult, LoroValue, ID,
 };
 use query::{ByteQuery, ByteQueryT};
+use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{ser::SerializeStruct, Serialize};
 use std::{
     fmt::{Display, Formatter},
@@ -286,11 +286,6 @@ mod text_chunk {
                 utf16_len: utf16_len as i32,
                 id,
             }
-        }
-
-        #[inline]
-        pub fn idlp(&self) -> IdLp {
-            IdLp::new(self.id.peer, self.id.lamport)
         }
 
         #[inline]
@@ -607,22 +602,6 @@ impl RichtextStateChunk {
 
     pub fn new_style(style: Arc<StyleOp>, anchor_type: AnchorType) -> Self {
         Self::Style { style, anchor_type }
-    }
-
-    pub(crate) fn get_id_lp_span(&self) -> IdLpSpan {
-        match self {
-            RichtextStateChunk::Text(t) => {
-                let id = t.idlp();
-                IdLpSpan::new(id.peer, id.lamport, id.lamport + t.unicode_len() as Lamport)
-            }
-            RichtextStateChunk::Style { style, anchor_type } => match anchor_type {
-                AnchorType::Start => style.idlp().into(),
-                AnchorType::End => {
-                    let id = style.idlp();
-                    IdLpSpan::new(id.peer, id.lamport + 1, id.lamport + 2)
-                }
-            },
-        }
     }
 
     pub(crate) fn get_id_span(&self) -> IdSpan {

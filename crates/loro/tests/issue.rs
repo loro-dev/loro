@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 #![allow(unexpected_cfgs)]
 use loro::{
     cursor::Cursor, ContainerID, ContainerTrait, EncodedBlobMode, ExportMode, LoroDoc, LoroList,

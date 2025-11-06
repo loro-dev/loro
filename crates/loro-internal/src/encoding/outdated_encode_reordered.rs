@@ -5,35 +5,26 @@ use loro_common::{
     TreeID, ID,
 };
 use serde_columnar::{columnar, ColumnarError};
-use std::borrow::Cow;
 use std::sync::Arc;
 
 use crate::version::VersionRange;
 use crate::{
     arena::SharedArena,
-    change::{Change, Lamport, Timestamp},
+    change::{Change, Lamport},
     container::{
         list::list_op::DeleteSpanWithId, richtext::TextStyleInfoFlag, tree::tree_op::TreeOp,
     },
-    op::{FutureInnerContent, Op, SliceRange},
-    OpLog, VersionVector,
+    op::{FutureInnerContent, SliceRange},
+    OpLog,
 };
 
-use super::ParsedHeaderAndBody;
-use super::{
-    arena::*,
-    value::{Value, ValueDecodedArenasTrait, ValueReader, ValueWriter},
-    ImportBlobMetadata,
-};
+use super::value::{Value, ValueDecodedArenasTrait};
 
 pub(crate) use crate::encoding::value_register::ValueRegister;
 
 #[allow(unused_imports)]
 use super::value::FutureValue;
 
-/// If any section of the document is longer than this, we will not decode it.
-/// It will return an data corruption error instead.
-pub(super) const MAX_DECODED_SIZE: usize = 1 << 30;
 /// If any collection in the document is longer than this, we will not decode it.
 /// It will return an data corruption error instead.
 pub(super) const MAX_COLLECTION_SIZE: usize = 1 << 28;
@@ -450,7 +441,14 @@ mod test {
     use loro_common::LoroValue;
     use rustc_hash::FxHashSet;
 
-    use crate::{encoding::value_register::ValueRegister, fx_map};
+    use crate::{
+        encoding::{
+            arena::EncodedRegisters,
+            value::{ValueReader, ValueWriter},
+            value_register::ValueRegister,
+        },
+        fx_map,
+    };
 
     use super::*;
 

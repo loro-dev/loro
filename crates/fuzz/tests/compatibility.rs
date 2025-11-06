@@ -1,9 +1,8 @@
 #![allow(deprecated)]
 #![allow(unexpected_cfgs)]
-use assert_unordered::assert_eq_unordered;
 use std::sync::Arc;
 
-use loro::{ExportMode, ToJson as _, ID};
+use loro::{ToJson as _, ID};
 
 ///
 /// This macro creates a series of random operations on various container types

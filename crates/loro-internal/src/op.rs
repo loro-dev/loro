@@ -39,25 +39,9 @@ impl EstimatedSize for Op {
 pub(crate) struct OpWithId {
     pub peer: PeerID,
     pub op: Op,
-    pub lamport: Option<Lamport>,
 }
 
 impl OpWithId {
-    pub fn id(&self) -> ID {
-        ID {
-            peer: self.peer,
-            counter: self.op.counter,
-        }
-    }
-
-    pub fn id_full(&self) -> IdFull {
-        IdFull::new(
-            self.peer,
-            self.op.counter,
-            self.lamport.expect("op should already be imported"),
-        )
-    }
-
     #[allow(unused)]
     pub fn id_span(&self) -> IdSpan {
         IdSpan::new(

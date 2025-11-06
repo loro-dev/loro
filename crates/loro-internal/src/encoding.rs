@@ -499,7 +499,7 @@ impl LoroDoc {
         match parsed.mode {
             EncodeMode::Auto => unreachable!(),
             EncodeMode::OutdatedRle | EncodeMode::OutdatedSnapshot => {
-                return Err(LoroError::ImportUnsupportedEncodingMode)
+                Err(LoroError::ImportUnsupportedEncodingMode)
             }
             EncodeMode::FastSnapshot => fast_snapshot::decode_snapshot_blob_meta(parsed),
             EncodeMode::FastUpdates => fast_snapshot::decode_updates_blob_meta(parsed),

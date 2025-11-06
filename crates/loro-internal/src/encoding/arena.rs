@@ -1,14 +1,12 @@
 use std::{borrow::Cow, ops::Deref};
 
 use crate::InternalString;
-use itertools::Itertools;
 use loro_common::{ContainerID, ContainerType, Counter, LoroError, LoroResult, PeerID, ID};
 use rustc_hash::FxHashSet;
-use serde::{Deserialize, Serialize};
-use serde_columnar::{columnar, ColumnarError};
+use serde_columnar::columnar;
 
 use super::{
-    outdated_encode_reordered::{PeerIdx, MAX_DECODED_SIZE},
+    outdated_encode_reordered::PeerIdx,
     value::{Value, ValueDecodedArenasTrait, ValueEncodeRegister},
     value_register::ValueRegister,
 };
