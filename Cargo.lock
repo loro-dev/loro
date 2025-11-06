@@ -1503,9 +1503,9 @@ dependencies = [
  "generic-btree",
  "loro-common 1.8.1 (git+https://github.com/loro-dev/loro.git?rev=c897c346d9fd46dccf44de7ef4e72799fa9c9769)",
  "loro-delta 1.6.0 (git+https://github.com/loro-dev/loro.git?rev=c897c346d9fd46dccf44de7ef4e72799fa9c9769)",
- "loro-internal 1.8.1 (git+https://github.com/loro-dev/loro.git?rev=c897c346d9fd46dccf44de7ef4e72799fa9c9769)",
+ "loro-internal 1.8.1",
  "loro-kv-store 1.8.1 (git+https://github.com/loro-dev/loro.git?rev=c897c346d9fd46dccf44de7ef4e72799fa9c9769)",
- "rustc-hash 2.1.1",
+ "rustc-hash",
  "tracing",
 ]
 
@@ -1556,7 +1556,7 @@ dependencies = [
  "leb128",
  "loro-rle 1.6.0 (git+https://github.com/loro-dev/loro.git?rev=c897c346d9fd46dccf44de7ef4e72799fa9c9769)",
  "nonmax",
- "rustc-hash 2.1.1",
+ "rustc-hash",
  "serde",
  "serde_columnar",
  "serde_json",
@@ -1645,6 +1645,50 @@ dependencies = [
 
 [[package]]
 name = "loro-internal"
+version = "1.8.1"
+source = "git+https://github.com/loro-dev/loro.git?rev=c897c346d9fd46dccf44de7ef4e72799fa9c9769#c897c346d9fd46dccf44de7ef4e72799fa9c9769"
+dependencies = [
+ "append-only-bytes",
+ "arref",
+ "bytes",
+ "either",
+ "ensure-cov",
+ "enum-as-inner 0.6.1",
+ "enum_dispatch",
+ "generic-btree",
+ "getrandom 0.2.16",
+ "im",
+ "itertools 0.12.1",
+ "leb128",
+ "loom",
+ "loro-common 1.8.1 (git+https://github.com/loro-dev/loro.git?rev=c897c346d9fd46dccf44de7ef4e72799fa9c9769)",
+ "loro-delta 1.6.0 (git+https://github.com/loro-dev/loro.git?rev=c897c346d9fd46dccf44de7ef4e72799fa9c9769)",
+ "loro-kv-store 1.8.1 (git+https://github.com/loro-dev/loro.git?rev=c897c346d9fd46dccf44de7ef4e72799fa9c9769)",
+ "loro-rle 1.6.0 (git+https://github.com/loro-dev/loro.git?rev=c897c346d9fd46dccf44de7ef4e72799fa9c9769)",
+ "loro_fractional_index 1.6.0 (git+https://github.com/loro-dev/loro.git?rev=c897c346d9fd46dccf44de7ef4e72799fa9c9769)",
+ "md5",
+ "nonmax",
+ "num",
+ "num-traits",
+ "once_cell",
+ "parking_lot",
+ "postcard",
+ "pretty_assertions",
+ "rand 0.8.5",
+ "rustc-hash",
+ "serde",
+ "serde_columnar",
+ "serde_json",
+ "smallvec",
+ "thiserror 1.0.69",
+ "thread_local",
+ "tracing",
+ "wasm-bindgen",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "loro-internal"
 version = "1.8.2"
 dependencies = [
  "append-only-bytes",
@@ -1698,50 +1742,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "loro-internal"
-version = "1.8.1"
-source = "git+https://github.com/loro-dev/loro.git?rev=c897c346d9fd46dccf44de7ef4e72799fa9c9769#c897c346d9fd46dccf44de7ef4e72799fa9c9769"
-dependencies = [
- "append-only-bytes",
- "arref",
- "bytes",
- "either",
- "ensure-cov",
- "enum-as-inner 0.6.1",
- "enum_dispatch",
- "generic-btree",
- "getrandom 0.2.16",
- "im",
- "itertools 0.12.1",
- "leb128",
- "loom",
- "loro-common 1.8.1 (git+https://github.com/loro-dev/loro.git?rev=c897c346d9fd46dccf44de7ef4e72799fa9c9769)",
- "loro-delta 1.6.0 (git+https://github.com/loro-dev/loro.git?rev=c897c346d9fd46dccf44de7ef4e72799fa9c9769)",
- "loro-kv-store 1.8.1 (git+https://github.com/loro-dev/loro.git?rev=c897c346d9fd46dccf44de7ef4e72799fa9c9769)",
- "loro-rle 1.6.0 (git+https://github.com/loro-dev/loro.git?rev=c897c346d9fd46dccf44de7ef4e72799fa9c9769)",
- "loro_fractional_index 1.6.0 (git+https://github.com/loro-dev/loro.git?rev=c897c346d9fd46dccf44de7ef4e72799fa9c9769)",
- "md5",
- "nonmax",
- "num",
- "num-traits",
- "once_cell",
- "parking_lot",
- "postcard",
- "pretty_assertions",
- "rand 0.8.5",
- "rustc-hash 2.1.1",
- "serde",
- "serde_columnar",
- "serde_json",
- "smallvec",
- "thiserror 1.0.69",
- "thread_local",
- "tracing",
- "wasm-bindgen",
- "xxhash-rust",
-]
-
-[[package]]
 name = "loro-kv-store"
 version = "0.16.2"
 source = "git+https://github.com/loro-dev/loro.git?tag=loro-crdt%401.0.0-alpha.4#9bfe97bce4912c6dc8439817497d18423a0e8cb7"
@@ -1786,7 +1786,7 @@ dependencies = [
  "lz4_flex",
  "once_cell",
  "quick_cache",
- "rustc-hash 2.1.1",
+ "rustc-hash",
  "tracing",
  "xxhash-rust",
 ]
