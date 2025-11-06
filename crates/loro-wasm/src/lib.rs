@@ -1421,42 +1421,6 @@ impl LoroDoc {
         }
     }
 
-    /// Export the snapshot of current version.
-    /// It includes all the history and the document state
-    ///
-    /// @deprecated Use `export({mode: "snapshot"})` instead
-    #[wasm_bindgen(js_name = "exportSnapshot")]
-    pub fn export_snapshot(&self) -> JsResult<Vec<u8>> {
-        Ok(self.doc.export_snapshot()?)
-    }
-
-    /// Export updates from the specific version to the current version
-    ///
-    /// @example
-    /// ```ts
-    /// import { LoroDoc } from "loro-crdt";
-    ///
-    /// const doc = new LoroDoc();
-    /// const text = doc.getText("text");
-    /// text.insert(0, "Hello");
-    /// // get all updates of the doc
-    /// const updates = doc.exportFrom();
-    /// const version = doc.oplogVersion();
-    /// text.insert(5, " World");
-    /// // get updates from specific version to the latest version
-    /// const updates2 = doc.exportFrom(version);
-    /// ```
-    #[wasm_bindgen(skip_typescript, js_name = "exportFrom")]
-    pub fn export_from(&self, vv: JsValue) -> JsResult<Vec<u8>> {
-        if vv.is_null() || vv.is_undefined() {
-            Ok(self.doc.export_from(&Default::default()))
-        } else {
-            let vv = js_to_version_vector(vv)?;
-            // `version` may be null or undefined
-            Ok(self.doc.export_from(&vv.0))
-        }
-    }
-
     /// Export the document based on the specified ExportMode.
     ///
     /// @param mode - The export mode to use. Can be one of:

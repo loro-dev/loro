@@ -1551,8 +1551,8 @@ impl ChangesBlockBytes {
 #[cfg(test)]
 mod test {
     use crate::{
-        oplog::convert_change_to_remote, state::TreeParentId, ListHandler, LoroDoc,
-        MovableListHandler, TextHandler, TreeHandler,
+        loro::ExportMode, oplog::convert_change_to_remote, state::TreeParentId, ListHandler,
+        LoroDoc, MovableListHandler, TextHandler, TreeHandler,
     };
 
     use super::*;
@@ -1606,7 +1606,7 @@ mod test {
 
         {
             // Sync initial state to B and C
-            let initial_state = doc_a.export_from(&Default::default());
+            let initial_state = doc_a.export(ExportMode::all_updates()).unwrap();
             doc_b.import(&initial_state)?;
             doc_c.import(&initial_state)?;
         }
@@ -1645,11 +1645,11 @@ mod test {
         }
 
         // Sync B's changes to A
-        let b_changes = doc_b.export_from(&doc_a.oplog_vv());
+        let b_changes = doc_b.export(ExportMode::updates(&doc_a.oplog_vv())).unwrap();
         doc_a.import(&b_changes)?;
 
         // Sync C's changes to A
-        let c_changes = doc_c.export_from(&doc_a.oplog_vv());
+        let c_changes = doc_c.export(ExportMode::updates(&doc_a.oplog_vv())).unwrap();
         doc_a.import(&c_changes)?;
 
         test_encode_decode(doc_a);

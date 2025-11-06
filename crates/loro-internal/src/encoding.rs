@@ -293,20 +293,6 @@ pub(crate) struct StateSnapshotDecodeContext<'a> {
     pub mode: EncodeMode,
 }
 
-pub(crate) fn encode_oplog(oplog: &OpLog, vv: &VersionVector, mode: EncodeMode) -> Vec<u8> {
-    let mode = match mode {
-        EncodeMode::Auto => EncodeMode::OutdatedRle,
-        mode => mode,
-    };
-
-    let body = match &mode {
-        EncodeMode::OutdatedRle => outdated_encode_reordered::encode_updates(oplog, vv),
-        _ => unreachable!(),
-    };
-
-    encode_header_and_body(mode, body)
-}
-
 pub(crate) fn decode_oplog(
     oplog: &mut OpLog,
     parsed: ParsedHeaderAndBody,
@@ -314,7 +300,7 @@ pub(crate) fn decode_oplog(
     let ParsedHeaderAndBody { mode, body, .. } = parsed;
     let changes = match mode {
         EncodeMode::OutdatedRle | EncodeMode::OutdatedSnapshot => {
-            outdated_encode_reordered::decode_updates(oplog, body)
+            return Err(LoroError::ImportUnsupportedEncodingMode);
         }
         EncodeMode::FastSnapshot => fast_snapshot::decode_oplog(oplog, body),
         EncodeMode::FastUpdates => fast_snapshot::decode_updates(oplog, body.to_vec().into()),
@@ -420,16 +406,6 @@ fn encode_header_and_body(mode: EncodeMode, body: Vec<u8>) -> Vec<u8> {
     ans
 }
 
-pub(crate) fn export_snapshot(doc: &LoroDoc) -> Vec<u8> {
-    let body = outdated_encode_reordered::encode_snapshot(
-        &doc.oplog().lock().unwrap(),
-        &mut doc.app_state().lock().unwrap(),
-        &Default::default(),
-    );
-
-    encode_header_and_body(EncodeMode::OutdatedSnapshot, body)
-}
-
 pub(crate) fn export_fast_snapshot(doc: &LoroDoc) -> Vec<u8> {
     encode_with(EncodeMode::FastSnapshot, &mut |ans| {
         fast_snapshot::encode_snapshot(doc, ans);
@@ -524,7 +500,7 @@ pub(crate) fn decode_snapshot(
 ) -> Result<ImportStatus, LoroError> {
     match mode {
         EncodeMode::OutdatedSnapshot => {
-            outdated_encode_reordered::decode_snapshot(doc, body, origin)?
+            return Err(LoroError::ImportUnsupportedEncodingMode);
         }
         EncodeMode::FastSnapshot => {
             fast_snapshot::decode_snapshot(doc, body.to_vec().into(), origin)?

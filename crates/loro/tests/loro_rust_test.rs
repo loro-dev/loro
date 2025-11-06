@@ -81,7 +81,8 @@ fn fork_doc() -> anyhow::Result<()> {
     assert_eq!(&text.to_string(), "123");
     assert_eq!(&text1.to_string(), "123456");
     assert!(!trigger_cloned.load(std::sync::atomic::Ordering::Acquire),);
-    doc0.import(&doc1.export_from(&Default::default()))?;
+    let updates = doc1.export(ExportMode::all_updates()).unwrap();
+    doc0.import(&updates)?;
     assert!(trigger_cloned.load(std::sync::atomic::Ordering::Acquire),);
     assert_eq!(text.to_string(), text1.to_string());
     assert_ne!(doc0.peer_id(), doc1.peer_id());
@@ -200,9 +201,11 @@ fn cmp_frontiers() {
     doc1.get_text("text").insert(0, "012345").unwrap();
     let doc2 = LoroDoc::new();
     doc2.set_peer_id(2).unwrap();
-    doc2.import(&doc1.export_snapshot()).unwrap();
+    let snapshot = doc1.export(ExportMode::Snapshot).unwrap();
+    doc2.import(&snapshot).unwrap();
     doc2.get_text("text").insert(0, "6789").unwrap();
-    doc1.import(&doc2.export_snapshot()).unwrap();
+    let snapshot = doc2.export(ExportMode::Snapshot).unwrap();
+    doc1.import(&snapshot).unwrap();
     doc1.get_text("text").insert(0, "0123").unwrap();
     doc1.commit();
 
@@ -239,9 +242,11 @@ fn get_change_at_lamport() {
     doc1.get_text("text").insert(0, "012345").unwrap();
     let doc2 = LoroDoc::new();
     doc2.set_peer_id(2).unwrap();
-    doc2.import(&doc1.export_snapshot()).unwrap();
+    let snapshot = doc1.export(ExportMode::Snapshot).unwrap();
+    doc2.import(&snapshot).unwrap();
     doc2.get_text("text").insert(0, "6789").unwrap();
-    doc1.import(&doc2.export_snapshot()).unwrap();
+    let snapshot = doc2.export(ExportMode::Snapshot).unwrap();
+    doc1.import(&snapshot).unwrap();
     doc1.get_text("text").insert(0, "0123").unwrap();
     doc1.commit();
     doc1.with_oplog(|oplog| {
@@ -354,7 +359,8 @@ fn list() -> LoroResult<()> {
         })
     );
     let doc_b = LoroDoc::new();
-    doc_b.import(&doc.export_from(&Default::default()))?;
+    let updates = doc.export(ExportMode::all_updates()).unwrap();
+    doc_b.import(&updates)?;
     assert_eq!(
         doc_b.get_deep_value().to_json_value(),
         json!({
@@ -362,7 +368,8 @@ fn list() -> LoroResult<()> {
         })
     );
     let doc_c = LoroDoc::new();
-    doc_c.import(&doc.export_snapshot())?;
+    let snapshot = doc.export(ExportMode::Snapshot).unwrap();
+    doc_c.import(&snapshot)?;
     assert_eq!(
         doc_c.get_deep_value().to_json_value(),
         json!({
@@ -458,13 +465,14 @@ fn sync() {
     let doc = LoroDoc::new();
     let text = doc.get_text("text");
     text.insert(0, "Hello world!").unwrap();
-    let bytes = doc.export_from(&Default::default());
+    let bytes = doc.export(ExportMode::all_updates()).unwrap();
     let doc_b = LoroDoc::new();
     doc_b.import(&bytes).unwrap();
     assert_eq!(doc.get_deep_value(), doc_b.get_deep_value());
     let text_b = doc_b.get_text("text");
     text_b.mark(0..5, "bold", true).unwrap();
-    doc.import(&doc_b.export_from(&doc.oplog_vv())).unwrap();
+    let updates = doc_b.export(ExportMode::updates(&doc.oplog_vv())).unwrap();
+    doc.import(&updates).unwrap();
     assert_eq!(
         text.get_richtext_value().to_json_value(),
         json!([
@@ -481,7 +489,7 @@ fn save() {
     let doc = LoroDoc::new();
     let text = doc.get_text("text");
     text.insert(0, "123").unwrap();
-    let snapshot = doc.export_snapshot();
+    let snapshot = doc.export(ExportMode::Snapshot).unwrap();
 
     let new_doc = LoroDoc::new();
     new_doc.import(&snapshot).unwrap();
@@ -573,7 +581,7 @@ fn decode_import_blob_meta() -> LoroResult<()> {
     doc_1.set_peer_id(1)?;
     doc_1.get_text("text").insert(0, "123")?;
     {
-        let bytes = doc_1.export_from(&Default::default());
+        let bytes = doc_1.export(ExportMode::all_updates()).unwrap();
         let meta = LoroDoc::decode_import_blob_meta(&bytes, false).unwrap();
         assert!(meta.partial_start_vv.is_empty());
         assert_eq!(meta.partial_end_vv, vv!(1 => 3));
@@ -583,7 +591,7 @@ fn decode_import_blob_meta() -> LoroResult<()> {
         assert!(meta.start_frontiers.is_empty());
         assert_eq!(meta.change_num, 1);
 
-        let bytes = doc_1.export_snapshot();
+        let bytes = doc_1.export(ExportMode::Snapshot).unwrap();
         let meta = LoroDoc::decode_import_blob_meta(&bytes, false).unwrap();
         assert!(meta.partial_start_vv.is_empty());
         assert_eq!(meta.partial_end_vv, vv!(1 => 3));
@@ -596,11 +604,14 @@ fn decode_import_blob_meta() -> LoroResult<()> {
 
     let doc_2 = LoroDoc::new();
     doc_2.set_peer_id(2)?;
-    doc_2.import(&doc_1.export_snapshot()).unwrap();
+    let snapshot = doc_1.export(ExportMode::Snapshot).unwrap();
+    doc_2.import(&snapshot).unwrap();
     doc_2.get_text("text").insert(0, "123")?;
     doc_2.get_text("text").insert(0, "123")?;
     {
-        let bytes = doc_2.export_from(&doc_1.oplog_vv());
+        let bytes = doc_2
+            .export(ExportMode::updates(&doc_1.oplog_vv()))
+            .unwrap();
         let meta = LoroDoc::decode_import_blob_meta(&bytes, false).unwrap();
         assert_eq!(meta.partial_start_vv, vv!());
         assert_eq!(meta.partial_end_vv, vv!(2 => 6));
@@ -610,7 +621,7 @@ fn decode_import_blob_meta() -> LoroResult<()> {
         assert_eq!(meta.start_frontiers, vec![ID::new(1, 2)].into());
         assert_eq!(meta.change_num, 1);
 
-        let bytes = doc_2.export_from(&vv!(1 => 1));
+        let bytes = doc_2.export(ExportMode::updates(&vv!(1 => 1))).unwrap();
         let meta = LoroDoc::decode_import_blob_meta(&bytes, false).unwrap();
         assert_eq!(meta.partial_start_vv, vv!(1 => 1));
         assert_eq!(meta.partial_end_vv, vv!(1 => 3, 2 => 6));
@@ -620,7 +631,7 @@ fn decode_import_blob_meta() -> LoroResult<()> {
         assert_eq!(meta.start_frontiers, vec![ID::new(1, 0)].into());
         assert_eq!(meta.change_num, 2);
 
-        let bytes = doc_2.export_snapshot();
+        let bytes = doc_2.export(ExportMode::Snapshot).unwrap();
         let meta = LoroDoc::decode_import_blob_meta(&bytes, false).unwrap();
         assert_eq!(meta.partial_start_vv, vv!());
         assert_eq!(meta.partial_end_vv, vv!(1 => 3, 2 => 6));
@@ -740,7 +751,8 @@ fn get_cursor() {
     assert!(pos_info.update.is_none());
     assert_eq!(pos_info.current.pos, 0);
     // text2: 0123456789ab
-    doc2.import(&doc1.export_snapshot()).unwrap();
+    let snapshot = doc1.export(ExportMode::Snapshot).unwrap();
+    doc2.import(&snapshot).unwrap();
     let pos_info = doc2.get_cursor_pos(&pos_a).unwrap();
     assert!(pos_info.update.is_none());
     assert_eq!(pos_info.current.pos, 10);
@@ -1075,8 +1087,8 @@ fn test_shallow_empty() {
     new_doc.import(&bytes.unwrap()).unwrap();
     assert_eq!(doc.get_deep_value(), new_doc.get_deep_value());
     apply_random_ops(&new_doc, 0, 10);
-    doc.import(&new_doc.export_from(&Default::default()))
-        .unwrap();
+    let updates = new_doc.export(ExportMode::all_updates()).unwrap();
+    doc.import(&updates).unwrap();
     assert_eq!(doc.get_deep_value(), new_doc.get_deep_value());
 
     let bytes = new_doc.export(loro::ExportMode::Snapshot);
@@ -1098,9 +1110,8 @@ fn test_shallow_import_outdated_updates() {
 
     let other_doc = LoroDoc::new();
     apply_random_ops(&other_doc, 123, 11);
-    let err = new_doc
-        .import(&other_doc.export_from(&Default::default()))
-        .unwrap_err();
+    let updates = other_doc.export(ExportMode::all_updates()).unwrap();
+    let err = new_doc.import(&updates).unwrap_err();
     assert_eq!(err, LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
 }
 
@@ -1117,10 +1128,10 @@ fn test_shallow_import_pending_updates_that_is_outdated() {
 
     let other_doc = LoroDoc::new();
     apply_random_ops(&other_doc, 123, 5);
-    let bytes_a = other_doc.export_from(&Default::default());
+    let bytes_a = other_doc.export(ExportMode::all_updates()).unwrap();
     let vv = other_doc.oplog_vv();
     apply_random_ops(&other_doc, 123, 5);
-    let bytes_b = other_doc.export_from(&vv);
+    let bytes_b = other_doc.export(ExportMode::updates(&vv)).unwrap();
     // pending
     new_doc.import(&bytes_b).unwrap();
     let err = new_doc.import(&bytes_a).unwrap_err();
@@ -1163,8 +1174,12 @@ fn sync_two_shallow_docs() {
     apply_random_ops(&doc_b, 2312, 10);
 
     // Sync doc_a and doc_b
-    let bytes_a = doc_a.export_from(&doc_b.oplog_vv());
-    let bytes_b = doc_b.export_from(&doc_a.oplog_vv());
+    let bytes_a = doc_a
+        .export(ExportMode::updates(&doc_b.oplog_vv()))
+        .unwrap();
+    let bytes_b = doc_b
+        .export(ExportMode::updates(&doc_a.oplog_vv()))
+        .unwrap();
 
     doc_a.import(&bytes_b).unwrap();
     doc_b.import(&bytes_a).unwrap();
@@ -2573,7 +2588,8 @@ fn test_export_json_in_id_span() -> LoroResult<()> {
     doc2.set_peer_id(2)?;
     doc2.get_list("list").insert(0, 3)?;
     doc2.commit();
-    doc.import(&doc2.export_snapshot())?;
+    let snapshot = doc2.export(ExportMode::Snapshot).unwrap();
+    doc.import(&snapshot)?;
 
     let changes = doc.export_json_in_id_span(IdSpan::new(2, 0, 1));
     assert_eq!(changes.len(), 1);
@@ -2597,8 +2613,10 @@ fn test_export_json_in_id_span() -> LoroResult<()> {
     doc2.commit();
 
     // Sync the documents
-    doc1.import(&doc2.export_snapshot())?;
-    doc2.import(&doc1.export_snapshot())?;
+    let snapshot = doc2.export(ExportMode::Snapshot).unwrap();
+    doc1.import(&snapshot)?;
+    let snapshot = doc1.export(ExportMode::Snapshot).unwrap();
+    doc2.import(&snapshot)?;
 
     // Export changes from both peers
     let changes1 = doc1.export_json_in_id_span(IdSpan::new(1, 0, 1));
@@ -2610,7 +2628,8 @@ fn test_export_json_in_id_span() -> LoroResult<()> {
 
     // Verify that the changes can be imported back
     let doc3 = LoroDoc::new();
-    doc3.import(&doc1.export_snapshot())?;
+    let snapshot = doc1.export(ExportMode::Snapshot).unwrap();
+    doc3.import(&snapshot)?;
     assert_eq!(
         doc3.get_text("text").to_string(),
         doc1.get_text("text").to_string()
@@ -2685,7 +2704,8 @@ fn test_export_json_in_id_span_with_complex_operations() -> LoroResult<()> {
 
     // Verify that all changes can be imported back
     let doc2 = LoroDoc::new();
-    doc2.import(&doc.export_snapshot())?;
+    let snapshot = doc.export(ExportMode::Snapshot).unwrap();
+    doc2.import(&snapshot)?;
     assert_eq!(doc2.get_deep_value(), doc.get_deep_value());
 
     Ok(())
@@ -2729,7 +2749,8 @@ fn test_find_spans_between() -> LoroResult<()> {
     doc2.set_peer_id(2)?;
     doc2.get_text("text").insert(0, "Hi")?;
     doc2.commit();
-    doc.import(&doc2.export_snapshot())?;
+    let snapshot = doc2.export(ExportMode::Snapshot).unwrap();
+    doc.import(&snapshot)?;
     let f3 = doc.state_frontiers();
 
     // Test finding spans between f2 and f3

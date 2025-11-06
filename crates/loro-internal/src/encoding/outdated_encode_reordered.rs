@@ -1,7 +1,6 @@
 use either::Either;
 pub(crate) use encode::{encode_op, get_op_prop};
 use fractional_index::FractionalIndex;
-use rustc_hash::{FxHashMap, FxHashSet};
 use generic_btree::rle::Sliceable;
 use itertools::Itertools;
 use loro_common::{
@@ -9,6 +8,7 @@ use loro_common::{
     LoroError, LoroResult, PeerID, TreeID, ID,
 };
 use rle::HasLength;
+use rustc_hash::{FxHashMap, FxHashSet};
 use serde_columnar::{columnar, ColumnarError};
 use std::sync::Arc;
 use std::{borrow::Cow, cell::RefCell, cmp::Ordering, rc::Rc};
@@ -49,124 +49,6 @@ pub(super) const MAX_DECODED_SIZE: usize = 1 << 30;
 /// If any collection in the document is longer than this, we will not decode it.
 /// It will return an data corruption error instead.
 pub(super) const MAX_COLLECTION_SIZE: usize = 1 << 28;
-
-pub(crate) fn encode_updates(oplog: &OpLog, vv: &VersionVector) -> Vec<u8> {
-    // skip the ops that current oplog does not have
-    let actual_start_vv: VersionVector = vv
-        .iter()
-        .filter_map(|(&peer, &end_counter)| {
-            if end_counter == 0 {
-                return None;
-            }
-
-            let this_end = oplog.vv().get(&peer).cloned().unwrap_or(0);
-            if this_end <= end_counter {
-                return Some((peer, this_end));
-            }
-
-            Some((peer, end_counter))
-        })
-        .collect();
-
-    let vv = &actual_start_vv;
-    let mut peer_register: ValueRegister<PeerID> = ValueRegister::new();
-    let (start_counters, diff_changes) = init_encode(oplog, vv, &mut peer_register);
-    let ExtractedContainer {
-        containers,
-        cid_idx_pairs: _,
-        container_to_index: container2index,
-    } = extract_containers_in_order(
-        &mut diff_changes
-            .iter()
-            .flat_map(|x| match x {
-                Either::Left(c) => c.ops.iter(),
-                Either::Right(c) => c.ops.iter(),
-            })
-            .map(|x| x.container),
-        &oplog.arena,
-    );
-
-    let mut registers = EncodedRegisters {
-        peer: peer_register,
-        container: ValueRegister::from_existing(containers),
-        key: ValueRegister::new(),
-        tree_id: ValueRegister::new(),
-        position: either::Left(FxHashSet::default()),
-    };
-    let mut dep_arena = DepsArena::default();
-    let mut value_writer = ValueWriter::new();
-    let mut ops: Vec<TempOp> = Vec::new();
-    let arena = &oplog.arena;
-    let changes = encode_changes(
-        &diff_changes,
-        &mut dep_arena,
-        &mut |op| ops.push(op),
-        &container2index,
-        &mut registers,
-    );
-    registers.sort_fractional_index();
-
-    ops.sort_by(move |a, b| {
-        a.container_index
-            .cmp(&b.container_index)
-            .then_with(|| a.prop_that_used_for_sort.cmp(&b.prop_that_used_for_sort))
-            .then_with(|| a.peer_idx.cmp(&b.peer_idx))
-            .then_with(|| a.lamport.cmp(&b.lamport))
-    });
-
-    let (encoded_ops, del_starts) = encode_ops(&ops, arena, &mut value_writer, &mut registers);
-
-    let frontiers = oplog
-        .dag
-        .vv_to_frontiers(&actual_start_vv)
-        .iter()
-        .map(|x| (registers.peer.register(&x.peer), x.counter))
-        .collect();
-    let doc = EncodedDoc {
-        ops: encoded_ops,
-        delete_starts: del_starts,
-        changes,
-        states: Vec::new(),
-        start_counters,
-        raw_values: Cow::Owned(value_writer.finish()),
-        arenas: Cow::Owned(encode_arena(registers, dep_arena, &[])),
-        start_frontiers: frontiers,
-    };
-
-    serde_columnar::to_vec(&doc).unwrap()
-}
-
-#[instrument(skip_all)]
-pub(crate) fn decode_updates(oplog: &mut OpLog, bytes: &[u8]) -> LoroResult<Vec<Change>> {
-    let iter = serde_columnar::iter_from_bytes::<EncodedDoc>(bytes)?;
-    let mut arenas = decode_arena(&iter.arenas)?;
-    let ops_map = extract_ops(
-        &iter.raw_values,
-        iter.ops,
-        iter.delete_starts,
-        &oplog.arena,
-        &mut arenas,
-        false,
-    )?
-    .ops_map;
-    let DecodedArenas {
-        peer_ids,
-        deps,
-        keys,
-        state_blob_arena: _,
-        ..
-    } = arenas;
-    let changes = decode_changes(
-        iter.changes,
-        iter.start_counters,
-        &peer_ids,
-        &keys,
-        deps,
-        ops_map,
-    )?;
-
-    Ok(changes)
-}
 
 pub fn decode_import_blob_meta(parsed: ParsedHeaderAndBody) -> LoroResult<ImportBlobMetadata> {
     let iterators = serde_columnar::iter_from_bytes::<EncodedDoc>(parsed.body)?;
@@ -435,95 +317,6 @@ fn extract_ops(
     })
 }
 
-pub(crate) fn encode_snapshot(oplog: &OpLog, state: &mut DocState, vv: &VersionVector) -> Vec<u8> {
-    assert!(!state.is_in_txn());
-    assert_eq!(oplog.frontiers(), &state.frontiers);
-
-    let mut peer_register: ValueRegister<PeerID> = ValueRegister::new();
-    let (start_counters, diff_changes) = init_encode(oplog, vv, &mut peer_register);
-    let ExtractedContainer {
-        containers,
-        cid_idx_pairs: c_pairs,
-        container_to_index: container_idx2index,
-    } = extract_containers_in_order(
-        &mut state
-            .iter_and_decode_all()
-            .map(|x| x.container_idx())
-            .chain(
-                diff_changes
-                    .iter()
-                    .flat_map(|x| {
-                        let c = match x {
-                            Either::Left(c) => c,
-                            Either::Right(c) => c,
-                        };
-                        c.ops.iter()
-                    })
-                    .map(|x| x.container),
-            ),
-        &oplog.arena,
-    );
-    let mut dep_arena = DepsArena::default();
-    let mut value_writer = ValueWriter::new();
-    let registers = Rc::new(RefCell::new(EncodedRegisters {
-        peer: peer_register,
-        container: ValueRegister::from_existing(containers),
-        key: ValueRegister::new(),
-        tree_id: ValueRegister::new(),
-        position: either::Left(FxHashSet::default()),
-    }));
-
-    // This stores the required op positions of each container state.
-    // The states can be encoded in these positions in the next step.
-    // This data structure stores that mapping from op id to the required total order.
-    let mut origin_ops: Vec<TempOp<'_>> = Vec::new();
-    let mut pos_mapping_heap: Vec<PosMappingItem> = Vec::new();
-
-    let (states, state_bytes) = encode_snapshot_states(
-        c_pairs.iter().map(|(_, x)| x).copied(),
-        state,
-        oplog,
-        &container_idx2index,
-        registers.clone(),
-        &mut origin_ops,
-        &mut pos_mapping_heap,
-    );
-
-    let mut registers = match Rc::try_unwrap(registers) {
-        Ok(r) => r.into_inner(),
-        Err(_) => unreachable!(),
-    };
-    let changes = encode_changes(
-        &diff_changes,
-        &mut dep_arena,
-        &mut |op| {
-            origin_ops.push(op);
-        },
-        &container_idx2index,
-        &mut registers,
-    );
-
-    let ops: Vec<TempOp> = calc_sorted_ops_for_snapshot(origin_ops, pos_mapping_heap);
-
-    registers.sort_fractional_index();
-
-    let (encoded_ops, del_starts) =
-        encode_ops(&ops, &oplog.arena, &mut value_writer, &mut registers);
-
-    let doc = EncodedDoc {
-        ops: encoded_ops,
-        delete_starts: del_starts,
-        changes,
-        states,
-        start_counters,
-        raw_values: Cow::Owned(value_writer.finish()),
-        arenas: Cow::Owned(encode_arena(registers, dep_arena, &state_bytes)),
-        start_frontiers: Vec::new(),
-    };
-
-    serde_columnar::to_vec(&doc).unwrap()
-}
-
 #[derive(Clone, Copy, PartialEq, Debug, Eq)]
 struct PosMappingItem {
     start_id: ID,
@@ -643,111 +436,6 @@ fn calc_sorted_ops_for_snapshot<'a>(
     ops
 }
 
-pub(crate) fn decode_snapshot(
-    doc: &LoroDoc,
-    bytes: &[u8],
-    origin: InternalString,
-) -> LoroResult<()> {
-    let mut oplog = doc.oplog().lock().map_err(|_| {
-        LoroError::DecodeError(
-            "decode_snapshot: failed to lock oplog"
-                .to_string()
-                .into_boxed_str(),
-        )
-    })?;
-    if !oplog.is_empty() {
-        unreachable!("Import snapshot to a non-empty loro doc");
-    }
-
-    let mut state = doc.app_state().lock().map_err(|_| {
-        LoroError::DecodeError(
-            "decode_snapshot: failed to lock app state"
-                .to_string()
-                .into_boxed_str(),
-        )
-    })?;
-    state.check_before_decode_snapshot()?;
-    assert!(state.frontiers.is_empty());
-    assert!(oplog.frontiers().is_empty());
-
-    let iter = serde_columnar::iter_from_bytes::<EncodedDoc>(bytes)?;
-    let mut arenas = decode_arena(&iter.arenas)?;
-    let ExtractedOps {
-        ops_map,
-        mut ops,
-        containers,
-    } = extract_ops(
-        &iter.raw_values,
-        iter.ops,
-        iter.delete_starts,
-        &oplog.arena,
-        &mut arenas,
-        true,
-    )?;
-    let DecodedArenas {
-        peer_ids,
-        keys,
-        deps,
-        state_blob_arena,
-        ..
-    } = arenas;
-
-    let changes = decode_changes(
-        iter.changes,
-        iter.start_counters,
-        &peer_ids,
-        &keys,
-        deps,
-        ops_map,
-    )?;
-
-    let ImportChangesResult {
-        latest_ids,
-        pending_changes,
-        changes_that_have_deps_before_shallow_root,
-        imported: _,
-    } = import_changes_to_oplog(changes, &mut oplog);
-    assert!(changes_that_have_deps_before_shallow_root.is_empty());
-    for op in ops.iter_mut() {
-        // update op's lamport
-        op.lamport = oplog.get_lamport_at(op.id());
-    }
-
-    decode_snapshot_states(
-        &mut state,
-        oplog.frontiers().clone(),
-        iter.states,
-        containers,
-        state_blob_arena,
-        ops,
-        &oplog,
-        &peer_ids,
-        origin.clone(),
-    )
-    .unwrap();
-
-    assert!(pending_changes.is_empty());
-    // we cannot assert this because frontiers of oplog is not updated yet when batch_importing
-    // assert_eq!(&state.frontiers, oplog.frontiers());
-    if !oplog.pending_changes.is_empty() {
-        drop(state);
-        drop(oplog);
-        doc.update_oplog_and_apply_delta_to_state_if_needed(
-            |oplog| {
-                oplog.try_apply_pending(latest_ids, None);
-                // ImportStatus is unnecessary
-                Ok(ImportStatus {
-                    success: Default::default(),
-                    pending: None,
-                })
-            },
-            origin,
-        )?;
-    }
-
-    Ok(())
-}
-
 fn encode_snapshot_states(
     container_idxs: impl Iterator<Item = ContainerIdx>,
     state: &mut DocState,
@@ -842,102 +530,13 @@ fn encode_snapshot_states(
     (states, state_bytes)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn decode_snapshot_states(
-    state: &mut DocState,
-    frontiers: Frontiers,
-    encoded_state_iter: IterableEncodedStateInfo<'_>,
-    containers: Vec<ContainerID>,
-    state_blob_arena: &[u8],
-    ops: Vec<OpWithId>,
-    oplog: &OpLog,
-    peers: &PeerIdArena,
-    origin: InternalString,
-) -> LoroResult<()> {
-    let mut state_blob_index: usize = 0;
-    let mut ops_index: usize = 0;
-    let mut unknown_containers = Vec::new();
-    for encoded_state in encoded_state_iter {
-        let EncodedStateInfo {
-            container_index,
-            mut op_len,
-            is_unknown,
-            state_bytes_len,
-        } = encoded_state?;
-        if is_unknown {
-            // if the container is unknown, we don't need to decode the state
-            // There are two cases:
-            // 1. The container is encoded as unknown, but now it's known. we should rebuild the state by `diff_calc`.
-            // 2. The container is unknown, and it's still unknown. we should init an unknown state and emit an unknown event.
-            let container_id = containers[container_index as usize].clone();
-            let container = state.arena.register_container(&container_id);
-            unknown_containers.push(container);
-            if container.is_unknown() {
-                state.init_unknown_container(container_id);
-            }
-            continue;
-        }
-        if op_len == 0 && state_bytes_len == 0 {
-            continue;
-        }
-
-        if container_index >= containers.len() as u32 {
-            return Err(LoroError::DecodeDataCorruptionError);
-        }
-
-        let container_id = &containers[container_index as usize];
-
-        let container = state.arena.register_container(container_id);
-
-        if state_blob_arena.len() < state_blob_index + state_bytes_len as usize {
-            return Err(LoroError::DecodeDataCorruptionError);
-        }
-
-        let state_bytes =
-            &state_blob_arena[state_blob_index..state_blob_index + state_bytes_len as usize];
-        state_blob_index += state_bytes_len as usize;
-
-        if ops.len() < ops_index {
-            return Err(LoroError::DecodeDataCorruptionError);
-        }
-
-        let mut next_ops = ops[ops_index..]
-            .iter()
-            .skip_while(|x| x.op.container != container)
-            .take_while(|x| {
-                if op_len == 0 {
-                    false
-                } else {
-                    op_len -= x.op.atom_len() as u32;
-                    ops_index += 1;
-                    true
-                }
-            })
-            .cloned();
-
-        state.init_container(
-            container_id.clone(),
-            StateSnapshotDecodeContext {
-                oplog,
-                ops: &mut next_ops,
-                blob: state_bytes,
-                mode: crate::encoding::EncodeMode::OutdatedSnapshot,
-                peers: &peers.peer_ids,
-            },
-        )?;
-    }
-
-    state.init_with_states_and_version(frontiers, oplog, unknown_containers, true, origin);
-    Ok(())
-}
-
 mod encode {
     #[allow(unused_imports)]
     use crate::encoding::value::FutureValue;
     use either::Either;
-    use rustc_hash::FxHashMap;
     use loro_common::{ContainerType, HasId, PeerID, ID};
     use rle::{HasLength, Sliceable};
+    use rustc_hash::FxHashMap;
     use std::{borrow::Cow, ops::Deref};
 
     use crate::{

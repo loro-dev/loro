@@ -29,7 +29,7 @@ fn unknown_json() {
         panic!("json schema don't support forward compatibility");
     }
 
-    let snapshot_with_counter = doc.export_snapshot();
+    let snapshot_with_counter = doc.export(loro::ExportMode::Snapshot).unwrap();
     let doc3_without_counter = loro_without_counter::LoroDoc::new();
     // Test2: older version import newer version snapshot with counter
     doc3_without_counter.import(&snapshot_with_counter).unwrap();

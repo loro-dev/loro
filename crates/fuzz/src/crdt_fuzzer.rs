@@ -7,8 +7,8 @@ use std::{
 };
 
 use arbitrary::Arbitrary;
+use loro::{ContainerType, ExportMode, Frontiers, ImportStatus, LoroError, LoroResult};
 use rustc_hash::FxHashSet;
-use loro::{ContainerType, Frontiers, ImportStatus, LoroError, LoroResult};
 use tabled::TableIteratorExt;
 use tracing::{info, info_span};
 
@@ -111,7 +111,11 @@ impl CRDTFuzzer {
                     info_span!("Importing", "importing to 0 from {}", i).in_scope(|| {
                         let (a, b) = array_mut_ref!(&mut self.actors, [0, i]);
                         handle_import_result(
-                            a.loro.import(&b.loro.export_from(&a.loro.oplog_vv())),
+                            a.loro.import(
+                                &b.loro
+                                    .export(ExportMode::updates(&a.loro.oplog_vv()))
+                                    .unwrap(),
+                            ),
                         );
                     });
                 }
@@ -119,7 +123,13 @@ impl CRDTFuzzer {
                 for i in 1..self.site_num() {
                     info_span!("Importing", "importing to {} from {}", i, 0).in_scope(|| {
                         let (a, b) = array_mut_ref!(&mut self.actors, [0, i]);
-                        handle_import_result(b.loro.import(&a.loro.export_from(&b.loro.oplog_vv())))
+                        handle_import_result(
+                            b.loro.import(
+                                &a.loro
+                                    .export(ExportMode::updates(&b.loro.oplog_vv()))
+                                    .unwrap(),
+                            ),
+                        )
                     });
                 }
                 self.actors.iter_mut().for_each(|a| a.record_history());
@@ -129,8 +139,16 @@ impl CRDTFuzzer {
             }
             Action::Sync { from, to } => {
                 let (a, b) = array_mut_ref!(&mut self.actors, [*from as usize, *to as usize]);
-                handle_import_result(a.loro.import(&b.loro.export_from(&a.loro.oplog_vv())));
-                handle_import_result(b.loro.import(&a.loro.export_from(&b.loro.oplog_vv())));
+                handle_import_result(a.loro.import(
+                    &b.loro
+                        .export(ExportMode::updates(&a.loro.oplog_vv()))
+                        .unwrap(),
+                ));
+                handle_import_result(b.loro.import(
+                    &a.loro
+                        .export(ExportMode::updates(&b.loro.oplog_vv()))
+                        .unwrap(),
+                ));
                 a.record_history();
                 b.record_history();
             }
@@ -167,7 +185,11 @@ impl CRDTFuzzer {
                     info_span!("Importing", "importing to 0 from {}", i).in_scope(|| {
                         let (a, b) = array_mut_ref!(&mut self.actors, [0, i]);
                         handle_import_result(
-                            a.loro.import(&b.loro.export_from(&a.loro.oplog_vv())),
+                            a.loro.import(
+                                &b.loro
+                                    .export(ExportMode::updates(&a.loro.oplog_vv()))
+                                    .unwrap(),
+                            ),
                         );
                     });
                 }
@@ -176,7 +198,11 @@ impl CRDTFuzzer {
                     info_span!("Importing", "importing to {} from {}", i, 0).in_scope(|| {
                         let (a, b) = array_mut_ref!(&mut self.actors, [0, i]);
                         handle_import_result(
-                            b.loro.import(&a.loro.export_from(&b.loro.oplog_vv())),
+                            b.loro.import(
+                                &a.loro
+                                    .export(ExportMode::updates(&b.loro.oplog_vv()))
+                                    .unwrap(),
+                            ),
                         );
                     });
                 }
@@ -207,18 +233,34 @@ impl CRDTFuzzer {
                 match (i + j) % 4 {
                     0 => {
                         info_span!("Updates", from = j, to = i).in_scope(|| {
-                            a_doc.import(&b_doc.export_from(&a_doc.oplog_vv())).unwrap();
+                            a_doc
+                                .import(
+                                    &b_doc
+                                        .export(ExportMode::updates(&a_doc.oplog_vv()))
+                                        .unwrap(),
+                                )
+                                .unwrap();
                         });
                         info_span!("Updates", from = i, to = j).in_scope(|| {
-                            b_doc.import(&a_doc.export_from(&b_doc.oplog_vv())).unwrap();
+                            b_doc
+                                .import(
+                                    &a_doc
+                                        .export(ExportMode::updates(&b_doc.oplog_vv()))
+                                        .unwrap(),
+                                )
+                                .unwrap();
                         });
                     }
                     1 => {
                         info_span!("Snapshot", from = i, to = j).in_scope(|| {
-                            b_doc.import(&a_doc.export_snapshot()).unwrap();
+                            b_doc
+                                .import(&a_doc.export(ExportMode::Snapshot).unwrap())
+                                .unwrap();
                         });
                         info_span!("Snapshot", from = j, to = i).in_scope(|| {
-                            a_doc.import(&b_doc.export_snapshot()).unwrap();
+                            a_doc
+                                .import(&b_doc.export(ExportMode::Snapshot).unwrap())
+                                .unwrap();
                         });
                     }
                     2 => {
@@ -409,18 +451,34 @@ pub fn test_multi_sites_with_gc(
                 match (i + j) % 4 {
                     0 => {
                         info_span!("Updates", from = j, to = i).in_scope(|| {
-                            a_doc.import(&b_doc.export_from(&a_doc.oplog_vv())).unwrap();
+                            a_doc
+                                .import(
+                                    &b_doc
+                                        .export(ExportMode::updates(&a_doc.oplog_vv()))
+                                        .unwrap(),
+                                )
+                                .unwrap();
                         });
                         info_span!("Updates", from = i, to = j).in_scope(|| {
-                            b_doc.import(&a_doc.export_from(&b_doc.oplog_vv())).unwrap();
+                            b_doc
+                                .import(
+                                    &a_doc
+                                        .export(ExportMode::updates(&b_doc.oplog_vv()))
+                                        .unwrap(),
+                                )
+                                .unwrap();
                         });
                     }
                     1 => {
                         info_span!("Snapshot", from = i, to = j).in_scope(|| {
-                            b_doc.import(&a_doc.export_snapshot()).unwrap();
+                            b_doc
+                                .import(&a_doc.export(ExportMode::Snapshot).unwrap())
+                                .unwrap();
                         });
                         info_span!("Snapshot", from = j, to = i).in_scope(|| {
-                            a_doc.import(&b_doc.export_snapshot()).unwrap();
+                            a_doc
+                                .import(&b_doc.export(ExportMode::Snapshot).unwrap())
+                                .unwrap();
                         });
                     }
                     2 => {
@@ -454,10 +512,22 @@ pub fn test_multi_sites_with_gc(
                     let a_doc = &mut a.loro;
                     let b_doc = &mut b.loro;
                     info_span!("Updates", from = j, to = i).in_scope(|| {
-                        a_doc.import(&b_doc.export_from(&a_doc.oplog_vv())).unwrap();
+                        a_doc
+                            .import(
+                                &b_doc
+                                    .export(ExportMode::updates(&a_doc.oplog_vv()))
+                                    .unwrap(),
+                            )
+                            .unwrap();
                     });
                     info_span!("Updates", from = i, to = j).in_scope(|| {
-                        b_doc.import(&a_doc.export_from(&b_doc.oplog_vv())).unwrap();
+                        b_doc
+                            .import(
+                                &a_doc
+                                    .export(ExportMode::updates(&b_doc.oplog_vv()))
+                                    .unwrap(),
+                            )
+                            .unwrap();
                     });
                 }
 
@@ -473,11 +543,20 @@ pub fn test_multi_sites_with_gc(
             b.loro.attach();
             info_span!("0 => 1").in_scope(|| {
                 b.loro
-                    .import(&a.loro.export_from(&b.loro.oplog_vv()))
+                    .import(
+                        &a.loro
+                            .export(ExportMode::updates(&b.loro.oplog_vv()))
+                            .unwrap(),
+                    )
                     .unwrap();
             });
-            let result = info_span!("1 => 0")
-                .in_scope(|| a.loro.import(&b.loro.export_from(&a.loro.oplog_vv())));
+            let result = info_span!("1 => 0").in_scope(|| {
+                a.loro.import(
+                    &b.loro
+                        .export(ExportMode::updates(&a.loro.oplog_vv()))
+                        .unwrap(),
+                )
+            });
             match result {
                 Ok(_) => {
                     a.check_eq(b);

@@ -1,6 +1,8 @@
 use std::sync::{Arc, Mutex};
 
-use loro::{event::Diff, Container, ContainerID, ContainerType, LoroCounter, LoroDoc, LoroValue};
+use loro::{
+    event::Diff, Container, ContainerID, ContainerType, ExportMode, LoroCounter, LoroDoc, LoroValue,
+};
 use tracing::debug_span;
 
 use crate::{
@@ -78,38 +80,62 @@ impl ActorTrait for CounterActor {
         use loro_without_counter::LoroDoc as LoroDocWithoutCounter;
         // snapshot to snapshot
         let unknown_loro = LoroDocWithoutCounter::new();
-        unknown_loro.import(&loro.export_snapshot()).unwrap();
+        unknown_loro
+            .import(&loro.export(loro::ExportMode::Snapshot).unwrap())
+            .unwrap();
         let new_loro = LoroDoc::new();
-        new_loro.import(&unknown_loro.export_snapshot()).unwrap();
+        new_loro
+            .import(
+                &unknown_loro
+                    .export(loro_without_counter::ExportMode::Snapshot)
+                    .unwrap(),
+            )
+            .unwrap();
         assert_value_eq(&new_loro.get_deep_value(), &loro.get_deep_value(), None);
 
         // updates to updates
         let unknown_loro = LoroDocWithoutCounter::new();
         unknown_loro
-            .import(&loro.export_from(&Default::default()))
+            .import(&loro.export(ExportMode::all_updates()).unwrap())
             .unwrap();
         let new_loro = LoroDoc::new();
         new_loro
-            .import(&unknown_loro.export_from(&Default::default()))
+            .import(
+                &unknown_loro
+                    .export(loro_without_counter::ExportMode::all_updates())
+                    .unwrap(),
+            )
             .unwrap();
         assert_value_eq(&new_loro.get_deep_value(), &loro.get_deep_value(), None);
 
         // snapshot to updates
         let unknown_loro = LoroDocWithoutCounter::new();
-        unknown_loro.import(&loro.export_snapshot()).unwrap();
+        unknown_loro
+            .import(&loro.export(ExportMode::Snapshot).unwrap())
+            .unwrap();
         let new_loro = LoroDoc::new();
         new_loro
-            .import(&unknown_loro.export_from(&Default::default()))
+            .import(
+                &unknown_loro
+                    .export(loro_without_counter::ExportMode::all_updates())
+                    .unwrap(),
+            )
             .unwrap();
         assert_value_eq(&new_loro.get_deep_value(), &loro.get_deep_value(), None);
 
         // updates to snapshot
         let unknown_loro = LoroDocWithoutCounter::new();
         unknown_loro
-            .import(&loro.export_from(&Default::default()))
+            .import(&loro.export(ExportMode::all_updates()).unwrap())
             .unwrap();
         let new_loro = LoroDoc::new();
-        new_loro.import(&unknown_loro.export_snapshot()).unwrap();
+        new_loro
+            .import(
+                &unknown_loro
+                    .export(loro_without_counter::ExportMode::Snapshot)
+                    .unwrap(),
+            )
+            .unwrap();
         assert_value_eq(&new_loro.get_deep_value(), &loro.get_deep_value(), None);
     }
 

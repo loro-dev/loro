@@ -4137,38 +4137,13 @@ pub mod counter {
 mod test {
 
     use super::{HandlerTrait, TextDelta};
+    use crate::loro::ExportMode;
     use crate::state::TreeParentId;
     use crate::version::Frontiers;
     use crate::LoroDoc;
     use crate::{fx_map, ToJson};
     use loro_common::ID;
     use serde_json::json;
-
-    #[test]
-    fn import() {
-        let loro = LoroDoc::new();
-        loro.set_peer_id(1).unwrap();
-        let loro2 = LoroDoc::new();
-        loro2.set_peer_id(2).unwrap();
-
-        let mut txn = loro.txn().unwrap();
-        let text = txn.get_text("hello");
-        text.insert_with_txn(&mut txn, 0, "hello").unwrap();
-        txn.commit().unwrap();
-        let exported = loro.export_from(&Default::default());
-        loro2.import(&exported).unwrap();
-        let mut txn = loro2.txn().unwrap();
-        let text = txn.get_text("hello");
-        assert_eq!(&**text.get_value().as_string().unwrap(), "hello");
-        text.insert_with_txn(&mut txn, 5, " world").unwrap();
-        assert_eq!(&**text.get_value().as_string().unwrap(), "hello world");
-        txn.commit().unwrap();
-        loro.import(&loro2.export_from(&Default::default()))
-            .unwrap();
-        let txn = loro.txn().unwrap();
-        let text = txn.get_text("hello");
-        assert_eq!(&**text.get_value().as_string().unwrap(), "hello world");
-    }
 
     #[test]
     fn richtext_handler() {
@@ -4181,7 +4156,7 @@ mod test {
         let text = txn.get_text("hello");
         text.insert_with_txn(&mut txn, 0, "hello").unwrap();
         txn.commit().unwrap();
-        let exported = loro.export_from(&Default::default());
+        let exported = loro.export(ExportMode::all_updates()).unwrap();
 
         loro2.import(&exported).unwrap();
         let mut txn = loro2.txn().unwrap();
@@ -4191,7 +4166,7 @@ mod test {
         assert_eq!(&**text.get_value().as_string().unwrap(), "hello world");
         txn.commit().unwrap();
 
-        loro.import(&loro2.export_from(&Default::default()))
+        loro.import(&loro2.export(ExportMode::all_updates()).unwrap())
             .unwrap();
         let txn = loro.txn().unwrap();
         let text = txn.get_text("hello");
@@ -4213,7 +4188,7 @@ mod test {
         for i in 0..100 {
             let new_loro = LoroDoc::new();
             new_loro
-                .import(&loro.export_from(&Default::default()))
+                .import(&loro.export(ExportMode::all_updates()).unwrap())
                 .unwrap();
             let mut txn = new_loro.txn().unwrap();
             let handler = new_loro.get_text("richtext");
@@ -4221,8 +4196,12 @@ mod test {
                 .insert_with_txn(&mut txn, i % 5, &i.to_string())
                 .unwrap();
             txn.commit().unwrap();
-            loro.import(&new_loro.export_from(&loro.oplog_vv()))
-                .unwrap();
+            loro.import(
+                &new_loro
+                    .export(ExportMode::updates(&loro.oplog_vv()))
+                    .unwrap(),
+            )
+            .unwrap();
         }
     }
 
@@ -4243,7 +4222,7 @@ mod test {
 
         let loro2 = LoroDoc::new_auto_commit();
         loro2
-            .import(&loro.export_from(&Default::default()))
+            .import(&loro.export(ExportMode::all_updates()).unwrap())
             .unwrap();
         let handler2 = loro2.get_text("richtext");
         assert_eq!(&**handler2.get_value().as_string().unwrap(), "hello world");
@@ -4281,7 +4260,9 @@ mod test {
         txn.commit().unwrap();
 
         let loro2 = LoroDoc::new();
-        loro2.import(&loro.export_snapshot().unwrap()).unwrap();
+        loro2
+            .import(&loro.export(ExportMode::snapshot()).unwrap())
+            .unwrap();
         let handler2 = loro2.get_text("richtext");
         assert_eq!(
             handler2.get_richtext_value().to_json_value(),
@@ -4307,7 +4288,7 @@ mod test {
             json!([{"parent":null,"meta":{"a":123},"id":"0@1","index":0,"children":[],"fractional_index":"80"}]),
             tree.get_deep_value().to_json_value()
         );
-        let bytes = loro.export_snapshot().unwrap();
+        let bytes = loro.export(ExportMode::snapshot()).unwrap();
         let loro2 = LoroDoc::new();
         loro2.import(&bytes).unwrap();
     }
@@ -4330,7 +4311,9 @@ mod test {
         let _g = loro2.subscribe_root(Arc::new(|e| {
             println!("{} {:?} ", e.event_meta.by, e.event_meta.diff)
         }));
-        loro2.import(&loro.export_from(&loro2.oplog_vv())).unwrap();
+        loro2
+            .import(&loro.export(ExportMode::all_updates()).unwrap())
+            .unwrap();
         assert_eq!(loro.get_deep_value(), loro2.get_deep_value());
     }
 

@@ -379,5 +379,5 @@ fn test_export_snapshot_from_shallow_doc() {
 
     // Attempt to export a shallow snapshot from the shallow document
     // using frontiers before its shallow version
-    shallow_doc.export_snapshot();
+    shallow_doc.export(loro::ExportMode::Snapshot).unwrap();
 }

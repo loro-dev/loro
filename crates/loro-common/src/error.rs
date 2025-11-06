@@ -98,6 +98,8 @@ pub enum LoroError {
     InvalidPeerID,
     #[error("The containers {containers:?} are not found in the doc")]
     ContainersNotFound { containers: Box<Vec<ContainerID>> },
+    #[error("Import failed: Deprecated encoding mode")]
+    ImportUnsupportedEncodingMode,
 }
 
 #[derive(Error, Debug, PartialEq)]

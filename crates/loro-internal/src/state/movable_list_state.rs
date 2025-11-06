@@ -1927,7 +1927,7 @@ mod snapshot {
 
 #[cfg(test)]
 mod test {
-    use crate::{HandlerTrait, LoroDoc, ToJson};
+    use crate::{loro::ExportMode, HandlerTrait, LoroDoc, ToJson};
     use serde_json::json;
 
     #[test]
@@ -1959,7 +1959,7 @@ mod test {
         list.mov(0, 1).unwrap();
         {
             let doc_b = LoroDoc::new_auto_commit();
-            doc_b.import(&doc.export_from(&Default::default())).unwrap();
+            doc_b.import(&doc.export(ExportMode::all_updates()).unwrap()).unwrap();
             assert_eq!(
                 doc_b.get_deep_value().to_json_value(),
                 json!({
@@ -1976,7 +1976,7 @@ mod test {
         );
         {
             let doc_b = LoroDoc::new_auto_commit();
-            doc_b.import(&doc.export_from(&Default::default())).unwrap();
+            doc_b.import(&doc.export(ExportMode::all_updates()).unwrap()).unwrap();
             assert_eq!(
                 doc_b.get_deep_value().to_json_value(),
                 json!({
@@ -1995,7 +1995,7 @@ mod test {
         );
         {
             let doc_b = LoroDoc::new_auto_commit();
-            doc_b.import(&doc.export_from(&Default::default())).unwrap();
+            doc_b.import(&doc.export(ExportMode::all_updates()).unwrap()).unwrap();
             assert_eq!(
                 doc_b.get_deep_value().to_json_value(),
                 json!({
@@ -2005,7 +2005,7 @@ mod test {
         }
         {
             let doc_b = LoroDoc::new_auto_commit();
-            doc_b.import(&doc.export_snapshot().unwrap()).unwrap();
+            doc_b.import(&doc.export(ExportMode::Snapshot).unwrap()).unwrap();
             assert_eq!(
                 doc_b.get_deep_value().to_json_value(),
                 json!({

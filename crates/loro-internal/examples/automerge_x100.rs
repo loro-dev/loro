@@ -19,7 +19,7 @@ fn main() {
             text.insert(*pos, ins).unwrap();
         }
         loro.commit_then_renew();
-        black_box(loro.export(ExportMode::updates(&v)).unwrap());
+        black_box(loro.export(ExportMode::updates(&v))).unwrap();
         v = loro.oplog_vv();
     }
     println!("Apply time {:?}", start.elapsed());

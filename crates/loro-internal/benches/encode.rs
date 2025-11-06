@@ -4,7 +4,7 @@ mod sync {
 
     use super::*;
     use bench_utils::{get_automerge_actions, TextAction};
-    use loro_internal::LoroDoc;
+    use loro_internal::{encoding::ExportMode, LoroDoc};
 
     pub fn b4(c: &mut Criterion) {
         let actions = get_automerge_actions();
@@ -29,14 +29,14 @@ mod sync {
                         t1.insert_with_txn(&mut txn, *pos, ins).unwrap();
                         txn.commit().unwrap();
 
-                        let update = c1.export_from(&c2.oplog_vv());
+                        let update = c1.export(ExportMode::updates(&c2.oplog_vv())).unwrap();
                         c2.import(&update).unwrap();
                     } else {
                         let mut txn = c2.txn().unwrap();
                         t2.delete_with_txn(&mut txn, *pos, *del).unwrap();
                         t2.insert_with_txn(&mut txn, *pos, ins).unwrap();
                         txn.commit().unwrap();
-                        let update = c2.export_from(&c1.oplog_vv());
+                        let update = c2.export(ExportMode::updates(&c1.oplog_vv())).unwrap();
                         c1.import(&update).unwrap();
                     }
                 }
@@ -48,7 +48,7 @@ mod sync {
 mod run {
     use super::*;
     use bench_utils::TextAction;
-    use loro_internal::LoroDoc;
+    use loro_internal::{encoding::ExportMode, LoroDoc};
 
     pub fn b4(c: &mut Criterion) {
         let loro = LoroDoc::default();
@@ -71,12 +71,12 @@ mod run {
         b.bench_function("B4_encode_updates", |b| {
             ensure_ran();
             b.iter(|| {
-                let _ = loro.export_from(&Default::default());
+                let _ = loro.export(ExportMode::all_updates()).unwrap();
             })
         });
         b.bench_function("B4_decode_updates", |b| {
             ensure_ran();
-            let buf = loro.export_from(&Default::default());
+            let buf = loro.export(ExportMode::all_updates()).unwrap();
 
             b.iter(|| {
                 let store2 = LoroDoc::default();
@@ -85,7 +85,7 @@ mod run {
         });
         b.bench_function("B4_decode_updates detached mode", |b| {
             ensure_ran();
-            let buf = loro.export_from(&Default::default());
+            let buf = loro.export(ExportMode::all_updates()).unwrap();
 
             b.iter(|| {
                 let store2 = LoroDoc::default();
@@ -96,12 +96,12 @@ mod run {
         b.bench_function("B4_encode_snapshot", |b| {
             ensure_ran();
             b.iter(|| {
-                let _ = loro.export_snapshot();
+                let _ = loro.export(ExportMode::Snapshot).unwrap();
             })
         });
         b.bench_function("B4_decode_snapshot", |b| {
             ensure_ran();
-            let buf = loro.export_snapshot().unwrap();
+            let buf = loro.export(ExportMode::Snapshot).unwrap();
             b.iter(|| {
                 let store2 = LoroDoc::default();
                 store2.import(&buf).unwrap();
@@ -127,7 +127,7 @@ mod run {
 
 mod import {
     use criterion::Criterion;
-    use loro_internal::LoroDoc;
+    use loro_internal::{encoding::ExportMode, LoroDoc};
 
     #[allow(dead_code)]
     pub fn causal_iter(c: &mut Criterion) {
@@ -151,7 +151,10 @@ mod import {
                         .unwrap();
                 }
 
-                c1.import(&c2.export_from(&c1.oplog_vv())).unwrap();
+                let updates = c2
+                    .export(ExportMode::updates(&c1.oplog_vv()))
+                    .unwrap();
+                c1.import(&updates).unwrap()
             })
         });
     }

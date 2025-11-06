@@ -4,8 +4,8 @@ use std::sync::{
 };
 
 use loro::{
-    undo::UndoItemMeta, ContainerTrait as _, LoroDoc, LoroError, LoroList, LoroMap, LoroResult,
-    LoroText, LoroValue, StyleConfigMap, ToJson, UndoManager,
+    undo::UndoItemMeta, ContainerTrait as _, ExportMode, LoroDoc, LoroError, LoroList, LoroMap,
+    LoroResult, LoroText, LoroValue, StyleConfigMap, ToJson, UndoManager,
 };
 use loro_internal::{configure::StyleConfig, id::ID, loro::CommitOptions};
 use serde_json::json;
@@ -152,11 +152,13 @@ fn map_collaborative_undo() -> Result<(), LoroError> {
     doc_a.commit();
 
     let doc_b = LoroDoc::new();
-    doc_b.import(&doc_a.export_from(&Default::default()))?;
+    let updates = doc_a.export(ExportMode::all_updates()).unwrap();
+    doc_b.import(&updates)?;
     doc_b.get_map("map").insert("b", "b")?;
     doc_b.commit();
 
-    doc_a.import(&doc_b.export_from(&Default::default()))?;
+    let updates = doc_b.export(ExportMode::all_updates()).unwrap();
+    doc_a.import(&updates)?;
     undo.undo()?;
     assert_eq!(
         doc_a.get_deep_value().to_json_value(),
@@ -247,8 +249,10 @@ fn one_register_collaborative_undo() -> Result<(), LoroError> {
 }
 
 fn sync(a: &LoroDoc, b: &LoroDoc) {
-    a.import(&b.export_from(&a.oplog_vv())).unwrap();
-    b.import(&a.export_from(&b.oplog_vv())).unwrap();
+    let updates = b.export(ExportMode::updates(&a.oplog_vv())).unwrap();
+    a.import(&updates).unwrap();
+    let updates = a.export(ExportMode::updates(&b.oplog_vv())).unwrap();
+    b.import(&updates).unwrap();
 }
 
 #[test]
@@ -1127,12 +1131,16 @@ fn undo_tree_move() -> LoroResult<()> {
     let tree_b = doc_b.get_tree("tree");
     let root = tree_a.create(None)?;
     let root2 = tree_b.create(None)?;
-    doc_a.import(&doc_b.export_from(&Default::default()))?;
-    doc_b.import(&doc_a.export_from(&Default::default()))?;
+    let updates = doc_b.export(ExportMode::all_updates()).unwrap();
+    doc_a.import(&updates)?;
+    let updates = doc_a.export(ExportMode::all_updates()).unwrap();
+    doc_b.import(&updates)?;
     tree_a.mov(root, root2)?;
     tree_b.mov(root2, root)?;
-    doc_a.import(&doc_b.export_from(&Default::default()))?;
-    doc_b.import(&doc_a.export_from(&Default::default()))?;
+    let updates = doc_b.export(ExportMode::all_updates()).unwrap();
+    doc_a.import(&updates)?;
+    let updates = doc_a.export(ExportMode::all_updates()).unwrap();
+    doc_b.import(&updates)?;
     let latest_value = tree_a.get_value();
     // a
     undo.undo()?;
@@ -1188,11 +1196,14 @@ fn undo_tree_concurrent_delete() -> LoroResult<()> {
     let doc_b = LoroDoc::new();
     let mut undo_b = UndoManager::new(&doc_b);
     let tree_b = doc_b.get_tree("tree");
-    doc_b.import(&doc_a.export_from(&Default::default()))?;
+    let updates = doc_a.export(ExportMode::all_updates()).unwrap();
+    doc_b.import(&updates)?;
     tree_a.delete(root)?;
     tree_b.delete(child)?;
-    doc_a.import(&doc_b.export_from(&Default::default()))?;
-    doc_b.import(&doc_a.export_from(&Default::default()))?;
+    let updates = doc_b.export(ExportMode::all_updates()).unwrap();
+    doc_a.import(&updates)?;
+    let updates = doc_a.export(ExportMode::all_updates()).unwrap();
+    doc_b.import(&updates)?;
     undo_b.undo()?;
     assert!(tree_b.get_value().as_list().unwrap().is_empty());
     Ok(())
@@ -1209,12 +1220,15 @@ fn undo_tree_concurrent_delete2() -> LoroResult<()> {
     doc_b.set_peer_id(2)?;
     let mut undo_b = UndoManager::new(&doc_b);
     let tree_b = doc_b.get_tree("tree");
-    doc_b.import(&doc_a.export_from(&Default::default()))?;
+    let updates = doc_a.export(ExportMode::all_updates()).unwrap();
+    doc_b.import(&updates)?;
     tree_a.mov(child, root)?;
     tree_a.delete(root)?;
     tree_b.delete(child)?;
-    doc_a.import(&doc_b.export_from(&Default::default()))?;
-    doc_b.import(&doc_a.export_from(&Default::default()))?;
+    let updates = doc_b.export(ExportMode::all_updates()).unwrap();
+    doc_a.import(&updates)?;
+    let updates = doc_a.export(ExportMode::all_updates()).unwrap();
+    doc_b.import(&updates)?;
     undo_b.undo()?;
     assert_eq!(tree_b.get_value().as_list().unwrap().len(), 1);
     assert_eq!(
@@ -1308,7 +1322,8 @@ fn undo_redo_when_collab() -> anyhow::Result<()> {
             "text": "Hi World"
         })
     );
-    doc_a.import(&doc_b.export_from(&Default::default()))?;
+    let updates = doc_b.export(ExportMode::all_updates()).unwrap();
+    doc_a.import(&updates)?;
     undo_a.undo()?;
     assert_eq!(
         doc_a.get_deep_value().to_json_value(),
@@ -1317,7 +1332,8 @@ fn undo_redo_when_collab() -> anyhow::Result<()> {
         })
     );
     text_b.insert(0, "Bob ")?;
-    doc_a.import(&doc_b.export_from(&Default::default()))?;
+    let updates = doc_b.export(ExportMode::all_updates()).unwrap();
+    doc_a.import(&updates)?;
     undo_a.undo()?;
     assert_eq!(
         doc_a.get_deep_value().to_json_value(),
@@ -1457,7 +1473,8 @@ fn undo_collab_list_move() -> LoroResult<()> {
     let mut undo = UndoManager::new(&doc);
     let doc_b = LoroDoc::new();
     doc_b.set_peer_id(2)?;
-    doc_b.import(&doc.export_snapshot())?;
+    let snapshot = doc.export(ExportMode::Snapshot).unwrap();
+    doc_b.import(&snapshot)?;
     list.mov(0, 2)?;
     assert_eq!(list.get_value().to_json_value(), json!(["1", "2", "0"]));
     doc.commit();
@@ -1636,10 +1653,12 @@ fn undo_transform_cursor_position() -> anyhow::Result<()> {
     doc.commit();
     {
         let doc_b = LoroDoc::new();
-        doc_b.import(&doc.export_snapshot())?;
+        let snapshot = doc.export(ExportMode::Snapshot).unwrap();
+        doc_b.import(&snapshot)?;
         doc_b.get_text("text").insert(0, "Hi ")?;
         doc_b.get_text("text").insert(4, "ii")?;
-        doc.import(&doc_b.export_snapshot())?;
+        let snapshot = doc_b.export(ExportMode::Snapshot).unwrap();
+        doc.import(&snapshot)?;
         assert_eq!(text.to_string(), "Hi Hii world!");
     }
     assert_eq!(popped_cursors.lock().unwrap().len(), 0);
