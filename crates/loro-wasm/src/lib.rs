@@ -57,7 +57,7 @@ mod convert;
 /// Get the version of Loro
 #[wasm_bindgen]
 pub fn LORO_VERSION() -> String {
-    include_str!("../VERSION").trim().to_string()
+    env!("CARGO_PKG_VERSION").to_string()
 }
 
 #[wasm_bindgen(start)]

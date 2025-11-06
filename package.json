@@ -15,6 +15,8 @@
     "watch-loom": "RUSTFLAGS='--cfg loom' bacon",
     "coverage": "mkdir -p coverage && cargo llvm-cov nextest --features test_utils,jsonpath --lcov > coverage/lcov-nextest.info && cargo llvm-cov report",
     "release-wasm": "deno run -A ./scripts/sync-loro-version.ts && cd crates/loro-wasm && pnpm i && pnpm build-release",
+    "ci-release-wasm-version": "pnpm changeset version && deno run -A ./scripts/sync-loro-version.ts",
+    "ci-release-wasm-publish": "pnpm release-wasm && pnpm changeset publish --access public",
     "check": "cargo clippy --all-features -- -Dwarnings",
     "run-fuzz-corpus": "cd crates/fuzz && cargo +nightly fuzz run all -- -max_total_time=1",
     "fix": "cargo clippy --fix --features=test_utils",
