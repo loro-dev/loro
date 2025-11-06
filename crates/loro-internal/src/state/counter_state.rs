@@ -1,11 +1,10 @@
 use std::sync::Weak;
 
-use loro_common::{ContainerID, LoroError, LoroResult, LoroValue};
+use loro_common::{ContainerID, LoroResult, LoroValue};
 
 use crate::{
     configure::Configure,
     container::idx::ContainerIdx,
-    encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff},
     op::{Op, RawOp, RawOpContent},
     LoroDocInner,
@@ -81,24 +80,7 @@ impl ContainerState for CounterState {
     #[doc = " State will use the provided encoder to encode the ops and export a blob."]
     #[doc = " The ops should be encoded into the snapshot as well as the blob."]
     #[doc = " The users then can use the ops and the blob to restore the state to the current state."]
-    fn encode_snapshot(&self, _encoder: StateSnapshotEncoder) -> Vec<u8> {
-        self.value.to_be_bytes().to_vec()
-    }
-
-    #[doc = " Restore the state to the state represented by the ops and the blob that exported by `get_snapshot_ops`"]
-    fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) -> LoroResult<()> {
-        let reader = ctx.blob;
-        let Some(bytes) = reader.get(0..8) else {
-            return Err(LoroError::DecodeDataCorruptionError);
-        };
-        let mut buf = [0; 8];
-        buf.copy_from_slice(bytes);
-        self.value = f64::from_be_bytes(buf);
-        Ok(())
-    }
-
-    #[allow(unused)]
-    fn contains_child(&self, id: &ContainerID) -> bool {
+    fn contains_child(&self, _id: &ContainerID) -> bool {
         false
     }
 

@@ -13,16 +13,14 @@ use crate::{
     container::{idx::ContainerIdx, list::list_op::ListOp},
     delta::DeltaItem,
     diff_calc::DiffMode,
-    encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff, ListDeltaMeta},
     handler::ValueOrHandler,
     op::{ListSlice, Op, RawOp},
-    state::movable_list_state::inner::PushElemInfo,
     ListDiff, LoroDocInner,
 };
 
 use self::{
-    inner::{InnerState, UpdateResultFromPosChange},
+    inner::{InnerState, PushElemInfo, UpdateResultFromPosChange},
     list_item_tree::{MovableListTreeTrait, OpLenQuery, UserLenQuery},
 };
 
@@ -1382,139 +1380,6 @@ impl ContainerState for MovableListState {
                 }
             })
             .collect_vec()
-    }
-
-    fn encode_snapshot(&self, mut encoder: StateSnapshotEncoder) -> Vec<u8> {
-        // We need to encode all the list items (including the ones that are not being pointed at)
-        // We also need to encode the elements' ids, values and last set ids as long as the element has a
-        // valid pos pointer (a pointer is valid when the pointee is in the list).
-
-        // But we can infer the element's id, the value by the `last set id` directly.
-        // Because they are included in the corresponding op.
-
-        let len = self.len();
-        let mut items = Vec::with_capacity(len);
-        // starts with a sentinel value. The num of `invisible_list_item` may be updated later
-        items.push(EncodedItem {
-            pos_id_eq_elem_id: true,
-            invisible_list_item: 0,
-        });
-        let mut ids = Vec::new();
-        for item in self.list().iter() {
-            if let Some(elem_id) = item.pointed_by {
-                let eq = elem_id.to_id() == item.id.idlp();
-                items.push(EncodedItem {
-                    invisible_list_item: 0,
-                    pos_id_eq_elem_id: eq,
-                });
-                if !eq {
-                    ids.push(EncodedId {
-                        peer_idx: encoder.register_peer(item.id.peer),
-                        lamport: item.id.lamport,
-                    });
-                }
-                let elem = self.elements().get(&elem_id).unwrap();
-                encoder.encode_op(elem.value_id.into(), || unimplemented!());
-            } else {
-                items.last_mut().unwrap().invisible_list_item += 1;
-                ids.push(EncodedId {
-                    peer_idx: encoder.register_peer(item.id.peer),
-                    lamport: item.id.lamport,
-                });
-            }
-        }
-
-        let out = EncodedSnapshot { items, ids };
-        serde_columnar::to_vec(&out).unwrap()
-    }
-
-    fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) -> LoroResult<()> {
-        let iter = serde_columnar::iter_from_bytes::<EncodedSnapshot>(ctx.blob).unwrap();
-        let item_iter = iter.items;
-        let mut item_ids = iter.ids;
-        let last_set_op_iter = ctx.ops;
-        let mut is_first = true;
-
-        for item in item_iter {
-            let EncodedItem {
-                invisible_list_item,
-                pos_id_eq_elem_id,
-                // FIXME: replace with a result return
-            } = item.unwrap();
-
-            // the first one don't need to read op, it only needs to read the invisible list items
-            if !is_first {
-                let last_set_op = last_set_op_iter.next().unwrap();
-                let idlp = last_set_op.id_full().idlp();
-                let mut get_pos_id_full = |elem_id: IdLp| {
-                    let pos_id = if pos_id_eq_elem_id {
-                        elem_id
-                    } else {
-                        let id = item_ids.next().unwrap().unwrap();
-                        IdLp::new(ctx.peers[id.peer_idx], id.lamport)
-                    };
-                    let pos_o_id = ctx.oplog.idlp_to_id(pos_id).unwrap();
-                    IdFull {
-                        peer: pos_id.peer,
-                        lamport: pos_id.lamport,
-                        counter: pos_o_id.counter,
-                    }
-                };
-                match &last_set_op.op.content {
-                    crate::op::InnerContent::List(l) => match l {
-                        crate::container::list::list_op::InnerListOp::Insert { slice, pos: _ } => {
-                            for (i, v) in ctx
-                                .oplog
-                                .arena
-                                .iter_value_slice(slice.to_range())
-                                .enumerate()
-                            {
-                                let elem_id = idlp.inc(i as i32);
-                                let pos_full_id = get_pos_id_full(elem_id);
-                                self.inner.push_inner(
-                                    pos_full_id,
-                                    Some(PushElemInfo {
-                                        elem_id: elem_id.compact(),
-                                        value: v,
-                                        last_set_id: elem_id,
-                                    }),
-                                );
-                            }
-                        }
-                        crate::container::list::list_op::InnerListOp::Set { elem_id, value } => {
-                            let pos_full_id = get_pos_id_full(*elem_id);
-                            self.inner.push_inner(
-                                pos_full_id,
-                                Some(PushElemInfo {
-                                    elem_id: elem_id.compact(),
-                                    value: value.clone(),
-                                    last_set_id: idlp,
-                                }),
-                            );
-                        }
-                        _ => unreachable!(),
-                    },
-                    _ => unreachable!(),
-                }
-            }
-
-            is_first = false;
-            for _ in 0..invisible_list_item {
-                let id = item_ids.next().unwrap().unwrap();
-                let pos_id = IdLp::new(ctx.peers[id.peer_idx], id.lamport);
-                let pos_o_id = ctx.oplog.idlp_to_id(pos_id).unwrap();
-                let pos_id_full = IdFull {
-                    peer: pos_id.peer,
-                    lamport: pos_id.lamport,
-                    counter: pos_o_id.counter,
-                };
-                self.inner.push_inner(pos_id_full, None);
-            }
-        }
-
-        assert!(item_ids.next().is_none());
-        assert!(last_set_op_iter.next().is_none());
-        Ok(())
     }
 
     fn fork(&self, _config: &Configure) -> Self {

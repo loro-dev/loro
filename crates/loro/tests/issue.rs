@@ -12,14 +12,6 @@ fn init() {
 }
 
 #[test]
-fn issue_0() {
-    let bytes = include_bytes!("./issue_0.bin");
-    let doc = LoroDoc::new();
-    doc.import_batch(&[bytes.into()]).unwrap();
-    doc.export(loro::ExportMode::Snapshot).unwrap();
-}
-
-#[test]
 fn test_event_hint_cross_container_merge_bug() {
     let doc = LoroDoc::new();
     let text_a = doc.get_text("text_a");

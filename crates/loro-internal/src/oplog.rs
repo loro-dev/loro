@@ -18,7 +18,7 @@ use crate::configure::Configure;
 use crate::container::list::list_op;
 use crate::dag::{Dag, DagUtils};
 use crate::diff_calc::DiffMode;
-use crate::encoding::{decode_oplog, EncodeMode};
+use crate::encoding::decode_oplog;
 use crate::encoding::{ImportStatus, ParsedHeaderAndBody};
 use crate::history_cache::ContainerHistoryCache;
 use crate::id::{Counter, PeerID, ID};

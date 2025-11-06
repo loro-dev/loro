@@ -19,7 +19,6 @@ use crate::{
         },
     },
     delta::{StyleMeta, StyleMetaItem},
-    encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff, TextDiff},
     handler::TextDelta,
     op::{Op, RawOp},
@@ -664,71 +663,6 @@ impl ContainerState for RichtextState {
 
     fn contains_child(&self, _id: &ContainerID) -> bool {
         false
-    }
-
-    #[doc = " Get a list of ops that can be used to restore the state to the current state"]
-    fn encode_snapshot(&self, mut encoder: StateSnapshotEncoder) -> Vec<u8> {
-        let iter: &mut dyn Iterator<Item = &RichtextStateChunk>;
-        let mut a;
-        let mut b;
-        match &self.state {
-            LazyLoad::Src(s) => {
-                a = Some(s.elements.iter());
-                iter = &mut *a.as_mut().unwrap();
-            }
-            LazyLoad::Dst(s) => {
-                b = Some(s.iter_chunk());
-                iter = &mut *b.as_mut().unwrap();
-            }
-        }
-
-        for chunk in iter {
-            let id_span = chunk.get_id_lp_span();
-            encoder.encode_op(id_span, || unimplemented!());
-        }
-
-        Default::default()
-    }
-
-    #[doc = " Restore the state to the state represented by the ops that exported by `get_snapshot_ops`"]
-    fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) -> LoroResult<()> {
-        self.update_version();
-        assert_eq!(ctx.mode, EncodeMode::OutdatedSnapshot);
-        let mut loader = RichtextStateLoader::default();
-        let mut id_to_style = FxHashMap::default();
-        for op in ctx.ops {
-            let id = op.id_full();
-            let chunk = match op.op.content.into_list().unwrap() {
-                list_op::InnerListOp::InsertText { slice, .. } => {
-                    RichtextStateChunk::new_text(slice.clone(), id)
-                }
-                list_op::InnerListOp::StyleStart {
-                    key, value, info, ..
-                } => {
-                    let style_op = Arc::new(StyleOp {
-                        lamport: op.lamport.expect("op should already be imported"),
-                        peer: op.peer,
-                        cnt: op.op.counter,
-                        key,
-                        value,
-                        info,
-                    });
-                    id_to_style.insert(id, style_op.clone());
-                    RichtextStateChunk::new_style(style_op, AnchorType::Start)
-                }
-                list_op::InnerListOp::StyleEnd => {
-                    let style = id_to_style.remove(&id.inc(-1)).unwrap();
-                    RichtextStateChunk::new_style(style, AnchorType::End)
-                }
-                a => unreachable!("richtext state should not have {a:?}"),
-            };
-
-            loader.push(chunk);
-        }
-
-        self.state = LazyLoad::Src(loader);
-        // self.check_consistency_between_content_and_style_ranges();
-        Ok(())
     }
 
     fn fork(&self, config: &crate::configure::Configure) -> Self {

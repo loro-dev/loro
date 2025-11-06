@@ -1,9 +1,9 @@
 use std::{borrow::Cow, ops::Deref};
 
 use crate::InternalString;
-use rustc_hash::FxHashSet;
 use itertools::Itertools;
 use loro_common::{ContainerID, ContainerType, Counter, LoroError, LoroResult, PeerID, ID};
+use rustc_hash::FxHashSet;
 use serde::{Deserialize, Serialize};
 use serde_columnar::{columnar, ColumnarError};
 
@@ -12,50 +12,6 @@ use super::{
     value::{Value, ValueDecodedArenasTrait, ValueEncodeRegister},
     value_register::ValueRegister,
 };
-
-pub(super) fn encode_arena(
-    registers: EncodedRegisters,
-    dep_arena: DepsArena,
-    state_blob_arena: &[u8],
-) -> Vec<u8> {
-    let EncodedRegisters {
-        peer: mut peer_register,
-        container: cid_register,
-        key: mut key_register,
-        tree_id: tree_id_register,
-        position: position_register,
-    } = registers;
-
-    let container_arena = ContainerArena::from_containers(
-        cid_register.unwrap_vec(),
-        &mut peer_register,
-        &mut key_register,
-    );
-
-    let position_arena =
-        PositionArena::from_positions(position_register.right().unwrap().unwrap_vec());
-    let tree_id_arena = TreeIDArena {
-        tree_ids: tree_id_register.unwrap_vec(),
-    };
-    let peer_ids = PeerIdArena {
-        peer_ids: peer_register.unwrap_vec(),
-    };
-
-    let key_arena = KeyArena {
-        keys: key_register.unwrap_vec(),
-    };
-    let encoded = EncodedArenas {
-        peer_id_arena: &peer_ids.encode(),
-        container_arena: &container_arena.encode(),
-        key_arena: &key_arena.encode(),
-        deps_arena: &dep_arena.encode(),
-        position_arena: &position_arena.encode(),
-        tree_id_arena: &tree_id_arena.encode(),
-        state_blob_arena,
-    };
-
-    encoded.encode_arenas()
-}
 
 #[derive(Debug)]
 pub struct EncodedRegisters<'a> {

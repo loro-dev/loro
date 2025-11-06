@@ -11,15 +11,13 @@ pub(crate) use outdated_encode_reordered::{
 use outdated_encode_reordered::{import_changes_to_oplog, ImportChangesResult};
 pub(crate) use value::OwnedValue;
 
-use crate::op::OpWithId;
 use crate::version::{Frontiers, VersionRange};
 use crate::LoroDoc;
 use crate::{oplog::OpLog, LoroError, VersionVector};
 use loro_common::{
-    HasIdSpan, IdLpSpan, IdSpan, InternalString, LoroEncodeError, LoroResult, PeerID, ID,
+    HasIdSpan, IdSpan, InternalString, LoroEncodeError, LoroResult, ID,
 };
 use num_traits::{FromPrimitive, ToPrimitive};
-use rle::{HasLength, Sliceable};
 use std::borrow::Cow;
 
 /// The mode of the export.
@@ -231,66 +229,6 @@ impl TryFrom<[u8; 2]> for EncodeMode {
 pub struct ImportStatus {
     pub success: VersionRange,
     pub pending: Option<VersionRange>,
-}
-
-/// The encoder used to encode the container states.
-///
-/// Each container state can be represented by a sequence of operations.
-/// For example, a list state can be represented by a sequence of insert
-/// operations that form its current state.
-/// We ignore the delete operations.
-///
-/// We will use a new encoder for each container state.
-/// Each container state should call encode_op multiple times until all the
-/// operations constituting its current state are encoded.
-pub(crate) struct StateSnapshotEncoder<'a> {
-    /// The `check_idspan` function is used to check if the id span is valid.
-    /// If the id span is invalid, the function should return an error that
-    /// contains the missing id span.
-    check_idspan: &'a dyn Fn(IdLpSpan) -> Result<(), IdLpSpan>,
-    /// The `encoder_by_op` function is used to encode an operation.
-    encoder_by_op: &'a mut dyn FnMut(OpWithId),
-    /// The `record_idspan` function is used to record the id span to track the
-    /// encoded order.
-    record_idspan: &'a mut dyn FnMut(IdLpSpan),
-    register_peer: &'a mut dyn FnMut(PeerID) -> usize,
-    #[allow(unused)]
-    mode: EncodeMode,
-}
-
-impl StateSnapshotEncoder<'_> {
-    pub fn encode_op(&mut self, id_span: IdLpSpan, get_op: impl FnOnce() -> OpWithId) {
-        if let Err(span) = (self.check_idspan)(id_span) {
-            let mut op = get_op();
-            if span == id_span {
-                (self.encoder_by_op)(op);
-            } else {
-                debug_assert_eq!(span.lamport.start, id_span.lamport.start);
-                op.op = op.op.slice(span.atom_len(), op.op.atom_len());
-                (self.encoder_by_op)(op);
-            }
-        }
-
-        (self.record_idspan)(id_span);
-    }
-
-    #[allow(unused)]
-    pub fn mode(&self) -> EncodeMode {
-        self.mode
-    }
-
-    pub(crate) fn register_peer(&mut self, peer: PeerID) -> usize {
-        (self.register_peer)(peer)
-    }
-}
-
-pub(crate) struct StateSnapshotDecodeContext<'a> {
-    pub oplog: &'a OpLog,
-    pub peers: &'a [PeerID],
-    pub ops: &'a mut dyn Iterator<Item = OpWithId>,
-    #[allow(unused)]
-    pub blob: &'a [u8],
-    pub mode: EncodeMode,
 }
 
 pub(crate) fn decode_oplog(

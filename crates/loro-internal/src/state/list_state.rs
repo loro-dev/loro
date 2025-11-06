@@ -4,7 +4,6 @@ use super::{ApplyLocalOpReturn, ContainerState, DiffApplyContext, FastStateSnaps
 use crate::{
     configure::Configure,
     container::{idx::ContainerIdx, list::list_op::ListOp, ContainerID},
-    encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff, ListDiff},
     handler::ValueOrHandler,
     op::{ListSlice, Op, RawOp, RawOpContent},
@@ -17,7 +16,7 @@ use generic_btree::{
     rle::{CanRemove, HasLength, Mergeable, Sliceable, TryInsert},
     BTree, BTreeTrait, Cursor, LeafIndex, LengthFinder, UseLengthFinder,
 };
-use loro_common::{IdFull, IdLpSpan, LoroResult, ID};
+use loro_common::{IdFull, LoroResult, ID};
 use loro_delta::array_vec::ArrayVec;
 
 #[derive(Debug)]
@@ -509,33 +508,6 @@ impl ContainerState for ListState {
             }
         }
         ans
-    }
-
-    #[doc = "Get a list of ops that can be used to restore the state to the current state"]
-    fn encode_snapshot(&self, mut encoder: StateSnapshotEncoder) -> Vec<u8> {
-        for elem in self.list.iter() {
-            let id_span: IdLpSpan = elem.id.idlp().into();
-            encoder.encode_op(id_span, || unimplemented!());
-        }
-
-        Vec::new()
-    }
-
-    #[doc = "Restore the state to the state represented by the ops that exported by `get_snapshot_ops`"]
-    fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) -> LoroResult<()> {
-        assert_eq!(ctx.mode, EncodeMode::OutdatedSnapshot);
-        let mut index = 0;
-        for op in ctx.ops {
-            let value = op.op.content.as_list().unwrap().as_insert().unwrap().0;
-            let list = ctx
-                .oplog
-                .arena
-                .get_values(value.0.start as usize..value.0.end as usize);
-            let len = list.len();
-            self.insert_batch(index, list, op.id_full());
-            index += len;
-        }
-        Ok(())
     }
 
     fn fork(&self, _config: &Configure) -> Self {

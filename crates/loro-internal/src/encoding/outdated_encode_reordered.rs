@@ -1,42 +1,31 @@
-use either::Either;
 pub(crate) use encode::{encode_op, get_op_prop};
 use fractional_index::FractionalIndex;
-use generic_btree::rle::Sliceable;
-use itertools::Itertools;
 use loro_common::{
-    ContainerID, ContainerType, Counter, HasCounterSpan, HasId, HasIdSpan, IdLp, InternalString,
-    LoroError, LoroResult, PeerID, TreeID, ID,
+    ContainerID, ContainerType, Counter, HasCounterSpan, HasIdSpan, IdLp, LoroError, LoroResult,
+    TreeID, ID,
 };
-use rle::HasLength;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
 use serde_columnar::{columnar, ColumnarError};
+use std::borrow::Cow;
 use std::sync::Arc;
-use std::{borrow::Cow, cell::RefCell, cmp::Ordering, rc::Rc};
-use tracing::instrument;
 
 use crate::version::VersionRange;
 use crate::{
     arena::SharedArena,
     change::{Change, Lamport, Timestamp},
     container::{
-        idx::ContainerIdx, list::list_op::DeleteSpanWithId, richtext::TextStyleInfoFlag,
-        tree::tree_op::TreeOp,
+        list::list_op::DeleteSpanWithId, richtext::TextStyleInfoFlag, tree::tree_op::TreeOp,
     },
-    encoding::StateSnapshotDecodeContext,
-    op::{FutureInnerContent, Op, OpWithId, SliceRange},
-    state::ContainerState,
-    version::Frontiers,
-    DocState, LoroDoc, OpLog, VersionVector,
+    op::{FutureInnerContent, Op, SliceRange},
+    OpLog, VersionVector,
 };
 
-use self::encode::{encode_changes, encode_ops, init_encode, TempOp};
-
+use super::ParsedHeaderAndBody;
 use super::{
     arena::*,
-    value::{Value, ValueDecodedArenasTrait, ValueKind, ValueReader, ValueWriter},
+    value::{Value, ValueDecodedArenasTrait, ValueReader, ValueWriter},
     ImportBlobMetadata,
 };
-use super::{ImportStatus, ParsedHeaderAndBody};
 
 pub(crate) use crate::encoding::value_register::ValueRegister;
 
@@ -163,602 +152,19 @@ pub(crate) fn import_changes_to_oplog(
     }
 }
 
-fn decode_changes<'a>(
-    encoded_changes: IterableEncodedChange<'_>,
-    mut counters: Vec<i32>,
-    peer_ids: &PeerIdArena,
-    keys: &KeyArena,
-    mut deps: impl Iterator<Item = Result<EncodedDep, ColumnarError>> + 'a,
-    mut ops_map: FxHashMap<u64, Vec<Op>>,
-) -> LoroResult<Vec<Change>> {
-    let mut changes = Vec::with_capacity(encoded_changes.size_hint().0);
-    for encoded_change in encoded_changes {
-        let EncodedChange {
-            peer_idx,
-            mut len,
-            timestamp,
-            deps_len,
-            dep_on_self,
-            msg_idx_plus_one,
-        } = encoded_change?;
-        if peer_ids.peer_ids.len() <= peer_idx || counters.len() <= peer_idx {
-            return Err(LoroError::DecodeDataCorruptionError);
-        }
-
-        let counter = counters[peer_idx];
-        counters[peer_idx] += len as Counter;
-        let peer = peer_ids.peer_ids[peer_idx];
-        let mut change: Change = Change {
-            id: ID::new(peer, counter),
-            ops: Default::default(),
-            deps: Frontiers::with_capacity((deps_len + if dep_on_self { 1 } else { 0 }) as usize),
-            lamport: 0,
-            commit_msg: if msg_idx_plus_one == 0 {
-                None
-            } else {
-                let key = keys.get(msg_idx_plus_one as usize - 1).unwrap();
-                let s = key.to_string();
-                Some(Arc::from(s))
-            },
-            timestamp,
-        };
-
-        if dep_on_self {
-            if counter <= 0 {
-                return Err(LoroError::DecodeDataCorruptionError);
-            }
-
-            change.deps.push(ID::new(peer, counter - 1));
-        }
-
-        for _ in 0..deps_len {
-            let dep = deps.next().ok_or(LoroError::DecodeDataCorruptionError)??;
-            change
-                .deps
-                .push(ID::new(peer_ids.peer_ids[dep.peer_idx], dep.counter));
-        }
-
-        let ops = ops_map
-            .get_mut(&peer)
-            .ok_or(LoroError::DecodeDataCorruptionError)?;
-        while len > 0 {
-            let op = ops.pop().ok_or(LoroError::DecodeDataCorruptionError)?;
-            len -= op.atom_len();
-            change.ops.push(op);
-        }
-
-        changes.push(change);
-    }
-
-    Ok(changes)
-}
-
-struct ExtractedOps {
-    ops_map: FxHashMap<PeerID, Vec<Op>>,
-    ops: Vec<OpWithId>,
-    containers: Vec<ContainerID>,
-}
-
-#[allow(clippy::too_many_arguments)]
-fn extract_ops(
-    raw_values: &[u8],
-    iter: impl Iterator<Item = Result<EncodedOp, ColumnarError>>,
-    mut del_iter: impl Iterator<Item = Result<EncodedDeleteStartId, ColumnarError>>,
-    shared_arena: &SharedArena,
-    arenas: &mut DecodedArenas<'_>,
-    should_extract_ops_with_ids: bool,
-) -> LoroResult<ExtractedOps> {
-    let mut value_reader = ValueReader::new(raw_values);
-    let mut ops_map: FxHashMap<PeerID, Vec<Op>> = FxHashMap::default();
-    let containers: Vec<_> = arenas
-        .containers
-        .iter()
-        .map(|x| x.as_container_id(arenas))
-        .try_collect()?;
-    let mut ops = Vec::new();
-    let positions = std::mem::take(&mut arenas.positions).parse_to_positions();
-    for op in iter {
-        let EncodedOp {
-            container_index,
-            prop,
-            peer_idx,
-            value_type,
-            counter,
-        } = op?;
-        if containers.len() <= container_index as usize
-            || arenas.peer_ids.len() <= peer_idx as usize
-        {
-            return Err(LoroError::DecodeDataCorruptionError);
-        }
-        let peer = arenas.peer_ids[peer_idx as usize];
-        let cid = &containers[container_index as usize];
-        let kind = ValueKind::from_u8(value_type);
-        let value = Value::decode(kind, &mut value_reader, arenas, ID::new(peer, counter))?;
-
-        let content = decode_op(
-            cid,
-            value,
-            &mut del_iter,
-            shared_arena,
-            arenas,
-            &positions,
-            prop,
-            ID::new(peer, counter),
-        )?;
-
-        let container = shared_arena.register_container(cid);
-
-        let op = Op {
-            counter,
-            container,
-            content,
-        };
-
-        if should_extract_ops_with_ids {
-            ops.push(OpWithId {
-                peer,
-                op: op.clone(),
-                lamport: None,
-            });
-        }
-
-        ops_map.entry(peer).or_default().push(op);
-    }
-
-    for (_, ops) in ops_map.iter_mut() {
-        // sort op by counter in the reversed order
-        ops.sort_by_key(|x| -x.counter);
-    }
-
-    Ok(ExtractedOps {
-        ops_map,
-        ops,
-        containers,
-    })
-}
-
-#[derive(Clone, Copy, PartialEq, Debug, Eq)]
-struct PosMappingItem {
-    start_id: ID,
-    len: usize,
-    target_value: i32,
-}
-
-impl Ord for PosMappingItem {
-    fn cmp(&self, other: &Self) -> Ordering {
-        // this is reversed so that the BinaryHeap will be a min-heap
-        other.start_id.cmp(&self.start_id)
-    }
-}
-
-impl PartialOrd for PosMappingItem {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl PosMappingItem {
-    fn split(&mut self, pos: usize) -> Self {
-        let new_len = self.len - pos;
-        self.len = pos;
-        PosMappingItem {
-            start_id: ID {
-                peer: self.start_id.peer,
-                counter: self.start_id.counter + pos as Counter,
-            },
-            len: new_len,
-            target_value: self.target_value + pos as i32,
-        }
-    }
-}
-
-fn calc_sorted_ops_for_snapshot<'a>(
-    mut origin_ops: Vec<TempOp<'a>>,
-    mut pos_mapping_heap: Vec<PosMappingItem>,
-) -> Vec<TempOp<'a>> {
-    origin_ops.sort_unstable();
-    pos_mapping_heap.sort_unstable();
-    let mut ops: Vec<TempOp<'a>> = Vec::with_capacity(origin_ops.len());
-    let ops_len: usize = origin_ops.iter().map(|x| x.atom_len()).sum();
-    let mut origin_top = origin_ops.pop();
-    let mut pos_top = pos_mapping_heap.pop();
-
-    while origin_top.is_some() || pos_top.is_some() {
-        let Some(mut inner_origin_top) = origin_top else {
-            unreachable!()
-        };
-
-        let Some(mut inner_pos_top) = pos_top else {
-            ops.push(inner_origin_top);
-            origin_top = origin_ops.pop();
-            continue;
-        };
-        match inner_origin_top.id_start().cmp(&inner_pos_top.start_id) {
-            std::cmp::Ordering::Less => {
-                if inner_origin_top.id_end() <= inner_pos_top.start_id {
-                    ops.push(inner_origin_top);
-                    origin_top = origin_ops.pop();
-                } else {
-                    let delta =
-                        inner_pos_top.start_id.counter - inner_origin_top.id_start().counter;
-                    let right = inner_origin_top.split(delta as usize);
-                    ops.push(inner_origin_top);
-                    origin_top = Some(right);
-                }
-            }
-            std::cmp::Ordering::Equal => {
-                match inner_origin_top.atom_len().cmp(&inner_pos_top.len) {
-                    std::cmp::Ordering::Less => {
-                        // origin top is shorter than pos mapping,
-                        // need to split the pos mapping
-                        let len = inner_origin_top.atom_len();
-                        inner_origin_top.prop_that_used_for_sort =
-                            i32::MIN + inner_pos_top.target_value;
-                        ops.push(inner_origin_top);
-                        let next = inner_pos_top.split(len);
-                        origin_top = origin_ops.pop();
-                        pos_top = Some(next);
-                    }
-                    std::cmp::Ordering::Equal => {
-                        // origin op's length equal to pos mapping's length
-                        inner_origin_top.prop_that_used_for_sort =
-                            i32::MIN + inner_pos_top.target_value;
-                        ops.push(inner_origin_top.clone());
-                        origin_top = origin_ops.pop();
-                        pos_top = pos_mapping_heap.pop();
-                    }
-                    std::cmp::Ordering::Greater => {
-                        // origin top is longer than pos mapping,
-                        // need to split the origin top
-                        let right = inner_origin_top.split(inner_pos_top.len);
-                        inner_origin_top.prop_that_used_for_sort =
-                            i32::MIN + inner_pos_top.target_value;
-                        ops.push(inner_origin_top);
-                        origin_top = Some(right);
-                        pos_top = pos_mapping_heap.pop();
-                    }
-                }
-            }
-            std::cmp::Ordering::Greater => unreachable!(),
-        }
-    }
-
-    ops.sort_unstable_by(|a, b| {
-        a.container_index.cmp(&b.container_index).then({
-            a.prop_that_used_for_sort
-                .cmp(&b.prop_that_used_for_sort)
-                .then_with(|| a.peer_idx.cmp(&b.peer_idx))
-                .then_with(|| a.lamport.cmp(&b.lamport))
-        })
-    });
-
-    debug_assert_eq!(ops.iter().map(|x| x.atom_len()).sum::<usize>(), ops_len);
-    ops
-}
-
-fn encode_snapshot_states(
-    container_idxs: impl Iterator<Item = ContainerIdx>,
-    state: &mut DocState,
-    oplog: &OpLog,
-    container_idx2index: &FxHashMap<ContainerIdx, usize>,
-    registers: Rc<RefCell<EncodedRegisters>>,
-    origin_ops: &mut Vec<TempOp<'_>>,
-    pos_mapping_heap: &mut Vec<PosMappingItem>,
-) -> (Vec<EncodedStateInfo>, Vec<u8>) {
-    let mut pos_target_value = 0;
-    let registers_clone = registers.clone();
-
-    let mut states = Vec::new();
-    let mut state_bytes = Vec::new();
-    for container in container_idxs {
-        let container_index = *container_idx2index.get(&container).unwrap() as u32;
-
-        // if the container is unknown, we don't need to encode the state
-        // but we flag it as unknown, so that we can decode it as unknown later
-        let is_unknown = container.is_unknown();
-        if is_unknown {
-            states.push(EncodedStateInfo {
-                container_index,
-                op_len: 0,
-                is_unknown,
-                state_bytes_len: 0,
-            });
-            continue;
-        }
-
-        let state = match state.get_container_mut(container) {
-            Some(state) if !state.is_state_empty() => state,
-            _ => {
-                states.push(EncodedStateInfo {
-                    container_index,
-                    op_len: 0,
-                    is_unknown,
-                    state_bytes_len: 0,
-                });
-                continue;
-            }
-        };
-
-        let mut op_len = 0;
-        let bytes = state.encode_snapshot(super::StateSnapshotEncoder {
-            register_peer: &mut |peer| RefCell::borrow_mut(&registers).peer.register(&peer),
-            check_idspan: &|_id_span| {
-                // TODO: todo!("check intersection by vv that defined by idlp");
-                // if let Some(counter) = vv.intersect_span(id_span) {
-                //     Err(IdSpan {
-                //         client_id: id_span.peer,
-                //         counter,
-                //     })
-                // } else {
-                Ok(())
-                // }
-            },
-            encoder_by_op: &mut |op| {
-                origin_ops.push(TempOp {
-                    op: Cow::Owned(op.op),
-                    peer_idx: RefCell::borrow_mut(&registers_clone)
-                        .peer
-                        .register(&op.peer) as u32,
-                    peer_id: op.peer,
-                    container_index,
-                    prop_that_used_for_sort: -1,
-                    lamport: op.lamport.unwrap(),
-                });
-            },
-            record_idspan: &mut |id_span| {
-                let len = id_span.atom_len();
-                op_len += len;
-                let start_id = oplog.idlp_to_id(IdLp::new(id_span.peer, id_span.lamport.start));
-                pos_mapping_heap.push(PosMappingItem {
-                    start_id: start_id.expect("convert idlp to id failed"),
-                    len,
-                    target_value: pos_target_value,
-                });
-                pos_target_value += len as i32;
-            },
-            mode: super::EncodeMode::OutdatedSnapshot,
-        });
-
-        states.push(EncodedStateInfo {
-            container_index,
-            op_len: op_len as u32,
-            is_unknown: false,
-            state_bytes_len: bytes.len() as u32,
-        });
-        state_bytes.extend(bytes);
-    }
-    (states, state_bytes)
-}
-
 mod encode {
-    #[allow(unused_imports)]
-    use crate::encoding::value::FutureValue;
-    use either::Either;
-    use loro_common::{ContainerType, HasId, PeerID, ID};
-    use rle::{HasLength, Sliceable};
-    use rustc_hash::FxHashMap;
-    use std::{borrow::Cow, ops::Deref};
+    use loro_common::ContainerType;
 
     use crate::{
         arena::SharedArena,
-        change::{Change, Lamport},
-        container::{idx::ContainerIdx, tree::tree_op::TreeOp},
-        encoding::{
-            value::{MarkStart, Value, ValueEncodeRegister, ValueKind, ValueWriter},
-            value_register::ValueRegister,
-        },
+        encoding::value::{MarkStart, Value, ValueEncodeRegister, ValueKind, ValueWriter},
         op::{FutureInnerContent, Op},
-        oplog::BlockChangeRef,
     };
 
-    #[derive(Debug, Clone)]
-    pub(super) struct TempOp<'a> {
-        pub op: Cow<'a, Op>,
-        pub lamport: Lamport,
-        pub peer_idx: u32,
-        pub peer_id: PeerID,
-        pub container_index: u32,
-        /// Prop is fake and will be encoded in the snapshot.
-        /// But it will not be used when decoding, because this op is not included in the vv so it's not in the encoded changes.
-        pub prop_that_used_for_sort: i32,
-    }
-
-    impl PartialEq for TempOp<'_> {
-        fn eq(&self, other: &Self) -> bool {
-            self.peer_id == other.peer_id && self.lamport == other.lamport
-        }
-    }
-
-    impl Eq for TempOp<'_> {}
-    impl Ord for TempOp<'_> {
-        fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-            self.peer_id
-                .cmp(&other.peer_id)
-                .then(self.lamport.cmp(&other.lamport))
-                // we need reverse because we'll need to use binary heap to get the smallest one
-                .reverse()
-        }
-    }
-
-    impl PartialOrd for TempOp<'_> {
-        fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-            Some(self.cmp(other))
-        }
-    }
-
-    impl HasId for TempOp<'_> {
-        fn id_start(&self) -> loro_common::ID {
-            ID::new(self.peer_id, self.op.counter)
-        }
-    }
-
-    impl HasLength for TempOp<'_> {
-        #[inline(always)]
-        fn atom_len(&self) -> usize {
-            self.op.atom_len()
-        }
-
-        #[inline(always)]
-        fn content_len(&self) -> usize {
-            self.op.atom_len()
-        }
-    }
-
-    impl generic_btree::rle::HasLength for TempOp<'_> {
-        #[inline(always)]
-        fn rle_len(&self) -> usize {
-            self.op.atom_len()
-        }
-    }
-
-    impl<'a> generic_btree::rle::Sliceable for TempOp<'a> {
-        fn _slice(&self, range: std::ops::Range<usize>) -> TempOp<'a> {
-            Self {
-                op: if range.start == 0 && range.end == self.op.atom_len() {
-                    match &self.op {
-                        Cow::Borrowed(o) => Cow::Borrowed(o),
-                        Cow::Owned(o) => Cow::Owned(o.clone()),
-                    }
-                } else {
-                    let op = self.op.slice(range.start, range.end);
-                    Cow::Owned(op)
-                },
-                lamport: self.lamport + range.start as Lamport,
-                peer_idx: self.peer_idx,
-                peer_id: self.peer_id,
-                container_index: self.container_index,
-                prop_that_used_for_sort: self.prop_that_used_for_sort,
-            }
-        }
-    }
-
-    pub(super) fn encode_ops<'p, 'a: 'p>(
-        ops: &'a [TempOp<'a>],
-        arena: &SharedArena,
-        value_writer: &mut ValueWriter,
-        registers: &mut EncodedRegisters<'p>,
-    ) -> (Vec<EncodedOp>, Vec<EncodedDeleteStartId>) {
-        let mut encoded_ops = Vec::with_capacity(ops.len());
-        let mut delete_start = Vec::new();
-        for TempOp {
-            op,
-            peer_idx,
-            container_index,
-            ..
-        } in ops
-        {
-            let value_type = encode_op(op, arena, &mut delete_start, value_writer, registers);
-            let prop = get_op_prop(op, registers);
-            encoded_ops.push(EncodedOp {
-                container_index: *container_index,
-                peer_idx: *peer_idx,
-                counter: op.counter,
-                prop,
-                value_type: value_type.to_u8(),
-            });
-        }
-
-        (encoded_ops, delete_start)
-    }
-
-    pub(super) fn encode_changes<'p, 'a: 'p>(
-        diff_changes: &'a [Either<Change, BlockChangeRef>],
-        dep_arena: &mut super::DepsArena,
-        push_op: &mut impl FnMut(TempOp<'a>),
-        container_idx2index: &FxHashMap<ContainerIdx, usize>,
-        registers: &mut EncodedRegisters<'p>,
-    ) -> Vec<EncodedChange> {
-        let mut changes: Vec<EncodedChange> = Vec::with_capacity(diff_changes.len());
-        for change in diff_changes.iter() {
-            let mut dep_on_self = false;
-            let mut deps_len = 0;
-            let change = match change {
-                Either::Left(c) => c,
-                Either::Right(c) => c,
-            };
-            for dep in change.deps.iter() {
-                if dep.peer == change.id.peer {
-                    dep_on_self = true;
-                } else {
-                    deps_len += 1;
-                    dep_arena.push(registers.peer.register(&dep.peer), dep.counter);
-                }
-            }
-
-            let peer_idx = registers.peer.register(&change.id.peer);
-            let msg_idx_plus_one = if let Some(msg) = change.commit_msg.as_ref() {
-                registers.key.register(&msg.deref().into()) + 1
-            } else {
-                0
-            };
-
-            changes.push(EncodedChange {
-                dep_on_self,
-                deps_len,
-                peer_idx,
-                len: change.atom_len(),
-                timestamp: change.timestamp,
-                msg_idx_plus_one: msg_idx_plus_one as i32,
-            });
-
-            for op in change.ops().iter() {
-                let lamport = (op.counter - change.id.counter) as Lamport + change.lamport();
-                push_op(TempOp {
-                    op: Cow::Borrowed(op),
-                    lamport,
-                    prop_that_used_for_sort: get_sorting_prop(op, registers),
-                    peer_idx: peer_idx as u32,
-                    peer_id: change.id.peer,
-                    container_index: container_idx2index[&op.container] as u32,
-                });
-            }
-        }
-        changes
-    }
-
-    use crate::{OpLog, VersionVector};
-
-    use super::{EncodedChange, EncodedDeleteStartId, EncodedOp, EncodedRegisters};
-
-    pub(super) fn init_encode(
-        oplog: &OpLog,
-        vv: &'_ VersionVector,
-        peer_register: &mut ValueRegister<PeerID>,
-    ) -> (Vec<i32>, Vec<Either<Change, BlockChangeRef>>) {
-        let mut start_vv = vv.trim(oplog.vv());
-        for (p, c) in oplog.shallow_since_vv().iter() {
-            let start_c = start_vv.entry(*p).or_default();
-            *start_c = (*start_c).max(*c);
-        }
-
-        let mut start_counters = Vec::new();
-        let self_vv = oplog.vv();
-        let mut diff_changes: Vec<Either<Change, BlockChangeRef>> = Vec::new();
-        for change in oplog.iter_changes_peer_by_peer(&start_vv, self_vv) {
-            let start_cnt = start_vv.get(&change.id.peer).copied().unwrap_or(0);
-            if !peer_register.contains(&change.id.peer) {
-                peer_register.register(&change.id.peer);
-                start_counters.push(start_cnt);
-            }
-            if change.id.counter < start_cnt {
-                let offset = start_cnt - change.id.counter;
-                diff_changes.push(Either::Left(
-                    change.slice(offset as usize, change.atom_len()),
-                ));
-            } else {
-                diff_changes.push(Either::Right(change));
-            }
-        }
-
-        diff_changes.sort_by_key(|x| match x {
-            Either::Left(c) => c.lamport,
-            Either::Right(c) => c.lamport,
-        });
-        (start_counters, diff_changes)
-    }
+    use super::EncodedDeleteStartId;
 
     fn get_future_op_prop(op: &FutureInnerContent) -> i32 {
-        match &op {
+        match op {
             #[cfg(feature = "counter")]
             FutureInnerContent::Counter(_) => 0,
             FutureInnerContent::Unknown { prop, .. } => *prop,
@@ -783,33 +189,7 @@ mod encode {
                 key as i32
             }
             crate::op::InnerContent::Tree(_) => 0,
-            // The future should not use register to encode prop
             crate::op::InnerContent::Future(f) => get_future_op_prop(f),
-        }
-    }
-
-    fn get_sorting_prop<'p, 'a: 'p>(op: &'a Op, registers: &mut EncodedRegisters<'p>) -> i32 {
-        match &op.content {
-            crate::op::InnerContent::List(_) => 0,
-            crate::op::InnerContent::Map(map) => {
-                let key = registers.key.register(&map.key);
-                key as i32
-            }
-            crate::op::InnerContent::Tree(op) => match &**op {
-                TreeOp::Create { position, .. } | TreeOp::Move { position, .. } => {
-                    let either::Either::Left(position_register) = &mut registers.position else {
-                        unreachable!()
-                    };
-                    position_register.insert(position.as_bytes());
-                    0
-                }
-                TreeOp::Delete { .. } => 0,
-            },
-            crate::op::InnerContent::Future(f) => match f {
-                #[cfg(feature = "counter")]
-                FutureInnerContent::Counter(_) => 0,
-                FutureInnerContent::Unknown { .. } => 0,
-            },
         }
     }
 
@@ -831,13 +211,7 @@ mod encode {
                     let value = arena.get_values(slice.0.start as usize..slice.0.end as usize);
                     Value::LoroValue(value.into())
                 }
-                crate::container::list::list_op::InnerListOp::InsertText {
-                    slice,
-                    unicode_start: _,
-                    unicode_len: _,
-                    ..
-                } => {
-                    // TODO: refactor this from_utf8 can be done internally without checking
+                crate::container::list::list_op::InnerListOp::InsertText { slice, .. } => {
                     Value::Str(std::str::from_utf8(slice.as_bytes()).unwrap())
                 }
                 crate::container::list::list_op::InnerListOp::Delete(span) => {
@@ -899,7 +273,7 @@ mod encode {
                         Value::F64(*c)
                     }
                 }
-                FutureInnerContent::Unknown { prop: _, value } => Value::from_owned(value),
+                FutureInnerContent::Unknown { value, .. } => Value::from_owned(value),
             },
         };
         let (k, _) = value.encode(value_writer, registers);
@@ -1119,66 +493,6 @@ pub(crate) fn decode_op(
 }
 
 pub type PeerIdx = usize;
-
-struct ExtractedContainer {
-    containers: Vec<ContainerID>,
-    cid_idx_pairs: Vec<(ContainerID, ContainerIdx)>,
-    container_to_index: FxHashMap<ContainerIdx, usize>,
-}
-
-/// Extract containers from oplog changes.
-///
-/// Containers are sorted by their peer_id and counter so that
-/// they can be compressed by using delta encoding.
-fn extract_containers_in_order(
-    c_iter: &mut dyn Iterator<Item = ContainerIdx>,
-    arena: &SharedArena,
-) -> ExtractedContainer {
-    let mut containers = Vec::new();
-    let mut visited = FxHashSet::default();
-    for c in c_iter {
-        if visited.contains(&c) {
-            continue;
-        }
-        visited.insert(c);
-        let id = arena.get_container_id(c).unwrap();
-        containers.push((id, c));
-    }
-
-    containers.sort_unstable_by(|(a, _), (b, _)| {
-        a.is_root()
-            .cmp(&b.is_root())
-            .then_with(|| a.container_type().cmp(&b.container_type()))
-            .then_with(|| match (a, b) {
-                (ContainerID::Root { name: a, .. }, ContainerID::Root { name: b, .. }) => a.cmp(b),
-                (
-                    ContainerID::Normal {
-                        peer: peer_a,
-                        counter: counter_a,
-                        ..
-                    },
-                    ContainerID::Normal {
-                        peer: peer_b,
-                        counter: counter_b,
-                        ..
-                    },
-                ) => peer_a.cmp(peer_b).then_with(|| counter_a.cmp(counter_b)),
-                _ => unreachable!(),
-            })
-    });
-
-    let container_idx2index = containers
-        .iter()
-        .enumerate()
-        .map(|(i, (_, c))| (*c, i))
-        .collect();
-
-    ExtractedContainer {
-        containers: containers.iter().map(|x| x.0.clone()).collect(),
-        cid_idx_pairs: containers,
-        container_to_index: container_idx2index,
-    }
-}
 
 #[columnar(ser, de)]
 struct EncodedDoc<'a> {
