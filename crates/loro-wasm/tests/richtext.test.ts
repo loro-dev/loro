@@ -87,7 +87,7 @@ describe("richtext", () => {
     const textB = docB.getText("text");
     textB.insert(0, "Hello World!");
     textB.mark({ start: 0, end: 5 }, "bold", true);
-    doc.import(docB.exportFrom());
+    doc.import(docB.export({ mode: "update" }));
     await new Promise((r) => setTimeout(r, 1));
     expect(called).toBeTruthy();
   });
@@ -211,18 +211,12 @@ describe("richtext", () => {
     text.insert(0, "123");
     const pos0 = text.getCursor(0, 0);
     {
-      const ans = expectDefined(
-        doc.getCursorPos(pos0!),
-        "cursor pos missing",
-      );
+      const ans = expectDefined(doc.getCursorPos(pos0!), "cursor pos missing");
       expect(ans.offset).toBe(0);
     }
     text.insert(0, "1");
     {
-      const ans = expectDefined(
-        doc.getCursorPos(pos0!),
-        "cursor pos missing",
-      );
+      const ans = expectDefined(doc.getCursorPos(pos0!), "cursor pos missing");
       expect(ans.offset).toBe(1);
     }
   });
@@ -240,10 +234,7 @@ describe("richtext", () => {
     // pos0 points to the first character, i.e. the id of '1'
     expect(pos0?.pos()).toStrictEqual({ peer: "1", counter: 0 } as OpId);
     {
-      const ans = expectDefined(
-        doc.getCursorPos(pos0!),
-        "cursor pos missing",
-      );
+      const ans = expectDefined(doc.getCursorPos(pos0!), "cursor pos missing");
       expect(ans.side).toBe(0);
       expect(ans.offset).toBe(0);
       expect(ans.update).toBeUndefined();
@@ -253,7 +244,7 @@ describe("richtext", () => {
     // Sending pos0 over the network
     const pos0decoded = Cursor.decode(bytes);
     const docA = new LoroDoc();
-    docA.import(doc.exportFrom());
+    docA.import(doc.export({ mode: "update" }));
     {
       const ans = expectDefined(
         docA.getCursorPos(pos0decoded!),
@@ -268,10 +259,7 @@ describe("richtext", () => {
     text.delete(3, 1); // remove "1", "abc23"
     doc.commit();
     {
-      const ans = expectDefined(
-        doc.getCursorPos(pos0!),
-        "cursor pos missing",
-      );
+      const ans = expectDefined(doc.getCursorPos(pos0!), "cursor pos missing");
       expect(ans.side).toBe(-1);
       expect(ans.offset).toBe(3);
       expect(ans.update).toBeDefined(); // The update of the stable position should be returned
@@ -292,10 +280,7 @@ describe("richtext", () => {
     text.insert(0, "Hello");
     const pos3 = text.getCursor(3);
     text.mark({ start: 0, end: 2 }, "bold", true);
-    const ans = expectDefined(
-      doc.getCursorPos(pos3!),
-      "cursor pos missing",
-    );
+    const ans = expectDefined(doc.getCursorPos(pos3!), "cursor pos missing");
     expect(ans.offset).toBe(3);
   });
 
@@ -307,43 +292,39 @@ describe("richtext", () => {
 
   it("Insert/delete by utf8 index", () => {
     const doc = new LoroDoc();
-    const text = doc.getText('t');
+    const text = doc.getText("t");
     text.insert(0, "你好");
     text.insertUtf8(3, "a");
     text.insertUtf8(7, "b");
-    expect(text.toDelta()).toStrictEqual([
-      { insert: "你a好b" },
-    ]);
+    expect(text.toDelta()).toStrictEqual([{ insert: "你a好b" }]);
     text.deleteUtf8(3, 4);
-    expect(text.toDelta()).toStrictEqual([
-      { insert: "你b" },
-    ]);
+    expect(text.toDelta()).toStrictEqual([{ insert: "你b" }]);
   });
 
   it("Slice", () => {
     const doc = new LoroDoc();
-    const text = doc.getText('t');
+    const text = doc.getText("t");
     text.insert(0, "你好");
     expect(text.slice(0, 1)).toStrictEqual("你");
   });
 
   it("Slice emoji", () => {
     const doc = new LoroDoc();
-    const text = doc.getText('t');
+    const text = doc.getText("t");
     text.insert(0, "😡😡😡");
     expect(text.slice(0, 2)).toStrictEqual("😡");
   });
 
   it("CharAt", () => {
     const doc = new LoroDoc();
-    const text = doc.getText('t');
+    const text = doc.getText("t");
     text.insert(0, "你好");
     expect(text.charAt(1)).toStrictEqual("好");
   });
 
   it("Splice", () => {
     const doc = new LoroDoc();
-    const text = doc.getText('t');
+    const text = doc.getText("t");
     text.insert(0, "你好");
     expect(text.splice(1, 1, "我")).toStrictEqual("好");
     expect(text.toString()).toStrictEqual("你我");
@@ -351,7 +332,7 @@ describe("richtext", () => {
 
   it("Text iter", () => {
     const doc = new LoroDoc();
-    const text = doc.getText('t');
+    const text = doc.getText("t");
     text.insert(0, "你好");
     let str = "";
     text.iter((s: string) => {
@@ -363,7 +344,7 @@ describe("richtext", () => {
 
   it("Text update", () => {
     const doc = new LoroDoc();
-    const text = doc.getText('t');
+    const text = doc.getText("t");
     text.insert(0, "Hello 😊Bro");
     text.update("Hello World Bro😊");
     expect(text.toString()).toStrictEqual("Hello World Bro😊");
@@ -371,20 +352,19 @@ describe("richtext", () => {
 
   it("Delta cache", async () => {
     const doc = new LoroDoc();
-    const text = doc.getText('t');
+    const text = doc.getText("t");
     text.insert(0, "Hello 😊Bro");
     const updates = doc.export({ mode: "snapshot" });
     const docB = new LoroDoc();
-    const textB = docB.getText('t');
+    const textB = docB.getText("t");
     const promise = new Promise<void>((r, reject) => {
       textB.subscribe((_e) => {
         try {
           expect(textB.toDelta()).toStrictEqual(text.toDelta());
-          r()
+          r();
         } catch (e) {
           reject(e);
         }
-
       });
     });
 

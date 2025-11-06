@@ -56,9 +56,6 @@ importers:
       loro-crdt-alpha-4:
         specifier: npm:loro-crdt@=1.0.0-alpha.4
         version: loro-crdt@1.0.0-alpha.4
-      loro-crdt-old:
-        specifier: npm:loro-crdt@=0.16.0
-        version: loro-crdt@0.16.0
       prettier:
         specifier: ^3.0.0
         version: 3.2.5
@@ -1956,14 +1953,8 @@ packages:
   lodash.startcase@4.4.0:
     resolution: {integrity: sha512-+WKqsK294HMSc2jEbNgpHpd0JfIBhp7rEV4aqXWqFr6AlXov+SlcgB1Fv01y2kGe3Gc8nMW7VA0SrGuSkRfIEg==}
 
-  loro-crdt@0.16.0:
-    resolution: {integrity: sha512-U/fwXPfe3GjE96tP97qzIjGoDOz5K/zSNPs1QZ7ZO4pqOAkjkLhBifSYZWW2v1t7ufFgUa4XqXpS1pn7Hyze2A==}
-
   loro-crdt@1.0.0-alpha.4:
     resolution: {integrity: sha512-WFVf/goGbiC9wmA7GNf9Fmdwry5hJq/CcQkXjoEp4QC9OYMUGm6QqKsrI7M4q05e2l7JeTc0RU858C7FRtg7qw==}
-
-  loro-wasm@0.16.0:
-    resolution: {integrity: sha512-2puF09ppACoUwMf9+6BkuYlogY+qZqqStq6RbYYXMhL8Uxrf8DXJdmLA+XGgI4suxXh39jvt6XfwdafqcUuu4A==}
 
   loro-wasm@1.0.0-alpha.4:
     resolution: {integrity: sha512-M1Bwh1PQQUFwdAldpSGZD3wl5D/6gQkbTC6aRoC8SjIxv0mgVzibp9sw9DXnolwoJ/Abd4hWeCz2sOvYOzw+Hg==}
@@ -4727,15 +4718,9 @@ snapshots:
 
   lodash.startcase@4.4.0: {}
 
-  loro-crdt@0.16.0:
-    dependencies:
-      loro-wasm: 0.16.0
-
   loro-crdt@1.0.0-alpha.4:
     dependencies:
       loro-wasm: 1.0.0-alpha.4
-
-  loro-wasm@0.16.0: {}
 
   loro-wasm@1.0.0-alpha.4: {}
 

@@ -4,9 +4,9 @@ use serde_columnar::columnar;
 use std::sync::Weak;
 use tracing::{instrument, warn};
 
-use rustc_hash::FxHashMap;
 use generic_btree::BTree;
 use loro_common::{CompactIdLp, ContainerID, IdFull, IdLp, LoroResult, LoroValue, PeerID, ID};
+use rustc_hash::FxHashMap;
 
 use crate::{
     configure::Configure,
@@ -20,7 +20,7 @@ use crate::{
 };
 
 use self::{
-    inner::{InnerState, PushElemInfo, UpdateResultFromPosChange},
+    inner::{InnerState, UpdateResultFromPosChange},
     list_item_tree::{MovableListTreeTrait, OpLenQuery, UserLenQuery},
 };
 
@@ -285,9 +285,9 @@ mod list_item_tree {
 /// - `id_to_list_leaf` must be consistent with the list.
 /// - `child_container_to_elem` must be consistent with the element.
 mod inner {
-    use rustc_hash::{FxHashMap, FxHashSet};
     use generic_btree::{BTree, Cursor, LeafIndex, Query};
     use loro_common::{CompactIdLp, ContainerID, IdFull, IdLp, LoroValue, PeerID};
+    use rustc_hash::{FxHashMap, FxHashSet};
     use tracing::error;
 
     use super::{
@@ -1388,28 +1388,12 @@ impl ContainerState for MovableListState {
 }
 
 #[columnar(vec, ser, de, iterable)]
-#[derive(Debug, Clone, Copy)]
-struct EncodedItem {
-    #[columnar(strategy = "DeltaRle")]
-    invisible_list_item: usize,
-    #[columnar(strategy = "BoolRle")]
-    pos_id_eq_elem_id: bool,
-}
-
-#[columnar(vec, ser, de, iterable)]
 #[derive(Debug, Clone)]
 struct EncodedId {
     #[columnar(strategy = "DeltaRle")]
     peer_idx: usize,
     #[columnar(strategy = "DeltaRle")]
     lamport: u32,
-}
-#[columnar(ser, de)]
-struct EncodedSnapshot {
-    #[columnar(class = "vec", iter = "EncodedItem")]
-    items: Vec<EncodedItem>,
-    #[columnar(class = "vec", iter = "EncodedId")]
-    ids: Vec<EncodedId>,
 }
 
 #[columnar(vec, ser, de, iterable)]
@@ -1824,7 +1808,9 @@ mod test {
         list.mov(0, 1).unwrap();
         {
             let doc_b = LoroDoc::new_auto_commit();
-            doc_b.import(&doc.export(ExportMode::all_updates()).unwrap()).unwrap();
+            doc_b
+                .import(&doc.export(ExportMode::all_updates()).unwrap())
+                .unwrap();
             assert_eq!(
                 doc_b.get_deep_value().to_json_value(),
                 json!({
@@ -1841,7 +1827,9 @@ mod test {
         );
         {
             let doc_b = LoroDoc::new_auto_commit();
-            doc_b.import(&doc.export(ExportMode::all_updates()).unwrap()).unwrap();
+            doc_b
+                .import(&doc.export(ExportMode::all_updates()).unwrap())
+                .unwrap();
             assert_eq!(
                 doc_b.get_deep_value().to_json_value(),
                 json!({
@@ -1860,7 +1848,9 @@ mod test {
         );
         {
             let doc_b = LoroDoc::new_auto_commit();
-            doc_b.import(&doc.export(ExportMode::all_updates()).unwrap()).unwrap();
+            doc_b
+                .import(&doc.export(ExportMode::all_updates()).unwrap())
+                .unwrap();
             assert_eq!(
                 doc_b.get_deep_value().to_json_value(),
                 json!({
@@ -1870,7 +1860,9 @@ mod test {
         }
         {
             let doc_b = LoroDoc::new_auto_commit();
-            doc_b.import(&doc.export(ExportMode::Snapshot).unwrap()).unwrap();
+            doc_b
+                .import(&doc.export(ExportMode::Snapshot).unwrap())
+                .unwrap();
             assert_eq!(
                 doc_b.get_deep_value().to_json_value(),
                 json!({

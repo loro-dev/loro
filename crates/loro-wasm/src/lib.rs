@@ -1358,7 +1358,6 @@ impl LoroDoc {
     /// Get the [frontiers](https://loro.dev/docs/advanced/version_deep_dive) of the latest version in OpLog.
     ///
     /// If you checkout to a specific version, this value will not change.
-    #[inline(always)]
     #[wasm_bindgen(js_name = "oplogFrontiers")]
     pub fn oplog_frontiers(&self) -> JsIDs {
         frontiers_to_ids(&self.doc.oplog_frontiers())
@@ -5637,27 +5636,6 @@ export type ContainerID =
 export type TreeID = `${number}@${PeerID}`;
 
 interface LoroDoc {
-    /**
-     * Export updates from the specific version to the current version
-     *
-     * @deprecated Use `export({mode: "update", from: version})` instead
-     *
-     *  @example
-     *  ```ts
-     *  import { LoroDoc } from "loro-crdt";
-     *
-     *  const doc = new LoroDoc();
-     *  const text = doc.getText("text");
-     *  text.insert(0, "Hello");
-     *  // get all updates of the doc
-     *  const updates = doc.exportFrom();
-     *  const version = doc.oplogVersion();
-     *  text.insert(5, " World");
-     *  // get updates from specific version to the latest version
-     *  const updates2 = doc.exportFrom(version);
-     *  ```
-     */
-    exportFrom(version?: VersionVector): Uint8Array;
     /**
      *
      *  Get the container corresponding to the container id

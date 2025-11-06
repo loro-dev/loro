@@ -22,8 +22,8 @@ describe("counter", () => {
     counter.increment(2);
     counter.decrement(4);
 
-    const updates = doc.exportFrom();
-    const snapshot = doc.exportSnapshot();
+    const updates = doc.export({ mode: "update" });
+    const snapshot = doc.export({ mode: "snapshot" });
     const json = doc.exportJsonUpdates();
     const doc2 = new LoroDoc();
     doc2.import(updates);
@@ -57,4 +57,3 @@ describe("counter event", () => {
     expect(triggered).toBe(true);
   });
 });
-

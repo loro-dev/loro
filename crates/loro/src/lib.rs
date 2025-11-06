@@ -3499,7 +3499,7 @@ pub struct UndoManager(InnerUndoManager);
 impl UndoManager {
     /// Create a new UndoManager.
     pub fn new(doc: &LoroDoc) -> Self {
-        let mut inner = InnerUndoManager::new(&doc.doc);
+        let inner = InnerUndoManager::new(&doc.doc);
         inner.set_max_undo_steps(100);
         Self(inner)
     }

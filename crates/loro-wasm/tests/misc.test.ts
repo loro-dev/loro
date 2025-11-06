@@ -138,14 +138,14 @@ describe("sync", () => {
     let b_version: undefined | VersionVector = undefined;
     a.subscribe((e) => {
       if (e.by == "local") {
-        const exported = a.exportFrom(a_version);
+        const exported = a.export({ mode: "update", from: a_version });
         b.import(exported);
         a_version = a.version();
       }
     });
     b.subscribe((e) => {
       if (e.by == "local") {
-        const exported = b.exportFrom(b_version);
+        const exported = b.export({ mode: "update", from: b_version });
         a.import(exported);
         b_version = b.version();
       }
@@ -165,13 +165,13 @@ describe("sync", () => {
     text.insert(0, "hello world");
 
     const loro_bk = new LoroDoc();
-    loro_bk.import(loro.exportFrom(undefined));
+    loro_bk.import(loro.export({ mode: "update" }));
     assertEquals(loro_bk.toJSON(), loro.toJSON());
     const text_bk = loro_bk.getText("text");
     assertEquals(text_bk.toString(), "hello world");
     text_bk.insert(0, "a ");
 
-    loro.import(loro_bk.exportFrom(undefined));
+    loro.import(loro_bk.export({ mode: "update" }));
     assertEquals(text.toString(), "a hello world");
     const map = loro.getMap("map");
     map.set("key", "value");

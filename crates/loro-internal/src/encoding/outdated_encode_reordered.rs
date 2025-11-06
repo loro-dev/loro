@@ -4,7 +4,6 @@ use loro_common::{
     ContainerID, ContainerType, Counter, HasCounterSpan, HasIdSpan, IdLp, LoroError, LoroResult,
     TreeID, ID,
 };
-use rustc_hash::FxHashSet;
 use serde_columnar::{columnar, ColumnarError};
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -38,66 +37,6 @@ pub(super) const MAX_DECODED_SIZE: usize = 1 << 30;
 /// If any collection in the document is longer than this, we will not decode it.
 /// It will return an data corruption error instead.
 pub(super) const MAX_COLLECTION_SIZE: usize = 1 << 28;
-
-pub fn decode_import_blob_meta(parsed: ParsedHeaderAndBody) -> LoroResult<ImportBlobMetadata> {
-    let iterators = serde_columnar::iter_from_bytes::<EncodedDoc>(parsed.body)?;
-    let DecodedArenas { peer_ids, .. } = decode_arena(&iterators.arenas)?;
-    let start_vv: VersionVector = iterators
-        .start_counters
-        .iter()
-        .enumerate()
-        .filter_map(|(peer_idx, counter)| {
-            if *counter == 0 {
-                None
-            } else {
-                Some(ID::new(peer_ids.peer_ids[peer_idx], *counter - 1))
-            }
-        })
-        .collect();
-    let frontiers = iterators
-        .start_frontiers
-        .iter()
-        .map(|x| ID::new(peer_ids.peer_ids[x.0], x.1))
-        .collect();
-    let mut end_vv_counters = iterators.start_counters;
-    let mut change_num = 0;
-    let mut start_timestamp = Timestamp::MAX;
-    let mut end_timestamp = Timestamp::MIN;
-
-    for iter in iterators.changes {
-        let EncodedChange {
-            peer_idx,
-            len,
-            timestamp,
-            ..
-        } = iter?;
-        end_vv_counters[peer_idx] += len as Counter;
-        start_timestamp = start_timestamp.min(timestamp);
-        end_timestamp = end_timestamp.max(timestamp);
-        change_num += 1;
-    }
-
-    Ok(ImportBlobMetadata {
-        mode: match parsed.mode {
-            super::EncodeMode::OutdatedRle => super::EncodedBlobMode::OutdatedRle,
-            super::EncodeMode::OutdatedSnapshot => super::EncodedBlobMode::OutdatedSnapshot,
-            super::EncodeMode::FastSnapshot => super::EncodedBlobMode::Snapshot,
-            super::EncodeMode::FastUpdates => super::EncodedBlobMode::Updates,
-            super::EncodeMode::Auto => unreachable!(),
-        },
-        start_frontiers: frontiers,
-        partial_start_vv: start_vv,
-        partial_end_vv: VersionVector::from_iter(
-            end_vv_counters
-                .iter()
-                .enumerate()
-                .map(|(peer_idx, counter)| ID::new(peer_ids.peer_ids[peer_idx], *counter - 1)),
-        ),
-        start_timestamp,
-        end_timestamp,
-        change_num,
-    })
-}
 
 pub(crate) struct ImportChangesResult {
     pub latest_ids: Vec<ID>,
@@ -494,54 +433,6 @@ pub(crate) fn decode_op(
 
 pub type PeerIdx = usize;
 
-#[columnar(ser, de)]
-struct EncodedDoc<'a> {
-    #[columnar(class = "vec", iter = "EncodedOp")]
-    ops: Vec<EncodedOp>,
-    #[columnar(class = "vec", iter = "EncodedChange")]
-    changes: Vec<EncodedChange>,
-    #[columnar(class = "vec", iter = "EncodedDeleteStartId")]
-    delete_starts: Vec<EncodedDeleteStartId>,
-    /// Container states snapshot.
-    ///
-    /// It's empty when the encoding mode is not snapshot.
-    #[columnar(class = "vec", iter = "EncodedStateInfo")]
-    states: Vec<EncodedStateInfo>,
-    /// The first counter value for each change of each peer in `changes`
-    start_counters: Vec<Counter>,
-    /// The frontiers at the start of this encoded delta.
-    ///
-    /// It's empty when the encoding mode is snapshot.
-    start_frontiers: Vec<(PeerIdx, Counter)>,
-    #[columnar(borrow)]
-    raw_values: Cow<'a, [u8]>,
-
-    /// A list of encoded arenas, in the following order
-    /// - `peer_id_arena`
-    /// - `container_arena`
-    /// - `key_arena`
-    /// - `deps_arena`
-    /// - `state_arena`
-    /// - `others`, left for future use
-    #[columnar(borrow)]
-    arenas: Cow<'a, [u8]>,
-}
-
-#[columnar(vec, ser, de, iterable)]
-#[derive(Debug, Clone)]
-struct EncodedOp {
-    #[columnar(strategy = "DeltaRle")]
-    container_index: u32,
-    #[columnar(strategy = "DeltaRle")]
-    prop: i32,
-    #[columnar(strategy = "DeltaRle")]
-    peer_idx: u32,
-    #[columnar(strategy = "DeltaRle")]
-    value_type: u8,
-    #[columnar(strategy = "DeltaRle")]
-    counter: i32,
-}
-
 #[columnar(vec, ser, de, iterable)]
 #[derive(Debug, Clone)]
 pub(crate) struct EncodedDeleteStartId {
@@ -553,40 +444,11 @@ pub(crate) struct EncodedDeleteStartId {
     len: isize,
 }
 
-#[columnar(vec, ser, de, iterable)]
-#[derive(Debug, Clone)]
-struct EncodedChange {
-    #[columnar(strategy = "DeltaRle")]
-    peer_idx: usize,
-    #[columnar(strategy = "DeltaRle")]
-    len: usize,
-    #[columnar(strategy = "DeltaRle")]
-    timestamp: i64,
-    #[columnar(strategy = "DeltaRle")]
-    deps_len: i32,
-    #[columnar(strategy = "BoolRle")]
-    dep_on_self: bool,
-    #[columnar(strategy = "DeltaRle")]
-    msg_idx_plus_one: i32,
-}
-
-#[columnar(vec, ser, de, iterable)]
-#[derive(Debug, Clone)]
-struct EncodedStateInfo {
-    #[columnar(strategy = "DeltaRle")]
-    container_index: u32,
-    #[columnar(strategy = "DeltaRle")]
-    op_len: u32,
-    #[columnar(strategy = "DeltaRle")]
-    state_bytes_len: u32,
-    #[columnar(strategy = "BoolRle")]
-    is_unknown: bool,
-}
-
 #[cfg(test)]
 mod test {
 
     use loro_common::LoroValue;
+    use rustc_hash::FxHashSet;
 
     use crate::{encoding::value_register::ValueRegister, fx_map};
 

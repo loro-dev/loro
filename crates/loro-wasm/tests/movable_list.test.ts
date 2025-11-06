@@ -36,7 +36,7 @@ describe("movable list", () => {
     const doc2 = new LoroDoc();
     const list2 = doc2.getMovableList("list");
     expect(list2.length).toBe(0);
-    doc2.import(doc.exportFrom());
+    doc2.import(doc.export({ mode: "update" }));
     expect(list2.length).toBe(3);
     expect(list2.get(0)).toBe("b");
     expect(list2.get(1)).toBe("a");
@@ -129,10 +129,10 @@ describe("movable list", () => {
     list.push("c");
     const docB = new LoroDoc();
     const listB = docB.getMovableList("list");
-    docB.import(docA.exportFrom());
+    docB.import(docA.export({ mode: "update" }));
     listB.move(0, 1);
     list.move(0, 1);
-    docB.import(docA.exportFrom());
+    docB.import(docA.export({ mode: "update" }));
     expect(listB.toJSON()).toEqual(["b", "a", "c"]);
     expect(listB.length).toBe(3);
   });
@@ -147,11 +147,11 @@ describe("movable list", () => {
     const docB = new LoroDoc();
     docB.setPeerId(1);
     const listB = docB.getMovableList("list");
-    docB.import(docA.exportFrom());
+    docB.import(docA.export({ mode: "update" }));
     listA.set(1, "fromA");
     listB.set(1, "fromB");
-    docB.import(docA.exportFrom());
-    docA.import(docB.exportFrom());
+    docB.import(docA.export({ mode: "update" }));
+    docA.import(docB.export({ mode: "update" }));
     expect(listA.toJSON()).toEqual(["a", "fromB", "c"]);
     expect(listA.length).toBe(3);
     expect(listB.toJSON()).toEqual(["a", "fromB", "c"]);
@@ -171,12 +171,10 @@ describe("movable list", () => {
       for (const e of event.events) {
         expect(e.target).toBe(list.id);
         if (e.diff.type === "list") {
-          expect(e.diff).toStrictEqual(
-            {
-              "type": "list",
-              "diff": [{ insert: ["a", "b", "c"] }],
-            } as ListDiff,
-          );
+          expect(e.diff).toStrictEqual({
+            type: "list",
+            diff: [{ insert: ["a", "b", "c"] }],
+          } as ListDiff);
         } else {
           throw new Error("unknown diff type");
         }
@@ -199,9 +197,9 @@ describe("movable list", () => {
   });
 
   it("has the right type", () => {
-    const doc = new LoroDoc<
-      { list: LoroMovableList<LoroMap<{ name: string }>> }
-    >();
+    const doc = new LoroDoc<{
+      list: LoroMovableList<LoroMap<{ name: string }>>;
+    }>();
     const list = doc.getMovableList("list");
     const map = list.insertContainer(0, new LoroMap());
     expectTypeOf(map).toMatchTypeOf<LoroMap<{ name: string }>>();

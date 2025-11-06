@@ -108,7 +108,7 @@ export class QuillBinding {
         if (!assertEqual(a, b as any)) {
           this.quill.setContents(new Delta(a), "this" as any);
         }
-        console.log("SIZE", this.doc.exportFrom().length);
+        console.log("SIZE", this.doc.export({ mode: "update" }).length);
         this.doc.debugHistory();
       }
     }

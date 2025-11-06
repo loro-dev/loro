@@ -20,18 +20,6 @@ impl<T: std::hash::Hash + Clone + PartialEq + Eq> ValueRegister<T> {
         }
     }
 
-    pub fn from_existing(vec: Vec<T>) -> Self {
-        let mut map = FxHashMap::with_capacity_and_hasher(vec.len(), Default::default());
-        for (i, value) in vec.iter().enumerate() {
-            map.insert(value.clone(), i);
-        }
-
-        Self {
-            map_value_to_index: map,
-            vec,
-        }
-    }
-
     /// Return the index of the given value. If it does not exist,
     /// insert it and return the new index.
     pub fn register(&mut self, key: &T) -> usize {

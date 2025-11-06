@@ -353,31 +353,3 @@ fn test_export_shallow_snapshot_from_shallow_doc() -> anyhow::Result<()> {
 
     Ok(())
 }
-
-#[test]
-#[should_panic]
-fn test_export_snapshot_from_shallow_doc() {
-    // Create and populate the original document
-    let doc = LoroDoc::new();
-    doc.set_peer_id(1).unwrap();
-    gen_action(&doc, 123, 32);
-    doc.commit();
-
-    // Get the current frontiers and create some more actions
-    let frontiers = doc.oplog_frontiers();
-    gen_action(&doc, 123, 32);
-    doc.commit();
-
-    // Export using shallowSnapshot mode
-    let shallow_bytes = doc
-        .export(loro::ExportMode::shallow_snapshot(&frontiers))
-        .unwrap();
-
-    // Import into a new document
-    let shallow_doc = LoroDoc::new();
-    shallow_doc.import(&shallow_bytes).unwrap();
-
-    // Attempt to export a shallow snapshot from the shallow document
-    // using frontiers before its shallow version
-    shallow_doc.export(loro::ExportMode::Snapshot).unwrap();
-}

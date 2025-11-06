@@ -14,9 +14,7 @@ pub(crate) use value::OwnedValue;
 use crate::version::{Frontiers, VersionRange};
 use crate::LoroDoc;
 use crate::{oplog::OpLog, LoroError, VersionVector};
-use loro_common::{
-    HasIdSpan, IdSpan, InternalString, LoroEncodeError, LoroResult, ID,
-};
+use loro_common::{HasIdSpan, IdSpan, InternalString, LoroEncodeError, LoroResult, ID};
 use num_traits::{FromPrimitive, ToPrimitive};
 use std::borrow::Cow;
 
@@ -331,19 +329,6 @@ pub(crate) fn parse_header_and_body(
     Ok(ans)
 }
 
-fn encode_header_and_body(mode: EncodeMode, body: Vec<u8>) -> Vec<u8> {
-    let mut ans = Vec::new();
-    ans.extend(MAGIC_BYTES);
-    let checksum = [0; 16];
-    ans.extend(checksum);
-    ans.extend(mode.to_bytes());
-    ans.extend(body);
-    let checksum_body = &ans[20..];
-    let checksum = md5::compute(checksum_body).0;
-    ans[4..20].copy_from_slice(&checksum);
-    ans
-}
-
 pub(crate) fn export_fast_snapshot(doc: &LoroDoc) -> Vec<u8> {
     encode_with(EncodeMode::FastSnapshot, &mut |ans| {
         fast_snapshot::encode_snapshot(doc, ans);
@@ -514,7 +499,7 @@ impl LoroDoc {
         match parsed.mode {
             EncodeMode::Auto => unreachable!(),
             EncodeMode::OutdatedRle | EncodeMode::OutdatedSnapshot => {
-                outdated_encode_reordered::decode_import_blob_meta(parsed)
+                return Err(LoroError::ImportUnsupportedEncodingMode)
             }
             EncodeMode::FastSnapshot => fast_snapshot::decode_snapshot_blob_meta(parsed),
             EncodeMode::FastUpdates => fast_snapshot::decode_updates_blob_meta(parsed),

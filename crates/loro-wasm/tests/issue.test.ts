@@ -17,8 +17,8 @@ it("#211", () => {
   show(text1, loro1, text2, loro2);
 
   // console.log("[2] Synchronize");
-  loro1.import(loro2.exportFrom(loro1.version()));
-  loro2.import(loro1.exportFrom(loro2.version()));
+  loro1.import(loro2.export({ mode: "update", from: loro1.version() }));
+  loro2.import(loro1.export({ mode: "update", from: loro2.version() }));
   show(text1, loro1, text2, loro2);
   const frontiers1After2 = loro1.frontiers();
   const frontiers2After2 = loro2.frontiers();
@@ -58,7 +58,12 @@ it("#211", () => {
   show(text1, loro1, text2, loro2);
 });
 
-function show(text1: LoroText, loro1: LoroDoc, text2: LoroText, loro2: LoroDoc) {
+function show(
+  text1: LoroText,
+  loro1: LoroDoc,
+  text2: LoroText,
+  loro2: LoroDoc,
+) {
   // console.log(`    #0 has content: ${JSON.stringify(text1.toString())}`);
   // console.log(`    #0 has frontiers: ${showFrontiers(loro1.frontiers())}`);
   // console.log(`    #1 has content: ${JSON.stringify(text2.toString())}`);
