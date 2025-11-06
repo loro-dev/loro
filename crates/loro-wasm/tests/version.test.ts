@@ -211,8 +211,7 @@ it("get import blob metadata on outdated-format", () => {
     expect(meta.startTimestamp).toBe(0);
     expect(meta.endTimestamp).toBe(0);
     expect(meta.mode).toBe("update");
-    // FIXME: here
-    // expect(meta.startFrontiers).toStrictEqual([{ peer: "0", counter: 0 }]);
+    expect(meta.startFrontiers).toStrictEqual([]);
   }
 });
 

@@ -576,7 +576,6 @@ fn prelim_support() -> LoroResult<()> {
 }
 
 #[test]
-#[ignore = "FIXME should fix issues here"]
 fn decode_import_blob_meta() -> LoroResult<()> {
     let doc_1 = LoroDoc::new();
     doc_1.set_peer_id(1)?;
@@ -584,7 +583,6 @@ fn decode_import_blob_meta() -> LoroResult<()> {
     {
         let bytes = doc_1.export(ExportMode::all_updates()).unwrap();
         let meta = LoroDoc::decode_import_blob_meta(&bytes, false).unwrap();
-        assert!(meta.partial_start_vv.is_empty());
         assert_eq!(meta.partial_end_vv, vv!(1 => 3));
         assert_eq!(meta.start_timestamp, 0);
         assert_eq!(meta.end_timestamp, 0);
@@ -642,6 +640,30 @@ fn decode_import_blob_meta() -> LoroResult<()> {
         assert!(meta.start_frontiers.is_empty());
         assert_eq!(meta.change_num, 2);
     }
+    Ok(())
+}
+
+#[test]
+fn decode_import_blob_meta_1() -> LoroResult<()> {
+    let doc0 = LoroDoc::new();
+    doc0.set_peer_id(0)?;
+    doc0.get_text("text").insert(0, "0")?;
+    doc0.commit();
+
+    let doc1 = LoroDoc::new();
+    doc1.set_peer_id(1)?;
+    doc1.get_text("text").insert(0, "123")?;
+    let updates = doc0.export(ExportMode::all_updates()).unwrap();
+    doc1.import(&updates).unwrap();
+    let bytes = doc1.export(ExportMode::updates(&doc0.oplog_vv())).unwrap();
+    let meta = LoroDoc::decode_import_blob_meta(&bytes, false).unwrap();
+    assert_eq!(meta.partial_start_vv, vv!());
+    assert_eq!(meta.partial_end_vv, vv!(1 => 3));
+    assert_eq!(meta.start_timestamp, 0);
+    assert_eq!(meta.end_timestamp, 0);
+    assert!(!meta.mode.is_snapshot());
+    assert_eq!(meta.start_frontiers, vec![].into());
+    assert_eq!(meta.change_num, 1);
     Ok(())
 }
 

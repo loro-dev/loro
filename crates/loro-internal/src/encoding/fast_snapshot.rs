@@ -16,10 +16,12 @@
 use std::io::{Read, Write};
 
 use crate::{
-    change::Change, encoding::shallow_snapshot, oplog::ChangeStore, LoroDoc, OpLog, VersionVector,
+    change::Change, encoding::shallow_snapshot, oplog::ChangeStore, version::Frontiers, LoroDoc,
+    OpLog, VersionVector,
 };
 use bytes::{Buf, Bytes};
-use loro_common::{HasCounterSpan, IdSpan, InternalString, LoroError, LoroResult};
+use loro_common::{HasCounterSpan, IdSpan, InternalString, LoroError, LoroResult, ID};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{EncodedBlobMode, ImportBlobMetadata, ParsedHeaderAndBody};
 pub(crate) const EMPTY_MARK: &[u8] = b"E";
@@ -328,12 +330,29 @@ pub(crate) fn decode_updates_blob_meta(
         end_vv.insert(c.id.peer, c.ctr_end());
     }
 
+    let mut start_frontiers = Frontiers::new();
+    for c in changes.iter() {
+        for dep in c.deps().iter() {
+            dbg!(&dep);
+            if let Some(start_counter) = start_vv.get(&dep.peer) {
+                println!("0");
+                if *start_counter > dep.counter {
+                    println!("1");
+                    start_frontiers.push(dep);
+                }
+            } else if end_vv.get(&dep.peer).is_none() {
+                println!("2");
+                start_frontiers.push(dep);
+            }
+        }
+    }
+
     Ok(ImportBlobMetadata {
         mode: EncodedBlobMode::Updates,
         partial_start_vv: start_vv,
         partial_end_vv: end_vv,
         start_timestamp: changes.first().map(|x| x.timestamp).unwrap_or(0),
-        start_frontiers: Default::default(),
+        start_frontiers,
         end_timestamp: changes.last().map(|x| x.timestamp).unwrap_or(0),
         change_num: changes.len() as u32,
     })
