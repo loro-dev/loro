@@ -289,9 +289,7 @@ impl std::fmt::Debug for ContainerID {
 
 // TODO: add non_exhausted
 // Note: It will be encoded into binary format, so the order of its fields should not be changed.
-#[derive(
-    Arbitrary, Debug, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord, Serialize, Deserialize,
-)]
+#[derive(Arbitrary, Debug, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord)]
 pub enum ContainerType {
     Text,
     Map,
@@ -358,6 +356,78 @@ impl ContainerType {
             #[cfg(feature = "counter")]
             5 => Ok(ContainerType::Counter),
             x => Ok(ContainerType::Unknown(x)),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename = "ContainerType")]
+enum ContainerTypeSerdeRepr {
+    Text,
+    Map,
+    List,
+    MovableList,
+    Tree,
+    #[cfg(feature = "counter")]
+    Counter,
+    Unknown(u8),
+}
+
+impl From<ContainerType> for ContainerTypeSerdeRepr {
+    fn from(value: ContainerType) -> Self {
+        match value {
+            ContainerType::Text => Self::Text,
+            ContainerType::Map => Self::Map,
+            ContainerType::List => Self::List,
+            ContainerType::MovableList => Self::MovableList,
+            ContainerType::Tree => Self::Tree,
+            #[cfg(feature = "counter")]
+            ContainerType::Counter => Self::Counter,
+            ContainerType::Unknown(value) => Self::Unknown(value),
+        }
+    }
+}
+
+impl From<ContainerTypeSerdeRepr> for ContainerType {
+    fn from(value: ContainerTypeSerdeRepr) -> Self {
+        match value {
+            ContainerTypeSerdeRepr::Text => ContainerType::Text,
+            ContainerTypeSerdeRepr::Map => ContainerType::Map,
+            ContainerTypeSerdeRepr::List => ContainerType::List,
+            ContainerTypeSerdeRepr::MovableList => ContainerType::MovableList,
+            ContainerTypeSerdeRepr::Tree => ContainerType::Tree,
+            #[cfg(feature = "counter")]
+            ContainerTypeSerdeRepr::Counter => ContainerType::Counter,
+            ContainerTypeSerdeRepr::Unknown(value) => ContainerType::Unknown(value),
+        }
+    }
+}
+
+impl Serialize for ContainerType {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        if serializer.is_human_readable() {
+            ContainerTypeSerdeRepr::from(*self).serialize(serializer)
+        } else {
+            serializer.serialize_u8(self.to_u8())
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ContainerType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        if deserializer.is_human_readable() {
+            let repr = ContainerTypeSerdeRepr::deserialize(deserializer)?;
+            Ok(repr.into())
+        } else {
+            let value = u8::deserialize(deserializer)?;
+            ContainerType::try_from_u8(value)
+                .map_err(|err| serde::de::Error::custom(err.to_string()))
         }
     }
 }
