@@ -15,10 +15,10 @@ mod span;
 mod value;
 
 pub use error::{LoroEncodeError, LoroError, LoroResult, LoroTreeError};
-#[doc(hidden)]
-pub use rustc_hash::FxHashMap;
 pub use internal_string::InternalString;
 pub use logging::log::*;
+#[doc(hidden)]
+pub use rustc_hash::FxHashMap;
 pub use span::*;
 pub use value::{
     to_value, LoroBinaryValue, LoroListValue, LoroMapValue, LoroStringValue, LoroValue,
@@ -373,6 +373,34 @@ enum ContainerTypeSerdeRepr {
     Unknown(u8),
 }
 
+// For some historical reason, we have another to_byte format for ContainerType,
+// it was used for serde of ContainerType
+fn historical_container_type_to_byte(c: ContainerType) -> u8 {
+    match c {
+        ContainerType::Text => 0,
+        ContainerType::Map => 1,
+        ContainerType::List => 2,
+        ContainerType::MovableList => 3,
+        ContainerType::Tree => 4,
+        #[cfg(feature = "counter")]
+        ContainerType::Counter => 5,
+        ContainerType::Unknown(k) => k,
+    }
+}
+
+fn historical_try_byte_to_container(byte: u8) -> ContainerType {
+    match byte {
+        0 => ContainerType::Text,
+        1 => ContainerType::Map,
+        2 => ContainerType::List,
+        3 => ContainerType::MovableList,
+        4 => ContainerType::Tree,
+        #[cfg(feature = "counter")]
+        5 => ContainerType::Counter,
+        _ => ContainerType::Unknown(byte),
+    }
+}
+
 impl From<ContainerType> for ContainerTypeSerdeRepr {
     fn from(value: ContainerType) -> Self {
         match value {
@@ -411,7 +439,7 @@ impl Serialize for ContainerType {
         if serializer.is_human_readable() {
             ContainerTypeSerdeRepr::from(*self).serialize(serializer)
         } else {
-            serializer.serialize_u8(self.to_u8())
+            serializer.serialize_u8(historical_container_type_to_byte(*self))
         }
     }
 }
@@ -426,8 +454,7 @@ impl<'de> Deserialize<'de> for ContainerType {
             Ok(repr.into())
         } else {
             let value = u8::deserialize(deserializer)?;
-            ContainerType::try_from_u8(value)
-                .map_err(|err| serde::de::Error::custom(err.to_string()))
+            Ok(historical_try_byte_to_container(value))
         }
     }
 }
