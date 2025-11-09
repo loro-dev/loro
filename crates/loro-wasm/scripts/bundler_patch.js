@@ -35,13 +35,17 @@ if (wasmModuleOrExports && wasmModuleOrExports.__wbindgen_start) {
   // wasm-bindgen externref table initializer after instantiation resets the
   // table so booleans stay primitives and avoids the infinite recursion seen in
   // Bun tests during `pnpm release-wasm`.
-  const source =
-    wasmModuleOrExports instanceof WebAssembly.Module
-      ? wasmModuleOrExports
-      : Bun.pathToFileURL(wasmModuleOrExports);
-  const { instance } = await WebAssembly.instantiateStreaming(fetch(source), {
-    './loro_wasm_bg.js': imports,
-  });
+  let instance;
+  if (wasmModuleOrExports instanceof WebAssembly.Module) {
+    ({ instance } = await WebAssembly.instantiate(wasmModuleOrExports, {
+      './loro_wasm_bg.js': imports,
+    }));
+  } else {
+    const url = Bun.pathToFileURL(wasmModuleOrExports);
+    ({ instance } = await WebAssembly.instantiateStreaming(fetch(url), {
+      './loro_wasm_bg.js': imports,
+    }));
+  }
   finalize(instance.exports);
 } else {
   // Browser/node-like bundlers: either we already have exports, or a Module/URL.
