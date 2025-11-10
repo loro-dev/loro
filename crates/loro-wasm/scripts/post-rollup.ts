@@ -73,45 +73,40 @@ async function rollupBase64() {
 
     const base64IndexPath = "./base64/index.js";
     const content = await Deno.readTextFile(base64IndexPath);
-
-    const legacyPattern =
-        /\{\s*const wkmod = await import\('\.\/loro_wasm_bg-([^']+)\.js'\);\s*const instance = new WebAssembly\.Instance\(wkmod\.default, \{\s*"\.\/loro_wasm_bg\.js": imports,\s*\}\);\s*__wbg_set_wasm\(instance\.exports\);\s*\}/;
-    const legacyReplacement = (match: string, hash: string) => `
-import loro_wasm_bg_js from './loro_wasm_bg-${hash}.js';
-const instance = new WebAssembly.Instance(loro_wasm_bg_js(), {
-    "./loro_wasm_bg.js": imports,
-});
-__wbg_set_wasm(instance.exports);
-`;
-
-    const modernPattern =
-        /const wkmod = await Promise\.resolve\(\)\.then\(function \(\) { return wasm\$1; }\);\s*const instance = new WebAssembly\.Instance\(wkmod\.default, \{\s*"\.\/loro_wasm_bg\.js": imports,\s*\}\);\s*__wbg_set_wasm\(instance\.exports\);\s*/;
-    const modernReplacement = () => `const instance = loro_wasm_bg({
-    "./loro_wasm_bg.js": imports,
-});
-__wbg_set_wasm(instance.exports);
-`;
-
-    let nextContent = content;
-    let replaced = false;
-
-    if (legacyPattern.test(nextContent)) {
-        nextContent = nextContent.replace(legacyPattern, legacyReplacement);
-        replaced = true;
-    } else if (modernPattern.test(nextContent)) {
-        nextContent = nextContent.replace(modernPattern, modernReplacement);
-        replaced = true;
-    }
-
-    if (!replaced) {
-        throw new Error(
-            `Could not find string to replace in ${base64IndexPath}`,
-        );
-    }
-
+    const nextContent = injectBase64WasmBranch(content, base64IndexPath);
     await Deno.writeTextFile(base64IndexPath, nextContent);
 
     await Deno.copyFile("./bundler/loro_wasm.d.ts", "./base64/loro_wasm.d.ts");
+}
+
+function injectBase64WasmBranch(content: string, filePath: string): string {
+    const alreadyPatched =
+        content.includes("typeof wasmModuleOrExports === \"function\"");
+    if (alreadyPatched) {
+        return content;
+    }
+
+    const bunBranchPattern = /}\s*else if\s*\(\s*(['"])Bun\1\s+in\s+globalThis\s*\)\s*\{/;
+    if (!bunBranchPattern.test(content)) {
+        throw new Error(
+            `Could not locate Bun branch while patching ${filePath}`,
+        );
+    }
+
+    const base64Branch = `} else if (typeof wasmModuleOrExports === "function") {
+  const moduleOrInstance = wasmModuleOrExports({
+    "./loro_wasm_bg.js": imports,
+  });
+  const instance =
+    moduleOrInstance instanceof WebAssembly.Instance
+      ? moduleOrInstance
+      : new WebAssembly.Instance(moduleOrInstance, {
+        "./loro_wasm_bg.js": imports,
+      });
+  finalize(instance.exports ?? instance);
+} else if ("Bun" in globalThis) {`;
+
+    return content.replace(bunBranchPattern, base64Branch);
 }
 
 async function main() {

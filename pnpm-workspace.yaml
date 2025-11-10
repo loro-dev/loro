@@ -3,3 +3,4 @@ packages:
   - "crates/loro-wasm"
   - "crates/loro-wasm-map"
   - "examples/loro-quill"
+  - "examples/test-rsbuild"
