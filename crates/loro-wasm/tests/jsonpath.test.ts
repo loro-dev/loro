@@ -28,6 +28,24 @@ describe("JSONPath", () => {
             store.set(key, value);
         })
 
+        const project = doc.getMap("project");
+        project.set("name", "Launch Plan");
+        project.set("tasks", [
+            { id: 1, title: "Storyboard slides", assignee: "amy", status: "in-progress" },
+            { id: 2, title: "Budget review", assignee: "li", status: "todo" },
+            { id: 3, title: "Finalize keynote deck", assignee: "amy", status: "done" }
+        ]);
+
+        const drafts = doc.getList("drafts");
+        drafts.push({ title: "slide walkthrough" });
+        drafts.push({ title: "executive summary" });
+        drafts.push({ title: "slide qa checklist" });
+
+        const todos = doc.getList("todos");
+        todos.push({ title: "Wire up auth", status: "done" });
+        todos.push({ title: "Polish animation", status: "doing" });
+        todos.push({ title: "Ship launch blog", status: "done" });
+
         doc.commit();
     });
 
@@ -69,7 +87,7 @@ describe("JSONPath", () => {
         it("handles recursive descent", () => {
             const path = "$..title";
             const result = doc.JSONPath(path);
-            expect(result).toHaveLength(10);
+            expect(result).toHaveLength(19);
         });
 
         it("handles quoted keys", () => {
@@ -366,6 +384,33 @@ describe("JSONPath", () => {
             const expected = ["1984", "Animal Farm"];
             expected.sort();
             expect(result).toEqual(expected);
+        });
+    });
+
+    describe("discord example queries", () => {
+        it("finds every task assigned to amy", () => {
+            const path = `$.project.tasks[?(@.assignee in ["amy"])]`;
+            const result = doc.JSONPath(path);
+            expect(result).toHaveLength(2);
+            const titles = result.map((task: any) => task.title).sort();
+            const expected = ["Storyboard slides", "Finalize keynote deck"].sort();
+            expect(titles).toEqual(expected);
+        });
+
+        it("selects drafts that mention slide", () => {
+            const path = `$.drafts[?(@.title contains "slide")]`;
+            const result = doc.JSONPath(path);
+            expect(result).toHaveLength(2);
+            const titles = result.map((draft: any) => draft.title);
+            expect(titles).toContain("slide walkthrough");
+            expect(titles).toContain("slide qa checklist");
+        });
+
+        it("grabs the first completed todo", () => {
+            const path = `$.todos[?(@.status == "done")]`;
+            const result = doc.JSONPath(path);
+            expect(result).toHaveLength(2);
+            expect((result[0] as any).title).toBe("Wire up auth");
         });
     });
 });
