@@ -1,0 +1,15 @@
+{
+  "name": "loro-test-esbuild",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "serve": "node server.ts",
+    "test": "node test.js"
+  },
+  "dependencies": {
+    "esbuild": "^0.25.12",
+    "loro-crdt": "link:../../crates/loro-wasm",
+    "playwright": "^1.40.0"
+  }
+}

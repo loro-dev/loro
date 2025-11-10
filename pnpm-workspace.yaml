@@ -4,3 +4,4 @@ packages:
   - "crates/loro-wasm-map"
   - "examples/loro-quill"
   - "examples/test-rsbuild"
+  - "examples/test-esbuild"

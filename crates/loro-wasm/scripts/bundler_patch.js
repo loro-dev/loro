@@ -20,14 +20,21 @@ const finalize = (exports) => {
   if (typeof imports.__wbindgen_init_externref_table === 'function') {
     imports.__wbindgen_init_externref_table();
   }
+  tryStart(imports);
 };
+
+function tryStart(imports) {
+  if (typeof imports.__wbindgen_start === 'function') {
+    // Some bundlers require explicit start invocation.
+    imports.__wbindgen_start();
+  }
+}
 
 if (wasmModuleOrExports && wasmModuleOrExports.__wbindgen_start) {
   // See https://github.com/loro-dev/loro/issues/440
   // Without this patch, Cloudflare Worker would raise issue like: "Uncaught TypeError: wasm2.__wbindgen_start is not a function"
   // Already the initialized exports object (Cloudflare Workers path).
   finalize(wasmModuleOrExports);
-  wasmModuleOrExports.__wbindgen_start();
 } else if ('Bun' in globalThis) {
   // Bun's wasm runtime (1.3.0 as of Oct 2025) sometimes reads externref slot 1
   // (reserved for booleans by wasm-bindgen) as the global object, causing APIs
@@ -57,12 +64,32 @@ if (wasmModuleOrExports && wasmModuleOrExports.__wbindgen_start) {
     wkmod instanceof WebAssembly.Module
       ? wkmod
       : (wkmod && wkmod.default) || wkmod;
-  const instance =
-    module instanceof WebAssembly.Instance
-      ? module
-      : new WebAssembly.Instance(module, {
+  let instance;
+  if (module instanceof WebAssembly.Instance) {
+    instance = module;
+  } else if (module instanceof WebAssembly.Module) {
+    instance = await WebAssembly.instantiate(module, {
+      './loro_wasm_bg.js': imports,
+    });
+  } else if (module instanceof ArrayBuffer || ArrayBuffer.isView(module)) {
+    const { instance: inst } = await WebAssembly.instantiate(module, {
+      './loro_wasm_bg.js': imports,
+    });
+    instance = inst;
+  } else if (typeof module === 'string' || module instanceof URL) {
+    const response = await fetch(module);
+    const { instance: inst } = await WebAssembly.instantiateStreaming(
+      response,
+      {
         './loro_wasm_bg.js': imports,
-      });
+      }
+    );
+    instance = inst;
+  } else {
+    console.error('Unsupported wasm import type:', module);
+    throw new Error('Unsupported wasm import type: ' + typeof module);
+  }
+
   finalize(instance.exports ?? instance);
 }
 
