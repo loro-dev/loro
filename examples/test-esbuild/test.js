@@ -36,8 +36,8 @@ page.on('requestfailed', (request) => {
 });
 
 try {
-  console.log('Navigating to http://localhost:8080...');
-  await page.goto('http://localhost:8080', { waitUntil: 'domcontentloaded', timeout: 10000 });
+  console.log('Navigating to http://localhost:8081...');
+  await page.goto('http://localhost:8081', { waitUntil: 'domcontentloaded', timeout: 10000 });
 
   console.log('Waiting for LoroMap to be available...');
   await page.waitForFunction(() => window.LoroMap !== undefined, { timeout: 10000 });
