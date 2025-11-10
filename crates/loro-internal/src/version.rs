@@ -2,7 +2,6 @@ mod frontiers;
 pub use frontiers::Frontiers;
 
 use crate::{
-    change::Lamport,
     id::{Counter, ID},
     oplog::AppDag,
     span::{CounterSpan, IdSpan},
@@ -22,6 +21,9 @@ use std::{
 ///
 /// i.e. a [VersionVector] of `{A: 1, B: 2}` means that A has 1 atomic op and B has 2 atomic ops,
 /// thus ID of `{client: A, counter: 1}` is out of the range.
+//
+// NOTE: though normally it doesn't make sense to have an entry with counter = 0, but it can be 0 in certain cases.
+// Like, when using start_vv and end_vv to mark the version range, start_vv may have an entry with counter = 0.
 #[repr(transparent)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VersionVector(FxHashMap<PeerID, Counter>);
@@ -847,16 +849,6 @@ impl VersionVector {
         postcard::from_bytes(bytes).map_err(|_| LoroError::DecodeVersionVectorError)
     }
 
-    pub(crate) fn trim(&self, vv: &VersionVector) -> VersionVector {
-        let mut ans = VersionVector::new();
-        for (client_id, &counter) in self.iter() {
-            if let Some(&other_counter) = vv.get(client_id) {
-                ans.insert(*client_id, counter.min(other_counter));
-            }
-        }
-        ans
-    }
-
     pub fn to_im_vv(&self) -> ImVersionVector {
         ImVersionVector(self.0.iter().map(|(&k, &v)| (k, v)).collect())
     }
@@ -988,11 +980,6 @@ impl FromIterator<(PeerID, Counter)> for VersionVector {
 }
 
 // Note: It will be encoded into binary format, so the order of its fields should not be changed.
-#[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord, Serialize, Deserialize)]
-pub(crate) struct TotalOrderStamp {
-    pub(crate) lamport: Lamport,
-    pub(crate) client_id: PeerID,
-}
 
 pub fn are_frontiers_eq(a: &[ID], b: &[ID]) -> bool {
     if a.len() != b.len() {
@@ -1055,16 +1042,6 @@ mod tests {
         assert_eq!(a.get(&2), Some(&2));
         assert_eq!(b.get(&1), Some(&3));
         assert_eq!(b.get(&2), Some(&3));
-    }
-
-    #[test]
-    fn field_order() {
-        let tos = TotalOrderStamp {
-            lamport: 0,
-            client_id: 1,
-        };
-        let buf = vec![0, 1];
-        assert_eq!(postcard::from_bytes::<TotalOrderStamp>(&buf).unwrap(), tos);
     }
 
     #[test]

@@ -8,7 +8,7 @@ mod run {
     use bench_utils::TextAction;
     use criterion::black_box;
     use loro_common::LoroValue;
-    use loro_internal::LoroDoc;
+    use loro_internal::{loro::ExportMode, LoroDoc};
 
     pub fn b4(c: &mut Criterion) {
         let actions = bench_utils::get_automerge_actions();
@@ -38,7 +38,7 @@ mod run {
                 txn.commit().unwrap();
             }
 
-            let update = store.export_snapshot().unwrap();
+            let update = store.export(ExportMode::Snapshot).unwrap();
             drop(store);
             b.iter_batched(
                 || {
@@ -93,7 +93,7 @@ mod run {
             txn.commit().unwrap();
 
             b.iter(|| {
-                loro.export_snapshot().unwrap();
+                loro.export(ExportMode::Snapshot).unwrap();
             });
         });
 
@@ -116,7 +116,7 @@ mod run {
             txn.commit().unwrap();
 
             b.iter(|| {
-                loro.export_from(&Default::default());
+                loro.export(ExportMode::all_updates()).unwrap();
             });
         });
 
@@ -137,7 +137,7 @@ mod run {
             }
             txn.commit().unwrap();
 
-            let data = loro.export_snapshot().unwrap();
+            let data = loro.export(ExportMode::Snapshot).unwrap();
             b.iter(|| {
                 let l = LoroDoc::new();
                 l.import(&data).unwrap();
@@ -162,7 +162,7 @@ mod run {
             }
             txn.commit().unwrap();
 
-            let data = loro.export_from(&Default::default());
+            let data = loro.export(ExportMode::all_updates()).unwrap();
             b.iter(|| {
                 let l = LoroDoc::new();
                 l.import(&data).unwrap();
@@ -247,7 +247,11 @@ mod run {
                     }
 
                     loro_b
-                        .import(&loro.export_from(&loro_b.oplog_vv()))
+                        .import(
+                            &loro
+                                .export(ExportMode::updates(&loro_b.oplog_vv()))
+                                .unwrap(),
+                        )
                         .unwrap();
                 }
             })
@@ -282,9 +286,18 @@ mod run {
                         text2.insert_with_txn(&mut txn, pos, ins).unwrap();
                     }
                     loro_b
-                        .import(&loro.export_from(&loro_b.oplog_vv()))
+                        .import(
+                            &loro
+                                .export(ExportMode::updates(&loro_b.oplog_vv()))
+                                .unwrap(),
+                        )
                         .unwrap();
-                    loro.import(&loro_b.export_from(&loro.oplog_vv())).unwrap();
+                    loro.import(
+                        &loro_b
+                            .export(ExportMode::updates(&loro.oplog_vv()))
+                            .unwrap(),
+                    )
+                    .unwrap();
                 }
             })
         });
@@ -310,11 +323,20 @@ mod run {
                     text2.insert_with_txn(&mut txn, pos, ins).unwrap();
                 }
                 loro_b
-                    .import(&loro.export_from(&loro_b.oplog_vv()))
+                    .import(
+                        &loro
+                            .export(ExportMode::updates(&loro_b.oplog_vv()))
+                            .unwrap(),
+                    )
                     .unwrap();
-                loro.import(&loro_b.export_from(&loro.oplog_vv())).unwrap();
+                loro.import(
+                    &loro_b
+                        .export(ExportMode::updates(&loro.oplog_vv()))
+                        .unwrap(),
+                )
+                .unwrap();
             }
-            let data = loro.export_from(&Default::default());
+            let data = loro.export(ExportMode::all_updates()).unwrap();
             b.iter(|| {
                 let loro = LoroDoc::default();
                 loro.import(&data).unwrap();
@@ -340,11 +362,20 @@ mod run {
                     text2.insert_with_txn(&mut txn, pos, ins).unwrap();
                 }
                 loro_b
-                    .import(&loro.export_from(&loro_b.oplog_vv()))
+                    .import(
+                        &loro
+                            .export(ExportMode::updates(&loro_b.oplog_vv()))
+                            .unwrap(),
+                    )
                     .unwrap();
-                loro.import(&loro_b.export_from(&loro.oplog_vv())).unwrap();
+                loro.import(
+                    &loro_b
+                        .export(ExportMode::updates(&loro.oplog_vv()))
+                        .unwrap(),
+                )
+                .unwrap();
             }
-            let data = loro.export_snapshot().unwrap();
+            let data = loro.export(ExportMode::Snapshot).unwrap();
             b.iter(|| {
                 let loro = LoroDoc::default();
                 loro.import(&data).unwrap();

@@ -1,5 +1,5 @@
 use bench_utils::TextAction;
-use loro_internal::{LoroDoc, VersionVector};
+use loro_internal::{encoding::ExportMode, LoroDoc, VersionVector};
 
 pub fn main() {
     let loro = LoroDoc::default();
@@ -13,7 +13,8 @@ pub fn main() {
             let mut txn = loro.txn().unwrap();
             text.delete_with_txn(&mut txn, *pos, *del).unwrap();
             text.insert_with_txn(&mut txn, *pos, ins).unwrap();
-            updates.push(loro.export_from(&latest_vv));
+            let update = loro.export(ExportMode::updates(&latest_vv)).unwrap();
+            updates.push(update);
             latest_vv = loro.oplog_vv();
         }
     }

@@ -11,15 +11,11 @@ pub(crate) use outdated_encode_reordered::{
 use outdated_encode_reordered::{import_changes_to_oplog, ImportChangesResult};
 pub(crate) use value::OwnedValue;
 
-use crate::op::OpWithId;
 use crate::version::{Frontiers, VersionRange};
 use crate::LoroDoc;
 use crate::{oplog::OpLog, LoroError, VersionVector};
-use loro_common::{
-    HasIdSpan, IdLpSpan, IdSpan, InternalString, LoroEncodeError, LoroResult, PeerID, ID,
-};
+use loro_common::{HasIdSpan, IdSpan, InternalString, LoroEncodeError, LoroResult, ID};
 use num_traits::{FromPrimitive, ToPrimitive};
-use rle::{HasLength, Sliceable};
 use std::borrow::Cow;
 
 /// The mode of the export.
@@ -233,80 +229,6 @@ pub struct ImportStatus {
     pub pending: Option<VersionRange>,
 }
 
-/// The encoder used to encode the container states.
-///
-/// Each container state can be represented by a sequence of operations.
-/// For example, a list state can be represented by a sequence of insert
-/// operations that form its current state.
-/// We ignore the delete operations.
-///
-/// We will use a new encoder for each container state.
-/// Each container state should call encode_op multiple times until all the
-/// operations constituting its current state are encoded.
-pub(crate) struct StateSnapshotEncoder<'a> {
-    /// The `check_idspan` function is used to check if the id span is valid.
-    /// If the id span is invalid, the function should return an error that
-    /// contains the missing id span.
-    check_idspan: &'a dyn Fn(IdLpSpan) -> Result<(), IdLpSpan>,
-    /// The `encoder_by_op` function is used to encode an operation.
-    encoder_by_op: &'a mut dyn FnMut(OpWithId),
-    /// The `record_idspan` function is used to record the id span to track the
-    /// encoded order.
-    record_idspan: &'a mut dyn FnMut(IdLpSpan),
-    register_peer: &'a mut dyn FnMut(PeerID) -> usize,
-    #[allow(unused)]
-    mode: EncodeMode,
-}
-
-impl StateSnapshotEncoder<'_> {
-    pub fn encode_op(&mut self, id_span: IdLpSpan, get_op: impl FnOnce() -> OpWithId) {
-        if let Err(span) = (self.check_idspan)(id_span) {
-            let mut op = get_op();
-            if span == id_span {
-                (self.encoder_by_op)(op);
-            } else {
-                debug_assert_eq!(span.lamport.start, id_span.lamport.start);
-                op.op = op.op.slice(span.atom_len(), op.op.atom_len());
-                (self.encoder_by_op)(op);
-            }
-        }
-
-        (self.record_idspan)(id_span);
-    }
-
-    #[allow(unused)]
-    pub fn mode(&self) -> EncodeMode {
-        self.mode
-    }
-
-    pub(crate) fn register_peer(&mut self, peer: PeerID) -> usize {
-        (self.register_peer)(peer)
-    }
-}
-
-pub(crate) struct StateSnapshotDecodeContext<'a> {
-    pub oplog: &'a OpLog,
-    pub peers: &'a [PeerID],
-    pub ops: &'a mut dyn Iterator<Item = OpWithId>,
-    #[allow(unused)]
-    pub blob: &'a [u8],
-    pub mode: EncodeMode,
-}
-
-pub(crate) fn encode_oplog(oplog: &OpLog, vv: &VersionVector, mode: EncodeMode) -> Vec<u8> {
-    let mode = match mode {
-        EncodeMode::Auto => EncodeMode::OutdatedRle,
-        mode => mode,
-    };
-
-    let body = match &mode {
-        EncodeMode::OutdatedRle => outdated_encode_reordered::encode_updates(oplog, vv),
-        _ => unreachable!(),
-    };
-
-    encode_header_and_body(mode, body)
-}
-
 pub(crate) fn decode_oplog(
     oplog: &mut OpLog,
     parsed: ParsedHeaderAndBody,
@@ -314,7 +236,7 @@ pub(crate) fn decode_oplog(
     let ParsedHeaderAndBody { mode, body, .. } = parsed;
     let changes = match mode {
         EncodeMode::OutdatedRle | EncodeMode::OutdatedSnapshot => {
-            outdated_encode_reordered::decode_updates(oplog, body)
+            return Err(LoroError::ImportUnsupportedEncodingMode);
         }
         EncodeMode::FastSnapshot => fast_snapshot::decode_oplog(oplog, body),
         EncodeMode::FastUpdates => fast_snapshot::decode_updates(oplog, body.to_vec().into()),
@@ -405,29 +327,6 @@ pub(crate) fn parse_header_and_body(
         ans.check_checksum()?;
     }
     Ok(ans)
-}
-
-fn encode_header_and_body(mode: EncodeMode, body: Vec<u8>) -> Vec<u8> {
-    let mut ans = Vec::new();
-    ans.extend(MAGIC_BYTES);
-    let checksum = [0; 16];
-    ans.extend(checksum);
-    ans.extend(mode.to_bytes());
-    ans.extend(body);
-    let checksum_body = &ans[20..];
-    let checksum = md5::compute(checksum_body).0;
-    ans[4..20].copy_from_slice(&checksum);
-    ans
-}
-
-pub(crate) fn export_snapshot(doc: &LoroDoc) -> Vec<u8> {
-    let body = outdated_encode_reordered::encode_snapshot(
-        &doc.oplog().lock().unwrap(),
-        &mut doc.app_state().lock().unwrap(),
-        &Default::default(),
-    );
-
-    encode_header_and_body(EncodeMode::OutdatedSnapshot, body)
 }
 
 pub(crate) fn export_fast_snapshot(doc: &LoroDoc) -> Vec<u8> {
@@ -524,7 +423,7 @@ pub(crate) fn decode_snapshot(
 ) -> Result<ImportStatus, LoroError> {
     match mode {
         EncodeMode::OutdatedSnapshot => {
-            outdated_encode_reordered::decode_snapshot(doc, body, origin)?
+            return Err(LoroError::ImportUnsupportedEncodingMode);
         }
         EncodeMode::FastSnapshot => {
             fast_snapshot::decode_snapshot(doc, body.to_vec().into(), origin)?
@@ -600,7 +499,7 @@ impl LoroDoc {
         match parsed.mode {
             EncodeMode::Auto => unreachable!(),
             EncodeMode::OutdatedRle | EncodeMode::OutdatedSnapshot => {
-                outdated_encode_reordered::decode_import_blob_meta(parsed)
+                Err(LoroError::ImportUnsupportedEncodingMode)
             }
             EncodeMode::FastSnapshot => fast_snapshot::decode_snapshot_blob_meta(parsed),
             EncodeMode::FastUpdates => fast_snapshot::decode_updates_blob_meta(parsed),

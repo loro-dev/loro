@@ -17,7 +17,7 @@ use crate::{
     diff_calc::DiffCalculator,
     encoding::{
         self, decode_snapshot, export_fast_snapshot, export_fast_updates,
-        export_fast_updates_in_range, export_shallow_snapshot, export_snapshot, export_snapshot_at,
+        export_fast_updates_in_range, export_shallow_snapshot, export_snapshot_at,
         export_state_only_snapshot,
         json_schema::{encode_change_to_json, json::JsonSchema},
         parse_header_and_body, EncodeMode, ImportBlobMetadata, ImportStatus, ParsedHeaderAndBody,
@@ -558,10 +558,6 @@ impl LoroDoc {
         &self.oplog
     }
 
-    pub fn export_from(&self, vv: &VersionVector) -> Vec<u8> {
-        self.with_barrier(|| self.oplog.lock().unwrap().export_from(vv))
-    }
-
     #[inline(always)]
     pub fn import(&self, bytes: &[u8]) -> Result<ImportStatus, LoroError> {
         let s = debug_span!("import", peer = self.peer_id());
@@ -628,7 +624,7 @@ impl LoroDoc {
 
                     // let new_doc = LoroDoc::new();
                     // new_doc.import(bytes)?;
-                    // let updates = new_doc.export_from(&self.oplog_vv());
+                    // let updates = new_doc.export(ExportMode::updates(&self.oplog_vv())).unwrap();
                     // return self.import_with(updates.as_slice(), origin);
                 }
             }
@@ -698,15 +694,6 @@ impl LoroDoc {
     pub(crate) fn drop_pending_events(&self) -> Vec<DocDiff> {
         let mut state = self.state.lock().unwrap();
         state.take_events()
-    }
-
-    #[instrument(skip_all)]
-    pub fn export_snapshot(&self) -> Result<Vec<u8>, LoroEncodeError> {
-        if self.is_shallow() {
-            return Err(LoroEncodeError::ShallowSnapshotIncompatibleWithOldFormat);
-        }
-        let ans = self.with_barrier(|| export_snapshot(self));
-        Ok(ans)
     }
 
     /// Import the json schema updates.
@@ -1459,7 +1446,10 @@ impl LoroDoc {
     ///
     /// After `a.merge(b)` and `b.merge(a)`, `a` and `b` will have the same content if they are in attached mode.
     pub fn merge(&self, other: &Self) -> LoroResult<ImportStatus> {
-        self.import(&other.export_from(&self.oplog_vv()))
+        let updates = other
+            .export(ExportMode::updates(&self.oplog_vv()))
+            .unwrap();
+        self.import(&updates)
     }
 
     pub(crate) fn arena(&self) -> &SharedArena {
@@ -2129,7 +2119,7 @@ impl Default for CommitOptions {
 mod test {
     use loro_common::ID;
 
-    use crate::{version::Frontiers, LoroDoc, ToJson};
+    use crate::{loro::ExportMode, version::Frontiers, LoroDoc, ToJson};
 
     #[test]
     fn test_sync() {
@@ -2153,7 +2143,7 @@ mod test {
         }
         txn.commit().unwrap();
         let b = LoroDoc::new();
-        b.import(&loro.export_snapshot().unwrap()).unwrap();
+        b.import(&loro.export(ExportMode::Snapshot).unwrap()).unwrap();
         loro.checkout(&Frontiers::default()).unwrap();
         {
             let json = &loro.get_deep_value();
@@ -2194,13 +2184,13 @@ mod test {
     #[test]
     fn import_batch_err_181() {
         let a = LoroDoc::new_auto_commit();
-        let update_a = a.export_snapshot();
+        let update_a = a.export(ExportMode::Snapshot);
         let b = LoroDoc::new_auto_commit();
         b.import_batch(&[update_a.unwrap()]).unwrap();
         b.get_text("text").insert(0, "hello").unwrap();
         b.commit_then_renew();
         let oplog = b.oplog().lock().unwrap();
         drop(oplog);
-        b.export_from(&Default::default());
+        b.export(ExportMode::all_updates()).unwrap();
     }
 }

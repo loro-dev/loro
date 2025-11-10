@@ -1,7 +1,7 @@
 #![allow(unexpected_cfgs)]
 #![allow(deprecated)]
 
-use loro::{LoroDoc, LoroError, ToJson};
+use loro::{ExportMode, LoroDoc, LoroError, ToJson};
 use serde_json::json;
 use tracing::debug_span;
 
@@ -27,7 +27,8 @@ fn conflict_moves() -> Result<(), LoroError> {
 
     // 0@1, 1@1, 2@1
     let doc2 = LoroDoc::new();
-    doc2.import(&doc1.export_from(&Default::default()))?;
+    let updates = doc1.export(ExportMode::all_updates()).unwrap();
+    doc2.import(&updates)?;
     doc2.set_peer_id(2)?;
     let list2 = doc2.get_movable_list("list");
     // [0@1], 1@1, 2@1, 3@1
@@ -37,10 +38,12 @@ fn conflict_moves() -> Result<(), LoroError> {
     list2.mov(0, 1)?;
     list2.log_internal_state();
     debug_span!("doc1 import").in_scope(|| {
-        doc1.import(&doc2.export_from(&Default::default())).unwrap();
+        let updates = doc2.export(ExportMode::all_updates()).unwrap();
+        doc1.import(&updates).unwrap();
     });
     debug_span!("doc2 import").in_scope(|| {
-        doc2.import(&doc1.export_from(&Default::default())).unwrap();
+        let updates = doc1.export(ExportMode::all_updates()).unwrap();
+        doc2.import(&updates).unwrap();
     });
     // [0@1], 1@1, 0@2, 2@1, 3@1
     //   -     2    1    3   (1)

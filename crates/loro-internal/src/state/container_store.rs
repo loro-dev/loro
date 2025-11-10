@@ -285,53 +285,6 @@ impl ContainerStore {
     }
 }
 
-mod encode {
-    use serde::{Deserialize, Serialize};
-    use std::borrow::Cow;
-
-    #[derive(Serialize, Deserialize)]
-    struct EncodedStateStore<'a> {
-        #[serde(borrow)]
-        cids: Cow<'a, [u8]>,
-        #[serde(borrow)]
-        bytes: Cow<'a, [u8]>,
-    }
-
-    /// ContainerID is sorted by IsRoot, ContainerType, PeerID, Counter
-    ///
-    /// ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─For CIDs ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
-    ///
-    /// ┌───────────────────────────────────────────────────┐
-    /// │                  Container Types                  │
-    /// └───────────────────────────────────────────────────┘
-    /// ┌───────────────────────────────────────────────────┐
-    /// │                      IsRoot                       │
-    /// └───────────────────────────────────────────────────┘
-    /// ┌───────────────────────────────────────────────────┐
-    /// │              Root Container Strings               │
-    /// └───────────────────────────────────────────────────┘
-    /// ┌───────────────────────────────────────────────────┐
-    /// │              NormalContainer PeerIDs              │
-    /// └───────────────────────────────────────────────────┘
-    /// ┌───────────────────────────────────────────────────┐
-    /// │             NormalContainer Counters              │
-    /// └───────────────────────────────────────────────────┘
-    /// ┌───────────────────────────────────────────────────┐
-    /// │                    Offsets                        │
-    /// └───────────────────────────────────────────────────┘
-
-    #[derive(Serialize, Deserialize)]
-    struct EncodedCid<'a> {
-        #[serde(borrow)]
-        types: Cow<'a, [u8]>,
-        is_root_bools: Cow<'a, [u8]>,
-        strings: Cow<'a, [u8]>,
-        peer_ids: Cow<'a, [u8]>,
-        counters: Cow<'a, [u8]>,
-        offsets: Cow<'a, [u8]>,
-    }
-}
-
 #[cfg(test)]
 mod test {
     use super::*;

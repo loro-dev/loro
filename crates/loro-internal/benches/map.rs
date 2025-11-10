@@ -2,7 +2,7 @@ use criterion::{criterion_group, criterion_main, Criterion};
 #[cfg(feature = "test_utils")]
 mod map {
     use super::*;
-    use loro_internal::LoroDoc;
+    use loro_internal::{loro::ExportMode, LoroDoc};
     use rand::{rngs::StdRng, Rng};
 
     pub fn tree_move(c: &mut Criterion) {
@@ -52,11 +52,23 @@ mod map {
                     if t % 2 == 0 {
                         let mut txn = doc_a.txn().unwrap();
                         map_a.insert_with_txn(&mut txn, "key", t.into()).unwrap();
-                        doc_b.import(&doc_a.export_from(&doc_b.oplog_vv())).unwrap();
+                        doc_b
+                            .import(
+                                &doc_a
+                                    .export(ExportMode::updates(&doc_b.oplog_vv()))
+                                    .unwrap(),
+                            )
+                            .unwrap();
                     } else {
                         let mut txn = doc_b.txn().unwrap();
                         map_b.insert_with_txn(&mut txn, "key", t.into()).unwrap();
-                        doc_a.import(&doc_b.export_from(&doc_a.oplog_vv())).unwrap();
+                        doc_a
+                            .import(
+                                &doc_b
+                                    .export(ExportMode::updates(&doc_a.oplog_vv()))
+                                    .unwrap(),
+                            )
+                            .unwrap();
                     }
                 }
             })

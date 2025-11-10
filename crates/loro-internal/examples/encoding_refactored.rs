@@ -1,6 +1,6 @@
 use bench_utils::TextAction;
 use criterion::black_box;
-use loro_internal::LoroDoc;
+use loro_internal::{loro::ExportMode, LoroDoc};
 
 fn main() {
     log_size();
@@ -21,8 +21,8 @@ fn log_size() {
             text.insert_with_txn(&mut txn, *pos, ins);
         }
         txn.commit().unwrap();
-        let snapshot = loro.export_snapshot().unwrap();
-        let updates = loro.export_from(&Default::default());
+        let snapshot = loro.export(ExportMode::Snapshot).unwrap();
+        let updates = loro.export(ExportMode::all_updates()).unwrap();
         let json_updates = serde_json::to_string(&loro.export_json_updates(
             &Default::default(),
             &loro.oplog_vv(),
@@ -50,8 +50,8 @@ fn log_size() {
             text.insert_with_txn(&mut txn, *pos, ins);
             txn.commit().unwrap();
         }
-        let snapshot = loro.export_snapshot().unwrap();
-        let updates = loro.export_from(&Default::default());
+        let snapshot = loro.export(ExportMode::Snapshot).unwrap();
+        let updates = loro.export(ExportMode::all_updates()).unwrap();
         println!("\n");
         println!("Snapshot size={}", snapshot.len());
         println!("Updates size={}", updates.len());
@@ -75,9 +75,9 @@ fn bench_decode() {
                 text.insert(*pos, ins);
             }
         }
-        let snapshot = loro.export_snapshot().unwrap();
+        let snapshot = loro.export(ExportMode::Snapshot).unwrap();
         // for _ in 0..100 {
-        //     black_box(loro.export_snapshot());
+        //     black_box(loro.export(ExportMode::Snapshot));
         // }
 
         for _ in 0..100 {
@@ -101,7 +101,7 @@ fn bench_decode_updates() {
         txn.commit().unwrap();
     }
 
-    let updates = loro.export_from(&Default::default());
+    let updates = loro.export(ExportMode::all_updates()).unwrap();
     for _ in 0..10 {
         let loro = LoroDoc::new();
         loro.import(black_box(&updates)).unwrap();

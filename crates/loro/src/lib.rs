@@ -751,26 +751,6 @@ impl LoroDoc {
         self.doc.export_json_in_id_span(id_span)
     }
 
-    /// Export all the ops not included in the given `VersionVector`
-    #[deprecated(
-        since = "1.0.0",
-        note = "Use `export` with `ExportMode::Updates` instead"
-    )]
-    #[inline]
-    pub fn export_from(&self, vv: &VersionVector) -> Vec<u8> {
-        self.doc.export_from(vv)
-    }
-
-    /// Export the current state and history of the document.
-    #[deprecated(
-        since = "1.0.0",
-        note = "Use `export` with `ExportMode::Snapshot` instead"
-    )]
-    #[inline]
-    pub fn export_snapshot(&self) -> Vec<u8> {
-        self.doc.export_snapshot().unwrap()
-    }
-
     /// Convert `Frontiers` into `VersionVector`
     ///
     /// Returns `None` if the frontiers are not included by this doc's OpLog.

@@ -86,7 +86,7 @@ it("basic sync example", () => {
   listA.insert(1, "B");
   listA.insert(2, "C");
   // B import the ops from A
-  docB.import(docA.exportFrom());
+  docB.import(docA.export({ mode: "update" }));
   expect(docB.toJSON()).toStrictEqual({
     list: ["A", "B", "C"],
   });
@@ -95,7 +95,7 @@ it("basic sync example", () => {
   // delete 1 element at index 1
   listB.delete(1, 1);
   // A import the ops from B
-  docA.import(docB.exportFrom(docA.version()));
+  docA.import(docB.export({ mode: "update", from: docA.version() }));
   // list at A is now ["A", "C"], with the same state as B
   expect(docA.toJSON()).toStrictEqual({
     list: ["A", "C"],
@@ -193,23 +193,23 @@ describe("import", () => {
     a.getText("text").insert(0, "a");
     const b = new LoroDoc();
     b.setPeerId(1);
-    b.import(a.exportFrom());
+    b.import(a.export({ mode: "update" }));
     b.getText("text").insert(1, "b");
     const c = new LoroDoc();
     c.setPeerId(2);
-    c.import(b.exportFrom());
+    c.import(b.export({ mode: "update" }));
     c.getText("text").insert(2, "c");
 
     // c export from b's version, which cannot be imported directly to a.
     // This operation is pending.
-    const status = a.import(c.exportFrom(b.version()));
+    const status = a.import(c.export({ mode: "update", from: b.version() }));
     const pending = new Map();
     pending.set("2", { start: 0, end: 1 });
     expect(status).toStrictEqual({ success: new Map(), pending });
     expect(a.getText("text").toString()).toBe("a");
 
     // a import the missing ops from b. It makes the pending operation from c valid.
-    const status2 = a.import(b.exportFrom(a.version()));
+    const status2 = a.import(b.export({ mode: "update", from: a.version() }));
     pending.set("1", { start: 0, end: 1 });
     expect(status2).toStrictEqual({ success: pending, pending: null });
     expect(a.getText("text").toString()).toBe("abc");
@@ -219,10 +219,13 @@ describe("import", () => {
     const a = new LoroDoc();
     a.getText("text").insert(0, "a");
     const b = new LoroDoc();
-    b.import(a.exportFrom());
+    b.import(a.export({ mode: "update" }));
     b.getText("text").insert(1, "b");
     b.getList("list").insert(0, [1, 2]);
-    const updates = b.exportFrom(b.frontiersToVV(a.frontiers()));
+    const updates = b.export({
+      mode: "update",
+      from: b.frontiersToVV(a.frontiers()),
+    });
     a.import(updates);
     expect(a.toJSON()).toStrictEqual(b.toJSON());
   });
@@ -230,7 +233,7 @@ describe("import", () => {
   it("from snapshot", () => {
     const a = new LoroDoc();
     a.getText("text").insert(0, "hello");
-    const bytes = a.exportSnapshot();
+    const bytes = a.export({ mode: "snapshot" });
     const b = LoroDoc.fromSnapshot(bytes);
     b.getText("text").insert(0, "123");
     expect(b.toJSON()).toStrictEqual({ text: "123hello" });
@@ -238,7 +241,7 @@ describe("import", () => {
 
   it("importBatch Error #181", () => {
     const docA = new LoroDoc();
-    const updateA = docA.exportSnapshot();
+    const updateA = docA.export({ mode: "snapshot" });
     const docB = new LoroDoc();
     docB.importBatch([updateA]);
     docB.getText("text").insert(0, "hello");
@@ -309,9 +312,9 @@ it("get change with given lamport", () => {
   const doc2 = new LoroDoc();
   doc2.setPeerId(2);
   doc1.getText("text").insert(0, "01234");
-  doc2.import(doc1.exportFrom());
+  doc2.import(doc1.export({ mode: "update" }));
   doc2.getText("text").insert(0, "56789");
-  doc1.import(doc2.exportFrom());
+  doc1.import(doc2.export({ mode: "update" }));
   doc1.getText("text").insert(0, "01234");
   doc1.commit();
   {
@@ -528,7 +531,7 @@ it("fork", () => {
   map2.set("key", 2);
   expect(doc.toJSON()).toStrictEqual({ map: { key: 1 } });
   expect(doc2.toJSON()).toStrictEqual({ map: { key: 2 } });
-  doc.import(doc2.exportSnapshot());
+  doc.import(doc2.export({ mode: "snapshot" }));
   expect(doc.toJSON()).toStrictEqual({ map: { key: 2 } });
 });
 

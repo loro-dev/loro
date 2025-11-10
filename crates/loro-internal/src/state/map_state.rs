@@ -2,14 +2,12 @@ use std::{collections::BTreeMap, sync::Weak};
 
 use rustc_hash::FxHashMap;
 use loro_common::{ContainerID, IdLp, LoroResult, PeerID};
-use rle::HasLength;
 
 use crate::{
     configure::Configure,
     container::{idx::ContainerIdx, map::MapSet},
     delta::{MapValue, ResolvedMapDelta, ResolvedMapValue},
     diff_calc::DiffMode,
-    encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, Index, InternalDiff},
     handler::ValueOrHandler,
     op::{Op, RawOp, RawOpContent},
@@ -148,38 +146,6 @@ impl ContainerState for MapState {
             }
         }
         ans
-    }
-
-    #[doc = " Get a list of ops that can be used to restore the state to the current state"]
-    fn encode_snapshot(&self, mut encoder: StateSnapshotEncoder) -> Vec<u8> {
-        for v in self.map.values() {
-            encoder.encode_op(v.idlp().into(), || unimplemented!());
-        }
-
-        Default::default()
-    }
-
-    #[doc = " Restore the state to the state represented by the ops that exported by `get_snapshot_ops`"]
-    fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) -> LoroResult<()> {
-        assert_eq!(ctx.mode, EncodeMode::OutdatedSnapshot);
-        for op in ctx.ops {
-            debug_assert_eq!(
-                op.op.atom_len(),
-                1,
-                "MapState::from_snapshot_ops: op.atom_len() != 1"
-            );
-
-            let content = op.op.content.as_map().unwrap();
-            self.insert(
-                content.key.clone(),
-                MapValue {
-                    value: content.value.clone(),
-                    lamp: op.lamport.expect("op should already be imported"),
-                    peer: op.peer,
-                },
-            );
-        }
-        Ok(())
     }
 
     fn fork(&self, _config: &Configure) -> Self {

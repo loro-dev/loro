@@ -1,5 +1,5 @@
 use bench_utils::{get_automerge_actions, TextAction};
-use loro_internal::LoroDoc;
+use loro_internal::{encoding::ExportMode, LoroDoc};
 
 // #[allow(dead_code)]
 // fn parallel() {
@@ -74,7 +74,7 @@ fn main() {
         }
 
         loro_b
-            .import(&loro.export_from(&loro_b.oplog_vv()))
+            .import(&loro.export(ExportMode::updates(&loro_b.oplog_vv())).unwrap())
             .unwrap();
         count += 1;
         if count % 1000 == 0 {

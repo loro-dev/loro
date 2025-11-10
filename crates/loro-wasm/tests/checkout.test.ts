@@ -62,7 +62,7 @@ describe("Checkout", () => {
 
     const v0 = doc.frontiers();
     const docB = new LoroDoc();
-    docB.import(doc.exportFrom());
+    docB.import(doc.export({ mode: "update" }));
     expect(docB.cmpWithFrontiers(v0)).toBe(0);
     text.insert(1, "0");
     doc.commit();
@@ -71,9 +71,9 @@ describe("Checkout", () => {
     textB.insert(0, "0");
     docB.commit();
     expect(docB.cmpWithFrontiers(doc.frontiers())).toBe(-1);
-    docB.import(doc.exportFrom());
+    docB.import(doc.export({ mode: "update" }));
     expect(docB.cmpWithFrontiers(doc.frontiers())).toBe(1);
-    doc.import(docB.exportFrom());
+    doc.import(docB.export({ mode: "update" }));
     expect(docB.cmpWithFrontiers(doc.frontiers())).toBe(0);
   });
 });

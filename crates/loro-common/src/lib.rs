@@ -15,10 +15,10 @@ mod span;
 mod value;
 
 pub use error::{LoroEncodeError, LoroError, LoroResult, LoroTreeError};
-#[doc(hidden)]
-pub use rustc_hash::FxHashMap;
 pub use internal_string::InternalString;
 pub use logging::log::*;
+#[doc(hidden)]
+pub use rustc_hash::FxHashMap;
 pub use span::*;
 pub use value::{
     to_value, LoroBinaryValue, LoroListValue, LoroMapValue, LoroStringValue, LoroValue,
@@ -289,9 +289,7 @@ impl std::fmt::Debug for ContainerID {
 
 // TODO: add non_exhausted
 // Note: It will be encoded into binary format, so the order of its fields should not be changed.
-#[derive(
-    Arbitrary, Debug, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord, Serialize, Deserialize,
-)]
+#[derive(Arbitrary, Debug, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord)]
 pub enum ContainerType {
     Text,
     Map,
@@ -358,6 +356,105 @@ impl ContainerType {
             #[cfg(feature = "counter")]
             5 => Ok(ContainerType::Counter),
             x => Ok(ContainerType::Unknown(x)),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename = "ContainerType")]
+enum ContainerTypeSerdeRepr {
+    Text,
+    Map,
+    List,
+    MovableList,
+    Tree,
+    #[cfg(feature = "counter")]
+    Counter,
+    Unknown(u8),
+}
+
+// For some historical reason, we have another to_byte format for ContainerType,
+// it was used for serde of ContainerType
+fn historical_container_type_to_byte(c: ContainerType) -> u8 {
+    match c {
+        ContainerType::Text => 0,
+        ContainerType::Map => 1,
+        ContainerType::List => 2,
+        ContainerType::MovableList => 3,
+        ContainerType::Tree => 4,
+        #[cfg(feature = "counter")]
+        ContainerType::Counter => 5,
+        ContainerType::Unknown(k) => k,
+    }
+}
+
+fn historical_try_byte_to_container(byte: u8) -> ContainerType {
+    match byte {
+        0 => ContainerType::Text,
+        1 => ContainerType::Map,
+        2 => ContainerType::List,
+        3 => ContainerType::MovableList,
+        4 => ContainerType::Tree,
+        #[cfg(feature = "counter")]
+        5 => ContainerType::Counter,
+        _ => ContainerType::Unknown(byte),
+    }
+}
+
+impl From<ContainerType> for ContainerTypeSerdeRepr {
+    fn from(value: ContainerType) -> Self {
+        match value {
+            ContainerType::Text => Self::Text,
+            ContainerType::Map => Self::Map,
+            ContainerType::List => Self::List,
+            ContainerType::MovableList => Self::MovableList,
+            ContainerType::Tree => Self::Tree,
+            #[cfg(feature = "counter")]
+            ContainerType::Counter => Self::Counter,
+            ContainerType::Unknown(value) => Self::Unknown(value),
+        }
+    }
+}
+
+impl From<ContainerTypeSerdeRepr> for ContainerType {
+    fn from(value: ContainerTypeSerdeRepr) -> Self {
+        match value {
+            ContainerTypeSerdeRepr::Text => ContainerType::Text,
+            ContainerTypeSerdeRepr::Map => ContainerType::Map,
+            ContainerTypeSerdeRepr::List => ContainerType::List,
+            ContainerTypeSerdeRepr::MovableList => ContainerType::MovableList,
+            ContainerTypeSerdeRepr::Tree => ContainerType::Tree,
+            #[cfg(feature = "counter")]
+            ContainerTypeSerdeRepr::Counter => ContainerType::Counter,
+            ContainerTypeSerdeRepr::Unknown(value) => ContainerType::Unknown(value),
+        }
+    }
+}
+
+impl Serialize for ContainerType {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        if serializer.is_human_readable() {
+            ContainerTypeSerdeRepr::from(*self).serialize(serializer)
+        } else {
+            serializer.serialize_u8(historical_container_type_to_byte(*self))
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ContainerType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        if deserializer.is_human_readable() {
+            let repr = ContainerTypeSerdeRepr::deserialize(deserializer)?;
+            Ok(repr.into())
+        } else {
+            let value = u8::deserialize(deserializer)?;
+            Ok(historical_try_byte_to_container(value))
         }
     }
 }

@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use loro_internal::{LoroDoc, TreeParentId};
+use loro_internal::{encoding::ExportMode, LoroDoc, TreeParentId};
 use rand::{rngs::StdRng, Rng};
 
 #[allow(unused)]
@@ -50,11 +50,11 @@ fn mov() {
     }
     println!(
         "encode snapshot size {:?}",
-        loro.export_snapshot().unwrap().len()
+        loro.export(ExportMode::Snapshot).unwrap().len()
     );
     println!(
         "encode updates size {:?}",
-        loro.export_from(&Default::default()).len()
+        loro.export(ExportMode::all_updates()).unwrap().len()
     );
 }
 
@@ -68,11 +68,11 @@ fn create() {
     }
     println!(
         "encode snapshot size {:?}\n",
-        loro.export_snapshot().unwrap().len()
+        loro.export(ExportMode::Snapshot).unwrap().len()
     );
     println!(
         "encode updates size {:?}",
-        loro.export_from(&Default::default()).len()
+        loro.export(ExportMode::all_updates()).unwrap().len()
     );
 }
 

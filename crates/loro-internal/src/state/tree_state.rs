@@ -7,7 +7,6 @@ use loro_common::{
     DELETED_TREE_ROOT, ID,
 };
 use rand::SeedableRng;
-use rle::HasLength;
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde::Serialize;
 use std::collections::VecDeque;
@@ -20,7 +19,6 @@ use crate::configure::Configure;
 use crate::container::idx::ContainerIdx;
 use crate::delta::{TreeDiff, TreeDiffItem, TreeExternalDiff};
 use crate::diff_calc::DiffMode;
-use crate::encoding::{EncodeMode, StateSnapshotDecodeContext, StateSnapshotEncoder};
 use crate::event::InternalDiff;
 use crate::op::Op;
 use crate::{
@@ -1385,48 +1383,6 @@ impl ContainerState for TreeState {
             .keys()
             .map(|n| n.associated_meta_container())
             .collect_vec()
-    }
-
-    #[doc = " Get a list of ops that can be used to restore the state to the current state"]
-    fn encode_snapshot(&self, mut encoder: StateSnapshotEncoder) -> Vec<u8> {
-        for node in self.trees.values() {
-            if node.last_move_op == IdFull::NONE_ID {
-                continue;
-            }
-            encoder.encode_op(node.last_move_op.idlp().into(), || unimplemented!());
-        }
-        Vec::new()
-    }
-
-    #[doc = " Restore the state to the state represented by the ops that exported by `get_snapshot_ops`"]
-    fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) -> LoroResult<()> {
-        assert_eq!(ctx.mode, EncodeMode::OutdatedSnapshot);
-        for op in ctx.ops {
-            assert_eq!(op.op.atom_len(), 1);
-            let content = op.op.content.as_tree().unwrap();
-            match &**content {
-                TreeOp::Create {
-                    target,
-                    parent,
-                    position,
-                }
-                | TreeOp::Move {
-                    target,
-                    parent,
-                    position,
-                } => {
-                    let parent = TreeParentId::from(*parent);
-                    self.mov(*target, parent, op.id_full(), Some(position.clone()), false)
-                        .unwrap()
-                }
-                TreeOp::Delete { target } => {
-                    let parent = TreeParentId::Deleted;
-                    self.mov(*target, parent, op.id_full(), None, false)
-                        .unwrap()
-                }
-            };
-        }
-        Ok(())
     }
 
     fn fork(&self, _config: &Configure) -> Self {

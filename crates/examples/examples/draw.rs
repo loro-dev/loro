@@ -4,7 +4,7 @@ use bench_utils::SyncKind;
 use examples::{draw::DrawActor, run_async_workflow, run_realtime_collab_workflow};
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use loro::{LoroDoc, ToJson};
+use loro::{ExportMode, LoroDoc, ToJson};
 use std::io::prelude::*;
 use std::time::Instant;
 use tabled::{settings::Style, Table, Tabled};
@@ -74,13 +74,16 @@ fn run_async(peer_num: usize, action_num: usize, seed: u64) -> BenchResult {
     let apply_duration = start.elapsed().as_secs_f64() * 1000.;
 
     let start = Instant::now();
-    let snapshot = actors.docs[0].doc.export_snapshot();
+    let snapshot = actors.docs[0].doc.export(ExportMode::Snapshot).unwrap();
     let encode_snapshot_duration = start.elapsed().as_secs_f64() * 1000.;
     let snapshot_size = snapshot.len();
     let compressed_snapshot_size = compress(&snapshot).len();
 
     let start = Instant::now();
-    let updates = actors.docs[0].doc.export_from(&Default::default());
+    let updates = actors.docs[0]
+        .doc
+        .export(ExportMode::all_updates())
+        .unwrap();
     let encode_udpate_duration = start.elapsed().as_secs_f64() * 1000.;
     let updates_size = updates.len();
     let compressed_updates_size = compress(&updates).len();
@@ -127,13 +130,16 @@ fn run_realtime_collab(peer_num: usize, action_num: usize, seed: u64) -> BenchRe
     let apply_duration = start.elapsed().as_secs_f64() * 1000.;
 
     let start = Instant::now();
-    let snapshot = actors.docs[0].doc.export_snapshot();
+    let snapshot = actors.docs[0].doc.export(ExportMode::Snapshot).unwrap();
     let encode_snapshot_duration = start.elapsed().as_secs_f64() * 1000.;
     let snapshot_size = snapshot.len();
     let compressed_snapshot_size = compress(&snapshot).len();
 
     let start = Instant::now();
-    let updates = actors.docs[0].doc.export_from(&Default::default());
+    let updates = actors.docs[0]
+        .doc
+        .export(ExportMode::all_updates())
+        .unwrap();
     let encode_udpate_duration = start.elapsed().as_secs_f64() * 1000.;
     let updates_size = updates.len();
     let compressed_updates_size = compress(&updates).len();

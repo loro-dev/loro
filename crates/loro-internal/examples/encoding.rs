@@ -19,7 +19,7 @@ fn main() {
     //     }
 
     //     loro_b
-    //         .import(&loro.export_from(&loro_b.oplog_vv()))
+    //         .import(&loro.export(ExportMode::updates(&loro_b.oplog_vv())).unwrap())
     //         .unwrap();
     //     i += 1;
     //     if i == 30000 {
@@ -40,7 +40,7 @@ fn main() {
     }
 
     let start = Instant::now();
-    let snapshot = loro.export_snapshot().unwrap();
+    let snapshot = loro.export(ExportMode::Snapshot).unwrap();
     println!("Snapshot time {}ms", start.elapsed().as_millis());
     let output = miniz_oxide::deflate::compress_to_vec(&snapshot, 6);
     println!(
@@ -71,7 +71,7 @@ fn main() {
         output.len(),
     );
 
-    let updates = loro.export_from(&Default::default());
+    let updates = loro.export(ExportMode::all_updates()).unwrap();
     let output = miniz_oxide::deflate::compress_to_vec(&updates, 6);
     println!(
         "updates size {} after compression {}",
@@ -100,12 +100,12 @@ fn main() {
 
         let start = Instant::now();
         for _ in 0..10 {
-            loro.export_from(&Default::default());
+            loro.export(ExportMode::all_updates()).unwrap();
         }
 
         println!("Avg encode {}ms", start.elapsed().as_millis() as f64 / 10.0);
 
-        let data = loro.export_from(&Default::default());
+        let data = loro.export(ExportMode::all_updates()).unwrap();
         let start = Instant::now();
         let n = 5;
         for _ in 0..n {
@@ -129,12 +129,12 @@ fn main() {
 
     //     // let start = Instant::now();
     //     // for _ in 0..10 {
-    //     //     loro.export_snapshot();
+    //     //     loro.export(ExportMode::Snapshot);
     //     // }
 
     //     // println!("Avg encode {}ms", start.elapsed().as_millis() as f64 / 10.0);
 
-    //     // let data = loro.export_snapshot();
+    //     // let data = loro.export(ExportMode::Snapshot);
     //     // let start = Instant::now();
     //     // let times = 300;
     //     // for _ in 0..times {

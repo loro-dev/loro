@@ -18,7 +18,7 @@ use crate::configure::Configure;
 use crate::container::list::list_op;
 use crate::dag::{Dag, DagUtils};
 use crate::diff_calc::DiffMode;
-use crate::encoding::{decode_oplog, encode_oplog, EncodeMode};
+use crate::encoding::decode_oplog;
 use crate::encoding::{ImportStatus, ParsedHeaderAndBody};
 use crate::history_cache::ContainerHistoryCache;
 use crate::id::{Counter, PeerID, ID};
@@ -303,7 +303,10 @@ impl OpLog {
         self.uncommitted_change = Some(change);
     }
 
-    pub(crate) fn get_uncommitted_change_in_span(&self, id_span: IdSpan) -> Option<Cow<'_, Change>> {
+    pub(crate) fn get_uncommitted_change_in_span(
+        &self,
+        id_span: IdSpan,
+    ) -> Option<Cow<'_, Change>> {
         self.uncommitted_change.as_ref().and_then(|c| {
             if c.id_span() == id_span {
                 Some(Cow::Borrowed(c))
@@ -342,11 +345,6 @@ impl OpLog {
     /// if id does not included in this oplog, return None
     pub(crate) fn lookup_change(&self, id: ID) -> Option<BlockChangeRef> {
         self.change_store.get_change(id)
-    }
-
-    #[inline(always)]
-    pub(crate) fn export_from(&self, vv: &VersionVector) -> Vec<u8> {
-        encode_oplog(self, vv, EncodeMode::Auto)
     }
 
     #[inline(always)]

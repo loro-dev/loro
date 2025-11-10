@@ -88,7 +88,7 @@ interface LoroDoc {
      *  const text = doc.getText("text");
      *  text.insert(0, "Hello");
      *  // get all updates of the doc
-     *  const updates = doc.exportFrom();
+     *  const updates = doc.export({ mode: "update" });
      *  const version = doc.oplogVersion();
      *  text.insert(5, " World");
      *  // get updates from specific version to the latest version
@@ -96,13 +96,13 @@ interface LoroDoc {
      *  ```
      */
     exportFrom(version?: VersionVector): Uint8Array;
-    /// 
+    ///
     /// Get the container corresponding to the container id
     ///
     /// @example
     /// ```ts
     /// import { LoroDoc } from "loro-crdt";
-    /// 
+    ///
     /// const doc = new LoroDoc();
     /// let text = doc.getText("text");
     /// const textId = text.id;

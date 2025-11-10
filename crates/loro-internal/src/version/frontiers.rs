@@ -245,12 +245,6 @@ impl Frontiers {
         self.push(id);
     }
 
-    #[inline]
-    pub(crate) fn with_capacity(_cap: usize) -> Frontiers {
-        // TODO
-        Self::None
-    }
-
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }

@@ -15,11 +15,10 @@ use tracing::{info_span, instrument, warn};
 
 use crate::{
     configure::{Configure, DefaultRandom, SecureRandomGenerator},
-    container::{idx::ContainerIdx, richtext::config::StyleConfigMap, ContainerIdRaw},
+    container::{idx::ContainerIdx, richtext::config::StyleConfigMap},
     cursor::Cursor,
     delta::TreeExternalDiff,
     diff_calc::{DiffCalculator, DiffMode},
-    encoding::{StateSnapshotDecodeContext, StateSnapshotEncoder},
     event::{Diff, EventTriggerKind, Index, InternalContainerDiff, InternalDiff},
     fx_map,
     handler::ValueOrHandler,
@@ -141,15 +140,6 @@ pub(crate) trait ContainerState {
     #[allow(unused)]
     fn get_child_containers(&self) -> Vec<ContainerID>;
 
-    /// Encode the ops and the blob that can be used to restore the state to the current state.
-    ///
-    /// State will use the provided encoder to encode the ops and export a blob.
-    /// The ops should be encoded into the snapshot as well as the blob.
-    /// The users then can use the ops and the blob to restore the state to the current state.
-    fn encode_snapshot(&self, encoder: StateSnapshotEncoder) -> Vec<u8>;
-
-    /// Restore the state to the state represented by the ops and the blob that exported by `get_snapshot_ops`
-    fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) -> LoroResult<()>;
     fn fork(&self, config: &Configure) -> Self;
 }
 
@@ -217,20 +207,6 @@ impl<T: ContainerState> ContainerState for Box<T> {
     #[allow(unused)]
     fn get_child_containers(&self) -> Vec<ContainerID> {
         self.as_ref().get_child_containers()
-    }
-
-    #[doc = r" Encode the ops and the blob that can be used to restore the state to the current state."]
-    #[doc = r""]
-    #[doc = r" State will use the provided encoder to encode the ops and export a blob."]
-    #[doc = r" The ops should be encoded into the snapshot as well as the blob."]
-    #[doc = r" The users then can use the ops and the blob to restore the state to the current state."]
-    fn encode_snapshot(&self, encoder: StateSnapshotEncoder) -> Vec<u8> {
-        self.as_ref().encode_snapshot(encoder)
-    }
-
-    #[doc = r" Restore the state to the state represented by the ops and the blob that exported by `get_snapshot_ops`"]
-    fn import_from_snapshot_ops(&mut self, ctx: StateSnapshotDecodeContext) -> LoroResult<()> {
-        self.as_mut().import_from_snapshot_ops(ctx)
     }
 
     fn fork(&self, config: &Configure) -> Self {
@@ -748,32 +724,12 @@ impl DocState {
         self.store.contains_id(id)
     }
 
-    pub(crate) fn init_container(
-        &mut self,
-        cid: ContainerID,
-        decode_ctx: StateSnapshotDecodeContext,
-    ) -> LoroResult<()> {
-        let idx = self.arena.register_container(&cid);
-        let state = self.store.get_or_create_mut(idx);
-        state.import_from_snapshot_ops(decode_ctx)
-    }
-
-    pub(crate) fn init_unknown_container(&mut self, cid: ContainerID) {
-        let idx = self.arena.register_container(&cid);
-        self.store.get_or_create_imm(idx);
-    }
-
     pub(crate) fn commit_txn(&mut self, new_frontiers: Frontiers, diff: Option<InternalDocDiff>) {
         self.in_txn = false;
         self.frontiers = new_frontiers;
         if self.is_recording() {
             self.record_diff(diff.unwrap());
         }
-    }
-
-    #[inline]
-    pub(super) fn get_container_mut(&mut self, idx: ContainerIdx) -> Option<&mut State> {
-        self.store.get_container_mut(idx)
     }
 
     /// Ensure the container is created and will be encoded in the next `encode` call

@@ -5,8 +5,8 @@ use crate::{
     version::{ImVersionVector, VersionRange},
     OpLog, VersionVector,
 };
-use rustc_hash::FxHashMap;
 use loro_common::{Counter, CounterSpan, HasCounterSpan, HasIdSpan, LoroResult, PeerID, ID};
+use rustc_hash::FxHashMap;
 
 #[derive(Debug)]
 pub enum PendingChange {
@@ -31,12 +31,6 @@ impl Deref for PendingChange {
 #[derive(Debug, Default)]
 pub(crate) struct PendingChanges {
     changes: FxHashMap<PeerID, BTreeMap<Counter, Vec<PendingChange>>>,
-}
-
-impl PendingChanges {
-    pub fn is_empty(&self) -> bool {
-        self.changes.is_empty()
-    }
 }
 
 impl OpLog {
@@ -183,7 +177,7 @@ fn remote_change_apply_state(
 
 #[cfg(test)]
 mod test {
-    use crate::{LoroDoc, ToJson, VersionVector};
+    use crate::{loro::ExportMode, LoroDoc, ToJson, VersionVector};
 
     #[test]
     fn import_pending() {
@@ -193,19 +187,21 @@ mod test {
         b.set_peer_id(2).unwrap();
         let text_a = a.get_text("text");
         text_a.insert(0, "a").unwrap();
-        let update1 = a.export_from(&VersionVector::default());
+        let update1 = a
+            .export(ExportMode::updates(&VersionVector::default()))
+            .unwrap();
         let version1 = a.oplog_vv();
         text_a.insert(0, "b").unwrap();
-        let update2 = a.export_from(&version1);
+        let update2 = a.export(ExportMode::updates(&version1)).unwrap();
         let version2 = a.oplog_vv();
         text_a.insert(0, "c").unwrap();
-        let update3 = a.export_from(&version2);
+        let update3 = a.export(ExportMode::updates(&version2)).unwrap();
         let version3 = a.oplog_vv();
         text_a.insert(0, "d").unwrap();
-        let update4 = a.export_from(&version3);
+        let update4 = a.export(ExportMode::updates(&version3)).unwrap();
         // let version4 = a.oplog_vv();
         text_a.insert(0, "e").unwrap();
-        let update3_5 = a.export_from(&version2);
+        let update3_5 = a.export(ExportMode::updates(&version2)).unwrap();
         b.import(&update3_5).unwrap();
         b.import(&update4).unwrap();
         b.import(&update2).unwrap();
@@ -222,10 +218,10 @@ mod test {
         b.set_peer_id(2).unwrap();
         let text_a = a.get_text("text");
         text_a.insert(0, "a").unwrap();
-        let update1 = a.export_snapshot().unwrap();
+        let update1 = a.export(ExportMode::Snapshot).unwrap();
         let version1 = a.oplog_vv();
         text_a.insert(0, "b").unwrap();
-        let update2 = a.export_from(&version1);
+        let update2 = a.export(ExportMode::updates(&version1)).unwrap();
         let _version2 = a.oplog_vv();
         b.import(&update2).unwrap();
         // snapshot will be converted to updates
@@ -250,14 +246,16 @@ mod test {
         let text_b = b.get_text("text");
         text_a.insert(0, "a").unwrap();
         let version_a1 = a.oplog_vv();
-        let update_a1 = a.export_from(&VersionVector::default());
+        let update_a1 = a
+            .export(ExportMode::updates(&VersionVector::default()))
+            .unwrap();
         b.import(&update_a1).unwrap();
         text_b.insert(1, "b").unwrap();
-        let update_b1 = b.export_from(&version_a1);
+        let update_b1 = b.export(ExportMode::updates(&version_a1)).unwrap();
         a.import(&update_b1).unwrap();
         let version_a1b1 = a.oplog_vv();
         text_a.insert(2, "c").unwrap();
-        let update_a2 = a.export_from(&version_a1b1);
+        let update_a2 = a.export(ExportMode::updates(&version_a1b1)).unwrap();
         c.import(&update_a2).unwrap();
         assert_eq!(c.get_deep_value().to_json(), "{\"text\":\"\"}");
         c.import(&update_a1).unwrap();
@@ -288,12 +286,12 @@ mod test {
         let text_a = a.get_text("text");
         let text_b = b.get_text("text");
         text_a.insert(0, "1").unwrap();
-        b.import(&a.export_snapshot().unwrap()).unwrap();
+        b.import(&a.export(ExportMode::Snapshot).unwrap()).unwrap();
         text_b.insert(0, "1").unwrap();
-        let b_change = b.export_from(&a.oplog_vv());
+        let b_change = b.export(ExportMode::updates(&a.oplog_vv())).unwrap();
         text_a.insert(0, "1").unwrap();
         c.import(&b_change).unwrap();
-        c.import(&a.export_snapshot().unwrap()).unwrap();
+        c.import(&a.export(ExportMode::Snapshot).unwrap()).unwrap();
         a.import(&b_change).unwrap();
         assert_eq!(c.get_deep_value(), a.get_deep_value());
     }
@@ -315,16 +313,16 @@ mod test {
     //     a.with_txn(|txn| text_a.insert(txn, 0, "a")).unwrap();
     //     a.with_txn(|txn| text_a.insert(txn, 1, "b")).unwrap();
     //     let version_a12 = a.oplog_vv();
-    //     let updates_a12 = a.export_snapshot();
+    //     let updates_a12 = a.export(ExportMode::Snapshot);
     //     a.with_txn(|txn| text_a.insert(txn, 2, "c")).unwrap();
-    //     let updates_a123 = a.export_snapshot();
+    //     let updates_a123 = a.export(ExportMode::Snapshot);
     //     b.import(&updates_a12).unwrap();
     //     b.with_txn(|txn| text_b.insert(txn, 2, "d")).unwrap();
-    //     let update_b1 = b.export_from(&version_a12);
+    //     let update_b1 = b.export(ExportMode::updates(&version_a12)).unwrap();
     //     a.import(&update_b1).unwrap();
     //     let version_a123_b1 = a.oplog_vv();
     //     a.with_txn(|txn| text_a.insert(txn, 4, "e")).unwrap();
-    //     let update_a4 = a.export_from(&version_a123_b1);
+    //     let update_a4 = a.export(ExportMode::updates(&version_a123_b1)).unwrap();
     //     c.import(&update_b1).unwrap();
     //     assert_eq!(c.get_deep_value().to_json(), "{\"text\":\"\"}");
     //     c.import(&update_a4).unwrap();

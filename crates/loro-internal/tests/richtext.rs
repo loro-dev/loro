@@ -3,7 +3,7 @@
 use std::ops::Range;
 
 use loro_common::LoroValue;
-use loro_internal::{LoroDoc, ToJson};
+use loro_internal::{loro::ExportMode, LoroDoc, ToJson};
 use serde_json::json;
 
 fn init(s: &str) -> LoroDoc {
@@ -17,7 +17,7 @@ fn init(s: &str) -> LoroDoc {
 fn clone(doc: &LoroDoc, peer_id: u64) -> LoroDoc {
     let doc2 = LoroDoc::new_auto_commit();
     doc2.set_peer_id(peer_id).unwrap();
-    doc2.import(&doc.export_from(&Default::default())).unwrap();
+    doc2.import(&doc.export(ExportMode::all_updates()).unwrap()).unwrap();
     doc2
 }
 
@@ -70,8 +70,8 @@ fn mark_kv(doc: &LoroDoc, range: Range<usize>, key: &str, value: impl Into<LoroV
 }
 
 fn merge(a: &LoroDoc, b: &LoroDoc) {
-    a.import(&b.export_from(&a.oplog_vv())).unwrap();
-    b.import(&a.export_from(&b.oplog_vv())).unwrap();
+    a.import(&b.export(ExportMode::updates(&a.oplog_vv())).unwrap()).unwrap();
+    b.import(&a.export(ExportMode::updates(&b.oplog_vv())).unwrap()).unwrap();
 }
 
 fn expect_result(doc: &LoroDoc, json: serde_json::Value) {

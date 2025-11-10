@@ -56,9 +56,6 @@ importers:
       loro-crdt-alpha-4:
         specifier: npm:loro-crdt@=1.0.0-alpha.4
         version: loro-crdt@1.0.0-alpha.4
-      loro-crdt-old:
-        specifier: npm:loro-crdt@=0.16.0
-        version: loro-crdt@0.16.0
       prettier:
         specifier: ^3.0.0
         version: 3.2.5
@@ -2134,9 +2131,6 @@ packages:
 
   loro-crdt@1.0.0-alpha.4:
     resolution: {integrity: sha512-WFVf/goGbiC9wmA7GNf9Fmdwry5hJq/CcQkXjoEp4QC9OYMUGm6QqKsrI7M4q05e2l7JeTc0RU858C7FRtg7qw==}
-
-  loro-wasm@0.16.0:
-    resolution: {integrity: sha512-2puF09ppACoUwMf9+6BkuYlogY+qZqqStq6RbYYXMhL8Uxrf8DXJdmLA+XGgI4suxXh39jvt6XfwdafqcUuu4A==}
 
   loro-wasm@1.0.0-alpha.4:
     resolution: {integrity: sha512-M1Bwh1PQQUFwdAldpSGZD3wl5D/6gQkbTC6aRoC8SjIxv0mgVzibp9sw9DXnolwoJ/Abd4hWeCz2sOvYOzw+Hg==}
@@ -5081,8 +5075,6 @@ snapshots:
   loro-crdt@1.0.0-alpha.4:
     dependencies:
       loro-wasm: 1.0.0-alpha.4
-
-  loro-wasm@0.16.0: {}
 
   loro-wasm@1.0.0-alpha.4: {}
 

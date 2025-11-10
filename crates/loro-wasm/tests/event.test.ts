@@ -387,7 +387,7 @@ describe("event", () => {
         expect(event.by).toBe("import");
         triggered = true;
       });
-      doc2.import(doc.exportFrom());
+      doc2.import(doc.export({ mode: "update" }));
       await oneMs();
       expect(triggered).toBeTruthy();
     }
@@ -398,7 +398,7 @@ describe("event", () => {
         expect(event.by).toBe("import");
         triggered = true;
       });
-      doc2.import(doc.exportSnapshot());
+      doc2.import(doc.export({ mode: "snapshot" }));
       await oneMs();
       expect(triggered).toBeTruthy();
     }

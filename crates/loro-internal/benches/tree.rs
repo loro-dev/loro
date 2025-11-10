@@ -3,7 +3,7 @@ use criterion::{criterion_group, criterion_main, Criterion};
 mod tree {
     use super::*;
     use criterion::{AxisScale, BenchmarkId, PlotConfiguration};
-    use loro_internal::{LoroDoc, TreeParentId};
+    use loro_internal::{encoding::ExportMode, LoroDoc, TreeParentId};
     use rand::{rngs::StdRng, Rng};
 
     pub fn tree_move(c: &mut Criterion) {
@@ -123,7 +123,9 @@ mod tree {
             for _ in 0..size {
                 ids.push(tree_a.create(TreeParentId::Root).unwrap())
             }
-            doc_b.import(&doc_a.export_snapshot().unwrap()).unwrap();
+            doc_b
+                .import(&doc_a.export(ExportMode::Snapshot).unwrap())
+                .unwrap();
             let mut rng: StdRng = rand::SeedableRng::seed_from_u64(0);
             let n = 1000;
             b.iter(|| {
@@ -134,12 +136,24 @@ mod tree {
                         tree_a
                             .mov(ids[i], TreeParentId::Node(ids[j]))
                             .unwrap_or_default();
-                        doc_b.import(&doc_a.export_from(&doc_b.oplog_vv())).unwrap();
+                        doc_b
+                            .import(
+                                &doc_a
+                                    .export(ExportMode::updates(&doc_b.oplog_vv()))
+                                    .unwrap(),
+                            )
+                            .unwrap();
                     } else {
                         tree_b
                             .mov(ids[i], TreeParentId::Node(ids[j]))
                             .unwrap_or_default();
-                        doc_a.import(&doc_b.export_from(&doc_a.oplog_vv())).unwrap();
+                        doc_a
+                            .import(
+                                &doc_b
+                                    .export(ExportMode::updates(&doc_a.oplog_vv()))
+                                    .unwrap(),
+                            )
+                            .unwrap();
                     }
                 }
             })

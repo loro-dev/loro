@@ -4,6 +4,7 @@ mod run {
     use super::*;
     use arbitrary::Arbitrary;
     use arbitrary::Unstructured;
+    use loro_internal::loro::ExportMode;
     use loro_internal::LoroDoc;
     use loro_internal::LoroValue;
     use rand::Rng;
@@ -60,17 +61,20 @@ mod run {
                     let b = (action.sync as usize) % len;
                     if a != b {
                         let (a, b) = arref::array_mut_ref!(&mut actors, [a, b]);
-                        a.import(&b.export_from(&a.oplog_vv())).unwrap();
+                        a.import(&b.export(ExportMode::updates(&a.oplog_vv())).unwrap())
+                            .unwrap();
                     }
                 }
 
                 for i in 1..actors.len() {
                     let (a, b) = arref::array_mut_ref!(&mut actors, [0, i]);
-                    a.import(&b.export_from(&a.oplog_vv())).unwrap();
+                    a.import(&b.export(ExportMode::updates(&a.oplog_vv())).unwrap())
+                        .unwrap();
                 }
                 for i in 1..actors.len() {
                     let (a, b) = arref::array_mut_ref!(&mut actors, [i, 0]);
-                    a.import(&b.export_from(&a.oplog_vv())).unwrap();
+                    a.import(&b.export(ExportMode::updates(&a.oplog_vv())).unwrap())
+                        .unwrap();
                 }
             })
         });
@@ -91,12 +95,14 @@ mod run {
 
                 for i in 1..actors.len() {
                     let (a, b) = arref::array_mut_ref!(&mut actors, [0, i]);
-                    a.import(&b.export_from(&a.oplog_vv())).unwrap();
+                    a.import(&b.export(ExportMode::updates(&a.oplog_vv())).unwrap())
+                        .unwrap();
                 }
 
                 for i in 1..actors.len() {
                     let (a, b) = arref::array_mut_ref!(&mut actors, [0, i]);
-                    b.import(&a.export_from(&b.oplog_vv())).unwrap();
+                    b.import(&a.export(ExportMode::updates(&b.oplog_vv())).unwrap())
+                        .unwrap();
                 }
             })
         });

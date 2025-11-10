@@ -3,6 +3,7 @@
 use bench_utils::{
     create_seed, gen_async_actions, gen_realtime_actions, make_actions_async, Action, ActionTrait,
 };
+use loro::ExportMode;
 use std::{
     collections::VecDeque,
     sync::{atomic::AtomicUsize, Arc, Mutex},
@@ -47,11 +48,17 @@ impl<T: ActorTrait> ActorGroup<T> {
             Action::Sync { from, to, kind } => match kind {
                 bench_utils::SyncKind::Fit => {
                     let vv = self.docs[*to].doc().oplog_vv();
-                    let data = self.docs[*from].doc().export_from(&vv);
+                    let data = self.docs[*from]
+                        .doc()
+                        .export(ExportMode::updates(&vv))
+                        .unwrap();
                     self.docs[*to].doc().import(&data).unwrap();
                 }
                 bench_utils::SyncKind::Snapshot => {
-                    let data = self.docs[*from].doc().export_snapshot();
+                    let data = self.docs[*from]
+                        .doc()
+                        .export(ExportMode::snapshot())
+                        .unwrap();
                     self.docs[*to].doc().import(&data).unwrap();
                 }
                 bench_utils::SyncKind::OnlyLastOpFromEachPeer => {
@@ -59,7 +66,10 @@ impl<T: ActorTrait> ActorGroup<T> {
                     for cnt in vv.values_mut() {
                         *cnt -= 1;
                     }
-                    let data = self.docs[*from].doc().export_from(&vv);
+                    let data = self.docs[*from]
+                        .doc()
+                        .export(ExportMode::updates(&vv))
+                        .unwrap();
                     self.docs[*to].doc().import(&data).unwrap();
                 }
             },
@@ -75,13 +85,21 @@ impl<T: ActorTrait> ActorGroup<T> {
             let s = tracing::span!(tracing::Level::INFO, "Importing to doc0");
             let _e = s.enter();
             let vv = first[0].doc().oplog_vv();
-            first[0].doc().import(&doc.doc().export_from(&vv)).unwrap();
+            first[0]
+                .doc()
+                .import(&doc.doc().export(ExportMode::updates(&vv)).unwrap())
+                .unwrap();
         }
         for (i, doc) in rest.iter_mut().enumerate() {
             let s = tracing::span!(tracing::Level::INFO, "Importing to doc", doc = i + 1);
             let _e = s.enter();
             let vv = doc.doc().oplog_vv();
-            doc.doc().import(&first[0].doc().export_from(&vv)).unwrap();
+            doc.doc()
+                .import(&first[0]
+                    .doc()
+                    .export(ExportMode::updates(&vv))
+                    .unwrap())
+                .unwrap();
         }
     }
 

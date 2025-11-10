@@ -660,7 +660,7 @@ pub fn decode_block(
 
 #[cfg(test)]
 mod test {
-    use crate::{delta::DeltaValue, LoroDoc};
+    use crate::{delta::DeltaValue, loro::ExportMode, LoroDoc};
 
     #[test]
     pub fn encode_single_text_edit() {
@@ -686,14 +686,14 @@ mod test {
     }
 
     fn diagnose(doc: &LoroDoc) {
-        let bytes = doc.export_from(&Default::default());
+        let bytes = doc.export(ExportMode::all_updates()).unwrap();
         println!("Old Update bytes {:?}", dev_utils::ByteSize(bytes.length()));
 
-        let bytes = doc.export(crate::loro::ExportMode::all_updates()).unwrap();
+        let bytes = doc.export(ExportMode::all_updates()).unwrap();
         println!("Update bytes {:?}", dev_utils::ByteSize(bytes.length()));
         // assert!(bytes.len() < 30);
 
-        let bytes = doc.export(crate::loro::ExportMode::Snapshot).unwrap();
+        let bytes = doc.export(ExportMode::Snapshot).unwrap();
         println!("Snapshot bytes {:?}", dev_utils::ByteSize(bytes.length()));
         // assert!(bytes.len() < 30);
 

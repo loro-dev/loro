@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use loro_internal::{LoroDoc, LoroValue};
+use loro_internal::{loro::ExportMode, LoroDoc, LoroValue};
 // #[global_allocator]
 // static ALLOC: dhat::Alloc = dhat::Alloc;
 
@@ -23,7 +23,7 @@ fn import_with_many_actors() {
 
     {
         let start = Instant::now();
-        let bytes = store.export_snapshot().unwrap();
+        let bytes = store.export(ExportMode::Snapshot).unwrap();
         LoroDoc::default().import(&bytes).unwrap();
         println!("{} ms", start.elapsed().as_millis());
     }

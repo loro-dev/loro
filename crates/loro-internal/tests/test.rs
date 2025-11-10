@@ -381,7 +381,7 @@ fn import_after_init_handlers() {
     b.get_list("list_a").insert(0, "list_a").unwrap();
     b.get_text("text").insert(0, "text").unwrap();
     b.get_map("map").insert("m", "map").unwrap();
-    a.import(&b.export_snapshot().unwrap()).unwrap();
+    a.import(&b.export(ExportMode::Snapshot).unwrap()).unwrap();
     a.commit_then_renew();
 }
 
@@ -389,12 +389,12 @@ fn import_after_init_handlers() {
 fn test_from_snapshot() {
     let a = LoroDoc::new_auto_commit();
     a.get_text("text").insert(0, "0").unwrap();
-    let snapshot = a.export_snapshot().unwrap();
+    let snapshot = a.export(ExportMode::Snapshot).unwrap();
     let c = LoroDoc::from_snapshot(&snapshot).unwrap();
     assert_eq!(a.get_deep_value(), c.get_deep_value());
     assert_eq!(a.oplog_frontiers(), c.oplog_frontiers());
     assert_eq!(a.state_frontiers(), c.state_frontiers());
-    let updates = a.export_from(&Default::default());
+    let updates = a.export(ExportMode::all_updates()).unwrap();
     let d = match LoroDoc::from_snapshot(&updates) {
         Ok(_) => panic!(),
         Err(e) => e,
@@ -409,19 +409,19 @@ fn test_pending() {
     a.get_text("text").insert(0, "0").unwrap();
     let b = LoroDoc::new_auto_commit();
     b.set_peer_id(1).unwrap();
-    b.import(&a.export_from(&Default::default())).unwrap();
+    b.import(&a.export(ExportMode::all_updates()).unwrap()).unwrap();
     b.get_text("text").insert(0, "1").unwrap();
     let c = LoroDoc::new_auto_commit();
     b.set_peer_id(2).unwrap();
-    c.import(&b.export_from(&Default::default())).unwrap();
+    c.import(&b.export(ExportMode::all_updates()).unwrap()).unwrap();
     c.get_text("text").insert(0, "2").unwrap();
 
     // c creates a pending change for a, insert "2" cannot be merged into a yet
-    a.import(&c.export_from(&b.oplog_vv())).unwrap();
+    a.import(&c.export(ExportMode::updates(&b.oplog_vv())).unwrap()).unwrap();
     assert_eq!(a.get_deep_value().to_json_value(), json!({"text": "0"}));
 
     // b does not has c's change
-    a.import(&b.export_from(&a.oplog_vv())).unwrap();
+    a.import(&b.export(ExportMode::updates(&a.oplog_vv())).unwrap()).unwrap();
     dbg!(&a.oplog().lock().unwrap());
     assert_eq!(a.get_deep_value().to_json_value(), json!({"text": "210"}));
 }
@@ -462,7 +462,7 @@ fn test_checkout() {
     text.insert(0, "123").unwrap();
 
     doc_0
-        .import(&doc_1.export_from(&Default::default()))
+        .import(&doc_1.export(ExportMode::all_updates()).unwrap())
         .unwrap();
 
     doc_0
@@ -646,7 +646,7 @@ fn map_concurrent_checkout() {
     let vb_0 = doc_b.oplog_frontiers();
     meta_b.insert("key", 1).unwrap();
     let vb_1 = doc_b.oplog_frontiers();
-    doc_a.import(&doc_b.export_snapshot().unwrap()).unwrap();
+    doc_a.import(&doc_b.export(ExportMode::Snapshot).unwrap()).unwrap();
     meta_a.insert("key", 2).unwrap();
 
     let v_merged = doc_a.oplog_frontiers();
@@ -718,8 +718,8 @@ fn issue_batch_import_snapshot() {
     doc.get_map("map").insert("s", "hello world!").unwrap();
     doc2.get_map("map").insert("s", "hello?").unwrap();
 
-    let data1 = doc.export_snapshot().unwrap();
-    let data2 = doc2.export_snapshot().unwrap();
+    let data1 = doc.export(ExportMode::Snapshot).unwrap();
+    let data2 = doc2.export(ExportMode::Snapshot).unwrap();
     let doc3 = LoroDoc::new();
     doc3.import_batch(&[data1, data2]).unwrap();
 }
@@ -757,7 +757,7 @@ fn state_may_deadlock_when_import() {
 
         let doc2 = LoroDoc::new_auto_commit();
         doc2.get_map("map").insert("foo", 123).unwrap();
-        doc.import(&doc.export_snapshot().unwrap()).unwrap();
+        doc.import(&doc.export(ExportMode::Snapshot).unwrap()).unwrap();
     })
 }
 
@@ -806,11 +806,11 @@ fn missing_event_when_checkout() {
     let _ = tree.create_at(TreeParentId::Root, 0).unwrap();
     let meta = tree.get_meta(node).unwrap();
     meta.insert("a", 0).unwrap();
-    doc.import(&doc2.export_from(&doc.oplog_vv())).unwrap();
+    doc.import(&doc2.export(ExportMode::updates(&doc.oplog_vv())).unwrap()).unwrap();
     doc.attach();
     meta.insert("b", 1).unwrap();
     doc.checkout(&doc.oplog_frontiers()).unwrap();
-    doc.import(&doc2.export_from(&doc.oplog_vv())).unwrap();
+    doc.import(&doc2.export(ExportMode::updates(&doc.oplog_vv())).unwrap()).unwrap();
     // checkout use the same diff_calculator, the depth of calculator is not updated
     doc.attach();
     assert!(value.lock().unwrap().contains_key("b"));
@@ -826,7 +826,7 @@ fn empty_event() {
     let _g = doc.subscribe_root(Arc::new(move |_e| {
         fire_clone.store(true, std::sync::atomic::Ordering::Relaxed);
     }));
-    doc.import(&doc.export_snapshot().unwrap()).unwrap();
+    doc.import(&doc.export(ExportMode::Snapshot).unwrap()).unwrap();
     assert!(!fire.load(std::sync::atomic::Ordering::Relaxed));
 }
 
@@ -1233,7 +1233,7 @@ fn import_status() -> LoroResult<()> {
     let t2 = doc2.get_text("text");
     t2.insert(0, "b")?;
     doc2.commit_then_renew();
-    let update1 = doc2.export_snapshot().unwrap();
+    let update1 = doc2.export(ExportMode::Snapshot).unwrap();
     let vv1 = doc2.oplog_vv();
     t2.insert(1, "c")?;
     let update2 = doc2.export(ExportMode::updates(&vv1)).unwrap();
@@ -1474,7 +1474,7 @@ fn test_origin() {
     remote.set_peer_id(1).unwrap();
     doc.get_map("map").insert("a", 1).unwrap();
     doc.commit_then_renew();
-    let snapshot = doc.export_snapshot().unwrap();
+    let snapshot = doc.export(ExportMode::Snapshot).unwrap();
     let expected_origin_string = "expectedOriginString";
 
     let sub = remote.subscribe_root(Arc::new(move |e| {
