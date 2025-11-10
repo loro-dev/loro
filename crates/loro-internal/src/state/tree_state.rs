@@ -1385,7 +1385,6 @@ impl ContainerState for TreeState {
             .collect_vec()
     }
 
-    #[doc = " Get a list of ops that can be used to restore the state to the current state"]
     fn fork(&self, _config: &Configure) -> Self {
         self.clone()
     }

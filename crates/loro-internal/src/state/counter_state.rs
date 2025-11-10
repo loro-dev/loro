@@ -75,11 +75,6 @@ impl ContainerState for CounterState {
         vec![]
     }
 
-    #[doc = " Encode the ops and the blob that can be used to restore the state to the current state."]
-    #[doc = ""]
-    #[doc = " State will use the provided encoder to encode the ops and export a blob."]
-    #[doc = " The ops should be encoded into the snapshot as well as the blob."]
-    #[doc = " The users then can use the ops and the blob to restore the state to the current state."]
     fn contains_child(&self, _id: &ContainerID) -> bool {
         false
     }

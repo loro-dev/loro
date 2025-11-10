@@ -333,15 +333,11 @@ pub(crate) fn decode_updates_blob_meta(
     let mut start_frontiers = Frontiers::new();
     for c in changes.iter() {
         for dep in c.deps().iter() {
-            dbg!(&dep);
             if let Some(start_counter) = start_vv.get(&dep.peer) {
-                println!("0");
                 if *start_counter > dep.counter {
-                    println!("1");
                     start_frontiers.push(dep);
                 }
             } else if end_vv.get(&dep.peer).is_none() {
-                println!("2");
                 start_frontiers.push(dep);
             }
         }
