@@ -3,4 +3,4 @@
 "loro-crdt-map": patch
 ---
 
-Fix WASM loading compatibility for esbuild and rsbuild
+fix: WASM loading compatibility for esbuild and rsbuild #851
