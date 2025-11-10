@@ -1,5 +1,133 @@
 # Changelog
 
+## 1.9.0
+
+### Minor Changes
+
+- 10a405b: feat: JSONPath rfc9535 #848
+
+  Thanks to @zolero for the thorough implementation of JSONPath support!
+
+  LoroDoc now supports querying and mutating document data using **JSONPath**, following the [RFC 9535](https://www.rfc-editor.org/rfc/rfc9535) specification.
+
+  ### 🧩 API
+
+  ```ts
+  // Execute a JSONPath query on the document
+  doc.JSONPath(path: string): any[];
+  ```
+
+  ### 📚 Query Examples
+
+  Example data setup
+
+  ```ts
+  const doc = new LoroDoc();
+  const store = doc.getMap("store");
+
+  // Simplified setup for illustration purposes
+  store.set("books", [
+    {
+      title: "1984",
+      author: "George Orwell",
+      price: 10,
+      available: true,
+      isbn: "978-0451524935",
+    },
+    {
+      title: "Animal Farm",
+      author: "George Orwell",
+      price: 8,
+      available: true,
+    },
+    {
+      title: "Brave New World",
+      author: "Aldous Huxley",
+      price: 12,
+      available: false,
+    },
+    {
+      title: "Fahrenheit 451",
+      author: "Ray Bradbury",
+      price: 9,
+      available: true,
+    },
+    {
+      title: "The Great Gatsby",
+      author: "F. Scott Fitzgerald",
+      price: null,
+      available: true,
+    },
+    {
+      title: "To Kill a Mockingbird",
+      author: "Harper Lee",
+      price: 11,
+      available: true,
+    },
+    {
+      title: "The Catcher in the Rye",
+      author: "J.D. Salinger",
+      price: 10,
+      available: false,
+    },
+    {
+      title: "Lord of the Flies",
+      author: "William Golding",
+      price: 9,
+      available: true,
+    },
+    {
+      title: "Pride and Prejudice",
+      author: "Jane Austen",
+      price: 7,
+      available: true,
+    },
+    {
+      title: "The Hobbit",
+      author: "J.R.R. Tolkien",
+      price: 14,
+      available: true,
+    },
+  ]);
+  store.set("featured_authors", ["George Orwell", "Jane Austen"]);
+  ```
+
+  ```ts
+  // 1. Get all book titles
+  doc.JSONPath("$.store.books[*].title");
+  // → ["1984", "Animal Farm", "Brave New World", "The Hobbit"]
+
+  // 2. Filter: available books only
+  doc.JSONPath("$.store.books[?(@.available)].title");
+  // → ["1984", "Animal Farm", "The Hobbit"]
+
+  // 3. Filter: books with price > 10
+  doc.JSONPath("$.store.books[?(@.price > 10)].title");
+  // → ["The Hobbit"]
+
+  // 4. Use recursive descent to get all prices
+  doc.JSONPath("$..price");
+  // → [10, 8, 12, 9, null, 11, 14]
+
+  // 5. Slice syntax: first three books
+  doc.JSONPath("$.store.books[0:3].title");
+  // → ["1984", "Animal Farm", "Brave New World"]
+
+  // 6. Membership test: authors in featured list
+  doc.JSONPath("$.store.books[?(@.author in $.store.featured_authors)].title");
+  // → ["1984", "Animal Farm", "Pride and Prejudice"]
+
+  // 7. String match using `contains`
+  doc.JSONPath("$.store.books[?(@.title contains 'The')].author");
+  // → ["F. Scott Fitzgerald", "J.R.R. Tolkien"]
+  ```
+
+- 10a405b: refactor!: remove deprecated encoding format in v0.x #849
+
+### Patch Changes
+
+- 3af6a85: fix: WASM loading compatibility for esbuild and rsbuild #851
+
 ## 1.8.9
 
 ### Patch Changes
@@ -87,6 +215,7 @@
 ### Minor Changes
 
 - 3a0db5b: feat: add APIs to fetch values associated with the top Undo and Redo stack entries (#790)
+
   - JS/WASM: `undo.topUndoValue()` and `undo.topRedoValue()` return the `value` from the top undo/redo item (or `undefined` when empty).
   - Rust: `UndoManager::{top_undo_meta, top_redo_meta, top_undo_value, top_redo_value}` to inspect top-of-stack metadata and values.
   - Internal: stack now supports peeking the top item metadata without mutation.
@@ -94,6 +223,7 @@
   This enables attaching human-readable labels via `onPush`/`onPop` and retrieving them to keep Undo/Redo menu items up to date.
 
 - 9a98e8d: Distinguish explicit vs implicit empty commit behavior for commit options.
+
   - Explicit commits (user-invoked `commit()` / `commit_with(...)`): if the transaction is empty, commit options (message/timestamp/origin) are swallowed and will NOT carry over.
   - Implicit commits (e.g., `export`, `checkout` internal barriers): if the transaction is empty, message/timestamp/origin are preserved for the next transaction.
 
@@ -437,6 +567,7 @@
 - ddafb7e: feat: diff, applyDiff, and revertTo #610
 
   Add new version-control-related primitives:
+
   - **`diff(from, to)`**: calculate the difference between two versions. The returned results have similar structures to the differences in events.
   - **`revertTo(targetVersion)`**: revert the document back to the target version. The difference between this and `checkout(targetVersion)` is this method will generate a series of new operations, which will transform the current doc into the same as the target version.
   - **`applyDiff(diff)`**: you can use it to apply the differences generated from `diff(from, to)`.
@@ -745,9 +876,11 @@
 - Performance improvement and bug fixes
 
   ### 🚀 Features
+
   - Redact (#504)
 
   ### 🐛 Bug Fixes
+
   - Ffi Subscription (#505)
   - Ffi remove try unwrap (#506)
   - Movable list undo impl (#509)
@@ -755,15 +888,18 @@
   - IsContainerDeleted cache err (#513)
 
   ### 📚 Documentation
+
   - Refine wasm docs
 
   ### ⚡ Performance
+
   - Optimize shrink frontiers
   - Optimize batch container registrations on arena (#510)
   - Optimize high concurrency performance (#514)
   - Use better data structure for frontiers (#515)
 
   ### Perf
+
   - Commit speed & text insert cache (#511)
 
 ## 1.0.0-alpha.5
@@ -771,9 +907,11 @@
 ### Patch Changes
 
 - ## Fix
+
   - Use release build
 
   ## Test
+
   - Add compatibility tests (#503)
 
 ## 1.0.0-alpha.4
@@ -781,6 +919,7 @@
 ### Patch Changes
 
 - ### 🚀 Features
+
   - _(wasm)_ Commit message & get pending ops length (#477)
   - Update text by line (#480)
   - Add clear methods (#478)
@@ -791,6 +930,7 @@
   - Add import status (#494)
 
   ### 🐛 Bug Fixes
+
   - Get correct tree_cache current vv when retreating (#476)
   - Gc snapshot error (#481)
   - Checkout into middle of marks
@@ -802,6 +942,7 @@
   - Create event cannot find parent (#498)
 
   ### 🚜 Refactor
+
   - [**breaking**] Don't wait for `commit` to update version info
   - Avoid footgun of impl ord for cid
   - Loro import function should return LoroEncodeError (#487)
@@ -810,6 +951,7 @@
   - [**breaking**] List state snapshot schema for v1.0 (#485)
 
   ### ⚡ Performance
+
   - Make shrink frontiers faster when the peer num is large (#482)
   - Optimize tree cache find children speed
   - Avoid memory leak when forking repeatedly (#500)
@@ -818,10 +960,12 @@
   - Optimize diff calc cache use (#475)
 
   ### 🧪 Testing
+
   - Make awareness more robust
   - Bench large folder with 1M files & 100M ops (#495)
 
   ### ⚙️ Miscellaneous Tasks
+
   - Use cached diff calc
 
 ## 1.0.0-alpha.3
@@ -829,16 +973,20 @@
 ### Patch Changes
 
 - ### 🐛 Bug Fixes
+
   - Cursor behavior when using gc-snapshot (#472)
   - _(wasm)_ Type err
 
   ### ⚙️ Miscellaneous Tasks
+
   - Make tree parent id pub on loro crate
 
   ### Feat
+
   - Allow editing on detached mode (#473)
 
   ### Fix
+
   - Get tree's alive children correctly (#474)
   - Should not emit event when exporting gc-snapshot (#471)
 
@@ -847,9 +995,11 @@
 ### Patch Changes
 
 - ### 🚀 Features
+
   - Fork doc at the target version (#469)
 
   ### 🚜 Refactor
+
   - BREAKING CHANGE: Use hierarchy value for tree value (#470)
 
 ## 1.0.0-alpha.1
@@ -857,20 +1007,24 @@
 ### Patch Changes
 
 - ### 🚀 Features
+
   - Get shallow value of doc (#463)
   - Add state only snapshot & refine check slow test
   - Add new cid method to js binding
   - Jsonpath experimental support (#466)
 
   ### 🐛 Bug Fixes
+
   - Raise error if perform action on a deleted container (#465)
   - Raise error if moving a deleted node
   - Export snapshot error on a gc doc
 
   ### 🚜 Refactor
+
   - Tree contains & isDeleted (#467)
 
   ### 🧪 Testing
+
   - Check state correctness on shallow doc
 
 ## 1.0.0-alpha.0
@@ -909,22 +1063,27 @@
 ### Patch Changes
 
 - 38b4bcf: Add text update API
+
   - Remove the patch for crypto
   - Add text update API (#404)
   - Check invalid root container name (#411)
 
   ### 🐛 Bug Fixes
+
   - Workaround lldb bug make loro crate debuggable (#414)
   - Delete the **bring back** tree node from the undo container remap (#423)
 
   ### 📚 Documentation
+
   - Fix typo
   - Refine docs about event (#417)
 
   ### 🎨 Styling
+
   - Use clippy to perf code (#407)
 
   ### ⚙️ Miscellaneous Tasks
+
   - Add test tools (#410)
 
 ## 0.16.7
@@ -934,20 +1093,24 @@
 - 45c98d5: Better text APIs and bug fixes
 
   ### 🚀 Features
+
   - Add insert_utf8 and delete_utf8 for Rust Text API (#396)
   - Add text iter (#400)
   - Add more text api (#398)
 
   ### 🐛 Bug Fixes
+
   - Tree undo when processing deleted node (#399)
   - Tree diff calc children should be sorted by idlp (#401)
   - When computing the len of the map, do not count elements that are None (#402)
 
   ### 📚 Documentation
+
   - Update wasm docs
   - Rm experimental warning
 
   ### ⚙️ Miscellaneous Tasks
+
   - Update fuzz config
   - Pnpm
   - Rename position to fractional_index (#381)
@@ -990,6 +1153,7 @@
 - 34f6064: Better undo events & transform cursors by undo manager (#369)
 
   #### 🧪 Testing
+
   - Enable compatibility test (#367)
 
 ## 0.16.1
@@ -1009,19 +1173,23 @@
 - c12c2b9: Movable Tree Children & Undo
 
   #### 🐛 Bug Fixes
+
   - Refine error message on corrupted data (#356)
   - Add MovableList to CONTAINER_TYPES (#359)
   - Better jitter for fractional index (#360)
 
   #### 🧪 Testing
+
   - Add compatibility tests (#357)
 
   #### Feat
+
   - Make the encoding format forward and backward compatible (#329)
   - Undo (#361)
   - Use fractional index to order the children of the tree (#298)
 
   #### 🐛 Bug Fixes
+
   - Tree fuzz sort value (#351)
   - Upgrade wasm-bindgen to fix str free err (#353)
 
@@ -1032,11 +1200,13 @@
 - 43506cc: Fix unsound issue caused by wasm-bindgen
 
   #### 🐛 Bug Fixes
+
   - Fix potential movable list bug (#354)
   - Tree fuzz sort value (#351)
   - Upgrade wasm-bindgen to fix str free err (#353)
 
   #### 📚 Documentation
+
   - Simplify readme (#352)
 
 ## 0.15.2
@@ -1046,12 +1216,15 @@
 - e30678d: Perf: fix deletions merge
 
   #### 🐛 Bug Fixes
+
   - _(wasm)_ Movable list .kind() (#342)
 
   #### ⚡ Performance
+
   - Delete span merge err (#348)
 
   #### ⚙️ Miscellaneous Tasks
+
   - Warn missing debug impl (#347)
 
   <!-- generated by git-cliff -->
@@ -1063,6 +1236,7 @@
 - 04c6290: Bug fixes and improvements.
 
   #### 🐛 Bug Fixes
+
   - Impl a few unimplemented! for movable tree (#335)
   - Refine ts type; reject invalid operations (#334)
   - Get cursor err on text and movable list (#337)
@@ -1070,10 +1244,12 @@
   - Upgrade generic-btree to allow large btree (#344)
 
   #### 📚 Documentation
+
   - Add warn(missing_docs) to loro and loro-wasm (#339)
   - Minor fix on set_change_merge_interval api (#341)
 
   #### ⚙️ Miscellaneous Tasks
+
   - Skip the checking if not debug_assertions (#340)
 
   <!-- generated by git-cliff -->
@@ -1121,6 +1297,7 @@
 - 24cf9b9: Bug Fix
 
   #### 🐛 Bug Fixes
+
   - Attached container can be inserted to `Map` or `List` (#331)
 
 ## 0.14.5
@@ -1130,9 +1307,11 @@
 - 73e3ba5: Bug Fix
 
   #### 🐛 Bug Fixes
+
   - _(js)_ Allow convert from undefined to LoroValue (#323)
 
   #### 🚜 Refactor
+
   - Refine ts type (#322)
 
 ## 0.14.4
@@ -1140,10 +1319,12 @@
 ### Patch Changes
 
 - 598d97e: ### 🚜 Refactor
+
   - Refine the TS Type of Awareness
   - Parse Uint8array to LoroValue::Binary (#320)
 
   ### 📚 Documentation
+
   - Update how to publish new npm pkgs
 
 ## 0.14.3
@@ -1157,6 +1338,7 @@
 ### Patch Changes
 
 - Refactor rename `StablePosition` to `Cursor`
+
   - Rename stable pos to cursor (#317)
 
   <!-- generated by git-cliff -->
@@ -1168,6 +1350,7 @@
 - Supports Cursors
 
   #### 🚀 Features
+
   - Cursors (#290)
 
 ## 0.14.0
@@ -1177,22 +1360,27 @@
 - Improved API
 
   ### 🚀 Features
+
   - Access value/container by path (#308)
   - Decode import blob meta (#307)
 
   ### 🐛 Bug Fixes
+
   - Decode iter return result by updating columnar to 0.3.4 (#309)
 
   ### 🚜 Refactor
+
   - Replace "local" and "fromCheckout" in event with "triggeredBy" (#312)
   - Add concrete type for each different container (#313)
   - _(ts)_ Make types better (#315)
 
   ### 📚 Documentation
+
   - Refine wasm docs (#304)
   - Clarify that peer id should be convertible to a u64 (#306)
 
   ### ⚙️ Miscellaneous Tasks
+
   - Add coverage report cli (#311)
 
 ## 0.13.1
