@@ -612,7 +612,7 @@ pub(crate) fn js_value_to_list_diff(js: &JsValue) -> Result<ListDiff, JsValue> {
 }
 
 pub(crate) fn js_value_to_loro_value(js: &JsValue) -> JsResult<LoroValue> {
-    if js.is_null() {
+    if js.is_null() || js.is_undefined() {
         return Ok(LoroValue::Null);
     } else if let Some(b) = js.as_bool() {
         return Ok(LoroValue::Bool(b));

@@ -9,6 +9,19 @@ import {
 import { expectTypeOf } from "vitest";
 import { expectDefined } from "./helpers";
 
+function expectErrorWithCasting(action: () => unknown, matcher: RegExp) {
+  expect(() => {
+    try {
+      action();
+    } catch (err) {
+      if (err instanceof Error) {
+        throw err;
+      }
+      throw new Error(String(err));
+    }
+  }).toThrowError(matcher);
+}
+
 function assertEquals(a: any, b: any) {
   expect(a).toStrictEqual(b);
 }
@@ -186,7 +199,54 @@ describe("LoroMap value conversion", () => {
     const symbolKey = Symbol("test");
     const valueWithSymbolKey = { [symbolKey]: "value" };
 
-    expect(() => map.set("key", valueWithSymbolKey as any)).toThrowError(
+    expectErrorWithCasting(
+      () => map.set("key", valueWithSymbolKey as any),
+      /Object keys must be strings/,
+    );
+  });
+
+  it("should throw when nested objects contain symbol keys", () => {
+    const loro = new LoroDoc<{ map: LoroMap }>();
+    const map = loro.getMap("map");
+
+    const symbolKey = Symbol("nested");
+    const nestedValue = { outer: { [symbolKey]: 42 } };
+
+    expectErrorWithCasting(
+      () => map.set("key", nestedValue as any),
+      /Object keys must be strings/,
+    );
+  });
+
+  it("coerces undefined map values to null via conversion", () => {
+    const loro = new LoroDoc<{ map: LoroMap }>();
+    const map = loro.getMap("map");
+
+    map.set("key", undefined as any);
+
+    expect(map.toJSON()).toStrictEqual({ key: null });
+  });
+});
+
+describe("LoroList value conversion", () => {
+  it("coerces undefined list entries to null", () => {
+    const loro = new LoroDoc<{ list: LoroList }>();
+    const list = loro.getList("list");
+
+    list.insert(0, undefined as any);
+
+    expect(list.toJSON()).toStrictEqual([null]);
+  });
+
+  it("should throw when inserting objects with symbol keys", () => {
+    const loro = new LoroDoc<{ list: LoroList }>();
+    const list = loro.getList("list");
+
+    const symbolKey = Symbol("invalid");
+    const valueWithSymbolKey = { [symbolKey]: "value" };
+
+    expectErrorWithCasting(
+      () => list.insert(0, valueWithSymbolKey as any),
       /Object keys must be strings/,
     );
   });
