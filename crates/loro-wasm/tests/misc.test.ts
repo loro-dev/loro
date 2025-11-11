@@ -178,6 +178,20 @@ describe("sync", () => {
   });
 });
 
+describe("LoroMap value conversion", () => {
+  it("should throw when setting objects with symbol keys", () => {
+    const loro = new LoroDoc<{ map: LoroMap }>();
+    const map = loro.getMap("map");
+
+    const symbolKey = Symbol("test");
+    const valueWithSymbolKey = { [symbolKey]: "value" };
+
+    expect(() => map.set("key", valueWithSymbolKey as any)).toThrowError(
+      /Object keys must be strings/,
+    );
+  });
+});
+
 describe("wasm", () => {
   const loro = new LoroDoc();
   const a = loro.getText("ha");

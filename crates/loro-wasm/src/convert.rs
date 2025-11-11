@@ -516,8 +516,13 @@ pub(crate) fn js_to_map_delta(js: &JsValue) -> Result<ResolvedMapDelta, JsValue>
     let entries = Object::entries(obj);
     for i in 0..entries.length() {
         let entry = entries.get(i);
-        let entry_arr = entry.dyn_ref::<Array>().unwrap();
-        let key = entry_arr.get(0).as_string().unwrap();
+        let entry_arr = entry
+            .dyn_into::<Array>()
+            .map_err(|_| JsValue::from_str("Invalid map delta entry"))?;
+        let key = entry_arr
+            .get(0)
+            .as_string()
+            .ok_or_else(|| JsValue::from_str("Map delta keys must be strings"))?;
         let value = entry_arr.get(1);
 
         if value.is_undefined() {
@@ -541,11 +546,12 @@ pub(crate) fn js_to_map_delta(js: &JsValue) -> Result<ResolvedMapDelta, JsValue>
                 }
             }
         }
+        let loro_value = js_value_to_loro_value(&value)?;
         delta = delta.with_entry(
             key.into(),
             ResolvedMapValue {
                 idlp: IdLp::new(0, 0),
-                value: Some(ValueOrHandler::Value(js_value_to_loro_value(&value))),
+                value: Some(ValueOrHandler::Value(loro_value)),
             },
         );
     }
@@ -592,8 +598,8 @@ pub(crate) fn js_value_to_list_diff(js: &JsValue) -> Result<ListDiff, JsValue> {
                     }
                 }
                 values
-                    .push(ValueOrHandler::Value(js_value_to_loro_value(&value)))
-                    .unwrap()
+                    .push(ValueOrHandler::Value(js_value_to_loro_value(&value)?))
+                    .map_err(|_| JsValue::from_str("Insert array exceeds maximum supported length"))?
             }
 
             builder = builder.insert(values, ListDeltaMeta::default());
@@ -605,49 +611,82 @@ pub(crate) fn js_value_to_list_diff(js: &JsValue) -> Result<ListDiff, JsValue> {
     Ok(builder.build())
 }
 
-pub(crate) fn js_value_to_loro_value(js: &JsValue) -> LoroValue {
+pub(crate) fn js_value_to_loro_value(js: &JsValue) -> JsResult<LoroValue> {
     if js.is_null() {
-        LoroValue::Null
+        return Ok(LoroValue::Null);
     } else if let Some(b) = js.as_bool() {
-        LoroValue::Bool(b)
+        return Ok(LoroValue::Bool(b));
     } else if let Some(n) = js.as_f64() {
         if n.fract() == 0.0 && n >= -(2i64.pow(53) as f64) && n <= 2i64.pow(53) as f64 {
-            LoroValue::I64(n as i64)
+            return Ok(LoroValue::I64(n as i64));
         } else {
-            LoroValue::Double(n)
+            return Ok(LoroValue::Double(n));
         }
     } else if let Some(s) = js.as_string() {
         if let Some(cid) = ContainerID::try_from_loro_value_string(&s) {
-            LoroValue::Container(cid)
+            return Ok(LoroValue::Container(cid));
         } else {
-            LoroValue::String(s.into())
+            return Ok(LoroValue::String(s.into()));
         }
     } else if js.is_array() {
         let arr = Array::from(js);
         let mut vec = Vec::with_capacity(arr.length() as usize);
         for i in 0..arr.length() {
-            vec.push(js_value_to_loro_value(&arr.get(i)));
+            vec.push(js_value_to_loro_value(&arr.get(i))?);
         }
-        LoroValue::List(LoroListValue::from(vec))
+        return Ok(LoroValue::List(LoroListValue::from(vec)));
     } else if js.is_object() {
+        if js.is_instance_of::<Uint8Array>() {
+            let typed_array = Uint8Array::new(js);
+            let mut buf = vec![0; typed_array.length() as usize];
+            typed_array.copy_to(&mut buf[..]);
+            return Ok(LoroValue::Binary(buf.into()));
+        }
+
+        if let Some(map) = js.dyn_ref::<Map>() {
+            let entries = Array::from(&map.entries().into());
+            let mut loro_map = FxHashMap::default();
+            for i in 0..entries.length() {
+                let entry = entries
+                    .get(i)
+                    .dyn_into::<Array>()
+                    .map_err(|_| JsValue::from_str("Invalid map entry"))?;
+                let key = entry
+                    .get(0)
+                    .as_string()
+                    .ok_or_else(|| JsValue::from_str("Map keys must be strings"))?;
+                let value = entry.get(1);
+                loro_map.insert(key, js_value_to_loro_value(&value)?);
+            }
+            return Ok(LoroValue::Map(LoroMapValue::from(loro_map)));
+        }
+
         let obj = Object::from(JsValue::from(js));
+
+        if Object::get_own_property_symbols(&obj).length() > 0 {
+            return Err(JsValue::from_str(
+                "Object keys must be strings; symbol properties are not supported",
+            )
+            .into());
+        }
         let mut map = FxHashMap::default();
         let entries = Object::entries(&obj);
         for i in 0..entries.length() {
-            let entry = entries.get(i);
+            let entry = entries
+                .get(i)
+                .dyn_into::<Array>()
+                .map_err(|_| JsValue::from_str("Invalid object entry"))?;
             let key = entry
-                .dyn_ref::<Array>()
-                .unwrap()
                 .get(0)
                 .as_string()
-                .unwrap();
-            let value = entry.dyn_ref::<Array>().unwrap().get(1);
-            map.insert(key, js_value_to_loro_value(&value));
+                .ok_or_else(|| JsValue::from_str("Object keys must be strings"))?;
+            let value = entry.get(1);
+            map.insert(key, js_value_to_loro_value(&value)?);
         }
-        LoroValue::Map(LoroMapValue::from(map))
-    } else {
-        LoroValue::Null
+        return Ok(LoroValue::Map(LoroMapValue::from(map)));
     }
+
+    Err(JsValue::from_str("Unsupported value type"))
 }
 
 /// Convert a JavaScript JsonSchema (or string) to Loro's internal JsonSchema
