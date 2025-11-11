@@ -7,7 +7,8 @@
 
 use convert::{
     import_status_to_js_value, js_diff_to_inner_diff, js_json_schema_to_loro_json_schema,
-    js_to_id_span, js_to_version_vector, loro_json_schema_to_js_json_schema, resolved_diff_to_js,
+    js_to_id_span, js_to_version_vector, js_value_to_loro_value,
+    loro_json_schema_to_js_json_schema, resolved_diff_to_js,
 };
 use js_sys::{Array, Object, Promise, Reflect, Uint8Array};
 use loro_internal::{
@@ -2745,10 +2746,13 @@ impl LoroText {
     /// text.insert(0, "Hello World!");
     /// text.mark({ start: 0, end: 5 }, "bold", true);
     /// ```
-    pub fn mark(&self, range: JsRange, key: &str, value: JsValue) -> Result<(), JsError> {
-        let range: MarkRange = serde_wasm_bindgen::from_value(range.into())?;
-        let value: LoroValue = LoroValue::from(value);
-        self.handler.mark(range.start, range.end, key, value)?;
+    pub fn mark(&self, range: JsRange, key: &str, value: JsValue) -> JsResult<()> {
+        let range: MarkRange = serde_wasm_bindgen::from_value(range.into())
+            .map_err(|err| JsValue::from_str(&err.to_string()))?;
+        let loro_value = js_value_to_loro_value(&value)?;
+        self.handler
+            .mark(range.start, range.end, key, loro_value)
+            .map_err(JsValue::from)?;
         Ok(())
     }
 
@@ -3022,8 +3026,9 @@ impl LoroMap {
     /// ```
     #[wasm_bindgen(js_name = "set", skip_typescript)]
     pub fn insert(&mut self, key: &str, value: JsLoroValue) -> JsResult<()> {
-        let v: JsValue = value.into();
-        self.handler.insert(key, v)?;
+        let js_value: JsValue = value.into();
+        let loro_value = js_value_to_loro_value(&js_value)?;
+        self.handler.insert(key, loro_value)?;
         Ok(())
     }
 
@@ -3396,8 +3401,9 @@ impl LoroList {
     /// ```
     #[wasm_bindgen(skip_typescript)]
     pub fn insert(&mut self, index: usize, value: JsLoroValue) -> JsResult<()> {
-        let v: JsValue = value.into();
-        self.handler.insert(index, v)?;
+        let js_value: JsValue = value.into();
+        let loro_value = js_value_to_loro_value(&js_value)?;
+        self.handler.insert(index, loro_value)?;
         Ok(())
     }
 
@@ -3642,8 +3648,9 @@ impl LoroList {
     /// Push a value to the end of the list.
     #[wasm_bindgen(skip_typescript)]
     pub fn push(&self, value: JsLoroValue) -> JsResult<()> {
-        let v: JsValue = value.into();
-        self.handler.push(v)?;
+        let js_value: JsValue = value.into();
+        let loro_value = js_value_to_loro_value(&js_value)?;
+        self.handler.push(loro_value)?;
         Ok(())
     }
 
@@ -3751,8 +3758,9 @@ impl LoroMovableList {
     /// ```
     #[wasm_bindgen(skip_typescript)]
     pub fn insert(&mut self, index: usize, value: JsLoroValue) -> JsResult<()> {
-        let v: JsValue = value.into();
-        self.handler.insert(index, v)?;
+        let js_value: JsValue = value.into();
+        let loro_value = js_value_to_loro_value(&js_value)?;
+        self.handler.insert(index, loro_value)?;
         Ok(())
     }
 
@@ -4019,8 +4027,9 @@ impl LoroMovableList {
     /// and the final result will be `[1, 100, 200, 3]` or `[1, 200, 100, 3]`.
     #[wasm_bindgen(skip_typescript)]
     pub fn set(&self, pos: usize, value: JsLoroValue) -> JsResult<()> {
-        let v: JsValue = value.into();
-        self.handler.set(pos, v)?;
+        let js_value: JsValue = value.into();
+        let loro_value = js_value_to_loro_value(&js_value)?;
+        self.handler.set(pos, loro_value)?;
         Ok(())
     }
 
@@ -4035,8 +4044,9 @@ impl LoroMovableList {
     /// Push a value to the end of the list.
     #[wasm_bindgen(skip_typescript)]
     pub fn push(&self, value: JsLoroValue) -> JsResult<()> {
-        let v: JsValue = value.into();
-        self.handler.push(v.into())?;
+        let js_value: JsValue = value.into();
+        let loro_value = js_value_to_loro_value(&js_value)?;
+        self.handler.push(loro_value)?;
         Ok(())
     }
 
