@@ -139,16 +139,20 @@ impl CRDTFuzzer {
             }
             Action::Sync { from, to } => {
                 let (a, b) = array_mut_ref!(&mut self.actors, [*from as usize, *to as usize]);
-                handle_import_result(a.loro.import(
-                    &b.loro
-                        .export(ExportMode::updates(&a.loro.oplog_vv()))
-                        .unwrap(),
-                ));
-                handle_import_result(b.loro.import(
-                    &a.loro
-                        .export(ExportMode::updates(&b.loro.oplog_vv()))
-                        .unwrap(),
-                ));
+                handle_import_result(
+                    a.loro.import(
+                        &b.loro
+                            .export(ExportMode::updates(&a.loro.oplog_vv()))
+                            .unwrap(),
+                    ),
+                );
+                handle_import_result(
+                    b.loro.import(
+                        &a.loro
+                            .export(ExportMode::updates(&b.loro.oplog_vv()))
+                            .unwrap(),
+                    ),
+                );
                 a.record_history();
                 b.record_history();
             }

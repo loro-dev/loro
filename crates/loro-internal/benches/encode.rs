@@ -151,9 +151,7 @@ mod import {
                         .unwrap();
                 }
 
-                let updates = c2
-                    .export(ExportMode::updates(&c1.oplog_vv()))
-                    .unwrap();
+                let updates = c2.export(ExportMode::updates(&c1.oplog_vv())).unwrap();
                 c1.import(&updates).unwrap()
             })
         });

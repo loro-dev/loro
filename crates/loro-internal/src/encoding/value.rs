@@ -1,10 +1,10 @@
 use enum_as_inner::EnumAsInner;
 use fractional_index::FractionalIndex;
-use rustc_hash::FxHashMap;
 use loro_common::{
     ContainerID, ContainerType, Counter, InternalString, LoroError, LoroResult, LoroValue, PeerID,
     TreeID, ID,
 };
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 

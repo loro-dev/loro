@@ -74,7 +74,11 @@ fn main() {
         }
 
         loro_b
-            .import(&loro.export(ExportMode::updates(&loro_b.oplog_vv())).unwrap())
+            .import(
+                &loro
+                    .export(ExportMode::updates(&loro_b.oplog_vv()))
+                    .unwrap(),
+            )
             .unwrap();
         count += 1;
         if count % 1000 == 0 {

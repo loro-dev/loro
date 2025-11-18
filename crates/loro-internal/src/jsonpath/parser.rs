@@ -10,7 +10,9 @@ use std::{collections::HashMap, ops::RangeInclusive};
 use pest::{iterators::Pair, Parser};
 use pest_derive::Parser;
 
-use crate::jsonpath::ast::{ComparisonOperator, FilterExpression, LogicalOperator, Segment, Selector};
+use crate::jsonpath::ast::{
+    ComparisonOperator, FilterExpression, LogicalOperator, Segment, Selector,
+};
 use crate::jsonpath::errors::JSONPathError;
 use crate::jsonpath::Query;
 
@@ -80,7 +82,7 @@ pub fn standard_functions() -> HashMap<String, FunctionSignature> {
 #[derive(Debug)]
 pub struct JSONPathParser {
     pub index_range: RangeInclusive<i64>,
-    pub function_signatures: HashMap<String, FunctionSignature>
+    pub function_signatures: HashMap<String, FunctionSignature>,
 }
 
 impl Default for JSONPathParser {
@@ -321,7 +323,9 @@ impl JSONPathParser {
                         self.parse_segment(acc, segment)
                     });
                 FilterExpression::RelativeQuery {
-                    query: Box::new(Query { segments: segments? }),
+                    query: Box::new(Query {
+                        segments: segments?,
+                    }),
                 }
             }
             Rule::abs_singular_query => {
@@ -331,7 +335,9 @@ impl JSONPathParser {
                         self.parse_segment(acc, segment)
                     });
                 FilterExpression::RootQuery {
-                    query: Box::new(Query { segments: segments? }),
+                    query: Box::new(Query {
+                        segments: segments?,
+                    }),
                 }
             }
             Rule::function_expr => self.parse_function_expression(expr)?,
@@ -362,9 +368,7 @@ impl JSONPathParser {
             .into_inner()
             .map(|p| self.parse_comparable(p))
             .collect();
-        Ok(FilterExpression::Array {
-            values: values?,
-        })
+        Ok(FilterExpression::Array { values: values? })
     }
 
     fn parse_test_expression(&self, expr: Pair<Rule>) -> Result<FilterExpression, JSONPathError> {
@@ -390,7 +394,9 @@ impl JSONPathParser {
                         self.parse_segment(acc, segment)
                     });
                 FilterExpression::RelativeQuery {
-                    query: Box::new(Query { segments: segments? }),
+                    query: Box::new(Query {
+                        segments: segments?,
+                    }),
                 }
             }
             Rule::root_query => {
@@ -400,7 +406,9 @@ impl JSONPathParser {
                         self.parse_segment(acc, segment)
                     });
                 FilterExpression::RootQuery {
-                    query: Box::new(Query { segments: segments? }),
+                    query: Box::new(Query {
+                        segments: segments?,
+                    }),
                 }
             }
             Rule::function_expr => self.parse_function_expression(expr)?,
@@ -441,7 +449,9 @@ impl JSONPathParser {
                         self.parse_segment(acc, segment)
                     });
                 FilterExpression::RelativeQuery {
-                    query: Box::new(Query { segments: segments? }),
+                    query: Box::new(Query {
+                        segments: segments?,
+                    }),
                 }
             }
             Rule::root_query => {
@@ -451,7 +461,9 @@ impl JSONPathParser {
                         self.parse_segment(acc, segment)
                     });
                 FilterExpression::RootQuery {
-                    query: Box::new(Query { segments: segments? }),
+                    query: Box::new(Query {
+                        segments: segments?,
+                    }),
                 }
             }
             Rule::logical_or_expr => self.parse_logical_or_expression(expr, false)?,
@@ -488,9 +500,9 @@ impl JSONPathParser {
             }
             FilterExpression::Function { name, .. } => {
                 if let Some(FunctionSignature {
-                                return_type: ExpressionType::Value,
-                                ..
-                            }) = self.function_signatures.get(name)
+                    return_type: ExpressionType::Value,
+                    ..
+                }) = self.function_signatures.get(name)
                 {
                     Ok(())
                 } else {
@@ -508,9 +520,9 @@ impl JSONPathParser {
         match expr {
             FilterExpression::Function { name, .. } => {
                 if let Some(FunctionSignature {
-                                return_type: ExpressionType::Value,
-                                ..
-                            }) = self.function_signatures.get(name)
+                    return_type: ExpressionType::Value,
+                    ..
+                }) = self.function_signatures.get(name)
                 {
                     Err(JSONPathError::typ(format!(
                         "result of {}() must be compared",
@@ -541,7 +553,11 @@ impl JSONPathParser {
                 "{}() takes {} argument{} but {} were given",
                 func_name,
                 signature.param_types.len(),
-                if signature.param_types.len() > 1 { "s" } else { "" },
+                if signature.param_types.len() > 1 {
+                    "s"
+                } else {
+                    ""
+                },
                 args.len()
             )));
         }
@@ -661,14 +677,16 @@ fn unescape_string(value: &str) -> String {
                             .collect::<String>();
                         let mut codepoint = u32::from_str_radix(&digits, 16).unwrap();
 
-                        if index + 5 < length && chars[index + 4] == '\\' && chars[index + 5] == 'u' {
+                        if index + 5 < length && chars[index + 4] == '\\' && chars[index + 5] == 'u'
+                        {
                             let digits = &chars
                                 .get(index + 6..index + 10)
                                 .unwrap()
                                 .iter()
                                 .collect::<String>();
                             let low_surrogate = u32::from_str_radix(digits, 16).unwrap();
-                            codepoint = 0x10000 + (((codepoint & 0x03FF) << 10) | (low_surrogate & 0x03FF));
+                            codepoint =
+                                0x10000 + (((codepoint & 0x03FF) << 10) | (low_surrogate & 0x03FF));
                             index += 6;
                         }
 

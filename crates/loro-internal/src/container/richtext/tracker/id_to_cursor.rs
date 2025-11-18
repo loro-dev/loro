@@ -1,10 +1,10 @@
-use rustc_hash::FxHashMap;
 use generic_btree::{
     rle::{HasLength, Mergeable},
     LeafIndex,
 };
 use loro_common::{Counter, IdSpan, PeerID, ID};
 use rle::{HasLength as RHasLength, Mergable as RMergeable, Sliceable};
+use rustc_hash::FxHashMap;
 use smallvec::smallvec;
 
 use self::insert_set::InsertSet;

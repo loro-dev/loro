@@ -20,7 +20,9 @@ mod pending {
                     let mut txn = loro.txn().unwrap();
                     text.delete_with_txn(&mut txn, *pos, *del).unwrap();
                     text.insert_with_txn(&mut txn, *pos, ins).unwrap();
-                    updates.push(loro.export(ExportMode::updates(&latest_vv))).unwrap();
+                    updates
+                        .push(loro.export(ExportMode::updates(&latest_vv)))
+                        .unwrap();
                     latest_vv = loro.oplog_vv();
                 }
             }

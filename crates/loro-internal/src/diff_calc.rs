@@ -11,11 +11,11 @@ use generic_btree::rle::HasLength as _;
 use itertools::Itertools;
 
 use enum_dispatch::enum_dispatch;
-use rustc_hash::{FxHashMap, FxHashSet};
 use loro_common::{
     CompactIdLp, ContainerID, Counter, HasCounterSpan, IdFull, IdLp, IdSpan, LoroValue, PeerID, ID,
 };
 use loro_delta::DeltaRope;
+use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use tracing::{info_span, instrument};
 

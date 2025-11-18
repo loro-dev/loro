@@ -1,9 +1,9 @@
 use std::{collections::BTreeSet, sync::Arc};
 
 use fractional_index::FractionalIndex;
-use rustc_hash::FxHashMap;
 use itertools::Itertools;
 use loro_common::{ContainerID, IdFull, IdLp, Lamport, PeerID, TreeID, ID};
+use rustc_hash::FxHashMap;
 
 use crate::{
     container::{idx::ContainerIdx, tree::tree_op::TreeOp},

@@ -1,5 +1,5 @@
-use rustc_hash::FxHashSet;
 use loro_common::ContainerID;
+use rustc_hash::FxHashSet;
 
 pub use crate::container::richtext::config::{StyleConfig, StyleConfigMap};
 use crate::LoroDoc;

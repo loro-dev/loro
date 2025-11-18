@@ -409,19 +409,23 @@ fn test_pending() {
     a.get_text("text").insert(0, "0").unwrap();
     let b = LoroDoc::new_auto_commit();
     b.set_peer_id(1).unwrap();
-    b.import(&a.export(ExportMode::all_updates()).unwrap()).unwrap();
+    b.import(&a.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
     b.get_text("text").insert(0, "1").unwrap();
     let c = LoroDoc::new_auto_commit();
     b.set_peer_id(2).unwrap();
-    c.import(&b.export(ExportMode::all_updates()).unwrap()).unwrap();
+    c.import(&b.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
     c.get_text("text").insert(0, "2").unwrap();
 
     // c creates a pending change for a, insert "2" cannot be merged into a yet
-    a.import(&c.export(ExportMode::updates(&b.oplog_vv())).unwrap()).unwrap();
+    a.import(&c.export(ExportMode::updates(&b.oplog_vv())).unwrap())
+        .unwrap();
     assert_eq!(a.get_deep_value().to_json_value(), json!({"text": "0"}));
 
     // b does not has c's change
-    a.import(&b.export(ExportMode::updates(&a.oplog_vv())).unwrap()).unwrap();
+    a.import(&b.export(ExportMode::updates(&a.oplog_vv())).unwrap())
+        .unwrap();
     dbg!(&a.oplog().lock().unwrap());
     assert_eq!(a.get_deep_value().to_json_value(), json!({"text": "210"}));
 }
@@ -646,7 +650,9 @@ fn map_concurrent_checkout() {
     let vb_0 = doc_b.oplog_frontiers();
     meta_b.insert("key", 1).unwrap();
     let vb_1 = doc_b.oplog_frontiers();
-    doc_a.import(&doc_b.export(ExportMode::Snapshot).unwrap()).unwrap();
+    doc_a
+        .import(&doc_b.export(ExportMode::Snapshot).unwrap())
+        .unwrap();
     meta_a.insert("key", 2).unwrap();
 
     let v_merged = doc_a.oplog_frontiers();
@@ -757,7 +763,8 @@ fn state_may_deadlock_when_import() {
 
         let doc2 = LoroDoc::new_auto_commit();
         doc2.get_map("map").insert("foo", 123).unwrap();
-        doc.import(&doc.export(ExportMode::Snapshot).unwrap()).unwrap();
+        doc.import(&doc.export(ExportMode::Snapshot).unwrap())
+            .unwrap();
     })
 }
 
@@ -806,11 +813,13 @@ fn missing_event_when_checkout() {
     let _ = tree.create_at(TreeParentId::Root, 0).unwrap();
     let meta = tree.get_meta(node).unwrap();
     meta.insert("a", 0).unwrap();
-    doc.import(&doc2.export(ExportMode::updates(&doc.oplog_vv())).unwrap()).unwrap();
+    doc.import(&doc2.export(ExportMode::updates(&doc.oplog_vv())).unwrap())
+        .unwrap();
     doc.attach();
     meta.insert("b", 1).unwrap();
     doc.checkout(&doc.oplog_frontiers()).unwrap();
-    doc.import(&doc2.export(ExportMode::updates(&doc.oplog_vv())).unwrap()).unwrap();
+    doc.import(&doc2.export(ExportMode::updates(&doc.oplog_vv())).unwrap())
+        .unwrap();
     // checkout use the same diff_calculator, the depth of calculator is not updated
     doc.attach();
     assert!(value.lock().unwrap().contains_key("b"));
@@ -826,7 +835,8 @@ fn empty_event() {
     let _g = doc.subscribe_root(Arc::new(move |_e| {
         fire_clone.store(true, std::sync::atomic::Ordering::Relaxed);
     }));
-    doc.import(&doc.export(ExportMode::Snapshot).unwrap()).unwrap();
+    doc.import(&doc.export(ExportMode::Snapshot).unwrap())
+        .unwrap();
     assert!(!fire.load(std::sync::atomic::Ordering::Relaxed));
 }
 

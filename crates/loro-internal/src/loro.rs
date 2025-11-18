@@ -1446,9 +1446,7 @@ impl LoroDoc {
     ///
     /// After `a.merge(b)` and `b.merge(a)`, `a` and `b` will have the same content if they are in attached mode.
     pub fn merge(&self, other: &Self) -> LoroResult<ImportStatus> {
-        let updates = other
-            .export(ExportMode::updates(&self.oplog_vv()))
-            .unwrap();
+        let updates = other.export(ExportMode::updates(&self.oplog_vv())).unwrap();
         self.import(&updates)
     }
 
@@ -2143,7 +2141,8 @@ mod test {
         }
         txn.commit().unwrap();
         let b = LoroDoc::new();
-        b.import(&loro.export(ExportMode::Snapshot).unwrap()).unwrap();
+        b.import(&loro.export(ExportMode::Snapshot).unwrap())
+            .unwrap();
         loro.checkout(&Frontiers::default()).unwrap();
         {
             let json = &loro.get_deep_value();
