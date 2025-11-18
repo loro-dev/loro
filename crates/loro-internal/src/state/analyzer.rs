@@ -1,7 +1,7 @@
 use crate::{change::Timestamp, LoroDoc};
-use rustc_hash::FxHashMap;
 use loro_common::ContainerID;
 use rle::HasLength;
+use rustc_hash::FxHashMap;
 
 #[derive(Debug, Clone)]
 pub struct DocAnalysis {

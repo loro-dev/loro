@@ -1645,11 +1645,15 @@ mod test {
         }
 
         // Sync B's changes to A
-        let b_changes = doc_b.export(ExportMode::updates(&doc_a.oplog_vv())).unwrap();
+        let b_changes = doc_b
+            .export(ExportMode::updates(&doc_a.oplog_vv()))
+            .unwrap();
         doc_a.import(&b_changes)?;
 
         // Sync C's changes to A
-        let c_changes = doc_c.export(ExportMode::updates(&doc_a.oplog_vv())).unwrap();
+        let c_changes = doc_c
+            .export(ExportMode::updates(&doc_a.oplog_vv()))
+            .unwrap();
         doc_a.import(&c_changes)?;
 
         test_encode_decode(doc_a);

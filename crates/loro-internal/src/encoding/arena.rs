@@ -1,7 +1,7 @@
 use std::{borrow::Cow, ops::Deref};
 
 use crate::InternalString;
-use loro_common::{ContainerID, ContainerType, Counter, LoroError, LoroResult, PeerID, ID};
+use loro_common::{ContainerID, ContainerType, Counter, LoroError, LoroResult, PeerID};
 use rustc_hash::FxHashSet;
 use serde_columnar::columnar;
 
@@ -15,7 +15,6 @@ use super::{
 pub struct EncodedRegisters<'a> {
     pub(super) peer: ValueRegister<PeerID>,
     pub(super) key: ValueRegister<InternalString>,
-    pub(super) container: ValueRegister<ContainerID>,
     pub(super) tree_id: ValueRegister<EncodedTreeID>,
     pub(super) position: either::Either<FxHashSet<&'a [u8]>, ValueRegister<&'a [u8]>>,
 }

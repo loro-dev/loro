@@ -1,5 +1,5 @@
-use rustc_hash::FxHashMap;
 use loro_common::{InternalString, LoroValue, PeerID};
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::change::Lamport;

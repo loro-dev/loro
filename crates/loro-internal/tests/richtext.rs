@@ -17,7 +17,8 @@ fn init(s: &str) -> LoroDoc {
 fn clone(doc: &LoroDoc, peer_id: u64) -> LoroDoc {
     let doc2 = LoroDoc::new_auto_commit();
     doc2.set_peer_id(peer_id).unwrap();
-    doc2.import(&doc.export(ExportMode::all_updates()).unwrap()).unwrap();
+    doc2.import(&doc.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
     doc2
 }
 
@@ -70,8 +71,10 @@ fn mark_kv(doc: &LoroDoc, range: Range<usize>, key: &str, value: impl Into<LoroV
 }
 
 fn merge(a: &LoroDoc, b: &LoroDoc) {
-    a.import(&b.export(ExportMode::updates(&a.oplog_vv())).unwrap()).unwrap();
-    b.import(&a.export(ExportMode::updates(&b.oplog_vv())).unwrap()).unwrap();
+    a.import(&b.export(ExportMode::updates(&a.oplog_vv())).unwrap())
+        .unwrap();
+    b.import(&a.export(ExportMode::updates(&b.oplog_vv())).unwrap())
+        .unwrap();
 }
 
 fn expect_result(doc: &LoroDoc, json: serde_json::Value) {

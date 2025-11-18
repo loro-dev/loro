@@ -4,11 +4,11 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use rustc_hash::FxHashMap;
 use loro::{
     event::Diff, Container, ContainerID, ContainerType, LoroDoc, LoroError, LoroTree, LoroValue,
     TreeExternalDiff, TreeID,
 };
+use rustc_hash::FxHashMap;
 
 use crate::{
     actions::{Actionable, FromGenericAction, GenericAction},

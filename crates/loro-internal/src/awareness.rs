@@ -1,8 +1,8 @@
 use std::sync::atomic::AtomicI64;
 use std::sync::{Arc, Mutex};
 
-use rustc_hash::FxHashMap;
 use loro_common::{LoroValue, PeerID};
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::change::{get_sys_timestamp, Timestamp};
@@ -245,7 +245,7 @@ impl EphemeralStore {
     pub fn encode_all(&self) -> Vec<u8> {
         self.inner.encode_all()
     }
-    
+
     /// Apply encoded updates imported from another peer/process.
     ///
     /// Subscribers receive an event with `by = Import` and the lists of

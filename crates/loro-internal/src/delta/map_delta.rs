@@ -1,7 +1,7 @@
 use std::{hash::Hash, sync::Weak};
 
-use rustc_hash::FxHashMap;
 use loro_common::IdLp;
+use rustc_hash::FxHashMap;
 use serde::{ser::SerializeStruct, Serialize};
 
 use crate::{

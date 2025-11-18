@@ -23,7 +23,7 @@ use wasm_bindgen::convert::RefFromWasmAbi;
 /// Convert a `JsValue` to `T` by constructor's name.
 ///
 /// more details can be found in https://github.com/rustwasm/wasm-bindgen/issues/2231#issuecomment-656293288
-pub(crate) fn js_to_container(js: JsContainer) -> Result<Container, JsValue> {
+pub(crate) fn js_to_container(js: JsContainer) -> JsResult<Container> {
     let js: JsValue = js.into();
     if !js.is_object() {
         return Err(JsValue::from_str(&format!(
@@ -37,7 +37,9 @@ pub(crate) fn js_to_container(js: JsContainer) -> Result<Container, JsValue> {
         Ok(kind_method) if kind_method.is_function() => {
             let kind_string = js_sys::Function::from(kind_method).call0(&js);
             match kind_string {
-                Ok(kind_string) if kind_string.is_string() => kind_string.as_string().unwrap(),
+                Ok(kind_string) if kind_string.is_string() => kind_string
+                    .as_string()
+                    .ok_or_else(|| JsValue::from_str("kind() did not return a string"))?,
                 _ => return Err(JsValue::from_str("kind() did not return a string")),
             }
         }
@@ -47,7 +49,9 @@ pub(crate) fn js_to_container(js: JsContainer) -> Result<Container, JsValue> {
     let Ok(ptr) = Reflect::get(&js, &JsValue::from_str("__wbg_ptr")) else {
         return Err(JsValue::from_str("Cannot find pointer field"));
     };
-    let ptr_u32: u32 = ptr.as_f64().unwrap() as u32;
+    let ptr_u32: u32 =
+        ptr.as_f64()
+            .ok_or_else(|| JsValue::from_str("__wbg_ptr must be a number"))? as u32;
     let container = match kind.as_str() {
         "Text" => {
             let obj = unsafe { LoroText::ref_from_abi(ptr_u32) };
@@ -87,25 +91,25 @@ pub(crate) fn js_to_container(js: JsContainer) -> Result<Container, JsValue> {
     Ok(container)
 }
 
-pub(crate) fn js_to_id_span(js: JsIdSpan) -> Result<IdSpan, JsValue> {
+pub(crate) fn js_to_id_span(js: JsIdSpan) -> JsResult<IdSpan> {
     let value: JsValue = js.into();
     let peer = Reflect::get(&value, &JsValue::from_str("peer"))?
         .as_string()
-        .unwrap()
+        .ok_or_else(|| JsValue::from_str("peer must be a string"))?
         .parse::<u64>()
-        .unwrap();
+        .map_err(|_| JsValue::from_str("peer must be a number"))?;
     let counter = Reflect::get(&value, &JsValue::from_str("counter"))?
         .as_f64()
-        .unwrap() as Counter;
+        .ok_or_else(|| JsValue::from_str("counter must be a number"))? as Counter;
     let length = Reflect::get(&value, &JsValue::from_str("length"))?
         .as_f64()
-        .unwrap() as Counter;
+        .ok_or_else(|| JsValue::from_str("length must be a number"))? as Counter;
     Ok(IdSpan::new(peer, counter, counter + length))
 }
 
 pub(crate) fn js_to_version_vector(
     js: JsValue,
-) -> Result<wasm_bindgen::__rt::RcRef<VersionVector>, JsValue> {
+) -> JsResult<wasm_bindgen::__rt::RcRef<VersionVector>> {
     if !js.is_object() {
         return Err(JsValue::from_str(&format!(
             "Value supplied is not an object, but {:?}",
@@ -128,29 +132,29 @@ pub(crate) fn js_to_version_vector(
         return Err(JsValue::from_str("Cannot find pointer field"));
     };
 
-    let ptr_u32: u32 = ptr.as_f64().unwrap() as u32;
+    let ptr_u32: u32 =
+        ptr.as_f64()
+            .ok_or_else(|| JsValue::from_str("__wbg_ptr must be a number"))? as u32;
     let vv = unsafe { VersionVector::ref_from_abi(ptr_u32) };
     Ok(vv)
 }
 
-pub(crate) fn resolved_diff_to_js(value: &Diff, for_json: bool) -> JsValue {
+pub(crate) fn resolved_diff_to_js(value: &Diff, for_json: bool) -> JsResult<JsValue> {
     // create a obj
     let obj = Object::new();
     match value {
         Diff::Tree(tree) => {
-            js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("tree"))
-                .unwrap();
-            js_sys::Reflect::set(&obj, &JsValue::from_str("diff"), &tree.into()).unwrap();
+            js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("tree"))?;
+            js_sys::Reflect::set(&obj, &JsValue::from_str("diff"), &tree.into())?;
         }
         Diff::List(list) => {
             // set type as "list"
-            js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("list"))
-                .unwrap();
+            js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("list"))?;
             // set diff as array
             let arr = Array::new();
             let mut i = 0;
             for v in list.iter() {
-                let (a, b) = delta_item_to_js(v.clone(), for_json);
+                let (a, b) = delta_item_to_js(v.clone(), for_json)?;
                 arr.set(i as u32, a);
                 i += 1;
                 if let Some(b) = b {
@@ -158,35 +162,27 @@ pub(crate) fn resolved_diff_to_js(value: &Diff, for_json: bool) -> JsValue {
                     i += 1;
                 }
             }
-            js_sys::Reflect::set(
-                &obj,
-                &JsValue::from_str("diff"),
-                &arr.into_js_result().unwrap(),
-            )
-            .unwrap();
+            let diff = arr.into_js_result()?;
+            js_sys::Reflect::set(&obj, &JsValue::from_str("diff"), &diff)?;
         }
         Diff::Text(text) => {
             // set type as "text"
-            js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("text"))
-                .unwrap();
+            js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("text"))?;
             // set diff as array
             js_sys::Reflect::set(
                 &obj,
                 &JsValue::from_str("diff"),
                 &loro_internal::wasm::text_diff_to_js_value(text),
-            )
-            .unwrap();
+            )?;
         }
         Diff::Map(map) => {
-            js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("map"))
-                .unwrap();
+            js_sys::Reflect::set(&obj, &JsValue::from_str("type"), &JsValue::from_str("map"))?;
 
             js_sys::Reflect::set(
                 &obj,
                 &JsValue::from_str("updated"),
-                &map_delta_to_js(map, for_json),
-            )
-            .unwrap();
+                &map_delta_to_js(map, for_json)?,
+            )?;
         }
 
         Diff::Counter(v) => {
@@ -194,20 +190,18 @@ pub(crate) fn resolved_diff_to_js(value: &Diff, for_json: bool) -> JsValue {
                 &obj,
                 &JsValue::from_str("type"),
                 &JsValue::from_str("counter"),
-            )
-            .unwrap();
+            )?;
             js_sys::Reflect::set(
                 &obj,
                 &JsValue::from_str("increment"),
                 &JsValue::from_f64(*v),
-            )
-            .unwrap();
+            )?;
         }
         _ => unreachable!(),
     };
 
     // convert object to js value
-    obj.into_js_result().unwrap()
+    obj.into_js_result()
 }
 
 pub(crate) fn js_diff_to_inner_diff(js: JsValue) -> JsResult<Diff> {
@@ -245,7 +239,7 @@ pub(crate) fn js_diff_to_inner_diff(js: JsValue) -> JsResult<Diff> {
     }
 }
 
-fn delta_item_to_js(item: ListDiffItem, for_json: bool) -> (JsValue, Option<JsValue>) {
+fn delta_item_to_js(item: ListDiffItem, for_json: bool) -> JsResult<(JsValue, Option<JsValue>)> {
     match item {
         loro_internal::loro_delta::DeltaItem::Retain { len, attr: _ } => {
             let obj = Object::new();
@@ -253,35 +247,29 @@ fn delta_item_to_js(item: ListDiffItem, for_json: bool) -> (JsValue, Option<JsVa
                 &obj,
                 &JsValue::from_str("retain"),
                 &JsValue::from_f64(len as f64),
-            )
-            .unwrap();
-            (obj.into_js_result().unwrap(), None)
+            )?;
+            Ok((obj.into_js_result()?, None))
         }
         loro_internal::loro_delta::DeltaItem::Replace {
             value,
             attr: _,
             delete,
         } => {
-            let mut a = None;
-            let mut b: Option<JsValue> = None;
+            let mut first = None;
+            let mut second: Option<JsValue> = None;
             if !value.is_empty() {
                 let obj = Object::new();
                 let arr = Array::new_with_length(value.len() as u32);
                 for (i, v) in value.into_iter().enumerate() {
                     let value = match v {
-                        ValueOrHandler::Value(v) => convert(v),
+                        ValueOrHandler::Value(v) => convert(v)?,
                         ValueOrHandler::Handler(h) => handler_to_js_value(h, for_json),
                     };
                     arr.set(i as u32, value);
                 }
 
-                js_sys::Reflect::set(
-                    &obj,
-                    &JsValue::from_str("insert"),
-                    &arr.into_js_result().unwrap(),
-                )
-                .unwrap();
-                a = Some(obj.into_js_result().unwrap());
+                js_sys::Reflect::set(&obj, &JsValue::from_str("insert"), &arr.into_js_result()?)?;
+                first = Some(obj.into_js_result()?);
             }
             if delete > 0 {
                 let obj = Object::new();
@@ -289,21 +277,23 @@ fn delta_item_to_js(item: ListDiffItem, for_json: bool) -> (JsValue, Option<JsVa
                     &obj,
                     &JsValue::from_str("delete"),
                     &JsValue::from_f64(delete as f64),
-                )
-                .unwrap();
-                b = Some(obj.into_js_result().unwrap());
+                )?;
+                if first.is_some() {
+                    second = Some(obj.into_js_result()?);
+                } else {
+                    first = Some(obj.into_js_result()?);
+                }
             }
 
-            if a.is_none() {
-                a = std::mem::take(&mut b);
-            }
+            let first =
+                first.ok_or_else(|| JsValue::from_str("Replace delta must insert or delete"))?;
 
-            (a.unwrap(), b)
+            Ok((first, second))
         }
     }
 }
 
-pub(crate) fn js_to_cursor(js: JsValue) -> Result<Cursor, JsValue> {
+pub(crate) fn js_to_cursor(js: JsValue) -> JsResult<Cursor> {
     if !js.is_object() {
         return Err(JsValue::from_str(&format!(
             "Value supplied is not an object, but {:?}",
@@ -316,7 +306,9 @@ pub(crate) fn js_to_cursor(js: JsValue) -> Result<Cursor, JsValue> {
         Ok(kind_method) if kind_method.is_function() => {
             let kind_string = js_sys::Function::from(kind_method).call0(&js);
             match kind_string {
-                Ok(kind_string) if kind_string.is_string() => kind_string.as_string().unwrap(),
+                Ok(kind_string) if kind_string.is_string() => kind_string
+                    .as_string()
+                    .ok_or_else(|| JsValue::from_str("kind() did not return a string"))?,
                 _ => return Err(JsValue::from_str("kind() did not return a string")),
             }
         }
@@ -330,93 +322,100 @@ pub(crate) fn js_to_cursor(js: JsValue) -> Result<Cursor, JsValue> {
     let Ok(ptr) = Reflect::get(&js, &JsValue::from_str("__wbg_ptr")) else {
         return Err(JsValue::from_str("Cannot find pointer field"));
     };
-    let ptr_u32: u32 = ptr.as_f64().unwrap() as u32;
+    let ptr_u32: u32 =
+        ptr.as_f64()
+            .ok_or_else(|| JsValue::from_str("__wbg_ptr must be a number"))? as u32;
     let cursor = unsafe { Cursor::ref_from_abi(ptr_u32) };
     Ok(cursor.clone())
 }
 
-pub fn convert(value: LoroValue) -> JsValue {
-    match value {
+pub(crate) fn convert(value: LoroValue) -> JsResult<JsValue> {
+    Ok(match value {
         LoroValue::Null => JsValue::NULL,
         LoroValue::Bool(b) => JsValue::from_bool(b),
         LoroValue::Double(f) => JsValue::from_f64(f),
         LoroValue::I64(i) => JsValue::from_f64(i as f64),
         LoroValue::String(s) => JsValue::from_str(&s),
         LoroValue::List(list) => {
-            let list = list.unwrap();
             let arr = Array::new_with_length(list.len() as u32);
-            for (i, v) in list.into_iter().enumerate() {
-                arr.set(i as u32, convert(v));
+            for (i, v) in list.as_ref().iter().cloned().enumerate() {
+                arr.set(i as u32, convert(v)?);
             }
-            arr.into_js_result().unwrap()
+            arr.into_js_result()?
         }
         LoroValue::Map(m) => {
-            let m = m.unwrap();
             let map = Object::new();
-            for (k, v) in m.into_iter() {
-                let str: &str = &k;
-                js_sys::Reflect::set(&map, &JsValue::from_str(str), &convert(v)).unwrap();
+            for (k, v) in m.as_ref().iter() {
+                let str: &str = k;
+                js_sys::Reflect::set(&map, &JsValue::from_str(str), &convert(v.clone())?)?;
             }
 
-            map.into_js_result().unwrap()
+            map.into_js_result()?
         }
         LoroValue::Container(container_id) => JsValue::from(&container_id),
         LoroValue::Binary(binary) => {
-            let binary = binary.unwrap();
             let arr = Uint8Array::new_with_length(binary.len() as u32);
-            for (i, v) in binary.into_iter().enumerate() {
-                arr.set_index(i as u32, v);
+            for (i, v) in binary.iter().enumerate() {
+                arr.set_index(i as u32, *v);
             }
-            arr.into_js_result().unwrap()
+            arr.into_js_result()?
         }
-    }
+    })
 }
 
 impl From<ImportBlobMetadata> for JsImportBlobMetadata {
     fn from(meta: ImportBlobMetadata) -> Self {
-        let start_vv = super::VersionVector(meta.partial_start_vv);
-        let end_vv = super::VersionVector(meta.partial_end_vv);
-        let start_vv: JsValue = start_vv.into();
-        let end_vv: JsValue = end_vv.into();
-        let start_timestamp: JsValue = JsValue::from_f64(meta.start_timestamp as f64);
-        let end_timestamp: JsValue = JsValue::from_f64(meta.end_timestamp as f64);
-        let mode: JsValue = JsValue::from_str(&meta.mode.to_string());
-        let change_num: JsValue = JsValue::from_f64(meta.change_num as f64);
-        let ans = Object::new();
-        js_sys::Reflect::set(
-            &ans,
-            &JsValue::from_str("partialStartVersionVector"),
-            &start_vv,
-        )
-        .unwrap();
-        js_sys::Reflect::set(&ans, &JsValue::from_str("partialEndVersionVector"), &end_vv).unwrap();
-        let js_frontiers: JsValue = frontiers_to_ids(&meta.start_frontiers).into();
-        js_sys::Reflect::set(&ans, &JsValue::from_str("startFrontiers"), &js_frontiers).unwrap();
-        js_sys::Reflect::set(&ans, &JsValue::from_str("startTimestamp"), &start_timestamp).unwrap();
-        js_sys::Reflect::set(&ans, &JsValue::from_str("endTimestamp"), &end_timestamp).unwrap();
-        js_sys::Reflect::set(&ans, &JsValue::from_str("mode"), &mode).unwrap();
-        js_sys::Reflect::set(&ans, &JsValue::from_str("changeNum"), &change_num).unwrap();
-        let ans: JsValue = ans.into();
-        ans.into()
+        match import_blob_metadata_to_js(meta) {
+            Ok(value) => value,
+            Err(err) => wasm_bindgen::throw_val(err),
+        }
     }
 }
 
-fn map_delta_to_js(value: &ResolvedMapDelta, for_json: bool) -> JsValue {
+pub(crate) fn import_blob_metadata_to_js(
+    meta: ImportBlobMetadata,
+) -> JsResult<JsImportBlobMetadata> {
+    let start_vv = super::VersionVector(meta.partial_start_vv);
+    let end_vv = super::VersionVector(meta.partial_end_vv);
+    let start_vv: JsValue = start_vv.into();
+    let end_vv: JsValue = end_vv.into();
+    let start_timestamp: JsValue = JsValue::from_f64(meta.start_timestamp as f64);
+    let end_timestamp: JsValue = JsValue::from_f64(meta.end_timestamp as f64);
+    let mode: JsValue = JsValue::from_str(&meta.mode.to_string());
+    let change_num: JsValue = JsValue::from_f64(meta.change_num as f64);
+    let ans = Object::new();
+    js_sys::Reflect::set(
+        &ans,
+        &JsValue::from_str("partialStartVersionVector"),
+        &start_vv,
+    )?;
+    js_sys::Reflect::set(&ans, &JsValue::from_str("partialEndVersionVector"), &end_vv)?;
+    let js_frontiers: JsValue = frontiers_to_ids(&meta.start_frontiers).into();
+    js_sys::Reflect::set(&ans, &JsValue::from_str("startFrontiers"), &js_frontiers)?;
+    js_sys::Reflect::set(&ans, &JsValue::from_str("startTimestamp"), &start_timestamp)?;
+    js_sys::Reflect::set(&ans, &JsValue::from_str("endTimestamp"), &end_timestamp)?;
+    js_sys::Reflect::set(&ans, &JsValue::from_str("mode"), &mode)?;
+    js_sys::Reflect::set(&ans, &JsValue::from_str("changeNum"), &change_num)?;
+    let ans: JsValue = ans.into();
+    Ok(ans.into())
+}
+
+fn map_delta_to_js(value: &ResolvedMapDelta, for_json: bool) -> JsResult<JsValue> {
     let obj = Object::new();
     for (key, value) in value.updated.iter() {
         let value = if let Some(value) = value.value.clone() {
             match value {
-                ValueOrHandler::Value(v) => convert(v),
+                ValueOrHandler::Value(v) => convert(v)?,
                 ValueOrHandler::Handler(h) => handler_to_js_value(h, for_json),
             }
         } else {
             JsValue::undefined()
         };
 
-        js_sys::Reflect::set(&obj, &JsValue::from_str(key), &value).unwrap();
+        js_sys::Reflect::set(&obj, &JsValue::from_str(key), &value)?;
     }
 
-    obj.into_js_result().unwrap()
+    obj.into_js_result()
 }
 
 pub(crate) fn handler_to_js_value(handler: Handler, for_json: bool) -> JsValue {
@@ -440,14 +439,13 @@ pub(crate) fn handler_to_js_value(handler: Handler, for_json: bool) -> JsValue {
     }
 }
 
-pub(crate) fn import_status_to_js_value(status: ImportStatus) -> JsValue {
+pub(crate) fn import_status_to_js_value(status: ImportStatus) -> JsResult<JsValue> {
     let obj = Object::new();
     js_sys::Reflect::set(
         &obj,
         &JsValue::from_str("success"),
         &id_span_vector_to_js_value(status.success),
-    )
-    .unwrap();
+    )?;
     js_sys::Reflect::set(
         &obj,
         &JsValue::from_str("pending"),
@@ -455,9 +453,8 @@ pub(crate) fn import_status_to_js_value(status: ImportStatus) -> JsValue {
             None => JsValue::null(),
             Some(pending) => id_span_vector_to_js_value(pending),
         },
-    )
-    .unwrap();
-    obj.into()
+    )?;
+    Ok(obj.into())
 }
 
 fn id_span_vector_to_js_value(v: VersionRange) -> JsValue {
@@ -531,7 +528,9 @@ pub(crate) fn js_to_map_delta(js: &JsValue) -> Result<ResolvedMapDelta, JsValue>
         }
 
         if value.is_object() && !value.is_null() {
-            let obj = value.dyn_ref::<Object>().unwrap();
+            let obj = value
+                .dyn_ref::<Object>()
+                .ok_or_else(|| JsValue::from_str("Expected an object value"))?;
             if let Ok(kind) = Reflect::get(obj, &JsValue::from_str("kind")) {
                 if kind.is_function() {
                     let container = js_to_container(value.clone().unchecked_into())?;
@@ -586,20 +585,28 @@ pub(crate) fn js_value_to_list_diff(js: &JsValue) -> Result<ListDiff, JsValue> {
             for j in 0..insert_arr.length() {
                 let value = insert_arr.get(j);
                 if value.is_object() && !value.is_null() {
-                    let obj = value.dyn_ref::<Object>().unwrap();
+                    let obj = value
+                        .dyn_ref::<Object>()
+                        .ok_or_else(|| JsValue::from_str("Insert entries must be objects"))?;
                     if let Ok(kind) = Reflect::get(obj, &JsValue::from_str("kind")) {
                         if kind.is_function() {
                             let container = js_to_container(value.clone().unchecked_into())?;
                             values
                                 .push(ValueOrHandler::Handler(container.to_handler()))
-                                .unwrap();
+                                .map_err(|_| {
+                                    JsValue::from_str(
+                                        "Insert array exceeds maximum supported length",
+                                    )
+                                })?;
                             continue;
                         }
                     }
                 }
                 values
                     .push(ValueOrHandler::Value(js_value_to_loro_value(&value)?))
-                    .map_err(|_| JsValue::from_str("Insert array exceeds maximum supported length"))?
+                    .map_err(|_| {
+                        JsValue::from_str("Insert array exceeds maximum supported length")
+                    })?
             }
 
             builder = builder.insert(values, ListDeltaMeta::default());
@@ -666,8 +673,7 @@ pub(crate) fn js_value_to_loro_value(js: &JsValue) -> JsResult<LoroValue> {
         if Object::get_own_property_symbols(&obj).length() > 0 {
             return Err(JsValue::from_str(
                 "Object keys must be strings; symbol properties are not supported",
-            )
-            .into());
+            ));
         }
         let mut map = FxHashMap::default();
         let entries = Object::entries(&obj);
@@ -696,7 +702,9 @@ pub(crate) fn js_json_schema_to_loro_json_schema(
     let js_value: JsValue = json.into();
 
     if js_value.is_string() {
-        let json_str = js_value.as_string().unwrap();
+        let json_str = js_value
+            .as_string()
+            .ok_or_else(|| JsValue::from_str("JsonSchema must be a string"))?;
         JsonSchema::try_from(json_str.as_str())
             .map_err(|e| JsValue::from_str(&format!("Invalid JSON format: {e}")))
     } else {
@@ -706,13 +714,14 @@ pub(crate) fn js_json_schema_to_loro_json_schema(
 }
 
 /// Convert Loro's internal JsonSchema to JavaScript JsonSchema
-pub(crate) fn loro_json_schema_to_js_json_schema(json_schema: JsonSchema) -> JsJsonSchema {
+pub(crate) fn loro_json_schema_to_js_json_schema(
+    json_schema: JsonSchema,
+) -> JsResult<JsJsonSchema> {
     let s = serde_wasm_bindgen::Serializer::new()
         .serialize_maps_as_objects(true)
         .serialize_missing_as_null(true);
     let value = json_schema
         .serialize(&s)
-        .map_err(std::convert::Into::<JsValue>::into)
-        .unwrap();
-    value.into()
+        .map_err(std::convert::Into::<JsValue>::into)?;
+    Ok(value.into())
 }

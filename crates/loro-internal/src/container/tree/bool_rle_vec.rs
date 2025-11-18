@@ -94,7 +94,7 @@ impl BoolRleVec {
         }
 
         // Align the end of self with the start of other
-        let self_last_run_true = self.rle_vec.len() % 2 == 0;
+        let self_last_run_true = self.rle_vec.len().is_multiple_of(2);
         if self_last_run_true {
             self.rle_vec.extend_from_slice(&other.rle_vec);
         } else {

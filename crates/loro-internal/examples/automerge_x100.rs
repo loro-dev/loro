@@ -1,5 +1,5 @@
-use criterion::black_box;
 use loro_internal::{loro::ExportMode, LoroDoc, VersionVector};
+use std::hint::black_box;
 
 fn main() {
     use bench_utils::TextAction;

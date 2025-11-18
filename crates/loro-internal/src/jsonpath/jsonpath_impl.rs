@@ -40,16 +40,11 @@ pub fn evaluate_jsonpath(
         .map_err(|e| JsonPathError::InvalidJsonPath(e.to_string()))?;
 
     let mut results = Vec::new();
-    evaluate_segment(root, root, &query.segments, &mut results);
+    evaluate_segment(root, &query.segments, &mut results);
     Ok(results)
 }
 
-fn evaluate_segment(
-    root: &dyn PathValue,
-    value: &dyn PathValue,
-    segment: &Segment,
-    results: &mut Vec<ValueOrHandler>,
-) {
+fn evaluate_segment(root: &dyn PathValue, segment: &Segment, results: &mut Vec<ValueOrHandler>) {
     match segment {
         Segment::Root {} => {
             if let Ok(cloned) = root.clone_this() {
@@ -61,7 +56,7 @@ fn evaluate_segment(
                 apply_selectors(root, root, selectors, results);
             } else {
                 let mut intermediate = Vec::new();
-                evaluate_segment(root, value, left, &mut intermediate);
+                evaluate_segment(root, left, &mut intermediate);
                 for node in intermediate {
                     apply_selectors(root, &node, selectors, results);
                 }
@@ -72,7 +67,7 @@ fn evaluate_segment(
                 recursive_descent(root, root, selectors, results);
             } else {
                 let mut intermediate = Vec::new();
-                evaluate_segment(root, value, left, &mut intermediate);
+                evaluate_segment(root, left, &mut intermediate);
                 for node in intermediate {
                     recursive_descent(root, &node, selectors, results);
                 }
@@ -250,12 +245,12 @@ fn eval_expr(root: &dyn PathValue, current: &dyn PathValue, expr: &FilterExpress
         }
         FilterExpression::RelativeQuery { query } => {
             let mut query_results = Vec::new();
-            evaluate_segment(current, current, &query.segments, &mut query_results);
+            evaluate_segment(current, &query.segments, &mut query_results);
             ExprValue::Nodes(query_results)
         }
         FilterExpression::RootQuery { query } => {
             let mut query_results = Vec::new();
-            evaluate_segment(root, root, &query.segments, &mut query_results);
+            evaluate_segment(root, &query.segments, &mut query_results);
             ExprValue::Nodes(query_results)
         }
         FilterExpression::Function { name, args } => eval_function(root, current, name, args),

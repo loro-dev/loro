@@ -6,11 +6,11 @@ use std::{
 };
 
 use enum_as_inner::EnumAsInner;
-use rustc_hash::FxHashMap;
 use generic_btree::rle::{HasLength as RleHasLength, Mergeable as GBSliceable};
 use loro_common::{ContainerType, IdLp, IdSpan, LoroResult};
 use loro_delta::{array_vec::ArrayVec, DeltaRopeBuilder};
 use rle::{HasLength, Mergable, RleVec, Sliceable};
+use rustc_hash::FxHashMap;
 use smallvec::{smallvec, SmallVec};
 
 use crate::{

@@ -139,16 +139,20 @@ impl CRDTFuzzer {
             }
             Action::Sync { from, to } => {
                 let (a, b) = array_mut_ref!(&mut self.actors, [*from as usize, *to as usize]);
-                handle_import_result(a.loro.import(
-                    &b.loro
-                        .export(ExportMode::updates(&a.loro.oplog_vv()))
-                        .unwrap(),
-                ));
-                handle_import_result(b.loro.import(
-                    &a.loro
-                        .export(ExportMode::updates(&b.loro.oplog_vv()))
-                        .unwrap(),
-                ));
+                handle_import_result(
+                    a.loro.import(
+                        &b.loro
+                            .export(ExportMode::updates(&a.loro.oplog_vv()))
+                            .unwrap(),
+                    ),
+                );
+                handle_import_result(
+                    b.loro.import(
+                        &a.loro
+                            .export(ExportMode::updates(&b.loro.oplog_vv()))
+                            .unwrap(),
+                    ),
+                );
                 a.record_history();
                 b.record_history();
             }
@@ -578,7 +582,10 @@ pub fn test_multi_sites_with_gc(
     });
 
     static COUNT: AtomicUsize = AtomicUsize::new(0);
-    if COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 1_000 == 0 {
+    if COUNT
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        .is_multiple_of(1_000)
+    {
         let must_meet = [
             "fuzz_gc",
             "export_shallow_snapshot",

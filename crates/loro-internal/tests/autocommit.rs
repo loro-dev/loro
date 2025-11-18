@@ -1,5 +1,7 @@
 use loro_common::ID;
-use loro_internal::{loro::ExportMode, version::Frontiers, HandlerTrait, LoroDoc, TextHandler, ToJson};
+use loro_internal::{
+    loro::ExportMode, version::Frontiers, HandlerTrait, LoroDoc, TextHandler, ToJson,
+};
 use serde_json::json;
 
 #[test]
@@ -19,7 +21,9 @@ fn auto_commit() {
     let text_b = doc_b.get_text("text");
     text_b.insert(0, "100").unwrap();
     doc_b.import(&bytes).unwrap();
-    doc_a.import(&doc_b.export(ExportMode::Snapshot).unwrap()).unwrap();
+    doc_a
+        .import(&doc_b.export(ExportMode::Snapshot).unwrap())
+        .unwrap();
     assert_eq!(text_a.get_value(), text_b.get_value());
     doc_a.check_state_diff_calc_consistency_slow();
 }
@@ -67,6 +71,7 @@ fn auto_commit_with_checkout() {
     // should include all changes
     let new = LoroDoc::default();
     let a = new.get_map("a");
-    new.import(&doc.export(ExportMode::Snapshot).unwrap()).unwrap();
+    new.import(&doc.export(ExportMode::Snapshot).unwrap())
+        .unwrap();
     assert_eq!(a.get_value().to_json_value(), expected,);
 }

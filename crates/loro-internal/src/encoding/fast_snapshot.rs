@@ -20,8 +20,7 @@ use crate::{
     OpLog, VersionVector,
 };
 use bytes::{Buf, Bytes};
-use loro_common::{HasCounterSpan, IdSpan, InternalString, LoroError, LoroResult, ID};
-use rustc_hash::{FxHashMap, FxHashSet};
+use loro_common::{HasCounterSpan, IdSpan, InternalString, LoroError, LoroResult};
 
 use super::{EncodedBlobMode, ImportBlobMetadata, ParsedHeaderAndBody};
 pub(crate) const EMPTY_MARK: &[u8] = b"E";

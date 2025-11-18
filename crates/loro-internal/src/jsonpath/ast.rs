@@ -1,6 +1,6 @@
-use std::fmt::{self, Write};
 use crate::jsonpath::errors::JSONPathError;
 use crate::jsonpath::JSONPathParser;
+use std::fmt::{self, Write};
 
 #[derive(Debug)]
 pub struct Query {
@@ -98,7 +98,6 @@ pub enum ComparisonOperator {
     Contains,
     In,
 }
-
 
 impl Query {
     pub fn standard(expr: &str) -> Result<Self, JSONPathError> {

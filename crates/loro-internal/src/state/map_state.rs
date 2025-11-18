@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, sync::Weak};
 
-use rustc_hash::FxHashMap;
 use loro_common::{ContainerID, IdLp, LoroResult, PeerID};
+use rustc_hash::FxHashMap;
 
 use crate::{
     configure::Configure,
@@ -244,8 +244,8 @@ impl MapState {
 
 mod snapshot {
 
-    use rustc_hash::{FxHashMap, FxHashSet};
     use loro_common::{InternalString, LoroValue};
+    use rustc_hash::{FxHashMap, FxHashSet};
     use serde_columnar::Itertools;
 
     use crate::{

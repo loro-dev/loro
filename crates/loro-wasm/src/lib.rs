@@ -6,9 +6,9 @@
 // #![warn(missing_docs)]
 
 use convert::{
-    import_status_to_js_value, js_diff_to_inner_diff, js_json_schema_to_loro_json_schema,
-    js_to_id_span, js_to_version_vector, js_value_to_loro_value,
-    loro_json_schema_to_js_json_schema, resolved_diff_to_js,
+    import_blob_metadata_to_js, import_status_to_js_value, js_diff_to_inner_diff,
+    js_json_schema_to_loro_json_schema, js_to_id_span, js_to_version_vector,
+    js_value_to_loro_value, loro_json_schema_to_js_json_schema, resolved_diff_to_js,
 };
 use js_sys::{Array, Object, Promise, Reflect, Uint8Array};
 use loro_internal::{
@@ -1489,7 +1489,7 @@ impl LoroDoc {
             with_peer_compression.unwrap_or(true),
         );
 
-        Ok(loro_json_schema_to_js_json_schema(json_schema))
+        loro_json_schema_to_js_json_schema(json_schema)
     }
 
     #[wasm_bindgen(js_name = "exportJsonInIdSpan", skip_typescript)]
@@ -1510,7 +1510,7 @@ impl LoroDoc {
     pub fn import_json_updates(&self, json: JsJsonSchemaOrString) -> JsResult<JsImportStatus> {
         let json_schema = js_json_schema_to_loro_json_schema(json)?;
         let status = self.doc.import_json_updates(json_schema)?;
-        Ok(import_status_to_js_value(status).into())
+        Ok(import_status_to_js_value(status)?.into())
     }
 
     /// Import snapshot or updates into current doc.
@@ -1537,7 +1537,7 @@ impl LoroDoc {
     /// ```
     pub fn import(&self, update_or_snapshot: &[u8]) -> JsResult<JsImportStatus> {
         let status = self.doc.import(update_or_snapshot)?;
-        Ok(import_status_to_js_value(status).into())
+        Ok(import_status_to_js_value(status)?.into())
     }
 
     /// Import a batch of updates and snapshots.
@@ -1591,7 +1591,7 @@ impl LoroDoc {
             .collect::<Vec<_>>();
 
         let status = self.doc.import_batch(&data)?;
-        Ok(import_status_to_js_value(status).into())
+        Ok(import_status_to_js_value(status)?.into())
     }
 
     /// Get the shallow json format of the document state.
@@ -2148,7 +2148,7 @@ impl LoroDoc {
         for (id, d) in diff.iter() {
             let entry = js_sys::Array::new();
             let id_str = id.to_string();
-            let v = resolved_diff_to_js(d, for_json.unwrap_or(true));
+            let v = resolved_diff_to_js(d, for_json.unwrap_or(true))?;
             entry.push(&id_str.into());
             entry.push(&v);
             arr.push(&entry.into());
@@ -2176,7 +2176,9 @@ impl LoroDoc {
     /// ```
     pub fn getUncommittedOpsAsJson(&self) -> JsResult<Option<JsJsonSchema>> {
         let json_schema = self.doc.get_uncommitted_ops_as_json();
-        Ok(json_schema.map(loro_json_schema_to_js_json_schema))
+        json_schema
+            .map(loro_json_schema_to_js_json_schema)
+            .transpose()
     }
 
     #[wasm_bindgen(js_name = "subscribeFirstCommitFromPeer", skip_typescript)]
@@ -2437,7 +2439,7 @@ fn container_diff_to_js_value(event: &loro_internal::ContainerDiff, for_json: bo
     Reflect::set(
         &obj,
         &"diff".into(),
-        &resolved_diff_to_js(&event.diff, for_json),
+        &resolved_diff_to_js(&event.diff, for_json).unwrap_throw(),
     )
     .unwrap();
     Reflect::set(
@@ -5126,8 +5128,10 @@ impl UndoManager {
                         None
                     };
 
-                    let drop_handler: Rc<RefCell<Option<Closure<dyn FnMut()>>>> =
-                        Rc::new(RefCell::new(None));
+                    #[allow(clippy::type_complexity)]
+                    let drop_handler: Rc<
+                        RefCell<Option<Closure<dyn FnMut()>>>,
+                    > = Rc::new(RefCell::new(None));
                     let drop_handler_clone = drop_handler.clone();
                     let undo_inner = undo_inner.clone();
                     let on_push = on_push.clone();
@@ -5448,7 +5452,7 @@ pub fn decode_import_blob_meta(
     check_checksum: bool,
 ) -> JsResult<JsImportBlobMetadata> {
     let meta: ImportBlobMetadata = LoroDocInner::decode_import_blob_meta(blob, check_checksum)?;
-    Ok(meta.into())
+    import_blob_metadata_to_js(meta)
 }
 
 fn js_to_export_mode(js_mode: JsExportMode) -> JsResult<ExportMode<'static>> {
@@ -5602,7 +5606,7 @@ pub fn redact_json_updates(
     loro_internal::json::redact(&mut loro_json, version_range)
         .map_err(|e| JsValue::from_str(&format!("Failed to redact JSON: {e}")))?;
 
-    Ok(loro_json_schema_to_js_json_schema(loro_json))
+    loro_json_schema_to_js_json_schema(loro_json)
 }
 
 #[wasm_bindgen(typescript_custom_section)]

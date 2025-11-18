@@ -95,10 +95,7 @@ impl<T: ActorTrait> ActorGroup<T> {
             let _e = s.enter();
             let vv = doc.doc().oplog_vv();
             doc.doc()
-                .import(&first[0]
-                    .doc()
-                    .export(ExportMode::updates(&vv))
-                    .unwrap())
+                .import(&first[0].doc().export(ExportMode::updates(&vv)).unwrap())
                 .unwrap();
         }
     }
