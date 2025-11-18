@@ -3,9 +3,7 @@ use generic_btree::{
     rle::{CanRemove, HasLength, Mergeable, Sliceable, TryInsert},
     BTree, BTreeTrait, Cursor, LeafIndex,
 };
-use loro_common::{
-    Counter, IdFull, IdLpSpan, IdSpan, Lamport, LoroError, LoroResult, LoroValue, ID,
-};
+use loro_common::{Counter, IdFull, IdSpan, LoroError, LoroResult, LoroValue, ID};
 use query::{ByteQuery, ByteQueryT};
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{ser::SerializeStruct, Serialize};
@@ -250,7 +248,7 @@ mod text_chunk {
     use std::ops::Range;
 
     use append_only_bytes::BytesSlice;
-    use loro_common::{IdFull, IdLp, ID};
+    use loro_common::{IdFull, ID};
 
     #[derive(Clone, PartialEq)]
     pub(crate) struct TextChunk {

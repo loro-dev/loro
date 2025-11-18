@@ -5128,8 +5128,10 @@ impl UndoManager {
                         None
                     };
 
-                    let drop_handler: Rc<RefCell<Option<Closure<dyn FnMut()>>>> =
-                        Rc::new(RefCell::new(None));
+                    #[allow(clippy::type_complexity)]
+                    let drop_handler: Rc<
+                        RefCell<Option<Closure<dyn FnMut()>>>,
+                    > = Rc::new(RefCell::new(None));
                     let drop_handler_clone = drop_handler.clone();
                     let undo_inner = undo_inner.clone();
                     let on_push = on_push.clone();

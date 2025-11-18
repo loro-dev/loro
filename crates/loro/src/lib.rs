@@ -3272,7 +3272,7 @@ impl ContainerTrait for LoroUnknown {
 
 use enum_as_inner::EnumAsInner;
 #[cfg(feature = "jsonpath")]
-use loro_internal::jsonpath::jsonpath::JsonPathError;
+use loro_internal::jsonpath::jsonpath_impl::JsonPathError;
 
 /// All the CRDT containers supported by Loro.
 #[derive(Clone, Debug, EnumAsInner)]

@@ -462,7 +462,6 @@ mod test {
 
         let mut registers = EncodedRegisters {
             key: ValueRegister::new(),
-            container: ValueRegister::new(),
             peer: ValueRegister::new(),
             tree_id: ValueRegister::new(),
             position: either::Either::Left(FxHashSet::default()),

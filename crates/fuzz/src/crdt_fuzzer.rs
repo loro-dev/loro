@@ -582,7 +582,10 @@ pub fn test_multi_sites_with_gc(
     });
 
     static COUNT: AtomicUsize = AtomicUsize::new(0);
-    if COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 1_000 == 0 {
+    if COUNT
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        .is_multiple_of(1_000)
+    {
         let must_meet = [
             "fuzz_gc",
             "export_shallow_snapshot",

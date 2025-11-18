@@ -1,6 +1,6 @@
 pub mod ast;
 pub mod errors;
-pub mod jsonpath;
+pub mod jsonpath_impl;
 pub mod parser;
 
 pub use ast::Query;

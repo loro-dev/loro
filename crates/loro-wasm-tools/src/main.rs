@@ -165,6 +165,7 @@ fn strip_debug(input: PathBuf, output: PathBuf) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::type_complexity)]
 fn collect_debug_sections(bytes: &[u8]) -> Result<(Vec<Range<usize>>, Vec<Range<usize>>)> {
     let mut remove_ranges = Vec::new();
     let mut debug_ranges = Vec::new();

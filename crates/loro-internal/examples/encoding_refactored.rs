@@ -1,6 +1,6 @@
 use bench_utils::TextAction;
-use criterion::black_box;
 use loro_internal::{loro::ExportMode, LoroDoc};
+use std::hint::black_box;
 
 fn main() {
     log_size();
