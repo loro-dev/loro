@@ -230,7 +230,7 @@ dependencies = [
  "arbitrary",
  "enum-as-inner 0.5.1",
  "flate2",
- "loro-common 1.8.1",
+ "loro-common 1.9.1",
  "rand 0.8.5",
  "serde_json",
 ]
@@ -832,7 +832,7 @@ dependencies = [
  "dev-utils",
  "ensure-cov",
  "flate2",
- "loro 1.8.1",
+ "loro 1.9.1",
  "rand 0.8.5",
  "serde_json",
  "tabled 0.15.0",
@@ -903,7 +903,7 @@ dependencies = [
  "itertools 0.12.1",
  "loro 0.16.12",
  "loro 1.8.1",
- "loro 1.8.1 (git+https://github.com/loro-dev/loro.git?rev=c897c346d9fd46dccf44de7ef4e72799fa9c9769)",
+ "loro 1.9.1",
  "num_cpus",
  "pretty_assertions",
  "rand 0.8.5",
@@ -1475,6 +1475,21 @@ dependencies = [
 [[package]]
 name = "loro"
 version = "1.8.1"
+source = "git+https://github.com/loro-dev/loro.git?rev=c897c346d9fd46dccf44de7ef4e72799fa9c9769#c897c346d9fd46dccf44de7ef4e72799fa9c9769"
+dependencies = [
+ "enum-as-inner 0.6.1",
+ "generic-btree",
+ "loro-common 1.8.1",
+ "loro-delta 1.6.0",
+ "loro-internal 1.8.1",
+ "loro-kv-store 1.8.1",
+ "rustc-hash",
+ "tracing",
+]
+
+[[package]]
+name = "loro"
+version = "1.9.1"
 dependencies = [
  "anyhow",
  "base64",
@@ -1483,29 +1498,14 @@ dependencies = [
  "enum-as-inner 0.6.1",
  "generic-btree",
  "loom",
- "loro-common 1.8.1",
- "loro-delta 1.6.0",
- "loro-internal 1.8.2",
- "loro-kv-store 1.8.1",
+ "loro-common 1.9.1",
+ "loro-delta 1.9.1",
+ "loro-internal 1.9.1",
+ "loro-kv-store 1.9.1",
  "pretty_assertions",
  "rand 0.8.5",
  "rustc-hash",
  "serde_json",
- "tracing",
-]
-
-[[package]]
-name = "loro"
-version = "1.8.1"
-source = "git+https://github.com/loro-dev/loro.git?rev=c897c346d9fd46dccf44de7ef4e72799fa9c9769#c897c346d9fd46dccf44de7ef4e72799fa9c9769"
-dependencies = [
- "enum-as-inner 0.6.1",
- "generic-btree",
- "loro-common 1.8.1 (git+https://github.com/loro-dev/loro.git?rev=c897c346d9fd46dccf44de7ef4e72799fa9c9769)",
- "loro-delta 1.6.0 (git+https://github.com/loro-dev/loro.git?rev=c897c346d9fd46dccf44de7ef4e72799fa9c9769)",
- "loro-internal 1.8.1",
- "loro-kv-store 1.8.1 (git+https://github.com/loro-dev/loro.git?rev=c897c346d9fd46dccf44de7ef4e72799fa9c9769)",
- "rustc-hash",
  "tracing",
 ]
 
@@ -1530,6 +1530,23 @@ dependencies = [
 [[package]]
 name = "loro-common"
 version = "1.8.1"
+source = "git+https://github.com/loro-dev/loro.git?rev=c897c346d9fd46dccf44de7ef4e72799fa9c9769#c897c346d9fd46dccf44de7ef4e72799fa9c9769"
+dependencies = [
+ "arbitrary",
+ "enum-as-inner 0.6.1",
+ "leb128",
+ "loro-rle 1.6.0 (git+https://github.com/loro-dev/loro.git?rev=c897c346d9fd46dccf44de7ef4e72799fa9c9769)",
+ "nonmax",
+ "rustc-hash",
+ "serde",
+ "serde_columnar",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "loro-common"
+version = "1.9.1"
 dependencies = [
  "arbitrary",
  "enum-as-inner 0.6.1",
@@ -1547,23 +1564,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "loro-common"
-version = "1.8.1"
-source = "git+https://github.com/loro-dev/loro.git?rev=c897c346d9fd46dccf44de7ef4e72799fa9c9769#c897c346d9fd46dccf44de7ef4e72799fa9c9769"
-dependencies = [
- "arbitrary",
- "enum-as-inner 0.6.1",
- "leb128",
- "loro-rle 1.6.0 (git+https://github.com/loro-dev/loro.git?rev=c897c346d9fd46dccf44de7ef4e72799fa9c9769)",
- "nonmax",
- "rustc-hash",
- "serde",
- "serde_columnar",
- "serde_json",
- "thiserror 1.0.69",
-]
-
-[[package]]
 name = "loro-delta"
 version = "0.16.12"
 source = "git+https://github.com/loro-dev/loro.git?tag=loro-crdt%401.0.0-alpha.4#9bfe97bce4912c6dc8439817497d18423a0e8cb7"
@@ -1578,6 +1578,17 @@ dependencies = [
 [[package]]
 name = "loro-delta"
 version = "1.6.0"
+source = "git+https://github.com/loro-dev/loro.git?rev=c897c346d9fd46dccf44de7ef4e72799fa9c9769#c897c346d9fd46dccf44de7ef4e72799fa9c9769"
+dependencies = [
+ "arrayvec",
+ "enum-as-inner 0.5.1",
+ "generic-btree",
+ "heapless 0.8.0",
+]
+
+[[package]]
+name = "loro-delta"
+version = "1.9.1"
 dependencies = [
  "arrayvec",
  "color-backtrace",
@@ -1589,17 +1600,6 @@ dependencies = [
  "rand 0.8.5",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "loro-delta"
-version = "1.6.0"
-source = "git+https://github.com/loro-dev/loro.git?rev=c897c346d9fd46dccf44de7ef4e72799fa9c9769#c897c346d9fd46dccf44de7ef4e72799fa9c9769"
-dependencies = [
- "arrayvec",
- "enum-as-inner 0.5.1",
- "generic-btree",
- "heapless 0.8.0",
 ]
 
 [[package]]
@@ -1661,9 +1661,9 @@ dependencies = [
  "itertools 0.12.1",
  "leb128",
  "loom",
- "loro-common 1.8.1 (git+https://github.com/loro-dev/loro.git?rev=c897c346d9fd46dccf44de7ef4e72799fa9c9769)",
- "loro-delta 1.6.0 (git+https://github.com/loro-dev/loro.git?rev=c897c346d9fd46dccf44de7ef4e72799fa9c9769)",
- "loro-kv-store 1.8.1 (git+https://github.com/loro-dev/loro.git?rev=c897c346d9fd46dccf44de7ef4e72799fa9c9769)",
+ "loro-common 1.8.1",
+ "loro-delta 1.6.0",
+ "loro-kv-store 1.8.1",
  "loro-rle 1.6.0 (git+https://github.com/loro-dev/loro.git?rev=c897c346d9fd46dccf44de7ef4e72799fa9c9769)",
  "loro_fractional_index 1.6.0 (git+https://github.com/loro-dev/loro.git?rev=c897c346d9fd46dccf44de7ef4e72799fa9c9769)",
  "md5",
@@ -1689,7 +1689,7 @@ dependencies = [
 
 [[package]]
 name = "loro-internal"
-version = "1.8.2"
+version = "1.9.1"
 dependencies = [
  "append-only-bytes",
  "arbitrary",
@@ -1710,9 +1710,9 @@ dependencies = [
  "js-sys",
  "leb128",
  "loom",
- "loro-common 1.8.1",
- "loro-delta 1.6.0",
- "loro-kv-store 1.8.1",
+ "loro-common 1.9.1",
+ "loro-delta 1.9.1",
+ "loro-kv-store 1.9.1",
  "loro-rle 1.6.0",
  "loro_fractional_index 1.6.0",
  "md5",
@@ -1760,16 +1760,14 @@ dependencies = [
 [[package]]
 name = "loro-kv-store"
 version = "1.8.1"
+source = "git+https://github.com/loro-dev/loro.git?rev=c897c346d9fd46dccf44de7ef4e72799fa9c9769#c897c346d9fd46dccf44de7ef4e72799fa9c9769"
 dependencies = [
  "bytes",
- "ctor 0.2.9",
- "dev-utils",
  "ensure-cov",
  "loro-common 1.8.1",
  "lz4_flex",
  "once_cell",
  "quick_cache",
- "rand 0.8.5",
  "rustc-hash",
  "tracing",
  "xxhash-rust",
@@ -1777,15 +1775,17 @@ dependencies = [
 
 [[package]]
 name = "loro-kv-store"
-version = "1.8.1"
-source = "git+https://github.com/loro-dev/loro.git?rev=c897c346d9fd46dccf44de7ef4e72799fa9c9769#c897c346d9fd46dccf44de7ef4e72799fa9c9769"
+version = "1.9.1"
 dependencies = [
  "bytes",
+ "ctor 0.2.9",
+ "dev-utils",
  "ensure-cov",
- "loro-common 1.8.1 (git+https://github.com/loro-dev/loro.git?rev=c897c346d9fd46dccf44de7ef4e72799fa9c9769)",
+ "loro-common 1.9.1",
  "lz4_flex",
  "once_cell",
  "quick_cache",
+ "rand 0.8.5",
  "rustc-hash",
  "tracing",
  "xxhash-rust",
@@ -1836,13 +1836,13 @@ checksum = "3f3d053a135388e6b1df14e8af1212af5064746e9b87a06a345a7a779ee9695a"
 
 [[package]]
 name = "loro-wasm"
-version = "1.8.9"
+version = "1.9.0"
 dependencies = [
  "console_error_panic_hook",
  "js-sys",
- "loro-common 1.8.1",
- "loro-delta 1.6.0",
- "loro-internal 1.8.2",
+ "loro-common 1.9.1",
+ "loro-delta 1.9.1",
+ "loro-internal 1.9.1",
  "loro-rle 1.6.0",
  "parking_lot",
  "serde",
@@ -1854,7 +1854,7 @@ dependencies = [
 
 [[package]]
 name = "loro-wasm-tools"
-version = "0.1.0"
+version = "1.9.1"
 dependencies = [
  "anyhow",
  "clap 4.5.47",
