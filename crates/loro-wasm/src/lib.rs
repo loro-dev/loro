@@ -2431,7 +2431,10 @@ fn diff_event_to_js_value(event: DiffEvent, for_json: bool) -> JsResult<JsValue>
 ///   path: Path;
 /// }
 ///
-fn container_diff_to_js_value(event: &loro_internal::ContainerDiff, for_json: bool) -> JsResult<JsValue> {
+fn container_diff_to_js_value(
+    event: &loro_internal::ContainerDiff,
+    for_json: bool,
+) -> JsResult<JsValue> {
     let obj = js_sys::Object::new();
     Reflect::set(&obj, &"target".into(), &event.id.to_string().into())?;
     Reflect::set(

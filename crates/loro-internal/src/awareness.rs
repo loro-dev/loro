@@ -1,3 +1,14 @@
+//! Ephemeral presence utilities.
+//!
+//! `EphemeralStore` is the recommended API: a timestamped, last-write-wins key-value
+//! store for transient presence data (cursors, selections, etc.). It supports:
+//! - Per-key timeouts: expired entries are skipped by `encode`/`encode_all` and removed
+//!   by `remove_outdated`.
+//! - Import/export via `encode`/`apply` for syncing between peers.
+//! - Subscriptions for both local updates (raw bytes to send) and merged updates.
+//!
+//! The legacy `Awareness` type remains for backward compatibility but is deprecated in
+//! favor of `EphemeralStore`.
 use std::sync::atomic::AtomicI64;
 use std::sync::{Arc, Mutex};
 
@@ -416,6 +427,7 @@ impl EphemeralStoreInner {
         let mut added_keys = Vec::new();
         let mut removed_keys = Vec::new();
         let now = get_sys_timestamp() as Timestamp;
+        let timeout = self.timeout.load(std::sync::atomic::Ordering::Relaxed);
         let mut states = self.states.lock().unwrap();
         for EncodedState {
             key,
@@ -423,6 +435,10 @@ impl EphemeralStoreInner {
             timestamp,
         } in peers_info
         {
+            if now - timestamp > timeout {
+                continue;
+            }
+
             match states.get_mut(key) {
                 Some(peer_info) if peer_info.timestamp >= timestamp => {
                     // do nothing
@@ -432,7 +448,7 @@ impl EphemeralStoreInner {
                         key.to_string(),
                         State {
                             state: record.clone(),
-                            timestamp: now,
+                            timestamp,
                         },
                     );
                     match (old, record) {
