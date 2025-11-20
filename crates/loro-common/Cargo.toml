@@ -1,6 +1,6 @@
 [package]
 name = "loro-common"
-version = "1.8.1"
+version = "1.9.0"
 edition = "2021"
 license = "MIT"
 description = "Common types and functions for Loro. This is an internal lib of Loro."
