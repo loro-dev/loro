@@ -77,7 +77,7 @@ pub fn encodeFrontiers(frontiers: Vec<JsID>) -> JsResult<Vec<u8>> {
 pub fn decodeFrontiers(bytes: &[u8]) -> JsResult<JsIDs> {
     let frontiers =
         Frontiers::decode(bytes).map_err(|_| JsError::new("Invalid frontiers binary data"))?;
-    Ok(frontiers_to_ids(&frontiers))
+    frontiers_to_ids(&frontiers)
 }
 
 /// Enable debug info of Loro
@@ -327,12 +327,11 @@ fn ids_to_frontiers(ids: Vec<JsID>) -> JsResult<Frontiers> {
     Ok(frontiers)
 }
 
-fn id_to_js(id: &ID) -> JsValue {
+fn id_to_js(id: &ID) -> JsResult<JsValue> {
     let obj = Object::new();
-    Reflect::set(&obj, &"peer".into(), &id.peer.to_string().into()).unwrap();
-    Reflect::set(&obj, &"counter".into(), &id.counter.into()).unwrap();
-    let value: JsValue = obj.into_js_result().unwrap();
-    value
+    Reflect::set(&obj, &"peer".into(), &id.peer.to_string().into())?;
+    Reflect::set(&obj, &"counter".into(), &id.counter.into())?;
+    Ok(obj.into())
 }
 
 fn peer_id_to_js(peer: PeerID) -> JsStrPeerID {
@@ -342,20 +341,22 @@ fn peer_id_to_js(peer: PeerID) -> JsStrPeerID {
 
 fn js_id_to_id(id: JsID) -> Result<ID, JsValue> {
     let peer = js_peer_to_peer(Reflect::get(&id, &"peer".into())?)?;
-    let counter = Reflect::get(&id, &"counter".into())?.as_f64().unwrap() as Counter;
+    let counter = Reflect::get(&id, &"counter".into())?
+        .as_f64()
+        .ok_or_else(|| JsValue::from_str("counter must be a number"))? as Counter;
     let id = ID::new(peer, counter);
     Ok(id)
 }
 
-fn frontiers_to_ids(frontiers: &Frontiers) -> JsIDs {
+fn frontiers_to_ids(frontiers: &Frontiers) -> JsResult<JsIDs> {
     let js_arr = Array::new();
     for id in frontiers.iter() {
-        let value = id_to_js(&id);
+        let value = id_to_js(&id)?;
         js_arr.push(&value);
     }
 
     let value: JsValue = js_arr.into();
-    value.into()
+    Ok(value.into())
 }
 
 fn js_value_to_container_id(
@@ -1337,7 +1338,7 @@ impl LoroDoc {
     ///
     /// The ops included by the shallow history start frontiers are not in the doc.
     #[wasm_bindgen(js_name = "shallowSinceFrontiers")]
-    pub fn shallow_since_frontiers(&self) -> JsIDs {
+    pub fn shallow_since_frontiers(&self) -> JsResult<JsIDs> {
         frontiers_to_ids(&self.doc.shallow_since_frontiers())
     }
 
@@ -1352,7 +1353,7 @@ impl LoroDoc {
     /// Get the [frontiers](https://loro.dev/docs/advanced/version_deep_dive) of the current document state.
     ///
     /// If you checkout to a specific version, this value will change.
-    pub fn frontiers(&self) -> JsIDs {
+    pub fn frontiers(&self) -> JsResult<JsIDs> {
         frontiers_to_ids(&self.doc.state_frontiers())
     }
 
@@ -1360,7 +1361,7 @@ impl LoroDoc {
     ///
     /// If you checkout to a specific version, this value will not change.
     #[wasm_bindgen(js_name = "oplogFrontiers")]
-    pub fn oplog_frontiers(&self) -> JsIDs {
+    pub fn oplog_frontiers(&self) -> JsResult<JsIDs> {
         frontiers_to_ids(&self.doc.oplog_frontiers())
     }
 
@@ -1694,8 +1695,10 @@ impl LoroDoc {
                 if set.inner().is_empty() {
                     *root_sub_set_clone.lock().unwrap() = None;
                 }
-                let event = diff_event_to_js_value(e, false);
-                set.emit(&(), SafeJsValue(event));
+                match diff_event_to_js_value(e, false) {
+                    Ok(event) => set.emit(&(), SafeJsValue(event)),
+                    Err(e) => console_error!("Failed to convert event: {:?}", e),
+                }
             }));
             sub.detach();
         }
@@ -1843,9 +1846,10 @@ impl LoroDoc {
     ) -> JsResult<JsChangeOrUndefined> {
         let borrow_mut = &self.doc;
         let oplog = borrow_mut.oplog().lock().unwrap();
-        let Some(change) =
-            oplog.get_change_with_lamport_lte(peer_id.parse().unwrap_throw(), lamport)
-        else {
+        let peer_id = peer_id
+            .parse()
+            .map_err(|_| JsValue::from_str(ID_CONVERT_ERROR))?;
+        let Some(change) = oplog.get_change_with_lamport_lte(peer_id, lamport) else {
             return Ok(JsValue::UNDEFINED.into());
         };
 
@@ -1937,7 +1941,7 @@ impl LoroDoc {
             .unwrap()
             .dag()
             .vv_to_frontiers(&vv.0);
-        Ok(frontiers_to_ids(&f))
+        frontiers_to_ids(&f)
     }
 
     /// Get the value or container at the given path
@@ -2311,8 +2315,10 @@ pub(crate) fn put_js_value_in_pending_queue(observer: observer::Observer, value:
 }
 
 fn put_event_in_pending_queue(ob: observer::Observer, event: DiffEvent) {
-    let event = diff_event_to_js_value(event, false);
-    put_js_value_in_pending_queue(ob, event);
+    match diff_event_to_js_value(event, false) {
+        Ok(event) => put_js_value_in_pending_queue(ob, event),
+        Err(e) => console_error!("Failed to convert event: {:?}", e),
+    }
 }
 
 fn throw_err_if_not_called(event_counter: usize) {
@@ -2388,34 +2394,32 @@ fn js_commit_option_to_commit_options(options: JsCommitOption) -> JsResult<Commi
     Ok(options)
 }
 
-fn diff_event_to_js_value(event: DiffEvent, for_json: bool) -> JsValue {
+fn diff_event_to_js_value(event: DiffEvent, for_json: bool) -> JsResult<JsValue> {
     let obj = js_sys::Object::new();
-    Reflect::set(&obj, &"by".into(), &event.event_meta.by.to_string().into()).unwrap();
+    Reflect::set(&obj, &"by".into(), &event.event_meta.by.to_string().into())?;
     let origin: &str = &event.event_meta.origin;
-    Reflect::set(&obj, &"origin".into(), &JsValue::from_str(origin)).unwrap();
+    Reflect::set(&obj, &"origin".into(), &JsValue::from_str(origin))?;
     if let Some(t) = event.current_target.as_ref() {
-        Reflect::set(&obj, &"currentTarget".into(), &t.to_string().into()).unwrap();
+        Reflect::set(&obj, &"currentTarget".into(), &t.to_string().into())?;
     }
 
     let events = js_sys::Array::new_with_length(event.events.len() as u32);
     for (i, &event) in event.events.iter().enumerate() {
-        events.set(i as u32, container_diff_to_js_value(event, for_json));
+        events.set(i as u32, container_diff_to_js_value(event, for_json)?);
     }
 
-    Reflect::set(&obj, &"events".into(), &events.into()).unwrap();
+    Reflect::set(&obj, &"events".into(), &events.into())?;
     Reflect::set(
         &obj,
         &"from".into(),
-        &frontiers_to_ids(&event.event_meta.from).into(),
-    )
-    .unwrap();
+        &frontiers_to_ids(&event.event_meta.from)?.into(),
+    )?;
     Reflect::set(
         &obj,
         &"to".into(),
-        &frontiers_to_ids(&event.event_meta.to).into(),
-    )
-    .unwrap();
-    obj.into()
+        &frontiers_to_ids(&event.event_meta.to)?.into(),
+    )?;
+    Ok(obj.into())
 }
 
 /// /**
@@ -2433,22 +2437,20 @@ fn diff_event_to_js_value(event: DiffEvent, for_json: bool) -> JsValue {
 ///   path: Path;
 /// }
 ///
-fn container_diff_to_js_value(event: &loro_internal::ContainerDiff, for_json: bool) -> JsValue {
+fn container_diff_to_js_value(event: &loro_internal::ContainerDiff, for_json: bool) -> JsResult<JsValue> {
     let obj = js_sys::Object::new();
-    Reflect::set(&obj, &"target".into(), &event.id.to_string().into()).unwrap();
+    Reflect::set(&obj, &"target".into(), &event.id.to_string().into())?;
     Reflect::set(
         &obj,
         &"diff".into(),
-        &resolved_diff_to_js(&event.diff, for_json).unwrap_throw(),
-    )
-    .unwrap();
+        &resolved_diff_to_js(&event.diff, for_json)?,
+    )?;
     Reflect::set(
         &obj,
         &"path".into(),
         &convert_container_path_to_js_value(&event.path),
-    )
-    .unwrap();
-    obj.into()
+    )?;
+    Ok(obj.into())
 }
 
 fn convert_container_path_to_js_value(path: &[(ContainerID, Index)]) -> JsContainerPath {
@@ -3673,8 +3675,11 @@ impl LoroList {
         Ok(())
     }
 
-    pub fn getIdAt(&self, pos: usize) -> Option<JsID> {
-        self.handler.get_id_at(pos).map(|x| id_to_js(&x).into())
+    pub fn getIdAt(&self, pos: usize) -> JsResult<Option<JsID>> {
+        match self.handler.get_id_at(pos) {
+            Some(x) => Ok(Some(id_to_js(&x)?.into())),
+            None => Ok(None),
+        }
     }
 
     /// Check if the container is deleted
@@ -4351,15 +4356,16 @@ impl LoroTreeNode {
     }
 
     /// Get the last mover of this node.
-    pub fn getLastMoveId(&self) -> Option<JsID> {
-        self.tree
-            .get_last_move_id(&self.id)
-            .map(|x| id_to_js(&x).into())
+    pub fn getLastMoveId(&self) -> JsResult<Option<JsID>> {
+        match self.tree.get_last_move_id(&self.id) {
+            Some(x) => Ok(Some(id_to_js(&x)?.into())),
+            None => Ok(None),
+        }
     }
 
     /// Get the creation id of this node.
-    pub fn creationId(&self) -> JsID {
-        id_to_js(&self.id.id()).into()
+    pub fn creationId(&self) -> JsResult<JsID> {
+        Ok(id_to_js(&self.id.id())?.into())
     }
 
     /// Get the creator of this node.
@@ -4871,13 +4877,13 @@ impl Cursor {
     /// Get the ID that represents the position.
     ///
     /// It can be undefined if it's not bind into a specific ID.
-    pub fn pos(&self) -> Option<JsID> {
+    pub fn pos(&self) -> JsResult<Option<JsID>> {
         match self.pos.id {
             Some(id) => {
-                let value: JsValue = id_to_js(&id);
-                Some(value.into())
+                let value: JsValue = id_to_js(&id)?;
+                Ok(Some(value.into()))
             }
-            None => None,
+            None => Ok(None),
         }
     }
 
@@ -5122,8 +5128,13 @@ impl UndoManager {
                     )
                     .unwrap();
                     let js_event = if let Some(e) = event {
-                        let diff = diff_event_to_js_value(e, false);
-                        Some(diff)
+                        match diff_event_to_js_value(e, false) {
+                            Ok(v) => Some(v),
+                            Err(e) => {
+                                console_error!("Failed to convert event in undo/redo: {:?}", e);
+                                None
+                            }
+                        }
                     } else {
                         None
                     };
@@ -5405,7 +5416,7 @@ fn js_peer_to_peer(value: JsValue) -> JsResult<u64> {
             .as_string()
             .unwrap()
             .parse()
-            .expect_throw(ID_CONVERT_ERROR);
+            .map_err(|_| JsValue::from_str(ID_CONVERT_ERROR))?;
         Ok(v)
     } else if let Some(v) = value.as_f64() {
         Ok(v as u64)

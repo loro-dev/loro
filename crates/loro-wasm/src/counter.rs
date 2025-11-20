@@ -60,8 +60,11 @@ impl LoroCounter {
 
     /// Get the value of the counter.
     #[wasm_bindgen(js_name = "value", getter)]
-    pub fn get_value(&self) -> f64 {
-        self.handler.get_value().into_double().unwrap()
+    pub fn get_value(&self) -> JsResult<f64> {
+        self.handler
+            .get_value()
+            .into_double()
+            .map_err(|_| JsValue::from_str("Counter value is not a number"))
     }
 
     /// Subscribe to the changes of the counter.
@@ -120,11 +123,17 @@ impl LoroCounter {
 
     /// Get the value of the counter.
     #[wasm_bindgen(js_name = "getShallowValue")]
-    pub fn get_shallow_value(&self) -> f64 {
-        self.handler.get_value().into_double().unwrap()
+    pub fn get_shallow_value(&self) -> JsResult<f64> {
+        self.handler
+            .get_value()
+            .into_double()
+            .map_err(|_| JsValue::from_str("Counter value is not a number"))
     }
 
-    pub fn toJSON(&self) -> f64 {
-        self.handler.get_value().into_double().unwrap()
+    pub fn toJSON(&self) -> JsResult<f64> {
+        self.handler
+            .get_value()
+            .into_double()
+            .map_err(|_| JsValue::from_str("Counter value is not a number"))
     }
 }

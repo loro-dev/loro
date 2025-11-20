@@ -46,21 +46,21 @@ impl AwarenessWasm {
     /// A state of a peer is considered outdated, if the last update of the state of the peer
     /// is older than the `timeout`.
     #[wasm_bindgen(constructor)]
-    pub fn new(peer: JsIntoPeerID, timeout: f64) -> AwarenessWasm {
-        let id = js_peer_to_peer(peer.into()).unwrap_throw();
-        AwarenessWasm {
+    pub fn new(peer: JsIntoPeerID, timeout: f64) -> JsResult<AwarenessWasm> {
+        let id = js_peer_to_peer(peer.into())?;
+        Ok(AwarenessWasm {
             inner: InternalAwareness::new(id, timeout as i64),
-        }
+        })
     }
 
     /// Encodes the state of the given peers.
-    pub fn encode(&self, peers: Array) -> Vec<u8> {
+    pub fn encode(&self, peers: Array) -> JsResult<Vec<u8>> {
         let mut peer_vec = Vec::with_capacity(peers.length() as usize);
         for peer in peers.iter() {
-            peer_vec.push(js_peer_to_peer(peer).unwrap_throw());
+            peer_vec.push(js_peer_to_peer(peer)?);
         }
 
-        self.inner.encode(&peer_vec)
+        Ok(self.inner.encode(&peer_vec))
     }
 
     /// Encodes the state of all peers.
@@ -97,34 +97,34 @@ impl AwarenessWasm {
 
     /// Get the state of all peers.
     #[wasm_bindgen(skip_typescript)]
-    pub fn getAllStates(&self) -> JsAwarenessStates {
+    pub fn getAllStates(&self) -> JsResult<JsAwarenessStates> {
         let states = self.inner.get_all_states();
         let obj = Object::new();
         for (peer, state) in states {
-            Reflect::set(&obj, &peer_to_str_js(*peer), &state.state.clone().into()).unwrap();
+            Reflect::set(&obj, &peer_to_str_js(*peer), &state.state.clone().into())?;
         }
         let v: JsValue = obj.into();
-        v.into()
+        Ok(v.into())
     }
 
     /// Get the state of a given peer.
     #[wasm_bindgen(skip_typescript)]
-    pub fn getState(&self, peer: JsIntoPeerID) -> JsValue {
-        let id = js_peer_to_peer(peer.into()).unwrap_throw();
+    pub fn getState(&self, peer: JsIntoPeerID) -> JsResult<JsValue> {
+        let id = js_peer_to_peer(peer.into())?;
         let Some(state) = self.inner.get_all_states().get(&id) else {
-            return JsValue::UNDEFINED;
+            return Ok(JsValue::UNDEFINED);
         };
 
-        state.state.clone().into()
+        Ok(state.state.clone().into())
     }
 
     /// Get the timestamp of the state of a given peer.
-    pub fn getTimestamp(&self, peer: JsIntoPeerID) -> Option<f64> {
-        let id = js_peer_to_peer(peer.into()).unwrap_throw();
-        self.inner
+    pub fn getTimestamp(&self, peer: JsIntoPeerID) -> JsResult<Option<f64>> {
+        let id = js_peer_to_peer(peer.into())?;
+        Ok(self.inner
             .get_all_states()
             .get(&id)
-            .map(|r| r.timestamp as f64)
+            .map(|r| r.timestamp as f64))
     }
 
     /// Remove the states of outdated peers.
@@ -200,13 +200,13 @@ impl EphemeralStoreWasm {
             .unwrap_or(JsValue::UNDEFINED)
     }
 
-    pub fn getAllStates(&self) -> JsValue {
+    pub fn getAllStates(&self) -> JsResult<JsValue> {
         let states = self.inner.get_all_states();
         let obj = Object::new();
         for (key, value) in states {
-            Reflect::set(&obj, &key.into(), &value.into()).unwrap();
+            Reflect::set(&obj, &key.into(), &value.into())?;
         }
-        obj.into()
+        Ok(obj.into())
     }
 
     #[wasm_bindgen(skip_typescript)]
