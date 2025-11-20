@@ -3,7 +3,7 @@
 use std::ops::Range;
 
 use loro_common::LoroValue;
-use loro_internal::{loro::ExportMode, LoroDoc, ToJson};
+use loro_internal::{cursor::PosType, loro::ExportMode, LoroDoc, ToJson};
 use serde_json::json;
 
 fn init(s: &str) -> LoroDoc {
@@ -52,21 +52,39 @@ fn delete(doc: &LoroDoc, pos: usize, len: usize) {
 fn mark(doc: &LoroDoc, range: Range<usize>, kind: Kind) {
     let richtext = doc.get_text("r");
     richtext
-        .mark(range.start, range.end, kind.key(), true.into())
+        .mark(
+            range.start,
+            range.end,
+            kind.key(),
+            true.into(),
+            PosType::Event,
+        )
         .unwrap();
 }
 
 fn unmark(doc: &LoroDoc, range: Range<usize>, kind: Kind) {
     let richtext = doc.get_text("r");
     richtext
-        .mark(range.start, range.end, kind.key(), false.into())
+        .mark(
+            range.start,
+            range.end,
+            kind.key(),
+            false.into(),
+            PosType::Event,
+        )
         .unwrap();
 }
 
 fn mark_kv(doc: &LoroDoc, range: Range<usize>, key: &str, value: impl Into<LoroValue>) {
     let richtext = doc.get_text("r");
     richtext
-        .mark(range.start, range.end, key, value.into())
+        .mark(
+            range.start,
+            range.end,
+            key,
+            value.into(),
+            PosType::Event,
+        )
         .unwrap();
 }
 

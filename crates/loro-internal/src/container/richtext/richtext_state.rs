@@ -2637,7 +2637,7 @@ impl RichtextState {
         result
     }
 
-    fn len(&self, pos_type: PosType) -> usize {
+    pub(crate) fn len(&self, pos_type: PosType) -> usize {
         self.check_cache();
         let result = {
             match pos_type {

@@ -6,7 +6,6 @@ use std::ops::Range;
 use std::sync::RwLock;
 use std::sync::{Arc, Weak};
 
-use crate::container::richtext::RichtextSpan;
 use crate::{
     container::{
         idx::ContainerIdx,
@@ -698,6 +697,11 @@ impl RichtextState {
     #[inline(always)]
     pub fn len_utf8(&mut self) -> usize {
         self.state.get_mut().len_utf8()
+    }
+
+    #[inline(always)]
+    pub fn len(&mut self, pos_type: PosType) -> usize {
+        self.state.get_mut().len(pos_type)
     }
 
     #[inline(always)]

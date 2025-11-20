@@ -1951,10 +1951,7 @@ impl TextHandler {
         Ok(())
     }
 
-    /// `start` and `end` are [Event Index]s:
-    ///
-    /// - if feature="wasm", pos is a UTF-16 index
-    /// - if feature!="wasm", pos is a Unicode index
+    /// `start` and `end` are interpreted using `pos_type`.
     ///
     /// This method requires auto_commit to be enabled.
     pub fn mark(
@@ -1963,14 +1960,25 @@ impl TextHandler {
         end: usize,
         key: impl Into<InternalString>,
         value: LoroValue,
+        pos_type: PosType,
     ) -> LoroResult<()> {
         match &self.inner {
             MaybeDetached::Detached(t) => {
                 let mut g = t.lock().unwrap();
-                self.mark_for_detached(&mut g.value, key, &value, start, end, false)
+                self.mark_for_detached(
+                    &mut g.value,
+                    key,
+                    &value,
+                    start,
+                    end,
+                    pos_type,
+                    false,
+                )
             }
             MaybeDetached::Attached(a) => {
-                a.with_txn(|txn| self.mark_with_txn(txn, start, end, key, value, false))
+                a.with_txn(|txn| {
+                    self.mark_with_txn(txn, start, end, key, value, pos_type, false)
+                })
             }
         }
     }
@@ -1982,15 +1990,17 @@ impl TextHandler {
         value: &LoroValue,
         start: usize,
         end: usize,
+        pos_type: PosType,
         is_delete: bool,
     ) -> Result<(), LoroError> {
         let key: InternalString = key.into();
-        let len = state.len_event();
         if start >= end {
             return Err(loro_common::LoroError::ArgErr(
                 "Start must be less than end".to_string().into_boxed_str(),
             ));
         }
+
+        let len = state.len(pos_type);
         if end > len {
             return Err(LoroError::OutOfBound {
                 pos: end,
@@ -1999,7 +2009,7 @@ impl TextHandler {
             });
         }
         let (entity_range, styles) =
-            state.get_entity_range_and_text_styles_at_range(start..end, PosType::Event);
+            state.get_entity_range_and_text_styles_at_range(start..end, pos_type);
         if let Some(styles) = styles {
             if styles.has_key_value(&key, value) {
                 // already has the same style, skip
@@ -2024,17 +2034,13 @@ impl TextHandler {
         Ok(())
     }
 
-    /// `start` and `end` are [Event Index]s:
-    ///
-    /// - if feature="wasm", pos is a UTF-16 index
-    /// - if feature!="wasm", pos is a Unicode index
-    ///
-    /// This method requires auto_commit to be enabled.
+    /// `start` and `end` are interpreted using `pos_type`.
     pub fn unmark(
         &self,
         start: usize,
         end: usize,
         key: impl Into<InternalString>,
+        pos_type: PosType,
     ) -> LoroResult<()> {
         match &self.inner {
             MaybeDetached::Detached(t) => self.mark_for_detached(
@@ -2043,18 +2049,18 @@ impl TextHandler {
                 &LoroValue::Null,
                 start,
                 end,
+                pos_type,
                 true,
             ),
             MaybeDetached::Attached(a) => {
-                a.with_txn(|txn| self.mark_with_txn(txn, start, end, key, LoroValue::Null, true))
+                a.with_txn(|txn| {
+                    self.mark_with_txn(txn, start, end, key, LoroValue::Null, pos_type, true)
+                })
             }
         }
     }
 
-    /// `start` and `end` are [Event Index]s:
-    ///
-    /// - if feature="wasm", pos is a UTF-16 index
-    /// - if feature!="wasm", pos is a Unicode index
+    /// `start` and `end` are interpreted using `pos_type`.
     pub fn mark_with_txn(
         &self,
         txn: &mut Transaction,
@@ -2062,6 +2068,7 @@ impl TextHandler {
         end: usize,
         key: impl Into<InternalString>,
         value: LoroValue,
+        pos_type: PosType,
         is_delete: bool,
     ) -> LoroResult<()> {
         if start >= end {
@@ -2070,7 +2077,17 @@ impl TextHandler {
             ));
         }
 
-        let len = self.len_event();
+        let inner = self.inner.try_attached_state()?;
+        let key: InternalString = key.into();
+
+        let mut doc_state = inner.doc.state.lock().unwrap();
+        let len = doc_state.with_state_mut(inner.container_idx, |state| {
+            state
+                .as_richtext_state_mut()
+                .unwrap()
+                .len(pos_type)
+        });
+
         if end > len {
             return Err(LoroError::OutOfBound {
                 pos: end,
@@ -2079,25 +2096,24 @@ impl TextHandler {
             });
         }
 
-        let inner = self.inner.try_attached_state()?;
-        let key: InternalString = key.into();
+        let (entity_range, skip, event_start, event_end) =
+            doc_state.with_state_mut(inner.container_idx, |state| {
+                let state = state.as_richtext_state_mut().unwrap();
+                let event_start = state.index_to_event_index(start, pos_type);
+                let event_end = state.index_to_event_index(end, pos_type);
+                let (entity_range, styles) =
+                    state.get_entity_range_and_styles_at_range(start..end, pos_type);
 
-        let mut doc_state = inner.doc.state.lock().unwrap();
-        let (entity_range, skip) = doc_state.with_state_mut(inner.container_idx, |state| {
-            let (entity_range, styles) = state
-                .as_richtext_state_mut()
-                .unwrap()
-                .get_entity_range_and_styles_at_range(start..end, PosType::Event);
+                let skip = match styles {
+                    Some(styles) if styles.has_key_value(&key, &value) => {
+                        // already has the same style, skip
+                        true
+                    }
+                    _ => false,
+                };
 
-            let skip = match styles {
-                Some(styles) if styles.has_key_value(&key, &value) => {
-                    // already has the same style, skip
-                    true
-                }
-                _ => false,
-            };
-            (entity_range, skip)
-        });
+                (entity_range, skip, event_start, event_end)
+            });
 
         if skip {
             return Ok(());
@@ -2128,8 +2144,8 @@ impl TextHandler {
                 info: flag,
             }),
             EventHint::Mark {
-                start: start as u32,
-                end: end as u32,
+                start: event_start as u32,
+                end: event_end as u32,
                 style: crate::container::richtext::Style { key, data: value },
             },
             &inner.doc,
@@ -2248,6 +2264,7 @@ impl TextHandler {
                     pending_mark.end,
                     key.deref(),
                     value,
+                    PosType::Event,
                     false,
                 )?;
             }
@@ -2397,7 +2414,7 @@ impl TextHandler {
                 }
                 delta
             }
-            MaybeDetached::Attached(a) => self
+            MaybeDetached::Attached(_a) => self
                 .with_state(|state| {
                     let state = state.as_richtext_state_mut().unwrap();
                     Ok(state.get_delta())
@@ -4195,6 +4212,7 @@ pub mod counter {
 mod test {
 
     use super::{HandlerTrait, TextDelta};
+    use crate::cursor::PosType;
     use crate::loro::ExportMode;
     use crate::state::TreeParentId;
     use crate::version::Frontiers;
@@ -4268,7 +4286,9 @@ mod test {
         let loro = LoroDoc::new_auto_commit();
         let handler = loro.get_text("richtext");
         handler.insert(0, "hello world").unwrap();
-        handler.mark(0, 5, "bold", true.into()).unwrap();
+        handler
+            .mark(0, 5, "bold", true.into(), PosType::Event)
+            .unwrap();
         loro.commit_then_renew();
 
         // assert has bold
@@ -4313,7 +4333,15 @@ mod test {
         let handler = loro.get_text("richtext");
         handler.insert_with_txn(&mut txn, 0, "hello world").unwrap();
         handler
-            .mark_with_txn(&mut txn, 0, 5, "bold", true.into(), false)
+            .mark_with_txn(
+                &mut txn,
+                0,
+                5,
+                "bold",
+                true.into(),
+                PosType::Event,
+                false,
+            )
             .unwrap();
         txn.commit().unwrap();
 

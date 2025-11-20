@@ -2745,7 +2745,7 @@ impl LoroText {
             .map_err(|err| JsValue::from_str(&err.to_string()))?;
         let loro_value = js_value_to_loro_value(&value)?;
         self.handler
-            .mark(range.start, range.end, key, loro_value)
+            .mark(range.start, range.end, key, loro_value, PosType::Utf16)
             .map_err(JsValue::from)?;
         Ok(())
     }
@@ -2770,7 +2770,8 @@ impl LoroText {
     pub fn unmark(&self, range: JsRange, key: &str) -> Result<(), JsValue> {
         // Internally, this may be marking with null or deleting all the marks with key in the range entirely.
         let range: MarkRange = serde_wasm_bindgen::from_value(range.into())?;
-        self.handler.unmark(range.start, range.end, key)?;
+        self.handler
+            .unmark(range.start, range.end, key, PosType::Utf16)?;
         Ok(())
     }
 

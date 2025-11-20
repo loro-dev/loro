@@ -2351,6 +2351,8 @@ impl LoroText {
 
     /// Mark a range of text with a key-value pair.
     ///
+    /// The range uses Unicode scalar indices; use [`mark_utf8`] for UTF-8 byte offsets.
+    ///
     /// You can use it to create a highlight, make a range of text bold, or add a link to a range of text.
     ///
     /// You can specify the `expand` option to set the behavior when inserting text at the boundary of the range.
@@ -2367,7 +2369,31 @@ impl LoroText {
         key: &str,
         value: impl Into<LoroValue>,
     ) -> LoroResult<()> {
-        self.handler.mark(range.start, range.end, key, value.into())
+        self.handler
+            .mark(
+                range.start,
+                range.end,
+                key,
+                value.into(),
+                cursor::PosType::Unicode,
+            )
+    }
+
+    /// Mark a range of text with a key-value pair using UTF-8 byte offsets.
+    pub fn mark_utf8(
+        &self,
+        range: Range<usize>,
+        key: &str,
+        value: impl Into<LoroValue>,
+    ) -> LoroResult<()> {
+        self.handler
+            .mark(
+                range.start,
+                range.end,
+                key,
+                value.into(),
+                cursor::PosType::Bytes,
+            )
     }
 
     /// Unmark a range of text with a key and a value.
@@ -2387,7 +2413,8 @@ impl LoroText {
     ///
     /// Note: you cannot delete unmergeable annotations like comments by this method.
     pub fn unmark(&self, range: Range<usize>, key: &str) -> LoroResult<()> {
-        self.handler.unmark(range.start, range.end, key)
+        self.handler
+            .unmark(range.start, range.end, key, cursor::PosType::Unicode)
     }
 
     /// Get the text in [Delta](https://quilljs.com/docs/delta/) format.
