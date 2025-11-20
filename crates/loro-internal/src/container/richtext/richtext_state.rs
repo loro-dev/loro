@@ -34,7 +34,7 @@ use super::{
     AnchorType, RichtextSpan, StyleOp,
 };
 
-pub(crate) use query::PosType;
+pub(crate) use crate::cursor::PosType;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct RichtextState {
@@ -1076,19 +1076,6 @@ mod query {
 
     use super::*;
 
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-    pub(crate) enum PosType {
-        #[allow(unused)]
-        Bytes,
-        #[allow(unused)]
-        Unicode,
-        #[allow(unused)]
-        Utf16,
-        #[allow(unused)]
-        Entity,
-        Event,
-    }
-
     #[cfg(not(feature = "wasm"))]
     pub(super) type EventIndexQuery = UnicodeQuery;
     #[cfg(feature = "wasm")]
@@ -1891,6 +1878,168 @@ impl RichtextState {
                         Err(()) => {
                             return Err(LoroError::UTF16InUnicodeCodePoint { pos: pos + len })
                         }
+                    }
+                }
+            }
+
+            Ok(ans)
+        };
+        self.check_cache();
+        result
+    }
+
+    pub(crate) fn slice_delta(
+        &self,
+        start_index: usize,
+        end_index: usize,
+        pos_type: PosType,
+    ) -> LoroResult<Vec<(String, StyleMeta)>> {
+        if end_index < start_index {
+            return Err(LoroError::EndIndexLessThanStartIndex {
+                start: start_index,
+                end: end_index,
+            });
+        }
+
+        if end_index == start_index {
+            return Ok(Vec::new());
+        }
+
+        self.check_cache();
+        let result = {
+            // 1. Convert start/end pos to cursors
+            let (start_query, end_query) = match pos_type {
+                PosType::Event => (
+                    self.tree.query::<EventIndexQuery>(&start_index),
+                    self.tree.query::<EventIndexQuery>(&end_index),
+                ),
+                PosType::Bytes => (
+                    self.tree.query::<ByteQuery>(&start_index),
+                    self.tree.query::<ByteQuery>(&end_index),
+                ),
+                PosType::Unicode => (
+                    self.tree.query::<UnicodeQuery>(&start_index),
+                    self.tree.query::<UnicodeQuery>(&end_index),
+                ),
+                PosType::Utf16 => (
+                    self.tree.query::<Utf16Query>(&start_index),
+                    self.tree.query::<Utf16Query>(&end_index),
+                ),
+                PosType::Entity => (
+                    self.tree.query::<EntityQuery>(&start_index),
+                    self.tree.query::<EntityQuery>(&end_index),
+                ),
+            };
+
+            let start_cursor = start_query
+                .ok_or(LoroError::OutOfBound {
+                    pos: start_index,
+                    len: self.len(pos_type),
+                    info: "".into(),
+                })?
+                .cursor;
+            let end_cursor = end_query
+                .ok_or(LoroError::OutOfBound {
+                    pos: end_index,
+                    len: self.len(pos_type),
+                    info: "".into(),
+                })?
+                .cursor;
+
+            // 2. Get start entity index
+            let mut current_entity_index = self
+                .get_index_from_cursor(start_cursor, PosType::Entity)
+                .unwrap();
+            // We need end entity index for style iterator
+            let end_entity_index = self
+                .get_index_from_cursor(end_cursor, PosType::Entity)
+                .unwrap();
+
+            // 3. Setup style iterator
+            let mut style_range_iter: Box<dyn Iterator<Item = (Range<usize>, &Styles)>> =
+                match &self.style_ranges {
+                    Some(s) => {
+                        let mut idx = current_entity_index;
+                        Box::new(
+                            s.iter_range(current_entity_index..end_entity_index)
+                                .map(move |elem_slice| {
+                                    let len = elem_slice.end.unwrap_or(elem_slice.elem.len)
+                                        - elem_slice.start.unwrap_or(0);
+                                    let range = idx..idx + len;
+                                    idx += len;
+                                    (range, &elem_slice.elem.styles)
+                                }),
+                        )
+                    }
+                    None => Box::new(Some((0..usize::MAX / 2, &*EMPTY_STYLES)).into_iter()),
+                };
+
+            let mut cur_style_range = style_range_iter.next();
+            let mut cur_styles: Option<StyleMeta> =
+                cur_style_range.as_ref().map(|x| x.1.clone().into());
+
+            let mut ans: Vec<(String, StyleMeta)> = Vec::new();
+
+            // 4. Iterate tree range
+            for span in self.tree.iter_range(start_cursor..end_cursor) {
+                match &span.elem {
+                    RichtextStateChunk::Text(t) => {
+                        let chunk_len = span.end.unwrap_or(span.elem.rle_len())
+                            - span.start.unwrap_or(0); // length in rle_len (unicode_len)
+                        let mut processed_len = 0;
+
+                        while processed_len < chunk_len {
+                            while let Some((inner_cur_range, _)) = cur_style_range.as_ref() {
+                                if current_entity_index >= inner_cur_range.end {
+                                    cur_style_range = style_range_iter.next();
+                                    cur_styles =
+                                        cur_style_range.as_ref().map(|x| x.1.clone().into());
+                                } else {
+                                    break;
+                                }
+                            }
+
+                            if cur_style_range.is_none() {
+                                cur_styles = Some(StyleMeta::default());
+                                cur_style_range =
+                                    Some((current_entity_index..usize::MAX, &*EMPTY_STYLES));
+                            }
+
+                            let (inner_cur_range, _) = cur_style_range.as_ref().unwrap();
+
+                            let remaining_text = chunk_len - processed_len;
+                            let remaining_style = inner_cur_range.end - current_entity_index;
+                            let take_len = remaining_text.min(remaining_style);
+
+                            let slice_start = span.start.unwrap_or(0) + processed_len;
+                            let slice_end = slice_start + take_len;
+
+                            let text_content =
+                                unicode_slice(t.as_str(), slice_start, slice_end)
+                                    .map_err(|_| LoroError::OutOfBound {
+                                        pos: slice_end,
+                                        len: t.unicode_len() as usize,
+                                        info: "Slice delta out of bound".into(),
+                                    })?;
+
+                            let styles = cur_styles.as_ref().unwrap();
+                            if let Some(last) = ans.last_mut() {
+                                if &last.1 == styles {
+                                    last.0.push_str(text_content);
+                                    processed_len += take_len;
+                                    current_entity_index += take_len;
+                                    continue;
+                                }
+                            }
+
+                            ans.push((text_content.to_string(), styles.clone()));
+
+                            processed_len += take_len;
+                            current_entity_index += take_len;
+                        }
+                    }
+                    RichtextStateChunk::Style { .. } => {
+                        current_entity_index += 1;
                     }
                 }
             }

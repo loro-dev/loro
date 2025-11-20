@@ -1512,6 +1512,40 @@ impl TextHandler {
         }
     }
 
+    pub fn slice_delta(
+        &self,
+        start_index: usize,
+        end_index: usize,
+        pos_type: PosType,
+    ) -> LoroResult<Vec<TextDelta>> {
+        match &self.inner {
+            MaybeDetached::Detached(t) => {
+                let t = t.lock().unwrap();
+                let ans = t.value.slice_delta(start_index, end_index, pos_type)?;
+                Ok(ans
+                    .into_iter()
+                    .map(|(s, a)| TextDelta::Insert {
+                        insert: s,
+                        attributes: a.to_option_map(),
+                    })
+                    .collect())
+            }
+            MaybeDetached::Attached(a) => a.with_state(|state| {
+                let ans = state
+                    .as_richtext_state_mut()
+                    .unwrap()
+                    .slice_delta(start_index, end_index, pos_type)?;
+                Ok(ans
+                    .into_iter()
+                    .map(|(s, a)| TextDelta::Insert {
+                        insert: s,
+                        attributes: a.to_option_map(),
+                    })
+                    .collect())
+            }),
+        }
+    }
+
     /// `pos` is a Event Index:
     ///
     /// - if feature="wasm", pos is a UTF-16 index

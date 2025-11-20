@@ -2233,6 +2233,16 @@ impl LoroText {
         self.handler.slice(start_index, end_index)
     }
 
+    /// Get the rich text delta in the given range.
+    pub fn slice_delta(
+        &self,
+        start: usize,
+        end: usize,
+        pos_type: cursor::PosType,
+    ) -> LoroResult<Vec<TextDelta>> {
+        self.handler.slice_delta(start, end, pos_type)
+    }
+
     /// Get the characters at given unicode position.
     pub fn char_at(&self, pos: usize) -> LoroResult<char> {
         self.handler.char_at(pos)

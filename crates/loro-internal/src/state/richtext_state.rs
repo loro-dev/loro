@@ -99,6 +99,17 @@ impl RichtextState {
         self.state.get_mut().get_text_slice_by_event_index(pos, len)
     }
 
+    pub(crate) fn slice_delta(
+        &mut self,
+        start_index: usize,
+        end_index: usize,
+        pos_type: PosType,
+    ) -> LoroResult<Vec<(String, StyleMeta)>> {
+        self.state
+            .get_mut()
+            .slice_delta(start_index, end_index, pos_type)
+    }
+
     pub(crate) fn get_char_by_event_index(&mut self, pos: usize) -> Result<char, ()> {
         self.state.get_mut().get_char_by_event_index(pos)
     }
