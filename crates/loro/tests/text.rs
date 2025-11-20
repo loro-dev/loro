@@ -1,5 +1,18 @@
-use loro::{LoroDoc, TextDelta};
 use loro::cursor::PosType;
+use loro::{ExpandType, LoroDoc, StyleConfig, StyleConfigMap, TextDelta};
+
+// Convert a Unicode scalar index into a byte offset.
+fn byte_pos(s: &str, char_index: usize) -> usize {
+    s.char_indices()
+        .nth(char_index)
+        .map(|(idx, _)| idx)
+        .unwrap_or_else(|| s.len())
+}
+
+// Convert a Unicode scalar index into a UTF-16 code unit offset.
+fn utf16_pos(s: &str, char_index: usize) -> usize {
+    s.chars().take(char_index).map(|c| c.len_utf16()).sum()
+}
 
 #[test]
 fn test_slice_delta() {
@@ -229,4 +242,109 @@ fn test_slice_delta_empty() {
     text.insert(0, "A").unwrap();
     let delta = text.slice_delta(0, 0, PosType::Unicode).unwrap();
     assert!(delta.is_empty());
+}
+
+#[test]
+fn test_slice_delta_utf16_positions() {
+    let doc = LoroDoc::new();
+    let text = doc.get_text("text");
+    let content = "A😀BC💡";
+    text.insert(0, content).unwrap();
+    let char_len = content.chars().count();
+    text.mark(0..2, "bold", true).unwrap(); // A and 😀
+    text.mark(4..char_len, "bold", true).unwrap(); // 💡 outside of slice
+    text.mark(1..3, "underline", true).unwrap(); // 😀 and B
+
+    let start = utf16_pos(content, 1); // start at 😀 which takes 2 UTF-16 units
+    let end = utf16_pos(content, 4); // end right before 💡
+    let delta = text.slice_delta(start, end, PosType::Utf16).unwrap();
+    assert_eq!(delta.len(), 3);
+
+    if let TextDelta::Insert { insert, attributes } = &delta[0] {
+        assert_eq!(insert, "😀");
+        let attrs = attributes.as_ref().expect("attributes expected for emoji");
+        assert_eq!(attrs.get("bold").unwrap(), &true.into());
+        assert_eq!(attrs.get("underline").unwrap(), &true.into());
+        assert_eq!(attrs.len(), 2);
+    } else {
+        panic!("Expected emoji segment");
+    }
+
+    if let TextDelta::Insert { insert, attributes } = &delta[1] {
+        assert_eq!(insert, "B");
+        let attrs = attributes.as_ref().expect("underline expected on 'B'");
+        assert!(attrs.get("bold").is_none());
+        assert_eq!(attrs.get("underline").unwrap(), &true.into());
+    } else {
+        panic!("Expected 'B' segment");
+    }
+
+    if let TextDelta::Insert { insert, attributes } = &delta[2] {
+        assert_eq!(insert, "C");
+        assert!(attributes.is_none(), "C should not carry attributes");
+    } else {
+        panic!("Expected 'C' segment");
+    }
+}
+
+#[test]
+fn test_slice_delta_bytes_with_mixed_attributes() {
+    let doc = LoroDoc::new();
+    let mut styles = StyleConfigMap::default_rich_text_config();
+    styles.insert(
+        "script".into(),
+        StyleConfig {
+            expand: ExpandType::After,
+        },
+    );
+    doc.config_text_style(styles);
+    let text = doc.get_text("text");
+    let content = "Rä😀汉字Z";
+    text.insert(0, content).unwrap();
+    let char_len = content.chars().count();
+    text.mark(0..3, "bold", true).unwrap(); // R, ä, 😀
+    text.mark(4..char_len, "bold", true).unwrap(); // 字 and beyond
+    text.mark(2..4, "script", true).unwrap(); // 😀 and 汉
+
+    let start = byte_pos(content, 1); // begin at 'ä' which is multi-byte
+    let end = byte_pos(content, 5); // stop before the trailing 'Z'
+    let delta = text.slice_delta(start, end, PosType::Bytes).unwrap();
+    assert_eq!(delta.len(), 4);
+
+    if let TextDelta::Insert { insert, attributes } = &delta[0] {
+        assert_eq!(insert, "ä");
+        let attrs = attributes.as_ref().expect("bold expected on 'ä'");
+        assert_eq!(attrs.get("bold").unwrap(), &true.into());
+        assert_eq!(attrs.len(), 1);
+    } else {
+        panic!("Expected 'ä' segment");
+    }
+
+    if let TextDelta::Insert { insert, attributes } = &delta[1] {
+        assert_eq!(insert, "😀");
+        let attrs = attributes.as_ref().expect("attributes expected on emoji");
+        assert_eq!(attrs.get("bold").unwrap(), &true.into());
+        assert_eq!(attrs.get("script").unwrap(), &true.into());
+    } else {
+        panic!("Expected emoji segment");
+    }
+
+    if let TextDelta::Insert { insert, attributes } = &delta[2] {
+        assert_eq!(insert, "汉");
+        let attrs = attributes.as_ref().expect("script expected on 汉");
+        assert!(attrs.get("bold").is_none());
+        assert_eq!(attrs.get("script").unwrap(), &true.into());
+        assert_eq!(attrs.len(), 1);
+    } else {
+        panic!("Expected '汉' segment");
+    }
+
+    if let TextDelta::Insert { insert, attributes } = &delta[3] {
+        assert_eq!(insert, "字");
+        let attrs = attributes.as_ref().expect("bold expected on 字");
+        assert_eq!(attrs.get("bold").unwrap(), &true.into());
+        assert!(attrs.get("script").is_none());
+    } else {
+        panic!("Expected '字' segment");
+    }
 }

@@ -6,6 +6,7 @@ use std::ops::Range;
 use std::sync::RwLock;
 use std::sync::{Arc, Weak};
 
+use crate::container::richtext::RichtextSpan;
 use crate::{
     container::{
         idx::ContainerIdx,
@@ -265,11 +266,18 @@ impl RichtextState {
 
     pub(crate) fn get_delta(&mut self) -> Vec<TextDelta> {
         let mut delta = Vec::new();
-        // TODO: merge last
         for span in self.state.get_mut().iter() {
+            let next_attr = span.attributes.to_option_map();
+            match delta.last_mut() {
+                Some(TextDelta::Insert { insert, attributes }) if &next_attr == attributes => {
+                    insert.push_str(span.text.as_str());
+                    continue;
+                }
+                _ => {}
+            }
             delta.push(TextDelta::Insert {
                 insert: span.text.as_str().to_string(),
-                attributes: span.attributes.to_option_map(),
+                attributes: next_attr,
             })
         }
         delta

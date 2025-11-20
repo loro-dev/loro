@@ -1531,10 +1531,11 @@ impl TextHandler {
                     .collect())
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
-                let ans = state
-                    .as_richtext_state_mut()
-                    .unwrap()
-                    .slice_delta(start_index, end_index, pos_type)?;
+                let ans = state.as_richtext_state_mut().unwrap().slice_delta(
+                    start_index,
+                    end_index,
+                    pos_type,
+                )?;
                 Ok(ans
                     .into_iter()
                     .map(|(s, a)| TextDelta::Insert {
@@ -2374,12 +2375,35 @@ impl TextHandler {
         }
     }
 
-    fn get_delta(&self) -> Vec<TextDelta> {
-        self.with_state(|state| {
-            let state = state.as_richtext_state_mut().unwrap();
-            Ok(state.get_delta())
-        })
-        .unwrap()
+    pub fn get_delta(&self) -> Vec<TextDelta> {
+        match &self.inner {
+            MaybeDetached::Detached(s) => {
+                let mut delta = Vec::new();
+                for span in s.lock().unwrap().value.iter() {
+                    let next_attr = span.attributes.to_option_map();
+                    match delta.last_mut() {
+                        Some(TextDelta::Insert { insert, attributes })
+                            if &next_attr == attributes =>
+                        {
+                            insert.push_str(span.text.as_str());
+                            continue;
+                        }
+                        _ => {}
+                    }
+                    delta.push(TextDelta::Insert {
+                        insert: span.text.as_str().to_string(),
+                        attributes: next_attr,
+                    })
+                }
+                delta
+            }
+            MaybeDetached::Attached(a) => self
+                .with_state(|state| {
+                    let state = state.as_richtext_state_mut().unwrap();
+                    Ok(state.get_delta())
+                })
+                .unwrap(),
+        }
     }
 
     pub fn is_deleted(&self) -> bool {
