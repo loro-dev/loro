@@ -390,7 +390,7 @@ pub(crate) fn import_blob_metadata_to_js(
         &start_vv,
     )?;
     js_sys::Reflect::set(&ans, &JsValue::from_str("partialEndVersionVector"), &end_vv)?;
-    let js_frontiers: JsValue = frontiers_to_ids(&meta.start_frontiers).into();
+    let js_frontiers: JsValue = frontiers_to_ids(&meta.start_frontiers)?.into();
     js_sys::Reflect::set(&ans, &JsValue::from_str("startFrontiers"), &js_frontiers)?;
     js_sys::Reflect::set(&ans, &JsValue::from_str("startTimestamp"), &start_timestamp)?;
     js_sys::Reflect::set(&ans, &JsValue::from_str("endTimestamp"), &end_timestamp)?;
