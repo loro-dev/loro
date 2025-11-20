@@ -121,7 +121,8 @@ impl AwarenessWasm {
     /// Get the timestamp of the state of a given peer.
     pub fn getTimestamp(&self, peer: JsIntoPeerID) -> JsResult<Option<f64>> {
         let id = js_peer_to_peer(peer.into())?;
-        Ok(self.inner
+        Ok(self
+            .inner
             .get_all_states()
             .get(&id)
             .map(|r| r.timestamp as f64))

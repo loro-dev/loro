@@ -1,3 +1,14 @@
+//! Ephemeral presence utilities.
+//!
+//! `EphemeralStore` is the recommended API: a timestamped, last-write-wins key-value
+//! store for transient presence data (cursors, selections, etc.). It supports:
+//! - Per-key timeouts: expired entries are skipped by `encode`/`encode_all` and removed
+//!   by `remove_outdated`.
+//! - Import/export via `encode`/`apply` for syncing between peers.
+//! - Subscriptions for both local updates (raw bytes to send) and merged updates.
+//!
+//! The legacy `Awareness` type remains for backward compatibility but is deprecated in
+//! favor of `EphemeralStore`.
 use std::sync::atomic::AtomicI64;
 use std::sync::{Arc, Mutex};
 
