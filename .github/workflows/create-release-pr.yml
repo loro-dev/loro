@@ -52,7 +52,7 @@ jobs:
           # Run cargo release and capture the output
           echo "Starting release process..."
           echo "Running deno script with version: ${{ steps.version.outputs.version }}"
-          deno run -A scripts/cargo-release-cli.ts ${{ steps.version.outputs.version }} 2>&1 | tee debug_output.log
+          deno run -A scripts/cargo-release.ts ${{ steps.version.outputs.version }} 2>&1 | tee debug_output.log
           RELEASE_OUTPUT=$(tail -n 1 debug_output.log)
           # Check if the output contains any error messages
           if echo "$RELEASE_OUTPUT" | grep -i "error" > /dev/null; then
