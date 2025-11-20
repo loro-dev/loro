@@ -80,3 +80,18 @@ impl Cursor {
         postcard::from_bytes(data)
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PosType {
+    /// The index is based on the length of the text in bytes(UTF-8).
+    Bytes,
+    /// The index is based on the length of the text in Unicode Code Points.
+    Unicode,
+    /// The index is based on the length of the text in UTF-16 code units.
+    Utf16,
+    /// The index is based on the length of the text in events.
+    /// It is determined by the `wasm` feature.
+    Event,
+    /// The index is based on the entity index.
+    Entity,
+}

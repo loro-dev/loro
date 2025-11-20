@@ -4,6 +4,7 @@ use loro_common::{
 use loro_internal::awareness::EphemeralStore;
 use loro_internal::sync::{AtomicBool, Mutex};
 use loro_internal::{
+    cursor::PosType,
     delta::ResolvedMapValue,
     encoding::ImportStatus,
     event::{Diff, EventTriggerKind},
@@ -35,7 +36,7 @@ fn issue_225() -> LoroResult<()> {
     let doc = LoroDoc::new_auto_commit();
     let text = doc.get_text("text");
     text.insert(0, "123")?;
-    text.mark(0, 3, "bold", true.into())?;
+    text.mark(0, 3, "bold", true.into(), PosType::Event)?;
     // when apply_delta, the attributes of insert should override the current styles
     text.apply_delta(&[
         TextDelta::Retain {
@@ -87,10 +88,12 @@ fn mark_with_the_same_key_value_should_be_skipped() {
     let a = LoroDoc::new_auto_commit();
     let text = a.get_text("text");
     text.insert(0, "Hello world!").unwrap();
-    text.mark(0, 11, "bold", "value".into()).unwrap();
+    text.mark(0, 11, "bold", "value".into(), PosType::Event)
+        .unwrap();
     a.commit_then_renew();
     let v = a.oplog_vv();
-    text.mark(0, 5, "bold", "value".into()).unwrap();
+    text.mark(0, 5, "bold", "value".into(), PosType::Event)
+        .unwrap();
     a.commit_then_renew();
     let new_v = a.oplog_vv();
     // new mark should be ignored, so vv should be the same
@@ -159,9 +162,15 @@ fn out_of_bound_test() {
     assert!(matches!(err, loro_common::LoroError::OutOfBound { .. }));
     let err = a.get_text("text").delete(3, 5).unwrap_err();
     assert!(matches!(err, loro_common::LoroError::OutOfBound { .. }));
-    let err = a.get_text("text").mark(0, 8, "h", 5.into()).unwrap_err();
+    let err = a
+        .get_text("text")
+        .mark(0, 8, "h", 5.into(), PosType::Event)
+        .unwrap_err();
     assert!(matches!(err, loro_common::LoroError::OutOfBound { .. }));
-    let _err = a.get_text("text").mark(3, 0, "h", 5.into()).unwrap_err();
+    let _err = a
+        .get_text("text")
+        .mark(3, 0, "h", 5.into(), PosType::Event)
+        .unwrap_err();
     let err = a.get_list("list").insert(6, "Hello").unwrap_err();
     assert!(matches!(err, loro_common::LoroError::OutOfBound { .. }));
     let err = a.get_list("list").delete(3, 2).unwrap_err();
@@ -221,9 +230,11 @@ fn richtext_mark_event() {
         }),
     );
     a.get_text("text").insert(0, "Hello").unwrap();
-    a.get_text("text").mark(0, 5, "bold", true.into()).unwrap();
     a.get_text("text")
-        .mark(2, 4, "bold", LoroValue::Null)
+        .mark(0, 5, "bold", true.into(), PosType::Event)
+        .unwrap();
+    a.get_text("text")
+        .mark(2, 4, "bold", LoroValue::Null, PosType::Event)
         .unwrap();
     let _ = a.implicit_commit_then_stop();
     let b = LoroDoc::new_auto_commit();
@@ -252,8 +263,12 @@ fn concurrent_richtext_mark_event() {
     a.get_text("text").insert(0, "Hello").unwrap();
     b.merge(&a).unwrap();
     c.merge(&a).unwrap();
-    b.get_text("text").mark(0, 3, "bold", true.into()).unwrap();
-    c.get_text("text").mark(1, 4, "link", true.into()).unwrap();
+    b.get_text("text")
+        .mark(0, 3, "bold", true.into(), PosType::Event)
+        .unwrap();
+    c.get_text("text")
+        .mark(1, 4, "link", true.into(), PosType::Event)
+        .unwrap();
     b.merge(&c).unwrap();
     let sub_id = a.subscribe(
         &a.get_text("text").id(),
@@ -293,7 +308,7 @@ fn concurrent_richtext_mark_event() {
     );
 
     b.get_text("text")
-        .mark(2, 3, "bold", LoroValue::Null)
+        .mark(2, 3, "bold", LoroValue::Null, PosType::Event)
         .unwrap();
     a.merge(&b).unwrap();
     sub_id.unsubscribe();
@@ -325,7 +340,9 @@ fn concurrent_richtext_mark_event() {
 fn insert_richtext_event() {
     let a = LoroDoc::new_auto_commit();
     a.get_text("text").insert(0, "Hello").unwrap();
-    a.get_text("text").mark(0, 5, "bold", true.into()).unwrap();
+    a.get_text("text")
+        .mark(0, 5, "bold", true.into(), PosType::Event)
+        .unwrap();
     a.commit_then_renew();
     let text = a.get_text("text");
     let _g = a.subscribe(
@@ -856,7 +873,7 @@ fn insert_attach_container() -> LoroResult<()> {
 
     let elem = list.insert_container(0, TextHandler::new_detached())?;
     elem.insert(0, "abc")?;
-    elem.mark(0, 2, "bold", true.into())?;
+    elem.mark(0, 2, "bold", true.into(), PosType::Event)?;
     let new_text = list.insert_container(0, elem)?;
     assert_eq!(
         new_text.get_richtext_value().to_json_value(),

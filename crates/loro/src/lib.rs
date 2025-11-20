@@ -2233,6 +2233,53 @@ impl LoroText {
         self.handler.slice(start_index, end_index)
     }
 
+    /// Get the rich-text delta within a range.
+    ///
+    /// The range is expressed in the coordinate system selected by `pos_type`:
+    /// Unicode scalar indices (`PosType::Unicode`), UTF-8 bytes, UTF-16 units, etc.
+    /// The returned [`TextDelta`] segments contain only inserts and preserve the
+    /// attributes active inside the slice.
+    ///
+    /// # Errors
+    /// Returns [`LoroError::OutOfBound`](crate::LoroError::OutOfBound) when the range
+    /// exceeds the current text length in the chosen coordinate system, or
+    /// [`LoroError::EndIndexLessThanStartIndex`](crate::LoroError::EndIndexLessThanStartIndex)
+    /// if `end < start`.
+    ///
+    /// # Examples
+    /// ```
+    /// use loro::{LoroDoc, TextDelta};
+    /// use loro::cursor::PosType;
+    ///
+    /// let doc = LoroDoc::new();
+    /// let text = doc.get_text("text");
+    /// text.insert(0, "A😀BC").unwrap();
+    /// text.mark(0..2, "bold", true).unwrap(); // A and 😀
+    ///
+    /// let delta = text.slice_delta(1, 3, PosType::Unicode).unwrap();
+    /// assert_eq!(delta.len(), 2);
+    /// if let TextDelta::Insert { insert, attributes } = &delta[0] {
+    ///     assert_eq!(insert, "😀");
+    ///     assert_eq!(attributes.as_ref().unwrap().get("bold").unwrap(), &true.into());
+    /// } else {
+    ///     unreachable!();
+    /// }
+    /// if let TextDelta::Insert { insert, attributes } = &delta[1] {
+    ///     assert_eq!(insert, "B");
+    ///     assert!(attributes.is_none());
+    /// } else {
+    ///     unreachable!();
+    /// }
+    /// ```
+    pub fn slice_delta(
+        &self,
+        start: usize,
+        end: usize,
+        pos_type: cursor::PosType,
+    ) -> LoroResult<Vec<TextDelta>> {
+        self.handler.slice_delta(start, end, pos_type)
+    }
+
     /// Get the characters at given unicode position.
     pub fn char_at(&self, pos: usize) -> LoroResult<char> {
         self.handler.char_at(pos)
@@ -2304,6 +2351,8 @@ impl LoroText {
 
     /// Mark a range of text with a key-value pair.
     ///
+    /// The range uses Unicode scalar indices; use [`mark_utf8`] for UTF-8 byte offsets.
+    ///
     /// You can use it to create a highlight, make a range of text bold, or add a link to a range of text.
     ///
     /// You can specify the `expand` option to set the behavior when inserting text at the boundary of the range.
@@ -2320,7 +2369,31 @@ impl LoroText {
         key: &str,
         value: impl Into<LoroValue>,
     ) -> LoroResult<()> {
-        self.handler.mark(range.start, range.end, key, value.into())
+        self.handler
+            .mark(
+                range.start,
+                range.end,
+                key,
+                value.into(),
+                cursor::PosType::Unicode,
+            )
+    }
+
+    /// Mark a range of text with a key-value pair using UTF-8 byte offsets.
+    pub fn mark_utf8(
+        &self,
+        range: Range<usize>,
+        key: &str,
+        value: impl Into<LoroValue>,
+    ) -> LoroResult<()> {
+        self.handler
+            .mark(
+                range.start,
+                range.end,
+                key,
+                value.into(),
+                cursor::PosType::Bytes,
+            )
     }
 
     /// Unmark a range of text with a key and a value.
@@ -2340,7 +2413,8 @@ impl LoroText {
     ///
     /// Note: you cannot delete unmergeable annotations like comments by this method.
     pub fn unmark(&self, range: Range<usize>, key: &str) -> LoroResult<()> {
-        self.handler.unmark(range.start, range.end, key)
+        self.handler
+            .unmark(range.start, range.end, key, cursor::PosType::Unicode)
     }
 
     /// Get the text in [Delta](https://quilljs.com/docs/delta/) format.

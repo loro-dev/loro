@@ -4,7 +4,7 @@ use loro_delta::{array_vec, DeltaRopeBuilder};
 use loro_internal::delta::{ResolvedMapDelta, ResolvedMapValue};
 use loro_internal::encoding::{ImportBlobMetadata, ImportStatus};
 use loro_internal::event::{Diff, ListDeltaMeta, ListDiff, TextDiff, TextMeta};
-use loro_internal::handler::{Handler, ValueOrHandler};
+use loro_internal::handler::{Handler, TextDelta, ValueOrHandler};
 use loro_internal::json::JsonSchema;
 use loro_internal::version::VersionRange;
 use loro_internal::StringSlice;
@@ -425,11 +425,7 @@ pub(crate) fn handler_to_js_value(handler: Handler, for_json: bool) -> JsValue {
     }
 
     match handler {
-        Handler::Text(t) => LoroText {
-            handler: t,
-            delta_cache: None,
-        }
-        .into(),
+        Handler::Text(t) => LoroText { handler: t }.into(),
         Handler::Map(m) => LoroMap { handler: m }.into(),
         Handler::List(l) => LoroList { handler: l }.into(),
         Handler::Tree(t) => LoroTree { handler: t }.into(),
@@ -724,4 +720,85 @@ pub(crate) fn loro_json_schema_to_js_json_schema(
         .serialize(&s)
         .map_err(std::convert::Into::<JsValue>::into)?;
     Ok(value.into())
+}
+
+pub(crate) fn text_delta_to_js_value(
+    delta: Vec<TextDelta>,
+) -> Result<JsValue, JsValue> {
+    let arr = Array::new();
+    let mut iter = delta.into_iter();
+    let mut current = iter.next();
+
+    while let Some(mut item) = current {
+        let mut next_item = iter.next();
+
+        // Try to merge with next items
+        while let Some(next) = next_item.take() {
+             match (&mut item, next) {
+                (
+                    TextDelta::Insert { insert: i1, attributes: a1 },
+                    TextDelta::Insert { insert: i2, attributes: a2 }
+                ) if a1 == &a2 => {
+                    i1.push_str(&i2);
+                    // next_item is consumed, try next
+                    next_item = iter.next();
+                }
+                (
+                    TextDelta::Retain { retain: r1, attributes: a1 },
+                    TextDelta::Retain { retain: r2, attributes: a2 }
+                ) if a1 == &a2 => {
+                    *r1 += r2;
+                    next_item = iter.next();
+                }
+                (
+                    TextDelta::Delete { delete: d1 },
+                    TextDelta::Delete { delete: d2 }
+                ) => {
+                    *d1 += d2;
+                    next_item = iter.next();
+                }
+                (_, next) => {
+                    // Cannot merge, break inner loop and save next item for next iteration
+                    next_item = Some(next);
+                    break;
+                }
+             }
+        }
+
+        // Convert merged item to JS
+        let obj = Object::new();
+        match item {
+            TextDelta::Insert { insert, attributes } => {
+                Reflect::set(&obj, &"insert".into(), &insert.into())?;
+                if let Some(attributes) = attributes {
+                    if !attributes.is_empty() {
+                        let attrs = Object::new();
+                        for (k, v) in attributes {
+                            Reflect::set(&attrs, &k.into(), &convert(v)?)?;
+                        }
+                        Reflect::set(&obj, &"attributes".into(), &attrs)?;
+                    }
+                }
+            }
+            TextDelta::Retain { retain, attributes } => {
+                Reflect::set(&obj, &"retain".into(), &retain.into())?;
+                if let Some(attributes) = attributes {
+                    if !attributes.is_empty() {
+                        let attrs = Object::new();
+                        for (k, v) in attributes {
+                            Reflect::set(&attrs, &k.into(), &convert(v)?)?;
+                        }
+                        Reflect::set(&obj, &"attributes".into(), &attrs)?;
+                    }
+                }
+            }
+            TextDelta::Delete { delete } => {
+                Reflect::set(&obj, &"delete".into(), &delete.into())?;
+            }
+        }
+        arr.push(&obj);
+
+        current = next_item;
+    }
+    Ok(arr.into())
 }

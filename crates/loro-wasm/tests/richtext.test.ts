@@ -374,4 +374,116 @@ describe("richtext", () => {
     await promise;
     expect(textB.toString()).toStrictEqual("Hello 😊Bro");
   });
+
+  it("sliceDelta basic", () => {
+    const doc = new LoroDoc();
+    doc.configTextStyle({
+      bold: { expand: "after" },
+      italic: { expand: "before" },
+    });
+    const text = doc.getText("text");
+    text.insert(0, "Hello World!");
+    text.mark({ start: 0, end: 5 }, "bold", true);
+    text.mark({ start: 6, end: 11 }, "italic", true);
+
+    const delta = text.sliceDelta(0, 12);
+    expect(delta).toStrictEqual([
+      { insert: "Hello", attributes: { bold: true } },
+      { insert: " " },
+      { insert: "World", attributes: { italic: true } },
+      { insert: "!" },
+    ] as Delta<string>[]);
+
+    const partialDelta = text.sliceDelta(1, 8);
+    expect(partialDelta).toStrictEqual([
+      { insert: "ello", attributes: { bold: true } },
+      { insert: " " },
+      { insert: "Wo", attributes: { italic: true } },
+    ] as Delta<string>[]);
+
+    const emptyDelta = text.sliceDelta(5, 5);
+    expect(emptyDelta).toStrictEqual([] as Delta<string>[]);
+
+    // Out of bounds
+    try {
+        text.sliceDelta(0, 100);
+        expect.fail("Should throw error");
+    } catch (e) {
+        // Expected
+    }
+  });
+
+  it("sliceDeltaUtf8 basic", () => {
+    const doc = new LoroDoc();
+    doc.configTextStyle({
+      bold: { expand: "after" },
+      italic: { expand: "before" },
+    });
+    const text = doc.getText("text");
+    text.insert(0, "你好 World!"); 
+    text.mark({ start: 0, end: 2 }, "bold", true); 
+    text.mark({ start: 3, end: 8 }, "italic", true); 
+
+    const deltaUtf8 = text.sliceDeltaUtf8(0, 13);
+    expect(deltaUtf8).toStrictEqual([
+      { insert: "你好", attributes: { bold: true } },
+      { insert: " " },
+      { insert: "World", attributes: { italic: true } },
+      { insert: "!" },
+    ] as Delta<string>[]);
+
+    // Partial slice by UTF8
+    const partialDeltaUtf8 = text.sliceDeltaUtf8(3, 10); // "好 World" (UTF8 indices)
+    expect(partialDeltaUtf8).toStrictEqual([
+      { insert: "好", attributes: { bold: true } },
+      { insert: " " },
+      { insert: "Wor", attributes: { italic: true } },
+    ] as Delta<string>[]);
+
+    // Empty slice by UTF8
+    const emptyDeltaUtf8 = text.sliceDeltaUtf8(6, 6);
+    expect(emptyDeltaUtf8).toStrictEqual([] as Delta<string>[]);
+
+    // Out of bounds by UTF8
+    try {
+        text.sliceDeltaUtf8(0, 100);
+        expect.fail("Should throw error");
+    } catch (e) {
+        // Expected
+    }
+  });
+
+  it("sliceDelta with emojis and styles", () => {
+    const doc = new LoroDoc();
+    doc.configTextStyle({
+      emoji: { expand: "none" },
+    });
+    const text = doc.getText("text");
+    text.insert(0, "🚀Hello✨World🌍");
+    // Correct UTF-16 indices:
+    // 🚀: 0-2
+    // Hello: 2-7
+    // ✨: 7-8
+    // World: 8-13
+    // 🌍: 13-15
+    text.mark({ start: 0, end: 2 }, "emoji", "rocket"); 
+    text.mark({ start: 7, end: 8 }, "emoji", "sparkles"); 
+    text.mark({ start: 13, end: 15 }, "emoji", "earth"); 
+
+    const delta = text.sliceDelta(0, 15);
+    expect(delta).toStrictEqual([
+      { insert: "🚀", attributes: { emoji: "rocket" } },
+      { insert: "Hello" },
+      { insert: "✨", attributes: { emoji: "sparkles" } },
+      { insert: "World" },
+      { insert: "🌍", attributes: { emoji: "earth" } },
+    ] as Delta<string>[]);
+
+    const partialDelta = text.sliceDelta(2, 13);
+    expect(partialDelta).toStrictEqual([
+      { insert: "Hello" },
+      { insert: "✨", attributes: { emoji: "sparkles" } },
+      { insert: "World" },
+    ] as Delta<string>[]);
+  });
 });

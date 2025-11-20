@@ -15,7 +15,7 @@ use loro_internal::{
     change::Lamport,
     configure::{StyleConfig, StyleConfigMap},
     container::{richtext::ExpandType, ContainerID},
-    cursor::{self, CannotFindRelativePosition, Side},
+    cursor::{self, CannotFindRelativePosition, PosType, Side},
     encoding::ImportBlobMetadata,
     event::Index,
     handler::{
@@ -1024,7 +1024,6 @@ impl LoroDoc {
         ensure_expected_container_type(&container_id, ContainerType::Text)?;
         Ok(LoroText {
             handler: self.doc.get_text(container_id),
-            delta_cache: None,
         })
     }
 
@@ -1213,12 +1212,7 @@ impl LoroDoc {
             }
             ContainerType::Text => {
                 let richtext = self.doc.get_text(container_id);
-                LoroText {
-                    handler: richtext,
-
-                    delta_cache: None,
-                }
-                .into()
+                LoroText { handler: richtext }.into()
             }
             ContainerType::Tree => {
                 let tree = self.doc.get_tree(container_id);
@@ -2469,7 +2463,6 @@ fn convert_container_path_to_js_value(path: &[(ContainerID, Index)]) -> JsContai
 #[wasm_bindgen]
 pub struct LoroText {
     handler: TextHandler,
-    delta_cache: Option<(usize, JsValue)>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -2488,7 +2481,6 @@ impl LoroText {
     pub fn new() -> Self {
         Self {
             handler: TextHandler::new_detached(),
-            delta_cache: None,
         }
     }
 
@@ -2755,7 +2747,7 @@ impl LoroText {
             .map_err(|err| JsValue::from_str(&err.to_string()))?;
         let loro_value = js_value_to_loro_value(&value)?;
         self.handler
-            .mark(range.start, range.end, key, loro_value)
+            .mark(range.start, range.end, key, loro_value, PosType::Utf16)
             .map_err(JsValue::from)?;
         Ok(())
     }
@@ -2780,7 +2772,8 @@ impl LoroText {
     pub fn unmark(&self, range: JsRange, key: &str) -> Result<(), JsValue> {
         // Internally, this may be marking with null or deleting all the marks with key in the range entirely.
         let range: MarkRange = serde_wasm_bindgen::from_value(range.into())?;
-        self.handler.unmark(range.start, range.end, key)?;
+        self.handler
+            .unmark(range.start, range.end, key, PosType::Utf16)?;
         Ok(())
     }
 
@@ -2807,23 +2800,32 @@ impl LoroText {
     /// console.log(text.toDelta());  // [ { insert: 'Hello', attributes: { bold: true } } ]
     /// ```
     #[wasm_bindgen(js_name = "toDelta")]
-    pub fn to_delta(&mut self) -> JsStringDelta {
-        let version = self.handler.version_id();
-        if let Some(v) = version {
-            if let Some((vv, delta)) = self.delta_cache.as_ref() {
-                if v == *vv {
-                    return delta.clone().into();
-                }
-            }
-        }
+    pub fn to_delta(&mut self) -> JsResult<JsStringDelta> {
+        let delta = self.handler.get_delta();
+        let value = convert::text_delta_to_js_value(delta)?;
+        Ok(value.into())
+    }
 
-        let delta = self.handler.get_richtext_value();
-        let value: JsValue = delta.into();
-        let ans: JsStringDelta = value.clone().into();
-        if let Some(v) = version {
-            self.delta_cache = Some((v, value));
-        }
-        ans
+    /// Get the rich text delta in the given range (utf-16 index).
+    #[wasm_bindgen(js_name = "sliceDelta")]
+    pub fn slice_delta(&mut self, start: usize, end: usize) -> JsResult<JsStringDelta> {
+        let delta = self
+            .handler
+            .slice_delta(start, end, PosType::Utf16)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        let value = convert::text_delta_to_js_value(delta)?;
+        Ok(value.into())
+    }
+
+    /// Get the rich text delta in the given range (utf-8 index).
+    #[wasm_bindgen(js_name = "sliceDeltaUtf8")]
+    pub fn slice_delta_utf8(&mut self, start: usize, end: usize) -> JsResult<JsStringDelta> {
+        let delta = self
+            .handler
+            .slice_delta(start, end, PosType::Bytes)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        let value = convert::text_delta_to_js_value(delta)?;
+        Ok(value.into())
     }
 
     /// Get the container id of the text.

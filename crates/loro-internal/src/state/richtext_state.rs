@@ -99,6 +99,17 @@ impl RichtextState {
         self.state.get_mut().get_text_slice_by_event_index(pos, len)
     }
 
+    pub(crate) fn slice_delta(
+        &mut self,
+        start_index: usize,
+        end_index: usize,
+        pos_type: PosType,
+    ) -> LoroResult<Vec<(String, StyleMeta)>> {
+        self.state
+            .get_mut()
+            .slice_delta(start_index, end_index, pos_type)
+    }
+
     pub(crate) fn get_char_by_event_index(&mut self, pos: usize) -> Result<char, ()> {
         self.state.get_mut().get_char_by_event_index(pos)
     }
@@ -254,11 +265,18 @@ impl RichtextState {
 
     pub(crate) fn get_delta(&mut self) -> Vec<TextDelta> {
         let mut delta = Vec::new();
-        // TODO: merge last
         for span in self.state.get_mut().iter() {
+            let next_attr = span.attributes.to_option_map();
+            match delta.last_mut() {
+                Some(TextDelta::Insert { insert, attributes }) if &next_attr == attributes => {
+                    insert.push_str(span.text.as_str());
+                    continue;
+                }
+                _ => {}
+            }
             delta.push(TextDelta::Insert {
                 insert: span.text.as_str().to_string(),
-                attributes: span.attributes.to_option_map(),
+                attributes: next_attr,
             })
         }
         delta
@@ -679,6 +697,11 @@ impl RichtextState {
     #[inline(always)]
     pub fn len_utf8(&mut self) -> usize {
         self.state.get_mut().len_utf8()
+    }
+
+    #[inline(always)]
+    pub fn len(&mut self, pos_type: PosType) -> usize {
+        self.state.get_mut().len(pos_type)
     }
 
     #[inline(always)]
