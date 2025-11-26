@@ -1851,3 +1851,102 @@ it("returns undefined when getting a non-existent cursor", () => {
   const newDoc = new LoroDoc();
   expect(newDoc.getCursorPos(cursor)).toBeUndefined();
 });
+
+it("should match when inserting container", () => {
+  const doc = new LoroDoc();
+  const list = doc.getList("list");
+  const text = new LoroText();
+  text.insert(0, "");
+  list.insertContainer(0, text);
+
+  const retrievedText = list.get(0) as LoroText;
+  expect(retrievedText.toString()).toBe("");
+});
+
+it("keeps detached text content when inserted", () => {
+  const doc = new LoroDoc();
+  const list = doc.getList("list");
+  const text = new LoroText();
+  text.insert(0, "detached");
+
+  list.insertContainer(0, text);
+
+  const retrievedText = list.get(0) as LoroText;
+  expect(retrievedText.toString()).toBe("detached");
+});
+
+it("keeps detached text styles when inserted", () => {
+  const doc = new LoroDoc();
+  const list = doc.getList("list");
+  const text = new LoroText();
+  text.insert(0, "styled");
+  text.mark({ start: 0, end: 6 }, "bold", true);
+
+  list.insertContainer(0, text);
+
+  const retrievedText = list.get(0) as LoroText;
+  expect(retrievedText.toDelta()).toStrictEqual([
+    { insert: "styled", attributes: { bold: true } },
+  ]);
+});
+
+it("keeps detached unicode text when inserted", () => {
+  const doc = new LoroDoc();
+  const list = doc.getList("list");
+  const text = new LoroText();
+  const content = "👨‍👩‍👦 family";
+  text.insert(0, content);
+
+  list.insertContainer(0, text);
+
+  const retrievedText = list.get(0) as LoroText;
+  expect(retrievedText.toString()).toBe(content);
+});
+
+it("keeps detached partial styles when inserted", () => {
+  const doc = new LoroDoc();
+  const list = doc.getList("list");
+  const text = new LoroText();
+  text.insert(0, "abcDEF");
+  text.mark({ start: 0, end: 3 }, "bold", true);
+
+  list.insertContainer(0, text);
+
+  const retrievedText = list.get(0) as LoroText;
+  expect(retrievedText.toDelta()).toStrictEqual([
+    { insert: "abc", attributes: { bold: true } },
+    { insert: "DEF" },
+  ]);
+});
+
+it("copies attached text without sharing future edits", () => {
+  const doc = new LoroDoc();
+  const source = doc.getText("source");
+  source.insert(0, "root");
+  const list = doc.getList("list");
+
+  list.insertContainer(0, source);
+  const copied = list.get(0) as LoroText;
+
+  source.insert(4, "-updated");
+  expect(source.toString()).toBe("root-updated");
+  expect(copied.toString()).toBe("root");
+});
+
+it("throws when inserting an attached text from another doc", () => {
+  const docA = new LoroDoc();
+  const textA = docA.getText("text");
+  textA.insert(0, "cross");
+
+  const docB = new LoroDoc();
+  const listB = docB.getList("list");
+
+  expect(() => listB.insertContainer(0, textA)).toThrow();
+});
+
+it("apply empty delta", () => {
+  const doc = new LoroDoc();
+  const text = doc.getText("text");
+  text.applyDelta([{ insert: "" }]);
+  expect(text.toString()).toBe("");
+});
