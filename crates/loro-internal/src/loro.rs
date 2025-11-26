@@ -2116,8 +2116,7 @@ impl Default for CommitOptions {
 #[cfg(test)]
 mod test {
     use loro_common::ID;
-
-    use crate::{loro::ExportMode, version::Frontiers, LoroDoc, ToJson};
+    use crate::{cursor::PosType, loro::ExportMode, version::Frontiers, LoroDoc, ToJson};
 
     #[test]
     fn test_sync() {
@@ -2136,7 +2135,8 @@ mod test {
         let mut txn = loro.txn().unwrap();
         for i in 0..10 {
             map.insert_with_txn(&mut txn, "key", i.into()).unwrap();
-            text.insert_with_txn(&mut txn, 0, &i.to_string()).unwrap();
+            text.insert_with_txn(&mut txn, 0, &i.to_string(), PosType::Unicode)
+                .unwrap();
             list.insert_with_txn(&mut txn, 0, i.into()).unwrap();
         }
         txn.commit().unwrap();
@@ -2186,7 +2186,9 @@ mod test {
         let update_a = a.export(ExportMode::Snapshot);
         let b = LoroDoc::new_auto_commit();
         b.import_batch(&[update_a.unwrap()]).unwrap();
-        b.get_text("text").insert(0, "hello").unwrap();
+        b.get_text("text")
+            .insert(0, "hello", PosType::Unicode)
+            .unwrap();
         b.commit_then_renew();
         let oplog = b.oplog().lock().unwrap();
         drop(oplog);

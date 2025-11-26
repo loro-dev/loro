@@ -2617,7 +2617,7 @@ impl LoroText {
     /// text.insert(0, "Hello");
     /// ```
     pub fn insert(&mut self, index: usize, content: &str) -> JsResult<()> {
-        self.handler.insert(index, content)?;
+        self.handler.insert(index, content, PosType::Utf16)?;
         Ok(())
     }
 
@@ -2633,7 +2633,7 @@ impl LoroText {
     /// text.slice(0, 2); // "He"
     /// ```
     pub fn slice(&mut self, start_index: usize, end_index: usize) -> JsResult<String> {
-        match self.handler.slice(start_index, end_index) {
+        match self.handler.slice(start_index, end_index, PosType::Utf16) {
             Ok(x) => Ok(x),
             Err(x) => Err(x.into()),
         }
@@ -2652,7 +2652,7 @@ impl LoroText {
     /// ```
     #[wasm_bindgen(js_name = "charAt")]
     pub fn char_at(&mut self, pos: usize) -> JsResult<char> {
-        match self.handler.char_at(pos) {
+        match self.handler.char_at(pos, PosType::Utf16) {
             Ok(x) => Ok(x),
             Err(x) => Err(x.into()),
         }
@@ -2670,7 +2670,7 @@ impl LoroText {
     /// text.splice(2, 3, "llo"); // "llo"
     /// ```
     pub fn splice(&mut self, pos: usize, len: usize, s: &str) -> JsResult<String> {
-        match self.handler.splice(pos, len, s) {
+        match self.handler.splice(pos, len, s, PosType::Utf16) {
             Ok(x) => Ok(x),
             Err(x) => Err(x.into()),
         }
@@ -2706,7 +2706,7 @@ impl LoroText {
     /// console.log(s); // "Ho"
     /// ```
     pub fn delete(&mut self, index: usize, len: usize) -> JsResult<()> {
-        self.handler.delete(index, len)?;
+        self.handler.delete(index, len, PosType::Utf16)?;
         Ok(())
     }
 

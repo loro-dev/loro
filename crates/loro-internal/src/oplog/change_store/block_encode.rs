@@ -660,7 +660,7 @@ pub fn decode_block(
 
 #[cfg(test)]
 mod test {
-    use crate::{delta::DeltaValue, loro::ExportMode, LoroDoc};
+    use crate::{cursor::PosType, delta::DeltaValue, loro::ExportMode, LoroDoc};
 
     #[test]
     pub fn encode_single_text_edit() {
@@ -675,13 +675,21 @@ mod test {
         diagnose(&doc);
         doc.get_map("map").insert("z", 1000).unwrap();
         diagnose(&doc);
-        doc.get_text("text").insert(0, "Hello").unwrap();
+        doc.get_text("text")
+            .insert(0, "Hello", PosType::Unicode)
+            .unwrap();
         diagnose(&doc);
-        doc.get_text("text").insert(2, "He").unwrap();
+        doc.get_text("text")
+            .insert(2, "He", PosType::Unicode)
+            .unwrap();
         diagnose(&doc);
-        doc.get_text("text").delete(1, 4).unwrap();
+        doc.get_text("text")
+            .delete(1, 4, PosType::Unicode)
+            .unwrap();
         diagnose(&doc);
-        doc.get_text("text").delete(0, 2).unwrap();
+        doc.get_text("text")
+            .delete(0, 2, PosType::Unicode)
+            .unwrap();
         diagnose(&doc);
     }
 

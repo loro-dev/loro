@@ -1,6 +1,7 @@
 use loro_common::ID;
 use loro_internal::{
-    loro::ExportMode, version::Frontiers, HandlerTrait, LoroDoc, TextHandler, ToJson,
+    cursor::PosType, loro::ExportMode, version::Frontiers, HandlerTrait, LoroDoc, TextHandler,
+    ToJson,
 };
 use serde_json::json;
 
@@ -10,8 +11,8 @@ fn auto_commit() {
     doc_a.set_peer_id(1).unwrap();
     doc_a.start_auto_commit();
     let text_a = doc_a.get_text("text");
-    text_a.insert(0, "hello").unwrap();
-    text_a.delete(2, 2).unwrap();
+    text_a.insert(0, "hello", PosType::Unicode).unwrap();
+    text_a.delete(2, 2, PosType::Unicode).unwrap();
     assert_eq!(&**text_a.get_value().as_string().unwrap(), "heo");
     let bytes = doc_a.export(ExportMode::all_updates()).unwrap();
 
@@ -19,7 +20,7 @@ fn auto_commit() {
     doc_b.start_auto_commit();
     doc_b.set_peer_id(2).unwrap();
     let text_b = doc_b.get_text("text");
-    text_b.insert(0, "100").unwrap();
+    text_b.insert(0, "100", PosType::Unicode).unwrap();
     doc_b.import(&bytes).unwrap();
     doc_a
         .import(&doc_b.export(ExportMode::Snapshot).unwrap())
@@ -39,7 +40,7 @@ fn auto_commit_list() {
         .insert_container(0, TextHandler::new_detached())
         .unwrap();
     let text = text_a;
-    text.insert(0, "world").unwrap();
+    text.insert(0, "world", PosType::Unicode).unwrap();
     let value = doc_a.get_deep_value();
     assert_eq!(value.to_json_value(), json!({"list": ["world", "hello"]}))
 }

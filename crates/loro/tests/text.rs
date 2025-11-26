@@ -288,6 +288,87 @@ fn test_slice_delta_utf16_positions() {
 }
 
 #[test]
+fn utf16_insert_delete_and_slice() {
+    let doc = LoroDoc::new();
+    let text = doc.get_text("text");
+    text.insert(0, "A😀C").unwrap();
+
+    text.insert_utf16(1, "B").unwrap();
+    assert_eq!(text.to_string(), "AB😀C");
+
+    let current = text.to_string();
+    let emoji_start = utf16_pos(&current, 2);
+    text.delete_utf16(emoji_start, 2).unwrap();
+    assert_eq!(text.to_string(), "ABC");
+
+    let tail = text.slice_utf16(1, text.len_utf16()).unwrap();
+    assert_eq!(tail, "BC");
+}
+
+#[test]
+fn mark_and_unmark_utf16_ranges() {
+    let doc = LoroDoc::new();
+    let text = doc.get_text("text");
+    let content = "A😀BC";
+    text.insert(0, content).unwrap();
+
+    let start = utf16_pos(content, 1);
+    let end = utf16_pos(content, 3);
+    text.mark_utf16(start..end, "bold", true).unwrap();
+
+    let delta = text
+        .slice_delta(0, text.len_unicode(), PosType::Unicode)
+        .unwrap();
+    assert_eq!(delta.len(), 3);
+
+    if let TextDelta::Insert { insert, attributes } = &delta[0] {
+        assert_eq!(insert, "A");
+        assert!(attributes.is_none());
+    } else {
+        panic!("Expected leading segment");
+    }
+
+    if let TextDelta::Insert { insert, attributes } = &delta[1] {
+        assert_eq!(insert, "😀B");
+        let attrs = attributes.as_ref().expect("bold attribute expected");
+        assert_eq!(attrs.get("bold"), Some(&true.into()));
+    } else {
+        panic!("Expected middle segment");
+    }
+
+    if let TextDelta::Insert { insert, attributes } = &delta[2] {
+        assert_eq!(insert, "C");
+        assert!(attributes.is_none());
+    } else {
+        panic!("Expected trailing segment");
+    }
+
+    text.unmark_utf16(start..end, "bold").unwrap();
+    let delta = text
+        .slice_delta(0, text.len_unicode(), PosType::Unicode)
+        .unwrap();
+    let mut combined = String::new();
+    for segment in &delta {
+        if let TextDelta::Insert { insert, attributes } = segment {
+            combined.push_str(insert);
+            if let Some(attrs) = attributes {
+                if let Some(v) = attrs.get("bold") {
+                    assert_ne!(
+                        v,
+                        &true.into(),
+                        "expected formatting cleared, got {:?}",
+                        attrs
+                    );
+                }
+            }
+        } else {
+            panic!("Expected insert segment");
+        }
+    }
+    assert_eq!(combined, content);
+}
+
+#[test]
 fn test_slice_delta_bytes_with_mixed_attributes() {
     let doc = LoroDoc::new();
     let mut styles = StyleConfigMap::default_rich_text_config();

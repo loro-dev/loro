@@ -1421,6 +1421,15 @@ impl TextHandler {
         }
     }
 
+    fn len(&self, pos_type: PosType) -> usize {
+        match &self.inner {
+            MaybeDetached::Detached(t) => t.lock().unwrap().value.len(pos_type),
+            MaybeDetached::Attached(a) => {
+                a.with_state(|state| state.as_richtext_state_mut().unwrap().len(pos_type))
+            }
+        }
+    }
+
     pub fn diagnose(&self) {
         match &self.inner {
             MaybeDetached::Detached(t) => {
@@ -1451,35 +1460,39 @@ impl TextHandler {
         }
     }
 
-    /// `pos` is a Event Index:
-    ///
-    /// - if feature="wasm", pos is a UTF-16 index
-    /// - if feature!="wasm", pos is a Unicode index
-    pub fn char_at(&self, pos: usize) -> LoroResult<char> {
-        if pos >= self.len_event() {
+    /// Get a character at `pos` in the coordinate system specified by `pos_type`.
+    pub fn char_at(&self, pos: usize, pos_type: PosType) -> LoroResult<char> {
+        let len = self.len(pos_type);
+        if pos >= len {
             return Err(LoroError::OutOfBound {
                 pos,
-                len: self.len_event(),
+                len,
                 info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
             });
         }
         if let Ok(c) = match &self.inner {
             MaybeDetached::Detached(t) => {
                 let t = t.lock().unwrap();
-                t.value.get_char_by_event_index(pos)
+                let event_pos = match pos_type {
+                    PosType::Event => pos,
+                    _ => t.value.index_to_event_index(pos, pos_type),
+                };
+                t.value.get_char_by_event_index(event_pos)
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
-                state
-                    .as_richtext_state_mut()
-                    .unwrap()
-                    .get_char_by_event_index(pos)
+                let state = state.as_richtext_state_mut().unwrap();
+                let event_pos = match pos_type {
+                    PosType::Event => pos,
+                    _ => state.index_to_event_index(pos, pos_type),
+                };
+                state.get_char_by_event_index(event_pos)
             }),
         } {
             Ok(c)
         } else {
             Err(LoroError::OutOfBound {
                 pos,
-                len: self.len_event(),
+                len,
                 info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
             })
         }
@@ -1490,24 +1503,74 @@ impl TextHandler {
     /// - if feature="wasm", pos is a UTF-16 index
     /// - if feature!="wasm", pos is a Unicode index
     ///
-    pub fn slice(&self, start_index: usize, end_index: usize) -> LoroResult<String> {
+    pub fn slice(
+        &self,
+        start_index: usize,
+        end_index: usize,
+        pos_type: PosType,
+    ) -> LoroResult<String> {
+        self.slice_with_pos_type(start_index, end_index, pos_type)
+    }
+
+    pub fn slice_utf16(&self, start_index: usize, end_index: usize) -> LoroResult<String> {
+        self.slice(start_index, end_index, PosType::Utf16)
+    }
+
+    fn slice_with_pos_type(
+        &self,
+        start_index: usize,
+        end_index: usize,
+        pos_type: PosType,
+    ) -> LoroResult<String> {
         if end_index < start_index {
             return Err(LoroError::EndIndexLessThanStartIndex {
                 start: start_index,
                 end: end_index,
             });
         }
+        if start_index == end_index {
+            return Ok(String::new());
+        }
+
+        let info = || format!("Position: {}:{}", file!(), line!()).into_boxed_str();
         match &self.inner {
             MaybeDetached::Detached(t) => {
                 let t = t.lock().unwrap();
-                t.value
-                    .get_text_slice_by_event_index(start_index, end_index - start_index)
+                let len = t.value.len(pos_type);
+                if end_index > len {
+                    return Err(LoroError::OutOfBound {
+                        pos: end_index,
+                        len,
+                        info: info(),
+                    });
+                }
+                let (start, end) = match pos_type {
+                    PosType::Event => (start_index, end_index),
+                    _ => (
+                        t.value.index_to_event_index(start_index, pos_type),
+                        t.value.index_to_event_index(end_index, pos_type),
+                    ),
+                };
+                t.value.get_text_slice_by_event_index(start, end - start)
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
-                state
-                    .as_richtext_state_mut()
-                    .unwrap()
-                    .get_text_slice_by_event_index(start_index, end_index - start_index)
+                let state = state.as_richtext_state_mut().unwrap();
+                let len = state.len(pos_type);
+                if end_index > len {
+                    return Err(LoroError::OutOfBound {
+                        pos: end_index,
+                        len,
+                        info: info(),
+                    });
+                }
+                let (start, end) = match pos_type {
+                    PosType::Event => (start_index, end_index),
+                    _ => (
+                        state.index_to_event_index(start_index, pos_type),
+                        state.index_to_event_index(end_index, pos_type),
+                    ),
+                };
+                state.get_text_slice_by_event_index(start, end - start)
             }),
         }
     }
@@ -1553,10 +1616,10 @@ impl TextHandler {
     /// - if feature!="wasm", pos is a Unicode index
     ///
     /// This method requires auto_commit to be enabled.
-    pub fn splice(&self, pos: usize, len: usize, s: &str) -> LoroResult<String> {
-        let x = self.slice(pos, pos + len)?;
-        self.delete(pos, len)?;
-        self.insert(pos, s)?;
+    pub fn splice(&self, pos: usize, len: usize, s: &str, pos_type: PosType) -> LoroResult<String> {
+        let x = self.slice(pos, pos + len, pos_type)?;
+        self.delete(pos, len, pos_type)?;
+        self.insert(pos, s, pos_type)?;
         Ok(x)
     }
 
@@ -1567,19 +1630,22 @@ impl TextHandler {
         Ok(())
     }
 
-    /// `pos` is a Event Index:
-    ///
-    /// - if feature="wasm", pos is a UTF-16 index
-    /// - if feature!="wasm", pos is a Unicode index
+    pub fn splice_utf16(&self, pos: usize, len: usize, s: &str) -> LoroResult<()> {
+        self.delete(pos, len, PosType::Utf16)?;
+        self.insert(pos, s, PosType::Utf16)?;
+        Ok(())
+    }
+
+    /// Insert text at `pos` using the given `pos_type` coordinate system.
     ///
     /// This method requires auto_commit to be enabled.
-    pub fn insert(&self, pos: usize, s: &str) -> LoroResult<()> {
+    pub fn insert(&self, pos: usize, s: &str, pos_type: PosType) -> LoroResult<()> {
         match &self.inner {
             MaybeDetached::Detached(t) => {
                 let mut t = t.lock().unwrap();
                 let (index, _) = t
                     .value
-                    .get_entity_index_for_text_insert(pos, PosType::Event)
+                    .get_entity_index_for_text_insert(pos, pos_type)
                     .unwrap();
                 t.value.insert_at_entity_index(
                     index,
@@ -1588,57 +1654,33 @@ impl TextHandler {
                 );
                 Ok(())
             }
-            MaybeDetached::Attached(a) => a.with_txn(|txn| self.insert_with_txn(txn, pos, s)),
+            MaybeDetached::Attached(a) => {
+                a.with_txn(|txn| self.insert_with_txn(txn, pos, s, pos_type))
+            }
         }
     }
 
     pub fn insert_utf8(&self, pos: usize, s: &str) -> LoroResult<()> {
-        match &self.inner {
-            MaybeDetached::Detached(t) => {
-                let mut t = t.lock().unwrap();
-                let (index, _) = t
-                    .value
-                    .get_entity_index_for_text_insert(pos, PosType::Bytes)
-                    .unwrap();
-                t.value.insert_at_entity_index(
-                    index,
-                    BytesSlice::from_bytes(s.as_bytes()),
-                    IdFull::NONE_ID,
-                );
-                Ok(())
-            }
-            MaybeDetached::Attached(a) => a.with_txn(|txn| self.insert_with_txn_utf8(txn, pos, s)),
-        }
+        self.insert(pos, s, PosType::Bytes)
+    }
+
+    pub fn insert_utf16(&self, pos: usize, s: &str) -> LoroResult<()> {
+        self.insert(pos, s, PosType::Utf16)
     }
 
     pub fn insert_unicode(&self, pos: usize, s: &str) -> LoroResult<()> {
-        match &self.inner {
-            MaybeDetached::Detached(t) => {
-                let mut t = t.lock().unwrap();
-                let (index, _) = t
-                    .value
-                    .get_entity_index_for_text_insert(pos, PosType::Unicode)
-                    .unwrap();
-                t.value.insert_at_entity_index(
-                    index,
-                    BytesSlice::from_bytes(s.as_bytes()),
-                    IdFull::NONE_ID,
-                );
-                Ok(())
-            }
-            MaybeDetached::Attached(a) => a.with_txn(|txn| {
-                self.insert_with_txn_and_attr(txn, pos, s, None, PosType::Unicode)?;
-                Ok(())
-            }),
-        }
+        self.insert(pos, s, PosType::Unicode)
     }
 
-    /// `pos` is a Event Index:
-    ///
-    /// - if feature="wasm", pos is a UTF-16 index
-    /// - if feature!="wasm", pos is a Unicode index
-    pub fn insert_with_txn(&self, txn: &mut Transaction, pos: usize, s: &str) -> LoroResult<()> {
-        self.insert_with_txn_and_attr(txn, pos, s, None, PosType::Event)?;
+    /// Insert text within an existing transaction using the provided `pos_type`.
+    pub fn insert_with_txn(
+        &self,
+        txn: &mut Transaction,
+        pos: usize,
+        s: &str,
+        pos_type: PosType,
+    ) -> LoroResult<()> {
+        self.insert_with_txn_and_attr(txn, pos, s, None, pos_type)?;
         Ok(())
     }
 
@@ -1648,66 +1690,39 @@ impl TextHandler {
         pos: usize,
         s: &str,
     ) -> LoroResult<()> {
-        self.insert_with_txn_and_attr(txn, pos, s, None, PosType::Bytes)?;
-        Ok(())
+        self.insert_with_txn(txn, pos, s, PosType::Bytes)
     }
 
-    /// `pos` is a Event Index:
-    ///
-    /// - if feature="wasm", pos is a UTF-16 index
-    /// - if feature!="wasm", pos is a Unicode index
+    /// Delete a span using the coordinate system described by `pos_type`.
     ///
     /// This method requires auto_commit to be enabled.
-    pub fn delete(&self, pos: usize, len: usize) -> LoroResult<()> {
+    pub fn delete(&self, pos: usize, len: usize, pos_type: PosType) -> LoroResult<()> {
         match &self.inner {
             MaybeDetached::Detached(t) => {
                 let mut t = t.lock().unwrap();
-                let ranges = t
-                    .value
-                    .get_text_entity_ranges(pos, len, PosType::Event)
-                    .unwrap();
+                let ranges = t.value.get_text_entity_ranges(pos, len, pos_type)?;
                 for range in ranges.iter().rev() {
                     t.value
                         .drain_by_entity_index(range.entity_start, range.entity_len(), None);
                 }
                 Ok(())
             }
-            MaybeDetached::Attached(a) => a.with_txn(|txn| self.delete_with_txn(txn, pos, len)),
+            MaybeDetached::Attached(a) => {
+                a.with_txn(|txn| self.delete_with_txn(txn, pos, len, pos_type))
+            }
         }
     }
 
     pub fn delete_utf8(&self, pos: usize, len: usize) -> LoroResult<()> {
-        match &self.inner {
-            MaybeDetached::Detached(t) => {
-                let mut t = t.lock().unwrap();
-                let ranges = t.value.get_text_entity_ranges(pos, len, PosType::Bytes)?;
-                for range in ranges.iter().rev() {
-                    t.value
-                        .drain_by_entity_index(range.entity_start, range.entity_len(), None);
-                }
-                Ok(())
-            }
-            MaybeDetached::Attached(a) => {
-                a.with_txn(|txn| self.delete_with_txn_inline(txn, pos, len, PosType::Bytes))
-            }
-        }
+        self.delete(pos, len, PosType::Bytes)
+    }
+
+    pub fn delete_utf16(&self, pos: usize, len: usize) -> LoroResult<()> {
+        self.delete(pos, len, PosType::Utf16)
     }
 
     pub fn delete_unicode(&self, pos: usize, len: usize) -> LoroResult<()> {
-        match &self.inner {
-            MaybeDetached::Detached(t) => {
-                let mut t = t.lock().unwrap();
-                let ranges = t.value.get_text_entity_ranges(pos, len, PosType::Unicode)?;
-                for range in ranges.iter().rev() {
-                    t.value
-                        .drain_by_entity_index(range.entity_start, range.entity_len(), None);
-                }
-                Ok(())
-            }
-            MaybeDetached::Attached(a) => {
-                a.with_txn(|txn| self.delete_with_txn_inline(txn, pos, len, PosType::Unicode))
-            }
-        }
+        self.delete(pos, len, PosType::Unicode)
     }
 
     /// If attr is specified, it will be used as the attribute of the inserted text.
@@ -1866,12 +1881,15 @@ impl TextHandler {
         Ok(override_styles)
     }
 
-    /// `pos` is a Event Index:
-    ///
-    /// - if feature="wasm", pos is a UTF-16 index
-    /// - if feature!="wasm", pos is a Unicode index
-    pub fn delete_with_txn(&self, txn: &mut Transaction, pos: usize, len: usize) -> LoroResult<()> {
-        self.delete_with_txn_inline(txn, pos, len, PosType::Event)
+    /// Delete text within a transaction using the specified `pos_type`.
+    pub fn delete_with_txn(
+        &self,
+        txn: &mut Transaction,
+        pos: usize,
+        len: usize,
+        pos_type: PosType,
+    ) -> LoroResult<()> {
+        self.delete_with_txn_inline(txn, pos, len, pos_type)
     }
 
     fn delete_with_txn_inline(
@@ -1885,28 +1903,13 @@ impl TextHandler {
             return Ok(());
         }
 
-        match pos_type {
-            PosType::Event => {
-                if pos + len > self.len_event() {
-                    error!("pos={} len={} len_event={}", pos, len, self.len_event());
-                    return Err(LoroError::OutOfBound {
-                        pos: pos + len,
-                        len: self.len_event(),
-                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-                    });
-                }
-            }
-            PosType::Bytes => {
-                if pos + len > self.len_utf8() {
-                    error!("pos={} len={} len_bytes={}", pos, len, self.len_utf8());
-                    return Err(LoroError::OutOfBound {
-                        pos: pos + len,
-                        len: self.len_utf8(),
-                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-                    });
-                }
-            }
-            _ => (),
+        if pos + len > self.len(pos_type) {
+            error!("pos={} len={} len_event={}", pos, len, self.len_event());
+            return Err(LoroError::OutOfBound {
+                pos: pos + len,
+                len: self.len_event(),
+                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+            });
         }
 
         let inner = self.inner.try_attached_state()?;
@@ -1965,20 +1968,10 @@ impl TextHandler {
         match &self.inner {
             MaybeDetached::Detached(t) => {
                 let mut g = t.lock().unwrap();
-                self.mark_for_detached(
-                    &mut g.value,
-                    key,
-                    &value,
-                    start,
-                    end,
-                    pos_type,
-                    false,
-                )
+                self.mark_for_detached(&mut g.value, key, &value, start, end, pos_type, false)
             }
             MaybeDetached::Attached(a) => {
-                a.with_txn(|txn| {
-                    self.mark_with_txn(txn, start, end, key, value, pos_type, false)
-                })
+                a.with_txn(|txn| self.mark_with_txn(txn, start, end, key, value, pos_type, false))
             }
         }
     }
@@ -2052,11 +2045,9 @@ impl TextHandler {
                 pos_type,
                 true,
             ),
-            MaybeDetached::Attached(a) => {
-                a.with_txn(|txn| {
-                    self.mark_with_txn(txn, start, end, key, LoroValue::Null, pos_type, true)
-                })
-            }
+            MaybeDetached::Attached(a) => a.with_txn(|txn| {
+                self.mark_with_txn(txn, start, end, key, LoroValue::Null, pos_type, true)
+            }),
         }
     }
 
@@ -2082,10 +2073,7 @@ impl TextHandler {
 
         let mut doc_state = inner.doc.state.lock().unwrap();
         let len = doc_state.with_state_mut(inner.container_idx, |state| {
-            state
-                .as_richtext_state_mut()
-                .unwrap()
-                .len(pos_type)
+            state.as_richtext_state_mut().unwrap().len(pos_type)
         });
 
         if end > len {
@@ -2225,7 +2213,7 @@ impl TextHandler {
                     index = end;
                 }
                 TextDelta::Delete { delete } => {
-                    self.delete_with_txn(txn, index, *delete)?;
+                    self.delete_with_txn(txn, index, *delete, PosType::Event)?;
                 }
                 TextDelta::Retain { attributes, retain } => {
                     let end = index + *retain;
@@ -2253,7 +2241,12 @@ impl TextHandler {
         let mut len = self.len_event();
         for pending_mark in marks {
             if pending_mark.start >= len {
-                self.insert_with_txn(txn, len, &"\n".repeat(pending_mark.start - len + 1))?;
+                self.insert_with_txn(
+                    txn,
+                    len,
+                    &"\n".repeat(pending_mark.start - len + 1),
+                    PosType::Event,
+                )?;
                 len = pending_mark.start;
             }
 
@@ -4230,7 +4223,8 @@ mod test {
 
         let mut txn = loro.txn().unwrap();
         let text = txn.get_text("hello");
-        text.insert_with_txn(&mut txn, 0, "hello").unwrap();
+        text.insert_with_txn(&mut txn, 0, "hello", PosType::Unicode)
+            .unwrap();
         txn.commit().unwrap();
         let exported = loro.export(ExportMode::all_updates()).unwrap();
 
@@ -4238,7 +4232,8 @@ mod test {
         let mut txn = loro2.txn().unwrap();
         let text = txn.get_text("hello");
         assert_eq!(&**text.get_value().as_string().unwrap(), "hello");
-        text.insert_with_txn(&mut txn, 5, " world").unwrap();
+        text.insert_with_txn(&mut txn, 5, " world", PosType::Unicode)
+            .unwrap();
         assert_eq!(&**text.get_value().as_string().unwrap(), "hello world");
         txn.commit().unwrap();
 
@@ -4259,7 +4254,9 @@ mod test {
         let loro = LoroDoc::new();
         let mut txn = loro.txn().unwrap();
         let handler = loro.get_text("richtext");
-        handler.insert_with_txn(&mut txn, 0, "hello").unwrap();
+        handler
+            .insert_with_txn(&mut txn, 0, "hello", PosType::Unicode)
+            .unwrap();
         txn.commit().unwrap();
         for i in 0..100 {
             let new_loro = LoroDoc::new();
@@ -4269,7 +4266,7 @@ mod test {
             let mut txn = new_loro.txn().unwrap();
             let handler = new_loro.get_text("richtext");
             handler
-                .insert_with_txn(&mut txn, i % 5, &i.to_string())
+                .insert_with_txn(&mut txn, i % 5, &i.to_string(), PosType::Unicode)
                 .unwrap();
             txn.commit().unwrap();
             loro.import(
@@ -4285,7 +4282,7 @@ mod test {
     fn richtext_handler_mark() {
         let loro = LoroDoc::new_auto_commit();
         let handler = loro.get_text("richtext");
-        handler.insert(0, "hello world").unwrap();
+        handler.insert(0, "hello world", PosType::Unicode).unwrap();
         handler
             .mark(0, 5, "bold", true.into(), PosType::Event)
             .unwrap();
@@ -4314,7 +4311,7 @@ mod test {
 
         // insert after bold should be bold
         {
-            handler2.insert(5, " new").unwrap();
+            handler2.insert(5, " new", PosType::Unicode).unwrap();
             let value = handler2.get_richtext_value();
             assert_eq!(
                 value.to_json_value(),
@@ -4331,17 +4328,11 @@ mod test {
         let loro = LoroDoc::new();
         let mut txn = loro.txn().unwrap();
         let handler = loro.get_text("richtext");
-        handler.insert_with_txn(&mut txn, 0, "hello world").unwrap();
         handler
-            .mark_with_txn(
-                &mut txn,
-                0,
-                5,
-                "bold",
-                true.into(),
-                PosType::Event,
-                false,
-            )
+            .insert_with_txn(&mut txn, 0, "hello world", PosType::Unicode)
+            .unwrap();
+        handler
+            .mark_with_txn(&mut txn, 0, 5, "bold", true.into(), PosType::Event, false)
             .unwrap();
         txn.commit().unwrap();
 
@@ -4389,7 +4380,7 @@ mod test {
         let id = tree.create(TreeParentId::Root).unwrap();
         let meta = tree.get_meta(id).unwrap();
         meta.insert("a", 1).unwrap();
-        text.insert(0, "abc").unwrap();
+        text.insert(0, "abc", PosType::Unicode).unwrap();
         let _id2 = tree.create(TreeParentId::Root).unwrap();
         meta.insert("b", 2).unwrap();
 

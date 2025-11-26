@@ -1,6 +1,6 @@
 use bench_utils::TextAction;
 
-use loro_internal::LoroDoc;
+use loro_internal::{cursor::PosType, LoroDoc};
 
 fn main() {
     let actions = bench_utils::get_automerge_actions();
@@ -13,8 +13,10 @@ fn main() {
         // }));
         for TextAction { pos, ins, del } in actions.iter() {
             let mut txn = loro.txn().unwrap();
-            text.delete_with_txn(&mut txn, *pos, *del).unwrap();
-            text.insert_with_txn(&mut txn, *pos, ins).unwrap();
+            text.delete_with_txn(&mut txn, *pos, *del, PosType::Unicode)
+                .unwrap();
+            text.insert_with_txn(&mut txn, *pos, ins, PosType::Unicode)
+                .unwrap();
         }
 
         text.diagnose();

@@ -1554,6 +1554,7 @@ mod test {
         loro::ExportMode, oplog::convert_change_to_remote, state::TreeParentId, ListHandler,
         LoroDoc, MovableListHandler, TextHandler, TreeHandler,
     };
+    use crate::cursor::PosType;
 
     use super::*;
 
@@ -1583,7 +1584,7 @@ mod test {
         let doc = LoroDoc::new_auto_commit();
         doc.set_record_timestamp(true);
         let t = doc.get_text("t");
-        t.insert(0, "hello").unwrap();
+        t.insert(0, "hello", PosType::Unicode).unwrap();
         doc.commit_then_renew();
         let t = doc.get_list("t");
         t.insert(0, "hello").unwrap();
@@ -1617,7 +1618,7 @@ mod test {
             let text = map
                 .insert_container("text", TextHandler::new_detached())
                 .unwrap();
-            text.insert(0, "Hello, ")?;
+            text.insert(0, "Hello, ", PosType::Unicode)?;
 
             let list = map
                 .insert_container("list", ListHandler::new_detached())

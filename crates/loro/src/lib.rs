@@ -2112,6 +2112,8 @@ impl Default for LoroMap {
 /// Indexing and lengths:
 /// - Rust APIs default to Unicode scalar positions for `insert`/`delete` and `slice`.
 /// - For byte-based integration, use `insert_utf8`/`delete_utf8`.
+/// - For UTF-16 code unit offsets (e.g., integrating with JavaScript), use
+///   `insert_utf16`/`delete_utf16`/`slice_utf16` and related helpers.
 /// - You can inspect `len_unicode`, `len_utf8`, and `len_utf16` depending on your needs.
 ///
 /// # Example (emoji)
@@ -2218,6 +2220,13 @@ impl LoroText {
         self.handler.insert_utf8(pos, s)
     }
 
+    /// Insert a string at the given UTF-16 code unit position.
+    ///
+    /// This is useful when working with JavaScript or other UTF-16-based index systems.
+    pub fn insert_utf16(&self, pos: usize, s: &str) -> LoroResult<()> {
+        self.handler.insert_utf16(pos, s)
+    }
+
     /// Delete a range of text at the given unicode position with unicode length.
     pub fn delete(&self, pos: usize, len: usize) -> LoroResult<()> {
         self.handler.delete_unicode(pos, len)
@@ -2228,9 +2237,20 @@ impl LoroText {
         self.handler.delete_utf8(pos, len)
     }
 
+    /// Delete a range of text at the given UTF-16 code unit position with UTF-16 length.
+    pub fn delete_utf16(&self, pos: usize, len: usize) -> LoroResult<()> {
+        self.handler.delete_utf16(pos, len)
+    }
+
     /// Get a string slice at the given Unicode range
     pub fn slice(&self, start_index: usize, end_index: usize) -> LoroResult<String> {
-        self.handler.slice(start_index, end_index)
+        self.handler
+            .slice(start_index, end_index, cursor::PosType::Unicode)
+    }
+
+    /// Get a string slice using UTF-16 code unit offsets.
+    pub fn slice_utf16(&self, start_index: usize, end_index: usize) -> LoroResult<String> {
+        self.handler.slice_utf16(start_index, end_index)
     }
 
     /// Get the rich-text delta within a range.
@@ -2282,12 +2302,18 @@ impl LoroText {
 
     /// Get the characters at given unicode position.
     pub fn char_at(&self, pos: usize) -> LoroResult<char> {
-        self.handler.char_at(pos)
+        self.handler.char_at(pos, cursor::PosType::Unicode)
     }
 
     /// Delete specified character and insert string at the same position at given unicode position.
     pub fn splice(&self, pos: usize, len: usize, s: &str) -> LoroResult<String> {
-        self.handler.splice(pos, len, s)
+        self.handler
+            .splice(pos, len, s, cursor::PosType::Unicode)
+    }
+
+    /// Delete specified range and insert a string at the same UTF-16 position.
+    pub fn splice_utf16(&self, pos: usize, len: usize, s: &str) -> LoroResult<()> {
+        self.handler.splice_utf16(pos, len, s)
     }
 
     /// Whether the text container is empty.
@@ -2396,6 +2422,23 @@ impl LoroText {
             )
     }
 
+    /// Mark a range of text with a key-value pair using UTF-16 code unit offsets.
+    pub fn mark_utf16(
+        &self,
+        range: Range<usize>,
+        key: &str,
+        value: impl Into<LoroValue>,
+    ) -> LoroResult<()> {
+        self.handler
+            .mark(
+                range.start,
+                range.end,
+                key,
+                value.into(),
+                cursor::PosType::Utf16,
+            )
+    }
+
     /// Unmark a range of text with a key and a value.
     ///
     /// You can use it to remove highlights, bolds or links
@@ -2415,6 +2458,12 @@ impl LoroText {
     pub fn unmark(&self, range: Range<usize>, key: &str) -> LoroResult<()> {
         self.handler
             .unmark(range.start, range.end, key, cursor::PosType::Unicode)
+    }
+
+    /// Unmark a range of text with a key and a value using UTF-16 code unit offsets.
+    pub fn unmark_utf16(&self, range: Range<usize>, key: &str) -> LoroResult<()> {
+        self.handler
+            .unmark(range.start, range.end, key, cursor::PosType::Utf16)
     }
 
     /// Get the text in [Delta](https://quilljs.com/docs/delta/) format.

@@ -288,7 +288,9 @@ impl ContainerStore {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{state::TreeParentId, ListHandler, LoroDoc, MapHandler, MovableListHandler};
+    use crate::{
+        cursor::PosType, state::TreeParentId, ListHandler, LoroDoc, MapHandler, MovableListHandler,
+    };
 
     fn decode_container_store(bytes: Bytes) -> ContainerStore {
         let mut new_store = ContainerStore::new(
@@ -305,7 +307,7 @@ mod test {
         let doc = LoroDoc::new();
         doc.start_auto_commit();
         let text = doc.get_text("text");
-        text.insert(0, "hello").unwrap();
+        text.insert(0, "hello", PosType::Unicode).unwrap();
         let map = doc.get_map("map");
         map.insert("key", "value").unwrap();
 

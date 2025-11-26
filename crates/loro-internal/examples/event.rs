@@ -3,7 +3,7 @@ use std::sync::Arc;
 use loro_internal::{
     event::Diff,
     handler::{Handler, ValueOrHandler},
-    ListHandler, LoroDoc, MapHandler, TextHandler, ToJson, TreeHandler,
+    cursor::PosType, ListHandler, LoroDoc, MapHandler, TextHandler, ToJson, TreeHandler,
 };
 
 fn main() {
@@ -29,7 +29,8 @@ fn main() {
                                                     TextHandler::new_detached(),
                                                 )
                                                 .unwrap();
-                                            text.insert(0, "created from event").unwrap();
+                                            text.insert(0, "created from event", PosType::Unicode)
+                                                .unwrap();
                                         }
                                     }
                                     ValueOrHandler::Value(value) => {

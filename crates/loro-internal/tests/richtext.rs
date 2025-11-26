@@ -10,7 +10,7 @@ fn init(s: &str) -> LoroDoc {
     let doc = LoroDoc::new_auto_commit();
     doc.set_peer_id(1).unwrap();
     let richtext = doc.get_text("r");
-    richtext.insert(0, s).unwrap();
+    richtext.insert(0, s, PosType::Unicode).unwrap();
     doc
 }
 
@@ -41,12 +41,12 @@ impl Kind {
 
 fn insert(doc: &LoroDoc, pos: usize, s: &str) {
     let richtext = doc.get_text("r");
-    richtext.insert(pos, s).unwrap();
+    richtext.insert(pos, s, PosType::Unicode).unwrap();
 }
 
 fn delete(doc: &LoroDoc, pos: usize, len: usize) {
     let richtext = doc.get_text("r");
-    richtext.delete(pos, len).unwrap();
+    richtext.delete(pos, len, PosType::Unicode).unwrap();
 }
 
 fn mark(doc: &LoroDoc, range: Range<usize>, kind: Kind) {
