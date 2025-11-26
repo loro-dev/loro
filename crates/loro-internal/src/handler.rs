@@ -280,7 +280,7 @@ impl HandlerTrait for TextHandler {
                     });
                 }
 
-                text.apply_delta_with_txn(txn, &delta)?;
+                text.apply_delta_for_attach_with_txn(txn, &delta)?;
                 t.attached = text.attached_handler().cloned();
                 Ok(text)
             }
@@ -289,7 +289,7 @@ impl HandlerTrait for TextHandler {
                 let ans = new_inner.into_text().unwrap();
 
                 let delta = self.get_delta();
-                ans.apply_delta_with_txn(txn, &delta)?;
+                ans.apply_delta_for_attach_with_txn(txn, &delta)?;
                 Ok(ans)
             }
         }
@@ -2194,6 +2194,23 @@ impl TextHandler {
         txn: &mut Transaction,
         delta: &[TextDelta],
     ) -> LoroResult<()> {
+        self.apply_delta_with_txn_internal(txn, delta, true)
+    }
+
+    fn apply_delta_for_attach_with_txn(
+        &self,
+        txn: &mut Transaction,
+        delta: &[TextDelta],
+    ) -> LoroResult<()> {
+        self.apply_delta_with_txn_internal(txn, delta, false)
+    }
+
+    fn apply_delta_with_txn_internal(
+        &self,
+        txn: &mut Transaction,
+        delta: &[TextDelta],
+        allow_grow_for_marks: bool,
+    ) -> LoroResult<()> {
         let mut index = 0;
         struct PendingMark {
             start: usize,
@@ -2204,12 +2221,25 @@ impl TextHandler {
         for d in delta {
             match d {
                 TextDelta::Insert { insert, attributes } => {
-                    let end = index + event_len(insert.as_str());
+                    let insert_len = event_len(insert.as_str());
+                    let is_attr_empty =
+                        attributes.as_ref().map(|a| a.is_empty()).unwrap_or(true);
+                    if insert_len == 0 && is_attr_empty && !allow_grow_for_marks {
+                        continue;
+                    }
+
+                    let mut empty_attr = None;
+                    let attr_ref = attributes.as_ref().unwrap_or_else(|| {
+                        empty_attr = Some(FxHashMap::default());
+                        empty_attr.as_ref().unwrap()
+                    });
+
+                    let end = index + insert_len;
                     let override_styles = self.insert_with_txn_and_attr(
                         txn,
                         index,
                         insert.as_str(),
-                        Some(attributes.as_ref().unwrap_or(&Default::default())),
+                        Some(attr_ref),
                         PosType::Event,
                     )?;
 
@@ -2253,8 +2283,20 @@ impl TextHandler {
         let mut len = self.len_event();
         for pending_mark in marks {
             if pending_mark.start >= len {
-                self.insert_with_txn(txn, len, &"\n".repeat(pending_mark.start - len + 1))?;
-                len = pending_mark.start;
+                if allow_grow_for_marks {
+                    self.insert_with_txn(
+                        txn,
+                        len,
+                        &"\n".repeat(pending_mark.start - len + 1),
+                    )?;
+                    len = pending_mark.start;
+                } else {
+                    return Err(LoroError::OutOfBound {
+                        pos: pending_mark.start,
+                        len,
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                    });
+                }
             }
 
             for (key, value) in pending_mark.attributes {
@@ -4218,7 +4260,7 @@ mod test {
     use crate::version::Frontiers;
     use crate::LoroDoc;
     use crate::{fx_map, ToJson};
-    use loro_common::ID;
+    use loro_common::{ID, LoroValue};
     use serde_json::json;
 
     #[test]
@@ -4435,5 +4477,64 @@ mod test {
 
             ])
         )
+    }
+
+    #[test]
+    fn richtext_apply_delta_marks_without_growth() {
+        let loro = LoroDoc::new_auto_commit();
+        let text = loro.get_text("text");
+        text.insert(0, "abc").unwrap();
+
+        text.apply_delta(&[TextDelta::Retain {
+            retain: 3,
+            attributes: Some(fx_map!("bold".into() => LoroValue::Bool(true))),
+        }])
+        .unwrap();
+        loro.commit_then_renew();
+
+        assert_eq!(text.to_string(), "abc");
+        assert_eq!(
+            text.get_richtext_value().to_json_value(),
+            json!([{"insert": "abc", "attributes": {"bold": true}}])
+        );
+    }
+
+    #[test]
+    fn richtext_apply_delta_grows_for_mark_gap() {
+        let loro = LoroDoc::new_auto_commit();
+        let text = loro.get_text("text");
+
+        text.apply_delta(&[TextDelta::Retain {
+            retain: 1,
+            attributes: Some(fx_map!("bold".into() => LoroValue::Bool(true))),
+        }])
+        .unwrap();
+        loro.commit_then_renew();
+
+        assert_eq!(text.to_string(), "\n");
+        assert_eq!(
+            text.get_richtext_value().to_json_value(),
+            json!([{"insert": "\n", "attributes": {"bold": true}}])
+        );
+    }
+
+    #[test]
+    fn richtext_apply_delta_ignores_empty_inserts() {
+        let loro = LoroDoc::new_auto_commit();
+        let text = loro.get_text("text");
+        text.insert(0, "seed").unwrap();
+
+        text.apply_delta(&[TextDelta::Insert {
+            insert: "".into(),
+            attributes: Some(fx_map!("bold".into() => LoroValue::Bool(true))),
+        }])
+        .unwrap();
+        loro.commit_then_renew();
+
+        assert_eq!(text.to_string(), "seed");
+        assert_eq!(
+            text.get_richtext_value().to_json_value(),
+            json!([{"insert": "seed"}])
+        );
     }
 }

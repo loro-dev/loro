@@ -1851,3 +1851,41 @@ it("returns undefined when getting a non-existent cursor", () => {
   const newDoc = new LoroDoc();
   expect(newDoc.getCursorPos(cursor)).toBeUndefined();
 });
+
+it("should match when inserting container", () => {
+  const doc = new LoroDoc();
+  const list = doc.getList("list");
+  const text = new LoroText();
+  text.insert(0, "");
+  list.insertContainer(0, text);
+
+  const retrievedText = list.get(0) as LoroText;
+  expect(retrievedText.toString()).toBe("");
+});
+
+it("keeps detached text content when inserted", () => {
+  const doc = new LoroDoc();
+  const list = doc.getList("list");
+  const text = new LoroText();
+  text.insert(0, "detached");
+
+  list.insertContainer(0, text);
+
+  const retrievedText = list.get(0) as LoroText;
+  expect(retrievedText.toString()).toBe("detached");
+});
+
+it("keeps detached text styles when inserted", () => {
+  const doc = new LoroDoc();
+  const list = doc.getList("list");
+  const text = new LoroText();
+  text.insert(0, "styled");
+  text.mark({ start: 0, end: 6 }, "bold", true);
+
+  list.insertContainer(0, text);
+
+  const retrievedText = list.get(0) as LoroText;
+  expect(retrievedText.toDelta()).toStrictEqual([
+    { insert: "styled", attributes: { bold: true } },
+  ]);
+});
