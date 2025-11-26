@@ -280,7 +280,7 @@ impl HandlerTrait for TextHandler {
                     });
                 }
 
-                text.apply_delta_for_attach_with_txn(txn, &delta)?;
+                text.apply_delta_with_txn(txn, &delta)?;
                 t.attached = text.attached_handler().cloned();
                 Ok(text)
             }
@@ -289,7 +289,7 @@ impl HandlerTrait for TextHandler {
                 let ans = new_inner.into_text().unwrap();
 
                 let delta = self.get_delta();
-                ans.apply_delta_for_attach_with_txn(txn, &delta)?;
+                ans.apply_delta_with_txn(txn, &delta)?;
                 Ok(ans)
             }
         }
@@ -2175,22 +2175,6 @@ impl TextHandler {
     }
 
     pub fn apply_delta_with_txn(
-        &self,
-        txn: &mut Transaction,
-        delta: &[TextDelta],
-    ) -> LoroResult<()> {
-        self.apply_delta_with_txn_internal(txn, delta)
-    }
-
-    fn apply_delta_for_attach_with_txn(
-        &self,
-        txn: &mut Transaction,
-        delta: &[TextDelta],
-    ) -> LoroResult<()> {
-        self.apply_delta_with_txn_internal(txn, delta)
-    }
-
-    fn apply_delta_with_txn_internal(
         &self,
         txn: &mut Transaction,
         delta: &[TextDelta],
