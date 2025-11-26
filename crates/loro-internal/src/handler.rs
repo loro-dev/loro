@@ -1965,20 +1965,10 @@ impl TextHandler {
         match &self.inner {
             MaybeDetached::Detached(t) => {
                 let mut g = t.lock().unwrap();
-                self.mark_for_detached(
-                    &mut g.value,
-                    key,
-                    &value,
-                    start,
-                    end,
-                    pos_type,
-                    false,
-                )
+                self.mark_for_detached(&mut g.value, key, &value, start, end, pos_type, false)
             }
             MaybeDetached::Attached(a) => {
-                a.with_txn(|txn| {
-                    self.mark_with_txn(txn, start, end, key, value, pos_type, false)
-                })
+                a.with_txn(|txn| self.mark_with_txn(txn, start, end, key, value, pos_type, false))
             }
         }
     }
@@ -2052,11 +2042,9 @@ impl TextHandler {
                 pos_type,
                 true,
             ),
-            MaybeDetached::Attached(a) => {
-                a.with_txn(|txn| {
-                    self.mark_with_txn(txn, start, end, key, LoroValue::Null, pos_type, true)
-                })
-            }
+            MaybeDetached::Attached(a) => a.with_txn(|txn| {
+                self.mark_with_txn(txn, start, end, key, LoroValue::Null, pos_type, true)
+            }),
         }
     }
 
@@ -2082,10 +2070,7 @@ impl TextHandler {
 
         let mut doc_state = inner.doc.state.lock().unwrap();
         let len = doc_state.with_state_mut(inner.container_idx, |state| {
-            state
-                .as_richtext_state_mut()
-                .unwrap()
-                .len(pos_type)
+            state.as_richtext_state_mut().unwrap().len(pos_type)
         });
 
         if end > len {
@@ -2194,7 +2179,7 @@ impl TextHandler {
         txn: &mut Transaction,
         delta: &[TextDelta],
     ) -> LoroResult<()> {
-        self.apply_delta_with_txn_internal(txn, delta, true)
+        self.apply_delta_with_txn_internal(txn, delta)
     }
 
     fn apply_delta_for_attach_with_txn(
@@ -2202,14 +2187,13 @@ impl TextHandler {
         txn: &mut Transaction,
         delta: &[TextDelta],
     ) -> LoroResult<()> {
-        self.apply_delta_with_txn_internal(txn, delta, false)
+        self.apply_delta_with_txn_internal(txn, delta)
     }
 
     fn apply_delta_with_txn_internal(
         &self,
         txn: &mut Transaction,
         delta: &[TextDelta],
-        allow_grow_for_marks: bool,
     ) -> LoroResult<()> {
         let mut index = 0;
         struct PendingMark {
@@ -2222,9 +2206,7 @@ impl TextHandler {
             match d {
                 TextDelta::Insert { insert, attributes } => {
                     let insert_len = event_len(insert.as_str());
-                    let is_attr_empty =
-                        attributes.as_ref().map(|a| a.is_empty()).unwrap_or(true);
-                    if insert_len == 0 && is_attr_empty && !allow_grow_for_marks {
+                    if insert_len == 0 {
                         continue;
                     }
 
@@ -2283,20 +2265,8 @@ impl TextHandler {
         let mut len = self.len_event();
         for pending_mark in marks {
             if pending_mark.start >= len {
-                if allow_grow_for_marks {
-                    self.insert_with_txn(
-                        txn,
-                        len,
-                        &"\n".repeat(pending_mark.start - len + 1),
-                    )?;
-                    len = pending_mark.start;
-                } else {
-                    return Err(LoroError::OutOfBound {
-                        pos: pending_mark.start,
-                        len,
-                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-                    });
-                }
+                self.insert_with_txn(txn, len, &"\n".repeat(pending_mark.start - len + 1))?;
+                len = pending_mark.start;
             }
 
             for (key, value) in pending_mark.attributes {
@@ -2439,6 +2409,10 @@ impl TextHandler {
             MaybeDetached::Detached(s) => {
                 let mut delta = Vec::new();
                 for span in s.lock().unwrap().value.iter() {
+                    if span.text.as_str().is_empty() {
+                        continue;
+                    }
+
                     let next_attr = span.attributes.to_option_map();
                     match delta.last_mut() {
                         Some(TextDelta::Insert { insert, attributes })
@@ -2449,6 +2423,7 @@ impl TextHandler {
                         }
                         _ => {}
                     }
+
                     delta.push(TextDelta::Insert {
                         insert: span.text.as_str().to_string(),
                         attributes: next_attr,
@@ -4260,7 +4235,7 @@ mod test {
     use crate::version::Frontiers;
     use crate::LoroDoc;
     use crate::{fx_map, ToJson};
-    use loro_common::{ID, LoroValue};
+    use loro_common::{LoroValue, ID};
     use serde_json::json;
 
     #[test]
@@ -4375,15 +4350,7 @@ mod test {
         let handler = loro.get_text("richtext");
         handler.insert_with_txn(&mut txn, 0, "hello world").unwrap();
         handler
-            .mark_with_txn(
-                &mut txn,
-                0,
-                5,
-                "bold",
-                true.into(),
-                PosType::Event,
-                false,
-            )
+            .mark_with_txn(&mut txn, 0, 5, "bold", true.into(), PosType::Event, false)
             .unwrap();
         txn.commit().unwrap();
 
