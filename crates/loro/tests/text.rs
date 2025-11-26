@@ -369,6 +369,47 @@ fn mark_and_unmark_utf16_ranges() {
 }
 
 #[test]
+fn convert_pos_across_coord_systems() {
+    let doc = LoroDoc::new();
+    let text = doc.get_text("text");
+    let content = "A😀BC";
+    text.insert(0, content).unwrap();
+
+    // Unicode -> UTF-16
+    assert_eq!(
+        text.convert_pos(0, PosType::Unicode, PosType::Utf16),
+        Some(0)
+    );
+    assert_eq!(
+        text.convert_pos(1, PosType::Unicode, PosType::Utf16),
+        Some(1)
+    ); // after 'A'
+    assert_eq!(
+        text.convert_pos(2, PosType::Unicode, PosType::Utf16),
+        Some(3)
+    ); // after emoji (2 code units)
+
+    // UTF-16 -> Unicode
+    assert_eq!(
+        text.convert_pos(3, PosType::Utf16, PosType::Unicode),
+        Some(2)
+    );
+
+    // Unicode -> Bytes
+    let utf8_len_before_emoji = "A".as_bytes().len();
+    assert_eq!(
+        text.convert_pos(1, PosType::Unicode, PosType::Bytes),
+        Some(utf8_len_before_emoji)
+    );
+
+    // Out of bounds yields None
+    assert_eq!(
+        text.convert_pos(10, PosType::Unicode, PosType::Utf16),
+        None
+    );
+}
+
+#[test]
 fn test_slice_delta_bytes_with_mixed_attributes() {
     let doc = LoroDoc::new();
     let mut styles = StyleConfigMap::default_rich_text_config();

@@ -126,6 +126,25 @@ describe("list", () => {
     expect(getType(t)).toBe("Text");
     expect(getType(123)).toBe("Json");
   });
+
+  it("convertPos bridges utf16/unicode/utf8", () => {
+    const doc = new LoroDoc();
+    const text = doc.getText("text");
+    const content = "A😀BC"; // emoji is 2 UTF-16 units
+    text.insert(0, content);
+
+    expect(text.convertPos(0, "unicode", "utf16")).toBe(0);
+    expect(text.convertPos(1, "unicode", "utf16")).toBe(1);
+    expect(text.convertPos(2, "unicode", "utf16")).toBe(3);
+
+    expect(text.convertPos(3, "utf16", "unicode")).toBe(2);
+
+    const utf8BeforeEmoji = new TextEncoder().encode("A").length;
+    expect(text.convertPos(1, "unicode", "utf8")).toBe(utf8BeforeEmoji);
+
+    expect(text.convertPos(999, "unicode", "utf16")).toBeUndefined();
+    expect(text.convertPos(1, "unicode", "unknown" as any)).toBeUndefined();
+  });
 });
 
 describe("map", () => {

@@ -2445,6 +2445,109 @@ impl TextHandler {
             }),
         }
     }
+
+    /// Convert a position `index` from one coordinate system to another.
+    ///
+    /// Supported `PosType` conversions: `Event`, `Unicode`, `Utf16`, and `Bytes`.
+    /// Returns `None` if the index is out of bounds or the conversion is unsupported.
+    pub fn convert_pos(&self, index: usize, from: PosType, to: PosType) -> Option<usize> {
+        if from == to {
+            return Some(index);
+        }
+
+        if matches!(from, PosType::Entity) || matches!(to, PosType::Entity) {
+            return None;
+        }
+
+        // Normalize to event + unicode indices for the given position.
+        let (event_index, unicode_index) = match &self.inner {
+            MaybeDetached::Detached(t) => {
+                let t = t.lock().unwrap();
+                if index > t.value.len(from) {
+                    return None;
+                }
+                let event_index = if from == PosType::Event {
+                    index
+                } else {
+                    t.value.index_to_event_index(index, from)
+                };
+                let unicode_index = if from == PosType::Unicode {
+                    index
+                } else {
+                    t.value.event_index_to_unicode_index(event_index)
+                };
+                (event_index, unicode_index)
+            }
+            MaybeDetached::Attached(a) => {
+                let res: Option<(usize, usize)> = a.with_state(|state| {
+                    let state = state.as_richtext_state_mut().unwrap();
+                    if index > state.len(from) {
+                        return None;
+                    }
+
+                    let event_index = if from == PosType::Event {
+                        index
+                    } else {
+                        state.index_to_event_index(index, from)
+                    };
+                    let unicode_index = if from == PosType::Unicode {
+                        index
+                    } else {
+                        state.event_index_to_unicode_index(event_index)
+                    };
+                    Some((event_index, unicode_index))
+                });
+
+                match res {
+                    Some(v) => v,
+                    None => return None,
+                }
+            }
+        };
+
+        let result = match to {
+            PosType::Unicode => Some(unicode_index),
+            PosType::Event => Some(event_index),
+            PosType::Bytes | PosType::Utf16 => {
+                // Use the prefix text to compute target offset.
+                let prefix = match &self.inner {
+                    MaybeDetached::Detached(t) => {
+                        let t = t.lock().unwrap();
+                        if event_index > t.value.len_event() {
+                            return None;
+                        }
+                        t.value
+                            .get_text_slice_by_event_index(0, event_index)
+                            .ok()?
+                    }
+                    MaybeDetached::Attached(a) => {
+                        let res: Result<String, ()> = a.with_state(|state| {
+                            let state = state.as_richtext_state_mut().unwrap();
+                            if event_index > state.len_event() {
+                                return Err(());
+                            }
+                            state
+                                .get_text_slice_by_event_index(0, event_index)
+                                .map_err(|_| ())
+                        });
+
+                        match res {
+                            Ok(v) => v,
+                            Err(_) => return None,
+                        }
+                    }
+                };
+
+                Some(match to {
+                    PosType::Bytes => prefix.len(),
+                    PosType::Utf16 => count_utf16_len(prefix.as_bytes()),
+                    _ => unreachable!(),
+                })
+            }
+            PosType::Entity => None,
+        };
+        result
+    }
 }
 
 fn event_len(s: &str) -> usize {

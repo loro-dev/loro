@@ -2729,6 +2729,32 @@ impl LoroText {
         Ok(())
     }
 
+    /// Convert a position between coordinate systems.
+    ///
+    /// Supported values: `"unicode"`, `"utf16"`, `"utf8"`.
+    ///
+    /// Returns `undefined` when out of bounds or unsupported.
+    #[wasm_bindgen(js_name = "convertPos")]
+    pub fn convert_pos(&self, index: usize, from: String, to: String) -> JsValue {
+        let from = match from.as_str() {
+            "unicode" => PosType::Unicode,
+            "utf16" => PosType::Utf16,
+            "utf8" => PosType::Bytes,
+            _ => return JsValue::undefined(),
+        };
+        let to = match to.as_str() {
+            "unicode" => PosType::Unicode,
+            "utf16" => PosType::Utf16,
+            "utf8" => PosType::Bytes,
+            _ => return JsValue::undefined(),
+        };
+
+        match self.handler.convert_pos(index, from, to) {
+            Some(v) => JsValue::from_f64(v as f64),
+            None => JsValue::undefined(),
+        }
+    }
+
     /// Mark a range of text with a key and a value (utf-16 index).
     ///
     /// > You should call `configTextStyle` before using `mark` and `unmark`.
@@ -5644,6 +5670,7 @@ const TYPES: &'static str = r#"
 export type ContainerType = "Text" | "Map" | "List"| "Tree" | "MovableList" | "Counter";
 
 export type PeerID = `${number}`;
+export type TextPosType = "unicode" | "utf16" | "utf8";
 /**
 * The unique id of each container.
 *
@@ -6031,6 +6058,11 @@ export interface ImportBlobMetadata {
 }
 
 interface LoroText {
+    /**
+     * Convert a position between coordinate systems.
+     */
+    convertPos(index: number, from: TextPosType, to: TextPosType): number | undefined;
+
     /**
      * Get the cursor position at the given pos.
      *
@@ -6845,6 +6877,10 @@ interface LoroText {
     insert(pos: number, text: string): void;
     delete(pos: number, len: number): void;
     subscribe(listener: Listener): Subscription;
+    /**
+     * Convert a position between coordinate systems.
+     */
+    convertPos(index: number, from: TextPosType, to: TextPosType): number | undefined;
     /**
      * Update the current text to the target text.
      *

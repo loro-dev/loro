@@ -2597,6 +2597,18 @@ impl LoroText {
         self.handler.is_deleted()
     }
 
+    /// Convert a position between coordinate systems (Unicode, UTF-16, UTF-8 bytes, Event).
+    ///
+    /// Returns `None` when the position is out of bounds or the conversion isn't supported.
+    pub fn convert_pos(
+        &self,
+        index: usize,
+        from: cursor::PosType,
+        to: cursor::PosType,
+    ) -> Option<usize> {
+        self.handler.convert_pos(index, from, to)
+    }
+
     /// Push a string to the end of the text container.
     pub fn push_str(&self, s: &str) -> LoroResult<()> {
         self.handler.push_str(s)
