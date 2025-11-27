@@ -230,7 +230,7 @@ dependencies = [
  "arbitrary",
  "enum-as-inner 0.5.1",
  "flate2",
- "loro-common 1.9.1",
+ "loro-common 1.10.0",
  "rand 0.8.5",
  "serde_json",
 ]
@@ -832,7 +832,7 @@ dependencies = [
  "dev-utils",
  "ensure-cov",
  "flate2",
- "loro 1.9.1",
+ "loro 1.10.0",
  "rand 0.8.5",
  "serde_json",
  "tabled 0.15.0",
@@ -902,8 +902,8 @@ dependencies = [
  "enum_dispatch",
  "itertools 0.12.1",
  "loro 0.16.12",
+ "loro 1.10.0",
  "loro 1.8.1",
- "loro 1.9.1",
  "num_cpus",
  "pretty_assertions",
  "rand 0.8.5",
@@ -1489,7 +1489,7 @@ dependencies = [
 
 [[package]]
 name = "loro"
-version = "1.9.1"
+version = "1.10.0"
 dependencies = [
  "anyhow",
  "base64",
@@ -1498,10 +1498,10 @@ dependencies = [
  "enum-as-inner 0.6.1",
  "generic-btree",
  "loom",
- "loro-common 1.9.1",
+ "loro-common 1.10.0",
  "loro-delta 1.9.1",
- "loro-internal 1.9.1",
- "loro-kv-store 1.9.1",
+ "loro-internal 1.10.0",
+ "loro-kv-store 1.10.0",
  "pretty_assertions",
  "rand 0.8.5",
  "rustc-hash",
@@ -1546,7 +1546,7 @@ dependencies = [
 
 [[package]]
 name = "loro-common"
-version = "1.9.1"
+version = "1.10.0"
 dependencies = [
  "arbitrary",
  "enum-as-inner 0.6.1",
@@ -1689,7 +1689,7 @@ dependencies = [
 
 [[package]]
 name = "loro-internal"
-version = "1.9.1"
+version = "1.10.0"
 dependencies = [
  "append-only-bytes",
  "arbitrary",
@@ -1710,9 +1710,9 @@ dependencies = [
  "js-sys",
  "leb128",
  "loom",
- "loro-common 1.9.1",
+ "loro-common 1.10.0",
  "loro-delta 1.9.1",
- "loro-kv-store 1.9.1",
+ "loro-kv-store 1.10.0",
  "loro-rle 1.6.0",
  "loro_fractional_index 1.6.0",
  "md5",
@@ -1775,13 +1775,13 @@ dependencies = [
 
 [[package]]
 name = "loro-kv-store"
-version = "1.9.1"
+version = "1.10.0"
 dependencies = [
  "bytes",
  "ctor 0.2.9",
  "dev-utils",
  "ensure-cov",
- "loro-common 1.9.1",
+ "loro-common 1.10.0",
  "lz4_flex",
  "once_cell",
  "quick_cache",
@@ -1836,13 +1836,13 @@ checksum = "3f3d053a135388e6b1df14e8af1212af5064746e9b87a06a345a7a779ee9695a"
 
 [[package]]
 name = "loro-wasm"
-version = "1.10.1"
+version = "1.10.2"
 dependencies = [
  "console_error_panic_hook",
  "js-sys",
- "loro-common 1.9.1",
+ "loro-common 1.10.0",
  "loro-delta 1.9.1",
- "loro-internal 1.9.1",
+ "loro-internal 1.10.0",
  "loro-rle 1.6.0",
  "parking_lot",
  "serde",
@@ -1854,7 +1854,7 @@ dependencies = [
 
 [[package]]
 name = "loro-wasm-tools"
-version = "1.9.1"
+version = "1.10.0"
 dependencies = [
  "anyhow",
  "clap 4.5.47",
