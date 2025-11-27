@@ -778,35 +778,13 @@ pub(crate) fn text_delta_to_js_value(delta: Vec<TextDelta>) -> Result<JsValue, J
             TextDelta::Insert { insert, attributes } => {
                 Reflect::set(&obj, &"insert".into(), &insert.into())?;
                 if let Some(attributes) = attributes {
-                    if !attributes.is_empty() {
-                        let attrs = Object::new();
-                        for (k, v) in attributes {
-                            Reflect::set(&attrs, &k.into(), &convert(v)?)?;
-                        }
-                        Reflect::set(&obj, &"attributes".into(), &attrs)?;
-                    }
+                    set_style_attributes(&obj, attributes)?;
                 }
             }
             TextDelta::Retain { retain, attributes } => {
                 Reflect::set(&obj, &"retain".into(), &retain.into())?;
                 if let Some(attributes) = attributes {
-                    if !attributes.is_empty() {
-                        let attrs = Object::new();
-                        let mut is_empty = true;
-                        for (k, v) in attributes {
-                            if v.is_null() {
-                                // We should ignore attribute with null value, since it should be treated as deleted
-                                continue;
-                            }
-
-                            is_empty = false;
-                            Reflect::set(&attrs, &k.into(), &convert(v)?)?;
-                        }
-
-                        if !is_empty {
-                            Reflect::set(&obj, &"attributes".into(), &attrs)?;
-                        }
-                    }
+                    set_style_attributes(&obj, attributes)?;
                 }
             }
             TextDelta::Delete { delete } => {
@@ -818,4 +796,28 @@ pub(crate) fn text_delta_to_js_value(delta: Vec<TextDelta>) -> Result<JsValue, J
         current = next_item;
     }
     Ok(arr.into())
+}
+
+fn set_style_attributes(
+    obj: &Object,
+    attributes: FxHashMap<String, LoroValue>,
+) -> Result<(), JsValue> {
+    if !attributes.is_empty() {
+        let attrs = Object::new();
+        let mut is_empty = true;
+        for (k, v) in attributes {
+            if v.is_null() {
+                // We should ignore attribute with null value, since it should be treated as deleted
+                continue;
+            }
+
+            is_empty = false;
+            Reflect::set(&attrs, &k.into(), &convert(v)?)?;
+        }
+
+        if !is_empty {
+            Reflect::set(obj, &"attributes".into(), &attrs)?;
+        }
+    }
+    Ok(())
 }
