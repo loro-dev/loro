@@ -1,5 +1,5 @@
 use bench_utils::{get_automerge_actions, TextAction};
-use loro_internal::{encoding::ExportMode, LoroDoc};
+use loro_internal::{cursor::PosType, encoding::ExportMode, LoroDoc};
 
 // #[allow(dead_code)]
 // fn parallel() {
@@ -69,8 +69,10 @@ fn main() {
     for TextAction { pos, ins, del } in actions.iter() {
         {
             let mut txn = loro.txn().unwrap();
-            text.delete_with_txn(&mut txn, *pos, *del).unwrap();
-            text.insert_with_txn(&mut txn, *pos, ins).unwrap();
+            text.delete_with_txn(&mut txn, *pos, *del, PosType::Unicode)
+                .unwrap();
+            text.insert_with_txn(&mut txn, *pos, ins, PosType::Unicode)
+                .unwrap();
         }
 
         loro_b

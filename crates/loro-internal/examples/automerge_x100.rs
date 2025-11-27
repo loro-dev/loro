@@ -1,4 +1,4 @@
-use loro_internal::{loro::ExportMode, LoroDoc, VersionVector};
+use loro_internal::{cursor::PosType, loro::ExportMode, LoroDoc, VersionVector};
 use std::hint::black_box;
 
 fn main() {
@@ -15,8 +15,8 @@ fn main() {
     let mut v = VersionVector::new();
     for _ in 0..n {
         for TextAction { del, ins, pos } in actions.iter() {
-            text.delete(*pos, *del).unwrap();
-            text.insert(*pos, ins).unwrap();
+            text.delete(*pos, *del, PosType::Unicode).unwrap();
+            text.insert(*pos, ins, PosType::Unicode).unwrap();
         }
         loro.commit_then_renew();
         black_box(loro.export(ExportMode::updates(&v))).unwrap();

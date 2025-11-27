@@ -35,7 +35,7 @@ fn issue_502() -> LoroResult<()> {
 fn issue_225() -> LoroResult<()> {
     let doc = LoroDoc::new_auto_commit();
     let text = doc.get_text("text");
-    text.insert(0, "123")?;
+    text.insert_unicode(0, "123")?;
     text.mark(0, 3, "bold", true.into(), PosType::Event)?;
     // when apply_delta, the attributes of insert should override the current styles
     text.apply_delta(&[
@@ -60,18 +60,18 @@ fn issue_225() -> LoroResult<()> {
 fn issue_211() -> LoroResult<()> {
     let doc1 = LoroDoc::new_auto_commit();
     let doc2 = LoroDoc::new_auto_commit();
-    doc1.get_text("text").insert(0, "T")?;
+    doc1.get_text("text").insert_unicode(0, "T")?;
     doc2.merge(&doc1)?;
     let v0 = doc1.oplog_frontiers();
-    doc1.get_text("text").insert(1, "A")?;
-    doc2.get_text("text").insert(1, "B")?;
+    doc1.get_text("text").insert_unicode(1, "A")?;
+    doc2.get_text("text").insert_unicode(1, "B")?;
     doc1.checkout(&v0)?;
     doc2.checkout(&v0)?;
     doc1.checkout_to_latest();
     doc2.checkout_to_latest();
     // let v1_of_doc1 = doc1.oplog_frontiers();
     let v1_of_doc2 = doc2.oplog_frontiers();
-    doc2.get_text("text").insert(2, "B")?;
+    doc2.get_text("text").insert_unicode(2, "B")?;
     doc2.checkout(&v1_of_doc2)?;
     doc2.checkout(&v0)?;
     assert_eq!(
@@ -87,7 +87,7 @@ fn issue_211() -> LoroResult<()> {
 fn mark_with_the_same_key_value_should_be_skipped() {
     let a = LoroDoc::new_auto_commit();
     let text = a.get_text("text");
-    text.insert(0, "Hello world!").unwrap();
+    text.insert_unicode(0, "Hello world!").unwrap();
     text.mark(0, 11, "bold", "value".into(), PosType::Event)
         .unwrap();
     a.commit_then_renew();
@@ -109,10 +109,10 @@ fn event_from_checkout() {
             EventTriggerKind::Checkout | EventTriggerKind::Local
         ));
     }));
-    a.get_text("text").insert(0, "hello").unwrap();
+    a.get_text("text").insert_unicode(0, "hello").unwrap();
     a.commit_then_renew();
     let version = a.oplog_frontiers();
-    a.get_text("text").insert(0, "hello").unwrap();
+    a.get_text("text").insert_unicode(0, "hello").unwrap();
     a.commit_then_renew();
     sub.unsubscribe();
     let ran = Arc::new(AtomicBool::new(false));
@@ -154,13 +154,13 @@ fn handler_in_event() {
 #[test]
 fn out_of_bound_test() {
     let a = LoroDoc::new_auto_commit();
-    a.get_text("text").insert(0, "Hello").unwrap();
+    a.get_text("text").insert_unicode(0, "Hello").unwrap();
     a.get_list("list").insert(0, "Hello").unwrap();
     a.get_list("list").insert(1, "Hello").unwrap();
     // expect out of bound err
-    let err = a.get_text("text").insert(6, "Hello").unwrap_err();
+    let err = a.get_text("text").insert_unicode(6, "Hello").unwrap_err();
     assert!(matches!(err, loro_common::LoroError::OutOfBound { .. }));
-    let err = a.get_text("text").delete(3, 5).unwrap_err();
+    let err = a.get_text("text").delete_unicode(3, 5).unwrap_err();
     assert!(matches!(err, loro_common::LoroError::OutOfBound { .. }));
     let err = a
         .get_text("text")
@@ -229,7 +229,7 @@ fn richtext_mark_event() {
             )
         }),
     );
-    a.get_text("text").insert(0, "Hello").unwrap();
+    a.get_text("text").insert_unicode(0, "Hello").unwrap();
     a.get_text("text")
         .mark(0, 5, "bold", true.into(), PosType::Event)
         .unwrap();
@@ -260,7 +260,7 @@ fn concurrent_richtext_mark_event() {
     let a = LoroDoc::new_auto_commit();
     let b = LoroDoc::new_auto_commit();
     let c = LoroDoc::new_auto_commit();
-    a.get_text("text").insert(0, "Hello").unwrap();
+    a.get_text("text").insert_unicode(0, "Hello").unwrap();
     b.merge(&a).unwrap();
     c.merge(&a).unwrap();
     b.get_text("text")
@@ -332,14 +332,14 @@ fn concurrent_richtext_mark_event() {
             }
         }),
     );
-    a.get_text("text").insert(2, "A").unwrap();
+    a.get_text("text").insert_unicode(2, "A").unwrap();
     let _ = a.implicit_commit_then_stop();
 }
 
 #[test]
 fn insert_richtext_event() {
     let a = LoroDoc::new_auto_commit();
-    a.get_text("text").insert(0, "Hello").unwrap();
+    a.get_text("text").insert_unicode(0, "Hello").unwrap();
     a.get_text("text")
         .mark(0, 5, "bold", true.into(), PosType::Event)
         .unwrap();
@@ -359,7 +359,7 @@ fn insert_richtext_event() {
         }),
     );
 
-    text.insert(5, " World!").unwrap();
+    text.insert_unicode(5, " World!").unwrap();
 }
 
 #[test]
@@ -396,7 +396,7 @@ fn import_after_init_handlers() {
     let b = LoroDoc::new_auto_commit();
     b.get_list("list").insert(0, "list").unwrap();
     b.get_list("list_a").insert(0, "list_a").unwrap();
-    b.get_text("text").insert(0, "text").unwrap();
+    b.get_text("text").insert_unicode(0, "text").unwrap();
     b.get_map("map").insert("m", "map").unwrap();
     a.import(&b.export(ExportMode::Snapshot).unwrap()).unwrap();
     a.commit_then_renew();
@@ -405,7 +405,7 @@ fn import_after_init_handlers() {
 #[test]
 fn test_from_snapshot() {
     let a = LoroDoc::new_auto_commit();
-    a.get_text("text").insert(0, "0").unwrap();
+    a.get_text("text").insert_unicode(0, "0").unwrap();
     let snapshot = a.export(ExportMode::Snapshot).unwrap();
     let c = LoroDoc::from_snapshot(&snapshot).unwrap();
     assert_eq!(a.get_deep_value(), c.get_deep_value());
@@ -423,17 +423,17 @@ fn test_from_snapshot() {
 fn test_pending() {
     let a = LoroDoc::new_auto_commit();
     a.set_peer_id(0).unwrap();
-    a.get_text("text").insert(0, "0").unwrap();
+    a.get_text("text").insert_unicode(0, "0").unwrap();
     let b = LoroDoc::new_auto_commit();
     b.set_peer_id(1).unwrap();
     b.import(&a.export(ExportMode::all_updates()).unwrap())
         .unwrap();
-    b.get_text("text").insert(0, "1").unwrap();
+    b.get_text("text").insert_unicode(0, "1").unwrap();
     let c = LoroDoc::new_auto_commit();
     b.set_peer_id(2).unwrap();
     c.import(&b.export(ExportMode::all_updates()).unwrap())
         .unwrap();
-    c.get_text("text").insert(0, "2").unwrap();
+    c.get_text("text").insert_unicode(0, "2").unwrap();
 
     // c creates a pending change for a, insert "2" cannot be merged into a yet
     a.import(&c.export(ExportMode::updates(&b.oplog_vv())).unwrap())
@@ -472,7 +472,7 @@ fn test_checkout() {
         .insert_container("text", TextHandler::new_detached())
         .unwrap();
     let text = handler;
-    text.insert(0, "123").unwrap();
+    text.insert_unicode(0, "123").unwrap();
 
     let map = doc_1.get_map("map");
 
@@ -480,7 +480,7 @@ fn test_checkout() {
         .insert_container("text", TextHandler::new_detached())
         .unwrap();
     let text = handler;
-    text.insert(0, "123").unwrap();
+    text.insert_unicode(0, "123").unwrap();
 
     doc_0
         .import(&doc_1.export(ExportMode::all_updates()).unwrap())
@@ -507,7 +507,8 @@ fn test_timestamp() {
     doc.set_record_timestamp(true);
     let text = doc.get_text("text");
     let mut txn = doc.txn().unwrap();
-    text.insert_with_txn(&mut txn, 0, "123").unwrap();
+    text.insert_with_txn(&mut txn, 0, "123", PosType::Unicode)
+        .unwrap();
     txn.commit().unwrap();
     let op_log = &doc.oplog().lock().unwrap();
     let change = op_log.get_change_at(ID::new(doc.peer_id(), 0)).unwrap();
@@ -519,8 +520,8 @@ fn test_text_checkout() {
     let doc = LoroDoc::new_auto_commit();
     doc.set_peer_id(1).unwrap();
     let text = doc.get_text("text");
-    text.insert(0, "你界").unwrap();
-    text.insert(1, "好世").unwrap();
+    text.insert_unicode(0, "你界").unwrap();
+    text.insert_unicode(1, "好世").unwrap();
     doc.commit_then_renew();
     {
         doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 0)].as_slice()))
@@ -547,9 +548,9 @@ fn test_text_checkout() {
     assert_eq!(text.len_unicode(), 4);
 
     doc.checkout_to_latest();
-    text.delete(3, 1).unwrap();
+    text.delete_unicode(3, 1).unwrap();
     assert_eq!(text.get_value().as_string().unwrap().as_str(), "你好世");
-    text.delete(2, 1).unwrap();
+    text.delete_unicode(2, 1).unwrap();
     assert_eq!(text.get_value().as_string().unwrap().as_str(), "你好");
     doc.checkout(&Frontiers::from([ID::new(doc.peer_id(), 3)].as_slice()))
         .unwrap();
@@ -872,7 +873,7 @@ fn insert_attach_container() -> LoroResult<()> {
     list.delete(3, 1)?;
 
     let elem = list.insert_container(0, TextHandler::new_detached())?;
-    elem.insert(0, "abc")?;
+    elem.insert(0, "abc", PosType::Unicode)?;
     elem.mark(0, 2, "bold", true.into(), PosType::Event)?;
     let new_text = list.insert_container(0, elem)?;
     assert_eq!(
@@ -1069,7 +1070,7 @@ fn test_delete_utf8_detached() {
 fn test_delete_utf8_panic_out_bound_pos() {
     let doc = LoroDoc::new_auto_commit();
     let text = doc.get_text("text");
-    text.insert(0, "Hello").unwrap();
+    text.insert_unicode(0, "Hello").unwrap();
     text.delete_utf8(10, 1).unwrap();
 }
 
@@ -1078,7 +1079,7 @@ fn test_delete_utf8_panic_out_bound_pos() {
 fn test_delete_utf8_panic_out_bound_len() {
     let doc = LoroDoc::new_auto_commit();
     let text = doc.get_text("text");
-    text.insert(0, "Hello").unwrap();
+    text.insert_unicode(0, "Hello").unwrap();
     text.delete_utf8(1, 10).unwrap();
 }
 
@@ -1086,26 +1087,26 @@ fn test_delete_utf8_panic_out_bound_len() {
 fn test_char_at() {
     let doc = LoroDoc::new_auto_commit();
     let text = doc.get_text("text");
-    text.insert(0, "Herld").unwrap();
-    text.insert(2, "llo Wo").unwrap();
-    assert_eq!(text.char_at(0).unwrap(), 'H');
-    assert_eq!(text.char_at(1).unwrap(), 'e');
-    assert_eq!(text.char_at(2).unwrap(), 'l');
-    assert_eq!(text.char_at(3).unwrap(), 'l');
-    let err = text.char_at(15).unwrap_err();
+    text.insert_unicode(0, "Herld").unwrap();
+    text.insert_unicode(2, "llo Wo").unwrap();
+    assert_eq!(text.char_at(0, PosType::Unicode).unwrap(), 'H');
+    assert_eq!(text.char_at(1, PosType::Unicode).unwrap(), 'e');
+    assert_eq!(text.char_at(2, PosType::Unicode).unwrap(), 'l');
+    assert_eq!(text.char_at(3, PosType::Unicode).unwrap(), 'l');
+    let err = text.char_at(15, PosType::Unicode).unwrap_err();
     assert!(matches!(err, loro_common::LoroError::OutOfBound { .. }))
 }
 
 #[test]
 fn test_char_at_detached() {
     let text = TextHandler::new_detached();
-    text.insert(0, "Herld").unwrap();
-    text.insert(2, "llo Wo").unwrap();
-    assert_eq!(text.char_at(0).unwrap(), 'H');
-    assert_eq!(text.char_at(1).unwrap(), 'e');
-    assert_eq!(text.char_at(2).unwrap(), 'l');
-    assert_eq!(text.char_at(3).unwrap(), 'l');
-    let err = text.char_at(15).unwrap_err();
+    text.insert_unicode(0, "Herld").unwrap();
+    text.insert_unicode(2, "llo Wo").unwrap();
+    assert_eq!(text.char_at(0, PosType::Unicode).unwrap(), 'H');
+    assert_eq!(text.char_at(1, PosType::Unicode).unwrap(), 'e');
+    assert_eq!(text.char_at(2, PosType::Unicode).unwrap(), 'l');
+    assert_eq!(text.char_at(3, PosType::Unicode).unwrap(), 'l');
+    let err = text.char_at(15, PosType::Unicode).unwrap_err();
     assert!(matches!(err, loro_common::LoroError::OutOfBound { .. }))
 }
 
@@ -1113,13 +1114,13 @@ fn test_char_at_detached() {
 fn test_char_at_wchar() {
     let doc = LoroDoc::new_auto_commit();
     let text = doc.get_text("text");
-    text.insert(0, "你好").unwrap();
-    text.insert(1, "世界").unwrap();
-    assert_eq!(text.char_at(0).unwrap(), '你');
-    assert_eq!(text.char_at(1).unwrap(), '世');
-    assert_eq!(text.char_at(2).unwrap(), '界');
-    assert_eq!(text.char_at(3).unwrap(), '好');
-    let err = text.char_at(5).unwrap_err();
+    text.insert_unicode(0, "你好").unwrap();
+    text.insert_unicode(1, "世界").unwrap();
+    assert_eq!(text.char_at(0, PosType::Unicode).unwrap(), '你');
+    assert_eq!(text.char_at(1, PosType::Unicode).unwrap(), '世');
+    assert_eq!(text.char_at(2, PosType::Unicode).unwrap(), '界');
+    assert_eq!(text.char_at(3, PosType::Unicode).unwrap(), '好');
+    let err = text.char_at(5, PosType::Unicode).unwrap_err();
     assert!(matches!(err, loro_common::LoroError::OutOfBound { .. }))
 }
 
@@ -1127,28 +1128,28 @@ fn test_char_at_wchar() {
 fn test_text_slice() {
     let doc = LoroDoc::new_auto_commit();
     let text = doc.get_text("text");
-    text.insert(0, "Hello").unwrap();
-    text.insert(1, "World").unwrap();
-    assert_eq!(text.slice(0, 4).unwrap(), "HWor");
-    assert_eq!(text.slice(0, 1).unwrap(), "H");
+    text.insert_unicode(0, "Hello").unwrap();
+    text.insert_unicode(1, "World").unwrap();
+    assert_eq!(text.slice(0, 4, PosType::Unicode).unwrap(), "HWor");
+    assert_eq!(text.slice(0, 1, PosType::Unicode).unwrap(), "H");
 }
 
 #[test]
 fn test_text_slice_detached() {
     let text = TextHandler::new_detached();
-    text.insert(0, "Herld").unwrap();
-    text.insert(2, "llo Wo").unwrap();
-    assert_eq!(text.slice(0, 4).unwrap(), "Hell");
-    assert_eq!(text.slice(0, 1).unwrap(), "H");
+    text.insert_unicode(0, "Herld").unwrap();
+    text.insert_unicode(2, "llo Wo").unwrap();
+    assert_eq!(text.slice(0, 4, PosType::Unicode).unwrap(), "Hell");
+    assert_eq!(text.slice(0, 1, PosType::Unicode).unwrap(), "H");
 }
 
 #[test]
 fn test_text_slice_wchar() {
     let doc = LoroDoc::new_auto_commit();
     let text = doc.get_text("text");
-    text.insert(0, "你好").unwrap();
-    text.insert(1, "世界").unwrap();
-    assert_eq!(text.slice(0, 3).unwrap(), "你世界");
+    text.insert_unicode(0, "你好").unwrap();
+    text.insert_unicode(1, "世界").unwrap();
+    assert_eq!(text.slice(0, 3, PosType::Unicode).unwrap(), "你世界");
 }
 
 #[test]
@@ -1156,9 +1157,9 @@ fn test_text_slice_wchar() {
 fn test_text_slice_end_index_less_than_start() {
     let doc = LoroDoc::new_auto_commit();
     let text = doc.get_text("text");
-    text.insert(0, "你好").unwrap();
-    text.insert(1, "世界").unwrap();
-    text.slice(2, 1).unwrap();
+    text.insert_unicode(0, "你好").unwrap();
+    text.insert_unicode(1, "世界").unwrap();
+    text.slice(2, 1, PosType::Unicode).unwrap();
 }
 
 #[test]
@@ -1166,17 +1167,20 @@ fn test_text_slice_end_index_less_than_start() {
 fn test_text_slice_out_of_bound() {
     let doc = LoroDoc::new_auto_commit();
     let text = doc.get_text("text");
-    text.insert(0, "你好").unwrap();
-    text.insert(1, "世界").unwrap();
-    text.slice(1, 10).unwrap();
+    text.insert_unicode(0, "你好").unwrap();
+    text.insert_unicode(1, "世界").unwrap();
+    text.slice(1, 10, PosType::Unicode).unwrap();
 }
 
 #[test]
 fn test_text_splice() {
     let doc = LoroDoc::new_auto_commit();
     let text = doc.get_text("text");
-    text.insert(0, "你好").unwrap();
-    assert_eq!(text.splice(1, 1, "世界").unwrap(), "好");
+    text.insert_unicode(0, "你好").unwrap();
+    assert_eq!(
+        text.splice(1, 1, "世界", PosType::Unicode).unwrap(),
+        "好"
+    );
     assert_eq!(text.to_string(), "你世界");
 }
 
@@ -1185,8 +1189,8 @@ fn test_text_iter() {
     let mut str = String::new();
     let doc = LoroDoc::new_auto_commit();
     let text = doc.get_text("text");
-    text.insert(0, "Hello").unwrap();
-    text.insert(1, "Hello").unwrap();
+    text.insert_unicode(0, "Hello").unwrap();
+    text.insert_unicode(1, "Hello").unwrap();
     text.iter(|s| {
         str.push_str(s);
         true
@@ -1209,8 +1213,8 @@ fn test_text_iter() {
 fn test_text_iter_detached() {
     let mut str = String::new();
     let text = TextHandler::new_detached();
-    text.insert(0, "Hello").unwrap();
-    text.insert(1, "Hello").unwrap();
+    text.insert_unicode(0, "Hello").unwrap();
+    text.insert_unicode(1, "Hello").unwrap();
     text.iter(|s| {
         str.push_str(s);
         true
@@ -1222,7 +1226,7 @@ fn test_text_iter_detached() {
 fn test_text_update() {
     let doc = LoroDoc::new_auto_commit();
     let text = doc.get_text("text");
-    text.insert(0, "Hello 😊Bro").unwrap();
+    text.insert_unicode(0, "Hello 😊Bro").unwrap();
     text.update("Hello World Bro😊", Default::default())
         .unwrap();
     assert_eq!(text.to_string(), "Hello World Bro😊");
@@ -1253,16 +1257,16 @@ fn import_status() -> LoroResult<()> {
     let doc = LoroDoc::new_auto_commit();
     doc.set_peer_id(0)?;
     let t = doc.get_text("text");
-    t.insert(0, "a")?;
+    t.insert_unicode(0, "a")?;
 
     let doc2 = LoroDoc::new_auto_commit();
     doc2.set_peer_id(1)?;
     let t2 = doc2.get_text("text");
-    t2.insert(0, "b")?;
+    t2.insert_unicode(0, "b")?;
     doc2.commit_then_renew();
     let update1 = doc2.export(ExportMode::Snapshot).unwrap();
     let vv1 = doc2.oplog_vv();
-    t2.insert(1, "c")?;
+    t2.insert_unicode(1, "c")?;
     let update2 = doc2.export(ExportMode::updates(&vv1)).unwrap();
 
     let status1 = doc.import(&update2)?;
@@ -1295,12 +1299,12 @@ fn test_on_first_commit_from_peer() {
         p2.try_lock().unwrap().push(e.peer);
         true
     }));
-    doc.get_text("text").insert(0, "a").unwrap();
+    doc.get_text("text").insert_unicode(0, "a").unwrap();
     doc.commit_then_renew();
-    doc.get_text("text").insert(0, "b").unwrap();
+    doc.get_text("text").insert_unicode(0, "b").unwrap();
     doc.commit_then_renew();
     doc.set_peer_id(1).unwrap();
-    doc.get_text("text").insert(0, "c").unwrap();
+    doc.get_text("text").insert_unicode(0, "c").unwrap();
     doc.commit_then_renew();
     sub.unsubscribe();
     assert_eq!(p.try_lock().unwrap().as_slice(), &[0, 1]);
@@ -1316,7 +1320,7 @@ fn test_on_first_commit_from_peer_when_drop_doc() {
         p2.try_lock().unwrap().push(e.peer);
         true
     }));
-    doc.get_text("text").insert(0, "a").unwrap();
+    doc.get_text("text").insert_unicode(0, "a").unwrap();
     drop(doc);
     assert_eq!(p.try_lock().unwrap().as_slice(), &[0]);
 }
@@ -1331,7 +1335,7 @@ fn test_on_first_commit_from_peer_and_set_peer_id() {
         f2.store(true, std::sync::atomic::Ordering::Relaxed);
         true
     }));
-    doc.get_text("text").insert(0, "a").unwrap();
+    doc.get_text("text").insert_unicode(0, "a").unwrap();
     doc.set_peer_id(1).unwrap();
     sub.unsubscribe();
     assert!(f.load(std::sync::atomic::Ordering::Relaxed));
@@ -1343,10 +1347,10 @@ fn test_on_first_commit_from_peer_with_lock() {
     doc.set_peer_id(0).unwrap();
     let doc_clone = doc.clone();
     let sub = doc.subscribe_first_commit_from_peer(Box::new(move |_e| {
-        doc_clone.get_text("text").insert(0, "b").unwrap();
+        doc_clone.get_text("text").insert_unicode(0, "b").unwrap();
         true
     }));
-    doc.get_text("text").insert(0, "a").unwrap();
+    doc.get_text("text").insert_unicode(0, "a").unwrap();
     doc.commit_then_renew();
     sub.unsubscribe();
     assert_eq!(doc.get_text("text").to_string(), "ba");
@@ -1370,7 +1374,7 @@ fn test_on_first_peer_commit_attach_user_id() {
             .unwrap();
         true
     }));
-    doc.get_text("text").insert(0, "a").unwrap();
+    doc.get_text("text").insert_unicode(0, "a").unwrap();
     doc.commit_then_renew();
     sub.unsubscribe();
     assert_eq!(
@@ -1392,7 +1396,7 @@ fn test_pre_commit_with_lock() {
         doc_clone.oplog_vv();
         true
     }));
-    doc.get_text("text").insert(0, "a").unwrap();
+    doc.get_text("text").insert_unicode(0, "a").unwrap();
     doc.commit_then_renew();
     sub.unsubscribe();
 }
@@ -1432,13 +1436,13 @@ fn test_pre_commit_with_hash() {
         ));
         true
     }));
-    doc.get_text("text").insert(0, "a").unwrap();
+    doc.get_text("text").insert_unicode(0, "a").unwrap();
     doc.commit_with(
         CommitOptions::default()
             .commit_msg("add a")
             .immediate_renew(true),
     );
-    doc.get_text("text").insert(0, "b").unwrap();
+    doc.get_text("text").insert_unicode(0, "b").unwrap();
     doc.commit_with(
         CommitOptions::default()
             .commit_msg("add b")
@@ -1460,7 +1464,7 @@ fn test_pre_commit_with_hash() {
 fn test_change_to_json_schema_include_uncommit() {
     let doc = LoroDoc::new_auto_commit();
     doc.set_peer_id(0).unwrap();
-    doc.get_text("text").insert(0, "a").unwrap();
+    doc.get_text("text").insert_unicode(0, "a").unwrap();
     doc.commit_then_renew();
     let doc_clone = doc.clone();
     let _sub = doc.subscribe_pre_commit(Box::new(move |e| {
@@ -1472,7 +1476,7 @@ fn test_change_to_json_schema_include_uncommit() {
         assert_eq!(changes.len(), 2);
         true
     }));
-    doc.get_text("text").insert(0, "b").unwrap();
+    doc.get_text("text").insert_unicode(0, "b").unwrap();
     let changes = doc.export_json_in_id_span(IdSpan::new(0, 0, 2));
     assert_eq!(changes.len(), 1);
     doc.commit_then_renew();

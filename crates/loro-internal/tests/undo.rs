@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use loro_internal::{handler::UpdateOptions, loro::ExportMode, LoroDoc, UndoManager};
+use loro_internal::{cursor::PosType, handler::UpdateOptions, loro::ExportMode, LoroDoc, UndoManager};
 
 #[test]
 fn test_basic_undo_group_checkpoint() {
@@ -136,14 +136,21 @@ fn test_undo_group_start_with_remote_ops() {
     let doc = LoroDoc::new();
     let doc2 = LoroDoc::new();
     let undo_manager = UndoManager::new(&doc);
-    doc.get_text("text").insert(0, "hi").unwrap();
+    doc.get_text("text")
+        .insert(0, "hi", PosType::Unicode)
+        .unwrap();
     doc2.import(&doc.export(ExportMode::Snapshot).unwrap())
         .unwrap();
-    doc2.get_text("text").insert(0, "test").unwrap();
+    doc2
+        .get_text("text")
+        .insert(0, "test", PosType::Unicode)
+        .unwrap();
     doc.import(&doc2.export(ExportMode::Snapshot).unwrap())
         .unwrap();
     undo_manager.group_start().unwrap();
-    doc.get_text("text").insert(0, "t").unwrap();
+    doc.get_text("text")
+        .insert(0, "t", PosType::Unicode)
+        .unwrap();
     undo_manager.undo().unwrap();
     assert_eq!(doc.get_text("text").to_string(), "testhi");
     undo_manager.undo().unwrap();

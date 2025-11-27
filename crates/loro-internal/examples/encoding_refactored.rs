@@ -1,5 +1,5 @@
 use bench_utils::TextAction;
-use loro_internal::{loro::ExportMode, LoroDoc};
+use loro_internal::{cursor::PosType, loro::ExportMode, LoroDoc};
 use std::hint::black_box;
 
 fn main() {
@@ -17,8 +17,10 @@ fn log_size() {
         let mut txn = loro.txn().unwrap();
 
         for TextAction { pos, ins, del } in actions.iter() {
-            text.delete_with_txn(&mut txn, *pos, *del);
-            text.insert_with_txn(&mut txn, *pos, ins);
+            text.delete_with_txn(&mut txn, *pos, *del, PosType::Unicode)
+                .unwrap();
+            text.insert_with_txn(&mut txn, *pos, ins, PosType::Unicode)
+                .unwrap();
         }
         txn.commit().unwrap();
         let snapshot = loro.export(ExportMode::Snapshot).unwrap();
@@ -46,8 +48,10 @@ fn log_size() {
 
         for TextAction { pos, ins, del } in actions.iter() {
             let mut txn = loro.txn().unwrap();
-            text.delete_with_txn(&mut txn, *pos, *del);
-            text.insert_with_txn(&mut txn, *pos, ins);
+            text.delete_with_txn(&mut txn, *pos, *del, PosType::Unicode)
+                .unwrap();
+            text.insert_with_txn(&mut txn, *pos, ins, PosType::Unicode)
+                .unwrap();
             txn.commit().unwrap();
         }
         let snapshot = loro.export(ExportMode::Snapshot).unwrap();
@@ -71,8 +75,8 @@ fn bench_decode() {
 
         for _ in 0..10 {
             for TextAction { pos, ins, del } in actions.iter() {
-                text.delete(*pos, *del);
-                text.insert(*pos, ins);
+                text.delete(*pos, *del, PosType::Unicode).unwrap();
+                text.insert(*pos, ins, PosType::Unicode).unwrap();
             }
         }
         let snapshot = loro.export(ExportMode::Snapshot).unwrap();
@@ -96,8 +100,10 @@ fn bench_decode_updates() {
     #[allow(warnings)]
     for TextAction { pos, ins, del } in actions.iter() {
         let mut txn = loro.txn().unwrap();
-        text.delete_with_txn(&mut txn, *pos, *del);
-        text.insert_with_txn(&mut txn, *pos, ins);
+        text.delete_with_txn(&mut txn, *pos, *del, PosType::Unicode)
+            .unwrap();
+        text.insert_with_txn(&mut txn, *pos, ins, PosType::Unicode)
+            .unwrap();
         txn.commit().unwrap();
     }
 

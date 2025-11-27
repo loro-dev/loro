@@ -1,5 +1,5 @@
 use bench_utils::TextAction;
-use loro_internal::{encoding::ExportMode, LoroDoc, VersionVector};
+use loro_internal::{cursor::PosType, encoding::ExportMode, LoroDoc, VersionVector};
 
 pub fn main() {
     let loro = LoroDoc::default();
@@ -11,8 +11,10 @@ pub fn main() {
     for chunks in actions.chunks(action_length / 10) {
         for TextAction { pos, ins, del } in chunks {
             let mut txn = loro.txn().unwrap();
-            text.delete_with_txn(&mut txn, *pos, *del).unwrap();
-            text.insert_with_txn(&mut txn, *pos, ins).unwrap();
+            text.delete_with_txn(&mut txn, *pos, *del, PosType::Unicode)
+                .unwrap();
+            text.insert_with_txn(&mut txn, *pos, ins, PosType::Unicode)
+                .unwrap();
             let update = loro.export(ExportMode::updates(&latest_vv)).unwrap();
             updates.push(update);
             latest_vv = loro.oplog_vv();

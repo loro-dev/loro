@@ -505,7 +505,7 @@ mod test {
     use itertools::Itertools;
     use loro_common::LoroValue;
 
-    use crate::{ApplyDiff, LoroDoc};
+    use crate::{cursor::PosType, ApplyDiff, LoroDoc};
 
     #[test]
     fn test_text_event() {
@@ -517,8 +517,10 @@ mod test {
         }));
         let mut txn = loro.txn().unwrap();
         let text = loro.get_text("id");
-        text.insert_with_txn(&mut txn, 0, "hello").unwrap();
-        text.insert_with_txn(&mut txn, 1, "223").unwrap();
+        text.insert_with_txn(&mut txn, 0, "hello", PosType::Unicode)
+            .unwrap();
+        text.insert_with_txn(&mut txn, 1, "223", PosType::Unicode)
+            .unwrap();
         txn.commit().unwrap();
     }
 }

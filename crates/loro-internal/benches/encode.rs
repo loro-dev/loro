@@ -4,7 +4,7 @@ mod sync {
 
     use super::*;
     use bench_utils::{get_automerge_actions, TextAction};
-    use loro_internal::{encoding::ExportMode, LoroDoc};
+    use loro_internal::{cursor::PosType, encoding::ExportMode, LoroDoc};
 
     pub fn b4(c: &mut Criterion) {
         let actions = get_automerge_actions();
@@ -25,16 +25,20 @@ mod sync {
                     let TextAction { pos, ins, del } = action;
                     if i % 2 == 0 {
                         let mut txn = c1.txn().unwrap();
-                        t1.delete_with_txn(&mut txn, *pos, *del).unwrap();
-                        t1.insert_with_txn(&mut txn, *pos, ins).unwrap();
+                        t1.delete_with_txn(&mut txn, *pos, *del, PosType::Unicode)
+                            .unwrap();
+                        t1.insert_with_txn(&mut txn, *pos, ins, PosType::Unicode)
+                            .unwrap();
                         txn.commit().unwrap();
 
                         let update = c1.export(ExportMode::updates(&c2.oplog_vv())).unwrap();
                         c2.import(&update).unwrap();
                     } else {
                         let mut txn = c2.txn().unwrap();
-                        t2.delete_with_txn(&mut txn, *pos, *del).unwrap();
-                        t2.insert_with_txn(&mut txn, *pos, ins).unwrap();
+                        t2.delete_with_txn(&mut txn, *pos, *del, PosType::Unicode)
+                            .unwrap();
+                        t2.insert_with_txn(&mut txn, *pos, ins, PosType::Unicode)
+                            .unwrap();
                         txn.commit().unwrap();
                         let update = c2.export(ExportMode::updates(&c1.oplog_vv())).unwrap();
                         c1.import(&update).unwrap();
@@ -127,7 +131,7 @@ mod run {
 
 mod import {
     use criterion::Criterion;
-    use loro_internal::{encoding::ExportMode, LoroDoc};
+    use loro_internal::{cursor::PosType, encoding::ExportMode, LoroDoc};
 
     #[allow(dead_code)]
     pub fn causal_iter(c: &mut Criterion) {
@@ -144,10 +148,10 @@ mod import {
                 let text2 = c2.get_text("text");
                 for _ in 0..500 {
                     text1
-                        .insert_with_txn(&mut c1.txn().unwrap(), 0, "1")
+                        .insert_with_txn(&mut c1.txn().unwrap(), 0, "1", PosType::Unicode)
                         .unwrap();
                     text2
-                        .insert_with_txn(&mut c2.txn().unwrap(), 0, "2")
+                        .insert_with_txn(&mut c2.txn().unwrap(), 0, "2", PosType::Unicode)
                         .unwrap();
                 }
 
