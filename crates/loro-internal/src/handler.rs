@@ -2192,12 +2192,23 @@ impl TextHandler {
         for d in delta {
             match d {
                 TextDelta::Insert { insert, attributes } => {
-                    let end = index + event_len(insert.as_str());
+                    let insert_len = event_len(insert.as_str());
+                    if insert_len == 0 {
+                        continue;
+                    }
+
+                    let mut empty_attr = None;
+                    let attr_ref = attributes.as_ref().unwrap_or_else(|| {
+                        empty_attr = Some(FxHashMap::default());
+                        empty_attr.as_ref().unwrap()
+                    });
+
+                    let end = index + insert_len;
                     let override_styles = self.insert_with_txn_and_attr(
                         txn,
                         index,
                         insert.as_str(),
-                        Some(attributes.as_ref().unwrap_or(&Default::default())),
+                        Some(attr_ref),
                         PosType::Event,
                     )?;
 
@@ -2390,6 +2401,10 @@ impl TextHandler {
             MaybeDetached::Detached(s) => {
                 let mut delta = Vec::new();
                 for span in s.lock().unwrap().value.iter() {
+                    if span.text.as_str().is_empty() {
+                        continue;
+                    }
+
                     let next_attr = span.attributes.to_option_map();
                     match delta.last_mut() {
                         Some(TextDelta::Insert { insert, attributes })
@@ -2400,6 +2415,7 @@ impl TextHandler {
                         }
                         _ => {}
                     }
+
                     delta.push(TextDelta::Insert {
                         insert: span.text.as_str().to_string(),
                         attributes: next_attr,
@@ -2516,9 +2532,7 @@ impl TextHandler {
                         if event_index > t.value.len_event() {
                             return None;
                         }
-                        t.value
-                            .get_text_slice_by_event_index(0, event_index)
-                            .ok()?
+                        t.value.get_text_slice_by_event_index(0, event_index).ok()?
                     }
                     MaybeDetached::Attached(a) => {
                         let res: Result<String, ()> = a.with_state(|state| {
@@ -4314,7 +4328,7 @@ mod test {
     use crate::version::Frontiers;
     use crate::LoroDoc;
     use crate::{fx_map, ToJson};
-    use loro_common::ID;
+    use loro_common::{LoroValue, ID};
     use serde_json::json;
 
     #[test]
@@ -4529,5 +4543,64 @@ mod test {
 
             ])
         )
+    }
+
+    #[test]
+    fn richtext_apply_delta_marks_without_growth() {
+        let loro = LoroDoc::new_auto_commit();
+        let text = loro.get_text("text");
+        text.insert(0, "abc", PosType::Unicode).unwrap();
+
+        text.apply_delta(&[TextDelta::Retain {
+            retain: 3,
+            attributes: Some(fx_map!("bold".into() => LoroValue::Bool(true))),
+        }])
+        .unwrap();
+        loro.commit_then_renew();
+
+        assert_eq!(text.to_string(), "abc");
+        assert_eq!(
+            text.get_richtext_value().to_json_value(),
+            json!([{"insert": "abc", "attributes": {"bold": true}}])
+        );
+    }
+
+    #[test]
+    fn richtext_apply_delta_grows_for_mark_gap() {
+        let loro = LoroDoc::new_auto_commit();
+        let text = loro.get_text("text");
+
+        text.apply_delta(&[TextDelta::Retain {
+            retain: 1,
+            attributes: Some(fx_map!("bold".into() => LoroValue::Bool(true))),
+        }])
+        .unwrap();
+        loro.commit_then_renew();
+
+        assert_eq!(text.to_string(), "\n");
+        assert_eq!(
+            text.get_richtext_value().to_json_value(),
+            json!([{"insert": "\n", "attributes": {"bold": true}}])
+        );
+    }
+
+    #[test]
+    fn richtext_apply_delta_ignores_empty_inserts() {
+        let loro = LoroDoc::new_auto_commit();
+        let text = loro.get_text("text");
+        text.insert(0, "seed", PosType::Unicode).unwrap();
+
+        text.apply_delta(&[TextDelta::Insert {
+            insert: "".into(),
+            attributes: Some(fx_map!("bold".into() => LoroValue::Bool(true))),
+        }])
+        .unwrap();
+        loro.commit_then_renew();
+
+        assert_eq!(text.to_string(), "seed");
+        assert_eq!(
+            text.get_richtext_value().to_json_value(),
+            json!([{"insert": "seed"}])
+        );
     }
 }

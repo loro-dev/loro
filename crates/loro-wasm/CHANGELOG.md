@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.10.1
+
+### Patch Changes
+
+- ca76d86: fix: Empty LoroText attach error #873
+
 ## 1.10.0
 
 ### Minor Changes
