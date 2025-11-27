@@ -1,6 +1,6 @@
 [package]
 name = "loro-wasm-tools"
-version = "1.9.1"
+version = "1.10.0"
 edition = "2021"
 publish = false
 
