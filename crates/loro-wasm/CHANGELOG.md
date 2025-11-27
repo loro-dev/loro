@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.10.3
+
+### Patch Changes
+
+- 2800a4c: perf: skip useless unmark op #878
+
 ## 1.10.2
 
 ### Patch Changes
