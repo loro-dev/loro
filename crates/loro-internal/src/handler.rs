@@ -4,7 +4,7 @@ use crate::{
     container::{
         idx::ContainerIdx,
         list::list_op::{DeleteSpan, DeleteSpanWithId, ListOp},
-        richtext::{richtext_state::PosType, RichtextState, StyleOp, TextStyleInfoFlag},
+        richtext::{richtext_state::PosType, RichtextState, StyleKey, StyleOp, TextStyleInfoFlag},
     },
     cursor::{Cursor, Side},
     delta::{DeltaItem, Meta, StyleMeta, TreeExternalDiff},
@@ -1968,10 +1968,10 @@ impl TextHandler {
         match &self.inner {
             MaybeDetached::Detached(t) => {
                 let mut g = t.lock().unwrap();
-                self.mark_for_detached(&mut g.value, key, &value, start, end, pos_type, false)
+                self.mark_for_detached(&mut g.value, key, &value, start, end, pos_type)
             }
             MaybeDetached::Attached(a) => {
-                a.with_txn(|txn| self.mark_with_txn(txn, start, end, key, value, pos_type, false))
+                a.with_txn(|txn| self.mark_with_txn(txn, start, end, key, value, pos_type))
             }
         }
     }
@@ -1984,9 +1984,9 @@ impl TextHandler {
         start: usize,
         end: usize,
         pos_type: PosType,
-        is_delete: bool,
     ) -> Result<(), LoroError> {
         let key: InternalString = key.into();
+        let is_delete = matches!(value, &LoroValue::Null);
         if start >= end {
             return Err(loro_common::LoroError::ArgErr(
                 "Start must be less than end".to_string().into_boxed_str(),
@@ -2005,9 +2005,16 @@ impl TextHandler {
             state.get_entity_range_and_text_styles_at_range(start..end, pos_type);
         if let Some(styles) = styles {
             if styles.has_key_value(&key, value) {
-                // already has the same style, skip
                 return Ok(());
             }
+        }
+
+        let has_target_style =
+            state.range_has_style_key(entity_range.clone(), &StyleKey::Key(key.clone()));
+        let missing_style_key = is_delete && !has_target_style;
+
+        if missing_style_key {
+            return Ok(());
         }
 
         let style_op = Arc::new(StyleOp {
@@ -2043,10 +2050,9 @@ impl TextHandler {
                 start,
                 end,
                 pos_type,
-                true,
             ),
             MaybeDetached::Attached(a) => a.with_txn(|txn| {
-                self.mark_with_txn(txn, start, end, key, LoroValue::Null, pos_type, true)
+                self.mark_with_txn(txn, start, end, key, LoroValue::Null, pos_type)
             }),
         }
     }
@@ -2060,7 +2066,6 @@ impl TextHandler {
         key: impl Into<InternalString>,
         value: LoroValue,
         pos_type: PosType,
-        is_delete: bool,
     ) -> LoroResult<()> {
         if start >= end {
             return Err(loro_common::LoroError::ArgErr(
@@ -2070,6 +2075,7 @@ impl TextHandler {
 
         let inner = self.inner.try_attached_state()?;
         let key: InternalString = key.into();
+        let is_delete = matches!(&value, &LoroValue::Null);
 
         let mut doc_state = inner.doc.state.lock().unwrap();
         let len = doc_state.with_state_mut(inner.container_idx, |state| {
@@ -2084,26 +2090,34 @@ impl TextHandler {
             });
         }
 
-        let (entity_range, skip, event_start, event_end) =
-            doc_state.with_state_mut(inner.container_idx, |state| {
+        let (entity_range, skip, missing_style_key, event_start, event_end) = doc_state
+            .with_state_mut(inner.container_idx, |state| {
                 let state = state.as_richtext_state_mut().unwrap();
                 let event_start = state.index_to_event_index(start, pos_type);
                 let event_end = state.index_to_event_index(end, pos_type);
                 let (entity_range, styles) =
                     state.get_entity_range_and_styles_at_range(start..end, pos_type);
 
-                let skip = match styles {
-                    Some(styles) if styles.has_key_value(&key, &value) => {
-                        // already has the same style, skip
-                        true
-                    }
-                    _ => false,
-                };
+                let skip = styles
+                    .as_ref()
+                    .map(|styles| styles.has_key_value(&key, &value))
+                    .unwrap_or(false);
+                let has_target_style = state.has_style_key_in_entity_range(
+                    entity_range.clone(),
+                    &StyleKey::Key(key.clone()),
+                );
+                let missing_style_key = is_delete && !has_target_style;
 
-                (entity_range, skip, event_start, event_end)
+                (
+                    entity_range,
+                    skip,
+                    missing_style_key,
+                    event_start,
+                    event_end,
+                )
             });
 
-        if skip {
+        if skip || missing_style_key {
             return Ok(());
         }
 
@@ -2269,7 +2283,6 @@ impl TextHandler {
                     key.deref(),
                     value,
                     PosType::Event,
-                    false,
                 )?;
             }
         }
@@ -4449,7 +4462,7 @@ mod test {
             .insert_with_txn(&mut txn, 0, "hello world", PosType::Unicode)
             .unwrap();
         handler
-            .mark_with_txn(&mut txn, 0, 5, "bold", true.into(), PosType::Event, false)
+            .mark_with_txn(&mut txn, 0, 5, "bold", true.into(), PosType::Event)
             .unwrap();
         txn.commit().unwrap();
 

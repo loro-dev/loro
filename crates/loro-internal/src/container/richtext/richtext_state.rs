@@ -31,7 +31,7 @@ use self::query::{
 
 use super::{
     style_range_map::{IterAnchorItem, StyleRangeMap, Styles},
-    AnchorType, RichtextSpan, StyleOp,
+    AnchorType, RichtextSpan, StyleKey, StyleOp,
 };
 
 pub(crate) use crate::cursor::PosType;
@@ -1295,13 +1295,29 @@ impl RichtextState {
         result
     }
 
-    fn has_styles(&self) -> bool {
+    pub(crate) fn has_styles(&self) -> bool {
         self.style_ranges
             .as_ref()
             .map(|x| x.has_style())
             .unwrap_or(false)
     }
 
+    pub(crate) fn range_has_style_key(
+        &mut self,
+        range: Range<usize>,
+        key: &StyleKey,
+    ) -> bool {
+        self.check_cache();
+        let result = match self.style_ranges.as_ref() {
+            Some(s) => s.range_contains_key(range, key),
+            None => false,
+        };
+        self.check_cache();
+        result
+    }
+
+    /// Return the entity range and text styles at the given range.
+    /// If in the target range the leaves are not in the same span, the returned styles would be None
     pub(crate) fn get_entity_range_and_text_styles_at_range(
         &mut self,
         range: Range<usize>,
@@ -1960,16 +1976,15 @@ impl RichtextState {
                 match &self.style_ranges {
                     Some(s) => {
                         let mut idx = current_entity_index;
-                        Box::new(
-                            s.iter_range(current_entity_index..end_entity_index)
-                                .map(move |elem_slice| {
-                                    let len = elem_slice.end.unwrap_or(elem_slice.elem.len)
-                                        - elem_slice.start.unwrap_or(0);
-                                    let range = idx..idx + len;
-                                    idx += len;
-                                    (range, &elem_slice.elem.styles)
-                                }),
-                        )
+                        Box::new(s.iter_range(current_entity_index..end_entity_index).map(
+                            move |elem_slice| {
+                                let len = elem_slice.end.unwrap_or(elem_slice.elem.len)
+                                    - elem_slice.start.unwrap_or(0);
+                                let range = idx..idx + len;
+                                idx += len;
+                                (range, &elem_slice.elem.styles)
+                            },
+                        ))
                     }
                     None => Box::new(Some((0..usize::MAX / 2, &*EMPTY_STYLES)).into_iter()),
                 };
@@ -1984,8 +1999,8 @@ impl RichtextState {
             for span in self.tree.iter_range(start_cursor..end_cursor) {
                 match &span.elem {
                     RichtextStateChunk::Text(t) => {
-                        let chunk_len = span.end.unwrap_or(span.elem.rle_len())
-                            - span.start.unwrap_or(0); // length in rle_len (unicode_len)
+                        let chunk_len =
+                            span.end.unwrap_or(span.elem.rle_len()) - span.start.unwrap_or(0); // length in rle_len (unicode_len)
                         let mut processed_len = 0;
 
                         while processed_len < chunk_len {
@@ -2014,13 +2029,12 @@ impl RichtextState {
                             let slice_start = span.start.unwrap_or(0) + processed_len;
                             let slice_end = slice_start + take_len;
 
-                            let text_content =
-                                unicode_slice(t.as_str(), slice_start, slice_end)
-                                    .map_err(|_| LoroError::OutOfBound {
-                                        pos: slice_end,
-                                        len: t.unicode_len() as usize,
-                                        info: "Slice delta out of bound".into(),
-                                    })?;
+                            let text_content = unicode_slice(t.as_str(), slice_start, slice_end)
+                                .map_err(|_| LoroError::OutOfBound {
+                                    pos: slice_end,
+                                    len: t.unicode_len() as usize,
+                                    info: "Slice delta out of bound".into(),
+                                })?;
 
                             let styles = cur_styles.as_ref().unwrap();
                             if let Some(last) = ans.last_mut() {
