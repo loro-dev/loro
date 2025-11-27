@@ -722,9 +722,7 @@ pub(crate) fn loro_json_schema_to_js_json_schema(
     Ok(value.into())
 }
 
-pub(crate) fn text_delta_to_js_value(
-    delta: Vec<TextDelta>,
-) -> Result<JsValue, JsValue> {
+pub(crate) fn text_delta_to_js_value(delta: Vec<TextDelta>) -> Result<JsValue, JsValue> {
     let arr = Array::new();
     let mut iter = delta.into_iter();
     let mut current = iter.next();
@@ -734,26 +732,35 @@ pub(crate) fn text_delta_to_js_value(
 
         // Try to merge with next items
         while let Some(next) = next_item.take() {
-             match (&mut item, next) {
+            match (&mut item, next) {
                 (
-                    TextDelta::Insert { insert: i1, attributes: a1 },
-                    TextDelta::Insert { insert: i2, attributes: a2 }
+                    TextDelta::Insert {
+                        insert: i1,
+                        attributes: a1,
+                    },
+                    TextDelta::Insert {
+                        insert: i2,
+                        attributes: a2,
+                    },
                 ) if a1 == &a2 => {
                     i1.push_str(&i2);
                     // next_item is consumed, try next
                     next_item = iter.next();
                 }
                 (
-                    TextDelta::Retain { retain: r1, attributes: a1 },
-                    TextDelta::Retain { retain: r2, attributes: a2 }
+                    TextDelta::Retain {
+                        retain: r1,
+                        attributes: a1,
+                    },
+                    TextDelta::Retain {
+                        retain: r2,
+                        attributes: a2,
+                    },
                 ) if a1 == &a2 => {
                     *r1 += r2;
                     next_item = iter.next();
                 }
-                (
-                    TextDelta::Delete { delete: d1 },
-                    TextDelta::Delete { delete: d2 }
-                ) => {
+                (TextDelta::Delete { delete: d1 }, TextDelta::Delete { delete: d2 }) => {
                     *d1 += d2;
                     next_item = iter.next();
                 }
@@ -762,7 +769,7 @@ pub(crate) fn text_delta_to_js_value(
                     next_item = Some(next);
                     break;
                 }
-             }
+            }
         }
 
         // Convert merged item to JS
@@ -771,25 +778,13 @@ pub(crate) fn text_delta_to_js_value(
             TextDelta::Insert { insert, attributes } => {
                 Reflect::set(&obj, &"insert".into(), &insert.into())?;
                 if let Some(attributes) = attributes {
-                    if !attributes.is_empty() {
-                        let attrs = Object::new();
-                        for (k, v) in attributes {
-                            Reflect::set(&attrs, &k.into(), &convert(v)?)?;
-                        }
-                        Reflect::set(&obj, &"attributes".into(), &attrs)?;
-                    }
+                    set_style_attributes(&obj, attributes)?;
                 }
             }
             TextDelta::Retain { retain, attributes } => {
                 Reflect::set(&obj, &"retain".into(), &retain.into())?;
                 if let Some(attributes) = attributes {
-                    if !attributes.is_empty() {
-                        let attrs = Object::new();
-                        for (k, v) in attributes {
-                            Reflect::set(&attrs, &k.into(), &convert(v)?)?;
-                        }
-                        Reflect::set(&obj, &"attributes".into(), &attrs)?;
-                    }
+                    set_style_attributes(&obj, attributes)?;
                 }
             }
             TextDelta::Delete { delete } => {
@@ -801,4 +796,28 @@ pub(crate) fn text_delta_to_js_value(
         current = next_item;
     }
     Ok(arr.into())
+}
+
+fn set_style_attributes(
+    obj: &Object,
+    attributes: FxHashMap<String, LoroValue>,
+) -> Result<(), JsValue> {
+    if !attributes.is_empty() {
+        let attrs = Object::new();
+        let mut is_empty = true;
+        for (k, v) in attributes {
+            if v.is_null() {
+                // We should ignore attribute with null value, since it should be treated as deleted
+                continue;
+            }
+
+            is_empty = false;
+            Reflect::set(&attrs, &k.into(), &convert(v)?)?;
+        }
+
+        if !is_empty {
+            Reflect::set(obj, &"attributes".into(), &attrs)?;
+        }
+    }
+    Ok(())
 }
