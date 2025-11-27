@@ -25,6 +25,27 @@ describe("richtext", () => {
     ] as Delta<string>[]);
   });
 
+  it("unmark noop when style key missing in span", () => {
+    const doc = new LoroDoc();
+    doc.configTextStyle({
+      bold: { expand: "after" },
+      italic: { expand: "after" },
+    });
+    const text = doc.getText("text");
+    text.insert(0, "Hello");
+    text.mark({ start: 1, end: 4 }, "bold", true);
+    doc.commit();
+    const beforeDelta = text.toDelta();
+    const beforeVersion = doc.version().toJSON();
+
+    // Unmark a key that doesn't exist in the span; should be noop
+    text.unmark({ start: 0, end: 5 }, "italic");
+    doc.commit();
+
+    expect(text.toDelta()).toStrictEqual(beforeDelta);
+    expect(doc.version().toJSON()).toStrictEqual(beforeVersion);
+  });
+
   it("insert after emoji", () => {
     const doc = new LoroDoc();
     const text = doc.getText("text");

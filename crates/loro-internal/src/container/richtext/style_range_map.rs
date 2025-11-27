@@ -188,6 +188,37 @@ impl StyleRangeMap {
         }
     }
 
+    pub(crate) fn range_contains_key(&self, range: Range<usize>, key: &StyleKey) -> bool {
+        if range.is_empty() || !self.has_style {
+            return false;
+        }
+
+        let mut query = self.tree.query::<LengthFinder>(&range.start).unwrap();
+        let mut pos = range.start;
+        loop {
+            let elem = self.tree.get_elem(query.cursor.leaf).unwrap();
+            if elem.styles.contains_key(key) {
+                return true;
+            }
+
+            let remaining_in_elem = elem.len - query.cursor.offset;
+            let next_pos = pos + remaining_in_elem;
+            if next_pos >= range.end {
+                break;
+            }
+
+            match self.tree.next_elem(query.cursor) {
+                Some(next_cursor) => {
+                    pos = next_pos;
+                    query.cursor = next_cursor;
+                }
+                None => break,
+            }
+        }
+
+        false
+    }
+
     /// Insert entities at `pos` with length of `len`
     ///
     /// # Internal

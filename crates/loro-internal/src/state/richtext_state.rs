@@ -15,7 +15,7 @@ use crate::{
             richtext_state::{
                 DrainInfo, EntityRangeInfo, IterRangeItem, PosType, RichtextStateChunk,
             },
-            AnchorType, RichtextState as InnerState, StyleOp, Styles,
+            AnchorType, RichtextState as InnerState, StyleKey, StyleOp, Styles,
         },
     },
     delta::{StyleMeta, StyleMetaItem},
@@ -280,6 +280,74 @@ impl RichtextState {
             })
         }
         delta
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{container::richtext::StyleKey, cursor::PosType, handler::HandlerTrait, LoroDoc};
+
+    #[test]
+    fn has_style_key_in_entity_range_basic() {
+        let loro = LoroDoc::new_auto_commit();
+        let text = loro.get_text("text");
+        text.insert(0, "abcdef", PosType::Unicode).unwrap();
+        text.mark(1, 3, "bold", true.into(), PosType::Unicode)
+            .unwrap();
+
+        let bold_key = StyleKey::Key("bold".into());
+        let has_style = text
+            .with_state(|state| {
+                let st = state.as_richtext_state_mut().unwrap();
+                let (entity_range, _) =
+                    st.get_entity_range_and_styles_at_range(1..3, PosType::Unicode);
+                Ok(st.has_style_key_in_entity_range(entity_range, &bold_key))
+            })
+            .unwrap();
+        assert!(has_style);
+
+        let missing = text
+            .with_state(|state| {
+                let st = state.as_richtext_state_mut().unwrap();
+                let (entity_range, _) =
+                    st.get_entity_range_and_styles_at_range(4..5, PosType::Unicode);
+                Ok(st.has_style_key_in_entity_range(entity_range, &bold_key))
+            })
+            .unwrap();
+        assert!(!missing);
+    }
+
+    #[test]
+    fn has_style_key_in_entity_range_spans_elements() {
+        let loro = LoroDoc::new_auto_commit();
+        let text = loro.get_text("text");
+        text.insert(0, "abcdefgh", PosType::Unicode).unwrap();
+        text.mark(0, 2, "bold", true.into(), PosType::Unicode)
+            .unwrap();
+        text.mark(3, 5, "bold", true.into(), PosType::Unicode)
+            .unwrap();
+
+        let bold_key = StyleKey::Key("bold".into());
+
+        let has_style_across_segments = text
+            .with_state(|state| {
+                let st = state.as_richtext_state_mut().unwrap();
+                let (entity_range, _) =
+                    st.get_entity_range_and_styles_at_range(0..5, PosType::Unicode);
+                Ok(st.has_style_key_in_entity_range(entity_range, &bold_key))
+            })
+            .unwrap();
+        assert!(has_style_across_segments);
+
+        let gap_has_style = text
+            .with_state(|state| {
+                let st = state.as_richtext_state_mut().unwrap();
+                let (entity_range, _) =
+                    st.get_entity_range_and_styles_at_range(6..7, PosType::Unicode);
+                Ok(st.has_style_key_in_entity_range(entity_range, &bold_key))
+            })
+            .unwrap();
+        assert!(!gap_has_style);
     }
 }
 
@@ -723,6 +791,19 @@ impl RichtextState {
         } else {
             self.len_unicode()
         }
+    }
+
+    #[inline]
+    pub(crate) fn has_styles(&mut self) -> bool {
+        self.state.get_mut().has_styles()
+    }
+
+    pub(crate) fn has_style_key_in_entity_range(
+        &mut self,
+        range: Range<usize>,
+        key: &StyleKey,
+    ) -> bool {
+        self.state.get_mut().range_has_style_key(range, key)
     }
 
     /// Check if the content and style ranges are consistent.
