@@ -1,5 +1,11 @@
 # loro-crdt-map
 
+## 1.10.2
+
+### Patch Changes
+
+- 53635dd: fix: toDelta should ignore null style entries #875
+
 ## 1.10.1
 
 ### Patch Changes
