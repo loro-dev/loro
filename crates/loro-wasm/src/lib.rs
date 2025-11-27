@@ -5946,7 +5946,7 @@ interface LoroDoc {
 export type Delta<T> =
   | {
     insert: T;
-    attributes?: { [key in string]: {} };
+    attributes?: { [key in string]: Value };
     retain?: undefined;
     delete?: undefined;
   }
@@ -5958,7 +5958,7 @@ export type Delta<T> =
   }
   | {
     retain: number;
-    attributes?: { [key in string]: {} };
+    attributes?: { [key in string]: Value };
     delete?: undefined;
     insert?: undefined;
   };

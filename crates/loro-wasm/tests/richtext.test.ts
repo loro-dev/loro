@@ -406,10 +406,10 @@ describe("richtext", () => {
 
     // Out of bounds
     try {
-        text.sliceDelta(0, 100);
-        expect.fail("Should throw error");
+      text.sliceDelta(0, 100);
+      expect.fail("Should throw error");
     } catch (e) {
-        // Expected
+      // Expected
     }
   });
 
@@ -420,9 +420,9 @@ describe("richtext", () => {
       italic: { expand: "before" },
     });
     const text = doc.getText("text");
-    text.insert(0, "你好 World!"); 
-    text.mark({ start: 0, end: 2 }, "bold", true); 
-    text.mark({ start: 3, end: 8 }, "italic", true); 
+    text.insert(0, "你好 World!");
+    text.mark({ start: 0, end: 2 }, "bold", true);
+    text.mark({ start: 3, end: 8 }, "italic", true);
 
     const deltaUtf8 = text.sliceDeltaUtf8(0, 13);
     expect(deltaUtf8).toStrictEqual([
@@ -446,10 +446,10 @@ describe("richtext", () => {
 
     // Out of bounds by UTF8
     try {
-        text.sliceDeltaUtf8(0, 100);
-        expect.fail("Should throw error");
+      text.sliceDeltaUtf8(0, 100);
+      expect.fail("Should throw error");
     } catch (e) {
-        // Expected
+      // Expected
     }
   });
 
@@ -466,9 +466,9 @@ describe("richtext", () => {
     // ✨: 7-8
     // World: 8-13
     // 🌍: 13-15
-    text.mark({ start: 0, end: 2 }, "emoji", "rocket"); 
-    text.mark({ start: 7, end: 8 }, "emoji", "sparkles"); 
-    text.mark({ start: 13, end: 15 }, "emoji", "earth"); 
+    text.mark({ start: 0, end: 2 }, "emoji", "rocket");
+    text.mark({ start: 7, end: 8 }, "emoji", "sparkles");
+    text.mark({ start: 13, end: 15 }, "emoji", "earth");
 
     const delta = text.sliceDelta(0, 15);
     expect(delta).toStrictEqual([
@@ -485,5 +485,28 @@ describe("richtext", () => {
       { insert: "✨", attributes: { emoji: "sparkles" } },
       { insert: "World" },
     ] as Delta<string>[]);
+  });
+
+  it("should remove the style entry when applyDelta with style that contains null value", () => {
+    const doc = new LoroDoc();
+    doc
+      .getText("text")
+      .applyDelta([{ insert: "hello", attributes: { bold: true } }]);
+    doc
+      .getText("text")
+      .applyDelta([{ retain: 2 }, { retain: 2, attributes: { bold: null } }]);
+    expect(doc.getText("text").toDelta()).toStrictEqual([
+      {
+        insert: "he",
+        attributes: { bold: true },
+      },
+      {
+        insert: "ll",
+      },
+      {
+        insert: "o",
+        attributes: { bold: true },
+      },
+    ]);
   });
 });
