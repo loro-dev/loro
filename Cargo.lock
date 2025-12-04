@@ -1864,6 +1864,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "loro-wit"
+version = "0.1.0"
+dependencies = [
+ "loro 1.10.0",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "loro_fractional_index"
 version = "0.16.12"
 source = "git+https://github.com/loro-dev/loro.git?tag=loro-crdt%401.0.0-alpha.4#9bfe97bce4912c6dc8439817497d18423a0e8cb7"
@@ -3636,6 +3645,12 @@ name = "wit-bindgen"
 version = "0.45.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5c573471f125075647d03df72e026074b7203790d41351cd6edc96f46bcccd36"
+
+[[package]]
+name = "wit-bindgen-rt"
+version = "0.36.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7947d0131c7c9da3f01dfde0ab8bd4c4cf3c5bd49b6dba0ae640f1fa752572ea"
 
 [[package]]
 name = "writeable"

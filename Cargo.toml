@@ -7,6 +7,7 @@ members = [
     "crates/loro-common",
     "crates/loro-internal",
     "crates/loro-wasm",
+    "crates/loro-wit",
     "crates/fuzz",
     "crates/fractional_index",
     "crates/dev-utils",

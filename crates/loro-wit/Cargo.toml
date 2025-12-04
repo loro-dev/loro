@@ -1,0 +1,21 @@
+[package]
+name = "loro-wit"
+version = "0.1.0"
+edition = "2021"
+description = "WebAssembly Component Model (WIT) bindings for Loro CRDT"
+license = "MIT"
+repository = "https://github.com/loro-dev/loro"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+loro = { path = "../loro" }
+wit-bindgen-rt = "0.36"
+serde_json = { workspace = true }
+
+[package.metadata.component]
+package = "loro:crdt"
+
+[package.metadata.component.target]
+path = "wit"

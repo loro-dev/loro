@@ -1,0 +1,153 @@
+package loro:crdt@0.1.0;
+
+/// Loro CRDT interface for collaborative data types
+world loro-world {
+    export loro-doc;
+    export loro-text;
+    export loro-map;
+    export loro-list;
+}
+
+/// The main document interface for Loro CRDT
+interface loro-doc {
+    /// A handle to a Loro document
+    resource doc {
+        /// Create a new Loro document
+        constructor();
+
+        /// Create a new Loro document with a specific peer ID
+        new-with-peer-id: static func(peer-id: u64) -> doc;
+
+        /// Get the peer ID of this document
+        peer-id: func() -> u64;
+
+        /// Get a text container by name
+        get-text: func(name: string) -> text-handle;
+
+        /// Get a map container by name
+        get-map: func(name: string) -> map-handle;
+
+        /// Get a list container by name
+        get-list: func(name: string) -> list-handle;
+
+        /// Commit pending changes with an optional message
+        commit: func(message: option<string>);
+
+        /// Export all updates as bytes
+        export-updates: func() -> list<u8>;
+
+        /// Export a snapshot as bytes
+        export-snapshot: func() -> list<u8>;
+
+        /// Import updates from bytes
+        import-updates: func(bytes: list<u8>) -> result<_, string>;
+
+        /// Get the JSON representation of the document
+        to-json: func() -> string;
+
+        /// Check if the document is empty
+        is-empty: func() -> bool;
+
+        /// Fork the document to create an independent copy
+        fork: func() -> doc;
+    }
+
+    /// Handle to a text container
+    record text-handle {
+        id: u64,
+    }
+
+    /// Handle to a map container
+    record map-handle {
+        id: u64,
+    }
+
+    /// Handle to a list container
+    record list-handle {
+        id: u64,
+    }
+}
+
+/// Text CRDT operations
+interface loro-text {
+    use loro-doc.{doc, text-handle};
+
+    /// Insert text at a position
+    insert: func(doc: borrow<doc>, handle: text-handle, pos: u32, text: string) -> result<_, string>;
+
+    /// Delete text at a range
+    delete: func(doc: borrow<doc>, handle: text-handle, pos: u32, len: u32) -> result<_, string>;
+
+    /// Get the text content as a string
+    to-string: func(doc: borrow<doc>, handle: text-handle) -> string;
+
+    /// Get the length of the text in UTF-8 bytes
+    len-utf8: func(doc: borrow<doc>, handle: text-handle) -> u32;
+
+    /// Get the length of the text in Unicode characters
+    len-unicode: func(doc: borrow<doc>, handle: text-handle) -> u32;
+}
+
+/// Map CRDT operations
+interface loro-map {
+    use loro-doc.{doc, map-handle};
+
+    /// Insert or update a string value
+    insert-string: func(doc: borrow<doc>, handle: map-handle, key: string, value: string) -> result<_, string>;
+
+    /// Insert or update a number value
+    insert-number: func(doc: borrow<doc>, handle: map-handle, key: string, value: f64) -> result<_, string>;
+
+    /// Insert or update a boolean value
+    insert-bool: func(doc: borrow<doc>, handle: map-handle, key: string, value: bool) -> result<_, string>;
+
+    /// Insert a null value
+    insert-null: func(doc: borrow<doc>, handle: map-handle, key: string) -> result<_, string>;
+
+    /// Get a value by key (returns JSON string)
+    get: func(doc: borrow<doc>, handle: map-handle, key: string) -> option<string>;
+
+    /// Delete a key
+    delete: func(doc: borrow<doc>, handle: map-handle, key: string) -> result<_, string>;
+
+    /// Check if a key exists
+    contains: func(doc: borrow<doc>, handle: map-handle, key: string) -> bool;
+
+    /// Get all keys
+    keys: func(doc: borrow<doc>, handle: map-handle) -> list<string>;
+
+    /// Get the number of entries
+    len: func(doc: borrow<doc>, handle: map-handle) -> u32;
+}
+
+/// List CRDT operations
+interface loro-list {
+    use loro-doc.{doc, list-handle};
+
+    /// Insert a string value at position
+    insert-string: func(doc: borrow<doc>, handle: list-handle, pos: u32, value: string) -> result<_, string>;
+
+    /// Insert a number value at position
+    insert-number: func(doc: borrow<doc>, handle: list-handle, pos: u32, value: f64) -> result<_, string>;
+
+    /// Insert a boolean value at position
+    insert-bool: func(doc: borrow<doc>, handle: list-handle, pos: u32, value: bool) -> result<_, string>;
+
+    /// Insert a null value at position
+    insert-null: func(doc: borrow<doc>, handle: list-handle, pos: u32) -> result<_, string>;
+
+    /// Push a string value to the end
+    push-string: func(doc: borrow<doc>, handle: list-handle, value: string) -> result<_, string>;
+
+    /// Push a number value to the end
+    push-number: func(doc: borrow<doc>, handle: list-handle, value: f64) -> result<_, string>;
+
+    /// Get a value at index (returns JSON string)
+    get: func(doc: borrow<doc>, handle: list-handle, index: u32) -> option<string>;
+
+    /// Delete an element at index
+    delete: func(doc: borrow<doc>, handle: list-handle, index: u32) -> result<_, string>;
+
+    /// Get the length of the list
+    len: func(doc: borrow<doc>, handle: list-handle) -> u32;
+}

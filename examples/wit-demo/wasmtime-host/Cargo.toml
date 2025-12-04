@@ -1,0 +1,14 @@
+[package]
+name = "loro-wit-wasmtime-demo"
+version = "0.1.0"
+edition = "2021"
+description = "Demo of hosting the Loro CRDT WebAssembly Component with wasmtime"
+
+[[bin]]
+name = "loro-wit-demo"
+path = "src/main.rs"
+
+[dependencies]
+wasmtime = { version = "27.0", features = ["component-model"] }
+wasmtime-wasi = "27.0"
+anyhow = "1.0"

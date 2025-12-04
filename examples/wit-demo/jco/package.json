@@ -1,0 +1,14 @@
+{
+  "name": "loro-wit-jco-demo",
+  "version": "1.0.0",
+  "description": "Demo of Loro CRDT WebAssembly Component with jco",
+  "type": "module",
+  "scripts": {
+    "build": "jco transpile ../../../target/wasm32-wasip1/release/loro_wit.wasm -o ./gen --name loro",
+    "demo": "node demo.mjs"
+  },
+  "dependencies": {
+    "@bytecodealliance/jco": "^1.7.0",
+    "@bytecodealliance/preview2-shim": "^0.17.0"
+  }
+}
