@@ -1,5 +1,12 @@
 # loro-crdt-map
 
+## 1.10.3
+
+### Patch Changes
+
+- 2800a4c: perf: skip useless unmark op #878
+- fffaf45: feat: add JSONPath subscription #883
+
 ## 1.10.2
 
 ### Patch Changes
