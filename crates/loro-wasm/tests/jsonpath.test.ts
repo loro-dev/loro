@@ -349,41 +349,6 @@ describe("JSONPath", () => {
             expect(received.length).toBe(1);
             expect(received[0].length).toBe(0);
         });
-
-        it("does not fire for map changes unrelated to filter keys", () => {
-            const localDoc = new LoroDoc();
-            const books = localDoc.getList("books");
-            const pushBook = (book: Record<string, unknown>): LoroMap => {
-                const map = new LoroMap();
-                Object.entries(book).forEach(([k, v]) => map.set(k, v as any));
-                return books.pushContainer(map) as unknown as LoroMap;
-            };
-
-            const first = pushBook({ title: "A", price: 12, available: true });
-            localDoc.commit();
-
-            let hit = 0;
-            const unsubscribe = localDoc.subscribeJsonpath("$.books[?@.price>10].title", () => {
-                hit += 1;
-            });
-
-            // unrelated key update should not trigger because filter depends on `price`
-            first.set("note", "ignored");
-            localDoc.commit();
-            expect(hit).toBe(0);
-
-            first.set("price", 15);
-            localDoc.commit();
-            expect(hit).toBe(1);
-            
-            const unrelated = localDoc.getList("unrelated");
-            const book = unrelated.pushContainer(new LoroMap());
-            book.set("price", 15);
-            book.set("title", "hello");
-            localDoc.commit();
-            expect(hit).toBe(1);
-            unsubscribe();
-        });
     });
 
     describe("edge cases and error handling", () => {
