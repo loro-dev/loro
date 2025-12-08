@@ -83,6 +83,8 @@ pub use loro_kv_store as kv_store;
 
 #[cfg(feature = "jsonpath")]
 pub use loro_internal::jsonpath;
+#[cfg(feature = "jsonpath")]
+pub use loro_internal::jsonpath::SubscribeJsonPathCallback;
 
 #[cfg(feature = "counter")]
 mod counter;
@@ -1284,6 +1286,22 @@ impl LoroDoc {
             .map(|vec| vec.into_iter().map(ValueOrContainer::from).collect())
     }
 
+    /// Subscribe to updates that might affect the given JSONPath query.
+    ///
+    /// The callback:
+    /// - may fire **false positives** (never false negatives) to stay lightweight;
+    /// - does **not** include the query result so the caller can debounce/throttle
+    ///   and run JSONPath themselves if desired;
+    /// - can be debounced/throttled before executing an expensive JSONPath read.
+    #[cfg(feature = "jsonpath")]
+    pub fn subscribe_jsonpath(
+        &self,
+        jsonpath: &str,
+        callback: SubscribeJsonPathCallback,
+    ) -> LoroResult<Subscription> {
+        self.doc.subscribe_jsonpath(jsonpath, callback)
+    }
+
     /// Get the number of operations in the pending transaction.
     ///
     /// The pending transaction is the one that is not committed yet. It will be committed
@@ -2307,8 +2325,7 @@ impl LoroText {
 
     /// Delete specified character and insert string at the same position at given unicode position.
     pub fn splice(&self, pos: usize, len: usize, s: &str) -> LoroResult<String> {
-        self.handler
-            .splice(pos, len, s, cursor::PosType::Unicode)
+        self.handler.splice(pos, len, s, cursor::PosType::Unicode)
     }
 
     /// Delete specified range and insert a string at the same UTF-16 position.
@@ -2395,14 +2412,13 @@ impl LoroText {
         key: &str,
         value: impl Into<LoroValue>,
     ) -> LoroResult<()> {
-        self.handler
-            .mark(
-                range.start,
-                range.end,
-                key,
-                value.into(),
-                cursor::PosType::Unicode,
-            )
+        self.handler.mark(
+            range.start,
+            range.end,
+            key,
+            value.into(),
+            cursor::PosType::Unicode,
+        )
     }
 
     /// Mark a range of text with a key-value pair using UTF-8 byte offsets.
@@ -2412,14 +2428,13 @@ impl LoroText {
         key: &str,
         value: impl Into<LoroValue>,
     ) -> LoroResult<()> {
-        self.handler
-            .mark(
-                range.start,
-                range.end,
-                key,
-                value.into(),
-                cursor::PosType::Bytes,
-            )
+        self.handler.mark(
+            range.start,
+            range.end,
+            key,
+            value.into(),
+            cursor::PosType::Bytes,
+        )
     }
 
     /// Mark a range of text with a key-value pair using UTF-16 code unit offsets.
@@ -2429,14 +2444,13 @@ impl LoroText {
         key: &str,
         value: impl Into<LoroValue>,
     ) -> LoroResult<()> {
-        self.handler
-            .mark(
-                range.start,
-                range.end,
-                key,
-                value.into(),
-                cursor::PosType::Utf16,
-            )
+        self.handler.mark(
+            range.start,
+            range.end,
+            key,
+            value.into(),
+            cursor::PosType::Utf16,
+        )
     }
 
     /// Unmark a range of text with a key and a value.

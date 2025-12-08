@@ -1,6 +1,8 @@
 use std::borrow::Cow;
 
-use loro_internal::{cursor::PosType, handler::UpdateOptions, loro::ExportMode, LoroDoc, UndoManager};
+use loro_internal::{
+    cursor::PosType, handler::UpdateOptions, loro::ExportMode, LoroDoc, UndoManager,
+};
 
 #[test]
 fn test_basic_undo_group_checkpoint() {
@@ -141,8 +143,7 @@ fn test_undo_group_start_with_remote_ops() {
         .unwrap();
     doc2.import(&doc.export(ExportMode::Snapshot).unwrap())
         .unwrap();
-    doc2
-        .get_text("text")
+    doc2.get_text("text")
         .insert(0, "test", PosType::Unicode)
         .unwrap();
     doc.import(&doc2.export(ExportMode::Snapshot).unwrap())
