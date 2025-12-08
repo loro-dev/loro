@@ -2115,8 +2115,8 @@ impl Default for CommitOptions {
 
 #[cfg(test)]
 mod test {
-    use loro_common::ID;
     use crate::{cursor::PosType, loro::ExportMode, version::Frontiers, LoroDoc, ToJson};
+    use loro_common::ID;
 
     #[test]
     fn test_sync() {

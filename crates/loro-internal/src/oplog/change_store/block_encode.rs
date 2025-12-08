@@ -683,13 +683,9 @@ mod test {
             .insert(2, "He", PosType::Unicode)
             .unwrap();
         diagnose(&doc);
-        doc.get_text("text")
-            .delete(1, 4, PosType::Unicode)
-            .unwrap();
+        doc.get_text("text").delete(1, 4, PosType::Unicode).unwrap();
         diagnose(&doc);
-        doc.get_text("text")
-            .delete(0, 2, PosType::Unicode)
-            .unwrap();
+        doc.get_text("text").delete(0, 2, PosType::Unicode).unwrap();
         diagnose(&doc);
     }
 

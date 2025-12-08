@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
 use loro_internal::{
+    cursor::PosType,
     event::Diff,
     handler::{Handler, ValueOrHandler},
-    cursor::PosType, ListHandler, LoroDoc, MapHandler, TextHandler, ToJson, TreeHandler,
+    ListHandler, LoroDoc, MapHandler, TextHandler, ToJson, TreeHandler,
 };
 
 fn main() {

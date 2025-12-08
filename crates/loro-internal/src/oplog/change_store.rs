@@ -1550,11 +1550,11 @@ impl ChangesBlockBytes {
 
 #[cfg(test)]
 mod test {
+    use crate::cursor::PosType;
     use crate::{
         loro::ExportMode, oplog::convert_change_to_remote, state::TreeParentId, ListHandler,
         LoroDoc, MovableListHandler, TextHandler, TreeHandler,
     };
-    use crate::cursor::PosType;
 
     use super::*;
 
