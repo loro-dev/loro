@@ -629,6 +629,7 @@ mod test {
     use generic_btree::rle::HasLength;
 
     use super::*;
+    use std::time::Instant;
 
     #[test]
     fn test_len() {
@@ -671,5 +672,88 @@ mod test {
         assert_eq!(v[0].rle_len(), 4);
         assert!(v[1].is_activated());
         assert_eq!(v[1].rle_len(), 6);
+    }
+
+    #[test]
+    #[ignore]
+    fn perf_update_insert_by_split_quadratic() {
+        // Run with:
+        // cargo test -p loro-internal perf_update_insert_by_split_quadratic -- --ignored --nocapture
+        const CHUNK_LEN: usize = 256;
+        let fragments: usize = std::env::var("LORO_PERF_FRAGMENTS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(8192);
+        const PEER_A: PeerID = 1;
+        const PEER_B: PeerID = 2;
+
+        let doc_len = CHUNK_LEN * fragments;
+
+        let mut t = Tracker::new();
+        t.insert(
+            IdFull::new(PEER_A, 0, 0),
+            0,
+            RichtextChunk::new_text(0..doc_len as u32),
+        );
+        t.id_to_cursor.diagnose();
+
+        let start = Instant::now();
+        let expected_fragment_updates = (fragments as u64) * ((fragments - 1) as u64) / 2;
+
+        for i in 0..(fragments - 1) {
+            let pos = (i + 1) * CHUNK_LEN + i;
+            let op_id = IdFull::new(PEER_B, i as Counter, i as Lamport);
+            let chunk = RichtextChunk::new_text(
+                (doc_len as u32 + i as u32)..(doc_len as u32 + i as u32 + 1),
+            );
+            t.insert(op_id, pos, chunk);
+        }
+
+        let elapsed = start.elapsed();
+        let before_vv = vv!(PEER_A => doc_len as Counter);
+        let after_vv = vv!(PEER_A => doc_len as Counter, PEER_B => (fragments - 1) as Counter);
+        let diff_start = Instant::now();
+        let diff_len = t.diff(&before_vv, &after_vv).count();
+        let diff_elapsed = diff_start.elapsed();
+        assert_eq!(t.rope.tree().iter().count(), 1 + 2 * (fragments - 1));
+        println!(
+            "perf_update_insert_by_split_quadratic: doc_len={}, fragments={}, expected_fragment_updates={}, insert_elapsed={:?}, diff_items={}, diff_elapsed={:?}",
+            doc_len, fragments, expected_fragment_updates, elapsed, diff_len, diff_elapsed
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn perf_update_insert_by_split_quadratic_unknown() {
+        // Run with:
+        // LORO_PERF_FRAGMENTS=8192 cargo test -p loro-internal perf_update_insert_by_split_quadratic_unknown -- --ignored --nocapture
+        const CHUNK_LEN: usize = 256;
+        let fragments: usize = std::env::var("LORO_PERF_FRAGMENTS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(8192);
+        const PEER_B: PeerID = 2;
+
+        let doc_len = CHUNK_LEN * fragments;
+
+        let mut t = Tracker::new_with_unknown();
+        t.checkout(&vv!());
+        t.id_to_cursor.diagnose();
+
+        let start = Instant::now();
+        for i in 0..(fragments - 1) {
+            let pos = (i + 1) * CHUNK_LEN + i;
+            let op_id = IdFull::new(PEER_B, i as Counter, i as Lamport);
+            let chunk = RichtextChunk::new_text(
+                (doc_len as u32 + i as u32)..(doc_len as u32 + i as u32 + 1),
+            );
+            t.insert(op_id, pos, chunk);
+        }
+
+        let elapsed = start.elapsed();
+        println!(
+            "perf_update_insert_by_split_quadratic_unknown: doc_len={}, fragments={}, elapsed={:?}",
+            doc_len, fragments, elapsed
+        );
     }
 }

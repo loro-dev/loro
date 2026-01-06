@@ -1,4 +1,4 @@
-use generic_btree::{rle::HasLength, Cursor};
+use generic_btree::{rle::HasLength, rle::Sliceable as _, Cursor};
 use loro_common::{ContainerID, InternalString, LoroError, LoroResult, LoroValue, ID};
 use loro_delta::DeltaRopeBuilder;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -576,6 +576,92 @@ impl ContainerState for RichtextState {
         let InternalDiff::RichtextRaw(richtext) = diff else {
             unreachable!()
         };
+
+        let can_fast_apply = {
+            let state = self.state.get_mut();
+            !state.has_styles()
+                && richtext.iter().all(|span| match span {
+                    loro_delta::DeltaItem::Retain { .. } => true,
+                    loro_delta::DeltaItem::Replace { value, delete: _, .. } => {
+                        value.rle_len() == 0 || matches!(value, RichtextStateChunk::Text(_))
+                    }
+                })
+        };
+
+        if can_fast_apply {
+            let new_state = {
+                let state = self.state.get_mut();
+                let mut chunks: Vec<RichtextStateChunk> = Vec::new();
+
+                let mut src_iter = state.iter_chunk();
+                let mut cur = src_iter.next();
+                let mut cur_offset: usize = 0;
+
+                for span in richtext.iter() {
+                    match span {
+                        loro_delta::DeltaItem::Retain { len, .. } => {
+                            let mut left = *len;
+                            while left > 0 {
+                                let chunk = cur.expect("Delta retain exceeds source length");
+                                let chunk_len = chunk.rle_len();
+                                let available = chunk_len - cur_offset;
+                                let take = left.min(available);
+                                if take == chunk_len && cur_offset == 0 {
+                                    chunks.push(chunk.clone());
+                                } else {
+                                    chunks.push(chunk.slice(cur_offset..cur_offset + take));
+                                }
+
+                                left -= take;
+                                cur_offset += take;
+                                if cur_offset == chunk_len {
+                                    cur = src_iter.next();
+                                    cur_offset = 0;
+                                }
+                            }
+                        }
+                        loro_delta::DeltaItem::Replace { value, delete, .. } => {
+                            let mut left = *delete;
+                            while left > 0 {
+                                let chunk = cur.expect("Delta delete exceeds source length");
+                                let chunk_len = chunk.rle_len();
+                                let available = chunk_len - cur_offset;
+                                let take = left.min(available);
+                                left -= take;
+                                cur_offset += take;
+                                if cur_offset == chunk_len {
+                                    cur = src_iter.next();
+                                    cur_offset = 0;
+                                }
+                            }
+
+                            if value.rle_len() > 0 {
+                                chunks.push(value.clone());
+                            }
+                        }
+                    }
+                }
+
+                if let Some(chunk) = cur {
+                    let chunk_len = chunk.rle_len();
+                    if cur_offset < chunk_len {
+                        if cur_offset == 0 {
+                            chunks.push(chunk.clone());
+                        } else {
+                            chunks.push(chunk.slice(cur_offset..chunk_len));
+                        }
+                    }
+                }
+                for chunk in src_iter {
+                    chunks.push(chunk.clone());
+                }
+
+                InnerState::from_chunks(chunks.into_iter())
+            };
+
+            *self.state.get_mut() = new_state;
+            return;
+        }
 
         let mut style_starts: FxHashMap<Arc<StyleOp>, usize> = FxHashMap::default();
         let mut entity_index = 0;

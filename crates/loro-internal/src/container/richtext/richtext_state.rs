@@ -433,13 +433,21 @@ mod text_chunk {
         }
 
         fn check(&self) {
-            if cfg!(any(debug_assertions, test)) {
-                assert_eq!(self.unicode_len, self.as_str().chars().count() as i32);
-                assert_eq!(
-                    self.utf16_len,
-                    self.as_str().chars().map(|c| c.len_utf16()).sum::<usize>() as i32
-                );
+            if !cfg!(any(debug_assertions, test)) {
+                return;
             }
+
+            let bytes_len = self.bytes.len() as i32;
+            if bytes_len == self.unicode_len {
+                assert_eq!(self.utf16_len, self.unicode_len);
+                return;
+            }
+
+            assert_eq!(self.unicode_len, self.as_str().chars().count() as i32);
+            assert_eq!(
+                self.utf16_len,
+                self.as_str().chars().map(|c| c.len_utf16()).sum::<usize>() as i32
+            );
         }
 
         pub(crate) fn entity_range_to_event_range(&self, range: Range<usize>) -> Range<usize> {
@@ -484,6 +492,67 @@ mod text_chunk {
     impl generic_btree::rle::Sliceable for TextChunk {
         fn _slice(&self, range: Range<usize>) -> Self {
             assert!(range.start < range.end);
+            let total_unicode_len = self.unicode_len as usize;
+            if range.start == 0 && range.end == total_unicode_len {
+                return self.clone();
+            }
+
+            // Fast path for ASCII text: unicode index == byte index, and utf16 index == unicode index.
+            if self.bytes.len() as i32 == self.unicode_len {
+                let ans = Self {
+                    unicode_len: range.len() as i32,
+                    bytes: self.bytes.slice_clone(range.start..range.end),
+                    utf16_len: range.len() as i32,
+                    id: self.id.inc(range.start as i32),
+                };
+                ans.check();
+                return ans;
+            }
+
+            // Fast path for slicing a suffix/prefix to avoid scanning the whole chunk.
+            if range.end == total_unicode_len {
+                let mut utf16_offset = 0;
+                let mut start_byte = self.bytes.len();
+                for (unicode_index, (byte_index, c)) in self.as_str().char_indices().enumerate() {
+                    if unicode_index == range.start {
+                        start_byte = byte_index;
+                        break;
+                    }
+                    utf16_offset += c.len_utf16();
+                }
+
+                let ans = Self {
+                    unicode_len: (total_unicode_len - range.start) as i32,
+                    bytes: self.bytes.slice_clone(start_byte..),
+                    utf16_len: self.utf16_len - utf16_offset as i32,
+                    id: self.id.inc(range.start as i32),
+                };
+                ans.check();
+                return ans;
+            }
+
+            if range.start == 0 {
+                let mut utf16_len = 0;
+                let mut end_byte = self.bytes.len();
+                for (unicode_index, (byte_index, c)) in self.as_str().char_indices().enumerate() {
+                    if unicode_index == range.end {
+                        end_byte = byte_index;
+                        break;
+                    }
+                    utf16_len += c.len_utf16();
+                }
+
+                let ans = Self {
+                    unicode_len: range.end as i32,
+                    bytes: self.bytes.slice_clone(..end_byte),
+                    utf16_len: utf16_len as i32,
+                    id: self.id,
+                };
+                ans.check();
+                return ans;
+            }
+
+            // General middle slice.
             let mut utf16_len = 0;
             let mut start = 0;
             let mut end = 0;
