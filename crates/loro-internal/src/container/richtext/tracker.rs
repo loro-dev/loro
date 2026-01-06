@@ -140,11 +140,22 @@ impl Tracker {
     }
 
     fn update_insert_by_split(&mut self, split: &[LeafIndex]) {
-        for &new_leaf_idx in split {
-            let leaf = self.rope.tree().get_elem(new_leaf_idx).unwrap();
-
-            self.id_to_cursor
-                .update_insert(leaf.id_span(), new_leaf_idx)
+        match split.len() {
+            0 => {}
+            1 => {
+                let new_leaf_idx = split[0];
+                let leaf = self.rope.tree().get_elem(new_leaf_idx).unwrap();
+                self.id_to_cursor
+                    .update_insert(leaf.id_span(), new_leaf_idx);
+            }
+            _ => {
+                let mut updates = Vec::with_capacity(split.len());
+                for &new_leaf_idx in split {
+                    let leaf = self.rope.tree().get_elem(new_leaf_idx).unwrap();
+                    updates.push((leaf.id_span(), new_leaf_idx));
+                }
+                self.id_to_cursor.update_insert_batch(&mut updates);
+            }
         }
     }
 

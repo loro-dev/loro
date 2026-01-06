@@ -109,6 +109,74 @@ impl IdToCursor {
         assert_eq!(start_counter, id_span.counter.end);
     }
 
+    pub fn update_insert_batch(&mut self, updates: &mut [(IdSpan, LeafIndex)]) {
+        if updates.is_empty() {
+            return;
+        }
+
+        if updates.len() == 1 {
+            let (span, leaf) = updates[0];
+            self.update_insert(span, leaf);
+            return;
+        }
+
+        let mut per_peer: FxHashMap<PeerID, Vec<(IdSpan, LeafIndex)>> = FxHashMap::default();
+        for &(id_span, new_leaf) in updates.iter() {
+            per_peer
+                .entry(id_span.peer)
+                .or_default()
+                .push((id_span, new_leaf));
+        }
+
+        for (peer, peer_updates) in per_peer {
+            let Some(list) = self.map.get_mut(&peer) else {
+                continue;
+            };
+
+            let mut per_fragment: FxHashMap<usize, Vec<(usize, usize, LeafIndex)>> =
+                FxHashMap::default();
+
+            for (id_span, new_leaf) in peer_updates {
+                debug_assert!(!id_span.is_reversed());
+                let mut index =
+                    match list.binary_search_by_key(&id_span.counter.start, |x| x.counter) {
+                        Ok(index) => index,
+                        Err(index) => index.saturating_sub(1),
+                    };
+
+                let mut start_counter = id_span.counter.start;
+                while start_counter < id_span.counter.end
+                    && index < list.len()
+                    && start_counter < list[index].counter_end()
+                {
+                    let fragment = &list[index];
+                    let from = (start_counter - fragment.counter) as usize;
+                    let to = ((id_span.counter.end - fragment.counter) as usize)
+                        .min(fragment.cursor.rle_len());
+
+                    if from != to {
+                        per_fragment
+                            .entry(index)
+                            .or_default()
+                            .push((from, to, new_leaf));
+                    }
+
+                    start_counter += (to - from) as Counter;
+                    index += 1;
+                }
+
+                assert_eq!(start_counter, id_span.counter.end);
+            }
+
+            let mut fragment_indexes: Vec<usize> = per_fragment.keys().copied().collect();
+            fragment_indexes.sort_unstable();
+            for index in fragment_indexes {
+                let updates = per_fragment.get(&index).unwrap();
+                list[index].cursor.update_insert_many(updates);
+            }
+        }
+    }
+
     pub fn iter_all(&self) -> impl Iterator<Item = IterCursor> + '_ {
         self.map.iter().flat_map(|(peer, list)| {
             list.iter()
@@ -352,6 +420,80 @@ mod insert_set {
             }
         }
 
+        pub(crate) fn update_many(&mut self, updates: &[(usize, usize, LeafIndex)]) {
+            if updates.is_empty() {
+                return;
+            }
+
+            if updates.len() == 1 {
+                let (from, to, leaf) = updates[0];
+                self.update(from, to, leaf);
+                return;
+            }
+
+            let len = self.len();
+            if len > MAX_FRAGMENT_LEN {
+                for &(from, to, leaf) in updates {
+                    self.update(from, to, leaf);
+                }
+                return;
+            }
+
+            let mut dense: SmallVec<[LeafIndex; MAX_FRAGMENT_LEN]> = SmallVec::with_capacity(len);
+            match self {
+                InsertSet::Small(set) => {
+                    for insert in set.set.iter() {
+                        for _ in 0..insert.len {
+                            dense.push(insert.leaf);
+                        }
+                    }
+                }
+                InsertSet::Large(set) => {
+                    for insert in set.tree.iter() {
+                        for _ in 0..insert.len {
+                            dense.push(insert.leaf);
+                        }
+                    }
+                }
+            }
+            debug_assert_eq!(dense.len(), len);
+
+            for &(from, to, leaf) in updates {
+                debug_assert!(from <= to);
+                debug_assert!(to <= len);
+                for i in from..to {
+                    dense[i] = leaf;
+                }
+            }
+
+            let mut new_set: SmallVec<[Insert; 1]> = SmallVec::new();
+            if !dense.is_empty() {
+                let mut cur_leaf = dense[0];
+                let mut cur_len: usize = 1;
+                for &leaf in dense.iter().skip(1) {
+                    if leaf == cur_leaf {
+                        cur_len += 1;
+                    } else {
+                        new_set.push(Insert {
+                            leaf: cur_leaf,
+                            len: cur_len as u32,
+                        });
+                        cur_leaf = leaf;
+                        cur_len = 1;
+                    }
+                }
+                new_set.push(Insert {
+                    leaf: cur_leaf,
+                    len: cur_len as u32,
+                });
+            }
+
+            *self = InsertSet::Small(SmallInsertSet {
+                set: new_set,
+                len: len as u32,
+            });
+        }
+
         pub(crate) fn get_insert(&self, pos: usize) -> Option<LeafIndex> {
             match self {
                 Self::Small(set) => {
@@ -548,9 +690,10 @@ mod insert_set {
     impl SmallInsertSet {
         fn update(&mut self, from: usize, to: usize, new_leaf: LeafIndex) {
             let mut cur_scan_index: usize = 0;
-            let mut new_set = SmallVec::new();
+            let old_set = std::mem::take(&mut self.set);
+            let mut new_set = SmallVec::with_capacity(old_set.len() + 2);
             let mut new_leaf_inserted = false;
-            for insert in self.set.iter() {
+            for insert in old_set.iter() {
                 if new_leaf_inserted {
                     let end = cur_scan_index + insert.len as usize;
                     if end <= to {
@@ -786,6 +929,18 @@ impl Cursor {
             }
             Self::Move { .. } => {
                 unreachable!("update_insert on Move")
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    fn update_insert_many(&mut self, updates: &[(usize, usize, LeafIndex)]) {
+        match self {
+            Self::Insert(set) => {
+                set.update_many(updates);
+            }
+            Self::Move { .. } => {
+                unreachable!("update_insert_many on Move")
             }
             _ => unreachable!(),
         }
