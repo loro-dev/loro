@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     container::richtext::TextStyleInfoFlag,
+    container::richtext::richtext_state::unicode_to_utf8_index,
     op::{ListSlice, SliceRange},
-    utils::string_slice::unicode_range_to_byte_range,
     InternalString,
 };
 
@@ -614,17 +614,32 @@ impl Sliceable for InnerListOp {
             InnerListOp::InsertText {
                 slice,
                 unicode_start,
-                unicode_len: _,
+                unicode_len,
                 pos,
             } => InnerListOp::InsertText {
                 slice: {
-                    let (a, b) = unicode_range_to_byte_range(
-                        // SAFETY: we know it's a valid utf8 string
-                        unsafe { std::str::from_utf8_unchecked(slice) },
-                        from,
-                        to,
-                    );
-                    slice.slice(a, b)
+                    // SAFETY: we know it's a valid utf8 string
+                    let s = unsafe { std::str::from_utf8_unchecked(slice) };
+                    let total_unicode_len = *unicode_len as usize;
+                    let total_bytes_len = slice.len();
+                    let (from_byte, to_byte) = if total_bytes_len == total_unicode_len {
+                        // ASCII fast path: unicode index equals byte offset.
+                        (from, to)
+                    } else {
+                        let from_byte = if from == 0 {
+                            0
+                        } else {
+                            unicode_to_utf8_index(s, from).expect("unicode index should be valid")
+                        };
+                        let to_byte = if to == total_unicode_len {
+                            total_bytes_len
+                        } else {
+                            unicode_to_utf8_index(s, to).expect("unicode index should be valid")
+                        };
+                        (from_byte, to_byte)
+                    };
+
+                    slice.slice(from_byte, to_byte)
                 },
                 unicode_start: *unicode_start + from as u32,
                 unicode_len: (to - from) as u32,
@@ -644,12 +659,14 @@ impl Sliceable for InnerListOp {
 
 #[cfg(test)]
 mod test {
+    use append_only_bytes::BytesSlice;
     use loro_common::ID;
-    use rle::{Mergable, Sliceable};
+    use rle::{HasLength as _, Mergable, Sliceable};
+    use std::time::Instant;
 
     use crate::{container::list::list_op::DeleteSpanWithId, op::ListSlice};
 
-    use super::{DeleteSpan, ListOp};
+    use super::{DeleteSpan, InnerListOp, ListOp};
 
     #[test]
     fn fix_fields_order() {
@@ -748,5 +765,39 @@ mod test {
         assert!(a_with_id.is_mergable(&b_with_id, &()));
         a_with_id.merge(&b_with_id, &());
         assert!(a_with_id.span.signed_len == -2);
+    }
+
+    #[test]
+    #[ignore]
+    fn perf_insert_text_slice_split_suffix() {
+        // Run with:
+        // cargo test -p loro-internal perf_insert_text_slice_split_suffix -- --ignored --nocapture
+        const TEXT_LEN: usize = 2 * 1024 * 1024;
+        const CHUNK_UNICODE_LEN: usize = 4096;
+
+        let text = "a".repeat(TEXT_LEN);
+        let slice = BytesSlice::from_bytes(text.as_bytes());
+        let mut op = InnerListOp::InsertText {
+            slice,
+            unicode_start: 0,
+            unicode_len: TEXT_LEN as u32,
+            pos: 0,
+        };
+
+        let start = Instant::now();
+        let mut total = 0usize;
+        while op.content_len() > CHUNK_UNICODE_LEN {
+            let end = CHUNK_UNICODE_LEN.min(op.content_len());
+            let _prefix = op.slice(0, end);
+            op = op.slice(end, op.content_len());
+            total += end;
+        }
+        total += op.content_len();
+        let elapsed = start.elapsed();
+        assert_eq!(total, TEXT_LEN);
+        println!(
+            "perf_insert_text_slice_split_suffix: text_len={}, chunk_unicode_len={}, elapsed={:?}",
+            TEXT_LEN, CHUNK_UNICODE_LEN, elapsed
+        );
     }
 }

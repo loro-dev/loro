@@ -323,6 +323,7 @@ impl Default for StringSlice {
 }
 
 impl loro_delta::delta_trait::DeltaValue for StringSlice {}
+#[allow(dead_code)]
 pub fn unicode_range_to_byte_range(s: &str, start: usize, end: usize) -> (usize, usize) {
     debug_assert!(start <= end);
     let start_unicode_index = start;
