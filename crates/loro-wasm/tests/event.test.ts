@@ -565,6 +565,37 @@ describe("event", () => {
       errorSpy.mockRestore();
     }
   });
+
+  it("setDetachedEditing flushes pending events", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const doc = new LoroDoc();
+      doc.setPeerId("1");
+
+      let called = 0;
+      doc.subscribe(() => {
+        called += 1;
+      });
+
+      doc.detach();
+      doc.setDetachedEditing(true);
+
+      doc.getText("text").update("Hello");
+      doc.setDetachedEditing(true);
+      await Promise.resolve();
+
+      expect(called).toBeGreaterThan(0);
+      expect(
+        errorSpy.mock.calls.some((args) =>
+          args.some((arg) =>
+            String(arg).includes("[LORO_INTERNAL_ERROR] Event not called"),
+          ),
+        ),
+      ).toBe(false);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
 });
 
 it.skip("subscription works after timeout", async () => {

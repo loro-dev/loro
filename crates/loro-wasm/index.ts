@@ -492,6 +492,7 @@ function decorateAllPrototypeMethods(prototype: object) {
 }
 
 decorateMethods(LoroDoc.prototype, [
+  "setDetachedEditing",
   "attach",
   "detach",
   "fork",
