@@ -499,6 +499,7 @@ decorateMethods(LoroDoc.prototype, [
   "checkoutToLatest",
   "checkout",
   "commit",
+  "getCursorPos",
   "revertTo",
   "export",
   "exportJsonUpdates",
