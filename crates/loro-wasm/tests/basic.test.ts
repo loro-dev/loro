@@ -1244,6 +1244,41 @@ it("export json in id span #602", () => {
   }
 });
 
+it("export json in id span implicitly commits pending ops", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId("1");
+  doc.getText("text").insert(0, "Hello");
+  expect(doc.getPendingTxnLength()).toBe(5);
+
+  const changes = doc.exportJsonInIdSpan({
+    peer: "1",
+    counter: 0,
+    length: 5,
+  });
+  expect(changes).toStrictEqual([
+    {
+      id: "0@1",
+      timestamp: expect.any(Number),
+      deps: [],
+      lamport: 0,
+      msg: undefined,
+      ops: [
+        {
+          container: "cid:root-text:Text",
+          counter: 0,
+          content: {
+            type: "insert",
+            pos: 0,
+            text: "Hello",
+          },
+        },
+      ],
+    },
+  ]);
+
+  expect(doc.getPendingTxnLength()).toBe(0);
+});
+
 it("find spans between versions", () => {
   const doc = new LoroDoc();
   doc.setPeerId("1");
