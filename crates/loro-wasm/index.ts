@@ -491,7 +491,36 @@ function decorateAllPrototypeMethods(prototype: object) {
   }
 }
 
-decorateAllPrototypeMethods(LoroDoc.prototype);
-decorateAllPrototypeMethods(EphemeralStoreWasm.prototype);
-decorateAllPrototypeMethods(AwarenessWasm.prototype);
+decorateMethods(LoroDoc.prototype, [
+  "setDetachedEditing",
+  "attach",
+  "detach",
+  "fork",
+  "forkAt",
+  "checkoutToLatest",
+  "checkout",
+  "commit",
+  "getCursorPos",
+  "revertTo",
+  "export",
+  "exportJsonUpdates",
+  "exportJsonInIdSpan",
+  "importJsonUpdates",
+  "import",
+  "importUpdateBatch",
+  "importBatch",
+  "travelChangeAncestors",
+  "getChangedContainersIn",
+  "diff",
+  "applyDiff",
+  "setPeerId",
+]);
+
+decorateMethods(EphemeralStoreWasm.prototype, [
+  "set",
+  "delete",
+  "apply",
+  "removeOutdated",
+]);
+
 decorateMethods(UndoManager.prototype, ["undo", "redo"]);

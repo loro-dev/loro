@@ -35,7 +35,7 @@ use parking_lot::lock_api::ReentrantMutex;
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     cmp::Ordering,
     collections::VecDeque,
     ops::ControlFlow,
@@ -88,6 +88,10 @@ pub fn set_debug() {
 
 type JsResult<T> = Result<T, JsValue>;
 type EventCallback = Box<dyn Fn(&SafeJsValue) -> bool + Send + Sync + 'static>;
+
+thread_local! {
+    static IN_PRE_COMMIT_CALLBACK: Cell<bool> = Cell::new(false);
+}
 
 /// The CRDTs document. Loro supports different CRDTs include [**List**](LoroList),
 /// [**RichText**](LoroText), [**Map**](LoroMap) and [**Movable Tree**](LoroTree),
@@ -1508,7 +1512,15 @@ impl LoroDoc {
     #[wasm_bindgen(js_name = "exportJsonInIdSpan", skip_typescript)]
     pub fn exportJsonInIdSpan(&self, idSpan: JsIdSpan) -> JsResult<JsValue> {
         let id_span = js_to_id_span(idSpan)?;
-        let json = self.doc.export_json_in_id_span(id_span);
+        // Most LoroDoc reads run in an implicit-commit barrier (export/checkout/etc.).
+        // `exportJsonInIdSpan` is special: it is often called from `subscribePreCommit`,
+        // where the txn lock is already held. In that case, triggering another implicit
+        // commit would deadlock/panic. We skip the barrier while inside pre-commit.
+        let json = if IN_PRE_COMMIT_CALLBACK.with(|f| f.get()) {
+            self.doc.export_json_in_id_span(id_span)
+        } else {
+            self.doc.with_barrier(|| self.doc.export_json_in_id_span(id_span))
+        };
         let s = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
         let v = json
             .serialize(&s)
@@ -2235,7 +2247,13 @@ impl LoroDoc {
                 &ChangeModifier(e.modifier.clone()).into(),
             )
             .unwrap();
-            if let Err(e) = observer.call1(&obj.into()) {
+            let res = IN_PRE_COMMIT_CALLBACK.with(|f| {
+                let prev = f.replace(true);
+                let res = observer.call1(&obj.into());
+                f.set(prev);
+                res
+            });
+            if let Err(e) = res {
                 console_error!("Error: {:?}", e);
             }
             true
@@ -6626,7 +6644,9 @@ interface LoroDoc<T extends Record<string, Container> = Record<string, Container
      *
      * This method can also export pending changes from the uncommitted transaction that have not yet been applied to the OpLog.
      *
-     * This method will NOT trigger a new commit implicitly.
+     * This method will implicitly commit pending local operations (like `export(...)`) so callers can
+     * observe the latest local edits. When called inside `subscribePreCommit(...)`, it will NOT trigger
+     * an additional implicit commit.
      *
      * @param idSpan - The id span to export.
      * @returns The changes in the given id span.
