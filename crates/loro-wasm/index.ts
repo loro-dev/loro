@@ -499,6 +499,7 @@ decorateMethods(LoroDoc.prototype, [
   "checkoutToLatest",
   "checkout",
   "commit",
+  "revertTo",
   "export",
   "exportJsonUpdates",
   "exportJsonInIdSpan",
@@ -509,6 +510,7 @@ decorateMethods(LoroDoc.prototype, [
   "travelChangeAncestors",
   "getChangedContainersIn",
   "diff",
+  "applyDiff",
   "setPeerId",
 ]);
 
