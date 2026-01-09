@@ -9,6 +9,7 @@ node_modules/
 .idea/
 coverage/
 trace-*.json
+.trace_analysis/
 .loro
 loom_test.json
 .env

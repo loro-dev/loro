@@ -14294,6 +14294,69 @@ fn import_enhance_error() {
 }
 
 #[test]
+fn perf_opt_issue() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            Handle {
+                site: 0,
+                target: 153,
+                container: 153,
+                action: Generic(GenericAction {
+                    value: Container(Tree),
+                    bool: true,
+                    key: 2576980377,
+                    pos: 10066329,
+                    length: 3429941800045903872,
+                    prop: 12852917281039111,
+                }),
+            },
+            Handle {
+                site: 53,
+                target: 223,
+                container: 255,
+                action: Generic(GenericAction {
+                    value: Container(Tree),
+                    bool: true,
+                    key: 3051861429,
+                    pos: 13093571283691877813,
+                    length: 18446532040284176163,
+                    prop: 18446744073709551419,
+                }),
+            },
+            SyncAllUndo {
+                site: 255,
+                op_len: 3014655,
+            },
+            SyncAllUndo {
+                site: 153,
+                op_len: 486539265,
+            },
+            Handle {
+                site: 0,
+                target: 153,
+                container: 153,
+                action: Generic(GenericAction {
+                    value: I32(-1718026240),
+                    bool: true,
+                    key: 2576980377,
+                    pos: 11068046445937007001,
+                    length: 10066329,
+                    prop: 12225303613249355776,
+                }),
+            },
+            SyncAllUndo {
+                site: 255,
+                op_len: 4292818211,
+            },
+            SyncAll,
+            Sync { from: 67, to: 0 },
+        ],
+    );
+}
+
+#[test]
 fn minify() {
     minify_error(
         5,
