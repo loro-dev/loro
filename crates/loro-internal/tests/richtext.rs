@@ -78,13 +78,7 @@ fn unmark(doc: &LoroDoc, range: Range<usize>, kind: Kind) {
 fn mark_kv(doc: &LoroDoc, range: Range<usize>, key: &str, value: impl Into<LoroValue>) {
     let richtext = doc.get_text("r");
     richtext
-        .mark(
-            range.start,
-            range.end,
-            key,
-            value.into(),
-            PosType::Event,
-        )
+        .mark(range.start, range.end, key, value.into(), PosType::Event)
         .unwrap();
 }
 

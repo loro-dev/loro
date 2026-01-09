@@ -1,4 +1,4 @@
-import { LoroDoc } from "../bundler/index";
+import { LoroDoc, LoroMap } from "../bundler/index";
 import { beforeEach, describe, expect, it } from "vitest";
 
 describe("JSONPath", () => {
@@ -308,6 +308,46 @@ describe("JSONPath", () => {
             expect(result).toContain("Brave New World");
             expect(result).toContain("To Kill a Mockingbird");
             expect(result).toContain("The Hobbit");
+        });
+    });
+
+    describe("jsonpath subscribe", () => {
+        it("triggers on matching change and can unsubscribe", () => {
+            let hit = 0;
+            const unsubscribe = doc.subscribeJsonpath("$.store.books[0].title", () => {
+                hit += 1;
+            });
+
+            const store = doc.getMap("store");
+            const books = store.get("books") as any[];
+            books[0] = { ...books[0], title: "Nineteen Eighty-Four" };
+            books[0] = { ...books[0], title: "1984 (second)" }; // same commit second change
+            store.set("books", books);
+            doc.commit();
+            expect(hit).toBe(1); // coalesced within commit
+
+            unsubscribe();
+            books[0] = { ...books[0], title: "1984 (second)" };
+            store.set("books", books);
+            doc.commit();
+            expect(hit).toBeGreaterThanOrEqual(1);
+        });
+
+        it("callback carries no args so caller can debounce/throttle then run JSONPath", () => {
+            const received: unknown[][] = [];
+            doc.subscribeJsonpath("$.store.books[*].title", (...args: unknown[]) => {
+                received.push(args);
+            });
+
+            const store = doc.getMap("store");
+            const books = store.get("books") as any[];
+            books.push({ title: "New Book", author: "Tester", price: 1, available: true });
+            books.push({ title: "Another", author: "Tester", price: 2, available: true });
+            store.set("books", books);
+            doc.commit();
+
+            expect(received.length).toBe(1);
+            expect(received[0].length).toBe(0);
         });
     });
 

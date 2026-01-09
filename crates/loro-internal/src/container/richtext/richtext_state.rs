@@ -1371,11 +1371,7 @@ impl RichtextState {
             .unwrap_or(false)
     }
 
-    pub(crate) fn range_has_style_key(
-        &mut self,
-        range: Range<usize>,
-        key: &StyleKey,
-    ) -> bool {
+    pub(crate) fn range_has_style_key(&mut self, range: Range<usize>, key: &StyleKey) -> bool {
         self.check_cache();
         let result = match self.style_ranges.as_ref() {
             Some(s) => s.range_contains_key(range, key),

@@ -20,31 +20,31 @@ fn test_slice_delta() {
     let text = doc.get_text("text");
     text.insert(0, "Hello world!").unwrap();
     text.mark(0..5, "bold", true).unwrap();
-    
+
     // Test slice_delta
     let delta = text.slice_delta(0, 12, PosType::Unicode).unwrap();
     println!("{:?}", delta);
-    
+
     assert_eq!(delta.len(), 2);
-    
+
     match &delta[0] {
         TextDelta::Insert { insert, attributes } => {
-             assert_eq!(insert, "Hello");
-             let attrs = attributes.as_ref().unwrap();
-             assert!(attrs.contains_key("bold"));
-             assert_eq!(attrs.get("bold").unwrap(), &true.into());
+            assert_eq!(insert, "Hello");
+            let attrs = attributes.as_ref().unwrap();
+            assert!(attrs.contains_key("bold"));
+            assert_eq!(attrs.get("bold").unwrap(), &true.into());
         }
         _ => panic!("Expected Insert, got {:?}", delta[0]),
     }
-    
+
     match &delta[1] {
         TextDelta::Insert { insert, attributes } => {
-             assert_eq!(insert, " world!");
-             assert!(attributes.is_none());
+            assert_eq!(insert, " world!");
+            assert!(attributes.is_none());
         }
         _ => panic!("Expected Insert, got {:?}", delta[1]),
     }
-    
+
     // Test slice_delta with partial range
     let delta = text.slice_delta(2, 8, PosType::Unicode).unwrap();
     // "llo wo"
@@ -52,16 +52,16 @@ fn test_slice_delta() {
     assert_eq!(delta.len(), 2);
     match &delta[0] {
         TextDelta::Insert { insert, attributes } => {
-             assert_eq!(insert, "llo");
-             let attrs = attributes.as_ref().unwrap();
-             assert!(attrs.contains_key("bold"));
+            assert_eq!(insert, "llo");
+            let attrs = attributes.as_ref().unwrap();
+            assert!(attrs.contains_key("bold"));
         }
         _ => panic!("Expected Insert, got {:?}", delta[0]),
     }
     match &delta[1] {
         TextDelta::Insert { insert, attributes } => {
-             assert_eq!(insert, " wo");
-             assert!(attributes.is_none());
+            assert_eq!(insert, " wo");
+            assert!(attributes.is_none());
         }
         _ => panic!("Expected Insert, got {:?}", delta[1]),
     }
@@ -82,7 +82,7 @@ fn test_slice_delta_overlapping() {
     // 234: bold, italic
     // 56: italic
     // 7: none
-    
+
     let delta = text.slice_delta(1, 8, PosType::Unicode).unwrap();
     assert_eq!(delta.len(), 4);
 
@@ -92,7 +92,9 @@ fn test_slice_delta_overlapping() {
         let attrs = attributes.as_ref().unwrap();
         assert!(attrs.contains_key("bold"));
         assert!(!attrs.contains_key("italic"));
-    } else { panic!("Expected segment 1") }
+    } else {
+        panic!("Expected segment 1")
+    }
 
     // "234"
     if let TextDelta::Insert { insert, attributes } = &delta[1] {
@@ -100,7 +102,9 @@ fn test_slice_delta_overlapping() {
         let attrs = attributes.as_ref().unwrap();
         assert!(attrs.contains_key("bold"));
         assert!(attrs.contains_key("italic"));
-    } else { panic!("Expected segment 234") }
+    } else {
+        panic!("Expected segment 234")
+    }
 
     // "56"
     if let TextDelta::Insert { insert, attributes } = &delta[2] {
@@ -108,13 +112,17 @@ fn test_slice_delta_overlapping() {
         let attrs = attributes.as_ref().unwrap();
         assert!(!attrs.contains_key("bold"));
         assert!(attrs.contains_key("italic"));
-    } else { panic!("Expected segment 56") }
+    } else {
+        panic!("Expected segment 56")
+    }
 
     // "7"
     if let TextDelta::Insert { insert, attributes } = &delta[3] {
         assert_eq!(insert, "7");
         assert!(attributes.is_none());
-    } else { panic!("Expected segment 7") }
+    } else {
+        panic!("Expected segment 7")
+    }
 }
 
 #[test]
@@ -129,18 +137,22 @@ fn test_slice_delta_unicode() {
     // Slice "好W" (index 1 to 3)
     let delta = text.slice_delta(1, 3, PosType::Unicode).unwrap();
     assert_eq!(delta.len(), 2);
-    
+
     // "好"
     if let TextDelta::Insert { insert, attributes } = &delta[0] {
         assert_eq!(insert, "好");
         assert!(attributes.as_ref().unwrap().contains_key("bold"));
-    } else { panic!("Expected segment '好'") }
+    } else {
+        panic!("Expected segment '好'")
+    }
 
     // "W"
     if let TextDelta::Insert { insert, attributes } = &delta[1] {
         assert_eq!(insert, "W");
         assert!(attributes.is_none());
-    } else { panic!("Expected segment 'W'") }
+    } else {
+        panic!("Expected segment 'W'")
+    }
 }
 
 #[test]
@@ -150,15 +162,17 @@ fn test_slice_delta_with_deletion() {
     text.insert(0, "01234").unwrap();
     text.mark(0..5, "bold", true).unwrap();
     text.delete(2, 2).unwrap(); // delete "23"
-    // Now "014" (all bold)
-    
+                                // Now "014" (all bold)
+
     let delta = text.slice_delta(0, 3, PosType::Unicode).unwrap();
     assert_eq!(delta.len(), 1);
-    
+
     if let TextDelta::Insert { insert, attributes } = &delta[0] {
         assert_eq!(insert, "014");
         assert!(attributes.as_ref().unwrap().contains_key("bold"));
-    } else { panic!("Expected combined segment after deletion") }
+    } else {
+        panic!("Expected combined segment after deletion")
+    }
 }
 
 #[test]
@@ -167,30 +181,36 @@ fn test_slice_delta_unicode_boundaries() {
     let text = doc.get_text("text");
     // "😀" is 1 char (scalar) in Rust chars().
     text.insert(0, "A😀B").unwrap();
-    
+
     // Mark "😀" (index 1 to 2)
     text.mark(1..2, "bold", true).unwrap();
-    
+
     let delta = text.slice_delta(0, 3, PosType::Unicode).unwrap();
     assert_eq!(delta.len(), 3);
-    
+
     // "A"
     if let TextDelta::Insert { insert, attributes } = &delta[0] {
         assert_eq!(insert, "A");
         assert!(attributes.is_none());
-    } else { panic!("Expected 'A'") }
-    
+    } else {
+        panic!("Expected 'A'")
+    }
+
     // "😀"
     if let TextDelta::Insert { insert, attributes } = &delta[1] {
         assert_eq!(insert, "😀");
         assert!(attributes.as_ref().unwrap().contains_key("bold"));
-    } else { panic!("Expected Emoji") }
-    
+    } else {
+        panic!("Expected Emoji")
+    }
+
     // "B"
     if let TextDelta::Insert { insert, attributes } = &delta[2] {
         assert_eq!(insert, "B");
         assert!(attributes.is_none());
-    } else { panic!("Expected 'B'") }
+    } else {
+        panic!("Expected 'B'")
+    }
 }
 
 #[test]
@@ -200,21 +220,32 @@ fn test_slice_delta_discontinuous_styles() {
     text.insert(0, "AB").unwrap();
     text.mark(0..1, "bold", true).unwrap(); // A bold
     text.mark(1..2, "bold", true).unwrap(); // B bold
-    // Even though they are applied separately, they might merge if they are adjacent and same.
-    // Let's see if Loro merges adjacent identical styles.
-    // Usually they should merge into one span if attributes are equal.
-    
+                                            // Even though they are applied separately, they might merge if they are adjacent and same.
+                                            // Let's see if Loro merges adjacent identical styles.
+                                            // Usually they should merge into one span if attributes are equal.
+
     let delta = text.slice_delta(0, 2, PosType::Unicode).unwrap();
     // Depends on implementation. Loro text delta usually merges adjacent same attributes.
     // If so, len is 1.
     if delta.len() == 1 {
-         if let TextDelta::Insert { insert, attributes } = &delta[0] {
-            assert_eq!(insert, "AB", "Expected merged segment 'AB', got '{}'", insert);
+        if let TextDelta::Insert { insert, attributes } = &delta[0] {
+            assert_eq!(
+                insert, "AB",
+                "Expected merged segment 'AB', got '{}'",
+                insert
+            );
             assert!(attributes.as_ref().unwrap().contains_key("bold"));
-        } else { panic!("Expected merged segment") }
+        } else {
+            panic!("Expected merged segment")
+        }
     } else {
         // If not merged
-        assert_eq!(delta.len(), 2, "Expected 1 or 2 segments, got {}", delta.len());
+        assert_eq!(
+            delta.len(),
+            2,
+            "Expected 1 or 2 segments, got {}",
+            delta.len()
+        );
         if let TextDelta::Insert { insert, attributes } = &delta[0] {
             assert_eq!(insert, "A");
             assert!(attributes.as_ref().unwrap().contains_key("bold"));
@@ -403,10 +434,7 @@ fn convert_pos_across_coord_systems() {
     );
 
     // Out of bounds yields None
-    assert_eq!(
-        text.convert_pos(10, PosType::Unicode, PosType::Utf16),
-        None
-    );
+    assert_eq!(text.convert_pos(10, PosType::Unicode, PosType::Utf16), None);
 }
 
 #[test]

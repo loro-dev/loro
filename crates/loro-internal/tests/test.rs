@@ -1177,10 +1177,7 @@ fn test_text_splice() {
     let doc = LoroDoc::new_auto_commit();
     let text = doc.get_text("text");
     text.insert_unicode(0, "你好").unwrap();
-    assert_eq!(
-        text.splice(1, 1, "世界", PosType::Unicode).unwrap(),
-        "好"
-    );
+    assert_eq!(text.splice(1, 1, "世界", PosType::Unicode).unwrap(), "好");
     assert_eq!(text.to_string(), "你世界");
 }
 

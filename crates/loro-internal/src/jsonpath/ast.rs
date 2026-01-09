@@ -2,12 +2,12 @@ use crate::jsonpath::errors::JSONPathError;
 use crate::jsonpath::JSONPathParser;
 use std::fmt::{self, Write};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Query {
     pub segments: Segment,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Segment {
     Root {},
     Child {
@@ -20,7 +20,7 @@ pub enum Segment {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Selector {
     Name {
         name: String,
@@ -39,7 +39,7 @@ pub enum Selector {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum FilterExpression {
     True_ {},
     False_ {},
@@ -81,13 +81,13 @@ pub enum FilterExpression {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum LogicalOperator {
     And,
     Or,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ComparisonOperator {
     Eq,
     Ne,

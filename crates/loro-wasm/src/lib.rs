@@ -1301,6 +1301,24 @@ impl LoroDoc {
         Ok(ans)
     }
 
+    /// Subscribe to changes that may affect a JSONPath query.
+    ///
+    /// The callback receives no query result; it is a lightweight notifier and may
+    /// fire false positives so callers can debounce/throttle before running JSONPath
+    /// themselves.
+    #[wasm_bindgen(js_name = "subscribeJsonpath", skip_typescript)]
+    pub fn subscribe_jsonpath(&self, jsonpath: &str, f: js_sys::Function) -> JsResult<JsValue> {
+        let observer = observer::Observer::new(f);
+        let sub = self.doc.subscribe_jsonpath(
+            jsonpath,
+            Arc::new(move || {
+                enqueue_pending_call(observer.clone(), Vec::new());
+            }),
+        )?;
+
+        Ok(subscription_to_js_function_callback(sub))
+    }
+
     /// Get the version vector of the current document state.
     ///
     /// If you checkout to a specific version, the version vector will change.
@@ -6481,6 +6499,12 @@ interface Listener {
 
 interface LoroDoc {
     subscribe(listener: Listener): Subscription;
+    /**
+     * Subscribe to changes that may affect a JSONPath query.
+     * Callback may fire false positives and carries no query result.
+     * You can debounce/throttle the callback before running `JSONPath(...)` to optimize heavy reads.
+     */
+    subscribeJsonpath(path: string, callback: () => void): Subscription;
 }
 
 interface UndoManager {
@@ -6518,6 +6542,12 @@ interface UndoManager {
     groupEnd(): void;
 }
 interface LoroDoc<T extends Record<string, Container> = Record<string, Container>> {
+    /**
+     * Subscribe to changes that may affect a JSONPath query.
+     * Callback may fire false positives and carries no query result.
+     * You can debounce/throttle the callback before running `JSONPath(...)` to optimize heavy reads.
+     */
+    subscribeJsonpath(path: string, callback: () => void): Subscription;
     /**
      * Get a LoroMap by container id
      *
