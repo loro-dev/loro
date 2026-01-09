@@ -2490,6 +2490,11 @@ impl RichtextState {
         self.tree.root_cache().entity_len as usize
     }
 
+    #[inline(always)]
+    pub(crate) fn content_node_len(&self) -> usize {
+        self.tree.node_len()
+    }
+
     pub fn diagnose(&self) {
         println!(
             "rope_nodes: {}, style_nodes: {}, text_len: {}",

@@ -577,18 +577,65 @@ impl ContainerState for RichtextState {
             unreachable!()
         };
 
-        let can_fast_apply = {
+        // Fast path for plain-text deltas (no style anchors / style ranges).
+        //
+        // Rebuilding avoids repeated BTree queries and mutations when the delta is very "choppy"
+        // (many small edit spans), but it allocates and clones chunks, so it can be slower for
+        // small deltas. Use a cheap cost model to enable it only when it's likely beneficial.
+        let should_fast_apply = {
+            #[inline]
+            fn ilog2_ceil(x: usize) -> usize {
+                debug_assert!(x > 0);
+                (usize::BITS - (x - 1).leading_zeros()) as usize
+            }
+
             let state = self.state.get_mut();
-            !state.has_styles()
-                && richtext.iter().all(|span| match span {
-                    loro_delta::DeltaItem::Retain { .. } => true,
-                    loro_delta::DeltaItem::Replace { value, delete: _, .. } => {
-                        value.rle_len() == 0 || matches!(value, RichtextStateChunk::Text(_))
+            if state.has_styles() {
+                false
+            } else {
+                // `edit_actions` approximates how many BTree mutations the incremental path will do:
+                // each Replace with delete>0 becomes a drain, and each Replace with value>0 becomes an insert.
+                let mut edit_actions: usize = 0;
+                let mut is_plain_text_delta = true;
+                for span in richtext.iter() {
+                    match span {
+                        loro_delta::DeltaItem::Retain { .. } => {}
+                        loro_delta::DeltaItem::Replace { value, delete, .. } => {
+                            if *delete > 0 {
+                                edit_actions += 1;
+                            }
+                            if value.rle_len() > 0 {
+                                if !matches!(value, RichtextStateChunk::Text(_)) {
+                                    is_plain_text_delta = false;
+                                    break;
+                                }
+                                edit_actions += 1;
+                            }
+                        }
                     }
-                })
+                }
+
+                if !is_plain_text_delta || edit_actions == 0 {
+                    false
+                } else {
+                    let content_nodes = state.content_node_len().max(1);
+                    let log_n = ilog2_ceil(content_nodes + 1).max(1);
+                    let incremental_score = edit_actions.saturating_mul(log_n);
+                    let rebuild_score = content_nodes.saturating_add(edit_actions);
+
+                    let old_len = richtext.old_len().max(1);
+                    let avg_action_span = old_len / edit_actions;
+                    // A very rough proxy for "choppiness": many edit actions with small average span.
+                    // The thresholds are intentionally conservative to avoid rebuilding for small or
+                    // localized deltas.
+                    let is_choppy = edit_actions >= 256 && avg_action_span <= 32;
+
+                    is_choppy && incremental_score >= rebuild_score.saturating_mul(4)
+                }
+            }
         };
 
-        if can_fast_apply {
+        if should_fast_apply {
             let new_state = {
                 let state = self.state.get_mut();
                 let mut chunks: Vec<RichtextStateChunk> = Vec::new();
@@ -604,6 +651,11 @@ impl ContainerState for RichtextState {
                             while left > 0 {
                                 let chunk = cur.expect("Delta retain exceeds source length");
                                 let chunk_len = chunk.rle_len();
+                                if chunk_len == 0 {
+                                    cur = src_iter.next();
+                                    cur_offset = 0;
+                                    continue;
+                                }
                                 let available = chunk_len - cur_offset;
                                 let take = left.min(available);
                                 if take == chunk_len && cur_offset == 0 {
@@ -625,6 +677,11 @@ impl ContainerState for RichtextState {
                             while left > 0 {
                                 let chunk = cur.expect("Delta delete exceeds source length");
                                 let chunk_len = chunk.rle_len();
+                                if chunk_len == 0 {
+                                    cur = src_iter.next();
+                                    cur_offset = 0;
+                                    continue;
+                                }
                                 let available = chunk_len - cur_offset;
                                 let take = left.min(available);
                                 left -= take;
