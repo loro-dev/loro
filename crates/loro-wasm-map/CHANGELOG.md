@@ -1,5 +1,12 @@
 # loro-crdt-map
 
+## 1.10.4
+
+### Patch Changes
+
+- 864b5ca: perf(loro-internal): remove quadratic slow paths in text import/checkout #895
+- a34134d: perf: rm the event calling wrapper for ops that will not trigger events
+
 ## 1.10.3
 
 ### Patch Changes
