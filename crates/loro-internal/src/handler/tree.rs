@@ -462,7 +462,9 @@ impl TreeHandler {
             }
         }
 
-        let index = self
+        let old_parent = self.get_node_parent(&target).unwrap();
+        let old_index = self.get_index_by_tree_id(&target).unwrap();
+        let mut index = self
             .get_index_by_fractional_index(
                 &parent,
                 &NodePosition {
@@ -471,6 +473,9 @@ impl TreeHandler {
                 },
             )
             .unwrap_or(0);
+        if old_parent == parent && old_index < index {
+            index -= 1;
+        }
         let with_event = !parent
             .tree_id()
             .is_some_and(|p| self.is_node_deleted(&p).unwrap());
@@ -500,8 +505,8 @@ impl TreeHandler {
                         index,
                         position: position.clone(),
                         // the old parent should be exist, so we can unwrap
-                        old_parent: self.get_node_parent(&target).unwrap(),
-                        old_index: self.get_index_by_tree_id(&target).unwrap(),
+                        old_parent,
+                        old_index,
                     },
                 }]),
                 &inner.doc,
