@@ -763,4 +763,161 @@ impl SharedArena {
         let mut slot = self.inner.parent_resolver.lock().unwrap();
         *slot = resolver.map(|f| Arc::new(f) as Arc<ParentResolver>);
     }
+
+    pub fn check_is_the_same(&self, other: &Self) {
+        let self_guards = self.get_arena_guards();
+        let other_guards = other.get_arena_guards();
+
+        // Compare container_idx_to_id
+        assert_eq!(
+            *self_guards.container_idx_to_id, *other_guards.container_idx_to_id,
+            "container_idx_to_id mismatch"
+        );
+
+        // Compare container_id_to_idx
+        assert_eq!(
+            *self_guards.container_id_to_idx, *other_guards.container_id_to_idx,
+            "container_id_to_idx mismatch"
+        );
+
+        // Compare parents
+        assert_eq!(
+            *self_guards.parents, *other_guards.parents,
+            "parents mismatch"
+        );
+
+        // Compare root_c_idx
+        assert_eq!(
+            *self_guards.root_c_idx, *other_guards.root_c_idx,
+            "root_c_idx mismatch"
+        );
+
+        // Compare depth
+        assert_eq!(*self_guards.depth, *other_guards.depth, "depth mismatch");
+    }
+
+    /// Clone container mappings to a new arena, preserving indices
+    pub fn clone_container_mappings_to(&self, target: &SharedArena) {
+        let source_ids = self.inner.container_idx_to_id.lock().unwrap();
+        let source_parents = self.inner.parents.lock().unwrap();
+
+        target.with_guards(|guards| {
+            // Register in exact same order to preserve indices
+            for id in source_ids.iter() {
+                guards.register_container(id);
+            }
+            // Copy parent relationships
+            for (child, parent) in source_parents.iter() {
+                guards.set_parent(*child, *parent);
+            }
+        });
+    }
+
+    pub fn swap_inner_contents(&self, other: &SharedArena) {
+        {
+            let mut a = self.inner.container_idx_to_id.lock().unwrap();
+            let mut b = other.inner.container_idx_to_id.lock().unwrap();
+            std::mem::swap(&mut *a, &mut *b);
+        }
+        {
+            let mut a = self.inner.depth.lock().unwrap();
+            let mut b = other.inner.depth.lock().unwrap();
+            std::mem::swap(&mut *a, &mut *b);
+        }
+        {
+            let mut a = self.inner.container_id_to_idx.lock().unwrap();
+            let mut b = other.inner.container_id_to_idx.lock().unwrap();
+            std::mem::swap(&mut *a, &mut *b);
+        }
+        {
+            let mut a = self.inner.parents.lock().unwrap();
+            let mut b = other.inner.parents.lock().unwrap();
+            std::mem::swap(&mut *a, &mut *b);
+        }
+        {
+            let mut a = self.inner.values.lock().unwrap();
+            let mut b = other.inner.values.lock().unwrap();
+            std::mem::swap(&mut *a, &mut *b);
+        }
+        {
+            let mut a = self.inner.root_c_idx.lock().unwrap();
+            let mut b = other.inner.root_c_idx.lock().unwrap();
+            std::mem::swap(&mut *a, &mut *b);
+        }
+        {
+            let mut a = self.inner.str.lock().unwrap();
+            let mut b = other.inner.str.lock().unwrap();
+            std::mem::swap(&mut *a, &mut *b);
+        }
+        {
+            let mut a = self.inner.parent_resolver.lock().unwrap();
+            let mut b = other.inner.parent_resolver.lock().unwrap();
+            std::mem::swap(&mut *a, &mut *b);
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::container::ContainerType;
+
+    #[test]
+    fn test_clone_container_mappings_flat() {
+        let arena1 = SharedArena::new();
+        let id1 = ContainerID::new_root("root1", ContainerType::Text);
+        let id2 = ContainerID::new_root("root2", ContainerType::List);
+        let idx1 = arena1.register_container(&id1);
+        let idx2 = arena1.register_container(&id2);
+
+        let arena2 = SharedArena::new();
+        arena1.clone_container_mappings_to(&arena2);
+
+        assert_eq!(arena2.id_to_idx(&id1), Some(idx1));
+        assert_eq!(arena2.id_to_idx(&id2), Some(idx2));
+
+        // Verify indices match
+        assert_eq!(arena2.register_container(&id1), idx1);
+        assert_eq!(arena2.register_container(&id2), idx2);
+    }
+
+    #[test]
+    fn test_clone_container_mappings_nested() {
+        let arena1 = SharedArena::new();
+        let root = ContainerID::new_root("root", ContainerType::Map);
+        let root_idx = arena1.register_container(&root);
+        let child = ContainerID::new_normal(crate::id::ID::new(0, 0), ContainerType::List);
+        let child_idx = arena1.register_container(&child);
+        arena1.set_parent(child_idx, Some(root_idx));
+
+        let arena2 = SharedArena::new();
+        arena1.clone_container_mappings_to(&arena2);
+
+        assert_eq!(arena2.id_to_idx(&root), Some(root_idx));
+        assert_eq!(arena2.id_to_idx(&child), Some(child_idx));
+        assert_eq!(arena2.get_parent(child_idx), Some(root_idx));
+    }
+
+    #[test]
+    fn test_swap_inner_contents() {
+        let arena1 = SharedArena::new();
+        let id1 = ContainerID::new_root("root1", ContainerType::Text);
+        arena1.register_container(&id1);
+        arena1.alloc_str("hello");
+
+        let arena2 = SharedArena::new();
+        let id2 = ContainerID::new_root("root2", ContainerType::List);
+        arena2.register_container(&id2);
+        arena2.alloc_str("world");
+
+        arena1.swap_inner_contents(&arena2);
+
+        // arena1 should have arena2's content
+        assert!(arena1.id_to_idx(&id2).is_some());
+        assert!(arena1.id_to_idx(&id1).is_none());
+
+        // arena2 should have arena1's content
+        assert!(arena2.id_to_idx(&id1).is_some());
+        assert!(arena2.id_to_idx(&id2).is_none());
+    }
 }

@@ -3294,6 +3294,7 @@ fn test_by_str_path() {
 }
 
 #[test]
+#[serial_test::serial]
 fn test_memory_leak() {
     #[inline(never)]
     fn repeat(f: impl Fn(), n: usize) {

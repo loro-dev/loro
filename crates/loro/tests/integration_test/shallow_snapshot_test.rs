@@ -4,7 +4,49 @@ use std::{
 };
 
 use super::gen_action;
-use loro::{cursor::CannotFindRelativePosition, ExportMode, Frontiers, LoroDoc, ID};
+use loro::{cursor::CannotFindRelativePosition, ExportMode, Frontiers, LoroDoc, ToJson, ID};
+
+#[test]
+fn test_checkout_to_map_that_was_created_before_gc() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    let map = doc.get_map("map");
+    map.insert("key1", "value1")?;
+    map.insert("key2", "value2")?;
+    doc.commit();
+    let frontiers = doc.oplog_frontiers();
+    map.delete("key1")?;
+    let bytes = doc.export(loro::ExportMode::shallow_snapshot(&frontiers));
+    let new_doc = LoroDoc::new();
+    new_doc.import(&bytes.unwrap())?;
+    new_doc.checkout(&frontiers)?;
+    assert_eq!(
+        new_doc.get_map("map").get_value().to_json_value(),
+        serde_json::json!({"key1": "value1", "key2": "value2"})
+    );
+    Ok(())
+}
+
+#[test]
+fn test_checkout_to_tree_that_was_created_before_gc() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    let tree = doc.get_tree("tree");
+    let root = tree.create(None)?;
+    let child = tree.create(Some(root))?;
+    doc.commit();
+    let frontiers = doc.oplog_frontiers();
+    tree.delete(child)?;
+    let bytes = doc.export(loro::ExportMode::shallow_snapshot(&frontiers));
+    let new_doc = LoroDoc::new();
+    new_doc.import(&bytes.unwrap())?;
+    new_doc.checkout(&frontiers)?;
+    assert_eq!(
+        new_doc.get_tree("tree").children(Some(root)).unwrap().len(),
+        1
+    );
+    Ok(())
+}
 
 #[test]
 fn test_gc() -> anyhow::Result<()> {
@@ -351,5 +393,118 @@ fn test_export_shallow_snapshot_from_shallow_doc() -> anyhow::Result<()> {
         panic!("Expected an error, but got Ok");
     }
 
+    Ok(())
+}
+
+#[test]
+fn test_nested_containers_gc() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    let map = doc.get_map("map");
+    let list = map.insert_container("list", loro::LoroList::new())?;
+    list.insert(0, "item1")?;
+    doc.commit();
+    let frontiers = doc.oplog_frontiers();
+    list.insert(1, "item2")?;
+    let bytes = doc.export(loro::ExportMode::shallow_snapshot(&frontiers));
+    let new_doc = LoroDoc::new();
+    new_doc.import(&bytes.unwrap())?;
+    new_doc.checkout(&frontiers)?;
+    assert_eq!(
+        new_doc.get_deep_value().to_json_value(),
+        serde_json::json!({"map": {"list": ["item1"]}})
+    );
+    Ok(())
+}
+
+#[test]
+fn test_deleted_containers_gc() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    let map = doc.get_map("map");
+    let list = map.insert_container("list", loro::LoroList::new())?;
+    list.insert(0, "item1")?;
+    doc.commit();
+    let frontiers = doc.oplog_frontiers();
+    map.delete("list")?;
+    let bytes = doc.export(loro::ExportMode::shallow_snapshot(&frontiers));
+    let new_doc = LoroDoc::new();
+    new_doc.import(&bytes.unwrap())?;
+    new_doc.checkout(&frontiers)?;
+    assert_eq!(
+        new_doc.get_deep_value().to_json_value(),
+        serde_json::json!({"map": {"list": ["item1"]}})
+    );
+    Ok(())
+}
+
+#[test]
+fn test_multi_peer_gc() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    doc.get_text("text").insert(0, "A")?;
+    doc.commit();
+    doc.set_peer_id(2)?;
+    doc.get_text("text").insert(1, "B")?;
+    doc.commit();
+    let frontiers = doc.oplog_frontiers();
+    doc.set_peer_id(1)?;
+    doc.get_text("text").insert(2, "C")?;
+    let bytes = doc.export(loro::ExportMode::shallow_snapshot(&frontiers));
+    let new_doc = LoroDoc::new();
+    new_doc.import(&bytes.unwrap())?;
+    new_doc.checkout(&frontiers)?;
+    assert_eq!(new_doc.get_text("text").to_string(), "AB");
+    Ok(())
+}
+
+#[test]
+fn test_shallow_at_beginning() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    doc.get_text("text").insert(0, "A")?;
+    doc.commit();
+    let frontiers = doc.oplog_frontiers();
+    let bytes = doc.export(loro::ExportMode::shallow_snapshot(&frontiers));
+    let new_doc = LoroDoc::new();
+    new_doc.import(&bytes.unwrap())?;
+    assert_eq!(new_doc.get_text("text").to_string(), "A");
+    Ok(())
+}
+
+#[test]
+fn test_shallow_at_exact_boundary() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    doc.get_text("text").insert(0, "A")?;
+    doc.commit();
+    doc.get_text("text").insert(1, "B")?;
+    doc.commit();
+    let frontiers = doc.oplog_frontiers();
+    let bytes = doc.export(loro::ExportMode::shallow_snapshot(&frontiers));
+    let new_doc = LoroDoc::new();
+    new_doc.import(&bytes.unwrap())?;
+    assert_eq!(new_doc.get_text("text").to_string(), "AB");
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn test_container_index_stability() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    let map = doc.get_map("map");
+    let list = map.insert_container("list", loro::LoroList::new())?;
+    list.insert(0, "item")?;
+    doc.commit();
+    let frontiers = doc.oplog_frontiers();
+
+    let bytes = doc.export(loro::ExportMode::shallow_snapshot(&frontiers));
+    let new_doc = LoroDoc::new();
+    new_doc.import(&bytes.unwrap())?;
+
+    let mut s1 = doc.inner().app_state().lock().unwrap();
+    let mut s2 = new_doc.inner().app_state().lock().unwrap();
+    s1.check_arena_is_the_same(&mut s2);
     Ok(())
 }

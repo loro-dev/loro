@@ -34,6 +34,7 @@ rand = "0.8.5"
 pretty_assertions = "1.4.0"
 loom = "0.7"
 base64 = "0.22.1"
+serial_test = "3"
 
 [features]
 counter = ["loro-internal/counter"]

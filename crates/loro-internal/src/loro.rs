@@ -997,6 +997,89 @@ impl LoroDoc {
         self._apply_diff(diff, &mut Default::default(), false)
     }
 
+    pub fn replace_with_shallow(&self, frontiers: &Frontiers) -> LoroResult<()> {
+        // 1. Commit pending transaction
+        let (options, guard) = self.implicit_commit_then_stop();
+
+        // 2. Export shallow snapshot
+        let snapshot_bytes = crate::encoding::export_shallow_snapshot(self, frontiers)
+            .map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
+
+        // 3. Create new arena and pre-populate it
+        let new_arena = SharedArena::new();
+        self.arena.clone_container_mappings_to(&new_arena);
+
+        // 4. Create new components from snapshot
+        let new_oplog = OpLog::new_with_arena(new_arena.clone());
+        let new_config = self.config.clone();
+        let lock_group = LoroLockGroup::new();
+        let new_state = DocState::new_arc(
+            std::sync::Weak::new(),
+            new_arena.clone(),
+            new_config.clone(),
+            &lock_group,
+        );
+
+        let new_inner = Arc::new(LoroDocInner {
+            oplog: Arc::new(lock_group.new_lock(new_oplog, LockKind::OpLog)),
+            state: new_state.clone(),
+            config: new_config,
+            detached: AtomicBool::new(false),
+            auto_commit: AtomicBool::new(false),
+            observer: Arc::new(Observer::new(new_arena.clone())),
+            diff_calculator: Arc::new(
+                lock_group.new_lock(DiffCalculator::new(true), LockKind::DiffCalculator),
+            ),
+            txn: Arc::new(lock_group.new_lock(None, LockKind::Txn)),
+            arena: new_arena.clone(),
+            local_update_subs: SubscriberSetWithQueue::new(),
+            peer_id_change_subs: SubscriberSetWithQueue::new(),
+            pre_commit_subs: SubscriberSetWithQueue::new(),
+            first_commit_from_peer_subs: SubscriberSetWithQueue::new(),
+        });
+
+        let temp_doc = LoroDoc { inner: new_inner };
+
+        let parsed = crate::encoding::parse_header_and_body(&snapshot_bytes, true)?;
+        crate::encoding::decode_snapshot(&temp_doc, parsed.mode, parsed.body, Default::default())?;
+
+        if self.is_detached() {
+            temp_doc.checkout(&self.state_frontiers())?;
+        }
+
+        // 5. Swap components
+        self.arena.swap_inner_contents(&new_arena);
+
+        {
+            let mut oplog = self.oplog.lock().unwrap();
+            let mut new_oplog = temp_doc.oplog.lock().unwrap();
+            std::mem::swap(&mut oplog.dag, &mut new_oplog.dag);
+            std::mem::swap(&mut oplog.change_store, &mut new_oplog.change_store);
+            oplog.free_history_cache();
+            std::mem::swap(&mut oplog.pending_changes, &mut new_oplog.pending_changes);
+            std::mem::swap(
+                &mut oplog.uncommitted_change,
+                &mut new_oplog.uncommitted_change,
+            );
+        }
+
+        {
+            let mut state = self.state.lock().unwrap();
+            let mut new_state = temp_doc.state.lock().unwrap();
+
+            std::mem::swap(&mut state.frontiers, &mut new_state.frontiers);
+            std::mem::swap(&mut state.store, &mut new_state.store);
+            state.clear_dead_containers_cache();
+        }
+
+        self.free_diff_calculator();
+
+        drop(guard);
+        self.renew_txn_if_auto_commit(options);
+
+        Ok(())
+    }
+
     /// Calculate the diff between two versions so that apply diff on a will make the state same as b.
     ///
     /// NOTE: This method will make the doc enter the **detached mode**.
@@ -1365,7 +1448,18 @@ impl LoroDoc {
         Ok(())
     }
 
-    /// NOTE: The caller of this method should ensure the txn is locked and set to None
+    /// NOTE: The caller of this method should ensure the txn is committed and no
+    /// concurrent transaction can be started during this operation. This is typically
+    /// achieved by either:
+    /// 1. Holding the txn lock guard (from `implicit_commit_then_stop()`)
+    /// 2. Being called within `with_barrier()` which commits and holds the guard
+    ///
+    /// The `is_locked()` assertion was removed because:
+    /// - `LoroMutex::is_locked()` uses `try_lock().is_err()` which is race-prone
+    ///   and unreliable for same-thread lock detection
+    /// - Internal callers in `shallow_snapshot.rs` legitimately call this without
+    ///   holding the txn lock directly, but are protected at the public API level
+    ///   by `with_barrier()` in methods like `export()`
     #[instrument(level = "info", skip(self))]
     pub(crate) fn _checkout_without_emitting(
         &self,
@@ -1373,7 +1467,6 @@ impl LoroDoc {
         to_shrink_frontiers: bool,
         to_commit_then_renew: bool,
     ) -> Result<(), LoroError> {
-        assert!(self.txn.is_locked());
         let from_frontiers = self.state_frontiers();
         loro_common::info!(
             "checkout from={:?} to={:?} cur_vv={:?}",

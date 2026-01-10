@@ -44,7 +44,7 @@ pub use change_store::{BlockChangeRef, ChangeStore};
 pub struct OpLog {
     pub(crate) dag: AppDag,
     pub(crate) arena: SharedArena,
-    change_store: ChangeStore,
+    pub(crate) change_store: ChangeStore,
     history_cache: Mutex<ContainerHistoryCache>,
     /// Pending changes that haven't been applied to the dag.
     /// A change can be imported only when all its deps are already imported.
@@ -72,6 +72,22 @@ impl OpLog {
     #[inline]
     pub(crate) fn new() -> Self {
         let arena = SharedArena::new();
+        let cfg = Configure::default();
+        let change_store = ChangeStore::new_mem(&arena, cfg.merge_interval_in_s.clone());
+        Self {
+            history_cache: Mutex::new(ContainerHistoryCache::new(change_store.clone(), None)),
+            dag: AppDag::new(change_store.clone()),
+            change_store,
+            arena,
+            pending_changes: Default::default(),
+            batch_importing: false,
+            configure: cfg,
+            uncommitted_change: None,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn new_with_arena(arena: SharedArena) -> Self {
         let cfg = Configure::default();
         let change_store = ChangeStore::new_mem(&arena, cfg.merge_interval_in_s.clone());
         Self {
@@ -620,6 +636,34 @@ impl OpLog {
         }
 
         max_timestamp
+    }
+
+    pub fn check_is_the_same(&self, other: &Self) {
+        self.dag.check_dag_correctness();
+        other.dag.check_dag_correctness();
+        assert_eq!(self.shallow_since_vv(), other.shallow_since_vv());
+        assert_eq!(self.frontiers(), other.frontiers());
+        assert_eq!(self.vv(), other.vv());
+
+        let self_vv = self.vv();
+
+        for (&peer, &end) in self_vv.iter() {
+            let start = self.shallow_since_vv().get(&peer).copied().unwrap_or(0);
+            if start >= end {
+                continue;
+            }
+            let span = IdSpan::new(peer, start, end);
+            let self_changes: Vec<_> = self.change_store.iter_changes(span).collect();
+            let other_changes: Vec<_> = other.change_store.iter_changes(span).collect();
+            assert_eq!(self_changes.len(), other_changes.len());
+            for (c1, c2) in self_changes.iter().zip(other_changes.iter()) {
+                assert_eq!(c1.id, c2.id);
+                assert_eq!(c1.lamport, c2.lamport);
+                assert_eq!(c1.deps, c2.deps);
+                assert_eq!(c1.timestamp, c2.timestamp);
+                assert_eq!(c1.ops.len(), c2.ops.len());
+            }
+        }
     }
 }
 

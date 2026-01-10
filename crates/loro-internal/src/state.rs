@@ -1308,13 +1308,24 @@ impl DocState {
         Ok(())
     }
 
+    pub(crate) fn clear_dead_containers_cache(&mut self) {
+        self.dead_containers_cache.clear();
+    }
+
     /// Check whether two [DocState]s are the same. Panic if not.
     ///
     /// Compared to check equality on `get_deep_value`, this function also checks the equality on richtext
     /// styles and states that are not reachable from the root.
     ///
+    pub fn check_arena_is_the_same(&self, other: &Self) {
+        self.arena.check_is_the_same(&other.arena);
+    }
+
     /// This is only used for test.
     pub(crate) fn check_is_the_same(&mut self, other: &mut Self) {
+        assert_eq!(self.frontiers, other.frontiers, "Frontiers mismatch");
+        self.store.check_is_the_same(&other.store);
+
         fn get_entries_for_state(
             arena: &SharedArena,
             state: &mut State,
