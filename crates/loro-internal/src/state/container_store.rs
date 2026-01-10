@@ -283,6 +283,17 @@ impl ContainerStore {
             }
         }
     }
+
+    pub fn check_is_the_same(&self, other: &Self) {
+        // Compare shallow_root_store
+        match (&self.shallow_root_store, &other.shallow_root_store) {
+            (Some(a), Some(b)) => {
+                assert_eq!(a.shallow_root_frontiers, b.shallow_root_frontiers);
+            }
+            (None, None) => {}
+            _ => panic!("shallow_root_store mismatch"),
+        }
+    }
 }
 
 #[cfg(test)]

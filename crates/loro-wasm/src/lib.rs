@@ -1519,7 +1519,8 @@ impl LoroDoc {
         let json = if IN_PRE_COMMIT_CALLBACK.with(|f| f.get()) {
             self.doc.export_json_in_id_span(id_span)
         } else {
-            self.doc.with_barrier(|| self.doc.export_json_in_id_span(id_span))
+            self.doc
+                .with_barrier(|| self.doc.export_json_in_id_span(id_span))
         };
         let s = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
         let v = json
@@ -2103,6 +2104,16 @@ impl LoroDoc {
     pub fn revert_to(&self, frontiers: Vec<JsID>) -> JsResult<()> {
         let frontiers = ids_to_frontiers(frontiers)?;
         self.doc.revert_to(&frontiers)?;
+        Ok(())
+    }
+
+    /// Replace the current document state with a shallow snapshot at the given frontiers.
+    ///
+    /// This method trims the history in place, preserving subscriptions and configuration.
+    #[wasm_bindgen(js_name = "replaceWithShallow")]
+    pub fn replace_with_shallow(&self, frontiers: Vec<JsID>) -> JsResult<()> {
+        let frontiers = ids_to_frontiers(frontiers)?;
+        self.doc.replace_with_shallow(&frontiers)?;
         Ok(())
     }
 

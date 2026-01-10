@@ -1395,6 +1395,14 @@ impl LoroDoc {
         self.doc.revert_to(version)
     }
 
+    /// Replace the current document state with a shallow snapshot at the given frontiers.
+    ///
+    /// This method trims the history in place, preserving subscriptions and configuration.
+    #[inline]
+    pub fn replace_with_shallow(&self, frontiers: &Frontiers) -> LoroResult<()> {
+        self.doc.replace_with_shallow(frontiers)
+    }
+
     /// Apply a diff to the current document state.
     ///
     /// Internally, it will apply the diff to the current state.
