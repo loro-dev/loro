@@ -18,6 +18,8 @@ Understanding this specification will enable developers to implement Loro-compat
 - [Change Block Encoding](#change-block-encoding)
 - [Value Encoding](#value-encoding)
 - [Compression Techniques](#compression-techniques)
+- [External Format Specifications](#external-format-specifications)
+- [Performance Optimization Techniques](#performance-optimization-techniques)
 - [Supplementary Documentation](#supplementary-documentation)
 
 ---
@@ -1389,6 +1391,145 @@ The columnar wire format is:
 
 **Source**: https://github.com/loro-dev/columnar (serde_columnar crate)
 **Source**: `serde_columnar_derive-0.3.7/src/derive/vec.rs:113` (column count serialization)
+
+---
+
+## Performance Optimization Techniques
+
+The Loro snapshot format is designed to support lazy loading and incremental parsing,
+which can significantly improve import performance for large documents.
+
+### SSTable Block-Level Lazy Loading
+
+SSTable uses a block-based architecture that enables on-demand loading:
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                   SSTable Lazy Loading Structure                  │
+├───────────────────────────────────────────────────────────────────┤
+│                                                                   │
+│  ┌─────────┐ ┌─────────┐ ┌─────────┐         ┌─────────────────┐ │
+│  │ Block 0 │ │ Block 1 │ │ Block 2 │  ...    │ BlockMeta Index │ │
+│  │ (lazy)  │ │ (lazy)  │ │ (lazy)  │         │ (load first)    │ │
+│  └─────────┘ └─────────┘ └─────────┘         └─────────────────┘ │
+│       ▲                                              │           │
+│       │         Binary search by key                 │           │
+│       └──────────────────────────────────────────────┘           │
+│                                                                   │
+└───────────────────────────────────────────────────────────────────┘
+
+Optimization Strategy:
+1. Load only BlockMeta index (at file end) on initial parse
+2. Use binary search on BlockMeta.first_key to locate target block
+3. Decompress and parse only the required block(s)
+4. Cache recently accessed blocks (LRU recommended)
+```
+
+**Key insight**: BlockMeta contains `first_key` and `offset` for each block, enabling
+O(log n) key lookup without loading all blocks.
+
+**Source**: `crates/kv-store/src/sstable.rs:300-308` (SsTable structure with block_cache)
+**Source**: `crates/kv-store/src/sstable.rs:447-451` (read_block_cached)
+
+### Random Access via BlockMeta Index
+
+The BlockMeta index at the end of SSTable enables efficient random access:
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                   BlockMeta Random Access                         │
+├───────────────────────────────────────────────────────────────────┤
+│                                                                   │
+│ To find key K:                                                   │
+│   1. Binary search BlockMeta array for block where:              │
+│      first_key[i] <= K < first_key[i+1]                          │
+│   2. Load only block[i] from disk/memory                         │
+│   3. Binary search within block for exact key                    │
+│                                                                   │
+│ Complexity: O(log B + log E) where B=blocks, E=entries/block     │
+│                                                                   │
+└───────────────────────────────────────────────────────────────────┘
+```
+
+This is particularly useful for:
+- Looking up specific container states by ContainerID
+- Fetching specific change blocks by ID
+- Partial document loading (e.g., load only visible containers)
+
+**Source**: `crates/kv-store/src/sstable.rs:430-445` (find_block_idx with binary search)
+
+### Shallow Snapshot for Incremental Sync
+
+Shallow snapshots enable efficient incremental synchronization:
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                   Shallow Snapshot Strategy                       │
+├───────────────────────────────────────────────────────────────────┤
+│                                                                   │
+│ Full Snapshot:    [All ops from beginning] + [Current state]     │
+│                                                                   │
+│ Shallow Snapshot: [Ops from frontier F] + [State at F] +         │
+│                   [Current state if ops > threshold]             │
+│                                                                   │
+│ Threshold: 256 ops (MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE)  │
+│                                                                   │
+│ Use cases:                                                       │
+│   - Incremental backup: export only new changes                  │
+│   - Peer sync: send minimal data for known shared history        │
+│   - Partial restore: import from known checkpoint                │
+│                                                                   │
+└───────────────────────────────────────────────────────────────────┘
+```
+
+**Source**: `crates/loro-internal/src/encoding/shallow_snapshot.rs:17-19` (threshold constant)
+**Source**: `crates/loro-internal/src/encoding/shallow_snapshot.rs:22-30` (export_shallow_snapshot)
+
+### State Store Container-Level Access
+
+Each container's state is stored as a separate KV entry, enabling:
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                Container-Level Lazy Loading                       │
+├───────────────────────────────────────────────────────────────────┤
+│                                                                   │
+│ State KV Store:                                                  │
+│   Key: ContainerID.to_bytes()  →  Value: ContainerWrapper        │
+│                                                                   │
+│ Optimization:                                                    │
+│   - Load only root container initially                           │
+│   - Load child containers on first access                        │
+│   - Use ContainerWrapper.parent to build hierarchy lazily        │
+│                                                                   │
+│ Memory savings for documents with many unused containers:        │
+│   Load 1 container: ~O(state size of 1 container)               │
+│   vs Load all: O(total state size)                               │
+│                                                                   │
+└───────────────────────────────────────────────────────────────────┘
+```
+
+**Source**: `crates/loro-internal/src/state/container_store.rs:48` (KV schema)
+
+### Implementation Recommendations
+
+1. **Block Cache**: Implement an LRU cache for decompressed blocks
+   - Loro uses `quick_cache` with configurable size
+   - Recommended: cache size = 8-16 blocks for typical workloads
+
+2. **Deferred Decompression**: Only decompress blocks when accessed
+   - LZ4 decompression is fast but still adds latency
+   - Keep compressed bytes in memory, decompress on demand
+
+3. **Parallel Block Loading**: For known access patterns, prefetch blocks
+   - Sequential scan: prefetch next N blocks
+   - Random access: parallel fetch for batch lookups
+
+4. **Incremental Parsing**: Parse only needed sections
+   - Skip change blocks if only state is needed
+   - Skip state if only applying updates
+
+**Source**: `crates/kv-store/src/sstable.rs:297` (DEFAULT_CACHE_SIZE)
 
 ---
 
