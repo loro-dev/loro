@@ -183,15 +183,19 @@ List container stores ordered elements with element IDs.
 ┌────────────────────────────────────────────────────────────────────────────┐
 │                    EncodedListIds (serde_columnar)                          │
 ├─────────────────┬──────────────────────────────────────────────────────────┤
-│ varint          │ Number of elements (N)                                   │
+│ varint          │ Number of columns (3)                                    │
+├─────────────────┼──────────────────────────────────────────────────────────┤
+│ For each column:                                                           │
+│   varint        │ Column data byte length                                  │
+│   bytes         │ Column data (strategy-encoded)                           │
 ├─────────────────┼──────────────────────────────────────────────────────────┤
 │ Column 1        │ peer_idx (DeltaRle encoded usize)                        │
-├─────────────────┼──────────────────────────────────────────────────────────┤
 │ Column 2        │ counter (DeltaRle encoded i32)                           │
-├─────────────────┼──────────────────────────────────────────────────────────┤
 │ Column 3        │ lamport_sub_counter (DeltaRle encoded i32)               │
 │                 │   Actual lamport = lamport_sub_counter + counter         │
 └─────────────────┴──────────────────────────────────────────────────────────┘
+
+Row count is inferred from the column data during decoding.
 ```
 
 **Source**: `crates/loro-internal/src/state/list_state.rs:529-619`
