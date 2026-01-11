@@ -425,8 +425,8 @@ Container Types (ContainerID.to_bytes):
 > **IMPORTANT - Postcard Serde Uses Different Mapping**: When ContainerType is serialized via postcard
 > (e.g., in `Option<ContainerID>` for ContainerWrapper parent), a **historical mapping** is used:
 >
-> | Type | ContainerID.to_bytes | Postcard Serde |
-> |------|---------------------|----------------|
+> | Type | ContainerID.to_bytes (value) | Postcard Serde (value) |
+> |------|------------------------------|------------------------|
 > | Text | 2 | 0 |
 > | Map | 0 | 1 |
 > | List | 1 | 2 |
