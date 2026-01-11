@@ -872,24 +872,26 @@ Examples:
 
 #### BoolRle
 
-Encodes sequences of booleans as alternating run lengths, always starting with
-the count of `true` values (which can be 0 if the sequence starts with `false`).
+Encodes sequences of booleans as alternating run lengths. The encoder starts
+in the "false" state, so the first count is always for `false` values (which
+can be 0 if the sequence starts with `true`).
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                      BoolRle Format                               │
 ├───────────────┬──────────────────────────────────────────────────┤
-│ LEB128        │ Count of initial true values (can be 0)         │
-│ LEB128        │ Count of following false values                 │
-│ LEB128        │ Count of following true values                  │
+│ varint        │ Count of initial false values (can be 0)        │
+│ varint        │ Count of following true values                  │
+│ varint        │ Count of following false values                 │
 │ ...           │ (continues alternating until all values covered)│
 └───────────────┴──────────────────────────────────────────────────┘
 
 Examples:
-- [T, T, T, F, F, T]     → [0x03, 0x02, 0x01]  (3 trues, 2 falses, 1 true)
-- [F, F, F, T, T]        → [0x00, 0x03, 0x02]  (0 trues, 3 falses, 2 trues)
-- [T, T, T, T, T]        → [0x05]              (5 trues, no more runs)
-- [F, F, F]              → [0x00, 0x03]        (0 trues, 3 falses)
+- [T, T, F, F, F]        → [0x00, 0x02, 0x03]  (0 false, 2 true, 3 false)
+- [F, F, F, T, T]        → [0x03, 0x02]        (3 false, 2 true)
+- [T, T, T, T, T]        → [0x00, 0x05]        (0 false, 5 true)
+- [F, F, F]              → [0x03]              (3 false)
+- [T, T, T, F, F, T]     → [0x00, 0x03, 0x02, 0x01] (0 false, 3 true, 2 false, 1 true)
 ```
 
 **Source**: `crates/loro-internal/src/oplog/change_store/block_meta_encode.rs:22,121` (BoolRleEncoder/Decoder usage)
@@ -897,25 +899,32 @@ Examples:
 #### AnyRle<T>
 
 Generic RLE for any type with equality. Used in change block headers.
+Supports both run-length encoding (repeated values) and literal runs (distinct values).
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                      AnyRle Format                                │
 ├───────────────┬──────────────────────────────────────────────────┤
-│ For each run: │                                                  │
-│   T           │   Value (LEB128 for integers)                    │
-│   LEB128      │   Run length (always unsigned LEB128)            │
+│ For each segment:                                                │
+│   zigzag varint│  Signed length (positive=run, negative=literal)│
+│   T (postcard) │  Value(s) - 1 if run, |length| if literal      │
+├───────────────┼──────────────────────────────────────────────────┤
+│ Run (len > 0):│  Length N followed by 1 value, repeated N times │
+│ Literal (len<0):│ Length -N followed by N distinct values       │
 └───────────────┴──────────────────────────────────────────────────┘
 
-Type encodings:
-- AnyRle<u32>:   value as unsigned LEB128, then run length as unsigned LEB128
-- AnyRle<usize>: value as unsigned LEB128, then run length as unsigned LEB128
-- AnyRle<i32>:   value as signed LEB128 (SLEB128), then run length
+Zigzag encoding for length (isize):
+  positive N → zigzag(N) = N * 2
+  negative N → zigzag(N) = (-N * 2) - 1
 
-Example: AnyRle<u32> encoding [5, 5, 5, 2, 2]
-  - Run 1: value=5, count=3 → [0x05, 0x03]
-  - Run 2: value=2, count=2 → [0x02, 0x02]
-  - Full:  [0x05, 0x03, 0x02, 0x02]
+Example: AnyRle<u64> encoding [5, 5, 5, 2, 2]
+  - Run 1: length=3 → zigzag(3)=6 → [0x06], value=5 → [0x05]
+  - Run 2: length=2 → zigzag(2)=4 → [0x04], value=2 → [0x02]
+  - Full:  [0x06, 0x05, 0x04, 0x02]
+
+Example: AnyRle<u32> encoding [1, 2, 3] (all different - literal run)
+  - Literal: length=-3 → zigzag(-3)=5 → [0x05], values=[0x01, 0x02, 0x03]
+  - Full: [0x05, 0x01, 0x02, 0x03]
 ```
 
 **Source**: `crates/loro-internal/src/oplog/change_store/block_meta_encode.rs:20,23,25` (AnyRleEncoder usage)
@@ -924,47 +933,55 @@ Example: AnyRle<u32> encoding [5, 5, 5, 2, 2]
 
 #### DeltaRle
 
-Stores differences between consecutive values with RLE:
-
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                     DeltaRle Format                               │
-├───────────────┬──────────────────────────────────────────────────┤
-│ LEB128        │ First value                                      │
-│ For each run: │                                                  │
-│   LEB128 signed│   Delta from previous                           │
-│   LEB128      │   Run length                                     │
-└───────────────┴──────────────────────────────────────────────────┘
-```
+See the [DeltaRle Column Strategy](#deltarle-column-strategy) section under serde_columnar for
+the complete format. DeltaRle applies AnyRle to delta values.
 
 **Source**: Uses `serde_columnar::DeltaRle` strategy annotation
 
 #### DeltaOfDelta
 
-Second-order delta encoding (differences of differences):
+Second-order delta encoding with variable-width bit-packing. This is highly efficient for
+monotonically increasing sequences like timestamps or counters.
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                   DeltaOfDelta Format                             │
 ├───────────────┬──────────────────────────────────────────────────┤
-│ LEB128 signed │ First value                                      │
-│ LEB128 signed │ First delta                                      │
-│ For each:     │                                                  │
-│   LEB128 signed│   Delta of delta                                │
+│ Header:                                                          │
+│   postcard    │ Option<i64> - first value (None if empty)       │
+│   1 byte      │ Number of valid bits in last byte (1-8)         │
+├───────────────┼──────────────────────────────────────────────────┤
+│ Bit-packed delta-of-deltas (big-endian bit order):               │
+│                                                                  │
+│ Prefix Code   │ Meaning                                         │
+│ 0             │ Delta-of-delta = 0 (1 bit total)                │
+│ 10 + 7 bits   │ Value in [-63, 64], stored as value+63          │
+│ 110 + 9 bits  │ Value in [-255, 256], stored as value+255       │
+│ 1110 + 12 bits│ Value in [-2047, 2048], stored as value+2047    │
+│ 11110 + 21 bits│Value in [-(2^20)+1, 2^20], biased               │
+│ 11111 + 64 bits│Full i64 value (two's complement)               │
 └───────────────┴──────────────────────────────────────────────────┘
 
-Decoding:
-  value[0] = first_value
-  delta = first_delta
-  for dod in delta_of_deltas:
-    delta += dod
-    value[i] = value[i-1] + delta
+Decoding algorithm:
+  1. Read postcard Option<i64> for first value (return if None)
+  2. Read 1 byte for last_used_bits
+  3. Read remaining bytes as bit stream (big-endian)
+  4. For each value after first:
+     - Read prefix bits to determine range
+     - Read value bits and subtract bias
+     - delta += delta_of_delta
+     - value = prev_value + delta
+     - yield value
 ```
 
-Useful for monotonically increasing sequences like timestamps.
+Example: Encoding [1, 2, 3, 4, 5, 6]
+- Values: 1, 2, 3, 4, 5, 6
+- Deltas: 1, 1, 1, 1, 1 (all +1)
+- Delta-of-deltas: 0, 0, 0, 0 (after first delta)
+- Each 0 encodes as single "0" bit → 5 bits total for 6 values!
 
-**Source**: `crates/loro-internal/src/oplog/change_store/block_meta_encode.rs:18-19,26` (DeltaOfDeltaEncoder)
-**Source**: `crates/loro-internal/src/oplog/change_store/block_meta_encode.rs:129,157` (DeltaOfDeltaDecoder)
+**Source**: `serde_columnar-0.3.14/src/strategy/rle.rs:405-513` (DeltaOfDeltaEncoder)
+**Source**: `crates/loro-internal/src/oplog/change_store/block_meta_encode.rs:18-19,26` (usage)
 
 ### Columnar Encoding (serde_columnar)
 
@@ -1103,68 +1120,87 @@ For a struct with fields marked as `#[columnar(vec, ...)]`:
 
 #### BoolRle Column Strategy
 
-Encodes boolean columns as run lengths, starting with the count of initial `true` values:
+Encodes boolean columns as run lengths, starting with the count of initial `false` values
+(the encoder starts in the "false" state):
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                   BoolRle Column Encoding                         │
 ├───────────────┬──────────────────────────────────────────────────┤
-│ Encoding:     │ Alternating run lengths of true/false values    │
+│ Encoding:     │ Alternating run lengths of false/true values    │
 ├───────────────┼──────────────────────────────────────────────────┤
-│ postcard varint│ Count of leading true values (can be 0)        │
-│ postcard varint│ Count of following false values                 │
+│ postcard varint│ Count of leading false values (can be 0)       │
 │ postcard varint│ Count of following true values                  │
+│ postcard varint│ Count of following false values                 │
 │ ...           │ (continues alternating until all N values)       │
 ├───────────────┼──────────────────────────────────────────────────┤
-│ Example:      │ [T, T, F, F, F, T] encodes as [2, 3, 1]         │
-│               │   2 trues, then 3 falses, then 1 true            │
+│ Example:      │ [T, T, F, F, F, T] encodes as [0, 2, 3, 1]      │
+│               │   0 false, 2 true, 3 false, 1 true               │
 ├───────────────┼──────────────────────────────────────────────────┤
-│ Edge case:    │ [F, F, T] encodes as [0, 2, 1]                  │
-│               │   0 leading trues, 2 falses, 1 true              │
+│ Edge case:    │ [F, F, T] encodes as [2, 1]                     │
+│               │   2 leading falses, 1 true                       │
 └───────────────┴──────────────────────────────────────────────────┘
 ```
 
+**Source**: `serde_columnar-0.3.14/src/strategy/rle.rs:15-43,248-309` (BoolRleEncoder/Decoder)
+
 #### Rle Column Strategy
 
-Run-length encoding for any comparable type:
+Run-length encoding for any comparable type. Uses AnyRle format with signed length
+(supports both runs and literal sequences):
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                    Rle Column Encoding                            │
 ├───────────────┬──────────────────────────────────────────────────┤
-│ For each run: │                                                  │
-│   T (postcard)│   Value (using postcard encoding for type T)    │
-│   postcard varint│ Run length (how many consecutive equal values)│
+│ For each segment:                                                │
+│   zigzag varint│  Signed length (positive=run, negative=literal)│
+│   T (postcard) │  Value(s) - see AnyRle format above            │
+├───────────────┼──────────────────────────────────────────────────┤
+│ Run (len > 0):│  Length N followed by 1 value, repeated N times │
+│ Literal (len<0):│ Length -N followed by N distinct values       │
 ├───────────────┼──────────────────────────────────────────────────┤
 │ Example:      │ [5, 5, 5, 3, 3] (u8 values)                     │
-│               │   encodes as: [0x05, 0x03, 0x03, 0x02]          │
-│               │   = value 5, count 3, value 3, count 2           │
+│               │   Run 1: zigzag(3)=6, value=5 → [0x06, 0x05]    │
+│               │   Run 2: zigzag(2)=4, value=3 → [0x04, 0x03]    │
+│               │   Full: [0x06, 0x05, 0x04, 0x03]                │
 └───────────────┴──────────────────────────────────────────────────┘
 ```
 
+**Source**: `serde_columnar-0.3.14/src/strategy/rle.rs:45-155,165-246` (AnyRleEncoder/Decoder)
+
 #### DeltaRle Column Strategy
 
-Delta encoding followed by RLE on the deltas:
+Computes deltas from consecutive values, then applies AnyRle<i128> to the deltas.
+Values are implicitly reconstructed from an initial value of 0.
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                   DeltaRle Column Encoding                        │
 ├───────────────┬──────────────────────────────────────────────────┤
-│ postcard varint│ First value (absolute)                          │
-│ For each delta run:                                              │
-│   postcard zigzag│ Delta value (signed)                          │
-│   postcard varint│ Run length (consecutive equal deltas)         │
+│ Encoding:     │ AnyRle<i128> applied to delta sequence          │
+│               │ Delta[0] = value[0] - 0 = value[0]              │
+│               │ Delta[i] = value[i] - value[i-1]                │
 ├───────────────┼──────────────────────────────────────────────────┤
-│ Example:      │ [10, 11, 12, 13, 15, 17] (deltas: +1,+1,+1,+2,+2)│
-│               │   First: 10                                      │
-│               │   Delta +1, count 3                              │
-│               │   Delta +2, count 2                              │
+│ For each delta segment (AnyRle format):                          │
+│   zigzag varint│  Signed length (positive=run, negative=literal)│
+│   i128 zigzag │  Delta value(s) - see AnyRle format             │
 ├───────────────┼──────────────────────────────────────────────────┤
-│ Decoding:     │ values[0] = first_value                         │
-│               │ for each (delta, count):                         │
-│               │   repeat count times: values[i] = values[i-1] + delta │
+│ Example:      │ [10, 11, 12, 13, 15, 17]                        │
+│               │   Deltas: [10, 1, 1, 1, 2, 2]                   │
+│               │   AnyRle: run(1, 10), run(3, 1), run(2, 2)      │
+│               │   Bytes: [zigzag(1), zigzag(10),                │
+│               │           zigzag(3), zigzag(1),                 │
+│               │           zigzag(2), zigzag(2)]                 │
+├───────────────┼──────────────────────────────────────────────────┤
+│ Decoding:     │ absolute = 0                                    │
+│               │ for each delta from AnyRle:                      │
+│               │   absolute += delta                              │
+│               │   yield absolute                                 │
 └───────────────┴──────────────────────────────────────────────────┘
 ```
+
+**Source**: `serde_columnar-0.3.14/src/strategy/rle.rs:311-401` (DeltaRleEncoder/Decoder)
 
 #### Example: ContainerArena Encoding
 
