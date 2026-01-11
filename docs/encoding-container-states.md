@@ -490,25 +490,29 @@ When the `counter` feature is enabled:
 
 ## LoroValue Encoding (in postcard)
 
-LoroValue is used within container states and follows postcard encoding:
+LoroValue is used within container states and follows postcard enum encoding.
+
+**Source**: `crates/loro-common/src/value.rs:714-739` (binary serde implementation)
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────┐
 │                         LoroValue Encoding                                  │
-├─────────────────┬──────────────────────────────────────────────────────────┤
+├─────────────────┬──────────────┬───────────────────────────────────────────┤
 │ Variant         │ Discriminant │ Payload                                   │
 ├─────────────────┼──────────────┼───────────────────────────────────────────┤
 │ Null            │ 0            │ (none)                                    │
-│ Bool(true)      │ 1            │ (none)                                    │
-│ Bool(false)     │ 2            │ (none)                                    │
-│ Double          │ 3            │ f64 (8 bytes, little-endian)              │
-│ I64             │ 4            │ i64 (zigzag varint)                       │
-│ Binary          │ 5            │ varint(len) + bytes                       │
-│ String          │ 6            │ varint(len) + UTF-8 bytes                 │
-│ List            │ 7            │ varint(len) + N × LoroValue               │
-│ Map             │ 8            │ varint(len) + N × (String, LoroValue)     │
-│ Container       │ 9            │ ContainerID encoding                      │
+│ Bool            │ 1            │ bool (0x00=false, 0x01=true)              │
+│ Double          │ 2            │ f64 (8 bytes, little-endian)              │
+│ I64             │ 3            │ i64 (zigzag varint)*                      │
+│ String          │ 4            │ varint(len) + UTF-8 bytes                 │
+│ List            │ 5            │ varint(len) + N × LoroValue               │
+│ Map             │ 6            │ varint(len) + N × (String, LoroValue)     │
+│ Container       │ 7            │ ContainerID encoding                      │
+│ Binary          │ 8            │ varint(len) + bytes                       │
 └─────────────────┴──────────────┴───────────────────────────────────────────┘
+
+* Note: The I64 variant is historically named "I32" in the serde variant name,
+  but the actual payload is always i64 encoded as zigzag varint.
 ```
 
 ---
