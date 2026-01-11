@@ -715,8 +715,9 @@ Loro uses multiple compression techniques to minimize data size.
 
 ### LEB128 (Little Endian Base 128)
 
-Variable-length encoding for unsigned integers:
+Variable-length encoding for integers.
 
+**Unsigned LEB128:**
 ```
 Value Range          Bytes
 0-127               1
@@ -728,10 +729,20 @@ Encoding:
 - Take 7 bits at a time from LSB
 - Set high bit (0x80) if more bytes follow
 - Last byte has high bit clear
-
-For signed integers, use zigzag encoding first:
-  encoded = (n << 1) ^ (n >> 63)
 ```
+
+**Signed LEB128 (SLEB128):**
+Loro uses standard signed LEB128 for signed integers (I64, DeltaInt, etc.),
+which uses two's complement representation with sign extension:
+```
+- Take 7 bits at a time from the two's complement representation
+- Set high bit (0x80) if more bytes follow
+- The sign bit of the last byte is extended
+- Negative values have the high bits set in the final byte
+```
+
+Note: Postcard serialization (used for VersionVector, Frontiers) uses zigzag
+encoding internally, which is different from signed LEB128.
 
 ### Run-Length Encoding (RLE)
 
@@ -904,7 +915,7 @@ To implement a complete Loro decoder/encoder, you need to handle:
 - [x] PositionArena encoding/decoding (prefix compression)
 - [x] Value encoding/decoding for all types
 - [x] serde_columnar compatible decoder
-- [x] LEB128 encoder/decoder (unsigned and signed/zigzag)
+- [x] LEB128 encoder/decoder (unsigned and signed SLEB128)
 - [x] BoolRle encoder/decoder
 - [x] AnyRle encoder/decoder
 - [x] DeltaRle encoder/decoder
