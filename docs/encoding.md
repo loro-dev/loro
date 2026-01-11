@@ -173,7 +173,7 @@ Both `oplog_bytes` and `state_bytes` use a KV Store format based on SSTable (Sor
 ├───────────────┬─────────────────────────────────────────────────┤
 │ Bytes         │ Content                                         │
 ├───────────────┼─────────────────────────────────────────────────┤
-│ 4             │ Magic Number: "LORO" (0x4C4F524F little-endian) │
+│ 4             │ Magic Bytes: "LORO" [0x4C, 0x4F, 0x52, 0x4F]     │
 ├───────────────┼─────────────────────────────────────────────────┤
 │ 1             │ Schema Version (currently 0)                    │
 ├───────────────┼─────────────────────────────────────────────────┤
@@ -315,9 +315,9 @@ For change blocks, the key is 12 bytes:
 ├───────────────┬─────────────────────────────────────────────────┤
 │ Bytes         │ Content                                         │
 ├───────────────┼─────────────────────────────────────────────────┤
-│ 0..8          │ PeerID (u64 little-endian)                      │
+│ 0..8          │ PeerID (u64 big-endian)                         │
 ├───────────────┼─────────────────────────────────────────────────┤
-│ 8..12         │ Counter (u32 little-endian) - start of block    │
+│ 8..12         │ Counter (i32 big-endian) - start of block       │
 └───────────────┴─────────────────────────────────────────────────┘
 ```
 
@@ -334,8 +334,8 @@ VersionVector is encoded using **postcard** format (a compact binary serializati
 │ LEB128        │ Number of entries (N)                           │
 ├───────────────┼─────────────────────────────────────────────────┤
 │ For each entry:                                                 │
-│   8           │   PeerID (u64, postcard varint)                 │
-│   4           │   Counter (i32, postcard zigzag varint)         │
+│   varint      │   PeerID (u64, postcard varint)                 │
+│   varint      │   Counter (i32, postcard zigzag varint)         │
 └───────────────┴─────────────────────────────────────────────────┘
 ```
 
@@ -531,7 +531,7 @@ ContainerIDs are encoded in columnar format:
 │ is_root       │ bool, BoolRle strategy                           │
 │ kind          │ u8, Rle strategy                                 │
 │ peer_idx      │ usize, Rle strategy                              │
-│ key_or_counter│ i32, DeltaRle strategy                           │
+│ key_idx_or_counter│ i32, DeltaRle strategy                       │
 └───────────────┴──────────────────────────────────────────────────┘
 ```
 
