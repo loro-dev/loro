@@ -211,7 +211,7 @@ Both `oplog_bytes` and `state_bytes` use a KV Store format based on SSTable (Sor
 │ variable      │   last_key (bytes) - only if !is_large          │
 ├───────────────┼─────────────────────────────────────────────────┤
 │ 4             │ Checksum (xxHash32, little-endian)              │
-│               │ Covers all block meta entries (excluding count) │
+│               │ Covers all block meta entries                   │
 └───────────────┴─────────────────────────────────────────────────┘
 ```
 
@@ -226,12 +226,66 @@ Both `oplog_bytes` and `state_bytes` use a KV Store format based on SSTable (Sor
 
 ### Block Chunk Format
 
-- [ ] **TODO: Document Block Chunk internal encoding format**
-  - Key-value pair encoding within blocks
-  - Key prefix compression
-  - Block builder logic
+SSTable uses two types of blocks: Normal blocks and Large value blocks.
 
-**Source**: `crates/kv-store/src/block.rs`
+#### Normal Block Format
+
+```
+┌────────────────────────────────────────────────────────────────────────────┐
+│ Normal Block (possibly LZ4 compressed body + uncompressed checksum)        │
+├────────────────────────────────────────────────────────────────────────────┤
+│ ┌─────────────────┬─────────────────┬─────────────────┬─────────────────┐  │
+│ │ KV Chunk 1      │ KV Chunk 2      │ ...             │ KV Chunk N      │  │
+│ └─────────────────┴─────────────────┴─────────────────┴─────────────────┘  │
+│ ┌─────────────────┬─────────────────┬─────────────────┬─────────────────┐  │
+│ │ offset[1] u16   │ offset[2] u16   │ ...             │ offset[N] u16   │  │
+│ └─────────────────┴─────────────────┴─────────────────┴─────────────────┘  │
+│ ┌─────────────────┐                                                        │
+│ │ kv_count u16    │  (number of key-value pairs)                           │
+│ └─────────────────┘                                                        │
+│ ┌─────────────────┐                                                        │
+│ │ checksum u32    │  (xxHash32 of compressed body, uncompressed)           │
+│ └─────────────────┘                                                        │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Key-Value Chunk Format
+
+The first entry stores full key + value. Subsequent entries use prefix compression:
+
+```
+First KV Chunk:
+┌─────────────────────────────────────────────────────────────────┐
+│ value bytes (no key stored, key is in Block Meta first_key)    │
+└─────────────────────────────────────────────────────────────────┘
+
+Subsequent KV Chunks:
+┌─────────────────────────────────────────────────────────────────┐
+│ common_prefix_len: u8   │ Length of shared prefix with first_key│
+├─────────────────────────┼───────────────────────────────────────┤
+│ key_suffix_len: u16 LE  │ Length of key suffix                  │
+├─────────────────────────┼───────────────────────────────────────┤
+│ key_suffix: bytes       │ Key bytes after common prefix         │
+├─────────────────────────┼───────────────────────────────────────┤
+│ value: bytes            │ Value bytes (to next offset or end)   │
+└─────────────────────────┴───────────────────────────────────────┘
+```
+
+#### Large Value Block Format
+
+For values exceeding block size (~4KB):
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Large Value Block                                                │
+├───────────────┬─────────────────────────────────────────────────┤
+│ variable      │ value bytes (possibly LZ4 compressed)           │
+├───────────────┼─────────────────────────────────────────────────┤
+│ 4             │ checksum u32 (xxHash32, little-endian)          │
+└───────────────┴─────────────────────────────────────────────────┘
+```
+
+**Source**: `crates/kv-store/src/block.rs:21-323`
 
 ---
 
@@ -269,15 +323,45 @@ For change blocks, the key is 12 bytes:
 
 ### VersionVector Encoding
 
-- [ ] **TODO: Document VersionVector binary encoding format**
+VersionVector is encoded using **postcard** format (a compact binary serialization format):
 
-**Source**: `crates/loro-common/src/span.rs`
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    VersionVector Encoding                        │
+├───────────────┬─────────────────────────────────────────────────┤
+│ Bytes         │ Content                                         │
+├───────────────┼─────────────────────────────────────────────────┤
+│ LEB128        │ Number of entries (N)                           │
+├───────────────┼─────────────────────────────────────────────────┤
+│ For each entry:                                                 │
+│   8           │   PeerID (u64, postcard varint)                 │
+│   4           │   Counter (i32, postcard zigzag varint)         │
+└───────────────┴─────────────────────────────────────────────────┘
+```
+
+The VersionVector is a HashMap<PeerID, Counter> serialized with postcard.
+
+**Source**: `crates/loro-internal/src/version.rs:843-850`
 
 ### Frontiers Encoding
 
-- [ ] **TODO: Document Frontiers binary encoding format**
+Frontiers is encoded as a sorted Vec<ID> using **postcard** format:
 
-**Source**: `crates/loro-internal/src/version.rs`
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      Frontiers Encoding                          │
+├───────────────┬─────────────────────────────────────────────────┤
+│ Bytes         │ Content                                         │
+├───────────────┼─────────────────────────────────────────────────┤
+│ LEB128        │ Number of IDs (N)                               │
+├───────────────┼─────────────────────────────────────────────────┤
+│ For each ID (sorted):                                           │
+│   varint      │   PeerID (u64, postcard encoding)               │
+│   varint      │   Counter (i32, postcard zigzag encoding)       │
+└───────────────┴─────────────────────────────────────────────────┘
+```
+
+**Source**: `crates/loro-internal/src/version/frontiers.rs:219-231`
 
 ---
 
@@ -290,24 +374,57 @@ The document state is stored as a KV Store where each container's state is a sep
 | Key | Value |
 |-----|-------|
 | `ContainerID.to_bytes()` | ContainerWrapper encoded bytes |
-| `b"FRONTIERS_KEY"` | Frontiers encoding (for shallow snapshots) |
+| `FRONTIERS_KEY` | Frontiers encoding (for shallow snapshots) |
 
 ### ContainerID Encoding
 
-- [ ] **TODO: Document ContainerID.to_bytes() format**
-  - Root container encoding
-  - Normal container encoding (with ID)
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    ContainerID Encoding                          │
+├───────────────┬─────────────────────────────────────────────────┤
+│ Root Container:                                                  │
+├───────────────┼─────────────────────────────────────────────────┤
+│ 1             │ first_byte: container_type | 0x80 (high bit set)│
+│ LEB128        │ name length                                     │
+│ variable      │ name (UTF-8 bytes)                              │
+├───────────────┼─────────────────────────────────────────────────┤
+│ Normal Container:                                                │
+├───────────────┼─────────────────────────────────────────────────┤
+│ 1             │ first_byte: container_type (high bit clear)     │
+│ 8             │ PeerID (u64 little-endian)                      │
+│ 4             │ Counter (i32 little-endian)                     │
+└───────────────┴─────────────────────────────────────────────────┘
 
-**Source**: `crates/loro-common/src/container_id.rs`
+Container Types:
+  0 = Map
+  1 = List
+  2 = Text
+  3 = Tree
+  4 = MovableList
+  5 = Counter (if feature enabled)
+```
+
+**Source**: `crates/loro-common/src/lib.rs:193-254, 336-347`
 
 ### ContainerWrapper Encoding
 
-- [ ] **TODO: Document ContainerWrapper binary format**
-  - Parent information
-  - Container state data
-  - Per-container-type encoding (Map, List, Text, Tree, MovableList, Counter, Unknown)
+Each container's state is wrapped in a ContainerWrapper:
 
-**Source**: `crates/loro-internal/src/state/container_store/container_wrapper.rs`
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                   ContainerWrapper Encoding                      │
+├───────────────┬─────────────────────────────────────────────────┤
+│ 1             │ ContainerType (u8)                              │
+├───────────────┼─────────────────────────────────────────────────┤
+│ LEB128        │ Depth in container hierarchy                    │
+├───────────────┼─────────────────────────────────────────────────┤
+│ variable      │ Parent ContainerID (postcard Option<ContainerID>│
+├───────────────┼─────────────────────────────────────────────────┤
+│ variable      │ Container State Snapshot (type-specific)        │
+└───────────────┴─────────────────────────────────────────────────┘
+```
+
+**Source**: `crates/loro-internal/src/state/container_store/container_wrapper.rs:100-120`
 
 ---
 
@@ -319,50 +436,53 @@ Each Change Block contains multiple consecutive Changes from the same peer. Bloc
 
 ### Block Structure Overview
 
+The block is encoded using **postcard** serialization with the following structure:
+
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                       Change Block Layout                         │
 ├──────────────────────────────────────────────────────────────────┤
-│ HEADER SECTION (encoded with postcard)                           │
-│ ┌──────────────────────────────────────────────────────────────┐ │
-│ │ counter_start: u32     - Starting counter value              │ │
-│ │ counter_len: u32       - Counter range length                │ │
-│ │ lamport_start: u32     - Starting lamport timestamp          │ │
-│ │ lamport_len: u32       - Lamport range length                │ │
-│ │ n_changes: u32         - Number of changes in block          │ │
-│ │ header: bytes          - Change header metadata              │ │
-│ │ change_meta: bytes     - Timestamps and commit messages      │ │
-│ │ cids: bytes            - Container IDs                       │ │
-│ │ keys: bytes            - Key strings                         │ │
-│ │ positions: bytes       - Fractional index positions (Tree)   │ │
-│ │ ops: bytes             - Encoded operations                  │ │
-│ │ delete_start_ids: bytes- Delete operation start IDs          │ │
-│ │ values: bytes          - Value data                          │ │
-│ └──────────────────────────────────────────────────────────────┘ │
+│ EncodedBlock (postcard serialized):                              │
+│   counter_start: u32 (LEB128)                                    │
+│   counter_len: u32 (LEB128)                                      │
+│   lamport_start: u32 (LEB128)                                    │
+│   lamport_len: u32 (LEB128)                                      │
+│   n_changes: u32 (LEB128)                                        │
+│   header: bytes (length-prefixed)                                │
+│   change_meta: bytes (length-prefixed)                           │
+│   cids: bytes (length-prefixed)                                  │
+│   keys: bytes (length-prefixed)                                  │
+│   positions: bytes (length-prefixed)                             │
+│   ops: bytes (length-prefixed)                                   │
+│   delete_start_ids: bytes (length-prefixed)                      │
+│   values: bytes (length-prefixed)                                │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
 ### Header Section Detail
 
-The `header` field contains:
+The `header` field contains change metadata:
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                      Header Field Layout                          │
-├──────────────────────────────────────────────────────────────────┤
-│ LEB128: counter_start                                            │
-│ LEB128: counter_len                                              │
-│ LEB128: lamport_start                                            │
-│ LEB128: lamport_len                                              │
-│ LEB128: n_changes (N)                                            │
-│ LEB128: peer_num                                                 │
-│ [u64 × peer_num]: PeerIDs (8 bytes each, little-endian)          │
-│ [LEB128 × N]: Change atom lengths                                │
-│ BoolRle: dep_on_self flags (N entries)                           │
-│ DeltaRle: dependency lengths (N entries)                         │
-│ [encoded deps]: Dependency IDs                                   │
-│ [LEB128 × N]: Delta lamports                                     │
-└──────────────────────────────────────────────────────────────────┘
+├───────────────┬──────────────────────────────────────────────────┤
+│ LEB128        │ peer_num (number of unique peers)                │
+├───────────────┼──────────────────────────────────────────────────┤
+│ 8 × peer_num  │ PeerIDs (u64 little-endian each)                 │
+├───────────────┼──────────────────────────────────────────────────┤
+│ N × LEB128    │ Change atom lengths (N-1 entries, last inferred) │
+├───────────────┼──────────────────────────────────────────────────┤
+│ BoolRle       │ dep_on_self flags (N entries)                    │
+├───────────────┼──────────────────────────────────────────────────┤
+│ AnyRle<usize> │ dependency lengths (N entries)                   │
+├───────────────┼──────────────────────────────────────────────────┤
+│ AnyRle<u32>   │ dep peer indices                                 │
+├───────────────┼──────────────────────────────────────────────────┤
+│ DeltaOfDelta  │ dep counters                                     │
+├───────────────┼──────────────────────────────────────────────────┤
+│ DeltaOfDelta  │ lamport timestamps (N-1 entries)                 │
+└───────────────┴──────────────────────────────────────────────────┘
 ```
 
 ### Change Meta Section
@@ -370,75 +490,98 @@ The `header` field contains:
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                    Change Meta Field Layout                       │
-├──────────────────────────────────────────────────────────────────┤
-│ DeltaOfDelta encoded: Timestamps (N entries, i64)                │
-│ AnyRle encoded: Commit message lengths (N entries, u32)          │
-│ Raw bytes: Commit messages (concatenated UTF-8 strings)          │
-└──────────────────────────────────────────────────────────────────┘
+├───────────────┬──────────────────────────────────────────────────┤
+│ DeltaOfDelta  │ Timestamps (N entries, i64)                      │
+├───────────────┼──────────────────────────────────────────────────┤
+│ AnyRle<u32>   │ Commit message lengths (N entries)               │
+├───────────────┼──────────────────────────────────────────────────┤
+│ Raw bytes     │ Commit messages (concatenated UTF-8 strings)     │
+└───────────────┴──────────────────────────────────────────────────┘
 ```
 
 **Source**: `crates/loro-internal/src/oplog/change_store/block_meta_encode.rs`
 
-### Operations Section
+### Operations Section (serde_columnar)
 
-The operations are encoded using `serde_columnar` for columnar storage:
+Operations are encoded using `serde_columnar` for columnar storage:
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│                    Operations Encoding (ops field)                │
-├──────────────────────────────────────────────────────────────────┤
-│ serde_columnar encoded EncodedOps:                               │
-│   - container_index: u32 (DeltaRle strategy)                     │
-│   - prop: i32 (DeltaRle strategy)                                │
-│   - value_type: u8 (Rle strategy)                                │
-│   - len: u32 (Rle strategy)                                      │
-└──────────────────────────────────────────────────────────────────┘
+│              Operations Encoding (serde_columnar)                 │
+├───────────────┬──────────────────────────────────────────────────┤
+│ Column        │ Strategy                                         │
+├───────────────┼──────────────────────────────────────────────────┤
+│ container_idx │ u32, DeltaRle strategy                           │
+│ prop          │ i32, DeltaRle strategy                           │
+│ value_type    │ u8, Rle strategy                                 │
+│ len           │ u32, Rle strategy                                │
+└───────────────┴──────────────────────────────────────────────────┘
 ```
 
-### Container IDs Section (cids)
+### Container Arena Encoding (serde_columnar)
 
-- [ ] **TODO: Document ContainerArena encoding format**
+ContainerIDs are encoded in columnar format:
 
-**Source**: `crates/loro-internal/src/encoding/arena.rs`
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                  ContainerArena (serde_columnar)                  │
+├───────────────┬──────────────────────────────────────────────────┤
+│ Column        │ Strategy                                         │
+├───────────────┼──────────────────────────────────────────────────┤
+│ is_root       │ bool, BoolRle strategy                           │
+│ kind          │ u8, Rle strategy                                 │
+│ peer_idx      │ usize, Rle strategy                              │
+│ key_or_counter│ i32, DeltaRle strategy                           │
+└───────────────┴──────────────────────────────────────────────────┘
+```
 
-### Key Strings Section (keys)
+**Source**: `crates/loro-internal/src/encoding/arena.rs:39-50`
+
+### Position Arena Encoding (serde_columnar)
+
+Fractional index positions use prefix compression:
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                  PositionArena (serde_columnar)                   │
+├───────────────┬──────────────────────────────────────────────────┤
+│ Column        │ Strategy                                         │
+├───────────────┼──────────────────────────────────────────────────┤
+│ common_prefix │ usize, Rle strategy                              │
+│ rest          │ bytes (Cow<[u8]>)                                │
+└───────────────┴──────────────────────────────────────────────────┘
+
+Decoding: For each position, take common_prefix bytes from previous
+position and append rest bytes.
+```
+
+**Source**: `crates/loro-internal/src/encoding/arena.rs:159-232`
+
+### Key Strings Section
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                    Key Strings Encoding                           │
-├──────────────────────────────────────────────────────────────────┤
+├───────────────┬──────────────────────────────────────────────────┤
 │ For each key:                                                    │
-│   LEB128: key length                                             │
-│   bytes: UTF-8 encoded key string                                │
-└──────────────────────────────────────────────────────────────────┘
+│   LEB128      │   key length                                     │
+│   bytes       │   UTF-8 encoded key string                       │
+└───────────────┴──────────────────────────────────────────────────┘
 ```
 
-### Positions Section
-
-- [ ] **TODO: Document PositionArena encoding format (for Tree operations)**
-
-**Source**: `crates/loro-internal/src/encoding/arena.rs`
-
-### Delete Start IDs Section
+### Delete Start IDs Section (serde_columnar)
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│              Delete Start IDs (serde_columnar encoded)            │
-├──────────────────────────────────────────────────────────────────┤
-│ EncodedDeleteStartId:                                            │
-│   - peer_idx: u32 (DeltaRle)                                     │
-│   - counter: i32 (DeltaRle)                                      │
-│   - len: i32 (Rle)                                               │
-└──────────────────────────────────────────────────────────────────┘
+│              Delete Start IDs (serde_columnar)                    │
+├───────────────┬──────────────────────────────────────────────────┤
+│ Column        │ Strategy                                         │
+├───────────────┼──────────────────────────────────────────────────┤
+│ peer_idx      │ u32, DeltaRle                                    │
+│ counter       │ i32, DeltaRle                                    │
+│ len           │ i32, Rle                                         │
+└───────────────┴──────────────────────────────────────────────────┘
 ```
-
-**Source**: `crates/loro-internal/src/encoding/outdated_encode_reordered.rs`
-
-### Values Section
-
-- [ ] **TODO: Document ValueWriter output format**
-
-**Source**: `crates/loro-internal/src/encoding/value.rs`
 
 ---
 
@@ -453,74 +596,245 @@ Loro uses a tagged value encoding system where each value is prefixed with a typ
 | 0 | Null | Null value |
 | 1 | True | Boolean true |
 | 2 | False | Boolean false |
-| 3 | I64 | 64-bit signed integer |
-| 4 | F64 | 64-bit floating point |
-| 5 | Str | String value |
-| 6 | Binary | Binary data |
-| 7 | ContainerType | Container type marker |
+| 3 | I64 | 64-bit signed integer (LEB128 signed) |
+| 4 | F64 | 64-bit floating point (big-endian) |
+| 5 | Str | String value (LEB128 len + UTF-8 bytes) |
+| 6 | Binary | Binary data (LEB128 len + bytes) |
+| 7 | ContainerType | Container type marker (LEB128 index) |
 | 8 | DeleteOnce | Single deletion marker |
 | 9 | DeleteSeq | Sequence deletion |
-| 10 | DeltaInt | Delta-encoded integer |
+| 10 | DeltaInt | Delta-encoded i32 (LEB128 signed) |
 | 11 | LoroValue | Nested LoroValue |
 | 12 | MarkStart | Rich text mark start |
 | 13 | TreeMove | Tree node move operation |
 | 14 | ListMove | List move operation |
 | 15 | ListSet | List set operation |
 | 16 | RawTreeMove | Raw tree move (internal) |
+| 0x80+ | Future | Unknown/future value types |
 
-**Source**: `crates/loro-internal/src/encoding/value.rs:39-165`
+**Source**: `crates/loro-internal/src/encoding/value.rs:39-161`
 
 ### Value Encoding Details
 
-- [ ] **TODO: Document each value type's binary encoding**
-  - I64 encoding (LEB128 or fixed?)
-  - F64 encoding
-  - String encoding (length-prefixed)
-  - Binary encoding
-  - MarkStart structure
-  - TreeMove structure
-  - ListMove structure
+#### Primitive Types
+
+```
+Null:      (no data)
+True:      (no data)
+False:     (no data)
+I64:       LEB128 signed encoding
+F64:       8 bytes big-endian IEEE 754
+Str:       LEB128(len) + UTF-8 bytes
+Binary:    LEB128(len) + raw bytes
+DeltaInt:  LEB128 signed encoding (i32)
+```
+
+#### LoroValue (Nested Value)
+
+LoroValue can contain nested structures:
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                    LoroValue Encoding                             │
+├───────────────┬──────────────────────────────────────────────────┤
+│ 1             │ LoroValueKind tag (u8)                           │
+├───────────────┼──────────────────────────────────────────────────┤
+│ variable      │ Value content (depends on kind)                  │
+└───────────────┴──────────────────────────────────────────────────┘
+
+LoroValueKind:
+  0 = Null
+  1 = True
+  2 = False
+  3 = I64 (LEB128 signed)
+  4 = F64 (8 bytes BE)
+  5 = Str (LEB128 len + UTF-8)
+  6 = Binary (LEB128 len + bytes)
+  7 = List (LEB128 len + N × LoroValue)
+  8 = Map (LEB128 len + N × (LEB128 key_idx + LoroValue))
+  9 = ContainerType (u8)
+```
+
+#### MarkStart (Rich Text)
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                    MarkStart Encoding                             │
+├───────────────┬──────────────────────────────────────────────────┤
+│ 1             │ info (u8 flags)                                  │
+│ LEB128        │ len (mark length)                                │
+│ LEB128        │ key_idx (index into keys array)                  │
+│ variable      │ value (LoroValue with type+content)              │
+└───────────────┴──────────────────────────────────────────────────┘
+```
+
+#### TreeMove
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                    TreeMove Encoding                              │
+├───────────────┬──────────────────────────────────────────────────┤
+│ LEB128        │ target_idx (index into tree_ids)                 │
+│ 1             │ is_parent_null (u8 as bool)                      │
+│ LEB128        │ position (index into positions)                  │
+│ LEB128        │ parent_idx (only if !is_parent_null)             │
+└───────────────┴──────────────────────────────────────────────────┘
+```
+
+#### ListMove
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                    ListMove Encoding                              │
+├───────────────┬──────────────────────────────────────────────────┤
+│ LEB128        │ from (source position)                           │
+│ LEB128        │ from_idx                                         │
+│ LEB128        │ lamport                                          │
+└───────────────┴──────────────────────────────────────────────────┘
+```
+
+#### ListSet
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                    ListSet Encoding                               │
+├───────────────┬──────────────────────────────────────────────────┤
+│ LEB128        │ peer_idx                                         │
+│ LEB128        │ lamport                                          │
+│ variable      │ value (LoroValue with type+content)              │
+└───────────────┴──────────────────────────────────────────────────┘
+```
+
+**Source**: `crates/loro-internal/src/encoding/value.rs:343-458, 858-990`
 
 ---
 
 ## Compression Techniques
 
-Loro uses multiple compression techniques to minimize data size:
+Loro uses multiple compression techniques to minimize data size.
 
 ### LEB128 (Little Endian Base 128)
 
-Variable-length encoding for unsigned integers. Used throughout the format for lengths and small integers.
+Variable-length encoding for unsigned integers:
 
 ```
-Value < 128:        1 byte
-Value < 16384:      2 bytes
-Value < 2097152:    3 bytes
+Value Range          Bytes
+0-127               1
+128-16383           2
+16384-2097151       3
 ...
+
+Encoding:
+- Take 7 bits at a time from LSB
+- Set high bit (0x80) if more bytes follow
+- Last byte has high bit clear
+
+For signed integers, use zigzag encoding first:
+  encoded = (n << 1) ^ (n >> 63)
 ```
 
 ### Run-Length Encoding (RLE)
 
-Used for sequences with repeated values:
-- `BoolRle`: Compressed boolean sequences
-- `AnyRle`: Generic RLE for any type
+#### BoolRle
+
+Encodes sequences of booleans as runs:
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                      BoolRle Format                               │
+├───────────────┬──────────────────────────────────────────────────┤
+│ Encoding:     │ Alternating run lengths starting with true      │
+│ LEB128        │ Count of true values                            │
+│ LEB128        │ Count of false values                           │
+│ LEB128        │ Count of true values                            │
+│ ...           │ (continues alternating)                         │
+└───────────────┴──────────────────────────────────────────────────┘
+```
+
+#### AnyRle<T>
+
+Generic RLE for any type with equality:
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                      AnyRle Format                                │
+├───────────────┬──────────────────────────────────────────────────┤
+│ For each run: │                                                  │
+│   T           │   Value (encoded per type)                       │
+│   LEB128      │   Run length                                     │
+└───────────────┴──────────────────────────────────────────────────┘
+```
 
 ### Delta Encoding
 
-Stores differences between consecutive values instead of absolute values:
-- `DeltaRle`: Delta + RLE combination
-- `DeltaOfDelta`: Second-order delta (for timestamps)
+#### DeltaRle
+
+Stores differences between consecutive values with RLE:
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                     DeltaRle Format                               │
+├───────────────┬──────────────────────────────────────────────────┤
+│ LEB128        │ First value                                      │
+│ For each run: │                                                  │
+│   LEB128 signed│   Delta from previous                           │
+│   LEB128      │   Run length                                     │
+└───────────────┴──────────────────────────────────────────────────┘
+```
+
+#### DeltaOfDelta
+
+Second-order delta encoding (differences of differences):
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                   DeltaOfDelta Format                             │
+├───────────────┬──────────────────────────────────────────────────┤
+│ LEB128 signed │ First value                                      │
+│ LEB128 signed │ First delta                                      │
+│ For each:     │                                                  │
+│   LEB128 signed│   Delta of delta                                │
+└───────────────┴──────────────────────────────────────────────────┘
+
+Decoding:
+  value[0] = first_value
+  delta = first_delta
+  for dod in delta_of_deltas:
+    delta += dod
+    value[i] = value[i-1] + delta
+```
+
+Useful for monotonically increasing sequences like timestamps.
+
+**Source**: `crates/loro-internal/src/oplog/change_store/block_meta_encode.rs:1-184`
 
 ### Columnar Encoding (serde_columnar)
 
-Operations are stored in columnar format for better compression:
-- Groups same-type fields together
-- Applies per-column compression strategies
+The `serde_columnar` library provides columnar storage with per-column compression:
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                  serde_columnar Format                            │
+├───────────────┬──────────────────────────────────────────────────┤
+│ For each column:                                                 │
+│   LEB128      │   Column data length                             │
+│   bytes       │   Column data (strategy-dependent)               │
+│               │                                                  │
+│ Strategies:   │                                                  │
+│   Rle         │   Run-length encoded values                      │
+│   DeltaRle    │   Delta + RLE                                    │
+│   BoolRle     │   Boolean RLE                                    │
+│   Raw         │   No compression                                 │
+└───────────────┴──────────────────────────────────────────────────┘
+```
 
 ### LZ4 Compression
 
 Block-level compression for SSTable blocks:
-- Fast compression and decompression
-- Good compression ratio for structured data
+
+- Applied to the entire block body (before checksum)
+- Falls back to uncompressed if compression increases size
+- Checksum is always uncompressed
 
 ---
 
@@ -530,6 +844,8 @@ Block-level compression for SSTable blocks:
 
 - All multi-byte integers use **little-endian** byte order unless otherwise specified
 - Exception: Encode Mode in header uses **big-endian**
+- Exception: F64 values use **big-endian** (IEEE 754)
+- Exception: ID.to_bytes() uses **big-endian** for both peer and counter
 
 ### Checksums
 
@@ -537,6 +853,7 @@ Block-level compression for SSTable blocks:
 |----------|-----------|------|
 | Document header | xxHash32 | 0x4F524F4C |
 | SSTable Block Meta | xxHash32 | 0x4F524F4C |
+| SSTable Block | xxHash32 | 0x4F524F4C |
 
 ### Constants
 
@@ -558,9 +875,13 @@ const DEFAULT_SSTABLE_BLOCK_SIZE: usize = 4096; // SSTable block size
 | Change block encoding | `crates/loro-internal/src/oplog/change_store/block_encode.rs` |
 | Block meta encoding | `crates/loro-internal/src/oplog/change_store/block_meta_encode.rs` |
 | Value encoding | `crates/loro-internal/src/encoding/value.rs` |
+| Arena encoding | `crates/loro-internal/src/encoding/arena.rs` |
 | SSTable format | `crates/kv-store/src/sstable.rs` |
 | Block format | `crates/kv-store/src/block.rs` |
-| Container arena | `crates/loro-internal/src/encoding/arena.rs` |
+| ContainerID | `crates/loro-common/src/lib.rs` |
+| ContainerWrapper | `crates/loro-internal/src/state/container_store/container_wrapper.rs` |
+| VersionVector | `crates/loro-internal/src/version.rs` |
+| Frontiers | `crates/loro-internal/src/version/frontiers.rs` |
 
 ---
 
@@ -572,19 +893,20 @@ To implement a complete Loro decoder/encoder, you need to handle:
 - [x] FastSnapshot body structure
 - [x] FastUpdates body structure
 - [x] SSTable parsing (header, blocks, meta)
-- [ ] SSTable Block Chunk internal format
-- [ ] LZ4 decompression for blocks
-- [ ] VersionVector encoding/decoding
-- [ ] Frontiers encoding/decoding
-- [ ] ContainerID encoding/decoding
-- [ ] ContainerWrapper encoding/decoding
-- [ ] Change Block full parsing
-- [ ] ContainerArena encoding/decoding
-- [ ] PositionArena encoding/decoding (FractionalIndex)
-- [ ] Value encoding/decoding for all types
-- [ ] serde_columnar compatible decoder
-- [ ] LEB128 encoder/decoder
-- [ ] BoolRle encoder/decoder
-- [ ] DeltaRle encoder/decoder
-- [ ] DeltaOfDelta encoder/decoder
-- [ ] Operation content parsing per container type
+- [x] SSTable Block Chunk internal format (Normal + Large)
+- [x] LZ4 decompression for blocks
+- [x] VersionVector encoding/decoding (postcard)
+- [x] Frontiers encoding/decoding (postcard)
+- [x] ContainerID encoding/decoding
+- [x] ContainerWrapper encoding/decoding
+- [x] Change Block full parsing
+- [x] ContainerArena encoding/decoding (serde_columnar)
+- [x] PositionArena encoding/decoding (prefix compression)
+- [x] Value encoding/decoding for all types
+- [x] serde_columnar compatible decoder
+- [x] LEB128 encoder/decoder (unsigned and signed/zigzag)
+- [x] BoolRle encoder/decoder
+- [x] AnyRle encoder/decoder
+- [x] DeltaRle encoder/decoder
+- [x] DeltaOfDelta encoder/decoder
+- [x] Operation content parsing per container type
