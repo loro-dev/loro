@@ -677,15 +677,32 @@ LoroValueKind:
 ┌──────────────────────────────────────────────────────────────────┐
 │                    MarkStart Encoding                             │
 ├───────────────┬──────────────────────────────────────────────────┤
-│ 1             │ info (u8 flags)                                  │
-│ LEB128        │ len (mark length)                                │
+│ 1             │ info (u8 flags, see below)                       │
+│ LEB128        │ len (mark length in characters)                  │
 │ LEB128        │ key_idx (index into keys array)                  │
 │ variable      │ value (LoroValue with type+content)              │
 └───────────────┴──────────────────────────────────────────────────┘
+
+Info byte bit layout:
+┌───────────────────────────────────────────────────────────────────┐
+│ Bit 7 │ Bit 6-3 │ Bit 2         │ Bit 1         │ Bit 0          │
+│ ALIVE │ Reserved│ EXPAND_AFTER  │ EXPAND_BEFORE │ Reserved       │
+│ (0x80)│ (0)     │ (0x04)        │ (0x02)        │ (0)            │
+└───────────────────────────────────────────────────────────────────┘
+
+- ALIVE (0x80): Always set for active styles
+- EXPAND_BEFORE (0x02): Style expands when text inserted before
+- EXPAND_AFTER (0x04): Style expands when text inserted after
+
+Common patterns:
+- Bold style:    0x84 (ALIVE | EXPAND_AFTER)
+- Link style:    0x80 (ALIVE only, no expansion)
+- Comment style: 0x80 (ALIVE only, no expansion)
 ```
 
 **Source**: `crates/loro-internal/src/encoding/value.rs:462-468` (MarkStart struct)
 **Source**: `crates/loro-internal/src/encoding/value.rs:937-950` (read_mark)
+**Source**: `crates/loro-internal/src/container/richtext.rs:141-282` (TextStyleInfoFlag)
 
 #### TreeMove
 
@@ -741,9 +758,10 @@ Loro uses multiple compression techniques to minimize data size.
 
 ### LEB128 (Little Endian Base 128)
 
-Variable-length encoding for integers.
+Variable-length encoding for integers. Used throughout Loro's custom value encoding.
 
-**Unsigned LEB128:**
+#### Unsigned LEB128
+
 ```
 Value Range          Bytes
 0-127               1
@@ -751,24 +769,101 @@ Value Range          Bytes
 16384-2097151       3
 ...
 
-Encoding:
-- Take 7 bits at a time from LSB
-- Set high bit (0x80) if more bytes follow
-- Last byte has high bit clear
+Encoding Algorithm (JavaScript):
+function encodeULEB128(value) {
+  const bytes = [];
+  do {
+    let byte = value & 0x7F;      // Take low 7 bits
+    value >>>= 7;                  // Shift right by 7
+    if (value !== 0) {
+      byte |= 0x80;                // Set continuation bit
+    }
+    bytes.push(byte);
+  } while (value !== 0);
+  return bytes;
+}
+
+Decoding Algorithm (JavaScript):
+function decodeULEB128(bytes, offset = 0) {
+  let result = 0;
+  let shift = 0;
+  let byte;
+  do {
+    byte = bytes[offset++];
+    result |= (byte & 0x7F) << shift;
+    shift += 7;
+  } while (byte & 0x80);
+  return { value: result, bytesRead: offset };
+}
+
+Examples:
+  0     → [0x00]
+  1     → [0x01]
+  127   → [0x7F]
+  128   → [0x80, 0x01]
+  300   → [0xAC, 0x02]
+  16384 → [0x80, 0x80, 0x01]
 ```
 
-**Signed LEB128 (SLEB128):**
+#### Signed LEB128 (SLEB128)
+
 Loro uses standard signed LEB128 for signed integers (I64, DeltaInt, etc.),
-which uses two's complement representation with sign extension:
+which uses two's complement representation with sign extension.
+
 ```
-- Take 7 bits at a time from the two's complement representation
-- Set high bit (0x80) if more bytes follow
-- The sign bit of the last byte is extended
-- Negative values have the high bits set in the final byte
+Encoding Algorithm (JavaScript):
+function encodeSLEB128(value) {
+  const bytes = [];
+  let more = true;
+  while (more) {
+    let byte = value & 0x7F;
+    value >>= 7;  // Arithmetic shift (sign-extending)
+
+    // Check if we need more bytes
+    const signBit = byte & 0x40;
+    if ((value === 0 && !signBit) || (value === -1 && signBit)) {
+      more = false;
+    } else {
+      byte |= 0x80;  // Set continuation bit
+    }
+    bytes.push(byte);
+  }
+  return bytes;
+}
+
+Decoding Algorithm (JavaScript):
+function decodeSLEB128(bytes, offset = 0) {
+  let result = 0;
+  let shift = 0;
+  let byte;
+  do {
+    byte = bytes[offset++];
+    result |= (byte & 0x7F) << shift;
+    shift += 7;
+  } while (byte & 0x80);
+
+  // Sign extend if the sign bit (bit 6 of last byte) is set
+  if (shift < 32 && (byte & 0x40)) {
+    result |= (~0 << shift);  // Sign extend
+  }
+  return { value: result, bytesRead: offset };
+}
+
+Examples:
+   0    → [0x00]
+   1    → [0x01]
+  -1    → [0x7F]
+   63   → [0x3F]
+  -64   → [0x40]
+   64   → [0xC0, 0x00]
+  -65   → [0xBF, 0x7F]
+  127   → [0xFF, 0x00]
+  -128  → [0x80, 0x7F]
 ```
 
-Note: Postcard serialization (used for VersionVector, Frontiers) uses zigzag
-encoding internally, which is different from signed LEB128.
+**Important**: SLEB128 is different from zigzag encoding used by postcard.
+- SLEB128: -1 encodes as [0x7F] (two's complement sign extension)
+- Zigzag:  -1 encodes as [0x01] (maps -1 → 1, then varint)
 
 **Source**: `crates/loro-internal/src/encoding/value.rs:858-859` (leb128::read::signed)
 **Source**: `crates/loro-internal/src/encoding/value.rs:1046-1047` (leb128::write::signed)
@@ -777,34 +872,50 @@ encoding internally, which is different from signed LEB128.
 
 #### BoolRle
 
-Encodes sequences of booleans as runs:
+Encodes sequences of booleans as alternating run lengths, always starting with
+the count of `true` values (which can be 0 if the sequence starts with `false`).
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                      BoolRle Format                               │
 ├───────────────┬──────────────────────────────────────────────────┤
-│ Encoding:     │ Alternating run lengths starting with true      │
-│ LEB128        │ Count of true values                            │
-│ LEB128        │ Count of false values                           │
-│ LEB128        │ Count of true values                            │
-│ ...           │ (continues alternating)                         │
+│ LEB128        │ Count of initial true values (can be 0)         │
+│ LEB128        │ Count of following false values                 │
+│ LEB128        │ Count of following true values                  │
+│ ...           │ (continues alternating until all values covered)│
 └───────────────┴──────────────────────────────────────────────────┘
+
+Examples:
+- [T, T, T, F, F, T]     → [0x03, 0x02, 0x01]  (3 trues, 2 falses, 1 true)
+- [F, F, F, T, T]        → [0x00, 0x03, 0x02]  (0 trues, 3 falses, 2 trues)
+- [T, T, T, T, T]        → [0x05]              (5 trues, no more runs)
+- [F, F, F]              → [0x00, 0x03]        (0 trues, 3 falses)
 ```
 
 **Source**: `crates/loro-internal/src/oplog/change_store/block_meta_encode.rs:22,121` (BoolRleEncoder/Decoder usage)
 
 #### AnyRle<T>
 
-Generic RLE for any type with equality:
+Generic RLE for any type with equality. Used in change block headers.
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                      AnyRle Format                                │
 ├───────────────┬──────────────────────────────────────────────────┤
 │ For each run: │                                                  │
-│   T           │   Value (encoded per type)                       │
-│   LEB128      │   Run length                                     │
+│   T           │   Value (LEB128 for integers)                    │
+│   LEB128      │   Run length (always unsigned LEB128)            │
 └───────────────┴──────────────────────────────────────────────────┘
+
+Type encodings:
+- AnyRle<u32>:   value as unsigned LEB128, then run length as unsigned LEB128
+- AnyRle<usize>: value as unsigned LEB128, then run length as unsigned LEB128
+- AnyRle<i32>:   value as signed LEB128 (SLEB128), then run length
+
+Example: AnyRle<u32> encoding [5, 5, 5, 2, 2]
+  - Run 1: value=5, count=3 → [0x05, 0x03]
+  - Run 2: value=2, count=2 → [0x02, 0x02]
+  - Full:  [0x05, 0x03, 0x02, 0x02]
 ```
 
 **Source**: `crates/loro-internal/src/oplog/change_store/block_meta_encode.rs:20,23,25` (AnyRleEncoder usage)
