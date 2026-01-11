@@ -689,7 +689,7 @@ Loro uses a tagged value encoding system where each value is prefixed with a typ
 | 4 | F64 | 64-bit floating point (big-endian) |
 | 5 | Str | String value (LEB128 len + UTF-8 bytes) |
 | 6 | Binary | Binary data (LEB128 len + bytes) |
-| 7 | ContainerType | Container type marker (LEB128 index) |
+| 7 | ContainerType | Container reference (LEB128 index into change block ContainerArena `cids`) |
 | 8 | DeleteOnce | Single deletion marker |
 | 9 | DeleteSeq | Sequence deletion |
 | 10 | DeltaInt | Delta-encoded i32 (LEB128 signed) |
@@ -1146,23 +1146,23 @@ Example: Encoding [1, 2, 3, 4, 5, 6]
 
 ### Columnar Encoding (serde_columnar)
 
-The `serde_columnar` library provides columnar storage with per-column compression:
+The `serde_columnar` library provides columnar storage with per-column compression. The outer wire
+format is a postcard sequence of column payloads:
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│                  serde_columnar Format                            │
+│                  serde_columnar Outer Format                      │
 ├───────────────┬──────────────────────────────────────────────────┤
+│ postcard varint│   Number of columns (fields)                    │
 │ For each column:                                                 │
-│   LEB128      │   Column data length                             │
+│   postcard varint│   Column data length in bytes                 │
 │   bytes       │   Column data (strategy-dependent)               │
-│               │                                                  │
-│ Strategies:   │                                                  │
-│   Rle         │   Run-length encoded values                      │
-│   DeltaRle    │   Delta + RLE                                    │
-│   BoolRle     │   Boolean RLE                                    │
-│   Raw         │   No compression                                 │
+│               │   Row count inferred from column payload         │
 └───────────────┴──────────────────────────────────────────────────┘
 ```
+
+Common strategies used by Loro include `BoolRle`, `Rle`, `DeltaRle`, and `DeltaOfDelta` (see below
+and [External Format Specifications](#external-format-specifications) for details).
 
 ### LZ4 Compression
 
