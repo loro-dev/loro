@@ -260,7 +260,8 @@ SSTable uses two types of blocks: Normal blocks and Large value blocks.
 
 #### Key-Value Chunk Format
 
-The first entry stores full key + value. Subsequent entries use prefix compression:
+The first entry stores only the value (key comes from BlockMeta `first_key`).
+Subsequent entries use prefix compression against `first_key`:
 
 ```
 First KV Chunk:
@@ -583,24 +584,30 @@ of the change block, and `prop` is the index into that arena.
 **Source**: `crates/loro-internal/src/encoding/outdated_encode_reordered.rs:104-124` (get_op_prop)
 **Source**: `crates/loro-internal/src/oplog/change_store/block_encode.rs:414-428` (EncodedOp struct)
 
-### Container Arena Encoding (serde_columnar)
+### Container Arena Encoding (postcard Vec)
 
-ContainerIDs are encoded in columnar format:
+> **IMPORTANT**: Despite having `#[columnar(...)]` annotations, ContainerArena is serialized
+> as a standard **postcard `Vec<EncodedContainer>`** (row-wise), NOT columnar format.
+> This is because `serde_columnar::to_vec(&self.containers)` is called without wrapping
+> in `ColumnarVec`.
+
+ContainerIDs are encoded as a postcard-serialized Vec:
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│                  ContainerArena (serde_columnar)                  │
+│                  ContainerArena (postcard Vec)                    │
 ├───────────────┬──────────────────────────────────────────────────┤
-│ Column        │ Strategy                                         │
+│ postcard varint│ Number of containers (N)                        │
 ├───────────────┼──────────────────────────────────────────────────┤
-│ is_root       │ bool, BoolRle strategy                           │
-│ kind          │ u8, Rle strategy                                 │
-│ peer_idx      │ usize, Rle strategy                              │
-│ key_idx_or_counter│ i32, DeltaRle strategy                       │
+│ For each container (row-wise):                                   │
+│   1 byte      │ is_root (bool: 0x00 or 0x01)                    │
+│   1 byte      │ kind (u8 container type)                        │
+│   varint      │ peer_idx (usize)                                │
+│   zigzag      │ key_idx_or_counter (i32)                        │
 └───────────────┴──────────────────────────────────────────────────┘
 ```
 
-**Source**: `crates/loro-internal/src/encoding/arena.rs:39-50`
+**Source**: `crates/loro-internal/src/encoding/arena.rs:39-50, 95`
 
 ### Position Arena Encoding (serde_columnar)
 
@@ -644,13 +651,13 @@ position and append rest bytes.
 ├───────────────┬──────────────────────────────────────────────────┤
 │ Column        │ Strategy                                         │
 ├───────────────┼──────────────────────────────────────────────────┤
-│ peer_idx      │ u32, DeltaRle                                    │
+│ peer_idx      │ usize, DeltaRle                                  │
 │ counter       │ i32, DeltaRle                                    │
-│ len           │ i32, Rle                                         │
+│ len           │ isize, DeltaRle                                  │
 └───────────────┴──────────────────────────────────────────────────┘
 ```
 
-**Source**: `crates/loro-internal/src/encoding/outdated_encode_reordered.rs:429-433` (EncodedDeleteStartId)
+**Source**: `crates/loro-internal/src/encoding/outdated_encode_reordered.rs:427-436` (EncodedDeleteStartId)
 
 ---
 
@@ -1087,7 +1094,10 @@ monotonically increasing sequences like timestamps or counters.
 ├───────────────┬──────────────────────────────────────────────────┤
 │ Header:                                                          │
 │   postcard    │ Option<i64> - first value (None if empty)       │
-│   1 byte      │ Number of valid bits in last byte (1-8)         │
+│   1 byte      │ Valid bits in last byte: 0-8                    │
+│               │   0 = no bitstream (only first value)           │
+│               │   1-7 = partial last byte                       │
+│               │   8 = last byte is fully used                   │
 ├───────────────┼──────────────────────────────────────────────────┤
 │ Bit-packed delta-of-deltas (big-endian bit order):               │
 │                                                                  │
@@ -1245,19 +1255,23 @@ It uses postcard as the underlying serializer.
 
 #### Overall Structure
 
-For a struct with fields marked as `#[columnar(vec, ...)]`:
+For a struct with fields marked as `#[columnar(vec, ...)]` serialized via `ColumnarVec`:
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                   serde_columnar Vec Format                       │
 ├───────────────┬──────────────────────────────────────────────────┤
-│ postcard varint│ Number of rows (N)                              │
+│ postcard varint│ Number of columns (fields in struct)            │
 ├───────────────┼──────────────────────────────────────────────────┤
 │ For each column (in field declaration order):                    │
 │   postcard varint│ Column data length in bytes                   │
 │   bytes       │   Column data (strategy-dependent encoding)      │
+│               │   Row count is inferred from decoded column data │
 └───────────────┴──────────────────────────────────────────────────┘
 ```
+
+> **Note**: The row count is NOT stored explicitly. It is inferred by decoding the
+> column payloads (e.g., counting runs in RLE, or counting deltas in DeltaRle).
 
 #### BoolRle Column Strategy
 
@@ -1343,44 +1357,38 @@ Values are implicitly reconstructed from an initial value of 0.
 
 **Source**: `serde_columnar-0.3.14/src/strategy/rle.rs:311-401` (DeltaRleEncoder/Decoder)
 
-#### Example: ContainerArena Encoding
+#### Example: Columnar Encoding (PositionArena)
 
-Given the struct definition:
+> **Note**: ContainerArena does NOT use columnar encoding (see [Container Arena Encoding](#container-arena-encoding-postcard-vec)).
+> PositionArena DOES use columnar encoding via `ColumnarVec` wrapper.
+
+Given a struct with `#[columnar(vec, ser, de)]` serialized via `ColumnarVec`:
 
 ```rust
 #[columnar(vec, ser, de)]
-struct EncodedContainer {
-    #[columnar(strategy = "BoolRle")]   is_root: bool,
-    #[columnar(strategy = "Rle")]       kind: u8,
-    #[columnar(strategy = "Rle")]       peer_idx: usize,
-    #[columnar(strategy = "DeltaRle")]  key_idx_or_counter: i32,
+struct EncodedPos {
+    #[columnar(strategy = "Rle")]       common_prefix: usize,
+    // rest is Cow<[u8]> without strategy
 }
 ```
 
-The wire format for `Vec<EncodedContainer>` is:
+The columnar wire format is:
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│              ContainerArena Wire Format Example                   │
+│              Columnar Vec Wire Format                             │
 ├───────────────┬──────────────────────────────────────────────────┤
-│ varint        │ N (number of containers)                         │
+│ varint        │ Number of columns (fields in struct)             │
 ├───────────────┼──────────────────────────────────────────────────┤
-│ varint        │ is_root column byte length                       │
-│ bytes         │ is_root data (BoolRle encoded)                   │
-├───────────────┼──────────────────────────────────────────────────┤
-│ varint        │ kind column byte length                          │
-│ bytes         │ kind data (Rle encoded u8 values)                │
-├───────────────┼──────────────────────────────────────────────────┤
-│ varint        │ peer_idx column byte length                      │
-│ bytes         │ peer_idx data (Rle encoded usize as varint)      │
-├───────────────┼──────────────────────────────────────────────────┤
-│ varint        │ key_idx_or_counter column byte length            │
-│ bytes         │ key_idx_or_counter data (DeltaRle encoded i32)   │
+│ For each column (in field declaration order):                    │
+│   varint      │ Column data byte length                          │
+│   bytes       │ Column data (strategy-dependent encoding)        │
+│               │ Row count is inferred from decoded column data   │
 └───────────────┴──────────────────────────────────────────────────┘
 ```
 
 **Source**: https://github.com/loro-dev/columnar (serde_columnar crate)
-**Source**: `crates/loro-internal/src/encoding/arena.rs:39-50` (ContainerArena definition)
+**Source**: `serde_columnar_derive-0.3.7/src/derive/vec.rs:113` (column count serialization)
 
 ---
 
@@ -1399,29 +1407,39 @@ The wire format for `Vec<EncodedContainer>` is:
 
 ### Checksums
 
-| Location | Algorithm | Seed |
-|----------|-----------|------|
-| Document header | xxHash32 | 0x4F524F4C |
-| SSTable Block Meta | xxHash32 | 0x4F524F4C |
-| SSTable Block | xxHash32 | 0x4F524F4C |
+| Location | Algorithm | Seed | Data Checksummed |
+|----------|-----------|------|------------------|
+| Document header | xxHash32 | 0x4F524F4C | bytes[20..] (mode + body) |
+| SSTable Block Meta | xxHash32 | 0x4F524F4C | meta entries (excluding count) |
+| SSTable Block | xxHash32 | 0x4F524F4C | block body (possibly compressed) |
 
-**Source**: `crates/loro-internal/src/encoding.rs:275` (XXH_SEED)
+> **IMPORTANT**: Document header checksum covers bytes starting at offset 20
+> (the 2-byte encode mode AND the body), NOT just the body at offset 22.
+
+**Source**: `crates/loro-internal/src/encoding.rs:275, 412` (XXH_SEED, checksum_body)
 **Source**: `crates/kv-store/src/sstable.rs:13` (XXH_SEED)
 **Source**: `crates/kv-store/src/sstable.rs:87,100` (checksum calculation)
 
 ### Constants
 
 ```rust
-const MAGIC_BYTES: [u8; 4] = *b"loro";           // Document magic
-const SSTABLE_MAGIC: [u8; 4] = *b"LORO";         // SSTable magic
+// Document header
+const MAGIC_BYTES: [u8; 4] = *b"loro";           // Document magic (lowercase)
 const XXH_SEED: u32 = 0x4F524F4C;                // "LORO" as u32 LE
-const MAX_BLOCK_SIZE: usize = 4096;              // ~4KB per change block
-const DEFAULT_SSTABLE_BLOCK_SIZE: usize = 4096; // SSTable block size
+
+// SSTable
+const MAGIC_BYTES: [u8; 4] = *b"LORO";           // SSTable magic (UPPERCASE)
+const XXH_SEED: u32 = 0x4F524F4C;                // Same seed as document
+
+// Change store
+const MAX_BLOCK_SIZE: usize = 1024 * 4;          // ~4KB per change block
 ```
 
-**Source**: `crates/loro-internal/src/encoding.rs:269-275` (MAGIC_BYTES, XXH_SEED)
+> **Note**: SSTable block size is a runtime parameter, not a constant.
+
+**Source**: `crates/loro-internal/src/encoding.rs:154, 275` (MAGIC_BYTES, XXH_SEED)
 **Source**: `crates/kv-store/src/sstable.rs:13-14` (XXH_SEED, MAGIC_BYTES)
-**Source**: `crates/loro-internal/src/oplog/change_store.rs:40` (MAX_BLOCK_SIZE)
+**Source**: `crates/loro-internal/src/oplog/change_store.rs:37` (MAX_BLOCK_SIZE)
 
 ### File Locations Reference
 
