@@ -114,8 +114,6 @@ Map container stores key-value pairs with CRDT metadata.
 
 ```javascript
 function decodeMapState(bytes) {
-  let offset = 0;
-
   // 1. Decode visible map values
   const [mapValue, rest1] = postcard.takeFromBytes(bytes);
 
@@ -123,21 +121,28 @@ function decodeMapState(bytes) {
   const [keysWithNone, rest2] = postcard.takeFromBytes(rest1);
 
   // 3. Decode peer table
-  const peerCount = decodeLEB128(rest2);
+  let offset = 0;
+  const [peerCount, peerCountBytes] = decodeLEB128WithSize(rest2);
+  offset += peerCountBytes;  // Advance past the varint
+
   const peers = [];
   for (let i = 0; i < peerCount; i++) {
     peers.push(readU64LE(rest2, offset));
     offset += 8;
   }
 
-  // 4. Decode per-key metadata
+  // 4. Decode per-key metadata (from remaining bytes after peer table)
+  let metaBytes = rest2.slice(offset);
+
   // Keys from both mapValue and keysWithNone, sorted alphabetically
   const allKeys = [...Object.keys(mapValue), ...keysWithNone].sort();
 
   const entries = [];
   for (const key of allKeys) {
-    const peerIdx = decodeLEB128(rest2);
-    const lamport = decodeLEB128(rest2);
+    const [peerIdx, peerIdxBytes] = decodeLEB128WithSize(metaBytes);
+    metaBytes = metaBytes.slice(peerIdxBytes);
+    const [lamport, lamportBytes] = decodeLEB128WithSize(metaBytes);
+    metaBytes = metaBytes.slice(lamportBytes);
     entries.push({
       key,
       value: keysWithNone.includes(key) ? null : mapValue[key],
@@ -320,6 +325,13 @@ function decodeRichtextState(bytes) {
 }
 ```
 
+> **Note on Unicode**: The `span.len` field represents Unicode scalar count (Rust's
+> `unicode_len()`), not byte length or UTF-16 code units. The JavaScript example uses
+> `String.slice()` which operates on UTF-16 code units, so it will produce incorrect
+> results for text containing characters outside the BMP (e.g., emoji, rare CJK).
+> Implementers should use proper Unicode scalar iteration (e.g., `[...str]` spread
+> or `Intl.Segmenter` for grapheme-aware handling).
+
 **Source**: `crates/loro-internal/src/state/richtext_state.rs:1130-1339`
 
 ---
@@ -453,7 +465,7 @@ Movable list allows elements to be moved while preserving their identity.
 ┌────────────────────────────────────────────────────────────────────────────┐
 │ Column                │ Strategy  │ Description                            │
 ├───────────────────────┼───────────┼────────────────────────────────────────┤
-│ invisible_list_item   │ DeltaRle  │ Count of invisible items before this   │
+│ invisible_list_item   │ DeltaRle  │ Count of invisible items AFTER this    │
 │ pos_id_eq_elem_id     │ BoolRle   │ True if position ID == element ID      │
 │ elem_id_eq_last_set_id│ BoolRle   │ True if element ID == last set ID      │
 └───────────────────────┴───────────┴────────────────────────────────────────┘
@@ -461,12 +473,21 @@ Movable list allows elements to be moved while preserving their identity.
 
 ### Decoding Logic
 
-The first item in `items` is a sentinel (skip it). For subsequent items:
-1. If `invisible_list_item > 0`, consume that many invisible position IDs first
-2. Consume one visible position from `list_item_ids`
-3. If `pos_id_eq_elem_id` is false, consume from `elem_ids`; otherwise, elem_id = position_id.idlp()
-4. If `elem_id_eq_last_set_id` is false, consume from `last_set_ids`; otherwise, last_set_id = elem_id
-5. Consume one value from the visible values list
+The first item in `items` is a sentinel. For each item record:
+
+1. **Skip first iteration** (sentinel has no visible item to decode)
+2. **For non-first iterations**, consume the visible item:
+   - Consume one position ID from `list_item_ids`
+   - If `pos_id_eq_elem_id` is false, consume from `elem_ids`; otherwise elem_id = position_id.idlp()
+   - If `elem_id_eq_last_set_id` is false, consume from `last_set_ids`; otherwise last_set_id = elem_id
+   - Consume one value from the visible values list
+   - Push the visible item
+3. **After the visible item**, consume `invisible_list_item` invisible positions:
+   - For each: consume one position ID from `list_item_ids`, push as invisible item (no value)
+
+**Key insight**: During encoding, when an invisible item is encountered, it increments the
+**previous** visible item's `invisible_list_item` counter (see line 1509). This means each
+record's `invisible_list_item` represents invisible items that **follow** the visible item.
 
 **Source**: `crates/loro-internal/src/state/movable_list_state.rs:1392-1637`
 
@@ -543,6 +564,7 @@ function decodeContainerState(bytes) {
     case 2: return { type: 'text', state: decodeRichtextState(stateBytes) };
     case 3: return { type: 'tree', state: decodeTreeState(stateBytes) };
     case 4: return { type: 'movable_list', state: decodeMovableListState(stateBytes) };
+    case 5: return { type: 'counter', state: decodeCounterState(stateBytes) }; // counter feature
     default: throw new Error(`Unknown container type: ${containerType}`);
   }
 }
