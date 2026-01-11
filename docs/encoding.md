@@ -18,6 +18,7 @@ Understanding this specification will enable developers to implement Loro-compat
 - [Change Block Encoding](#change-block-encoding)
 - [Value Encoding](#value-encoding)
 - [Compression Techniques](#compression-techniques)
+- [Supplementary Documentation](#supplementary-documentation)
 
 ---
 
@@ -74,6 +75,8 @@ checksum = xxHash32(body_bytes, seed=0x4F524F4C)
 ```
 
 The checksum is stored in bytes [16..20] of the header as a little-endian u32.
+
+> **See Also**: [xxHash32 Algorithm Specification](./encoding-xxhash32.md) for complete implementation details and JavaScript code.
 
 **Source**: `crates/loro-internal/src/encoding.rs:275-295, 397-416`
 
@@ -370,6 +373,8 @@ Frontiers is encoded as a sorted Vec<ID> using **postcard** format:
 ## State Encoding
 
 The document state is stored as a KV Store where each container's state is a separate entry.
+
+> **See Also**: [Container State Snapshot Encoding](./encoding-container-states.md) for detailed encoding formats of Map, List, Text, Tree, and MovableList containers.
 
 ### State KV Schema
 
@@ -1010,6 +1015,9 @@ Block-level compression for SSTable blocks:
 - Applied to the entire block body (before checksum)
 - Falls back to uncompressed if compression increases size
 - Checksum is always uncompressed
+- Uses LZ4 Frame format (not raw LZ4 block format)
+
+> **See Also**: [LZ4 Frame Format Specification](./encoding-lz4.md) for complete format details and JavaScript implementation.
 
 **Source**: `crates/kv-store/src/block.rs:89-112` (compress_block)
 **Source**: `crates/kv-store/src/block.rs:193-212` (decompress_block)
@@ -1302,6 +1310,27 @@ const DEFAULT_SSTABLE_BLOCK_SIZE: usize = 4096; // SSTable block size
 
 ---
 
+## Supplementary Documentation
+
+The following supplementary documents provide detailed specifications for components that require significant implementation effort:
+
+### Algorithm Specifications
+
+| Document | Description |
+|----------|-------------|
+| [xxHash32 Algorithm](./encoding-xxhash32.md) | Complete xxHash32 implementation with JavaScript code, test vectors, and usage examples for Loro checksum verification |
+| [LZ4 Frame Format](./encoding-lz4.md) | LZ4 Frame format specification with decompression algorithm and JavaScript implementation |
+
+### Container-Specific Formats
+
+| Document | Description |
+|----------|-------------|
+| [Container State Snapshots](./encoding-container-states.md) | Detailed encoding formats for Map, List, Text (Richtext), Tree, and MovableList container states |
+
+These documents are essential for implementing a complete Loro encoder/decoder, especially for pure JavaScript implementations without external dependencies.
+
+---
+
 ## Checklist for Implementation
 
 To implement a complete Loro decoder/encoder, you need to handle:
@@ -1311,7 +1340,7 @@ To implement a complete Loro decoder/encoder, you need to handle:
 - [x] FastUpdates body structure
 - [x] SSTable parsing (header, blocks, meta)
 - [x] SSTable Block Chunk internal format (Normal + Large)
-- [x] LZ4 decompression for blocks
+- [x] LZ4 decompression for blocks ([see LZ4 spec](./encoding-lz4.md))
 - [x] VersionVector encoding/decoding (postcard)
 - [x] Frontiers encoding/decoding (postcard)
 - [x] ContainerID encoding/decoding
@@ -1327,3 +1356,10 @@ To implement a complete Loro decoder/encoder, you need to handle:
 - [x] DeltaRle encoder/decoder
 - [x] DeltaOfDelta encoder/decoder
 - [x] Operation content parsing per container type
+- [x] xxHash32 checksum verification ([see xxHash32 spec](./encoding-xxhash32.md))
+- [x] Container state snapshot decoding ([see Container States spec](./encoding-container-states.md))
+  - [x] MapState snapshot format
+  - [x] ListState snapshot format
+  - [x] RichtextState (Text) snapshot format
+  - [x] TreeState snapshot format
+  - [x] MovableListState snapshot format
