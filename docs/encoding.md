@@ -53,7 +53,8 @@ All Loro export formats share a common 22-byte header:
 ├───────────────┼─────────────────────────────────────────────────┤
 │ 4..20         │ Checksum (16 bytes)                             │
 │               │   - [0..12]: Reserved (zeros)                   │
-│               │   - [12..16]: xxHash32 of body (little-endian)  │
+│               │   - [12..16]: xxHash32 (little-endian u32)      │
+│               │     Covers: bytes[20..] (encode_mode + body)    │
 │               │     Seed: 0x4F524F4C ("LORO" in LE)             │
 ├───────────────┼─────────────────────────────────────────────────┤
 │ 20..22        │ Encode Mode (big-endian u16)                    │
@@ -71,8 +72,13 @@ All Loro export formats share a common 22-byte header:
 For `FastSnapshot` and `FastUpdates` modes:
 
 ```
-checksum = xxHash32(body_bytes, seed=0x4F524F4C)
+checksum = xxHash32(bytes[20..], seed=0x4F524F4C)
+         = xxHash32(encode_mode_bytes + body_bytes, seed=0x4F524F4C)
 ```
+
+**IMPORTANT**: The checksum covers bytes starting at offset 20, which includes
+the 2-byte encode mode AND the body. It does NOT hash just the body starting
+at offset 22.
 
 The checksum is stored in bytes [16..20] of the header as a little-endian u32.
 
@@ -822,7 +828,7 @@ Value Range          Bytes
 16384-2097151       3
 ...
 
-Encoding Algorithm (JavaScript):
+Encoding Algorithm (JavaScript - 32-bit safe):
 function encodeULEB128(value) {
   const bytes = [];
   do {
@@ -836,8 +842,9 @@ function encodeULEB128(value) {
   return bytes;
 }
 
-Decoding Algorithm (JavaScript):
+Decoding Algorithm (JavaScript - 32-bit safe):
 function decodeULEB128(bytes, offset = 0) {
+  const startOffset = offset;
   let result = 0;
   let shift = 0;
   let byte;
@@ -846,7 +853,7 @@ function decodeULEB128(bytes, offset = 0) {
     result |= (byte & 0x7F) << shift;
     shift += 7;
   } while (byte & 0x80);
-  return { value: result, bytesRead: offset };
+  return { value: result, nextOffset: offset, bytesRead: offset - startOffset };
 }
 
 Examples:
@@ -858,13 +865,46 @@ Examples:
   16384 → [0x80, 0x80, 0x01]
 ```
 
+> **WARNING - 32-bit Limitation**: The above algorithms use JavaScript's 32-bit bitwise
+> operators (`>>>`, `<<`, `|`) which silently truncate values larger than 32 bits.
+> For u64 PeerIDs and i64 values, you MUST use BigInt. See BigInt-safe versions below.
+
+**BigInt-safe ULEB128 (for u64 values like PeerID):**
+
+```javascript
+function encodeULEB128_BigInt(value) {
+  value = BigInt(value);
+  const bytes = [];
+  do {
+    let byte = Number(value & 0x7Fn);
+    value >>= 7n;
+    if (value !== 0n) byte |= 0x80;
+    bytes.push(byte);
+  } while (value !== 0n);
+  return bytes;
+}
+
+function decodeULEB128_BigInt(bytes, offset = 0) {
+  const startOffset = offset;
+  let result = 0n;
+  let shift = 0n;
+  let byte;
+  do {
+    byte = bytes[offset++];
+    result |= BigInt(byte & 0x7F) << shift;
+    shift += 7n;
+  } while (byte & 0x80);
+  return { value: result, nextOffset: offset, bytesRead: offset - startOffset };
+}
+```
+
 #### Signed LEB128 (SLEB128)
 
 Loro uses standard signed LEB128 for signed integers (I64, DeltaInt, etc.),
 which uses two's complement representation with sign extension.
 
 ```
-Encoding Algorithm (JavaScript):
+Encoding Algorithm (JavaScript - 32-bit safe):
 function encodeSLEB128(value) {
   const bytes = [];
   let more = true;
@@ -884,8 +924,9 @@ function encodeSLEB128(value) {
   return bytes;
 }
 
-Decoding Algorithm (JavaScript):
+Decoding Algorithm (JavaScript - 32-bit safe):
 function decodeSLEB128(bytes, offset = 0) {
+  const startOffset = offset;
   let result = 0;
   let shift = 0;
   let byte;
@@ -899,7 +940,7 @@ function decodeSLEB128(bytes, offset = 0) {
   if (shift < 32 && (byte & 0x40)) {
     result |= (~0 << shift);  // Sign extend
   }
-  return { value: result, bytesRead: offset };
+  return { value: result, nextOffset: offset, bytesRead: offset - startOffset };
 }
 
 Examples:
@@ -912,6 +953,50 @@ Examples:
   -65   → [0xBF, 0x7F]
   127   → [0xFF, 0x00]
   -128  → [0x80, 0x7F]
+```
+
+> **WARNING - 32-bit Limitation**: The above algorithms are limited to 32-bit values.
+> For i64 values, use the BigInt version below.
+
+**BigInt-safe SLEB128 (for i64 values):**
+
+```javascript
+function encodeSLEB128_BigInt(value) {
+  value = BigInt(value);
+  const bytes = [];
+  let more = true;
+  while (more) {
+    let byte = Number(value & 0x7Fn);
+    value >>= 7n;  // Arithmetic shift (sign-extending in BigInt)
+
+    const signBit = byte & 0x40;
+    if ((value === 0n && !signBit) || (value === -1n && signBit)) {
+      more = false;
+    } else {
+      byte |= 0x80;
+    }
+    bytes.push(byte);
+  }
+  return bytes;
+}
+
+function decodeSLEB128_BigInt(bytes, offset = 0) {
+  const startOffset = offset;
+  let result = 0n;
+  let shift = 0n;
+  let byte;
+  do {
+    byte = bytes[offset++];
+    result |= BigInt(byte & 0x7F) << shift;
+    shift += 7n;
+  } while (byte & 0x80);
+
+  // Sign extend if the sign bit (bit 6 of last byte) is set
+  if (byte & 0x40) {
+    result |= (-1n << shift);  // Sign extend
+  }
+  return { value: result, nextOffset: offset, bytesRead: offset - startOffset };
+}
 ```
 
 **Important**: SLEB128 is different from zigzag encoding used by postcard.
