@@ -230,7 +230,7 @@ Richtext container stores text with optional styling marks.
 ├─────────────────┼──────────────────────────────────────────────────────────┤
 │ Vec<String>     │ Style keys (postcard Vec<InternalString>)                │
 ├─────────────────┼──────────────────────────────────────────────────────────┤
-│ Vec<Mark>       │ EncodedMark array (columnar)                             │
+│ Vec<Mark>       │ EncodedMark array (postcard Vec, row-wise)               │
 └─────────────────┴──────────────────────────────────────────────────────────┘
 ```
 
@@ -252,18 +252,18 @@ len interpretation:
   - -1: Style mark end
 ```
 
-### EncodedMark (Columnar)
+### EncodedMark (postcard Vec, row-wise)
 
 For each span with `len == 0` (style start), there's a corresponding mark:
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────┐
-│ Column          │ Strategy       │ Description                             │
-├─────────────────┼────────────────┼─────────────────────────────────────────┤
-│ key_idx         │ (raw varint)   │ Index into keys array                   │
-│ value           │ (postcard)     │ LoroValue for the style                 │
-│ info            │ (raw u8)       │ TextStyleInfoFlag byte                  │
-└─────────────────┴────────────────┴─────────────────────────────────────────┘
+│ For each EncodedMark (row-wise postcard):                                  │
+├─────────────────┬──────────────────────────────────────────────────────────┤
+│ varint          │ key_idx - Index into keys array                          │
+│ postcard        │ value - LoroValue for the style                          │
+│ 1 byte          │ info - TextStyleInfoFlag byte                            │
+└─────────────────┴──────────────────────────────────────────────────────────┘
 
 info byte layout:
   Bit 7 (0x80): ALIVE - Style is active

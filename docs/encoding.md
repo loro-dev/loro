@@ -600,7 +600,7 @@ ContainerIDs are encoded as a postcard Vec of EncodedContainer structs (row-wise
 │   1 byte      │   is_root (bool)                                 │
 │   1 byte      │   kind (u8 container type)                       │
 │   LEB128      │   peer_idx (usize)                               │
-│   SLEB128     │   key_idx_or_counter (i32)                       │
+│   zigzag varint│  key_idx_or_counter (i32)                       │
 └───────────────┴──────────────────────────────────────────────────┘
 
 For root containers (is_root = true):
