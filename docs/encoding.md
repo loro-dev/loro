@@ -586,33 +586,41 @@ of the change block, and `prop` is the index into that arena.
 **Source**: `crates/loro-internal/src/encoding/outdated_encode_reordered.rs:104-124` (get_op_prop)
 **Source**: `crates/loro-internal/src/oplog/change_store/block_encode.rs:414-428` (EncodedOp struct)
 
-### Container Arena Encoding (serde_columnar)
+### Container Arena Encoding (postcard Vec)
 
-ContainerIDs are encoded using serde_columnar with columnar strategies:
+ContainerIDs are encoded as a postcard Vec of EncodedContainer structs (row-wise):
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│                  ContainerArena (serde_columnar)                  │
-├───────────────┬──────────────────────────────────────────────────┤
-│ Column        │ Strategy                                         │
+│                  ContainerArena (postcard Vec)                    │
+├──────────────────────────────────────────────────────────────────┤
+│ LEB128        │   number of containers                           │
 ├───────────────┼──────────────────────────────────────────────────┤
-│ is_root       │ bool, BoolRle strategy                           │
-│ kind          │ u8 container type, Rle strategy                  │
-│ peer_idx      │ usize, Rle strategy                              │
-│ key_idx_or_counter │ i32, DeltaRle strategy                      │
+│ For each EncodedContainer (row-wise):                            │
+│   1 byte      │   is_root (bool)                                 │
+│   1 byte      │   kind (u8 container type)                       │
+│   LEB128      │   peer_idx (usize)                               │
+│   SLEB128     │   key_idx_or_counter (i32)                       │
 └───────────────┴──────────────────────────────────────────────────┘
 
-For root containers:
+For root containers (is_root = true):
   - kind = ContainerType as u8
+  - peer_idx = 0 (unused)
   - key_idx_or_counter = index into keys arena (key string)
 
-For non-root containers:
+For non-root containers (is_root = false):
   - kind = ContainerType as u8
   - peer_idx = index into peer ID table
   - key_idx_or_counter = counter value
 ```
 
-**Source**: `crates/loro-internal/src/encoding/arena.rs:39-50, 95`
+> **Note**: Although EncodedContainer has `#[columnar(vec, ...)]` attributes with
+> strategy annotations (BoolRle, Rle, DeltaRle), `ContainerArena::encode()` calls
+> `serde_columnar::to_vec(&self.containers)` which serializes the raw Vec directly.
+> Columnar encoding only applies when serializing via a ColumnarVec wrapper, so
+> the strategies are NOT applied here - it's plain postcard row-wise encoding.
+
+**Source**: `crates/loro-internal/src/encoding/arena.rs:39-50, 94-96`
 
 ### Position Arena Encoding (serde_columnar)
 
@@ -1364,9 +1372,9 @@ Values are implicitly reconstructed from an initial value of 0.
 
 #### Example: Columnar Encoding (PositionArena)
 
-> **Note**: Both ContainerArena and PositionArena use columnar encoding. See
-> [Container Arena Encoding](#container-arena-encoding-serde_columnar) for ContainerArena's
-> column strategies (BoolRle, Rle, DeltaRle).
+> **Note**: PositionArena uses columnar encoding (serializes `&self` via serde_columnar).
+> ContainerArena does NOT use columnar encoding - it serializes the raw Vec directly,
+> resulting in postcard row-wise format. See [Container Arena Encoding](#container-arena-encoding-postcard-vec).
 
 Given a struct with `#[columnar(vec, ser, de)]` serialized via serde_columnar:
 
@@ -1642,7 +1650,7 @@ To implement a complete Loro decoder/encoder, you need to handle:
 - [x] ContainerID encoding/decoding
 - [x] ContainerWrapper encoding/decoding
 - [x] Change Block full parsing
-- [x] ContainerArena encoding/decoding (serde_columnar)
+- [x] ContainerArena encoding/decoding (postcard Vec)
 - [x] PositionArena encoding/decoding (prefix compression)
 - [x] Value encoding/decoding for all types
 - [x] serde_columnar compatible decoder
