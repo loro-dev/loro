@@ -888,6 +888,214 @@ Block-level compression for SSTable blocks:
 
 ---
 
+## External Format Specifications
+
+Loro uses two external serialization libraries: **postcard** and **serde_columnar**. For implementers
+in other languages, this section provides the exact wire format specifications.
+
+### Postcard Wire Format
+
+Postcard is used for serializing VersionVector, Frontiers, and as the underlying serializer for
+serde_columnar. The format is documented at https://postcard.jamesmunns.com/wire-format.html
+
+#### Postcard Varint (Unsigned)
+
+All unsigned integers larger than 1 byte use variable-length encoding:
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                    Postcard Unsigned Varint                       │
+├───────────────┬──────────────────────────────────────────────────┤
+│ Encoding:     │                                                  │
+│   - Each byte stores 7 data bits + 1 continuation bit           │
+│   - Continuation bit (MSB): 1 = more bytes, 0 = last byte       │
+│   - Little-endian byte order (LSB first)                        │
+│   - Max bytes limited by type (u16=3, u32=5, u64=10)            │
+├───────────────┼──────────────────────────────────────────────────┤
+│ Example:      │ 300 (0x12C) encodes as [0xAC, 0x02]             │
+│               │   0xAC = 0b1_0101100 (cont=1, value=44)         │
+│               │   0x02 = 0b0_0000010 (cont=0, value=2)          │
+│               │   result = 44 + (2 << 7) = 44 + 256 = 300       │
+└───────────────┴──────────────────────────────────────────────────┘
+```
+
+#### Postcard Varint (Signed) - Zigzag Encoding
+
+Signed integers use zigzag encoding to make small negative numbers efficient:
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                  Postcard Signed Varint (Zigzag)                  │
+├───────────────┬──────────────────────────────────────────────────┤
+│ Step 1:       │ Zigzag encode: z = (n << 1) ^ (n >> (bits-1))   │
+│               │   0 → 0,  -1 → 1,  1 → 2,  -2 → 3,  2 → 4, ...  │
+├───────────────┼──────────────────────────────────────────────────┤
+│ Step 2:       │ Encode z as unsigned varint                      │
+├───────────────┼──────────────────────────────────────────────────┤
+│ Decoding:     │ n = (z >> 1) ^ -(z & 1)                         │
+├───────────────┼──────────────────────────────────────────────────┤
+│ Examples:     │ -1_i32 → zigzag(1) → varint [0x01]              │
+│               │  1_i32 → zigzag(2) → varint [0x02]              │
+│               │ -64_i32 → zigzag(127) → varint [0x7F]           │
+└───────────────┴──────────────────────────────────────────────────┘
+```
+
+#### Postcard Other Types
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                    Postcard Type Encodings                        │
+├──────────────┬───────────────────────────────────────────────────┤
+│ Type         │ Encoding                                          │
+├──────────────┼───────────────────────────────────────────────────┤
+│ bool         │ 0x00 = false, 0x01 = true                        │
+│ u8 / i8      │ Single byte (i8 uses two's complement)           │
+│ u16-u128     │ Varint (unsigned)                                │
+│ i16-i128     │ Zigzag + Varint                                  │
+│ f32          │ 4 bytes little-endian IEEE 754                   │
+│ f64          │ 8 bytes little-endian IEEE 754                   │
+│ Option<T>    │ 0x00 = None, 0x01 + T = Some(T)                  │
+│ Vec<T>/[T]   │ varint(len) + N × T                              │
+│ String/&str  │ varint(len) + UTF-8 bytes                        │
+│ Tuple (A,B)  │ A followed by B (no length prefix)               │
+│ Struct       │ Fields in declaration order (no field names)     │
+│ Enum variant │ varint(discriminant) + variant data              │
+│ HashMap<K,V> │ varint(len) + N × (K, V)                         │
+└──────────────┴───────────────────────────────────────────────────┘
+```
+
+**Important Note**: Postcard's f64 uses **little-endian**, but Loro's custom value encoding uses
+**big-endian** for F64. Be careful not to confuse them.
+
+**Source**: https://postcard.jamesmunns.com/wire-format.html
+
+### serde_columnar Wire Format
+
+serde_columnar organizes struct fields into columns and applies per-column compression strategies.
+It uses postcard as the underlying serializer.
+
+#### Overall Structure
+
+For a struct with fields marked as `#[columnar(vec, ...)]`:
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                   serde_columnar Vec Format                       │
+├───────────────┬──────────────────────────────────────────────────┤
+│ postcard varint│ Number of rows (N)                              │
+├───────────────┼──────────────────────────────────────────────────┤
+│ For each column (in field declaration order):                    │
+│   postcard varint│ Column data length in bytes                   │
+│   bytes       │   Column data (strategy-dependent encoding)      │
+└───────────────┴──────────────────────────────────────────────────┘
+```
+
+#### BoolRle Column Strategy
+
+Encodes boolean columns as run lengths, starting with the count of initial `true` values:
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                   BoolRle Column Encoding                         │
+├───────────────┬──────────────────────────────────────────────────┤
+│ Encoding:     │ Alternating run lengths of true/false values    │
+├───────────────┼──────────────────────────────────────────────────┤
+│ postcard varint│ Count of leading true values (can be 0)        │
+│ postcard varint│ Count of following false values                 │
+│ postcard varint│ Count of following true values                  │
+│ ...           │ (continues alternating until all N values)       │
+├───────────────┼──────────────────────────────────────────────────┤
+│ Example:      │ [T, T, F, F, F, T] encodes as [2, 3, 1]         │
+│               │   2 trues, then 3 falses, then 1 true            │
+├───────────────┼──────────────────────────────────────────────────┤
+│ Edge case:    │ [F, F, T] encodes as [0, 2, 1]                  │
+│               │   0 leading trues, 2 falses, 1 true              │
+└───────────────┴──────────────────────────────────────────────────┘
+```
+
+#### Rle Column Strategy
+
+Run-length encoding for any comparable type:
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                    Rle Column Encoding                            │
+├───────────────┬──────────────────────────────────────────────────┤
+│ For each run: │                                                  │
+│   T (postcard)│   Value (using postcard encoding for type T)    │
+│   postcard varint│ Run length (how many consecutive equal values)│
+├───────────────┼──────────────────────────────────────────────────┤
+│ Example:      │ [5, 5, 5, 3, 3] (u8 values)                     │
+│               │   encodes as: [0x05, 0x03, 0x03, 0x02]          │
+│               │   = value 5, count 3, value 3, count 2           │
+└───────────────┴──────────────────────────────────────────────────┘
+```
+
+#### DeltaRle Column Strategy
+
+Delta encoding followed by RLE on the deltas:
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                   DeltaRle Column Encoding                        │
+├───────────────┬──────────────────────────────────────────────────┤
+│ postcard varint│ First value (absolute)                          │
+│ For each delta run:                                              │
+│   postcard zigzag│ Delta value (signed)                          │
+│   postcard varint│ Run length (consecutive equal deltas)         │
+├───────────────┼──────────────────────────────────────────────────┤
+│ Example:      │ [10, 11, 12, 13, 15, 17] (deltas: +1,+1,+1,+2,+2)│
+│               │   First: 10                                      │
+│               │   Delta +1, count 3                              │
+│               │   Delta +2, count 2                              │
+├───────────────┼──────────────────────────────────────────────────┤
+│ Decoding:     │ values[0] = first_value                         │
+│               │ for each (delta, count):                         │
+│               │   repeat count times: values[i] = values[i-1] + delta │
+└───────────────┴──────────────────────────────────────────────────┘
+```
+
+#### Example: ContainerArena Encoding
+
+Given the struct definition:
+
+```rust
+#[columnar(vec, ser, de)]
+struct EncodedContainer {
+    #[columnar(strategy = "BoolRle")]   is_root: bool,
+    #[columnar(strategy = "Rle")]       kind: u8,
+    #[columnar(strategy = "Rle")]       peer_idx: usize,
+    #[columnar(strategy = "DeltaRle")]  key_idx_or_counter: i32,
+}
+```
+
+The wire format for `Vec<EncodedContainer>` is:
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│              ContainerArena Wire Format Example                   │
+├───────────────┬──────────────────────────────────────────────────┤
+│ varint        │ N (number of containers)                         │
+├───────────────┼──────────────────────────────────────────────────┤
+│ varint        │ is_root column byte length                       │
+│ bytes         │ is_root data (BoolRle encoded)                   │
+├───────────────┼──────────────────────────────────────────────────┤
+│ varint        │ kind column byte length                          │
+│ bytes         │ kind data (Rle encoded u8 values)                │
+├───────────────┼──────────────────────────────────────────────────┤
+│ varint        │ peer_idx column byte length                      │
+│ bytes         │ peer_idx data (Rle encoded usize as varint)      │
+├───────────────┼──────────────────────────────────────────────────┤
+│ varint        │ key_idx_or_counter column byte length            │
+│ bytes         │ key_idx_or_counter data (DeltaRle encoded i32)   │
+└───────────────┴──────────────────────────────────────────────────┘
+```
+
+**Source**: https://github.com/loro-dev/columnar (serde_columnar crate)
+**Source**: `crates/loro-internal/src/encoding/arena.rs:39-50` (ContainerArena definition)
+
+---
+
 ## Appendix
 
 ### Endianness
