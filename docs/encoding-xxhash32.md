@@ -164,9 +164,9 @@ function verifyLoroDocument(bytes) {
   // Read stored checksum (bytes 16-20, little-endian)
   const storedChecksum = readU32LE(bytes, 16);
 
-  // Calculate checksum of body (bytes 22+)
-  const body = bytes.slice(22);
-  const calculatedChecksum = xxHash32(body, 0x4F524F4C);
+  // Calculate checksum of encode_mode + body (bytes 20+)
+  const payload = bytes.slice(20);
+  const calculatedChecksum = xxHash32(payload, 0x4F524F4C);
 
   if (storedChecksum !== calculatedChecksum) {
     throw new Error("Checksum mismatch");
