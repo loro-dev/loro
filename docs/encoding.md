@@ -321,6 +321,8 @@ For change blocks, the key is 12 bytes:
 └───────────────┴─────────────────────────────────────────────────┘
 ```
 
+**Source**: `crates/loro-common/src/lib.rs:42-47` (ID.to_bytes)
+
 ### VersionVector Encoding
 
 VersionVector is encoded using **postcard** format (a compact binary serialization format):
@@ -374,7 +376,9 @@ The document state is stored as a KV Store where each container's state is a sep
 | Key | Value |
 |-----|-------|
 | `ContainerID.to_bytes()` | ContainerWrapper encoded bytes |
-| `FRONTIERS_KEY` | Frontiers encoding (for shallow snapshots) |
+| `FRONTIERS_KEY` (`b"fr"`) | Frontiers encoding (for shallow snapshots) |
+
+**Source**: `crates/loro-internal/src/state/container_store.rs:48` (FRONTIERS_KEY)
 
 ### ContainerID Encoding
 
@@ -518,6 +522,8 @@ Operations are encoded using `serde_columnar` for columnar storage:
 └───────────────┴──────────────────────────────────────────────────┘
 ```
 
+**Source**: `crates/loro-internal/src/oplog/change_store/block_encode.rs:414-428` (EncodedOp struct)
+
 ### Container Arena Encoding (serde_columnar)
 
 ContainerIDs are encoded in columnar format:
@@ -569,6 +575,8 @@ position and append rest bytes.
 └───────────────┴──────────────────────────────────────────────────┘
 ```
 
+**Source**: `crates/loro-internal/src/encoding/value.rs:860-867` (read_str/write_str pattern)
+
 ### Delete Start IDs Section (serde_columnar)
 
 ```
@@ -582,6 +590,8 @@ position and append rest bytes.
 │ len           │ i32, Rle                                         │
 └───────────────┴──────────────────────────────────────────────────┘
 ```
+
+**Source**: `crates/loro-internal/src/encoding/outdated_encode_reordered.rs:429-433` (EncodedDeleteStartId)
 
 ---
 
@@ -629,6 +639,9 @@ Binary:    LEB128(len) + raw bytes
 DeltaInt:  LEB128 signed encoding (i32)
 ```
 
+**Source**: `crates/loro-internal/src/encoding/value.rs:858-882` (read_i64, read_f64)
+**Source**: `crates/loro-internal/src/encoding/value.rs:1045-1073` (write_i64, write_f64)
+
 #### LoroValue (Nested Value)
 
 LoroValue can contain nested structures:
@@ -655,6 +668,9 @@ LoroValueKind:
   9 = ContainerType (u8)
 ```
 
+**Source**: `crates/loro-internal/src/encoding/value.rs:63-85` (LoroValueKind enum)
+**Source**: `crates/loro-internal/src/encoding/value.rs:620-660` (decode_loro_value)
+
 #### MarkStart (Rich Text)
 
 ```
@@ -667,6 +683,9 @@ LoroValueKind:
 │ variable      │ value (LoroValue with type+content)              │
 └───────────────┴──────────────────────────────────────────────────┘
 ```
+
+**Source**: `crates/loro-internal/src/encoding/value.rs:462-468` (MarkStart struct)
+**Source**: `crates/loro-internal/src/encoding/value.rs:937-950` (read_mark)
 
 #### TreeMove
 
@@ -681,6 +700,9 @@ LoroValueKind:
 └───────────────┴──────────────────────────────────────────────────┘
 ```
 
+**Source**: `crates/loro-internal/src/encoding/value.rs:480-485` (EncodedTreeMove struct)
+**Source**: `crates/loro-internal/src/encoding/value.rs:953-967` (read_tree_move)
+
 #### ListMove
 
 ```
@@ -692,6 +714,9 @@ LoroValueKind:
 │ LEB128        │ lamport                                          │
 └───────────────┴──────────────────────────────────────────────────┘
 ```
+
+**Source**: `crates/loro-internal/src/encoding/value.rs:181-185` (ListMove variant)
+**Source**: `crates/loro-internal/src/encoding/value.rs:367-375` (read ListMove)
 
 #### ListSet
 
@@ -705,7 +730,8 @@ LoroValueKind:
 └───────────────┴──────────────────────────────────────────────────┘
 ```
 
-**Source**: `crates/loro-internal/src/encoding/value.rs:343-458, 858-990`
+**Source**: `crates/loro-internal/src/encoding/value.rs:186-190` (ListSet variant)
+**Source**: `crates/loro-internal/src/encoding/value.rs:377-385` (read ListSet)
 
 ---
 
@@ -744,6 +770,9 @@ which uses two's complement representation with sign extension:
 Note: Postcard serialization (used for VersionVector, Frontiers) uses zigzag
 encoding internally, which is different from signed LEB128.
 
+**Source**: `crates/loro-internal/src/encoding/value.rs:858-859` (leb128::read::signed)
+**Source**: `crates/loro-internal/src/encoding/value.rs:1046-1047` (leb128::write::signed)
+
 ### Run-Length Encoding (RLE)
 
 #### BoolRle
@@ -762,6 +791,8 @@ Encodes sequences of booleans as runs:
 └───────────────┴──────────────────────────────────────────────────┘
 ```
 
+**Source**: `crates/loro-internal/src/oplog/change_store/block_meta_encode.rs:22,121` (BoolRleEncoder/Decoder usage)
+
 #### AnyRle<T>
 
 Generic RLE for any type with equality:
@@ -775,6 +806,8 @@ Generic RLE for any type with equality:
 │   LEB128      │   Run length                                     │
 └───────────────┴──────────────────────────────────────────────────┘
 ```
+
+**Source**: `crates/loro-internal/src/oplog/change_store/block_meta_encode.rs:20,23,25` (AnyRleEncoder usage)
 
 ### Delta Encoding
 
@@ -792,6 +825,8 @@ Stores differences between consecutive values with RLE:
 │   LEB128      │   Run length                                     │
 └───────────────┴──────────────────────────────────────────────────┘
 ```
+
+**Source**: Uses `serde_columnar::DeltaRle` strategy annotation
 
 #### DeltaOfDelta
 
@@ -817,7 +852,8 @@ Decoding:
 
 Useful for monotonically increasing sequences like timestamps.
 
-**Source**: `crates/loro-internal/src/oplog/change_store/block_meta_encode.rs:1-184`
+**Source**: `crates/loro-internal/src/oplog/change_store/block_meta_encode.rs:18-19,26` (DeltaOfDeltaEncoder)
+**Source**: `crates/loro-internal/src/oplog/change_store/block_meta_encode.rs:129,157` (DeltaOfDeltaDecoder)
 
 ### Columnar Encoding (serde_columnar)
 
@@ -847,6 +883,9 @@ Block-level compression for SSTable blocks:
 - Falls back to uncompressed if compression increases size
 - Checksum is always uncompressed
 
+**Source**: `crates/kv-store/src/block.rs:89-112` (compress_block)
+**Source**: `crates/kv-store/src/block.rs:193-212` (decompress_block)
+
 ---
 
 ## Appendix
@@ -858,6 +897,10 @@ Block-level compression for SSTable blocks:
 - Exception: F64 values use **big-endian** (IEEE 754)
 - Exception: ID.to_bytes() uses **big-endian** for both peer and counter
 
+**Source**: `crates/loro-common/src/lib.rs:42-47` (ID.to_bytes - big-endian)
+**Source**: `crates/loro-common/src/lib.rs:212-213` (ContainerID.encode - little-endian)
+**Source**: `crates/loro-internal/src/encoding/value.rs:874-882` (F64 - big-endian)
+
 ### Checksums
 
 | Location | Algorithm | Seed |
@@ -865,6 +908,10 @@ Block-level compression for SSTable blocks:
 | Document header | xxHash32 | 0x4F524F4C |
 | SSTable Block Meta | xxHash32 | 0x4F524F4C |
 | SSTable Block | xxHash32 | 0x4F524F4C |
+
+**Source**: `crates/loro-internal/src/encoding.rs:275` (XXH_SEED)
+**Source**: `crates/kv-store/src/sstable.rs:13` (XXH_SEED)
+**Source**: `crates/kv-store/src/sstable.rs:87,100` (checksum calculation)
 
 ### Constants
 
@@ -875,6 +922,10 @@ const XXH_SEED: u32 = 0x4F524F4C;                // "LORO" as u32 LE
 const MAX_BLOCK_SIZE: usize = 4096;              // ~4KB per change block
 const DEFAULT_SSTABLE_BLOCK_SIZE: usize = 4096; // SSTable block size
 ```
+
+**Source**: `crates/loro-internal/src/encoding.rs:269-275` (MAGIC_BYTES, XXH_SEED)
+**Source**: `crates/kv-store/src/sstable.rs:13-14` (XXH_SEED, MAGIC_BYTES)
+**Source**: `crates/loro-internal/src/oplog/change_store.rs:40` (MAX_BLOCK_SIZE)
 
 ### File Locations Reference
 
