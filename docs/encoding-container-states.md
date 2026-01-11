@@ -183,8 +183,6 @@ List container stores ordered elements with element IDs.
 ┌────────────────────────────────────────────────────────────────────────────┐
 │                    EncodedListIds (serde_columnar)                          │
 ├─────────────────┬──────────────────────────────────────────────────────────┤
-│ varint          │ Number of elements (N)                                   │
-├─────────────────┼──────────────────────────────────────────────────────────┤
 │ Column 1        │ peer_idx (DeltaRle encoded usize)                        │
 ├─────────────────┼──────────────────────────────────────────────────────────┤
 │ Column 2        │ counter (DeltaRle encoded i32)                           │
@@ -408,8 +406,6 @@ Fractional indexes are prefix-compressed:
 ┌────────────────────────────────────────────────────────────────────────────┐
 │                    PositionArena (serde_columnar)                           │
 ├─────────────────┬──────────────────────────────────────────────────────────┤
-│ varint          │ Number of positions (N)                                  │
-├─────────────────┼──────────────────────────────────────────────────────────┤
 │ Column 1        │ common_prefix_length (Rle encoded usize)                 │
 │                 │   Bytes shared with previous position                    │
 ├─────────────────┼──────────────────────────────────────────────────────────┤

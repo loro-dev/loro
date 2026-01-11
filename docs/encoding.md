@@ -678,7 +678,7 @@ Loro uses a tagged value encoding system where each value is prefixed with a typ
 | 4 | F64 | 64-bit floating point (big-endian) |
 | 5 | Str | String value (LEB128 len + UTF-8 bytes) |
 | 6 | Binary | Binary data (LEB128 len + bytes) |
-| 7 | ContainerType | Container type marker (LEB128 index) |
+| 7 | ContainerType | Container index (LEB128 unsigned) |
 | 8 | DeleteOnce | Single deletion marker |
 | 9 | DeleteSeq | Sequence deletion |
 | 10 | DeltaInt | Delta-encoded i32 (LEB128 signed) |
@@ -687,7 +687,7 @@ Loro uses a tagged value encoding system where each value is prefixed with a typ
 | 13 | TreeMove | Tree node move operation |
 | 14 | ListMove | List move operation |
 | 15 | ListSet | List set operation |
-| 16 | RawTreeMove | Raw tree move (internal) |
+| 16 | RawTreeMove | Raw tree move (used for Tree ops in Change Blocks) |
 | 0x80+ | Future | Unknown/future value types |
 
 **Source**: `crates/loro-internal/src/encoding/value.rs:39-161`
@@ -787,6 +787,28 @@ Common patterns:
 
 **Source**: `crates/loro-internal/src/encoding/value.rs:480-485` (EncodedTreeMove struct)
 **Source**: `crates/loro-internal/src/encoding/value.rs:953-967` (read_tree_move)
+
+#### RawTreeMove
+
+This encoding is used by Change Blocks for Tree operations (Create/Move/Delete).
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                    RawTreeMove Encoding                           │
+├───────────────┬──────────────────────────────────────────────────┤
+│ LEB128        │ subject_peer_idx (index into peers)              │
+│ LEB128        │ subject_cnt (TreeID counter)                     │
+│ LEB128        │ position_idx (index into positions)              │
+│ 1             │ is_parent_null (u8 as bool)                      │
+│ LEB128        │ parent_peer_idx (only if !is_parent_null)        │
+│ LEB128        │ parent_cnt (only if !is_parent_null)             │
+└───────────────┴──────────────────────────────────────────────────┘
+```
+
+**Source**: `crates/loro-internal/src/encoding/value.rs:470-477` (RawTreeMove struct)
+**Source**: `crates/loro-internal/src/encoding/value.rs:969-987` (read_raw_tree_move)
+**Source**: `crates/loro-internal/src/encoding/value.rs:1122-1136` (write_raw_tree_move)
+**Source**: `crates/loro-internal/src/oplog/change_store/block_encode.rs:316-370` (TreeOp → RawTreeMove)
 
 #### ListMove
 
@@ -1638,7 +1660,7 @@ To implement a complete Loro decoder/encoder, you need to handle:
 - [x] ContainerID encoding/decoding
 - [x] ContainerWrapper encoding/decoding
 - [x] Change Block full parsing
-- [x] ContainerArena encoding/decoding (serde_columnar)
+- [x] ContainerArena encoding/decoding (postcard Vec)
 - [x] PositionArena encoding/decoding (prefix compression)
 - [x] Value encoding/decoding for all types
 - [x] serde_columnar compatible decoder
