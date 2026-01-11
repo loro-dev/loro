@@ -404,7 +404,7 @@ The document state is stored as a KV Store where each container's state is a sep
 │ 4             │ Counter (i32 little-endian)                     │
 └───────────────┴─────────────────────────────────────────────────┘
 
-Container Types:
+Container Types (ContainerID.to_bytes):
   0 = Map
   1 = List
   2 = Text
@@ -413,7 +413,21 @@ Container Types:
   5 = Counter (if feature enabled)
 ```
 
-**Source**: `crates/loro-common/src/lib.rs:193-254, 336-347`
+> **IMPORTANT - Postcard Serde Uses Different Mapping**: When ContainerType is serialized via postcard
+> (e.g., in `Option<ContainerID>` for ContainerWrapper parent), a **historical mapping** is used:
+>
+> | Type | ContainerID.to_bytes | Postcard Serde |
+> |------|---------------------|----------------|
+> | Text | 2 | 0 |
+> | Map | 0 | 1 |
+> | List | 1 | 2 |
+> | MovableList | 4 | 3 |
+> | Tree | 3 | 4 |
+> | Counter | 5 | 5 |
+>
+> This affects decoding of `ContainerWrapper.parent` which uses postcard `Option<ContainerID>`.
+
+**Source**: `crates/loro-common/src/lib.rs:193-254, 336-347, 378-401`
 
 ### ContainerWrapper Encoding
 
@@ -423,11 +437,12 @@ Each container's state is wrapped in a ContainerWrapper:
 ┌─────────────────────────────────────────────────────────────────┐
 │                   ContainerWrapper Encoding                      │
 ├───────────────┬─────────────────────────────────────────────────┤
-│ 1             │ ContainerType (u8)                              │
+│ 1             │ ContainerType (u8, uses ContainerID.to_bytes)   │
 ├───────────────┼─────────────────────────────────────────────────┤
 │ LEB128        │ Depth in container hierarchy                    │
 ├───────────────┼─────────────────────────────────────────────────┤
-│ variable      │ Parent ContainerID (postcard Option<ContainerID>│
+│ variable      │ Parent ContainerID (postcard Option<ContainerID>)│
+│               │ NOTE: Uses historical postcard mapping above!   │
 ├───────────────┼─────────────────────────────────────────────────┤
 │ variable      │ Container State Snapshot (type-specific)        │
 └───────────────┴─────────────────────────────────────────────────┘
@@ -527,6 +542,39 @@ Operations are encoded using `serde_columnar` for columnar storage:
 └───────────────┴──────────────────────────────────────────────────┘
 ```
 
+#### Prop Field Semantics
+
+The `prop` field meaning varies by container type and operation:
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                    Prop Field by Operation                        │
+├─────────────────┬────────────────────────────────────────────────┤
+│ Container       │ Operation         │ prop value                 │
+├─────────────────┼───────────────────┼────────────────────────────┤
+│ List            │ Insert            │ position (index)           │
+│ List            │ Delete            │ position (start of span)   │
+├─────────────────┼───────────────────┼────────────────────────────┤
+│ Text            │ Insert            │ position (Unicode offset)  │
+│ Text            │ Delete            │ position (start of span)   │
+│ Text            │ StyleStart        │ start position             │
+│ Text            │ StyleEnd          │ 0                          │
+├─────────────────┼───────────────────┼────────────────────────────┤
+│ MovableList     │ Insert            │ position (index)           │
+│ MovableList     │ Delete            │ position (start of span)   │
+│ MovableList     │ Move              │ target position (to)       │
+│ MovableList     │ Set               │ 0                          │
+├─────────────────┼───────────────────┼────────────────────────────┤
+│ Map             │ Set               │ key index (into keys arena)│
+├─────────────────┼───────────────────┼────────────────────────────┤
+│ Tree            │ Create/Move/Delete│ 0 (always)                 │
+└─────────────────┴───────────────────┴────────────────────────────┘
+```
+
+**Note**: For Map operations, the actual key string is stored in the `keys` section
+of the change block, and `prop` is the index into that arena.
+
+**Source**: `crates/loro-internal/src/encoding/outdated_encode_reordered.rs:104-124` (get_op_prop)
 **Source**: `crates/loro-internal/src/oplog/change_store/block_encode.rs:414-428` (EncodedOp struct)
 
 ### Container Arena Encoding (serde_columnar)

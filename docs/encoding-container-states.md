@@ -10,18 +10,36 @@ Each container state is wrapped in a `ContainerWrapper` before being stored in t
 ┌────────────────────────────────────────────────────────────────────────────┐
 │                         ContainerWrapper Format                             │
 ├─────────────────┬──────────────────────────────────────────────────────────┤
-│ 1 byte          │ ContainerType (u8)                                       │
+│ 1 byte          │ ContainerType (u8, uses ContainerID.to_bytes mapping)    │
 │                 │   0 = Map, 1 = List, 2 = Text, 3 = Tree, 4 = MovableList │
 ├─────────────────┼──────────────────────────────────────────────────────────┤
 │ LEB128          │ Depth in container hierarchy                             │
 ├─────────────────┼──────────────────────────────────────────────────────────┤
 │ postcard        │ Parent ContainerID (Option<ContainerID>)                 │
+│                 │ WARNING: Uses historical postcard mapping (see below)    │
 ├─────────────────┼──────────────────────────────────────────────────────────┤
 │ variable        │ Container State Snapshot (type-specific, see below)      │
 └─────────────────┴──────────────────────────────────────────────────────────┘
 ```
 
+> **CRITICAL - Two Different ContainerType Mappings**:
+>
+> The first byte uses `ContainerID.to_bytes()` mapping, but the `Parent ContainerID`
+> field uses postcard serialization which has a **different historical mapping**:
+>
+> | Type | First byte (to_bytes) | Postcard Serde |
+> |------|----------------------|----------------|
+> | Text | 2 | 0 |
+> | Map | 0 | 1 |
+> | List | 1 | 2 |
+> | MovableList | 4 | 3 |
+> | Tree | 3 | 4 |
+> | Counter | 5 | 5 |
+>
+> When decoding `Option<ContainerID>` via postcard, use the postcard serde column.
+
 **Source**: `crates/loro-internal/src/state/container_store/container_wrapper.rs:100-120`
+**Source**: `crates/loro-common/src/lib.rs:378-401` (historical mapping)
 
 ---
 
