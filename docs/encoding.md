@@ -222,7 +222,7 @@ Both `oplog_bytes` and `state_bytes` use a KV Store format based on SSTable (Sor
 │ variable      │   last_key (bytes) - only if !is_large          │
 ├───────────────┼─────────────────────────────────────────────────┤
 │ 4             │ Checksum (xxHash32, little-endian)              │
-│               │ Covers all block meta entries                   │
+│               │ Covers all block meta entries (excluding count) │
 └───────────────┴─────────────────────────────────────────────────┘
 ```
 
