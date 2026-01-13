@@ -134,19 +134,19 @@ xxHash32(new Uint8Array([]), 0) === 0x02CC5D05  // 46947589
 const LORO_SEED = 0x4F524F4C;
 
 // Empty with LORO seed
-xxHash32(new Uint8Array([]), LORO_SEED) === 0xDC3BF95A  // 3694230874
+xxHash32(new Uint8Array([]), LORO_SEED) === 0xDC3BF95A  // 3694917978
 
 // Single byte
-xxHash32(new Uint8Array([0x00]), LORO_SEED) === 0xDAD9F666  // 3672012390
+xxHash32(new Uint8Array([0x00]), LORO_SEED) === 0xDAD9F666  // 3671717478
 
 // "loro" (4 bytes)
-xxHash32(new Uint8Array([0x6C, 0x6F, 0x72, 0x6F]), LORO_SEED) === 0x74D321EA  // 1959690730
+xxHash32(new Uint8Array([0x6C, 0x6F, 0x72, 0x6F]), LORO_SEED) === 0x74D321EA  // 1959993834
 
 // 16 bytes (triggers block processing)
 xxHash32(new Uint8Array([
   0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
   0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F
-]), LORO_SEED) === 0x2EDAB25F  // 787026527
+]), LORO_SEED) === 0x2EDAB25F  // 786084447
 ```
 
 ## Usage in Loro Checksum Verification
