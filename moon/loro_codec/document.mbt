@@ -106,3 +106,75 @@ pub fn parse_fast_updates_body(body: BytesView) -> Array[BytesView] raise Decode
   }
   blocks
 }
+
+pub fn encode_fast_snapshot_body(oplog: Bytes, state: Bytes, shallow_root_state: Bytes) -> Bytes {
+  let w = BytesWriter::new()
+  w.write_u32_le(oplog.length().reinterpret_as_uint())
+  w.write_bytes(oplog)
+  w.write_u32_le(state.length().reinterpret_as_uint())
+  w.write_bytes(state)
+  w.write_u32_le(shallow_root_state.length().reinterpret_as_uint())
+  w.write_bytes(shallow_root_state)
+  w.to_bytes()
+}
+
+pub fn encode_fast_updates_body(blocks: Array[Bytes]) -> Bytes {
+  let w = BytesWriter::new()
+  for b in blocks {
+    w.write_uleb128_u64(b.length().to_uint64())
+    w.write_bytes(b)
+  }
+  w.to_bytes()
+}
+
+pub fn encode_document(mode: UInt, body: Bytes) -> Bytes raise DecodeError {
+  // checksum covers bytes[20..] = mode(u16 BE) + body
+  let checksum_input = BytesWriter::new()
+  checksum_input.write_u16_be(mode)
+  checksum_input.write_bytes(body)
+  let checksum = xxhash32(checksum_input.to_bytes()[:], LORO_XXH32_SEED)
+
+  let w = BytesWriter::new()
+  w.write_bytes(MAGIC_BYTES)
+  for _i in 0..<12 {
+    w.write_u8(0x00)
+  }
+  w.write_u32_le(checksum)
+  w.write_u16_be(mode)
+  w.write_bytes(body)
+  w.to_bytes()
+}
+
+pub fn transcode_document(bytes: Bytes, validate: Bool) -> Bytes raise DecodeError {
+  let doc = parse_document(bytes, true)
+  match doc.mode() {
+    3 => {
+      let parsed = parse_fast_snapshot_body(doc.body_view())
+      // v1: keep bytes as-is, but reconstruct a canonical blob with recomputed checksum.
+      let body = encode_fast_snapshot_body(
+        parsed.oplog_bytes_view().to_bytes(),
+        parsed.state_bytes_view().to_bytes(),
+        parsed.shallow_root_state_bytes_view().to_bytes(),
+      )
+      if validate {
+        // TODO: validate SSTable/state decoding in later milestones.
+      }
+      encode_document(3, body)
+    }
+    4 => {
+      let blocks = parse_fast_updates_body(doc.body_view())
+      if validate {
+        for b in blocks {
+          let _ = decode_change_block(b)
+        }
+      }
+      let out_blocks: Array[Bytes] = []
+      for b in blocks {
+        out_blocks.push(b.to_bytes())
+      }
+      let body = encode_fast_updates_body(out_blocks)
+      encode_document(4, body)
+    }
+    _ => raise DecodeError("unsupported document mode")
+  }
+}
