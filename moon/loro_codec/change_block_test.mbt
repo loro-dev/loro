@@ -115,21 +115,15 @@ test "change_block: decode header/meta/arenas basics" {
   assert_eq(keys[1], "k")
 
   // --- container arena ---
-  let arena_w = BytesWriter::new()
-  arena_w.write_varint_u64(2UL) // vec len
-  // root map(name=keys[0])
-  arena_w.write_varint_u64(4UL) // field count
-  arena_w.write_u8(b'\x01')
-  arena_w.write_u8(container_type_to_u8(ContainerType::map()))
-  arena_w.write_varint_u64(0UL)
-  arena_w.write_varint_i64(0L)
-  // normal list(peer=peers[1], counter=42)
-  arena_w.write_varint_u64(4UL) // field count
-  arena_w.write_u8(b'\x00')
-  arena_w.write_u8(container_type_to_u8(ContainerType::list()))
-  arena_w.write_varint_u64(1UL)
-  arena_w.write_varint_i64(42L)
-  let cids = try! decode_container_arena(arena_w.to_bytes()[:], peers, keys)
+  let cid_col0 = encode_bool_rle([true, false]) // is_root
+  let cid_col1 = encode_rle_u8([
+    container_type_to_u8(ContainerType::map()).to_uint(),
+    container_type_to_u8(ContainerType::list()).to_uint(),
+  ]) // kind
+  let cid_col2 = encode_any_rle_usize([0UL, 1UL]) // peer_idx
+  let cid_col3 = encode_delta_rle_i32([0, 42]) // key_idx_or_counter
+  let cids_bytes = encode_columnar_vec([cid_col0, cid_col1, cid_col2, cid_col3])
+  let cids = try! decode_container_arena(cids_bytes[:], peers, keys)
   assert_eq(cids.length(), 2)
   assert_eq(cids[0], ContainerID::root("root", ContainerType::map()))
   assert_eq(cids[1], ContainerID::normal(peers[1], 42, ContainerType::list()))
@@ -166,14 +160,11 @@ test "change_block: decode full block with ops/values" {
   let keys_bytes = keys_w.to_bytes()
 
   // --- container arena (1 root map, name=keys[0]) ---
-  let arena_w = BytesWriter::new()
-  arena_w.write_varint_u64(1UL)
-  arena_w.write_varint_u64(4UL) // field count
-  arena_w.write_u8(b'\x01') // is_root
-  arena_w.write_u8(container_type_to_u8(ContainerType::map()))
-  arena_w.write_varint_u64(0UL)
-  arena_w.write_varint_i64(0L)
-  let cids_bytes = arena_w.to_bytes()
+  let cid_col0 = encode_bool_rle([true]) // is_root
+  let cid_col1 = encode_rle_u8([container_type_to_u8(ContainerType::map()).to_uint()]) // kind
+  let cid_col2 = encode_any_rle_usize([0UL]) // peer_idx
+  let cid_col3 = encode_delta_rle_i32([0]) // key_idx_or_counter
+  let cids_bytes = encode_columnar_vec([cid_col0, cid_col1, cid_col2, cid_col3])
 
   // --- ops (1 row) ---
   let ops_col0 = encode_delta_rle_u32([0]) // container_index
