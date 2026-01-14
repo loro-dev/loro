@@ -103,6 +103,7 @@ fn make_minimal_change_block_bytes() -> Bytes {
 
   let arena_w = BytesWriter::new()
   arena_w.write_varint_u64(1UL)
+  arena_w.write_varint_u64(4UL) // field count
   arena_w.write_u8(b'\x01') // is_root
   arena_w.write_u8(container_type_to_u8(ContainerType::map()))
   arena_w.write_varint_u64(0UL)
@@ -113,7 +114,7 @@ fn make_minimal_change_block_bytes() -> Bytes {
   let ops_col1 = encode_delta_rle_i32([1]) // prop = key idx
   let ops_col2 = encode_rle_u8([11]) // value_type = LoroValue
   let ops_col3 = encode_rle_u32([1]) // len = 1
-  let ops_bytes = encode_columnar_vec([ops_col0, ops_col1, ops_col2, ops_col3])
+  let ops_bytes = encode_columnar_vec_wrapped([ops_col0, ops_col1, ops_col2, ops_col3])
 
   let values_bytes = b"\x03\x0A"
 

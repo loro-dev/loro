@@ -1,4 +1,4 @@
-pub fn decode_columnar_vec(bytes: BytesView) -> Array[BytesView] raise DecodeError {
+pub fn take_columnar_vec(bytes: BytesView) -> (Array[BytesView], BytesView) raise DecodeError {
   let r = BytesReader::from_view(bytes)
   let n_cols_u64 = r.read_varint_u64()
   if n_cols_u64 > 0x7FFF_FFFFUL {
@@ -17,10 +17,38 @@ pub fn decode_columnar_vec(bytes: BytesView) -> Array[BytesView] raise DecodeErr
     }
     cols.push(r.read_exact(len))
   }
-  if r.remaining() != 0 {
+  (cols, r.remaining_view())
+}
+
+pub fn decode_columnar_vec(bytes: BytesView) -> Array[BytesView] raise DecodeError {
+  let (cols, rest) = take_columnar_vec(bytes)
+  if rest.length() != 0 {
     raise DecodeError("serde_columnar: trailing bytes")
   }
   cols
+}
+
+// Common pattern: serde_columnar::to_vec(&Struct { field: Vec<Row> }) where
+// the struct has exactly one field, and that field is annotated with `#[columnar(class="vec")]`.
+// In this case the serialized bytes are: varint(1) + (the columnar vec bytes).
+pub fn decode_columnar_vec_maybe_wrapped(bytes: BytesView) -> Array[BytesView] raise DecodeError {
+  if bytes.length() == 0 {
+    return []
+  }
+  let r = BytesReader::from_view(bytes)
+  let first = r.read_varint_u64()
+  if first == 1UL {
+    return decode_columnar_vec(r.remaining_view())
+  }
+  decode_columnar_vec(bytes)
+}
+
+pub fn encode_columnar_vec_wrapped(cols: Array[Bytes]) -> Bytes {
+  let inner = encode_columnar_vec(cols)
+  let w = BytesWriter::new()
+  w.write_varint_u64(1UL)
+  w.write_bytes(inner)
+  w.to_bytes()
 }
 
 pub fn encode_columnar_vec(cols: Array[Bytes]) -> Bytes {

@@ -118,11 +118,13 @@ test "change_block: decode header/meta/arenas basics" {
   let arena_w = BytesWriter::new()
   arena_w.write_varint_u64(2UL) // vec len
   // root map(name=keys[0])
+  arena_w.write_varint_u64(4UL) // field count
   arena_w.write_u8(b'\x01')
   arena_w.write_u8(container_type_to_u8(ContainerType::map()))
   arena_w.write_varint_u64(0UL)
   arena_w.write_varint_i64(0L)
   // normal list(peer=peers[1], counter=42)
+  arena_w.write_varint_u64(4UL) // field count
   arena_w.write_u8(b'\x00')
   arena_w.write_u8(container_type_to_u8(ContainerType::list()))
   arena_w.write_varint_u64(1UL)
@@ -166,6 +168,7 @@ test "change_block: decode full block with ops/values" {
   // --- container arena (1 root map, name=keys[0]) ---
   let arena_w = BytesWriter::new()
   arena_w.write_varint_u64(1UL)
+  arena_w.write_varint_u64(4UL) // field count
   arena_w.write_u8(b'\x01') // is_root
   arena_w.write_u8(container_type_to_u8(ContainerType::map()))
   arena_w.write_varint_u64(0UL)
@@ -177,7 +180,7 @@ test "change_block: decode full block with ops/values" {
   let ops_col1 = encode_delta_rle_i32([1]) // prop = key idx
   let ops_col2 = encode_rle_u8([11]) // value_type = LoroValue
   let ops_col3 = encode_rle_u32([1]) // len = 1
-  let ops_bytes = encode_columnar_vec([ops_col0, ops_col1, ops_col2, ops_col3])
+  let ops_bytes = encode_columnar_vec_wrapped([ops_col0, ops_col1, ops_col2, ops_col3])
 
   // --- values: Value::LoroValue(I64(10)) content only (no tag byte) ---
   // LoroValue::I64 => [0x03, sleb128(10)=0x0A]

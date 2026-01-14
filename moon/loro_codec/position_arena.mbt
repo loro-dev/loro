@@ -14,7 +14,7 @@ pub fn decode_position_arena_v2(bytes: BytesView) -> Array[Bytes] raise DecodeEr
   if bytes.length() == 0 {
     return []
   }
-  let cols = decode_columnar_vec(bytes)
+  let cols = decode_columnar_vec_maybe_wrapped(bytes)
   if cols.length() != 2 {
     raise DecodeError("position_arena: invalid column count")
   }
@@ -24,6 +24,14 @@ pub fn decode_position_arena_v2(bytes: BytesView) -> Array[Bytes] raise DecodeEr
   let rest_col = cols[1]
 
   let r = BytesReader::from_view(rest_col)
+  let rest_n_u64 = r.read_varint_u64()
+  if rest_n_u64 > 0x7FFF_FFFFUL {
+    raise DecodeError("position_arena: too many rests")
+  }
+  let rest_n = rest_n_u64.to_int()
+  if rest_n != n {
+    raise DecodeError("position_arena: rest count mismatch")
+  }
   let rests: Array[Bytes] = []
   for _i in 0..<n {
     let len_u64 = r.read_varint_u64()
@@ -69,6 +77,7 @@ pub fn encode_position_arena_v2(positions: Array[Bytes]) -> Bytes {
   }
   let common_prefix: Array[UInt64] = []
   let rest_col_w = BytesWriter::new()
+  rest_col_w.write_varint_u64(positions.length().to_uint64())
   let mut last: Bytes = b""
   for pos in positions {
     let common = longest_common_prefix_length(last, pos)
@@ -81,6 +90,5 @@ pub fn encode_position_arena_v2(positions: Array[Bytes]) -> Bytes {
 
   let col0 = encode_any_rle_usize(common_prefix)
   let col1 = rest_col_w.to_bytes()
-  encode_columnar_vec([col0, col1])
+  encode_columnar_vec_wrapped([col0, col1])
 }
-
