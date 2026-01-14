@@ -439,18 +439,20 @@ fn decode_delta_of_delta_value(br: BitReader) -> Int64 raise DecodeError {
 pub fn decode_delta_of_delta_i64(bytes: BytesView) -> Array[Int64] raise DecodeError {
   let r = BytesReader::from_view(bytes)
   let first_opt = read_postcard_option_i64(r)
+  if r.remaining() < 1 {
+    raise DecodeError("delta_of_delta: invalid bytes")
+  }
+  let last_used_bits = r.read_u8().to_uint()
+  let bitstream = r.read_exact(r.remaining())
   match first_opt {
     None => {
-      if r.remaining() != 0 {
-        raise DecodeError("delta_of_delta: trailing bytes")
+      if last_used_bits != 0 || bitstream.length() != 0 {
+        raise DecodeError("delta_of_delta: invalid empty encoding")
       }
-      return []
+      []
     }
     Some(first) => {
-      let last_used_bits = r.read_u8().to_uint()
-      let bitstream = r.read_exact(r.remaining())
       let br = BitReader::new(bitstream, last_used_bits)
-
       let out: Array[Int64] = [first]
       let mut prev = first
       let mut delta: Int64 = 0
@@ -526,6 +528,7 @@ pub fn encode_delta_of_delta_i64(values: Array[Int64]) -> Bytes {
   let w = BytesWriter::new()
   if values.length() == 0 {
     write_postcard_option_i64(w, None)
+    w.write_u8(b'\x00')
     return w.to_bytes()
   }
 

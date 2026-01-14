@@ -59,7 +59,7 @@ test "serde_columnar: deltarle encode/decode" {
 
 test "serde_columnar: delta_of_delta encode/decode empty" {
   let enc = encode_delta_of_delta_i64([])
-  assert_eq(enc, b"\x00")
+  assert_eq(enc, b"\x00\x00")
   let dec = try! decode_delta_of_delta_i64(enc[:])
   assert_eq(dec, [])
 }
