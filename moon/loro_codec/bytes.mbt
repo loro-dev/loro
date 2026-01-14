@@ -15,6 +15,10 @@ pub fn BytesReader::remaining(self: BytesReader) -> Int {
   self.buf.length() - self.pos
 }
 
+pub fn BytesReader::remaining_view(self: BytesReader) -> BytesView {
+  self.buf[self.pos:self.buf.length()]
+}
+
 fn BytesReader::require(self: BytesReader, n: Int) -> Unit raise DecodeError {
   if n < 0 {
     raise DecodeError("invalid read length")
