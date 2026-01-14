@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use loro::{ExportMode, LoroDoc, ToJson};
+use loro::{ExportMode, Frontiers, LoroDoc, Timestamp, ToJson, VersionVector};
 
 fn bin_available(bin: &str, args: &[&str]) -> bool {
     Command::new(bin)
@@ -87,6 +87,10 @@ fn moon_transcode_e2e() -> anyhow::Result<()> {
     // Build a doc that exercises multiple op kinds.
     let doc = LoroDoc::new();
 
+    // Commit #1 (with msg/timestamp) to create an intermediate frontiers for SnapshotAt/StateOnly.
+    doc.set_next_commit_message("commit-1");
+    doc.set_next_commit_timestamp(1 as Timestamp);
+
     doc.get_map("map").insert("x", 1).unwrap();
     doc.get_map("map").insert("y", true).unwrap();
 
@@ -117,6 +121,15 @@ fn moon_transcode_e2e() -> anyhow::Result<()> {
     tree.delete(n2).unwrap();
 
     doc.commit();
+    let frontiers_v1: Frontiers = doc.state_frontiers();
+    let expected_v1 = doc.get_deep_value().to_json_value();
+
+    // Commit #2 to create a newer version.
+    doc.set_next_commit_message("commit-2 😀");
+    doc.set_next_commit_timestamp(2 as Timestamp);
+    doc.get_map("map").insert("z", 123).unwrap();
+    doc.get_text("text").insert(0, "Z").unwrap();
+    doc.commit();
     let expected = doc.get_deep_value().to_json_value();
 
     // Updates e2e (FastUpdates): Rust export -> Moon transcode -> Rust import.
@@ -132,6 +145,72 @@ fn moon_transcode_e2e() -> anyhow::Result<()> {
     let doc3 = LoroDoc::new();
     doc3.import(&out_snapshot).unwrap();
     assert_eq!(doc3.get_deep_value().to_json_value(), expected);
+
+    // SnapshotAt e2e (FastSnapshot): decode snapshot at an earlier version.
+    let snapshot_at = doc
+        .export(ExportMode::SnapshotAt {
+            version: std::borrow::Cow::Borrowed(&frontiers_v1),
+        })
+        .unwrap();
+    let out_snapshot_at = run_transcode(&node_bin, &cli_js, &snapshot_at)?;
+    let doc_at = LoroDoc::new();
+    doc_at.import(&out_snapshot_at).unwrap();
+    assert_eq!(doc_at.get_deep_value().to_json_value(), expected_v1);
+
+    // StateOnly e2e (FastSnapshot): state at an earlier version with minimal history.
+    let state_only = doc
+        .export(ExportMode::StateOnly(Some(std::borrow::Cow::Borrowed(
+            &frontiers_v1,
+        ))))
+        .unwrap();
+    let out_state_only = run_transcode(&node_bin, &cli_js, &state_only)?;
+    let doc_state_only = LoroDoc::new();
+    doc_state_only.import(&out_state_only).unwrap();
+    assert_eq!(doc_state_only.get_deep_value().to_json_value(), expected_v1);
+
+    // ShallowSnapshot e2e (FastSnapshot): full current state + partial history since v1.
+    let shallow = doc
+        .export(ExportMode::ShallowSnapshot(std::borrow::Cow::Borrowed(
+            &frontiers_v1,
+        )))
+        .unwrap();
+    let out_shallow = run_transcode(&node_bin, &cli_js, &shallow)?;
+    let doc_shallow = LoroDoc::new();
+    doc_shallow.import(&out_shallow).unwrap();
+    assert_eq!(doc_shallow.get_deep_value().to_json_value(), expected);
+
+    // Updates(from vv) e2e: snapshot_at(v1) + updates(vv_v1) => latest.
+    let vv_v1: VersionVector = doc.frontiers_to_vv(&frontiers_v1).unwrap();
+    let updates_since_v1 = doc.export(ExportMode::Updates {
+        from: std::borrow::Cow::Borrowed(&vv_v1),
+    })?;
+    let out_updates_since_v1 = run_transcode(&node_bin, &cli_js, &updates_since_v1)?;
+    let doc_from_v1 = LoroDoc::new();
+    doc_from_v1.import(&out_snapshot_at).unwrap();
+    doc_from_v1.import(&out_updates_since_v1).unwrap();
+    assert_eq!(doc_from_v1.get_deep_value().to_json_value(), expected);
+
+    // Multi-peer e2e: updates should include >1 peer.
+    let doc_a = LoroDoc::new();
+    doc_a.set_peer_id(1)?;
+    doc_a.set_next_commit_message("A-1");
+    doc_a.get_map("m").insert("a", 1).unwrap();
+    doc_a.commit();
+
+    let doc_b = LoroDoc::new();
+    doc_b.set_peer_id(2)?;
+    doc_b.import(&doc_a.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    doc_b.set_next_commit_message("B-1");
+    doc_b.get_map("m").insert("b", 2).unwrap();
+    doc_b.commit();
+    let expected_b = doc_b.get_deep_value().to_json_value();
+
+    let updates_b = doc_b.export(ExportMode::all_updates()).unwrap();
+    let out_updates_b = run_transcode(&node_bin, &cli_js, &updates_b)?;
+    let doc_c = LoroDoc::new();
+    doc_c.import(&out_updates_b).unwrap();
+    assert_eq!(doc_c.get_deep_value().to_json_value(), expected_b);
 
     Ok(())
 }
