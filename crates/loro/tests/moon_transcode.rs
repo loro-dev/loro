@@ -62,6 +62,27 @@ fn run_transcode(node_bin: &str, cli_js: &Path, input: &[u8]) -> anyhow::Result<
     Ok(out)
 }
 
+fn run_decode_updates(node_bin: &str, cli_js: &Path, input: &[u8]) -> anyhow::Result<String> {
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let tmp = std::env::temp_dir().join(format!(
+        "loro-moon-decode-updates-{}-{ts}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&tmp)?;
+    let in_path = tmp.join("in.blob");
+    std::fs::write(&in_path, input)?;
+
+    let out = Command::new(node_bin)
+        .arg(cli_js)
+        .args(["decode-updates", in_path.to_str().unwrap()])
+        .output()?;
+    anyhow::ensure!(out.status.success(), "node decode-updates failed");
+    Ok(String::from_utf8(out.stdout)?)
+}
+
 #[test]
 fn moon_transcode_e2e() -> anyhow::Result<()> {
     let moon_bin = std::env::var("MOON_BIN").unwrap_or_else(|_| "moon".to_string());
@@ -212,5 +233,80 @@ fn moon_transcode_e2e() -> anyhow::Result<()> {
     doc_c.import(&out_updates_b).unwrap();
     assert_eq!(doc_c.get_deep_value().to_json_value(), expected_b);
 
+    Ok(())
+}
+
+#[test]
+fn moon_decode_ops_text_insert() -> anyhow::Result<()> {
+    let moon_bin = std::env::var("MOON_BIN").unwrap_or_else(|_| "moon".to_string());
+    let node_bin = std::env::var("NODE_BIN").unwrap_or_else(|_| "node".to_string());
+
+    if !bin_available(&moon_bin, &["version"]) {
+        eprintln!("skipping decode ops: moon not available (set MOON_BIN)");
+        return Ok(());
+    }
+    if !bin_available(&node_bin, &["--version"]) {
+        eprintln!("skipping decode ops: node not available (set NODE_BIN)");
+        return Ok(());
+    }
+
+    let cli_js = match build_moon_cli_js(&moon_bin) {
+        Some(p) => p,
+        None => {
+            eprintln!("skipping decode ops: failed to build MoonBit CLI");
+            return Ok(());
+        }
+    };
+
+    let peer: u64 = 0x0102_0304_0506_0708;
+    let doc = LoroDoc::new();
+    doc.set_peer_id(peer)?;
+    doc.get_text("t").insert(0, "123").unwrap();
+    doc.commit();
+
+    let updates = doc.export(ExportMode::all_updates()).unwrap();
+    let json = run_decode_updates(&node_bin, &cli_js, &updates)?;
+    let v: serde_json::Value = serde_json::from_str(&json)?;
+
+    let changes = v
+        .get("changes")
+        .and_then(|x| x.as_array())
+        .ok_or_else(|| anyhow::anyhow!("missing changes array"))?;
+
+    let expected_container = "cid:root-t:Text";
+    let expected_peer_suffix = format!("@{peer}");
+
+    let mut found = false;
+    for c in changes {
+        let Some(id) = c.get("id").and_then(|x| x.as_str()) else {
+            continue;
+        };
+        if !id.ends_with(&expected_peer_suffix) {
+            continue;
+        }
+        let Some(ops) = c.get("ops").and_then(|x| x.as_array()) else {
+            continue;
+        };
+        for op in ops {
+            if op.get("container").and_then(|x| x.as_str()) != Some(expected_container) {
+                continue;
+            }
+            let Some(insert) = op
+                .get("content")
+                .and_then(|x| x.get("Text"))
+                .and_then(|x| x.get("Insert"))
+            else {
+                continue;
+            };
+            if insert.get("pos").and_then(|x| x.as_i64()) == Some(0)
+                && insert.get("text").and_then(|x| x.as_str()) == Some("123")
+            {
+                found = true;
+                break;
+            }
+        }
+    }
+
+    anyhow::ensure!(found, "expected Text insert op not found in Moon decode output");
     Ok(())
 }
