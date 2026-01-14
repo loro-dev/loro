@@ -92,3 +92,24 @@ pub fn encode_position_arena_v2(positions: Array[Bytes]) -> Bytes {
   let col1 = rest_col_w.to_bytes()
   encode_columnar_vec_wrapped([col0, col1])
 }
+
+// Rust `PositionArena::encode()` always emits a serde_columnar payload even when empty.
+// (TreeState uses this form and `PositionArena::decode()` does not accept empty bytes.)
+pub fn encode_position_arena(positions: Array[Bytes]) -> Bytes {
+  let common_prefix: Array[UInt64] = []
+  let rest_col_w = BytesWriter::new()
+  rest_col_w.write_varint_u64(positions.length().to_uint64())
+  let mut last: Bytes = b""
+  for pos in positions {
+    let common = longest_common_prefix_length(last, pos)
+    common_prefix.push(common)
+    let rest = pos[common.to_int():pos.length()]
+    rest_col_w.write_varint_u64(rest.length().to_uint64())
+    rest_col_w.write_bytesview(rest)
+    last = pos
+  }
+
+  let col0 = encode_any_rle_usize(common_prefix)
+  let col1 = rest_col_w.to_bytes()
+  encode_columnar_vec_wrapped([col0, col1])
+}

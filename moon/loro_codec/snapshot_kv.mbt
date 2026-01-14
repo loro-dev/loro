@@ -135,11 +135,12 @@ pub fn transcode_state_kv_store(state_bytes: Bytes, validate: Bool) -> Bytes rai
       continue
     }
     let wrapper = parse_container_wrapper(v[:])
+    let payload = transcode_container_state_snapshot(wrapper.kind(), wrapper.payload_view(), validate)
     let out_v = encode_container_wrapper(
       wrapper.kind(),
       wrapper.depth(),
       wrapper.parent(),
-      wrapper.payload_view().to_bytes(),
+      payload,
     )
     out_kvs.push((k, out_v))
   }

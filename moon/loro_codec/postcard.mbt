@@ -79,6 +79,18 @@ fn write_postcard_utf8(w: BytesWriter, s: String) -> Unit {
   w.write_bytes(bytes)
 }
 
+pub fn postcard_take_string(bytes: BytesView) -> (String, BytesView) raise DecodeError {
+  let r = BytesReader::from_view(bytes)
+  let s = read_postcard_utf8(r)
+  (s, r.remaining_view())
+}
+
+pub fn postcard_encode_string(s: String) -> Bytes {
+  let w = BytesWriter::new()
+  write_postcard_utf8(w, s)
+  w.to_bytes()
+}
+
 fn read_postcard_bytes_val(r: BytesReader) -> Bytes raise DecodeError {
   let len_u64 = r.read_varint_u64()
   if len_u64 > 0x7FFF_FFFFUL {
@@ -362,6 +374,45 @@ pub fn postcard_encode_frontiers(ids: Array[ID]) -> Bytes {
   for id in ids {
     w.write_varint_u64(id.peer())
     w.write_varint_i64(id.counter().to_int64())
+  }
+  w.to_bytes()
+}
+
+// --- Bytes / HashMap helpers (postcard encoding) ---
+
+pub fn postcard_take_bytes(bytes: BytesView) -> (Bytes, BytesView) raise DecodeError {
+  let r = BytesReader::from_view(bytes)
+  let b = read_postcard_bytes_val(r)
+  (b, r.remaining_view())
+}
+
+pub fn postcard_encode_bytes(b: Bytes) -> Bytes {
+  let w = BytesWriter::new()
+  write_postcard_bytes_val(w, b)
+  w.to_bytes()
+}
+
+pub fn postcard_take_map_string_common_value(
+  bytes: BytesView,
+) -> (Array[(String, CommonValue)], BytesView) raise DecodeError {
+  let r = BytesReader::from_view(bytes)
+  let len = read_postcard_len_u64(r).to_int()
+  let out: Array[(String, CommonValue)] = []
+  for _i in 0..<len {
+    let k = read_postcard_utf8(r)
+    let v = read_common_value(r, 0)
+    out.push((k, v))
+  }
+  (out, r.remaining_view())
+}
+
+pub fn postcard_encode_map_string_common_value(values: Array[(String, CommonValue)]) -> Bytes {
+  let w = BytesWriter::new()
+  w.write_varint_u64(values.length().to_uint64())
+  for pair in values {
+    let (k, v) = pair
+    write_postcard_utf8(w, k)
+    write_common_value(w, v)
   }
   w.to_bytes()
 }
