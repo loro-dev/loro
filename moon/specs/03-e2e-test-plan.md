@@ -107,3 +107,23 @@
 2. Milestone 2：FastUpdates e2e 通过
 3. Milestone 3：ShallowSnapshot/StateOnly/SnapshotAt 覆盖通过
 4. Milestone 4（可选）：编码策略对齐（压缩/块布局/byte-level 更接近 Rust）
+
+## 3.8 当前落地（repo 现状）
+
+目前 repo 内已落地一个 **可选** 的 Rust integration test（默认会在缺少 Moon/Node 时自动跳过）：
+
+- Rust harness：`crates/loro/tests/moon_transcode.rs`
+- Moon CLI：`moon/cmd/loro_codec_cli`（JS target，Node 侧用 `fs` 读写文件）
+
+本地运行：
+
+```sh
+MOON_BIN=~/.moon/bin/moon NODE_BIN=node cargo test -p loro --test moon_transcode
+```
+
+当前覆盖点包含（至少）：
+
+- Snapshot / AllUpdates
+- SnapshotAt / StateOnly / ShallowSnapshot
+- Updates(from vv)
+- 多 peer（导出包含多个 peer 的 updates）
