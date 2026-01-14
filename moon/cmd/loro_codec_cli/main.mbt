@@ -3,6 +3,7 @@ fn usage() -> Unit {
   println("Usage:")
   println("  loro-codec transcode <in.blob> <out.blob>")
   println("  loro-codec decode-updates <in.blob>")
+  println("  loro-codec export-jsonschema <in.blob>")
 }
 
 fn find_cmd_index(args: Array[String]) -> Int? {
@@ -11,6 +12,7 @@ fn find_cmd_index(args: Array[String]) -> Int? {
     match args[i] {
       "transcode" => return Some(i)
       "decode-updates" => return Some(i)
+      "export-jsonschema" => return Some(i)
       _ => ()
     }
     i = i + 1
@@ -56,6 +58,24 @@ fn main {
           let input = read_file(input_path)
           let json = try
             @loro_codec.decode_fast_updates_changes_json(input, true)
+          catch {
+            @loro_codec.DecodeError(msg) => {
+              println("decode error: " + msg)
+              exit_process(2)
+              ""
+            }
+          }
+          println(json)
+        }
+        "export-jsonschema" => {
+          if i + 1 >= args.length() {
+            usage()
+            exit_process(1)
+          }
+          let input_path = args[i + 1]
+          let input = read_file(input_path)
+          let json = try
+            @loro_codec.export_json_schema_from_fast_updates(input, true)
           catch {
             @loro_codec.DecodeError(msg) => {
               println("decode error: " + msg)
