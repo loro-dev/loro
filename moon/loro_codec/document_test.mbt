@@ -101,11 +101,14 @@ fn make_minimal_change_block_bytes() -> Bytes {
   keys_w.write_bytes(k)
   let keys_bytes = keys_w.to_bytes()
 
-  let cid_col0 = encode_bool_rle([true]) // is_root
-  let cid_col1 = encode_rle_u8([container_type_to_u8(ContainerType::map()).to_uint()]) // kind
-  let cid_col2 = encode_any_rle_usize([0UL]) // peer_idx
-  let cid_col3 = encode_delta_rle_i32([0]) // key_idx_or_counter
-  let cids_bytes = encode_columnar_vec([cid_col0, cid_col1, cid_col2, cid_col3])
+  let arena_w = BytesWriter::new()
+  arena_w.write_varint_u64(1UL)
+  arena_w.write_varint_u64(4UL) // field count
+  arena_w.write_u8(b'\x01') // is_root
+  arena_w.write_u8(container_type_to_u8(ContainerType::map()))
+  arena_w.write_varint_u64(0UL)
+  arena_w.write_varint_i64(0L)
+  let cids_bytes = arena_w.to_bytes()
 
   let ops_col0 = encode_delta_rle_u32([0]) // container_index
   let ops_col1 = encode_delta_rle_i32([1]) // prop = key idx

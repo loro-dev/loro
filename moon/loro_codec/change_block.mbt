@@ -421,51 +421,53 @@ pub fn decode_container_arena(
   peers: Array[UInt64],
   keys: Array[String],
 ) -> Array[ContainerID] raise DecodeError {
-  if bytes.length() == 0 {
-    return []
+  let r = BytesReader::from_view(bytes)
+  let n_u64 = r.read_varint_u64()
+  if n_u64 > 0x7FFF_FFFFUL {
+    raise DecodeError("container_arena: too many containers")
   }
-  // ContainerArena::encode() uses `serde_columnar::to_vec(&containers)` directly,
-  // which serializes as a ColumnarVec (columns vector), not postcard.
-  let cols = decode_columnar_vec(bytes)
-  if cols.length() != 4 {
-    raise DecodeError("container_arena: invalid column count")
-  }
-
-  let is_root = decode_bool_rle(cols[0])
-  let kind_u8 = decode_rle_u8(cols[1])
-  let peer_idx = decode_any_rle_usize(cols[2])
-  let key_idx_or_counter = decode_delta_rle_i32(cols[3])
-
-  let n = is_root.length()
-  if kind_u8.length() != n || peer_idx.length() != n || key_idx_or_counter.length() != n {
-    raise DecodeError("container_arena: column length mismatch")
+  let n = n_u64.to_int()
+  if n < 0 {
+    raise DecodeError("container_arena: invalid len")
   }
 
   let out: Array[ContainerID] = []
-  for i in 0..<n {
-    let k = kind_u8[i]
-    if k > 0xFF {
-      raise DecodeError("container_arena: kind overflow")
+  for _i in 0..<n {
+    // EncodedContainer uses serde to serialize as a seq of 4 fields.
+    let field_len = r.read_varint_u64()
+    if field_len != 4UL {
+      raise DecodeError("container_arena: invalid field length")
     }
-    let kind = container_type_from_u8((k & 0xFF).to_byte())
-
-    let key_or_counter = key_idx_or_counter[i]
-    if is_root[i] {
-      if key_or_counter < 0 || key_or_counter >= keys.length() {
+    let is_root = match r.read_u8() {
+      b'\x00' => false
+      b'\x01' => true
+      _ => raise DecodeError("container_arena: invalid bool")
+    }
+    let kind = container_type_from_u8(r.read_u8())
+    let peer_idx_u64 = r.read_varint_u64()
+    if peer_idx_u64 > 0x7FFF_FFFFUL {
+      raise DecodeError("container_arena: peer_idx too large")
+    }
+    let peer_idx = peer_idx_u64.to_int()
+    let key_idx_or_counter_i64 = r.read_varint_i64()
+    if key_idx_or_counter_i64 < -2147483648L || key_idx_or_counter_i64 > 2147483647L {
+      raise DecodeError("container_arena: i32 overflow")
+    }
+    let key_idx_or_counter = key_idx_or_counter_i64.to_int()
+    if is_root {
+      if key_idx_or_counter < 0 || key_idx_or_counter >= keys.length() {
         raise DecodeError("container_arena: invalid root key idx")
       }
-      out.push(ContainerID::root(keys[key_or_counter], kind))
+      out.push(ContainerID::root(keys[key_idx_or_counter], kind))
     } else {
-      let peer_idx_u64 = peer_idx[i]
-      if peer_idx_u64 > 0x7FFF_FFFFUL {
-        raise DecodeError("container_arena: peer_idx too large")
-      }
-      let peer_i = peer_idx_u64.to_int()
-      if peer_i < 0 || peer_i >= peers.length() {
+      if peer_idx < 0 || peer_idx >= peers.length() {
         raise DecodeError("container_arena: invalid peer idx")
       }
-      out.push(ContainerID::normal(peers[peer_i], key_or_counter, kind))
+      out.push(ContainerID::normal(peers[peer_idx], key_idx_or_counter, kind))
     }
+  }
+  if r.remaining() != 0 {
+    raise DecodeError("container_arena: trailing bytes")
   }
   out
 }
