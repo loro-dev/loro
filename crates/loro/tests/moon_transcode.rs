@@ -83,6 +83,27 @@ fn run_decode_updates(node_bin: &str, cli_js: &Path, input: &[u8]) -> anyhow::Re
     Ok(String::from_utf8(out.stdout)?)
 }
 
+fn run_export_jsonschema(node_bin: &str, cli_js: &Path, input: &[u8]) -> anyhow::Result<String> {
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let tmp = std::env::temp_dir().join(format!(
+        "loro-moon-export-jsonschema-{}-{ts}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&tmp)?;
+    let in_path = tmp.join("in.blob");
+    std::fs::write(&in_path, input)?;
+
+    let out = Command::new(node_bin)
+        .arg(cli_js)
+        .args(["export-jsonschema", in_path.to_str().unwrap()])
+        .output()?;
+    anyhow::ensure!(out.status.success(), "node export-jsonschema failed");
+    Ok(String::from_utf8(out.stdout)?)
+}
+
 #[test]
 fn moon_transcode_e2e() -> anyhow::Result<()> {
     let moon_bin = std::env::var("MOON_BIN").unwrap_or_else(|_| "moon".to_string());
@@ -308,5 +329,72 @@ fn moon_decode_ops_text_insert() -> anyhow::Result<()> {
     }
 
     anyhow::ensure!(found, "expected Text insert op not found in Moon decode output");
+    Ok(())
+}
+
+#[test]
+fn moon_export_jsonschema_text_insert() -> anyhow::Result<()> {
+    let moon_bin = std::env::var("MOON_BIN").unwrap_or_else(|_| "moon".to_string());
+    let node_bin = std::env::var("NODE_BIN").unwrap_or_else(|_| "node".to_string());
+
+    if !bin_available(&moon_bin, &["version"]) {
+        eprintln!("skipping jsonschema export: moon not available (set MOON_BIN)");
+        return Ok(());
+    }
+    if !bin_available(&node_bin, &["--version"]) {
+        eprintln!("skipping jsonschema export: node not available (set NODE_BIN)");
+        return Ok(());
+    }
+
+    let cli_js = match build_moon_cli_js(&moon_bin) {
+        Some(p) => p,
+        None => {
+            eprintln!("skipping jsonschema export: failed to build MoonBit CLI");
+            return Ok(());
+        }
+    };
+
+    let peer: u64 = 0x0102_0304_0506_0708;
+    let doc = LoroDoc::new();
+    doc.set_peer_id(peer)?;
+    doc.get_text("t").insert(0, "123").unwrap();
+    doc.commit();
+
+    let updates = doc.export(ExportMode::all_updates()).unwrap();
+    let json = run_export_jsonschema(&node_bin, &cli_js, &updates)?;
+    let schema: loro::JsonSchema = serde_json::from_str(&json)?;
+
+    assert_eq!(schema.schema_version, 1);
+    assert_eq!(schema.peers.as_deref(), Some(&[peer][..]));
+
+    let expected_container = "cid:root-t:Text";
+    let mut found = false;
+    for change in &schema.changes {
+        // After peer-compression, change IDs use peer indices (so the only peer here is 0).
+        if change.id.peer != 0 {
+            continue;
+        }
+        for op in &change.ops {
+            if op.container.to_string() != expected_container {
+                continue;
+            }
+            match &op.content {
+                loro::JsonOpContent::Text(loro::JsonTextOp::Insert { pos, text }) => {
+                    if *pos == 0 && text == "123" {
+                        found = true;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    anyhow::ensure!(found, "expected Text insert op not found in Moon jsonschema output");
+
+    // Roundtrip: Moon jsonschema output must be importable by Rust.
+    let doc2 = LoroDoc::new();
+    doc2.import_json_updates(schema).unwrap();
+    assert_eq!(doc2.get_deep_value().to_json_value(), doc.get_deep_value().to_json_value());
+
     Ok(())
 }
