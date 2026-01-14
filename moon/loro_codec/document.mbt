@@ -173,14 +173,17 @@ pub fn transcode_document(bytes: Bytes, validate: Bool) -> Bytes raise DecodeErr
     }
     4 => {
       let blocks = parse_fast_updates_body(doc.body_view())
-      if validate {
-        for b in blocks {
-          let _ = decode_change_block(b)
-        }
-      }
       let out_blocks: Array[Bytes] = []
       for b in blocks {
-        out_blocks.push(b.to_bytes())
+        let decoded = decode_change_block_full(b)
+        let encoded =
+          encode_change_block(decoded) catch { EncodeError(msg) =>
+            raise DecodeError("fastupdates: encode change block failed: " + msg)
+          }
+        if validate {
+          let _ = decode_change_block(encoded[:])
+        }
+        out_blocks.push(encoded)
       }
       let body = encode_fast_updates_body(out_blocks)
       encode_document(4, body)
