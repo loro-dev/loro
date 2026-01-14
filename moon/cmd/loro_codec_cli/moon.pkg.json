@@ -2,5 +2,18 @@
   "is-main": true,
   "import": [
     "loro-dev/loro/loro_codec"
-  ]
+  ],
+  "targets": {
+    "fs_js.mbt": [
+      "js"
+    ],
+    "fs_wasm.mbt": [
+      "wasm",
+      "wasm-gc"
+    ],
+    "fs_native.mbt": [
+      "native",
+      "llvm"
+    ]
+  }
 }
