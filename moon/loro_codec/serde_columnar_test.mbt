@@ -57,6 +57,20 @@ test "serde_columnar: deltarle encode/decode" {
   assert_eq(dec, values)
 }
 
+test "serde_columnar: deltarle usize encode/decode" {
+  let values: Array[UInt64] = [0UL, 1UL, 2UL, 10UL, 11UL]
+  let enc = encode_delta_rle_usize(values)
+  let dec = try! decode_delta_rle_usize(enc[:])
+  assert_eq(dec, values)
+}
+
+test "serde_columnar: deltarle isize encode/decode" {
+  let values: Array[Int64] = [-2L, -1L, 0L, 5L, 3L]
+  let enc = encode_delta_rle_isize(values)
+  let dec = try! decode_delta_rle_isize(enc[:])
+  assert_eq(dec, values)
+}
+
 test "serde_columnar: delta_of_delta encode/decode empty" {
   let enc = encode_delta_of_delta_i64([])
   assert_eq(enc, b"\x00\x00")
