@@ -38,3 +38,30 @@ test "parse_document rejects bad checksum" {
     Err(_) => ()
   }
 }
+
+test "parse fastsnapshot body" {
+  let w = BytesWriter::new()
+  w.write_u32_le(3)
+  w.write_bytes(b"op!")
+  w.write_u32_le(1)
+  w.write_bytes(b"E")
+  w.write_u32_le(0)
+
+  let parsed = try! parse_fast_snapshot_body(w.to_bytes()[:])
+  assert_eq(parsed.oplog_bytes_view().to_bytes(), b"op!")
+  assert_eq(parsed.state_bytes_view().to_bytes(), b"E")
+  assert_eq(parsed.shallow_root_state_bytes_view().length(), 0)
+}
+
+test "parse fastupdates body" {
+  let w = BytesWriter::new()
+  w.write_uleb128_u64(3)
+  w.write_bytes(b"abc")
+  w.write_uleb128_u64(1)
+  w.write_bytes(b"Z")
+
+  let blocks = try! parse_fast_updates_body(w.to_bytes()[:])
+  assert_eq(blocks.length(), 2)
+  assert_eq(blocks[0].to_bytes(), b"abc")
+  assert_eq(blocks[1].to_bytes(), b"Z")
+}
