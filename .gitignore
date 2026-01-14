@@ -3,6 +3,7 @@
 *.ipynb
 flamegraph.svg
 target
+moon/_build/
 dhat-heap.json
 .DS_Store
 node_modules/

@@ -1,0 +1,6 @@
+{
+  "is-main": true,
+  "import": [
+    "loro-dev/loro/loro_codec"
+  ]
+}
