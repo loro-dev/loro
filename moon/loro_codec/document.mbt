@@ -150,15 +150,25 @@ pub fn transcode_document(bytes: Bytes, validate: Bool) -> Bytes raise DecodeErr
   match doc.mode() {
     3 => {
       let parsed = parse_fast_snapshot_body(doc.body_view())
-      // v1: keep bytes as-is, but reconstruct a canonical blob with recomputed checksum.
-      let body = encode_fast_snapshot_body(
-        parsed.oplog_bytes_view().to_bytes(),
-        parsed.state_bytes_view().to_bytes(),
-        parsed.shallow_root_state_bytes_view().to_bytes(),
-      )
-      if validate {
-        // TODO: validate SSTable/state decoding in later milestones.
-      }
+      let oplog =
+        if validate {
+          transcode_oplog_kv_store(parsed.oplog_bytes_view().to_bytes(), true)
+        } else {
+          parsed.oplog_bytes_view().to_bytes()
+        }
+      let state =
+        if validate {
+          transcode_state_kv_store(parsed.state_bytes_view().to_bytes(), true)
+        } else {
+          parsed.state_bytes_view().to_bytes()
+        }
+      let shallow_root_state =
+        if validate {
+          transcode_state_kv_store(parsed.shallow_root_state_bytes_view().to_bytes(), true)
+        } else {
+          parsed.shallow_root_state_bytes_view().to_bytes()
+        }
+      let body = encode_fast_snapshot_body(oplog, state, shallow_root_state)
       encode_document(3, body)
     }
     4 => {

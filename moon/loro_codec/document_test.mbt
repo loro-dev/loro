@@ -132,7 +132,15 @@ fn make_minimal_change_block_bytes() -> Bytes {
 }
 
 test "transcode_document preserves fastsnapshot" {
-  let body = encode_fast_snapshot_body(b"op!", b"E", b"")
+  let vv: VersionVector = [(1UL, 0)]
+  let vv_bytes = postcard_encode_version_vector(vv)
+  let fr_bytes = postcard_encode_frontiers([])
+  // Ensure keys are sorted: "fr" < "vv"
+  let oplog = sstable_export_all([(b"fr", fr_bytes), (b"vv", vv_bytes)], 4096) catch {
+    EncodeError(_) => fail("failed to build oplog sstable")
+  }
+
+  let body = encode_fast_snapshot_body(oplog, b"E", b"")
   let doc = try! encode_document(3, body)
   let out = try! transcode_document(doc, true)
   assert_eq(out, doc)
