@@ -226,6 +226,7 @@
 
 目标：
 - 完整实现 ChangeBlock 的 decode（必要时 encode）
+- 产出可测试的 IR：`ChangeIR/OpIR`（见 `moon/specs/04-ir-design.md`）
 
 分解实现顺序（建议严格按层次）：
 1. postcard 外层 EncodedBlock struct：切分出各 bytes 段
@@ -235,12 +236,15 @@
 5. ops（serde_columnar）
 6. delete_start_ids（serde_columnar）
 7. values（自定义 Value）
+8. **组装 IR**：把 EncodedOp + values + delete_start_ids 还原为 `OpIR`，并按 change atom_len 切分成 `ChangeIR` 列表
 
 测试：
 - Rust 导出 FastUpdates：
   - Moon 能逐 block 解码
   - Moon encode 回 blob 后 Rust import 成功
   - Rust `get_deep_value()` 与真值 JSON 相同
+- IR 级对照（推荐作为“快速定位”用例）：
+  - Rust 额外输出 `changes.json`（Change/Op 列表），Moon decode 输出同构 JSON（见 `moon/specs/04-ir-design.md#46-测试用-json-形态建议`），做结构化 diff
 
 退出条件：
 - FastUpdates e2e 通过（至少覆盖多 peer + 多容器）
@@ -279,6 +283,7 @@
 目标：
 - 提供给 e2e harness 调用的稳定接口（建议至少包含）：
   - `decode <in.blob> --out <dir>`：输出结构化 JSON（debug 用）
+    - 建议额外支持输出 `changes.json`（Change/Op IR），用于与 Rust 对照（见 `moon/specs/04-ir-design.md`）
   - `encode <in.json> --out <out.blob>`：从 IR JSON 生成 blob（进阶）
   - `transcode <in.blob> <out.blob>`：decode→encode（e2e 主入口）
 

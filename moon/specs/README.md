@@ -8,6 +8,7 @@
 - `moon/specs/01-context-checklist.md`：开工前必须收集/确认的 Context 清单（规格/源码/边界条件）
 - `moon/specs/02-module-plan.md`：按模块逐步实现的详细计划（每步的依赖、测试与退出条件）
 - `moon/specs/03-e2e-test-plan.md`：e2e 测试方案（Rust 向量生成、Moon CLI 约定、对照校验）
+- `moon/specs/04-ir-design.md`：Moon 侧 IR 设计（重点：Change / Op 结构与测试友好 JSON 形态）
 
 ## 约定
 
