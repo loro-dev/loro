@@ -1,7 +1,7 @@
 pub struct ID {
   peer: UInt64
   counter: Int
-}
+} derive(Eq, Show)
 
 pub fn ID::new(peer: UInt64, counter: Int) -> ID {
   { peer, counter }
@@ -34,4 +34,3 @@ pub fn id_from_change_block_key(bytes: BytesView) -> ID raise DecodeError {
   }
   { peer, counter }
 }
-
