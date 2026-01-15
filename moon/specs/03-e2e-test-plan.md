@@ -110,7 +110,7 @@
 
 ## 3.8 当前落地（repo 现状）
 
-目前 repo 内已落地一个 **可选** 的 Rust integration test（默认会在缺少 Moon/Node 时自动跳过）：
+目前 repo 内已落地一组 **可选** 的 Rust integration tests（默认会在缺少 Moon/Node 时自动跳过）：
 
 - Rust harness：`crates/loro/tests/moon_transcode.rs`
 - Moon CLI：`moon/cmd/loro_codec_cli`（JS target，Node 侧用 `fs` 读写文件）
@@ -121,12 +121,14 @@
 MOON_BIN=~/.moon/bin/moon NODE_BIN=node cargo test -p loro --test moon_transcode
 ```
 
-当前覆盖点包含（至少）：
+当前覆盖点包含（至少，且持续扩充）：
 
 - Snapshot / AllUpdates
 - SnapshotAt / StateOnly / ShallowSnapshot
 - Updates(from vv)
 - 多 peer（导出包含多个 peer 的 updates）
+- 终极测试：FastUpdates→JsonUpdates（与 Rust 强一致）、FastSnapshot→Deep JSON（与 Rust 强一致）
+- 覆盖矩阵：固定覆盖（curated ops）+ 多 seed 随机序列（包含容器嵌套、RichText mark/unmark、Tree meta 等）
 
 ## 3.9 终极测试（两种形态，强一致性）
 
