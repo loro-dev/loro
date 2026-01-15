@@ -4,7 +4,7 @@
 
 实现代码：
 
-- `moon/loro_codec/json_schema.mbt`
+- `moon/loro_codec/json_schema_export.mbt`
 - CLI：`moon/cmd/loro_codec_cli/main.mbt`（`export-jsonschema`）
 
 > 注意：本文只讨论 **导出**（FastUpdates 二进制 → JsonSchema JSON）。JsonSchema → FastUpdates 的 **编码**细节见 `moon/specs/07-jsonschema-encode.md`。

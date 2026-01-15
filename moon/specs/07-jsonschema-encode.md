@@ -7,7 +7,7 @@
 
 实现代码：
 
-- `moon/loro_codec/json_schema.mbt`（`encode_fast_updates_from_json_schema`）
+- `moon/loro_codec/json_schema_import.mbt`（`encode_fast_updates_from_json_schema`）
 - CLI：`moon/cmd/loro_codec_cli/main.mbt`（`encode-jsonschema`）
 
 ---
@@ -101,4 +101,3 @@ JsonSchema 的 `start_version` 在编码为 FastUpdates 时会被 **忽略**：
 - 导入方（Rust `LoroDoc.import(...)`）也不需要它
 
 如果需要基于 `start_version` 做“补齐缺失历史”的工具链，建议在更外层协议中单独保存它。
-
