@@ -1,8 +1,13 @@
+///|
 test "container wrapper encode/parse header" {
   let payload = b"PAYLOAD"
   let parent = Some(ContainerID::normal(7, 42, ContainerType::list()))
-  let bytes = encode_container_wrapper(ContainerType::text(), 3, parent, payload)
-
+  let bytes = encode_container_wrapper(
+    ContainerType::text(),
+    3,
+    parent,
+    payload,
+  )
   let parsed = try! parse_container_wrapper(bytes[:])
   assert_eq(parsed.kind(), ContainerType::text())
   assert_eq(parsed.depth(), 3)

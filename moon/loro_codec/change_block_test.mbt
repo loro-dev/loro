@@ -1,7 +1,7 @@
+///|
 test "change_block: postcard encoded block roundtrip" {
   // u32 fields: 1,2,10,2,1; then 8 bytes fields with varint len.
   let encoded = b"\x01\x02\x0A\x02\x01\x03hdr\x04meta\x01c\x01k\x01p\x01o\x01d\x01v"
-
   let decoded = try! decode_encoded_block(encoded[:])
   assert_eq(decoded.counter_start(), 1)
   assert_eq(decoded.counter_len(), 2)
@@ -16,15 +16,14 @@ test "change_block: postcard encoded block roundtrip" {
   assert_eq(decoded.ops(), b"o")
   assert_eq(decoded.delete_start_ids(), b"d")
   assert_eq(decoded.values(), b"v")
-
   let encoded2 = encode_encoded_block(decoded)
   assert_eq(encoded2, encoded)
 }
 
+///|
 test "change_block: decode header/meta/arenas basics" {
   // --- header ---
-  let peers: Array[UInt64] = [0x0102030405060708UL, 0x1112131415161718UL]
-
+  let peers : Array[UInt64] = [0x0102030405060708UL, 0x1112131415161718UL]
   let header_w = BytesWriter::new()
   header_w.write_uleb128_u64(2UL) // peer_num
   for p in peers {
@@ -38,38 +37,31 @@ test "change_block: decode header/meta/arenas basics" {
   header_w.write_bytes(encode_delta_of_delta_i64([5L, 6L, 7L])) // dep counters
   header_w.write_bytes(encode_delta_of_delta_i64([100L, 105L])) // lamports (n-1)
   let header_bytes = header_w.to_bytes()
-
-  let header = try!
-    decode_changes_header(
-      header_bytes[:],
-      (3).reinterpret_as_uint(),
-      (10).reinterpret_as_uint(),
-      (7).reinterpret_as_uint(),
-      (100).reinterpret_as_uint(),
-      (14).reinterpret_as_uint(),
-    )
-
+  let header = try! decode_changes_header(
+    header_bytes[:],
+    (3).reinterpret_as_uint(),
+    (10).reinterpret_as_uint(),
+    (7).reinterpret_as_uint(),
+    (100).reinterpret_as_uint(),
+    (14).reinterpret_as_uint(),
+  )
   assert_eq(header.peer(), peers[0])
   assert_eq(header.peers().length(), 2)
   assert_eq(header.peers()[0], peers[0])
   assert_eq(header.peers()[1], peers[1])
-
   assert_eq(header.lengths().length(), 3)
   assert_eq(header.lengths()[0], 2)
   assert_eq(header.lengths()[1], 1)
   assert_eq(header.lengths()[2], 4)
-
   assert_eq(header.counters().length(), 4)
   assert_eq(header.counters()[0], 10)
   assert_eq(header.counters()[1], 12)
   assert_eq(header.counters()[2], 13)
   assert_eq(header.counters()[3], 17)
-
   assert_eq(header.lamports().length(), 3)
   assert_eq(header.lamports()[0], 100)
   assert_eq(header.lamports()[1], 105)
   assert_eq(header.lamports()[2], 110)
-
   assert_eq(header.deps().length(), 3)
   // change 0 deps: (peer[1], 5)
   assert_eq(header.deps()[0].length(), 1)
@@ -91,7 +83,10 @@ test "change_block: decode header/meta/arenas basics" {
   meta_w.write_bytes(encode_delta_of_delta_i64([1000L, 2000L, 3000L]))
   meta_w.write_bytes(encode_any_rle_u32([0, 2, 0]))
   meta_w.write_bytes(@encoding/utf8.encode("hi"[:]))
-  let meta = try! decode_changes_meta(meta_w.to_bytes()[:], (3).reinterpret_as_uint())
+  let meta = try! decode_changes_meta(
+    meta_w.to_bytes()[:],
+    (3).reinterpret_as_uint(),
+  )
   assert_eq(meta.timestamps().length(), 3)
   assert_eq(meta.timestamps()[0], 1000L)
   assert_eq(meta.timestamps()[1], 2000L)
@@ -135,6 +130,7 @@ test "change_block: decode header/meta/arenas basics" {
   assert_eq(cids[1], ContainerID::normal(peers[1], 42, ContainerType::list()))
 }
 
+///|
 test "change_block: decode full block with ops/values" {
   // A single change with one Map insert op.
   let peer0 = 0x0102030405060708UL
@@ -180,7 +176,9 @@ test "change_block: decode full block with ops/values" {
   let ops_col1 = encode_delta_rle_i32([1]) // prop = key idx
   let ops_col2 = encode_rle_u8([11]) // value_type = LoroValue
   let ops_col3 = encode_rle_u32([1]) // len = 1
-  let ops_bytes = encode_columnar_vec_wrapped([ops_col0, ops_col1, ops_col2, ops_col3])
+  let ops_bytes = encode_columnar_vec_wrapped([
+    ops_col0, ops_col1, ops_col2, ops_col3,
+  ])
 
   // --- values: Value::LoroValue(I64(10)) content only (no tag byte) ---
   // LoroValue::I64 => [0x03, sleb128(10)=0x0A]
@@ -193,13 +191,15 @@ test "change_block: decode full block with ops/values" {
   w.write_varint_u64(100UL) // lamport_start
   w.write_varint_u64(1UL) // lamport_len
   w.write_varint_u64(1UL) // n_changes
-  for part in [header_bytes, meta_bytes, cids_bytes, keys_bytes, b"", ops_bytes, b"", values_bytes] {
+  for
+    part in [
+      header_bytes, meta_bytes, cids_bytes, keys_bytes, b"", ops_bytes, b"", values_bytes,
+    ] {
     w.write_varint_u64(part.length().to_uint64())
     w.write_bytes(part)
   }
   let encoded = w.to_bytes()
   let decoded = try! decode_change_block(encoded[:])
-
   assert_eq(decoded.length(), 1)
   let c = decoded[0]
   assert_eq(c.id(), ID::new(peer0, 10))
@@ -224,6 +224,7 @@ test "change_block: decode full block with ops/values" {
   }
 }
 
+///|
 test "change_block: decode -> encode -> decode (semantic) roundtrip" {
   // Reuse the minimal block from the previous test (one change with one Map insert op).
   let peer0 = 0x0102030405060708UL
@@ -269,7 +270,9 @@ test "change_block: decode -> encode -> decode (semantic) roundtrip" {
   let ops_col1 = encode_delta_rle_i32([1]) // prop = key idx
   let ops_col2 = encode_rle_u8([11]) // value_type = LoroValue
   let ops_col3 = encode_rle_u32([1]) // len = 1
-  let ops_bytes = encode_columnar_vec_wrapped([ops_col0, ops_col1, ops_col2, ops_col3])
+  let ops_bytes = encode_columnar_vec_wrapped([
+    ops_col0, ops_col1, ops_col2, ops_col3,
+  ])
 
   // --- values: nested LoroValue(I64(10)) content only (no tag byte) ---
   let values_bytes = b"\x03\x0A"
@@ -281,17 +284,18 @@ test "change_block: decode -> encode -> decode (semantic) roundtrip" {
   w.write_varint_u64(100UL) // lamport_start
   w.write_varint_u64(1UL) // lamport_len
   w.write_varint_u64(1UL) // n_changes
-  for part in [header_bytes, meta_bytes, cids_bytes, keys_bytes, b"", ops_bytes, b"", values_bytes] {
+  for
+    part in [
+      header_bytes, meta_bytes, cids_bytes, keys_bytes, b"", ops_bytes, b"", values_bytes,
+    ] {
     w.write_varint_u64(part.length().to_uint64())
     w.write_bytes(part)
   }
   let encoded = w.to_bytes()
-
   let decoded = try! decode_change_block_full(encoded[:])
-  let encoded2 = encode_change_block(decoded) catch { EncodeError(msg) =>
-    fail(msg)
+  let encoded2 = encode_change_block(decoded) catch {
+    EncodeError(msg) => fail(msg)
   }
-
   let changes1 = try! decode_change_block(encoded[:])
   let changes2 = try! decode_change_block(encoded2[:])
   assert_eq(changes2, changes1)

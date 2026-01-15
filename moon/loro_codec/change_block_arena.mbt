@@ -1,6 +1,7 @@
-pub fn decode_keys(bytes: BytesView) -> Array[String] raise DecodeError {
+///|
+pub fn decode_keys(bytes : BytesView) -> Array[String] raise DecodeError {
   let r = BytesReader::from_view(bytes)
-  let out: Array[String] = []
+  let out : Array[String] = []
   while r.remaining() > 0 {
     let len_u64 = r.read_uleb128_u64()
     if len_u64 > 0x7FFF_FFFFUL {
@@ -11,18 +12,19 @@ pub fn decode_keys(bytes: BytesView) -> Array[String] raise DecodeError {
       raise DecodeError("keys: invalid key length")
     }
     let key_bytes = r.read_exact(len)
-    let key = @encoding/utf8.decode(key_bytes) catch { @encoding/utf8.Malformed(_) =>
-      raise DecodeError("keys: invalid utf8")
+    let key = @encoding/utf8.decode(key_bytes) catch {
+      @encoding/utf8.Malformed(_) => raise DecodeError("keys: invalid utf8")
     }
     out.push(key)
   }
   out
 }
 
+///|
 pub fn decode_container_arena(
-  bytes: BytesView,
-  peers: Array[UInt64],
-  keys: Array[String],
+  bytes : BytesView,
+  peers : Array[UInt64],
+  keys : Array[String],
 ) -> Array[ContainerID] raise DecodeError {
   let r = BytesReader::from_view(bytes)
   let n_u64 = r.read_varint_u64()
@@ -33,8 +35,7 @@ pub fn decode_container_arena(
   if n < 0 {
     raise DecodeError("container_arena: invalid len")
   }
-
-  let out: Array[ContainerID] = []
+  let out : Array[ContainerID] = []
   for _i in 0..<n {
     // EncodedContainer uses serde to serialize as a seq of 4 fields.
     let field_len = r.read_varint_u64()
@@ -53,7 +54,8 @@ pub fn decode_container_arena(
     }
     let peer_idx = peer_idx_u64.to_int()
     let key_idx_or_counter_i64 = r.read_varint_i64()
-    if key_idx_or_counter_i64 < -2147483648L || key_idx_or_counter_i64 > 2147483647L {
+    if key_idx_or_counter_i64 < -2147483648L ||
+      key_idx_or_counter_i64 > 2147483647L {
       raise DecodeError("container_arena: i32 overflow")
     }
     let key_idx_or_counter = key_idx_or_counter_i64.to_int()

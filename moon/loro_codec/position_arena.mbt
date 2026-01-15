@@ -1,4 +1,5 @@
-fn longest_common_prefix_length(a: Bytes, b: Bytes) -> UInt64 {
+///|
+fn longest_common_prefix_length(a : Bytes, b : Bytes) -> UInt64 {
   let n = if a.length() < b.length() { a.length() } else { b.length() }
   let mut i = 0
   while i < n {
@@ -10,7 +11,10 @@ fn longest_common_prefix_length(a: Bytes, b: Bytes) -> UInt64 {
   i.to_uint64()
 }
 
-pub fn decode_position_arena_v2(bytes: BytesView) -> Array[Bytes] raise DecodeError {
+///|
+pub fn decode_position_arena_v2(
+  bytes : BytesView,
+) -> Array[Bytes] raise DecodeError {
   if bytes.length() == 0 {
     return []
   }
@@ -18,11 +22,9 @@ pub fn decode_position_arena_v2(bytes: BytesView) -> Array[Bytes] raise DecodeEr
   if cols.length() != 2 {
     raise DecodeError("position_arena: invalid column count")
   }
-
   let common_prefix_u64 = decode_any_rle_usize(cols[0])
   let n = common_prefix_u64.length()
   let rest_col = cols[1]
-
   let r = BytesReader::from_view(rest_col)
   let rest_n_u64 = r.read_varint_u64()
   if rest_n_u64 > 0x7FFF_FFFFUL {
@@ -32,7 +34,7 @@ pub fn decode_position_arena_v2(bytes: BytesView) -> Array[Bytes] raise DecodeEr
   if rest_n != n {
     raise DecodeError("position_arena: rest count mismatch")
   }
-  let rests: Array[Bytes] = []
+  let rests : Array[Bytes] = []
   for _i in 0..<n {
     let len_u64 = r.read_varint_u64()
     if len_u64 > 0x7FFF_FFFFUL {
@@ -50,9 +52,8 @@ pub fn decode_position_arena_v2(bytes: BytesView) -> Array[Bytes] raise DecodeEr
   if rests.length() != n {
     raise DecodeError("position_arena: invalid rest count")
   }
-
-  let out: Array[Bytes] = []
-  let mut last: Bytes = b""
+  let out : Array[Bytes] = []
+  let mut last : Bytes = b""
   for i in 0..<n {
     let common_u64 = common_prefix_u64[i]
     if common_u64 > 0x7FFF_FFFFUL {
@@ -71,14 +72,15 @@ pub fn decode_position_arena_v2(bytes: BytesView) -> Array[Bytes] raise DecodeEr
   out
 }
 
-pub fn encode_position_arena_v2(positions: Array[Bytes]) -> Bytes {
+///|
+pub fn encode_position_arena_v2(positions : Array[Bytes]) -> Bytes {
   if positions.length() == 0 {
     return b""
   }
-  let common_prefix: Array[UInt64] = []
+  let common_prefix : Array[UInt64] = []
   let rest_col_w = BytesWriter::new()
   rest_col_w.write_varint_u64(positions.length().to_uint64())
-  let mut last: Bytes = b""
+  let mut last : Bytes = b""
   for pos in positions {
     let common = longest_common_prefix_length(last, pos)
     common_prefix.push(common)
@@ -87,7 +89,6 @@ pub fn encode_position_arena_v2(positions: Array[Bytes]) -> Bytes {
     rest_col_w.write_bytesview(rest)
     last = pos
   }
-
   let col0 = encode_any_rle_usize(common_prefix)
   let col1 = rest_col_w.to_bytes()
   encode_columnar_vec_wrapped([col0, col1])
@@ -95,11 +96,13 @@ pub fn encode_position_arena_v2(positions: Array[Bytes]) -> Bytes {
 
 // Rust `PositionArena::encode()` always emits a serde_columnar payload even when empty.
 // (TreeState uses this form and `PositionArena::decode()` does not accept empty bytes.)
-pub fn encode_position_arena(positions: Array[Bytes]) -> Bytes {
-  let common_prefix: Array[UInt64] = []
+
+///|
+pub fn encode_position_arena(positions : Array[Bytes]) -> Bytes {
+  let common_prefix : Array[UInt64] = []
   let rest_col_w = BytesWriter::new()
   rest_col_w.write_varint_u64(positions.length().to_uint64())
-  let mut last: Bytes = b""
+  let mut last : Bytes = b""
   for pos in positions {
     let common = longest_common_prefix_length(last, pos)
     common_prefix.push(common)
@@ -108,7 +111,6 @@ pub fn encode_position_arena(positions: Array[Bytes]) -> Bytes {
     rest_col_w.write_bytesview(rest)
     last = pos
   }
-
   let col0 = encode_any_rle_usize(common_prefix)
   let col1 = rest_col_w.to_bytes()
   encode_columnar_vec_wrapped([col0, col1])

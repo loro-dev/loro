@@ -1,3 +1,4 @@
+///|
 fn usage() -> Unit {
   println("loro-codec (moonbit) v" + @loro_codec.version())
   println("Usage:")
@@ -7,7 +8,8 @@ fn usage() -> Unit {
   println("  loro-codec encode-jsonschema <in.json> <out.blob>")
 }
 
-fn find_cmd_index(args: Array[String]) -> Int? {
+///|
+fn find_cmd_index(args : Array[String]) -> Int? {
   let mut i = 0
   while i < args.length() {
     match args[i] {
@@ -22,6 +24,7 @@ fn find_cmd_index(args: Array[String]) -> Int? {
   None
 }
 
+///|
 fn main {
   let args = @env.args()
   match find_cmd_index(args) {
@@ -40,9 +43,7 @@ fn main {
           let input_path = args[i + 1]
           let output_path = args[i + 2]
           let input = read_file(input_path)
-          let output = try
-            @loro_codec.transcode_document(input, true)
-          catch {
+          let output = @loro_codec.transcode_document(input, true) catch {
             @loro_codec.DecodeError(msg) => {
               println("decode error: " + msg)
               exit_process(2)
@@ -58,9 +59,7 @@ fn main {
           }
           let input_path = args[i + 1]
           let input = read_file(input_path)
-          let json = try
-            @loro_codec.decode_fast_updates_changes_json(input, true)
-          catch {
+          let json = @loro_codec.decode_fast_updates_changes_json(input, true) catch {
             @loro_codec.DecodeError(msg) => {
               println("decode error: " + msg)
               exit_process(2)
@@ -76,9 +75,9 @@ fn main {
           }
           let input_path = args[i + 1]
           let input = read_file(input_path)
-          let json = try
-            @loro_codec.export_json_schema_from_fast_updates(input, true)
-          catch {
+          let json = @loro_codec.export_json_schema_from_fast_updates(
+            input, true,
+          ) catch {
             @loro_codec.DecodeError(msg) => {
               println("decode error: " + msg)
               exit_process(2)
@@ -95,15 +94,16 @@ fn main {
           let input_path = args[i + 1]
           let output_path = args[i + 2]
           let input = read_file(input_path)
-          let json =
-            @encoding/utf8.decode(input) catch { @encoding/utf8.Malformed(_) => {
+          let json = @encoding/utf8.decode(input) catch {
+            @encoding/utf8.Malformed(_) => {
               println("decode error: invalid utf8 input json")
               exit_process(2)
               ""
-            } }
-          let output = try
-            @loro_codec.encode_fast_updates_from_json_schema(json, true)
-          catch {
+            }
+          }
+          let output = @loro_codec.encode_fast_updates_from_json_schema(
+            json, true,
+          ) catch {
             @loro_codec.DecodeError(msg) => {
               println("decode error: " + msg)
               exit_process(2)

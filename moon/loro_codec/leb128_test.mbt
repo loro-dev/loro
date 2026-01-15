@@ -1,5 +1,6 @@
+///|
 test "uleb128 examples" {
-  fn roundtrip(v: UInt64, expected: Bytes) raise {
+  fn roundtrip(v : UInt64, expected : Bytes) raise {
     let w = BytesWriter::new()
     w.write_uleb128_u64(v)
     assert_eq(w.to_bytes(), expected)
@@ -16,8 +17,9 @@ test "uleb128 examples" {
   try! roundtrip(16384, b"\x80\x80\x01")
 }
 
+///|
 test "sleb128 examples" {
-  fn roundtrip(v: Int64, expected: Bytes) raise {
+  fn roundtrip(v : Int64, expected : Bytes) raise {
     let w = BytesWriter::new()
     w.write_sleb128_i64(v)
     assert_eq(w.to_bytes(), expected)

@@ -1,5 +1,8 @@
-pub fn BytesReader::read_uleb128_u64(self : BytesReader) -> UInt64 raise DecodeError {
-  let mut result: UInt64 = 0
+///|
+pub fn BytesReader::read_uleb128_u64(
+  self : BytesReader,
+) -> UInt64 raise DecodeError {
+  let mut result : UInt64 = 0
   let mut shift = 0
   while true {
     if shift >= 64 {
@@ -15,7 +18,11 @@ pub fn BytesReader::read_uleb128_u64(self : BytesReader) -> UInt64 raise DecodeE
   0
 }
 
-pub fn BytesWriter::write_uleb128_u64(self : BytesWriter, value : UInt64) -> Unit {
+///|
+pub fn BytesWriter::write_uleb128_u64(
+  self : BytesWriter,
+  value : UInt64,
+) -> Unit {
   let mut value = value
   while true {
     let mut byte = value & 0x7F
@@ -30,10 +37,13 @@ pub fn BytesWriter::write_uleb128_u64(self : BytesWriter, value : UInt64) -> Uni
   }
 }
 
-pub fn BytesReader::read_sleb128_i64(self : BytesReader) -> Int64 raise DecodeError {
-  let mut result: Int64 = 0
+///|
+pub fn BytesReader::read_sleb128_i64(
+  self : BytesReader,
+) -> Int64 raise DecodeError {
+  let mut result : Int64 = 0
   let mut shift = 0
-  let mut byte: UInt64 = 0
+  let mut byte : UInt64 = 0
   while true {
     if shift >= 64 {
       raise DecodeError("sleb128 overflow")
@@ -52,7 +62,11 @@ pub fn BytesReader::read_sleb128_i64(self : BytesReader) -> Int64 raise DecodeEr
   result
 }
 
-pub fn BytesWriter::write_sleb128_i64(self : BytesWriter, value : Int64) -> Unit {
+///|
+pub fn BytesWriter::write_sleb128_i64(
+  self : BytesWriter,
+  value : Int64,
+) -> Unit {
   let mut value = value
   let mut more = true
   while more {

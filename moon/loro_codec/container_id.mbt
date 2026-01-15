@@ -1,3 +1,4 @@
+///|
 pub enum ContainerType {
   Text
   Map
@@ -10,35 +11,44 @@ pub enum ContainerType {
 
 // NOTE: MoonBit makes enum constructors read-only across packages. Expose explicit
 // constructor functions for blackbox tests and future callers.
+
+///|
 pub fn ContainerType::text() -> ContainerType {
   ContainerType::Text
 }
 
+///|
 pub fn ContainerType::map() -> ContainerType {
   ContainerType::Map
 }
 
+///|
 pub fn ContainerType::list() -> ContainerType {
   ContainerType::List
 }
 
+///|
 pub fn ContainerType::movable_list() -> ContainerType {
   ContainerType::MovableList
 }
 
+///|
 pub fn ContainerType::tree() -> ContainerType {
   ContainerType::Tree
 }
 
+///|
 pub fn ContainerType::counter() -> ContainerType {
   ContainerType::Counter
 }
 
-pub fn ContainerType::unknown(kind: UInt) -> ContainerType {
+///|
+pub fn ContainerType::unknown(kind : UInt) -> ContainerType {
   ContainerType::Unknown(kind)
 }
 
-pub fn container_type_to_u8(t: ContainerType) -> Byte {
+///|
+pub fn container_type_to_u8(t : ContainerType) -> Byte {
   match t {
     ContainerType::Map => b'\x00'
     ContainerType::List => b'\x01'
@@ -50,7 +60,8 @@ pub fn container_type_to_u8(t: ContainerType) -> Byte {
   }
 }
 
-pub fn container_type_from_u8(b: Byte) -> ContainerType {
+///|
+pub fn container_type_from_u8(b : Byte) -> ContainerType {
   match b.to_uint() {
     0 => ContainerType::Map
     1 => ContainerType::List
@@ -63,7 +74,9 @@ pub fn container_type_from_u8(b: Byte) -> ContainerType {
 }
 
 // Used by serde (postcard) for historical reasons.
-pub fn container_type_to_historical_u8(t: ContainerType) -> Byte {
+
+///|
+pub fn container_type_to_historical_u8(t : ContainerType) -> Byte {
   match t {
     ContainerType::Text => b'\x00'
     ContainerType::Map => b'\x01'
@@ -75,7 +88,8 @@ pub fn container_type_to_historical_u8(t: ContainerType) -> Byte {
   }
 }
 
-pub fn container_type_from_historical_u8(b: Byte) -> ContainerType {
+///|
+pub fn container_type_from_historical_u8(b : Byte) -> ContainerType {
   match b.to_uint() {
     0 => ContainerType::Text
     1 => ContainerType::Map
@@ -87,20 +101,28 @@ pub fn container_type_from_historical_u8(b: Byte) -> ContainerType {
   }
 }
 
+///|
 pub enum ContainerID {
   Root(String, ContainerType)
   Normal(UInt64, Int, ContainerType)
 } derive(Eq, Show)
 
-pub fn ContainerID::root(name: String, kind: ContainerType) -> ContainerID {
+///|
+pub fn ContainerID::root(name : String, kind : ContainerType) -> ContainerID {
   ContainerID::Root(name, kind)
 }
 
-pub fn ContainerID::normal(peer: UInt64, counter: Int, kind: ContainerType) -> ContainerID {
+///|
+pub fn ContainerID::normal(
+  peer : UInt64,
+  counter : Int,
+  kind : ContainerType,
+) -> ContainerID {
   ContainerID::Normal(peer, counter, kind)
 }
 
-pub fn ContainerID::to_bytes(self: ContainerID) -> Bytes {
+///|
+pub fn ContainerID::to_bytes(self : ContainerID) -> Bytes {
   let w = BytesWriter::new()
   match self {
     ContainerID::Root(name, kind) => {
@@ -119,7 +141,10 @@ pub fn ContainerID::to_bytes(self: ContainerID) -> Bytes {
   w.to_bytes()
 }
 
-pub fn container_id_from_bytes(bytes: BytesView) -> ContainerID raise DecodeError {
+///|
+pub fn container_id_from_bytes(
+  bytes : BytesView,
+) -> ContainerID raise DecodeError {
   if bytes.length() < 1 {
     raise DecodeError("container_id: empty bytes")
   }
@@ -137,15 +162,15 @@ pub fn container_id_from_bytes(bytes: BytesView) -> ContainerID raise DecodeErro
       raise DecodeError("container_id: invalid name length")
     }
     let name_bytes = r.read_exact(name_len)
-    let name = @encoding/utf8.decode(name_bytes) catch { @encoding/utf8.Malformed(_) =>
-      raise DecodeError("container_id: invalid utf8 name")
+    let name = @encoding/utf8.decode(name_bytes) catch {
+      @encoding/utf8.Malformed(_) =>
+        raise DecodeError("container_id: invalid utf8 name")
     }
     if r.remaining() != 0 {
       raise DecodeError("container_id: trailing bytes")
     }
     return ContainerID::Root(name, kind)
   }
-
   if r.remaining() != 12 {
     raise DecodeError("container_id: invalid normal length")
   }
@@ -159,19 +184,17 @@ pub fn container_id_from_bytes(bytes: BytesView) -> ContainerID raise DecodeErro
 
 // --- postcard (serde) encoding for Option<ContainerID> ---
 
+///|
 pub fn postcard_decode_option_container_id(
-  bytes: BytesView,
+  bytes : BytesView,
 ) -> (ContainerID?, BytesView) raise DecodeError {
   let r = BytesReader::from_view(bytes)
   let opt_tag = r.read_varint_u64()
   match opt_tag {
-    0UL => {
-      return (None, bytes[bytes.length() - r.remaining():])
-    }
+    0UL => return (None, bytes[bytes.length() - r.remaining():])
     1UL => ()
     _ => raise DecodeError("postcard: invalid Option tag")
   }
-
   let cid_tag = r.read_varint_u64()
   match cid_tag {
     0UL => {
@@ -185,24 +208,32 @@ pub fn postcard_decode_option_container_id(
         raise DecodeError("postcard: invalid name length")
       }
       let name_bytes = r.read_exact(name_len)
-      let name = @encoding/utf8.decode(name_bytes) catch { @encoding/utf8.Malformed(_) =>
-        raise DecodeError("postcard: invalid utf8 name")
+      let name = @encoding/utf8.decode(name_bytes) catch {
+        @encoding/utf8.Malformed(_) =>
+          raise DecodeError("postcard: invalid utf8 name")
       }
       let kind = container_type_from_historical_u8(r.read_u8())
-      return (Some(ContainerID::Root(name, kind)), bytes[bytes.length() - r.remaining():])
+      return (
+        Some(ContainerID::Root(name, kind)),
+        bytes[bytes.length() - r.remaining():],
+      )
     }
     1UL => {
       // Normal: (peer: u64 varint, counter: i32 zigzag varint, container_type as historical u8)
       let peer = r.read_varint_u64()
       let counter = r.read_varint_i64().to_int()
       let kind = container_type_from_historical_u8(r.read_u8())
-      return (Some(ContainerID::Normal(peer, counter, kind)), bytes[bytes.length() - r.remaining():])
+      return (
+        Some(ContainerID::Normal(peer, counter, kind)),
+        bytes[bytes.length() - r.remaining():],
+      )
     }
     _ => raise DecodeError("postcard: invalid ContainerID tag")
   }
 }
 
-pub fn postcard_encode_option_container_id(cid: ContainerID?) -> Bytes {
+///|
+pub fn postcard_encode_option_container_id(cid : ContainerID?) -> Bytes {
   let w = BytesWriter::new()
   match cid {
     None => {

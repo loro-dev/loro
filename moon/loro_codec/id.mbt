@@ -1,28 +1,34 @@
+///|
 pub struct ID {
-  peer: UInt64
-  counter: Int
+  peer : UInt64
+  counter : Int
 } derive(Eq, Show)
 
-pub fn ID::new(peer: UInt64, counter: Int) -> ID {
+///|
+pub fn ID::new(peer : UInt64, counter : Int) -> ID {
   { peer, counter }
 }
 
-pub fn ID::peer(self: ID) -> UInt64 {
+///|
+pub fn ID::peer(self : ID) -> UInt64 {
   self.peer
 }
 
-pub fn ID::counter(self: ID) -> Int {
+///|
+pub fn ID::counter(self : ID) -> Int {
   self.counter
 }
 
-pub fn ID::to_change_block_key(self: ID) -> Bytes {
+///|
+pub fn ID::to_change_block_key(self : ID) -> Bytes {
   let w = BytesWriter::new()
   w.write_u64_be(self.peer)
   w.write_u32_be(self.counter.reinterpret_as_uint())
   w.to_bytes()
 }
 
-pub fn id_from_change_block_key(bytes: BytesView) -> ID raise DecodeError {
+///|
+pub fn id_from_change_block_key(bytes : BytesView) -> ID raise DecodeError {
   if bytes.length() != 12 {
     raise DecodeError("id: invalid change block key length")
   }

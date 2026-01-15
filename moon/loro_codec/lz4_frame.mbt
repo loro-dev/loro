@@ -1,16 +1,20 @@
-const LZ4_MAGIC: UInt = 0x184D2204
+///|
+const LZ4_MAGIC : UInt = 0x184D2204
 
-fn lz4_header_checksum(descriptor: BytesView) -> Byte raise DecodeError {
+///|
+fn lz4_header_checksum(descriptor : BytesView) -> Byte raise DecodeError {
   // LZ4 Frame spec: header checksum is xxHash32(descriptor, seed=0) >> 8 & 0xFF
   let h = xxhash32(descriptor, 0)
   ((h >> 8) & 0xFF).to_byte()
 }
 
-fn lz4_block_checksum(block_data: BytesView) -> UInt raise DecodeError {
+///|
+fn lz4_block_checksum(block_data : BytesView) -> UInt raise DecodeError {
   xxhash32(block_data, 0)
 }
 
-fn read_ext_len(r: BytesReader, base: Int) -> Int raise DecodeError {
+///|
+fn read_ext_len(r : BytesReader, base : Int) -> Int raise DecodeError {
   let mut len = base
   if base != 15 {
     return len
@@ -25,7 +29,11 @@ fn read_ext_len(r: BytesReader, base: Int) -> Int raise DecodeError {
   len
 }
 
-fn lz4_decompress_block_into(out: @buffer.Buffer, input: BytesView) -> Unit raise DecodeError {
+///|
+fn lz4_decompress_block_into(
+  out : @buffer.Buffer,
+  input : BytesView,
+) -> Unit raise DecodeError {
   let r = BytesReader::from_view(input)
   while r.remaining() > 0 {
     let token = r.read_u8().to_uint()
@@ -35,11 +43,9 @@ fn lz4_decompress_block_into(out: @buffer.Buffer, input: BytesView) -> Unit rais
       raise DecodeError("lz4: invalid literal length")
     }
     out.write_bytesview(r.read_exact(literal_len))
-
     if r.remaining() == 0 {
       break
     }
-
     let offset = r.read_u16_le().reinterpret_as_int()
     if offset <= 0 {
       raise DecodeError("lz4: invalid match offset")
@@ -47,7 +53,6 @@ fn lz4_decompress_block_into(out: @buffer.Buffer, input: BytesView) -> Unit rais
     if offset > out.length() {
       raise DecodeError("lz4: match offset out of bounds")
     }
-
     let match_base = (token & 0x0F).reinterpret_as_int()
     let mut match_len = match_base + 4
     if match_base == 15 {
@@ -56,7 +61,6 @@ fn lz4_decompress_block_into(out: @buffer.Buffer, input: BytesView) -> Unit rais
     if match_len < 0 {
       raise DecodeError("lz4: invalid match length")
     }
-
     let start = out.length() - offset
     for i in 0..<match_len {
       // NOTE: This supports overlap copy because out grows as we write.
@@ -66,13 +70,15 @@ fn lz4_decompress_block_into(out: @buffer.Buffer, input: BytesView) -> Unit rais
   }
 }
 
-fn lz4_decompress_block(input: BytesView) -> Bytes raise DecodeError {
+///|
+fn lz4_decompress_block(input : BytesView) -> Bytes raise DecodeError {
   let out = @buffer.new()
   lz4_decompress_block_into(out, input)
   out.to_bytes()
 }
 
-fn block_max_size_from_bd(bd: Byte) -> Int raise DecodeError {
+///|
+fn block_max_size_from_bd(bd : Byte) -> Int raise DecodeError {
   if (bd.to_uint() & 0x8F) != 0 {
     raise DecodeError("lz4: invalid BD")
   }
@@ -86,13 +92,16 @@ fn block_max_size_from_bd(bd: Byte) -> Int raise DecodeError {
   }
 }
 
-pub fn lz4_decompress_frame(bytes: BytesView, check_checksum: Bool) -> Bytes raise DecodeError {
+///|
+pub fn lz4_decompress_frame(
+  bytes : BytesView,
+  check_checksum : Bool,
+) -> Bytes raise DecodeError {
   let r = BytesReader::from_view(bytes)
   let magic = r.read_u32_le()
   if magic != LZ4_MAGIC {
     raise DecodeError("lz4: invalid magic")
   }
-
   let flg = r.read_u8()
   let version = ((flg.to_uint() >> 6) & 0x03).reinterpret_as_int()
   if version != 1 {
@@ -101,21 +110,17 @@ pub fn lz4_decompress_frame(bytes: BytesView, check_checksum: Bool) -> Bytes rai
   if (flg.to_uint() & 0x02) != 0 {
     raise DecodeError("lz4: invalid FLG (reserved bit set)")
   }
-
   let block_independence = (flg.to_uint() & 0x20) != 0
   let block_checksum_flag = (flg.to_uint() & 0x10) != 0
   let content_size_flag = (flg.to_uint() & 0x08) != 0
   let content_checksum_flag = (flg.to_uint() & 0x04) != 0
   let dict_id_flag = (flg.to_uint() & 0x01) != 0
-
   let bd = r.read_u8()
   let block_max_size = block_max_size_from_bd(bd)
-
   let desc = BytesWriter::new()
   desc.write_u8(flg)
   desc.write_u8(bd)
-
-  let mut expected_content_size: UInt64? = None
+  let mut expected_content_size : UInt64? = None
   if content_size_flag {
     let size = r.read_u64_le()
     expected_content_size = Some(size)
@@ -125,7 +130,6 @@ pub fn lz4_decompress_frame(bytes: BytesView, check_checksum: Bool) -> Bytes rai
     let dict_id = r.read_u32_le()
     desc.write_u32_le(dict_id)
   }
-
   let header_checksum = r.read_u8()
   if check_checksum {
     let expected = lz4_header_checksum(desc.to_bytes()[:])
@@ -133,7 +137,6 @@ pub fn lz4_decompress_frame(bytes: BytesView, check_checksum: Bool) -> Bytes rai
       raise DecodeError("lz4: header checksum mismatch")
     }
   }
-
   let out = @buffer.new()
   while true {
     let block_size_raw = r.read_u32_le()
@@ -146,7 +149,6 @@ pub fn lz4_decompress_frame(bytes: BytesView, check_checksum: Bool) -> Bytes rai
       raise DecodeError("lz4: invalid block size")
     }
     let block_data = r.read_exact(size)
-
     if block_checksum_flag {
       let stored = r.read_u32_le()
       if check_checksum {
@@ -156,18 +158,14 @@ pub fn lz4_decompress_frame(bytes: BytesView, check_checksum: Bool) -> Bytes rai
         }
       }
     }
-
     if is_uncompressed {
       out.write_bytesview(block_data)
+    } else if block_independence {
+      out.write_bytes(lz4_decompress_block(block_data))
     } else {
-      if block_independence {
-        out.write_bytes(lz4_decompress_block(block_data))
-      } else {
-        lz4_decompress_block_into(out, block_data)
-      }
+      lz4_decompress_block_into(out, block_data)
     }
   }
-
   if content_checksum_flag {
     let stored = r.read_u32_le()
     if check_checksum {
@@ -177,21 +175,17 @@ pub fn lz4_decompress_frame(bytes: BytesView, check_checksum: Bool) -> Bytes rai
       }
     }
   }
-
   if check_checksum {
     match expected_content_size {
-      Some(sz) => {
+      Some(sz) =>
         if out.length().to_uint64() != sz {
           raise DecodeError("lz4: content size mismatch")
         }
-      }
       None => ()
     }
   }
-
   if r.remaining() != 0 {
     raise DecodeError("lz4: trailing bytes")
   }
-
   out.to_bytes()
 }

@@ -1,6 +1,8 @@
-const DEFAULT_SSTABLE_BLOCK_SIZE: Int = 4096
+///|
+const DEFAULT_SSTABLE_BLOCK_SIZE : Int = 4096
 
-fn bytes_eq(a: Bytes, b: Bytes) -> Bool {
+///|
+fn bytes_eq(a : Bytes, b : Bytes) -> Bool {
   if a.length() != b.length() {
     return false
   }
@@ -12,9 +14,12 @@ fn bytes_eq(a: Bytes, b: Bytes) -> Bool {
   true
 }
 
-pub fn transcode_oplog_kv_store(oplog_bytes: Bytes, validate: Bool) -> Bytes raise DecodeError {
+///|
+pub fn transcode_oplog_kv_store(
+  oplog_bytes : Bytes,
+  validate : Bool,
+) -> Bytes raise DecodeError {
   let kvs = sstable_import_all(oplog_bytes, validate)
-
   if validate {
     let mut seen_vv = false
     let mut seen_fr = false
@@ -80,14 +85,17 @@ pub fn transcode_oplog_kv_store(oplog_bytes: Bytes, validate: Bool) -> Bytes rai
   }
 
   // Re-encode SSTable (compression=None) for canonical Moon output.
-  try {
-    sstable_export_all(kvs, DEFAULT_SSTABLE_BLOCK_SIZE)
-  } catch {
-    EncodeError(msg) => raise DecodeError("oplog: encode sstable failed: " + msg)
+  sstable_export_all(kvs, DEFAULT_SSTABLE_BLOCK_SIZE) catch {
+    EncodeError(msg) =>
+      raise DecodeError("oplog: encode sstable failed: " + msg)
   }
 }
 
-pub fn transcode_state_kv_store(state_bytes: Bytes, validate: Bool) -> Bytes raise DecodeError {
+///|
+pub fn transcode_state_kv_store(
+  state_bytes : Bytes,
+  validate : Bool,
+) -> Bytes raise DecodeError {
   // For shallow_root_state_bytes in non-shallow snapshots.
   if state_bytes.length() == 0 {
     return state_bytes
@@ -96,12 +104,10 @@ pub fn transcode_state_kv_store(state_bytes: Bytes, validate: Bool) -> Bytes rai
   if state_bytes.length() == 1 && state_bytes[0] == b'E' {
     return state_bytes
   }
-
   let kvs = sstable_import_all(state_bytes, validate)
   if kvs.length() == 0 {
     return b"E"
   }
-
   if validate {
     for kv in kvs {
       let (k, v) = kv
@@ -112,22 +118,20 @@ pub fn transcode_state_kv_store(state_bytes: Bytes, validate: Bool) -> Bytes rai
         }
         continue
       }
-
       let cid = container_id_from_bytes(k[:])
       let wrapper = parse_container_wrapper(v[:])
       // Basic consistency check: wrapper kind should match key's container kind.
       match cid {
-        ContainerID::Root(_, kind) | ContainerID::Normal(_, _, kind) => {
+        ContainerID::Root(_, kind) | ContainerID::Normal(_, _, kind) =>
           if wrapper.kind() != kind {
             raise DecodeError("state: container kind mismatch")
           }
-        }
       }
     }
   }
 
   // For now, keep payload opaque and only normalize the wrapper prefix.
-  let out_kvs: Array[(Bytes, Bytes)] = []
+  let out_kvs : Array[(Bytes, Bytes)] = []
   for kv in kvs {
     let (k, v) = kv
     if bytes_eq(k, b"fr") {
@@ -135,7 +139,11 @@ pub fn transcode_state_kv_store(state_bytes: Bytes, validate: Bool) -> Bytes rai
       continue
     }
     let wrapper = parse_container_wrapper(v[:])
-    let payload = transcode_container_state_snapshot(wrapper.kind(), wrapper.payload_view(), validate)
+    let payload = transcode_container_state_snapshot(
+      wrapper.kind(),
+      wrapper.payload_view(),
+      validate,
+    )
     let out_v = encode_container_wrapper(
       wrapper.kind(),
       wrapper.depth(),
@@ -144,10 +152,8 @@ pub fn transcode_state_kv_store(state_bytes: Bytes, validate: Bool) -> Bytes rai
     )
     out_kvs.push((k, out_v))
   }
-
-  try {
-    sstable_export_all(out_kvs, DEFAULT_SSTABLE_BLOCK_SIZE)
-  } catch {
-    EncodeError(msg) => raise DecodeError("state: encode sstable failed: " + msg)
+  sstable_export_all(out_kvs, DEFAULT_SSTABLE_BLOCK_SIZE) catch {
+    EncodeError(msg) =>
+      raise DecodeError("state: encode sstable failed: " + msg)
   }
 }

@@ -1,72 +1,87 @@
+///|
 pub struct EncodedBlock {
-  counter_start: UInt
-  counter_len: UInt
-  lamport_start: UInt
-  lamport_len: UInt
-  n_changes: UInt
-  header: Bytes
-  change_meta: Bytes
-  cids: Bytes
-  keys: Bytes
-  positions: Bytes
-  ops: Bytes
-  delete_start_ids: Bytes
-  values: Bytes
+  counter_start : UInt
+  counter_len : UInt
+  lamport_start : UInt
+  lamport_len : UInt
+  n_changes : UInt
+  header : Bytes
+  change_meta : Bytes
+  cids : Bytes
+  keys : Bytes
+  positions : Bytes
+  ops : Bytes
+  delete_start_ids : Bytes
+  values : Bytes
 }
 
-pub fn EncodedBlock::counter_start(self: EncodedBlock) -> UInt {
+///|
+pub fn EncodedBlock::counter_start(self : EncodedBlock) -> UInt {
   self.counter_start
 }
 
-pub fn EncodedBlock::counter_len(self: EncodedBlock) -> UInt {
+///|
+pub fn EncodedBlock::counter_len(self : EncodedBlock) -> UInt {
   self.counter_len
 }
 
-pub fn EncodedBlock::lamport_start(self: EncodedBlock) -> UInt {
+///|
+pub fn EncodedBlock::lamport_start(self : EncodedBlock) -> UInt {
   self.lamport_start
 }
 
-pub fn EncodedBlock::lamport_len(self: EncodedBlock) -> UInt {
+///|
+pub fn EncodedBlock::lamport_len(self : EncodedBlock) -> UInt {
   self.lamport_len
 }
 
-pub fn EncodedBlock::n_changes(self: EncodedBlock) -> UInt {
+///|
+pub fn EncodedBlock::n_changes(self : EncodedBlock) -> UInt {
   self.n_changes
 }
 
-pub fn EncodedBlock::header(self: EncodedBlock) -> Bytes {
+///|
+pub fn EncodedBlock::header(self : EncodedBlock) -> Bytes {
   self.header
 }
 
-pub fn EncodedBlock::change_meta(self: EncodedBlock) -> Bytes {
+///|
+pub fn EncodedBlock::change_meta(self : EncodedBlock) -> Bytes {
   self.change_meta
 }
 
-pub fn EncodedBlock::cids(self: EncodedBlock) -> Bytes {
+///|
+pub fn EncodedBlock::cids(self : EncodedBlock) -> Bytes {
   self.cids
 }
 
-pub fn EncodedBlock::keys(self: EncodedBlock) -> Bytes {
+///|
+pub fn EncodedBlock::keys(self : EncodedBlock) -> Bytes {
   self.keys
 }
 
-pub fn EncodedBlock::positions(self: EncodedBlock) -> Bytes {
+///|
+pub fn EncodedBlock::positions(self : EncodedBlock) -> Bytes {
   self.positions
 }
 
-pub fn EncodedBlock::ops(self: EncodedBlock) -> Bytes {
+///|
+pub fn EncodedBlock::ops(self : EncodedBlock) -> Bytes {
   self.ops
 }
 
-pub fn EncodedBlock::delete_start_ids(self: EncodedBlock) -> Bytes {
+///|
+pub fn EncodedBlock::delete_start_ids(self : EncodedBlock) -> Bytes {
   self.delete_start_ids
 }
 
-pub fn EncodedBlock::values(self: EncodedBlock) -> Bytes {
+///|
+pub fn EncodedBlock::values(self : EncodedBlock) -> Bytes {
   self.values
 }
 
-fn read_postcard_u32_block(r: BytesReader) -> UInt raise DecodeError {
+///|
+fn read_postcard_u32_block(r : BytesReader) -> UInt raise DecodeError {
   let v = r.read_varint_u64()
   if v > 0xFFFF_FFFFUL {
     raise DecodeError("postcard: u32 overflow")
@@ -74,11 +89,13 @@ fn read_postcard_u32_block(r: BytesReader) -> UInt raise DecodeError {
   v.to_uint()
 }
 
-fn write_postcard_u32_block(w: BytesWriter, v: UInt) -> Unit {
+///|
+fn write_postcard_u32_block(w : BytesWriter, v : UInt) -> Unit {
   w.write_varint_u64(v.to_uint64())
 }
 
-fn read_postcard_bytes(r: BytesReader) -> Bytes raise DecodeError {
+///|
+fn read_postcard_bytes(r : BytesReader) -> Bytes raise DecodeError {
   let len_u64 = r.read_varint_u64()
   if len_u64 > 0x7FFF_FFFFUL {
     raise DecodeError("postcard: bytes too large")
@@ -90,12 +107,16 @@ fn read_postcard_bytes(r: BytesReader) -> Bytes raise DecodeError {
   r.read_exact(len).to_bytes()
 }
 
-fn write_postcard_bytes(w: BytesWriter, b: Bytes) -> Unit {
+///|
+fn write_postcard_bytes(w : BytesWriter, b : Bytes) -> Unit {
   w.write_varint_u64(b.length().to_uint64())
   w.write_bytes(b)
 }
 
-pub fn decode_encoded_block(bytes: BytesView) -> EncodedBlock raise DecodeError {
+///|
+pub fn decode_encoded_block(
+  bytes : BytesView,
+) -> EncodedBlock raise DecodeError {
   let r = BytesReader::from_view(bytes)
   let counter_start = read_postcard_u32_block(r)
   let counter_len = read_postcard_u32_block(r)
@@ -130,7 +151,8 @@ pub fn decode_encoded_block(bytes: BytesView) -> EncodedBlock raise DecodeError 
   }
 }
 
-pub fn encode_encoded_block(block: EncodedBlock) -> Bytes {
+///|
+pub fn encode_encoded_block(block : EncodedBlock) -> Bytes {
   let w = BytesWriter::new()
   write_postcard_u32_block(w, block.counter_start)
   write_postcard_u32_block(w, block.counter_len)

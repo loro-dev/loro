@@ -1,13 +1,20 @@
-const SSTABLE_MAGIC: Bytes = b"LORO"
-const CURRENT_SCHEMA_VERSION: Byte = b'\x00'
-const MAX_BLOCK_NUM: Int = 10_000_000
+///|
+const SSTABLE_MAGIC : Bytes = b"LORO"
 
+///|
+const CURRENT_SCHEMA_VERSION : Byte = b'\x00'
+
+///|
+const MAX_BLOCK_NUM : Int = 10_000_000
+
+///|
 pub enum CompressionType {
   None
   LZ4
 }
 
-fn compression_type_from_u8(v: UInt) -> CompressionType raise DecodeError {
+///|
+fn compression_type_from_u8(v : UInt) -> CompressionType raise DecodeError {
   match v {
     0 => CompressionType::None
     1 => CompressionType::LZ4
@@ -15,22 +22,25 @@ fn compression_type_from_u8(v: UInt) -> CompressionType raise DecodeError {
   }
 }
 
-fn compression_type_to_u8(v: CompressionType) -> Byte {
+///|
+fn compression_type_to_u8(v : CompressionType) -> Byte {
   match v {
     CompressionType::None => b'\x00'
     CompressionType::LZ4 => b'\x01'
   }
 }
 
+///|
 pub struct BlockMeta {
-  offset: Int
-  is_large: Bool
-  compression_type: CompressionType
-  first_key: Bytes
-  last_key: Bytes?
+  offset : Int
+  is_large : Bool
+  compression_type : CompressionType
+  first_key : Bytes
+  last_key : Bytes?
 }
 
-fn bytes_compare(a: BytesView, b: BytesView) -> Int {
+///|
+fn bytes_compare(a : BytesView, b : BytesView) -> Int {
   let n = if a.length() < b.length() { a.length() } else { b.length() }
   for i in 0..<n {
     let ai = a[i].to_int()
@@ -42,7 +52,8 @@ fn bytes_compare(a: BytesView, b: BytesView) -> Int {
   a.length() - b.length()
 }
 
-fn common_prefix_len(a: Bytes, b: Bytes) -> Int {
+///|
+fn common_prefix_len(a : Bytes, b : Bytes) -> Int {
   let n = if a.length() < b.length() { a.length() } else { b.length() }
   let mut i = 0
   while i < n && i < 255 {
@@ -54,12 +65,15 @@ fn common_prefix_len(a: Bytes, b: Bytes) -> Int {
   i
 }
 
-fn decode_block_meta(bytes: BytesView, check_checksum: Bool) -> Array[BlockMeta] raise DecodeError {
+///|
+fn decode_block_meta(
+  bytes : BytesView,
+  check_checksum : Bool,
+) -> Array[BlockMeta] raise DecodeError {
   let len = bytes.length()
   if len < 8 {
     raise DecodeError("sstable: invalid meta bytes")
   }
-
   if check_checksum {
     let stored = BytesReader::from_view(bytes[len - 4:len]).read_u32_le()
     let expected = xxhash32(bytes[4:len - 4], LORO_XXH32_SEED)
@@ -67,14 +81,12 @@ fn decode_block_meta(bytes: BytesView, check_checksum: Bool) -> Array[BlockMeta]
       raise DecodeError("sstable: meta checksum mismatch")
     }
   }
-
   let r = BytesReader::from_view(bytes)
   let num = r.read_u32_le().reinterpret_as_int()
   if num < 0 || num > MAX_BLOCK_NUM {
     raise DecodeError("sstable: invalid block count")
   }
-
-  let metas: Array[BlockMeta] = []
+  let metas : Array[BlockMeta] = []
   for _i in 0..<num {
     let offset = r.read_u32_le().reinterpret_as_int()
     let first_len = r.read_u16_le().reinterpret_as_int()
@@ -86,15 +98,13 @@ fn decode_block_meta(bytes: BytesView, check_checksum: Bool) -> Array[BlockMeta]
     let is_large = (flags & 0x80) != 0
     let compression_type = compression_type_from_u8(flags & 0x7F)
     if is_large {
-      metas.push(
-        {
-          offset,
-          is_large,
-          compression_type,
-          first_key,
-          last_key: None,
-        },
-      )
+      metas.push({
+        offset,
+        is_large,
+        compression_type,
+        first_key,
+        last_key: None,
+      })
       continue
     }
     let last_len = r.read_u16_le().reinterpret_as_int()
@@ -102,17 +112,14 @@ fn decode_block_meta(bytes: BytesView, check_checksum: Bool) -> Array[BlockMeta]
       raise DecodeError("sstable: invalid last key length")
     }
     let last_key = r.read_exact(last_len).to_bytes()
-    metas.push(
-      {
-        offset,
-        is_large,
-        compression_type,
-        first_key,
-        last_key: Some(last_key),
-      },
-    )
+    metas.push({
+      offset,
+      is_large,
+      compression_type,
+      first_key,
+      last_key: Some(last_key),
+    })
   }
-
   let _ = r.read_u32_le()
   if r.remaining() != 0 {
     raise DecodeError("sstable: trailing bytes in meta")
@@ -120,12 +127,18 @@ fn decode_block_meta(bytes: BytesView, check_checksum: Bool) -> Array[BlockMeta]
   metas
 }
 
-fn decode_normal_block(data: BytesView, first_key: Bytes) -> Array[(Bytes, Bytes)] raise DecodeError {
+///|
+fn decode_normal_block(
+  data : BytesView,
+  first_key : Bytes,
+) -> Array[(Bytes, Bytes)] raise DecodeError {
   if data.length() < 2 {
     raise DecodeError("sstable: invalid normal block")
   }
   let total_len = data.length()
-  let kv_len = BytesReader::from_view(data[total_len - 2:total_len]).read_u16_le().reinterpret_as_int()
+  let kv_len = BytesReader::from_view(data[total_len - 2:total_len])
+    .read_u16_le()
+    .reinterpret_as_int()
   if kv_len < 0 {
     raise DecodeError("sstable: invalid kv_len")
   }
@@ -135,13 +148,14 @@ fn decode_normal_block(data: BytesView, first_key: Bytes) -> Array[(Bytes, Bytes
     raise DecodeError("sstable: invalid offsets section")
   }
   let offsets_view = data[data_end:data_end + offsets_bytes_len]
-  let offsets: Array[Int] = []
+  let offsets : Array[Int] = []
   for i in 0..<kv_len {
-    let off = BytesReader::from_view(offsets_view[i * 2:i * 2 + 2]).read_u16_le().reinterpret_as_int()
+    let off = BytesReader::from_view(offsets_view[i * 2:i * 2 + 2])
+      .read_u16_le()
+      .reinterpret_as_int()
     offsets.push(off)
   }
-
-  let kvs: Array[(Bytes, Bytes)] = []
+  let kvs : Array[(Bytes, Bytes)] = []
   for i in 0..<kv_len {
     let start = offsets[i]
     let end = if i + 1 < kv_len { offsets[i + 1] } else { data_end }
@@ -160,7 +174,9 @@ fn decode_normal_block(data: BytesView, first_key: Bytes) -> Array[(Bytes, Bytes
     if common < 0 || common > first_key.length() {
       raise DecodeError("sstable: invalid common prefix len")
     }
-    let key_suffix_len = BytesReader::from_view(rest[1:3]).read_u16_le().reinterpret_as_int()
+    let key_suffix_len = BytesReader::from_view(rest[1:3])
+      .read_u16_le()
+      .reinterpret_as_int()
     if key_suffix_len < 0 || 3 + key_suffix_len > rest.length() {
       raise DecodeError("sstable: invalid key suffix len")
     }
@@ -174,7 +190,11 @@ fn decode_normal_block(data: BytesView, first_key: Bytes) -> Array[(Bytes, Bytes
   kvs
 }
 
-pub fn sstable_import_all(bytes: Bytes, check_checksum: Bool) -> Array[(Bytes, Bytes)] raise DecodeError {
+///|
+pub fn sstable_import_all(
+  bytes : Bytes,
+  check_checksum : Bool,
+) -> Array[(Bytes, Bytes)] raise DecodeError {
   if bytes.length() < 9 {
     raise DecodeError("sstable: invalid bytes")
   }
@@ -184,19 +204,23 @@ pub fn sstable_import_all(bytes: Bytes, check_checksum: Bool) -> Array[(Bytes, B
   if bytes[4] != CURRENT_SCHEMA_VERSION {
     raise DecodeError("sstable: invalid schema version")
   }
-
-  let meta_offset = BytesReader::from_view(bytes[bytes.length() - 4:]).read_u32_le().reinterpret_as_int()
+  let meta_offset = BytesReader::from_view(bytes[bytes.length() - 4:])
+    .read_u32_le()
+    .reinterpret_as_int()
   if meta_offset < 5 || meta_offset >= bytes.length() - 4 {
     raise DecodeError("sstable: invalid meta offset")
   }
   let raw_meta = bytes[meta_offset:bytes.length() - 4]
   let meta = decode_block_meta(raw_meta, check_checksum)
-
-  let kvs: Array[(Bytes, Bytes)] = []
+  let kvs : Array[(Bytes, Bytes)] = []
   for i in 0..<meta.length() {
     let m = meta[i]
     let offset = m.offset
-    let offset_end = if i + 1 < meta.length() { meta[i + 1].offset } else { meta_offset }
+    let offset_end = if i + 1 < meta.length() {
+      meta[i + 1].offset
+    } else {
+      meta_offset
+    }
     if offset < 5 || offset_end < offset || offset_end > meta_offset {
       raise DecodeError("sstable: invalid block offset")
     }
@@ -204,7 +228,9 @@ pub fn sstable_import_all(bytes: Bytes, check_checksum: Bool) -> Array[(Bytes, B
     if raw_block_and_check.length() < 4 {
       raise DecodeError("sstable: invalid block bytes")
     }
-    let stored = BytesReader::from_view(raw_block_and_check[raw_block_and_check.length() - 4:]).read_u32_le()
+    let stored = BytesReader::from_view(
+      raw_block_and_check[raw_block_and_check.length() - 4:],
+    ).read_u32_le()
     let body = raw_block_and_check[0:raw_block_and_check.length() - 4]
     if check_checksum {
       let expected = xxhash32(body, LORO_XXH32_SEED)
@@ -212,12 +238,10 @@ pub fn sstable_import_all(bytes: Bytes, check_checksum: Bool) -> Array[(Bytes, B
         raise DecodeError("sstable: block checksum mismatch")
       }
     }
-
     let uncompressed = match m.compression_type {
       CompressionType::None => body.to_bytes()
       CompressionType::LZ4 => lz4_decompress_frame(body, check_checksum)
     }
-
     if m.is_large {
       kvs.push((m.first_key, uncompressed))
     } else {
@@ -230,14 +254,14 @@ pub fn sstable_import_all(bytes: Bytes, check_checksum: Bool) -> Array[(Bytes, B
   kvs
 }
 
+///|
 pub fn sstable_export_all(
-  kvs: Array[(Bytes, Bytes)],
-  block_size: Int,
+  kvs : Array[(Bytes, Bytes)],
+  block_size : Int,
 ) -> Bytes raise EncodeError {
   if block_size <= 0 || block_size > 0xFFFF {
     raise EncodeError("sstable: invalid block_size")
   }
-
   for i in 0..<kvs.length() {
     let (k, _) = kvs[i]
     if k.length() == 0 {
@@ -250,49 +274,41 @@ pub fn sstable_export_all(
       }
     }
   }
-
-  let blocks: Array[Bytes] = []
-  let meta: Array[BlockMeta] = []
+  let blocks : Array[Bytes] = []
+  let meta : Array[BlockMeta] = []
   let mut next_offset = 5
-
   let mut idx = 0
   while idx < kvs.length() {
     let (key, value) = kvs[idx]
-
     if value.length() > block_size {
-      let checksum = xxhash32(value[:], LORO_XXH32_SEED) catch { DecodeError(e) =>
-        raise EncodeError("sstable: checksum failed: " + e)
+      let checksum = xxhash32(value[:], LORO_XXH32_SEED) catch {
+        DecodeError(e) => raise EncodeError("sstable: checksum failed: " + e)
       }
       let w = BytesWriter::new()
       w.write_bytes(value)
       w.write_u32_le(checksum)
       let block_bytes = w.to_bytes()
       blocks.push(block_bytes)
-      meta.push(
-        {
-          offset: next_offset,
-          is_large: true,
-          compression_type: CompressionType::None,
-          first_key: key,
-          last_key: None,
-        },
-      )
+      meta.push({
+        offset: next_offset,
+        is_large: true,
+        compression_type: CompressionType::None,
+        first_key: key,
+        last_key: None,
+      })
       next_offset = next_offset + block_bytes.length()
       idx = idx + 1
       continue
     }
-
     let first_key = key
     let mut last_key = key
     let data_w = BytesWriter::new()
-    let offsets: Array[Int] = []
+    let offsets : Array[Int] = []
     let mut data_len = 0
-
     offsets.push(data_len)
     data_w.write_bytes(value)
     data_len = data_len + value.length()
     idx = idx + 1
-
     while idx < kvs.length() {
       let (k2, v2) = kvs[idx]
       if v2.length() > block_size {
@@ -303,7 +319,6 @@ pub fn sstable_export_all(
       if estimated + add_est > block_size {
         break
       }
-
       let common = common_prefix_len(first_key, k2)
       let suffix = k2[common:]
       let suffix_len = suffix.length()
@@ -313,7 +328,6 @@ pub fn sstable_export_all(
       if data_len > 0xFFFF {
         raise EncodeError("sstable: block too large")
       }
-
       offsets.push(data_len)
       data_w.write_u8(common.to_byte())
       data_w.write_u16_le(suffix_len.reinterpret_as_uint())
@@ -323,7 +337,6 @@ pub fn sstable_export_all(
       last_key = k2
       idx = idx + 1
     }
-
     let body_w = BytesWriter::new()
     body_w.write_bytes(data_w.to_bytes())
     for off in offsets {
@@ -334,37 +347,32 @@ pub fn sstable_export_all(
     }
     body_w.write_u16_le(offsets.length().reinterpret_as_uint())
     let body_bytes = body_w.to_bytes()
-    let checksum = xxhash32(body_bytes[:], LORO_XXH32_SEED) catch { DecodeError(e) =>
-      raise EncodeError("sstable: checksum failed: " + e)
+    let checksum = xxhash32(body_bytes[:], LORO_XXH32_SEED) catch {
+      DecodeError(e) => raise EncodeError("sstable: checksum failed: " + e)
     }
     let w = BytesWriter::new()
     w.write_bytes(body_bytes)
     w.write_u32_le(checksum)
     let block_bytes = w.to_bytes()
     blocks.push(block_bytes)
-    meta.push(
-      {
-        offset: next_offset,
-        is_large: false,
-        compression_type: CompressionType::None,
-        first_key,
-        last_key: Some(last_key),
-      },
-    )
+    meta.push({
+      offset: next_offset,
+      is_large: false,
+      compression_type: CompressionType::None,
+      first_key,
+      last_key: Some(last_key),
+    })
     next_offset = next_offset + block_bytes.length()
   }
-
   let meta_offset = next_offset
-
   let meta_w = BytesWriter::new()
   meta_w.write_u32_le(meta.length().reinterpret_as_uint())
   for m in meta {
     meta_w.write_u32_le(m.offset.reinterpret_as_uint())
     meta_w.write_u16_le(m.first_key.length().reinterpret_as_uint())
     meta_w.write_bytes(m.first_key)
-    let flags =
-      (if m.is_large { 0x80 } else { 0 }).reinterpret_as_uint()
-      | compression_type_to_u8(m.compression_type).to_uint()
+    let flags = (if m.is_large { 0x80 } else { 0 }).reinterpret_as_uint() |
+      compression_type_to_u8(m.compression_type).to_uint()
     meta_w.write_u8((flags & 0xFF).to_byte())
     if !m.is_large {
       match m.last_key {
@@ -382,7 +390,6 @@ pub fn sstable_export_all(
   }
   meta_w.write_u32_le(meta_checksum)
   let meta_bytes = meta_w.to_bytes()
-
   let out = BytesWriter::new()
   out.write_bytes(SSTABLE_MAGIC)
   out.write_u8(CURRENT_SCHEMA_VERSION)
@@ -393,4 +400,3 @@ pub fn sstable_export_all(
   out.write_u32_le(meta_offset.reinterpret_as_uint())
   out.to_bytes()
 }
-

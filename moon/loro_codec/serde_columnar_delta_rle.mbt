@@ -1,7 +1,8 @@
-pub fn decode_delta_rle_u32(bytes: BytesView) -> Array[UInt] raise DecodeError {
+///|
+pub fn decode_delta_rle_u32(bytes : BytesView) -> Array[UInt] raise DecodeError {
   let deltas = decode_any_rle(bytes, read_postcard_i128_bigint)
-  let out: Array[UInt] = []
-  let mut abs: BigInt = 0N
+  let out : Array[UInt] = []
+  let mut abs : BigInt = 0N
   let max = BigInt::from_uint64(0xFFFF_FFFFUL)
   for d in deltas {
     abs = abs + d
@@ -13,12 +14,13 @@ pub fn decode_delta_rle_u32(bytes: BytesView) -> Array[UInt] raise DecodeError {
   out
 }
 
-pub fn encode_delta_rle_u32(values: Array[UInt]) -> Bytes {
+///|
+pub fn encode_delta_rle_u32(values : Array[UInt]) -> Bytes {
   if values.length() == 0 {
     return b""
   }
-  let deltas: Array[BigInt] = []
-  let mut prev: BigInt = 0N
+  let deltas : Array[BigInt] = []
+  let mut prev : BigInt = 0N
   for v in values {
     let cur = BigInt::from_uint(v)
     deltas.push(cur - prev)
@@ -27,10 +29,11 @@ pub fn encode_delta_rle_u32(values: Array[UInt]) -> Bytes {
   encode_any_rle_literal(deltas, write_postcard_i128_bigint)
 }
 
-pub fn decode_delta_rle_i32(bytes: BytesView) -> Array[Int] raise DecodeError {
+///|
+pub fn decode_delta_rle_i32(bytes : BytesView) -> Array[Int] raise DecodeError {
   let deltas = decode_any_rle(bytes, read_postcard_i128_bigint)
-  let out: Array[Int] = []
-  let mut abs: BigInt = 0N
+  let out : Array[Int] = []
+  let mut abs : BigInt = 0N
   let min = BigInt::from_int64(-2147483648L)
   let max = BigInt::from_int64(2147483647L)
   for d in deltas {
@@ -43,12 +46,13 @@ pub fn decode_delta_rle_i32(bytes: BytesView) -> Array[Int] raise DecodeError {
   out
 }
 
-pub fn encode_delta_rle_i32(values: Array[Int]) -> Bytes {
+///|
+pub fn encode_delta_rle_i32(values : Array[Int]) -> Bytes {
   if values.length() == 0 {
     return b""
   }
-  let deltas: Array[BigInt] = []
-  let mut prev: BigInt = 0N
+  let deltas : Array[BigInt] = []
+  let mut prev : BigInt = 0N
   for v in values {
     let cur = BigInt::from_int(v)
     deltas.push(cur - prev)
@@ -57,10 +61,13 @@ pub fn encode_delta_rle_i32(values: Array[Int]) -> Bytes {
   encode_any_rle_literal(deltas, write_postcard_i128_bigint)
 }
 
-pub fn decode_delta_rle_usize(bytes: BytesView) -> Array[UInt64] raise DecodeError {
+///|
+pub fn decode_delta_rle_usize(
+  bytes : BytesView,
+) -> Array[UInt64] raise DecodeError {
   let deltas = decode_any_rle(bytes, read_postcard_i128_bigint)
-  let out: Array[UInt64] = []
-  let mut abs: BigInt = 0N
+  let out : Array[UInt64] = []
+  let mut abs : BigInt = 0N
   let max = BigInt::from_uint64(0xFFFF_FFFF_FFFF_FFFFUL)
   for d in deltas {
     abs = abs + d
@@ -72,12 +79,13 @@ pub fn decode_delta_rle_usize(bytes: BytesView) -> Array[UInt64] raise DecodeErr
   out
 }
 
-pub fn encode_delta_rle_usize(values: Array[UInt64]) -> Bytes {
+///|
+pub fn encode_delta_rle_usize(values : Array[UInt64]) -> Bytes {
   if values.length() == 0 {
     return b""
   }
-  let deltas: Array[BigInt] = []
-  let mut prev: BigInt = 0N
+  let deltas : Array[BigInt] = []
+  let mut prev : BigInt = 0N
   for v in values {
     let cur = BigInt::from_uint64(v)
     deltas.push(cur - prev)
@@ -86,10 +94,13 @@ pub fn encode_delta_rle_usize(values: Array[UInt64]) -> Bytes {
   encode_any_rle_literal(deltas, write_postcard_i128_bigint)
 }
 
-pub fn decode_delta_rle_isize(bytes: BytesView) -> Array[Int64] raise DecodeError {
+///|
+pub fn decode_delta_rle_isize(
+  bytes : BytesView,
+) -> Array[Int64] raise DecodeError {
   let deltas = decode_any_rle(bytes, read_postcard_i128_bigint)
-  let out: Array[Int64] = []
-  let mut abs: BigInt = 0N
+  let out : Array[Int64] = []
+  let mut abs : BigInt = 0N
   let min = BigInt::from_int64(-9223372036854775808L)
   let max = BigInt::from_int64(9223372036854775807L)
   for d in deltas {
@@ -102,12 +113,13 @@ pub fn decode_delta_rle_isize(bytes: BytesView) -> Array[Int64] raise DecodeErro
   out
 }
 
-pub fn encode_delta_rle_isize(values: Array[Int64]) -> Bytes {
+///|
+pub fn encode_delta_rle_isize(values : Array[Int64]) -> Bytes {
   if values.length() == 0 {
     return b""
   }
-  let deltas: Array[BigInt] = []
-  let mut prev: BigInt = 0N
+  let deltas : Array[BigInt] = []
+  let mut prev : BigInt = 0N
   for v in values {
     let cur = BigInt::from_int64(v)
     deltas.push(cur - prev)
@@ -116,7 +128,8 @@ pub fn encode_delta_rle_isize(values: Array[Int64]) -> Bytes {
   encode_any_rle_literal(deltas, write_postcard_i128_bigint)
 }
 
-fn read_postcard_option_i64(r: BytesReader) -> Int64? raise DecodeError {
+///|
+fn read_postcard_option_i64(r : BytesReader) -> Int64? raise DecodeError {
   let tag = r.read_varint_u64()
   match tag {
     0UL => None
@@ -125,7 +138,8 @@ fn read_postcard_option_i64(r: BytesReader) -> Int64? raise DecodeError {
   }
 }
 
-fn write_postcard_option_i64(w: BytesWriter, v: Int64?) -> Unit {
+///|
+fn write_postcard_option_i64(w : BytesWriter, v : Int64?) -> Unit {
   match v {
     None => w.write_varint_u64(0)
     Some(x) => {
@@ -135,13 +149,18 @@ fn write_postcard_option_i64(w: BytesWriter, v: Int64?) -> Unit {
   }
 }
 
+///|
 priv struct BitReader {
-  buf: BytesView
-  mut bit_pos: Int
-  total_bits: Int
+  buf : BytesView
+  mut bit_pos : Int
+  total_bits : Int
 }
 
-fn BitReader::new(buf: BytesView, last_used_bits: UInt) -> BitReader raise DecodeError {
+///|
+fn BitReader::new(
+  buf : BytesView,
+  last_used_bits : UInt,
+) -> BitReader raise DecodeError {
   if last_used_bits > 8 {
     raise DecodeError("delta_of_delta: invalid last_used_bits")
   }
@@ -159,11 +178,13 @@ fn BitReader::new(buf: BytesView, last_used_bits: UInt) -> BitReader raise Decod
   { buf, bit_pos: 0, total_bits }
 }
 
-fn BitReader::remaining(self: BitReader) -> Int {
+///|
+fn BitReader::remaining(self : BitReader) -> Int {
   self.total_bits - self.bit_pos
 }
 
-fn BitReader::read_bit(self: BitReader) -> Bool raise DecodeError {
+///|
+fn BitReader::read_bit(self : BitReader) -> Bool raise DecodeError {
   if self.bit_pos >= self.total_bits {
     raise DecodeError("delta_of_delta: unexpected end of bitstream")
   }
@@ -174,18 +195,23 @@ fn BitReader::read_bit(self: BitReader) -> Bool raise DecodeError {
   (self.buf[byte_index] & mask) != b'\x00'
 }
 
-fn BitReader::read_bits_u64(self: BitReader, n: Int) -> UInt64 raise DecodeError {
+///|
+fn BitReader::read_bits_u64(
+  self : BitReader,
+  n : Int,
+) -> UInt64 raise DecodeError {
   if n < 0 || n > 64 {
     raise DecodeError("delta_of_delta: invalid bit width")
   }
-  let mut v: UInt64 = 0
+  let mut v : UInt64 = 0
   for _i in 0..<n {
     v = (v << 1) | (if self.read_bit() { 1UL } else { 0UL })
   }
   v
 }
 
-fn decode_delta_of_delta_value(br: BitReader) -> Int64 raise DecodeError {
+///|
+fn decode_delta_of_delta_value(br : BitReader) -> Int64 raise DecodeError {
   let b0 = br.read_bit()
   if !b0 {
     return 0

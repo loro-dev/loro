@@ -1,5 +1,7 @@
-const MAX_COLLECTION_SIZE: UInt64 = 268435456UL
+///|
+const MAX_COLLECTION_SIZE : UInt64 = 268435456UL
 
+///|
 pub enum LoroValue {
   Null
   True
@@ -13,6 +15,7 @@ pub enum LoroValue {
   ContainerType(Byte)
 } derive(Eq, Show)
 
+///|
 pub enum Value {
   Null
   True
@@ -34,42 +37,48 @@ pub enum Value {
   Future(Byte, Bytes) // (raw tag byte, binary payload bytes)
 } derive(Eq, Show)
 
+///|
 pub struct MarkStart {
-  info: Byte
-  len: UInt64
-  key_idx: UInt64
-  value: LoroValue
+  info : Byte
+  len : UInt64
+  key_idx : UInt64
+  value : LoroValue
 } derive(Eq, Show)
 
+///|
 pub struct TreeMove {
-  target_idx: UInt64
-  is_parent_null: Bool
-  position: UInt64
-  parent_idx: UInt64?
+  target_idx : UInt64
+  is_parent_null : Bool
+  position : UInt64
+  parent_idx : UInt64?
 } derive(Eq, Show)
 
+///|
 pub struct ListMove {
-  from: UInt64
-  from_idx: UInt64
-  lamport: UInt64
+  from : UInt64
+  from_idx : UInt64
+  lamport : UInt64
 } derive(Eq, Show)
 
+///|
 pub struct ListSet {
-  peer_idx: UInt64
-  lamport: UInt
-  value: LoroValue
+  peer_idx : UInt64
+  lamport : UInt
+  value : LoroValue
 } derive(Eq, Show)
 
+///|
 pub struct RawTreeMove {
-  subject_peer_idx: UInt64
-  subject_cnt: Int
-  position_idx: UInt64
-  is_parent_null: Bool
-  parent_peer_idx: UInt64
-  parent_cnt: Int
+  subject_peer_idx : UInt64
+  subject_cnt : Int
+  position_idx : UInt64
+  is_parent_null : Bool
+  parent_peer_idx : UInt64
+  parent_cnt : Int
 } derive(Eq, Show)
 
-fn read_len_u64(r: BytesReader) -> UInt64 raise DecodeError {
+///|
+fn read_len_u64(r : BytesReader) -> UInt64 raise DecodeError {
   let n = r.read_uleb128_u64()
   if n > MAX_COLLECTION_SIZE {
     raise DecodeError("value: collection too large")
@@ -77,7 +86,8 @@ fn read_len_u64(r: BytesReader) -> UInt64 raise DecodeError {
   n
 }
 
-fn read_utf8(r: BytesReader) -> String raise DecodeError {
+///|
+fn read_utf8(r : BytesReader) -> String raise DecodeError {
   let len_u64 = r.read_uleb128_u64()
   if len_u64 > 0x7FFF_FFFFUL {
     raise DecodeError("value: string too long")
@@ -87,12 +97,13 @@ fn read_utf8(r: BytesReader) -> String raise DecodeError {
     raise DecodeError("value: invalid string length")
   }
   let bytes = r.read_exact(len)
-  @encoding/utf8.decode(bytes) catch { @encoding/utf8.Malformed(_) =>
-    raise DecodeError("value: invalid utf8")
+  @encoding/utf8.decode(bytes) catch {
+    @encoding/utf8.Malformed(_) => raise DecodeError("value: invalid utf8")
   }
 }
 
-fn read_binary(r: BytesReader) -> Bytes raise DecodeError {
+///|
+fn read_binary(r : BytesReader) -> Bytes raise DecodeError {
   let len_u64 = r.read_uleb128_u64()
   if len_u64 > 0x7FFF_FFFFUL {
     raise DecodeError("value: binary too long")
@@ -104,18 +115,21 @@ fn read_binary(r: BytesReader) -> Bytes raise DecodeError {
   r.read_exact(len).to_bytes()
 }
 
-fn write_utf8(w: BytesWriter, s: String) -> Unit {
+///|
+fn write_utf8(w : BytesWriter, s : String) -> Unit {
   let bytes = @encoding/utf8.encode(s[:])
   w.write_uleb128_u64(bytes.length().to_uint64())
   w.write_bytes(bytes)
 }
 
-fn write_binary(w: BytesWriter, b: Bytes) -> Unit {
+///|
+fn write_binary(w : BytesWriter, b : Bytes) -> Unit {
   w.write_uleb128_u64(b.length().to_uint64())
   w.write_bytes(b)
 }
 
-fn read_loro_value(r: BytesReader, depth: Int) -> LoroValue raise DecodeError {
+///|
+fn read_loro_value(r : BytesReader, depth : Int) -> LoroValue raise DecodeError {
   if depth > 1024 {
     raise DecodeError("value: too deep")
   }
@@ -133,7 +147,7 @@ fn read_loro_value(r: BytesReader, depth: Int) -> LoroValue raise DecodeError {
     6 => LoroValue::Binary(read_binary(r))
     7 => {
       let len = read_len_u64(r).to_int()
-      let items: Array[LoroValue] = []
+      let items : Array[LoroValue] = []
       for _i in 0..<len {
         items.push(read_loro_value(r, depth + 1))
       }
@@ -141,7 +155,7 @@ fn read_loro_value(r: BytesReader, depth: Int) -> LoroValue raise DecodeError {
     }
     8 => {
       let len = read_len_u64(r).to_int()
-      let items: Array[(UInt64, LoroValue)] = []
+      let items : Array[(UInt64, LoroValue)] = []
       for _i in 0..<len {
         let key_idx = r.read_uleb128_u64()
         let v = read_loro_value(r, depth + 1)
@@ -157,7 +171,8 @@ fn read_loro_value(r: BytesReader, depth: Int) -> LoroValue raise DecodeError {
   }
 }
 
-fn write_loro_value(w: BytesWriter, v: LoroValue) -> Unit {
+///|
+fn write_loro_value(w : BytesWriter, v : LoroValue) -> Unit {
   match v {
     LoroValue::Null => w.write_u8(b'\x00')
     LoroValue::True => w.write_u8(b'\x01')
@@ -201,106 +216,109 @@ fn write_loro_value(w: BytesWriter, v: LoroValue) -> Unit {
   }
 }
 
-pub fn decode_value(bytes: BytesView) -> (Value, BytesView) raise DecodeError {
+///|
+pub fn decode_value(bytes : BytesView) -> (Value, BytesView) raise DecodeError {
   let r = BytesReader::from_view(bytes)
   let tag = r.read_u8()
   decode_value_content(tag, bytes[1:])
 }
 
-pub fn decode_value_content(tag: Byte, bytes: BytesView) -> (Value, BytesView) raise DecodeError {
+///|
+pub fn decode_value_content(
+  tag : Byte,
+  bytes : BytesView,
+) -> (Value, BytesView) raise DecodeError {
   let r = BytesReader::from_view(bytes)
-  let kind = (tag.to_uint() & 0x7F)
-  let v: Value =
-    match kind {
-      0 => Value::Null
-      1 => Value::True
-      2 => Value::False
-      3 => Value::I64(r.read_sleb128_i64())
-      4 => {
-        let bits = r.read_u64_be()
-        Value::F64(bits.reinterpret_as_double())
-      }
-      5 => Value::Str(read_utf8(r))
-      6 => Value::Binary(read_binary(r))
-      7 => Value::ContainerIdx(r.read_uleb128_u64())
-      8 => Value::DeleteOnce
-      9 => Value::DeleteSeq
-      10 => {
-        let x = r.read_sleb128_i64()
-        if x < -2147483648L || x > 2147483647L {
-          raise DecodeError("value: deltaint overflow")
-        }
-        Value::DeltaInt(x.to_int())
-      }
-      11 => Value::LoroValue(read_loro_value(r, 0))
-      12 => {
-        let info = r.read_u8()
-        let len = r.read_uleb128_u64()
-        let key_idx = r.read_uleb128_u64()
-        let value = read_loro_value(r, 0)
-        Value::MarkStart({ info, len, key_idx, value })
-      }
-      13 => {
-        let target_idx = r.read_uleb128_u64()
-        let is_parent_null = r.read_u8() != b'\x00'
-        let position = r.read_uleb128_u64()
-        let parent_idx =
-          if is_parent_null {
-            Option::None
-          } else {
-            Option::Some(r.read_uleb128_u64())
-          }
-        Value::TreeMove({ target_idx, is_parent_null, position, parent_idx })
-      }
-      14 => {
-        let from = r.read_uleb128_u64()
-        let from_idx = r.read_uleb128_u64()
-        let lamport = r.read_uleb128_u64()
-        Value::ListMove({ from, from_idx, lamport })
-      }
-      15 => {
-        let peer_idx = r.read_uleb128_u64()
-        let lamport_u64 = r.read_uleb128_u64()
-        if lamport_u64 > 0xFFFF_FFFFUL {
-          raise DecodeError("value: listset lamport overflow")
-        }
-        let value = read_loro_value(r, 0)
-        Value::ListSet({ peer_idx, lamport: lamport_u64.to_uint(), value })
-      }
-      16 => {
-        let subject_peer_idx = r.read_uleb128_u64()
-        let subject_cnt_u64 = r.read_uleb128_u64()
-        let position_idx = r.read_uleb128_u64()
-        let is_parent_null = r.read_u8() != b'\x00'
-        let mut parent_peer_idx: UInt64 = 0
-        let mut parent_cnt_u64: UInt64 = 0
-        if !is_parent_null {
-          parent_peer_idx = r.read_uleb128_u64()
-          parent_cnt_u64 = r.read_uleb128_u64()
-        }
-        if subject_cnt_u64 > 0x7FFF_FFFFUL || parent_cnt_u64 > 0x7FFF_FFFFUL {
-          raise DecodeError("value: raw_tree_move counter overflow")
-        }
-        Value::RawTreeMove({
-          subject_peer_idx,
-          subject_cnt: subject_cnt_u64.to_int(),
-          position_idx,
-          is_parent_null,
-          parent_peer_idx,
-          parent_cnt: parent_cnt_u64.to_int(),
-        })
-      }
-      _ => {
-        let data = read_binary(r)
-        Value::Future(tag, data)
-      }
+  let kind = tag.to_uint() & 0x7F
+  let v : Value = match kind {
+    0 => Value::Null
+    1 => Value::True
+    2 => Value::False
+    3 => Value::I64(r.read_sleb128_i64())
+    4 => {
+      let bits = r.read_u64_be()
+      Value::F64(bits.reinterpret_as_double())
     }
-
+    5 => Value::Str(read_utf8(r))
+    6 => Value::Binary(read_binary(r))
+    7 => Value::ContainerIdx(r.read_uleb128_u64())
+    8 => Value::DeleteOnce
+    9 => Value::DeleteSeq
+    10 => {
+      let x = r.read_sleb128_i64()
+      if x < -2147483648L || x > 2147483647L {
+        raise DecodeError("value: deltaint overflow")
+      }
+      Value::DeltaInt(x.to_int())
+    }
+    11 => Value::LoroValue(read_loro_value(r, 0))
+    12 => {
+      let info = r.read_u8()
+      let len = r.read_uleb128_u64()
+      let key_idx = r.read_uleb128_u64()
+      let value = read_loro_value(r, 0)
+      Value::MarkStart({ info, len, key_idx, value })
+    }
+    13 => {
+      let target_idx = r.read_uleb128_u64()
+      let is_parent_null = r.read_u8() != b'\x00'
+      let position = r.read_uleb128_u64()
+      let parent_idx = if is_parent_null {
+        Option::None
+      } else {
+        Option::Some(r.read_uleb128_u64())
+      }
+      Value::TreeMove({ target_idx, is_parent_null, position, parent_idx })
+    }
+    14 => {
+      let from = r.read_uleb128_u64()
+      let from_idx = r.read_uleb128_u64()
+      let lamport = r.read_uleb128_u64()
+      Value::ListMove({ from, from_idx, lamport })
+    }
+    15 => {
+      let peer_idx = r.read_uleb128_u64()
+      let lamport_u64 = r.read_uleb128_u64()
+      if lamport_u64 > 0xFFFF_FFFFUL {
+        raise DecodeError("value: listset lamport overflow")
+      }
+      let value = read_loro_value(r, 0)
+      Value::ListSet({ peer_idx, lamport: lamport_u64.to_uint(), value })
+    }
+    16 => {
+      let subject_peer_idx = r.read_uleb128_u64()
+      let subject_cnt_u64 = r.read_uleb128_u64()
+      let position_idx = r.read_uleb128_u64()
+      let is_parent_null = r.read_u8() != b'\x00'
+      let mut parent_peer_idx : UInt64 = 0
+      let mut parent_cnt_u64 : UInt64 = 0
+      if !is_parent_null {
+        parent_peer_idx = r.read_uleb128_u64()
+        parent_cnt_u64 = r.read_uleb128_u64()
+      }
+      if subject_cnt_u64 > 0x7FFF_FFFFUL || parent_cnt_u64 > 0x7FFF_FFFFUL {
+        raise DecodeError("value: raw_tree_move counter overflow")
+      }
+      Value::RawTreeMove({
+        subject_peer_idx,
+        subject_cnt: subject_cnt_u64.to_int(),
+        position_idx,
+        is_parent_null,
+        parent_peer_idx,
+        parent_cnt: parent_cnt_u64.to_int(),
+      })
+    }
+    _ => {
+      let data = read_binary(r)
+      Value::Future(tag, data)
+    }
+  }
   let rest = bytes[bytes.length() - r.remaining():]
   (v, rest)
 }
 
-pub fn encode_value_content(v: Value) -> (Byte, Bytes) {
+///|
+pub fn encode_value_content(v : Value) -> (Byte, Bytes) {
   let w = BytesWriter::new()
   match v {
     Value::Null => (b'\x00', b"")
@@ -383,7 +401,8 @@ pub fn encode_value_content(v: Value) -> (Byte, Bytes) {
   }
 }
 
-pub fn encode_value(v: Value) -> Bytes {
+///|
+pub fn encode_value(v : Value) -> Bytes {
   let w = BytesWriter::new()
   let (tag, content) = encode_value_content(v)
   w.write_u8(tag)

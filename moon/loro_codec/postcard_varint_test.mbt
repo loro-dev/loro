@@ -1,5 +1,6 @@
+///|
 test "postcard zigzag i64 examples" {
-  fn enc(v: Int64) -> Bytes {
+  fn enc(v : Int64) -> Bytes {
     let w = BytesWriter::new()
     w.write_varint_i64(v)
     w.to_bytes()
@@ -14,8 +15,9 @@ test "postcard zigzag i64 examples" {
   assert_eq(enc(-64), b"\x7F")
 }
 
+///|
 test "postcard varint roundtrip" {
-  fn rt(v: UInt64) raise {
+  fn rt(v : UInt64) raise {
     let w = BytesWriter::new()
     w.write_varint_u64(v)
     let bytes = w.to_bytes()

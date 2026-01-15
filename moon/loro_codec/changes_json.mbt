@@ -1,12 +1,15 @@
-fn id_string(id: ID) -> String {
+///|
+fn id_string(id : ID) -> String {
   id.counter().to_string() + "@" + id.peer().to_string()
 }
 
-fn idlp_string(id: IdLp) -> String {
+///|
+fn idlp_string(id : IdLp) -> String {
   "L" + id.lamport().to_string() + "@" + id.peer().to_string()
 }
 
-fn container_type_string(kind: ContainerType) -> String {
+///|
+fn container_type_string(kind : ContainerType) -> String {
   match kind {
     ContainerType::Map => "Map"
     ContainerType::List => "List"
@@ -18,33 +21,26 @@ fn container_type_string(kind: ContainerType) -> String {
   }
 }
 
-fn container_id_string(cid: ContainerID) -> String {
+///|
+fn container_id_string(cid : ContainerID) -> String {
   match cid {
-    ContainerID::Root(name, kind) => "cid:root-" + name + ":" + container_type_string(kind)
+    ContainerID::Root(name, kind) =>
+      "cid:root-" + name + ":" + container_type_string(kind)
     ContainerID::Normal(peer, counter, kind) =>
-      "cid:" + counter.to_string() + "@" + peer.to_string() + ":" + container_type_string(kind)
+      "cid:" +
+      counter.to_string() +
+      "@" +
+      peer.to_string() +
+      ":" +
+      container_type_string(kind)
   }
 }
 
-fn bytes_hex_upper(bytes: Bytes) -> String {
+///|
+fn bytes_hex_upper(bytes : Bytes) -> String {
   let sb = StringBuilder::new()
-  let hex: Array[Char] = [
-    '0',
-    '1',
-    '2',
-    '3',
-    '4',
-    '5',
-    '6',
-    '7',
-    '8',
-    '9',
-    'A',
-    'B',
-    'C',
-    'D',
-    'E',
-    'F',
+  let hex : Array[Char] = [
+    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F',
   ]
   for b in bytes {
     let u = b.to_uint()
@@ -56,23 +52,25 @@ fn bytes_hex_upper(bytes: Bytes) -> String {
   sb.to_string()
 }
 
-fn fractional_index_json(fi: FractionalIndex) -> Json {
+///|
+fn fractional_index_json(fi : FractionalIndex) -> Json {
   Json::string(bytes_hex_upper(fi.bytes()))
 }
 
-fn binary_json(bytes: Bytes) -> Json {
-  let out: Array[Json] = []
+///|
+fn binary_json(bytes : Bytes) -> Json {
+  let out : Array[Json] = []
   for b in bytes {
     out.push(Json::number(b.to_uint().to_double()))
   }
   Json::array(out)
 }
 
-fn loro_value_json(v: LoroValue, keys: Array[String], depth: Int) -> Json {
+///|
+fn loro_value_json(v : LoroValue, keys : Array[String], depth : Int) -> Json {
   if depth > 1024 {
     return Json::string("<too deep>")
   }
-
   match v {
     LoroValue::Null => Json::null()
     LoroValue::True => Json::boolean(true)
@@ -82,7 +80,7 @@ fn loro_value_json(v: LoroValue, keys: Array[String], depth: Int) -> Json {
     LoroValue::Str(s) => Json::string(s)
     LoroValue::Binary(b) => binary_json(b)
     LoroValue::List(items) => {
-      let out: Array[Json] = []
+      let out : Array[Json] = []
       for it in items {
         out.push(loro_value_json(it, keys, depth + 1))
       }
@@ -107,45 +105,63 @@ fn loro_value_json(v: LoroValue, keys: Array[String], depth: Int) -> Json {
   }
 }
 
-fn op_content_json(content: OpContent, keys: Array[String]) -> Json {
+///|
+fn op_content_json(content : OpContent, keys : Array[String]) -> Json {
   match content {
-    OpContent::Map(MapOp::Insert(k, v)) => {
-      { "Map": { "Insert": { "key": k, "value": loro_value_json(v, keys, 0) } } }
-    }
+    OpContent::Map(MapOp::Insert(k, v)) =>
+      {
+        "Map": { "Insert": { "key": k, "value": loro_value_json(v, keys, 0) } },
+      }
     OpContent::Map(MapOp::Delete(k)) => { "Map": { "Delete": { "key": k } } }
     OpContent::List(ListOp::Insert(pos, values)) => {
-      let out: Array[Json] = []
+      let out : Array[Json] = []
       for v in values {
         out.push(loro_value_json(v, keys, 0))
       }
-      { "List": { "Insert": { "pos": pos.reinterpret_as_int(), "values": Json::array(out) } } }
-    }
-    OpContent::List(ListOp::Delete(pos, len, start_id)) => {
       {
         "List": {
-          "Delete": { "pos": pos, "len": len.to_string(), "start_id": id_string(start_id) },
+          "Insert": {
+            "pos": pos.reinterpret_as_int(),
+            "values": Json::array(out),
+          },
         },
       }
     }
+    OpContent::List(ListOp::Delete(pos, len, start_id)) =>
+      {
+        "List": {
+          "Delete": {
+            "pos": pos,
+            "len": len.to_string(),
+            "start_id": id_string(start_id),
+          },
+        },
+      }
     OpContent::MovableList(MovableListOp::Insert(pos, values)) => {
-      let out: Array[Json] = []
+      let out : Array[Json] = []
       for v in values {
         out.push(loro_value_json(v, keys, 0))
       }
       {
         "MovableList": {
-          "Insert": { "pos": pos.reinterpret_as_int(), "values": Json::array(out) },
+          "Insert": {
+            "pos": pos.reinterpret_as_int(),
+            "values": Json::array(out),
+          },
         },
       }
     }
-    OpContent::MovableList(MovableListOp::Delete(pos, len, start_id)) => {
+    OpContent::MovableList(MovableListOp::Delete(pos, len, start_id)) =>
       {
         "MovableList": {
-          "Delete": { "pos": pos, "len": len.to_string(), "start_id": id_string(start_id) },
+          "Delete": {
+            "pos": pos,
+            "len": len.to_string(),
+            "start_id": id_string(start_id),
+          },
         },
       }
-    }
-    OpContent::MovableList(MovableListOp::Move(from, to, elem_id)) => {
+    OpContent::MovableList(MovableListOp::Move(from, to, elem_id)) =>
       {
         "MovableList": {
           "Move": {
@@ -155,8 +171,7 @@ fn op_content_json(content: OpContent, keys: Array[String]) -> Json {
           },
         },
       }
-    }
-    OpContent::MovableList(MovableListOp::Set(elem_id, value)) => {
+    OpContent::MovableList(MovableListOp::Set(elem_id, value)) =>
       {
         "MovableList": {
           "Set": {
@@ -165,18 +180,21 @@ fn op_content_json(content: OpContent, keys: Array[String]) -> Json {
           },
         },
       }
-    }
-    OpContent::Text(TextOp::Insert(pos, text)) => {
-      { "Text": { "Insert": { "pos": pos.reinterpret_as_int(), "text": text } } }
-    }
-    OpContent::Text(TextOp::Delete(pos, len, start_id)) => {
+    OpContent::Text(TextOp::Insert(pos, text)) =>
+      {
+        "Text": { "Insert": { "pos": pos.reinterpret_as_int(), "text": text } },
+      }
+    OpContent::Text(TextOp::Delete(pos, len, start_id)) =>
       {
         "Text": {
-          "Delete": { "pos": pos, "len": len.to_string(), "start_id": id_string(start_id) },
+          "Delete": {
+            "pos": pos,
+            "len": len.to_string(),
+            "start_id": id_string(start_id),
+          },
         },
       }
-    }
-    OpContent::Text(TextOp::Mark(start, end, key, value, info)) => {
+    OpContent::Text(TextOp::Mark(start, end, key, value, info)) =>
       {
         "Text": {
           "Mark": {
@@ -188,9 +206,8 @@ fn op_content_json(content: OpContent, keys: Array[String]) -> Json {
           },
         },
       }
-    }
     OpContent::Text(TextOp::MarkEnd) => { "Text": { "MarkEnd": Json::null() } }
-    OpContent::Tree(TreeOp::Create(target, parent, fi)) => {
+    OpContent::Tree(TreeOp::Create(target, parent, fi)) =>
       {
         "Tree": {
           "Create": {
@@ -203,8 +220,7 @@ fn op_content_json(content: OpContent, keys: Array[String]) -> Json {
           },
         },
       }
-    }
-    OpContent::Tree(TreeOp::Move(target, parent, fi)) => {
+    OpContent::Tree(TreeOp::Move(target, parent, fi)) =>
       {
         "Tree": {
           "Move": {
@@ -217,7 +233,6 @@ fn op_content_json(content: OpContent, keys: Array[String]) -> Json {
           },
         },
       }
-    }
     OpContent::Tree(TreeOp::Delete(target)) =>
       { "Tree": { "Delete": { "target": id_string(target) } } }
     OpContent::Future(FutureOp::Unknown(prop, _raw)) =>
@@ -225,7 +240,8 @@ fn op_content_json(content: OpContent, keys: Array[String]) -> Json {
   }
 }
 
-fn op_json(op: Op, keys: Array[String]) -> Json {
+///|
+fn op_json(op : Op, keys : Array[String]) -> Json {
   {
     "container": container_id_string(op.container()),
     "counter": op.counter(),
@@ -234,17 +250,16 @@ fn op_json(op: Op, keys: Array[String]) -> Json {
   }
 }
 
-fn change_json(change: Change, keys: Array[String]) -> Json {
-  let deps: Array[String] = []
+///|
+fn change_json(change : Change, keys : Array[String]) -> Json {
+  let deps : Array[String] = []
   for d in change.deps() {
     deps.push(id_string(d))
   }
-
-  let ops: Array[Json] = []
+  let ops : Array[Json] = []
   for op in change.ops() {
     ops.push(op_json(op, keys))
   }
-
   {
     "id": id_string(change.id()),
     "timestamp": change.timestamp().to_string(),
@@ -258,13 +273,17 @@ fn change_json(change: Change, keys: Array[String]) -> Json {
   }
 }
 
-pub fn decode_fast_updates_changes_json(bytes: Bytes, validate: Bool) -> String raise DecodeError {
+///|
+pub fn decode_fast_updates_changes_json(
+  bytes : Bytes,
+  validate : Bool,
+) -> String raise DecodeError {
   let doc = parse_document(bytes, validate)
   if doc.mode() != 4 {
     raise DecodeError("decode-updates: not a FastUpdates (mode=4) document")
   }
   let blocks = parse_fast_updates_body(doc.body_view())
-  let changes: Array[Json] = []
+  let changes : Array[Json] = []
   for b in blocks {
     let decoded = decode_change_block_full(b)
     let keys = decoded.keys()
@@ -272,7 +291,6 @@ pub fn decode_fast_updates_changes_json(bytes: Bytes, validate: Bool) -> String 
       changes.push(change_json(c, keys))
     }
   }
-
-  let root: Json = { "mode": 4, "changes": Json::array(changes) }
+  let root : Json = { "mode": 4, "changes": Json::array(changes) }
   root.stringify(indent=2)
 }
