@@ -129,6 +129,7 @@ MOON_BIN=~/.moon/bin/moon NODE_BIN=node cargo test -p loro --test moon_transcode
 - 多 peer（导出包含多个 peer 的 updates）
 - 终极测试：FastUpdates→JsonUpdates（与 Rust 强一致）、FastSnapshot→Deep JSON（与 Rust 强一致）
 - 覆盖矩阵：固定覆盖（curated ops）+ 多 seed 随机序列（包含容器嵌套、RichText mark/unmark、Tree meta 等）
+- （可选）Counter：`cargo test -p loro --features counter --test moon_transcode`
 
 ## 3.9 终极测试（两种形态，强一致性）
 

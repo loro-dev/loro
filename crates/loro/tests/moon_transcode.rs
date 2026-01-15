@@ -1168,3 +1168,22 @@ fn moon_golden_snapshot_seed_3() -> anyhow::Result<()> {
 fn moon_golden_snapshot_multi_peer_seed_7() -> anyhow::Result<()> {
     golden_random_snapshot(7, 250, 25, &[1, 2, 3])
 }
+
+#[cfg(feature = "counter")]
+#[test]
+fn moon_counter_snapshot_deep_json_matches_rust() -> anyhow::Result<()> {
+    let Some(ctx) = moon_ctx() else {
+        return Ok(());
+    };
+
+    let doc = LoroDoc::new();
+    let map = doc.get_map("m");
+    let counter = map.insert_container("c", loro::LoroCounter::new())?;
+    counter.increment(1.0)?;
+    counter.decrement(0.5)?;
+    doc.set_next_commit_message("counter");
+    doc.set_next_commit_timestamp(1 as Timestamp);
+    doc.commit();
+
+    assert_snapshot_deep_json_matches_rust(&doc, ctx)
+}
