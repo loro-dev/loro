@@ -197,7 +197,7 @@ fn write_ext_len(w : BytesWriter, extra : Int) -> Unit raise EncodeError {
   }
   let mut left = extra
   while left >= 255 {
-    w.write_u8(255.to_byte())
+    w.write_u8(255)
     left = left - 255
   }
   w.write_u8(left.to_byte())
@@ -246,13 +246,14 @@ fn lz4_compress_block(input : BytesView) -> Bytes raise EncodeError {
   while i + 4 <= n {
     let seq = read_u32_le_at(input, i)
     let h = hash_u32(seq)
-    let ref = table[h]
+    let ref_pos = table[h]
     table[h] = i
 
-    if ref >= 0 && i - ref <= 65535 && bytes_eq4(input, ref, i) {
+    if ref_pos >= 0 && i - ref_pos <= 65535 &&
+      bytes_eq4(input, ref_pos, i) {
       // Extend match.
       let mut mlen = 4
-      while i + mlen < n && input[ref + mlen] == input[i + mlen] {
+      while i + mlen < n && input[ref_pos + mlen] == input[i + mlen] {
         mlen = mlen + 1
       }
 
@@ -270,7 +271,7 @@ fn lz4_compress_block(input : BytesView) -> Bytes raise EncodeError {
       }
       w.write_bytesview(input[anchor:i])
 
-      let offset = i - ref
+      let offset = i - ref_pos
       if offset <= 0 || offset > 65535 {
         raise EncodeError("lz4: invalid match offset")
       }
@@ -334,8 +335,7 @@ pub fn lz4_compress_frame(bytes : Bytes) -> Bytes raise EncodeError {
     let compressed = lz4_compress_block(chunk)
     if compressed.length() >= len {
       // Use an uncompressed block inside the frame.
-      let raw = 0x8000_0000.reinterpret_as_uint() |
-        len.reinterpret_as_uint()
+      let raw = 0x8000_0000U | len.reinterpret_as_uint()
       w.write_u32_le(raw)
       w.write_bytesview(chunk)
     } else {
