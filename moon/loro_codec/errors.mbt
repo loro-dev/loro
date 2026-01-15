@@ -1,3 +1,3 @@
-pub(all) suberror DecodeError { DecodeError(String) }
+pub(all) suberror DecodeError { DecodeError(String) } derive(Show, Eq)
 
-pub(all) suberror EncodeError { EncodeError(String) }
+pub(all) suberror EncodeError { EncodeError(String) } derive(Show, Eq)
