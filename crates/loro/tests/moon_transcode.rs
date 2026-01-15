@@ -181,6 +181,13 @@ fn moon_transcode_e2e() -> anyhow::Result<()> {
     doc2.import(&out_updates).unwrap();
     assert_eq!(doc2.get_deep_value().to_json_value(), expected);
 
+    // JsonSchema export e2e: Rust export (FastUpdates) -> Moon export-jsonschema -> Rust import_json_updates.
+    let jsonschema = run_export_jsonschema(&node_bin, &cli_js, &updates)?;
+    let schema: loro::JsonSchema = serde_json::from_str(&jsonschema)?;
+    let doc_json = LoroDoc::new();
+    doc_json.import_json_updates(schema).unwrap();
+    assert_eq!(doc_json.get_deep_value().to_json_value(), expected);
+
     // Snapshot e2e (FastSnapshot): Rust export -> Moon transcode -> Rust import.
     let snapshot = doc.export(ExportMode::Snapshot).unwrap();
     let out_snapshot = run_transcode(&node_bin, &cli_js, &snapshot)?;
@@ -395,6 +402,115 @@ fn moon_export_jsonschema_text_insert() -> anyhow::Result<()> {
     let doc2 = LoroDoc::new();
     doc2.import_json_updates(schema).unwrap();
     assert_eq!(doc2.get_deep_value().to_json_value(), doc.get_deep_value().to_json_value());
+
+    Ok(())
+}
+
+#[test]
+fn moon_export_jsonschema_updates_since_v1() -> anyhow::Result<()> {
+    let moon_bin = std::env::var("MOON_BIN").unwrap_or_else(|_| "moon".to_string());
+    let node_bin = std::env::var("NODE_BIN").unwrap_or_else(|_| "node".to_string());
+
+    if !bin_available(&moon_bin, &["version"]) {
+        eprintln!("skipping jsonschema export: moon not available (set MOON_BIN)");
+        return Ok(());
+    }
+    if !bin_available(&node_bin, &["--version"]) {
+        eprintln!("skipping jsonschema export: node not available (set NODE_BIN)");
+        return Ok(());
+    }
+
+    let cli_js = match build_moon_cli_js(&moon_bin) {
+        Some(p) => p,
+        None => {
+            eprintln!("skipping jsonschema export: failed to build MoonBit CLI");
+            return Ok(());
+        }
+    };
+
+    let peer: u64 = 100;
+    let doc = LoroDoc::new();
+    doc.set_peer_id(peer)?;
+
+    doc.get_text("t").insert(0, "a").unwrap();
+    doc.commit();
+    let frontiers_v1: Frontiers = doc.state_frontiers();
+
+    doc.get_text("t").insert(1, "b").unwrap();
+    doc.get_map("m").insert("k", 1).unwrap();
+    doc.commit();
+    let expected = doc.get_deep_value().to_json_value();
+
+    let vv_v1: VersionVector = doc.frontiers_to_vv(&frontiers_v1).unwrap();
+    let updates_since_v1 = doc.export(ExportMode::Updates {
+        from: std::borrow::Cow::Borrowed(&vv_v1),
+    })?;
+
+    let json = run_export_jsonschema(&node_bin, &cli_js, &updates_since_v1)?;
+    let schema: loro::JsonSchema = serde_json::from_str(&json)?;
+
+    // `start_version` should match the starting frontiers of this range.
+    assert_eq!(schema.start_version, frontiers_v1);
+
+    // Apply on top of SnapshotAt(v1) should yield the latest state.
+    let base = LoroDoc::new();
+    base.import(
+        &doc.export(ExportMode::SnapshotAt {
+            version: std::borrow::Cow::Borrowed(&frontiers_v1),
+        })?,
+    )?;
+    base.import_json_updates(schema).unwrap();
+    assert_eq!(base.get_deep_value().to_json_value(), expected);
+
+    Ok(())
+}
+
+#[test]
+fn moon_export_jsonschema_multi_peer() -> anyhow::Result<()> {
+    let moon_bin = std::env::var("MOON_BIN").unwrap_or_else(|_| "moon".to_string());
+    let node_bin = std::env::var("NODE_BIN").unwrap_or_else(|_| "node".to_string());
+
+    if !bin_available(&moon_bin, &["version"]) {
+        eprintln!("skipping jsonschema export: moon not available (set MOON_BIN)");
+        return Ok(());
+    }
+    if !bin_available(&node_bin, &["--version"]) {
+        eprintln!("skipping jsonschema export: node not available (set NODE_BIN)");
+        return Ok(());
+    }
+
+    let cli_js = match build_moon_cli_js(&moon_bin) {
+        Some(p) => p,
+        None => {
+            eprintln!("skipping jsonschema export: failed to build MoonBit CLI");
+            return Ok(());
+        }
+    };
+
+    let doc_a = LoroDoc::new();
+    doc_a.set_peer_id(1)?;
+    doc_a.get_map("m").insert("a", 1).unwrap();
+    doc_a.commit();
+
+    let doc_b = LoroDoc::new();
+    doc_b.set_peer_id(2)?;
+    doc_b.import(&doc_a.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    doc_b.get_map("m").insert("b", 2).unwrap();
+    doc_b.commit();
+    let expected_b = doc_b.get_deep_value().to_json_value();
+
+    let updates_b = doc_b.export(ExportMode::all_updates()).unwrap();
+    let json = run_export_jsonschema(&node_bin, &cli_js, &updates_b)?;
+    let schema: loro::JsonSchema = serde_json::from_str(&json)?;
+
+    let mut peers = schema.peers.clone().unwrap_or_default();
+    peers.sort();
+    assert_eq!(peers, vec![1, 2]);
+
+    let doc_c = LoroDoc::new();
+    doc_c.import_json_updates(schema).unwrap();
+    assert_eq!(doc_c.get_deep_value().to_json_value(), expected_b);
 
     Ok(())
 }
