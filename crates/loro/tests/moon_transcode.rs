@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use loro::{
@@ -7,6 +8,11 @@ use loro::{
     ToJson, TreeParentId, VersionVector,
 };
 use rand::{rngs::StdRng, Rng, SeedableRng};
+
+struct MoonCtx {
+    node_bin: String,
+    cli_js: PathBuf,
+}
 
 fn bin_available(bin: &str, args: &[&str]) -> bool {
     Command::new(bin)
@@ -40,6 +46,35 @@ fn build_moon_cli_js(moon_bin: &str) -> Option<PathBuf> {
         moon_dir
             .join("_build/js/release/build/cmd/loro_codec_cli/loro_codec_cli.js"),
     )
+}
+
+fn moon_ctx() -> Option<&'static MoonCtx> {
+    static MOON_CTX: OnceLock<Option<MoonCtx>> = OnceLock::new();
+    MOON_CTX
+        .get_or_init(|| {
+            let moon_bin = std::env::var("MOON_BIN").unwrap_or_else(|_| "moon".to_string());
+            let node_bin = std::env::var("NODE_BIN").unwrap_or_else(|_| "node".to_string());
+
+            if !bin_available(&moon_bin, &["version"]) {
+                eprintln!("skipping e2e: moon not available (set MOON_BIN)");
+                return None;
+            }
+            if !bin_available(&node_bin, &["--version"]) {
+                eprintln!("skipping e2e: node not available (set NODE_BIN)");
+                return None;
+            }
+
+            let cli_js = match build_moon_cli_js(&moon_bin) {
+                Some(p) => p,
+                None => {
+                    eprintln!("skipping e2e: failed to build MoonBit CLI");
+                    return None;
+                }
+            };
+
+            Some(MoonCtx { node_bin, cli_js })
+        })
+        .as_ref()
 }
 
 fn run_transcode(node_bin: &str, cli_js: &Path, input: &[u8]) -> anyhow::Result<Vec<u8>> {
@@ -436,9 +471,10 @@ fn apply_random_ops_with_peers(
                 let t = &mut trees[rng.gen_range(0..trees.len())];
                 if !t.nodes.is_empty() {
                     let id = t.nodes[rng.gen_range(0..t.nodes.len())];
-                    let meta = t.tree.get_meta(id)?;
-                    let key = format!("m{}", rng.gen::<u8>());
-                    meta.insert(&key, rng.gen::<i32>())?;
+                    if let Ok(meta) = t.tree.get_meta(id) {
+                        let key = format!("m{}", rng.gen::<u8>());
+                        let _ = meta.insert(&key, rng.gen::<i32>());
+                    }
                 }
             }
             17 => {
@@ -509,26 +545,165 @@ fn first_json_diff_path(a: &serde_json::Value, b: &serde_json::Value, path: &str
     }
 }
 
+fn assert_updates_jsonschema_matches_rust(doc: &LoroDoc, ctx: &MoonCtx) -> anyhow::Result<()> {
+    let start = VersionVector::default();
+    let end = doc.oplog_vv();
+
+    let updates_blob = doc.export(ExportMode::Updates {
+        from: std::borrow::Cow::Borrowed(&start),
+    })?;
+    let moon_json = run_export_jsonschema(&ctx.node_bin, &ctx.cli_js, &updates_blob)?;
+    let moon_value: serde_json::Value = serde_json::from_str(&moon_json)?;
+
+    let rust_schema = doc.export_json_updates(&start, &end);
+    let rust_value = serde_json::to_value(&rust_schema)?;
+
+    anyhow::ensure!(
+        moon_value == rust_value,
+        "jsonschema mismatch at {:?}",
+        first_json_diff_path(&moon_value, &rust_value, "$")
+    );
+    Ok(())
+}
+
+fn assert_snapshot_deep_json_matches_rust(doc: &LoroDoc, ctx: &MoonCtx) -> anyhow::Result<()> {
+    let expected = doc.get_deep_value().to_json_value();
+    let snapshot_blob = doc.export(ExportMode::Snapshot)?;
+
+    // Ensure Rust snapshot import round-trips for the same op sequence.
+    let doc_roundtrip = LoroDoc::new();
+    doc_roundtrip.import(&snapshot_blob)?;
+    assert_eq!(doc_roundtrip.get_deep_value().to_json_value(), expected);
+
+    let moon_json = run_export_deep_json(&ctx.node_bin, &ctx.cli_js, &snapshot_blob)?;
+    let moon_value: serde_json::Value = serde_json::from_str(&moon_json)?;
+
+    assert_eq!(moon_value, expected);
+    Ok(())
+}
+
+fn apply_curated_ops(doc: &LoroDoc) -> anyhow::Result<()> {
+    let mut styles = StyleConfigMap::new();
+    styles.insert(
+        "bold".into(),
+        StyleConfig {
+            expand: ExpandType::After,
+        },
+    );
+    styles.insert(
+        "link".into(),
+        StyleConfig {
+            expand: ExpandType::Before,
+        },
+    );
+    doc.config_text_style(styles);
+
+    // Map ops.
+    let map = doc.get_map("map");
+    map.insert("i32", 1)?;
+    map.insert("bool", true)?;
+    map.insert("null", LoroValue::Null)?;
+    map.insert("str", "hello😀")?;
+    map.insert("f64", 1.25f64)?;
+    map.insert("bin", vec![0u8, 1, 2, 3])?;
+    // Overwrite existing key.
+    map.insert("i32", 2)?;
+    // Container values in map.
+    let child_map = map.insert_container("child_map", loro::LoroMap::new())?;
+    child_map.insert("a", 1)?;
+    let child_list = map.get_or_create_container("child_list", loro::LoroList::new())?;
+    child_list.push("x")?;
+    map.delete("null")?;
+    // Map clear (but keep non-empty at the end).
+    let tmp = map.insert_container("tmp", loro::LoroMap::new())?;
+    tmp.insert("k", 1)?;
+    tmp.clear()?;
+    tmp.insert("k2", 2)?;
+
+    // List ops.
+    let list = doc.get_list("list");
+    list.insert(0, "a")?;
+    list.push("b")?;
+    let list_child_text = list.insert_container(2, loro::LoroText::new())?;
+    list_child_text.insert(0, "t")?;
+    let _ = list.pop()?;
+    if list.len() > 0 {
+        list.delete(0, 1)?;
+    }
+    list.clear()?;
+    list.push(0)?;
+    let list_child_map = list.push_container(loro::LoroMap::new())?;
+    list_child_map.insert("k", 1)?;
+
+    // MovableList ops.
+    let mlist = doc.get_movable_list("mlist");
+    mlist.insert(0, "a")?;
+    mlist.push("b")?;
+    mlist.set(0, "A")?;
+    if mlist.len() >= 2 {
+        mlist.mov(0, 1)?;
+    }
+    let ml_child_text = mlist.insert_container(0, loro::LoroText::new())?;
+    ml_child_text.insert(0, "ml")?;
+    let ml_set_text = mlist.set_container(0, loro::LoroText::new())?;
+    ml_set_text.insert(0, "set")?;
+    let _ = mlist.pop()?;
+    if mlist.len() > 0 {
+        mlist.delete(0, 1)?;
+    }
+    mlist.clear()?;
+    mlist.push(1)?;
+
+    // Text ops.
+    let text = doc.get_text("text");
+    text.insert(0, "A😀BC")?;
+    // Use UTF-8/UTF-16 coordinate APIs at a safe ASCII boundary.
+    text.insert_utf8(0, "u8")?;
+    text.insert_utf16(0, "u16")?;
+    text.delete_utf8(0, 1)?;
+    if text.len_unicode() >= 2 {
+        text.mark(0..2, "bold", true)?;
+        text.mark(1..2, "link", "https://example.com")?;
+        text.unmark(0..1, "bold")?;
+    }
+    if text.len_unicode() >= 2 {
+        let _ = text.splice(1, 1, "Z")?;
+    }
+    if text.len_unicode() > 0 {
+        text.delete(0, 1)?;
+    }
+    text.insert(0, "keep")?;
+
+    // Tree ops (fractional index + ordering moves).
+    let tree = doc.get_tree("tree");
+    tree.enable_fractional_index(0);
+    let root_a = tree.create(None)?;
+    let root_b = tree.create(None)?;
+    let c1 = tree.create(root_a)?;
+    let c2 = tree.create_at(root_a, 0)?;
+    tree.mov_to(c1, root_a, 1)?;
+    tree.mov_after(root_a, root_b)?;
+    tree.mov_before(root_a, root_b)?;
+    tree.delete(c2)?;
+
+    // Tree meta ops: insert/delete/clear.
+    let meta = tree.get_meta(root_a)?;
+    meta.insert("title", "A")?;
+    meta.insert("num", 1)?;
+    meta.delete("num")?;
+    meta.clear()?;
+    meta.insert("title", "A2")?;
+
+    doc.set_next_commit_message("curated-ops");
+    doc.set_next_commit_timestamp(1 as Timestamp);
+    doc.commit();
+    Ok(())
+}
+
 #[test]
 fn moon_transcode_e2e() -> anyhow::Result<()> {
-    let moon_bin = std::env::var("MOON_BIN").unwrap_or_else(|_| "moon".to_string());
-    let node_bin = std::env::var("NODE_BIN").unwrap_or_else(|_| "node".to_string());
-
-    if !bin_available(&moon_bin, &["version"]) {
-        eprintln!("skipping e2e: moon not available (set MOON_BIN)");
+    let Some(ctx) = moon_ctx() else {
         return Ok(());
-    }
-    if !bin_available(&node_bin, &["--version"]) {
-        eprintln!("skipping e2e: node not available (set NODE_BIN)");
-        return Ok(());
-    }
-
-    let cli_js = match build_moon_cli_js(&moon_bin) {
-        Some(p) => p,
-        None => {
-            eprintln!("skipping e2e: failed to build MoonBit CLI");
-            return Ok(());
-        }
     };
 
     // Build a doc that exercises multiple op kinds.
@@ -581,13 +756,13 @@ fn moon_transcode_e2e() -> anyhow::Result<()> {
 
     // Updates e2e (FastUpdates): Rust export -> Moon transcode -> Rust import.
     let updates = doc.export(ExportMode::all_updates()).unwrap();
-    let out_updates = run_transcode(&node_bin, &cli_js, &updates)?;
+    let out_updates = run_transcode(&ctx.node_bin, &ctx.cli_js, &updates)?;
     let doc2 = LoroDoc::new();
     doc2.import(&out_updates).unwrap();
     assert_eq!(doc2.get_deep_value().to_json_value(), expected);
 
     // JsonSchema export e2e: Rust export (FastUpdates) -> Moon export-jsonschema -> Rust import_json_updates.
-    let jsonschema = run_export_jsonschema(&node_bin, &cli_js, &updates)?;
+    let jsonschema = run_export_jsonschema(&ctx.node_bin, &ctx.cli_js, &updates)?;
     let schema: loro::JsonSchema = serde_json::from_str(&jsonschema)?;
     let doc_json = LoroDoc::new();
     doc_json.import_json_updates(schema).unwrap();
@@ -595,7 +770,7 @@ fn moon_transcode_e2e() -> anyhow::Result<()> {
 
     // Snapshot e2e (FastSnapshot): Rust export -> Moon transcode -> Rust import.
     let snapshot = doc.export(ExportMode::Snapshot).unwrap();
-    let out_snapshot = run_transcode(&node_bin, &cli_js, &snapshot)?;
+    let out_snapshot = run_transcode(&ctx.node_bin, &ctx.cli_js, &snapshot)?;
     let doc3 = LoroDoc::new();
     doc3.import(&out_snapshot).unwrap();
     assert_eq!(doc3.get_deep_value().to_json_value(), expected);
@@ -606,7 +781,7 @@ fn moon_transcode_e2e() -> anyhow::Result<()> {
             version: std::borrow::Cow::Borrowed(&frontiers_v1),
         })
         .unwrap();
-    let out_snapshot_at = run_transcode(&node_bin, &cli_js, &snapshot_at)?;
+    let out_snapshot_at = run_transcode(&ctx.node_bin, &ctx.cli_js, &snapshot_at)?;
     let doc_at = LoroDoc::new();
     doc_at.import(&out_snapshot_at).unwrap();
     assert_eq!(doc_at.get_deep_value().to_json_value(), expected_v1);
@@ -617,7 +792,7 @@ fn moon_transcode_e2e() -> anyhow::Result<()> {
             &frontiers_v1,
         ))))
         .unwrap();
-    let out_state_only = run_transcode(&node_bin, &cli_js, &state_only)?;
+    let out_state_only = run_transcode(&ctx.node_bin, &ctx.cli_js, &state_only)?;
     let doc_state_only = LoroDoc::new();
     doc_state_only.import(&out_state_only).unwrap();
     assert_eq!(doc_state_only.get_deep_value().to_json_value(), expected_v1);
@@ -628,7 +803,7 @@ fn moon_transcode_e2e() -> anyhow::Result<()> {
             &frontiers_v1,
         )))
         .unwrap();
-    let out_shallow = run_transcode(&node_bin, &cli_js, &shallow)?;
+    let out_shallow = run_transcode(&ctx.node_bin, &ctx.cli_js, &shallow)?;
     let doc_shallow = LoroDoc::new();
     doc_shallow.import(&out_shallow).unwrap();
     assert_eq!(doc_shallow.get_deep_value().to_json_value(), expected);
@@ -638,7 +813,7 @@ fn moon_transcode_e2e() -> anyhow::Result<()> {
     let updates_since_v1 = doc.export(ExportMode::Updates {
         from: std::borrow::Cow::Borrowed(&vv_v1),
     })?;
-    let out_updates_since_v1 = run_transcode(&node_bin, &cli_js, &updates_since_v1)?;
+    let out_updates_since_v1 = run_transcode(&ctx.node_bin, &ctx.cli_js, &updates_since_v1)?;
     let doc_from_v1 = LoroDoc::new();
     doc_from_v1.import(&out_snapshot_at).unwrap();
     doc_from_v1.import(&out_updates_since_v1).unwrap();
@@ -661,7 +836,7 @@ fn moon_transcode_e2e() -> anyhow::Result<()> {
     let expected_b = doc_b.get_deep_value().to_json_value();
 
     let updates_b = doc_b.export(ExportMode::all_updates()).unwrap();
-    let out_updates_b = run_transcode(&node_bin, &cli_js, &updates_b)?;
+    let out_updates_b = run_transcode(&ctx.node_bin, &ctx.cli_js, &updates_b)?;
     let doc_c = LoroDoc::new();
     doc_c.import(&out_updates_b).unwrap();
     assert_eq!(doc_c.get_deep_value().to_json_value(), expected_b);
@@ -671,24 +846,8 @@ fn moon_transcode_e2e() -> anyhow::Result<()> {
 
 #[test]
 fn moon_decode_ops_text_insert() -> anyhow::Result<()> {
-    let moon_bin = std::env::var("MOON_BIN").unwrap_or_else(|_| "moon".to_string());
-    let node_bin = std::env::var("NODE_BIN").unwrap_or_else(|_| "node".to_string());
-
-    if !bin_available(&moon_bin, &["version"]) {
-        eprintln!("skipping decode ops: moon not available (set MOON_BIN)");
+    let Some(ctx) = moon_ctx() else {
         return Ok(());
-    }
-    if !bin_available(&node_bin, &["--version"]) {
-        eprintln!("skipping decode ops: node not available (set NODE_BIN)");
-        return Ok(());
-    }
-
-    let cli_js = match build_moon_cli_js(&moon_bin) {
-        Some(p) => p,
-        None => {
-            eprintln!("skipping decode ops: failed to build MoonBit CLI");
-            return Ok(());
-        }
     };
 
     let peer: u64 = 0x0102_0304_0506_0708;
@@ -698,7 +857,7 @@ fn moon_decode_ops_text_insert() -> anyhow::Result<()> {
     doc.commit();
 
     let updates = doc.export(ExportMode::all_updates()).unwrap();
-    let json = run_decode_updates(&node_bin, &cli_js, &updates)?;
+    let json = run_decode_updates(&ctx.node_bin, &ctx.cli_js, &updates)?;
     let v: serde_json::Value = serde_json::from_str(&json)?;
 
     let changes = v
@@ -746,24 +905,8 @@ fn moon_decode_ops_text_insert() -> anyhow::Result<()> {
 
 #[test]
 fn moon_export_jsonschema_text_insert() -> anyhow::Result<()> {
-    let moon_bin = std::env::var("MOON_BIN").unwrap_or_else(|_| "moon".to_string());
-    let node_bin = std::env::var("NODE_BIN").unwrap_or_else(|_| "node".to_string());
-
-    if !bin_available(&moon_bin, &["version"]) {
-        eprintln!("skipping jsonschema export: moon not available (set MOON_BIN)");
+    let Some(ctx) = moon_ctx() else {
         return Ok(());
-    }
-    if !bin_available(&node_bin, &["--version"]) {
-        eprintln!("skipping jsonschema export: node not available (set NODE_BIN)");
-        return Ok(());
-    }
-
-    let cli_js = match build_moon_cli_js(&moon_bin) {
-        Some(p) => p,
-        None => {
-            eprintln!("skipping jsonschema export: failed to build MoonBit CLI");
-            return Ok(());
-        }
     };
 
     let peer: u64 = 0x0102_0304_0506_0708;
@@ -773,7 +916,7 @@ fn moon_export_jsonschema_text_insert() -> anyhow::Result<()> {
     doc.commit();
 
     let updates = doc.export(ExportMode::all_updates()).unwrap();
-    let json = run_export_jsonschema(&node_bin, &cli_js, &updates)?;
+    let json = run_export_jsonschema(&ctx.node_bin, &ctx.cli_js, &updates)?;
     let schema: loro::JsonSchema = serde_json::from_str(&json)?;
 
     assert_eq!(schema.schema_version, 1);
@@ -813,24 +956,8 @@ fn moon_export_jsonschema_text_insert() -> anyhow::Result<()> {
 
 #[test]
 fn moon_encode_jsonschema_text_insert() -> anyhow::Result<()> {
-    let moon_bin = std::env::var("MOON_BIN").unwrap_or_else(|_| "moon".to_string());
-    let node_bin = std::env::var("NODE_BIN").unwrap_or_else(|_| "node".to_string());
-
-    if !bin_available(&moon_bin, &["version"]) {
-        eprintln!("skipping jsonschema encode: moon not available (set MOON_BIN)");
+    let Some(ctx) = moon_ctx() else {
         return Ok(());
-    }
-    if !bin_available(&node_bin, &["--version"]) {
-        eprintln!("skipping jsonschema encode: node not available (set NODE_BIN)");
-        return Ok(());
-    }
-
-    let cli_js = match build_moon_cli_js(&moon_bin) {
-        Some(p) => p,
-        None => {
-            eprintln!("skipping jsonschema encode: failed to build MoonBit CLI");
-            return Ok(());
-        }
     };
 
     let peer: u64 = 0x0102_0304_0506_0708;
@@ -845,7 +972,7 @@ fn moon_encode_jsonschema_text_insert() -> anyhow::Result<()> {
     let schema = doc.export_json_updates(&start, &end);
     let json = serde_json::to_string(&schema)?;
 
-    let out_blob = run_encode_jsonschema(&node_bin, &cli_js, &json)?;
+    let out_blob = run_encode_jsonschema(&ctx.node_bin, &ctx.cli_js, &json)?;
     let doc2 = LoroDoc::new();
     doc2.import(&out_blob).unwrap();
     assert_eq!(doc2.get_deep_value().to_json_value(), expected);
@@ -855,24 +982,8 @@ fn moon_encode_jsonschema_text_insert() -> anyhow::Result<()> {
 
 #[test]
 fn moon_export_jsonschema_updates_since_v1() -> anyhow::Result<()> {
-    let moon_bin = std::env::var("MOON_BIN").unwrap_or_else(|_| "moon".to_string());
-    let node_bin = std::env::var("NODE_BIN").unwrap_or_else(|_| "node".to_string());
-
-    if !bin_available(&moon_bin, &["version"]) {
-        eprintln!("skipping jsonschema export: moon not available (set MOON_BIN)");
+    let Some(ctx) = moon_ctx() else {
         return Ok(());
-    }
-    if !bin_available(&node_bin, &["--version"]) {
-        eprintln!("skipping jsonschema export: node not available (set NODE_BIN)");
-        return Ok(());
-    }
-
-    let cli_js = match build_moon_cli_js(&moon_bin) {
-        Some(p) => p,
-        None => {
-            eprintln!("skipping jsonschema export: failed to build MoonBit CLI");
-            return Ok(());
-        }
     };
 
     let peer: u64 = 100;
@@ -893,7 +1004,7 @@ fn moon_export_jsonschema_updates_since_v1() -> anyhow::Result<()> {
         from: std::borrow::Cow::Borrowed(&vv_v1),
     })?;
 
-    let json = run_export_jsonschema(&node_bin, &cli_js, &updates_since_v1)?;
+    let json = run_export_jsonschema(&ctx.node_bin, &ctx.cli_js, &updates_since_v1)?;
     let schema: loro::JsonSchema = serde_json::from_str(&json)?;
 
     // `start_version` should match the starting frontiers of this range.
@@ -914,24 +1025,8 @@ fn moon_export_jsonschema_updates_since_v1() -> anyhow::Result<()> {
 
 #[test]
 fn moon_export_jsonschema_multi_peer() -> anyhow::Result<()> {
-    let moon_bin = std::env::var("MOON_BIN").unwrap_or_else(|_| "moon".to_string());
-    let node_bin = std::env::var("NODE_BIN").unwrap_or_else(|_| "node".to_string());
-
-    if !bin_available(&moon_bin, &["version"]) {
-        eprintln!("skipping jsonschema export: moon not available (set MOON_BIN)");
+    let Some(ctx) = moon_ctx() else {
         return Ok(());
-    }
-    if !bin_available(&node_bin, &["--version"]) {
-        eprintln!("skipping jsonschema export: node not available (set NODE_BIN)");
-        return Ok(());
-    }
-
-    let cli_js = match build_moon_cli_js(&moon_bin) {
-        Some(p) => p,
-        None => {
-            eprintln!("skipping jsonschema export: failed to build MoonBit CLI");
-            return Ok(());
-        }
     };
 
     let doc_a = LoroDoc::new();
@@ -948,7 +1043,7 @@ fn moon_export_jsonschema_multi_peer() -> anyhow::Result<()> {
     let expected_b = doc_b.get_deep_value().to_json_value();
 
     let updates_b = doc_b.export(ExportMode::all_updates()).unwrap();
-    let json = run_export_jsonschema(&node_bin, &cli_js, &updates_b)?;
+    let json = run_export_jsonschema(&ctx.node_bin, &ctx.cli_js, &updates_b)?;
     let schema: loro::JsonSchema = serde_json::from_str(&json)?;
 
     let mut peers = schema.peers.clone().unwrap_or_default();
@@ -964,86 +1059,112 @@ fn moon_export_jsonschema_multi_peer() -> anyhow::Result<()> {
 
 #[test]
 fn moon_golden_updates_jsonschema_matches_rust() -> anyhow::Result<()> {
-    let moon_bin = std::env::var("MOON_BIN").unwrap_or_else(|_| "moon".to_string());
-    let node_bin = std::env::var("NODE_BIN").unwrap_or_else(|_| "node".to_string());
-
-    if !bin_available(&moon_bin, &["version"]) {
-        eprintln!("skipping golden updates: moon not available (set MOON_BIN)");
+    let Some(ctx) = moon_ctx() else {
         return Ok(());
-    }
-    if !bin_available(&node_bin, &["--version"]) {
-        eprintln!("skipping golden updates: node not available (set NODE_BIN)");
-        return Ok(());
-    }
-
-    let cli_js = match build_moon_cli_js(&moon_bin) {
-        Some(p) => p,
-        None => {
-            eprintln!("skipping golden updates: failed to build MoonBit CLI");
-            return Ok(());
-        }
     };
 
     let seed = 42;
     let doc = LoroDoc::new();
     apply_random_ops(&doc, seed, 200, 20)?;
-
-    let start = VersionVector::default();
-    let end = doc.oplog_vv();
-
-    let updates_blob = doc.export(ExportMode::Updates {
-        from: std::borrow::Cow::Borrowed(&start),
-    })?;
-    let moon_json = run_export_jsonschema(&node_bin, &cli_js, &updates_blob)?;
-    let moon_value: serde_json::Value = serde_json::from_str(&moon_json)?;
-
-    let rust_schema = doc.export_json_updates(&start, &end);
-    let rust_value = serde_json::to_value(&rust_schema)?;
-
-    anyhow::ensure!(
-        moon_value == rust_value,
-        "jsonschema mismatch at {:?}",
-        first_json_diff_path(&moon_value, &rust_value, "$")
-    );
-    Ok(())
+    assert_updates_jsonschema_matches_rust(&doc, ctx)
 }
 
 #[test]
 fn moon_golden_snapshot_deep_json_matches_rust() -> anyhow::Result<()> {
-    let moon_bin = std::env::var("MOON_BIN").unwrap_or_else(|_| "moon".to_string());
-    let node_bin = std::env::var("NODE_BIN").unwrap_or_else(|_| "node".to_string());
-
-    if !bin_available(&moon_bin, &["version"]) {
-        eprintln!("skipping golden snapshot: moon not available (set MOON_BIN)");
+    let Some(ctx) = moon_ctx() else {
         return Ok(());
-    }
-    if !bin_available(&node_bin, &["--version"]) {
-        eprintln!("skipping golden snapshot: node not available (set NODE_BIN)");
-        return Ok(());
-    }
-
-    let cli_js = match build_moon_cli_js(&moon_bin) {
-        Some(p) => p,
-        None => {
-            eprintln!("skipping golden snapshot: failed to build MoonBit CLI");
-            return Ok(());
-        }
     };
 
     let seed = 1337;
     let doc = LoroDoc::new();
     apply_random_ops(&doc, seed, 200, 20)?;
-    let expected = doc.get_deep_value().to_json_value();
+    assert_snapshot_deep_json_matches_rust(&doc, ctx)
+}
 
-    let snapshot_blob = doc.export(ExportMode::Snapshot)?;
-    // Ensure Rust snapshot import round-trips for the same random op generator.
-    let doc_roundtrip = LoroDoc::new();
-    doc_roundtrip.import(&snapshot_blob)?;
-    assert_eq!(doc_roundtrip.get_deep_value().to_json_value(), expected);
+fn golden_random_updates(seed: u64, ops: usize, commit_every: usize, peers: &[u64]) -> anyhow::Result<()> {
+    let Some(ctx) = moon_ctx() else {
+        return Ok(());
+    };
+    let doc = LoroDoc::new();
+    apply_random_ops_with_peers(&doc, seed, ops, commit_every, peers)?;
+    assert_updates_jsonschema_matches_rust(&doc, ctx)
+}
 
-    let moon_json = run_export_deep_json(&node_bin, &cli_js, &snapshot_blob)?;
-    let moon_value: serde_json::Value = serde_json::from_str(&moon_json)?;
+fn golden_random_snapshot(seed: u64, ops: usize, commit_every: usize, peers: &[u64]) -> anyhow::Result<()> {
+    let Some(ctx) = moon_ctx() else {
+        return Ok(());
+    };
+    let doc = LoroDoc::new();
+    apply_random_ops_with_peers(&doc, seed, ops, commit_every, peers)?;
+    assert_snapshot_deep_json_matches_rust(&doc, ctx)
+}
 
-    assert_eq!(moon_value, expected);
-    Ok(())
+#[test]
+fn moon_curated_updates_jsonschema_matches_rust() -> anyhow::Result<()> {
+    let Some(ctx) = moon_ctx() else {
+        return Ok(());
+    };
+    let doc = LoroDoc::new();
+    apply_curated_ops(&doc)?;
+    assert_updates_jsonschema_matches_rust(&doc, ctx)
+}
+
+#[test]
+fn moon_curated_snapshot_deep_json_matches_rust() -> anyhow::Result<()> {
+    let Some(ctx) = moon_ctx() else {
+        return Ok(());
+    };
+    let doc = LoroDoc::new();
+    apply_curated_ops(&doc)?;
+    assert_snapshot_deep_json_matches_rust(&doc, ctx)
+}
+
+#[test]
+fn moon_golden_updates_seed_0() -> anyhow::Result<()> {
+    golden_random_updates(0, 200, 20, &[1])
+}
+
+#[test]
+fn moon_golden_updates_seed_1() -> anyhow::Result<()> {
+    golden_random_updates(1, 200, 20, &[1])
+}
+
+#[test]
+fn moon_golden_updates_seed_2() -> anyhow::Result<()> {
+    golden_random_updates(2, 200, 20, &[1])
+}
+
+#[test]
+fn moon_golden_updates_seed_3() -> anyhow::Result<()> {
+    golden_random_updates(3, 200, 20, &[1])
+}
+
+#[test]
+fn moon_golden_updates_multi_peer_seed_7() -> anyhow::Result<()> {
+    golden_random_updates(7, 250, 25, &[1, 2, 3])
+}
+
+#[test]
+fn moon_golden_snapshot_seed_0() -> anyhow::Result<()> {
+    golden_random_snapshot(0, 200, 20, &[1])
+}
+
+#[test]
+fn moon_golden_snapshot_seed_1() -> anyhow::Result<()> {
+    golden_random_snapshot(1, 200, 20, &[1])
+}
+
+#[test]
+fn moon_golden_snapshot_seed_2() -> anyhow::Result<()> {
+    golden_random_snapshot(2, 200, 20, &[1])
+}
+
+#[test]
+fn moon_golden_snapshot_seed_3() -> anyhow::Result<()> {
+    golden_random_snapshot(3, 200, 20, &[1])
+}
+
+#[test]
+fn moon_golden_snapshot_multi_peer_seed_7() -> anyhow::Result<()> {
+    golden_random_snapshot(7, 250, 25, &[1, 2, 3])
 }

@@ -336,9 +336,10 @@ fn apply_random_ops(
                 let t = &mut trees[rng.gen_range(0..trees.len())];
                 if !t.nodes.is_empty() {
                     let id = t.nodes[rng.gen_range(0..t.nodes.len())];
-                    let meta = t.tree.get_meta(id)?;
-                    let key = format!("m{}", rng.gen::<u8>());
-                    meta.insert(&key, rng.gen::<i32>())?;
+                    if let Ok(meta) = t.tree.get_meta(id) {
+                        let key = format!("m{}", rng.gen::<u8>());
+                        let _ = meta.insert(&key, rng.gen::<i32>());
+                    }
                 }
             }
             17 => {
