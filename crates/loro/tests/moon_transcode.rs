@@ -139,7 +139,13 @@ fn run_export_jsonschema(node_bin: &str, cli_js: &Path, input: &[u8]) -> anyhow:
         .arg(cli_js)
         .args(["export-jsonschema", in_path.to_str().unwrap()])
         .output()?;
-    anyhow::ensure!(out.status.success(), "node export-jsonschema failed");
+    if !out.status.success() {
+        anyhow::bail!(
+            "node export-jsonschema failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
     Ok(String::from_utf8(out.stdout)?)
 }
 
@@ -1186,4 +1192,23 @@ fn moon_counter_snapshot_deep_json_matches_rust() -> anyhow::Result<()> {
     doc.commit();
 
     assert_snapshot_deep_json_matches_rust(&doc, ctx)
+}
+
+#[cfg(feature = "counter")]
+#[test]
+fn moon_counter_updates_jsonschema_matches_rust() -> anyhow::Result<()> {
+    let Some(ctx) = moon_ctx() else {
+        return Ok(());
+    };
+
+    let doc = LoroDoc::new();
+    let map = doc.get_map("m");
+    let counter = map.insert_container("c", loro::LoroCounter::new())?;
+    counter.increment(1.0)?;
+    counter.decrement(0.5)?;
+    doc.set_next_commit_message("counter");
+    doc.set_next_commit_timestamp(1 as Timestamp);
+    doc.commit();
+
+    assert_updates_jsonschema_matches_rust(&doc, ctx)
 }
