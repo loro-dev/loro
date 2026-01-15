@@ -4,6 +4,26 @@ fn is_deleted_tree_root(peer : UInt64, counter : Int) -> Bool {
 }
 
 ///|
+fn decode_delete_seq_start_id(
+  delete_start_ids : Array[EncodedDeleteStartIdRow],
+  del_idx : Int,
+  peers : Array[UInt64],
+) -> (ID, Int64, Int) raise DecodeError {
+  if del_idx < 0 || del_idx >= delete_start_ids.length() {
+    raise DecodeError("op: delete_start_ids underflow")
+  }
+  let del = delete_start_ids[del_idx]
+  if del.peer_idx > 0x7FFF_FFFFUL {
+    raise DecodeError("op: delete_start peer_idx too large")
+  }
+  let peer_i = del.peer_idx.to_int()
+  if peer_i < 0 || peer_i >= peers.length() {
+    raise DecodeError("op: delete_start invalid peer_idx")
+  }
+  (ID::new(peers[peer_i], del.counter), del.len, del_idx + 1)
+}
+
+///|
 fn decode_op_content(
   cid : ContainerID,
   prop : Int,
@@ -44,21 +64,12 @@ fn decode_op_content(
           )
         }
         Value::DeleteSeq => {
-          if del_idx < 0 || del_idx >= delete_start_ids.length() {
-            raise DecodeError("op: delete_start_ids underflow")
-          }
-          let del = delete_start_ids[del_idx]
-          if del.peer_idx > 0x7FFF_FFFFUL {
-            raise DecodeError("op: delete_start peer_idx too large")
-          }
-          let peer_i = del.peer_idx.to_int()
-          if peer_i < 0 || peer_i >= peers.length() {
-            raise DecodeError("op: delete_start invalid peer_idx")
-          }
-          let start_id = ID::new(peers[peer_i], del.counter)
+          let (start_id, del_len, next_del_idx) = decode_delete_seq_start_id(
+            delete_start_ids, del_idx, peers,
+          )
           (
-            OpContent::Text(TextOp::Delete(prop, del.len, start_id)),
-            del_idx + 1,
+            OpContent::Text(TextOp::Delete(prop, del_len, start_id)),
+            next_del_idx,
           )
         }
         Value::MarkStart(m) => {
@@ -99,21 +110,12 @@ fn decode_op_content(
           )
         }
         Value::DeleteSeq => {
-          if del_idx < 0 || del_idx >= delete_start_ids.length() {
-            raise DecodeError("op: delete_start_ids underflow")
-          }
-          let del = delete_start_ids[del_idx]
-          if del.peer_idx > 0x7FFF_FFFFUL {
-            raise DecodeError("op: delete_start peer_idx too large")
-          }
-          let peer_i = del.peer_idx.to_int()
-          if peer_i < 0 || peer_i >= peers.length() {
-            raise DecodeError("op: delete_start invalid peer_idx")
-          }
-          let start_id = ID::new(peers[peer_i], del.counter)
+          let (start_id, del_len, next_del_idx) = decode_delete_seq_start_id(
+            delete_start_ids, del_idx, peers,
+          )
           (
-            OpContent::List(ListOp::Delete(prop, del.len, start_id)),
-            del_idx + 1,
+            OpContent::List(ListOp::Delete(prop, del_len, start_id)),
+            next_del_idx,
           )
         }
         _ => raise DecodeError("op: invalid list value kind")
@@ -132,23 +134,14 @@ fn decode_op_content(
           )
         }
         Value::DeleteSeq => {
-          if del_idx < 0 || del_idx >= delete_start_ids.length() {
-            raise DecodeError("op: delete_start_ids underflow")
-          }
-          let del = delete_start_ids[del_idx]
-          if del.peer_idx > 0x7FFF_FFFFUL {
-            raise DecodeError("op: delete_start peer_idx too large")
-          }
-          let peer_i = del.peer_idx.to_int()
-          if peer_i < 0 || peer_i >= peers.length() {
-            raise DecodeError("op: delete_start invalid peer_idx")
-          }
-          let start_id = ID::new(peers[peer_i], del.counter)
+          let (start_id, del_len, next_del_idx) = decode_delete_seq_start_id(
+            delete_start_ids, del_idx, peers,
+          )
           (
             OpContent::MovableList(
-              MovableListOp::Delete(prop, del.len, start_id),
+              MovableListOp::Delete(prop, del_len, start_id),
             ),
-            del_idx + 1,
+            next_del_idx,
           )
         }
         Value::ListMove(m) => {
