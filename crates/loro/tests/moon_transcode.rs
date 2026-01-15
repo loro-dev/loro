@@ -104,6 +104,34 @@ fn run_export_jsonschema(node_bin: &str, cli_js: &Path, input: &[u8]) -> anyhow:
     Ok(String::from_utf8(out.stdout)?)
 }
 
+fn run_encode_jsonschema(node_bin: &str, cli_js: &Path, input_json: &str) -> anyhow::Result<Vec<u8>> {
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let tmp = std::env::temp_dir().join(format!(
+        "loro-moon-encode-jsonschema-{}-{ts}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&tmp)?;
+    let in_path = tmp.join("in.json");
+    let out_path = tmp.join("out.blob");
+    std::fs::write(&in_path, input_json.as_bytes())?;
+
+    let status = Command::new(node_bin)
+        .arg(cli_js)
+        .args([
+            "encode-jsonschema",
+            in_path.to_str().unwrap(),
+            out_path.to_str().unwrap(),
+        ])
+        .status()?;
+    anyhow::ensure!(status.success(), "node encode-jsonschema failed");
+
+    let out = std::fs::read(&out_path)?;
+    Ok(out)
+}
+
 #[test]
 fn moon_transcode_e2e() -> anyhow::Result<()> {
     let moon_bin = std::env::var("MOON_BIN").unwrap_or_else(|_| "moon".to_string());
@@ -402,6 +430,48 @@ fn moon_export_jsonschema_text_insert() -> anyhow::Result<()> {
     let doc2 = LoroDoc::new();
     doc2.import_json_updates(schema).unwrap();
     assert_eq!(doc2.get_deep_value().to_json_value(), doc.get_deep_value().to_json_value());
+
+    Ok(())
+}
+
+#[test]
+fn moon_encode_jsonschema_text_insert() -> anyhow::Result<()> {
+    let moon_bin = std::env::var("MOON_BIN").unwrap_or_else(|_| "moon".to_string());
+    let node_bin = std::env::var("NODE_BIN").unwrap_or_else(|_| "node".to_string());
+
+    if !bin_available(&moon_bin, &["version"]) {
+        eprintln!("skipping jsonschema encode: moon not available (set MOON_BIN)");
+        return Ok(());
+    }
+    if !bin_available(&node_bin, &["--version"]) {
+        eprintln!("skipping jsonschema encode: node not available (set NODE_BIN)");
+        return Ok(());
+    }
+
+    let cli_js = match build_moon_cli_js(&moon_bin) {
+        Some(p) => p,
+        None => {
+            eprintln!("skipping jsonschema encode: failed to build MoonBit CLI");
+            return Ok(());
+        }
+    };
+
+    let peer: u64 = 0x0102_0304_0506_0708;
+    let doc = LoroDoc::new();
+    doc.set_peer_id(peer)?;
+    doc.get_text("t").insert(0, "123").unwrap();
+    doc.commit();
+    let expected = doc.get_deep_value().to_json_value();
+
+    let start = VersionVector::default();
+    let end = doc.oplog_vv();
+    let schema = doc.export_json_updates(&start, &end);
+    let json = serde_json::to_string(&schema)?;
+
+    let out_blob = run_encode_jsonschema(&node_bin, &cli_js, &json)?;
+    let doc2 = LoroDoc::new();
+    doc2.import(&out_blob).unwrap();
+    assert_eq!(doc2.get_deep_value().to_json_value(), expected);
 
     Ok(())
 }
