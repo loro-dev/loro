@@ -7,7 +7,7 @@
 - `moon/loro_codec/json_schema.mbt`
 - CLI：`moon/cmd/loro_codec_cli/main.mbt`（`export-jsonschema`）
 
-> 注意：本实现目前只做 **导出**，且输入必须是 `FastUpdates(mode=4)` 的二进制 blob（Rust `LoroDoc.export(ExportMode::Updates{...}/all_updates())`）。
+> 注意：本文只讨论 **导出**（FastUpdates 二进制 → JsonSchema JSON）。JsonSchema → FastUpdates 的 **编码**细节见 `moon/specs/07-jsonschema-encode.md`。
 
 ---
 
@@ -96,4 +96,3 @@ MoonBit 侧目前只在二进制 `ValueEncoding` 里拿到 `ContainerType`（对
 
 - 仅支持从 `FastUpdates(mode=4)` 二进制导出 JsonSchema（不支持 FastSnapshot）。
 - `UnknownOp` 目前输出为占位结构（`value_type="unknown", value=null`），用于保持导出可用；后续如需要可对齐 Rust 的 `OwnedValue` / `EncodedValue` 细节。
-
