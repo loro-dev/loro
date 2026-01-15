@@ -1212,3 +1212,33 @@ fn moon_counter_updates_jsonschema_matches_rust() -> anyhow::Result<()> {
 
     assert_updates_jsonschema_matches_rust(&doc, ctx)
 }
+
+#[cfg(feature = "counter")]
+#[test]
+fn moon_encode_jsonschema_counter() -> anyhow::Result<()> {
+    let Some(ctx) = moon_ctx() else {
+        return Ok(());
+    };
+
+    let doc = LoroDoc::new();
+    let map = doc.get_map("m");
+    let counter = map.insert_container("c", loro::LoroCounter::new())?;
+    counter.increment(1.0)?;
+    counter.decrement(0.5)?;
+    doc.set_next_commit_message("counter");
+    doc.set_next_commit_timestamp(1 as Timestamp);
+    doc.commit();
+    let expected = doc.get_deep_value().to_json_value();
+
+    let start = VersionVector::default();
+    let end = doc.oplog_vv();
+    let schema = doc.export_json_updates(&start, &end);
+    let json = serde_json::to_string(&schema)?;
+
+    let out_blob = run_encode_jsonschema(&ctx.node_bin, &ctx.cli_js, &json)?;
+    let doc2 = LoroDoc::new();
+    doc2.import(&out_blob).unwrap();
+    assert_eq!(doc2.get_deep_value().to_json_value(), expected);
+
+    Ok(())
+}

@@ -60,8 +60,7 @@ fn jsonschema_import_parse_op_content(
       )
     ContainerType::Tree =>
       jsonschema_import_parse_tree_op_content(obj, t, peers)
-    ContainerType::Counter =>
-      raise DecodeError("jsonschema_import: Counter ops are not supported")
+    ContainerType::Counter => jsonschema_import_parse_counter_op_content(obj, t)
     ContainerType::Unknown(_) =>
       raise DecodeError(
         "jsonschema_import: Unknown container type is not supported",

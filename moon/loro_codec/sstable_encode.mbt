@@ -25,18 +25,26 @@ pub fn sstable_export_all(
   while idx < kvs.length() {
     let (key, value) = kvs[idx]
     if value.length() > block_size {
-      let checksum = xxhash32(value[:], LORO_XXH32_SEED) catch {
+      let compressed = lz4_compress_frame(value) catch {
+        EncodeError(e) => raise EncodeError("sstable: lz4 encode failed: " + e)
+      }
+      let (body, compression_type) = if compressed.length() > value.length() {
+        (value, CompressionType::None)
+      } else {
+        (compressed, CompressionType::LZ4)
+      }
+      let checksum = xxhash32(body[:], LORO_XXH32_SEED) catch {
         DecodeError(e) => raise EncodeError("sstable: checksum failed: " + e)
       }
       let w = BytesWriter::new()
-      w.write_bytes(value)
+      w.write_bytes(body)
       w.write_u32_le(checksum)
       let block_bytes = w.to_bytes()
       blocks.push(block_bytes)
       meta.push({
         offset: next_offset,
         is_large: true,
-        compression_type: CompressionType::None,
+        compression_type,
         first_key: key,
         last_key: None,
       })
@@ -90,19 +98,27 @@ pub fn sstable_export_all(
       body_w.write_u16_le(off.reinterpret_as_uint())
     }
     body_w.write_u16_le(offsets.length().reinterpret_as_uint())
-    let body_bytes = body_w.to_bytes()
-    let checksum = xxhash32(body_bytes[:], LORO_XXH32_SEED) catch {
+    let raw_body = body_w.to_bytes()
+    let compressed = lz4_compress_frame(raw_body) catch {
+      EncodeError(e) => raise EncodeError("sstable: lz4 encode failed: " + e)
+    }
+    let (body, compression_type) = if compressed.length() > raw_body.length() {
+      (raw_body, CompressionType::None)
+    } else {
+      (compressed, CompressionType::LZ4)
+    }
+    let checksum = xxhash32(body[:], LORO_XXH32_SEED) catch {
       DecodeError(e) => raise EncodeError("sstable: checksum failed: " + e)
     }
     let w = BytesWriter::new()
-    w.write_bytes(body_bytes)
+    w.write_bytes(body)
     w.write_u32_le(checksum)
     let block_bytes = w.to_bytes()
     blocks.push(block_bytes)
     meta.push({
       offset: next_offset,
       is_large: false,
-      compression_type: CompressionType::None,
+      compression_type,
       first_key,
       last_key: Some(last_key),
     })

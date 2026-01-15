@@ -189,3 +189,163 @@ pub fn lz4_decompress_frame(
   }
   out.to_bytes()
 }
+
+///|
+fn write_ext_len(w : BytesWriter, extra : Int) -> Unit raise EncodeError {
+  if extra < 0 {
+    raise EncodeError("lz4: negative ext len")
+  }
+  let mut left = extra
+  while left >= 255 {
+    w.write_u8(255.to_byte())
+    left = left - 255
+  }
+  w.write_u8(left.to_byte())
+}
+
+///|
+fn read_u32_le_at(input : BytesView, i : Int) -> UInt {
+  let b0 = input[i].to_uint()
+  let b1 = input[i + 1].to_uint()
+  let b2 = input[i + 2].to_uint()
+  let b3 = input[i + 3].to_uint()
+  b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)
+}
+
+///|
+fn bytes_eq4(input : BytesView, a : Int, b : Int) -> Bool {
+  input[a] == input[b] &&
+  input[a + 1] == input[b + 1] &&
+  input[a + 2] == input[b + 2] &&
+  input[a + 3] == input[b + 3]
+}
+
+///|
+fn hash_u32(x : UInt) -> Int {
+  // LZ4 uses a multiplicative hash for 4-byte sequences.
+  let mul = x.to_uint64() * 2654435761UL
+  ((mul >> 16) & 0xFFFFUL).to_int()
+}
+
+///|
+fn lz4_compress_block(input : BytesView) -> Bytes raise EncodeError {
+  let n = input.length()
+  if n == 0 {
+    return b""
+  }
+
+  // Hash table for 4-byte sequences. Use -1 as empty.
+  let table : Array[Int] = []
+  for _i in 0..<65536 {
+    table.push(-1)
+  }
+
+  let w = BytesWriter::new()
+  let mut anchor = 0
+  let mut i = 0
+  while i + 4 <= n {
+    let seq = read_u32_le_at(input, i)
+    let h = hash_u32(seq)
+    let ref = table[h]
+    table[h] = i
+
+    if ref >= 0 && i - ref <= 65535 && bytes_eq4(input, ref, i) {
+      // Extend match.
+      let mut mlen = 4
+      while i + mlen < n && input[ref + mlen] == input[i + mlen] {
+        mlen = mlen + 1
+      }
+
+      let lit_len = i - anchor
+      let match_len_minus4 = mlen - 4
+      let lit_n = if lit_len < 15 { lit_len } else { 15 }
+      let match_n = if match_len_minus4 < 15 {
+        match_len_minus4
+      } else {
+        15
+      }
+      w.write_u8(((lit_n << 4) | match_n).to_byte())
+      if lit_len >= 15 {
+        write_ext_len(w, lit_len - 15)
+      }
+      w.write_bytesview(input[anchor:i])
+
+      let offset = i - ref
+      if offset <= 0 || offset > 65535 {
+        raise EncodeError("lz4: invalid match offset")
+      }
+      w.write_u16_le(offset.reinterpret_as_uint())
+
+      if match_len_minus4 >= 15 {
+        write_ext_len(w, match_len_minus4 - 15)
+      }
+
+      i = i + mlen
+      anchor = i
+
+      // Prime the table at i-2 for better compression, like the reference impl.
+      if i - 2 >= 0 && i - 2 + 4 <= n {
+        let seq2 = read_u32_le_at(input, i - 2)
+        table[hash_u32(seq2)] = i - 2
+      }
+      continue
+    }
+
+    i = i + 1
+  }
+
+  // Last literals.
+  let lit_len = n - anchor
+  let lit_n = if lit_len < 15 { lit_len } else { 15 }
+  w.write_u8((lit_n << 4).to_byte())
+  if lit_len >= 15 {
+    write_ext_len(w, lit_len - 15)
+  }
+  w.write_bytesview(input[anchor:n])
+  w.to_bytes()
+}
+
+///|
+pub fn lz4_compress_frame(bytes : Bytes) -> Bytes raise EncodeError {
+  // Emit a minimal LZ4 frame (block independent, no checksums/content size),
+  // compatible with Rust's `lz4_flex::frame::FrameDecoder`.
+  let flg = b'\x60' // version=1, block_independence=1
+  let bd = b'\x40' // block_max_size=64KB
+
+  let desc = BytesWriter::new()
+  desc.write_u8(flg)
+  desc.write_u8(bd)
+  let header_checksum = lz4_header_checksum(desc.to_bytes()[:]) catch {
+    DecodeError(e) => raise EncodeError("lz4: header checksum failed: " + e)
+  }
+
+  let w = BytesWriter::new()
+  w.write_u32_le(LZ4_MAGIC)
+  w.write_u8(flg)
+  w.write_u8(bd)
+  w.write_u8(header_checksum)
+
+  let block_max = 64 * 1024
+  let mut pos = 0
+  while pos < bytes.length() {
+    let remaining = bytes.length() - pos
+    let len = if remaining > block_max { block_max } else { remaining }
+    let chunk = bytes[pos:pos + len]
+    let compressed = lz4_compress_block(chunk)
+    if compressed.length() >= len {
+      // Use an uncompressed block inside the frame.
+      let raw = 0x8000_0000.reinterpret_as_uint() |
+        len.reinterpret_as_uint()
+      w.write_u32_le(raw)
+      w.write_bytesview(chunk)
+    } else {
+      w.write_u32_le(compressed.length().reinterpret_as_uint())
+      w.write_bytes(compressed)
+    }
+    pos = pos + len
+  }
+
+  // End mark.
+  w.write_u32_le(0)
+  w.to_bytes()
+}

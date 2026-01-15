@@ -81,11 +81,14 @@ MoonBit 在 `jsonschema_import_sort_and_validate_changes(...)` 中做了上述�
 
 当前支持的容器类型：
 
-- `Map` / `List` / `Text` / `Tree` / `MovableList`
+- `Map` / `List` / `Text` / `Tree` / `MovableList` / `Counter`
 
 当前限制：
 
 - `UnknownOp` 暂不支持（遇到会报错）。
+- `Counter` 的 JsonSchema 形态使用 `JsonOpContent::Future`（字段 `type="counter"` + `prop` + `value_type/value`），目前仅支持：
+  - `prop == 0`
+  - `value_type` 为 `f64` 或 `i64`（会编码为二进制 values 段里的 `F64/I64`）
 - `LoroValue::Container`（JSON 中 `"🦜:cid:..."`）仅支持 normal container，并且要求它的 `peer/counter` 与当前 op 的 `op_id(peer, counter)` **一致**：
   - 二进制 ValueEncoding 里对 container value 只存 `container_type`（不存 peer/counter），因此必须从 `op_id` 推回 container id；
   - root container value（`cid:root-*`）在二进制 value 里不可表示，目前直接拒绝。

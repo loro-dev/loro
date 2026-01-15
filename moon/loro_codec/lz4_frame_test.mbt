@@ -48,3 +48,34 @@ test "lz4 frame: compressed block overlap copy" {
   let out = lz4_decompress_frame(frame[:], true) catch { DecodeError(_) => b"" }
   assert_eq(out, b"aaaaaaaaaa")
 }
+
+///|
+fn repeat_byte(byte : Byte, n : Int) -> Bytes {
+  let w = BytesWriter::new()
+  for _i in 0..<n {
+    w.write_u8(byte)
+  }
+  w.to_bytes()
+}
+
+///|
+test "lz4 frame: encode/decode roundtrip (repetitive)" {
+  let input = repeat_byte(b'a', 4096)
+  let encoded = lz4_compress_frame(input) catch { EncodeError(_) => b"" }
+  let out = lz4_decompress_frame(encoded[:], true) catch { DecodeError(_) => b"" }
+  assert_eq(out, input)
+  // Should compress enough to beat frame overhead.
+  assert_true(encoded.length() < input.length())
+}
+
+///|
+test "lz4 frame: encode uses uncompressed block when not beneficial" {
+  let input = b"Hello, World!"
+  let encoded = lz4_compress_frame(input) catch { EncodeError(_) => b"" }
+  // Frame header is 7 bytes; next u32_le is the first block size.
+  let block_size_raw = BytesReader::from_view(encoded[7:11])
+    .read_u32_le()
+  assert_true((block_size_raw & 0x8000_0000) != 0)
+  let out = lz4_decompress_frame(encoded[:], true) catch { DecodeError(_) => b"" }
+  assert_eq(out, input)
+}
