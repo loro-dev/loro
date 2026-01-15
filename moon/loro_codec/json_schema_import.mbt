@@ -48,6 +48,57 @@ fn jsonschema_import_expect_number(v: Json, what: String) -> (Double, String?) r
   }
 }
 
+fn jsonschema_import_req(
+  obj: Map[String, Json],
+  key: String,
+  what: String,
+) -> Json raise DecodeError {
+  match obj.get(key) {
+    Some(v) => v
+    None => raise DecodeError("jsonschema_import: missing " + what)
+  }
+}
+
+fn jsonschema_import_req_string(
+  obj: Map[String, Json],
+  key: String,
+  what: String,
+) -> String raise DecodeError {
+  jsonschema_import_expect_string(jsonschema_import_req(obj, key, what), what)
+}
+
+fn jsonschema_import_req_array(
+  obj: Map[String, Json],
+  key: String,
+  what: String,
+) -> Array[Json] raise DecodeError {
+  jsonschema_import_expect_array(jsonschema_import_req(obj, key, what), what)
+}
+
+fn jsonschema_import_req_int(
+  obj: Map[String, Json],
+  key: String,
+  what: String,
+) -> Int raise DecodeError {
+  jsonschema_import_number_to_int(jsonschema_import_req(obj, key, what), what)
+}
+
+fn jsonschema_import_req_i64(
+  obj: Map[String, Json],
+  key: String,
+  what: String,
+) -> Int64 raise DecodeError {
+  jsonschema_import_number_to_i64(jsonschema_import_req(obj, key, what), what)
+}
+
+fn jsonschema_import_req_u32(
+  obj: Map[String, Json],
+  key: String,
+  what: String,
+) -> UInt raise DecodeError {
+  jsonschema_import_number_to_u32(jsonschema_import_req(obj, key, what), what)
+}
+
 fn jsonschema_import_number_to_int(v: Json, what: String) -> Int raise DecodeError {
   let (n, repr) = jsonschema_import_expect_number(v, what)
   // Prefer repr for integer decoding to avoid float rounding.
@@ -349,26 +400,27 @@ fn jsonschema_import_parse_op_content(
     ContainerType::Text => {
       match t {
         "insert" => {
-          let pos = jsonschema_import_number_to_u32(obj["pos"], "text.insert.pos")
-          let text = jsonschema_import_expect_string(obj["text"], "text.insert.text")
+          let pos = jsonschema_import_req_u32(obj, "pos", "text.insert.pos")
+          let text = jsonschema_import_req_string(obj, "text", "text.insert.text")
           OpContent::Text(TextOp::Insert(pos, text))
         }
         "delete" => {
-          let pos = jsonschema_import_number_to_int(obj["pos"], "text.delete.pos")
-          let len_i64 = jsonschema_import_number_to_i64(obj["len"], "text.delete.len")
+          let pos = jsonschema_import_req_int(obj, "pos", "text.delete.pos")
+          let len_i64 = jsonschema_import_req_i64(obj, "len", "text.delete.len")
           let start_id = jsonschema_import_parse_id(
-            jsonschema_import_expect_string(obj["start_id"], "text.delete.start_id"),
+            jsonschema_import_req_string(obj, "start_id", "text.delete.start_id"),
             peers,
             "start_id",
           )
           OpContent::Text(TextOp::Delete(pos, len_i64, start_id))
         }
         "mark" => {
-          let start = jsonschema_import_number_to_u32(obj["start"], "text.mark.start")
-          let end = jsonschema_import_number_to_u32(obj["end"], "text.mark.end")
-          let style_key = jsonschema_import_expect_string(obj["style_key"], "text.mark.style_key")
-          let style_val = jsonschema_import_loro_value(obj["style_value"], op_id, keys, key_to_idx, peers)
-          let info_i = jsonschema_import_number_to_int(obj["info"], "text.mark.info")
+          let start = jsonschema_import_req_u32(obj, "start", "text.mark.start")
+          let end = jsonschema_import_req_u32(obj, "end", "text.mark.end")
+          let style_key = jsonschema_import_req_string(obj, "style_key", "text.mark.style_key")
+          let style_val =
+            jsonschema_import_loro_value(jsonschema_import_req(obj, "style_value", "text.mark.style_value"), op_id, keys, key_to_idx, peers)
+          let info_i = jsonschema_import_req_int(obj, "info", "text.mark.info")
           if info_i < 0 || info_i > 255 {
             raise DecodeError("jsonschema_import: invalid text.mark.info")
           }
@@ -381,8 +433,8 @@ fn jsonschema_import_parse_op_content(
     ContainerType::List => {
       match t {
         "insert" => {
-          let pos = jsonschema_import_number_to_u32(obj["pos"], "list.insert.pos")
-          let values_json = jsonschema_import_expect_array(obj["value"], "list.insert.value")
+          let pos = jsonschema_import_req_u32(obj, "pos", "list.insert.pos")
+          let values_json = jsonschema_import_req_array(obj, "value", "list.insert.value")
           let values: Array[LoroValue] = []
           for i in 0..<values_json.length() {
             values.push(jsonschema_import_loro_value(values_json[i], id_inc(op_id, i), keys, key_to_idx, peers))
@@ -390,10 +442,10 @@ fn jsonschema_import_parse_op_content(
           OpContent::List(ListOp::Insert(pos, values))
         }
         "delete" => {
-          let pos = jsonschema_import_number_to_int(obj["pos"], "list.delete.pos")
-          let len_i64 = jsonschema_import_number_to_i64(obj["len"], "list.delete.len")
+          let pos = jsonschema_import_req_int(obj, "pos", "list.delete.pos")
+          let len_i64 = jsonschema_import_req_i64(obj, "len", "list.delete.len")
           let start_id = jsonschema_import_parse_id(
-            jsonschema_import_expect_string(obj["start_id"], "list.delete.start_id"),
+            jsonschema_import_req_string(obj, "start_id", "list.delete.start_id"),
             peers,
             "start_id",
           )
@@ -405,8 +457,8 @@ fn jsonschema_import_parse_op_content(
     ContainerType::MovableList => {
       match t {
         "insert" => {
-          let pos = jsonschema_import_number_to_u32(obj["pos"], "mlist.insert.pos")
-          let values_json = jsonschema_import_expect_array(obj["value"], "mlist.insert.value")
+          let pos = jsonschema_import_req_u32(obj, "pos", "mlist.insert.pos")
+          let values_json = jsonschema_import_req_array(obj, "value", "mlist.insert.value")
           let values: Array[LoroValue] = []
           for i in 0..<values_json.length() {
             values.push(jsonschema_import_loro_value(values_json[i], id_inc(op_id, i), keys, key_to_idx, peers))
@@ -414,20 +466,20 @@ fn jsonschema_import_parse_op_content(
           OpContent::MovableList(MovableListOp::Insert(pos, values))
         }
         "delete" => {
-          let pos = jsonschema_import_number_to_int(obj["pos"], "mlist.delete.pos")
-          let len_i64 = jsonschema_import_number_to_i64(obj["len"], "mlist.delete.len")
+          let pos = jsonschema_import_req_int(obj, "pos", "mlist.delete.pos")
+          let len_i64 = jsonschema_import_req_i64(obj, "len", "mlist.delete.len")
           let start_id = jsonschema_import_parse_id(
-            jsonschema_import_expect_string(obj["start_id"], "mlist.delete.start_id"),
+            jsonschema_import_req_string(obj, "start_id", "mlist.delete.start_id"),
             peers,
             "start_id",
           )
           OpContent::MovableList(MovableListOp::Delete(pos, len_i64, start_id))
         }
         "move" => {
-          let from = jsonschema_import_number_to_u32(obj["from"], "mlist.move.from")
-          let to = jsonschema_import_number_to_u32(obj["to"], "mlist.move.to")
+          let from = jsonschema_import_req_u32(obj, "from", "mlist.move.from")
+          let to = jsonschema_import_req_u32(obj, "to", "mlist.move.to")
           let elem_id = jsonschema_import_parse_idlp(
-            jsonschema_import_expect_string(obj["elem_id"], "mlist.move.elem_id"),
+            jsonschema_import_req_string(obj, "elem_id", "mlist.move.elem_id"),
             peers,
             "elem_id",
           )
@@ -435,11 +487,11 @@ fn jsonschema_import_parse_op_content(
         }
         "set" => {
           let elem_id = jsonschema_import_parse_idlp(
-            jsonschema_import_expect_string(obj["elem_id"], "mlist.set.elem_id"),
+            jsonschema_import_req_string(obj, "elem_id", "mlist.set.elem_id"),
             peers,
             "elem_id",
           )
-          let value = jsonschema_import_loro_value(obj["value"], op_id, keys, key_to_idx, peers)
+          let value = jsonschema_import_loro_value(jsonschema_import_req(obj, "value", "mlist.set.value"), op_id, keys, key_to_idx, peers)
           OpContent::MovableList(MovableListOp::Set(elem_id, value))
         }
         _ => raise DecodeError("jsonschema_import: unknown movable_list op type: " + t)
@@ -448,12 +500,12 @@ fn jsonschema_import_parse_op_content(
     ContainerType::Map => {
       match t {
         "insert" => {
-          let key = jsonschema_import_expect_string(obj["key"], "map.insert.key")
-          let value = jsonschema_import_loro_value(obj["value"], op_id, keys, key_to_idx, peers)
+          let key = jsonschema_import_req_string(obj, "key", "map.insert.key")
+          let value = jsonschema_import_loro_value(jsonschema_import_req(obj, "value", "map.insert.value"), op_id, keys, key_to_idx, peers)
           OpContent::Map(MapOp::Insert(key, value))
         }
         "delete" => {
-          let key = jsonschema_import_expect_string(obj["key"], "map.delete.key")
+          let key = jsonschema_import_req_string(obj, "key", "map.delete.key")
           OpContent::Map(MapOp::Delete(key))
         }
         _ => raise DecodeError("jsonschema_import: unknown map op type: " + t)
@@ -463,7 +515,7 @@ fn jsonschema_import_parse_op_content(
       match t {
         "create" => {
           let target = jsonschema_import_parse_id(
-            jsonschema_import_expect_string(obj["target"], "tree.create.target"),
+            jsonschema_import_req_string(obj, "target", "tree.create.target"),
             peers,
             "tree_id",
           )
@@ -476,13 +528,13 @@ fn jsonschema_import_parse_op_content(
                   jsonschema_import_parse_id(jsonschema_import_expect_string(vp, "tree.parent"), peers, "tree_id"),
                 )
             }
-          let fi_hex = jsonschema_import_expect_string(obj["fractional_index"], "tree.fractional_index")
+          let fi_hex = jsonschema_import_req_string(obj, "fractional_index", "tree.fractional_index")
           let fi = FractionalIndex::new(jsonschema_import_hex_to_bytes(fi_hex))
           OpContent::Tree(TreeOp::Create(target, parent, fi))
         }
         "move" => {
           let target = jsonschema_import_parse_id(
-            jsonschema_import_expect_string(obj["target"], "tree.move.target"),
+            jsonschema_import_req_string(obj, "target", "tree.move.target"),
             peers,
             "tree_id",
           )
@@ -495,13 +547,13 @@ fn jsonschema_import_parse_op_content(
                   jsonschema_import_parse_id(jsonschema_import_expect_string(vp, "tree.parent"), peers, "tree_id"),
                 )
             }
-          let fi_hex = jsonschema_import_expect_string(obj["fractional_index"], "tree.fractional_index")
+          let fi_hex = jsonschema_import_req_string(obj, "fractional_index", "tree.fractional_index")
           let fi = FractionalIndex::new(jsonschema_import_hex_to_bytes(fi_hex))
           OpContent::Tree(TreeOp::Move(target, parent, fi))
         }
         "delete" => {
           let target = jsonschema_import_parse_id(
-            jsonschema_import_expect_string(obj["target"], "tree.delete.target"),
+            jsonschema_import_req_string(obj, "target", "tree.delete.target"),
             peers,
             "tree_id",
           )
@@ -521,11 +573,11 @@ fn jsonschema_import_parse_change(
   peers: Array[UInt64]?,
 ) -> Change raise DecodeError {
   let obj = jsonschema_import_expect_object(v, "change")
-  let id_str = jsonschema_import_expect_string(obj["id"], "change.id")
+  let id_str = jsonschema_import_req_string(obj, "id", "change.id")
   let id = jsonschema_import_parse_id(id_str, peers, "change.id")
 
-  let timestamp = jsonschema_import_number_to_i64(obj["timestamp"], "change.timestamp")
-  let lamport_u32 = jsonschema_import_number_to_u32(obj["lamport"], "change.lamport")
+  let timestamp = jsonschema_import_req_i64(obj, "timestamp", "change.timestamp")
+  let lamport_u32 = jsonschema_import_req_u32(obj, "lamport", "change.lamport")
   let msg: String? =
     match obj.get("msg") {
       None => None
@@ -533,7 +585,7 @@ fn jsonschema_import_parse_change(
       Some(vs) => Some(jsonschema_import_expect_string(vs, "change.msg"))
     }
 
-  let deps_json = jsonschema_import_expect_array(obj["deps"], "change.deps")
+  let deps_json = jsonschema_import_req_array(obj, "deps", "change.deps")
   let deps: Array[ID] = []
   for i in 0..<deps_json.length() {
     let dep_s = jsonschema_import_expect_string(deps_json[i], "change.deps[" + i.to_string() + "]")
@@ -542,14 +594,15 @@ fn jsonschema_import_parse_change(
 
   let c = Change::new(id, timestamp, deps, lamport_u32, msg)
 
-  let ops_json = jsonschema_import_expect_array(obj["ops"], "change.ops")
+  let ops_json = jsonschema_import_req_array(obj, "ops", "change.ops")
   for i in 0..<ops_json.length() {
     let op_obj = jsonschema_import_expect_object(ops_json[i], "op")
-    let container_str = jsonschema_import_expect_string(op_obj["container"], "op.container")
+    let container_str = jsonschema_import_req_string(op_obj, "container", "op.container")
     let container = jsonschema_import_parse_container_id(container_str, peers)
-    let counter = jsonschema_import_number_to_int(op_obj["counter"], "op.counter")
+    let counter = jsonschema_import_req_int(op_obj, "counter", "op.counter")
     let op_id = ID::new(id.peer(), counter)
-    let content = jsonschema_import_parse_op_content(container, op_obj["content"], op_id, keys, key_to_idx, peers)
+    let content =
+      jsonschema_import_parse_op_content(container, jsonschema_import_req(op_obj, "content", "op.content"), op_id, keys, key_to_idx, peers)
     let len = jsonschema_import_op_len(content)
     c.ops().push(Op::new(container, counter, len, content))
   }
@@ -626,7 +679,7 @@ pub fn encode_fast_updates_from_json_schema(json: String, validate: Bool) -> Byt
   let keys: Array[String] = []
   let key_to_idx: @hashmap.HashMap[String, UInt64] = @hashmap.new(capacity=64)
 
-  let changes_json = jsonschema_import_expect_array(obj["changes"], "changes")
+  let changes_json = jsonschema_import_req_array(obj, "changes", "changes")
   let all_changes: Array[Change] = []
   for i in 0..<changes_json.length() {
     all_changes.push(jsonschema_import_parse_change(changes_json[i], keys, key_to_idx, peers))
