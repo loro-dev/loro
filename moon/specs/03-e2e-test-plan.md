@@ -165,3 +165,8 @@ MOON_BIN=~/.moon/bin/moon NODE_BIN=node cargo test -p loro --test moon_transcode
 
 覆盖意义：
 - 该测试直接约束 FastSnapshot 的 state snapshot（Map/List/Richtext/Tree/MovableList/Counter 等）解码语义与 JSON 形态，能暴露 Unicode scalar、排序/稳定性等问题。
+
+当前落地（repo 现状）：
+- Rust 生成器：`crates/loro/examples/moon_golden_gen.rs`
+- Rust tests：`crates/loro/tests/moon_transcode.rs`（`moon_golden_updates_jsonschema_matches_rust` / `moon_golden_snapshot_deep_json_matches_rust`）
+- Moon CLI：`moon/cmd/loro_codec_cli`（`export-jsonschema` / `export-deep-json`）
