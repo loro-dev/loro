@@ -94,12 +94,23 @@ pub fn export_json_schema_from_fast_updates(
   }
   let peers : Array[UInt64] = []
   let peer_to_idx : @hashmap.HashMap[UInt64, UInt64] = @hashmap.new(capacity=64)
-  let changes : Array[Json] = []
+  // Rust `export_json_updates` orders changes by lamport. FastUpdates blocks are
+  // typically grouped by peer/counter, so normalize here to match Rust output.
+  let change_entries : Array[(UInt64, Array[String], Change)] = []
   for blk in decoded_blocks {
     let keys = blk.keys()
     for c in blk.changes() {
-      changes.push(change_json_schema(c, keys, peers, peer_to_idx))
+      change_entries.push((c.lamport().to_uint64(), keys, c))
     }
+  }
+  change_entries.sort_by_key(entry => {
+    let (lamport, _keys, _c) = entry
+    lamport
+  })
+  let changes : Array[Json] = []
+  for entry in change_entries {
+    let (_lamport, keys, c) = entry
+    changes.push(change_json_schema(c, keys, peers, peer_to_idx))
   }
   let peers_json : Array[Json] = []
   for p in peers {
