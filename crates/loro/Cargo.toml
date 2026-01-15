@@ -37,6 +37,7 @@ base64 = "0.22.1"
 serial_test = "3"
 
 [features]
+default = ["counter"]
 counter = ["loro-internal/counter"]
 jsonpath = ["loro-internal/jsonpath"]
 logging = ["loro-internal/logging"]
