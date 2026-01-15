@@ -2,7 +2,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use loro::{ExportMode, Frontiers, LoroDoc, Timestamp, ToJson, VersionVector};
+use loro::{ExportMode, Frontiers, LoroDoc, LoroValue, Timestamp, ToJson, TreeParentId, VersionVector};
+use rand::{rngs::StdRng, Rng, SeedableRng};
 
 fn bin_available(bin: &str, args: &[&str]) -> bool {
     Command::new(bin)
@@ -104,6 +105,27 @@ fn run_export_jsonschema(node_bin: &str, cli_js: &Path, input: &[u8]) -> anyhow:
     Ok(String::from_utf8(out.stdout)?)
 }
 
+fn run_export_deep_json(node_bin: &str, cli_js: &Path, input: &[u8]) -> anyhow::Result<String> {
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let tmp = std::env::temp_dir().join(format!(
+        "loro-moon-export-deep-json-{}-{ts}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&tmp)?;
+    let in_path = tmp.join("in.blob");
+    std::fs::write(&in_path, input)?;
+
+    let out = Command::new(node_bin)
+        .arg(cli_js)
+        .args(["export-deep-json", in_path.to_str().unwrap()])
+        .output()?;
+    anyhow::ensure!(out.status.success(), "node export-deep-json failed");
+    Ok(String::from_utf8(out.stdout)?)
+}
+
 fn run_encode_jsonschema(node_bin: &str, cli_js: &Path, input_json: &str) -> anyhow::Result<Vec<u8>> {
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -130,6 +152,183 @@ fn run_encode_jsonschema(node_bin: &str, cli_js: &Path, input_json: &str) -> any
 
     let out = std::fs::read(&out_path)?;
     Ok(out)
+}
+
+fn apply_random_ops(doc: &LoroDoc, seed: u64, ops: usize, commit_every: usize) -> anyhow::Result<()> {
+    let mut rng = StdRng::seed_from_u64(seed);
+
+    doc.set_peer_id(1)?;
+    let map = doc.get_map("map");
+    let list = doc.get_list("list");
+    let text = doc.get_text("text");
+    let mlist = doc.get_movable_list("mlist");
+    let tree = doc.get_tree("tree");
+    tree.enable_fractional_index(0);
+
+    let mut tree_nodes = Vec::new();
+
+    for i in 0..ops {
+        let op_type = rng.gen_range(0..11);
+        match op_type {
+            0 => {
+                let key = format!("k{}", rng.gen::<u32>());
+                map.insert(&key, rng.gen::<i32>())?;
+            }
+            1 => {
+                let key = format!("k{}", rng.gen::<u32>());
+                let value = if rng.gen::<bool>() {
+                    LoroValue::from(rng.gen::<bool>())
+                } else {
+                    LoroValue::Null
+                };
+                map.insert(&key, value)?;
+            }
+            2 => {
+                if !map.is_empty() {
+                    let key = format!("k{}", rng.gen::<u32>());
+                    let _ = map.delete(&key);
+                }
+            }
+            3 => {
+                let index = rng.gen_range(0..=list.len());
+                list.insert(index, rng.gen::<i32>())?;
+            }
+            4 => {
+                if !list.is_empty() {
+                    let index = rng.gen_range(0..list.len());
+                    list.delete(index, 1)?;
+                }
+            }
+            5 => {
+                let index = rng.gen_range(0..=text.len_unicode());
+                let s = match rng.gen_range(0..6) {
+                    0 => "a",
+                    1 => "b",
+                    2 => "Z",
+                    3 => "😀",
+                    4 => "中",
+                    _ => "!",
+                };
+                text.insert(index, s)?;
+            }
+            6 => {
+                if text.len_unicode() > 0 {
+                    let index = rng.gen_range(0..text.len_unicode());
+                    text.delete(index, 1)?;
+                }
+            }
+            7 => {
+                let index = rng.gen_range(0..=mlist.len());
+                mlist.insert(index, rng.gen::<i32>())?;
+            }
+            8 => {
+                if !mlist.is_empty() {
+                    let index = rng.gen_range(0..mlist.len());
+                    mlist.set(index, rng.gen::<i32>())?;
+                }
+            }
+            9 => {
+                if mlist.len() >= 2 && rng.gen::<bool>() {
+                    let from = rng.gen_range(0..mlist.len());
+                    let to = rng.gen_range(0..mlist.len());
+                    let _ = mlist.mov(from, to);
+                } else if !mlist.is_empty() {
+                    let index = rng.gen_range(0..mlist.len());
+                    mlist.delete(index, 1)?;
+                }
+            }
+            10 => {
+                match rng.gen_range(0..4) {
+                    0 => {
+                        let parent = if tree_nodes.is_empty() || rng.gen::<bool>() {
+                            TreeParentId::Root
+                        } else {
+                            TreeParentId::from(tree_nodes[rng.gen_range(0..tree_nodes.len())])
+                        };
+                        let id = tree.create(parent)?;
+                        tree_nodes.push(id);
+                    }
+                    1 => {
+                        if tree_nodes.len() >= 2 {
+                            let target = tree_nodes[rng.gen_range(0..tree_nodes.len())];
+                            let parent = if rng.gen::<bool>() {
+                                TreeParentId::Root
+                            } else {
+                                TreeParentId::from(tree_nodes[rng.gen_range(0..tree_nodes.len())])
+                            };
+                            let _ = tree.mov(target, parent);
+                        }
+                    }
+                    2 => {
+                        if !tree_nodes.is_empty() {
+                            let idx = rng.gen_range(0..tree_nodes.len());
+                            let id = tree_nodes.swap_remove(idx);
+                            let _ = tree.delete(id);
+                        }
+                    }
+                    _ => {
+                        if !tree_nodes.is_empty() {
+                            let id = tree_nodes[rng.gen_range(0..tree_nodes.len())];
+                            let meta = tree.get_meta(id)?;
+                            let key = format!("m{}", rng.gen::<u8>());
+                            meta.insert(&key, rng.gen::<i32>())?;
+                        }
+                    }
+                }
+            }
+            _ => unreachable!(),
+        }
+
+        if commit_every > 0 && (i + 1) % commit_every == 0 {
+            let msg = format!("commit-{} seed={}", i + 1, seed);
+            doc.set_next_commit_message(&msg);
+            doc.set_next_commit_timestamp(i as Timestamp);
+            doc.commit();
+        }
+    }
+
+    let msg = format!("final seed={seed} ops={ops}");
+    doc.set_next_commit_message(&msg);
+    doc.set_next_commit_timestamp(ops as Timestamp);
+    doc.commit();
+    Ok(())
+}
+
+fn first_json_diff_path(a: &serde_json::Value, b: &serde_json::Value, path: &str) -> Option<String> {
+    use serde_json::Value;
+    if a == b {
+        return None;
+    }
+    match (a, b) {
+        (Value::Object(ao), Value::Object(bo)) => {
+            for (k, av) in ao {
+                let Some(bv) = bo.get(k) else {
+                    return Some(format!("{path}.{k} (missing rhs)"));
+                };
+                if let Some(p) = first_json_diff_path(av, bv, &format!("{path}.{k}")) {
+                    return Some(p);
+                }
+            }
+            for k in bo.keys() {
+                if !ao.contains_key(k) {
+                    return Some(format!("{path}.{k} (missing lhs)"));
+                }
+            }
+            Some(path.to_string())
+        }
+        (Value::Array(aa), Value::Array(ba)) => {
+            if aa.len() != ba.len() {
+                return Some(format!("{path} (len {} != {})", aa.len(), ba.len()));
+            }
+            for (i, (av, bv)) in aa.iter().zip(ba.iter()).enumerate() {
+                if let Some(p) = first_json_diff_path(av, bv, &format!("{path}[{i}]")) {
+                    return Some(p);
+                }
+            }
+            Some(path.to_string())
+        }
+        _ => Some(path.to_string()),
+    }
 }
 
 #[test]
@@ -582,5 +781,86 @@ fn moon_export_jsonschema_multi_peer() -> anyhow::Result<()> {
     doc_c.import_json_updates(schema).unwrap();
     assert_eq!(doc_c.get_deep_value().to_json_value(), expected_b);
 
+    Ok(())
+}
+
+#[test]
+fn moon_golden_updates_jsonschema_matches_rust() -> anyhow::Result<()> {
+    let moon_bin = std::env::var("MOON_BIN").unwrap_or_else(|_| "moon".to_string());
+    let node_bin = std::env::var("NODE_BIN").unwrap_or_else(|_| "node".to_string());
+
+    if !bin_available(&moon_bin, &["version"]) {
+        eprintln!("skipping golden updates: moon not available (set MOON_BIN)");
+        return Ok(());
+    }
+    if !bin_available(&node_bin, &["--version"]) {
+        eprintln!("skipping golden updates: node not available (set NODE_BIN)");
+        return Ok(());
+    }
+
+    let cli_js = match build_moon_cli_js(&moon_bin) {
+        Some(p) => p,
+        None => {
+            eprintln!("skipping golden updates: failed to build MoonBit CLI");
+            return Ok(());
+        }
+    };
+
+    let seed = 42;
+    let doc = LoroDoc::new();
+    apply_random_ops(&doc, seed, 200, 20)?;
+
+    let start = VersionVector::default();
+    let end = doc.oplog_vv();
+
+    let updates_blob = doc.export(ExportMode::Updates {
+        from: std::borrow::Cow::Borrowed(&start),
+    })?;
+    let moon_json = run_export_jsonschema(&node_bin, &cli_js, &updates_blob)?;
+    let moon_value: serde_json::Value = serde_json::from_str(&moon_json)?;
+
+    let rust_schema = doc.export_json_updates(&start, &end);
+    let rust_value = serde_json::to_value(&rust_schema)?;
+
+    anyhow::ensure!(
+        moon_value == rust_value,
+        "jsonschema mismatch at {:?}",
+        first_json_diff_path(&moon_value, &rust_value, "$")
+    );
+    Ok(())
+}
+
+#[test]
+fn moon_golden_snapshot_deep_json_matches_rust() -> anyhow::Result<()> {
+    let moon_bin = std::env::var("MOON_BIN").unwrap_or_else(|_| "moon".to_string());
+    let node_bin = std::env::var("NODE_BIN").unwrap_or_else(|_| "node".to_string());
+
+    if !bin_available(&moon_bin, &["version"]) {
+        eprintln!("skipping golden snapshot: moon not available (set MOON_BIN)");
+        return Ok(());
+    }
+    if !bin_available(&node_bin, &["--version"]) {
+        eprintln!("skipping golden snapshot: node not available (set NODE_BIN)");
+        return Ok(());
+    }
+
+    let cli_js = match build_moon_cli_js(&moon_bin) {
+        Some(p) => p,
+        None => {
+            eprintln!("skipping golden snapshot: failed to build MoonBit CLI");
+            return Ok(());
+        }
+    };
+
+    let seed = 1337;
+    let doc = LoroDoc::new();
+    apply_random_ops(&doc, seed, 200, 20)?;
+    let expected = doc.get_deep_value().to_json_value();
+
+    let snapshot_blob = doc.export(ExportMode::Snapshot)?;
+    let moon_json = run_export_deep_json(&node_bin, &cli_js, &snapshot_blob)?;
+    let moon_value: serde_json::Value = serde_json::from_str(&moon_json)?;
+
+    assert_eq!(moon_value, expected);
     Ok(())
 }

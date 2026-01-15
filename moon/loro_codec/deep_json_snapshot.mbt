@@ -30,7 +30,7 @@ fn common_value_json(
     CommonValue::Null => Json::null()
     CommonValue::Bool(b) => Json::boolean(b)
     CommonValue::Double(d) => Json::number(d)
-    CommonValue::I64(x) => Json::number(x.to_double())
+    CommonValue::I64(x) => jsonschema_number_i64(x)
     CommonValue::String(s) => Json::string(s)
     CommonValue::Binary(b) => binary_json(b)
     CommonValue::List(items) => {
@@ -286,7 +286,7 @@ fn tree_nodes_json(
       depth + 1,
     )
     obj["id"] = Json::string(id_strs[i])
-    obj["index"] = Json::number(index_arr[i].to_double())
+    obj["index"] = jsonschema_number_int(index_arr[i])
     let out_children : Array[Json] = []
     for c in children[i] {
       out_children.push(
