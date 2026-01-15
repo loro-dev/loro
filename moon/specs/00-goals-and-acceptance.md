@@ -77,3 +77,19 @@ Moon 需要能把解码得到的结构重新编码为合法 blob，并满足：
 
 - 在 Moon 内实现完整 Loro CRDT 与操作应用（本项目只要求编码格式互通）。
 - 完全复刻 Rust 的压缩策略与块布局（byte-for-byte 相同）。可作为后续优化目标。
+
+## 0.7 终极测试（必须落地）
+
+除 Rust→Moon→Rust 的 transcode e2e 外，最终还必须补齐两类“强一致性”黄金测试（用于兜底编码细节与语义一致性）：
+
+1. **Updates 一致性（JsonUpdates 对照）**：
+   - Rust CLI 固定 seed 生成随机操作，同时导出二进制 updates（mode=4）与 JsonUpdates（`loro::JsonSchema`，见 `docs/JsonSchema.md`）。
+   - Moon 从二进制 updates 导出 JsonUpdates。
+   - 两份 JsonUpdates 必须结构完全一致（建议 parse 后比较，而不是比字符串）。
+
+2. **Snapshot 一致性（Deep JSON/toJSON 对照）**：
+   - Rust CLI 固定 seed 生成随机操作，同时导出二进制 snapshot（mode=3）与 `get_deep_value()` 的真值 JSON。
+   - Moon 解析 snapshot 后提供 toJSON（deep JSON）输出。
+   - Moon 的 deep JSON 必须与 Rust 真值 JSON 完全一致（建议 parse 后比较）。
+
+详细流程与建议接口见 `moon/specs/03-e2e-test-plan.md`。

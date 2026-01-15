@@ -127,3 +127,41 @@ MOON_BIN=~/.moon/bin/moon NODE_BIN=node cargo test -p loro --test moon_transcode
 - SnapshotAt / StateOnly / ShallowSnapshot
 - Updates(from vv)
 - 多 peer（导出包含多个 peer 的 updates）
+
+## 3.9 终极测试（两种形态，强一致性）
+
+为避免“仅能 import 成功但语义细节漂移”，最终需要落地两类黄金测试：**同一份随机操作序列**下，Rust 与 Moon 的“结构化输出”要强一致。
+
+> 约定：下文的 JsonUpdates 指 `loro::JsonSchema`（见 `docs/JsonSchema.md`）。
+
+### 3.9.1 Updates：二进制 FastUpdates → JsonUpdates，一致性对照
+
+目标：
+- Rust 侧导出的 JsonUpdates，与 Moon 从**二进制 updates** 导出的 JsonUpdates **结构完全一致**。
+
+建议流程：
+1. Rust CLI（固定 seed，可复现）生成随机操作并 commit，得到最终 doc。
+2. Rust 同时导出：
+   - `updates.blob`：二进制 updates（mode=4，建议 `ExportMode::Updates{from: ...}` 或 `ExportMode::all_updates()`）
+   - `updates.json`：JsonUpdates（Rust `export_json_updates(...)` 的 JSON 输出）
+3. Moon 读取 `updates.blob`，导出 JsonUpdates（例如调用 Moon CLI `export-jsonschema`），得到 `updates.moon.json`。
+4. 对比：`updates.moon.json` 与 `updates.json` 反序列化后的结构体/JSON 值完全相等（推荐**先 parse 再比较**，而不是比字符串）。
+
+覆盖意义：
+- 该测试直接约束 ChangeBlock/serde_columnar/Value 等解码语义：Moon 的“二进制→JsonUpdates”必须与 Rust 的“真值 JsonUpdates”一致。
+
+### 3.9.2 Snapshot：二进制 FastSnapshot → Deep JSON(toJSON)，一致性对照
+
+目标：
+- Rust 的 `get_deep_value()` 真值 JSON，与 Moon 从**二进制 snapshot** 解析后产出的 deep JSON（toJSON）**结构完全一致**。
+
+建议流程：
+1. Rust CLI（固定 seed，可复现）生成随机操作并 commit，得到最终 doc。
+2. Rust 同时导出：
+   - `snapshot.blob`：二进制 snapshot（mode=3，`ExportMode::Snapshot`）
+   - `snapshot.deep.json`：真值 JSON（`doc.get_deep_value().to_json_value()`）
+3. Moon 读取 `snapshot.blob`，解析 snapshot，并提供 `toJSON`/`export-deep-json` 之类的接口输出 `snapshot.moon.deep.json`（最终状态的 JSON）。
+4. 对比：`snapshot.moon.deep.json` 与 `snapshot.deep.json` 反序列化后的 JSON 值完全相等。
+
+覆盖意义：
+- 该测试直接约束 FastSnapshot 的 state snapshot（Map/List/Richtext/Tree/MovableList/Counter 等）解码语义与 JSON 形态，能暴露 Unicode scalar、排序/稳定性等问题。
