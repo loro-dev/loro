@@ -10,6 +10,7 @@
 - `moon/specs/03-e2e-test-plan.md`：e2e 测试方案（Rust 向量生成、Moon CLI 约定、对照校验）
 - `moon/specs/04-ir-design.md`：Moon 侧 Change / Op 数据结构设计（重点：Change / Op 结构与测试友好 JSON 形态）
 - `moon/specs/05-fastupdates-changeblock-encoding.md`：FastUpdates / ChangeBlock 的编码细节摘记（以 Rust 源码为真值），用于实现 mode=4 的真正 decode→encode
+- `moon/specs/06-jsonschema-export.md`：JsonSchema（`docs/JsonSchema.md`）导出实现细节（FastUpdates 二进制 → JsonSchema JSON）
 
 ## 约定
 
