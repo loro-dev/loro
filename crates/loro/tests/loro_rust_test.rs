@@ -2,6 +2,7 @@
 #![allow(unexpected_cfgs)]
 use dev_utils::ByteSize;
 use pretty_assertions::assert_eq;
+use serial_test::parallel;
 use std::{
     cmp::Ordering,
     collections::HashSet,
@@ -34,6 +35,7 @@ fn init() {
 }
 
 #[test]
+#[parallel]
 fn insert_an_inserted_movable_handler() -> Result<(), LoroError> {
     let doc = LoroDoc::new();
     let list = doc.get_movable_list("list");
@@ -61,6 +63,7 @@ fn insert_an_inserted_movable_handler() -> Result<(), LoroError> {
 }
 
 #[test]
+#[parallel]
 fn fork_doc() -> anyhow::Result<()> {
     let doc0 = LoroDoc::new();
     let text = doc0.get_text("123");
@@ -90,6 +93,7 @@ fn fork_doc() -> anyhow::Result<()> {
 }
 
 #[test]
+#[parallel]
 fn movable_list() -> Result<(), LoroError> {
     let doc = LoroDoc::new();
     let list = doc.get_movable_list("list");
@@ -121,6 +125,7 @@ fn movable_list() -> Result<(), LoroError> {
 }
 
 #[test]
+#[parallel]
 fn list_checkout() -> Result<(), LoroError> {
     let doc = LoroDoc::new();
     doc.get_list("list").insert_container(0, LoroMap::new())?;
@@ -166,6 +171,7 @@ fn list_checkout() -> Result<(), LoroError> {
 }
 
 #[test]
+#[parallel]
 fn timestamp() {
     let doc1 = LoroDoc::new();
     doc1.set_peer_id(1).unwrap();
@@ -195,6 +201,7 @@ fn timestamp() {
 }
 
 #[test]
+#[parallel]
 fn cmp_frontiers() {
     let doc1 = LoroDoc::new();
     doc1.set_peer_id(1).unwrap();
@@ -236,6 +243,7 @@ fn cmp_frontiers() {
 }
 
 #[test]
+#[parallel]
 fn get_change_at_lamport() {
     let doc1 = LoroDoc::new();
     doc1.set_peer_id(1).unwrap();
@@ -265,6 +273,7 @@ fn get_change_at_lamport() {
 }
 
 #[test]
+#[parallel]
 fn time_travel() {
     let doc = LoroDoc::new();
     let doc2 = LoroDoc::new();
@@ -298,6 +307,7 @@ fn time_travel() {
 }
 
 #[test]
+#[parallel]
 fn travel_back_should_remove_styles() {
     let doc = LoroDoc::new();
     let doc2 = LoroDoc::new();
@@ -344,6 +354,7 @@ fn travel_back_should_remove_styles() {
 }
 
 #[test]
+#[parallel]
 fn list() -> LoroResult<()> {
     use loro::{LoroDoc, ToJson};
     use serde_json::json;
@@ -382,6 +393,7 @@ fn list() -> LoroResult<()> {
 }
 
 #[test]
+#[parallel]
 fn map() -> LoroResult<()> {
     use loro::{LoroDoc, LoroValue, ToJson};
     use serde_json::json;
@@ -410,6 +422,7 @@ fn map() -> LoroResult<()> {
 }
 
 #[test]
+#[parallel]
 fn tree() {
     use loro::{LoroDoc, ToJson};
 
@@ -432,6 +445,7 @@ fn tree() {
 fn check_sync_send(_doc: impl Sync + Send) {}
 
 #[test]
+#[parallel]
 fn richtext_test() {
     use loro::{LoroDoc, ToJson};
     use serde_json::json;
@@ -458,6 +472,7 @@ fn richtext_test() {
 }
 
 #[test]
+#[parallel]
 fn sync() {
     use loro::{LoroDoc, ToJson};
     use serde_json::json;
@@ -483,6 +498,7 @@ fn sync() {
 }
 
 #[test]
+#[parallel]
 fn save() {
     use loro::LoroDoc;
 
@@ -497,6 +513,7 @@ fn save() {
 }
 
 #[test]
+#[parallel]
 fn subscribe() {
     use loro::LoroDoc;
     use std::sync::{atomic::AtomicBool, Arc};
@@ -530,6 +547,7 @@ fn subscribe() {
 }
 
 #[test]
+#[parallel]
 fn prelim_support() -> LoroResult<()> {
     let map = LoroMap::new();
     map.insert("key", "value")?;
@@ -576,6 +594,7 @@ fn prelim_support() -> LoroResult<()> {
 }
 
 #[test]
+#[parallel]
 fn decode_import_blob_meta() -> LoroResult<()> {
     let doc_1 = LoroDoc::new();
     doc_1.set_peer_id(1)?;
@@ -644,6 +663,7 @@ fn decode_import_blob_meta() -> LoroResult<()> {
 }
 
 #[test]
+#[parallel]
 fn decode_import_blob_meta_1() -> LoroResult<()> {
     let doc0 = LoroDoc::new();
     doc0.set_peer_id(0)?;
@@ -668,6 +688,7 @@ fn decode_import_blob_meta_1() -> LoroResult<()> {
 }
 
 #[test]
+#[parallel]
 fn init_example() {
     // create meta/users/0/new_user/{name: string, bio: Text}
     let doc = LoroDoc::new();
@@ -682,6 +703,7 @@ fn init_example() {
 }
 
 #[test]
+#[parallel]
 fn get_container_by_str_path() {
     let doc = LoroDoc::new();
     doc.get_map("map")
@@ -750,6 +772,7 @@ fn get_container_by_str_path() {
 }
 
 #[test]
+#[parallel]
 fn get_cursor() {
     let doc1 = LoroDoc::new();
     doc1.set_peer_id(1).unwrap();
@@ -800,6 +823,7 @@ fn get_cursor() {
 }
 
 #[test]
+#[parallel]
 fn get_cursor_at_the_end() {
     let doc = LoroDoc::new();
     let text = &doc.get_text("text");
@@ -815,6 +839,7 @@ fn get_cursor_at_the_end() {
 }
 
 #[test]
+#[parallel]
 fn get_cursor_for_list() {
     let doc = LoroDoc::new();
     let list = doc.get_list("list");
@@ -876,6 +901,7 @@ fn get_cursor_for_list() {
 }
 
 #[test]
+#[parallel]
 fn get_out_of_bound_cursor() {
     let a = LoroDoc::new();
     let text = a.get_text("text");
@@ -888,6 +914,7 @@ fn get_out_of_bound_cursor() {
 }
 
 #[test]
+#[parallel]
 fn awareness() {
     let mut a = Awareness::new(1, 1000);
     a.set_local_state(1);
@@ -907,6 +934,7 @@ fn awareness() {
 }
 
 #[test]
+#[parallel]
 // https://github.com/loro-dev/loro/issues/397
 fn len_and_is_empty_inconsistency() {
     let doc = LoroDoc::new();
@@ -924,6 +952,7 @@ fn len_and_is_empty_inconsistency() {
 }
 
 #[test]
+#[parallel]
 fn fast_snapshot_for_updates() {
     let doc_a = LoroDoc::new();
     // Create some random edits on doc_a
@@ -968,6 +997,7 @@ fn fast_snapshot_for_updates() {
 }
 
 #[test]
+#[parallel]
 fn new_update_encode_mode() {
     let doc = LoroDoc::new();
     // Create some random edits on doc
@@ -1070,6 +1100,7 @@ fn apply_random_ops(doc: &LoroDoc, seed: u64, mut op_len: usize) {
 }
 
 #[test]
+#[parallel]
 fn test_shallow_sync() {
     let doc = LoroDoc::new();
     doc.set_peer_id(1).unwrap();
@@ -1102,6 +1133,7 @@ fn test_shallow_sync() {
 }
 
 #[test]
+#[parallel]
 fn test_shallow_empty() {
     let doc = LoroDoc::new();
     apply_random_ops(&doc, 123, 11);
@@ -1121,6 +1153,7 @@ fn test_shallow_empty() {
 }
 
 #[test]
+#[parallel]
 fn test_shallow_import_outdated_updates() {
     let doc = LoroDoc::new();
     apply_random_ops(&doc, 123, 11);
@@ -1139,6 +1172,7 @@ fn test_shallow_import_outdated_updates() {
 }
 
 #[test]
+#[parallel]
 fn test_shallow_import_pending_updates_that_is_outdated() {
     let doc = LoroDoc::new();
     apply_random_ops(&doc, 123, 11);
@@ -1162,6 +1196,7 @@ fn test_shallow_import_pending_updates_that_is_outdated() {
 }
 
 #[test]
+#[parallel]
 fn test_calling_exporting_snapshot_on_shallow_doc() {
     let doc = LoroDoc::new();
     apply_random_ops(&doc, 123, 11);
@@ -1179,6 +1214,7 @@ fn test_calling_exporting_snapshot_on_shallow_doc() {
 }
 
 #[test]
+#[parallel]
 fn sync_two_shallow_docs() {
     let doc = LoroDoc::new();
     apply_random_ops(&doc, 123, 11);
@@ -1216,6 +1252,7 @@ fn sync_two_shallow_docs() {
 }
 
 #[test]
+#[parallel]
 fn test_map_checkout_on_shallow_doc() {
     let doc = LoroDoc::new();
     doc.get_map("map").insert("0", 0).unwrap();
@@ -1283,6 +1320,7 @@ fn test_map_checkout_on_shallow_doc() {
 }
 
 #[test]
+#[parallel]
 fn test_loro_export_local_updates() {
     use std::sync::{Arc, Mutex};
 
@@ -1328,6 +1366,7 @@ fn test_loro_export_local_updates() {
 }
 
 #[test]
+#[parallel]
 fn test_movable_list_checkout_on_shallow_doc() -> LoroResult<()> {
     let doc = LoroDoc::new();
     let list = doc.get_movable_list("list");
@@ -1375,6 +1414,7 @@ fn test_movable_list_checkout_on_shallow_doc() -> LoroResult<()> {
 }
 
 #[test]
+#[parallel]
 fn test_tree_checkout_on_shallow_doc() -> LoroResult<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(0)?;
@@ -1513,6 +1553,7 @@ fn test_tree_checkout_on_shallow_doc() -> LoroResult<()> {
 }
 
 #[test]
+#[parallel]
 fn test_tree_with_other_ops_checkout_on_shallow_doc() -> LoroResult<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(0)?;
@@ -1585,6 +1626,7 @@ fn test_tree_with_other_ops_checkout_on_shallow_doc() -> LoroResult<()> {
 }
 
 #[test]
+#[parallel]
 fn test_shallow_can_remove_unreachable_states() -> LoroResult<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(1)?;
@@ -1647,6 +1689,7 @@ fn test_shallow_can_remove_unreachable_states() -> LoroResult<()> {
 }
 
 #[test]
+#[parallel]
 fn small_update_size() {
     let doc = LoroDoc::new();
     let text = doc.get_text("text");
@@ -1657,6 +1700,7 @@ fn small_update_size() {
 }
 
 #[test]
+#[parallel]
 fn test_tree_move() {
     let doc = LoroDoc::new();
     let tree = doc.get_tree("tree");
@@ -1677,6 +1721,7 @@ fn test_tree_move() {
 }
 
 #[test]
+#[parallel]
 fn richtext_map_value() {
     let doc = LoroDoc::new();
     let text = doc.get_text("text");
@@ -1702,6 +1747,7 @@ fn richtext_map_value() {
 }
 
 #[test]
+#[parallel]
 fn test_get_shallow_value() {
     let doc = LoroDoc::new();
     let _tree = doc.get_tree("tree");
@@ -1719,6 +1765,7 @@ fn test_get_shallow_value() {
 }
 
 #[test]
+#[parallel]
 fn perform_action_on_deleted_container_should_return_error() {
     let doc = LoroDoc::new();
     let list = doc.get_movable_list("list");
@@ -1734,6 +1781,7 @@ fn perform_action_on_deleted_container_should_return_error() {
 }
 
 #[test]
+#[parallel]
 fn checkout_should_reset_container_deleted_cache() {
     let doc = LoroDoc::new();
     let list = doc.get_movable_list("list");
@@ -1747,6 +1795,7 @@ fn checkout_should_reset_container_deleted_cache() {
 }
 
 #[test]
+#[parallel]
 fn test_fork_at_target_frontiers() {
     let doc = LoroDoc::new();
     let list = doc.get_movable_list("list");
@@ -1777,6 +1826,7 @@ fn test_fork_at_target_frontiers() {
 }
 
 #[test]
+#[parallel]
 fn change_peer_id() {
     use std::sync::atomic::Ordering;
     let doc = LoroDoc::new();
@@ -1799,6 +1849,7 @@ fn change_peer_id() {
 }
 
 #[test]
+#[parallel]
 fn test_encode_snapshot_when_checkout() {
     let doc = LoroDoc::new();
     doc.get_text("text").insert(0, "Hello").unwrap();
@@ -1817,6 +1868,7 @@ fn test_encode_snapshot_when_checkout() {
 }
 
 #[test]
+#[parallel]
 fn test_travel_change_ancestors() {
     let doc = LoroDoc::new();
     doc.set_peer_id(1).unwrap();
@@ -1953,6 +2005,7 @@ fn test_travel_change_ancestors() {
 }
 
 #[test]
+#[parallel]
 fn no_dead_loop_when_subscribe_local_updates_to_each_other() {
     let doc1 = Arc::new(LoroDoc::new());
     let doc2 = Arc::new(LoroDoc::new());
@@ -1978,6 +2031,7 @@ fn no_dead_loop_when_subscribe_local_updates_to_each_other() {
 
 /// https://github.com/loro-dev/loro/issues/490
 #[test]
+#[parallel]
 fn issue_490() -> anyhow::Result<()> {
     let fx_loro = loro::LoroDoc::new();
     fx_loro
@@ -2003,6 +2057,7 @@ fn issue_490() -> anyhow::Result<()> {
 }
 
 #[test]
+#[parallel]
 fn test_loro_doc() {
     let doc = LoroDoc::new();
     doc.get_text("text").insert(0, "Hello").unwrap();
@@ -2010,6 +2065,7 @@ fn test_loro_doc() {
 }
 
 #[test]
+#[parallel]
 fn test_fork_at_should_restore_attached_state() {
     let doc = LoroDoc::new();
     doc.set_peer_id(0).unwrap();
@@ -2022,6 +2078,7 @@ fn test_fork_at_should_restore_attached_state() {
 }
 
 #[test]
+#[parallel]
 fn test_fork_when_detached() {
     let doc = LoroDoc::new();
     doc.set_peer_id(0).unwrap();
@@ -2044,6 +2101,7 @@ fn test_fork_when_detached() {
 }
 
 #[test]
+#[parallel]
 fn test_for_each_movable_list() {
     let doc = LoroDoc::new();
     let list = doc.get_movable_list("list");
@@ -2058,6 +2116,7 @@ fn test_for_each_movable_list() {
 }
 
 #[test]
+#[parallel]
 fn test_for_each_map() {
     let doc = LoroDoc::new();
     let map = doc.get_map("map");
@@ -2072,6 +2131,7 @@ fn test_for_each_map() {
 }
 
 #[test]
+#[parallel]
 fn test_for_each_list() {
     let doc = LoroDoc::new();
     let list = doc.get_list("list");
@@ -2086,6 +2146,7 @@ fn test_for_each_list() {
 }
 
 #[test]
+#[parallel]
 #[should_panic]
 fn should_avoid_initialize_new_container_accidentally() {
     let doc = LoroDoc::new();
@@ -2094,6 +2155,7 @@ fn should_avoid_initialize_new_container_accidentally() {
 }
 
 #[test]
+#[parallel]
 fn test_decode_import_blob_meta_mode() {
     let doc0 = LoroDoc::new();
     doc0.set_peer_id(0).unwrap();
@@ -2144,6 +2206,7 @@ fn test_decode_import_blob_meta_mode() {
 }
 
 #[test]
+#[parallel]
 fn test_decode_import_blob_meta_shallow_since() {
     let doc = LoroDoc::new();
     doc.set_peer_id(0).unwrap();
@@ -2160,6 +2223,7 @@ fn test_decode_import_blob_meta_shallow_since() {
 }
 
 #[test]
+#[parallel]
 fn test_decode_import_blob_meta_updates_range() {
     let doc = LoroDoc::new();
     doc.set_peer_id(0).unwrap();
@@ -2176,6 +2240,7 @@ fn test_decode_import_blob_meta_updates_range() {
 }
 
 #[test]
+#[parallel]
 fn should_import_snapshot_before_shallow_snapshot() {
     let doc = LoroDoc::new();
     doc.set_peer_id(0).unwrap();
@@ -2193,6 +2258,7 @@ fn should_import_snapshot_before_shallow_snapshot() {
 }
 
 #[test]
+#[parallel]
 fn get_last_editor_on_map() {
     let doc = LoroDoc::new();
     doc.set_peer_id(0).unwrap();
@@ -2209,6 +2275,7 @@ fn get_last_editor_on_map() {
 }
 
 #[test]
+#[parallel]
 fn get_editor() {
     let doc = LoroDoc::new();
     doc.set_peer_id(0).unwrap();
@@ -2241,6 +2308,7 @@ fn get_editor() {
 }
 
 #[test]
+#[parallel]
 fn origin_does_not_persist_across_empty_commits() {
     use std::sync::{
         atomic::{AtomicBool, Ordering},
@@ -2273,6 +2341,7 @@ fn origin_does_not_persist_across_empty_commits() {
 }
 
 #[test]
+#[parallel]
 fn get_changed_containers_in() {
     let doc = LoroDoc::new();
     doc.set_peer_id(0).unwrap();
@@ -2305,6 +2374,7 @@ fn get_changed_containers_in() {
 }
 
 #[test]
+#[parallel]
 fn is_deleted() {
     let doc = LoroDoc::new();
     let list = doc.get_list("list");
@@ -2320,6 +2390,7 @@ fn is_deleted() {
 }
 
 #[test]
+#[parallel]
 fn change_count() {
     let doc = LoroDoc::new();
     let n = 1024 * 5;
@@ -2338,6 +2409,7 @@ fn change_count() {
 }
 
 #[test]
+#[parallel]
 fn loro_import_batch_status() {
     let doc_1 = LoroDoc::new();
     doc_1.set_peer_id(1).unwrap();
@@ -2388,6 +2460,7 @@ fn loro_import_batch_status() {
 }
 
 #[test]
+#[parallel]
 fn test_get_or_create_container_with_null() {
     let doc = LoroDoc::new();
     let root = doc.get_map("root");
@@ -2418,6 +2491,7 @@ fn test_get_or_create_container_with_null() {
 }
 
 #[test]
+#[parallel]
 fn test_detach_and_attach() {
     let doc = LoroDoc::new();
     assert!(!doc.is_detached());
@@ -2428,6 +2502,7 @@ fn test_detach_and_attach() {
 }
 
 #[test]
+#[parallel]
 fn test_event_order() {
     let doc = LoroDoc::new();
     let _sub = doc.subscribe_root(Arc::new(|e| {
@@ -2445,6 +2520,7 @@ fn test_event_order() {
 }
 
 #[test]
+#[parallel]
 fn test_rust_get_value_by_path() {
     let doc = LoroDoc::new();
     let tree = doc.get_tree("tree");
@@ -2544,6 +2620,7 @@ fn test_rust_get_value_by_path() {
 }
 
 #[test]
+#[parallel]
 fn travel_before_commit() -> Result<(), Box<dyn std::error::Error>> {
     let doc = LoroDoc::new();
     let map = doc.get_map("metadata");
@@ -2556,6 +2633,7 @@ fn travel_before_commit() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
+#[parallel]
 fn test_export_json_in_id_span() -> LoroResult<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(1)?;
@@ -2662,6 +2740,7 @@ fn test_export_json_in_id_span() -> LoroResult<()> {
 }
 
 #[test]
+#[parallel]
 fn test_export_json_in_id_span_with_complex_operations() -> LoroResult<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(1)?;
@@ -2735,6 +2814,7 @@ fn test_export_json_in_id_span_with_complex_operations() -> LoroResult<()> {
 }
 
 #[test]
+#[parallel]
 fn test_find_spans_between() -> LoroResult<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(1)?;
@@ -2823,6 +2903,7 @@ fn test_find_spans_between() -> LoroResult<()> {
 }
 
 #[test]
+#[parallel]
 fn revert_to() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(1)?;
@@ -2849,6 +2930,7 @@ fn revert_to() -> anyhow::Result<()> {
 }
 
 #[test]
+#[parallel]
 fn test_diff_and_apply_on_another_doc() -> LoroResult<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(1)?;
@@ -2928,6 +3010,7 @@ fn test_diff_and_apply_on_another_doc() -> LoroResult<()> {
 }
 
 #[test]
+#[parallel]
 fn test_diff_and_apply_on_another_doc_with_child_container() -> LoroResult<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(1)?;
@@ -3021,6 +3104,7 @@ fn test_diff_and_apply_on_another_doc_with_child_container() -> LoroResult<()> {
 }
 
 #[test]
+#[parallel]
 fn test_diff_apply_with_unknown_container() -> LoroResult<()> {
     let doc = LoroDoc::new();
     let mut batch = DiffBatch::default();
@@ -3040,6 +3124,7 @@ fn test_diff_apply_with_unknown_container() -> LoroResult<()> {
 }
 
 #[test]
+#[parallel]
 fn test_set_merge_interval() {
     let doc = LoroDoc::new();
     doc.set_record_timestamp(true);
@@ -3064,6 +3149,7 @@ fn test_set_merge_interval() {
 }
 
 #[test]
+#[parallel]
 fn test_child_container_attach_behavior() {
     let map = LoroMap::new();
     let child = map.insert_container("child", LoroMap::new()).unwrap();
@@ -3086,6 +3172,7 @@ fn test_child_container_attach_behavior() {
 }
 
 #[test]
+#[parallel]
 fn test_map_keys_values_for_each() {
     let doc = LoroDoc::new();
     let map = doc.get_map("map");
@@ -3109,6 +3196,7 @@ fn test_map_keys_values_for_each() {
 }
 
 #[test]
+#[parallel]
 fn test_update_long_text() {
     let text = "a".repeat(1_000_000);
     let doc = LoroDoc::new();
@@ -3119,6 +3207,7 @@ fn test_update_long_text() {
 }
 
 #[test]
+#[parallel]
 fn test_loro_tree_move() {
     let doc = LoroDoc::new();
     let tree = doc.get_tree("myTree");
@@ -3135,6 +3224,7 @@ fn test_loro_tree_move() {
 }
 
 #[test]
+#[parallel]
 fn test_export_json_updates_in_shallow_snapshot() {
     let doc = LoroDoc::new();
     doc.set_peer_id(1).unwrap();
@@ -3148,6 +3238,7 @@ fn test_export_json_updates_in_shallow_snapshot() {
 }
 
 #[test]
+#[parallel]
 fn should_call_subscription_after_diff() {
     use std::sync::atomic::{AtomicBool, Ordering};
     let doc = LoroDoc::new();
@@ -3168,6 +3259,7 @@ fn should_call_subscription_after_diff() {
 }
 
 #[test]
+#[parallel]
 fn test_get_value_by_path() {
     let doc = LoroDoc::new();
     let tree = doc.get_tree("tree");
@@ -3263,6 +3355,7 @@ fn test_get_value_by_path() {
 }
 
 #[test]
+#[parallel]
 fn test_by_str_path() {
     let doc = LoroDoc::new();
     let tree = doc.get_tree("tree");
@@ -3294,6 +3387,7 @@ fn test_by_str_path() {
 }
 
 #[test]
+#[serial_test::serial]
 fn test_memory_leak() {
     #[inline(never)]
     fn repeat(f: impl Fn(), n: usize) {
@@ -3321,6 +3415,7 @@ fn test_memory_leak() {
 }
 
 #[test]
+#[parallel]
 fn test_iter_change_on_edge() {
     let doc = LoroDoc::new();
     doc.set_peer_id(1).unwrap();
@@ -3340,6 +3435,7 @@ fn test_iter_change_on_edge() {
 }
 
 #[test]
+#[parallel]
 fn test_to_delta_on_detached_text() {
     let text = LoroText::new();
     text.insert(0, "Hello").unwrap();
@@ -3355,6 +3451,7 @@ fn test_to_delta_on_detached_text() {
 }
 
 #[test]
+#[parallel]
 fn test_apply_delta_on_the_end() {
     let doc = LoroDoc::new();
     doc.get_text("text").insert(0, "Hello").unwrap();
@@ -3386,6 +3483,7 @@ fn test_apply_delta_on_the_end() {
 }
 
 #[test]
+#[parallel]
 fn test_delete_root_containers() {
     let doc = LoroDoc::new();
     let _map = doc.get_map("map");
@@ -3404,6 +3502,7 @@ fn test_delete_root_containers() {
 }
 
 #[test]
+#[parallel]
 fn test_hide_empty_root_containers() {
     let doc = LoroDoc::new();
     let _map = doc.get_map("map");
@@ -3421,6 +3520,7 @@ fn test_hide_empty_root_containers() {
 }
 
 #[test]
+#[parallel]
 fn test_from_shallow_snapshot() {
     let doc = LoroDoc::new();
     doc.set_peer_id(1).unwrap();
@@ -3438,6 +3538,7 @@ fn test_from_shallow_snapshot() {
 }
 
 #[test]
+#[parallel]
 fn test_checkout_to_unknown_version() {
     let doc = LoroDoc::new();
     doc.set_peer_id(1).unwrap();
@@ -3451,6 +3552,7 @@ fn test_checkout_to_unknown_version() {
 }
 
 #[test]
+#[parallel]
 fn has_container_test() {
     let doc = LoroDoc::new();
     let text = doc.get_text("text");
