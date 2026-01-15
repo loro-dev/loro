@@ -47,10 +47,25 @@ pub fn export_json_schema_from_fast_updates(
   for b in blocks {
     decoded_blocks.push(decode_change_block_full(b))
   }
-  let included : @hashmap.HashMap[String, Bool] = @hashmap.new(capacity=1024)
+
+  // Determine the per-peer exported starting counter (like start_vv[peer]).
+  // FastUpdates always include a contiguous counter range per peer, so deps are external iff
+  // `dep.counter < start_counter` or the peer isn't exported at all.
+  let start_counter_by_peer : @hashmap.HashMap[UInt64, Int] = @hashmap.new(
+    capacity=64,
+  )
   for blk in decoded_blocks {
     for c in blk.changes() {
-      included.set(id_key_actual(c.id()), true)
+      let id = c.id()
+      let peer = id.peer()
+      let counter = id.counter()
+      match start_counter_by_peer.get(peer) {
+        None => start_counter_by_peer.set(peer, counter)
+        Some(old) =>
+          if counter < old {
+            start_counter_by_peer.set(peer, counter)
+          }
+      }
     }
   }
 
@@ -61,7 +76,11 @@ pub fn export_json_schema_from_fast_updates(
   for blk in decoded_blocks {
     for c in blk.changes() {
       for dep in c.deps() {
-        if !included.contains(id_key_actual(dep)) {
+        let is_external = match start_counter_by_peer.get(dep.peer()) {
+          None => true
+          Some(start_counter) => dep.counter() < start_counter
+        }
+        if is_external {
           match external_deps_max.get(dep.peer()) {
             None => external_deps_max.set(dep.peer(), dep.counter())
             Some(old) =>

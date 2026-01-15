@@ -16,11 +16,6 @@ fn jsonschema_register_peer(
 }
 
 ///|
-fn id_key_actual(id : ID) -> String {
-  id.counter().to_string() + "@" + id.peer().to_string()
-}
-
-///|
 fn id_string_with_peer_index(
   id : ID,
   peers : Array[UInt64],
