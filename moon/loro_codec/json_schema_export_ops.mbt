@@ -1,5 +1,6 @@
 ///|
 fn op_content_json_schema(
+  container : ContainerID,
   content : OpContent,
   keys : Array[String],
   op_id : ID,
@@ -135,14 +136,51 @@ fn op_content_json_schema(
         "type": "delete",
         "target": id_string_with_peer_index(target, peers, peer_to_idx),
       }
-    OpContent::Future(FutureOp::Unknown(prop, _raw)) =>
-      // Best-effort: keep unknown ops opaque. This is only used when container type is Counter/Unknown.
-      {
-        "type": "unknown",
-        "prop": prop,
-        "value_type": "unknown",
-        "value": Json::null(),
+    OpContent::Future(FutureOp::Unknown(prop, raw)) => {
+      let kind = match container {
+        ContainerID::Root(_, k) => k
+        ContainerID::Normal(_, _, k) => k
       }
+      match kind {
+        ContainerType::Counter =>
+          match raw {
+            // Match Rust JsonSchema `FutureOp::Counter(OwnedValue::F64(..))`.
+            Value::F64(x) => {
+              let s = x.to_string()
+              let repr = if s.contains(".") || s.contains("e") || s.contains("E") {
+                s
+              } else {
+                s + ".0"
+              }
+              {
+                "type": "counter",
+                "prop": prop,
+                "value_type": "f64",
+                "value": Json::number(x, repr=repr),
+              }
+            }
+            Value::I64(x) =>
+              {
+                "type": "counter",
+                "prop": prop,
+                "value_type": "f64",
+                "value": Json::number(x.to_double(), repr=x.to_string() + ".0"),
+              }
+            _ =>
+              raise DecodeError(
+                "jsonschema: Counter op must have f64 raw value",
+              )
+          }
+        _ =>
+          // Best-effort: keep unknown ops opaque. This is only used when container type is Unknown.
+          {
+            "type": "unknown",
+            "prop": prop,
+            "value_type": "unknown",
+            "value": Json::null(),
+          }
+      }
+    }
   }
 }
 
@@ -162,6 +200,7 @@ fn op_json_schema(
       peer_to_idx,
     ),
     "content": op_content_json_schema(
+      op.container(),
       op.content(),
       keys,
       op_id,
