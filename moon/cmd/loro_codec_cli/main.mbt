@@ -6,6 +6,7 @@ fn usage() -> Unit {
   println("  loro-codec decode-updates <in.blob>")
   println("  loro-codec export-jsonschema <in.blob>")
   println("  loro-codec encode-jsonschema <in.json> <out.blob>")
+  println("  loro-codec export-deep-json <snapshot.blob>")
 }
 
 ///|
@@ -17,6 +18,7 @@ fn find_cmd_index(args : Array[String]) -> Int? {
       "decode-updates" => return Some(i)
       "export-jsonschema" => return Some(i)
       "encode-jsonschema" => return Some(i)
+      "export-deep-json" => return Some(i)
       _ => ()
     }
     i = i + 1
@@ -111,6 +113,24 @@ fn main {
             }
           }
           write_file(output_path, output)
+        }
+        "export-deep-json" => {
+          if i + 1 >= args.length() {
+            usage()
+            exit_process(1)
+          }
+          let input_path = args[i + 1]
+          let input = read_file(input_path)
+          let json = @loro_codec.export_deep_json_from_fast_snapshot(
+            input, true,
+          ) catch {
+            @loro_codec.DecodeError(msg) => {
+              println("decode error: " + msg)
+              exit_process(2)
+              ""
+            }
+          }
+          println(json)
         }
         _ => {
           usage()
