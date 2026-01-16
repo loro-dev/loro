@@ -21,8 +21,9 @@ impl DocState {
     pub(crate) fn is_deleted(&mut self, idx: ContainerIdx) -> bool {
         #[cfg(not(debug_assertions))]
         {
-            if let Some(is_deleted) = self.dead_containers_cache.cache.get(&idx) {
-                return *is_deleted;
+            // Cache stores only deleted containers.
+            if self.dead_containers_cache.cache.contains_key(&idx) {
+                return true;
             }
         }
 
@@ -52,8 +53,14 @@ impl DocState {
             }
         }
 
-        for idx in visited {
-            self.dead_containers_cache.cache.insert(idx, is_deleted);
+        if is_deleted {
+            for idx in visited {
+                self.dead_containers_cache.cache.insert(idx, true);
+            }
+        } else {
+            for idx in visited {
+                self.dead_containers_cache.cache.remove(&idx);
+            }
         }
 
         is_deleted
