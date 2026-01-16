@@ -12,6 +12,7 @@
 - `moon/specs/05-fastupdates-changeblock-encoding.md`：FastUpdates / ChangeBlock 的编码细节摘记（以 Rust 源码为真值），用于实现 mode=4 的真正 decode→encode
 - `moon/specs/06-jsonschema-export.md`：JsonSchema（`docs/JsonSchema.md`）导出实现细节（FastUpdates 二进制 → JsonSchema JSON）
 - `moon/specs/07-jsonschema-encode.md`：JsonSchema 编码实现细节（JsonSchema JSON → FastUpdates 二进制）
+- `moon/specs/08-lorodoc-basic-plan.md`：MoonBit 侧 LoroDoc 运行时（CRDT 引擎）基础支持计划（Map/List/Text/Tree）
 
 ## 约定
 
