@@ -35,3 +35,58 @@ test "lorodoc export/update roundtrip (map)" {
   }
 }
 
+///|
+test "lorodoc export/update roundtrip (list)" {
+  let doc1 = LoroDoc::new()
+  try! doc1.setPeerId(1UL)
+  let l1 = try! doc1.getList("list")
+  try! l1.push(Value::Str("a"))
+  try! l1.push(Value::Str("b"))
+  try! l1.delete(0, 1)
+  assert_eq(l1.toArray(), [Value::Str("b")])
+
+  let bytes = try! doc1.export({ from: None })
+  let doc2 = LoroDoc::new()
+  try! doc2.setPeerId(2UL)
+  try! doc2.import(bytes)
+  let l2 = try! doc2.getList("list")
+  assert_eq(l2.toArray(), [Value::Str("b")])
+}
+
+///|
+test "lorodoc export/update roundtrip (text)" {
+  let doc1 = LoroDoc::new()
+  try! doc1.setPeerId(1UL)
+  let t1 = try! doc1.getText("text")
+  try! t1.insert(0, "hello")
+  try! t1.delete(1, 2)
+  assert_eq(t1.toString(), "hlo")
+
+  let bytes = try! doc1.export({ from: None })
+  let doc2 = LoroDoc::new()
+  try! doc2.setPeerId(2UL)
+  try! doc2.import(bytes)
+  let t2 = try! doc2.getText("text")
+  assert_eq(t2.toString(), "hlo")
+}
+
+///|
+test "lorodoc concurrent list insert converges" {
+  let doc1 = LoroDoc::new()
+  try! doc1.setPeerId(1UL)
+  let l1 = try! doc1.getList("list")
+  try! l1.insert(0, Value::Str("A"))
+  let bytes1 = try! doc1.export({ from: None })
+
+  let doc2 = LoroDoc::new()
+  try! doc2.setPeerId(2UL)
+  let l2 = try! doc2.getList("list")
+  try! l2.insert(0, Value::Str("B"))
+  let bytes2 = try! doc2.export({ from: None })
+
+  try! doc1.import(bytes2)
+  try! doc2.import(bytes1)
+
+  assert_eq(l1.toArray(), [Value::Str("A"), Value::Str("B")])
+  assert_eq(l2.toArray(), [Value::Str("A"), Value::Str("B")])
+}

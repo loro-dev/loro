@@ -4,6 +4,166 @@ pub struct LoroList {
   cid : @loro_codec.ContainerID
 }
 
+fn LoroDoc::ensure_list_tracker(self : LoroDoc, cid : @loro_codec.ContainerID) -> SeqTracker {
+  let key = container_id_string(cid)
+  match self.inner.list_trackers.get(key) {
+    Some(t) => t
+    None => {
+      let t = SeqTracker::new()
+      self.inner.list_trackers.set(key, t)
+      t
+    }
+  }
+}
+
+fn LoroDoc::list_len(self : LoroDoc, cid : @loro_codec.ContainerID) -> Int {
+  let t = self.ensure_list_tracker(cid)
+  t.rope.active_len()
+}
+
+fn LoroDoc::list_get(
+  self : LoroDoc,
+  cid : @loro_codec.ContainerID,
+  index : Int,
+) -> Value? {
+  if index < 0 {
+    return None
+  }
+  let t = self.ensure_list_tracker(cid)
+  let mut left = index
+  for s in t.rope.spans {
+    if !s.status.is_activated() {
+      continue
+    }
+    match s.content {
+      SeqContent::List(items) => {
+        if left < items.length() {
+          return Some(items[left])
+        }
+        left = left - items.length()
+      }
+      SeqContent::Unknown(n) => left = left - n
+      SeqContent::MoveAnchor => left = left - 1
+      SeqContent::Text(_, n) => left = left - n
+    }
+  }
+  None
+}
+
+fn LoroDoc::list_to_array(
+  self : LoroDoc,
+  cid : @loro_codec.ContainerID,
+) -> Array[Value] {
+  let t = self.ensure_list_tracker(cid)
+  let out : Array[Value] = []
+  for s in t.rope.spans {
+    if !s.status.is_activated() {
+      continue
+    }
+    match s.content {
+      SeqContent::List(items) =>
+        for v in items {
+          out.push(v)
+        }
+      _ => ()
+    }
+  }
+  out
+}
+
+fn LoroDoc::list_shallow_json(self : LoroDoc, cid : @loro_codec.ContainerID) -> Json {
+  let arr : Array[Json] = []
+  let items = self.list_to_array(cid)
+  for v in items {
+    arr.push(value_to_json_shallow(v))
+  }
+  Json::array(arr)
+}
+
+fn LoroDoc::list_deep_json(self : LoroDoc, cid : @loro_codec.ContainerID) -> Json {
+  let arr : Array[Json] = []
+  let items = self.list_to_array(cid)
+  for v in items {
+    arr.push(self.value_deep_json(v))
+  }
+  Json::array(arr)
+}
+
+fn LoroDoc::list_insert(
+  self : LoroDoc,
+  cid : @loro_codec.ContainerID,
+  index : Int,
+  value : Value,
+) -> Unit raise LoroError {
+  if value_contains_container(value) {
+    raise LoroError("list.insert: container values require insertContainer()")
+  }
+  if index < 0 {
+    raise LoroError("list.insert: negative index")
+  }
+  let t = self.ensure_list_tracker(cid)
+  let cur_len = t.rope.active_len()
+  if index > cur_len {
+    raise LoroError("list.insert: index out of range")
+  }
+
+  self.start_txn_if_needed()
+  let peer = self.inner.peer
+  let counter = self.inner.txn_next_counter
+  let lamport = self.inner.txn_next_lamport
+  t.insert(
+    SeqIdFull::new(peer, counter, lamport),
+    index,
+    SeqContent::List([value]),
+  )
+
+  self.inner.pending_ops.push({
+    container: cid,
+    counter,
+    lamport,
+    len: 1U,
+    content: PendingOpContent::ListInsert(index, [value]),
+  })
+  self.inner.txn_next_counter = counter + 1
+  self.inner.txn_next_lamport = lamport + 1U
+}
+
+fn LoroDoc::list_delete(
+  self : LoroDoc,
+  cid : @loro_codec.ContainerID,
+  index : Int,
+  len : Int,
+) -> Unit raise LoroError {
+  if len <= 0 {
+    return
+  }
+  if index < 0 {
+    raise LoroError("list.delete: negative index")
+  }
+  let t = self.ensure_list_tracker(cid)
+  let cur_len = t.rope.active_len()
+  if index + len > cur_len {
+    raise LoroError("list.delete: range out of bounds")
+  }
+
+  let start_id = t.rope.id_at_active_index(index)
+  self.start_txn_if_needed()
+  let peer = self.inner.peer
+  let counter = self.inner.txn_next_counter
+  let lamport = self.inner.txn_next_lamport
+  t.delete(@loro_codec.ID::new(peer, counter), start_id, index, len, false)
+
+  self.inner.pending_ops.push({
+    container: cid,
+    counter,
+    lamport,
+    len: len.reinterpret_as_uint(),
+    content: PendingOpContent::ListDelete(index, len, start_id),
+  })
+  self.inner.txn_next_counter = counter + len
+  self.inner.txn_next_lamport = lamport + len.reinterpret_as_uint()
+}
+
 ///|
 pub fn LoroList::asContainer(self : LoroList) -> Container {
   Container::new(self.doc, self.cid)
@@ -41,35 +201,35 @@ pub fn LoroList::toJSON(self : LoroList) -> Json {
 
 ///|
 pub fn LoroList::length(self : LoroList) -> Int {
-  0
+  self.doc.list_len(self.cid)
 }
 
 ///|
 pub fn LoroList::get(self : LoroList, _index : Int) -> Value? {
-  None
+  self.doc.list_get(self.cid, _index)
 }
 
 ///|
 pub fn LoroList::insert(
   self : LoroList,
-  _index : Int,
-  _value : Value,
+  index : Int,
+  value : Value,
 ) -> Unit raise LoroError {
-  raise LoroError("List is not implemented yet")
+  self.doc.list_insert(self.cid, index, value)
 }
 
 ///|
-pub fn LoroList::delete(self : LoroList, _index : Int, _len : Int) -> Unit raise LoroError {
-  raise LoroError("List is not implemented yet")
+pub fn LoroList::delete(self : LoroList, index : Int, len : Int) -> Unit raise LoroError {
+  self.doc.list_delete(self.cid, index, len)
 }
 
 ///|
 pub fn LoroList::push(self : LoroList, _value : Value) -> Unit raise LoroError {
-  raise LoroError("List is not implemented yet")
+  let n = self.length()
+  self.doc.list_insert(self.cid, n, _value)
 }
 
 ///|
 pub fn LoroList::toArray(self : LoroList) -> Array[Value] {
-  []
+  self.doc.list_to_array(self.cid)
 }
-
