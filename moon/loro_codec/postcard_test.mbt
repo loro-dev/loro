@@ -49,9 +49,20 @@ test "postcard: frontiers / version vector encode/decode" {
   let (vv2, rest0) = try! postcard_take_version_vector(vv_bytes[:])
   assert_eq(rest0.length(), 0)
   assert_eq(vv2, vv)
-  let fr : Array[ID] = [ID::new(7UL, 42), ID::new(7UL, 43)]
+  let fr : Array[ID] = [
+    ID::new(7UL, 42),
+    ID::new(1UL, 0),
+    ID::new(7UL, 41),
+    ID::new(1UL, -1),
+  ]
   let fr_bytes = postcard_encode_frontiers(fr)
   let (fr2, rest1) = try! postcard_take_frontiers(fr_bytes[:])
   assert_eq(rest1.length(), 0)
-  assert_eq(fr2, fr)
+  let fr_expected : Array[ID] = [
+    ID::new(1UL, -1),
+    ID::new(1UL, 0),
+    ID::new(7UL, 41),
+    ID::new(7UL, 42),
+  ]
+  assert_eq(fr2, fr_expected)
 }

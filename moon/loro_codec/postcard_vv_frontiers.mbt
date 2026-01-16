@@ -61,9 +61,20 @@ pub fn postcard_take_frontiers(
 
 ///|
 pub fn postcard_encode_frontiers(ids : Array[ID]) -> Bytes {
-  let w = BytesWriter::new()
-  w.write_varint_u64(ids.length().to_uint64())
+  let sorted : Array[ID] = []
   for id in ids {
+    sorted.push(id)
+  }
+  // Canonical encoding: sort by (peer, counter).
+  let counter_bias = BigInt::from_int64(-2147483648L)
+  sorted.sort_by_key(id => {
+    let peer_key = BigInt::from_uint64(id.peer()) << 32
+    let counter_key = BigInt::from_int(id.counter()) - counter_bias
+    peer_key | counter_key
+  })
+  let w = BytesWriter::new()
+  w.write_varint_u64(sorted.length().to_uint64())
+  for id in sorted {
     w.write_varint_u64(id.peer())
     w.write_varint_i64(id.counter().to_int64())
   }

@@ -359,7 +359,10 @@ The VersionVector is a HashMap<PeerID, Counter> serialized with postcard.
 
 ### Frontiers Encoding
 
-Frontiers is encoded as a sorted Vec<ID> using **postcard** format:
+Frontiers is encoded as a Vec<ID> using **postcard** format.
+
+- Canonical encoding sorts IDs ascending by (PeerID, Counter) before serialization.
+- Decoders should accept any order; the order does not change the semantics of Frontiers.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -369,7 +372,7 @@ Frontiers is encoded as a sorted Vec<ID> using **postcard** format:
 ├───────────────┼─────────────────────────────────────────────────┤
 │ LEB128        │ Number of IDs (N)                               │
 ├───────────────┼─────────────────────────────────────────────────┤
-│ For each ID (sorted):                                           │
+│ For each ID:                                                    │
 │   varint      │   PeerID (u64, postcard encoding)               │
 │   varint      │   Counter (i32, postcard zigzag encoding)       │
 └───────────────┴─────────────────────────────────────────────────┘
@@ -699,9 +702,14 @@ Loro uses a tagged value encoding system where each value is prefixed with a typ
 | 14 | ListMove | List move operation |
 | 15 | ListSet | List set operation |
 | 16 | RawTreeMove | Raw tree move (internal) |
-| 0x80+ | Future | Unknown/future value types |
+| 0x80 \| kind | Future | Unknown/future value types |
 
 **Source**: `crates/loro-internal/src/encoding/value.rs:39-161`
+
+**Notes (Future)**:
+- The encoding uses the high bit (`0x80`) as a marker and stores the future kind in the low 7 bits.
+- Decoding uses `tag & 0x7F`, so kinds `0..=16` are reserved for known types; Future kinds must be `17..=127`.
+- Payload is encoded like `Binary`: `LEB128(len) + len bytes` (opaque).
 
 ### Value Encoding Details
 
@@ -798,6 +806,25 @@ Common patterns:
 
 **Source**: `crates/loro-internal/src/encoding/value.rs:480-485` (EncodedTreeMove struct)
 **Source**: `crates/loro-internal/src/encoding/value.rs:953-967` (read_tree_move)
+
+#### RawTreeMove (internal)
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                    RawTreeMove Encoding                           │
+├───────────────┬──────────────────────────────────────────────────┤
+│ LEB128        │ subject_peer_idx                                 │
+│ LEB128        │ subject_cnt (encoded as usize; must fit i32)      │
+│ LEB128        │ position_idx                                     │
+│ 1             │ is_parent_null (u8 as bool)                      │
+│ LEB128        │ parent_peer_idx (only if !is_parent_null)        │
+│ LEB128        │ parent_cnt (encoded as usize; must fit i32)       │
+└───────────────┴──────────────────────────────────────────────────┘
+```
+
+**Source**: `crates/loro-internal/src/encoding/value.rs:470-477` (RawTreeMove struct)
+**Source**: `crates/loro-internal/src/encoding/value.rs:969-989` (read_raw_tree_move)
+**Source**: `crates/loro-internal/src/encoding/value.rs:1122-1134` (write_raw_tree_move)
 
 #### ListMove
 
