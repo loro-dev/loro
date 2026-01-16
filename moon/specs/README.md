@@ -14,6 +14,14 @@
 - `moon/specs/07-jsonschema-encode.md`：JsonSchema 编码实现细节（JsonSchema JSON → FastUpdates 二进制）
 - `moon/specs/08-lorodoc-basic-plan.md`：MoonBit 侧 LoroDoc 运行时（CRDT 引擎）基础支持计划（Container/Map/List/MovableList/Text/Tree）
 - `moon/specs/09-lorodoc-spec-pack.md`：LoroDoc Runtime 的 Spec-driven 开工包（步骤 0：阅读/整理 specs + Rust 真值索引）
+- `moon/specs/10-lorodoc-api-spec.md`：LoroDoc runtime 对外 API 规格（对齐 TS 心智模型）
+- `moon/specs/11-lorodoc-core-model-spec.md`：Core model（ID/Lamport/Change/DAG/vv/frontiers）
+- `moon/specs/12-seq-crdt-spec.md`：List/Text/MovableList 共享的序列 CRDT（Fugue + Eg-walker 启发）
+- `moon/specs/13-movable-list-spec.md`：MovableList（identity + move/set 的并发语义）
+- `moon/specs/14-richtext-spec.md`：RichText（样式 anchors + expand + toDelta）
+- `moon/specs/15-tree-spec.md`：Tree（FractionalIndex + last-move-wins + cycle/rearrange）
+- `moon/specs/16-lorodoc-import-export-spec.md`：Import/Export updates（mode=4）语义与 codec 对接
+- `moon/specs/17-lorodoc-test-plan.md`：runtime 测试与验收计划（Rust 作为 oracle）
 
 ## 约定
 
