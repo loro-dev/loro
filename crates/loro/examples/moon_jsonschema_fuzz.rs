@@ -4,10 +4,27 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use loro::{
-    ExpandType, ExportMode, Frontiers, LoroDoc, LoroValue, StyleConfig, StyleConfigMap, Timestamp,
-    ToJson, TreeParentId, VersionVector,
+    Container, ExpandType, ExportMode, Frontiers, LoroDoc, LoroValue, StyleConfig, StyleConfigMap,
+    Timestamp, ToJson, TreeParentId, ValueOrContainer, VersionVector,
 };
 use rand::{rngs::StdRng, Rng, SeedableRng};
+
+fn configure_styles(doc: &LoroDoc) {
+    let mut styles = StyleConfigMap::new();
+    styles.insert(
+        "bold".into(),
+        StyleConfig {
+            expand: ExpandType::After,
+        },
+    );
+    styles.insert(
+        "link".into(),
+        StyleConfig {
+            expand: ExpandType::Before,
+        },
+    );
+    doc.config_text_style(styles);
+}
 
 fn usage() -> ! {
     eprintln!(
@@ -160,6 +177,23 @@ fn first_json_diff_path(
     }
 }
 
+fn frontiers_sorted_strings(frontiers: &Frontiers) -> Vec<String> {
+    let mut ids: Vec<String> = frontiers.iter().map(|id| id.to_string()).collect();
+    ids.sort();
+    ids
+}
+
+fn richtext_json_child_text(doc: &LoroDoc) -> anyhow::Result<serde_json::Value> {
+    let map = doc.get_map("map");
+    let Some(ValueOrContainer::Container(Container::Map(child_map))) = map.get("child_map") else {
+        anyhow::bail!("missing map.child_map container")
+    };
+    let Some(ValueOrContainer::Container(Container::Text(child_text))) = child_map.get("t") else {
+        anyhow::bail!("missing map.child_map.t container")
+    };
+    Ok(child_text.get_richtext_value().to_json_value())
+}
+
 fn apply_random_ops(
     doc: &LoroDoc,
     seed: u64,
@@ -170,20 +204,7 @@ fn apply_random_ops(
     let mut rng = StdRng::seed_from_u64(seed);
     let peer_ids = if peer_ids.is_empty() { &[1] } else { peer_ids };
 
-    let mut styles = StyleConfigMap::new();
-    styles.insert(
-        "bold".into(),
-        StyleConfig {
-            expand: ExpandType::After,
-        },
-    );
-    styles.insert(
-        "link".into(),
-        StyleConfig {
-            expand: ExpandType::Before,
-        },
-    );
-    doc.config_text_style(styles);
+    configure_styles(doc);
 
     let mut active_peer = peer_ids[0];
     doc.set_peer_id(active_peer)?;
@@ -554,6 +575,7 @@ fn main() -> anyhow::Result<()> {
             from: Cow::Borrowed(&start_vv),
         })?;
         let expected_doc = LoroDoc::new();
+        configure_styles(&expected_doc);
         if let Some(base_snapshot) = &base_snapshot_blob {
             expected_doc.import(base_snapshot)?;
         }
@@ -565,13 +587,35 @@ fn main() -> anyhow::Result<()> {
 
         let out_blob = run_encode_jsonschema(&node_bin, &cli_js, &json)?;
         let got_doc = LoroDoc::new();
+        configure_styles(&got_doc);
         if let Some(base_snapshot) = &base_snapshot_blob {
             got_doc.import(base_snapshot)?;
         }
         got_doc.import(&out_blob)?;
         let got = got_doc.get_deep_value().to_json_value();
 
-        if got != expected {
+        let expected_vv = expected_doc.oplog_vv();
+        let got_vv = got_doc.oplog_vv();
+
+        let expected_frontiers = expected_doc.state_frontiers();
+        let got_frontiers = got_doc.state_frontiers();
+        let end_frontiers = doc.state_frontiers();
+
+        let expected_rich_root = expected_doc.get_text("text").get_richtext_value().to_json_value();
+        let got_rich_root = got_doc.get_text("text").get_richtext_value().to_json_value();
+        let expected_rich_child = richtext_json_child_text(&expected_doc)?;
+        let got_rich_child = richtext_json_child_text(&got_doc)?;
+
+        let ok = got == expected
+            && got_vv == end
+            && expected_vv == end
+            && frontiers_sorted_strings(&got_frontiers) == frontiers_sorted_strings(&end_frontiers)
+            && frontiers_sorted_strings(&expected_frontiers)
+                == frontiers_sorted_strings(&end_frontiers)
+            && got_rich_root == expected_rich_root
+            && got_rich_child == expected_rich_child;
+
+        if !ok {
             let case_dir = out_dir.join(format!("case-{case_seed}"));
             std::fs::create_dir_all(&case_dir)?;
 
@@ -586,6 +630,10 @@ fn main() -> anyhow::Result<()> {
             write_json(&case_dir.join("expected.json"), &expected)?;
             write_json(&case_dir.join("got.json"), &got)?;
             write_json(&case_dir.join("expected_local.json"), &expected_local)?;
+            write_json(&case_dir.join("expected_richtext_root.json"), &expected_rich_root)?;
+            write_json(&case_dir.join("got_richtext_root.json"), &got_rich_root)?;
+            write_json(&case_dir.join("expected_richtext_child.json"), &expected_rich_child)?;
+            write_json(&case_dir.join("got_richtext_child.json"), &got_rich_child)?;
 
             let start_ids: Option<Vec<String>> =
                 start_frontiers.as_ref().map(|f| f.iter().map(|id| id.to_string()).collect());
@@ -595,8 +643,16 @@ fn main() -> anyhow::Result<()> {
                 "commit_every": commit_every,
                 "peers": peer_ids,
                 "start_frontiers": start_ids,
+                "end_frontiers": frontiers_sorted_strings(&end_frontiers),
+                "expected_frontiers": frontiers_sorted_strings(&expected_frontiers),
+                "got_frontiers": frontiers_sorted_strings(&got_frontiers),
+                "end_vv": format!("{end:?}"),
+                "expected_vv": format!("{expected_vv:?}"),
+                "got_vv": format!("{got_vv:?}"),
                 "diff_path": first_json_diff_path(&got, &expected, "$"),
                 "local_diff_path": first_json_diff_path(&got, &expected_local, "$"),
+                "richtext_root_diff_path": first_json_diff_path(&got_rich_root, &expected_rich_root, "$"),
+                "richtext_child_diff_path": first_json_diff_path(&got_rich_child, &expected_rich_child, "$"),
             });
             write_json(&case_dir.join("meta.json"), &meta)?;
 

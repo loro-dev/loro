@@ -198,6 +198,115 @@ fn run_encode_jsonschema(node_bin: &str, cli_js: &Path, input_json: &str) -> any
     Ok(out)
 }
 
+fn run_transcode_output(node_bin: &str, cli_js: &Path, input: &[u8]) -> anyhow::Result<std::process::Output> {
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let tmp = std::env::temp_dir().join(format!(
+        "loro-moon-transcode-raw-{}-{ts}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&tmp)?;
+    let in_path = tmp.join("in.blob");
+    let out_path = tmp.join("out.blob");
+    std::fs::write(&in_path, input)?;
+
+    Ok(Command::new(node_bin)
+        .arg(cli_js)
+        .args(["transcode", in_path.to_str().unwrap(), out_path.to_str().unwrap()])
+        .output()?)
+}
+
+fn run_decode_updates_output(node_bin: &str, cli_js: &Path, input: &[u8]) -> anyhow::Result<std::process::Output> {
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let tmp = std::env::temp_dir().join(format!(
+        "loro-moon-decode-updates-raw-{}-{ts}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&tmp)?;
+    let in_path = tmp.join("in.blob");
+    std::fs::write(&in_path, input)?;
+
+    Ok(Command::new(node_bin)
+        .arg(cli_js)
+        .args(["decode-updates", in_path.to_str().unwrap()])
+        .output()?)
+}
+
+fn run_export_jsonschema_output(
+    node_bin: &str,
+    cli_js: &Path,
+    input: &[u8],
+) -> anyhow::Result<std::process::Output> {
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let tmp = std::env::temp_dir().join(format!(
+        "loro-moon-export-jsonschema-raw-{}-{ts}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&tmp)?;
+    let in_path = tmp.join("in.blob");
+    std::fs::write(&in_path, input)?;
+
+    Ok(Command::new(node_bin)
+        .arg(cli_js)
+        .args(["export-jsonschema", in_path.to_str().unwrap()])
+        .output()?)
+}
+
+fn run_export_deep_json_output(node_bin: &str, cli_js: &Path, input: &[u8]) -> anyhow::Result<std::process::Output> {
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let tmp = std::env::temp_dir().join(format!(
+        "loro-moon-export-deep-json-raw-{}-{ts}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&tmp)?;
+    let in_path = tmp.join("in.blob");
+    std::fs::write(&in_path, input)?;
+
+    Ok(Command::new(node_bin)
+        .arg(cli_js)
+        .args(["export-deep-json", in_path.to_str().unwrap()])
+        .output()?)
+}
+
+fn run_encode_jsonschema_output(
+    node_bin: &str,
+    cli_js: &Path,
+    input_json: &str,
+) -> anyhow::Result<std::process::Output> {
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let tmp = std::env::temp_dir().join(format!(
+        "loro-moon-encode-jsonschema-raw-{}-{ts}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&tmp)?;
+    let in_path = tmp.join("in.json");
+    let out_path = tmp.join("out.blob");
+    std::fs::write(&in_path, input_json.as_bytes())?;
+
+    Ok(Command::new(node_bin)
+        .arg(cli_js)
+        .args([
+            "encode-jsonschema",
+            in_path.to_str().unwrap(),
+            out_path.to_str().unwrap(),
+        ])
+        .output()?)
+}
+
 fn apply_random_ops(doc: &LoroDoc, seed: u64, ops: usize, commit_every: usize) -> anyhow::Result<()> {
     apply_random_ops_with_peers(doc, seed, ops, commit_every, &[1])
 }
@@ -1324,6 +1433,94 @@ fn moon_encode_jsonschema_random_roundtrip() -> anyhow::Result<()> {
 }
 
 #[test]
+fn moon_encode_jsonschema_richtext_roundtrip() -> anyhow::Result<()> {
+    let Some(ctx) = moon_ctx() else {
+        return Ok(());
+    };
+
+    let configure_styles = |doc: &LoroDoc| {
+        let mut styles = StyleConfigMap::new();
+        styles.insert(
+            "bold".into(),
+            StyleConfig {
+                expand: ExpandType::After,
+            },
+        );
+        styles.insert(
+            "link".into(),
+            StyleConfig {
+                expand: ExpandType::Before,
+            },
+        );
+        doc.config_text_style(styles);
+    };
+
+    let doc = LoroDoc::new();
+    configure_styles(&doc);
+    let text = doc.get_text("t");
+
+    // Commit #1: establish marks that later inserts depend on (expand semantics).
+    text.insert(0, "Hello😀")?;
+    let len = text.len_unicode();
+    text.mark(0..len, "bold", true)?;
+    doc.commit();
+    let frontiers_v1: Frontiers = doc.state_frontiers();
+
+    // Commit #2: boundary inserts should expand based on style info bits.
+    let len2 = text.len_unicode();
+    text.insert(len2, "!")?; // should be bold (ExpandType::After)
+    let len3 = text.len_unicode();
+    text.mark(0..len3, "link", "https://example.com")?;
+    text.insert(0, "X")?; // should be link (ExpandType::Before)
+    text.unmark(1..3, "bold")?; // create splits
+    doc.commit();
+
+    let expected_deep = doc.get_deep_value().to_json_value();
+    let expected_delta = doc.get_text("t").get_richtext_value().to_json_value();
+
+    let end = doc.oplog_vv();
+
+    // Full range.
+    let schema0 = doc.export_json_updates(&VersionVector::default(), &end);
+    let json0 = serde_json::to_string(&schema0)?;
+    let blob0 = run_encode_jsonschema(&ctx.node_bin, &ctx.cli_js, &json0)?;
+    let doc0 = LoroDoc::new();
+    configure_styles(&doc0);
+    doc0.import(&blob0)?;
+    anyhow::ensure!(
+        doc0.get_deep_value().to_json_value() == expected_deep,
+        "full-range deep-json mismatch"
+    );
+    anyhow::ensure!(
+        doc0.get_text("t").get_richtext_value().to_json_value() == expected_delta,
+        "full-range richtext delta mismatch"
+    );
+
+    // Incremental range (SnapshotAt(v1) + Updates(from v1)).
+    let vv_v1: VersionVector = doc.frontiers_to_vv(&frontiers_v1).unwrap();
+    let schema = doc.export_json_updates(&vv_v1, &end);
+    let json = serde_json::to_string(&schema)?;
+    let blob = run_encode_jsonschema(&ctx.node_bin, &ctx.cli_js, &json)?;
+    let base_snapshot = doc.export(ExportMode::SnapshotAt {
+        version: std::borrow::Cow::Borrowed(&frontiers_v1),
+    })?;
+    let base = LoroDoc::new();
+    configure_styles(&base);
+    base.import(&base_snapshot)?;
+    base.import(&blob)?;
+    anyhow::ensure!(
+        base.get_deep_value().to_json_value() == expected_deep,
+        "incremental deep-json mismatch"
+    );
+    anyhow::ensure!(
+        base.get_text("t").get_richtext_value().to_json_value() == expected_delta,
+        "incremental richtext delta mismatch"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn moon_export_jsonschema_updates_since_v1() -> anyhow::Result<()> {
     let Some(ctx) = moon_ctx() else {
         return Ok(());
@@ -1362,6 +1559,89 @@ fn moon_export_jsonschema_updates_since_v1() -> anyhow::Result<()> {
     )?;
     base.import_json_updates(schema).unwrap();
     assert_eq!(base.get_deep_value().to_json_value(), expected);
+
+    Ok(())
+}
+
+#[test]
+fn moon_cli_robustness_rejects_invalid_inputs() -> anyhow::Result<()> {
+    let Some(ctx) = moon_ctx() else {
+        return Ok(());
+    };
+
+    let doc = LoroDoc::new();
+    doc.get_text("t").insert(0, "hi")?;
+    doc.commit();
+    let updates = doc.export(ExportMode::all_updates())?;
+    let snapshot = doc.export(ExportMode::Snapshot)?;
+
+    // Wrong mode should be rejected.
+    let out = run_export_deep_json_output(&ctx.node_bin, &ctx.cli_js, &updates)?;
+    anyhow::ensure!(
+        !out.status.success(),
+        "expected export-deep-json to reject Updates; stdout={} stderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let out = run_export_jsonschema_output(&ctx.node_bin, &ctx.cli_js, &snapshot)?;
+    anyhow::ensure!(
+        !out.status.success(),
+        "expected export-jsonschema to reject Snapshot; stdout={} stderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // Truncated blobs should be rejected.
+    if snapshot.len() > 1 {
+        let out = run_export_deep_json_output(&ctx.node_bin, &ctx.cli_js, &snapshot[..snapshot.len() - 1])?;
+        anyhow::ensure!(
+            !out.status.success(),
+            "expected export-deep-json to reject truncated Snapshot; stdout={} stderr={}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    if updates.len() > 1 {
+        let out = run_export_jsonschema_output(&ctx.node_bin, &ctx.cli_js, &updates[..updates.len() - 1])?;
+        anyhow::ensure!(
+            !out.status.success(),
+            "expected export-jsonschema to reject truncated Updates; stdout={} stderr={}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    // Malformed blobs should be rejected.
+    let out = run_decode_updates_output(&ctx.node_bin, &ctx.cli_js, &[])?;
+    anyhow::ensure!(
+        !out.status.success(),
+        "expected decode-updates to reject empty input; stdout={} stderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let out = run_transcode_output(&ctx.node_bin, &ctx.cli_js, b"not-a-loro-doc")?;
+    anyhow::ensure!(
+        !out.status.success(),
+        "expected transcode to reject garbage input; stdout={} stderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // Invalid JsonSchema JSON should be rejected.
+    let out = run_encode_jsonschema_output(&ctx.node_bin, &ctx.cli_js, "{")?;
+    anyhow::ensure!(
+        !out.status.success(),
+        "expected encode-jsonschema to reject invalid json; stdout={} stderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let out = run_encode_jsonschema_output(&ctx.node_bin, &ctx.cli_js, "{}")?;
+    anyhow::ensure!(
+        !out.status.success(),
+        "expected encode-jsonschema to reject missing fields; stdout={} stderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
 
     Ok(())
 }
