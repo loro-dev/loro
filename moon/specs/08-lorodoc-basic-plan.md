@@ -11,19 +11,21 @@
 ### 1.1 必须支持（MVP）
 
 - `LoroDoc::new()`：创建文档（本地 peer、时钟/lamport、oplog、state 等最小闭环）。
-- Root 容器：`doc.getMap(name)` / `doc.getList(name)` / `doc.getText(name)` / `doc.getTree(name)`。
+- Root 容器：`doc.getMap(name)` / `doc.getList(name)` / `doc.getMovableList(name)` / `doc.getText(name)` / `doc.getTree(name)`。
 - 容器操作（与 TS 类似的直觉 API）：
   - **Map**：`get/set/delete/keys/toJSON`
   - **List**：`len/get/insert/delete/push/toJSON`
+  - **MovableList**：`len/get/insert/delete/move/set/toJSON`（元素具备稳定 identity，可移动）
   - **Text（RichText）**：`toString/insert/delete/mark/unmark(or markEnd)/toDelta(or toJSON)`
   - **Tree**：`create/move/delete/children/parent/meta(map)/toJSON`
 - **Import / Export updates**：可与 Rust/TS 互通（至少支持 update 流；snapshot 可作为下一阶段）。
+- **Container 基础能力**：统一容器 handle（`Container.kind/id/doc`），以及 `LoroValue::Container` 的运行时展开/索引（Map/List/MovableList 中嵌套容器）。
 
 ### 1.2 不做（明确排除）
 
 - deprecated / outdated API（例如 TS 侧 `class Loro extends LoroDoc` 这种别名，或明确标注 deprecated 的模块）。
 - Awareness/Ephemeral/UndoManager 等高级能力（后续另开计划）。
-- MovableList / Counter 容器（本计划先不纳入；如后续需要可复用 List/Text 相关基础设施扩展）。
+- Counter 容器（本计划先不纳入；后续可按 `feature=counter` 独立扩展）。
 - Time-travel/checkout 任意历史版本（可先只维护“当前版本”正确性；后续再补 diff/checkout）。
 
 ---
@@ -37,6 +39,7 @@
 - `pub fn LoroDoc::new() -> LoroDoc`
 - `pub fn LoroDoc::getMap(self, name : String) -> LoroMap`
 - `pub fn LoroDoc::getList(self, name : String) -> LoroList`
+- `pub fn LoroDoc::getMovableList(self, name : String) -> LoroMovableList`
 - `pub fn LoroDoc::getText(self, name : String) -> LoroText`
 - `pub fn LoroDoc::getTree(self, name : String) -> LoroTree`
 - `pub fn LoroDoc::import(self, bytes : Bytes) -> Unit raise LoroError`
@@ -47,8 +50,13 @@
 
 ### 2.2 容器
 
+- `Container`：所有容器的共同抽象（用于 `isContainer/getType`、容器引用展开、以及未来的订阅/事件统一入口）。
+  - `pub fn Container::id(self) -> ContainerID`
+  - `pub fn Container::kind(self) -> ContainerType`
+  - `pub fn Container::doc(self) -> LoroDoc`（或内部弱引用句柄）
 - `LoroMap`：键值对，值为 `LoroValue`（含容器引用）。
 - `LoroList`：数组序列，元素为 `LoroValue`（含容器引用）。
+- `LoroMovableList`：可移动列表（元素具备稳定 identity；`move` 通过 elem_id 语义而非“值移动”）。
 - `LoroText`：RichText（字符串 + 样式 marks）。
 - `LoroTree` / `LoroTreeNode`：可移动树（节点元数据为 Map 容器；与 Rust/TS 行为一致）。
 
@@ -64,6 +72,7 @@ moon/loro_doc/       # 新增：运行时（oplog + state + CRDT 算法）
   containers/
     map/
     list/
+    movable_list/
     text/
     tree/
   algo/
@@ -108,7 +117,29 @@ Loro 的 List diff 计算复用 RichText 的 tracker（用 `Unknown` chunk 承�
   - `crates/loro-internal/src/container/richtext/tracker.rs`
   - `crates/loro-internal/src/diff_calc.rs`：`ListDiffCalculator`（Unknown span 回查 oplog 的处理）
 
-### 4.3 Text（RichText：TextChunk + Style anchors + styles range map）
+### 4.3 MovableList（“位置序列 + 元素 identity”的组合 CRDT）
+
+MovableList 不是简单的 List：
+
+- 底层维护一条 **ListItem 序列**（其插入排序仍是序列 CRDT 的问题，和 List/Text 同源）。
+- 每个用户可见元素有稳定 `elem_id`（`IdLp`），并维护：
+  - `pos : IdLp`（最后一次有效 move/insert 的位置标识，对应某个 ListItem 的 idlp）
+  - `value_id : IdLp`（最后一次有效 set 的写入标识，用于 LWW 取值）
+- Move 的本质：在目标位置插入一个新的 ListItem（带新 op_id），然后把 `elem_id.pos` 更新到这个新 ListItem（按 LWW 决胜）；旧位置对应的 ListItem 变为“dead”（不再 `pointed_by`）。
+- 用户视角 length 只统计 `pointed_by != None` 的 ListItem；op 视角 length 统计全部 ListItem（含 dead），因此需要 **双索引**（ForUser / ForOp）。
+
+落地建议：
+
+- v1：先实现“当前版本正确”的 apply（insert/delete/move/set + LWW 规则 + child container index）。
+- v2：再接入通用 diff/checkout（若要实现 time-travel/订阅），沿用 Rust 的 MovableListDiffCalculator 思路。
+
+Rust 参考（必读）：
+
+- `crates/loro-internal/src/state/movable_list_state.rs`（核心状态结构与 move/set 语义）
+- `crates/loro-internal/src/container/list/list_op.rs`（Move/Set/Insert/Delete 统一在 ListOp 中）
+- `crates/loro-internal/src/diff_calc.rs`：`MovableListDiffCalculator`（与 ListDiffCalculator 的复用关系）
+
+### 4.4 Text（RichText：TextChunk + Style anchors + styles range map）
 
 Text 的本体是“文本插入/删除”，样式是“锚点事件（StyleStart/StyleEnd）”插入到同一条序列中：
 
@@ -123,7 +154,7 @@ Text 的本体是“文本插入/删除”，样式是“锚点事件（StyleSta
   - `crates/loro-internal/src/state/richtext_state.rs`
   - `crates/loro-internal/src/diff_calc.rs`：`RichtextDiffCalculator`
 
-### 4.4 Tree（Movable Tree：FractionalIndex + last-move-wins + cycle handling）
+### 4.5 Tree（Movable Tree：FractionalIndex + last-move-wins + cycle handling）
 
 Tree 的关键点不是“序列插入”，而是“父子关系 + 同级顺序”的并发合并：
 
@@ -166,29 +197,37 @@ Tree 的关键点不是“序列插入”，而是“父子关系 + 同级顺序
 
 **验收**：对齐 TS 示例：`version=oplogVersion()`，编辑后 `export({from:version})` 能在对端增量合并。
 
-### M3：List CRDT（基于 tracker/rope）（1–2 周）
+### M3：Seq CRDT 基建（List / MovableList / Text 共享）（1–2 周）
 
 - port `CrdtRope + IdToCursor + FugueSpan/Status`（先做 Unknown chunk 路径）。
-- 实现 List 的 import/apply（从 Change/Op 还原到 tracker 输入：insert/delete）。
-- 实现 List API（insert/delete/push）。
+- 产出一份 MoonBit 侧可复用的 `seq_crdt` 模块（被 List、MovableList、Text 复用）。
 
-**验收**：并发用例（双端同时 insert/delete）与 Rust 结果一致；随机小规模 fuzz（对比 Rust 输出）。
+**验收**：并发插入排序与删除（含 reverse delete）行为与 Rust 一致（可用对照用例/小规模 fuzz）。
 
-### M4：RichText（Text + Styles）（1–2 周）
+### M4：List + MovableList（1–2 周）
+
+- **List**：实现 import/apply + API（insert/delete/push/toJSON）。
+- **MovableList**：实现 import/apply + API（insert/delete/move/set/toJSON），并保证：
+  - move 不复制值、只移动 identity
+  - set 与 move 的并发按 LWW（`IdLp(lamport,peer)`）一致决胜
+
+**验收**：List/MovableList 并发用例与 Rust 结果一致（含 move+delete+set 交织）。
+
+### M5：RichText（Text + Styles）（1–2 周）
 
 - 在 M3 的 rope 上补齐 TextChunk、unicode/utf8 索引换算、Style anchors。
 - 实现 `mark`/`markEnd` 与 `toDelta`（或至少 `toJSON` 能包含样式信息）。
 
 **验收**：对齐 Rust/TS 的 richtext 行为：文本内容一致、样式区间一致（至少在导出 json-schema/changes 的层面可对照）。
 
-### M5：Tree（FractionalIndex + apply）（1–2 周）
+### M6：Tree（FractionalIndex + apply）（1–2 周）
 
 - port `fractional_index` 到 MoonBit；实现 siblings 顺序与重排逻辑。
 - 实现 TreeState：create/move/delete + children cache + meta container（Map）联动。
 
 **验收**：对齐 Rust tree 典型用例与并发移动用例；无环约束与 deleted_root 语义一致。
 
-### M6：订阅与事件（可选，后续）
+### M7：订阅与事件（可选，后续）
 
 - 提供 doc/container 级别 subscribe（回调 diff）。
 - 若未来要对齐 wasm 的“microtask flush”语义，再单独设计（MoonBit runtime 不一定需要）。
@@ -217,9 +256,8 @@ Tree 的关键点不是“序列插入”，而是“父子关系 + 同级顺序
 
 ## 7. 最终验收标准（面向 PR 合并）
 
-- `LoroDoc::new()` + Map/List/Text/Tree 的核心 API 可用，且行为与 `loro-crdt` TS 的直觉一致。
+- `LoroDoc::new()` + Map/List/MovableList/Text/Tree 的核心 API 可用，且行为与 `loro-crdt` TS 的直觉一致。
 - Rust ↔ Moon 的 update bytes 互通：
   - Rust 生成 updates → Moon import → `toJSON` 与 Rust 一致
   - Moon 本地编辑 → export updates → Rust import → `get_deep_value/to_json` 一致
-- 覆盖并发用例（至少：并发 list/text 插入、并发 tree move、并发 map set 覆盖）。
-
+- 覆盖并发用例（至少：并发 list/text 插入、并发 movable_list move+set、并发 tree move、并发 map set 覆盖）。
