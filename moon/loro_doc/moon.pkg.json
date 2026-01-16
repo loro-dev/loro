@@ -1,0 +1,5 @@
+{
+  "import": [
+    "loro-dev/loro/loro_codec"
+  ]
+}
