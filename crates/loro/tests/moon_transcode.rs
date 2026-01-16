@@ -551,6 +551,61 @@ fn first_json_diff_path(a: &serde_json::Value, b: &serde_json::Value, path: &str
     }
 }
 
+fn first_json_diff(
+    a: &serde_json::Value,
+    b: &serde_json::Value,
+    path: &str,
+) -> Option<(String, serde_json::Value, serde_json::Value)> {
+    use serde_json::Value;
+    if a == b {
+        return None;
+    }
+    match (a, b) {
+        (Value::Object(ao), Value::Object(bo)) => {
+            for (k, av) in ao {
+                let Some(bv) = bo.get(k) else {
+                    return Some((format!("{path}.{k} (missing rhs)"), av.clone(), Value::Null));
+                };
+                if let Some((p, ga, gb)) = first_json_diff(av, bv, &format!("{path}.{k}")) {
+                    return Some((p, ga, gb));
+                }
+            }
+            for (k, bv) in bo {
+                if !ao.contains_key(k) {
+                    return Some((format!("{path}.{k} (missing lhs)"), Value::Null, bv.clone()));
+                }
+            }
+            Some((path.to_string(), a.clone(), b.clone()))
+        }
+        (Value::Array(aa), Value::Array(ba)) => {
+            if aa.len() != ba.len() {
+                return Some((
+                    format!("{path} (len {} != {})", aa.len(), ba.len()),
+                    a.clone(),
+                    b.clone(),
+                ));
+            }
+            for (i, (av, bv)) in aa.iter().zip(ba.iter()).enumerate() {
+                if let Some((p, ga, gb)) = first_json_diff(av, bv, &format!("{path}[{i}]")) {
+                    return Some((p, ga, gb));
+                }
+            }
+            Some((path.to_string(), a.clone(), b.clone()))
+        }
+        _ => Some((path.to_string(), a.clone(), b.clone())),
+    }
+}
+
+fn first_bytes_diff(a: &[u8], b: &[u8]) -> Option<usize> {
+    let min_len = a.len().min(b.len());
+    for i in 0..min_len {
+        if a[i] != b[i] {
+            return Some(i);
+        }
+    }
+    (a.len() != b.len()).then_some(min_len)
+}
+
 fn assert_updates_jsonschema_matches_rust(doc: &LoroDoc, ctx: &MoonCtx) -> anyhow::Result<()> {
     let start = VersionVector::default();
     let end = doc.oplog_vv();
@@ -763,6 +818,14 @@ fn moon_transcode_e2e() -> anyhow::Result<()> {
     // Updates e2e (FastUpdates): Rust export -> Moon transcode -> Rust import.
     let updates = doc.export(ExportMode::all_updates()).unwrap();
     let out_updates = run_transcode(&ctx.node_bin, &ctx.cli_js, &updates)?;
+    let out_updates2 = run_transcode(&ctx.node_bin, &ctx.cli_js, &out_updates)?;
+    anyhow::ensure!(
+        out_updates2 == out_updates,
+        "moon transcode not idempotent for FastUpdates at {:?} ({} -> {})",
+        first_bytes_diff(&out_updates2, &out_updates),
+        out_updates.len(),
+        out_updates2.len()
+    );
     let doc2 = LoroDoc::new();
     doc2.import(&out_updates).unwrap();
     assert_eq!(doc2.get_deep_value().to_json_value(), expected);
@@ -777,6 +840,14 @@ fn moon_transcode_e2e() -> anyhow::Result<()> {
     // Snapshot e2e (FastSnapshot): Rust export -> Moon transcode -> Rust import.
     let snapshot = doc.export(ExportMode::Snapshot).unwrap();
     let out_snapshot = run_transcode(&ctx.node_bin, &ctx.cli_js, &snapshot)?;
+    let out_snapshot2 = run_transcode(&ctx.node_bin, &ctx.cli_js, &out_snapshot)?;
+    anyhow::ensure!(
+        out_snapshot2 == out_snapshot,
+        "moon transcode not idempotent for Snapshot at {:?} ({} -> {})",
+        first_bytes_diff(&out_snapshot2, &out_snapshot),
+        out_snapshot.len(),
+        out_snapshot2.len()
+    );
     let doc3 = LoroDoc::new();
     doc3.import(&out_snapshot).unwrap();
     assert_eq!(doc3.get_deep_value().to_json_value(), expected);
@@ -788,6 +859,14 @@ fn moon_transcode_e2e() -> anyhow::Result<()> {
         })
         .unwrap();
     let out_snapshot_at = run_transcode(&ctx.node_bin, &ctx.cli_js, &snapshot_at)?;
+    let out_snapshot_at2 = run_transcode(&ctx.node_bin, &ctx.cli_js, &out_snapshot_at)?;
+    anyhow::ensure!(
+        out_snapshot_at2 == out_snapshot_at,
+        "moon transcode not idempotent for SnapshotAt at {:?} ({} -> {})",
+        first_bytes_diff(&out_snapshot_at2, &out_snapshot_at),
+        out_snapshot_at.len(),
+        out_snapshot_at2.len()
+    );
     let doc_at = LoroDoc::new();
     doc_at.import(&out_snapshot_at).unwrap();
     assert_eq!(doc_at.get_deep_value().to_json_value(), expected_v1);
@@ -799,6 +878,14 @@ fn moon_transcode_e2e() -> anyhow::Result<()> {
         ))))
         .unwrap();
     let out_state_only = run_transcode(&ctx.node_bin, &ctx.cli_js, &state_only)?;
+    let out_state_only2 = run_transcode(&ctx.node_bin, &ctx.cli_js, &out_state_only)?;
+    anyhow::ensure!(
+        out_state_only2 == out_state_only,
+        "moon transcode not idempotent for StateOnly at {:?} ({} -> {})",
+        first_bytes_diff(&out_state_only2, &out_state_only),
+        out_state_only.len(),
+        out_state_only2.len()
+    );
     let doc_state_only = LoroDoc::new();
     doc_state_only.import(&out_state_only).unwrap();
     assert_eq!(doc_state_only.get_deep_value().to_json_value(), expected_v1);
@@ -810,6 +897,14 @@ fn moon_transcode_e2e() -> anyhow::Result<()> {
         )))
         .unwrap();
     let out_shallow = run_transcode(&ctx.node_bin, &ctx.cli_js, &shallow)?;
+    let out_shallow2 = run_transcode(&ctx.node_bin, &ctx.cli_js, &out_shallow)?;
+    anyhow::ensure!(
+        out_shallow2 == out_shallow,
+        "moon transcode not idempotent for ShallowSnapshot at {:?} ({} -> {})",
+        first_bytes_diff(&out_shallow2, &out_shallow),
+        out_shallow.len(),
+        out_shallow2.len()
+    );
     let doc_shallow = LoroDoc::new();
     doc_shallow.import(&out_shallow).unwrap();
     assert_eq!(doc_shallow.get_deep_value().to_json_value(), expected);
@@ -820,6 +915,14 @@ fn moon_transcode_e2e() -> anyhow::Result<()> {
         from: std::borrow::Cow::Borrowed(&vv_v1),
     })?;
     let out_updates_since_v1 = run_transcode(&ctx.node_bin, &ctx.cli_js, &updates_since_v1)?;
+    let out_updates_since_v12 = run_transcode(&ctx.node_bin, &ctx.cli_js, &out_updates_since_v1)?;
+    anyhow::ensure!(
+        out_updates_since_v12 == out_updates_since_v1,
+        "moon transcode not idempotent for Updates(from) at {:?} ({} -> {})",
+        first_bytes_diff(&out_updates_since_v12, &out_updates_since_v1),
+        out_updates_since_v1.len(),
+        out_updates_since_v12.len()
+    );
     let doc_from_v1 = LoroDoc::new();
     doc_from_v1.import(&out_snapshot_at).unwrap();
     doc_from_v1.import(&out_updates_since_v1).unwrap();
@@ -843,9 +946,135 @@ fn moon_transcode_e2e() -> anyhow::Result<()> {
 
     let updates_b = doc_b.export(ExportMode::all_updates()).unwrap();
     let out_updates_b = run_transcode(&ctx.node_bin, &ctx.cli_js, &updates_b)?;
+    let out_updates_b2 = run_transcode(&ctx.node_bin, &ctx.cli_js, &out_updates_b)?;
+    anyhow::ensure!(
+        out_updates_b2 == out_updates_b,
+        "moon transcode not idempotent for multi-peer Updates at {:?} ({} -> {})",
+        first_bytes_diff(&out_updates_b2, &out_updates_b),
+        out_updates_b.len(),
+        out_updates_b2.len()
+    );
     let doc_c = LoroDoc::new();
     doc_c.import(&out_updates_b).unwrap();
     assert_eq!(doc_c.get_deep_value().to_json_value(), expected_b);
+
+    Ok(())
+}
+
+#[test]
+fn moon_edge_varints_and_lengths() -> anyhow::Result<()> {
+    let Some(ctx) = moon_ctx() else {
+        return Ok(());
+    };
+
+    // Stress:
+    // - LEB128 / varint boundaries (lengths >= 128, peer tables >= 128).
+    // - Big peer IDs (JS-safe boundary) carried through JSON schema.
+    // - String/binary lengths at 127/128.
+    let doc = LoroDoc::new();
+    let map = doc.get_map("m");
+    let list = doc.get_list("l");
+
+    // Commit #1: one change with many keys/ops.
+    doc.set_peer_id(1)?;
+    doc.set_next_commit_timestamp(-1 as Timestamp);
+
+    map.insert("", "empty-key")?;
+    map.insert("s127", "a".repeat(127))?;
+    map.insert("s128", "b".repeat(128))?;
+    map.insert("bin0", Vec::<u8>::new())?;
+    map.insert("bin127", vec![7u8; 127])?;
+    map.insert("bin128", vec![8u8; 128])?;
+
+    for i in 0..130u32 {
+        let key = format!("k{i:03}");
+        map.insert(&key, i as i64)?;
+        list.push(i as i64)?;
+    }
+
+    // Root container name length boundaries (UTF-8 byte length).
+    let root_127 = "r".repeat(127);
+    doc.get_map(root_127.as_str()).insert("x", 1)?;
+    let root_emoji = "😀".repeat(40); // 160 UTF-8 bytes
+    doc.get_list(root_emoji.as_str()).push("y")?;
+
+    doc.commit();
+
+    // More peers to force peer-index varints (len >= 128).
+    for peer in 2u64..=130u64 {
+        doc.set_peer_id(peer)?;
+        if peer == 2 {
+            doc.set_next_commit_message("");
+            doc.set_next_commit_timestamp(0 as Timestamp);
+        } else {
+            doc.set_next_commit_timestamp(peer as Timestamp);
+        }
+        let key = format!("p{peer:03}");
+        map.insert(&key, peer as i64)?;
+        doc.commit();
+    }
+
+    // Big peer ID (forces bigint path in JS).
+    let big_peer: u64 = 9_007_199_254_740_993; // 2^53 + 1
+    doc.set_peer_id(big_peer)?;
+    doc.set_next_commit_message("big-peer");
+    doc.set_next_commit_timestamp(1_700_000_000 as Timestamp);
+    map.insert("big_peer", big_peer as i64)?;
+    doc.commit();
+
+    // Decode correctness (Moon export-deep-json / export-jsonschema).
+    assert_snapshot_deep_json_matches_rust(&doc, ctx)?;
+    assert_updates_jsonschema_matches_rust(&doc, ctx)?;
+
+    // Encode correctness: Moon transcode is deterministic (idempotent) and importable by Rust.
+    let snapshot = doc.export(ExportMode::Snapshot)?;
+    let out_snapshot = run_transcode(&ctx.node_bin, &ctx.cli_js, &snapshot)?;
+    let out_snapshot2 = run_transcode(&ctx.node_bin, &ctx.cli_js, &out_snapshot)?;
+    anyhow::ensure!(
+        out_snapshot2 == out_snapshot,
+        "moon transcode not idempotent for edge Snapshot at {:?} ({} -> {})",
+        first_bytes_diff(&out_snapshot2, &out_snapshot),
+        out_snapshot.len(),
+        out_snapshot2.len()
+    );
+    let doc_from_snapshot = LoroDoc::new();
+    doc_from_snapshot.import(&out_snapshot).unwrap();
+    assert_eq!(
+        doc_from_snapshot.get_deep_value().to_json_value(),
+        doc.get_deep_value().to_json_value()
+    );
+    let updates = doc.export(ExportMode::all_updates())?;
+    let out_updates = run_transcode(&ctx.node_bin, &ctx.cli_js, &updates)?;
+    let out_updates2 = run_transcode(&ctx.node_bin, &ctx.cli_js, &out_updates)?;
+    anyhow::ensure!(
+        out_updates2 == out_updates,
+        "moon transcode not idempotent for edge Updates at {:?} ({} -> {})",
+        first_bytes_diff(&out_updates2, &out_updates),
+        out_updates.len(),
+        out_updates2.len()
+    );
+    let doc_from_updates = LoroDoc::new();
+    doc_from_updates.import(&out_updates).unwrap();
+    assert_eq!(
+        doc_from_updates.get_deep_value().to_json_value(),
+        doc.get_deep_value().to_json_value()
+    );
+
+    // Roundtrip: Moon encode-jsonschema output must be importable by Rust (large peer/key tables).
+    let start = VersionVector::default();
+    let end = doc.oplog_vv();
+    let schema = doc.export_json_updates(&start, &end);
+    let json = serde_json::to_string(&schema)?;
+    let out_blob = run_encode_jsonschema(&ctx.node_bin, &ctx.cli_js, &json)?;
+    let doc2 = LoroDoc::new();
+    doc2.import(&out_blob).unwrap();
+    let got = doc2.get_deep_value().to_json_value();
+    let expected = doc.get_deep_value().to_json_value();
+    anyhow::ensure!(
+        got == expected,
+        "encode-jsonschema state mismatch: {:?}",
+        first_json_diff(&got, &expected, "$")
+    );
 
     Ok(())
 }

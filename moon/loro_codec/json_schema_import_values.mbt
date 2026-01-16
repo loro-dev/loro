@@ -21,7 +21,17 @@ fn jsonschema_import_loro_value(
               jsonschema_import_parse_int64_decimal(s, "loro_value.i64"),
             )
           }
-        None => LoroValue::F64(_n)
+        None => {
+          let i = _n.to_int64()
+          // If the number is an integer (no fractional part), treat it as i64.
+          // This matches Rust JsonSchema output for i64 values when the JSON parser
+          // doesn't retain the original lexical representation.
+          if i.to_double() == _n {
+            LoroValue::I64(i)
+          } else {
+            LoroValue::F64(_n)
+          }
+        }
       }
     Json::String(s) =>
       if s.has_prefix(LORO_CONTAINER_ID_PREFIX) {
