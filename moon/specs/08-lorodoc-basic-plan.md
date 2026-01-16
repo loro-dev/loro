@@ -174,6 +174,13 @@ Tree 的关键点不是“序列插入”，而是“父子关系 + 同级顺序
 
 ## 5. 里程碑拆解（按“可验证闭环”推进）
 
+### S0：规格整理（Spec Pack，必须）（1–3 天）
+
+- 先完成 `moon/specs/09-lorodoc-spec-pack.md` 规定的 specs（10–17）与 `moon/LORODOC_SPEC_NOTES.md`。
+- 明确对齐目标：以 Rust 行为为真值、以 TS API 为用户心智模型；把“并发决胜规则/边界条件/坐标系”写成可测试断言。
+
+**验收**：所有关键规则都能在 specs 中定位，并能回链到对应 Rust 源码位置；实现阶段不再“边写边猜”。
+
 ### M0：接口与骨架（1–2 天）
 
 - 建 `moon/loro_doc/` 模块骨架；定义 `LoroError`、`VersionVector`、`Clock`、`ContainerID`、`LoroValue` 的 runtime 侧视图（优先复用 `moon/loro_codec/*` 类型）。
@@ -236,17 +243,17 @@ Tree 的关键点不是“序列插入”，而是“父子关系 + 同级顺序
 
 ## 6. “读 Rust → 提取文档”计划（把算法讲清楚再写 MoonBit）
 
-建议在动手 port 前，先把关键算法拆成 3 份内部文档（放 `moon/specs/` 或 `moon/docs/`）：
+建议在动手 port 前，先按 `moon/specs/09-lorodoc-spec-pack.md` 输出一组 specs；其中最核心的算法文档包括：
 
-1. **seq-crdt（List/Text）**：
+1. **seq-crdt（List/Text）**（`12-seq-crdt-spec`）：
    - `FugueSpan` 字段语义、Status 状态机、origin_left/origin_right 的计算规则
    - `CrdtRope::insert/delete` 的并发排序与 split 规则
    - `IdToCursor` 的索引结构与更新策略
    - “Unknown span 回查 oplog”的策略（List 特有）
-2. **richtext-styles**：
+2. **richtext-styles**（`14-richtext-spec`）：
    - StyleStart/End 如何占用 op_id 位置、如何与文本混排
    - unicode/utf8/event_index 三套坐标系换算
-3. **tree-crdt**：
+3. **tree-crdt**（`15-tree-spec`）：
    - last-move-wins 的比较键（lamport/peer）与 cycle 处理策略
    - FractionalIndex 的生成、碰撞与重排（generate_n_evenly）
 

@@ -13,6 +13,7 @@
 - `moon/specs/06-jsonschema-export.md`：JsonSchema（`docs/JsonSchema.md`）导出实现细节（FastUpdates 二进制 → JsonSchema JSON）
 - `moon/specs/07-jsonschema-encode.md`：JsonSchema 编码实现细节（JsonSchema JSON → FastUpdates 二进制）
 - `moon/specs/08-lorodoc-basic-plan.md`：MoonBit 侧 LoroDoc 运行时（CRDT 引擎）基础支持计划（Container/Map/List/MovableList/Text/Tree）
+- `moon/specs/09-lorodoc-spec-pack.md`：LoroDoc Runtime 的 Spec-driven 开工包（步骤 0：阅读/整理 specs + Rust 真值索引）
 
 ## 约定
 
