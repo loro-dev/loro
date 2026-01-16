@@ -4,6 +4,7 @@
 flamegraph.svg
 target
 moon/_build/
+moon_*_fuzz_artifacts*/
 dhat-heap.json
 .DS_Store
 node_modules/

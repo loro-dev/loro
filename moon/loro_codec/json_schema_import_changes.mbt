@@ -162,7 +162,9 @@ pub fn encode_fast_updates_from_json_schema(
     }
     let sorted_changes = jsonschema_import_sort_and_validate_changes(arr)
     let block : DecodedChangeBlock = {
-      peers: [],
+      // Ensure the block peer is always at peers[0], as required by ChangeBlock encoding,
+      // even when this peer references containers created by other peers.
+      peers: [peer],
       keys,
       cids: [],
       positions: [],

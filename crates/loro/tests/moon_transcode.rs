@@ -1216,6 +1216,114 @@ fn moon_encode_jsonschema_text_insert() -> anyhow::Result<()> {
 }
 
 #[test]
+fn moon_encode_jsonschema_cross_peer_container_refs() -> anyhow::Result<()> {
+    let Some(ctx) = moon_ctx() else {
+        return Ok(());
+    };
+
+    // Peer 2 writes into a nested container created by peer 1.
+    // This ensures the encoded ChangeBlock for peer 2 references container IDs with another peer.
+    let doc = LoroDoc::new();
+    let root = doc.get_map("m");
+
+    doc.set_peer_id(1)?;
+    let child = root.insert_container("child", loro::LoroMap::new())?;
+    child.insert("a", 1)?;
+    doc.commit();
+    let frontiers_v1: Frontiers = doc.state_frontiers();
+
+    doc.set_peer_id(2)?;
+    child.insert("b", 2)?;
+    doc.commit();
+    let expected = doc.get_deep_value().to_json_value();
+
+    let end = doc.oplog_vv();
+
+    // Full range should import on a fresh doc.
+    let schema0 = doc.export_json_updates(&VersionVector::default(), &end);
+    let json0 = serde_json::to_string(&schema0)?;
+    let blob0 = run_encode_jsonschema(&ctx.node_bin, &ctx.cli_js, &json0)?;
+    let doc0 = LoroDoc::new();
+    doc0.import(&blob0).unwrap();
+    assert_eq!(doc0.get_deep_value().to_json_value(), expected);
+
+    // Incremental range should apply on top of SnapshotAt(v1).
+    let vv_v1: VersionVector = doc.frontiers_to_vv(&frontiers_v1).unwrap();
+    let schema = doc.export_json_updates(&vv_v1, &end);
+    let json = serde_json::to_string(&schema)?;
+    let blob = run_encode_jsonschema(&ctx.node_bin, &ctx.cli_js, &json)?;
+    let base_snapshot = doc.export(ExportMode::SnapshotAt {
+        version: std::borrow::Cow::Borrowed(&frontiers_v1),
+    })?;
+    let base = LoroDoc::new();
+    base.import(&base_snapshot)?;
+    base.import(&blob).unwrap();
+    assert_eq!(base.get_deep_value().to_json_value(), expected);
+
+    Ok(())
+}
+
+#[test]
+fn moon_encode_jsonschema_random_roundtrip() -> anyhow::Result<()> {
+    let Some(ctx) = moon_ctx() else {
+        return Ok(());
+    };
+
+    // A small deterministic set of cases to catch common regressions:
+    // - multi-peer ids and peer compression
+    // - non-empty start version (deps resolution)
+    // - mixed container/value kinds from random ops
+    let seeds = [0u64, 1, 2, 3];
+    for seed in seeds {
+        let doc = LoroDoc::new();
+
+        // Build three committed segments with different peers so the schema definitely contains
+        // multiple peers, and we have a stable "start" point after the first segment.
+        apply_random_ops_with_peers(&doc, seed, 80, 0, &[1])?;
+        let frontiers_v1: Frontiers = doc.state_frontiers();
+        apply_random_ops_with_peers(&doc, seed.wrapping_add(1), 80, 0, &[2])?;
+        apply_random_ops_with_peers(&doc, seed.wrapping_add(2), 80, 0, &[3])?;
+
+        let expected = doc.get_deep_value().to_json_value();
+        let end = doc.oplog_vv();
+
+        // Full range (empty start) should roundtrip on a fresh doc.
+        let schema0 = doc.export_json_updates(&VersionVector::default(), &end);
+        let json0 = serde_json::to_string(&schema0)?;
+        let blob0 = run_encode_jsonschema(&ctx.node_bin, &ctx.cli_js, &json0)?;
+        let doc0 = LoroDoc::new();
+        doc0.import(&blob0).unwrap();
+        let got0 = doc0.get_deep_value().to_json_value();
+        anyhow::ensure!(
+            got0 == expected,
+            "seed={seed} full-range mismatch at {:?}",
+            first_json_diff_path(&got0, &expected, "$")
+        );
+
+        // Incremental range should apply cleanly on top of SnapshotAt(v1).
+        let vv_v1: VersionVector = doc.frontiers_to_vv(&frontiers_v1).unwrap();
+        let schema = doc.export_json_updates(&vv_v1, &end);
+        let json = serde_json::to_string(&schema)?;
+
+        let blob = run_encode_jsonschema(&ctx.node_bin, &ctx.cli_js, &json)?;
+        let base_snapshot = doc.export(ExportMode::SnapshotAt {
+            version: std::borrow::Cow::Borrowed(&frontiers_v1),
+        })?;
+        let base = LoroDoc::new();
+        base.import(&base_snapshot)?;
+        base.import(&blob).unwrap();
+        let got = base.get_deep_value().to_json_value();
+        anyhow::ensure!(
+            got == expected,
+            "seed={seed} incremental mismatch at {:?}",
+            first_json_diff_path(&got, &expected, "$")
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
 fn moon_export_jsonschema_updates_since_v1() -> anyhow::Result<()> {
     let Some(ctx) = moon_ctx() else {
         return Ok(());

@@ -22,11 +22,23 @@ fn jsonschema_import_parse_counter_op_content(
   let value_json = jsonschema_import_req(obj, "value", "op.content.value")
   let raw = match value_type {
     "f64" => {
-      let (n, _repr) = jsonschema_import_expect_number(
+      let (n, repr) = jsonschema_import_expect_number(
         value_json,
         "op.content.value",
       )
-      Value::F64(n)
+      // Prefer parsing from the lexical representation when available, to avoid any
+      // precision loss in the JSON number parser.
+      let v = match repr {
+        None => n
+        Some(s) =>
+          @strconv.parse_double(s[:]) catch {
+            @strconv.StrConvError(err) =>
+              raise DecodeError(
+                "jsonschema_import: invalid op.content.value f64: " + err,
+              )
+          }
+      }
+      Value::F64(v)
     }
     "i64" =>
       Value::I64(
@@ -39,4 +51,3 @@ fn jsonschema_import_parse_counter_op_content(
   }
   OpContent::Future(FutureOp::Unknown(prop, raw))
 }
-
