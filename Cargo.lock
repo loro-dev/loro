@@ -1991,6 +1991,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "moon-vectors-gen"
+version = "0.1.0"
+dependencies = [
+ "loro 1.10.3",
+]
+
+[[package]]
 name = "new_debug_unreachable"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
