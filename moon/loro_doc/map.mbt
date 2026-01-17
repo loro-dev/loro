@@ -75,17 +75,7 @@ fn LoroDoc::apply_map_set(
   let state = self.ensure_map_state(cid)
   state.set(key, value, writer)
   match value {
-    Value::Container(child) =>
-      match child {
-        @loro_codec.ContainerID::Root(_name, _kind) => ()
-        @loro_codec.ContainerID::Normal(_peer, _counter, kind) =>
-          match kind {
-            @loro_codec.ContainerType::Map => {
-              let _ = self.ensure_map_state(child)
-            }
-            _ => ()
-          }
-      }
+    Value::Container(child) => self.ensure_container_state(child)
     _ => ()
   }
 }
@@ -230,6 +220,40 @@ fn LoroDoc::map_delete(
   self.inner.txn_next_lamport = lamport + 1U
 }
 
+fn LoroDoc::map_set_container(
+  self : LoroDoc,
+  cid : @loro_codec.ContainerID,
+  key : String,
+  kind : @loro_codec.ContainerType,
+) -> Container raise LoroError {
+  match kind {
+    @loro_codec.ContainerType::Map => ()
+    @loro_codec.ContainerType::List => ()
+    @loro_codec.ContainerType::MovableList => ()
+    @loro_codec.ContainerType::Text => ()
+    @loro_codec.ContainerType::Tree => ()
+    _ => raise LoroError("map.setContainer: unsupported container type")
+  }
+  self.start_txn_if_needed()
+  let peer = self.inner.peer
+  let counter = self.inner.txn_next_counter
+  let lamport = self.inner.txn_next_lamport
+  let child = @loro_codec.ContainerID::normal(peer, counter, kind)
+  self.ensure_container_state(child)
+  let writer = @loro_codec.IdLp::new(peer, lamport)
+  self.apply_map_set(cid, key, Value::Container(child), writer)
+  self.inner.pending_ops.push({
+    container: cid,
+    counter,
+    lamport,
+    len: 1U,
+    content: PendingOpContent::MapInsert(key, Value::Container(child)),
+  })
+  self.inner.txn_next_counter = counter + 1
+  self.inner.txn_next_lamport = lamport + 1U
+  Container::new(self, child)
+}
+
 ///|
 pub struct LoroMap {
   doc : LoroDoc
@@ -303,4 +327,13 @@ pub fn LoroMap::keys(self : LoroMap) -> Array[String] {
 ///|
 pub fn LoroMap::entries(self : LoroMap) -> Array[(String, Value)] {
   self.doc.map_entries(self.cid)
+}
+
+///|
+pub fn LoroMap::setContainer(
+  self : LoroMap,
+  key : String,
+  child : Container,
+) -> Container raise LoroError {
+  self.doc.map_set_container(self.cid, key, child.kind())
 }

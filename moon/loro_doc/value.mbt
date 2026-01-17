@@ -91,8 +91,13 @@ fn encode_value_to_loro_value(
       }
       @loro_codec.LoroValue::Map(out)
     }
-    Value::Container(_cid) =>
-      raise LoroError("value encoding: Container is not supported here")
+    Value::Container(cid) => {
+      let kind = match cid {
+        @loro_codec.ContainerID::Root(_name, k) => k
+        @loro_codec.ContainerID::Normal(_peer, _counter, k) => k
+      }
+      @loro_codec.LoroValue::ContainerType(@loro_codec.container_type_to_u8(kind))
+    }
   }
 }
 

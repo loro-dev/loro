@@ -14,6 +14,10 @@ enum PendingOpContent {
   MapDelete(String)
   ListInsert(Int, Array[Value])
   ListDelete(Int, Int, @loro_codec.ID)
+  MovableListInsert(Int, Array[Value])
+  MovableListDelete(Int, Int, @loro_codec.ID)
+  MovableListMove(Int, Int, @loro_codec.IdLp)
+  MovableListSet(@loro_codec.IdLp, Value)
   TextInsert(Int, String)
   TextDelete(Int, Int, @loro_codec.ID)
 }
@@ -44,7 +48,9 @@ struct DocInner {
   roots : @hashmap.HashMap[String, @loro_codec.ContainerID]
   map_states : @hashmap.HashMap[String, MapState]
   list_trackers : @hashmap.HashMap[String, SeqTracker]
+  movable_list_states : @hashmap.HashMap[String, MovableListState]
   text_trackers : @hashmap.HashMap[String, SeqTracker]
+  tree_states : @hashmap.HashMap[String, Bool]
 }
 
 ///|
@@ -73,7 +79,9 @@ pub fn LoroDoc::new() -> LoroDoc {
       roots: @hashmap.new(capacity=8),
       map_states: @hashmap.new(capacity=8),
       list_trackers: @hashmap.new(capacity=8),
+      movable_list_states: @hashmap.new(capacity=8),
       text_trackers: @hashmap.new(capacity=8),
+      tree_states: @hashmap.new(capacity=8),
     },
   }
 }
@@ -253,6 +261,7 @@ pub fn LoroDoc::getMovableList(
     @loro_codec.ContainerType::movable_list(),
   )
   self.register_root(cid)
+  let _ = self.ensure_movable_list_state(cid)
   { doc: self, cid }
 }
 
@@ -396,6 +405,65 @@ fn LoroDoc::commit_inner(
             p.len,
             @loro_codec.OpContent::List(
               @loro_codec.ListOp::Delete(pos, len.to_int64(), start_id),
+            ),
+          ),
+        )
+      }
+      PendingOpContent::MovableListInsert(pos, items) => {
+        let out : Array[@loro_codec.LoroValue] = []
+        for it in items {
+          out.push(
+            encode_value_to_loro_value(it, self.inner.keys, self.inner.key_to_idx),
+          )
+        }
+        change.ops().push(
+          @loro_codec.Op::new(
+            p.container,
+            p.counter,
+            p.len,
+            @loro_codec.OpContent::MovableList(
+              @loro_codec.MovableListOp::Insert(pos.reinterpret_as_uint(), out),
+            ),
+          ),
+        )
+      }
+      PendingOpContent::MovableListDelete(pos, len, start_id) => {
+        change.ops().push(
+          @loro_codec.Op::new(
+            p.container,
+            p.counter,
+            p.len,
+            @loro_codec.OpContent::MovableList(
+              @loro_codec.MovableListOp::Delete(pos, len.to_int64(), start_id),
+            ),
+          ),
+        )
+      }
+      PendingOpContent::MovableListMove(from, to, elem_id) => {
+        change.ops().push(
+          @loro_codec.Op::new(
+            p.container,
+            p.counter,
+            p.len,
+            @loro_codec.OpContent::MovableList(
+              @loro_codec.MovableListOp::Move(
+                from.reinterpret_as_uint(),
+                to.reinterpret_as_uint(),
+                elem_id,
+              ),
+            ),
+          ),
+        )
+      }
+      PendingOpContent::MovableListSet(elem_id, value) => {
+        let lv = encode_value_to_loro_value(value, self.inner.keys, self.inner.key_to_idx)
+        change.ops().push(
+          @loro_codec.Op::new(
+            p.container,
+            p.counter,
+            p.len,
+            @loro_codec.OpContent::MovableList(
+              @loro_codec.MovableListOp::Set(elem_id, lv),
             ),
           ),
         )
@@ -577,6 +645,12 @@ fn LoroDoc::ensure_container_state(self : LoroDoc, cid : @loro_codec.ContainerID
         @loro_codec.ContainerType::Text => {
           let _ = self.ensure_text_tracker(cid)
         }
+        @loro_codec.ContainerType::MovableList => {
+          let _ = self.ensure_movable_list_state(cid)
+        }
+        @loro_codec.ContainerType::Tree => {
+          self.inner.tree_states.set(container_id_string(cid), true)
+        }
         _ => ()
       }
   }
@@ -709,6 +783,130 @@ fn LoroDoc::apply_incoming_change(
         // Restore to the merged current version so future spans become visible again.
         t.checkout(merged_vv)
       }
+      @loro_codec.OpContent::MovableList(ml) => {
+        self.register_root(op.container())
+        let s = self.ensure_movable_list_state(op.container())
+        s.tracker.checkout(vv_before_op)
+        let offset = op.counter() - change.id().counter()
+        if offset < 0 {
+          raise LoroError("import: invalid op counter order")
+        }
+        let op_lamport = change.lamport() + offset.reinterpret_as_uint()
+        let op_id = SeqIdFull::new(peer, op.counter(), op_lamport)
+        match ml {
+          @loro_codec.MovableListOp::Insert(pos, items) => {
+            let out : Array[Value] = []
+            for i in 0..<items.length() {
+              let v = decode_value_from_loro_value(
+                items[i],
+                self.inner.keys,
+                @loro_codec.ID::new(peer, op.counter() + i),
+              )
+              match v {
+                Value::Container(child) => self.ensure_container_state(child)
+                _ => ()
+              }
+              out.push(v)
+            }
+            let n = out.length()
+            if n <= 0 {
+              raise LoroError("import: invalid movable_list insert len=0")
+            }
+            s.tracker.insert(op_id, pos.to_int(), SeqContent::Unknown(n))
+            for i in 0..<n {
+              let item_id = @loro_codec.ID::new(peer, op.counter() + i)
+              let elem_id = @loro_codec.IdLp::new(
+                peer,
+                op_lamport + i.reinterpret_as_uint(),
+              )
+              s.item_to_elem.set(id_string(item_id), elem_id)
+              s.elements.set(idlp_string(elem_id), {
+                elem_id,
+                value: out[i],
+                value_id: elem_id,
+                pos_id: elem_id,
+                pos_item_id: item_id,
+              })
+            }
+          }
+          @loro_codec.MovableListOp::Delete(pos, signed_len, start_id) => {
+            if signed_len == 0L {
+              raise LoroError("import: invalid movable_list delete len=0")
+            }
+            let reversed = signed_len < 0L
+            let abs_len = if signed_len < 0L {
+              (-signed_len).to_int()
+            } else {
+              signed_len.to_int()
+            }
+            let start_pos = if signed_len > 0L {
+              pos
+            } else {
+              pos + 1 + signed_len.to_int()
+            }
+            let deleted_item_ids : Array[@loro_codec.ID] = []
+            for i in 0..<abs_len {
+              deleted_item_ids.push(s.tracker.rope.id_at_active_index(start_pos + i))
+            }
+            s.tracker.delete(@loro_codec.ID::new(peer, op.counter()), start_id, start_pos, abs_len, reversed)
+            for del_id in deleted_item_ids {
+              match s.item_to_elem.get(id_string(del_id)) {
+                None => ()
+                Some(eid) => {
+                  let ek = idlp_string(eid)
+                  match s.elements.get(ek) {
+                    None => ()
+                    Some(e) =>
+                      if e.pos_item_id == del_id {
+                        s.elements.remove(ek)
+                      }
+                  }
+                }
+              }
+            }
+          }
+          @loro_codec.MovableListOp::Move(from, to, elem_id) => {
+            let from_pos = from.to_int()
+            let to_pos = to.to_int()
+            let deleted_id = s.tracker.rope.id_at_active_index(from_pos)
+            s.tracker.move_item(op_id, deleted_id, from_pos, to_pos)
+            let new_item_id = @loro_codec.ID::new(peer, op.counter())
+            s.item_to_elem.set(id_string(new_item_id), elem_id)
+            match s.elements.get(idlp_string(elem_id)) {
+              None => ()
+              Some(e) => {
+                let new_pos_id = @loro_codec.IdLp::new(peer, op_lamport)
+                if idlp_gt(new_pos_id, e.pos_id) {
+                  e.pos_id = new_pos_id
+                  e.pos_item_id = new_item_id
+                }
+              }
+            }
+          }
+          @loro_codec.MovableListOp::Set(elem_id, lv) => {
+            let v = decode_value_from_loro_value(
+              lv,
+              self.inner.keys,
+              @loro_codec.ID::new(peer, op.counter()),
+            )
+            match v {
+              Value::Container(child) => self.ensure_container_state(child)
+              _ => ()
+            }
+            match s.elements.get(idlp_string(elem_id)) {
+              None => ()
+              Some(e) => {
+                let new_value_id = @loro_codec.IdLp::new(peer, op_lamport)
+                if idlp_gt(new_value_id, e.value_id) {
+                  e.value = v
+                  e.value_id = new_value_id
+                }
+              }
+            }
+          }
+        }
+        s.tracker.checkout(merged_vv)
+      }
       @loro_codec.OpContent::Text(t2) => {
         self.register_root(op.container())
         let t = self.ensure_text_tracker(op.container())
@@ -770,6 +968,16 @@ fn LoroDoc::has_container(self : LoroDoc, cid : @loro_codec.ContainerID) -> Bool
             None => false
             Some(_) => true
           }
+        @loro_codec.ContainerType::MovableList =>
+          match self.inner.movable_list_states.get(container_id_string(cid)) {
+            None => false
+            Some(_) => true
+          }
+        @loro_codec.ContainerType::Tree =>
+          match self.inner.tree_states.get(container_id_string(cid)) {
+            None => false
+            Some(_) => true
+          }
         _ => false
       }
   }
@@ -781,6 +989,7 @@ fn LoroDoc::container_shallow_json(self : LoroDoc, cid : @loro_codec.ContainerID
       match kind {
         @loro_codec.ContainerType::Map => self.map_shallow_json(cid)
         @loro_codec.ContainerType::List => self.list_shallow_json(cid)
+        @loro_codec.ContainerType::MovableList => self.movable_list_shallow_json(cid)
         @loro_codec.ContainerType::Text => Json::string(self.text_to_string(cid))
         _ => Json::null()
       }
@@ -788,6 +997,7 @@ fn LoroDoc::container_shallow_json(self : LoroDoc, cid : @loro_codec.ContainerID
       match kind {
         @loro_codec.ContainerType::Map => self.map_shallow_json(cid)
         @loro_codec.ContainerType::List => self.list_shallow_json(cid)
+        @loro_codec.ContainerType::MovableList => self.movable_list_shallow_json(cid)
         @loro_codec.ContainerType::Text => Json::string(self.text_to_string(cid))
         _ => Json::null()
       }
@@ -800,7 +1010,7 @@ fn LoroDoc::container_deep_json(self : LoroDoc, cid : @loro_codec.ContainerID) -
       match kind {
         @loro_codec.ContainerType::Map => self.map_deep_json(cid)
         @loro_codec.ContainerType::List => self.list_deep_json(cid)
-        @loro_codec.ContainerType::MovableList => Json::array([])
+        @loro_codec.ContainerType::MovableList => self.movable_list_deep_json(cid)
         @loro_codec.ContainerType::Text => Json::string(self.text_to_string(cid))
         @loro_codec.ContainerType::Tree => Json::array([])
         _ => Json::null()
@@ -809,7 +1019,7 @@ fn LoroDoc::container_deep_json(self : LoroDoc, cid : @loro_codec.ContainerID) -
       match kind {
         @loro_codec.ContainerType::Map => self.map_deep_json(cid)
         @loro_codec.ContainerType::List => self.list_deep_json(cid)
-        @loro_codec.ContainerType::MovableList => Json::array([])
+        @loro_codec.ContainerType::MovableList => self.movable_list_deep_json(cid)
         @loro_codec.ContainerType::Text => Json::string(self.text_to_string(cid))
         @loro_codec.ContainerType::Tree => Json::array([])
         _ => Json::null()

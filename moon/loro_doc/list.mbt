@@ -128,6 +128,54 @@ fn LoroDoc::list_insert(
   self.inner.txn_next_lamport = lamport + 1U
 }
 
+fn LoroDoc::list_insert_container(
+  self : LoroDoc,
+  cid : @loro_codec.ContainerID,
+  index : Int,
+  kind : @loro_codec.ContainerType,
+) -> Container raise LoroError {
+  match kind {
+    @loro_codec.ContainerType::Map => ()
+    @loro_codec.ContainerType::List => ()
+    @loro_codec.ContainerType::MovableList => ()
+    @loro_codec.ContainerType::Text => ()
+    @loro_codec.ContainerType::Tree => ()
+    _ => raise LoroError("list.insertContainer: unsupported container type")
+  }
+  if index < 0 {
+    raise LoroError("list.insertContainer: negative index")
+  }
+  let t = self.ensure_list_tracker(cid)
+  let cur_len = t.rope.active_len()
+  if index > cur_len {
+    raise LoroError("list.insertContainer: index out of range")
+  }
+
+  self.start_txn_if_needed()
+  let peer = self.inner.peer
+  let counter = self.inner.txn_next_counter
+  let lamport = self.inner.txn_next_lamport
+  let child = @loro_codec.ContainerID::normal(peer, counter, kind)
+  self.ensure_container_state(child)
+  let value = Value::Container(child)
+  t.insert(
+    SeqIdFull::new(peer, counter, lamport),
+    index,
+    SeqContent::List([value]),
+  )
+
+  self.inner.pending_ops.push({
+    container: cid,
+    counter,
+    lamport,
+    len: 1U,
+    content: PendingOpContent::ListInsert(index, [value]),
+  })
+  self.inner.txn_next_counter = counter + 1
+  self.inner.txn_next_lamport = lamport + 1U
+  Container::new(self, child)
+}
+
 fn LoroDoc::list_delete(
   self : LoroDoc,
   cid : @loro_codec.ContainerID,
@@ -232,4 +280,19 @@ pub fn LoroList::push(self : LoroList, _value : Value) -> Unit raise LoroError {
 ///|
 pub fn LoroList::toArray(self : LoroList) -> Array[Value] {
   self.doc.list_to_array(self.cid)
+}
+
+///|
+pub fn LoroList::insertContainer(
+  self : LoroList,
+  index : Int,
+  child : Container,
+) -> Container raise LoroError {
+  self.doc.list_insert_container(self.cid, index, child.kind())
+}
+
+///|
+pub fn LoroList::pushContainer(self : LoroList, child : Container) -> Container raise LoroError {
+  let n = self.length()
+  self.doc.list_insert_container(self.cid, n, child.kind())
 }
