@@ -44,6 +44,7 @@ fn LoroDoc::list_get(
       }
       SeqContent::Unknown(n) => left = left - n
       SeqContent::MoveAnchor => left = left - 1
+      SeqContent::TextStyleAnchor(_) => left = left - 1
       SeqContent::Text(_, n) => left = left - n
     }
   }
@@ -95,6 +96,7 @@ fn LoroDoc::list_insert(
   index : Int,
   value : Value,
 ) -> Unit raise LoroError {
+  let key = container_id_string(cid)
   if value_contains_container(value) {
     raise LoroError("list.insert: container values require insertContainer()")
   }
@@ -116,6 +118,7 @@ fn LoroDoc::list_insert(
     index,
     SeqContent::List([value]),
   )
+  self.inner.list_trackers.set(key, t)
 
   self.inner.pending_ops.push({
     container: cid,
@@ -134,6 +137,7 @@ fn LoroDoc::list_insert_container(
   index : Int,
   kind : @loro_codec.ContainerType,
 ) -> Container raise LoroError {
+  let key = container_id_string(cid)
   match kind {
     @loro_codec.ContainerType::Map => ()
     @loro_codec.ContainerType::List => ()
@@ -163,6 +167,7 @@ fn LoroDoc::list_insert_container(
     index,
     SeqContent::List([value]),
   )
+  self.inner.list_trackers.set(key, t)
 
   self.inner.pending_ops.push({
     container: cid,
@@ -182,6 +187,7 @@ fn LoroDoc::list_delete(
   index : Int,
   len : Int,
 ) -> Unit raise LoroError {
+  let key = container_id_string(cid)
   if len <= 0 {
     return
   }
@@ -200,6 +206,7 @@ fn LoroDoc::list_delete(
   let counter = self.inner.txn_next_counter
   let lamport = self.inner.txn_next_lamport
   t.delete(@loro_codec.ID::new(peer, counter), start_id, index, len, false)
+  self.inner.list_trackers.set(key, t)
 
   self.inner.pending_ops.push({
     container: cid,

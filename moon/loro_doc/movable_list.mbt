@@ -6,10 +6,10 @@ pub struct LoroMovableList {
 
 struct MovableListElem {
   elem_id : @loro_codec.IdLp
-  value : Value
-  value_id : @loro_codec.IdLp
-  pos_id : @loro_codec.IdLp
-  pos_item_id : @loro_codec.ID
+  mut value : Value
+  mut value_id : @loro_codec.IdLp
+  mut pos_id : @loro_codec.IdLp
+  mut pos_item_id : @loro_codec.ID
 }
 
 struct MovableListState {
@@ -238,6 +238,7 @@ fn LoroDoc::movable_list_insert(
   index : Int,
   value : Value,
 ) -> Unit raise LoroError {
+  let key = container_id_string(cid)
   if value_contains_container(value) {
     raise LoroError("movable_list.insert: container values require insertContainer()")
   }
@@ -265,6 +266,7 @@ fn LoroDoc::movable_list_insert(
     pos_id: elem_id,
     pos_item_id: item_id,
   })
+  self.inner.movable_list_states.set(key, s)
 
   self.inner.pending_ops.push({
     container: cid,
@@ -283,6 +285,7 @@ fn LoroDoc::movable_list_insert_container(
   index : Int,
   kind : @loro_codec.ContainerType,
 ) -> Container raise LoroError {
+  let key = container_id_string(cid)
   match kind {
     @loro_codec.ContainerType::Map => ()
     @loro_codec.ContainerType::List => ()
@@ -318,6 +321,7 @@ fn LoroDoc::movable_list_insert_container(
     pos_id: elem_id,
     pos_item_id: item_id,
   })
+  self.inner.movable_list_states.set(key, s)
 
   self.inner.pending_ops.push({
     container: cid,
@@ -337,6 +341,7 @@ fn LoroDoc::movable_list_delete(
   index : Int,
   len : Int,
 ) -> Unit raise LoroError {
+  let key = container_id_string(cid)
   if len <= 0 {
     return
   }
@@ -387,6 +392,7 @@ fn LoroDoc::movable_list_delete(
   })
   self.inner.txn_next_counter = counter + op_len
   self.inner.txn_next_lamport = lamport + op_len.reinterpret_as_uint()
+  self.inner.movable_list_states.set(key, s)
 }
 
 fn LoroDoc::movable_list_move(
@@ -395,6 +401,7 @@ fn LoroDoc::movable_list_move(
   from : Int,
   to : Int,
 ) -> Unit raise LoroError {
+  let key = container_id_string(cid)
   if from == to {
     return
   }
@@ -440,6 +447,7 @@ fn LoroDoc::movable_list_move(
   })
   self.inner.txn_next_counter = counter + 1
   self.inner.txn_next_lamport = lamport + 1U
+  self.inner.movable_list_states.set(key, s)
 }
 
 fn LoroDoc::movable_list_set(
@@ -448,6 +456,7 @@ fn LoroDoc::movable_list_set(
   index : Int,
   value : Value,
 ) -> Unit raise LoroError {
+  let key = container_id_string(cid)
   if value_contains_container(value) {
     raise LoroError("movable_list.set: container values require setContainer()")
   }
@@ -484,6 +493,7 @@ fn LoroDoc::movable_list_set(
   })
   self.inner.txn_next_counter = counter + 1
   self.inner.txn_next_lamport = lamport + 1U
+  self.inner.movable_list_states.set(key, s)
 }
 
 fn LoroDoc::movable_list_set_container(
@@ -492,6 +502,7 @@ fn LoroDoc::movable_list_set_container(
   index : Int,
   kind : @loro_codec.ContainerType,
 ) -> Container raise LoroError {
+  let key = container_id_string(cid)
   match kind {
     @loro_codec.ContainerType::Map => ()
     @loro_codec.ContainerType::List => ()
@@ -536,6 +547,7 @@ fn LoroDoc::movable_list_set_container(
   })
   self.inner.txn_next_counter = counter + 1
   self.inner.txn_next_lamport = lamport + 1U
+  self.inner.movable_list_states.set(key, s)
   Container::new(self, child)
 }
 

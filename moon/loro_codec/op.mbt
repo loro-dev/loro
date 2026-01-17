@@ -40,6 +40,19 @@ pub enum ListOp {
   Delete(Int, Int64, ID) // (pos, len, start_id)
 } derive(Eq, Show)
 
+// NOTE: MoonBit makes enum constructors read-only across packages. Expose explicit
+// constructor functions for callers (e.g. `loro_doc`).
+
+///|
+pub fn ListOp::insert(pos : UInt, values : Array[LoroValue]) -> ListOp {
+  ListOp::Insert(pos, values)
+}
+
+///|
+pub fn ListOp::delete(pos : Int, len : Int64, start_id : ID) -> ListOp {
+  ListOp::Delete(pos, len, start_id)
+}
+
 ///|
 pub enum MovableListOp {
   Insert(UInt, Array[LoroValue])
@@ -49,10 +62,40 @@ pub enum MovableListOp {
 } derive(Eq, Show)
 
 ///|
+pub fn MovableListOp::insert(pos : UInt, values : Array[LoroValue]) -> MovableListOp {
+  MovableListOp::Insert(pos, values)
+}
+
+///|
+pub fn MovableListOp::delete(pos : Int, len : Int64, start_id : ID) -> MovableListOp {
+  MovableListOp::Delete(pos, len, start_id)
+}
+
+///|
+pub fn MovableListOp::move(from : UInt, to : UInt, elem_id : IdLp) -> MovableListOp {
+  MovableListOp::Move(from, to, elem_id)
+}
+
+///|
+pub fn MovableListOp::set(elem_id : IdLp, value : LoroValue) -> MovableListOp {
+  MovableListOp::Set(elem_id, value)
+}
+
+///|
 pub enum MapOp {
   Insert(String, LoroValue)
   Delete(String)
 } derive(Eq, Show)
+
+///|
+pub fn MapOp::insert(key : String, value : LoroValue) -> MapOp {
+  MapOp::Insert(key, value)
+}
+
+///|
+pub fn MapOp::delete(key : String) -> MapOp {
+  MapOp::Delete(key)
+}
 
 ///|
 pub enum TextOp {
@@ -63,6 +106,32 @@ pub enum TextOp {
 } derive(Eq, Show)
 
 ///|
+pub fn TextOp::insert(pos : UInt, text : String) -> TextOp {
+  TextOp::Insert(pos, text)
+}
+
+///|
+pub fn TextOp::delete(pos : Int, len : Int64, start_id : ID) -> TextOp {
+  TextOp::Delete(pos, len, start_id)
+}
+
+///|
+pub fn TextOp::mark(
+  start : UInt,
+  end : UInt,
+  key : String,
+  value : LoroValue,
+  info : Byte,
+) -> TextOp {
+  TextOp::Mark(start, end, key, value, info)
+}
+
+///|
+pub fn TextOp::mark_end() -> TextOp {
+  TextOp::MarkEnd
+}
+
+///|
 pub enum TreeOp {
   Create(ID, ID?, FractionalIndex)
   Move(ID, ID?, FractionalIndex)
@@ -70,9 +139,29 @@ pub enum TreeOp {
 } derive(Eq, Show)
 
 ///|
+pub fn TreeOp::create(target : ID, parent : ID?, position : FractionalIndex) -> TreeOp {
+  TreeOp::Create(target, parent, position)
+}
+
+///|
+pub fn TreeOp::move(target : ID, parent : ID?, position : FractionalIndex) -> TreeOp {
+  TreeOp::Move(target, parent, position)
+}
+
+///|
+pub fn TreeOp::delete(target : ID) -> TreeOp {
+  TreeOp::Delete(target)
+}
+
+///|
 pub enum FutureOp {
   Unknown(Int, Value) // (prop, raw encoded value)
 } derive(Eq, Show)
+
+///|
+pub fn FutureOp::unknown(prop : Int, value : Value) -> FutureOp {
+  FutureOp::Unknown(prop, value)
+}
 
 ///|
 pub enum OpContent {
@@ -83,6 +172,36 @@ pub enum OpContent {
   Tree(TreeOp)
   Future(FutureOp)
 } derive(Eq, Show)
+
+///|
+pub fn OpContent::list(op : ListOp) -> OpContent {
+  OpContent::List(op)
+}
+
+///|
+pub fn OpContent::movable_list(op : MovableListOp) -> OpContent {
+  OpContent::MovableList(op)
+}
+
+///|
+pub fn OpContent::map(op : MapOp) -> OpContent {
+  OpContent::Map(op)
+}
+
+///|
+pub fn OpContent::text(op : TextOp) -> OpContent {
+  OpContent::Text(op)
+}
+
+///|
+pub fn OpContent::tree(op : TreeOp) -> OpContent {
+  OpContent::Tree(op)
+}
+
+///|
+pub fn OpContent::future(op : FutureOp) -> OpContent {
+  OpContent::Future(op)
+}
 
 ///|
 pub struct Op {

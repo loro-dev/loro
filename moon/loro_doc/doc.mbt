@@ -5,8 +5,21 @@ pub struct CommitOptions {
 }
 
 ///|
+pub fn CommitOptions::new(
+  timestamp : Int64?,
+  message : String?,
+) -> CommitOptions {
+  { timestamp, message }
+}
+
+///|
 pub struct ExportOptions {
   from : @loro_codec.VersionVector?
+}
+
+///|
+pub fn ExportOptions::new(from : @loro_codec.VersionVector?) -> ExportOptions {
+  { from }
 }
 
 enum PendingOpContent {
@@ -20,6 +33,8 @@ enum PendingOpContent {
   MovableListSet(@loro_codec.IdLp, Value)
   TextInsert(Int, String)
   TextDelete(Int, Int, @loro_codec.ID)
+  TextMark(Int, Int, String, Value, Byte)
+  TextMarkEnd
 }
 
 struct PendingOp {
@@ -31,20 +46,24 @@ struct PendingOp {
 }
 
 struct DocInner {
-  peer : UInt64
+  mut peer : UInt64
   vv : @hashmap.HashMap[UInt64, Int]
-  frontiers : Array[@loro_codec.ID]
+  mut frontiers : Array[@loro_codec.ID]
   frontier_lamports : @hashmap.HashMap[String, UInt]
   change_vv_ends : @hashmap.HashMap[String, @hashmap.HashMap[UInt64, Int]]
-  txn_deps : Array[@loro_codec.ID]?
-  txn_start_counter : Int
-  txn_start_lamport : UInt
-  txn_next_counter : Int
-  txn_next_lamport : UInt
+  change_deps_vv_bases : @hashmap.HashMap[String, @hashmap.HashMap[UInt64, Int]]
+  pending_changes : @hashmap.HashMap[String, @loro_codec.Change]
+  mut txn_deps : Array[@loro_codec.ID]?
+  mut txn_start_counter : Int
+  mut txn_start_lamport : UInt
+  mut txn_next_counter : Int
+  mut txn_next_lamport : UInt
   keys : Array[String]
   key_to_idx : @hashmap.HashMap[String, UInt64]
+  text_style_configs : @hashmap.HashMap[String, ExpandType]
+  mut text_default_style : ExpandType?
   oplog_changes : Array[@loro_codec.Change]
-  pending_ops : Array[PendingOp]
+  mut pending_ops : Array[PendingOp]
   roots : @hashmap.HashMap[String, @loro_codec.ContainerID]
   map_states : @hashmap.HashMap[String, MapState]
   list_trackers : @hashmap.HashMap[String, SeqTracker]
@@ -58,6 +77,18 @@ pub struct LoroDoc {
   inner : DocInner
 }
 
+fn default_text_style_configs() -> @hashmap.HashMap[String, ExpandType] {
+  let m = @hashmap.new(capacity=8)
+  m.set("bold", ExpandType::After)
+  m.set("italic", ExpandType::After)
+  m.set("underline", ExpandType::After)
+  m.set("link", ExpandType::None_)
+  m.set("highlight", ExpandType::None_)
+  m.set("comment", ExpandType::None_)
+  m.set("code", ExpandType::None_)
+  m
+}
+
 ///|
 pub fn LoroDoc::new() -> LoroDoc {
   {
@@ -67,6 +98,8 @@ pub fn LoroDoc::new() -> LoroDoc {
       frontiers: [],
       frontier_lamports: @hashmap.new(capacity=4),
       change_vv_ends: @hashmap.new(capacity=16),
+      change_deps_vv_bases: @hashmap.new(capacity=16),
+      pending_changes: @hashmap.new(capacity=16),
       txn_deps: None,
       txn_start_counter: 0,
       txn_start_lamport: 0U,
@@ -74,6 +107,8 @@ pub fn LoroDoc::new() -> LoroDoc {
       txn_next_lamport: 0U,
       keys: [],
       key_to_idx: @hashmap.new(capacity=16),
+      text_style_configs: default_text_style_configs(),
+      text_default_style: None,
       oplog_changes: [],
       pending_ops: [],
       roots: @hashmap.new(capacity=8),
@@ -87,6 +122,57 @@ pub fn LoroDoc::new() -> LoroDoc {
 }
 
 ///|
+pub fn LoroDoc::configTextStyle(
+  self : LoroDoc,
+  styles : Array[(String, ExpandType)],
+) -> Unit raise LoroError {
+  for pair in styles {
+    let (key, expand) = pair
+    if key.contains(":") {
+      raise LoroError("configTextStyle: style key should not contain ':'")
+    }
+    self.inner.text_style_configs.set(key, expand)
+  }
+}
+
+///|
+pub fn LoroDoc::configDefaultTextStyle(
+  self : LoroDoc,
+  expand : ExpandType?,
+) -> Unit {
+  self.inner.text_default_style = expand
+}
+
+fn style_base_key(key : String) -> String {
+  let mut i = 0
+  while i < key.length() {
+    if key[i].to_int() == ':'.to_int() {
+      return key.unsafe_substring(start=0, end=i)
+    }
+    i = i + 1
+  }
+  key
+}
+
+fn LoroDoc::get_text_style_flag(
+  self : LoroDoc,
+  key : String,
+  is_delete : Bool,
+) -> Byte raise LoroError {
+  let base = style_base_key(key)
+  let expand = match self.inner.text_style_configs.get(base) {
+    None =>
+      match self.inner.text_default_style {
+        None => raise LoroError("text style config missing: " + base)
+        Some(d) => d
+      }
+    Some(e) => e
+  }
+  let expand = if is_delete { expand.reverse() } else { expand }
+  text_style_info_flag_from_expand(expand)
+}
+
+///|
 pub fn LoroDoc::peerId(self : LoroDoc) -> UInt64 {
   self.inner.peer
 }
@@ -94,7 +180,8 @@ pub fn LoroDoc::peerId(self : LoroDoc) -> UInt64 {
 ///|
 pub fn LoroDoc::setPeerId(self : LoroDoc, peer : UInt64) -> Unit raise LoroError {
   if self.inner.oplog_changes.length() != 0 ||
-    self.inner.pending_ops.length() != 0 {
+    self.inner.pending_ops.length() != 0 ||
+    self.inner.pending_changes.length() != 0 {
     raise LoroError("setPeerId: cannot change peer after edits/imports")
   }
   self.inner.peer = peer
@@ -114,7 +201,7 @@ pub fn LoroDoc::oplogVersion(self : LoroDoc) -> @loro_codec.VersionVector {
 }
 
 ///|
-pub fn LoroDoc::import(self : LoroDoc, bytes : Bytes) -> Unit raise LoroError {
+pub fn LoroDoc::importBytes(self : LoroDoc, bytes : Bytes) -> Unit raise LoroError {
   // Barrier: commit pending local ops first.
   self.commit_inner(None)
 
@@ -151,8 +238,9 @@ pub fn LoroDoc::import(self : LoroDoc, bytes : Bytes) -> Unit raise LoroError {
   })
 
   for c in incoming {
-    self.apply_incoming_change(c)
+    self.enqueue_pending_change(c)
   }
+  self.drain_pending_changes()
 }
 
 ///|
@@ -191,13 +279,13 @@ pub fn LoroDoc::export(
   for pair in by_peer {
     let (peer, changes) = pair
     changes.sort_by_key(c => c.id().counter())
-    let block = {
-      peers: [peer],
-      keys: self.inner.keys,
-      cids: [],
-      positions: [],
+    let block = @loro_codec.DecodedChangeBlock::new(
+      [peer],
+      self.inner.keys,
+      [],
+      [],
       changes,
-    }
+    )
     let encoded = @loro_codec.encode_change_block(block) catch {
       @loro_codec.EncodeError(msg) => raise LoroError("export: encode block failed: " + msg)
     }
@@ -237,7 +325,7 @@ pub fn LoroDoc::getMap(self : LoroDoc, name : String) -> LoroMap raise LoroError
   check_root_container_name(name)
   let cid = @loro_codec.ContainerID::root(name, @loro_codec.ContainerType::map())
   self.register_root(cid)
-  self.ensure_map_state(cid)
+  let _ = self.ensure_map_state(cid)
   { doc: self, cid }
 }
 
@@ -348,7 +436,7 @@ fn LoroDoc::commit_inner(
     Some(o) => o.message
   }
 
-  let mut change = @loro_codec.Change::new(
+  let change = @loro_codec.Change::new(
     @loro_codec.ID::new(peer, start_counter),
     timestamp,
     deps,
@@ -365,7 +453,7 @@ fn LoroDoc::commit_inner(
             p.container,
             p.counter,
             p.len,
-            @loro_codec.OpContent::Map(@loro_codec.MapOp::Insert(key, lv)),
+            @loro_codec.OpContent::map(@loro_codec.MapOp::insert(key, lv)),
           ),
         )
       }
@@ -375,7 +463,7 @@ fn LoroDoc::commit_inner(
             p.container,
             p.counter,
             p.len,
-            @loro_codec.OpContent::Map(@loro_codec.MapOp::Delete(key)),
+            @loro_codec.OpContent::map(@loro_codec.MapOp::delete(key)),
           ),
         )
       }
@@ -391,8 +479,8 @@ fn LoroDoc::commit_inner(
             p.container,
             p.counter,
             p.len,
-            @loro_codec.OpContent::List(
-              @loro_codec.ListOp::Insert(pos.reinterpret_as_uint(), out),
+            @loro_codec.OpContent::list(
+              @loro_codec.ListOp::insert(pos.reinterpret_as_uint(), out),
             ),
           ),
         )
@@ -403,8 +491,8 @@ fn LoroDoc::commit_inner(
             p.container,
             p.counter,
             p.len,
-            @loro_codec.OpContent::List(
-              @loro_codec.ListOp::Delete(pos, len.to_int64(), start_id),
+            @loro_codec.OpContent::list(
+              @loro_codec.ListOp::delete(pos, len.to_int64(), start_id),
             ),
           ),
         )
@@ -421,8 +509,8 @@ fn LoroDoc::commit_inner(
             p.container,
             p.counter,
             p.len,
-            @loro_codec.OpContent::MovableList(
-              @loro_codec.MovableListOp::Insert(pos.reinterpret_as_uint(), out),
+            @loro_codec.OpContent::movable_list(
+              @loro_codec.MovableListOp::insert(pos.reinterpret_as_uint(), out),
             ),
           ),
         )
@@ -433,8 +521,8 @@ fn LoroDoc::commit_inner(
             p.container,
             p.counter,
             p.len,
-            @loro_codec.OpContent::MovableList(
-              @loro_codec.MovableListOp::Delete(pos, len.to_int64(), start_id),
+            @loro_codec.OpContent::movable_list(
+              @loro_codec.MovableListOp::delete(pos, len.to_int64(), start_id),
             ),
           ),
         )
@@ -445,8 +533,8 @@ fn LoroDoc::commit_inner(
             p.container,
             p.counter,
             p.len,
-            @loro_codec.OpContent::MovableList(
-              @loro_codec.MovableListOp::Move(
+            @loro_codec.OpContent::movable_list(
+              @loro_codec.MovableListOp::move(
                 from.reinterpret_as_uint(),
                 to.reinterpret_as_uint(),
                 elem_id,
@@ -462,8 +550,8 @@ fn LoroDoc::commit_inner(
             p.container,
             p.counter,
             p.len,
-            @loro_codec.OpContent::MovableList(
-              @loro_codec.MovableListOp::Set(elem_id, lv),
+            @loro_codec.OpContent::movable_list(
+              @loro_codec.MovableListOp::set(elem_id, lv),
             ),
           ),
         )
@@ -474,8 +562,8 @@ fn LoroDoc::commit_inner(
             p.container,
             p.counter,
             p.len,
-            @loro_codec.OpContent::Text(
-              @loro_codec.TextOp::Insert(pos.reinterpret_as_uint(), text),
+            @loro_codec.OpContent::text(
+              @loro_codec.TextOp::insert(pos.reinterpret_as_uint(), text),
             ),
           ),
         )
@@ -486,12 +574,40 @@ fn LoroDoc::commit_inner(
             p.container,
             p.counter,
             p.len,
-            @loro_codec.OpContent::Text(
-              @loro_codec.TextOp::Delete(pos, len.to_int64(), start_id),
+            @loro_codec.OpContent::text(
+              @loro_codec.TextOp::delete(pos, len.to_int64(), start_id),
             ),
           ),
         )
       }
+      PendingOpContent::TextMark(start, end, key, value, info) => {
+        let lv = encode_value_to_loro_value(value, self.inner.keys, self.inner.key_to_idx)
+        change.ops().push(
+          @loro_codec.Op::new(
+            p.container,
+            p.counter,
+            p.len,
+            @loro_codec.OpContent::text(
+              @loro_codec.TextOp::mark(
+                start.reinterpret_as_uint(),
+                end.reinterpret_as_uint(),
+                key,
+                lv,
+                info,
+              ),
+            ),
+          ),
+        )
+      }
+      PendingOpContent::TextMarkEnd =>
+        change.ops().push(
+          @loro_codec.Op::new(
+            p.container,
+            p.counter,
+            p.len,
+            @loro_codec.OpContent::text(@loro_codec.TextOp::mark_end()),
+          ),
+        )
     }
   }
 
@@ -523,7 +639,17 @@ fn LoroDoc::next_lamport_from_frontiers(
   for id in deps {
     let key = id_string(id)
     match self.inner.frontier_lamports.get(key) {
-      None => raise LoroError("missing lamport for frontier " + key)
+      None =>
+        match self.lamport_for_id(id) {
+          None => raise LoroError("missing lamport for frontier " + key)
+          Some(lp) =>
+            match max_lp {
+              None => max_lp = Some(lp)
+              Some(m) => if lp > m {
+                max_lp = Some(lp)
+              }
+            }
+        }
       Some(lp) =>
         match max_lp {
           None => max_lp = Some(lp)
@@ -544,7 +670,7 @@ fn LoroDoc::normalize_change(
   change : @loro_codec.Change,
   block_keys : Array[String],
 ) -> @loro_codec.Change raise LoroError {
-  let mut out = @loro_codec.Change::new(
+  let out = @loro_codec.Change::new(
     change.id(),
     change.timestamp(),
     change.deps(),
@@ -579,7 +705,7 @@ fn LoroDoc::normalize_op_content(
         self.inner.keys,
         self.inner.key_to_idx,
       )
-      @loro_codec.OpContent::Map(@loro_codec.MapOp::Insert(key, v2))
+      @loro_codec.OpContent::map(@loro_codec.MapOp::insert(key, v2))
     }
     @loro_codec.OpContent::List(@loro_codec.ListOp::Insert(pos, items)) => {
       let out : Array[@loro_codec.LoroValue] = []
@@ -593,7 +719,7 @@ fn LoroDoc::normalize_op_content(
           ),
         )
       }
-      @loro_codec.OpContent::List(@loro_codec.ListOp::Insert(pos, out))
+      @loro_codec.OpContent::list(@loro_codec.ListOp::insert(pos, out))
     }
     @loro_codec.OpContent::MovableList(@loro_codec.MovableListOp::Insert(pos, items)) => {
       let out : Array[@loro_codec.LoroValue] = []
@@ -607,7 +733,7 @@ fn LoroDoc::normalize_op_content(
           ),
         )
       }
-      @loro_codec.OpContent::MovableList(@loro_codec.MovableListOp::Insert(pos, out))
+      @loro_codec.OpContent::movable_list(@loro_codec.MovableListOp::insert(pos, out))
     }
     @loro_codec.OpContent::MovableList(@loro_codec.MovableListOp::Set(idlp, value)) => {
       let v2 = normalize_loro_value_keys(
@@ -616,7 +742,7 @@ fn LoroDoc::normalize_op_content(
         self.inner.keys,
         self.inner.key_to_idx,
       )
-      @loro_codec.OpContent::MovableList(@loro_codec.MovableListOp::Set(idlp, v2))
+      @loro_codec.OpContent::movable_list(@loro_codec.MovableListOp::set(idlp, v2))
     }
     @loro_codec.OpContent::Text(@loro_codec.TextOp::Mark(start, end, key, value, info)) => {
       let v2 = normalize_loro_value_keys(
@@ -625,7 +751,7 @@ fn LoroDoc::normalize_op_content(
         self.inner.keys,
         self.inner.key_to_idx,
       )
-      @loro_codec.OpContent::Text(@loro_codec.TextOp::Mark(start, end, key, v2, info))
+      @loro_codec.OpContent::text(@loro_codec.TextOp::mark(start, end, key, v2, info))
     }
     _ => content
   }
@@ -660,19 +786,154 @@ fn LoroDoc::apply_incoming_change(
   self : LoroDoc,
   change : @loro_codec.Change,
 ) -> Unit raise LoroError {
+  let _ = self.try_apply_incoming_change(change) catch {
+    LoroError(msg) => raise LoroError(msg)
+  }
+}
+
+fn LoroDoc::is_change_applied(self : LoroDoc, change : @loro_codec.Change) -> Bool {
+  let peer = change.id().peer()
+  let atom_len = change_atom_len(change)
+  let end_excl = change.id().counter() + atom_len
+  vv_get(self.inner.vv, peer) >= end_excl
+}
+
+fn pending_change_key(change : @loro_codec.Change) -> String {
+  id_string(change_last_id(change))
+}
+
+fn LoroDoc::enqueue_pending_change(self : LoroDoc, change : @loro_codec.Change) -> Unit {
+  if self.is_change_applied(change) {
+    return
+  }
+  let key = pending_change_key(change)
+  // De-dup by last_id (unique per change).
+  match self.inner.pending_changes.get(key) {
+    None => self.inner.pending_changes.set(key, change)
+    Some(_) => ()
+  }
+}
+
+fn sort_changes_in_place(changes : Array[@loro_codec.Change]) -> Unit {
+  // Deterministic order: (lamport, peer, counter).
+  let counter_bias = BigInt::from_int64(-2147483648L)
+  changes.sort_by_key(c => {
+    let lamport_key = BigInt::from_uint64(c.lamport().to_uint64()) << 96
+    let peer_key = BigInt::from_uint64(c.id().peer()) << 32
+    let counter_key = BigInt::from_int(c.id().counter()) - counter_bias
+    lamport_key | peer_key | counter_key
+  })
+}
+
+fn LoroDoc::drain_pending_changes(self : LoroDoc) -> Unit raise LoroError {
+  // Apply any pending changes whose deps are now satisfied.
+  // We iterate until no progress because applying a change can satisfy others.
+  let mut progressed = true
+  while progressed {
+    progressed = false
+    if self.inner.pending_changes.length() == 0 {
+      break
+    }
+    let candidates : Array[@loro_codec.Change] = []
+    for pair in self.inner.pending_changes {
+      let (_k, c) = pair
+      candidates.push(c)
+    }
+    sort_changes_in_place(candidates)
+    for c in candidates {
+      let applied = self.try_apply_incoming_change(c)
+      if applied {
+        self.inner.pending_changes.remove(pending_change_key(c))
+        progressed = true
+      }
+    }
+  }
+}
+
+fn LoroDoc::lamport_for_id(self : LoroDoc, id : @loro_codec.ID) -> UInt? {
+  let key = id_string(id)
+  match self.inner.frontier_lamports.get(key) {
+    Some(lp) => Some(lp)
+    None => {
+      let peer = id.peer()
+      let counter = id.counter()
+      for c in self.inner.oplog_changes {
+        if c.id().peer() != peer {
+          continue
+        }
+        let start = c.id().counter()
+        let len = change_atom_len(c)
+        let end_excl = start + len
+        if counter < start || counter >= end_excl {
+          continue
+        }
+        let offset = counter - start
+        if offset < 0 {
+          continue
+        }
+        let lp = c.lamport() + offset.reinterpret_as_uint()
+        self.inner.frontier_lamports.set(key, lp)
+        return Some(lp)
+      }
+      None
+    }
+  }
+}
+
+fn LoroDoc::vv_end_for_id(
+  self : LoroDoc,
+  id : @loro_codec.ID,
+) -> @hashmap.HashMap[UInt64, Int]? {
+  let key = id_string(id)
+  match self.inner.change_vv_ends.get(key) {
+    Some(v) => Some(v)
+    None => {
+      let peer = id.peer()
+      let counter = id.counter()
+      for c in self.inner.oplog_changes {
+        if c.id().peer() != peer {
+          continue
+        }
+        let start = c.id().counter()
+        let len = change_atom_len(c)
+        let end_excl = start + len
+        if counter < start || counter >= end_excl {
+          continue
+        }
+        let last_id = change_last_id(c)
+        let base_key = id_string(last_id)
+        let base =
+          match self.inner.change_deps_vv_bases.get(base_key) {
+            None => @hashmap.new(capacity=0)
+            Some(vv) => vv
+          }
+        let vv = vv_clone(base)
+        vv_set_max(vv, peer, counter + 1)
+        self.inner.change_vv_ends.set(key, vv)
+        return self.inner.change_vv_ends.get(key)
+      }
+      None
+    }
+  }
+}
+
+// Try to apply a change; returns false if deps are missing and it should be kept pending.
+fn LoroDoc::try_apply_incoming_change(
+  self : LoroDoc,
+  change : @loro_codec.Change,
+) -> Bool raise LoroError {
   let peer = change.id().peer()
   let atom_len = change_atom_len(change)
   let end_excl = change.id().counter() + atom_len
   if vv_get(self.inner.vv, peer) >= end_excl {
-    return
+    return true
   }
 
   // Build the causal context vv for this change (merge of deps' vv_end).
   let deps_vv : @hashmap.HashMap[UInt64, Int] = @hashmap.new(capacity=8)
   for dep in change.deps() {
-    let key = id_string(dep)
-    match self.inner.change_vv_ends.get(key) {
-      None => raise LoroError("import: deps not satisfied: missing " + key)
+    match self.vv_end_for_id(dep) {
+      None => return false
       Some(vv_end) =>
         for pair in vv_end {
           let (p, c) = pair
@@ -686,11 +947,15 @@ fn LoroDoc::apply_incoming_change(
   vv_set_max(self.inner.vv, peer, end_excl)
   let last_id = change_last_id(change)
   let last_lamport = change_last_lamport(change)
-  self.inner.frontier_lamports.set(id_string(last_id), last_lamport)
-  self.inner.change_vv_ends.set(id_string(last_id), vv_clone(self.inner.vv))
+  let last_key = id_string(last_id)
+  self.inner.frontier_lamports.set(last_key, last_lamport)
+  let vv_end = vv_clone(deps_vv)
+  vv_set_max(vv_end, peer, end_excl)
+  self.inner.change_vv_ends.set(last_key, vv_end)
+  self.inner.change_deps_vv_bases.set(last_key, vv_clone(deps_vv))
 
   // Update frontiers (best-effort without full DAG).
-  let mut next_frontiers : Array[@loro_codec.ID] = []
+  let next_frontiers : Array[@loro_codec.ID] = []
   for f in self.inner.frontiers {
     let mut is_dep = false
     for d in change.deps() {
@@ -709,6 +974,7 @@ fn LoroDoc::apply_incoming_change(
   let merged_vv = self.inner.vv
 
   // Apply to state.
+  let mut pending_text_mark : (String, Int, String, Value, Byte, @loro_codec.IdLp)? = None
   for op in change.ops() {
     // Checkout the seq trackers to the causal context before this op.
     let vv_before_op = vv_clone(deps_vv)
@@ -737,6 +1003,7 @@ fn LoroDoc::apply_incoming_change(
       }
       @loro_codec.OpContent::List(l) => {
         self.register_root(op.container())
+        let cid_key = container_id_string(op.container())
         let t = self.ensure_list_tracker(op.container())
         t.checkout(vv_before_op)
         let offset = op.counter() - change.id().counter()
@@ -782,9 +1049,11 @@ fn LoroDoc::apply_incoming_change(
         }
         // Restore to the merged current version so future spans become visible again.
         t.checkout(merged_vv)
+        self.inner.list_trackers.set(cid_key, t)
       }
       @loro_codec.OpContent::MovableList(ml) => {
         self.register_root(op.container())
+        let cid_key = container_id_string(op.container())
         let s = self.ensure_movable_list_state(op.container())
         s.tracker.checkout(vv_before_op)
         let offset = op.counter() - change.id().counter()
@@ -795,6 +1064,10 @@ fn LoroDoc::apply_incoming_change(
         let op_id = SeqIdFull::new(peer, op.counter(), op_lamport)
         match ml {
           @loro_codec.MovableListOp::Insert(pos, items) => {
+            let end_excl = op.counter() + items.length()
+            if vv_get(s.tracker.applied_vv, peer) >= end_excl {
+              // Already applied via a different change (FastUpdates may squash commits).
+            } else {
             let out : Array[Value] = []
             for i in 0..<items.length() {
               let v = decode_value_from_loro_value(
@@ -828,6 +1101,7 @@ fn LoroDoc::apply_incoming_change(
                 pos_item_id: item_id,
               })
             }
+            }
           }
           @loro_codec.MovableListOp::Delete(pos, signed_len, start_id) => {
             if signed_len == 0L {
@@ -839,6 +1113,10 @@ fn LoroDoc::apply_incoming_change(
             } else {
               signed_len.to_int()
             }
+            let end_excl = op.counter() + abs_len
+            if vv_get(s.tracker.applied_vv, peer) >= end_excl {
+              // Already applied; skip side effects to keep movable list identity stable.
+            } else {
             let start_pos = if signed_len > 0L {
               pos
             } else {
@@ -864,8 +1142,13 @@ fn LoroDoc::apply_incoming_change(
                 }
               }
             }
+            }
           }
           @loro_codec.MovableListOp::Move(from, to, elem_id) => {
+            let end_excl = op.counter() + 1
+            if vv_get(s.tracker.applied_vv, peer) >= end_excl {
+              // Already applied; avoid resetting pos_id / item_to_elem.
+            } else {
             let from_pos = from.to_int()
             let to_pos = to.to_int()
             let deleted_id = s.tracker.rope.id_at_active_index(from_pos)
@@ -881,6 +1164,7 @@ fn LoroDoc::apply_incoming_change(
                   e.pos_item_id = new_item_id
                 }
               }
+            }
             }
           }
           @loro_codec.MovableListOp::Set(elem_id, lv) => {
@@ -906,9 +1190,11 @@ fn LoroDoc::apply_incoming_change(
           }
         }
         s.tracker.checkout(merged_vv)
+        self.inner.movable_list_states.set(cid_key, s)
       }
       @loro_codec.OpContent::Text(t2) => {
         self.register_root(op.container())
+        let op_cid_key = container_id_string(op.container())
         let t = self.ensure_text_tracker(op.container())
         t.checkout(vv_before_op)
         let offset = op.counter() - change.id().counter()
@@ -939,13 +1225,70 @@ fn LoroDoc::apply_incoming_change(
             }
             t.delete(@loro_codec.ID::new(peer, op.counter()), start_id, start_pos, abs_len, reversed)
           }
-          _ => raise LoroError("import: unsupported text op")
+          @loro_codec.TextOp::Mark(start, end, key, lv, info) => {
+            let value = decode_value_from_loro_value(
+              lv,
+              self.inner.keys,
+              @loro_codec.ID::new(peer, op.counter()),
+            )
+            match value {
+              Value::Container(child) => self.ensure_container_state(child)
+              _ => ()
+            }
+            let style_id = @loro_codec.IdLp::new(peer, op_lamport)
+            t.insert(
+              op_id,
+              start.to_int(),
+              SeqContent::TextStyleAnchor({
+                style_id,
+                key,
+                value,
+                info,
+                anchor_type: TextAnchorType::Start,
+              }),
+            )
+            pending_text_mark = Some(
+              (
+                op_cid_key,
+                end.to_int(),
+                key,
+                value,
+                info,
+                style_id,
+              ),
+            )
+          }
+          @loro_codec.TextOp::MarkEnd =>
+            match pending_text_mark {
+              None => raise LoroError("import: MarkEnd without Mark")
+              Some(pending) => {
+                let (pending_cid_key, end_entity, key, value, info, style_id) = pending
+                if pending_cid_key != op_cid_key {
+                  raise LoroError("import: MarkEnd container mismatch")
+                }
+                t.insert(
+                  op_id,
+                  end_entity + 1,
+                  SeqContent::TextStyleAnchor({
+                    style_id,
+                    key,
+                    value,
+                    info,
+                    anchor_type: TextAnchorType::End,
+                  }),
+                )
+                pending_text_mark = None
+              }
+            }
         }
         t.checkout(merged_vv)
+        self.inner.text_trackers.set(op_cid_key, t)
       }
       _ => raise LoroError("import: unsupported op content")
     }
   }
+
+  true
 }
 
 fn LoroDoc::has_container(self : LoroDoc, cid : @loro_codec.ContainerID) -> Bool {

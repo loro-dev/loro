@@ -41,8 +41,8 @@ fn seq_id_span_len(span : SeqIdSpan) -> Int {
 }
 
 struct SeqStatus {
-  future : Bool
-  delete_times : Int
+  mut future : Bool
+  mut delete_times : Int
 }
 
 fn SeqStatus::new() -> SeqStatus {
@@ -53,11 +53,29 @@ fn SeqStatus::is_activated(self : SeqStatus) -> Bool {
   self.delete_times == 0 && !self.future
 }
 
+fn SeqStatus::clone(self : SeqStatus) -> SeqStatus {
+  { future: self.future, delete_times: self.delete_times }
+}
+
 enum SeqContent {
   List(Array[Value])
   Text(String, Int) // (utf8 string, unicode scalar count)
   Unknown(Int)
   MoveAnchor
+  TextStyleAnchor(TextStyleAnchor)
+}
+
+enum TextAnchorType {
+  Start
+  End
+} derive(Eq, Show)
+
+struct TextStyleAnchor {
+  style_id : @loro_codec.IdLp
+  key : String
+  value : Value
+  info : Byte
+  anchor_type : TextAnchorType
 }
 
 fn seq_status_eq(a : SeqStatus, b : SeqStatus) -> Bool {
@@ -130,6 +148,7 @@ fn seq_content_len(content : SeqContent) -> Int {
     SeqContent::Text(_s, n) => n
     SeqContent::Unknown(n) => n
     SeqContent::MoveAnchor => 1
+    SeqContent::TextStyleAnchor(_) => 1
   }
 }
 
@@ -167,6 +186,12 @@ fn seq_content_slice(content : SeqContent, start : Int, end : Int) -> SeqContent
         raise LoroError("seq_content_slice: move anchor must be len=1")
       }
       SeqContent::MoveAnchor
+    }
+    SeqContent::TextStyleAnchor(a) => {
+      if len != 1 {
+        raise LoroError("seq_content_slice: style anchor must be len=1")
+      }
+      SeqContent::TextStyleAnchor(a)
     }
   }
 }

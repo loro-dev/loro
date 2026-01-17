@@ -13,6 +13,56 @@ pub enum Value {
 } derive(Eq, Show)
 
 ///|
+pub fn Value::null() -> Value {
+  Value::Null
+}
+
+///|
+pub fn Value::true_() -> Value {
+  Value::True
+}
+
+///|
+pub fn Value::false_() -> Value {
+  Value::False
+}
+
+///|
+pub fn Value::i64(i : Int64) -> Value {
+  Value::I64(i)
+}
+
+///|
+pub fn Value::f64(f : Double) -> Value {
+  Value::F64(f)
+}
+
+///|
+pub fn Value::str(s : String) -> Value {
+  Value::Str(s)
+}
+
+///|
+pub fn Value::binary(bytes : Bytes) -> Value {
+  Value::Binary(bytes)
+}
+
+///|
+pub fn Value::list(items : Array[Value]) -> Value {
+  Value::List(items)
+}
+
+///|
+pub fn Value::map(items : Array[(String, Value)]) -> Value {
+  Value::Map(items)
+}
+
+///|
+pub fn Value::container(cid : @loro_codec.ContainerID) -> Value {
+  Value::Container(cid)
+}
+
+///|
 fn binary_json(bytes : Bytes) -> Json {
   let out : Array[Json] = []
   for b in bytes {
@@ -68,19 +118,19 @@ fn encode_value_to_loro_value(
   key_to_idx : @hashmap.HashMap[String, UInt64],
 ) -> @loro_codec.LoroValue raise LoroError {
   match value {
-    Value::Null => @loro_codec.LoroValue::Null
-    Value::True => @loro_codec.LoroValue::True
-    Value::False => @loro_codec.LoroValue::False
-    Value::I64(i) => @loro_codec.LoroValue::I64(i)
-    Value::F64(f) => @loro_codec.LoroValue::F64(f)
-    Value::Str(s) => @loro_codec.LoroValue::Str(s)
-    Value::Binary(b) => @loro_codec.LoroValue::Binary(b)
+    Value::Null => @loro_codec.LoroValue::null()
+    Value::True => @loro_codec.LoroValue::true_()
+    Value::False => @loro_codec.LoroValue::false_()
+    Value::I64(i) => @loro_codec.LoroValue::i64(i)
+    Value::F64(f) => @loro_codec.LoroValue::f64(f)
+    Value::Str(s) => @loro_codec.LoroValue::str(s)
+    Value::Binary(b) => @loro_codec.LoroValue::binary(b)
     Value::List(items) => {
       let out : Array[@loro_codec.LoroValue] = []
       for it in items {
         out.push(encode_value_to_loro_value(it, keys, key_to_idx))
       }
-      @loro_codec.LoroValue::List(out)
+      @loro_codec.LoroValue::list(out)
     }
     Value::Map(items) => {
       let out : Array[(UInt64, @loro_codec.LoroValue)] = []
@@ -89,14 +139,14 @@ fn encode_value_to_loro_value(
         let idx = register_key(keys, key_to_idx, k)
         out.push((idx, encode_value_to_loro_value(v, keys, key_to_idx)))
       }
-      @loro_codec.LoroValue::Map(out)
+      @loro_codec.LoroValue::map(out)
     }
     Value::Container(cid) => {
       let kind = match cid {
         @loro_codec.ContainerID::Root(_name, k) => k
         @loro_codec.ContainerID::Normal(_peer, _counter, k) => k
       }
-      @loro_codec.LoroValue::ContainerType(@loro_codec.container_type_to_u8(kind))
+      @loro_codec.LoroValue::container_type(@loro_codec.container_type_to_u8(kind))
     }
   }
 }
@@ -154,7 +204,7 @@ fn normalize_loro_value_keys(
           ),
         )
       }
-      @loro_codec.LoroValue::Map(out)
+      @loro_codec.LoroValue::map(out)
     }
     @loro_codec.LoroValue::List(items) => {
       let out : Array[@loro_codec.LoroValue] = []
@@ -163,7 +213,7 @@ fn normalize_loro_value_keys(
           normalize_loro_value_keys(it, block_keys, doc_keys, doc_key_to_idx),
         )
       }
-      @loro_codec.LoroValue::List(out)
+      @loro_codec.LoroValue::list(out)
     }
     _ => value
   }

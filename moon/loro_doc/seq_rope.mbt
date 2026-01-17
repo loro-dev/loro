@@ -6,12 +6,12 @@ enum SeqDiffStatus {
 
 struct SeqSpan {
   id : SeqIdFull
-  real_id : @loro_codec.ID?
+  mut real_id : @loro_codec.ID?
   status : SeqStatus
-  diff_status : SeqStatus?
-  origin_left : @loro_codec.ID?
-  origin_right : @loro_codec.ID?
-  content : SeqContent
+  mut diff_status : SeqStatus?
+  mut origin_left : @loro_codec.ID?
+  mut origin_right : @loro_codec.ID?
+  mut content : SeqContent
 }
 
 fn SeqSpan::new(id : SeqIdFull, content : SeqContent) -> SeqSpan {
@@ -149,8 +149,12 @@ fn SeqSpan::slice(self : SeqSpan, start : Int, end : Int) -> SeqSpan raise LoroE
   {
     id: new_id,
     real_id: new_real_id,
-    status: self.status,
-    diff_status: self.diff_status,
+    status: self.status.clone(),
+    diff_status:
+      match self.diff_status {
+        None => None
+        Some(d) => Some(d.clone())
+      },
     origin_left: new_origin_left,
     origin_right: self.origin_right,
     content: seq_content_slice(self.content, start, end),
@@ -225,7 +229,7 @@ struct SeqInsertScanElem {
 }
 
 struct SeqRope {
-  spans : Array[SeqSpan]
+  mut spans : Array[SeqSpan]
 }
 
 fn SeqRope::new() -> SeqRope {
@@ -466,7 +470,7 @@ fn SeqRope::insert_at_active_pos(
     })
   }
 
-  let mut new_span = content
+  let new_span = content
   new_span.origin_left = origin_left
   new_span.origin_right = origin_right
 
@@ -694,7 +698,7 @@ fn SeqRope::update_id_range(
   }
   let out : Array[SeqSpan] = []
   for span0 in self.spans {
-    let mut span = span0
+    let span = span0
     if span.id.peer != peer {
       out.push(span)
       continue
@@ -710,10 +714,11 @@ fn SeqRope::update_id_range(
     if ov_start == 0 && ov_end == span.rle_len() {
       // full
       if on_diff_status {
-        let mut d = match span.diff_status {
-          None => span.status
-          Some(x) => x
-        }
+        let d =
+          match span.diff_status {
+            None => span.status.clone()
+            Some(x) => x.clone()
+          }
         match set_future {
           None => ()
           Some(f) => d.future = f
@@ -732,12 +737,13 @@ fn SeqRope::update_id_range(
       if ov_start > 0 {
         out.push(span.slice(0, ov_start))
       }
-      let mut mid = span.slice(ov_start, ov_end)
+      let mid = span.slice(ov_start, ov_end)
       if on_diff_status {
-        let mut d = match mid.diff_status {
-          None => mid.status
-          Some(x) => x
-        }
+        let d =
+          match mid.diff_status {
+            None => mid.status.clone()
+            Some(x) => x.clone()
+          }
         match set_future {
           None => ()
           Some(f) => d.future = f

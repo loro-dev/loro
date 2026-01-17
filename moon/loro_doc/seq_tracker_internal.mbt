@@ -49,13 +49,13 @@ test "seq tracker concurrent inserts converge by peer" {
   try! t_ab.insert(
     SeqIdFull::new(1UL, 0, 0U),
     0,
-    SeqContent::List([Value::Str("A")]),
+    SeqContent::List([Value::str("A")]),
   )
   try! t_ab.checkout(vv_empty)
   try! t_ab.insert(
     SeqIdFull::new(2UL, 0, 0U),
     0,
-    SeqContent::List([Value::Str("B")]),
+    SeqContent::List([Value::str("B")]),
   )
   try! t_ab.checkout(vv_merged)
 
@@ -63,13 +63,13 @@ test "seq tracker concurrent inserts converge by peer" {
   try! t_ba.insert(
     SeqIdFull::new(2UL, 0, 0U),
     0,
-    SeqContent::List([Value::Str("B")]),
+    SeqContent::List([Value::str("B")]),
   )
   try! t_ba.checkout(vv_empty)
   try! t_ba.insert(
     SeqIdFull::new(1UL, 0, 0U),
     0,
-    SeqContent::List([Value::Str("A")]),
+    SeqContent::List([Value::str("A")]),
   )
   try! t_ba.checkout(vv_merged)
 
@@ -90,17 +90,16 @@ test "seq tracker diff emits created inserts" {
   try! t.insert(
     SeqIdFull::new(1UL, 0, 0U),
     0,
-    SeqContent::List([Value::Str("A")]),
+    SeqContent::List([Value::str("A")]),
   )
   try! t.checkout(vv_empty)
   try! t.insert(
     SeqIdFull::new(2UL, 0, 0U),
     0,
-    SeqContent::List([Value::Str("B")]),
+    SeqContent::List([Value::str("B")]),
   )
   // diff should not require current state to be at `to`
   let deltas = try! t.diff(vv_empty, vv_merged)
   let inserts = list_values_of_deltas(deltas)
   assert_eq(inserts, ["A", "B"])
 }
-

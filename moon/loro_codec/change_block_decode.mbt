@@ -103,6 +103,17 @@ pub struct DecodedChangeBlock {
 }
 
 ///|
+pub fn DecodedChangeBlock::new(
+  peers : Array[UInt64],
+  keys : Array[String],
+  cids : Array[ContainerID],
+  positions : Array[Bytes],
+  changes : Array[Change],
+) -> DecodedChangeBlock {
+  { peers, keys, cids, positions, changes }
+}
+
+///|
 pub fn DecodedChangeBlock::peers(self : DecodedChangeBlock) -> Array[UInt64] {
   self.peers
 }

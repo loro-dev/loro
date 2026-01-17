@@ -11,7 +11,7 @@ struct SeqOpEffectEntry {
 
 struct SeqTracker {
   applied_vv : @hashmap.HashMap[UInt64, Int]
-  current_vv : @hashmap.HashMap[UInt64, Int]
+  mut current_vv : @hashmap.HashMap[UInt64, Int]
   rope : SeqRope
   effects : @hashmap.HashMap[UInt64, Array[SeqOpEffectEntry]]
 }
@@ -26,7 +26,7 @@ fn SeqTracker::new() -> SeqTracker {
 }
 
 fn SeqTracker::new_with_unknown() -> SeqTracker {
-  let mut t = SeqTracker::new()
+  let t = SeqTracker::new()
   t.rope.spans.push(
     {
       id: SeqIdFull::new(SEQ_UNKNOWN_PEER_ID, 0, 0U),

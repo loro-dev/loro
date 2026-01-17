@@ -15,6 +15,59 @@ pub enum LoroValue {
   ContainerType(Byte)
 } derive(Eq, Show)
 
+// NOTE: MoonBit makes enum constructors read-only across packages. Expose explicit
+// constructor functions for callers (e.g. `loro_doc`).
+
+///|
+pub fn LoroValue::null() -> LoroValue {
+  LoroValue::Null
+}
+
+///|
+pub fn LoroValue::true_() -> LoroValue {
+  LoroValue::True
+}
+
+///|
+pub fn LoroValue::false_() -> LoroValue {
+  LoroValue::False
+}
+
+///|
+pub fn LoroValue::i64(x : Int64) -> LoroValue {
+  LoroValue::I64(x)
+}
+
+///|
+pub fn LoroValue::f64(x : Double) -> LoroValue {
+  LoroValue::F64(x)
+}
+
+///|
+pub fn LoroValue::str(s : String) -> LoroValue {
+  LoroValue::Str(s)
+}
+
+///|
+pub fn LoroValue::binary(b : Bytes) -> LoroValue {
+  LoroValue::Binary(b)
+}
+
+///|
+pub fn LoroValue::list(items : Array[LoroValue]) -> LoroValue {
+  LoroValue::List(items)
+}
+
+///|
+pub fn LoroValue::map(items : Array[(UInt64, LoroValue)]) -> LoroValue {
+  LoroValue::Map(items)
+}
+
+///|
+pub fn LoroValue::container_type(kind : Byte) -> LoroValue {
+  LoroValue::ContainerType(kind)
+}
+
 ///|
 pub enum Value {
   Null
