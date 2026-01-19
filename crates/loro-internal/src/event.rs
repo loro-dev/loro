@@ -431,12 +431,8 @@ impl Diff {
             (Diff::Map(a), Diff::Map(b)) => a.transform(b, left_prior),
             (Diff::Tree(a), Diff::Tree(b)) => a.transform(b, left_prior),
             #[cfg(feature = "counter")]
-            (Diff::Counter(a), Diff::Counter(b)) => {
-                if left_prior {
-                    *a += b;
-                } else {
-                    *a -= b;
-                }
+            (Diff::Counter(_a), Diff::Counter(_b)) => {
+                // Counter operations commute; no transformation is needed.
             }
             _ => {}
         }
