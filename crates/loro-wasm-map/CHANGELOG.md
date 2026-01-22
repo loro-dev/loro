@@ -1,5 +1,11 @@
 # loro-crdt-map
 
+## 1.10.5
+
+### Patch Changes
+
+- 2d6c235: Fix counter undo after remote updates #906
+
 ## 1.10.4
 
 ### Patch Changes
