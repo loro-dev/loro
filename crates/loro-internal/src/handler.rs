@@ -63,7 +63,7 @@ pub trait HandlerTrait: Clone + Sized {
 
     fn idx(&self) -> ContainerIdx {
         self.attached_handler()
-            .map(|x| x.container_idx)
+            .map(|x| x.container_idx())
             .unwrap_or_else(|| ContainerIdx::from_index_and_type(u32::MAX, self.kind()))
     }
 
@@ -81,7 +81,7 @@ pub trait HandlerTrait: Clone + Sized {
             })?;
         let state = inner.doc.state.clone();
         let mut guard = state.lock().unwrap();
-        guard.with_state_mut(inner.container_idx, f)
+        guard.with_state_mut(inner.container_idx(), f)
     }
 }
 
@@ -90,11 +90,25 @@ fn create_handler(inner: &BasicHandler, id: ContainerID) -> Handler {
 }
 
 /// Flatten attributes that allow overlap
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct BasicHandler {
     id: ContainerID,
-    container_idx: ContainerIdx,
+    /// Cached container index with generation for invalidation detection.
+    /// The tuple contains (ContainerIdx, generation) where generation is used
+    /// to detect when the arena has been swapped and re-resolution is needed.
+    /// Uses Mutex for thread-safety (required for Sync).
+    cached_idx: Arc<Mutex<(ContainerIdx, u64)>>,
     doc: LoroDoc,
+}
+
+impl std::fmt::Debug for BasicHandler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BasicHandler")
+            .field("id", &self.id)
+            .field("container_idx", &self.container_idx())
+            .field("doc", &"...")
+            .finish()
+    }
 }
 
 struct DetachedInner<T> {
@@ -162,6 +176,42 @@ impl<T> From<BasicHandler> for MaybeDetached<T> {
 }
 
 impl BasicHandler {
+    /// Create a new BasicHandler with the given id and doc.
+    /// The container index is resolved from the arena and cached with the current generation.
+    pub(crate) fn new(id: ContainerID, doc: LoroDoc) -> Self {
+        let idx = doc.arena.register_container(&id);
+        let gen = doc.arena_generation();
+        Self {
+            id,
+            cached_idx: Arc::new(Mutex::new((idx, gen))),
+            doc,
+        }
+    }
+
+    /// Get the container index, re-resolving from the arena if the generation has changed.
+    /// This ensures handlers remain valid after operations like `replace_with_shallow`.
+    #[inline]
+    pub(crate) fn container_idx(&self) -> ContainerIdx {
+        let guard = self.cached_idx.lock().unwrap();
+        let (idx, gen) = *guard;
+        if gen == self.doc.arena_generation() {
+            idx
+        } else {
+            drop(guard);
+            self.resolve_and_cache()
+        }
+    }
+
+    /// Cold path: re-resolve the container index from the arena and update the cache.
+    #[cold]
+    fn resolve_and_cache(&self) -> ContainerIdx {
+        let idx = self.doc.arena.register_container(&self.id);
+        let gen = self.doc.arena_generation();
+        let mut guard = self.cached_idx.lock().unwrap();
+        *guard = (idx, gen);
+        idx
+    }
+
     pub(crate) fn doc(&self) -> LoroDoc {
         self.doc.clone()
     }
@@ -181,15 +231,11 @@ impl BasicHandler {
     }
 
     fn get_parent(&self) -> Option<Handler> {
-        let parent_idx = self.doc.arena.get_parent(self.container_idx)?;
+        let parent_idx = self.doc.arena.get_parent(self.container_idx())?;
         let parent_id = self.doc.arena.get_container_id(parent_idx).unwrap();
         {
             let kind = parent_id.container_type();
-            let handler = BasicHandler {
-                container_idx: parent_idx,
-                id: parent_id,
-                doc: self.doc.clone(),
-            };
+            let handler = BasicHandler::new(parent_id, self.doc.clone());
 
             Some(match kind {
                 ContainerType::Map => Handler::Map(MapHandler {
@@ -221,7 +267,7 @@ impl BasicHandler {
             .state
             .lock()
             .unwrap()
-            .get_value_by_idx(self.container_idx)
+            .get_value_by_idx(self.container_idx())
     }
 
     pub fn get_deep_value(&self) -> LoroValue {
@@ -229,12 +275,12 @@ impl BasicHandler {
             .state
             .lock()
             .unwrap()
-            .get_container_deep_value(self.container_idx)
+            .get_container_deep_value(self.container_idx())
     }
 
     fn with_state<R>(&self, f: impl FnOnce(&mut State) -> R) -> R {
         let mut guard = self.doc.state.lock().unwrap();
-        guard.with_state_mut(self.container_idx, f)
+        guard.with_state_mut(self.container_idx(), f)
     }
 
     pub fn parent(&self) -> Option<Handler> {
@@ -246,7 +292,7 @@ impl BasicHandler {
             .state
             .lock()
             .unwrap()
-            .is_deleted(self.container_idx)
+            .is_deleted(self.container_idx())
     }
 }
 
@@ -1027,11 +1073,7 @@ impl HandlerTrait for Handler {
 impl Handler {
     pub(crate) fn new_attached(id: ContainerID, doc: LoroDoc) -> Self {
         let kind = id.container_type();
-        let handler = BasicHandler {
-            container_idx: doc.arena.register_container(&id),
-            id,
-            doc,
-        };
+        let handler = BasicHandler::new(id, doc);
 
         match kind {
             ContainerType::Map => Self::Map(MapHandler {
@@ -1861,7 +1903,7 @@ impl TextHandler {
         };
 
         txn.apply_local_op(
-            inner.container_idx,
+            inner.container_idx(),
             crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
                 slice: ListSlice::RawStr {
                     str: Cow::Borrowed(s),
@@ -1933,7 +1975,7 @@ impl TextHandler {
         for range in ranges.iter().rev() {
             let event_start = event_end - range.event_len as isize;
             txn.apply_local_op(
-                inner.container_idx,
+                inner.container_idx(),
                 crate::op::RawOpContent::List(ListOp::Delete(DeleteSpanWithId::new(
                     range.id_start,
                     range.entity_start as isize,
@@ -2078,7 +2120,7 @@ impl TextHandler {
         let is_delete = matches!(&value, &LoroValue::Null);
 
         let mut doc_state = inner.doc.state.lock().unwrap();
-        let len = doc_state.with_state_mut(inner.container_idx, |state| {
+        let len = doc_state.with_state_mut(inner.container_idx(), |state| {
             state.as_richtext_state_mut().unwrap().len(pos_type)
         });
 
@@ -2091,7 +2133,7 @@ impl TextHandler {
         }
 
         let (entity_range, skip, missing_style_key, event_start, event_end) = doc_state
-            .with_state_mut(inner.container_idx, |state| {
+            .with_state_mut(inner.container_idx(), |state| {
                 let state = state.as_richtext_state_mut().unwrap();
                 let event_start = state.index_to_event_index(start, pos_type);
                 let event_end = state.index_to_event_index(end, pos_type);
@@ -2137,7 +2179,7 @@ impl TextHandler {
         drop(style_config);
         drop(doc_state);
         txn.apply_local_op(
-            inner.container_idx,
+            inner.container_idx(),
             crate::op::RawOpContent::List(ListOp::StyleStart {
                 start: entity_start as u32,
                 end: entity_end as u32,
@@ -2154,7 +2196,7 @@ impl TextHandler {
         )?;
 
         txn.apply_local_op(
-            inner.container_idx,
+            inner.container_idx(),
             crate::op::RawOpContent::List(ListOp::StyleEnd),
             EventHint::MarkEnd,
             &inner.doc,
@@ -2632,7 +2674,7 @@ impl ListHandler {
         }
 
         txn.apply_local_op(
-            inner.container_idx,
+            inner.container_idx(),
             crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
                 slice: ListSlice::RawData(Cow::Owned(vec![v.clone()])),
                 pos,
@@ -2716,7 +2758,7 @@ impl ListHandler {
         let container_id = ContainerID::new_normal(id, child.kind());
         let v = LoroValue::Container(container_id.clone());
         txn.apply_local_op(
-            inner.container_idx,
+            inner.container_idx(),
             crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
                 slice: ListSlice::RawData(Cow::Owned(vec![v.clone()])),
                 pos,
@@ -2762,7 +2804,7 @@ impl ListHandler {
 
         for id in ids.into_iter() {
             txn.apply_local_op(
-                inner.container_idx,
+                inner.container_idx(),
                 crate::op::RawOpContent::List(ListOp::Delete(DeleteSpanWithId::new(
                     id.id(),
                     pos as isize,
@@ -2836,7 +2878,7 @@ impl ListHandler {
     pub fn get_deep_value_with_id(&self) -> LoroResult<LoroValue> {
         let inner = self.inner.try_attached_state()?;
         Ok(inner.with_doc_state(|state| {
-            state.get_container_deep_value_with_id(inner.container_idx, None)
+            state.get_container_deep_value_with_id(inner.container_idx(), None)
         }))
     }
 
@@ -3095,7 +3137,7 @@ impl MovableListHandler {
 
         let inner = self.inner.try_attached_state()?;
         txn.apply_local_op(
-            inner.container_idx,
+            inner.container_idx(),
             crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
                 slice: ListSlice::RawData(Cow::Owned(vec![v.clone()])),
                 pos: op_index,
@@ -3172,7 +3214,7 @@ impl MovableListHandler {
 
         let inner = self.inner.try_attached_state()?;
         txn.apply_local_op(
-            inner.container_idx,
+            inner.container_idx(),
             crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Move {
                 from: op_from as u32,
                 to: op_to as u32,
@@ -3290,7 +3332,7 @@ impl MovableListHandler {
         let v = LoroValue::Container(container_id.clone());
         let inner = self.inner.try_attached_state()?;
         txn.apply_local_op(
-            inner.container_idx,
+            inner.container_idx(),
             crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
                 slice: ListSlice::RawData(Cow::Owned(vec![v.clone()])),
                 pos: op_index,
@@ -3350,7 +3392,7 @@ impl MovableListHandler {
         });
 
         let hint = EventHint::SetList { index, value };
-        txn.apply_local_op(inner.container_idx, op, hint, &inner.doc)
+        txn.apply_local_op(inner.container_idx(), op, hint, &inner.doc)
     }
 
     pub fn set_container<H: HandlerTrait>(&self, pos: usize, child: H) -> LoroResult<H> {
@@ -3393,7 +3435,7 @@ impl MovableListHandler {
         };
         let inner = self.inner.try_attached_state()?;
         txn.apply_local_op(
-            inner.container_idx,
+            inner.container_idx(),
             crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Set {
                 elem_id: elem_id.to_id(),
                 value: v.clone(),
@@ -3456,7 +3498,7 @@ impl MovableListHandler {
         let inner = self.inner.try_attached_state()?;
         for (id, op_pos) in ids.into_iter().zip(new_poses.into_iter()) {
             txn.apply_local_op(
-                inner.container_idx,
+                inner.container_idx(),
                 crate::op::RawOpContent::List(ListOp::Delete(DeleteSpanWithId::new(
                     id,
                     op_pos as isize,
@@ -3542,7 +3584,7 @@ impl MovableListHandler {
             .state
             .lock()
             .unwrap()
-            .get_container_deep_value_with_id(inner.container_idx, None)
+            .get_container_deep_value_with_id(inner.container_idx(), None)
     }
 
     pub fn get(&self, index: usize) -> Option<LoroValue> {
@@ -3794,7 +3836,7 @@ impl MapHandler {
 
                 let inner = this.inner.try_attached_state()?;
                 txn.apply_local_op(
-                    inner.container_idx,
+                    inner.container_idx(),
                     crate::op::RawOpContent::Map(crate::container::map::MapSet {
                         key: key.into(),
                         value: Some(value.clone()),
@@ -3830,7 +3872,7 @@ impl MapHandler {
 
         let inner = self.inner.try_attached_state()?;
         txn.apply_local_op(
-            inner.container_idx,
+            inner.container_idx(),
             crate::op::RawOpContent::Map(crate::container::map::MapSet {
                 key: key.into(),
                 value: Some(value.clone()),
@@ -3868,7 +3910,7 @@ impl MapHandler {
         let id = txn.next_id();
         let container_id = ContainerID::new_normal(id, child.kind());
         txn.apply_local_op(
-            inner.container_idx,
+            inner.container_idx(),
             crate::op::RawOpContent::Map(crate::container::map::MapSet {
                 key: key.into(),
                 value: Some(LoroValue::Container(container_id.clone())),
@@ -3897,7 +3939,7 @@ impl MapHandler {
     pub fn delete_with_txn(&self, txn: &mut Transaction, key: &str) -> LoroResult<()> {
         let inner = self.inner.try_attached_state()?;
         txn.apply_local_op(
-            inner.container_idx,
+            inner.container_idx(),
             crate::op::RawOpContent::Map(crate::container::map::MapSet {
                 key: key.into(),
                 value: None,
@@ -3984,7 +4026,7 @@ impl MapHandler {
                 method: "get_deep_value_with_id",
             }),
             MaybeDetached::Attached(inner) => Ok(inner.with_doc_state(|state| {
-                state.get_container_deep_value_with_id(inner.container_idx, None)
+                state.get_container_deep_value_with_id(inner.container_idx(), None)
             })),
         }
     }
@@ -4220,7 +4262,7 @@ pub mod counter {
         fn increment_with_txn(&self, txn: &mut Transaction, n: f64) -> LoroResult<()> {
             let inner = self.inner.try_attached_state()?;
             txn.apply_local_op(
-                inner.container_idx,
+                inner.container_idx(),
                 crate::op::RawOpContent::Counter(n),
                 EventHint::Counter(n),
                 &inner.doc,
