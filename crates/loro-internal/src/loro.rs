@@ -2017,6 +2017,78 @@ impl LoroDoc {
             .hide_empty_root_containers
             .store(hide, std::sync::atomic::Ordering::Relaxed);
     }
+
+    /// Swap the internal data of this document with another document.
+    ///
+    /// This method atomically replaces the document's internal state (OpLog, DocState, Arena)
+    /// with the contents from another document, while preserving:
+    /// - The `Arc` wrappers (so existing references remain valid)
+    /// - Subscriptions and observers
+    /// - Configuration
+    /// - Peer ID
+    ///
+    /// After this call:
+    /// - `self` will contain the data that was in `other`
+    /// - `other` will contain the data that was in `self`
+    /// - The arena generation counter is bumped, invalidating cached `ContainerIdx` in handlers
+    ///
+    /// # Use Case
+    ///
+    /// This is primarily used by `replace_with_shallow` to atomically replace a document's
+    /// contents with a trimmed shallow snapshot while preserving all external references.
+    ///
+    /// # Panics
+    ///
+    /// - Panics if either document is in a transaction
+    /// - Panics if either document has an uncommitted change
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Create a shallow snapshot and swap it in
+    /// let shallow_bytes = doc.export(ExportMode::shallow_snapshot(&frontiers))?;
+    /// let temp_doc = LoroDoc::new();
+    /// temp_doc.import(&shallow_bytes)?;
+    /// doc.swap_internals_from(&temp_doc);
+    /// // Now doc contains the shallow snapshot, and temp_doc contains the old data
+    /// ```
+    pub fn swap_internals_from(&self, other: &LoroDoc) {
+        // Ensure no transactions are active
+        let (self_options, _self_guard) = self.implicit_commit_then_stop();
+        let (other_options, _other_guard) = other.implicit_commit_then_stop();
+
+        // Lock all components in a consistent order to avoid deadlocks
+        // Order: oplog -> state (following LockKind ordering)
+        let mut self_oplog = self.oplog.lock().unwrap();
+        let mut other_oplog = other.oplog.lock().unwrap();
+        let mut self_state = self.state.lock().unwrap();
+        let mut other_state = other.state.lock().unwrap();
+
+        // Swap OpLog contents
+        self_oplog.swap_data_with(&mut other_oplog);
+
+        // Swap DocState contents
+        self_state.swap_data_with(&mut other_state);
+
+        // Swap Arena contents
+        self.arena.swap_contents_with(&other.arena);
+
+        // Drop locks before bumping generation
+        drop(self_state);
+        drop(other_state);
+        drop(self_oplog);
+        drop(other_oplog);
+
+        // Bump arena generation to invalidate cached ContainerIdx in handlers
+        self.bump_arena_generation();
+        other.bump_arena_generation();
+
+        // Restore auto-commit if it was enabled
+        drop(_self_guard);
+        drop(_other_guard);
+        self.renew_txn_if_auto_commit(self_options);
+        other.renew_txn_if_auto_commit(other_options);
+    }
 }
 
 // FIXME: PERF: This method is quite slow because it iterates all the changes

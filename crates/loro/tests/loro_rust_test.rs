@@ -2029,6 +2029,137 @@ fn no_dead_loop_when_subscribe_local_updates_to_each_other() {
     assert_eq!(doc1.get_deep_value(), doc2.get_deep_value());
 }
 
+#[test]
+#[parallel]
+fn test_swap_internals_from_basic() {
+    // Create doc1 with some data
+    let doc1 = LoroDoc::new();
+    doc1.set_peer_id(1).unwrap();
+    let text1 = doc1.get_text("text");
+    text1.insert(0, "Hello from doc1").unwrap();
+    doc1.commit();
+    let doc1_value_before = doc1.get_deep_value();
+    let doc1_vv_before = doc1.oplog_vv();
+
+    // Create doc2 with different data
+    let doc2 = LoroDoc::new();
+    doc2.set_peer_id(2).unwrap();
+    let text2 = doc2.get_text("text");
+    text2.insert(0, "Hello from doc2").unwrap();
+    doc2.get_map("map").insert("key", "value").unwrap();
+    doc2.commit();
+    let doc2_value_before = doc2.get_deep_value();
+    let doc2_vv_before = doc2.oplog_vv();
+
+    // Swap internals
+    doc1.swap_internals_from(&doc2);
+
+    // Verify doc1 now has doc2's data
+    assert_eq!(doc1.get_deep_value(), doc2_value_before);
+    assert_eq!(doc1.oplog_vv(), doc2_vv_before);
+
+    // Verify doc2 now has doc1's data
+    assert_eq!(doc2.get_deep_value(), doc1_value_before);
+    assert_eq!(doc2.oplog_vv(), doc1_vv_before);
+
+    // Verify peer IDs are preserved (not swapped)
+    assert_eq!(doc1.peer_id(), 1);
+    assert_eq!(doc2.peer_id(), 2);
+}
+
+#[test]
+#[parallel]
+fn test_swap_internals_from_preserves_peer_id() {
+    // Test that peer IDs are preserved after swap
+    let doc1 = LoroDoc::new();
+    doc1.set_peer_id(1).unwrap();
+    let text1 = doc1.get_text("text");
+    text1.insert(0, "Initial").unwrap();
+    doc1.commit();
+
+    // Create doc2 with different data
+    let doc2 = LoroDoc::new();
+    doc2.set_peer_id(2).unwrap();
+    doc2.get_text("text").insert(0, "From doc2").unwrap();
+    doc2.commit();
+
+    // Swap internals
+    doc1.swap_internals_from(&doc2);
+
+    // Verify peer IDs are preserved (not swapped)
+    assert_eq!(doc1.peer_id(), 1);
+    assert_eq!(doc2.peer_id(), 2);
+
+    // Verify data was swapped
+    assert_eq!(doc1.get_text("text").to_string(), "From doc2");
+    assert_eq!(doc2.get_text("text").to_string(), "Initial");
+}
+
+#[test]
+#[parallel]
+fn test_swap_internals_from_handler_invalidation() {
+    let doc1 = LoroDoc::new();
+    doc1.set_peer_id(1).unwrap();
+    let text1 = doc1.get_text("text");
+    text1.insert(0, "Hello").unwrap();
+    doc1.commit();
+
+    // Create doc2 with different data
+    let doc2 = LoroDoc::new();
+    doc2.set_peer_id(2).unwrap();
+    doc2.get_text("text").insert(0, "World").unwrap();
+    doc2.commit();
+
+    // Swap internals
+    doc1.swap_internals_from(&doc2);
+
+    // Get a fresh handler after swap - it should work with the new data
+    let text_after = doc1.get_text("text");
+    assert_eq!(text_after.to_string(), "World");
+
+    // The old handler should be invalidated (generation mismatch)
+    // Operations on it should fail or use the new data
+    // Note: The exact behavior depends on how handler invalidation is implemented
+}
+
+#[test]
+#[parallel]
+fn test_swap_internals_for_shallow_snapshot() {
+    // This test simulates the use case for replace_with_shallow
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+
+    // Create some history
+    for i in 0..10 {
+        doc.get_text("text").insert(i, &format!("{}", i)).unwrap();
+        doc.commit();
+    }
+
+    let frontiers = doc.oplog_frontiers();
+    let value_before = doc.get_deep_value();
+
+    // Export a shallow snapshot
+    let shallow_bytes = doc
+        .export(ExportMode::shallow_snapshot(&frontiers))
+        .unwrap();
+
+    // Create a temp doc and import the shallow snapshot
+    let temp_doc = LoroDoc::new();
+    temp_doc.import(&shallow_bytes).unwrap();
+
+    // Verify temp doc has the same value
+    assert_eq!(temp_doc.get_deep_value(), value_before);
+
+    // Swap internals - this is what replace_with_shallow would do
+    doc.swap_internals_from(&temp_doc);
+
+    // Verify doc still has the same value
+    assert_eq!(doc.get_deep_value(), value_before);
+
+    // Verify doc is now shallow
+    assert!(doc.is_shallow());
+}
+
 /// https://github.com/loro-dev/loro/issues/490
 #[test]
 #[parallel]

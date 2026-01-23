@@ -763,4 +763,42 @@ impl SharedArena {
         let mut slot = self.inner.parent_resolver.lock().unwrap();
         *slot = resolver.map(|f| Arc::new(f) as Arc<ParentResolver>);
     }
+
+    /// Swap the internal contents of this arena with another arena.
+    ///
+    /// This is used by `swap_internals_from` to atomically replace document internals
+    /// while preserving the `Arc` wrappers so that existing references remain valid.
+    ///
+    /// Note: The `str` arena is shared via `Arc` and is NOT swapped - both arenas
+    /// will continue to share the same string storage after this call.
+    pub(crate) fn swap_contents_with(&self, other: &SharedArena) {
+        // Lock all mutexes in a consistent order to avoid deadlocks
+        let mut self_idx_to_id = self.inner.container_idx_to_id.lock().unwrap();
+        let mut other_idx_to_id = other.inner.container_idx_to_id.lock().unwrap();
+        std::mem::swap(&mut *self_idx_to_id, &mut *other_idx_to_id);
+
+        let mut self_depth = self.inner.depth.lock().unwrap();
+        let mut other_depth = other.inner.depth.lock().unwrap();
+        std::mem::swap(&mut *self_depth, &mut *other_depth);
+
+        let mut self_id_to_idx = self.inner.container_id_to_idx.lock().unwrap();
+        let mut other_id_to_idx = other.inner.container_id_to_idx.lock().unwrap();
+        std::mem::swap(&mut *self_id_to_idx, &mut *other_id_to_idx);
+
+        let mut self_parents = self.inner.parents.lock().unwrap();
+        let mut other_parents = other.inner.parents.lock().unwrap();
+        std::mem::swap(&mut *self_parents, &mut *other_parents);
+
+        let mut self_values = self.inner.values.lock().unwrap();
+        let mut other_values = other.inner.values.lock().unwrap();
+        std::mem::swap(&mut *self_values, &mut *other_values);
+
+        let mut self_root_c_idx = self.inner.root_c_idx.lock().unwrap();
+        let mut other_root_c_idx = other.inner.root_c_idx.lock().unwrap();
+        std::mem::swap(&mut *self_root_c_idx, &mut *other_root_c_idx);
+
+        // Note: We intentionally do NOT swap the str arena or parent_resolver.
+        // The str arena is append-only and shared, and the parent_resolver
+        // is document-specific configuration that should stay with the original doc.
+    }
 }

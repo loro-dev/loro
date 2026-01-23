@@ -1605,6 +1605,45 @@ impl DocState {
     pub(crate) fn shallow_root_store(&self) -> Option<&Arc<GcStore>> {
         self.store.shallow_root_store()
     }
+
+    /// Swap the data-related contents of this DocState with another.
+    ///
+    /// This swaps:
+    /// - `frontiers` - the version frontiers
+    /// - `store` - the container store with all container states
+    ///
+    /// This does NOT swap (these stay with the original doc):
+    /// - `peer` - peer ID stays with original doc
+    /// - `arena` - arena contents are swapped separately via `SharedArena::swap_contents_with`
+    /// - `config` - configuration stays with original doc
+    /// - `doc` - weak reference stays with original doc
+    /// - `in_txn`, `changed_idx_in_txn` - transaction state stays
+    /// - `event_recorder` - event recording state is cleared
+    /// - `dead_containers_cache` - cache is cleared
+    ///
+    /// # Panics
+    ///
+    /// Panics if either DocState is in a transaction.
+    pub(crate) fn swap_data_with(&mut self, other: &mut DocState) {
+        assert!(!self.in_txn, "Cannot swap DocState while in transaction");
+        assert!(!other.in_txn, "Cannot swap DocState while in transaction");
+
+        // Swap the data fields
+        std::mem::swap(&mut self.frontiers, &mut other.frontiers);
+        std::mem::swap(&mut self.store, &mut other.store);
+
+        // After swapping stores, update their arena references.
+        // The swapped stores still reference their original arenas, so we need
+        // to point them to the correct (now-swapped) arenas.
+        self.store.set_arena(self.arena.clone());
+        other.store.set_arena(other.arena.clone());
+
+        // Clear caches and event recording state since they're now invalid
+        self.event_recorder = Default::default();
+        self.dead_containers_cache = Default::default();
+        other.event_recorder = Default::default();
+        other.dead_containers_cache = Default::default();
+    }
 }
 
 fn create_state_(idx: ContainerIdx, config: &Configure, peer: u64) -> State {

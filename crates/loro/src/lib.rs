@@ -1594,6 +1594,54 @@ impl LoroDoc {
     pub fn set_hide_empty_root_containers(&self, hide: bool) {
         self.doc.set_hide_empty_root_containers(hide);
     }
+
+    /// Swap the internal data of this document with another document.
+    ///
+    /// This method atomically replaces the document's internal state (OpLog, DocState, Arena)
+    /// with the contents from another document, while preserving:
+    /// - The `Arc` wrappers (so existing references remain valid)
+    /// - Subscriptions and observers
+    /// - Configuration
+    /// - Peer ID
+    ///
+    /// After this call:
+    /// - `self` will contain the data that was in `other`
+    /// - `other` will contain the data that was in `self`
+    /// - The arena generation counter is bumped, invalidating cached `ContainerIdx` in handlers
+    ///
+    /// # Use Case
+    ///
+    /// This is primarily used by `replace_with_shallow` to atomically replace a document's
+    /// contents with a trimmed shallow snapshot while preserving all external references.
+    ///
+    /// # Panics
+    ///
+    /// - Panics if either document is in a transaction
+    /// - Panics if either document has an uncommitted change
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use loro::{LoroDoc, ExportMode};
+    ///
+    /// let doc = LoroDoc::new();
+    /// doc.get_text("text").insert(0, "Hello").unwrap();
+    /// doc.commit();
+    /// let frontiers = doc.oplog_frontiers();
+    /// let value_before = doc.get_deep_value();
+    ///
+    /// // Create a shallow snapshot and swap it in
+    /// let shallow_bytes = doc.export(ExportMode::shallow_snapshot(&frontiers)).unwrap();
+    /// let temp_doc = LoroDoc::new();
+    /// temp_doc.import(&shallow_bytes).unwrap();
+    /// doc.swap_internals_from(&temp_doc);
+    ///
+    /// // Now doc contains the shallow snapshot
+    /// assert_eq!(doc.get_deep_value(), value_before);
+    /// ```
+    pub fn swap_internals_from(&self, other: &LoroDoc) {
+        self.doc.swap_internals_from(&other.doc);
+    }
 }
 
 /// It's used to prevent the user from implementing the trait directly.
