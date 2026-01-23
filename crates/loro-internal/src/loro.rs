@@ -2089,6 +2089,57 @@ impl LoroDoc {
         self.renew_txn_if_auto_commit(self_options);
         other.renew_txn_if_auto_commit(other_options);
     }
+
+    /// Replace the current document state with a shallow snapshot at the given frontiers.
+    ///
+    /// This method trims the history in place, discarding operations before the specified
+    /// frontiers while preserving:
+    /// - Subscriptions and observers
+    /// - Configuration
+    /// - Peer ID
+    /// - All existing references to the document
+    ///
+    /// After this call, the document will only contain history from the specified frontiers
+    /// onwards. The state at the frontiers becomes the new "shallow root" of the document.
+    ///
+    /// # Arguments
+    ///
+    /// * `frontiers` - The version to use as the new shallow root. All history before this
+    ///   version will be discarded.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The frontiers are not found in the document's history
+    /// - The document cannot export a shallow snapshot at the given frontiers
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let doc = LoroDoc::new();
+    /// // ... perform many operations ...
+    ///
+    /// // Trim history to only keep operations from the current state onwards
+    /// let frontiers = doc.oplog_frontiers();
+    /// doc.replace_with_shallow(&frontiers)?;
+    ///
+    /// // The document now has a shallow history starting from `frontiers`
+    /// assert!(doc.is_shallow());
+    /// ```
+    pub fn replace_with_shallow(&self, frontiers: &Frontiers) -> LoroResult<()> {
+        // Export a shallow snapshot at the given frontiers
+        let shallow_bytes = self
+            .export(ExportMode::shallow_snapshot(frontiers))
+            .map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
+
+        // Create a temporary document and import the shallow snapshot
+        let temp_doc = LoroDoc::from_snapshot(&shallow_bytes)?;
+
+        // Swap the internals - this preserves subscriptions, config, peer_id
+        self.swap_internals_from(&temp_doc);
+
+        Ok(())
+    }
 }
 
 // FIXME: PERF: This method is quite slow because it iterates all the changes

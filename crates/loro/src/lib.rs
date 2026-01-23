@@ -1642,6 +1642,49 @@ impl LoroDoc {
     pub fn swap_internals_from(&self, other: &LoroDoc) {
         self.doc.swap_internals_from(&other.doc);
     }
+
+    /// Replace the current document state with a shallow snapshot at the given frontiers.
+    ///
+    /// This method trims the history in place, discarding operations before the specified
+    /// frontiers while preserving:
+    /// - Subscriptions and observers
+    /// - Configuration
+    /// - Peer ID
+    /// - All existing references to the document
+    ///
+    /// After this call, the document will only contain history from the specified frontiers
+    /// onwards. The state at the frontiers becomes the new "shallow root" of the document.
+    ///
+    /// # Arguments
+    ///
+    /// * `frontiers` - The version to use as the new shallow root. All history before this
+    ///   version will be discarded.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The frontiers are not found in the document's history
+    /// - The document cannot export a shallow snapshot at the given frontiers
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use loro::LoroDoc;
+    ///
+    /// let doc = LoroDoc::new();
+    /// doc.get_text("text").insert(0, "Hello").unwrap();
+    /// doc.commit();
+    ///
+    /// // Trim history to only keep operations from the current state onwards
+    /// let frontiers = doc.oplog_frontiers();
+    /// doc.replace_with_shallow(&frontiers).unwrap();
+    ///
+    /// // The document now has a shallow history starting from `frontiers`
+    /// assert!(doc.is_shallow());
+    /// ```
+    pub fn replace_with_shallow(&self, frontiers: &Frontiers) -> LoroResult<()> {
+        self.doc.replace_with_shallow(frontiers)
+    }
 }
 
 /// It's used to prevent the user from implementing the trait directly.

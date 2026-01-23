@@ -3699,3 +3699,124 @@ fn has_container_test() {
     assert!(doc.has_container(&text.id()));
     assert!(doc.has_container(&list.id()));
 }
+
+#[test]
+#[parallel]
+fn test_replace_with_shallow_basic() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    let text = doc.get_text("text");
+    text.insert(0, "Hello").unwrap();
+    doc.commit();
+    let frontiers_before = doc.oplog_frontiers();
+    text.insert(5, " World").unwrap();
+    doc.commit();
+
+    // Replace with shallow at the earlier frontiers
+    // Note: shallow_snapshot exports current state with history trimmed to start from frontiers
+    let value_before = doc.get_deep_value();
+    doc.replace_with_shallow(&frontiers_before).unwrap();
+
+    // Document should be shallow now
+    assert!(doc.is_shallow());
+    // Value should be preserved (current state, not state at frontiers)
+    assert_eq!(doc.get_deep_value(), value_before);
+    // Shallow since should be at the frontiers_before
+    assert_eq!(doc.shallow_since_frontiers(), frontiers_before);
+}
+
+#[test]
+#[parallel]
+fn test_replace_with_shallow_preserves_peer_id() {
+    let doc = LoroDoc::new();
+    let original_peer_id = 12345u64;
+    doc.set_peer_id(original_peer_id).unwrap();
+    let text = doc.get_text("text");
+    text.insert(0, "Hello").unwrap();
+    doc.commit();
+
+    let frontiers = doc.oplog_frontiers();
+    doc.replace_with_shallow(&frontiers).unwrap();
+
+    // Peer ID should be preserved
+    assert_eq!(doc.peer_id(), original_peer_id);
+}
+
+#[test]
+#[parallel]
+fn test_replace_with_shallow_can_continue_editing() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    let text = doc.get_text("text");
+    text.insert(0, "Hello").unwrap();
+    doc.commit();
+
+    let frontiers = doc.oplog_frontiers();
+    doc.replace_with_shallow(&frontiers).unwrap();
+
+    // Should be able to continue editing after replace_with_shallow
+    doc.get_text("text").insert(5, " World").unwrap();
+    doc.commit();
+
+    assert_eq!(doc.get_text("text").to_string(), "Hello World");
+
+    // Should be able to sync with another doc using snapshot (shallow docs need snapshot, not updates)
+    let doc2 = LoroDoc::new();
+    let snapshot = doc.export(ExportMode::Snapshot).unwrap();
+    doc2.import(&snapshot).unwrap();
+    assert_eq!(doc2.get_text("text").to_string(), "Hello World");
+}
+
+#[test]
+#[parallel]
+fn test_replace_with_shallow_at_intermediate_version() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    let text = doc.get_text("text");
+    text.insert(0, "A").unwrap();
+    doc.commit();
+    let frontiers_a = doc.oplog_frontiers();
+
+    text.insert(1, "B").unwrap();
+    doc.commit();
+    let frontiers_b = doc.oplog_frontiers();
+
+    text.insert(2, "C").unwrap();
+    doc.commit();
+
+    // Replace at intermediate version (frontiers_a)
+    // Note: shallow_snapshot exports current state ("ABC") with history trimmed to start from frontiers_a
+    doc.replace_with_shallow(&frontiers_a).unwrap();
+
+    // Document should be shallow
+    assert!(doc.is_shallow());
+    // Value should be the current state (ABC), not the state at frontiers_a
+    assert_eq!(doc.get_text("text").to_string(), "ABC");
+    // Shallow since should be at frontiers_a
+    assert_eq!(doc.shallow_since_frontiers(), frontiers_a);
+
+    // Can still checkout to frontiers_b (which is after shallow root)
+    doc.checkout(&frontiers_b).unwrap();
+    assert_eq!(doc.get_text("text").to_string(), "AB");
+}
+
+#[test]
+#[parallel]
+fn test_replace_with_shallow_cloned_doc_independence() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    let text = doc.get_text("text");
+    text.insert(0, "Hello").unwrap();
+    doc.commit();
+
+    // Clone the doc (creates a reference to the same inner)
+    let doc_clone = doc.clone();
+
+    let frontiers = doc.oplog_frontiers();
+    doc.replace_with_shallow(&frontiers).unwrap();
+
+    // Both should see the shallow state since they share the same inner
+    assert!(doc.is_shallow());
+    assert!(doc_clone.is_shallow());
+    assert_eq!(doc.get_deep_value(), doc_clone.get_deep_value());
+}
