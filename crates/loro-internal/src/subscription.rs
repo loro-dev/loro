@@ -12,6 +12,7 @@ use smallvec::SmallVec;
 use std::{collections::VecDeque, sync::Arc};
 
 use crate::sync::Mutex;
+
 /// The callback of the local update.
 pub type LocalUpdateCallback = Box<dyn Fn(&Vec<u8>) -> bool + Send + Sync + 'static>;
 /// The callback of the peer id change. The second argument is the next counter for the peer.
@@ -31,6 +32,11 @@ impl LoroDoc {
 struct ObserverInner {
     subscriber_set: SubscriberSet<Option<ContainerIdx>, Subscriber>,
     queue: Arc<Mutex<VecDeque<DocDiff>>>,
+    /// Maps ContainerIdx to ContainerID for subscription migration.
+    /// This allows us to re-resolve subscriptions after an arena swap.
+    /// - Key: ContainerIdx (the current index in the arena)
+    /// - Value: ContainerID (the stable identifier)
+    container_id_map: Mutex<FxHashMap<ContainerIdx, ContainerID>>,
 }
 
 impl Default for ObserverInner {
@@ -38,6 +44,7 @@ impl Default for ObserverInner {
         Self {
             subscriber_set: SubscriberSet::new(),
             queue: Arc::new(Mutex::new(VecDeque::new())),
+            container_id_map: Mutex::new(FxHashMap::default()),
         }
     }
 }
@@ -64,6 +71,12 @@ impl Observer {
     pub fn subscribe(&self, id: &ContainerID, callback: Subscriber) -> Subscription {
         let idx = self.arena.register_container(id);
         let inner = &self.inner;
+        // Track the ContainerID for this ContainerIdx to enable subscription migration
+        inner
+            .container_id_map
+            .lock()
+            .unwrap()
+            .insert(idx, id.clone());
         let (sub, enable) = inner.subscriber_set.insert(Some(idx), callback);
         enable();
         sub
@@ -146,6 +159,18 @@ impl Observer {
             .unwrap();
 
         true
+    }
+
+    /// Get the ContainerID associated with a ContainerIdx.
+    /// This is used for subscription migration after arena swaps.
+    /// Returns None for root subscriptions or if the ContainerIdx is not tracked.
+    pub fn get_subscription_container_id(&self, idx: ContainerIdx) -> Option<ContainerID> {
+        self.inner
+            .container_id_map
+            .lock()
+            .unwrap()
+            .get(&idx)
+            .cloned()
     }
 }
 
