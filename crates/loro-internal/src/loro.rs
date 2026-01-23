@@ -2,7 +2,7 @@ use crate::encoding::json_schema::{encode_change, export_json_in_id_span};
 pub use crate::encoding::ExportMode;
 use crate::pre_commit::{FirstCommitFromPeerCallback, FirstCommitFromPeerPayload};
 pub use crate::state::analyzer::{ContainerAnalysisInfo, DocAnalysis};
-use crate::sync::AtomicBool;
+use crate::sync::{AtomicBool, AtomicU64};
 pub(crate) use crate::LoroDocInner;
 use crate::{
     arena::SharedArena,
@@ -111,6 +111,7 @@ impl LoroDoc {
                 config,
                 detached: AtomicBool::new(false),
                 auto_commit: AtomicBool::new(false),
+                arena_generation: AtomicU64::new(0),
                 observer: Arc::new(Observer::new(arena.clone())),
                 diff_calculator: Arc::new(
                     lock_group.new_lock(DiffCalculator::new(true), LockKind::DiffCalculator),
@@ -514,6 +515,25 @@ impl LoroDoc {
 
     pub(crate) fn set_detached(&self, detached: bool) {
         self.detached.store(detached, Release);
+    }
+
+    /// Get the current arena generation counter.
+    ///
+    /// This counter is incremented when the document's internals are swapped
+    /// (e.g., during `replace_with_shallow`). Handlers use this to detect
+    /// when their cached `ContainerIdx` needs re-resolution.
+    #[inline(always)]
+    pub fn arena_generation(&self) -> u64 {
+        self.arena_generation.load(Acquire)
+    }
+
+    /// Increment the arena generation counter.
+    ///
+    /// This should be called after swapping document internals to invalidate
+    /// all cached `ContainerIdx` values in handlers.
+    #[inline]
+    pub(crate) fn bump_arena_generation(&self) {
+        self.arena_generation.fetch_add(1, Release);
     }
 
     #[inline(always)]
