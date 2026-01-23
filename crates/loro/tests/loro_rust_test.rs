@@ -3820,3 +3820,90 @@ fn test_replace_with_shallow_cloned_doc_independence() {
     assert!(doc_clone.is_shallow());
     assert_eq!(doc.get_deep_value(), doc_clone.get_deep_value());
 }
+
+#[test]
+#[parallel]
+fn test_replace_with_shallow_preserves_subscriptions() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    let text = doc.get_text("text");
+    text.insert(0, "Hello").unwrap();
+    doc.commit();
+
+    // Set up a subscription
+    let event_count = Arc::new(AtomicUsize::new(0));
+    let event_count_clone = event_count.clone();
+    let _sub = doc.subscribe_root(Arc::new(move |_e| {
+        event_count_clone.fetch_add(1, Ordering::SeqCst);
+    }));
+
+    // Verify subscription works before replace_with_shallow
+    doc.get_text("text").insert(5, " World").unwrap();
+    doc.commit();
+    assert!(
+        event_count.load(Ordering::SeqCst) >= 1,
+        "Subscription should fire before replace_with_shallow"
+    );
+
+    let count_before_replace = event_count.load(Ordering::SeqCst);
+
+    // Replace with shallow
+    let frontiers = doc.oplog_frontiers();
+    doc.replace_with_shallow(&frontiers).unwrap();
+
+    // Verify subscription still works after replace_with_shallow
+    doc.get_text("text").insert(11, "!").unwrap();
+    doc.commit();
+
+    assert!(
+        event_count.load(Ordering::SeqCst) > count_before_replace,
+        "Subscription should still fire after replace_with_shallow"
+    );
+}
+
+#[test]
+#[parallel]
+fn test_replace_with_shallow_preserves_container_subscriptions() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    let text = doc.get_text("text");
+    text.insert(0, "Hello").unwrap();
+    doc.commit();
+
+    // Set up a container-specific subscription
+    let event_count = Arc::new(AtomicUsize::new(0));
+    let event_count_clone = event_count.clone();
+    let _sub = doc.subscribe(
+        &text.id(),
+        Arc::new(move |_e| {
+            event_count_clone.fetch_add(1, Ordering::SeqCst);
+        }),
+    );
+
+    // Verify subscription works before replace_with_shallow
+    doc.get_text("text").insert(5, " World").unwrap();
+    doc.commit();
+    assert!(
+        event_count.load(Ordering::SeqCst) >= 1,
+        "Container subscription should fire before replace_with_shallow"
+    );
+
+    let count_before_replace = event_count.load(Ordering::SeqCst);
+
+    // Replace with shallow
+    let frontiers = doc.oplog_frontiers();
+    doc.replace_with_shallow(&frontiers).unwrap();
+
+    // Verify subscription still works after replace_with_shallow
+    doc.get_text("text").insert(11, "!").unwrap();
+    doc.commit();
+
+    assert!(
+        event_count.load(Ordering::SeqCst) > count_before_replace,
+        "Container subscription should still fire after replace_with_shallow"
+    );
+}

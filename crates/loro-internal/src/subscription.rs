@@ -172,6 +172,58 @@ impl Observer {
             .get(&idx)
             .cloned()
     }
+
+    /// Extract all subscriptions from the observer, removing them.
+    /// Returns a vector of (Option<ContainerID>, Subscriber) pairs.
+    /// - None ContainerID means a root subscription
+    /// - Some(ContainerID) means a container-specific subscription
+    ///
+    /// This is used for subscription migration during `replace_with_shallow`.
+    pub fn extract_subscriptions(&self) -> Vec<(Option<ContainerID>, Subscriber)> {
+        let extracted = self.inner.subscriber_set.extract_all();
+        let container_id_map = self.inner.container_id_map.lock().unwrap();
+
+        extracted
+            .into_iter()
+            .map(|(key, callback)| {
+                let container_id = match key {
+                    None => None, // Root subscription
+                    Some(idx) => container_id_map.get(&idx).cloned(),
+                };
+                (container_id, callback)
+            })
+            .collect()
+    }
+
+    /// Restore subscriptions that were previously extracted.
+    /// This re-registers each subscription with the current arena,
+    /// resolving ContainerIDs to new ContainerIdx values.
+    ///
+    /// Note: The returned Subscriptions are detached (no unsubscribe handle is returned).
+    /// This is intentional - the original Subscription handles held by users remain valid
+    /// but will no longer unsubscribe (since the original subscriptions were extracted).
+    pub fn restore_subscriptions(&self, subscriptions: Vec<(Option<ContainerID>, Subscriber)>) {
+        let mut container_id_map = self.inner.container_id_map.lock().unwrap();
+
+        for (container_id, callback) in subscriptions {
+            match container_id {
+                None => {
+                    // Root subscription - no ContainerIdx needed
+                    let (sub, enable) = self.inner.subscriber_set.insert(None, callback);
+                    enable();
+                    sub.detach(); // Detach so it stays active
+                }
+                Some(id) => {
+                    // Container-specific subscription - resolve to new ContainerIdx
+                    let idx = self.arena.register_container(&id);
+                    container_id_map.insert(idx, id);
+                    let (sub, enable) = self.inner.subscriber_set.insert(Some(idx), callback);
+                    enable();
+                    sub.detach(); // Detach so it stays active
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

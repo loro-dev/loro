@@ -1628,6 +1628,10 @@ impl DocState {
         assert!(!self.in_txn, "Cannot swap DocState while in transaction");
         assert!(!other.in_txn, "Cannot swap DocState while in transaction");
 
+        // Remember if we were recording before the swap
+        let self_was_recording = self.is_recording();
+        let other_was_recording = other.is_recording();
+
         // Swap the data fields
         std::mem::swap(&mut self.frontiers, &mut other.frontiers);
         std::mem::swap(&mut self.store, &mut other.store);
@@ -1643,6 +1647,14 @@ impl DocState {
         self.dead_containers_cache = Default::default();
         other.event_recorder = Default::default();
         other.dead_containers_cache = Default::default();
+
+        // Restore recording state if it was active before the swap
+        if self_was_recording {
+            self.start_recording();
+        }
+        if other_was_recording {
+            other.start_recording();
+        }
     }
 }
 

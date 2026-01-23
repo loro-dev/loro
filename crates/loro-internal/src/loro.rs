@@ -2135,8 +2135,18 @@ impl LoroDoc {
         // Create a temporary document and import the shallow snapshot
         let temp_doc = LoroDoc::from_snapshot(&shallow_bytes)?;
 
-        // Swap the internals - this preserves subscriptions, config, peer_id
+        // Extract subscriptions before the swap so we can restore them after
+        // This captures the ContainerID for each subscription so we can re-resolve
+        // the ContainerIdx after the arena is swapped
+        let subscriptions = self.observer.extract_subscriptions();
+
+        // Swap the internals - this preserves the observer Arc, config, peer_id
+        // but the arena contents are swapped, invalidating ContainerIdx values
         self.swap_internals_from(&temp_doc);
+
+        // Restore subscriptions with the new arena
+        // This re-resolves ContainerIDs to new ContainerIdx values
+        self.observer.restore_subscriptions(subscriptions);
 
         Ok(())
     }
