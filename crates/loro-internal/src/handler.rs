@@ -1131,7 +1131,9 @@ impl Handler {
         // In this method we will not clone the values of the containers if
         // they are remapped. It's the caller's duty to do so
         let on_container_remap = &mut |old_id, new_id| {
-            container_remap.insert(old_id, new_id);
+            if old_id != new_id {
+                container_remap.insert(old_id, new_id);
+            }
         };
         match self {
             Self::Map(x) => {
