@@ -73,6 +73,18 @@ pub fn check_root_container_name(name: &str) -> bool {
     !name.is_empty() && name.char_indices().all(|(_, x)| x != '/' && x != '\0')
 }
 
+/// Return whether the given name indicates a mergeable container.
+///
+/// Mergeable containers are special containers that use a Root Container ID format
+/// but have a parent. They are identified by having a `/` in their name, which is
+/// forbidden for user-created root containers.
+///
+/// The format is: `parent_container_id/key`
+#[inline]
+pub fn is_mergeable_container_name(name: &str) -> bool {
+    name.contains('/')
+}
+
 impl CompactId {
     pub fn new(peer: PeerID, counter: Counter) -> Self {
         Self {
@@ -583,6 +595,19 @@ mod container {
 
         pub fn is_unknown(&self) -> bool {
             matches!(self.container_type(), ContainerType::Unknown(_))
+        }
+
+        /// Returns true if this is a mergeable container.
+        ///
+        /// Mergeable containers are special containers that use a Root Container ID format
+        /// but have a parent. They are identified by having a `/` in their name, which is
+        /// forbidden for user-created root containers.
+        #[inline]
+        pub fn is_mergeable(&self) -> bool {
+            match self {
+                ContainerID::Root { name, .. } => crate::is_mergeable_container_name(name),
+                ContainerID::Normal { .. } => false,
+            }
         }
     }
 

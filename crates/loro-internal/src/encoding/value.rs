@@ -70,6 +70,8 @@ pub enum LoroValueKind {
     List,
     Map,
     ContainerType,
+    /// Root container type - used for mergeable containers
+    RootContainerType,
 }
 impl LoroValueKind {
     fn from_u8(kind: u8) -> Self {
@@ -84,6 +86,7 @@ impl LoroValueKind {
             7 => LoroValueKind::List,
             8 => LoroValueKind::Map,
             9 => LoroValueKind::ContainerType,
+            10 => LoroValueKind::RootContainerType,
             _ => unreachable!(),
         }
     }
@@ -100,6 +103,7 @@ impl LoroValueKind {
             LoroValueKind::List => 7,
             LoroValueKind::Map => 8,
             LoroValueKind::ContainerType => 9,
+            LoroValueKind::RootContainerType => 10,
         }
     }
 }
@@ -665,6 +669,23 @@ impl<'a> ValueReader<'a> {
 
                 LoroValue::Container(container_id)
             }
+            LoroValueKind::RootContainerType => {
+                // Read container type
+                let type_u8 = self.read_u8()?;
+                let container_type =
+                    ContainerType::try_from_u8(type_u8).unwrap_or(ContainerType::Unknown(type_u8));
+                // Read the root container name from the keys arena
+                let key_idx = self.read_usize()?;
+                let name = keys
+                    .get(key_idx)
+                    .ok_or(LoroError::DecodeDataCorruptionError)?
+                    .clone();
+                let container_id = ContainerID::Root {
+                    name,
+                    container_type,
+                };
+                LoroValue::Container(container_id)
+            }
         })
     }
 
@@ -775,6 +796,23 @@ impl<'a> ValueReader<'a> {
                             ContainerType::try_from_u8(u8).unwrap_or(ContainerType::Unknown(u8)),
                         );
 
+                        LoroValue::Container(container_id)
+                    }
+                    LoroValueKind::RootContainerType => {
+                        // Read container type
+                        let type_u8 = self.read_u8()?;
+                        let container_type = ContainerType::try_from_u8(type_u8)
+                            .unwrap_or(ContainerType::Unknown(type_u8));
+                        // Read the root container name from the keys arena
+                        let name_key_idx = self.read_usize()?;
+                        let name = keys
+                            .get(name_key_idx)
+                            .ok_or(LoroError::DecodeDataCorruptionError)?
+                            .clone();
+                        let container_id = ContainerID::Root {
+                            name,
+                            container_type,
+                        };
                         LoroValue::Container(container_id)
                     }
                 };
@@ -1035,10 +1073,23 @@ impl ValueWriter {
                 (LoroValueKind::Map, len)
             }
             LoroValue::Binary(value) => (LoroValueKind::Binary, self.write_binary(value)),
-            LoroValue::Container(c) => (
-                LoroValueKind::ContainerType,
-                self.write_u8(c.container_type().to_u8()),
-            ),
+            LoroValue::Container(c) => match c {
+                ContainerID::Normal { container_type, .. } => (
+                    LoroValueKind::ContainerType,
+                    self.write_u8(container_type.to_u8()),
+                ),
+                ContainerID::Root {
+                    name,
+                    container_type,
+                } => {
+                    // For Root containers, we need to encode:
+                    // 1. The container type
+                    // 2. The name (via key register)
+                    let key_idx = registers.key_mut().register(name);
+                    let len = self.write_u8(container_type.to_u8()) + self.write_usize(key_idx);
+                    (LoroValueKind::RootContainerType, len)
+                }
+            },
         }
     }
 
@@ -1145,6 +1196,9 @@ fn get_loro_value_kind(value: &LoroValue) -> LoroValueKind {
         LoroValue::List(_) => LoroValueKind::List,
         LoroValue::Map(_) => LoroValueKind::Map,
         LoroValue::Binary(_) => LoroValueKind::Binary,
-        LoroValue::Container(_) => LoroValueKind::ContainerType,
+        LoroValue::Container(c) => match c {
+            ContainerID::Normal { .. } => LoroValueKind::ContainerType,
+            ContainerID::Root { .. } => LoroValueKind::RootContainerType,
+        },
     }
 }

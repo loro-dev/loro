@@ -876,7 +876,7 @@ impl DocState {
         let roots = self.arena.root_containers(flag);
         let ans: loro_common::LoroMapValue = roots
             .into_iter()
-            .map(|idx| {
+            .filter_map(|idx| {
                 let id = self.arena.idx_to_id(idx).unwrap();
                 let ContainerID::Root {
                     name,
@@ -885,7 +885,11 @@ impl DocState {
                 else {
                     unreachable!()
                 };
-                (name.to_string(), LoroValue::Container(id))
+                // Skip mergeable containers - they should not appear at the root level
+                if id.is_mergeable() {
+                    return None;
+                }
+                Some((name.to_string(), LoroValue::Container(id)))
             })
             .collect();
         LoroValue::Map(ans)
@@ -905,6 +909,10 @@ impl DocState {
             let id = self.arena.idx_to_id(root_idx).unwrap();
             match &id {
                 loro_common::ContainerID::Root { name, .. } => {
+                    // Skip mergeable containers - they should not appear at the root level
+                    if id.is_mergeable() {
+                        continue;
+                    }
                     let v = self.get_container_deep_value(root_idx);
                     if (should_hide_empty_root_container || deleted_root_container.contains(&id))
                         && v.is_empty_collection()
@@ -931,6 +939,10 @@ impl DocState {
             let id = self.arena.idx_to_id(root_idx).unwrap();
             match id.clone() {
                 loro_common::ContainerID::Root { name, .. } => {
+                    // Skip mergeable containers - they should not appear at the root level
+                    if id.is_mergeable() {
+                        continue;
+                    }
                     ans.insert(
                         name.to_string(),
                         self.get_container_deep_value_with_id(root_idx, Some(id)),

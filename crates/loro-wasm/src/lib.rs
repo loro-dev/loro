@@ -1519,7 +1519,8 @@ impl LoroDoc {
         let json = if IN_PRE_COMMIT_CALLBACK.with(|f| f.get()) {
             self.doc.export_json_in_id_span(id_span)
         } else {
-            self.doc.with_barrier(|| self.doc.export_json_in_id_span(id_span))
+            self.doc
+                .with_barrier(|| self.doc.export_json_in_id_span(id_span))
         };
         let s = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
         let v = json
@@ -3421,6 +3422,78 @@ impl LoroMap {
     pub fn get_shallow_value(&self) -> JsLoroMapValue {
         let v: JsValue = self.handler.get_value().into();
         v.into()
+    }
+
+    /// Get a mergeable LoroList by key.
+    ///
+    /// If the container does not exist, it will be created.
+    ///
+    /// Mergeable containers are special containers that can be merged with other containers
+    /// created with the same key by other peers.
+    #[wasm_bindgen(js_name = "getMergeableList", skip_typescript)]
+    pub fn get_mergeable_list(&self, key: &str) -> JsResult<LoroList> {
+        let list = self.handler.get_mergeable_list(key)?;
+        Ok(LoroList { handler: list })
+    }
+
+    /// Get a mergeable LoroMap by key.
+    ///
+    /// If the container does not exist, it will be created.
+    ///
+    /// Mergeable containers are special containers that can be merged with other containers
+    /// created with the same key by other peers.
+    #[wasm_bindgen(js_name = "getMergeableMap", skip_typescript)]
+    pub fn get_mergeable_map(&self, key: &str) -> JsResult<LoroMap> {
+        let map = self.handler.get_mergeable_map(key)?;
+        Ok(LoroMap { handler: map })
+    }
+
+    /// Get a mergeable LoroMovableList by key.
+    ///
+    /// If the container does not exist, it will be created.
+    ///
+    /// Mergeable containers are special containers that can be merged with other containers
+    /// created with the same key by other peers.
+    #[wasm_bindgen(js_name = "getMergeableMovableList", skip_typescript)]
+    pub fn get_mergeable_movable_list(&self, key: &str) -> JsResult<LoroMovableList> {
+        let list = self.handler.get_mergeable_movable_list(key)?;
+        Ok(LoroMovableList { handler: list })
+    }
+
+    /// Get a mergeable LoroText by key.
+    ///
+    /// If the container does not exist, it will be created.
+    ///
+    /// Mergeable containers are special containers that can be merged with other containers
+    /// created with the same key by other peers.
+    #[wasm_bindgen(js_name = "getMergeableText", skip_typescript)]
+    pub fn get_mergeable_text(&self, key: &str) -> JsResult<LoroText> {
+        let text = self.handler.get_mergeable_text(key)?;
+        Ok(LoroText { handler: text })
+    }
+
+    /// Get a mergeable LoroTree by key.
+    ///
+    /// If the container does not exist, it will be created.
+    ///
+    /// Mergeable containers are special containers that can be merged with other containers
+    /// created with the same key by other peers.
+    #[wasm_bindgen(js_name = "getMergeableTree", skip_typescript)]
+    pub fn get_mergeable_tree(&self, key: &str) -> JsResult<LoroTree> {
+        let tree = self.handler.get_mergeable_tree(key)?;
+        Ok(LoroTree { handler: tree })
+    }
+
+    /// Get a mergeable LoroCounter by key.
+    ///
+    /// If the container does not exist, it will be created.
+    ///
+    /// Mergeable containers are special containers that can be merged with other containers
+    /// created with the same key by other peers.
+    #[wasm_bindgen(js_name = "getMergeableCounter", skip_typescript)]
+    pub fn get_mergeable_counter(&self, key: &str) -> JsResult<LoroCounter> {
+        let counter = self.handler.get_mergeable_counter(key)?;
+        Ok(LoroCounter { handler: counter })
     }
 }
 
@@ -6921,6 +6994,12 @@ interface LoroMap<T extends Record<string, unknown> = Record<string, unknown>> {
     set<Key extends keyof T, V extends T[Key]>(key: Key, value: Exclude<V, Container>): void;
     delete(key: string): void;
     subscribe(listener: Listener): Subscription;
+    getMergeableList(key: string): LoroList;
+    getMergeableMap(key: string): LoroMap;
+    getMergeableMovableList(key: string): LoroMovableList;
+    getMergeableText(key: string): LoroText;
+    getMergeableTree(key: string): LoroTree;
+    getMergeableCounter(key: string): LoroCounter;
 }
 interface LoroText {
     new(): LoroText;
