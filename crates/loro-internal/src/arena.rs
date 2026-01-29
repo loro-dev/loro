@@ -330,7 +330,8 @@ impl SharedArena {
     }
 
     pub fn get_parent(&self, child: ContainerIdx) -> Option<ContainerIdx> {
-        if self.get_container_id(child).unwrap().is_root() {
+        let id = self.get_container_id(child).unwrap();
+        if id.is_root() && !id.is_mergeable() {
             // TODO: PERF: we can speed this up by use a special bit in ContainerIdx to indicate
             // whether the target is a root container
             return None;

@@ -4153,6 +4153,141 @@ impl MapHandler {
             }),
         }
     }
+
+    pub fn get_mergeable_list(&self, key: &str) -> LoroResult<ListHandler> {
+        self.get_or_create_mergeable_container(
+            key,
+            Handler::new_unattached(ContainerType::List)
+                .into_list()
+                .unwrap(),
+        )
+    }
+
+    pub fn get_mergeable_map(&self, key: &str) -> LoroResult<MapHandler> {
+        self.get_or_create_mergeable_container(
+            key,
+            Handler::new_unattached(ContainerType::Map)
+                .into_map()
+                .unwrap(),
+        )
+    }
+
+    pub fn get_mergeable_movable_list(&self, key: &str) -> LoroResult<MovableListHandler> {
+        self.get_or_create_mergeable_container(
+            key,
+            Handler::new_unattached(ContainerType::MovableList)
+                .into_movable_list()
+                .unwrap(),
+        )
+    }
+
+    pub fn get_mergeable_text(&self, key: &str) -> LoroResult<TextHandler> {
+        self.get_or_create_mergeable_container(
+            key,
+            Handler::new_unattached(ContainerType::Text)
+                .into_text()
+                .unwrap(),
+        )
+    }
+
+    pub fn get_mergeable_tree(&self, key: &str) -> LoroResult<TreeHandler> {
+        self.get_or_create_mergeable_container(
+            key,
+            Handler::new_unattached(ContainerType::Tree)
+                .into_tree()
+                .unwrap(),
+        )
+    }
+
+    #[cfg(feature = "counter")]
+    pub fn get_mergeable_counter(&self, key: &str) -> LoroResult<counter::CounterHandler> {
+        self.get_or_create_mergeable_container(
+            key,
+            Handler::new_unattached(ContainerType::Counter)
+                .into_counter()
+                .unwrap(),
+        )
+    }
+
+    pub fn get_or_create_mergeable_container<C: HandlerTrait>(
+        &self,
+        key: &str,
+        child: C,
+    ) -> LoroResult<C> {
+        // Extract just the name portion from the parent container ID.
+        // For Root containers, we use the name directly (without the "cid:root-" prefix).
+        // For Normal containers, we format as "counter@peer:type".
+        let parent_name = match self.id() {
+            ContainerID::Root { name, .. } => name.to_string(),
+            ContainerID::Normal {
+                peer,
+                counter,
+                container_type,
+            } => format!("{}@{}:{}", counter, peer, container_type),
+        };
+        let name = format!("{}/{}", parent_name, key);
+        let expected_id = ContainerID::Root {
+            name: name.into(),
+            container_type: child.kind(),
+        };
+
+        // Check if exists
+        if let Some(ValueOrHandler::Handler(h)) = self.get_(key) {
+            if h.id() == expected_id {
+                if let Some(c) = C::from_handler(h) {
+                    return Ok(c);
+                } else {
+                    unreachable!("Container type mismatch for same ID");
+                }
+            }
+        }
+
+        // Create
+        match &self.inner {
+            MaybeDetached::Detached(_) => Err(LoroError::MisuseDetachedContainer {
+                method: "get_or_create_mergeable_container",
+            }),
+            MaybeDetached::Attached(a) => a.with_txn(|txn| {
+                self.insert_mergeable_container_with_txn(txn, key, child, expected_id)
+            }),
+        }
+    }
+
+    pub fn insert_mergeable_container_with_txn<H: HandlerTrait>(
+        &self,
+        txn: &mut Transaction,
+        key: &str,
+        child: H,
+        container_id: ContainerID,
+    ) -> LoroResult<H> {
+        let inner = self.inner.try_attached_state()?;
+
+        // Insert into Map
+        txn.apply_local_op(
+            inner.container_idx,
+            crate::op::RawOpContent::Map(crate::container::map::MapSet {
+                key: key.into(),
+                value: Some(LoroValue::Container(container_id.clone())),
+            }),
+            EventHint::Map {
+                key: key.into(),
+                value: Some(LoroValue::Container(container_id.clone())),
+            },
+            &inner.doc,
+        )?;
+
+        // Attach
+        let ans = child.attach(txn, inner, container_id)?;
+
+        // Set Parent in Arena
+        let child_idx = ans.idx();
+        inner
+            .doc
+            .arena
+            .set_parent(child_idx, Some(inner.container_idx));
+
+        Ok(ans)
+    }
 }
 
 fn with_txn<R>(doc: &LoroDoc, f: impl FnOnce(&mut Transaction) -> LoroResult<R>) -> LoroResult<R> {
