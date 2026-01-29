@@ -1513,3 +1513,31 @@ fn test_origin() {
         .unwrap();
     sub.unsubscribe();
 }
+
+#[test]
+fn apply_diff_with_same_peer_id_should_not_hang() {
+    let doc1 = LoroDoc::new_auto_commit();
+    doc1.set_peer_id(1).unwrap();
+
+    let doc2 = doc1.fork();
+    doc2.set_peer_id(1).unwrap(); // Same peer ID
+
+    // The key issue: setContainer creates a nested container
+    let map = doc2.get_map("root");
+    let nested = map
+        .insert_container("nested", MapHandler::new_detached())
+        .unwrap(); // This is what triggers the hang
+    nested.insert("key", "value").unwrap();
+    doc2.commit_then_renew();
+
+    let frontiers_before = doc1.oplog_frontiers();
+    let frontiers_after = doc2.oplog_frontiers();
+    let diff = doc2.diff(&frontiers_before, &frontiers_after).unwrap();
+
+    // This should NOT hang
+    doc1.apply_diff(diff).unwrap();
+    assert_eq!(
+        doc1.get_deep_value().to_json_value(),
+        doc2.get_deep_value().to_json_value()
+    );
+}
