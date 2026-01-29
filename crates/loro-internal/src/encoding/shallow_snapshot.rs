@@ -254,7 +254,7 @@ pub(crate) fn encode_snapshot_at<W: std::io::Write>(
     w: &mut W,
 ) -> Result<(), LoroEncodeError> {
     let was_detached = doc.is_detached();
-    let version_before_start = doc.oplog_frontiers();
+    let version_before_start = doc.state_frontiers();
     doc._checkout_without_emitting(frontiers, true, false)
         .unwrap();
     let result = 'block: {
