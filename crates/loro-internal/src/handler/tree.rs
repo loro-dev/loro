@@ -309,7 +309,7 @@ impl TreeHandler {
             }
         };
         txn.apply_local_op(
-            inner.container_idx,
+            inner.container_idx(),
             crate::op::RawOpContent::Tree(Arc::new(TreeOp::Delete { target })),
             EventHint::Tree(smallvec![TreeDiffItem {
                 target,
@@ -409,7 +409,7 @@ impl TreeHandler {
             let inner = self.inner.try_attached_state()?;
 
             txn.apply_local_op(
-                inner.container_idx,
+                inner.container_idx(),
                 crate::op::RawOpContent::Tree(Arc::new(TreeOp::Create {
                     target,
                     parent: parent.tree_id(),
@@ -492,7 +492,7 @@ impl TreeHandler {
         a.with_txn(|txn| {
             let inner = self.inner.try_attached_state()?;
             txn.apply_local_op(
-                inner.container_idx,
+                inner.container_idx(),
                 crate::op::RawOpContent::Tree(Arc::new(TreeOp::Move {
                     target,
                     parent: parent.tree_id(),
@@ -671,7 +671,7 @@ impl TreeHandler {
         position: FractionalIndex,
     ) -> LoroResult<TreeID> {
         txn.apply_local_op(
-            inner.container_idx,
+            inner.container_idx(),
             crate::op::RawOpContent::Tree(Arc::new(TreeOp::Create {
                 target: tree_id,
                 parent: parent.tree_id(),
@@ -702,7 +702,7 @@ impl TreeHandler {
         old_index: usize,
     ) -> LoroResult<()> {
         txn.apply_local_op(
-            inner.container_idx,
+            inner.container_idx(),
             crate::op::RawOpContent::Tree(Arc::new(TreeOp::Move {
                 target,
                 parent: parent.tree_id(),

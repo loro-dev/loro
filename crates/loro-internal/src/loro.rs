@@ -2,7 +2,7 @@ use crate::encoding::json_schema::{encode_change, export_json_in_id_span};
 pub use crate::encoding::ExportMode;
 use crate::pre_commit::{FirstCommitFromPeerCallback, FirstCommitFromPeerPayload};
 pub use crate::state::analyzer::{ContainerAnalysisInfo, DocAnalysis};
-use crate::sync::AtomicBool;
+use crate::sync::{AtomicBool, AtomicU64};
 pub(crate) use crate::LoroDocInner;
 use crate::{
     arena::SharedArena,
@@ -111,6 +111,7 @@ impl LoroDoc {
                 config,
                 detached: AtomicBool::new(false),
                 auto_commit: AtomicBool::new(false),
+                arena_generation: AtomicU64::new(0),
                 observer: Arc::new(Observer::new(arena.clone())),
                 diff_calculator: Arc::new(
                     lock_group.new_lock(DiffCalculator::new(true), LockKind::DiffCalculator),
@@ -514,6 +515,25 @@ impl LoroDoc {
 
     pub(crate) fn set_detached(&self, detached: bool) {
         self.detached.store(detached, Release);
+    }
+
+    /// Get the current arena generation counter.
+    ///
+    /// This counter is incremented when the document's internals are swapped
+    /// (e.g., during `replace_with_shallow`). Handlers use this to detect
+    /// when their cached `ContainerIdx` needs re-resolution.
+    #[inline(always)]
+    pub fn arena_generation(&self) -> u64 {
+        self.arena_generation.load(Acquire)
+    }
+
+    /// Increment the arena generation counter.
+    ///
+    /// This should be called after swapping document internals to invalidate
+    /// all cached `ContainerIdx` values in handlers.
+    #[inline]
+    pub(crate) fn bump_arena_generation(&self) {
+        self.arena_generation.fetch_add(1, Release);
     }
 
     #[inline(always)]
@@ -1996,6 +2016,139 @@ impl LoroDoc {
         self.config
             .hide_empty_root_containers
             .store(hide, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Swap the internal data of this document with another document.
+    ///
+    /// This method atomically replaces the document's internal state (OpLog, DocState, Arena)
+    /// with the contents from another document, while preserving:
+    /// - The `Arc` wrappers (so existing references remain valid)
+    /// - Subscriptions and observers
+    /// - Configuration
+    /// - Peer ID
+    ///
+    /// After this call:
+    /// - `self` will contain the data that was in `other`
+    /// - `other` will contain the data that was in `self`
+    /// - The arena generation counter is bumped, invalidating cached `ContainerIdx` in handlers
+    ///
+    /// # Use Case
+    ///
+    /// This is primarily used by `replace_with_shallow` to atomically replace a document's
+    /// contents with a trimmed shallow snapshot while preserving all external references.
+    ///
+    /// # Panics
+    ///
+    /// - Panics if either document is in a transaction
+    /// - Panics if either document has an uncommitted change
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Create a shallow snapshot and swap it in
+    /// let shallow_bytes = doc.export(ExportMode::shallow_snapshot(&frontiers))?;
+    /// let temp_doc = LoroDoc::new();
+    /// temp_doc.import(&shallow_bytes)?;
+    /// doc.swap_internals_from(&temp_doc);
+    /// // Now doc contains the shallow snapshot, and temp_doc contains the old data
+    /// ```
+    pub fn swap_internals_from(&self, other: &LoroDoc) {
+        // Ensure no transactions are active
+        let (self_options, _self_guard) = self.implicit_commit_then_stop();
+        let (other_options, _other_guard) = other.implicit_commit_then_stop();
+
+        // Lock all components in a consistent order to avoid deadlocks
+        // Order: oplog -> state (following LockKind ordering)
+        let mut self_oplog = self.oplog.lock().unwrap();
+        let mut other_oplog = other.oplog.lock().unwrap();
+        let mut self_state = self.state.lock().unwrap();
+        let mut other_state = other.state.lock().unwrap();
+
+        // Swap OpLog contents
+        self_oplog.swap_data_with(&mut other_oplog);
+
+        // Swap DocState contents
+        self_state.swap_data_with(&mut other_state);
+
+        // Swap Arena contents
+        self.arena.swap_contents_with(&other.arena);
+
+        // Drop locks before bumping generation
+        drop(self_state);
+        drop(other_state);
+        drop(self_oplog);
+        drop(other_oplog);
+
+        // Bump arena generation to invalidate cached ContainerIdx in handlers
+        self.bump_arena_generation();
+        other.bump_arena_generation();
+
+        // Restore auto-commit if it was enabled
+        drop(_self_guard);
+        drop(_other_guard);
+        self.renew_txn_if_auto_commit(self_options);
+        other.renew_txn_if_auto_commit(other_options);
+    }
+
+    /// Replace the current document state with a shallow snapshot at the given frontiers.
+    ///
+    /// This method trims the history in place, discarding operations before the specified
+    /// frontiers while preserving:
+    /// - Subscriptions and observers
+    /// - Configuration
+    /// - Peer ID
+    /// - All existing references to the document
+    ///
+    /// After this call, the document will only contain history from the specified frontiers
+    /// onwards. The state at the frontiers becomes the new "shallow root" of the document.
+    ///
+    /// # Arguments
+    ///
+    /// * `frontiers` - The version to use as the new shallow root. All history before this
+    ///   version will be discarded.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The frontiers are not found in the document's history
+    /// - The document cannot export a shallow snapshot at the given frontiers
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let doc = LoroDoc::new();
+    /// // ... perform many operations ...
+    ///
+    /// // Trim history to only keep operations from the current state onwards
+    /// let frontiers = doc.oplog_frontiers();
+    /// doc.replace_with_shallow(&frontiers)?;
+    ///
+    /// // The document now has a shallow history starting from `frontiers`
+    /// assert!(doc.is_shallow());
+    /// ```
+    pub fn replace_with_shallow(&self, frontiers: &Frontiers) -> LoroResult<()> {
+        // Export a shallow snapshot at the given frontiers
+        let shallow_bytes = self
+            .export(ExportMode::shallow_snapshot(frontiers))
+            .map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
+
+        // Create a temporary document and import the shallow snapshot
+        let temp_doc = LoroDoc::from_snapshot(&shallow_bytes)?;
+
+        // Extract subscriptions before the swap so we can restore them after
+        // This captures the ContainerID for each subscription so we can re-resolve
+        // the ContainerIdx after the arena is swapped
+        let subscriptions = self.observer.extract_subscriptions();
+
+        // Swap the internals - this preserves the observer Arc, config, peer_id
+        // but the arena contents are swapped, invalidating ContainerIdx values
+        self.swap_internals_from(&temp_doc);
+
+        // Restore subscriptions with the new arena
+        // This re-resolves ContainerIDs to new ContainerIdx values
+        self.observer.restore_subscriptions(subscriptions);
+
+        Ok(())
     }
 }
 

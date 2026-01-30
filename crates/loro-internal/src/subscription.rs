@@ -12,6 +12,7 @@ use smallvec::SmallVec;
 use std::{collections::VecDeque, sync::Arc};
 
 use crate::sync::Mutex;
+
 /// The callback of the local update.
 pub type LocalUpdateCallback = Box<dyn Fn(&Vec<u8>) -> bool + Send + Sync + 'static>;
 /// The callback of the peer id change. The second argument is the next counter for the peer.
@@ -31,6 +32,11 @@ impl LoroDoc {
 struct ObserverInner {
     subscriber_set: SubscriberSet<Option<ContainerIdx>, Subscriber>,
     queue: Arc<Mutex<VecDeque<DocDiff>>>,
+    /// Maps ContainerIdx to ContainerID for subscription migration.
+    /// This allows us to re-resolve subscriptions after an arena swap.
+    /// - Key: ContainerIdx (the current index in the arena)
+    /// - Value: ContainerID (the stable identifier)
+    container_id_map: Mutex<FxHashMap<ContainerIdx, ContainerID>>,
 }
 
 impl Default for ObserverInner {
@@ -38,6 +44,7 @@ impl Default for ObserverInner {
         Self {
             subscriber_set: SubscriberSet::new(),
             queue: Arc::new(Mutex::new(VecDeque::new())),
+            container_id_map: Mutex::new(FxHashMap::default()),
         }
     }
 }
@@ -64,6 +71,12 @@ impl Observer {
     pub fn subscribe(&self, id: &ContainerID, callback: Subscriber) -> Subscription {
         let idx = self.arena.register_container(id);
         let inner = &self.inner;
+        // Track the ContainerID for this ContainerIdx to enable subscription migration
+        inner
+            .container_id_map
+            .lock()
+            .unwrap()
+            .insert(idx, id.clone());
         let (sub, enable) = inner.subscriber_set.insert(Some(idx), callback);
         enable();
         sub
@@ -146,6 +159,70 @@ impl Observer {
             .unwrap();
 
         true
+    }
+
+    /// Get the ContainerID associated with a ContainerIdx.
+    /// This is used for subscription migration after arena swaps.
+    /// Returns None for root subscriptions or if the ContainerIdx is not tracked.
+    pub fn get_subscription_container_id(&self, idx: ContainerIdx) -> Option<ContainerID> {
+        self.inner
+            .container_id_map
+            .lock()
+            .unwrap()
+            .get(&idx)
+            .cloned()
+    }
+
+    /// Extract all subscriptions from the observer, removing them.
+    /// Returns a vector of (Option<ContainerID>, Subscriber) pairs.
+    /// - None ContainerID means a root subscription
+    /// - Some(ContainerID) means a container-specific subscription
+    ///
+    /// This is used for subscription migration during `replace_with_shallow`.
+    pub fn extract_subscriptions(&self) -> Vec<(Option<ContainerID>, Subscriber)> {
+        let extracted = self.inner.subscriber_set.extract_all();
+        let container_id_map = self.inner.container_id_map.lock().unwrap();
+
+        extracted
+            .into_iter()
+            .map(|(key, callback)| {
+                let container_id = match key {
+                    None => None, // Root subscription
+                    Some(idx) => container_id_map.get(&idx).cloned(),
+                };
+                (container_id, callback)
+            })
+            .collect()
+    }
+
+    /// Restore subscriptions that were previously extracted.
+    /// This re-registers each subscription with the current arena,
+    /// resolving ContainerIDs to new ContainerIdx values.
+    ///
+    /// Note: The returned Subscriptions are detached (no unsubscribe handle is returned).
+    /// This is intentional - the original Subscription handles held by users remain valid
+    /// but will no longer unsubscribe (since the original subscriptions were extracted).
+    pub fn restore_subscriptions(&self, subscriptions: Vec<(Option<ContainerID>, Subscriber)>) {
+        let mut container_id_map = self.inner.container_id_map.lock().unwrap();
+
+        for (container_id, callback) in subscriptions {
+            match container_id {
+                None => {
+                    // Root subscription - no ContainerIdx needed
+                    let (sub, enable) = self.inner.subscriber_set.insert(None, callback);
+                    enable();
+                    sub.detach(); // Detach so it stays active
+                }
+                Some(id) => {
+                    // Container-specific subscription - resolve to new ContainerIdx
+                    let idx = self.arena.register_container(&id);
+                    container_id_map.insert(idx, id);
+                    let (sub, enable) = self.inner.subscriber_set.insert(Some(idx), callback);
+                    enable();
+                    sub.detach(); // Detach so it stays active
+                }
+            }
+        }
     }
 }
 

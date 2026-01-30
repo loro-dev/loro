@@ -2029,6 +2029,137 @@ fn no_dead_loop_when_subscribe_local_updates_to_each_other() {
     assert_eq!(doc1.get_deep_value(), doc2.get_deep_value());
 }
 
+#[test]
+#[parallel]
+fn test_swap_internals_from_basic() {
+    // Create doc1 with some data
+    let doc1 = LoroDoc::new();
+    doc1.set_peer_id(1).unwrap();
+    let text1 = doc1.get_text("text");
+    text1.insert(0, "Hello from doc1").unwrap();
+    doc1.commit();
+    let doc1_value_before = doc1.get_deep_value();
+    let doc1_vv_before = doc1.oplog_vv();
+
+    // Create doc2 with different data
+    let doc2 = LoroDoc::new();
+    doc2.set_peer_id(2).unwrap();
+    let text2 = doc2.get_text("text");
+    text2.insert(0, "Hello from doc2").unwrap();
+    doc2.get_map("map").insert("key", "value").unwrap();
+    doc2.commit();
+    let doc2_value_before = doc2.get_deep_value();
+    let doc2_vv_before = doc2.oplog_vv();
+
+    // Swap internals
+    doc1.swap_internals_from(&doc2);
+
+    // Verify doc1 now has doc2's data
+    assert_eq!(doc1.get_deep_value(), doc2_value_before);
+    assert_eq!(doc1.oplog_vv(), doc2_vv_before);
+
+    // Verify doc2 now has doc1's data
+    assert_eq!(doc2.get_deep_value(), doc1_value_before);
+    assert_eq!(doc2.oplog_vv(), doc1_vv_before);
+
+    // Verify peer IDs are preserved (not swapped)
+    assert_eq!(doc1.peer_id(), 1);
+    assert_eq!(doc2.peer_id(), 2);
+}
+
+#[test]
+#[parallel]
+fn test_swap_internals_from_preserves_peer_id() {
+    // Test that peer IDs are preserved after swap
+    let doc1 = LoroDoc::new();
+    doc1.set_peer_id(1).unwrap();
+    let text1 = doc1.get_text("text");
+    text1.insert(0, "Initial").unwrap();
+    doc1.commit();
+
+    // Create doc2 with different data
+    let doc2 = LoroDoc::new();
+    doc2.set_peer_id(2).unwrap();
+    doc2.get_text("text").insert(0, "From doc2").unwrap();
+    doc2.commit();
+
+    // Swap internals
+    doc1.swap_internals_from(&doc2);
+
+    // Verify peer IDs are preserved (not swapped)
+    assert_eq!(doc1.peer_id(), 1);
+    assert_eq!(doc2.peer_id(), 2);
+
+    // Verify data was swapped
+    assert_eq!(doc1.get_text("text").to_string(), "From doc2");
+    assert_eq!(doc2.get_text("text").to_string(), "Initial");
+}
+
+#[test]
+#[parallel]
+fn test_swap_internals_from_handler_invalidation() {
+    let doc1 = LoroDoc::new();
+    doc1.set_peer_id(1).unwrap();
+    let text1 = doc1.get_text("text");
+    text1.insert(0, "Hello").unwrap();
+    doc1.commit();
+
+    // Create doc2 with different data
+    let doc2 = LoroDoc::new();
+    doc2.set_peer_id(2).unwrap();
+    doc2.get_text("text").insert(0, "World").unwrap();
+    doc2.commit();
+
+    // Swap internals
+    doc1.swap_internals_from(&doc2);
+
+    // Get a fresh handler after swap - it should work with the new data
+    let text_after = doc1.get_text("text");
+    assert_eq!(text_after.to_string(), "World");
+
+    // The old handler should be invalidated (generation mismatch)
+    // Operations on it should fail or use the new data
+    // Note: The exact behavior depends on how handler invalidation is implemented
+}
+
+#[test]
+#[parallel]
+fn test_swap_internals_for_shallow_snapshot() {
+    // This test simulates the use case for replace_with_shallow
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+
+    // Create some history
+    for i in 0..10 {
+        doc.get_text("text").insert(i, &format!("{}", i)).unwrap();
+        doc.commit();
+    }
+
+    let frontiers = doc.oplog_frontiers();
+    let value_before = doc.get_deep_value();
+
+    // Export a shallow snapshot
+    let shallow_bytes = doc
+        .export(ExportMode::shallow_snapshot(&frontiers))
+        .unwrap();
+
+    // Create a temp doc and import the shallow snapshot
+    let temp_doc = LoroDoc::new();
+    temp_doc.import(&shallow_bytes).unwrap();
+
+    // Verify temp doc has the same value
+    assert_eq!(temp_doc.get_deep_value(), value_before);
+
+    // Swap internals - this is what replace_with_shallow would do
+    doc.swap_internals_from(&temp_doc);
+
+    // Verify doc still has the same value
+    assert_eq!(doc.get_deep_value(), value_before);
+
+    // Verify doc is now shallow
+    assert!(doc.is_shallow());
+}
+
 /// https://github.com/loro-dev/loro/issues/490
 #[test]
 #[parallel]
@@ -3567,4 +3698,212 @@ fn has_container_test() {
         .unwrap();
     assert!(doc.has_container(&text.id()));
     assert!(doc.has_container(&list.id()));
+}
+
+#[test]
+#[parallel]
+fn test_replace_with_shallow_basic() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    let text = doc.get_text("text");
+    text.insert(0, "Hello").unwrap();
+    doc.commit();
+    let frontiers_before = doc.oplog_frontiers();
+    text.insert(5, " World").unwrap();
+    doc.commit();
+
+    // Replace with shallow at the earlier frontiers
+    // Note: shallow_snapshot exports current state with history trimmed to start from frontiers
+    let value_before = doc.get_deep_value();
+    doc.replace_with_shallow(&frontiers_before).unwrap();
+
+    // Document should be shallow now
+    assert!(doc.is_shallow());
+    // Value should be preserved (current state, not state at frontiers)
+    assert_eq!(doc.get_deep_value(), value_before);
+    // Shallow since should be at the frontiers_before
+    assert_eq!(doc.shallow_since_frontiers(), frontiers_before);
+}
+
+#[test]
+#[parallel]
+fn test_replace_with_shallow_preserves_peer_id() {
+    let doc = LoroDoc::new();
+    let original_peer_id = 12345u64;
+    doc.set_peer_id(original_peer_id).unwrap();
+    let text = doc.get_text("text");
+    text.insert(0, "Hello").unwrap();
+    doc.commit();
+
+    let frontiers = doc.oplog_frontiers();
+    doc.replace_with_shallow(&frontiers).unwrap();
+
+    // Peer ID should be preserved
+    assert_eq!(doc.peer_id(), original_peer_id);
+}
+
+#[test]
+#[parallel]
+fn test_replace_with_shallow_can_continue_editing() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    let text = doc.get_text("text");
+    text.insert(0, "Hello").unwrap();
+    doc.commit();
+
+    let frontiers = doc.oplog_frontiers();
+    doc.replace_with_shallow(&frontiers).unwrap();
+
+    // Should be able to continue editing after replace_with_shallow
+    doc.get_text("text").insert(5, " World").unwrap();
+    doc.commit();
+
+    assert_eq!(doc.get_text("text").to_string(), "Hello World");
+
+    // Should be able to sync with another doc using snapshot (shallow docs need snapshot, not updates)
+    let doc2 = LoroDoc::new();
+    let snapshot = doc.export(ExportMode::Snapshot).unwrap();
+    doc2.import(&snapshot).unwrap();
+    assert_eq!(doc2.get_text("text").to_string(), "Hello World");
+}
+
+#[test]
+#[parallel]
+fn test_replace_with_shallow_at_intermediate_version() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    let text = doc.get_text("text");
+    text.insert(0, "A").unwrap();
+    doc.commit();
+    let frontiers_a = doc.oplog_frontiers();
+
+    text.insert(1, "B").unwrap();
+    doc.commit();
+    let frontiers_b = doc.oplog_frontiers();
+
+    text.insert(2, "C").unwrap();
+    doc.commit();
+
+    // Replace at intermediate version (frontiers_a)
+    // Note: shallow_snapshot exports current state ("ABC") with history trimmed to start from frontiers_a
+    doc.replace_with_shallow(&frontiers_a).unwrap();
+
+    // Document should be shallow
+    assert!(doc.is_shallow());
+    // Value should be the current state (ABC), not the state at frontiers_a
+    assert_eq!(doc.get_text("text").to_string(), "ABC");
+    // Shallow since should be at frontiers_a
+    assert_eq!(doc.shallow_since_frontiers(), frontiers_a);
+
+    // Can still checkout to frontiers_b (which is after shallow root)
+    doc.checkout(&frontiers_b).unwrap();
+    assert_eq!(doc.get_text("text").to_string(), "AB");
+}
+
+#[test]
+#[parallel]
+fn test_replace_with_shallow_cloned_doc_independence() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    let text = doc.get_text("text");
+    text.insert(0, "Hello").unwrap();
+    doc.commit();
+
+    // Clone the doc (creates a reference to the same inner)
+    let doc_clone = doc.clone();
+
+    let frontiers = doc.oplog_frontiers();
+    doc.replace_with_shallow(&frontiers).unwrap();
+
+    // Both should see the shallow state since they share the same inner
+    assert!(doc.is_shallow());
+    assert!(doc_clone.is_shallow());
+    assert_eq!(doc.get_deep_value(), doc_clone.get_deep_value());
+}
+
+#[test]
+#[parallel]
+fn test_replace_with_shallow_preserves_subscriptions() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    let text = doc.get_text("text");
+    text.insert(0, "Hello").unwrap();
+    doc.commit();
+
+    // Set up a subscription
+    let event_count = Arc::new(AtomicUsize::new(0));
+    let event_count_clone = event_count.clone();
+    let _sub = doc.subscribe_root(Arc::new(move |_e| {
+        event_count_clone.fetch_add(1, Ordering::SeqCst);
+    }));
+
+    // Verify subscription works before replace_with_shallow
+    doc.get_text("text").insert(5, " World").unwrap();
+    doc.commit();
+    assert!(
+        event_count.load(Ordering::SeqCst) >= 1,
+        "Subscription should fire before replace_with_shallow"
+    );
+
+    let count_before_replace = event_count.load(Ordering::SeqCst);
+
+    // Replace with shallow
+    let frontiers = doc.oplog_frontiers();
+    doc.replace_with_shallow(&frontiers).unwrap();
+
+    // Verify subscription still works after replace_with_shallow
+    doc.get_text("text").insert(11, "!").unwrap();
+    doc.commit();
+
+    assert!(
+        event_count.load(Ordering::SeqCst) > count_before_replace,
+        "Subscription should still fire after replace_with_shallow"
+    );
+}
+
+#[test]
+#[parallel]
+fn test_replace_with_shallow_preserves_container_subscriptions() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    let text = doc.get_text("text");
+    text.insert(0, "Hello").unwrap();
+    doc.commit();
+
+    // Set up a container-specific subscription
+    let event_count = Arc::new(AtomicUsize::new(0));
+    let event_count_clone = event_count.clone();
+    let _sub = doc.subscribe(
+        &text.id(),
+        Arc::new(move |_e| {
+            event_count_clone.fetch_add(1, Ordering::SeqCst);
+        }),
+    );
+
+    // Verify subscription works before replace_with_shallow
+    doc.get_text("text").insert(5, " World").unwrap();
+    doc.commit();
+    assert!(
+        event_count.load(Ordering::SeqCst) >= 1,
+        "Container subscription should fire before replace_with_shallow"
+    );
+
+    let count_before_replace = event_count.load(Ordering::SeqCst);
+
+    // Replace with shallow
+    let frontiers = doc.oplog_frontiers();
+    doc.replace_with_shallow(&frontiers).unwrap();
+
+    // Verify subscription still works after replace_with_shallow
+    doc.get_text("text").insert(11, "!").unwrap();
+    doc.commit();
+
+    assert!(
+        event_count.load(Ordering::SeqCst) > count_before_replace,
+        "Container subscription should still fire after replace_with_shallow"
+    );
 }

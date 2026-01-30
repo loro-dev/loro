@@ -243,6 +243,16 @@ impl ContainerStore {
         }
     }
 
+    /// Update the arena reference in this store and its inner store.
+    ///
+    /// This is needed after `DocState::swap_data_with` because the swapped store
+    /// still references the old arena. After swapping, we need to update the arena
+    /// reference to point to the correct (swapped) arena.
+    pub(crate) fn set_arena(&mut self, arena: SharedArena) {
+        self.arena = arena.clone();
+        self.store.set_arena(arena);
+    }
+
     #[allow(unused)]
     fn check_eq_after_parsing(&mut self, other: &mut ContainerStore) {
         for (idx, container) in self.store.iter_all_containers_mut() {
