@@ -1222,6 +1222,13 @@ impl Handler {
                                 // So when we redo the delete operation, we should check if the target is still alive.
                                 // If it's alive, we should move it back instead of creating new one.
                                 x.move_at_with_target_for_apply_diff(parent, position, target)?;
+                            } else if !x.is_node_unexist(&target) {
+                                // Node exists but is deleted — resurrect it with the same
+                                // TreeID so that all references to the original node remain
+                                // valid (e.g. after undoing a tree.delete()).
+                                x.create_at_with_target_for_apply_diff(
+                                    parent, position, target,
+                                )?;
                             } else {
                                 let new_target = x.__internal__next_tree_id();
                                 if x.create_at_with_target_for_apply_diff(
@@ -1246,8 +1253,8 @@ impl Handler {
                             }
                             remap_tree_id(&mut target, container_remap);
                             // determine if the target is deleted
-                            if x.is_node_unexist(&target) || x.is_node_deleted(&target).unwrap() {
-                                // create the target node, we should use the new target id
+                            if x.is_node_unexist(&target) {
+                                // Node truly doesn't exist — create with a new target id
                                 let new_target = x.__internal__next_tree_id();
                                 if x.create_at_with_target_for_apply_diff(
                                     parent, position, new_target,
@@ -1257,6 +1264,11 @@ impl Handler {
                                         new_target.associated_meta_container(),
                                     );
                                 }
+                            } else if x.is_node_deleted(&target).unwrap() {
+                                // Node exists but is deleted — resurrect with same TreeID
+                                x.create_at_with_target_for_apply_diff(
+                                    parent, position, target,
+                                )?;
                             } else {
                                 x.move_at_with_target_for_apply_diff(parent, position, target)?;
                             }

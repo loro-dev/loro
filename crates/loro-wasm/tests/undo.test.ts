@@ -395,6 +395,91 @@ describe("undo", () => {
     expect(docJson).toStrictEqual(docJson1);
   });
 
+  test("undo tree delete restores node to original parent", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    const undo = new UndoManager(doc, {
+      mergeInterval: 0,
+      maxUndoSteps: 100,
+    });
+
+    const tree = doc.getTree("1");
+    tree.enableFractionalIndex(3);
+
+    // Create parent and child
+    const parent = tree.createNode(undefined, 0);
+    parent.data.set("title", "parent");
+    const child = tree.createNode(parent.id, 0);
+    child.data.set("title", "child");
+    doc.commit();
+
+    const childId = child.id;
+    const snapshotBefore = doc.toJSON();
+
+    // Delete the child
+    tree.delete(childId);
+    doc.commit();
+
+    // Undo the delete
+    undo.undo();
+
+    // The node should be restored with same identity and correct parent
+    const restored = tree.getNodeByID(childId);
+    expect(restored).toBeDefined();
+    expect(restored!.parent()!.id).toStrictEqual(parent.id); // Should have original parent
+    expect(restored!.data.get("title")).toBe("child"); // Data should be intact
+
+    // Full doc state should match pre-delete state
+    expect(doc.toJSON()).toStrictEqual(snapshotBefore);
+  });
+
+  test("undo tree delete restores subtree parent relationships", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    const undo = new UndoManager(doc, {
+      mergeInterval: 0,
+      maxUndoSteps: 100,
+    });
+
+    const tree = doc.getTree("1");
+    tree.enableFractionalIndex(3);
+
+    // Create a subtree: root -> parent -> child
+    const root = tree.createNode(undefined, 0);
+    root.data.set("title", "root");
+    const parent = tree.createNode(root.id, 0);
+    parent.data.set("title", "parent");
+    const child = tree.createNode(parent.id, 0);
+    child.data.set("title", "child");
+    doc.commit();
+
+    const parentId = parent.id;
+    const childId = child.id;
+    const snapshotBefore = doc.toJSON();
+
+    // Delete the parent (which cascades to child)
+    tree.delete(parentId);
+    doc.commit();
+
+    // Undo the delete
+    undo.undo();
+
+    // Parent should be restored under root
+    const restoredParent = tree.getNodeByID(parentId);
+    expect(restoredParent).toBeDefined();
+    expect(restoredParent!.parent()!.id).toStrictEqual(root.id);
+    expect(restoredParent!.data.get("title")).toBe("parent");
+
+    // Child should be restored under parent
+    const restoredChild = tree.getNodeByID(childId);
+    expect(restoredChild).toBeDefined();
+    expect(restoredChild!.parent()!.id).toStrictEqual(parentId);
+    expect(restoredChild!.data.get("title")).toBe("child");
+
+    // Full doc state should match pre-delete state
+    expect(doc.toJSON()).toStrictEqual(snapshotBefore);
+  });
+
   test("avoid rust recursive use error", () => {
     const doc = new LoroDoc();
     const undoManager = new UndoManager(doc, {});
