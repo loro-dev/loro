@@ -1,5 +1,8 @@
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
-use loro::internal::{LoroDoc as InternalLoroDoc, MapHandler, TextHandler};
+use loro::internal::{
+    LoroDoc as InternalLoroDoc, MapHandler, TextHandler, UndoItemMeta as InternalUndoItemMeta,
+    UndoManager as InternalUndoManager,
+};
 use loro::{LoroDoc, LoroMap, LoroText, UndoItemMeta, UndoManager};
 use std::hint::black_box;
 use std::sync::{
@@ -65,6 +68,28 @@ fn bench_active_subscriptions(c: &mut Criterion) {
                 list.insert(0, 1).unwrap();
                 list.insert(1, 2).unwrap();
                 doc.commit();
+            },
+            BatchSize::SmallInput,
+        );
+    });
+}
+
+fn bench_internal_active_subscriptions(c: &mut Criterion) {
+    c.bench_function("merge baseline/internal active subscriptions", |b| {
+        b.iter_batched(
+            || {
+                let doc = InternalLoroDoc::new_auto_commit();
+                let list = doc.get_list("list");
+                let sub = doc.subscribe_root(Arc::new(|event| {
+                    black_box(event.events.len());
+                }));
+                (doc, list, sub)
+            },
+            |(doc, list, sub)| {
+                black_box(&sub);
+                list.insert(0, 1).unwrap();
+                list.insert(1, 2).unwrap();
+                doc.commit_then_renew();
             },
             BatchSize::SmallInput,
         );
@@ -167,12 +192,44 @@ fn bench_undo_callbacks(c: &mut Criterion) {
     });
 }
 
+fn bench_internal_undo_callbacks(c: &mut Criterion) {
+    c.bench_function("merge baseline/internal undo callbacks", |b| {
+        b.iter_batched(
+            || {
+                let doc = InternalLoroDoc::new_auto_commit();
+                let text = doc.get_text("text");
+                let callback_hits = Arc::new(AtomicUsize::new(0));
+                let callback_hits_clone = callback_hits.clone();
+                let undo = InternalUndoManager::new(&doc);
+                undo.set_merge_interval(0);
+                undo.set_on_push(Some(Box::new(move |_, _, event| {
+                    callback_hits_clone.fetch_add(
+                        event.map(|event| event.events.len()).unwrap_or_default(),
+                        Ordering::Relaxed,
+                    );
+                    InternalUndoItemMeta::new()
+                })));
+                (doc, text, undo, callback_hits)
+            },
+            |(doc, text, undo, callback_hits)| {
+                black_box(&undo);
+                text.insert_unicode(0, "hello").unwrap();
+                doc.commit_then_renew();
+                black_box(callback_hits.load(Ordering::Relaxed));
+            },
+            BatchSize::SmallInput,
+        );
+    });
+}
+
 criterion_group!(
     benches,
     bench_active_subscriptions,
+    bench_internal_active_subscriptions,
     bench_heterogeneous_reads,
     bench_internal_heterogeneous_reads,
     bench_diff_apply_diff,
-    bench_undo_callbacks
+    bench_undo_callbacks,
+    bench_internal_undo_callbacks
 );
 criterion_main!(benches);

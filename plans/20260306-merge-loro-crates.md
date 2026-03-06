@@ -99,7 +99,7 @@ The target state is:
 | 1 | Import engine into `loro` | Done | Phase 0 | `loro` owns implementation modules |
 | 2 | Merge canonical `LoroDoc` semantics | Done | Phase 1 | One canonical document type |
 | 3 | Collapse container and value surface | Done | Phase 2 | One canonical container/value layer |
-| 4 | Collapse event, diff, and undo surface | Not Started | Phase 3 | One canonical event/diff/undo layer |
+| 4 | Collapse event, diff, and undo surface | Done | Phase 3 | One canonical event/diff/undo layer |
 | 5 | Migrate `loro-wasm` and first-party consumers | Not Started | Phase 4 | No first-party dependency on `loro-internal` |
 | 6 | Remove shim and finalize cleanup | Not Started | Phase 5 | Single-crate steady state |
 
@@ -413,7 +413,7 @@ Completed on 2026-03-06.
 
 ## Phase 4: Collapse the Event, Diff, and Undo Surface
 
-Status: Not Started
+Status: Done
 
 ### Objective
 
@@ -434,6 +434,10 @@ This is the most sensitive API surface. The internal and public event shapes are
 
 ### Decision Gate
 
+Chosen on 2026-03-06: compatibility-first.
+
+The canonical first-party event/diff/undo surface is `loro::internal::{DiffEvent, Diff, DiffBatch, UndoManager, UndoItemMeta, UndoOrRedo}`. The existing public `loro::event::*` and public `UndoManager` callback payloads remain compatibility wrappers.
+
 Before implementation starts, choose one of these approaches and record it in the Decision Log:
 
 - Compatibility-first: introduce a canonical borrowed or raw event API, keep the current owned event API as a compatibility layer for one or more releases.
@@ -441,12 +445,12 @@ Before implementation starts, choose one of these approaches and record it in th
 
 ### Work Items
 
-- [ ] Select the canonical event model.
-- [ ] Select the canonical diff model.
-- [ ] Decide whether old `subscribe` remains temporarily as a compatibility wrapper.
-- [ ] Update `UndoManager` callback payloads to use the canonical event or diff types.
-- [ ] Remove first-party hot-path dependence on facade-only event reconstruction.
-- [ ] Re-run the active-subscription benchmark and compare against the Phase 0 baseline.
+- [x] Select the canonical event model.
+- [x] Select the canonical diff model.
+- [x] Decide whether old `subscribe` remains temporarily as a compatibility wrapper.
+- [x] Update `UndoManager` callback payloads to use the canonical event or diff types.
+- [x] Remove first-party hot-path dependence on facade-only event reconstruction.
+- [x] Re-run the active-subscription benchmark and compare against the Phase 0 baseline.
 
 ### Deliverables
 
@@ -464,6 +468,30 @@ Before implementation starts, choose one of these approaches and record it in th
 - `cargo test -p loro`
 - subscription-focused regression tests
 - benchmark comparison against Phase 0 active-subscription baseline
+
+### Phase 4 Summary
+
+Completed on 2026-03-06.
+
+- Chose the compatibility-first event model:
+  - `loro::internal::{DiffEvent, Diff, DiffBatch, UndoManager, UndoItemMeta, UndoOrRedo}` is the canonical first-party event/diff/undo surface.
+  - Public `loro::event::*`, public `subscribe*`, and public `UndoManager` remain compatibility wrappers over that canonical internal surface.
+- Re-exported the canonical event, diff, subscription, and undo types from the `loro::internal` root so first-party crates can stay off the facade bridge without deep module imports.
+- Extended `crates/loro/tests/internal_canonical_surface.rs` to lock:
+  - internal `subscribe_root` delivering canonical `DiffEvent`
+  - internal `UndoManager::set_on_push` delivering canonical `DiffEvent`
+  - text diffs staying on the internal `Diff::Text` path end to end
+- Extended `crates/loro/benches/merge_baseline.rs` with internal benchmarks for:
+  - active subscriptions
+  - undo callbacks
+- Validation passed:
+  - `cargo test -p loro`
+  - `cargo bench -p loro --bench merge_baseline -- --sample-size 10 --warm-up-time 0.1 --measurement-time 0.2`
+- Benchmark comparison against the Phase 0 public-facade baseline:
+  - `merge baseline/public active subscriptions`: `8.1305 us .. 8.5955 us`
+  - `merge baseline/internal active subscriptions`: `7.8933 us .. 8.1270 us`
+  - `merge baseline/public undo callbacks`: `9.0388 us .. 11.589 us`
+  - `merge baseline/internal undo callbacks`: `9.0572 us .. 9.5479 us`
 
 ### Risks
 
@@ -582,6 +610,7 @@ Delete the temporary compatibility crate and complete the transition to a true s
 - [x] 2026-03-06: Phase 1 uses an embedded engine layout under `crates/loro/src/internal/**`, while `crates/loro-internal` becomes a forwarding shim. This removes the dependency edge first and defers facade collapse to Phases 2-4.
 - [x] 2026-03-06: `inner()` remains as a compatibility escape hatch in Phase 2 and returns an internal `LoroDoc` view over the same `Arc<LoroDocInner>`. `with_oplog()` and `with_state()` remain unchanged for now; narrowing them is deferred.
 - [x] 2026-03-06: Phase 3 keeps public `LoroList` / `LoroMap` / `LoroText` / `LoroTree` / `LoroMovableList` and `ValueOrContainer` as compatibility wrappers. The canonical first-party container/value surface is the handler layer re-exported from `loro::internal`.
+- [x] 2026-03-06: Phase 4 adopts a compatibility-first event model. First-party crates should use the `loro::internal` event/diff/undo re-exports directly, while the public `loro::event::*` and public undo callback payloads remain compatibility bridges for now.
 
 ## Suggested PR Sequence
 

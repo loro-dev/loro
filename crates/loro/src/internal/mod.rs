@@ -1,8 +1,8 @@
 //! Canonical engine surface for the merged `loro` crate.
 //!
 //! `loro::internal` now owns the implementation modules that previously lived in
-//! `loro-internal`. First-party crates should treat the handler and value types
-//! re-exported here as the canonical low-level surface.
+//! `loro-internal`. First-party crates should treat the handler, value, event,
+//! diff, and undo types re-exported here as the canonical low-level surface.
 //!
 //! The public `loro::Loro*` and `loro::event::*` APIs remain compatibility
 //! facades. They preserve stable semantics, while first-party performance-
@@ -28,7 +28,10 @@ use diff_calc::DiffCalculator;
 use lock::LoroMutex;
 
 pub use change_meta::ChangeMeta;
-pub use event::{ContainerDiff, DiffEvent, DocDiff, ListDiff, ListDiffInsertItem, ListDiffItem};
+pub use event::{
+    ContainerDiff, Diff, DiffEvent, DocDiff, EventTriggerKind, Index, ListDeltaMeta, ListDiff,
+    ListDiffInsertItem, ListDiffItem, TextDiff, TextDiffItem, TextMeta,
+};
 #[cfg(feature = "counter")]
 pub use handler::counter::CounterHandler;
 pub use handler::{
@@ -44,9 +47,10 @@ use pre_commit::{
 pub use rustc_hash::FxHashMap;
 pub use state::DocState;
 pub use state::{TreeNode, TreeNodeWithChildren, TreeParentId};
+pub use subscription::Subscriber;
 use subscription::{LocalUpdateCallback, Observer, PeerIdUpdateCallback};
 use txn::Transaction;
-pub use undo::UndoManager;
+pub use undo::{DiffBatch, UndoItemMeta, UndoManager, UndoOrRedo};
 pub use utils::subscription::SubscriberSetWithQueue;
 pub use utils::subscription::Subscription;
 pub mod allocation;

@@ -1,4 +1,10 @@
-use loro::internal::{Handler, LoroDoc, MapHandler, TextHandler, ValueOrHandler};
+use loro::internal::{
+    Diff, Handler, LoroDoc, MapHandler, TextHandler, UndoItemMeta, UndoManager, ValueOrHandler,
+};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
 
 #[test]
 fn canonical_internal_handler_surface_covers_read_paths() {
@@ -36,4 +42,34 @@ fn canonical_internal_handler_surface_covers_read_paths() {
     assert!(values
         .iter()
         .any(|value| matches!(value, ValueOrHandler::Handler(Handler::Text(_)))));
+}
+
+#[test]
+fn canonical_internal_event_surface_drives_subscriptions_and_undo() {
+    let doc = LoroDoc::new_auto_commit();
+    let text = doc.get_text("text");
+
+    let root_events = Arc::new(AtomicUsize::new(0));
+    let root_events_clone = root_events.clone();
+    let _sub = doc.subscribe_root(Arc::new(move |event| {
+        assert!(matches!(&event.events[0].diff, Diff::Text(_)));
+        root_events_clone.fetch_add(event.events.len(), Ordering::Relaxed);
+    }));
+
+    let undo_events = Arc::new(AtomicUsize::new(0));
+    let undo_events_clone = undo_events.clone();
+    let undo = UndoManager::new(&doc);
+    undo.set_merge_interval(0);
+    undo.set_on_push(Some(Box::new(move |_, _, event| {
+        let event = event.expect("undo push should carry the canonical diff event");
+        assert!(matches!(&event.events[0].diff, Diff::Text(_)));
+        undo_events_clone.fetch_add(event.events.len(), Ordering::Relaxed);
+        UndoItemMeta::new()
+    })));
+
+    text.insert_unicode(0, "hello").unwrap();
+    doc.commit_then_renew();
+
+    assert_eq!(root_events.load(Ordering::Relaxed), 1);
+    assert_eq!(undo_events.load(Ordering::Relaxed), 1);
 }
