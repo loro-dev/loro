@@ -1,7 +1,7 @@
 # Plan: Merge `crates/loro` and `crates/loro-internal` into One Crate
 
 Date: 2026-03-06
-Status: Draft
+Status: Done
 Primary package target: `loro`
 Compatibility stance: Compatibility-first by default, with explicit decision points for semver-breaking cleanup
 
