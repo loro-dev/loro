@@ -5332,6 +5332,20 @@ impl UndoManager {
     pub fn clear(&self) {
         self.undo.lock().clear();
     }
+
+    /// Clear only the redo stack, preserving the undo stack.
+    ///
+    /// This is useful when coordinating undo/redo across multiple participants
+    /// (e.g., multiple editors) where a new edit in one participant should
+    /// invalidate redo in all other participants.
+    pub fn clearRedo(&self) {
+        self.undo.lock().clear_redo();
+    }
+
+    /// Clear only the undo stack, preserving the redo stack.
+    pub fn clearUndo(&self) {
+        self.undo.lock().clear_undo();
+    }
 }
 
 /// Use this function to throw an error after the micro task.
@@ -6558,6 +6572,20 @@ interface UndoManager {
      * Ends the current grouping of undo operations.
      */
     groupEnd(): void;
+
+    /**
+     * Clear only the redo stack, preserving the undo stack.
+     *
+     * This is useful when coordinating undo/redo across multiple participants
+     * (e.g., multiple editors) where a new edit in one participant should
+     * invalidate redo in all other participants.
+     */
+    clearRedo(): void;
+
+    /**
+     * Clear only the undo stack, preserving the redo stack.
+     */
+    clearUndo(): void;
 }
 interface LoroDoc<T extends Record<string, Container> = Record<string, Container>> {
     /**

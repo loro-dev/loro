@@ -165,3 +165,59 @@ fn test_undo_group_start_with_remote_ops() {
     undo_manager.undo().unwrap();
     assert_eq!(doc.get_text("text").to_string(), "test");
 }
+
+#[test]
+fn test_clear_redo() {
+    let doc = LoroDoc::new();
+    let undo_manager = UndoManager::new(&doc);
+    let text = doc.get_text("text");
+
+    // Make some edits
+    text.update("hello", UpdateOptions::default()).unwrap();
+    doc.commit_then_renew();
+    text.update("hello world", UpdateOptions::default()).unwrap();
+    doc.commit_then_renew();
+
+    // Undo to create redo stack
+    undo_manager.undo().unwrap();
+    assert_eq!(text.to_string(), "hello");
+    assert!(undo_manager.can_redo(), "should be able to redo");
+    assert!(undo_manager.can_undo(), "should be able to undo");
+
+    // Clear only redo stack
+    undo_manager.clear_redo();
+    assert!(!undo_manager.can_redo(), "redo stack should be empty");
+    assert!(undo_manager.can_undo(), "undo stack should still have items");
+
+    // Verify undo still works
+    undo_manager.undo().unwrap();
+    assert_eq!(text.to_string(), "");
+}
+
+#[test]
+fn test_clear_undo() {
+    let doc = LoroDoc::new();
+    let undo_manager = UndoManager::new(&doc);
+    let text = doc.get_text("text");
+
+    // Make some edits
+    text.update("hello", UpdateOptions::default()).unwrap();
+    doc.commit_then_renew();
+    text.update("hello world", UpdateOptions::default()).unwrap();
+    doc.commit_then_renew();
+
+    // Undo to create redo stack
+    undo_manager.undo().unwrap();
+    assert_eq!(text.to_string(), "hello");
+    assert!(undo_manager.can_redo(), "should be able to redo");
+    assert!(undo_manager.can_undo(), "should be able to undo");
+
+    // Clear only undo stack
+    undo_manager.clear_undo();
+    assert!(undo_manager.can_redo(), "redo stack should still have items");
+    assert!(!undo_manager.can_undo(), "undo stack should be empty");
+
+    // Verify redo still works
+    undo_manager.redo().unwrap();
+    assert_eq!(text.to_string(), "hello world");
+}
