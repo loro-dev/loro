@@ -1,8 +1,13 @@
-//! loro-internal is a CRDT framework.
+//! Canonical engine surface for the merged `loro` crate.
 //!
+//! `loro::internal` now owns the implementation modules that previously lived in
+//! `loro-internal`. First-party crates should treat the handler and value types
+//! re-exported here as the canonical low-level surface.
 //!
-//!
-//!
+//! The public `loro::Loro*` and `loro::event::*` APIs remain compatibility
+//! facades. They preserve stable semantics, while first-party performance-
+//! sensitive paths can stay on the canonical internal surface without rebuilding
+//! handler/value/event wrappers on hot paths.
 #![deny(clippy::undocumented_unsafe_blocks)]
 #![allow(clippy::uninlined_format_args)]
 #![warn(rustdoc::broken_intra_doc_links)]
@@ -24,9 +29,11 @@ use lock::LoroMutex;
 
 pub use change_meta::ChangeMeta;
 pub use event::{ContainerDiff, DiffEvent, DocDiff, ListDiff, ListDiffInsertItem, ListDiffItem};
+#[cfg(feature = "counter")]
+pub use handler::counter::CounterHandler;
 pub use handler::{
-    BasicHandler, HandlerTrait, ListHandler, MapHandler, MovableListHandler, TextHandler,
-    TreeHandler, UnknownHandler,
+    BasicHandler, Handler, HandlerTrait, ListHandler, MapHandler, MovableListHandler, TextDelta,
+    TextHandler, TreeHandler, UnknownHandler, ValueOrHandler,
 };
 pub use loro_common;
 pub use oplog::OpLog;

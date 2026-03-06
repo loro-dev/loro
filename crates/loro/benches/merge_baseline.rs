@@ -1,4 +1,5 @@
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
+use loro::internal::{LoroDoc as InternalLoroDoc, MapHandler, TextHandler};
 use loro::{LoroDoc, LoroMap, LoroText, UndoItemMeta, UndoManager};
 use std::hint::black_box;
 use std::sync::{
@@ -21,6 +22,30 @@ fn seed_heterogeneous_doc() -> LoroDoc {
     text.insert(0, "baseline").unwrap();
     let text = nested.insert_container("text", LoroText::new()).unwrap();
     text.insert(0, "baseline").unwrap();
+    doc
+}
+
+fn seed_internal_heterogeneous_doc() -> InternalLoroDoc {
+    let doc = InternalLoroDoc::new_auto_commit();
+    let root = doc.get_list("root_list");
+    root.insert(0, 1).unwrap();
+    root.insert(1, true).unwrap();
+    let nested = root
+        .insert_container(2, MapHandler::new_detached())
+        .unwrap();
+    nested.insert("title", "loro").unwrap();
+    nested.insert("count", 3).unwrap();
+    let map = doc.get_map("root_map");
+    map.insert("flag", true).unwrap();
+    map.insert("count", 7).unwrap();
+    let text = map
+        .insert_container("text", TextHandler::new_detached())
+        .unwrap();
+    text.insert_unicode(0, "baseline").unwrap();
+    let text = nested
+        .insert_container("text", TextHandler::new_detached())
+        .unwrap();
+    text.insert_unicode(0, "baseline").unwrap();
     doc
 }
 
@@ -56,6 +81,28 @@ fn bench_heterogeneous_reads(c: &mut Criterion) {
             black_box(root.get(2));
             black_box(map.get("flag"));
             black_box(map.get("text"));
+            black_box(doc.get_by_str_path("root_list/2/title"));
+            black_box(doc.get_by_str_path("root_list/2/text"));
+            black_box(doc.get_by_str_path("root_map/text"));
+            let mut list_values = Vec::new();
+            root.for_each(|value| list_values.push(value));
+            black_box(list_values);
+            let map_values: Vec<_> = map.values().collect();
+            black_box(map_values);
+        });
+    });
+}
+
+fn bench_internal_heterogeneous_reads(c: &mut Criterion) {
+    let doc = seed_internal_heterogeneous_doc();
+    let root = doc.get_list("root_list");
+    let map = doc.get_map("root_map");
+    c.bench_function("merge baseline/internal heterogeneous reads", |b| {
+        b.iter(|| {
+            black_box(root.get_(0));
+            black_box(root.get_(2));
+            black_box(map.get_("flag"));
+            black_box(map.get_("text"));
             black_box(doc.get_by_str_path("root_list/2/title"));
             black_box(doc.get_by_str_path("root_list/2/text"));
             black_box(doc.get_by_str_path("root_map/text"));
@@ -124,6 +171,7 @@ criterion_group!(
     benches,
     bench_active_subscriptions,
     bench_heterogeneous_reads,
+    bench_internal_heterogeneous_reads,
     bench_diff_apply_diff,
     bench_undo_callbacks
 );

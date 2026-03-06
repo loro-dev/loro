@@ -98,7 +98,7 @@ The target state is:
 | 0 | Lock behavior and perf baseline | Done | None | Baseline tests and benchmark numbers |
 | 1 | Import engine into `loro` | Done | Phase 0 | `loro` owns implementation modules |
 | 2 | Merge canonical `LoroDoc` semantics | Done | Phase 1 | One canonical document type |
-| 3 | Collapse container and value surface | Not Started | Phase 2 | One canonical container/value layer |
+| 3 | Collapse container and value surface | Done | Phase 2 | One canonical container/value layer |
 | 4 | Collapse event, diff, and undo surface | Not Started | Phase 3 | One canonical event/diff/undo layer |
 | 5 | Migrate `loro-wasm` and first-party consumers | Not Started | Phase 4 | No first-party dependency on `loro-internal` |
 | 6 | Remove shim and finalize cleanup | Not Started | Phase 5 | Single-crate steady state |
@@ -337,7 +337,7 @@ Completed on 2026-03-06.
 
 ## Phase 3: Collapse the Container and Value Surface
 
-Status: Not Started
+Status: Done
 
 ### Objective
 
@@ -353,12 +353,12 @@ Remove the duplicated container and value layers where the facade currently wrap
 
 ### Work Items
 
-- [ ] Choose the canonical naming strategy for container handles.
-- [ ] Decide whether to keep public names such as `LoroText` as aliases, renamed canonical types, or compatibility wrappers.
-- [ ] Collapse `Container` and the internal handler enum into one canonical representation where practical.
-- [ ] Collapse `ValueOrContainer` and `ValueOrHandler` into one canonical representation where practical.
-- [ ] Remove or narrow `ContainerTrait` if it only exists to bridge two type layers.
-- [ ] Eliminate conversion-heavy read paths from:
+- [x] Choose the canonical naming strategy for container handles.
+- [x] Decide whether to keep public names such as `LoroText` as aliases, renamed canonical types, or compatibility wrappers.
+- [x] Collapse `Container` and the internal handler enum into one canonical representation where practical.
+- [x] Collapse `ValueOrContainer` and `ValueOrHandler` into one canonical representation where practical.
+- [x] Remove or narrow `ContainerTrait` if it only exists to bridge two type layers.
+- [x] Eliminate conversion-heavy read paths from:
   - list/map getters
   - `for_each`
   - `values`
@@ -383,6 +383,28 @@ Remove the duplicated container and value layers where the facade currently wrap
 - `cargo test -p loro`
 - read-path regression tests
 - benchmark comparison against Phase 0 heterogeneous-read baseline
+
+### Phase 3 Summary
+
+Completed on 2026-03-06.
+
+- Adopted a compatibility-first naming strategy:
+  - `loro::internal::{Handler, ValueOrHandler, ListHandler, MapHandler, TextHandler, TreeHandler, MovableListHandler}` is the canonical first-party container/value surface.
+  - Public `LoroList`, `LoroMap`, `LoroText`, `LoroTree`, `LoroMovableList`, `Container`, and `ValueOrContainer` remain compatibility wrappers for the stable public facade.
+- Re-exported the canonical handler/value types from the `loro::internal` root so first-party consumers no longer need deep `handler::...` imports to stay on the merged engine surface.
+- Added `crates/loro/tests/internal_canonical_surface.rs` to lock the canonical internal read-path behavior around:
+  - list/map getters
+  - nested container discovery via `ValueOrHandler`
+  - `for_each`
+  - `values`
+  - `get_by_str_path`
+- Extended `crates/loro/benches/merge_baseline.rs` with an internal heterogeneous-read benchmark that exercises the canonical handler/value surface directly.
+- Validation passed:
+  - `cargo test -p loro`
+  - `cargo bench -p loro --bench merge_baseline -- --sample-size 10 --warm-up-time 0.1 --measurement-time 0.2`
+- Benchmark comparison against the Phase 0 public-facade baseline:
+  - `merge baseline/public heterogeneous reads`: `1.5213 us .. 1.6324 us`
+  - `merge baseline/internal heterogeneous reads`: `1.4115 us .. 1.4424 us`
 
 ### Risks
 
@@ -559,6 +581,7 @@ Delete the temporary compatibility crate and complete the transition to a true s
 - [x] 2026-03-06: Keep the existing `loro-internal` benches as split-architecture baselines, and add `crates/loro/benches/merge_baseline.rs` to measure public facade overhead on active subscriptions, heterogeneous reads, diff/apply-diff, and undo callbacks.
 - [x] 2026-03-06: Phase 1 uses an embedded engine layout under `crates/loro/src/internal/**`, while `crates/loro-internal` becomes a forwarding shim. This removes the dependency edge first and defers facade collapse to Phases 2-4.
 - [x] 2026-03-06: `inner()` remains as a compatibility escape hatch in Phase 2 and returns an internal `LoroDoc` view over the same `Arc<LoroDocInner>`. `with_oplog()` and `with_state()` remain unchanged for now; narrowing them is deferred.
+- [x] 2026-03-06: Phase 3 keeps public `LoroList` / `LoroMap` / `LoroText` / `LoroTree` / `LoroMovableList` and `ValueOrContainer` as compatibility wrappers. The canonical first-party container/value surface is the handler layer re-exported from `loro::internal`.
 
 ## Suggested PR Sequence
 
