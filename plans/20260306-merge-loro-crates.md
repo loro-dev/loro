@@ -97,7 +97,7 @@ The target state is:
 | --- | --- | --- | --- | --- |
 | 0 | Lock behavior and perf baseline | Done | None | Baseline tests and benchmark numbers |
 | 1 | Import engine into `loro` | Done | Phase 0 | `loro` owns implementation modules |
-| 2 | Merge canonical `LoroDoc` semantics | Not Started | Phase 1 | One canonical document type |
+| 2 | Merge canonical `LoroDoc` semantics | Done | Phase 1 | One canonical document type |
 | 3 | Collapse container and value surface | Not Started | Phase 2 | One canonical container/value layer |
 | 4 | Collapse event, diff, and undo surface | Not Started | Phase 3 | One canonical event/diff/undo layer |
 | 5 | Migrate `loro-wasm` and first-party consumers | Not Started | Phase 4 | No first-party dependency on `loro-internal` |
@@ -268,7 +268,7 @@ Completed on 2026-03-06.
 
 ## Phase 2: Merge Canonical `LoroDoc` Semantics
 
-Status: Not Started
+Status: Done
 
 ### Objective
 
@@ -284,15 +284,15 @@ Remove the outer `LoroDoc { doc: InnerLoroDoc }` split and make one canonical `L
 
 ### Work Items
 
-- [ ] Move the current public constructor semantics into the canonical merged `LoroDoc`.
-- [ ] Preserve current auto-commit behavior for:
+- [x] Move the current public constructor semantics into the canonical merged `LoroDoc`.
+- [x] Preserve current auto-commit behavior for:
   - `new()`
   - `from_snapshot()`
   - `fork_at()`
   - `doc()` returned from attached containers
-- [ ] Decide whether `inner()` survives, is deprecated, or is replaced by a narrower API.
-- [ ] Decide the long-term shape of `with_oplog` and `with_state`.
-- [ ] Ensure first-party constructors such as those in `loro-wasm` keep the same behavior.
+- [x] Decide whether `inner()` survives, is deprecated, or is replaced by a narrower API.
+- [x] Decide the long-term shape of `with_oplog` and `with_state`.
+- [x] Ensure first-party constructors such as those in `loro-wasm` keep the same behavior.
 
 ### Deliverables
 
@@ -313,6 +313,22 @@ Remove the outer `LoroDoc { doc: InnerLoroDoc }` split and make one canonical `L
   - `from_snapshot()`
   - `fork_at()`
   - attached container `doc()`
+
+### Phase 2 Summary
+
+Completed on 2026-03-06.
+
+- Public `LoroDoc` now stores the canonical `Arc<LoroDocInner>` directly instead of wrapping an `InnerLoroDoc` value.
+- The public constructor and lifecycle methods still preserve the Phase 0 auto-commit semantics for:
+  - `new()`
+  - `from_snapshot()`
+  - `fork_at()`
+  - attached container `doc()`
+- `inner()` survives as a compatibility escape hatch returning an internal `LoroDoc` view backed by the same `Arc<LoroDocInner>`.
+- `with_oplog()` and `with_state()` are retained unchanged as the current escape hatches for low-level access; narrowing or deprecation is deferred until the container/value/event collapse is farther along.
+- Validation passed:
+  - `cargo test -p loro`
+  - `cargo test -p loro --test merge_semantics_baseline`
 
 ### Risks
 
@@ -542,6 +558,7 @@ Delete the temporary compatibility crate and complete the transition to a true s
 - [x] 2026-03-06: Phase 0 baseline commands for `loro-internal` benches must include `--features test_utils`; without it the existing benchmark files fall back to no-op stubs.
 - [x] 2026-03-06: Keep the existing `loro-internal` benches as split-architecture baselines, and add `crates/loro/benches/merge_baseline.rs` to measure public facade overhead on active subscriptions, heterogeneous reads, diff/apply-diff, and undo callbacks.
 - [x] 2026-03-06: Phase 1 uses an embedded engine layout under `crates/loro/src/internal/**`, while `crates/loro-internal` becomes a forwarding shim. This removes the dependency edge first and defers facade collapse to Phases 2-4.
+- [x] 2026-03-06: `inner()` remains as a compatibility escape hatch in Phase 2 and returns an internal `LoroDoc` view over the same `Arc<LoroDocInner>`. `with_oplog()` and `with_state()` remain unchanged for now; narrowing them is deferred.
 
 ## Suggested PR Sequence
 

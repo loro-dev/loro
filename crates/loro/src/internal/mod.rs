@@ -122,7 +122,7 @@ pub use version::VersionVector;
 #[derive(Debug, Clone)]
 #[repr(transparent)]
 pub struct LoroDoc {
-    inner: Arc<LoroDocInner>,
+    pub(crate) inner: Arc<LoroDocInner>,
 }
 
 impl LoroDoc {
