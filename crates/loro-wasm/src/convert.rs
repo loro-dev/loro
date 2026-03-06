@@ -1,14 +1,14 @@
 use js_sys::{Array, Map, Object, Reflect, Uint8Array};
 use loro_common::{ContainerID, IdLp, LoroListValue, LoroMapValue, LoroValue};
 use loro_delta::{array_vec, DeltaRopeBuilder};
-use loro_internal::delta::{ResolvedMapDelta, ResolvedMapValue};
-use loro_internal::encoding::{ImportBlobMetadata, ImportStatus};
-use loro_internal::event::{Diff, ListDeltaMeta, ListDiff, TextDiff, TextMeta};
-use loro_internal::handler::{Handler, TextDelta, ValueOrHandler};
-use loro_internal::json::JsonSchema;
-use loro_internal::version::VersionRange;
-use loro_internal::StringSlice;
-use loro_internal::{Counter, CounterSpan, FxHashMap, IdSpan, ListDiffItem};
+use loro::internal::delta::{ResolvedMapDelta, ResolvedMapValue};
+use loro::internal::encoding::{ImportBlobMetadata, ImportStatus};
+use loro::internal::event::{Diff, ListDeltaMeta, ListDiff, TextDiff, TextMeta};
+use loro::internal::handler::{Handler, TextDelta, ValueOrHandler};
+use loro::internal::json::JsonSchema;
+use loro::internal::version::VersionRange;
+use loro::internal::StringSlice;
+use loro::internal::{Counter, CounterSpan, FxHashMap, IdSpan, ListDiffItem};
 use serde::Serialize;
 use wasm_bindgen::{JsCast, JsValue};
 
@@ -172,7 +172,7 @@ pub(crate) fn resolved_diff_to_js(value: &Diff, for_json: bool) -> JsResult<JsVa
             js_sys::Reflect::set(
                 &obj,
                 &JsValue::from_str("diff"),
-                &loro_internal::wasm::text_diff_to_js_value(text),
+                &loro::internal::wasm::text_diff_to_js_value(text),
             )?;
         }
         Diff::Map(map) => {
@@ -241,7 +241,7 @@ pub(crate) fn js_diff_to_inner_diff(js: JsValue) -> JsResult<Diff> {
 
 fn delta_item_to_js(item: ListDiffItem, for_json: bool) -> JsResult<(JsValue, Option<JsValue>)> {
     match item {
-        loro_internal::loro_delta::DeltaItem::Retain { len, attr: _ } => {
+        loro::internal::loro_delta::DeltaItem::Retain { len, attr: _ } => {
             let obj = Object::new();
             js_sys::Reflect::set(
                 &obj,
@@ -250,7 +250,7 @@ fn delta_item_to_js(item: ListDiffItem, for_json: bool) -> JsResult<(JsValue, Op
             )?;
             Ok((obj.into_js_result()?, None))
         }
-        loro_internal::loro_delta::DeltaItem::Replace {
+        loro::internal::loro_delta::DeltaItem::Replace {
             value,
             attr: _,
             delete,

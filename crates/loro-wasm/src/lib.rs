@@ -11,7 +11,7 @@ use convert::{
     js_value_to_loro_value, loro_json_schema_to_js_json_schema, resolved_diff_to_js,
 };
 use js_sys::{Array, Object, Promise, Reflect, Uint8Array};
-use loro_internal::{
+use loro::internal::{
     change::Lamport,
     configure::{StyleConfig, StyleConfigMap},
     container::{richtext::ExpandType, ContainerID},
@@ -438,7 +438,7 @@ impl ChangeMeta {
         self.serialize(&s).unwrap()
     }
 
-    fn from_loro(meta: &loro_internal::ChangeMeta) -> Self {
+    fn from_loro(meta: &loro::internal::ChangeMeta) -> Self {
         Self {
             lamport: meta.lamport,
             length: meta.len as u32,
@@ -2468,7 +2468,7 @@ fn diff_event_to_js_value(event: DiffEvent, for_json: bool) -> JsResult<JsValue>
 /// }
 ///
 fn container_diff_to_js_value(
-    event: &loro_internal::ContainerDiff,
+    event: &loro::internal::ContainerDiff,
     for_json: bool,
 ) -> JsResult<JsValue> {
     let obj = js_sys::Object::new();
@@ -5603,7 +5603,7 @@ fn subscription_to_js_function_callback(sub: Subscription) -> JsValue {
 }
 
 #[wasm_bindgen]
-pub struct ChangeModifier(loro_internal::pre_commit::ChangeModifier);
+pub struct ChangeModifier(loro::internal::pre_commit::ChangeModifier);
 
 #[wasm_bindgen]
 impl ChangeModifier {
@@ -5681,7 +5681,7 @@ pub fn redact_json_updates(
     let mut loro_json = js_json_schema_to_loro_json_schema(json_updates)?;
     let version_range = js_value_to_version_range(version_range)?;
 
-    loro_internal::json::redact(&mut loro_json, version_range)
+    loro::internal::json::redact(&mut loro_json, version_range)
         .map_err(|e| JsValue::from_str(&format!("Failed to redact JSON: {e}")))?;
 
     loro_json_schema_to_js_json_schema(loro_json)

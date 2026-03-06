@@ -1882,9 +1882,9 @@ version = "1.10.5"
 dependencies = [
  "console_error_panic_hook",
  "js-sys",
+ "loro 1.10.3",
  "loro-common 1.10.0",
  "loro-delta 1.9.1",
- "loro-internal 1.10.3",
  "loro-rle 1.6.0",
  "parking_lot",
  "serde",

@@ -1,5 +1,5 @@
 use super::subscription_to_js_function_callback;
-use loro_internal::{
+use loro::internal::{
     handler::{counter::CounterHandler, Handler},
     HandlerTrait,
 };

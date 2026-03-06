@@ -100,7 +100,7 @@ The target state is:
 | 2 | Merge canonical `LoroDoc` semantics | Done | Phase 1 | One canonical document type |
 | 3 | Collapse container and value surface | Done | Phase 2 | One canonical container/value layer |
 | 4 | Collapse event, diff, and undo surface | Done | Phase 3 | One canonical event/diff/undo layer |
-| 5 | Migrate `loro-wasm` and first-party consumers | Not Started | Phase 4 | No first-party dependency on `loro-internal` |
+| 5 | Migrate `loro-wasm` and first-party consumers | Done | Phase 4 | No first-party dependency on `loro-internal` |
 | 6 | Remove shim and finalize cleanup | Not Started | Phase 5 | Single-crate steady state |
 
 ## Phase 0: Lock Behavior and Performance Baseline
@@ -500,7 +500,7 @@ Completed on 2026-03-06.
 
 ## Phase 5: Migrate `loro-wasm` and Other First-Party Consumers
 
-Status: Not Started
+Status: Done
 
 ### Objective
 
@@ -515,11 +515,11 @@ Remove first-party dependencies on `loro-internal` and make `loro` the only crat
 
 ### Work Items
 
-- [ ] Switch `crates/loro-wasm` imports from `loro-internal` to `loro`.
-- [ ] If low-level support is still needed, expose a narrowly scoped internal support module from `loro` rather than exposing the entire engine root.
-- [ ] Keep the JS pending-event flush invariant intact.
-- [ ] Audit all workspace members and remove direct `loro-internal` imports.
-- [ ] Update examples and benches to use the merged crate surface.
+- [x] Switch `crates/loro-wasm` imports from `loro-internal` to `loro`.
+- [x] If low-level support is still needed, expose a narrowly scoped internal support module from `loro` rather than exposing the entire engine root.
+- [x] Keep the JS pending-event flush invariant intact.
+- [x] Audit all workspace members and remove direct `loro-internal` imports.
+- [x] Update examples and benches to use the merged crate surface.
 
 ### Deliverables
 
@@ -537,6 +537,25 @@ Remove first-party dependencies on `loro-internal` and make `loro` the only crat
 - `cargo test -p loro-wasm`
 - `pnpm -C crates/loro-wasm build-release`
 - repository-wide search for `loro_internal`
+
+### Phase 5 Summary
+
+Completed on 2026-03-06.
+
+- Migrated `crates/loro-wasm` off the shim crate:
+  - dependency switched from `loro-internal` to `loro`
+  - low-level imports retargeted from `loro_internal::...` to `loro::internal::...`
+- Kept the JS pending-event flush invariant intact; the release build and downstream JS/deno/bun test suites all passed after the migration.
+- Confirmed the first-party repo no longer imports `loro-internal` outside the temporary shim crate:
+  - the remaining `loro_internal::...` hits are coverage/fuzz string labels, not Rust imports
+  - no `loro-internal = { ... }` dependency edges remain in first-party `Cargo.toml` files outside the shim
+- Validation passed:
+  - `cargo test -p loro-wasm`
+  - `pnpm -C crates/loro-wasm build-release`
+  - `rg -n "use loro_internal|loro_internal::|loro-internal\\s*=\\s*\\{" crates --glob '!crates/loro-internal/**' --glob '!target'`
+- Non-blocking warnings observed during validation:
+  - existing Rollup/TypeScript lib-target warnings in `crates/loro-wasm/index.ts`
+  - existing npm user/env config warnings during `npm run test`
 
 ### Risks
 
@@ -611,6 +630,7 @@ Delete the temporary compatibility crate and complete the transition to a true s
 - [x] 2026-03-06: `inner()` remains as a compatibility escape hatch in Phase 2 and returns an internal `LoroDoc` view over the same `Arc<LoroDocInner>`. `with_oplog()` and `with_state()` remain unchanged for now; narrowing them is deferred.
 - [x] 2026-03-06: Phase 3 keeps public `LoroList` / `LoroMap` / `LoroText` / `LoroTree` / `LoroMovableList` and `ValueOrContainer` as compatibility wrappers. The canonical first-party container/value surface is the handler layer re-exported from `loro::internal`.
 - [x] 2026-03-06: Phase 4 adopts a compatibility-first event model. First-party crates should use the `loro::internal` event/diff/undo re-exports directly, while the public `loro::event::*` and public undo callback payloads remain compatibility bridges for now.
+- [x] 2026-03-06: Phase 5 uses `loro::internal` as the single low-level support surface for `loro-wasm`; do not introduce a second wasm-only support module unless a later narrowing pass proves necessary.
 
 ## Suggested PR Sequence
 
