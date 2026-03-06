@@ -3,7 +3,7 @@ use criterion::{criterion_group, criterion_main, Criterion};
 mod pending {
     use super::*;
     use bench_utils::TextAction;
-    use loro_internal::{LoroDoc, VersionVector};
+    use loro_internal::{cursor::PosType, loro::ExportMode, LoroDoc, VersionVector};
 
     pub fn b4(c: &mut Criterion) {
         let mut b = c.benchmark_group("B4 pending decode");
@@ -18,11 +18,11 @@ mod pending {
             for chunks in actions.chunks(action_length / 5) {
                 for TextAction { pos, ins, del } in chunks {
                     let mut txn = loro.txn().unwrap();
-                    text.delete_with_txn(&mut txn, *pos, *del).unwrap();
-                    text.insert_with_txn(&mut txn, *pos, ins).unwrap();
-                    updates
-                        .push(loro.export(ExportMode::updates(&latest_vv)))
+                    text.delete_with_txn(&mut txn, *pos, *del, PosType::Unicode)
                         .unwrap();
+                    text.insert_with_txn(&mut txn, *pos, ins, PosType::Unicode)
+                        .unwrap();
+                    updates.push(loro.export(ExportMode::updates(&latest_vv)).unwrap());
                     latest_vv = loro.oplog_vv();
                 }
             }

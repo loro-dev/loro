@@ -35,12 +35,17 @@ pretty_assertions = "1.4.0"
 loom = "0.7"
 base64 = "0.22.1"
 serial_test = "3"
+criterion = { version = "0.7.0", features = ["html_reports"] }
 
 [features]
 default = ["counter"]
 counter = ["loro-internal/counter"]
 jsonpath = ["loro-internal/jsonpath"]
 logging = ["loro-internal/logging"]
+
+[[bench]]
+name = "merge_baseline"
+harness = false
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }

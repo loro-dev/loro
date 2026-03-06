@@ -95,7 +95,7 @@ The target state is:
 
 | Phase | Name | Status | Depends On | Main Output |
 | --- | --- | --- | --- | --- |
-| 0 | Lock behavior and perf baseline | Not Started | None | Baseline tests and benchmark numbers |
+| 0 | Lock behavior and perf baseline | Done | None | Baseline tests and benchmark numbers |
 | 1 | Import engine into `loro` | Not Started | Phase 0 | `loro` owns implementation modules |
 | 2 | Merge canonical `LoroDoc` semantics | Not Started | Phase 1 | One canonical document type |
 | 3 | Collapse container and value surface | Not Started | Phase 2 | One canonical container/value layer |
@@ -105,7 +105,7 @@ The target state is:
 
 ## Phase 0: Lock Behavior and Performance Baseline
 
-Status: Not Started
+Status: Done
 
 ### Objective
 
@@ -123,15 +123,15 @@ Without a baseline, later phases can accidentally change semantics while still c
 
 ### Work Items
 
-- [ ] Inventory the public semantics currently provided only by `crates/loro`.
-- [ ] Treat `crates/loro/tests` as the public compatibility suite.
-- [ ] Identify the minimum subset of `crates/loro-internal/tests` that must remain green throughout the migration.
-- [ ] Add or confirm benchmark coverage for:
+- [x] Inventory the public semantics currently provided only by `crates/loro`.
+- [x] Treat `crates/loro/tests` as the public compatibility suite.
+- [x] Identify the minimum subset of `crates/loro-internal/tests` that must remain green throughout the migration.
+- [x] Add or confirm benchmark coverage for:
   - active subscriptions
   - heterogeneous reads
   - diff/apply-diff paths
   - undo callbacks
-- [ ] Record baseline commands and store baseline numbers in the PR or a linked artifact.
+- [x] Record baseline commands and store baseline numbers in the PR or a linked artifact.
 
 ### Deliverables
 
@@ -149,9 +149,52 @@ Without a baseline, later phases can accidentally change semantics while still c
 
 - `cargo test -p loro`
 - `cargo test -p loro-internal`
-- `cargo bench -p loro-internal event`
-- `cargo bench -p loro-internal pending`
-- `cargo bench -p loro-internal list`
+- `cargo bench -p loro-internal --features test_utils --bench event -- --sample-size 10 --warm-up-time 0.1 --measurement-time 0.2`
+- `cargo bench -p loro-internal --features test_utils --bench pending -- --sample-size 10 --warm-up-time 0.1 --measurement-time 0.2`
+- `cargo bench -p loro-internal --features test_utils --bench list -- --sample-size 10 --warm-up-time 0.1 --measurement-time 0.2`
+- `cargo bench -p loro --bench merge_baseline -- --sample-size 10 --warm-up-time 0.1 --measurement-time 0.2`
+
+### Baseline Summary
+
+Captured on 2026-03-06 in the current split-crate architecture.
+
+- Public compatibility suite: all of `crates/loro/tests/**`.
+- Public constructor and attached-container auto-commit semantics are now explicitly locked by `crates/loro/tests/merge_semantics_baseline.rs`:
+  - `LoroDoc::new()`
+  - `LoroDoc::from_snapshot()`
+  - `LoroDoc::fork_at()`
+  - attached container `doc()`
+- Minimum `loro-internal` tests to keep green during the merge:
+  - `crates/loro-internal/tests/autocommit.rs`
+  - `crates/loro-internal/tests/test.rs`
+  - `crates/loro-internal/tests/undo.rs`
+  - `crates/loro-internal/tests/richtext.rs`
+  - `crates/loro-internal/tests/tree.rs`
+- Existing engine benches remain the baseline for split-architecture internals:
+  - `crates/loro-internal/benches/event.rs`
+  - `crates/loro-internal/benches/pending.rs`
+  - `crates/loro-internal/benches/list.rs`
+- Added a public-facade perf baseline in `crates/loro/benches/merge_baseline.rs` for:
+  - active subscriptions
+  - heterogeneous reads
+  - diff/apply-diff
+  - undo callbacks
+- Refreshed `crates/loro-internal/benches/pending.rs` and `crates/loro-internal/benches/list.rs` so the documented benchmark commands match the current text-handler APIs and are runnable again.
+
+### Baseline Numbers
+
+One-shot local Criterion samples with short warm-up/measurement windows; use them as coarse merge checkpoints, not publication-grade statistics.
+
+| Scope | Benchmark | Time |
+| --- | --- | --- |
+| internal event | `resolved/subContainer in event` | `928.24 ms .. 995.86 ms` |
+| internal pending | `B4 pending decode/detached mode` | `52.171 ms .. 53.067 ms` |
+| internal list | `10 list containers/sync random inserts to 10 list containers` | `71.750 ms .. 74.392 ms` |
+| internal list | `many_actors/100 actors` | `127.92 ms .. 131.60 ms` |
+| public facade | `merge baseline/public active subscriptions` | `10.303 us .. 12.682 us` |
+| public facade | `merge baseline/public heterogeneous reads` | `1.4776 us .. 1.5084 us` |
+| public facade | `merge baseline/public diff apply_diff` | `11.349 us .. 12.090 us` |
+| public facade | `merge baseline/public undo callbacks` | `9.3043 us .. 10.831 us` |
 
 ### Risks
 
@@ -482,7 +525,8 @@ Delete the temporary compatibility crate and complete the transition to a true s
 
 ## Decision Log
 
-- [ ] No decisions recorded yet.
+- [x] 2026-03-06: Phase 0 baseline commands for `loro-internal` benches must include `--features test_utils`; without it the existing benchmark files fall back to no-op stubs.
+- [x] 2026-03-06: Keep the existing `loro-internal` benches as split-architecture baselines, and add `crates/loro/benches/merge_baseline.rs` to measure public facade overhead on active subscriptions, heterogeneous reads, diff/apply-diff, and undo callbacks.
 
 ## Suggested PR Sequence
 
