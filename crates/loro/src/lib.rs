@@ -2,28 +2,30 @@
 #![allow(clippy::uninlined_format_args)]
 #![warn(missing_docs)]
 #![warn(missing_debug_implementations)]
+#[doc(hidden)]
+pub mod internal;
 use event::DiffBatch;
 use event::{DiffEvent, Subscriber};
 pub use loro_common::InternalString;
-pub use loro_internal::cursor::CannotFindRelativePosition;
-use loro_internal::cursor::Cursor;
-use loro_internal::cursor::PosQueryResult;
-use loro_internal::cursor::Side;
-pub use loro_internal::encoding::ImportStatus;
-use loro_internal::handler::{HandlerTrait, ValueOrHandler};
-pub use loro_internal::loro::ChangeTravelError;
-pub use loro_internal::pre_commit::{
+pub use crate::internal::cursor::CannotFindRelativePosition;
+use crate::internal::cursor::Cursor;
+use crate::internal::cursor::PosQueryResult;
+use crate::internal::cursor::Side;
+pub use crate::internal::encoding::ImportStatus;
+use crate::internal::handler::{HandlerTrait, ValueOrHandler};
+pub use crate::internal::loro::ChangeTravelError;
+pub use crate::internal::pre_commit::{
     ChangeModifier, FirstCommitFromPeerCallback, FirstCommitFromPeerPayload, PreCommitCallback,
     PreCommitCallbackPayload,
 };
-pub use loro_internal::sync;
-pub use loro_internal::undo::{OnPop, UndoItemMeta, UndoOrRedo};
-use loro_internal::version::shrink_frontiers;
-pub use loro_internal::version::ImVersionVector;
-use loro_internal::DocState;
-use loro_internal::LoroDoc as InnerLoroDoc;
-use loro_internal::OpLog;
-use loro_internal::{
+pub use crate::internal::sync;
+pub use crate::internal::undo::{OnPop, UndoItemMeta, UndoOrRedo};
+use crate::internal::version::shrink_frontiers;
+pub use crate::internal::version::ImVersionVector;
+use crate::internal::DocState;
+use crate::internal::LoroDoc as InnerLoroDoc;
+use crate::internal::OpLog;
+use crate::internal::{
     handler::Handler as InnerHandler, ListHandler as InnerListHandler,
     MapHandler as InnerMapHandler, MovableListHandler as InnerMovableListHandler,
     TextHandler as InnerTextHandler, TreeHandler as InnerTreeHandler,
@@ -37,54 +39,54 @@ use std::ops::Range;
 use std::sync::Arc;
 use tracing::info;
 
-pub use loro_internal::diff::diff_impl::UpdateOptions;
-pub use loro_internal::diff::diff_impl::UpdateTimeoutError;
-pub use loro_internal::subscription::LocalUpdateCallback;
-pub use loro_internal::subscription::PeerIdUpdateCallback;
-pub use loro_internal::ChangeMeta;
-pub use loro_internal::LORO_VERSION;
+pub use crate::internal::diff::diff_impl::UpdateOptions;
+pub use crate::internal::diff::diff_impl::UpdateTimeoutError;
+pub use crate::internal::subscription::LocalUpdateCallback;
+pub use crate::internal::subscription::PeerIdUpdateCallback;
+pub use crate::internal::ChangeMeta;
+pub use crate::internal::LORO_VERSION;
 pub mod event;
-pub use loro_internal::awareness;
-pub use loro_internal::change::Timestamp;
-pub use loro_internal::configure::Configure;
-pub use loro_internal::configure::{StyleConfig, StyleConfigMap};
-pub use loro_internal::container::richtext::ExpandType;
-pub use loro_internal::container::{ContainerID, ContainerType, IntoContainerId};
-pub use loro_internal::cursor;
-pub use loro_internal::delta::{TreeDeltaItem, TreeDiff, TreeDiffItem, TreeExternalDiff};
-pub use loro_internal::encoding::ImportBlobMetadata;
-pub use loro_internal::encoding::{EncodedBlobMode, ExportMode};
-pub use loro_internal::event::{EventTriggerKind, Index};
-pub use loro_internal::handler::TextDelta;
-pub use loro_internal::json;
-pub use loro_internal::json::{
+pub use crate::internal::awareness;
+pub use crate::internal::change::Timestamp;
+pub use crate::internal::configure::Configure;
+pub use crate::internal::configure::{StyleConfig, StyleConfigMap};
+pub use crate::internal::container::richtext::ExpandType;
+pub use crate::internal::container::{ContainerID, ContainerType, IntoContainerId};
+pub use crate::internal::cursor;
+pub use crate::internal::delta::{TreeDeltaItem, TreeDiff, TreeDiffItem, TreeExternalDiff};
+pub use crate::internal::encoding::ImportBlobMetadata;
+pub use crate::internal::encoding::{EncodedBlobMode, ExportMode};
+pub use crate::internal::event::{EventTriggerKind, Index};
+pub use crate::internal::handler::TextDelta;
+pub use crate::internal::json;
+pub use crate::internal::json::{
     FutureOp as JsonFutureOp, FutureOpWrapper as JsonFutureOpWrapper, JsonChange, JsonOp,
     JsonOpContent, JsonSchema, ListOp as JsonListOp, MapOp as JsonMapOp,
     MovableListOp as JsonMovableListOp, TextOp as JsonTextOp, TreeOp as JsonTreeOp,
 };
-pub use loro_internal::kv_store::{KvStore, MemKvStore};
-pub use loro_internal::loro::CommitOptions;
-pub use loro_internal::loro::DocAnalysis;
-pub use loro_internal::oplog::FrontiersNotIncluded;
-pub use loro_internal::undo;
-pub use loro_internal::version::{Frontiers, VersionRange, VersionVector, VersionVectorDiff};
-pub use loro_internal::ApplyDiff;
-pub use loro_internal::Subscription;
-pub use loro_internal::UndoManager as InnerUndoManager;
-pub use loro_internal::{loro_value, to_value};
-pub use loro_internal::{
+pub use crate::internal::kv_store::{KvStore, MemKvStore};
+pub use crate::internal::loro::CommitOptions;
+pub use crate::internal::loro::DocAnalysis;
+pub use crate::internal::oplog::FrontiersNotIncluded;
+pub use crate::internal::undo;
+pub use crate::internal::version::{Frontiers, VersionRange, VersionVector, VersionVectorDiff};
+pub use crate::internal::ApplyDiff;
+pub use crate::internal::Subscription;
+pub use crate::internal::UndoManager as InnerUndoManager;
+pub use crate::internal::{loro_value, to_value};
+pub use crate::internal::{
     Counter, CounterSpan, FractionalIndex, IdLp, IdSpan, Lamport, PeerID, TreeID, TreeParentId, ID,
 };
-pub use loro_internal::{
+pub use crate::internal::{
     LoroBinaryValue, LoroEncodeError, LoroError, LoroListValue, LoroMapValue, LoroResult,
     LoroStringValue, LoroTreeError, LoroValue, ToJson,
 };
 pub use loro_kv_store as kv_store;
 
 #[cfg(feature = "jsonpath")]
-pub use loro_internal::jsonpath;
+pub use crate::internal::jsonpath;
 #[cfg(feature = "jsonpath")]
-pub use loro_internal::jsonpath::SubscribeJsonPathCallback;
+pub use crate::internal::jsonpath::SubscribeJsonPathCallback;
 
 #[cfg(feature = "counter")]
 mod counter;
@@ -98,11 +100,9 @@ pub use counter::LoroCounter;
 /// It is the responsibility of the user to manage the storage, loading, and synchronization
 /// of the bytes exported by Loro in a manner suitable for their specific environment.
 #[derive(Debug)]
+#[repr(transparent)]
 pub struct LoroDoc {
-    doc: InnerLoroDoc,
-    // This field is here to prevent some weird issues in debug mode
-    #[cfg(debug_assertions)]
-    _temp: u8,
+    inner: Arc<crate::internal::LoroDocInner>,
 }
 
 impl Default for LoroDoc {
@@ -117,19 +117,22 @@ impl Clone for LoroDoc {
     ///
     /// For deep clone, please use the `.fork()` method.
     fn clone(&self) -> Self {
-        let doc = self.doc.clone();
-        LoroDoc::_new(doc)
+        Self { inner: self.inner.clone() }
     }
 }
 
 impl LoroDoc {
     #[inline(always)]
     fn _new(doc: InnerLoroDoc) -> Self {
-        Self {
-            doc,
-            #[cfg(debug_assertions)]
-            _temp: 0,
-        }
+        Self { inner: doc.inner.clone() }
+    }
+
+    #[inline(always)]
+    fn inner_doc(&self) -> &InnerLoroDoc {
+        // SAFETY: both public and internal docs are repr(transparent) over the same
+        // `Arc<LoroDocInner>` field. This keeps compatibility while Phase 2 removes
+        // the stored `InnerLoroDoc` facade from the public type.
+        unsafe { &*(self as *const Self as *const InnerLoroDoc) }
     }
 
     /// Create a new `LoroDoc` instance.
@@ -149,7 +152,7 @@ impl LoroDoc {
     /// It will have the same effect as `fork_at(&self.state_frontiers())`.
     #[inline]
     pub fn fork(&self) -> Self {
-        let doc = self.doc.fork();
+        let doc = self.inner_doc().fork();
         LoroDoc::_new(doc)
     }
 
@@ -157,7 +160,7 @@ impl LoroDoc {
     ///
     /// The created doc will only contain the history before the specified frontiers.
     pub fn fork_at(&self, frontiers: &Frontiers) -> LoroDoc {
-        let new_doc = self.doc.fork_at(frontiers);
+        let new_doc = self.inner_doc().fork_at(frontiers);
         new_doc.start_auto_commit();
         LoroDoc::_new(new_doc)
     }
@@ -165,7 +168,7 @@ impl LoroDoc {
     /// Get the configurations of the document.
     #[inline]
     pub fn config(&self) -> &Configure {
-        self.doc.config()
+        self.inner_doc().config()
     }
 
     /// Get `Change` at the given id.
@@ -182,7 +185,7 @@ impl LoroDoc {
     ///
     /// The length of the `Change` is how many operations it contains
     pub fn get_change(&self, id: ID) -> Option<ChangeMeta> {
-        let change = self.doc.oplog().lock().unwrap().get_change_at(id)?;
+        let change = self.inner_doc().oplog().lock().unwrap().get_change_at(id)?;
         Some(ChangeMeta::from_change(&change))
     }
 
@@ -227,7 +230,7 @@ impl LoroDoc {
     /// ```
     #[inline]
     pub fn set_record_timestamp(&self, record: bool) {
-        self.doc.set_record_timestamp(record);
+        self.inner_doc().set_record_timestamp(record);
     }
 
     /// Enables editing in detached mode, which is disabled by default.
@@ -261,7 +264,7 @@ impl LoroDoc {
     /// ```
     #[inline]
     pub fn set_detached_editing(&self, enable: bool) {
-        self.doc.set_detached_editing(enable);
+        self.inner_doc().set_detached_editing(enable);
     }
 
     /// Whether editing the doc in detached mode is allowed, which is disabled by
@@ -277,7 +280,7 @@ impl LoroDoc {
     ///   recorded in the [OpLog] only. Call `checkout` to apply changes.
     #[inline]
     pub fn is_detached_editing_enabled(&self) -> bool {
-        self.doc.is_detached_editing_enabled()
+        self.inner_doc().is_detached_editing_enabled()
     }
 
     /// Set the interval of mergeable changes, **in seconds**.
@@ -289,7 +292,7 @@ impl LoroDoc {
     /// have timestamps of 3 and 4 respectively, then they will be merged into one change.
     #[inline]
     pub fn set_change_merge_interval(&self, interval: i64) {
-        self.doc.set_change_merge_interval(interval);
+        self.inner_doc().set_change_merge_interval(interval);
     }
 
     /// Set the rich text format configuration of the document.
@@ -312,7 +315,7 @@ impl LoroDoc {
     /// ```
     #[inline]
     pub fn config_text_style(&self, text_style: StyleConfigMap) {
-        self.doc.config_text_style(text_style)
+        self.inner_doc().config_text_style(text_style)
     }
 
     /// Configures the default text style for the document.
@@ -331,7 +334,7 @@ impl LoroDoc {
     /// doc.config_default_text_style(Some(StyleConfig { expand: ExpandType::After }));
     /// ```
     pub fn config_default_text_style(&self, text_style: Option<StyleConfig>) {
-        self.doc.config_default_text_style(text_style);
+        self.inner_doc().config_default_text_style(text_style);
     }
 
     /// Attach the document state to the latest known version.
@@ -342,7 +345,7 @@ impl LoroDoc {
     /// > recorded in the `OpLog` without being applied to the `DocState`.
     #[inline]
     pub fn attach(&self) {
-        self.doc.attach()
+        self.inner_doc().attach()
     }
 
     /// Checkout the `DocState` to a specific version.
@@ -357,7 +360,7 @@ impl LoroDoc {
     /// PeerID per checkout.
     #[inline]
     pub fn checkout(&self, frontiers: &Frontiers) -> LoroResult<()> {
-        self.doc.checkout(frontiers)
+        self.inner_doc().checkout(frontiers)
     }
 
     /// Checkout the `DocState` to the latest version.
@@ -370,7 +373,7 @@ impl LoroDoc {
     /// This has the same effect as `attach`.
     #[inline]
     pub fn checkout_to_latest(&self) {
-        self.doc.checkout_to_latest()
+        self.inner_doc().checkout_to_latest()
     }
 
     /// Compare the frontiers with the current OpLog's version.
@@ -378,7 +381,7 @@ impl LoroDoc {
     /// If `other` contains any version that's not contained in the current OpLog, return [Ordering::Less].
     #[inline]
     pub fn cmp_with_frontiers(&self, other: &Frontiers) -> Ordering {
-        self.doc.cmp_with_frontiers(other)
+        self.inner_doc().cmp_with_frontiers(other)
     }
 
     /// Compare two frontiers.
@@ -390,17 +393,18 @@ impl LoroDoc {
         a: &Frontiers,
         b: &Frontiers,
     ) -> Result<Option<Ordering>, FrontiersNotIncluded> {
-        self.doc.cmp_frontiers(a, b)
+        self.inner_doc().cmp_frontiers(a, b)
     }
 
     /// Force the document enter the detached mode.
     ///
-    /// In this mode, importing new updates only records them in the OpLog; the [loro_internal::DocState] is not updated until you reattach.
+    /// In this mode, importing new updates only records them in the `OpLog`; the
+    /// in-memory `DocState` is not updated until you reattach.
     ///
     /// Learn more at https://loro.dev/docs/advanced/doc_state_and_oplog#attacheddetached-status
     #[inline]
     pub fn detach(&self) {
-        self.doc.detach()
+        self.inner_doc().detach()
     }
 
     /// Import a batch of updates/snapshot.
@@ -423,13 +427,13 @@ impl LoroDoc {
     /// ```
     #[inline]
     pub fn import_batch(&self, bytes: &[Vec<u8>]) -> LoroResult<ImportStatus> {
-        self.doc.import_batch(bytes)
+        self.inner_doc().import_batch(bytes)
     }
 
     /// Get a [Container] by container id.
     #[inline]
     pub fn get_container(&self, id: ContainerID) -> Option<Container> {
-        self.doc.get_handler(id).map(Container::from_handler)
+        self.inner_doc().get_handler(id).map(Container::from_handler)
     }
 
     /// Get a [LoroMovableList] by container id.
@@ -438,7 +442,7 @@ impl LoroDoc {
     #[inline]
     pub fn get_movable_list<I: IntoContainerId>(&self, id: I) -> LoroMovableList {
         LoroMovableList {
-            handler: self.doc.get_movable_list(id),
+            handler: self.inner_doc().get_movable_list(id),
         }
     }
 
@@ -450,7 +454,7 @@ impl LoroDoc {
     #[inline]
     pub fn get_list<I: IntoContainerId>(&self, id: I) -> LoroList {
         LoroList {
-            handler: self.doc.get_list(id),
+            handler: self.inner_doc().get_list(id),
         }
     }
 
@@ -462,7 +466,7 @@ impl LoroDoc {
     #[inline]
     pub fn get_map<I: IntoContainerId>(&self, id: I) -> LoroMap {
         LoroMap {
-            handler: self.doc.get_map(id),
+            handler: self.inner_doc().get_map(id),
         }
     }
 
@@ -474,7 +478,7 @@ impl LoroDoc {
     #[inline]
     pub fn get_text<I: IntoContainerId>(&self, id: I) -> LoroText {
         LoroText {
-            handler: self.doc.get_text(id),
+            handler: self.inner_doc().get_text(id),
         }
     }
 
@@ -486,7 +490,7 @@ impl LoroDoc {
     #[inline]
     pub fn get_tree<I: IntoContainerId>(&self, id: I) -> LoroTree {
         LoroTree {
-            handler: self.doc.get_tree(id),
+            handler: self.inner_doc().get_tree(id),
         }
     }
 
@@ -497,7 +501,7 @@ impl LoroDoc {
     #[inline]
     pub fn get_counter<I: IntoContainerId>(&self, id: I) -> LoroCounter {
         LoroCounter {
-            handler: self.doc.get_counter(id),
+            handler: self.inner_doc().get_counter(id),
         }
     }
 
@@ -520,7 +524,7 @@ impl LoroDoc {
     /// are swallowed and will not carry over.
     #[inline]
     pub fn commit(&self) {
-        self.doc.commit_then_renew();
+        self.inner_doc().commit_then_renew();
     }
 
     /// Commit the cumulative auto commit transaction with custom options.
@@ -539,21 +543,21 @@ impl LoroDoc {
     /// message/timestamp/origin from an empty transaction are preserved for the next commit.
     #[inline]
     pub fn commit_with(&self, options: CommitOptions) {
-        self.doc.commit_with(options);
+        self.inner_doc().commit_with(options);
     }
 
     /// Set commit message for the current uncommitted changes
     ///
     /// It will be persisted.
     pub fn set_next_commit_message(&self, msg: &str) {
-        self.doc.set_next_commit_message(msg)
+        self.inner_doc().set_next_commit_message(msg)
     }
 
     /// Set `origin` for the current uncommitted changes, it can be used to track the source of changes in an event.
     ///
     /// It will NOT be persisted.
     pub fn set_next_commit_origin(&self, origin: &str) {
-        self.doc.set_next_commit_origin(origin)
+        self.inner_doc().set_next_commit_origin(origin)
     }
 
     /// Set the timestamp of the next commit.
@@ -561,7 +565,7 @@ impl LoroDoc {
     /// It will be persisted and stored in the `OpLog`.
     /// You can get the timestamp from the [`Change`] type.
     pub fn set_next_commit_timestamp(&self, timestamp: Timestamp) {
-        self.doc.set_next_commit_timestamp(timestamp)
+        self.inner_doc().set_next_commit_timestamp(timestamp)
     }
 
     /// Set the options of the next commit.
@@ -577,19 +581,19 @@ impl LoroDoc {
     /// doc.commit();
     /// ```
     pub fn set_next_commit_options(&self, options: CommitOptions) {
-        self.doc.set_next_commit_options(options);
+        self.inner_doc().set_next_commit_options(options);
     }
 
     /// Clear the options of the next commit.
     pub fn clear_next_commit_options(&self) {
-        self.doc.clear_next_commit_options();
+        self.inner_doc().clear_next_commit_options();
     }
 
-    /// Whether the document is in detached mode, where the [loro_internal::DocState] is not
-    /// synchronized with the latest version of the [loro_internal::OpLog].
+    /// Whether the document is in detached mode, where the `DocState` is not
+    /// synchronized with the latest version of the `OpLog`.
     #[inline]
     pub fn is_detached(&self) -> bool {
-        self.doc.is_detached()
+        self.inner_doc().is_detached()
     }
 
     /// Create a new `LoroDoc` from a snapshot.
@@ -637,7 +641,7 @@ impl LoroDoc {
     /// - Auto-commit: `import` finalizes the current transaction before applying incoming data.
     #[inline]
     pub fn import(&self, bytes: &[u8]) -> Result<ImportStatus, LoroError> {
-        self.doc.import_with(bytes, "".into())
+        self.inner_doc().import_with(bytes, "".into())
     }
 
     /// Import data exported by [`LoroDoc::export`] and mark it with a custom origin.
@@ -648,7 +652,7 @@ impl LoroDoc {
     /// - Same as [`import`]: verify `ImportStatus.pending` and fetch dependencies if needed.
     #[inline]
     pub fn import_with(&self, bytes: &[u8], origin: &str) -> Result<ImportStatus, LoroError> {
-        self.doc.import_with(bytes, origin.into())
+        self.inner_doc().import_with(bytes, origin.into())
     }
 
     /// Import the json schema updates.
@@ -670,7 +674,7 @@ impl LoroDoc {
         &self,
         json: T,
     ) -> Result<ImportStatus, LoroError> {
-        self.doc.import_json_updates(json)
+        self.inner_doc().import_json_updates(json)
     }
 
     /// Export the current state with json-string format of the document.
@@ -689,7 +693,7 @@ impl LoroDoc {
         start_vv: &VersionVector,
         end_vv: &VersionVector,
     ) -> JsonSchema {
-        self.doc.export_json_updates(start_vv, end_vv, true)
+        self.inner_doc().export_json_updates(start_vv, end_vv, true)
     }
 
     /// Export the current state with json-string format of the document, without peer compression.
@@ -711,7 +715,7 @@ impl LoroDoc {
         start_vv: &VersionVector,
         end_vv: &VersionVector,
     ) -> JsonSchema {
-        self.doc.export_json_updates(start_vv, end_vv, false)
+        self.inner_doc().export_json_updates(start_vv, end_vv, false)
     }
 
     /// Exports changes within the specified ID span to JSON schema format.
@@ -750,7 +754,7 @@ impl LoroDoc {
     /// assert_eq!(changes.len(), 1);
     /// ```
     pub fn export_json_in_id_span(&self, id_span: IdSpan) -> Vec<JsonChange> {
-        self.doc.export_json_in_id_span(id_span)
+        self.inner_doc().export_json_in_id_span(id_span)
     }
 
     /// Convert `Frontiers` into `VersionVector`
@@ -767,7 +771,7 @@ impl LoroDoc {
     /// ```
     #[inline]
     pub fn frontiers_to_vv(&self, frontiers: &Frontiers) -> Option<VersionVector> {
-        self.doc.frontiers_to_vv(frontiers)
+        self.inner_doc().frontiers_to_vv(frontiers)
     }
 
     /// Minimize the frontiers by removing the unnecessary entries.
@@ -788,7 +792,7 @@ impl LoroDoc {
     /// Convert `VersionVector` into `Frontiers`
     #[inline]
     pub fn vv_to_frontiers(&self, vv: &VersionVector) -> Frontiers {
-        self.doc.vv_to_frontiers(vv)
+        self.inner_doc().vv_to_frontiers(vv)
     }
 
     /// Access the `OpLog`.
@@ -797,7 +801,7 @@ impl LoroDoc {
     /// that might re-enter the document while holding the lock.
     #[inline]
     pub fn with_oplog<R>(&self, f: impl FnOnce(&OpLog) -> R) -> R {
-        let oplog = self.doc.oplog().lock().unwrap();
+        let oplog = self.inner_doc().oplog().lock().unwrap();
         f(&oplog)
     }
 
@@ -807,20 +811,20 @@ impl LoroDoc {
     /// that might re-enter the document while holding the lock.
     #[inline]
     pub fn with_state<R>(&self, f: impl FnOnce(&mut DocState) -> R) -> R {
-        let mut state = self.doc.app_state().lock().unwrap();
+        let mut state = self.inner_doc().app_state().lock().unwrap();
         f(&mut state)
     }
 
     /// Get the `VersionVector` version of `OpLog`
     #[inline]
     pub fn oplog_vv(&self) -> VersionVector {
-        self.doc.oplog_vv()
+        self.inner_doc().oplog_vv()
     }
 
     /// Get the `VersionVector` version of `DocState`
     #[inline]
     pub fn state_vv(&self) -> VersionVector {
-        self.doc.state_vv()
+        self.inner_doc().state_vv()
     }
 
     /// The doc only contains the history since this version
@@ -830,7 +834,7 @@ impl LoroDoc {
     /// The ops included by the shallow history start version vector are not in the doc.
     #[inline]
     pub fn shallow_since_vv(&self) -> ImVersionVector {
-        self.doc.shallow_since_vv()
+        self.inner_doc().shallow_since_vv()
     }
 
     /// The doc only contains the history since this version
@@ -840,36 +844,36 @@ impl LoroDoc {
     /// The ops included by the shallow history start frontiers are not in the doc.
     #[inline]
     pub fn shallow_since_frontiers(&self) -> Frontiers {
-        self.doc.shallow_since_frontiers()
+        self.inner_doc().shallow_since_frontiers()
     }
 
     /// Get the total number of operations in the `OpLog`
     #[inline]
     pub fn len_ops(&self) -> usize {
-        self.doc.len_ops()
+        self.inner_doc().len_ops()
     }
 
     /// Get the total number of changes in the `OpLog`
     #[inline]
     pub fn len_changes(&self) -> usize {
-        self.doc.len_changes()
+        self.inner_doc().len_changes()
     }
 
     /// Get the shallow value of the document.
     #[inline]
     pub fn get_value(&self) -> LoroValue {
-        self.doc.get_value()
+        self.inner_doc().get_value()
     }
 
     /// Get the entire state of the current DocState
     #[inline]
     pub fn get_deep_value(&self) -> LoroValue {
-        self.doc.get_deep_value()
+        self.inner_doc().get_deep_value()
     }
 
     /// Get the entire state of the current DocState with container id
     pub fn get_deep_value_with_id(&self) -> LoroValue {
-        self.doc
+        self.inner_doc()
             .app_state()
             .lock()
             .unwrap()
@@ -879,7 +883,7 @@ impl LoroDoc {
     /// Get the `Frontiers` version of `OpLog`.
     #[inline]
     pub fn oplog_frontiers(&self) -> Frontiers {
-        self.doc.oplog_frontiers()
+        self.inner_doc().oplog_frontiers()
     }
 
     /// Get the `Frontiers` version of `DocState`.
@@ -898,13 +902,13 @@ impl LoroDoc {
     /// ```
     #[inline]
     pub fn state_frontiers(&self) -> Frontiers {
-        self.doc.state_frontiers()
+        self.inner_doc().state_frontiers()
     }
 
     /// Get the PeerID
     #[inline]
     pub fn peer_id(&self) -> PeerID {
-        self.doc.peer_id()
+        self.inner_doc().peer_id()
     }
 
     /// Change the PeerID
@@ -916,7 +920,7 @@ impl LoroDoc {
     ///   Prefer the default random PeerID per process/session.
     #[inline]
     pub fn set_peer_id(&self, peer: PeerID) -> LoroResult<()> {
-        self.doc.set_peer_id(peer)
+        self.inner_doc().set_peer_id(peer)
     }
 
     /// Subscribe the events of a container.
@@ -966,7 +970,7 @@ impl LoroDoc {
     /// ```
     #[inline]
     pub fn subscribe(&self, container_id: &ContainerID, callback: Subscriber) -> Subscription {
-        self.doc.subscribe(
+        self.inner_doc().subscribe(
             container_id,
             Arc::new(move |e| {
                 callback(DiffEvent::from(e));
@@ -976,7 +980,7 @@ impl LoroDoc {
 
     /// Subscribe all the events.
     ///
-    /// The callback will be invoked when any part of the [loro_internal::DocState] is changed.
+    /// The callback will be invoked when any part of the document state is changed.
     /// Returns a subscription that can be used to unsubscribe.
     ///
     /// The events will be emitted after a transaction is committed. A transaction is committed when:
@@ -987,8 +991,8 @@ impl LoroDoc {
     /// - `doc.checkout(version)` is called.
     #[inline]
     pub fn subscribe_root(&self, callback: Subscriber) -> Subscription {
-        // self.doc.subscribe_root(callback)
-        self.doc.subscribe_root(Arc::new(move |e| {
+        // self.inner_doc().subscribe_root(callback)
+        self.inner_doc().subscribe_root(Arc::new(move |e| {
             callback(DiffEvent::from(e));
         }))
     }
@@ -1030,7 +1034,7 @@ impl LoroDoc {
     /// doc.commit();
     /// ```
     pub fn subscribe_local_update(&self, callback: LocalUpdateCallback) -> Subscription {
-        self.doc.subscribe_local_update(callback)
+        self.inner_doc().subscribe_local_update(callback)
     }
 
     /// Subscribe to peer ID changes in the document.
@@ -1065,20 +1069,20 @@ impl LoroDoc {
     /// doc.set_peer_id(100).unwrap();
     /// ```
     pub fn subscribe_peer_id_change(&self, callback: PeerIdUpdateCallback) -> Subscription {
-        self.doc.subscribe_peer_id_change(callback)
+        self.inner_doc().subscribe_peer_id_change(callback)
     }
 
     /// Check the correctness of the document state by comparing it with the state
     /// calculated by applying all the history.
     #[inline]
     pub fn check_state_correctness_slow(&self) {
-        self.doc.check_state_diff_calc_consistency_slow()
+        self.inner_doc().check_state_diff_calc_consistency_slow()
     }
 
     /// Get the handler by the path.
     #[inline]
     pub fn get_by_path(&self, path: &[Index]) -> Option<ValueOrContainer> {
-        self.doc.get_by_path(path).map(ValueOrContainer::from)
+        self.inner_doc().get_by_path(path).map(ValueOrContainer::from)
     }
 
     /// Get the handler by the string path.
@@ -1136,7 +1140,7 @@ impl LoroDoc {
     /// ```
     #[inline]
     pub fn get_by_str_path(&self, path: &str) -> Option<ValueOrContainer> {
-        self.doc.get_by_str_path(path).map(ValueOrContainer::from)
+        self.inner_doc().get_by_str_path(path).map(ValueOrContainer::from)
     }
 
     /// Get the absolute position of the given cursor.
@@ -1162,19 +1166,19 @@ impl LoroDoc {
         &self,
         cursor: &Cursor,
     ) -> Result<PosQueryResult, CannotFindRelativePosition> {
-        self.doc.query_pos(cursor)
+        self.inner_doc().query_pos(cursor)
     }
 
     /// Get the inner LoroDoc ref.
     #[inline]
     pub fn inner(&self) -> &InnerLoroDoc {
-        &self.doc
+        self.inner_doc()
     }
 
     /// Whether the history cache is built.
     #[inline]
     pub fn has_history_cache(&self) -> bool {
-        self.doc.has_history_cache()
+        self.inner_doc().has_history_cache()
     }
 
     /// Free the history cache that is used for making checkout faster.
@@ -1183,13 +1187,13 @@ impl LoroDoc {
     /// You can free it by calling this method.
     #[inline]
     pub fn free_history_cache(&self) {
-        self.doc.free_history_cache()
+        self.inner_doc().free_history_cache()
     }
 
     /// Free the cached diff calculator that is used for checkout.
     #[inline]
     pub fn free_diff_calculator(&self) {
-        self.doc.free_diff_calculator()
+        self.inner_doc().free_diff_calculator()
     }
 
     /// Encoded all ops and history cache to bytes and store them in the kv store.
@@ -1197,7 +1201,7 @@ impl LoroDoc {
     /// This will free up the memory that used by parsed ops
     #[inline]
     pub fn compact_change_store(&self) {
-        self.doc.compact_change_store()
+        self.inner_doc().compact_change_store()
     }
 
     /// Export the document in the given mode.
@@ -1233,19 +1237,19 @@ impl LoroDoc {
     /// assert!(!delta.is_empty());
     /// ```
     pub fn export(&self, mode: ExportMode) -> Result<Vec<u8>, LoroEncodeError> {
-        self.doc.export(mode)
+        self.inner_doc().export(mode)
     }
 
     /// Analyze the container info of the doc
     ///
     /// This is used for development and debugging. It can be slow.
     pub fn analyze(&self) -> DocAnalysis {
-        self.doc.analyze()
+        self.inner_doc().analyze()
     }
 
     /// Get the path from the root to the container
     pub fn get_path_to_container(&self, id: &ContainerID) -> Option<Vec<(ContainerID, Index)>> {
-        self.doc.get_path_to_container(id)
+        self.inner_doc().get_path_to_container(id)
     }
 
     /// Evaluate a JSONPath expression on the document and return matching values or handlers.
@@ -1281,7 +1285,7 @@ impl LoroDoc {
     #[inline]
     #[cfg(feature = "jsonpath")]
     pub fn jsonpath(&self, path: &str) -> Result<Vec<ValueOrContainer>, JsonPathError> {
-        self.doc
+        self.inner_doc()
             .jsonpath(path)
             .map(|vec| vec.into_iter().map(ValueOrContainer::from).collect())
     }
@@ -1299,7 +1303,7 @@ impl LoroDoc {
         jsonpath: &str,
         callback: SubscribeJsonPathCallback,
     ) -> LoroResult<Subscription> {
-        self.doc.subscribe_jsonpath(jsonpath, callback)
+        self.inner_doc().subscribe_jsonpath(jsonpath, callback)
     }
 
     /// Get the number of operations in the pending transaction.
@@ -1307,7 +1311,7 @@ impl LoroDoc {
     /// The pending transaction is the one that is not committed yet. It will be committed
     /// after calling `doc.commit()`, `doc.export(mode)` or `doc.checkout(version)`.
     pub fn get_pending_txn_len(&self) -> usize {
-        self.doc.get_pending_txn_len()
+        self.inner_doc().get_pending_txn_len()
     }
 
     /// Traverses the ancestors of the Change containing the given ID, including itself.
@@ -1324,12 +1328,12 @@ impl LoroDoc {
         ids: &[ID],
         f: &mut dyn FnMut(ChangeMeta) -> ControlFlow<()>,
     ) -> Result<(), ChangeTravelError> {
-        self.doc.travel_change_ancestors(ids, f)
+        self.inner_doc().travel_change_ancestors(ids, f)
     }
 
     /// Check if the doc contains the full history.
     pub fn is_shallow(&self) -> bool {
-        self.doc.is_shallow()
+        self.inner_doc().is_shallow()
     }
 
     /// Gets container IDs modified in the given ID range.
@@ -1345,7 +1349,7 @@ impl LoroDoc {
     /// * `id` - The starting ID of the change range
     /// * `len` - The length of the change range to check
     pub fn get_changed_containers_in(&self, id: ID, len: usize) -> FxHashSet<ContainerID> {
-        self.doc.get_changed_containers_in(id, len)
+        self.inner_doc().get_changed_containers_in(id, len)
     }
 
     /// Find the operation id spans that between the `from` version and the `to` version.
@@ -1365,7 +1369,7 @@ impl LoroDoc {
     /// ```
     #[inline]
     pub fn find_id_spans_between(&self, from: &Frontiers, to: &Frontiers) -> VersionVectorDiff {
-        self.doc.find_id_spans_between(from, to)
+        self.inner_doc().find_id_spans_between(from, to)
     }
 
     /// Revert the current document state back to the target version
@@ -1392,7 +1396,7 @@ impl LoroDoc {
     /// ```
     #[inline]
     pub fn revert_to(&self, version: &Frontiers) -> LoroResult<()> {
-        self.doc.revert_to(version)
+        self.inner_doc().revert_to(version)
     }
 
     /// Apply a diff to the current document state.
@@ -1400,7 +1404,7 @@ impl LoroDoc {
     /// Internally, it will apply the diff to the current state.
     #[inline]
     pub fn apply_diff(&self, diff: DiffBatch) -> LoroResult<()> {
-        self.doc.apply_diff(diff.into())
+        self.inner_doc().apply_diff(diff.into())
     }
 
     /// Calculate the diff between two versions.
@@ -1418,7 +1422,7 @@ impl LoroDoc {
     /// ```
     #[inline]
     pub fn diff(&self, a: &Frontiers, b: &Frontiers) -> LoroResult<DiffBatch> {
-        self.doc.diff(a, b).map(|x| x.into())
+        self.inner_doc().diff(a, b).map(|x| x.into())
     }
 
     /// Check if the doc contains the target container.
@@ -1452,7 +1456,7 @@ impl LoroDoc {
     /// assert!(doc2.has_container(&"cid:1@1:List".try_into().unwrap()));
     /// ```
     pub fn has_container(&self, container_id: &ContainerID) -> bool {
-        self.doc.has_container(container_id)
+        self.inner_doc().has_container(container_id)
     }
 
     /// Subscribe to the first commit from a peer. Operations performed on the `LoroDoc` within this callback
@@ -1510,7 +1514,7 @@ impl LoroDoc {
         &self,
         callback: FirstCommitFromPeerCallback,
     ) -> Subscription {
-        self.doc.subscribe_first_commit_from_peer(callback)
+        self.inner_doc().subscribe_first_commit_from_peer(callback)
     }
 
     /// Subscribe to pre-commit events.
@@ -1565,7 +1569,7 @@ impl LoroDoc {
     /// doc.commit();
     /// ```
     pub fn subscribe_pre_commit(&self, callback: PreCommitCallback) -> Subscription {
-        self.doc.subscribe_pre_commit(callback)
+        self.inner_doc().subscribe_pre_commit(callback)
     }
 
     /// Delete all content from a root container and hide it from the document.
@@ -1576,7 +1580,7 @@ impl LoroDoc {
     ///
     /// Only works on root containers (containers without parents).
     pub fn delete_root_container(&self, cid: ContainerID) {
-        self.doc.delete_root_container(cid);
+        self.inner_doc().delete_root_container(cid);
     }
 
     /// Set whether to hide empty root containers.
@@ -1592,7 +1596,7 @@ impl LoroDoc {
     /// dbg!(doc.get_deep_value()); // {}
     /// ```
     pub fn set_hide_empty_root_containers(&self, hide: bool) {
-        self.doc.set_hide_empty_root_containers(hide);
+        self.inner_doc().set_hide_empty_root_containers(hide);
     }
 }
 
@@ -1852,7 +1856,7 @@ impl LoroList {
     ///
     /// ```
     /// use loro::LoroDoc;
-    /// use loro_internal::cursor::Side;
+    /// use loro::cursor::Side;
     ///
     /// let doc = LoroDoc::new();
     /// let list = doc.get_list("list");
@@ -3273,7 +3277,7 @@ impl LoroMovableList {
     ///
     /// ```
     /// use loro::LoroDoc;
-    /// use loro_internal::cursor::Side;
+    /// use loro::cursor::Side;
     ///
     /// let doc = LoroDoc::new();
     /// let list = doc.get_movable_list("list");
@@ -3421,7 +3425,7 @@ impl ContainerTrait for LoroUnknown {
 
 use enum_as_inner::EnumAsInner;
 #[cfg(feature = "jsonpath")]
-use loro_internal::jsonpath::jsonpath_impl::JsonPathError;
+use crate::internal::jsonpath::jsonpath_impl::JsonPathError;
 
 /// All the CRDT containers supported by Loro.
 #[derive(Clone, Debug, EnumAsInner)]
@@ -3445,7 +3449,7 @@ pub enum Container {
 
 impl SealedTrait for Container {}
 impl ContainerTrait for Container {
-    type Handler = loro_internal::handler::Handler;
+    type Handler = crate::internal::handler::Handler;
 
     fn id(&self) -> ContainerID {
         match self {
@@ -3648,7 +3652,7 @@ pub struct UndoManager(InnerUndoManager);
 impl UndoManager {
     /// Create a new UndoManager.
     pub fn new(doc: &LoroDoc) -> Self {
-        let inner = InnerUndoManager::new(&doc.doc);
+        let inner = InnerUndoManager::new(doc.inner_doc());
         inner.set_max_undo_steps(100);
         Self(inner)
     }

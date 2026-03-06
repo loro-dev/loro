@@ -5,9 +5,9 @@ use std::sync::{
 
 use loro::{
     undo::UndoItemMeta, ContainerTrait as _, ExportMode, LoroDoc, LoroError, LoroList, LoroMap,
-    LoroResult, LoroText, LoroValue, StyleConfigMap, ToJson, UndoManager,
+    LoroResult, LoroText, LoroValue, StyleConfig, StyleConfigMap, ToJson, UndoManager,
+    CommitOptions, ID,
 };
-use loro_internal::{configure::StyleConfig, id::ID, loro::CommitOptions};
 use serde_json::json;
 use tracing::{debug_span, info_span};
 

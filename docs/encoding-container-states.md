@@ -38,7 +38,7 @@ Each container state is wrapped in a `ContainerWrapper` before being stored in t
 >
 > When decoding `Option<ContainerID>` via postcard, use the postcard serde column.
 
-**Source**: `crates/loro-internal/src/state/container_store/container_wrapper.rs:100-120`
+**Source**: `crates/loro/src/internal/state/container_store/container_wrapper.rs:100-120`
 **Source**: `crates/loro-common/src/lib.rs:378-401` (historical mapping)
 
 ---
@@ -155,7 +155,7 @@ function decodeMapState(bytes) {
 }
 ```
 
-**Source**: `crates/loro-internal/src/state/map_state.rs:260-365`
+**Source**: `crates/loro/src/internal/state/map_state.rs:260-365`
 
 ---
 
@@ -198,7 +198,7 @@ List container stores ordered elements with element IDs.
 Row count is inferred from the column data during decoding.
 ```
 
-**Source**: `crates/loro-internal/src/state/list_state.rs:529-619`
+**Source**: `crates/loro/src/internal/state/list_state.rs:529-619`
 
 ---
 
@@ -336,7 +336,7 @@ function decodeRichtextState(bytes) {
 > Implementers should use proper Unicode scalar iteration (e.g., `[...str]` spread
 > or `Intl.Segmenter` for grapheme-aware handling).
 
-**Source**: `crates/loro-internal/src/state/richtext_state.rs:1130-1339`
+**Source**: `crates/loro/src/internal/state/richtext_state.rs:1130-1339`
 
 ---
 
@@ -425,7 +425,7 @@ To decode position[i]:
   position = position[i-1][0..common_prefix_length] + rest
 ```
 
-**Source**: `crates/loro-internal/src/state/tree_state.rs:1556-1746`
+**Source**: `crates/loro/src/internal/state/tree_state.rs:1556-1746`
 
 ---
 
@@ -493,7 +493,7 @@ The first item in `items` is a sentinel. For each item record:
 **previous** visible item's `invisible_list_item` counter (see line 1509). This means each
 record's `invisible_list_item` represents invisible items that **follow** the visible item.
 
-**Source**: `crates/loro-internal/src/state/movable_list_state.rs:1392-1637`
+**Source**: `crates/loro/src/internal/state/movable_list_state.rs:1392-1637`
 
 ---
 
@@ -509,7 +509,7 @@ When the `counter` feature is enabled:
 └─────────────────┴──────────────────────────────────────────────────────────┘
 ```
 
-**Source**: `crates/loro-internal/src/state/counter_state.rs`
+**Source**: `crates/loro/src/internal/state/counter_state.rs`
 
 ---
 
@@ -580,11 +580,11 @@ function decodeContainerState(bytes) {
 
 | Container | Source File |
 |-----------|-------------|
-| MapState | `crates/loro-internal/src/state/map_state.rs` |
-| ListState | `crates/loro-internal/src/state/list_state.rs` |
-| RichtextState | `crates/loro-internal/src/state/richtext_state.rs` |
-| TreeState | `crates/loro-internal/src/state/tree_state.rs` |
-| MovableListState | `crates/loro-internal/src/state/movable_list_state.rs` |
-| CounterState | `crates/loro-internal/src/state/counter_state.rs` |
-| ContainerWrapper | `crates/loro-internal/src/state/container_store/container_wrapper.rs` |
-| PositionArena | `crates/loro-internal/src/encoding/arena.rs` |
+| MapState | `crates/loro/src/internal/state/map_state.rs` |
+| ListState | `crates/loro/src/internal/state/list_state.rs` |
+| RichtextState | `crates/loro/src/internal/state/richtext_state.rs` |
+| TreeState | `crates/loro/src/internal/state/tree_state.rs` |
+| MovableListState | `crates/loro/src/internal/state/movable_list_state.rs` |
+| CounterState | `crates/loro/src/internal/state/counter_state.rs` |
+| ContainerWrapper | `crates/loro/src/internal/state/container_store/container_wrapper.rs` |
+| PositionArena | `crates/loro/src/internal/encoding/arena.rs` |

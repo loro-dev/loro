@@ -13,7 +13,7 @@ release = false
 
 [dependencies]
 js-sys = "0.3.60"
-loro-internal = { path = "../loro-internal", features = [
+loro = { path = "../loro", features = [
     "wasm",
     "counter",
     "jsonpath",

@@ -47,7 +47,7 @@ function isValidVersion(version: string): boolean {
 }
 
 function syncRustVersionFile(version: string) {
-  const rustVersionFile = "crates/loro-internal/VERSION";
+  const rustVersionFile = "crates/loro/VERSION";
   const versionFileContent = readFileSync(rustVersionFile, "utf-8");
   const versionFileVersion = versionFileContent.trim();
   const parsedFileVersion = semverParse(versionFileVersion);

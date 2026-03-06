@@ -243,7 +243,7 @@ enum FutureOp {
 1. postcard 解出 `EncodedBlock` 外层字段：
    - `counter_start/counter_len/lamport_start/lamport_len/n_changes`
    - 以及各 bytes 段：`header/change_meta/cids/keys/positions/ops/delete_start_ids/values`
-2. 解析 `header`（见 `crates/loro-internal/src/oplog/change_store/block_meta_encode.rs::decode_changes_header`）：
+2. 解析 `header`（见 `crates/loro/src/internal/oplog/change_store/block_meta_encode.rs::decode_changes_header`）：
    - 得到 `peers[]`、每个 change 的 `atom_len`、`deps`、每个 change 的 `lamport`
 3. 解析 `change_meta`：
    - `timestamps[]`（DeltaOfDelta）
@@ -255,7 +255,7 @@ enum FutureOp {
 5. 解析 `ops`（serde_columnar EncodedOp 列）得到 `[(container_idx, prop, value_type, len)]`
 6. 解析 `delete_start_ids`（serde_columnar）得到删除跨度表（供 DeleteSeq 消费）
 7. 解析 `values`：按每个 op 的 `value_type` 顺序消费 values byte stream，得到 `Value`（自定义 Value 编码体系）
-8. **用容器类型 + prop + value** 还原语义 Op（对照 Rust `crates/loro-internal/src/encoding/outdated_encode_reordered.rs::decode_op`）：
+8. **用容器类型 + prop + value** 还原语义 Op（对照 Rust `crates/loro/src/internal/encoding/outdated_encode_reordered.rs::decode_op`）：
    - Map：`prop` 是 `key_idx` → `keys[key_idx]`
    - List/Text/MovableList：`prop` 多为位置；Delete 需要从 delete_start_ids 取 `start_id + signed_len`
    - Text Mark：由 `MarkStart` + `prop(start)` 还原 `start/end/style_key/style_value/info`

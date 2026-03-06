@@ -7,14 +7,14 @@
 ## 5.1 真值来源（必须读）
 
 - ChangeBlock 打包与 op 编码：
-  - `crates/loro-internal/src/oplog/change_store/block_encode.rs`
-  - `crates/loro-internal/src/encoding/outdated_encode_reordered.rs`（`get_op_prop` / `encode_op` 真正决定 `prop` 与 `value_type`）
+  - `crates/loro/src/internal/oplog/change_store/block_encode.rs`
+  - `crates/loro/src/internal/encoding/outdated_encode_reordered.rs`（`get_op_prop` / `encode_op` 真正决定 `prop` 与 `value_type`）
 - ChangeBlock header/meta 编码：
-  - `crates/loro-internal/src/oplog/change_store/block_meta_encode.rs`（`encode_changes`）
+  - `crates/loro/src/internal/oplog/change_store/block_meta_encode.rs`（`encode_changes`）
 - Arena：
-  - `crates/loro-internal/src/encoding/arena.rs`（`ContainerArena` / `PositionArena`）
+  - `crates/loro/src/internal/encoding/arena.rs`（`ContainerArena` / `PositionArena`）
 - Value 编码（values 段）：
-  - `crates/loro-internal/src/encoding/value.rs`（`ValueWriter` / `ValueKind`）
+  - `crates/loro/src/internal/encoding/value.rs`（`ValueWriter` / `ValueKind`）
 - 依赖库语义（排查策略/空序列编码时用）：
   - `serde_columnar` 0.3.14（策略与 wrapper 行为）
   - `postcard`（struct/vec/bytes 的编码语义）

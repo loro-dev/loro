@@ -14,33 +14,90 @@ keywords = ["crdt", "local-first"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-loro-internal = { path = "../loro-internal", version = "1.10.3" }
 loro-common = { path = "../loro-common", version = "1.10.0", features = [
     "serde_json",
 ] }
 loro-kv-store = { path = "../kv-store", version = "1.10.0" }
-delta = { path = "../delta", package = "loro-delta", version = "1.9.1" }
+loro-delta = { path = "../delta", version = "1.9.1", package = "loro-delta" }
+rle = { path = "../rle", version = "1.6.0", package = "loro-rle" }
+fractional_index = { path = "../fractional_index", features = [
+    "serde",
+], version = "1.6.0", package = "loro_fractional_index" }
 generic-btree = { version = "^0.10.7" }
+smallvec = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
 enum-as-inner = { workspace = true }
 tracing = { workspace = true }
 rustc-hash = { workspace = true }
+serde_json = { workspace = true }
+bytes = { workspace = true }
+xxhash-rust = { workspace = true }
+serde_columnar = { workspace = true }
+itertools = { workspace = true }
+enum_dispatch = { workspace = true }
+once_cell = { workspace = true }
+ensure-cov = { workspace = true }
+either = { workspace = true }
+arbitrary = { version = "1", optional = true }
+postcard = { version = "1", features = ["use-std"] }
+append-only-bytes = { version = "0.1.12", features = ["u32_range"] }
+im = { version = "15.1.0", features = ["serde"] }
+tabled = { version = "0.10.0", optional = true }
+wasm-bindgen = { version = "=0.2.100", optional = true }
+js-sys = { version = "0.3.60", optional = true }
+num = "0.4.0"
+rand = { version = "0.8.5" }
+getrandom = "0.2.15"
+leb128 = "0.2.5"
+num-traits = "0.2"
+md5 = "0.7.0"
+arref = "0.1.0"
+nonmax = "0.5.5"
+pretty_assertions = "1.4.1"
+thread_local = "1.1.8"
+parking_lot = "0.12.5"
+pest = "2.8.3"
+pest_derive = "2.8.3"
 
 [dev-dependencies]
 serde_json = { version = "1.0.87", features = ["float_roundtrip"] }
 anyhow = "1.0.83"
 ctor = "0.2"
 dev-utils = { path = "../dev-utils" }
+bench-utils = { path = "../bench-utils" }
 rand = "0.8.5"
 pretty_assertions = "1.4.0"
 loom = "0.7"
 base64 = "0.22.1"
 serial_test = "3"
+criterion = { version = "0.7.0", features = ["html_reports"] }
+arbitrary = { version = "1" }
+tabled = "0.10.0"
+miniz_oxide = "0.7.1"
+zstd = "0.13.0"
+
+[target.'cfg(loom)'.dependencies]
+loom = { version = "0.7", features = ["checkpoint"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies.getrandom]
+version = "0.2.15"
+features = ["js"]
+
+[target.'cfg(all(target_arch = "wasm32", not(features = "wasm")))'.dependencies]
+wasm-bindgen = "0.2.100"
 
 [features]
 default = ["counter"]
-counter = ["loro-internal/counter"]
-jsonpath = ["loro-internal/jsonpath"]
-logging = ["loro-internal/logging"]
+counter = ["loro-common/counter"]
+jsonpath = []
+logging = ["loro-common/logging"]
+test_utils = ["arbitrary", "tabled"]
+wasm = ["wasm-bindgen", "js-sys", "loro-common/wasm"]
+
+[[bench]]
+name = "merge_baseline"
+harness = false
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }

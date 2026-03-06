@@ -2,7 +2,7 @@ use pretty_assertions::assert_eq;
 use std::sync::{Arc, Mutex};
 
 use loro::{Frontiers, LoroDoc, LoroError, UndoManager, ID};
-use loro_internal::vv;
+use loro::vv;
 
 #[test]
 fn disallow_editing_on_detached_mode_by_default() {
