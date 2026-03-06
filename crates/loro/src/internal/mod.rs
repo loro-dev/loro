@@ -1,7 +1,7 @@
 //! Canonical engine surface for the merged `loro` crate.
 //!
 //! `loro::internal` now owns the implementation modules that previously lived in
-//! `loro-internal`. First-party crates should treat the handler, value, event,
+//! the hidden engine crate. First-party crates should treat the handler, value, event,
 //! diff, and undo types re-exported here as the canonical low-level surface.
 //!
 //! The public `loro::Loro*` and `loro::event::*` APIs remain compatibility
@@ -182,7 +182,7 @@ pub struct LoroDocInner {
 }
 
 /// The version of the loro crate
-pub const LORO_VERSION: &str = include_str!("../../../loro-internal/VERSION");
+pub const LORO_VERSION: &str = include_str!("../../VERSION");
 
 impl Drop for LoroDoc {
     fn drop(&mut self) {

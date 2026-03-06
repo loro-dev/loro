@@ -32,24 +32,24 @@
 
 每一块格式都要找到 Rust 参考实现并记录文件位置（方便对照/排查）：
 
-- 顶层 header/body：`crates/loro-internal/src/encoding.rs`
-- FastSnapshot / FastUpdates：`crates/loro-internal/src/encoding/fast_snapshot.rs`
+- 顶层 header/body：`crates/loro/src/internal/encoding.rs`
+- FastSnapshot / FastUpdates：`crates/loro/src/internal/encoding/fast_snapshot.rs`
 - SSTable：
   - `crates/kv-store/src/sstable.rs`
   - `crates/kv-store/src/block.rs`
 - ChangeBlock：
-  - `crates/loro-internal/src/oplog/change_store/block_encode.rs`
-  - `crates/loro-internal/src/oplog/change_store/block_meta_encode.rs`
-- 自定义 Value：`crates/loro-internal/src/encoding/value.rs`
+  - `crates/loro/src/internal/oplog/change_store/block_encode.rs`
+  - `crates/loro/src/internal/oplog/change_store/block_meta_encode.rs`
+- 自定义 Value：`crates/loro/src/internal/encoding/value.rs`
 - ID / ContainerID：`crates/loro-common/src/lib.rs`
-- ContainerWrapper：`crates/loro-internal/src/state/container_store/container_wrapper.rs`
+- ContainerWrapper：`crates/loro/src/internal/state/container_store/container_wrapper.rs`
 - 各容器 state：
-  - `crates/loro-internal/src/state/map_state.rs`
-  - `crates/loro-internal/src/state/list_state.rs`
-  - `crates/loro-internal/src/state/richtext_state.rs`
-  - `crates/loro-internal/src/state/tree_state.rs`
-  - `crates/loro-internal/src/state/movable_list_state.rs`
-  - `crates/loro-internal/src/state/counter_state.rs`
+  - `crates/loro/src/internal/state/map_state.rs`
+  - `crates/loro/src/internal/state/list_state.rs`
+  - `crates/loro/src/internal/state/richtext_state.rs`
+  - `crates/loro/src/internal/state/tree_state.rs`
+  - `crates/loro/src/internal/state/movable_list_state.rs`
+  - `crates/loro/src/internal/state/counter_state.rs`
 
 输出物：
 

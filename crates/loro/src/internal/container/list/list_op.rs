@@ -771,7 +771,7 @@ mod test {
     #[ignore]
     fn perf_insert_text_slice_split_suffix() {
         // Run with:
-        // cargo test -p loro-internal perf_insert_text_slice_split_suffix -- --ignored --nocapture
+        // cargo test -p loro perf_insert_text_slice_split_suffix -- --ignored --nocapture
         const TEXT_LEN: usize = 2 * 1024 * 1024;
         const CHUNK_UNICODE_LEN: usize = 4096;
 

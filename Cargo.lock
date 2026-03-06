@@ -1759,31 +1759,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "loro-internal"
-version = "1.10.3"
-dependencies = [
- "arbitrary",
- "bench-utils",
- "criterion 0.7.0",
- "ctor 0.1.26",
- "dev-utils",
- "getrandom 0.2.16",
- "loro 1.10.3",
- "loro-common 1.10.0",
- "loro-delta 1.9.1",
- "miniz_oxide 0.7.4",
- "postcard",
- "rand 0.8.5",
- "rustc-hash",
- "serde",
- "serde_json",
- "tabled 0.10.0",
- "wasm-bindgen",
- "xxhash-rust",
- "zstd",
-]
-
-[[package]]
 name = "loro-kv-store"
 version = "0.16.2"
 source = "git+https://github.com/loro-dev/loro.git?tag=loro-crdt%401.0.0-alpha.4#9bfe97bce4912c6dc8439817497d18423a0e8cb7"

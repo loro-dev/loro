@@ -101,7 +101,7 @@ The target state is:
 | 3 | Collapse container and value surface | Done | Phase 2 | One canonical container/value layer |
 | 4 | Collapse event, diff, and undo surface | Done | Phase 3 | One canonical event/diff/undo layer |
 | 5 | Migrate `loro-wasm` and first-party consumers | Done | Phase 4 | No first-party dependency on `loro-internal` |
-| 6 | Remove shim and finalize cleanup | Not Started | Phase 5 | Single-crate steady state |
+| 6 | Remove shim and finalize cleanup | Done | Phase 5 | Single-crate steady state |
 
 ## Phase 0: Lock Behavior and Performance Baseline
 
@@ -564,7 +564,7 @@ Completed on 2026-03-06.
 
 ## Phase 6: Remove the Shim and Finalize Cleanup
 
-Status: Not Started
+Status: Done
 
 ### Objective
 
@@ -580,11 +580,11 @@ Delete the temporary compatibility crate and complete the transition to a true s
 
 ### Work Items
 
-- [ ] Delete `crates/loro-internal`.
-- [ ] Remove any temporary compatibility aliases or forwarding code that no longer serves a migration purpose.
-- [ ] Consolidate remaining tests, benches, and docs into the merged `loro` crate.
-- [ ] Update crate documentation and repository documentation.
-- [ ] Write release notes and a migration guide if any user-visible API moved or changed.
+- [x] Delete `crates/loro-internal`.
+- [x] Remove any temporary compatibility aliases or forwarding code that no longer serves a migration purpose.
+- [x] Consolidate remaining tests, benches, and docs into the merged `loro` crate.
+- [x] Update crate documentation and repository documentation.
+- [x] Write release notes and a migration guide if any user-visible API moved or changed.
 
 ### Deliverables
 
@@ -602,6 +602,29 @@ Delete the temporary compatibility crate and complete the transition to a true s
 - workspace build and test pass
 - repository-wide search confirms there are no `loro-internal` references left, except historical changelog text
 
+### Phase 6 Summary
+
+Completed on 2026-03-06.
+
+- Deleted `crates/loro-internal` from the workspace and the repository.
+- Moved the remaining shim-owned assets into the merged crate layout:
+  - version file to `crates/loro/VERSION`
+  - automerge benchmark payload to `crates/bench-utils/data/automerge-paper.json.gz`
+  - compatibility tests to `crates/loro/tests/internal_*` plus `internal_compat_src/**`
+- Updated the merged crate and repo tooling to use the new single-crate locations:
+  - `crates/loro/src/internal/mod.rs` now reads `crates/loro/VERSION`
+  - `scripts/cargo-release.ts` now syncs `crates/loro/VERSION`
+  - `crates/bench-utils/src/lib.rs` now reads the relocated benchmark payload
+- Updated docs/spec references to the merged `crates/loro/src/internal/**` layout and removed live code/comments/docs references that still pointed at the deleted shim crate.
+- Validation passed:
+  - `cargo test -p loro`
+  - `cargo check --workspace`
+  - `rg -n "loro-internal|loro_internal::" . -g '!target'`
+- Residual `loro-internal` hits are intentionally historical:
+  - this migration plan document
+  - changelog entries
+  - lockfile entries for fuzz/compatibility crates that pin older git revisions where `loro-internal` was still part of the published dependency graph
+
 ### Risks
 
 - Deleting the shim too early
@@ -616,10 +639,10 @@ Delete the temporary compatibility crate and complete the transition to a true s
 
 ## Open Questions
 
-- [ ] Will the merge allow a semver-major Rust API cleanup for the event layer?
-- [ ] What should be the exact name of any hidden internal support module exposed for `loro-wasm`?
+- [x] The current merge uses a compatibility-first event story rather than a semver-major Rust event-layer cleanup.
+- [x] The low-level support module exposed for `loro-wasm` is `loro::internal`.
 - [ ] Which escape hatches should remain public after the merge, and which should be deprecated?
-- [ ] Should canonical container type names remain `LoroText` / `LoroList` / `LoroMap`, or should they be renamed around the current internal handler names?
+- [x] Public canonical names remain `LoroText` / `LoroList` / `LoroMap` / `LoroTree` / `LoroMovableList` as compatibility wrappers, while first-party low-level canonical names use the handler layer under `loro::internal`.
 - [ ] How long should compatibility wrappers remain after the canonical APIs are introduced?
 
 ## Decision Log
@@ -631,6 +654,7 @@ Delete the temporary compatibility crate and complete the transition to a true s
 - [x] 2026-03-06: Phase 3 keeps public `LoroList` / `LoroMap` / `LoroText` / `LoroTree` / `LoroMovableList` and `ValueOrContainer` as compatibility wrappers. The canonical first-party container/value surface is the handler layer re-exported from `loro::internal`.
 - [x] 2026-03-06: Phase 4 adopts a compatibility-first event model. First-party crates should use the `loro::internal` event/diff/undo re-exports directly, while the public `loro::event::*` and public undo callback payloads remain compatibility bridges for now.
 - [x] 2026-03-06: Phase 5 uses `loro::internal` as the single low-level support surface for `loro-wasm`; do not introduce a second wasm-only support module unless a later narrowing pass proves necessary.
+- [x] 2026-03-06: Phase 6 treats plan text, changelog text, and lockfile entries for fuzz compatibility crates that pin historical git revisions as acceptable historical `loro-internal` references. No live workspace code, manifests, tests, or docs should depend on the deleted crate.
 
 ## Suggested PR Sequence
 

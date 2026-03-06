@@ -5,7 +5,6 @@ members = [
     "crates/bench-utils",
     "crates/rle",
     "crates/loro-common",
-    "crates/loro-internal",
     "crates/loro-wasm",
     "crates/fuzz",
     "crates/fractional_index",

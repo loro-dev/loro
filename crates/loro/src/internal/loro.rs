@@ -580,7 +580,7 @@ impl LoroDoc {
         bytes: &[u8],
         origin: InternalString,
     ) -> Result<ImportStatus, LoroError> {
-        ensure_cov::notify_cov("loro_internal::import");
+        ensure_cov::notify_cov("loro::internal::import");
         let parsed = parse_header_and_body(bytes, true)?;
         loro_common::info!("Importing with mode={:?}", &parsed.mode);
         let result = match parsed.mode {
@@ -613,7 +613,7 @@ impl LoroDoc {
             }
             EncodeMode::FastSnapshot => {
                 if self.can_reset_with_snapshot() {
-                    ensure_cov::notify_cov("loro_internal::import::snapshot");
+                    ensure_cov::notify_cov("loro::internal::import::snapshot");
                     loro_common::info!("Init by fast snapshot {}", self.peer_id());
                     decode_snapshot(self, parsed.mode, parsed.body, origin)
                 } else {

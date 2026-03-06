@@ -689,7 +689,7 @@ mod test {
     #[ignore]
     fn perf_update_insert_by_split_quadratic() {
         // Run with:
-        // cargo test -p loro-internal perf_update_insert_by_split_quadratic -- --ignored --nocapture
+        // cargo test -p loro perf_update_insert_by_split_quadratic -- --ignored --nocapture
         const CHUNK_LEN: usize = 256;
         let fragments: usize = std::env::var("LORO_PERF_FRAGMENTS")
             .ok()
@@ -737,7 +737,7 @@ mod test {
     #[ignore]
     fn perf_update_insert_by_split_quadratic_unknown() {
         // Run with:
-        // LORO_PERF_FRAGMENTS=8192 cargo test -p loro-internal perf_update_insert_by_split_quadratic_unknown -- --ignored --nocapture
+        // LORO_PERF_FRAGMENTS=8192 cargo test -p loro perf_update_insert_by_split_quadratic_unknown -- --ignored --nocapture
         const CHUNK_LEN: usize = 256;
         let fragments: usize = std::env::var("LORO_PERF_FRAGMENTS")
             .ok()

@@ -31,7 +31,7 @@ and the Rust implementation referenced below.
 - **Historical mapping** (only for postcard `Option<ContainerID>` in wrapper.parent):
   `Text=0, Map=1, List=2, MovableList=3, Tree=4, Counter=5`.
 
-See Rust: `crates/loro-internal/src/state/container_store/container_wrapper.rs`.
+See Rust: `crates/loro/src/internal/state/container_store/container_wrapper.rs`.
 
 ## Unicode (RichText)
 
@@ -65,11 +65,11 @@ See Rust: `crates/loro-internal/src/state/container_store/container_wrapper.rs`.
 
 ## Rust “truth” pointers (for debugging)
 
-- Document header/body: `crates/loro-internal/src/encoding.rs`, `.../encoding/fast_snapshot.rs`
+- Document header/body: `crates/loro/src/internal/encoding.rs`, `.../encoding/fast_snapshot.rs`
 - SSTable: `crates/kv-store/src/sstable.rs`, `crates/kv-store/src/block.rs`, `crates/kv-store/src/compress.rs`
-- ChangeBlock: `crates/loro-internal/src/oplog/change_store/block_encode.rs`,
-  `crates/loro-internal/src/oplog/change_store/block_meta_encode.rs`,
-  `crates/loro-internal/src/encoding/outdated_encode_reordered.rs`
-- Value encoding: `crates/loro-internal/src/encoding/value.rs`
+- ChangeBlock: `crates/loro/src/internal/oplog/change_store/block_encode.rs`,
+  `crates/loro/src/internal/oplog/change_store/block_meta_encode.rs`,
+  `crates/loro/src/internal/encoding/outdated_encode_reordered.rs`
+- Value encoding: `crates/loro/src/internal/encoding/value.rs`
 - IDs / ContainerIDs: `crates/loro-common/src/lib.rs`
 

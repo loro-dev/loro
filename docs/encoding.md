@@ -37,7 +37,7 @@ Loro supports multiple export modes to meet different synchronization requiremen
 | `StateOnly` | `FastSnapshot (3)` | State-only snapshot with minimal history (depth=1) |
 | `SnapshotAt` | `FastSnapshot (3)` | Full history till target version + state at that version |
 
-**Source**: `crates/loro-internal/src/encoding.rs:52-70`
+**Source**: `crates/loro/src/internal/encoding.rs:52-70`
 
 ---
 
@@ -86,7 +86,7 @@ The checksum is stored in bytes [16..20] of the header as a little-endian u32.
 
 > **See Also**: [xxHash32 Algorithm Specification](./encoding-xxhash32.md) for complete implementation details and JavaScript code.
 
-**Source**: `crates/loro-internal/src/encoding.rs:275-295, 397-416`
+**Source**: `crates/loro/src/internal/encoding.rs:275-295, 397-416`
 
 ---
 
@@ -119,7 +119,7 @@ The FastSnapshot body contains three sections:
 └───────────────┴─────────────────────────────────────────────────┘
 ```
 
-**Source**: `crates/loro-internal/src/encoding/fast_snapshot.rs:1-46`
+**Source**: `crates/loro/src/internal/encoding/fast_snapshot.rs:1-46`
 
 ### Encoding Pseudocode
 
@@ -168,7 +168,7 @@ The FastUpdates body contains a sequence of LEB128-length-prefixed change blocks
 └───────────────┴─────────────────────────────────────────────────┘
 ```
 
-**Source**: `crates/loro-internal/src/encoding/fast_snapshot.rs:257-288`
+**Source**: `crates/loro/src/internal/encoding/fast_snapshot.rs:257-288`
 
 ---
 
@@ -315,7 +315,7 @@ The OpLog is stored as a KV Store with the following key-value schema:
 | `b"sf"` (2 bytes) | Shallow start Frontiers |
 | 12 bytes: PeerID (8) + Counter (4) | Encoded Change Block |
 
-**Source**: `crates/loro-internal/src/oplog/change_store.rs:47-59, 110-113`
+**Source**: `crates/loro/src/internal/oplog/change_store.rs:47-59, 110-113`
 
 ### Block Key Format
 
@@ -355,7 +355,7 @@ VersionVector is encoded using **postcard** format (a compact binary serializati
 
 The VersionVector is a HashMap<PeerID, Counter> serialized with postcard.
 
-**Source**: `crates/loro-internal/src/version.rs:843-850`
+**Source**: `crates/loro/src/internal/version.rs:843-850`
 
 ### Frontiers Encoding
 
@@ -378,7 +378,7 @@ Frontiers is encoded as a Vec<ID> using **postcard** format.
 └───────────────┴─────────────────────────────────────────────────┘
 ```
 
-**Source**: `crates/loro-internal/src/version/frontiers.rs:219-231`
+**Source**: `crates/loro/src/internal/version/frontiers.rs:219-231`
 
 ---
 
@@ -395,7 +395,7 @@ The document state is stored as a KV Store where each container's state is a sep
 | `ContainerID.to_bytes()` | ContainerWrapper encoded bytes |
 | `FRONTIERS_KEY` (`b"fr"`) | Frontiers encoding (for shallow snapshots) |
 
-**Source**: `crates/loro-internal/src/state/container_store.rs:48` (FRONTIERS_KEY)
+**Source**: `crates/loro/src/internal/state/container_store.rs:48` (FRONTIERS_KEY)
 
 ### ContainerID Encoding
 
@@ -460,7 +460,7 @@ Each container's state is wrapped in a ContainerWrapper:
 └───────────────┴─────────────────────────────────────────────────┘
 ```
 
-**Source**: `crates/loro-internal/src/state/container_store/container_wrapper.rs:100-120`
+**Source**: `crates/loro/src/internal/state/container_store/container_wrapper.rs:100-120`
 
 ---
 
@@ -468,7 +468,7 @@ Each container's state is wrapped in a ContainerWrapper:
 
 Each Change Block contains multiple consecutive Changes from the same peer. Blocks are approximately 4KB after compression.
 
-**Source**: `crates/loro-internal/src/oplog/change_store/block_encode.rs:1-65`
+**Source**: `crates/loro/src/internal/oplog/change_store/block_encode.rs:1-65`
 
 ### Block Structure Overview
 
@@ -535,7 +535,7 @@ The `header` field contains change metadata:
 └───────────────┴──────────────────────────────────────────────────┘
 ```
 
-**Source**: `crates/loro-internal/src/oplog/change_store/block_meta_encode.rs`
+**Source**: `crates/loro/src/internal/oplog/change_store/block_meta_encode.rs`
 
 ### Operations Section (serde_columnar)
 
@@ -586,8 +586,8 @@ The `prop` field meaning varies by container type and operation:
 **Note**: For Map operations, the actual key string is stored in the `keys` section
 of the change block, and `prop` is the index into that arena.
 
-**Source**: `crates/loro-internal/src/encoding/outdated_encode_reordered.rs:104-124` (get_op_prop)
-**Source**: `crates/loro-internal/src/oplog/change_store/block_encode.rs:414-428` (EncodedOp struct)
+**Source**: `crates/loro/src/internal/encoding/outdated_encode_reordered.rs:104-124` (get_op_prop)
+**Source**: `crates/loro/src/internal/oplog/change_store/block_encode.rs:414-428` (EncodedOp struct)
 
 ### Container Arena Encoding (postcard Vec)
 
@@ -623,7 +623,7 @@ For non-root containers (is_root = false):
 > Columnar encoding only applies when serializing via a ColumnarVec wrapper, so
 > the strategies are NOT applied here - it's plain postcard row-wise encoding.
 
-**Source**: `crates/loro-internal/src/encoding/arena.rs:39-50, 94-96`
+**Source**: `crates/loro/src/internal/encoding/arena.rs:39-50, 94-96`
 
 ### Position Arena Encoding (serde_columnar)
 
@@ -643,7 +643,7 @@ Decoding: For each position, take common_prefix bytes from previous
 position and append rest bytes.
 ```
 
-**Source**: `crates/loro-internal/src/encoding/arena.rs:159-232`
+**Source**: `crates/loro/src/internal/encoding/arena.rs:159-232`
 
 ### Key Strings Section
 
@@ -657,7 +657,7 @@ position and append rest bytes.
 └───────────────┴──────────────────────────────────────────────────┘
 ```
 
-**Source**: `crates/loro-internal/src/encoding/value.rs:860-867` (read_str/write_str pattern)
+**Source**: `crates/loro/src/internal/encoding/value.rs:860-867` (read_str/write_str pattern)
 
 ### Delete Start IDs Section (serde_columnar)
 
@@ -673,7 +673,7 @@ position and append rest bytes.
 └───────────────┴──────────────────────────────────────────────────┘
 ```
 
-**Source**: `crates/loro-internal/src/encoding/outdated_encode_reordered.rs:427-436` (EncodedDeleteStartId)
+**Source**: `crates/loro/src/internal/encoding/outdated_encode_reordered.rs:427-436` (EncodedDeleteStartId)
 
 ---
 
@@ -704,7 +704,7 @@ Loro uses a tagged value encoding system where each value is prefixed with a typ
 | 16 | RawTreeMove | Raw tree move (internal) |
 | 0x80 \| kind | Future | Unknown/future value types |
 
-**Source**: `crates/loro-internal/src/encoding/value.rs:39-161`
+**Source**: `crates/loro/src/internal/encoding/value.rs:39-161`
 
 **Notes (Future)**:
 - The encoding uses the high bit (`0x80`) as a marker and stores the future kind in the low 7 bits.
@@ -726,8 +726,8 @@ Binary:    LEB128(len) + raw bytes
 DeltaInt:  LEB128 signed encoding (i32)
 ```
 
-**Source**: `crates/loro-internal/src/encoding/value.rs:858-882` (read_i64, read_f64)
-**Source**: `crates/loro-internal/src/encoding/value.rs:1045-1073` (write_i64, write_f64)
+**Source**: `crates/loro/src/internal/encoding/value.rs:858-882` (read_i64, read_f64)
+**Source**: `crates/loro/src/internal/encoding/value.rs:1045-1073` (write_i64, write_f64)
 
 #### LoroValue (Nested Value)
 
@@ -755,8 +755,8 @@ LoroValueKind:
   9 = ContainerType (u8)
 ```
 
-**Source**: `crates/loro-internal/src/encoding/value.rs:63-85` (LoroValueKind enum)
-**Source**: `crates/loro-internal/src/encoding/value.rs:620-660` (decode_loro_value)
+**Source**: `crates/loro/src/internal/encoding/value.rs:63-85` (LoroValueKind enum)
+**Source**: `crates/loro/src/internal/encoding/value.rs:620-660` (decode_loro_value)
 
 #### MarkStart (Rich Text)
 
@@ -787,9 +787,9 @@ Common patterns:
 - Comment style: 0x80 (ALIVE only, no expansion)
 ```
 
-**Source**: `crates/loro-internal/src/encoding/value.rs:462-468` (MarkStart struct)
-**Source**: `crates/loro-internal/src/encoding/value.rs:937-950` (read_mark)
-**Source**: `crates/loro-internal/src/container/richtext.rs:141-282` (TextStyleInfoFlag)
+**Source**: `crates/loro/src/internal/encoding/value.rs:462-468` (MarkStart struct)
+**Source**: `crates/loro/src/internal/encoding/value.rs:937-950` (read_mark)
+**Source**: `crates/loro/src/internal/container/richtext.rs:141-282` (TextStyleInfoFlag)
 
 #### TreeMove
 
@@ -804,8 +804,8 @@ Common patterns:
 └───────────────┴──────────────────────────────────────────────────┘
 ```
 
-**Source**: `crates/loro-internal/src/encoding/value.rs:480-485` (EncodedTreeMove struct)
-**Source**: `crates/loro-internal/src/encoding/value.rs:953-967` (read_tree_move)
+**Source**: `crates/loro/src/internal/encoding/value.rs:480-485` (EncodedTreeMove struct)
+**Source**: `crates/loro/src/internal/encoding/value.rs:953-967` (read_tree_move)
 
 #### RawTreeMove (internal)
 
@@ -822,9 +822,9 @@ Common patterns:
 └───────────────┴──────────────────────────────────────────────────┘
 ```
 
-**Source**: `crates/loro-internal/src/encoding/value.rs:470-477` (RawTreeMove struct)
-**Source**: `crates/loro-internal/src/encoding/value.rs:969-989` (read_raw_tree_move)
-**Source**: `crates/loro-internal/src/encoding/value.rs:1122-1134` (write_raw_tree_move)
+**Source**: `crates/loro/src/internal/encoding/value.rs:470-477` (RawTreeMove struct)
+**Source**: `crates/loro/src/internal/encoding/value.rs:969-989` (read_raw_tree_move)
+**Source**: `crates/loro/src/internal/encoding/value.rs:1122-1134` (write_raw_tree_move)
 
 #### ListMove
 
@@ -838,8 +838,8 @@ Common patterns:
 └───────────────┴──────────────────────────────────────────────────┘
 ```
 
-**Source**: `crates/loro-internal/src/encoding/value.rs:181-185` (ListMove variant)
-**Source**: `crates/loro-internal/src/encoding/value.rs:367-375` (read ListMove)
+**Source**: `crates/loro/src/internal/encoding/value.rs:181-185` (ListMove variant)
+**Source**: `crates/loro/src/internal/encoding/value.rs:367-375` (read ListMove)
 
 #### ListSet
 
@@ -853,8 +853,8 @@ Common patterns:
 └───────────────┴──────────────────────────────────────────────────┘
 ```
 
-**Source**: `crates/loro-internal/src/encoding/value.rs:186-190` (ListSet variant)
-**Source**: `crates/loro-internal/src/encoding/value.rs:377-385` (read ListSet)
+**Source**: `crates/loro/src/internal/encoding/value.rs:186-190` (ListSet variant)
+**Source**: `crates/loro/src/internal/encoding/value.rs:377-385` (read ListSet)
 
 ---
 
@@ -1050,8 +1050,8 @@ function decodeSLEB128_BigInt(bytes, offset = 0) {
 - SLEB128: -1 encodes as [0x7F] (two's complement sign extension)
 - Zigzag:  -1 encodes as [0x01] (maps -1 → 1, then varint)
 
-**Source**: `crates/loro-internal/src/encoding/value.rs:858-859` (leb128::read::signed)
-**Source**: `crates/loro-internal/src/encoding/value.rs:1046-1047` (leb128::write::signed)
+**Source**: `crates/loro/src/internal/encoding/value.rs:858-859` (leb128::read::signed)
+**Source**: `crates/loro/src/internal/encoding/value.rs:1046-1047` (leb128::write::signed)
 
 ### Run-Length Encoding (RLE)
 
@@ -1079,7 +1079,7 @@ Examples:
 - [T, T, T, F, F, T]     → [0x00, 0x03, 0x02, 0x01] (0 false, 3 true, 2 false, 1 true)
 ```
 
-**Source**: `crates/loro-internal/src/oplog/change_store/block_meta_encode.rs:22,121` (BoolRleEncoder/Decoder usage)
+**Source**: `crates/loro/src/internal/oplog/change_store/block_meta_encode.rs:22,121` (BoolRleEncoder/Decoder usage)
 
 #### AnyRle<T>
 
@@ -1112,7 +1112,7 @@ Example: AnyRle<u32> encoding [1, 2, 3] (all different - literal run)
   - Full: [0x05, 0x01, 0x02, 0x03]
 ```
 
-**Source**: `crates/loro-internal/src/oplog/change_store/block_meta_encode.rs:20,23,25` (AnyRleEncoder usage)
+**Source**: `crates/loro/src/internal/oplog/change_store/block_meta_encode.rs:20,23,25` (AnyRleEncoder usage)
 
 ### Delta Encoding
 
@@ -1169,7 +1169,7 @@ Example: Encoding [1, 2, 3, 4, 5, 6]
 - Each 0 encodes as single "0" bit → 5 bits total for 6 values!
 
 **Source**: `serde_columnar-0.3.14/src/strategy/rle.rs:405-513` (DeltaOfDeltaEncoder)
-**Source**: `crates/loro-internal/src/oplog/change_store/block_meta_encode.rs:18-19,26` (usage)
+**Source**: `crates/loro/src/internal/oplog/change_store/block_meta_encode.rs:18-19,26` (usage)
 
 ### Columnar Encoding (serde_columnar)
 
@@ -1521,8 +1521,8 @@ Shallow snapshots enable efficient incremental synchronization:
 └───────────────────────────────────────────────────────────────────┘
 ```
 
-**Source**: `crates/loro-internal/src/encoding/shallow_snapshot.rs:17-19` (threshold constant)
-**Source**: `crates/loro-internal/src/encoding/shallow_snapshot.rs:22-30` (export_shallow_snapshot)
+**Source**: `crates/loro/src/internal/encoding/shallow_snapshot.rs:17-19` (threshold constant)
+**Source**: `crates/loro/src/internal/encoding/shallow_snapshot.rs:22-30` (export_shallow_snapshot)
 
 ### State Store Container-Level Access
 
@@ -1548,7 +1548,7 @@ Each container's state is stored as a separate KV entry, enabling:
 └───────────────────────────────────────────────────────────────────┘
 ```
 
-**Source**: `crates/loro-internal/src/state/container_store.rs:48` (KV schema)
+**Source**: `crates/loro/src/internal/state/container_store.rs:48` (KV schema)
 
 ### Implementation Recommendations
 
@@ -1583,7 +1583,7 @@ Each container's state is stored as a separate KV entry, enabling:
 
 **Source**: `crates/loro-common/src/lib.rs:42-47` (ID.to_bytes - big-endian)
 **Source**: `crates/loro-common/src/lib.rs:212-213` (ContainerID.encode - little-endian)
-**Source**: `crates/loro-internal/src/encoding/value.rs:874-882` (F64 - big-endian)
+**Source**: `crates/loro/src/internal/encoding/value.rs:874-882` (F64 - big-endian)
 
 ### Checksums
 
@@ -1596,7 +1596,7 @@ Each container's state is stored as a separate KV entry, enabling:
 > **IMPORTANT**: Document header checksum covers bytes starting at offset 20
 > (the 2-byte encode mode AND the body), NOT just the body at offset 22.
 
-**Source**: `crates/loro-internal/src/encoding.rs:275, 412` (XXH_SEED, checksum_body)
+**Source**: `crates/loro/src/internal/encoding.rs:275, 412` (XXH_SEED, checksum_body)
 **Source**: `crates/kv-store/src/sstable.rs:13` (XXH_SEED)
 **Source**: `crates/kv-store/src/sstable.rs:87,100` (checksum calculation)
 
@@ -1617,27 +1617,27 @@ const MAX_BLOCK_SIZE: usize = 1024 * 4;          // ~4KB per change block
 
 > **Note**: SSTable block size is a runtime parameter, not a constant.
 
-**Source**: `crates/loro-internal/src/encoding.rs:154, 275` (MAGIC_BYTES, XXH_SEED)
+**Source**: `crates/loro/src/internal/encoding.rs:154, 275` (MAGIC_BYTES, XXH_SEED)
 **Source**: `crates/kv-store/src/sstable.rs:13-14` (XXH_SEED, MAGIC_BYTES)
-**Source**: `crates/loro-internal/src/oplog/change_store.rs:37` (MAX_BLOCK_SIZE)
+**Source**: `crates/loro/src/internal/oplog/change_store.rs:37` (MAX_BLOCK_SIZE)
 
 ### File Locations Reference
 
 | Component | Source File |
 |-----------|-------------|
-| Main encoding module | `crates/loro-internal/src/encoding.rs` |
-| FastSnapshot format | `crates/loro-internal/src/encoding/fast_snapshot.rs` |
-| Shallow snapshot | `crates/loro-internal/src/encoding/shallow_snapshot.rs` |
-| Change block encoding | `crates/loro-internal/src/oplog/change_store/block_encode.rs` |
-| Block meta encoding | `crates/loro-internal/src/oplog/change_store/block_meta_encode.rs` |
-| Value encoding | `crates/loro-internal/src/encoding/value.rs` |
-| Arena encoding | `crates/loro-internal/src/encoding/arena.rs` |
+| Main encoding module | `crates/loro/src/internal/encoding.rs` |
+| FastSnapshot format | `crates/loro/src/internal/encoding/fast_snapshot.rs` |
+| Shallow snapshot | `crates/loro/src/internal/encoding/shallow_snapshot.rs` |
+| Change block encoding | `crates/loro/src/internal/oplog/change_store/block_encode.rs` |
+| Block meta encoding | `crates/loro/src/internal/oplog/change_store/block_meta_encode.rs` |
+| Value encoding | `crates/loro/src/internal/encoding/value.rs` |
+| Arena encoding | `crates/loro/src/internal/encoding/arena.rs` |
 | SSTable format | `crates/kv-store/src/sstable.rs` |
 | Block format | `crates/kv-store/src/block.rs` |
 | ContainerID | `crates/loro-common/src/lib.rs` |
-| ContainerWrapper | `crates/loro-internal/src/state/container_store/container_wrapper.rs` |
-| VersionVector | `crates/loro-internal/src/version.rs` |
-| Frontiers | `crates/loro-internal/src/version/frontiers.rs` |
+| ContainerWrapper | `crates/loro/src/internal/state/container_store/container_wrapper.rs` |
+| VersionVector | `crates/loro/src/internal/version.rs` |
+| Frontiers | `crates/loro/src/internal/version/frontiers.rs` |
 
 ---
 

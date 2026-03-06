@@ -107,7 +107,7 @@ pub(crate) fn decode_snapshot_inner(
         state_bytes,
         shallow_root_state_bytes,
     } = snapshot;
-    ensure_cov::notify_cov("loro_internal::import::fast_snapshot::decode_snapshot");
+    ensure_cov::notify_cov("loro::internal::import::fast_snapshot::decode_snapshot");
     let mut oplog = doc.oplog().lock().map_err(|_| {
         LoroError::DecodeError(
             "decode_snapshot: failed to lock oplog"
@@ -135,13 +135,13 @@ pub(crate) fn decode_snapshot_inner(
     let need_calc = state_bytes.is_none();
     let state_frontiers;
     if shallow_root_state_bytes.is_empty() {
-        ensure_cov::notify_cov("loro_internal::import::snapshot::normal");
+        ensure_cov::notify_cov("loro::internal::import::snapshot::normal");
         if let Some(bytes) = state_bytes {
             state.store.decode(bytes)?;
         }
         state_frontiers = oplog.frontiers().clone();
     } else {
-        ensure_cov::notify_cov("loro_internal::import::snapshot::gc");
+        ensure_cov::notify_cov("loro::internal::import::snapshot::gc");
         let shallow_root_state_frontiers = state.store.decode_gc(
             shallow_root_state_bytes.clone(),
             oplog.dag().shallow_since_frontiers().clone(),

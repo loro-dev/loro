@@ -205,4 +205,4 @@ function verifyBlock(blockBytes) {
 
 ---
 
-**Source**: Based on xxHash specification and Loro's usage at `crates/kv-store/src/sstable.rs` and `crates/loro-internal/src/encoding.rs`
+**Source**: Based on xxHash specification and Loro's usage at `crates/kv-store/src/sstable.rs` and `crates/loro/src/internal/encoding.rs`
