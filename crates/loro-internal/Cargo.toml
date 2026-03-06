@@ -14,52 +14,7 @@ keywords = ["crdt", "local-first"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-generic-btree = { version = "^0.10.7" }
-smallvec = { workspace = true }
-loro-delta = { path = "../delta", version = "1.9.1", package = "loro-delta" }
-rle = { path = "../rle", version = "1.6.0", package = "loro-rle" }
-loro-common = { path = "../loro-common", version = "1.10.0" }
-fractional_index = { path = "../fractional_index", features = [
-    "serde",
-], version = "1.6.0", package = "loro_fractional_index" }
-loro-kv-store = { path = "../kv-store", version = "1.10.0" }
-rustc-hash = { workspace = true }
-serde = { workspace = true }
-thiserror = { workspace = true }
-enum-as-inner = { workspace = true }
-serde_json = { workspace = true }
-bytes = { workspace = true }
-xxhash-rust = { workspace = true }
-serde_columnar = { workspace = true }
-itertools = { workspace = true }
-enum_dispatch = { workspace = true }
-once_cell = { workspace = true }
-arbitrary = { version = "1", optional = true }
-postcard = { version = "1", features = ["use-std"] }
-append-only-bytes = { version = "0.1.12", features = ["u32_range"] }
-im = { version = "15.1.0", features = ["serde"] }
-tabled = { version = "0.10.0", optional = true }
-wasm-bindgen = { version = "=0.2.100", optional = true }
-js-sys = { version = "0.3.60", optional = true }
-num = "0.4.0"
-rand = { version = "0.8.5" }
-getrandom = "0.2.15"
-leb128 = "0.2.5"
-num-traits = "0.2"
-either = "1"
-md5 = "0.7.0"
-arref = "0.1.0"
-tracing = { version = "0.1" }
-nonmax = "0.5.5"
-ensure-cov = { workspace = true }
-pretty_assertions = "1.4.1"
-thread_local = "1.1.8"
-parking_lot = "0.12.5"
-pest = "2.8.3"
-pest_derive = "2.8.3"
-
-[target.'cfg(loom)'.dependencies]
-loom = { version = "0.7", features = ["checkpoint"] }
+loro = { path = "../loro", version = "1.10.3" }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
@@ -77,6 +32,13 @@ miniz_oxide = "0.7.1"
 rand = { version = "0.8.5" }
 tabled = "0.10.0"
 ctor = "0.1.23"
+loro-common = { path = "../loro-common", version = "1.10.0" }
+loro-delta = { path = "../delta", version = "1.9.1", package = "loro-delta" }
+rustc-hash = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+xxhash-rust = { workspace = true }
+postcard = { version = "1", features = ["use-std"] }
 bench-utils = { path = "../bench-utils" }
 dev-utils = { path = "../dev-utils" }
 zstd = "0.13.0"
@@ -88,14 +50,11 @@ doctest = false
 bench = false
 
 [features]
-# "wasm" will use utf-16 index by default when using text related stuff; But it'll use utf-8 encoding internally.
-wasm = ["wasm-bindgen", "js-sys", "loro-common/wasm"]
-# whether to use list slice instead of raw str in text container
-test_utils = ["arbitrary", "tabled"]
-# whether enable the counter container
-counter = ["loro-common/counter"]
-logging = ["loro-common/logging"]
-jsonpath = []
+wasm = ["loro/wasm"]
+test_utils = ["loro/test_utils"]
+counter = ["loro/counter"]
+logging = ["loro/logging"]
+jsonpath = ["loro/jsonpath"]
 
 [[bench]]
 name = "text_r"

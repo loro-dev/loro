@@ -18,10 +18,8 @@ use loro::{
     event::{Diff, DiffBatch, ListDiffItem},
     loro_value, CommitOptions, ContainerID, ContainerTrait, ContainerType, ExportMode, Frontiers,
     FrontiersNotIncluded, IdSpan, Index, LoroDoc, LoroError, LoroList, LoroMap, LoroMapValue,
-    LoroStringValue, LoroText, LoroValue, ToJson, TreeParentId,
-};
-use loro_internal::{
-    encoding::EncodedBlobMode, fx_map, handler::TextDelta, id::ID, version_range, vv, LoroResult,
+    LoroResult, LoroStringValue, LoroText, LoroValue, ToJson, TreeParentId, EncodedBlobMode,
+    TextDelta, ID, fx_map, version_range, vv,
 };
 use rand::{Rng, SeedableRng};
 use serde_json::json;
@@ -528,7 +526,7 @@ fn subscribe() {
         Arc::new(move |event| {
             assert!(matches!(
                 event.triggered_by,
-                loro_internal::event::EventTriggerKind::Local
+                loro::EventTriggerKind::Local
             ));
             for event in event.events {
                 let delta = event.diff.as_text().unwrap();
@@ -906,11 +904,11 @@ fn get_out_of_bound_cursor() {
     let a = LoroDoc::new();
     let text = a.get_text("text");
     text.insert(0, "123").unwrap();
-    text.get_cursor(5, loro_internal::cursor::Side::Right);
+    text.get_cursor(5, loro::cursor::Side::Right);
     let list = a.get_list("list");
-    list.get_cursor(5, loro_internal::cursor::Side::Right);
+    list.get_cursor(5, loro::cursor::Side::Right);
     let m_list = a.get_movable_list("list");
-    m_list.get_cursor(5, loro_internal::cursor::Side::Right);
+    m_list.get_cursor(5, loro::cursor::Side::Right);
 }
 
 #[test]

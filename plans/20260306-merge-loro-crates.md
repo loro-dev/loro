@@ -96,7 +96,7 @@ The target state is:
 | Phase | Name | Status | Depends On | Main Output |
 | --- | --- | --- | --- | --- |
 | 0 | Lock behavior and perf baseline | Done | None | Baseline tests and benchmark numbers |
-| 1 | Import engine into `loro` | Not Started | Phase 0 | `loro` owns implementation modules |
+| 1 | Import engine into `loro` | Done | Phase 0 | `loro` owns implementation modules |
 | 2 | Merge canonical `LoroDoc` semantics | Not Started | Phase 1 | One canonical document type |
 | 3 | Collapse container and value surface | Not Started | Phase 2 | One canonical container/value layer |
 | 4 | Collapse event, diff, and undo surface | Not Started | Phase 3 | One canonical event/diff/undo layer |
@@ -203,7 +203,7 @@ One-shot local Criterion samples with short warm-up/measurement windows; use the
 
 ## Phase 1: Import the Engine into `loro`
 
-Status: Not Started
+Status: Done
 
 ### Objective
 
@@ -222,12 +222,12 @@ The recommended strategy is to move the implementation into `crates/loro` first,
 
 ### Work Items
 
-- [ ] Create an internal module tree inside `crates/loro` to host the current engine implementation.
-- [ ] Merge the dependency sets from `crates/loro` and `crates/loro-internal`.
-- [ ] Merge feature flags while preserving the public `loro` feature contract.
-- [ ] Make `crates/loro` compile against the local engine modules instead of the path dependency on `loro-internal`.
-- [ ] Convert `crates/loro-internal` into a temporary compatibility shim that re-exports from `loro`.
-- [ ] Keep the workspace buildable through the shim while downstream consumers are still migrating.
+- [x] Create an internal module tree inside `crates/loro` to host the current engine implementation.
+- [x] Merge the dependency sets from `crates/loro` and `crates/loro-internal`.
+- [x] Merge feature flags while preserving the public `loro` feature contract.
+- [x] Make `crates/loro` compile against the local engine modules instead of the path dependency on `loro-internal`.
+- [x] Convert `crates/loro-internal` into a temporary compatibility shim that re-exports from `loro`.
+- [x] Keep the workspace buildable through the shim while downstream consumers are still migrating.
 
 ### Deliverables
 
@@ -246,6 +246,20 @@ The recommended strategy is to move the implementation into `crates/loro` first,
 - `cargo test -p loro`
 - `cargo test -p loro-internal`
 - workspace build check
+
+### Phase 1 Summary
+
+Completed on 2026-03-06.
+
+- Imported the engine source tree into `crates/loro/src/internal/**` and retargeted facade imports from `loro_internal::...` to `crate::internal::...`.
+- Merged the dependency and feature surface into `crates/loro/Cargo.toml`, including the internal-only support features needed by the compatibility shim.
+- Converted `crates/loro-internal` into a forwarding crate that re-exports `::loro::internal::*` and the macro surface used by existing first-party tests, benches, and examples.
+- Updated the public compatibility suite under `crates/loro/tests/**` so it targets `loro` directly rather than importing `loro_internal`.
+- Validation passed:
+  - `cargo tree -p loro` no longer shows `loro-internal` as a dependency edge.
+  - `cargo test -p loro`
+  - `cargo test -p loro-internal`
+  - `cargo check --workspace`
 
 ### Risks
 
@@ -527,6 +541,7 @@ Delete the temporary compatibility crate and complete the transition to a true s
 
 - [x] 2026-03-06: Phase 0 baseline commands for `loro-internal` benches must include `--features test_utils`; without it the existing benchmark files fall back to no-op stubs.
 - [x] 2026-03-06: Keep the existing `loro-internal` benches as split-architecture baselines, and add `crates/loro/benches/merge_baseline.rs` to measure public facade overhead on active subscriptions, heterogeneous reads, diff/apply-diff, and undo callbacks.
+- [x] 2026-03-06: Phase 1 uses an embedded engine layout under `crates/loro/src/internal/**`, while `crates/loro-internal` becomes a forwarding shim. This removes the dependency edge first and defers facade collapse to Phases 2-4.
 
 ## Suggested PR Sequence
 

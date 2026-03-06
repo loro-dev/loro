@@ -1,19 +1,18 @@
 //! Loro event handling.
-use delta::array_vec::ArrayVec;
-use delta::DeltaRope;
 use enum_as_inner::EnumAsInner;
 use loro_common::IdLp;
-use loro_internal::container::ContainerID;
-pub use loro_internal::delta::TreeDiff;
-use loro_internal::delta::{ResolvedMapDelta, ResolvedMapValue};
-use loro_internal::event::{EventTriggerKind, ListDeltaMeta};
-use loro_internal::handler::{TextDelta, ValueOrHandler};
-use loro_internal::undo::DiffBatch as InnerDiffBatch;
-use loro_internal::{
+use crate::internal::loro_delta::{self as loro_delta, array_vec::ArrayVec, DeltaRope};
+use crate::internal::container::ContainerID;
+pub use crate::internal::delta::TreeDiff;
+use crate::internal::delta::{ResolvedMapDelta, ResolvedMapValue};
+use crate::internal::event::{EventTriggerKind, ListDeltaMeta};
+use crate::internal::handler::{TextDelta, ValueOrHandler};
+use crate::internal::undo::DiffBatch as InnerDiffBatch;
+use crate::internal::{
     event::{Diff as DiffInner, Index},
     ContainerDiff as ContainerDiffInner, DiffEvent as DiffEventInner,
 };
-use loro_internal::{FxHashMap, ListDiffInsertItem};
+use crate::internal::{FxHashMap, ListDiffInsertItem};
 use std::borrow::Cow;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -140,10 +139,10 @@ impl<'a> From<&'a DiffInner> for Diff<'a> {
                 let mut ans = Vec::new();
                 for item in l.iter() {
                     match item {
-                        delta::DeltaItem::Retain { len, .. } => {
+                        loro_delta::DeltaItem::Retain { len, .. } => {
                             ans.push(ListDiffItem::Retain { retain: *len });
                         }
-                        delta::DeltaItem::Replace {
+                        loro_delta::DeltaItem::Replace {
                             value,
                             delete,
                             attr,
@@ -193,10 +192,10 @@ impl From<DiffInner> for Diff<'static> {
                 let mut ans = Vec::new();
                 for item in l.iter() {
                     match item {
-                        delta::DeltaItem::Retain { len, .. } => {
+                        loro_delta::DeltaItem::Retain { len, .. } => {
                             ans.push(ListDiffItem::Retain { retain: *len });
                         }
-                        delta::DeltaItem::Replace {
+                        loro_delta::DeltaItem::Replace {
                             value,
                             delete,
                             attr,

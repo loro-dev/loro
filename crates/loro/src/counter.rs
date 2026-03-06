@@ -1,4 +1,4 @@
-use loro_internal::{
+use crate::internal::{
     container::ContainerID, handler::counter::CounterHandler, HandlerTrait, LoroResult,
 };
 

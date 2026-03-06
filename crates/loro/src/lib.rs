@@ -2,28 +2,30 @@
 #![allow(clippy::uninlined_format_args)]
 #![warn(missing_docs)]
 #![warn(missing_debug_implementations)]
+#[doc(hidden)]
+pub mod internal;
 use event::DiffBatch;
 use event::{DiffEvent, Subscriber};
 pub use loro_common::InternalString;
-pub use loro_internal::cursor::CannotFindRelativePosition;
-use loro_internal::cursor::Cursor;
-use loro_internal::cursor::PosQueryResult;
-use loro_internal::cursor::Side;
-pub use loro_internal::encoding::ImportStatus;
-use loro_internal::handler::{HandlerTrait, ValueOrHandler};
-pub use loro_internal::loro::ChangeTravelError;
-pub use loro_internal::pre_commit::{
+pub use crate::internal::cursor::CannotFindRelativePosition;
+use crate::internal::cursor::Cursor;
+use crate::internal::cursor::PosQueryResult;
+use crate::internal::cursor::Side;
+pub use crate::internal::encoding::ImportStatus;
+use crate::internal::handler::{HandlerTrait, ValueOrHandler};
+pub use crate::internal::loro::ChangeTravelError;
+pub use crate::internal::pre_commit::{
     ChangeModifier, FirstCommitFromPeerCallback, FirstCommitFromPeerPayload, PreCommitCallback,
     PreCommitCallbackPayload,
 };
-pub use loro_internal::sync;
-pub use loro_internal::undo::{OnPop, UndoItemMeta, UndoOrRedo};
-use loro_internal::version::shrink_frontiers;
-pub use loro_internal::version::ImVersionVector;
-use loro_internal::DocState;
-use loro_internal::LoroDoc as InnerLoroDoc;
-use loro_internal::OpLog;
-use loro_internal::{
+pub use crate::internal::sync;
+pub use crate::internal::undo::{OnPop, UndoItemMeta, UndoOrRedo};
+use crate::internal::version::shrink_frontiers;
+pub use crate::internal::version::ImVersionVector;
+use crate::internal::DocState;
+use crate::internal::LoroDoc as InnerLoroDoc;
+use crate::internal::OpLog;
+use crate::internal::{
     handler::Handler as InnerHandler, ListHandler as InnerListHandler,
     MapHandler as InnerMapHandler, MovableListHandler as InnerMovableListHandler,
     TextHandler as InnerTextHandler, TreeHandler as InnerTreeHandler,
@@ -37,54 +39,54 @@ use std::ops::Range;
 use std::sync::Arc;
 use tracing::info;
 
-pub use loro_internal::diff::diff_impl::UpdateOptions;
-pub use loro_internal::diff::diff_impl::UpdateTimeoutError;
-pub use loro_internal::subscription::LocalUpdateCallback;
-pub use loro_internal::subscription::PeerIdUpdateCallback;
-pub use loro_internal::ChangeMeta;
-pub use loro_internal::LORO_VERSION;
+pub use crate::internal::diff::diff_impl::UpdateOptions;
+pub use crate::internal::diff::diff_impl::UpdateTimeoutError;
+pub use crate::internal::subscription::LocalUpdateCallback;
+pub use crate::internal::subscription::PeerIdUpdateCallback;
+pub use crate::internal::ChangeMeta;
+pub use crate::internal::LORO_VERSION;
 pub mod event;
-pub use loro_internal::awareness;
-pub use loro_internal::change::Timestamp;
-pub use loro_internal::configure::Configure;
-pub use loro_internal::configure::{StyleConfig, StyleConfigMap};
-pub use loro_internal::container::richtext::ExpandType;
-pub use loro_internal::container::{ContainerID, ContainerType, IntoContainerId};
-pub use loro_internal::cursor;
-pub use loro_internal::delta::{TreeDeltaItem, TreeDiff, TreeDiffItem, TreeExternalDiff};
-pub use loro_internal::encoding::ImportBlobMetadata;
-pub use loro_internal::encoding::{EncodedBlobMode, ExportMode};
-pub use loro_internal::event::{EventTriggerKind, Index};
-pub use loro_internal::handler::TextDelta;
-pub use loro_internal::json;
-pub use loro_internal::json::{
+pub use crate::internal::awareness;
+pub use crate::internal::change::Timestamp;
+pub use crate::internal::configure::Configure;
+pub use crate::internal::configure::{StyleConfig, StyleConfigMap};
+pub use crate::internal::container::richtext::ExpandType;
+pub use crate::internal::container::{ContainerID, ContainerType, IntoContainerId};
+pub use crate::internal::cursor;
+pub use crate::internal::delta::{TreeDeltaItem, TreeDiff, TreeDiffItem, TreeExternalDiff};
+pub use crate::internal::encoding::ImportBlobMetadata;
+pub use crate::internal::encoding::{EncodedBlobMode, ExportMode};
+pub use crate::internal::event::{EventTriggerKind, Index};
+pub use crate::internal::handler::TextDelta;
+pub use crate::internal::json;
+pub use crate::internal::json::{
     FutureOp as JsonFutureOp, FutureOpWrapper as JsonFutureOpWrapper, JsonChange, JsonOp,
     JsonOpContent, JsonSchema, ListOp as JsonListOp, MapOp as JsonMapOp,
     MovableListOp as JsonMovableListOp, TextOp as JsonTextOp, TreeOp as JsonTreeOp,
 };
-pub use loro_internal::kv_store::{KvStore, MemKvStore};
-pub use loro_internal::loro::CommitOptions;
-pub use loro_internal::loro::DocAnalysis;
-pub use loro_internal::oplog::FrontiersNotIncluded;
-pub use loro_internal::undo;
-pub use loro_internal::version::{Frontiers, VersionRange, VersionVector, VersionVectorDiff};
-pub use loro_internal::ApplyDiff;
-pub use loro_internal::Subscription;
-pub use loro_internal::UndoManager as InnerUndoManager;
-pub use loro_internal::{loro_value, to_value};
-pub use loro_internal::{
+pub use crate::internal::kv_store::{KvStore, MemKvStore};
+pub use crate::internal::loro::CommitOptions;
+pub use crate::internal::loro::DocAnalysis;
+pub use crate::internal::oplog::FrontiersNotIncluded;
+pub use crate::internal::undo;
+pub use crate::internal::version::{Frontiers, VersionRange, VersionVector, VersionVectorDiff};
+pub use crate::internal::ApplyDiff;
+pub use crate::internal::Subscription;
+pub use crate::internal::UndoManager as InnerUndoManager;
+pub use crate::internal::{loro_value, to_value};
+pub use crate::internal::{
     Counter, CounterSpan, FractionalIndex, IdLp, IdSpan, Lamport, PeerID, TreeID, TreeParentId, ID,
 };
-pub use loro_internal::{
+pub use crate::internal::{
     LoroBinaryValue, LoroEncodeError, LoroError, LoroListValue, LoroMapValue, LoroResult,
     LoroStringValue, LoroTreeError, LoroValue, ToJson,
 };
 pub use loro_kv_store as kv_store;
 
 #[cfg(feature = "jsonpath")]
-pub use loro_internal::jsonpath;
+pub use crate::internal::jsonpath;
 #[cfg(feature = "jsonpath")]
-pub use loro_internal::jsonpath::SubscribeJsonPathCallback;
+pub use crate::internal::jsonpath::SubscribeJsonPathCallback;
 
 #[cfg(feature = "counter")]
 mod counter;
@@ -395,7 +397,8 @@ impl LoroDoc {
 
     /// Force the document enter the detached mode.
     ///
-    /// In this mode, importing new updates only records them in the OpLog; the [loro_internal::DocState] is not updated until you reattach.
+    /// In this mode, importing new updates only records them in the `OpLog`; the
+    /// in-memory `DocState` is not updated until you reattach.
     ///
     /// Learn more at https://loro.dev/docs/advanced/doc_state_and_oplog#attacheddetached-status
     #[inline]
@@ -585,8 +588,8 @@ impl LoroDoc {
         self.doc.clear_next_commit_options();
     }
 
-    /// Whether the document is in detached mode, where the [loro_internal::DocState] is not
-    /// synchronized with the latest version of the [loro_internal::OpLog].
+    /// Whether the document is in detached mode, where the `DocState` is not
+    /// synchronized with the latest version of the `OpLog`.
     #[inline]
     pub fn is_detached(&self) -> bool {
         self.doc.is_detached()
@@ -976,7 +979,7 @@ impl LoroDoc {
 
     /// Subscribe all the events.
     ///
-    /// The callback will be invoked when any part of the [loro_internal::DocState] is changed.
+    /// The callback will be invoked when any part of the document state is changed.
     /// Returns a subscription that can be used to unsubscribe.
     ///
     /// The events will be emitted after a transaction is committed. A transaction is committed when:
@@ -1852,7 +1855,7 @@ impl LoroList {
     ///
     /// ```
     /// use loro::LoroDoc;
-    /// use loro_internal::cursor::Side;
+    /// use loro::cursor::Side;
     ///
     /// let doc = LoroDoc::new();
     /// let list = doc.get_list("list");
@@ -3273,7 +3276,7 @@ impl LoroMovableList {
     ///
     /// ```
     /// use loro::LoroDoc;
-    /// use loro_internal::cursor::Side;
+    /// use loro::cursor::Side;
     ///
     /// let doc = LoroDoc::new();
     /// let list = doc.get_movable_list("list");
@@ -3421,7 +3424,7 @@ impl ContainerTrait for LoroUnknown {
 
 use enum_as_inner::EnumAsInner;
 #[cfg(feature = "jsonpath")]
-use loro_internal::jsonpath::jsonpath_impl::JsonPathError;
+use crate::internal::jsonpath::jsonpath_impl::JsonPathError;
 
 /// All the CRDT containers supported by Loro.
 #[derive(Clone, Debug, EnumAsInner)]
@@ -3445,7 +3448,7 @@ pub enum Container {
 
 impl SealedTrait for Container {}
 impl ContainerTrait for Container {
-    type Handler = loro_internal::handler::Handler;
+    type Handler = crate::internal::handler::Handler;
 
     fn id(&self) -> ContainerID {
         match self {

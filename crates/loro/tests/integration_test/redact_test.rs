@@ -1,6 +1,5 @@
 use loro::json::redact;
-use loro::{LoroDoc, LoroList, LoroMovableList, LoroTree, LoroValue};
-use loro_internal::version::VersionRange;
+use loro::{LoroDoc, LoroList, LoroMovableList, LoroTree, LoroValue, VersionRange};
 
 #[test]
 fn redact_text_doc() {
