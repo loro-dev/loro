@@ -1,0 +1,4 @@
+interface:
+  display_name: "Loro"
+  short_description: "Complete Loro guide for modeling, sync, editors, and wasm"
+  default_prompt: "Use $loro to solve a Loro modeling, sync, editor, mirror, versioning, or wasm-maintenance task."
