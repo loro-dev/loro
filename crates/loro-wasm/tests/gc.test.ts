@@ -48,5 +48,24 @@ describe("gc", () => {
         gcDoc.import(bytes);
 
         expect(() => gcDoc.import(updates)).toThrow();
-    })
+    });
+
+    it("can fork a shallow snapshot", () => {
+        const docA = new LoroDoc();
+        const listA = docA.getList("list");
+        listA.insert(0, "A");
+        listA.insert(1, "B");
+        listA.insert(2, "C");
+
+        const bytes = docA.export({
+            mode: "shallow-snapshot",
+            frontiers: docA.oplogFrontiers(),
+        });
+
+        const docB = new LoroDoc();
+        docB.import(bytes);
+
+        const docC = docB.fork();
+        expect(docC.toJSON()).toEqual(docB.toJSON());
+    });
 });

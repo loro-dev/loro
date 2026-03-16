@@ -361,6 +361,29 @@ fn fix_get_unknown_cursor_position() {
 }
 
 #[test]
+fn issue_924_fork_shallow_snapshot() {
+    let doc_a = LoroDoc::new();
+    let list_a = doc_a.get_list("list");
+    list_a.insert(0, "A").unwrap();
+    list_a.insert(1, "B").unwrap();
+    list_a.insert(2, "C").unwrap();
+
+    let bytes = doc_a
+        .export(ExportMode::shallow_snapshot(&doc_a.oplog_frontiers()))
+        .unwrap();
+
+    let doc_b = LoroDoc::new();
+    doc_b.import(&bytes).unwrap();
+
+    assert!(doc_b.is_shallow());
+    assert!(!doc_b.is_detached());
+
+    let doc_c = doc_b.fork();
+    assert!(doc_c.is_shallow());
+    assert_eq!(doc_b.get_deep_value(), doc_c.get_deep_value());
+}
+
+#[test]
 fn get_unknown_cursor_position_but_its_in_pending() {
     let doc_0 = LoroDoc::new();
     let list = doc_0

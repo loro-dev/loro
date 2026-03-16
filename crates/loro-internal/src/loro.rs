@@ -133,7 +133,10 @@ impl LoroDoc {
 
         let snapshot = self.with_barrier(|| encoding::fast_snapshot::encode_snapshot_inner(self));
         let doc = Self::new();
-        encoding::fast_snapshot::decode_snapshot_inner(snapshot, &doc, Default::default()).unwrap();
+        doc.with_barrier(|| {
+            encoding::fast_snapshot::decode_snapshot_inner(snapshot, &doc, Default::default())
+        })
+        .unwrap();
         doc.set_config(&self.config);
         if self.auto_commit.load(std::sync::atomic::Ordering::Relaxed) {
             doc.start_auto_commit();
