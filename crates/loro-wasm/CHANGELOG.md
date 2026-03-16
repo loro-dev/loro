@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.10.7
+
+### Patch Changes
+
+- e030672: Fix a panic when calling `fork()` on a document imported from a `shallow-snapshot`.
+
 ## 1.10.6
 
 ### Patch Changes
