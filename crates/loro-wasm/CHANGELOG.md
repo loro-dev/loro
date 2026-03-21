@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.10.8
+
+### Patch Changes
+
+- 9f68a57: Return errors instead of panicking when diff or checkout targets frontiers before a shallow snapshot root.
+
 ## 1.10.7
 
 ### Patch Changes
