@@ -1003,18 +1003,25 @@ impl LoroDoc {
     // FIXME: This method needs testing (no event should be emitted during processing this)
     pub fn diff(&self, a: &Frontiers, b: &Frontiers) -> LoroResult<DiffBatch> {
         {
-            // check whether a and b are valid
+            // Check whether a and b are valid before checkout so this returns a normal error
+            // instead of panicking on shallow docs.
             let oplog = self.oplog.lock().unwrap();
-            for id in a.iter() {
-                if !oplog.dag.contains(id) {
-                    return Err(LoroError::FrontiersNotFound(id));
+            let validate_frontiers = |frontiers: &Frontiers| -> LoroResult<()> {
+                for id in frontiers.iter() {
+                    if !oplog.dag.contains(id) {
+                        return Err(LoroError::FrontiersNotFound(id));
+                    }
                 }
-            }
-            for id in b.iter() {
-                if !oplog.dag.contains(id) {
-                    return Err(LoroError::FrontiersNotFound(id));
+
+                if oplog.dag.is_before_shallow_root(frontiers) {
+                    return Err(LoroError::SwitchToVersionBeforeShallowRoot);
                 }
-            }
+
+                Ok(())
+            };
+
+            validate_frontiers(a)?;
+            validate_frontiers(b)?;
         }
 
         let (options, txn) = self.implicit_commit_then_stop();
@@ -1351,18 +1358,27 @@ impl LoroDoc {
     /// This will make the current [DocState] detached from the latest version of [OpLog].
     /// Any further import will not be reflected on the [DocState], until user call [LoroDoc::attach()]
     pub fn checkout(&self, frontiers: &Frontiers) -> LoroResult<()> {
+        let was_detached = self.is_detached();
         let (options, guard) = self.implicit_commit_then_stop();
-        self._checkout_without_emitting(frontiers, true, true)?;
-        self.emit_events();
+        let result = self._checkout_without_emitting(frontiers, true, true);
+        if result.is_ok() {
+            self.emit_events();
+        }
         drop(guard);
         if self.config.detached_editing() {
-            self.renew_peer_id();
+            if result.is_ok() {
+                self.renew_peer_id();
+            }
             self.renew_txn_if_auto_commit(options);
+        } else if result.is_err() {
+            if !was_detached {
+                self.renew_txn_if_auto_commit(options);
+            }
         } else if !self.is_detached() {
             self.renew_txn_if_auto_commit(options);
         }
 
-        Ok(())
+        result
     }
 
     /// NOTE: The caller of this method should ensure the txn is locked and set to None

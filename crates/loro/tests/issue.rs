@@ -1,8 +1,8 @@
 #![allow(deprecated)]
 #![allow(unexpected_cfgs)]
 use loro::{
-    cursor::Cursor, ContainerID, ContainerTrait, EncodedBlobMode, ExportMode, LoroDoc, LoroList,
-    LoroText, UndoManager,
+    cursor::Cursor, ContainerID, ContainerTrait, EncodedBlobMode, ExportMode, LoroDoc, LoroError,
+    LoroList, LoroText, UndoManager,
 };
 use std::sync::{Arc, Mutex};
 use tracing::{trace, trace_span};
@@ -342,6 +342,68 @@ fn issue_822_tree_shallow_snapshot_roundtrip() {
         "tree shallow value should roundtrip"
     );
     assert_eq!(doc_before, doc_after, "doc shallow value should roundtrip");
+}
+
+#[test]
+fn issue_928_diff_before_shallow_root_should_error_without_poisoning_doc() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+
+    let text = doc.get_text("t");
+    text.insert(0, "hello").unwrap();
+    doc.commit();
+    let pre_shallow_frontiers = doc.oplog_frontiers();
+
+    text.insert(5, " world").unwrap();
+    doc.commit();
+    let current_frontiers = doc.oplog_frontiers();
+
+    let shallow_snapshot = doc
+        .export(ExportMode::shallow_snapshot(&current_frontiers))
+        .unwrap();
+    let shallow_doc = LoroDoc::new();
+    shallow_doc.import(&shallow_snapshot).unwrap();
+
+    let err = shallow_doc
+        .diff(&pre_shallow_frontiers, &current_frontiers)
+        .unwrap_err();
+    assert_eq!(err, LoroError::SwitchToVersionBeforeShallowRoot);
+    assert!(!shallow_doc.is_detached());
+    assert_eq!(shallow_doc.get_text("t").to_string(), "hello world");
+
+    shallow_doc.get_text("t").insert(11, "!").unwrap();
+    shallow_doc.commit();
+    assert_eq!(shallow_doc.get_text("t").to_string(), "hello world!");
+}
+
+#[test]
+fn issue_928_checkout_before_shallow_root_should_error_without_stopping_auto_commit() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+
+    let text = doc.get_text("t");
+    text.insert(0, "hello").unwrap();
+    doc.commit();
+    let pre_shallow_frontiers = doc.oplog_frontiers();
+
+    text.insert(5, " world").unwrap();
+    doc.commit();
+    let current_frontiers = doc.oplog_frontiers();
+
+    let shallow_snapshot = doc
+        .export(ExportMode::shallow_snapshot(&current_frontiers))
+        .unwrap();
+    let shallow_doc = LoroDoc::new();
+    shallow_doc.import(&shallow_snapshot).unwrap();
+
+    let err = shallow_doc.checkout(&pre_shallow_frontiers).unwrap_err();
+    assert_eq!(err, LoroError::SwitchToVersionBeforeShallowRoot);
+    assert!(!shallow_doc.is_detached());
+    assert_eq!(shallow_doc.get_text("t").to_string(), "hello world");
+
+    shallow_doc.get_text("t").insert(11, "!").unwrap();
+    shallow_doc.commit();
+    assert_eq!(shallow_doc.get_text("t").to_string(), "hello world!");
 }
 
 #[test]
