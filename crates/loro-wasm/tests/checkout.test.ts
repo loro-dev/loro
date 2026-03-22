@@ -76,4 +76,42 @@ describe("Checkout", () => {
     doc.import(docB.export({ mode: "update" }));
     expect(docB.cmpWithFrontiers(doc.frontiers())).toBe(0);
   });
+
+  it("forkAt inside subscription during checkout event should not corrupt state", async () => {
+    const doc = new LoroDoc();
+    doc.setPeerId("1");
+
+    // Make some changes
+    doc.getText("text").insert(0, "Hello");
+    doc.commit();
+    const frontier1 = doc.frontiers(); // [{ peer: "1", counter: 4 }]
+
+    doc.getText("text").insert(5, " World");
+    doc.commit();
+
+    // Verify initial state
+    expect(doc.toJSON()).toStrictEqual({ text: "Hello World" });
+
+    // Subscribe and call forkAt inside the callback
+    let forkResult: any = null;
+    doc.subscribe((event) => {
+      if (event.by === "checkout") {
+        // BUG: This corrupts the checkout state
+        const fork = doc.forkAt(doc.frontiers());
+        forkResult = fork.toJSON();
+      }
+    });
+
+    // Checkout to earlier state
+    doc.checkout(frontier1);
+
+    // Wait for events to be processed
+    await new Promise((resolve) => setTimeout(resolve, 1));
+
+    expect(doc.frontiers()).toStrictEqual(frontier1);
+    expect(doc.toJSON()).toStrictEqual({ text: "Hello" });
+
+    // The fork should also have the correct state at frontier1
+    expect(forkResult).toStrictEqual({ text: "Hello" });
+  });
 });
