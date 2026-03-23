@@ -436,7 +436,7 @@ impl SsTable {
             .get(block_idx + 1)
             .map_or(self.meta_offset, |m| m.offset);
         let raw_block_and_check = self.data.slice(offset..offset_end);
-        Arc::new(Block::decode_verified(
+        Arc::new(Block::decode(
             raw_block_and_check,
             self.meta[block_idx].is_large,
             self.meta[block_idx].first_key.clone(),

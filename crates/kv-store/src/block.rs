@@ -189,7 +189,7 @@ impl Block {
         }
     }
 
-    pub(crate) fn decode_verified(
+    pub fn decode(
         raw_block_and_check: Bytes,
         is_large: bool,
         key: Bytes,
