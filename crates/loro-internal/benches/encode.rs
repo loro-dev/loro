@@ -15,7 +15,7 @@ mod sync {
                 let c1 = LoroDoc::new();
                 c1.set_peer_id(1).unwrap();
                 let c2 = LoroDoc::new();
-                c1.set_peer_id(2).unwrap();
+                c2.set_peer_id(2).unwrap();
                 let t1 = c1.get_text("text");
                 let t2 = c2.get_text("text");
                 for (i, action) in actions.iter().enumerate() {
@@ -52,7 +52,7 @@ mod sync {
 mod run {
     use super::*;
     use bench_utils::TextAction;
-    use loro_internal::{encoding::ExportMode, LoroDoc};
+    use loro_internal::{cursor::PosType, encoding::ExportMode, LoroDoc};
 
     pub fn b4(c: &mut Criterion) {
         let loro = LoroDoc::default();
@@ -63,8 +63,10 @@ mod run {
                 let text = loro.get_text("text");
                 for TextAction { pos, ins, del } in actions.iter() {
                     let mut txn = loro.txn().unwrap();
-                    text.delete_with_txn(&mut txn, *pos, *del).unwrap();
-                    text.insert_with_txn(&mut txn, *pos, ins).unwrap();
+                    text.delete_with_txn(&mut txn, *pos, *del, PosType::Unicode)
+                        .unwrap();
+                    text.insert_with_txn(&mut txn, *pos, ins, PosType::Unicode)
+                        .unwrap();
                 }
                 ran = true;
             }

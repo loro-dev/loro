@@ -239,6 +239,8 @@ impl MemKvStore {
     }
 
     /// We can import several times, the latter will override the former.
+    ///
+    /// The caller is expected to validate blob integrity before passing bytes here.
     pub fn import_all(&mut self, bytes: Bytes) -> Result<(), String> {
         if bytes.is_empty() {
             return Ok(());

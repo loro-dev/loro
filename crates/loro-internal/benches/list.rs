@@ -4,6 +4,7 @@ mod run {
     use super::*;
     use arbitrary::Arbitrary;
     use arbitrary::Unstructured;
+    use loro_internal::cursor::PosType;
     use loro_internal::loro::ExportMode;
     use loro_internal::LoroDoc;
     use loro_internal::LoroValue;
@@ -44,6 +45,7 @@ mod run {
                             &mut txn,
                             (action.pos as usize) % text.len_unicode().max(1),
                             action.value.to_string().as_str(),
+                            PosType::Unicode,
                         )
                         .unwrap();
                     } else {

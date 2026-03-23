@@ -189,21 +189,21 @@ impl Block {
         }
     }
 
-    pub fn decode(
+    pub(crate) fn decode_verified(
         raw_block_and_check: Bytes,
         is_large: bool,
         key: Bytes,
         compression_type: CompressionType,
     ) -> Self {
-        // we have checked the checksum, so the block should be valid when decompressing
+        // The caller is responsible for validating SSTable integrity before lazy block reads.
         if is_large {
             return LargeValueBlock::decode(raw_block_and_check, key, compression_type)
                 .map(Block::Large)
-                .unwrap();
+                .expect("validated SSTable block should decode");
         }
         NormalBlock::decode(raw_block_and_check, key, compression_type)
             .map(Block::Normal)
-            .unwrap()
+            .expect("validated SSTable block should decode")
     }
 
     pub fn len(&self) -> usize {

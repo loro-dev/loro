@@ -2309,6 +2309,19 @@ fn get_editor() {
 
 #[test]
 #[parallel]
+fn get_editor_returns_none_for_empty_or_right_boundary() {
+    let doc = LoroDoc::new();
+    let text = doc.get_text("text");
+    assert_eq!(text.get_editor_at_unicode_pos(0), None);
+
+    doc.set_peer_id(7).unwrap();
+    text.insert(0, "hi").unwrap();
+    assert_eq!(text.get_editor_at_unicode_pos(2), None);
+    assert_eq!(text.get_editor_at_unicode_pos(3), None);
+}
+
+#[test]
+#[parallel]
 fn origin_does_not_persist_across_empty_commits() {
     use std::sync::{
         atomic::{AtomicBool, Ordering},

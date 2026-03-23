@@ -436,7 +436,7 @@ impl SsTable {
             .get(block_idx + 1)
             .map_or(self.meta_offset, |m| m.offset);
         let raw_block_and_check = self.data.slice(offset..offset_end);
-        Arc::new(Block::decode(
+        Arc::new(Block::decode_verified(
             raw_block_and_check,
             self.meta[block_idx].is_large,
             self.meta[block_idx].first_key.clone(),
@@ -449,7 +449,7 @@ impl SsTable {
             .get_or_insert_with(&block_idx, || {
                 Ok::<_, LoroError>(self.read_block(block_idx))
             })
-            .unwrap()
+            .expect("validated SSTable block cache insert should succeed")
     }
 
     pub fn contains_key(&self, key: &[u8]) -> bool {

@@ -583,7 +583,7 @@ impl std::fmt::Debug for ListDiffCalculator {
 impl DiffCalculatorTrait for ListDiffCalculator {
     fn start_tracking(&mut self, _oplog: &OpLog, vv: &crate::VersionVector, _mode: DiffMode) {
         if !vv.includes_vv(&self.start_vv) || !self.tracker.all_vv().includes_vv(vv) {
-            self.tracker = Box::new(RichtextTracker::new_with_unknown());
+            *self.tracker = RichtextTracker::new_with_unknown();
             self.start_vv = vv.clone();
         }
 
@@ -804,10 +804,10 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
     ) {
         match mode {
             DiffMode::Linear => {
-                self.mode = Box::new(RichtextCalcMode::Linear {
+                *self.mode = RichtextCalcMode::Linear {
                     diff: DeltaRope::new(),
                     last_style_start: None,
-                });
+                };
             }
             _ => {
                 if !matches!(&*self.mode, RichtextCalcMode::Crdt { .. }) {
@@ -823,7 +823,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                 start_vv,
             } => {
                 if !vv.includes_vv(start_vv) || !tracker.all_vv().includes_vv(vv) {
-                    *tracker = Box::new(RichtextTracker::new_with_unknown());
+                    **tracker = RichtextTracker::new_with_unknown();
                     styles.clear();
                     *start_vv = vv.clone();
                 }
@@ -1203,7 +1203,7 @@ struct MovableListInner {
 impl DiffCalculatorTrait for MovableListDiffCalculator {
     fn start_tracking(&mut self, _oplog: &OpLog, vv: &crate::VersionVector, mode: DiffMode) {
         if !vv.includes_vv(&self.list.start_vv) || !self.list.tracker.all_vv().includes_vv(vv) {
-            self.list.tracker = Box::new(RichtextTracker::new_with_unknown());
+            *self.list.tracker = RichtextTracker::new_with_unknown();
             self.list.start_vv = vv.clone();
         }
 

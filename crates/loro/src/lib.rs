@@ -2644,7 +2644,7 @@ impl LoroText {
     pub fn get_editor_at_unicode_pos(&self, pos: usize) -> Option<PeerID> {
         self.handler
             .get_cursor(pos, Side::Middle)
-            .map(|x| x.id.unwrap().peer)
+            .and_then(|x| x.id.map(|id| id.peer))
     }
 }
 
