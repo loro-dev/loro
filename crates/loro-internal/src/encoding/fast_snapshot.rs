@@ -47,16 +47,37 @@ pub(super) fn _encode_snapshot<W: Write>(s: Snapshot, w: &mut W) {
 
 pub(super) fn _decode_snapshot_bytes(bytes: Bytes) -> LoroResult<Snapshot> {
     let mut r = bytes.reader();
-    let oplog_bytes_len = read_u32_le(&mut r) as usize;
+    let oplog_bytes_len = read_u32_le(&mut r)? as usize;
+    if r.get_ref().len() < oplog_bytes_len {
+        return Err(LoroError::DecodeError(
+            "decode_snapshot: invalid oplog bytes length"
+                .to_string()
+                .into_boxed_str(),
+        ));
+    }
     let oplog_bytes = r.get_mut().copy_to_bytes(oplog_bytes_len);
-    let state_bytes_len = read_u32_le(&mut r) as usize;
+    let state_bytes_len = read_u32_le(&mut r)? as usize;
+    if r.get_ref().len() < state_bytes_len {
+        return Err(LoroError::DecodeError(
+            "decode_snapshot: invalid state bytes length"
+                .to_string()
+                .into_boxed_str(),
+        ));
+    }
     let state_bytes = r.get_mut().copy_to_bytes(state_bytes_len);
     let state_bytes = if state_bytes == EMPTY_MARK {
         None
     } else {
         Some(state_bytes)
     };
-    let shallow_bytes_len = read_u32_le(&mut r) as usize;
+    let shallow_bytes_len = read_u32_le(&mut r)? as usize;
+    if r.get_ref().len() < shallow_bytes_len {
+        return Err(LoroError::DecodeError(
+            "decode_snapshot: invalid shallow root bytes length"
+                .to_string()
+                .into_boxed_str(),
+        ));
+    }
     let shallow_root_state_bytes = r.get_mut().copy_to_bytes(shallow_bytes_len);
     Ok(Snapshot {
         oplog_bytes,
@@ -82,10 +103,16 @@ fn read_u32_le_slice(r: &mut &[u8]) -> u32 {
     u32::from_le_bytes(buf)
 }
 
-fn read_u32_le(r: &mut bytes::buf::Reader<Bytes>) -> u32 {
+fn read_u32_le(r: &mut bytes::buf::Reader<Bytes>) -> LoroResult<u32> {
     let mut buf = [0; 4];
-    r.read_exact(&mut buf).unwrap();
-    u32::from_le_bytes(buf)
+    r.read_exact(&mut buf).map_err(|_| {
+        LoroError::DecodeError(
+            "decode_snapshot: unexpected end of snapshot bytes"
+                .to_string()
+                .into_boxed_str(),
+        )
+    })?;
+    Ok(u32::from_le_bytes(buf))
 }
 
 pub(crate) fn decode_snapshot(
@@ -116,7 +143,11 @@ pub(crate) fn decode_snapshot_inner(
         )
     })?;
     if !oplog.is_empty() {
-        panic!("InternalError importing snapshot to an non-empty doc");
+        return Err(LoroError::DecodeError(
+            "decode_snapshot: cannot import snapshot into a non-empty doc"
+                .to_string()
+                .into_boxed_str(),
+        ));
     }
 
     let mut state = doc.app_state().lock().map_err(|_| {
@@ -129,8 +160,21 @@ pub(crate) fn decode_snapshot_inner(
 
     state.check_before_decode_snapshot()?;
 
-    assert!(state.frontiers.is_empty());
-    assert!(oplog.frontiers().is_empty());
+    if !state.frontiers.is_empty() {
+        return Err(LoroError::DecodeError(
+            "decode_snapshot: app state frontiers must be empty before import"
+                .to_string()
+                .into_boxed_str(),
+        ));
+    }
+
+    if !oplog.frontiers().is_empty() {
+        return Err(LoroError::DecodeError(
+            "decode_snapshot: oplog frontiers must be empty before import"
+                .to_string()
+                .into_boxed_str(),
+        ));
+    }
     oplog.decode_change_store(oplog_bytes)?;
     let need_calc = state_bytes.is_none();
     let state_frontiers;
@@ -158,7 +202,13 @@ pub(crate) fn decode_snapshot_inner(
 
         if need_calc {
             ensure_cov::notify_cov("shallow_snapshot::need_calc");
-            state_frontiers = shallow_root_state_frontiers.unwrap();
+            state_frontiers = shallow_root_state_frontiers.ok_or_else(|| {
+                LoroError::DecodeError(
+                    "decode_snapshot: shallow root frontiers are missing"
+                        .to_string()
+                        .into_boxed_str(),
+                )
+            })?;
         } else {
             ensure_cov::notify_cov("shallow_snapshot::dont_need_calc");
             state_frontiers = oplog.frontiers().clone();

@@ -156,10 +156,10 @@ impl LoroDoc {
     /// Fork the document at the given frontiers.
     ///
     /// The created doc will only contain the history before the specified frontiers.
-    pub fn fork_at(&self, frontiers: &Frontiers) -> LoroDoc {
-        let new_doc = self.doc.fork_at(frontiers);
+    pub fn fork_at(&self, frontiers: &Frontiers) -> LoroResult<LoroDoc> {
+        let new_doc = self.doc.fork_at(frontiers)?;
         new_doc.start_auto_commit();
-        LoroDoc::_new(new_doc)
+        Ok(LoroDoc::_new(new_doc))
     }
 
     /// Get the configurations of the document.

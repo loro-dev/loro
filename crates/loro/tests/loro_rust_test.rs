@@ -2070,11 +2070,41 @@ fn test_fork_at_should_restore_attached_state() {
     let doc = LoroDoc::new();
     doc.set_peer_id(0).unwrap();
     doc.get_text("text").insert(0, "Hello").unwrap();
-    doc.fork_at(&[ID::new(0, 0)].into());
+    doc.fork_at(&[ID::new(0, 0)].into()).unwrap();
     assert!(!doc.is_detached());
     doc.detach();
-    doc.fork_at(&[ID::new(0, 0)].into());
+    doc.fork_at(&[ID::new(0, 0)].into()).unwrap();
     assert!(doc.is_detached());
+}
+
+#[test]
+#[parallel]
+fn test_fork_at_should_return_error_for_invalid_frontiers() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(0).unwrap();
+    doc.get_text("text").insert(0, "Hello").unwrap();
+    let err = doc.fork_at(&Frontiers::from_id(ID::new(9, 9))).unwrap_err();
+    assert!(matches!(err, LoroError::NotFoundError(..)));
+}
+
+#[test]
+#[parallel]
+fn test_fork_at_should_return_error_for_shallow_doc() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    doc.get_text("text").insert(0, "Hello").unwrap();
+    doc.commit();
+    let shallow_bytes = doc
+        .export(ExportMode::shallow_snapshot(&doc.oplog_frontiers()))
+        .unwrap();
+
+    let shallow_doc = LoroDoc::new();
+    shallow_doc.import(&shallow_bytes).unwrap();
+
+    let err = shallow_doc
+        .fork_at(&shallow_doc.oplog_frontiers())
+        .unwrap_err();
+    assert!(matches!(err, LoroError::Unknown(..)));
 }
 
 #[test]
@@ -3442,9 +3472,9 @@ fn test_iter_change_on_edge() {
     doc.set_peer_id(2).unwrap();
     doc.get_text("text").insert(0, "hello").unwrap();
     doc.commit_with(CommitOptions::default().timestamp(6000));
-    doc.fork_at(&Frontiers::from_id(ID::new(1, 9)));
-    doc.fork_at(&Frontiers::from_id(ID::new(1, 10)));
-    doc.fork_at(&Frontiers::from_id(ID::new(1, 11)));
+    doc.fork_at(&Frontiers::from_id(ID::new(1, 9))).unwrap();
+    doc.fork_at(&Frontiers::from_id(ID::new(1, 10))).unwrap();
+    doc.fork_at(&Frontiers::from_id(ID::new(1, 11))).unwrap();
 }
 
 #[test]

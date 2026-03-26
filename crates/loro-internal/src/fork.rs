@@ -31,21 +31,22 @@
 use std::borrow::Cow;
 
 use crate::{version::Frontiers, LoroDoc};
+use loro_common::{LoroError, LoroResult};
 
 impl LoroDoc {
     /// Creates a new LoroDoc at a specified version (Frontiers)
-    pub fn fork_at(&self, frontiers: &Frontiers) -> Self {
+    pub fn fork_at(&self, frontiers: &Frontiers) -> LoroResult<Self> {
         let bytes = self
             .export(crate::loro::ExportMode::SnapshotAt {
                 version: Cow::Borrowed(frontiers),
             })
-            .unwrap();
+            .map_err(LoroError::from)?;
         let doc = LoroDoc::new();
         doc.set_config(&self.config);
         if self.auto_commit.load(std::sync::atomic::Ordering::Relaxed) {
             doc.start_auto_commit();
         }
-        doc.import(&bytes).unwrap();
-        doc
+        doc.import(&bytes)?;
+        Ok(doc)
     }
 }

@@ -42,7 +42,7 @@ use std::{
     rc::Rc,
     sync::{atomic::AtomicBool, Arc, Mutex},
 };
-use wasm_bindgen::{__rt::IntoJsResult, prelude::*, throw_val};
+use wasm_bindgen::{prelude::*, throw_val};
 use wasm_bindgen_derive::TryFromJsValue;
 mod counter;
 pub use counter::LoroCounter;
@@ -738,7 +738,7 @@ impl LoroDoc {
     #[wasm_bindgen(js_name = "forkAt")]
     pub fn fork_at(&self, frontiers: Vec<JsID>) -> JsResult<LoroDoc> {
         Ok(Self {
-            doc: self.doc.fork_at(&ids_to_frontiers(frontiers)?),
+            doc: self.doc.fork_at(&ids_to_frontiers(frontiers)?)?,
             root_event_sub: Arc::new(Mutex::new(None)),
         })
     }
@@ -1519,7 +1519,8 @@ impl LoroDoc {
         let json = if IN_PRE_COMMIT_CALLBACK.with(|f| f.get()) {
             self.doc.export_json_in_id_span(id_span)
         } else {
-            self.doc.with_barrier(|| self.doc.export_json_in_id_span(id_span))
+            self.doc
+                .with_barrier(|| self.doc.export_json_in_id_span(id_span))
         };
         let s = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
         let v = json

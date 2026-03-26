@@ -128,7 +128,9 @@ impl LoroDoc {
 
     pub fn fork(&self) -> Self {
         if self.is_detached() {
-            return self.fork_at(&self.state_frontiers());
+            return self
+                .fork_at(&self.state_frontiers())
+                .expect("fork_at on detached doc should not fail");
         }
 
         let snapshot = self.with_barrier(|| encoding::fast_snapshot::encode_snapshot_inner(self));
@@ -1392,7 +1394,13 @@ impl LoroDoc {
         to_shrink_frontiers: bool,
         to_commit_then_renew: bool,
     ) -> Result<(), LoroError> {
-        assert!(self.txn.is_locked());
+        if !self.txn.is_locked() {
+            return Err(LoroError::TransactionError(
+                "checkout requires the transaction mutex to be held"
+                    .to_string()
+                    .into_boxed_str(),
+            ));
+        }
         let from_frontiers = self.state_frontiers();
         loro_common::info!(
             "checkout from={:?} to={:?} cur_vv={:?}",
@@ -1405,7 +1413,7 @@ impl LoroDoc {
             return Ok(());
         }
 
-        let oplog = self.oplog.lock().unwrap();
+        let oplog = self.oplog.lock().map_err(|_| LoroError::LockError)?;
         if oplog.dag.is_before_shallow_root(frontiers) {
             return Err(LoroError::SwitchToVersionBeforeShallowRoot);
         }
@@ -1420,15 +1428,26 @@ impl LoroDoc {
             return Ok(());
         }
 
-        let mut state = self.state.lock().unwrap();
-        let mut calc = self.diff_calculator.lock().unwrap();
+        let mut state = self.state.lock().map_err(|_| LoroError::LockError)?;
+        let mut calc = self
+            .diff_calculator
+            .lock()
+            .map_err(|_| LoroError::LockError)?;
         for i in frontiers.iter() {
             if !oplog.dag.contains(i) {
                 return Err(LoroError::FrontiersNotFound(i));
             }
         }
 
-        let before = &oplog.dag.frontiers_to_vv(&state.frontiers).unwrap();
+        let before = oplog.dag.frontiers_to_vv(&state.frontiers).ok_or_else(|| {
+            LoroError::NotFoundError(
+                format!(
+                    "Cannot find the current state version {:?}",
+                    state.frontiers
+                )
+                .into_boxed_str(),
+            )
+        })?;
         let Some(after) = &oplog.dag.frontiers_to_vv(&frontiers) else {
             return Err(LoroError::NotFoundError(
                 format!("Cannot find the specified version {:?}", frontiers).into_boxed_str(),
@@ -1437,7 +1456,7 @@ impl LoroDoc {
 
         self.set_detached(true);
         let (diff, diff_mode) =
-            calc.calc_diff_internal(&oplog, before, &state.frontiers, after, &frontiers, None);
+            calc.calc_diff_internal(&oplog, &before, &state.frontiers, after, &frontiers, None);
         state.apply_diff(
             InternalDocDiff {
                 origin: "checkout".into(),

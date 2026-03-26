@@ -391,6 +391,15 @@ it("fork at", () => {
   expect(doc.getText("text").toString()).toEqual("Hello, world! Alice!");
 });
 
+it("fork at invalid frontiers should throw", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId("0");
+  doc.getText("text").insert(0, "Hello, world!");
+  expectErrorWithCasting(() => {
+    doc.forkAt([{ peer: "9", counter: 9 }]);
+  }, /Cannot find|frontiers/i);
+});
+
 function one_ms(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 1));
 }

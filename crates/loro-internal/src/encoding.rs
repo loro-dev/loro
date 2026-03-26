@@ -283,12 +283,20 @@ impl ParsedHeaderAndBody<'_> {
                 }
             }
             EncodeMode::FastSnapshot | EncodeMode::FastUpdates => {
-                let expected = u32::from_le_bytes(self.checksum[12..16].try_into().unwrap());
+                let mut expected_bytes = [0; 4];
+                expected_bytes.copy_from_slice(&self.checksum[12..16]);
+                let expected = u32::from_le_bytes(expected_bytes);
                 if xxhash_rust::xxh32::xxh32(self.checksum_body, XXH_SEED) != expected {
                     return Err(LoroError::DecodeChecksumMismatchError);
                 }
             }
-            EncodeMode::Auto => unreachable!(),
+            EncodeMode::Auto => {
+                return Err(LoroError::DecodeError(
+                    "Invalid import mode `Auto` in encoded blob"
+                        .to_string()
+                        .into_boxed_str(),
+                ));
+            }
         }
 
         Ok(())
@@ -306,7 +314,6 @@ pub(crate) fn parse_header_and_body(
     }
 
     let (magic_bytes, reader) = reader.split_at(4);
-    let magic_bytes: [u8; 4] = magic_bytes.try_into().unwrap();
     if magic_bytes != MAGIC_BYTES {
         return Err(LoroError::DecodeError("Invalid magic bytes".into()));
     }
@@ -315,11 +322,13 @@ pub(crate) fn parse_header_and_body(
     let checksum_body = reader;
     let (mode_bytes, reader) = reader.split_at(2);
     let mode: EncodeMode = [mode_bytes[0], mode_bytes[1]].try_into()?;
+    let mut checksum_arr = [0; 16];
+    checksum_arr.copy_from_slice(checksum);
 
     let ans = ParsedHeaderAndBody {
         mode,
         checksum_body,
-        checksum: checksum.try_into().unwrap(),
+        checksum: checksum_arr,
         body: reader,
     };
 
@@ -375,7 +384,10 @@ pub(crate) fn export_shallow_snapshot(
 }
 
 fn check_target_version_reachable(doc: &LoroDoc, f: &Frontiers) -> Result<(), LoroEncodeError> {
-    let oplog = doc.oplog.lock().unwrap();
+    let oplog = doc
+        .oplog
+        .lock()
+        .map_err(|_| LoroEncodeError::from(LoroError::LockError))?;
     if !oplog.dag.can_export_shallow_snapshot_on(f) {
         return Err(LoroEncodeError::FrontiersNotFound(format!("{f:?}")));
     }
@@ -428,7 +440,11 @@ pub(crate) fn decode_snapshot(
         EncodeMode::FastSnapshot => {
             fast_snapshot::decode_snapshot(doc, body.to_vec().into(), origin)?
         }
-        _ => unreachable!(),
+        _ => {
+            return Err(LoroError::DecodeError(
+                format!("Invalid snapshot encoding mode: {mode:?}").into_boxed_str(),
+            ));
+        }
     };
     Ok(ImportStatus {
         success: VersionRange::from_vv(&doc.oplog_vv()),

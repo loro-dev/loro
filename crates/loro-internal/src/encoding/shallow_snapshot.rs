@@ -2,7 +2,7 @@ use bytes::Bytes;
 use rle::HasLength;
 use std::collections::BTreeSet;
 
-use loro_common::{ContainerID, ContainerType, LoroEncodeError, ID};
+use loro_common::{ContainerID, ContainerType, LoroEncodeError, LoroError, ID};
 
 use crate::{
     container::list::list_op::InnerListOp,
@@ -254,18 +254,35 @@ pub(crate) fn encode_snapshot_at<W: std::io::Write>(
     w: &mut W,
 ) -> Result<(), LoroEncodeError> {
     let was_detached = doc.is_detached();
-    let version_before_start = doc.oplog_frontiers();
+    let version_before_start = doc
+        .oplog()
+        .lock()
+        .map_err(|_| LoroEncodeError::from(LoroError::LockError))?
+        .frontiers()
+        .clone();
     doc._checkout_without_emitting(frontiers, true, false)
-        .unwrap();
+        .map_err(LoroEncodeError::from)?;
     let result = 'block: {
-        let oplog = doc.oplog().lock().unwrap();
-        let mut state = doc.app_state().lock().unwrap();
+        let oplog = doc
+            .oplog()
+            .lock()
+            .map_err(|_| LoroEncodeError::from(LoroError::LockError))?;
+        let mut state = doc
+            .app_state()
+            .lock()
+            .map_err(|_| LoroEncodeError::from(LoroError::LockError))?;
         let is_shallow = state.store.shallow_root_store().is_some();
         if is_shallow {
-            unimplemented!()
+            break 'block Err(LoroEncodeError::from(LoroError::NotImplemented(
+                "fork_at on shallow docs",
+            )));
         }
 
-        assert!(!state.is_in_txn());
+        if state.is_in_txn() {
+            break 'block Err(LoroEncodeError::InternalError(
+                "encode_snapshot_at: state is unexpectedly still in a transaction".into(),
+            ));
+        }
         let Some(oplog_bytes) = oplog.fork_changes_up_to(frontiers) else {
             break 'block Err(LoroEncodeError::FrontiersNotFound(format!(
                 "frontiers: {:?} when export in SnapshotAt mode",
@@ -274,10 +291,16 @@ pub(crate) fn encode_snapshot_at<W: std::io::Write>(
         };
 
         if oplog.is_shallow() {
-            assert_eq!(
-                oplog.shallow_since_frontiers(),
-                state.store.shallow_root_frontiers().unwrap()
-            );
+            let Some(shallow_root_frontiers) = state.store.shallow_root_frontiers() else {
+                break 'block Err(LoroEncodeError::InternalError(
+                    "encode_snapshot_at: shallow oplog is missing shallow root frontiers".into(),
+                ));
+            };
+            if oplog.shallow_since_frontiers() != shallow_root_frontiers {
+                break 'block Err(LoroEncodeError::InternalError(
+                    "encode_snapshot_at: shallow root frontiers are inconsistent".into(),
+                ));
+            }
         }
 
         let alive_containers = state.ensure_all_alive_containers();
@@ -301,11 +324,24 @@ pub(crate) fn encode_snapshot_at<W: std::io::Write>(
 
         Ok(())
     };
-    doc._checkout_without_emitting(&version_before_start, false, false)
-        .unwrap();
+    let restore_result = doc
+        ._checkout_without_emitting(&version_before_start, false, false)
+        .map_err(LoroEncodeError::from);
     if !was_detached {
         doc.set_detached(false);
     }
-    doc.drop_pending_events();
-    result
+    let cleanup_result = doc
+        .app_state()
+        .lock()
+        .map_err(|_| LoroEncodeError::from(LoroError::LockError))
+        .map(|mut state| {
+            state.take_events();
+        });
+
+    let final_result = match result {
+        Err(err) => Err(err),
+        Ok(()) => restore_result,
+    };
+
+    final_result.and(cleanup_result)
 }

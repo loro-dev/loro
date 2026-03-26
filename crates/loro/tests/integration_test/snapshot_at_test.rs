@@ -56,7 +56,7 @@ fn test_fork_at_target_frontiers() -> anyhow::Result<()> {
     gen_action(&doc, 2, 20);
     doc.commit();
 
-    let new_doc = doc.fork_at(&frontiers);
+    let new_doc = doc.fork_at(&frontiers)?;
     assert_eq!(new_doc.get_deep_value(), value_after_first_commit);
 
     // Import all updates to the new document
