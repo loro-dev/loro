@@ -279,8 +279,8 @@ pub(crate) fn encode_snapshot_at<W: std::io::Write>(
         }
 
         if state.is_in_txn() {
-            break 'block Err(LoroEncodeError::InternalError(
-                "encode_snapshot_at: state is unexpectedly still in a transaction".into(),
+            break 'block Err(LoroEncodeError::internal(
+                "encode_snapshot_at: state is unexpectedly still in a transaction",
             ));
         }
         let Some(oplog_bytes) = oplog.fork_changes_up_to(frontiers) else {
@@ -292,13 +292,13 @@ pub(crate) fn encode_snapshot_at<W: std::io::Write>(
 
         if oplog.is_shallow() {
             let Some(shallow_root_frontiers) = state.store.shallow_root_frontiers() else {
-                break 'block Err(LoroEncodeError::InternalError(
-                    "encode_snapshot_at: shallow oplog is missing shallow root frontiers".into(),
+                break 'block Err(LoroEncodeError::internal(
+                    "encode_snapshot_at: shallow oplog is missing shallow root frontiers",
                 ));
             };
             if oplog.shallow_since_frontiers() != shallow_root_frontiers {
-                break 'block Err(LoroEncodeError::InternalError(
-                    "encode_snapshot_at: shallow root frontiers are inconsistent".into(),
+                break 'block Err(LoroEncodeError::internal(
+                    "encode_snapshot_at: shallow root frontiers are inconsistent",
                 ));
             }
         }
