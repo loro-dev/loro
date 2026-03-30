@@ -671,7 +671,7 @@ impl LoroDoc {
     /// doc.attach();
     /// text.insert(0, "Hi");
     /// ```
-    pub fn attach(&mut self) {
+    pub fn attach(&self) {
         self.doc.attach();
     }
 
@@ -766,7 +766,7 @@ impl LoroDoc {
     /// text.insert(0, "Hi");
     /// ```
     #[wasm_bindgen(js_name = "checkoutToLatest")]
-    pub fn checkout_to_latest(&mut self) -> JsResult<()> {
+    pub fn checkout_to_latest(&self) -> JsResult<()> {
         self.doc.checkout_to_latest();
         Ok(())
     }
@@ -927,7 +927,7 @@ impl LoroDoc {
     /// doc.checkout(frontiers);
     /// console.log(doc.toJSON()); // {"text": ""}
     /// ```
-    pub fn checkout(&mut self, frontiers: Vec<JsID>) -> JsResult<()> {
+    pub fn checkout(&self, frontiers: Vec<JsID>) -> JsResult<()> {
         self.doc.checkout(&ids_to_frontiers(frontiers)?)?;
         Ok(())
     }
@@ -1585,7 +1585,7 @@ impl LoroDoc {
     /// doc2.importBatch([snapshot, updates]);
     /// ```
     #[wasm_bindgen(js_name = "importUpdateBatch")]
-    pub fn import_update_batch(&mut self, data: JsBinaryArray) -> JsResult<JsImportStatus> {
+    pub fn import_update_batch(&self, data: JsBinaryArray) -> JsResult<JsImportStatus> {
         self.import_batch(data)
     }
 
@@ -1606,7 +1606,7 @@ impl LoroDoc {
     /// doc2.importBatch([snapshot, updates]);
     /// ```
     #[wasm_bindgen(js_name = "importBatch")]
-    pub fn import_batch(&mut self, data: JsBinaryArray) -> JsResult<JsImportStatus> {
+    pub fn import_batch(&self, data: JsBinaryArray) -> JsResult<JsImportStatus> {
         let data: Array = data.dyn_into()?;
         let data = data
             .iter()
