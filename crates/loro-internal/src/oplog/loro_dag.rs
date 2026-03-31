@@ -869,6 +869,12 @@ impl AppDag {
             // (node, has_processed_children)
             let mut stack: SmallVec<[AppDagNode; 4]> = smallvec::smallvec![target_node.clone()];
             while let Some(top_node) = stack.pop() {
+                if top_node.vv.get().is_some() {
+                    // Shared deps can enqueue the same node more than once before its first
+                    // evaluation reaches the top of the stack.
+                    continue;
+                }
+
                 let mut ans_vv = ImVersionVector::default();
                 // trace!("node={:?} {:?}", &top_node, has_all_deps_met);
                 // trace!("deps={:?}", &top_node.deps);
