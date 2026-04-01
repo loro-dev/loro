@@ -126,9 +126,6 @@ impl<T> LoroMutex<T> {
     /// released in the reverse acquisition order (LIFO). The callsite is
     /// recorded to improve panic diagnostics.
     ///
-    /// Errors:
-    /// - Propagates [`std::sync::PoisonError`] from the underlying mutex.
-    ///
     /// Panics:
     /// - If the current thread already holds a lock with kind `>= self.kind`.
     /// - If the guard is later dropped out of acquisition order.
@@ -147,7 +144,9 @@ impl<T> LoroMutex<T> {
             );
         }
 
-        let ans = self.lock.lock()?;
+        // A previous panic while holding the mutex should not permanently disable
+        // the document. Recover the inner value and let the caller decide what to do next.
+        let ans = self.lock.lock().unwrap_or_else(|e| e.into_inner());
         *v.lock().unwrap_or_else(|e| e.into_inner()) = this;
         let ans = LoroMutexGuard {
             guard: ans,
@@ -356,5 +355,19 @@ mod tests {
 
         // This line should be reported in the panic message
         let _guard2 = mutex2.lock().unwrap();
+    }
+
+    #[test]
+    fn test_poisoned_lock_can_be_recovered() {
+        let group = LoroLockGroup::new();
+        let mutex = group.new_lock(42, LockKind::Txn);
+
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = mutex.lock().unwrap();
+            panic!("poison the lock");
+        }));
+
+        let guard = mutex.lock().unwrap();
+        assert_eq!(*guard, 42);
     }
 }

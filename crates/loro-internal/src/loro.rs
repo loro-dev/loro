@@ -2153,6 +2153,8 @@ impl Default for CommitOptions {
 
 #[cfg(test)]
 mod test {
+    use std::panic::AssertUnwindSafe;
+
     use crate::{cursor::PosType, loro::ExportMode, version::Frontiers, LoroDoc, ToJson};
     use loro_common::ID;
 
@@ -2231,5 +2233,19 @@ mod test {
         let oplog = b.oplog().lock().unwrap();
         drop(oplog);
         b.export(ExportMode::all_updates()).unwrap();
+    }
+
+    #[test]
+    fn poisoned_mutex_allows_follow_up_operations() {
+        let doc = LoroDoc::new();
+        let oplog = doc.oplog.clone();
+        let _ = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            let _guard = oplog.lock().unwrap();
+            panic!("poison oplog");
+        }));
+
+        let vv = std::panic::catch_unwind(AssertUnwindSafe(|| doc.oplog_vv()))
+            .expect("poisoned lock should be recovered");
+        assert!(vv.is_empty());
     }
 }
