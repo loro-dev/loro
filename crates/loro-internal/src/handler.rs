@@ -4347,16 +4347,43 @@ pub mod counter {
 
 #[cfg(test)]
 mod test {
+    use std::borrow::Cow;
 
     use super::{HandlerTrait, TextDelta};
+    use crate::container::list::list_op::ListOp;
     use crate::cursor::PosType;
     use crate::loro::ExportMode;
+    use crate::op::ListSlice;
     use crate::state::TreeParentId;
+    use crate::txn::EventHint;
     use crate::version::Frontiers;
     use crate::LoroDoc;
     use crate::{fx_map, ToJson};
     use loro_common::{LoroValue, ID};
     use serde_json::json;
+
+    fn insert_many_with_single_list_op(
+        txn: &mut crate::txn::Transaction,
+        list: &crate::handler::ListHandler,
+        pos: usize,
+        values: Vec<LoroValue>,
+    ) {
+        let len = values.len();
+        let inner = list.inner.try_attached_state().unwrap();
+        txn.apply_local_op(
+            inner.container_idx,
+            crate::op::RawOpContent::List(ListOp::Insert {
+                slice: ListSlice::RawData(Cow::Owned(values)),
+                pos,
+            }),
+            EventHint::InsertList {
+                len: len as u32,
+                pos,
+            },
+            &inner.doc,
+        )
+        .unwrap();
+    }
 
     #[test]
     fn richtext_handler() {
@@ -4420,6 +4447,40 @@ mod test {
             )
             .unwrap();
         }
+    }
+
+    #[test]
+    fn list_import_batch_stays_consistent_after_repeated_tail_splits() {
+        let doc_a = LoroDoc::new();
+        doc_a.set_peer_id(1).unwrap();
+        let mut txn = doc_a.txn().unwrap();
+        let list_a = txn.get_list("list");
+        insert_many_with_single_list_op(
+            &mut txn,
+            &list_a,
+            0,
+            (0..300).map(|i| LoroValue::I64(i)).collect(),
+        );
+        txn.commit().unwrap();
+
+        let doc_b = LoroDoc::new();
+        doc_b.set_peer_id(2).unwrap();
+        doc_b.import(&doc_a.export(ExportMode::all_updates()).unwrap())
+            .unwrap();
+
+        let list_b = doc_b.get_list("list");
+        let mut vv = doc_a.oplog_vv();
+        let mut updates = Vec::new();
+        for (i, pos) in [100, 201, 252, 278].into_iter().enumerate() {
+            list_b.insert(pos, 1000 + i as i64).unwrap();
+            updates.push(doc_b.export(ExportMode::updates(&vv)).unwrap());
+            vv = doc_b.oplog_vv();
+        }
+
+        doc_a.import_batch(&updates).unwrap();
+        doc_a.check_state_diff_calc_consistency_slow();
+        doc_b.check_state_diff_calc_consistency_slow();
+        assert_eq!(doc_a.get_deep_value(), doc_b.get_deep_value());
     }
 
     #[test]
