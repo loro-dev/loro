@@ -672,6 +672,20 @@ mod test {
     }
 
     #[test]
+    fn repeated_tail_splits_keep_id_to_cursor_consistent() {
+        let mut t = Tracker::new();
+        t.insert(IdFull::new(1, 0, 0), 0, RichtextChunk::new_text(0..300));
+
+        for (i, pos) in [100, 201, 252, 278].into_iter().enumerate() {
+            let op_id = IdFull::new(2, i as Counter, i as Lamport);
+            let start = 1000 + i as u32;
+            t.insert(op_id, pos, RichtextChunk::new_text(start..start + 1));
+        }
+
+        t.check();
+    }
+
+    #[test]
     fn test_checkout_in_doc_with_del_span() {
         let mut t = Tracker::new();
         t.insert(IdFull::new(1, 0, 0), 0, RichtextChunk::new_text(0..10));

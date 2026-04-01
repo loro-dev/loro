@@ -689,6 +689,10 @@ mod insert_set {
 
     impl SmallInsertSet {
         fn update(&mut self, from: usize, to: usize, new_leaf: LeafIndex) {
+            if from == to {
+                return;
+            }
+
             let mut cur_scan_index: usize = 0;
             let old_set = std::mem::take(&mut self.set);
             let mut new_set = SmallVec::with_capacity(old_set.len() + 2);
@@ -861,14 +865,21 @@ mod insert_set {
         }
 
         fn update(&mut self, from: usize, to: usize, new_leaf: LeafIndex) {
+            if from == to {
+                return;
+            }
+
             let Some(from) = self.tree.query::<LengthFinder>(&from) else {
                 return;
             };
-            let Some(to) = self.tree.query::<LengthFinder>(&to) else {
-                return;
-            };
+            let to = self
+                .tree
+                .query::<LengthFinder>(&to)
+                .map(|x| x.cursor)
+                .or_else(|| self.tree.end_cursor())
+                .unwrap();
 
-            self.tree.update(from.cursor..to.cursor, &mut |x| {
+            self.tree.update(from.cursor..to, &mut |x| {
                 x.leaf = new_leaf;
                 None
             });
@@ -1004,10 +1015,208 @@ impl Mergeable for Cursor {
 
 #[cfg(test)]
 mod test {
+    use std::{any::Any, ops::Range, panic::AssertUnwindSafe};
+
     use super::*;
+    use generic_btree::{
+        rle::{CanRemove, TryInsert},
+        BTree, BTreeTrait, UseLengthFinder,
+    };
+    use smallvec::smallvec;
+
+    #[derive(Debug, Clone)]
+    struct DummyElem;
+
+    impl generic_btree::rle::HasLength for DummyElem {
+        fn rle_len(&self) -> usize {
+            1
+        }
+    }
+
+    impl generic_btree::rle::Sliceable for DummyElem {
+        fn _slice(&self, range: Range<usize>) -> Self {
+            assert_eq!(range.start, 0);
+            assert_eq!(range.end, 1);
+            DummyElem
+        }
+
+        fn split(&mut self, _pos: usize) -> Self {
+            unreachable!()
+        }
+    }
+
+    impl generic_btree::rle::Mergeable for DummyElem {
+        fn can_merge(&self, _rhs: &Self) -> bool {
+            false
+        }
+
+        fn merge_right(&mut self, _rhs: &Self) {
+            unreachable!()
+        }
+
+        fn merge_left(&mut self, _left: &Self) {
+            unreachable!()
+        }
+    }
+
+    impl TryInsert for DummyElem {
+        fn try_insert(&mut self, _pos: usize, elem: Self) -> Result<(), Self> {
+            Err(elem)
+        }
+    }
+
+    impl CanRemove for DummyElem {
+        fn can_remove(&self) -> bool {
+            false
+        }
+    }
+
+    struct DummyTree;
+
+    impl BTreeTrait for DummyTree {
+        type Elem = DummyElem;
+        type Cache = isize;
+        type CacheDiff = isize;
+        const USE_DIFF: bool = true;
+
+        fn calc_cache_internal(
+            cache: &mut Self::Cache,
+            caches: &[generic_btree::Child<Self>],
+        ) -> Self::CacheDiff {
+            let new_cache = caches.iter().map(|child| child.cache).sum::<isize>();
+            let diff = new_cache - *cache;
+            *cache = new_cache;
+            diff
+        }
+
+        fn apply_cache_diff(cache: &mut Self::Cache, diff: &Self::CacheDiff) {
+            *cache += diff;
+        }
+
+        fn merge_cache_diff(diff1: &mut Self::CacheDiff, diff2: &Self::CacheDiff) {
+            *diff1 += diff2;
+        }
+
+        fn get_elem_cache(_elem: &Self::Elem) -> Self::Cache {
+            1
+        }
+
+        fn new_cache_to_diff(cache: &Self::Cache) -> Self::CacheDiff {
+            *cache
+        }
+
+        fn sub_cache(cache_lhs: &Self::Cache, cache_rhs: &Self::Cache) -> Self::CacheDiff {
+            cache_lhs - cache_rhs
+        }
+    }
+
+    impl UseLengthFinder<DummyTree> for DummyTree {
+        fn get_len(cache: &isize) -> usize {
+            *cache as usize
+        }
+    }
+
+    fn dummy_leaf() -> LeafIndex {
+        let mut tree = BTree::<DummyTree>::new();
+        tree.push(DummyElem).leaf
+    }
+
+    fn dummy_leaves(n: usize) -> Vec<LeafIndex> {
+        let mut tree = BTree::<DummyTree>::new();
+        (0..n).map(|_| tree.push(DummyElem).leaf).collect()
+    }
+
+    fn panic_message(payload: Box<dyn Any + Send>) -> String {
+        if let Some(msg) = payload.downcast_ref::<String>() {
+            msg.clone()
+        } else if let Some(msg) = payload.downcast_ref::<&str>() {
+            msg.to_string()
+        } else {
+            "<non-string panic>".to_string()
+        }
+    }
 
     #[test]
     fn test_id_to_cursor() {
         let _map = IdToCursor::default();
+    }
+
+    #[test]
+    fn zero_len_fragment_panics_with_left_0_right_3() {
+        let peer = 1;
+        let mut map = IdToCursor::default();
+        map.map.insert(
+            peer,
+            vec![
+                Fragment {
+                    counter: 0,
+                    cursor: Cursor::Insert(insert_set::InsertSet::Small(
+                        insert_set::SmallInsertSet {
+                            set: smallvec![],
+                            len: 0,
+                        },
+                    )),
+                },
+                Fragment {
+                    counter: 3,
+                    cursor: Cursor::new_insert(dummy_leaf(), 1),
+                },
+            ],
+        );
+
+        let err = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            map.update_insert(IdSpan::new(peer, 0, 3), dummy_leaf());
+        }))
+        .expect_err("expected zero-length fragment to trip the invariant");
+        let msg = panic_message(err);
+        assert!(msg.contains("left == right"), "{msg}");
+        assert!(msg.contains("left: 0"), "{msg}");
+        assert!(msg.contains("right: 3"), "{msg}");
+    }
+
+    #[test]
+    fn zero_width_small_update_keeps_insert_set_non_empty() {
+        let leaf = dummy_leaf();
+        let mut set = insert_set::InsertSet::new(leaf, 3);
+        set.update(0, 0, dummy_leaf());
+
+        match set {
+            insert_set::InsertSet::Small(set) => {
+                assert_eq!(set.len, 3);
+                assert_eq!(set.set.len(), 1);
+                assert_eq!(set.set[0].len, 3);
+            }
+            insert_set::InsertSet::Large(_) => panic!("expected small insert set"),
+        }
+    }
+
+    #[test]
+    fn large_update_can_replace_the_tail_range() {
+        let leaves = dummy_leaves(4);
+        let mut set = insert_set::InsertSet::Small(insert_set::SmallInsertSet {
+            set: smallvec![
+                Insert {
+                    leaf: leaves[0],
+                    len: 100,
+                },
+                Insert {
+                    leaf: leaves[1],
+                    len: 100,
+                },
+                Insert {
+                    leaf: leaves[2],
+                    len: 100,
+                }
+            ],
+            len: 300,
+        });
+        set.update(0, 1, leaves[3]);
+        let new_leaf = leaves[3];
+        set.update_many(&[(200, 300, new_leaf)]);
+
+        assert_ne!(set.get_insert(199), Some(new_leaf));
+        for i in 200..300 {
+            assert_eq!(set.get_insert(i), Some(new_leaf));
+        }
     }
 }
