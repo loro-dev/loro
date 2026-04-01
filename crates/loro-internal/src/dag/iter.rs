@@ -262,79 +262,274 @@ impl<T: DagNode, D: Dag<Node = T>> Iterator for DagCausalIter<'_, D> {
     type Item = IterReturn<T>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.stack.is_empty() {
-            debug_assert_eq!(
-                0,
-                self.target
-                    .iter()
-                    .map(|x| x.1.content_len() as i32)
-                    .sum::<i32>()
-            );
-            return None;
-        }
-        let node_id = self.stack.pop().unwrap();
-        let target_span = self.target.get_mut(&node_id.peer).unwrap();
-        debug_assert_eq!(
-            node_id.counter,
-            target_span.min(),
-            "{} {:?}",
-            node_id,
-            target_span
-        );
+        loop {
+            if self.stack.is_empty() {
+                debug_assert_eq!(
+                    0,
+                    self.target
+                        .iter()
+                        .map(|x| x.1.content_len() as i32)
+                        .sum::<i32>()
+                );
+                return None;
+            }
 
-        // // node_id may points into the middle of the node, we need to slice
-        let node = self.dag.get(node_id).unwrap();
-        // node start_id may be smaller than node_id
-        let counter = node.id_span().counter;
-        let slice_from = if counter.start < target_span.start {
-            target_span.start - counter.start
-        } else {
-            0
-        };
-        let slice_end = if counter.end < target_span.end {
-            counter.end - counter.start
-        } else {
-            target_span.end - counter.start
-        };
-        assert!(slice_end > slice_from);
+            let node_id = self.stack.pop().unwrap();
+            let (node, slice_from, slice_end, next_same_peer) = {
+                let target_span = self.target.get_mut(&node_id.peer).unwrap();
+                if node_id.counter != target_span.min() {
+                    debug_assert!(
+                        node_id.counter < target_span.min(),
+                        "{} {:?}",
+                        node_id,
+                        target_span
+                    );
+                    continue;
+                }
 
-        let last_counter = node.id_last().counter;
-        target_span.set_start(last_counter + 1);
+                // node_id may point into the middle of the node, we need to slice
+                let node = self.dag.get(node_id).unwrap();
+                // node start_id may be smaller than node_id
+                let counter = node.id_span().counter;
+                let slice_from = if counter.start < target_span.start {
+                    target_span.start - counter.start
+                } else {
+                    0
+                };
+                let slice_end = if counter.end < target_span.end {
+                    counter.end - counter.start
+                } else {
+                    target_span.end - counter.start
+                };
 
-        // tracing::span!(tracing::Level::INFO, "Dag Causal");
+                if slice_end <= slice_from {
+                    debug_assert_eq!(slice_end, slice_from, "{node_id} {:?}", target_span);
+                    continue;
+                }
 
-        //
+                let consumed_last_counter = counter.start + slice_end - 1;
+                target_span.set_start(consumed_last_counter + 1);
+                let next_same_peer = if target_span.content_len() > 0 {
+                    Some(ID::new(node_id.peer, target_span.min()))
+                } else {
+                    None
+                };
 
-        // NOTE: we expect user to update the tracker, to apply node, after visiting the node
-        self.frontier = Frontiers::from_id(node.id_start().inc(slice_end - 1));
+                (node, slice_from, slice_end, next_same_peer)
+            };
 
-        let current_peer = node_id.peer;
-        let mut keys = Vec::new();
-        let mut heap = BinaryHeap::new();
-        // The in-degree of the successor node minus 1, and if it becomes 0, it is added to the heap
-        for (key, succ) in self.succ.range(node.id_start()..node.id_end()) {
-            keys.push(*key);
-            for succ_id in succ.iter() {
-                self.out_degrees.entry(*succ_id).and_modify(|i| *i -= 1);
-                if let Some(in_degree) = self.out_degrees.get(succ_id) {
-                    if in_degree.is_zero() {
-                        heap.push((succ_id.peer != current_peer, *succ_id));
-                        self.out_degrees.remove(succ_id);
+            if let Some(next_id) = next_same_peer {
+                if !self.out_degrees.contains_key(&next_id) && !self.stack.contains(&next_id) {
+                    self.stack.push(next_id);
+                }
+            }
+
+            // NOTE: we expect user to update the tracker, to apply node, after visiting the node
+            self.frontier = Frontiers::from_id(node.id_start().inc(slice_end - 1));
+
+            let current_peer = node_id.peer;
+            let mut keys = Vec::new();
+            let mut heap = BinaryHeap::new();
+            // The in-degree of the successor node minus 1, and if it becomes 0, it is added to the heap
+            for (key, succ) in self.succ.range(node.id_start()..node.id_end()) {
+                keys.push(*key);
+                for succ_id in succ.iter() {
+                    self.out_degrees.entry(*succ_id).and_modify(|i| *i -= 1);
+                    if let Some(in_degree) = self.out_degrees.get(succ_id) {
+                        if in_degree.is_zero() {
+                            heap.push((succ_id.peer != current_peer, *succ_id));
+                            self.out_degrees.remove(succ_id);
+                        }
                     }
                 }
             }
+            // Nodes that have been traversed are removed from the graph to avoid being covered by other node ranges again
+            keys.into_iter().for_each(|k| {
+                self.succ.remove(&k);
+            });
+            while let Some(id) = heap.pop() {
+                self.stack.push(id.1)
+            }
+
+            return Some(IterReturn {
+                data: node,
+                slice: slice_from..slice_end,
+            });
         }
-        // Nodes that have been traversed are removed from the graph to avoid being covered by other node ranges again
-        keys.into_iter().for_each(|k| {
-            self.succ.remove(&k);
-        });
-        while let Some(id) = heap.pop() {
-            self.stack.push(id.1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::*;
+    use crate::{
+        change::Lamport,
+        id::ID,
+        span::{CounterSpan, HasId, HasLamport},
+        version::VersionVector,
+    };
+    use rle::{HasLength, Sliceable};
+
+    #[derive(Debug, Clone)]
+    struct DummyNode {
+        id: ID,
+        lamport: Lamport,
+        len: usize,
+        deps: Frontiers,
+    }
+
+    impl DagNode for DummyNode {
+        fn deps(&self) -> &Frontiers {
+            &self.deps
+        }
+    }
+
+    impl Sliceable for DummyNode {
+        fn slice(&self, from: usize, to: usize) -> Self {
+            Self {
+                id: self.id.inc(from as i32),
+                lamport: self.lamport + from as Lamport,
+                len: to - from,
+                deps: if from > 0 {
+                    self.id.inc(from as i32 - 1).into()
+                } else {
+                    self.deps.clone()
+                },
+            }
+        }
+    }
+
+    impl HasLamport for DummyNode {
+        fn lamport(&self) -> Lamport {
+            self.lamport
+        }
+    }
+
+    impl HasId for DummyNode {
+        fn id_start(&self) -> ID {
+            self.id
+        }
+    }
+
+    impl HasLength for DummyNode {
+        fn content_len(&self) -> usize {
+            self.len
+        }
+    }
+
+    #[derive(Debug)]
+    struct DummyDag {
+        nodes: BTreeMap<ID, DummyNode>,
+        vv: VersionVector,
+        frontier: Frontiers,
+    }
+
+    impl Dag for DummyDag {
+        type Node = DummyNode;
+
+        fn get(&self, id: ID) -> Option<Self::Node> {
+            self.nodes
+                .range(..=id)
+                .next_back()
+                .filter(|(_, node)| node.contains_id(id))
+                .map(|(_, node)| node.clone())
         }
 
-        Some(IterReturn {
-            data: node,
-            slice: slice_from..slice_end,
-        })
+        fn frontier(&self) -> &Frontiers {
+            &self.frontier
+        }
+
+        fn vv(&self) -> &VersionVector {
+            &self.vv
+        }
+
+        fn contains(&self, id: ID) -> bool {
+            self.nodes
+                .range(..=id)
+                .next_back()
+                .is_some_and(|(_, node)| node.contains_id(id))
+        }
+    }
+
+    #[test]
+    fn stale_iterator_state_repairs_missing_same_peer_continuation() {
+        let first = DummyNode {
+            id: ID::new(1, 0),
+            lamport: 0,
+            len: 5,
+            deps: Frontiers::default(),
+        };
+        let second = DummyNode {
+            id: ID::new(1, 5),
+            lamport: 5,
+            len: 5,
+            deps: ID::new(1, 4).into(),
+        };
+        let mut vv = VersionVector::default();
+        vv.set_end(second.id_end());
+        let dag = DummyDag {
+            frontier: second.id_last().into(),
+            nodes: [(first.id_start(), first), (second.id_start(), second)]
+                .into_iter()
+                .collect(),
+            vv,
+        };
+
+        let mut target = IdSpanVector::default();
+        target.insert(1, CounterSpan::new(0, 7));
+        let mut iter = DagCausalIter {
+            dag: &dag,
+            frontier: Frontiers::default(),
+            target,
+            out_degrees: Default::default(),
+            succ: BTreeMap::default(),
+            // This models the stale iterator state after `new()` saw one large
+            // node and queued only the first peer segment.
+            stack: vec![ID::new(1, 0)],
+        };
+
+        let first = iter.next().expect("first segment should be yielded");
+        assert_eq!(first.data.id_start(), ID::new(1, 0));
+        assert_eq!(first.slice, 0..5);
+
+        let second = iter.next().expect("second segment should be re-queued");
+        assert_eq!(second.data.id_start(), ID::new(1, 5));
+        assert_eq!(second.slice, 0..2);
+
+        assert!(iter.next().is_none());
+    }
+
+    #[test]
+    fn larger_node_only_advances_consumed_slice() {
+        let node = DummyNode {
+            id: ID::new(1, 0),
+            lamport: 0,
+            len: 10,
+            deps: Frontiers::default(),
+        };
+        let mut vv = VersionVector::default();
+        vv.set_end(node.id_end());
+        let dag = DummyDag {
+            frontier: node.id_last().into(),
+            nodes: [(node.id_start(), node)].into_iter().collect(),
+            vv,
+        };
+
+        let mut target = IdSpanVector::default();
+        target.insert(1, CounterSpan::new(0, 7));
+        let mut iter = DagCausalIter {
+            dag: &dag,
+            frontier: Frontiers::default(),
+            target,
+            out_degrees: Default::default(),
+            succ: BTreeMap::default(),
+            stack: vec![ID::new(1, 0)],
+        };
+
+        let item = iter.next().expect("target slice should be yielded");
+        assert_eq!(item.slice, 0..7);
+        assert_eq!(iter.target.get(&1).unwrap().content_len(), 0);
     }
 }
