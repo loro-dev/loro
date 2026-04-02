@@ -9,7 +9,7 @@ use crate::{
     dag::DagUtils,
     encoding::fast_snapshot::{Snapshot, _encode_snapshot},
     state::container_store::FRONTIERS_KEY,
-    version::Frontiers,
+    version::{Frontiers, VersionVector},
     LoroDoc,
 };
 
@@ -35,7 +35,7 @@ pub(crate) fn export_shallow_snapshot_inner(
 ) -> Result<(Snapshot, Frontiers), LoroEncodeError> {
     let oplog = doc.oplog().lock_unpoisoned();
     let start_from = calc_shallow_doc_start(&oplog, start_from);
-    let mut start_vv = oplog.dag().frontiers_to_vv(&start_from).unwrap();
+    let mut start_vv = frontiers_to_vv_for_export(&oplog, &start_from, "export_shallow_snapshot")?;
     for id in start_from.iter() {
         // we need to include the ops in start_from, this can make things easier
         start_vv.insert(id.peer, id.counter);
@@ -74,65 +74,59 @@ pub(crate) fn export_shallow_snapshot_inner(
     let latest_vv = oplog.vv();
     let ops_num: usize = latest_vv.sub_iter(&start_vv).map(|x| x.atom_len()).sum();
     drop(oplog);
-    doc._checkout_without_emitting(&start_from, false, false)
-        .unwrap();
-    let mut state = doc.app_state().lock_unpoisoned();
-    let alive_containers = state.ensure_all_alive_containers();
-    if has_unknown_container(alive_containers.iter()) {
-        return Err(LoroEncodeError::UnknownContainer);
-    }
-    let mut alive_c_bytes: BTreeSet<Vec<u8>> =
-        alive_containers.iter().map(|x| x.to_bytes()).collect();
-    state.store.flush();
-    let shallow_root_state_kv = state.store.get_kv_clone();
-    drop(state);
-    doc._checkout_without_emitting(&latest_frontiers, false, false)
-        .unwrap();
-    let state_bytes = if ops_num > MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE {
+    let result = (|| -> Result<Snapshot, LoroEncodeError> {
+        doc._checkout_without_emitting(&start_from, false, false)
+            .map_err(LoroEncodeError::from)?;
         let mut state = doc.app_state().lock_unpoisoned();
-        state.ensure_all_alive_containers();
-        state.store.encode();
-        // All the containers that are created after start_from need to be encoded
-        for cid in state.store.iter_all_container_ids() {
-            if let ContainerID::Normal { peer, counter, .. } = cid {
-                let temp_id = ID::new(peer, counter);
-                if !start_from.contains(&temp_id) {
+        let alive_containers = state.ensure_all_alive_containers();
+        if has_unknown_container(alive_containers.iter()) {
+            return Err(LoroEncodeError::UnknownContainer);
+        }
+        let mut alive_c_bytes: BTreeSet<Vec<u8>> =
+            alive_containers.iter().map(|x| x.to_bytes()).collect();
+        state.store.flush();
+        let shallow_root_state_kv = state.store.get_kv_clone();
+        drop(state);
+        doc._checkout_without_emitting(&latest_frontiers, false, false)
+            .map_err(LoroEncodeError::from)?;
+        let state_bytes = if ops_num > MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE {
+            let mut state = doc.app_state().lock_unpoisoned();
+            state.ensure_all_alive_containers();
+            state.store.encode();
+            // All the containers that are created after start_from need to be encoded
+            for cid in state.store.iter_all_container_ids() {
+                if let ContainerID::Normal { peer, counter, .. } = cid {
+                    let temp_id = ID::new(peer, counter);
+                    if !start_from.contains(&temp_id) {
+                        alive_c_bytes.insert(cid.to_bytes());
+                    }
+                } else {
                     alive_c_bytes.insert(cid.to_bytes());
                 }
-            } else {
-                alive_c_bytes.insert(cid.to_bytes());
             }
-        }
 
-        let new_kv = state.store.get_kv_clone();
-        new_kv.remove_same(&shallow_root_state_kv);
-        new_kv.retain_keys(&alive_c_bytes);
-        Some(new_kv.export())
-    } else {
-        None
-    };
+            let new_kv = state.store.get_kv_clone();
+            new_kv.remove_same(&shallow_root_state_kv);
+            new_kv.retain_keys(&alive_c_bytes);
+            Some(new_kv.export())
+        } else {
+            None
+        };
 
-    shallow_root_state_kv.retain_keys(&alive_c_bytes);
-    shallow_root_state_kv.insert(FRONTIERS_KEY, start_from.encode().into());
-    let shallow_root_state_bytes = shallow_root_state_kv.export();
+        shallow_root_state_kv.retain_keys(&alive_c_bytes);
+        shallow_root_state_kv.insert(FRONTIERS_KEY, start_from.encode().into());
+        let shallow_root_state_bytes = shallow_root_state_kv.export();
 
-    let snapshot = Snapshot {
-        oplog_bytes,
-        state_bytes,
-        shallow_root_state_bytes,
-    };
+        Ok(Snapshot {
+            oplog_bytes,
+            state_bytes,
+            shallow_root_state_bytes,
+        })
+    })();
 
-    if state_frontiers != latest_frontiers {
-        doc._checkout_without_emitting(&state_frontiers, false, false)
-            .unwrap();
-    }
-
-    if is_attached {
-        doc.set_detached(false);
-    }
-
+    restore_export_doc_state(doc, &state_frontiers, is_attached)?;
     doc.drop_pending_events();
-    Ok((snapshot, start_from))
+    Ok((result?, start_from))
 }
 
 fn has_unknown_container<'a>(mut cids: impl Iterator<Item = &'a ContainerID>) -> bool {
@@ -146,7 +140,7 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
 ) -> Result<Frontiers, LoroEncodeError> {
     let oplog = doc.oplog().lock_unpoisoned();
     let start_from = calc_shallow_doc_start(&oplog, start_from);
-    let mut start_vv = oplog.dag().frontiers_to_vv(&start_from).unwrap();
+    let mut start_vv = frontiers_to_vv_for_export(&oplog, &start_from, "export_state_only_snapshot")?;
     for id in start_from.iter() {
         // we need to include the ops in start_from, this can make things easier
         start_vv.insert(id.peer, id.counter);
@@ -168,36 +162,30 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
     let state_frontiers = doc.state_frontiers();
     let is_attached = !doc.is_detached();
     drop(oplog);
-    doc._checkout_without_emitting(&start_from, false, false)
-        .unwrap();
-    let mut state = doc.app_state().lock_unpoisoned();
-    let alive_containers = state.ensure_all_alive_containers();
-    let alive_c_bytes = cids_to_bytes(alive_containers);
-    state.store.flush();
-    let shallow_state_kv = state.store.get_kv_clone();
-    drop(state);
-    shallow_state_kv.retain_keys(&alive_c_bytes);
-    shallow_state_kv.insert(FRONTIERS_KEY, start_from.encode().into());
-    let shallow_state_bytes = shallow_state_kv.export();
-    // println!("shallow_state_bytes.len = {:?}", shallow_state_bytes.len());
-    // println!("oplog_bytes.len = {:?}", oplog_bytes.len());
-    let snapshot = Snapshot {
-        oplog_bytes,
-        state_bytes: None,
-        shallow_root_state_bytes: shallow_state_bytes,
-    };
-    _encode_snapshot(snapshot, w);
+    let result = (|| -> Result<(), LoroEncodeError> {
+        doc._checkout_without_emitting(&start_from, false, false)
+            .map_err(LoroEncodeError::from)?;
+        let mut state = doc.app_state().lock_unpoisoned();
+        let alive_containers = state.ensure_all_alive_containers();
+        let alive_c_bytes = cids_to_bytes(alive_containers);
+        state.store.flush();
+        let shallow_state_kv = state.store.get_kv_clone();
+        drop(state);
+        shallow_state_kv.retain_keys(&alive_c_bytes);
+        shallow_state_kv.insert(FRONTIERS_KEY, start_from.encode().into());
+        let shallow_state_bytes = shallow_state_kv.export();
+        let snapshot = Snapshot {
+            oplog_bytes,
+            state_bytes: None,
+            shallow_root_state_bytes: shallow_state_bytes,
+        };
+        _encode_snapshot(snapshot, w);
+        Ok(())
+    })();
 
-    if state_frontiers != start_from {
-        doc._checkout_without_emitting(&state_frontiers, false, false)
-            .unwrap();
-    }
-
-    if is_attached {
-        doc.set_detached(false);
-    }
-
+    restore_export_doc_state(doc, &state_frontiers, is_attached)?;
     doc.drop_pending_events();
+    result?;
     Ok(start_from)
 }
 
@@ -206,6 +194,33 @@ fn cids_to_bytes(
 ) -> BTreeSet<Vec<u8>> {
     let alive_c_bytes: BTreeSet<Vec<u8>> = alive_containers.iter().map(|x| x.to_bytes()).collect();
     alive_c_bytes
+}
+
+fn frontiers_to_vv_for_export(
+    oplog: &crate::OpLog,
+    frontiers: &Frontiers,
+    context: &str,
+) -> Result<VersionVector, LoroEncodeError> {
+    oplog.dag().frontiers_to_vv(frontiers).ok_or_else(|| {
+        LoroEncodeError::FrontiersNotFound(format!("{context}: unreachable frontiers {frontiers:?}"))
+    })
+}
+
+fn restore_export_doc_state(
+    doc: &LoroDoc,
+    state_frontiers: &Frontiers,
+    was_attached: bool,
+) -> Result<(), LoroEncodeError> {
+    if &doc.state_frontiers() != state_frontiers {
+        doc._checkout_without_emitting(state_frontiers, false, false)
+            .map_err(LoroEncodeError::from)?;
+    }
+
+    if was_attached {
+        doc.set_detached(false);
+    }
+
+    Ok(())
 }
 
 /// Calculates optimal starting version for the shallow doc

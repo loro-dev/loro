@@ -293,8 +293,17 @@ pub(crate) fn encode_snapshot_inner(doc: &LoroDoc) -> Snapshot {
 }
 
 pub(crate) fn decode_oplog(oplog: &mut OpLog, bytes: &[u8]) -> Result<Vec<Change>, LoroError> {
-    let oplog_len = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
-    let oplog_bytes = &bytes[4..4 + oplog_len as usize];
+    let oplog_len = bytes
+        .get(0..4)
+        .ok_or_else(|| LoroError::DecodeError("decode_oplog: missing length prefix".into()))?;
+    let oplog_len = u32::from_le_bytes(
+        oplog_len
+            .try_into()
+            .expect("slice length checked to be exactly 4"),
+    ) as usize;
+    let oplog_bytes = bytes.get(4..4 + oplog_len).ok_or_else(|| {
+        LoroError::DecodeError("decode_oplog: invalid oplog length".into())
+    })?;
     let mut changes = ChangeStore::decode_snapshot_for_updates(
         oplog_bytes.to_vec().into(),
         &oplog.arena,
@@ -324,17 +333,41 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, body: Bytes) -> Result<Vec<Chang
     let mut changes = Vec::new();
     while !reader.is_empty() {
         let old_reader_len = reader.len();
-        let len = leb128::read::unsigned(&mut reader).unwrap() as usize;
+        let len = leb128::read::unsigned(&mut reader)
+            .map_err(|_| LoroError::DecodeError("decode_updates: invalid block length".into()))?
+            as usize;
         index += old_reader_len - reader.len();
-        let block_bytes = body.slice(index..index + len);
+        let end = index.checked_add(len).ok_or_else(|| {
+            LoroError::DecodeError("decode_updates: block length overflow".into())
+        })?;
+        if end > body.len() {
+            return Err(LoroError::DecodeError(
+                "decode_updates: truncated block payload".into(),
+            ));
+        }
+        let block_bytes = body.slice(index..end);
         let new_changes = ChangeStore::decode_block_bytes(block_bytes, &oplog.arena, self_vv)?;
         changes.extend(new_changes);
-        index += len;
+        index = end;
         reader = &reader[len..];
     }
 
     changes.sort_unstable_by_key(|x| x.lamport);
     Ok(changes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decode_updates_rejects_truncated_block() {
+        let doc = LoroDoc::new();
+        let mut oplog = doc.oplog.lock_unpoisoned();
+        let err = decode_updates(&mut oplog, Bytes::from_static(&[0x02, 0x01]))
+            .expect_err("truncated update block should be rejected");
+        assert!(matches!(err, LoroError::DecodeError(_)));
+    }
 }
 
 pub(crate) fn decode_snapshot_blob_meta(
