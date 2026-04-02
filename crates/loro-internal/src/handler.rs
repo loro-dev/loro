@@ -4190,6 +4190,7 @@ pub mod counter {
     use loro_common::LoroResult;
 
     use crate::{
+        sync::MutexExt as _,
         txn::{EventHint, Transaction},
         HandlerTrait,
     };

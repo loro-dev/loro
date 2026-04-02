@@ -226,7 +226,10 @@ impl OpLog {
 
         let mut max_last_counter = -1;
         for dep in deps.iter() {
-            let dep_vv = self.dag.get_vv(dep).unwrap();
+            let dep_vv = self
+                .dag
+                .get_vv(dep)
+                .ok_or(LoroError::FrontiersNotFound(dep))?;
             max_last_counter = max_last_counter.max(dep_vv.get(&peer).cloned().unwrap_or(0) - 1);
         }
 

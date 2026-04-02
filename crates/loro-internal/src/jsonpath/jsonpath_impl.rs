@@ -5,7 +5,6 @@ use crate::jsonpath::ast::{
     ComparisonOperator, FilterExpression, LogicalOperator, Segment, Selector,
 };
 use crate::jsonpath::JSONPathParser;
-use crate::sync::MutexExt as _;
 use crate::{HandlerTrait, LoroDoc};
 use loro_common::{ContainerID, LoroValue};
 use std::ops::ControlFlow;

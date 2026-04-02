@@ -132,7 +132,9 @@ impl<T> LoroMutex<T> {
     pub fn lock(&self) -> Result<LoroMutexGuard<'_, T>, std::sync::PoisonError<MutexGuard<'_, T>>> {
         let caller = Location::caller();
         let v = self.currently_locked_in_this_thread.get_or_default();
-        let last = *v.lock().unwrap_or_else(|e| e.into_inner());
+        let last = *v
+            .lock()
+            .expect("poisoned lock-order tracking mutex");
         let this = LockInfo {
             kind: self.kind,
             caller_location: Some(caller),
@@ -144,10 +146,8 @@ impl<T> LoroMutex<T> {
             );
         }
 
-        // A previous panic while holding the mutex should not permanently disable
-        // the document. Recover the inner value and let the caller decide what to do next.
-        let ans = self.lock.lock().unwrap_or_else(|e| e.into_inner());
-        *v.lock().unwrap_or_else(|e| e.into_inner()) = this;
+        let ans = self.lock.lock()?;
+        *v.lock().expect("poisoned lock-order tracking mutex") = this;
         let ans = LoroMutexGuard {
             guard: ans,
             _inner: LoroMutexGuardInner {
@@ -160,10 +160,7 @@ impl<T> LoroMutex<T> {
     }
 
     pub fn lock_unpoisoned(&self) -> LoroMutexGuard<'_, T> {
-        match self.lock() {
-            Ok(guard) => guard,
-            Err(_) => unreachable!("LoroMutex::lock recovers poisoned state before returning"),
-        }
+        self.lock().expect("poisoned LoroMutex")
     }
 
     /// Returns whether the mutex appears locked at this instant.
@@ -236,7 +233,9 @@ impl<'a, T> LoroMutexGuard<'a, T> {
 impl<T> Drop for LoroMutexGuardInner<'_, T> {
     fn drop(&mut self) {
         let cur = self.inner.currently_locked_in_this_thread.get_or_default();
-        let current_lock_info = *cur.lock().unwrap_or_else(|e| e.into_inner());
+        let current_lock_info = *cur
+            .lock()
+            .expect("poisoned lock-order tracking mutex");
         if current_lock_info.kind != self.this.kind {
             let bt = Backtrace::capture();
             eprintln!("Locking release order violation callstack:\n{}", bt);
@@ -246,7 +245,7 @@ impl<T> Drop for LoroMutexGuardInner<'_, T> {
             );
         }
 
-        *cur.lock().unwrap_or_else(|e| e.into_inner()) = self.last;
+        *cur.lock().expect("poisoned lock-order tracking mutex") = self.last;
     }
 }
 
@@ -365,7 +364,8 @@ mod tests {
     }
 
     #[test]
-    fn test_poisoned_lock_can_be_recovered() {
+    #[should_panic(expected = "poisoned LoroMutex")]
+    fn test_poisoned_lock_panics_after_unwind() {
         let group = LoroLockGroup::new();
         let mutex = group.new_lock(42, LockKind::Txn);
 
@@ -374,7 +374,6 @@ mod tests {
             panic!("poison the lock");
         }));
 
-        let guard = mutex.lock_unpoisoned();
-        assert_eq!(*guard, 42);
+        let _ = mutex.lock_unpoisoned();
     }
 }

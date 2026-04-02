@@ -2239,7 +2239,7 @@ mod test {
     }
 
     #[test]
-    fn poisoned_mutex_allows_follow_up_operations() {
+    fn poisoned_mutex_keeps_follow_up_operations_failed() {
         let doc = LoroDoc::new();
         let oplog = doc.oplog.clone();
         let _ = std::panic::catch_unwind(AssertUnwindSafe(|| {
@@ -2247,8 +2247,15 @@ mod test {
             panic!("poison oplog");
         }));
 
-        let vv = std::panic::catch_unwind(AssertUnwindSafe(|| doc.oplog_vv()))
-            .expect("poisoned lock should be recovered");
-        assert!(vv.is_empty());
+        let err = std::panic::catch_unwind(AssertUnwindSafe(|| doc.oplog_vv()))
+            .expect_err("poisoned lock should continue to fail fast");
+        let msg = if let Some(msg) = err.downcast_ref::<&str>() {
+            (*msg).to_string()
+        } else if let Some(msg) = err.downcast_ref::<String>() {
+            msg.clone()
+        } else {
+            String::new()
+        };
+        assert!(msg.contains("poisoned LoroMutex"), "{msg}");
     }
 }
