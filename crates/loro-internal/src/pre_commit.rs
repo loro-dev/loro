@@ -1,5 +1,6 @@
 use std::sync::{Arc, Mutex};
 
+use crate::sync::MutexExt as _;
 use crate::{
     change::{Change, Timestamp},
     oplog::get_timestamp_now_txn,
@@ -41,22 +42,22 @@ struct ChangeModifierInner {
 
 impl ChangeModifier {
     pub fn set_message(&self, msg: &str) -> &Self {
-        self.0.lock().unwrap().new_msg = Some(Arc::from(msg));
+        self.0.lock_unpoisoned().new_msg = Some(Arc::from(msg));
         self
     }
 
     pub fn set_timestamp(&self, timestamp: Timestamp) -> &Self {
-        self.0.lock().unwrap().new_timestamp = Some(timestamp);
+        self.0.lock_unpoisoned().new_timestamp = Some(timestamp);
         self
     }
 
     pub fn set_timestamp_now(&self) -> &Self {
-        self.0.lock().unwrap().new_timestamp = Some(get_timestamp_now_txn());
+        self.0.lock_unpoisoned().new_timestamp = Some(get_timestamp_now_txn());
         self
     }
 
     pub(crate) fn modify_change(&self, change: &mut Change) {
-        let m = self.0.lock().unwrap();
+        let m = self.0.lock_unpoisoned();
         if let Some(msg) = &m.new_msg {
             change.commit_msg = Some(msg.clone());
         }

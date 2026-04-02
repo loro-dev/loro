@@ -33,7 +33,7 @@ pub(crate) fn export_shallow_snapshot_inner(
     doc: &LoroDoc,
     start_from: &Frontiers,
 ) -> Result<(Snapshot, Frontiers), LoroEncodeError> {
-    let oplog = doc.oplog().lock().unwrap();
+    let oplog = doc.oplog().lock_unpoisoned();
     let start_from = calc_shallow_doc_start(&oplog, start_from);
     let mut start_vv = oplog.dag().frontiers_to_vv(&start_from).unwrap();
     for id in start_from.iter() {
@@ -76,7 +76,7 @@ pub(crate) fn export_shallow_snapshot_inner(
     drop(oplog);
     doc._checkout_without_emitting(&start_from, false, false)
         .unwrap();
-    let mut state = doc.app_state().lock().unwrap();
+    let mut state = doc.app_state().lock_unpoisoned();
     let alive_containers = state.ensure_all_alive_containers();
     if has_unknown_container(alive_containers.iter()) {
         return Err(LoroEncodeError::UnknownContainer);
@@ -89,7 +89,7 @@ pub(crate) fn export_shallow_snapshot_inner(
     doc._checkout_without_emitting(&latest_frontiers, false, false)
         .unwrap();
     let state_bytes = if ops_num > MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE {
-        let mut state = doc.app_state().lock().unwrap();
+        let mut state = doc.app_state().lock_unpoisoned();
         state.ensure_all_alive_containers();
         state.store.encode();
         // All the containers that are created after start_from need to be encoded
@@ -144,7 +144,7 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
     start_from: &Frontiers,
     w: &mut W,
 ) -> Result<Frontiers, LoroEncodeError> {
-    let oplog = doc.oplog().lock().unwrap();
+    let oplog = doc.oplog().lock_unpoisoned();
     let start_from = calc_shallow_doc_start(&oplog, start_from);
     let mut start_vv = oplog.dag().frontiers_to_vv(&start_from).unwrap();
     for id in start_from.iter() {
@@ -170,7 +170,7 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
     drop(oplog);
     doc._checkout_without_emitting(&start_from, false, false)
         .unwrap();
-    let mut state = doc.app_state().lock().unwrap();
+    let mut state = doc.app_state().lock_unpoisoned();
     let alive_containers = state.ensure_all_alive_containers();
     let alive_c_bytes = cids_to_bytes(alive_containers);
     state.store.flush();

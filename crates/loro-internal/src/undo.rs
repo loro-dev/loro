@@ -1,5 +1,6 @@
 use std::{cell::RefCell, collections::VecDeque, sync::Arc};
 
+use crate::sync::MutexExt as _;
 use crate::sync::{AtomicU64, Mutex};
 use either::Either;
 use loro_common::{
@@ -326,7 +327,7 @@ impl Stack {
     pub fn pop(&mut self) -> Option<(StackItem, Arc<Mutex<DiffBatch>>)> {
         while self.stack.back().unwrap().0.is_empty() && self.stack.len() > 1 {
             let (_, diff) = self.stack.pop_back().unwrap();
-            let diff = diff.lock().unwrap();
+            let diff = diff.lock_unpoisoned();
             if !diff.cid_to_events.is_empty() {
                 self.stack
                     .back_mut()
@@ -340,7 +341,7 @@ impl Stack {
 
         if self.stack.len() == 1 && self.stack.back().unwrap().0.is_empty() {
             // If the stack is empty, we need to clear the remote diff
-            self.stack.back_mut().unwrap().1.lock().unwrap().clear();
+            self.stack.back_mut().unwrap().1.lock_unpoisoned().clear();
             return None;
         }
 
@@ -364,7 +365,7 @@ impl Stack {
         group: Option<&UndoGroup>,
     ) {
         let last = self.stack.back_mut().unwrap();
-        let last_remote_diff = last.1.lock().unwrap();
+        let last_remote_diff = last.1.lock_unpoisoned();
 
         // Check if the remote diff is disjoint with the current undo group
         let is_disjoint_group = group.is_some_and(|g| {
@@ -413,7 +414,7 @@ impl Stack {
         }
 
         let remote_diff = &mut self.stack.back_mut().unwrap().1;
-        let mut remote_diff = remote_diff.lock().unwrap();
+        let mut remote_diff = remote_diff.lock_unpoisoned();
         for e in diff {
             if let Some(d) = remote_diff.cid_to_events.get_mut(&e.id) {
                 d.compose_ref(&e.diff);
@@ -431,7 +432,7 @@ impl Stack {
             return;
         }
         let remote_diff = &mut self.stack.back_mut().unwrap().1;
-        remote_diff.lock().unwrap().transform(diff, false);
+        remote_diff.lock_unpoisoned().transform(diff, false);
     }
 
     pub fn clear(&mut self) {
@@ -823,13 +824,13 @@ impl UndoManager {
             {
                 let inner = self.inner.clone();
                 // We need to clone this because otherwise <transform_delta> will be applied to the same remote diff
-                let remote_change_clone = remote_diff.lock().unwrap().clone();
+                let remote_change_clone = remote_diff.lock_unpoisoned().clone();
                 let commit = doc.undo_internal(
                     IdSpan {
                         peer: self.peer(),
                         counter: span.span,
                     },
-                    &mut self.container_remap.lock().unwrap(),
+                    &mut self.container_remap.lock_unpoisoned(),
                     Some(&remote_change_clone),
                     &mut |diff| {
                         info_span!("transform remote diff").in_scope(|| {
@@ -851,9 +852,9 @@ impl UndoManager {
                         // remote_diff is also transformed by it now (that's what we need).
                         transform_cursor(
                             cursor,
-                            &remote_diff.lock().unwrap(),
+                            &remote_diff.lock_unpoisoned(),
                             doc,
-                            &self.container_remap.lock().unwrap(),
+                            &self.container_remap.lock_unpoisoned(),
                         );
                     }
 

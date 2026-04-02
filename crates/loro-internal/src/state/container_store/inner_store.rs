@@ -1,3 +1,4 @@
+use crate::sync::MutexExt as _;
 use crate::{
     arena::SharedArena, configure::Configure, container::idx::ContainerIdx,
     state::container_store::FRONTIERS_KEY, utils::kv_wrapper::KvWrapper, version::Frontiers,
@@ -133,7 +134,7 @@ impl InnerStore {
     }
 
     pub(crate) fn flush(&mut self) {
-        let deleted = self.config.deleted_root_containers.lock().unwrap();
+        let deleted = self.config.deleted_root_containers.lock_unpoisoned();
         self.kv
             .set_all(self.store.iter_mut().filter_map(|(idx, c)| {
                 if c.is_flushed() {

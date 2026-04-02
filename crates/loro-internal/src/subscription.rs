@@ -2,6 +2,7 @@ use super::{
     arena::SharedArena,
     event::{DiffEvent, DocDiff},
 };
+use crate::sync::MutexExt as _;
 use crate::{
     container::idx::ContainerIdx, utils::subscription::SubscriberSet, ContainerDiff, LoroDoc,
     Subscription,
@@ -79,10 +80,10 @@ impl Observer {
     pub(crate) fn emit(&self, doc_diff: DocDiff) {
         let success = self.emit_inner(doc_diff);
         if success {
-            let mut e = self.inner.queue.lock().unwrap().pop_front();
+            let mut e = self.inner.queue.lock_unpoisoned().pop_front();
             while let Some(event) = e {
                 self.emit_inner(event);
-                e = self.inner.queue.lock().unwrap().pop_front();
+                e = self.inner.queue.lock_unpoisoned().pop_front();
             }
         }
     }
@@ -113,7 +114,7 @@ impl Observer {
                     .any(|x| inner.subscriber_set.is_recursive_calling(&Some(*x)))
             {
                 drop(container_events_map);
-                inner.queue.lock().unwrap().push_back(doc_diff);
+                inner.queue.lock_unpoisoned().push_back(doc_diff);
                 return false;
             }
         }

@@ -1,5 +1,6 @@
 use std::{collections::BTreeSet, sync::Arc};
 
+use crate::sync::MutexExt as _;
 use fractional_index::FractionalIndex;
 use itertools::Itertools;
 use loro_common::{ContainerID, IdFull, IdLp, Lamport, PeerID, TreeID, ID};
@@ -164,7 +165,7 @@ impl TreeDiffCalculator {
         oplog.with_history_cache(|h| {
             let mark = h.ensure_importing_caches_exist();
             let tree_ops = h.get_tree(&self.container, mark).unwrap();
-            let mut tree_cache = tree_ops.tree().lock().unwrap();
+            let mut tree_cache = tree_ops.tree().lock_unpoisoned();
             let s = format!("checkout current {:?} to {:?}", &tree_cache.current_vv, &to);
             let s = tracing::span!(tracing::Level::INFO, "checkout", s = s);
             let _e = s.enter();
@@ -231,7 +232,7 @@ impl TreeDiffCalculator {
         oplog.with_history_cache(|h| {
             let mark = h.ensure_importing_caches_exist();
             let tree_ops = h.get_tree(&self.container, mark).unwrap();
-            let mut tree_cache = tree_ops.tree().lock().unwrap();
+            let mut tree_cache = tree_ops.tree().lock_unpoisoned();
             let mut parent_to_children_cache =
                 TreeParentToChildrenCache::init_from_tree_cache(&tree_cache);
             let s = tracing::span!(tracing::Level::INFO, "checkout_diff");

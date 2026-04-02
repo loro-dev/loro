@@ -1,4 +1,5 @@
 use crate::sync::Mutex;
+use crate::sync::MutexExt as _;
 use bytes::Bytes;
 use loro_kv_store::{mem_store::MemKvConfig, MemKvStore};
 use std::{collections::BTreeSet, ops::Bound, sync::Arc};
@@ -15,7 +16,7 @@ impl Clone for KvWrapper {
     /// Deep clone the inner kv store.
     fn clone(&self) -> Self {
         Self {
-            kv: self.kv.lock().unwrap().clone_store(),
+            kv: self.kv.lock_unpoisoned().clone_store(),
         }
     }
 }
@@ -38,27 +39,27 @@ impl KvWrapper {
     }
 
     pub fn import(&self, bytes: Bytes) {
-        let mut kv = self.kv.lock().unwrap();
+        let mut kv = self.kv.lock_unpoisoned();
         kv.import_all(bytes).unwrap();
     }
 
     pub fn export(&self) -> Bytes {
-        let mut kv = self.kv.lock().unwrap();
+        let mut kv = self.kv.lock_unpoisoned();
         kv.export_all()
     }
 
     pub fn get(&self, key: &[u8]) -> Option<Bytes> {
-        let kv = self.kv.lock().unwrap();
+        let kv = self.kv.lock_unpoisoned();
         kv.get(key)
     }
 
     pub fn with_kv<R>(&self, f: impl FnOnce(&dyn KvStore) -> R) -> R {
-        let kv = self.kv.lock().unwrap();
+        let kv = self.kv.lock_unpoisoned();
         f(&*kv)
     }
 
     pub fn set_all(&self, iter: impl Iterator<Item = (Bytes, Bytes)>) {
-        let mut kv = self.kv.lock().unwrap();
+        let mut kv = self.kv.lock_unpoisoned();
         for (k, v) in iter {
             kv.set(&k, v);
         }
@@ -66,12 +67,12 @@ impl KvWrapper {
 
     #[allow(unused)]
     pub(crate) fn contains_key(&self, key: &[u8]) -> bool {
-        self.kv.lock().unwrap().contains_key(key)
+        self.kv.lock_unpoisoned().contains_key(key)
     }
 
     pub(crate) fn remove_same(&self, old_kv: &KvWrapper) {
-        let other = old_kv.kv.lock().unwrap();
-        let mut this = self.kv.lock().unwrap();
+        let other = old_kv.kv.lock_unpoisoned();
+        let mut this = self.kv.lock_unpoisoned();
         for (k, v) in other.scan(Bound::Unbounded, Bound::Unbounded) {
             if this.get(&k) == Some(v) {
                 this.remove(&k);
@@ -80,12 +81,12 @@ impl KvWrapper {
     }
 
     pub(crate) fn remove(&self, k: &[u8]) -> Option<Bytes> {
-        self.kv.lock().unwrap().remove(k)
+        self.kv.lock_unpoisoned().remove(k)
     }
 
     /// Remove all keys not in the given set
     pub(crate) fn retain_keys(&self, keys: &BTreeSet<Vec<u8>>) {
-        let mut kv = self.kv.lock().unwrap();
+        let mut kv = self.kv.lock_unpoisoned();
         let mut to_remove = BTreeSet::new();
         for (k, _) in kv.scan(Bound::Unbounded, Bound::Unbounded) {
             if !keys.contains(&*k) {
@@ -99,10 +100,10 @@ impl KvWrapper {
     }
 
     pub(crate) fn insert(&self, k: &[u8], v: Bytes) {
-        self.kv.lock().unwrap().set(k, v);
+        self.kv.lock_unpoisoned().set(k, v);
     }
 
     pub(crate) fn is_empty(&self) -> bool {
-        self.kv.lock().unwrap().is_empty()
+        self.kv.lock_unpoisoned().is_empty()
     }
 }

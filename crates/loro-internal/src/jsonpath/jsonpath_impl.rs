@@ -5,6 +5,7 @@ use crate::jsonpath::ast::{
     ComparisonOperator, FilterExpression, LogicalOperator, Segment, Selector,
 };
 use crate::jsonpath::JSONPathParser;
+use crate::sync::MutexExt as _;
 use crate::{HandlerTrait, LoroDoc};
 use loro_common::{ContainerID, LoroValue};
 use std::ops::ControlFlow;
@@ -526,7 +527,7 @@ impl PathValue for LoroDoc {
     }
 
     fn for_each_for_path(&self, f: &mut dyn FnMut(ValueOrHandler) -> ControlFlow<()>) {
-        let x = self.state.lock().unwrap().store.load_all();
+        let x = self.state.lock_unpoisoned().store.load_all();
         let arena = self.arena();
         for c in arena.root_containers(x) {
             let cid = arena.idx_to_id(c).unwrap();
@@ -538,8 +539,8 @@ impl PathValue for LoroDoc {
     }
 
     fn length_for_path(&self) -> usize {
-        let x = self.state.lock().unwrap().store.load_all();
-        let state = self.app_state().lock().unwrap();
+        let x = self.state.lock_unpoisoned().store.load_all();
+        let state = self.app_state().lock_unpoisoned();
         state.arena.root_containers(x).len()
     }
 

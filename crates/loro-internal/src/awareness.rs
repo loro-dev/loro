@@ -9,6 +9,7 @@
 //!
 //! The legacy `Awareness` type remains for backward compatibility but is deprecated in
 //! favor of `EphemeralStore`.
+use crate::sync::MutexExt as _;
 use std::sync::atomic::AtomicI64;
 use std::sync::{Arc, Mutex};
 
@@ -321,7 +322,7 @@ impl EphemeralStore {
     /// // Subscribe and collect first 3 updates, then auto-unsubscribe
     /// let sub = store.subscribe_local_updates(Box::new(move |bytes| {
     ///     println!("Received {} bytes of ephemeral data", bytes.len());
-    ///     let mut count = count_clone.lock().unwrap();
+    ///     let mut count = count_clone.lock_unpoisoned();
     ///     *count += 1;
     ///     *count < 3  // Auto-unsubscribe after 3 updates
     /// }));
@@ -381,7 +382,7 @@ impl EphemeralStoreInner {
     pub fn encode(&self, key: &str) -> Vec<u8> {
         let mut peers_info = Vec::new();
         let now = get_sys_timestamp() as Timestamp;
-        let states = self.states.lock().unwrap();
+        let states = self.states.lock_unpoisoned();
         if let Some(peer_state) = states.get(key) {
             if now - peer_state.timestamp > self.timeout.load(std::sync::atomic::Ordering::Relaxed)
             {
@@ -401,7 +402,7 @@ impl EphemeralStoreInner {
     pub fn encode_all(&self) -> Vec<u8> {
         let mut peers_info = Vec::new();
         let now = get_sys_timestamp() as Timestamp;
-        let states = self.states.lock().unwrap();
+        let states = self.states.lock_unpoisoned();
         for (key, peer_state) in states.iter() {
             if now - peer_state.timestamp > self.timeout.load(std::sync::atomic::Ordering::Relaxed)
             {
@@ -428,7 +429,7 @@ impl EphemeralStoreInner {
         let mut removed_keys = Vec::new();
         let now = get_sys_timestamp() as Timestamp;
         let timeout = self.timeout.load(std::sync::atomic::Ordering::Relaxed);
-        let mut states = self.states.lock().unwrap();
+        let mut states = self.states.lock_unpoisoned();
         for EncodedState {
             key,
             value: record,
@@ -486,14 +487,14 @@ impl EphemeralStoreInner {
     }
 
     pub fn get(&self, key: &str) -> Option<LoroValue> {
-        let states = self.states.lock().unwrap();
+        let states = self.states.lock_unpoisoned();
         states.get(key).and_then(|x| x.state.clone())
     }
 
     pub fn remove_outdated(&self) {
         let now = get_sys_timestamp() as Timestamp;
         let mut removed = Vec::new();
-        let mut states = self.states.lock().unwrap();
+        let mut states = self.states.lock_unpoisoned();
         states.retain(|key, state| {
             if now - state.timestamp > self.timeout.load(std::sync::atomic::Ordering::Relaxed) {
                 if state.state.is_some() {
@@ -519,7 +520,7 @@ impl EphemeralStoreInner {
     }
 
     pub fn get_all_states(&self) -> FxHashMap<String, LoroValue> {
-        let states = self.states.lock().unwrap();
+        let states = self.states.lock_unpoisoned();
         states
             .iter()
             .filter(|(_, v)| v.state.is_some())
@@ -528,7 +529,7 @@ impl EphemeralStoreInner {
     }
 
     pub fn keys(&self) -> Vec<String> {
-        let states = self.states.lock().unwrap();
+        let states = self.states.lock_unpoisoned();
         states
             .keys()
             .filter(|&k| states.get(k).unwrap().state.is_some())
@@ -566,7 +567,7 @@ impl EphemeralStoreInner {
 
     fn _set_local_state(&self, key: &str, value: Option<LoroValue>) {
         let is_delete = value.is_none();
-        let mut states = self.states.lock().unwrap();
+        let mut states = self.states.lock_unpoisoned();
         let old = states.insert(
             key.to_string(),
             State {

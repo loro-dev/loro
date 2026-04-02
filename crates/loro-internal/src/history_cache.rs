@@ -6,6 +6,7 @@ use std::{
 };
 
 use crate::sync::Mutex;
+use crate::sync::MutexExt as _;
 use either::Either;
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
@@ -201,7 +202,7 @@ impl ContainerHistoryCache {
             ensure_cov::notify_cov(
                 "loro_internal::history_cache::init_cache_by_visit_all_change_slow::visit_gc",
             );
-            let mut store = state.store.lock().unwrap();
+            let mut store = state.store.lock_unpoisoned();
             for (idx, c) in store.iter_all_containers_mut() {
                 match idx.get_type() {
                     ContainerType::Text | ContainerType::List | ContainerType::Unknown(_) => {
@@ -311,7 +312,7 @@ impl ContainerHistoryCache {
             return Vec::new();
         };
 
-        let mut binding = state.store.lock().unwrap();
+        let mut binding = state.store.lock_unpoisoned();
         let Some(text) = binding.get_mut(idx) else {
             return Vec::new();
         };
@@ -351,7 +352,7 @@ impl ContainerHistoryCache {
             return Vec::new();
         };
 
-        let mut binding = state.store.lock().unwrap();
+        let mut binding = state.store.lock_unpoisoned();
         let Some(list) = binding.get_mut(idx) else {
             return Vec::new();
         };
@@ -633,7 +634,7 @@ impl TreeOpGroup {
     }
 
     pub(crate) fn record_shallow_root_state(&mut self, nodes: Vec<MoveLamportAndID>) {
-        let mut tree = self.tree_for_diff.lock().unwrap();
+        let mut tree = self.tree_for_diff.lock_unpoisoned();
         for node in nodes.iter() {
             self.ops.insert(
                 node.id.idlp(),

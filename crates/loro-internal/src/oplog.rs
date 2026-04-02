@@ -3,6 +3,7 @@ pub(crate) mod loro_dag;
 mod pending_changes;
 
 use crate::sync::Mutex;
+use crate::sync::MutexExt as _;
 use bytes::Bytes;
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -149,16 +150,16 @@ impl OpLog {
     where
         F: FnOnce(&mut ContainerHistoryCache) -> R,
     {
-        let mut history_cache = self.history_cache.lock().unwrap();
+        let mut history_cache = self.history_cache.lock_unpoisoned();
         f(&mut history_cache)
     }
 
     pub fn has_history_cache(&self) -> bool {
-        self.history_cache.lock().unwrap().has_cache()
+        self.history_cache.lock_unpoisoned().has_cache()
     }
 
     pub fn free_history_cache(&self) {
-        let mut history_cache = self.history_cache.lock().unwrap();
+        let mut history_cache = self.history_cache.lock_unpoisoned();
         history_cache.free();
     }
 

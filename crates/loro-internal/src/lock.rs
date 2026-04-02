@@ -159,6 +159,13 @@ impl<T> LoroMutex<T> {
         Ok(ans)
     }
 
+    pub fn lock_unpoisoned(&self) -> LoroMutexGuard<'_, T> {
+        match self.lock() {
+            Ok(guard) => guard,
+            Err(_) => unreachable!("LoroMutex::lock recovers poisoned state before returning"),
+        }
+    }
+
     /// Returns whether the mutex appears locked at this instant.
     ///
     /// This is implemented via `try_lock().is_err()` and is intended only for
@@ -254,8 +261,8 @@ mod tests {
         let mutex1 = group.new_lock(1, LockKind::DocState);
         let mutex2 = group.new_lock(2, LockKind::Txn);
 
-        let _guard1 = mutex1.lock().unwrap(); // Lock higher priority first
-        let _guard2 = mutex2.lock().unwrap(); // This should panic with caller info
+        let _guard1 = mutex1.lock_unpoisoned(); // Lock higher priority first
+        let _guard2 = mutex2.lock_unpoisoned(); // This should panic with caller info
     }
 
     #[test]
@@ -264,11 +271,11 @@ mod tests {
         let mutex1 = group.new_lock(1, LockKind::Txn);
         let mutex2 = group.new_lock(2, LockKind::OpLog);
         let mutex3 = group.new_lock(3, LockKind::DocState);
-        let _guard1 = mutex1.lock().unwrap();
+        let _guard1 = mutex1.lock_unpoisoned();
         drop(_guard1);
-        let _guard2 = mutex2.lock().unwrap();
+        let _guard2 = mutex2.lock_unpoisoned();
         drop(_guard2);
-        let _guard3 = mutex3.lock().unwrap();
+        let _guard3 = mutex3.lock_unpoisoned();
     }
 
     #[test]
@@ -277,8 +284,8 @@ mod tests {
         let group = LoroLockGroup::new();
         let mutex1 = group.new_lock(1, LockKind::Txn);
         let mutex2 = group.new_lock(2, LockKind::OpLog);
-        let _guard1 = mutex1.lock().unwrap();
-        let _guard2 = mutex2.lock().unwrap();
+        let _guard1 = mutex1.lock_unpoisoned();
+        let _guard2 = mutex2.lock_unpoisoned();
         drop(_guard1);
         drop(_guard2);
     }
@@ -289,10 +296,10 @@ mod tests {
         let mutex1 = group.new_lock(1, LockKind::Txn);
         let mutex2 = group.new_lock(2, LockKind::OpLog);
         let mutex3 = group.new_lock(3, LockKind::DocState);
-        let _guard1 = mutex1.lock().unwrap();
-        let _guard3 = mutex3.lock().unwrap();
+        let _guard1 = mutex1.lock_unpoisoned();
+        let _guard3 = mutex3.lock_unpoisoned();
         drop(_guard3);
-        let _guard2 = mutex2.lock().unwrap();
+        let _guard2 = mutex2.lock_unpoisoned();
         drop(_guard2);
     }
 
@@ -303,10 +310,10 @@ mod tests {
         let mutex1 = group.new_lock(1, LockKind::Txn);
         let mutex2 = group.new_lock(2, LockKind::OpLog);
         let mutex3 = group.new_lock(3, LockKind::DocState);
-        let _guard2 = mutex2.lock().unwrap();
-        let _guard3 = mutex3.lock().unwrap();
+        let _guard2 = mutex2.lock_unpoisoned();
+        let _guard3 = mutex3.lock_unpoisoned();
         drop(_guard3);
-        let _guard1 = mutex1.lock().unwrap();
+        let _guard1 = mutex1.lock_unpoisoned();
     }
 
     #[test]
@@ -315,12 +322,12 @@ mod tests {
         let mutex1 = group.new_lock(1, LockKind::Txn);
         let mutex2 = group.new_lock(2, LockKind::Txn);
 
-        let guard1 = mutex1.lock().unwrap();
+        let guard1 = mutex1.lock_unpoisoned();
         // Locking same kind should work (cur >= self.kind, so this would fail)
         // Actually, let's test this properly - same kind should fail
         drop(guard1);
 
-        let _guard2 = mutex2.lock().unwrap(); // This should work when guard1 is dropped
+        let _guard2 = mutex2.lock_unpoisoned(); // This should work when guard1 is dropped
     }
 
     #[test]
@@ -339,7 +346,7 @@ mod tests {
 
         assert!(!mutex.is_locked());
 
-        let _guard = mutex.lock().unwrap();
+        let _guard = mutex.lock_unpoisoned();
         assert!(mutex.is_locked());
     }
 
@@ -351,10 +358,10 @@ mod tests {
         let mutex1 = group.new_lock(1, LockKind::DocState);
         let mutex2 = group.new_lock(2, LockKind::Txn);
 
-        let _guard1 = mutex1.lock().unwrap();
+        let _guard1 = mutex1.lock_unpoisoned();
 
         // This line should be reported in the panic message
-        let _guard2 = mutex2.lock().unwrap();
+        let _guard2 = mutex2.lock_unpoisoned();
     }
 
     #[test]
@@ -363,11 +370,11 @@ mod tests {
         let mutex = group.new_lock(42, LockKind::Txn);
 
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _guard = mutex.lock().unwrap();
+            let _guard = mutex.lock_unpoisoned();
             panic!("poison the lock");
         }));
 
-        let guard = mutex.lock().unwrap();
+        let guard = mutex.lock_unpoisoned();
         assert_eq!(*guard, 42);
     }
 }

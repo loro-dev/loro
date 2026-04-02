@@ -247,8 +247,8 @@ pub(crate) fn encode_snapshot_inner(doc: &LoroDoc) -> Snapshot {
     assert!(doc.drop_pending_events().is_empty());
     let old_state_frontiers = doc.state_frontiers();
     let was_detached = doc.is_detached();
-    let oplog = doc.oplog().lock().unwrap();
-    let mut state = doc.app_state().lock().unwrap();
+    let oplog = doc.oplog().lock_unpoisoned();
+    let mut state = doc.app_state().lock_unpoisoned();
     let is_gc = state.store.shallow_root_store().is_some();
     if is_gc {
         // TODO: PERF: this can be optimized by reusing the bytes of gc store
@@ -273,7 +273,7 @@ pub(crate) fn encode_snapshot_inner(doc: &LoroDoc) -> Snapshot {
         drop(oplog);
         doc._checkout_without_emitting(&latest, false, true)
             .unwrap();
-        state = doc.app_state().lock().unwrap();
+        state = doc.app_state().lock_unpoisoned();
     }
     state.ensure_all_alive_containers();
     let state_bytes = state.store.encode();
@@ -305,7 +305,7 @@ pub(crate) fn decode_oplog(oplog: &mut OpLog, bytes: &[u8]) -> Result<Vec<Change
 }
 
 pub(crate) fn encode_updates<W: std::io::Write>(doc: &LoroDoc, vv: &VersionVector, w: &mut W) {
-    let oplog = doc.oplog().lock().unwrap();
+    let oplog = doc.oplog().lock_unpoisoned();
     oplog.export_blocks_from(vv, w);
 }
 
@@ -348,7 +348,7 @@ pub(crate) fn decode_snapshot_blob_meta(
     };
 
     let doc = LoroDoc::new();
-    let mut oplog = doc.oplog.lock().unwrap();
+    let mut oplog = doc.oplog.lock_unpoisoned();
     oplog.decode_change_store(oplog_bytes.to_vec().into())?;
     let timestamp = oplog.get_greatest_timestamp(oplog.dag.frontiers());
     let f = oplog.dag.shallow_since_frontiers().clone();
@@ -370,7 +370,7 @@ pub(crate) fn decode_updates_blob_meta(
     parsed: ParsedHeaderAndBody,
 ) -> LoroResult<ImportBlobMetadata> {
     let doc = LoroDoc::new();
-    let mut oplog = doc.oplog.lock().unwrap();
+    let mut oplog = doc.oplog.lock_unpoisoned();
     let changes = decode_updates(&mut oplog, parsed.body.to_vec().into())?;
     let mut start_vv = VersionVector::new();
     let mut end_vv = VersionVector::new();
