@@ -621,6 +621,44 @@ impl OpLog {
 
         max_timestamp
     }
+
+    /// Swap the data-related contents of this OpLog with another.
+    ///
+    /// This swaps:
+    /// - `dag` - the AppDag containing version history
+    /// - `change_store` - the store containing all changes
+    /// - `history_cache` - the history cache
+    /// - `pending_changes` - pending changes waiting for deps
+    ///
+    /// This does NOT swap (these stay with the original doc):
+    /// - `arena` - arena contents are swapped separately via `SharedArena::swap_contents_with`
+    /// - `batch_importing` - stays with original doc
+    /// - `configure` - configuration stays with original doc
+    /// - `uncommitted_change` - must be None during swap
+    ///
+    /// # Panics
+    ///
+    /// Panics if either OpLog has an uncommitted change.
+    pub(crate) fn swap_data_with(&mut self, other: &mut OpLog) {
+        assert!(
+            self.uncommitted_change.is_none(),
+            "Cannot swap OpLog with uncommitted change"
+        );
+        assert!(
+            other.uncommitted_change.is_none(),
+            "Cannot swap OpLog with uncommitted change"
+        );
+
+        // Swap the data fields
+        std::mem::swap(&mut self.dag, &mut other.dag);
+        std::mem::swap(&mut self.change_store, &mut other.change_store);
+        std::mem::swap(&mut self.pending_changes, &mut other.pending_changes);
+
+        // Swap history cache contents
+        let mut self_cache = self.history_cache.lock().unwrap();
+        let mut other_cache = other.history_cache.lock().unwrap();
+        std::mem::swap(&mut *self_cache, &mut *other_cache);
+    }
 }
 
 #[derive(Debug)]

@@ -13,7 +13,7 @@ pub mod diff;
 pub mod diff_calc;
 pub mod handler;
 pub mod sync;
-use crate::sync::AtomicBool;
+use crate::sync::{AtomicBool, AtomicU64};
 use std::sync::Arc;
 mod change_meta;
 pub(crate) mod lock;
@@ -162,6 +162,12 @@ pub struct LoroDocInner {
     txn: Arc<LoroMutex<Option<Transaction>>>,
     auto_commit: AtomicBool,
     detached: AtomicBool,
+    /// Generation counter for arena invalidation.
+    ///
+    /// This counter is incremented when the document's internals are swapped
+    /// (e.g., during `replace_with_shallow`). Handlers cache this value alongside
+    /// their `ContainerIdx` to detect when re-resolution is needed.
+    arena_generation: AtomicU64,
     local_update_subs: SubscriberSetWithQueue<(), LocalUpdateCallback, Vec<u8>>,
     peer_id_change_subs: SubscriberSetWithQueue<(), PeerIdUpdateCallback, ID>,
     first_commit_from_peer_subs:

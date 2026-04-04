@@ -502,6 +502,7 @@ decorateMethods(LoroDoc.prototype, [
   "commit",
   "getCursorPos",
   "revertTo",
+  "replaceWithShallow",
   "export",
   "exportJsonUpdates",
   "exportJsonInIdSpan",

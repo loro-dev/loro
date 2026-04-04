@@ -442,6 +442,27 @@ where
     pub fn may_include(&self, emitter: &EmitterKey) -> bool {
         self.0.lock().unwrap().subscribers.contains_key(emitter)
     }
+
+    /// Extract all active subscriptions, removing them from the set.
+    /// Returns a vector of (emitter_key, callback) pairs.
+    /// This is useful for migrating subscriptions to a new context.
+    pub fn extract_all(&self) -> Vec<(EmitterKey, Callback)> {
+        let mut lock = self.0.lock().unwrap();
+        let mut result = Vec::new();
+
+        for (key, subscribers) in std::mem::take(&mut lock.subscribers) {
+            if let Either::Left(subs) = subscribers {
+                for (_, subscriber) in subs {
+                    if subscriber.active.load(Ordering::Relaxed) {
+                        result.push((key.clone(), subscriber.callback));
+                    }
+                    // The InnerSubscription (_sub) is dropped here, which clears the unsubscribe callback
+                }
+            }
+        }
+
+        result
+    }
 }
 
 impl<EmitterKey, Callback> Default for SubscriberSet<EmitterKey, Callback>

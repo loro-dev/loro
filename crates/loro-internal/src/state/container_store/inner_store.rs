@@ -263,4 +263,12 @@ impl InnerStore {
         new_store.decode(bytes).unwrap();
         new_store
     }
+
+    /// Update the arena reference in this store.
+    ///
+    /// This is needed after `DocState::swap_data_with` because the swapped store
+    /// still references the old arena.
+    pub(crate) fn set_arena(&mut self, arena: SharedArena) {
+        self.arena = arena;
+    }
 }

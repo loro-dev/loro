@@ -1348,6 +1348,34 @@ impl LoroDoc {
         self.doc.is_shallow()
     }
 
+    /// Replace the current document state with a shallow snapshot at the given frontiers.
+    ///
+    /// This method trims the history in place, preserving subscriptions and configuration.
+    /// After calling this method, the document will only contain history from the specified
+    /// frontiers onwards.
+    ///
+    /// @param frontiers - The frontiers to trim history to
+    ///
+    /// @example
+    /// ```ts
+    /// import { LoroDoc } from "loro-crdt";
+    ///
+    /// const doc = new LoroDoc();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello World!");
+    /// doc.commit();
+    /// const frontiers = doc.frontiers();
+    /// // ... more operations ...
+    /// // Trim history to the frontiers, discarding earlier operations
+    /// doc.replaceWithShallow(frontiers);
+    /// ```
+    #[wasm_bindgen(js_name = "replaceWithShallow")]
+    pub fn replace_with_shallow(&self, frontiers: Vec<JsID>) -> JsResult<()> {
+        let frontiers = ids_to_frontiers(frontiers)?;
+        self.doc.replace_with_shallow(&frontiers)?;
+        Ok(())
+    }
+
     /// The doc only contains the history since this version
     ///
     /// This is empty if the doc is not shallow.
