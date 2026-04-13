@@ -4,13 +4,9 @@ pub use loom::thread;
 pub use std::thread;
 
 #[cfg(loom)]
-pub use loom::sync::{
-    LockResult, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard,
-};
+pub use loom::sync::{LockResult, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 #[cfg(not(loom))]
-pub use std::sync::{
-    LockResult, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard,
-};
+pub use std::sync::{LockResult, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 #[cfg(loom)]
 pub use loom::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicU8, AtomicUsize};
@@ -69,6 +65,7 @@ mod my_thread_local {
 
     use super::thread;
     use super::Mutex;
+    use super::MutexExt as _;
     use rustc_hash::FxHashMap;
 
     #[derive(Debug)]

@@ -9,9 +9,9 @@
 //!
 //! The legacy `Awareness` type remains for backward compatibility but is deprecated in
 //! favor of `EphemeralStore`.
-use crate::sync::MutexExt as _;
+use crate::sync::{Mutex, MutexExt as _};
 use std::sync::atomic::AtomicI64;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use loro_common::{LoroValue, PeerID};
 use rustc_hash::FxHashMap;

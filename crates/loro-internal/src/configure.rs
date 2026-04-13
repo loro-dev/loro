@@ -1,12 +1,11 @@
-use crate::sync::{MutexExt as _, RwLockExt as _};
+use crate::sync::{Mutex, MutexExt as _, RwLock, RwLockExt as _};
 use loro_common::ContainerID;
 use rustc_hash::FxHashSet;
 
 pub use crate::container::richtext::config::{StyleConfig, StyleConfigMap};
 use crate::LoroDoc;
 use std::sync::atomic::{AtomicBool, AtomicI64};
-use std::sync::RwLock;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 #[derive(Clone, Debug)]
 pub struct Configure {

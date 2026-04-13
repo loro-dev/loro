@@ -1,6 +1,6 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use crate::sync::MutexExt as _;
+use crate::sync::{Mutex, MutexExt as _};
 use crate::{
     change::{Change, Timestamp},
     oplog::get_timestamp_now_txn,

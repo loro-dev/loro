@@ -3,7 +3,6 @@ use loro_common::{ContainerID, InternalString, LoroError, LoroResult, LoroValue,
 use loro_delta::DeltaRopeBuilder;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::ops::Range;
-use std::sync::RwLock;
 use std::sync::{Arc, Weak};
 
 use crate::{
@@ -22,6 +21,7 @@ use crate::{
     event::{Diff, Index, InternalDiff, TextDiff},
     handler::TextDelta,
     op::{Op, RawOp},
+    sync::RwLock,
     utils::{lazy::LazyLoad, string_slice::StringSlice},
     LoroDocInner,
 };

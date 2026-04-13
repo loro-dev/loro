@@ -1,6 +1,5 @@
 use crate::sync::MutexExt as _;
-use crate::sync::{AtomicU64, Mutex};
-use std::sync::RwLock;
+use crate::sync::{AtomicU64, Mutex, RwLock};
 use std::sync::{Arc, Weak};
 use std::{borrow::Cow, io::Write, sync::atomic::Ordering};
 
