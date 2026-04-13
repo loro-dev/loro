@@ -566,6 +566,36 @@ describe("event", () => {
     }
   });
 
+  it("importBatch flushes pending events", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const source = new LoroDoc();
+      source.getText("text").insert(0, "Hello");
+      source.commit();
+      const snapshot = source.export({ mode: "snapshot" });
+
+      const doc = new LoroDoc();
+      let called = 0;
+      doc.subscribe(() => {
+        called += 1;
+      });
+
+      doc.importBatch([snapshot]);
+      await Promise.resolve();
+
+      expect(called).toBeGreaterThan(0);
+      expect(
+        errorSpy.mock.calls.some((args) =>
+          args.some((arg) =>
+            String(arg).includes("[LORO_INTERNAL_ERROR] Event not called"),
+          ),
+        ),
+      ).toBe(false);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
   it("setDetachedEditing flushes pending events", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
@@ -671,6 +701,77 @@ it("subscribe pre commit", () => {
   doc.getList("list").insert(0, 100);
   doc.commit();
   expect(doc.getChangeAt({ peer: "0", counter: 0 }).message).toBe("test");
+});
+
+it("importBatch can re-enter doc in pre-commit callback", () => {
+  const remote = new LoroDoc();
+  remote.getText("remote").insert(0, "remote");
+  remote.commit();
+  const snapshot = remote.export({ mode: "snapshot" });
+
+  const doc = new LoroDoc();
+  doc.setPeerId(1);
+  doc.getText("local").insert(0, "local");
+
+  let callbackError: unknown;
+  let peerIdStr: string | undefined;
+  doc.subscribePreCommit(() => {
+    try {
+      peerIdStr = doc.peerIdStr;
+    } catch (error) {
+      callbackError = error;
+    }
+  });
+
+  doc.importBatch([snapshot]);
+
+  expect(callbackError).toBeUndefined();
+  expect(peerIdStr).toBe("1");
+});
+
+it("checkoutToLatest can re-enter doc in pre-commit callback", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId(1);
+  doc.getText("local").insert(0, "local");
+
+  let callbackError: unknown;
+  let peerIdStr: string | undefined;
+  doc.subscribePreCommit(() => {
+    try {
+      peerIdStr = doc.peerIdStr;
+    } catch (error) {
+      callbackError = error;
+    }
+  });
+
+  doc.checkoutToLatest();
+
+  expect(callbackError).toBeUndefined();
+  expect(peerIdStr).toBe("1");
+});
+
+it("attach can re-enter doc in pre-commit callback", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId(1);
+  doc.detach();
+  doc.setDetachedEditing(true);
+  doc.getText("local").insert(0, "local");
+
+  let callbackError: unknown;
+  let peerIdStr: string | undefined;
+  doc.subscribePreCommit(() => {
+    try {
+      peerIdStr = doc.peerIdStr;
+    } catch (error) {
+      callbackError = error;
+    }
+  });
+
+  doc.attach();
+
+  expect(callbackError).toBeUndefined();
+  expect(typeof peerIdStr).toBe("string");
+  expect(peerIdStr).not.toBe("");
 });
 
 function oneMs(): Promise<void> {

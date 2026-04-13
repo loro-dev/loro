@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.11.0
+
+### Minor Changes
+
+- 33d5e51: Disable WebAssembly reference-types in the wasm build for compatibility with devices like iOS 16.
+
+### Patch Changes
+
+- 41c687b: Fix forkAt to return errors instead of panicking on invalid frontiers and shallow docs.
+
 ## 1.10.8
 
 ### Patch Changes

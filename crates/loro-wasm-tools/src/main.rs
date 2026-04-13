@@ -43,6 +43,15 @@ enum Command {
         /// Output Wasm file path.
         output: PathBuf,
     },
+    /// Strip named custom sections from a Wasm binary.
+    StripCustom {
+        /// Input Wasm file to strip.
+        input: PathBuf,
+        /// Output Wasm file path.
+        output: PathBuf,
+        /// Custom section names to remove.
+        names: Vec<String>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -56,6 +65,11 @@ fn main() -> Result<()> {
             url,
         } => split_debug(input, output, debug_output, url),
         Command::StripDebug { input, output } => strip_debug(input, output),
+        Command::StripCustom {
+            input,
+            output,
+            names,
+        } => strip_custom(input, output, names),
     }
 }
 
@@ -153,6 +167,74 @@ fn strip_debug(input: PathBuf, output: PathBuf) -> Result<()> {
         return Ok(());
     }
 
+    let stripped = strip_custom_sections(&bytes, &remove_ranges)?;
+
+    if let Some(parent) = output.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create directory {}", parent.display()))?;
+    }
+    fs::write(&output, &stripped)
+        .with_context(|| format!("failed to write stripped Wasm {}", output.display()))?;
+
+    Ok(())
+}
+
+fn strip_custom(input: PathBuf, output: PathBuf, names: Vec<String>) -> Result<()> {
+    ensure!(
+        !names.is_empty(),
+        "at least one custom section name must be provided"
+    );
+
+    let bytes = fs::read(&input)
+        .with_context(|| format!("failed to read Wasm module {}", input.display()))?;
+    ensure!(
+        bytes.starts_with(&[0x00, 0x61, 0x73, 0x6d]),
+        "input {} is not a valid WebAssembly binary",
+        input.display()
+    );
+
+    let mut remove_ranges = Vec::new();
+    for payload in WasmParser::new(0).parse_all(&bytes) {
+        let payload = payload.context("failed to parse Wasm payload")?;
+        if let Payload::CustomSection(section) = payload {
+            let section_name = section.name();
+            if !names.iter().any(|name| name == section_name) {
+                continue;
+            }
+
+            let payload_range = section.range();
+            let payload_len = payload_range
+                .end
+                .checked_sub(payload_range.start)
+                .context("custom section range underflow")?;
+            let mut leb_len = 1usize;
+            let mut tmp = payload_len;
+            while tmp >= 0x80 {
+                leb_len += 1;
+                tmp >>= 7;
+            }
+            let header_len = 1 + leb_len;
+            let start = payload_range
+                .start
+                .checked_sub(header_len)
+                .context("custom section header underflow")?;
+            remove_ranges.push(start..payload_range.end);
+        }
+    }
+
+    if remove_ranges.is_empty() {
+        if input != output {
+            if let Some(parent) = output.parent() {
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("failed to create directory {}", parent.display()))?;
+            }
+            fs::write(&output, &bytes)
+                .with_context(|| format!("failed to write Wasm {}", output.display()))?;
+        }
+        return Ok(());
+    }
+
+    remove_ranges.sort_by_key(|r| r.start);
     let stripped = strip_custom_sections(&bytes, &remove_ranges)?;
 
     if let Some(parent) = output.parent() {

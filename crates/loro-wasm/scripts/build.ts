@@ -26,6 +26,12 @@ const TARGETS = ["bundler", "nodejs", "web"];
 const startTime = performance.now();
 const LoroWasmDir = path.resolve(__dirname, "..");
 const WorkspaceCargoToml = path.resolve(__dirname, "../../../Cargo.toml");
+const RawWasmPath = path.resolve(
+  LoroWasmDir,
+  "../../target/wasm32-unknown-unknown",
+  profileDir,
+  "loro_wasm.wasm",
+);
 const wasmPackageJson = JSON.parse(
   await Deno.readTextFile(path.resolve(LoroWasmDir, "package.json")),
 );
@@ -51,6 +57,7 @@ console.log({
 });
 async function build() {
   await cargoBuild();
+  await stripReferenceTypesFeatureHint();
   const target = Deno.args[1];
   if (target != null) {
     if (!TARGETS.includes(target)) {
@@ -218,7 +225,7 @@ async function buildTarget(target: string) {
 
   // TODO: polyfill FinalizationRegistry
   const cmd =
-    `wasm-bindgen --keep-debug --weak-refs --target ${target} --out-dir ${target} ../../target/wasm32-unknown-unknown/${profileDir}/loro_wasm.wasm`;
+    `wasm-bindgen --keep-debug --weak-refs --target ${target} --out-dir ${target} ${RawWasmPath}`;
   console.log(">", cmd);
   await Deno.run({ cmd: cmd.split(" "), cwd: LoroWasmDir }).status();
   console.log();
@@ -248,6 +255,18 @@ async function buildTarget(target: string) {
       patch,
     );
   }
+}
+
+async function stripReferenceTypesFeatureHint() {
+  // wasm-bindgen 0.2.100 uses the `target_features` custom section to choose
+  // externref table glue. Safari 16.0-16.3 lacks WebAssembly reference-types,
+  // so strip the feature hint and let wasm-bindgen fall back to slab handles.
+  await runWasmTools([
+    "strip-custom",
+    RawWasmPath,
+    RawWasmPath,
+    "target_features",
+  ]);
 }
 
 const resolveSourcemapReference = (target: string): string => {
