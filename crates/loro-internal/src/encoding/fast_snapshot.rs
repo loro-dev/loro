@@ -218,7 +218,7 @@ pub(crate) fn decode_snapshot_inner(
     // FIXME: we may need to extract the unknown containers here?
     // Or we should lazy load it when the time comes?
 
-    state.init_with_states_and_version(state_frontiers, &oplog, vec![], false, origin);
+    state.init_with_states_and_version(state_frontiers, &oplog, vec![], false, origin)?;
     drop(state);
     drop(oplog);
     if need_calc {

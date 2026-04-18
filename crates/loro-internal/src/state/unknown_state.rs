@@ -36,7 +36,7 @@ impl ContainerState for UnknownState {
         unreachable!()
     }
 
-    fn apply_diff(&mut self, _diff: InternalDiff, _ctx: DiffApplyContext) {
+    fn apply_diff(&mut self, _diff: InternalDiff, _ctx: DiffApplyContext) -> LoroResult<()> {
         unreachable!()
     }
 

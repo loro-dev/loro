@@ -867,16 +867,19 @@ impl AppDag {
 
     pub(crate) fn ensure_vv_for(&self, target_node: &AppDagNode) -> ImVersionVector {
         if target_node.vv.get().is_none() {
-            // (node, has_processed_children)
+            // Iterative DFS. When the DAG contains a diamond, a dep can end
+            // up on the stack multiple times (once for each ancestor that
+            // re-queued the current node before its deps were ready). We
+            // skip nodes whose vv has already been computed — the original
+            // code eagerly called `OnceCell::set(..).unwrap()` on every pop
+            // and panicked on the second visit (see loro-dev/loro#929).
             let mut stack: SmallVec<[AppDagNode; 4]> = smallvec::smallvec![target_node.clone()];
             while let Some(top_node) = stack.pop() {
+                if top_node.vv.get().is_some() {
+                    continue;
+                }
+
                 let mut ans_vv = ImVersionVector::default();
-                // trace!("node={:?} {:?}", &top_node, has_all_deps_met);
-                // trace!("deps={:?}", &top_node.deps);
-                // trace!("this.shallow_f_deps={:?}", &self.shallow_frontiers_deps);
-                // trace!("this.vv={:?}", &self.vv);
-                // trace!("this.unparsed_vv={:?}", &self.unparsed_vv);
-                // trace!("this.shallow_since_vv={:?}", &self.shallow_since_vv);
                 if top_node.deps == self.shallow_root_frontiers_deps {
                     for (&p, &c) in self.shallow_since_vv.iter() {
                         ans_vv.insert(p, c);
@@ -886,7 +889,6 @@ impl AppDag {
                     for id in top_node.deps.iter() {
                         let node = self.get(id).expect("deps should be in the dag");
                         if node.vv.get().is_none() {
-                            // assert!(!has_all_deps_met);
                             if all_deps_processed {
                                 stack.push(top_node.clone());
                             }
@@ -913,8 +915,10 @@ impl AppDag {
                     }
                 }
 
-                // trace!("ans_vv={:?}", &ans_vv);
-                top_node.vv.set(ans_vv.clone()).unwrap();
+                // Tolerate a racing set from the diamond case above: if
+                // another path already initialized this cell, trust that
+                // value (it was computed from the same DAG) and move on.
+                let _ = top_node.vv.set(ans_vv);
             }
         }
 
@@ -1128,5 +1132,71 @@ pub struct FrontiersNotIncluded;
 impl Display for FrontiersNotIncluded {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("The given Frontiers are not included by the doc")
+    }
+}
+
+#[cfg(test)]
+mod ensure_vv_for_tests {
+    use super::*;
+    use crate::arena::SharedArena;
+    use std::sync::atomic::AtomicI64;
+
+    fn make_dag_node(peer: PeerID, cnt: Counter, len: usize, deps: Frontiers) -> AppDagNode {
+        AppDagNodeInner {
+            vv: OnceCell::new(),
+            peer,
+            cnt,
+            lamport: cnt as Lamport,
+            deps,
+            has_succ: false,
+            len,
+        }
+        .into()
+    }
+
+    /// Regression for loro-dev/loro#929: when computing the vv for a node
+    /// whose DAG fan-in contains a shared ancestor reached through multiple
+    /// paths, the iterative DFS used to push the shared ancestor onto the
+    /// stack twice. The second visit would then call `OnceCell::set(..)
+    /// .unwrap()` on an already-initialized cell and panic with
+    /// "called `Result::unwrap()` on an `Err` value: ImVersionVector(..)".
+    ///
+    /// Topology:
+    ///    x (peer 1, counter 0)
+    ///    |
+    ///    y (peer 2, counter 0, deps = [x])
+    ///    |
+    ///    z (peer 3, counter 0, deps = [x, y])
+    ///
+    /// When we call `ensure_vv_for(z)`, z pushes x and y. Processing y then
+    /// re-pushes x (still uninitialized), so the stack ends up with two
+    /// copies of x; the second pop must be a no-op after the fix.
+    #[test]
+    fn diamond_dep_ensure_vv_for_does_not_double_set() {
+        let change_store =
+            ChangeStore::new_mem(&SharedArena::new(), Arc::new(AtomicI64::new(0)));
+        let dag = AppDag::new(change_store);
+
+        let x = make_dag_node(1, 0, 1, Frontiers::default());
+        let y = make_dag_node(2, 0, 1, Frontiers::from_id(ID::new(1, 0)));
+        let mut z_deps = Frontiers::default();
+        z_deps.push(ID::new(1, 0));
+        z_deps.push(ID::new(2, 0));
+        let z = make_dag_node(3, 0, 1, z_deps);
+
+        {
+            let mut map = dag.map.lock_unpoisoned();
+            map.insert(x.id_start(), x);
+            map.insert(y.id_start(), y);
+            map.insert(z.id_start(), z.clone());
+        }
+
+        // Historically this panicked at the inner `vv.set(...).unwrap()`.
+        // `ensure_vv_for` returns the vv *at* the node: it covers every
+        // peer in the causal past, but not the node's own peer counter.
+        let vv = dag.ensure_vv_for(&z);
+        assert_eq!(vv.get(&1).copied(), Some(1));
+        assert_eq!(vv.get(&2).copied(), Some(1));
+        assert!(vv.get(&3).is_none());
     }
 }

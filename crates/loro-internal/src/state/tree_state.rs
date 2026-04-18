@@ -1226,7 +1226,7 @@ impl ContainerState for TreeState {
 
     // How we apply the diff is coupled with the [DiffMode] we used to calculate the diff.
     // So be careful when you modify this function.
-    fn apply_diff(&mut self, diff: InternalDiff, ctx: DiffApplyContext) {
+    fn apply_diff(&mut self, diff: InternalDiff, ctx: DiffApplyContext) -> LoroResult<()> {
         if let InternalDiff::Tree(tree) = &diff {
             let need_check = !matches!(ctx.mode, DiffMode::Checkout | DiffMode::Linear);
             // assert never cause cycle move
@@ -1272,6 +1272,7 @@ impl ContainerState for TreeState {
             }
         }
         // self.check_tree_integrity();
+        Ok(())
     }
 
     fn apply_local_op(&mut self, raw_op: &RawOp, _op: &Op) -> LoroResult<ApplyLocalOpReturn> {

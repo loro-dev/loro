@@ -677,7 +677,7 @@ impl LoroDoc {
                         new_version: Cow::Owned(oplog.frontiers().clone()),
                     },
                     diff_mode,
-                );
+                )?;
             }
             result
         } else {
@@ -1468,7 +1468,7 @@ impl LoroDoc {
                 new_version: Cow::Owned(frontiers.clone()),
             },
             diff_mode,
-        );
+        )?;
 
         Ok(())
     }

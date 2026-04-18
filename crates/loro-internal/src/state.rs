@@ -122,7 +122,12 @@ pub(crate) trait ContainerState {
     #[must_use]
     fn apply_diff_and_convert(&mut self, diff: InternalDiff, ctx: DiffApplyContext) -> Diff;
 
-    fn apply_diff(&mut self, diff: InternalDiff, ctx: DiffApplyContext);
+    /// Apply a state diff. Returns `Err` when the diff is malformed in a
+    /// way that would corrupt the container (e.g. a `Retain`/`Insert` that
+    /// overruns the current state). The error is propagated up to
+    /// `doc.import` so the caller can observe the failure without the
+    /// doc-state panicking inside a lock.
+    fn apply_diff(&mut self, diff: InternalDiff, ctx: DiffApplyContext) -> LoroResult<()>;
 
     fn apply_local_op(&mut self, raw_op: &RawOp, op: &Op) -> LoroResult<ApplyLocalOpReturn>;
     /// Convert a state to a diff, such that an empty state will be transformed into the same as this state when it's applied.
@@ -177,7 +182,7 @@ impl<T: ContainerState> ContainerState for Box<T> {
         self.as_mut().apply_diff_and_convert(diff, ctx)
     }
 
-    fn apply_diff(&mut self, diff: InternalDiff, ctx: DiffApplyContext) {
+    fn apply_diff(&mut self, diff: InternalDiff, ctx: DiffApplyContext) -> LoroResult<()> {
         self.as_mut().apply_diff(diff, ctx)
     }
 
@@ -474,8 +479,17 @@ impl DocState {
 
     /// It's expected that diff only contains [`InternalDiff`]
     ///
+    /// Returns `Err` if any container state rejects its diff as malformed
+    /// (see `ContainerState::apply_diff`). The oplog has already accepted
+    /// the changes at this point; a returned error means the doc-state
+    /// view is incomplete and the caller should surface the failure
+    /// rather than treat the import as successful.
     #[instrument(skip_all)]
-    pub(crate) fn apply_diff(&mut self, mut diff: InternalDocDiff<'static>, diff_mode: DiffMode) {
+    pub(crate) fn apply_diff(
+        &mut self,
+        mut diff: InternalDocDiff<'static>,
+        diff_mode: DiffMode,
+    ) -> LoroResult<()> {
         if self.in_txn {
             panic!("apply_diff should not be called in a transaction");
         }
@@ -582,50 +596,53 @@ impl DocState {
                 }
                 crate::event::DiffVariant::Internal(_) => {
                     let cid = self.arena.idx_to_id(idx).unwrap();
-                    info_span!("apply diff on", container_id = ?cid).in_scope(|| {
-                        if self.in_txn {
-                            self.changed_idx_in_txn.insert(idx);
-                        }
-                        let state = self.store.get_or_create_mut(idx);
-                        if is_recording {
-                            // process bring_back before apply
-                            let external_diff =
-                                if diff.bring_back || to_revive_in_this_layer.contains(&idx) {
-                                    state.apply_diff(
-                                        internal_diff.into_internal().unwrap(),
-                                        DiffApplyContext {
-                                            mode: diff.diff_mode,
-                                            doc: &self.doc,
-                                        },
-                                    );
-                                    state.to_diff(&self.doc)
-                                } else {
-                                    state.apply_diff_and_convert(
-                                        internal_diff.into_internal().unwrap(),
-                                        DiffApplyContext {
-                                            mode: diff.diff_mode,
-                                            doc: &self.doc,
-                                        },
-                                    )
-                                };
-                            trigger_on_new_container(
-                                &external_diff,
-                                |cid| {
-                                    to_revive_in_next_layer.insert(cid);
-                                },
-                                &self.arena,
-                            );
-                            diff.diff = external_diff.into();
-                        } else {
-                            state.apply_diff(
-                                internal_diff.into_internal().unwrap(),
-                                DiffApplyContext {
-                                    mode: diff.diff_mode,
-                                    doc: &self.doc,
-                                },
-                            );
-                        }
-                    });
+                    info_span!("apply diff on", container_id = ?cid).in_scope(
+                        || -> LoroResult<()> {
+                            if self.in_txn {
+                                self.changed_idx_in_txn.insert(idx);
+                            }
+                            let state = self.store.get_or_create_mut(idx);
+                            if is_recording {
+                                // process bring_back before apply
+                                let external_diff =
+                                    if diff.bring_back || to_revive_in_this_layer.contains(&idx) {
+                                        state.apply_diff(
+                                            internal_diff.into_internal().unwrap(),
+                                            DiffApplyContext {
+                                                mode: diff.diff_mode,
+                                                doc: &self.doc,
+                                            },
+                                        )?;
+                                        state.to_diff(&self.doc)
+                                    } else {
+                                        state.apply_diff_and_convert(
+                                            internal_diff.into_internal().unwrap(),
+                                            DiffApplyContext {
+                                                mode: diff.diff_mode,
+                                                doc: &self.doc,
+                                            },
+                                        )
+                                    };
+                                trigger_on_new_container(
+                                    &external_diff,
+                                    |cid| {
+                                        to_revive_in_next_layer.insert(cid);
+                                    },
+                                    &self.arena,
+                                );
+                                diff.diff = external_diff.into();
+                            } else {
+                                state.apply_diff(
+                                    internal_diff.into_internal().unwrap(),
+                                    DiffApplyContext {
+                                        mode: diff.diff_mode,
+                                        doc: &self.doc,
+                                    },
+                                )?;
+                            }
+                            Ok(())
+                        },
+                    )?;
                 }
                 crate::event::DiffVariant::External(_) => unreachable!(),
             }
@@ -672,6 +689,7 @@ impl DocState {
         if self.is_recording() {
             self.record_diff(diff)
         }
+        Ok(())
     }
 
     pub fn apply_local_op(&mut self, raw_op: &RawOp, op: &Op) -> LoroResult<()> {
@@ -769,7 +787,7 @@ impl DocState {
         unknown_containers: Vec<ContainerIdx>,
         need_to_register_parent: bool,
         origin: InternalString,
-    ) {
+    ) -> LoroResult<()> {
         self.pre_txn(Default::default(), EventTriggerKind::Import);
         if need_to_register_parent {
             for state in self.store.iter_and_decode_all() {
@@ -808,7 +826,7 @@ impl DocState {
                     new_version: Cow::Owned(frontiers.clone()),
                 },
                 DiffMode::Checkout,
-            )
+            )?;
         }
 
         if self.is_recording() {
@@ -841,6 +859,7 @@ impl DocState {
         }
 
         self.frontiers = frontiers;
+        Ok(())
     }
 
     #[inline(always)]

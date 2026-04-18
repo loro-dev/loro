@@ -42,8 +42,9 @@ impl ContainerState for CounterState {
         }
     }
 
-    fn apply_diff(&mut self, diff: InternalDiff, ctx: DiffApplyContext) {
+    fn apply_diff(&mut self, diff: InternalDiff, ctx: DiffApplyContext) -> LoroResult<()> {
         let _ = self.apply_diff_and_convert(diff, ctx);
+        Ok(())
     }
 
     fn apply_local_op(&mut self, raw_op: &RawOp, _op: &Op) -> LoroResult<ApplyLocalOpReturn> {

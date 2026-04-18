@@ -571,7 +571,7 @@ impl ContainerState for RichtextState {
         Diff::Text(ans)
     }
 
-    fn apply_diff(&mut self, diff: InternalDiff, _ctx: DiffApplyContext) {
+    fn apply_diff(&mut self, diff: InternalDiff, _ctx: DiffApplyContext) -> LoroResult<()> {
         self.update_version();
         let InternalDiff::RichtextRaw(richtext) = diff else {
             unreachable!()
@@ -717,7 +717,7 @@ impl ContainerState for RichtextState {
             };
 
             *self.state.get_mut() = new_state;
-            return;
+            return Ok(());
         }
 
         let mut style_starts: FxHashMap<Arc<StyleOp>, usize> = FxHashMap::default();
@@ -795,6 +795,7 @@ impl ContainerState for RichtextState {
         }
 
         // self.check_consistency_between_content_and_style_ranges()
+        Ok(())
     }
 
     fn apply_local_op(&mut self, r_op: &RawOp, op: &Op) -> LoroResult<ApplyLocalOpReturn> {

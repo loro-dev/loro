@@ -1281,8 +1281,9 @@ impl ContainerState for MovableListState {
 
     // How we apply the diff is coupled with the [DiffMode] we used to calculate the diff.
     // So be careful when you modify this function.
-    fn apply_diff(&mut self, diff: InternalDiff, ctx: DiffApplyContext) {
+    fn apply_diff(&mut self, diff: InternalDiff, ctx: DiffApplyContext) -> LoroResult<()> {
         let _ = self.apply_diff_and_convert(diff, ctx);
+        Ok(())
     }
 
     #[instrument(skip_all)]

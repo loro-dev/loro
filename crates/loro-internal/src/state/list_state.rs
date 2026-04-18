@@ -15,7 +15,7 @@ use generic_btree::{
     rle::{CanRemove, HasLength, Mergeable, Sliceable, TryInsert},
     BTree, BTreeTrait, Cursor, LeafIndex, LengthFinder, UseLengthFinder,
 };
-use loro_common::{IdFull, LoroResult, ID};
+use loro_common::{IdFull, LoroError, LoroResult, ID};
 use loro_delta::array_vec::ArrayVec;
 use rustc_hash::FxHashMap;
 
@@ -408,10 +408,53 @@ impl ContainerState for ListState {
         Diff::List(ans)
     }
 
-    fn apply_diff(&mut self, diff: InternalDiff, DiffApplyContext { doc, .. }: DiffApplyContext) {
+    fn apply_diff(&mut self, diff: InternalDiff, DiffApplyContext { doc, .. }: DiffApplyContext) -> LoroResult<()> {
         let doc = &doc.upgrade().unwrap();
         match diff {
             InternalDiff::ListRaw(delta) => {
+                // Pre-validate the delta against the current state. If any
+                // span would read/write past `self.len()` the diff is
+                // malformed (see the mads-bootstrap fixture: the list
+                // diff calculator's tracker produces a `Retain(N)` where
+                // `N > self.len()` after a cold-start from a snapshot).
+                // Bail out with a structured error rather than advancing
+                // into `LoroList::insert` where it would panic.
+                let mut cursor = 0usize;
+                let mut projected = self.len();
+                for span in delta.iter() {
+                    match span {
+                        crate::delta::DeltaItem::Retain { retain: len, .. } => {
+                            cursor += len;
+                            if cursor > projected {
+                                return Err(LoroError::internal(format!(
+                                    "list diff retains {cursor} items but state only has {projected}",
+                                )));
+                            }
+                        }
+                        crate::delta::DeltaItem::Insert { insert: value, .. } => {
+                            let len = match &value.values {
+                                either::Either::Left(range) => range.to_range().len(),
+                                either::Either::Right(_) => 1,
+                            };
+                            if cursor > projected {
+                                return Err(LoroError::internal(format!(
+                                    "list diff inserts at {cursor} but state only has {projected}",
+                                )));
+                            }
+                            cursor += len;
+                            projected += len;
+                        }
+                        crate::delta::DeltaItem::Delete { delete: len, .. } => {
+                            if cursor + len > projected {
+                                return Err(LoroError::internal(format!(
+                                    "list diff deletes {len} at {cursor} but state only has {projected}",
+                                )));
+                            }
+                            projected -= len;
+                        }
+                    }
+                }
+
                 let mut index = 0;
                 for span in delta.iter() {
                     match span {
@@ -442,6 +485,7 @@ impl ContainerState for ListState {
             }
             _ => unreachable!(),
         }
+        Ok(())
     }
 
     fn apply_local_op(&mut self, op: &RawOp, _: &Op) -> LoroResult<ApplyLocalOpReturn> {

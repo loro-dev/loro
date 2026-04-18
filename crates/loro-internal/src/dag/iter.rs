@@ -239,6 +239,32 @@ impl<'a, T: DagNode, D: Dag<Node = T> + Debug> DagCausalIter<'a, D> {
             }
         }
 
+        // Enforce per-peer counter order. Within a single peer, the iterator
+        // must visit tracked node-starts in ascending counter order even when
+        // the nodes are concurrent (i.e. don't declare each other as deps).
+        // Without this, two same-peer nodes can both have zero in-degree and
+        // end up on the stack at once; the LIFO pop order would then violate
+        // the iterator's invariant that each popped id equals the current
+        // target_span.min() for its peer.
+        let mut by_peer: FxHashMap<PeerID, Vec<Counter>> = FxHashMap::default();
+        for id in out_degrees.keys() {
+            by_peer.entry(id.peer).or_default().push(id.counter);
+        }
+        for (peer, mut counters) in by_peer {
+            if counters.len() < 2 {
+                continue;
+            }
+            counters.sort_unstable();
+            for pair in counters.windows(2) {
+                let prev = ID::new(peer, pair[0]);
+                let curr = ID::new(peer, pair[1]);
+                if let Some(deg) = out_degrees.get_mut(&curr) {
+                    *deg += 1;
+                }
+                succ.entry(prev).or_default().push(curr);
+            }
+        }
+
         out_degrees.retain(|k, v| {
             if v.is_zero() {
                 stack.push(*k);
@@ -497,6 +523,77 @@ mod tests {
         let second = iter.next().expect("second segment should be re-queued");
         assert_eq!(second.data.id_start(), ID::new(1, 5));
         assert_eq!(second.slice, 0..2);
+
+        assert!(iter.next().is_none());
+    }
+
+    /// Regression: before the fix, `DagCausalIter::new` would push both
+    /// `(peer=1, counter=0)` and `(peer=1, counter=5)` onto the initial
+    /// stack because neither node has any *in-target* dependency. The LIFO
+    /// pop would then surface `(peer=1, counter=5)` first while
+    /// `target_span.min()` is still `0`, tripping the causal-order
+    /// invariant (historically: "slice_end > slice_from" / "counter <
+    /// target_span.min()"). With the fix the iter synthesizes a per-peer
+    /// ordering edge so the second node is only released after the first is
+    /// consumed.
+    #[test]
+    fn two_concurrent_same_peer_nodes_visit_in_counter_order() {
+        let first = DummyNode {
+            id: ID::new(1, 0),
+            lamport: 10,
+            len: 5,
+            deps: Frontiers::default(),
+        };
+        // `second` is concurrent with `first` from peer 1's perspective:
+        // its only dep lives outside the target span (peer 2), so the BFS
+        // records zero in-degree and would historically race to the stack
+        // alongside `first`.
+        let second = DummyNode {
+            id: ID::new(1, 5),
+            lamport: 20,
+            len: 5,
+            deps: ID::new(2, 0).into(),
+        };
+        let side = DummyNode {
+            id: ID::new(2, 0),
+            lamport: 0,
+            len: 1,
+            deps: Frontiers::default(),
+        };
+
+        let mut vv = VersionVector::default();
+        vv.set_end(first.id_end());
+        vv.set_end(second.id_end());
+        vv.set_end(side.id_end());
+
+        let dag = DummyDag {
+            frontier: second.id_last().into(),
+            nodes: [
+                (first.id_start(), first),
+                (second.id_start(), second),
+                (side.id_start(), side),
+            ]
+            .into_iter()
+            .collect(),
+            vv,
+        };
+
+        // Target only peer 1. `second`'s dep on (peer 2, 0) is thus
+        // *outside* the target vector — the exact condition that made both
+        // same-peer nodes reach the stack concurrently before the fix.
+        let mut target = IdSpanVector::default();
+        target.insert(1, CounterSpan::new(0, 10));
+
+        let mut iter =
+            DagCausalIter::new(&dag, Frontiers::default(), target);
+
+        let a = iter.next().expect("first peer-1 segment");
+        assert_eq!(a.data.id_start(), ID::new(1, 0));
+        assert_eq!(a.slice, 0..5);
+
+        let b = iter.next().expect("second peer-1 segment");
+        assert_eq!(b.data.id_start(), ID::new(1, 5));
+        assert_eq!(b.slice, 0..5);
 
         assert!(iter.next().is_none());
     }
