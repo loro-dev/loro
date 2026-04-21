@@ -314,7 +314,8 @@ impl TreeHandler {
             EventHint::Tree(smallvec![TreeDiffItem {
                 target,
                 action: TreeExternalDiff::Delete {
-                    old_parent: self.get_node_parent(&target).unwrap(),
+                    old_parent: self.get_node_parent(&target)
+                        .ok_or(LoroTreeError::TreeNodeDeletedOrNotExist(target))?,
                     old_index: index
                 },
             }]),
@@ -384,7 +385,7 @@ impl TreeHandler {
 
         let with_event = !parent
             .tree_id()
-            .is_some_and(|p| self.is_node_deleted(&p).unwrap());
+            .is_some_and(|p| self.is_node_deleted(&p).unwrap_or(true));
         if !with_event {
             return Ok(false);
         }
@@ -431,7 +432,9 @@ impl TreeHandler {
                 .unwrap_or_default())
         })?;
         for child in children {
-            let position = self.get_position_by_tree_id(&child).unwrap();
+            let Some(position) = self.get_position_by_tree_id(&child) else {
+                continue;
+            };
             self.create_at_with_target_for_apply_diff(TreeParentId::Node(target), position, child)?;
         }
         Ok(true)
@@ -462,8 +465,12 @@ impl TreeHandler {
             }
         }
 
-        let old_parent = self.get_node_parent(&target).unwrap();
-        let old_index = self.get_index_by_tree_id(&target).unwrap();
+        let Some(old_parent) = self.get_node_parent(&target) else {
+            return Ok(false);
+        };
+        let Some(old_index) = self.get_index_by_tree_id(&target) else {
+            return Ok(false);
+        };
         let mut index = self
             .get_index_by_fractional_index(
                 &parent,
@@ -478,7 +485,7 @@ impl TreeHandler {
         }
         let with_event = !parent
             .tree_id()
-            .is_some_and(|p| self.is_node_deleted(&p).unwrap());
+            .is_some_and(|p| self.is_node_deleted(&p).unwrap_or(true));
 
         if !with_event {
             return Ok(false);
@@ -724,7 +731,8 @@ impl TreeHandler {
                     parent,
                     index,
                     position,
-                    old_parent: self.get_node_parent(&target).unwrap(),
+                    old_parent: self.get_node_parent(&target)
+                        .ok_or(LoroTreeError::TreeNodeDeletedOrNotExist(target))?,
                     old_index,
                 },
             }]),
@@ -748,7 +756,11 @@ impl TreeHandler {
                 }
                 let map_container_id = target.associated_meta_container();
                 let handler = create_handler(a, map_container_id);
-                Ok(handler.into_map().unwrap())
+                handler.into_map().map_err(|_| {
+                    LoroError::DecodeError(
+                        "Tree node's associated meta container is not a map".into(),
+                    )
+                })
             }
         }
     }

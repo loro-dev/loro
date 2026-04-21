@@ -430,7 +430,10 @@ impl DocState {
             return;
         }
 
-        panic!("should call pre_txn before record_diff")
+        loro_common::warn!(
+            "WARNING: record_diff called without pre_txn. Skipping diff recording."
+        );
+        self.event_recorder.diffs.push(diff.into_owned());
     }
 
     /// This should be called when DocState is going to apply a transaction / a diff.
@@ -459,8 +462,13 @@ impl DocState {
         }
 
         let diffs = std::mem::take(&mut recorder.diffs);
-        let start = recorder.diff_start_version.take().unwrap();
-        recorder.diff_start_version = Some((*diffs.last().unwrap().new_version).to_owned());
+        let Some(start) = recorder.diff_start_version.take() else {
+            return;
+        };
+        let Some(last_diff) = diffs.last() else {
+            return;
+        };
+        recorder.diff_start_version = Some((*last_diff.new_version).to_owned());
         let event = self.diffs_to_event(diffs, start);
         self.event_recorder.events.push(event);
     }
@@ -748,8 +756,10 @@ impl DocState {
     pub(crate) fn commit_txn(&mut self, new_frontiers: Frontiers, diff: Option<InternalDocDiff>) {
         self.in_txn = false;
         self.frontiers = new_frontiers;
-        if self.is_recording() {
-            self.record_diff(diff.unwrap());
+        if let Some(diff) = diff {
+            if self.is_recording() {
+                self.record_diff(diff);
+            }
         }
     }
 
@@ -1175,7 +1185,13 @@ impl DocState {
     // the event recorder to a separate module.
     fn diffs_to_event(&mut self, diffs: Vec<InternalDocDiff<'_>>, from: Frontiers) -> DocDiff {
         if diffs.is_empty() {
-            panic!("diffs is empty");
+            return DocDiff {
+                from: from.clone(),
+                to: from,
+                origin: InternalString::default(),
+                by: EventTriggerKind::Local,
+                diff: vec![],
+            };
         }
 
         let triggered_by = diffs[0].by;
@@ -1192,36 +1208,41 @@ impl DocState {
                     } else {
                         // if we cannot find the path to the container, the container must be overwritten afterwards.
                         // So we can ignore the diff from it.
+                        let _container_id = self
+                            .arena
+                            .idx_to_id(container_diff.idx)
+                            .map(|x| x.to_string())
+                            .unwrap_or_else(|| "unknown".to_string());
                         loro_common::warn!(
                             "⚠️ WARNING: ignore event because cannot find its path {:#?} container id:{}",
                             &container_diff,
-                            self.arena.idx_to_id(container_diff.idx).unwrap()
+                            container_id
                         );
                     }
 
                     continue;
                 };
                 // TODO: PERF avoid this clone
-                *last_container_diff = last_container_diff
-                    .clone()
-                    .compose(container_diff.diff)
-                    .unwrap();
+                if let Ok(composed) = last_container_diff.clone().compose(container_diff.diff) {
+                    *last_container_diff = composed;
+                }
             }
         }
         let mut diff: Vec<_> = containers
             .into_iter()
-            .map(|(container, (diff, path))| {
+            .filter_map(|(container, (diff, path))| {
                 let idx = container;
-                let id = self.arena.get_container_id(idx).unwrap();
+                let id = self.arena.get_container_id(idx)?;
                 let is_unknown = id.is_unknown();
+                let diff = diff.into_external().ok()?;
 
-                ContainerDiff {
+                Some(ContainerDiff {
                     id,
                     idx,
-                    diff: diff.into_external().unwrap(),
+                    diff,
                     is_unknown,
                     path,
-                }
+                })
             })
             .collect();
 
