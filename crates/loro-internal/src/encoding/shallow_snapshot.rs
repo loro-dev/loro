@@ -33,7 +33,7 @@ pub(crate) fn export_shallow_snapshot_inner(
     doc: &LoroDoc,
     start_from: &Frontiers,
 ) -> Result<(Snapshot, Frontiers), LoroEncodeError> {
-    let oplog = doc.oplog().lock_unpoisoned();
+    let oplog = doc.oplog().lock();
     let start_from = calc_shallow_doc_start(&oplog, start_from);
     let mut start_vv = frontiers_to_vv_for_export(&oplog, &start_from, "export_shallow_snapshot")?;
     for id in start_from.iter() {
@@ -77,7 +77,7 @@ pub(crate) fn export_shallow_snapshot_inner(
     let result = (|| -> Result<Snapshot, LoroEncodeError> {
         doc._checkout_without_emitting(&start_from, false, false)
             .map_err(LoroEncodeError::from)?;
-        let mut state = doc.app_state().lock_unpoisoned();
+        let mut state = doc.app_state().lock();
         let alive_containers = state.ensure_all_alive_containers();
         if has_unknown_container(alive_containers.iter()) {
             return Err(LoroEncodeError::UnknownContainer);
@@ -90,7 +90,7 @@ pub(crate) fn export_shallow_snapshot_inner(
         doc._checkout_without_emitting(&latest_frontiers, false, false)
             .map_err(LoroEncodeError::from)?;
         let state_bytes = if ops_num > MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE {
-            let mut state = doc.app_state().lock_unpoisoned();
+            let mut state = doc.app_state().lock();
             state.ensure_all_alive_containers();
             state.store.encode();
             // All the containers that are created after start_from need to be encoded
@@ -138,9 +138,10 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
     start_from: &Frontiers,
     w: &mut W,
 ) -> Result<Frontiers, LoroEncodeError> {
-    let oplog = doc.oplog().lock_unpoisoned();
+    let oplog = doc.oplog().lock();
     let start_from = calc_shallow_doc_start(&oplog, start_from);
-    let mut start_vv = frontiers_to_vv_for_export(&oplog, &start_from, "export_state_only_snapshot")?;
+    let mut start_vv =
+        frontiers_to_vv_for_export(&oplog, &start_from, "export_state_only_snapshot")?;
     for id in start_from.iter() {
         // we need to include the ops in start_from, this can make things easier
         start_vv.insert(id.peer, id.counter);
@@ -165,7 +166,7 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
     let result = (|| -> Result<(), LoroEncodeError> {
         doc._checkout_without_emitting(&start_from, false, false)
             .map_err(LoroEncodeError::from)?;
-        let mut state = doc.app_state().lock_unpoisoned();
+        let mut state = doc.app_state().lock();
         let alive_containers = state.ensure_all_alive_containers();
         let alive_c_bytes = cids_to_bytes(alive_containers);
         state.store.flush();
@@ -202,7 +203,9 @@ fn frontiers_to_vv_for_export(
     context: &str,
 ) -> Result<VersionVector, LoroEncodeError> {
     oplog.dag().frontiers_to_vv(frontiers).ok_or_else(|| {
-        LoroEncodeError::FrontiersNotFound(format!("{context}: unreachable frontiers {frontiers:?}"))
+        LoroEncodeError::FrontiersNotFound(format!(
+            "{context}: unreachable frontiers {frontiers:?}"
+        ))
     })
 }
 
@@ -269,23 +272,12 @@ pub(crate) fn encode_snapshot_at<W: std::io::Write>(
     w: &mut W,
 ) -> Result<(), LoroEncodeError> {
     let was_detached = doc.is_detached();
-    let version_before_start = doc
-        .oplog()
-        .lock()
-        .map_err(|_| LoroEncodeError::from(LoroError::LockError))?
-        .frontiers()
-        .clone();
+    let version_before_start = doc.oplog().lock().frontiers().clone();
     doc._checkout_without_emitting(frontiers, true, false)
         .map_err(LoroEncodeError::from)?;
     let result = 'block: {
-        let oplog = doc
-            .oplog()
-            .lock()
-            .map_err(|_| LoroEncodeError::from(LoroError::LockError))?;
-        let mut state = doc
-            .app_state()
-            .lock()
-            .map_err(|_| LoroEncodeError::from(LoroError::LockError))?;
+        let oplog = doc.oplog().lock();
+        let mut state = doc.app_state().lock();
         let is_shallow = state.store.shallow_root_store().is_some();
         if is_shallow {
             break 'block Err(LoroEncodeError::from(LoroError::NotImplemented(
@@ -345,18 +337,12 @@ pub(crate) fn encode_snapshot_at<W: std::io::Write>(
     if !was_detached {
         doc.set_detached(false);
     }
-    let cleanup_result = doc
-        .app_state()
-        .lock()
-        .map_err(|_| LoroEncodeError::from(LoroError::LockError))
-        .map(|mut state| {
-            state.take_events();
-        });
+    doc.app_state().lock().take_events();
 
     let final_result = match result {
         Err(err) => Err(err),
         Ok(()) => restore_result,
     };
 
-    final_result.and(cleanup_result)
+    final_result
 }

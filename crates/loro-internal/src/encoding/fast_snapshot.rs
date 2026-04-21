@@ -135,13 +135,7 @@ pub(crate) fn decode_snapshot_inner(
         shallow_root_state_bytes,
     } = snapshot;
     ensure_cov::notify_cov("loro_internal::import::fast_snapshot::decode_snapshot");
-    let mut oplog = doc.oplog().lock().map_err(|_| {
-        LoroError::DecodeError(
-            "decode_snapshot: failed to lock oplog"
-                .to_string()
-                .into_boxed_str(),
-        )
-    })?;
+    let mut oplog = doc.oplog().lock();
     if !oplog.is_empty() {
         return Err(LoroError::DecodeError(
             "decode_snapshot: cannot import snapshot into a non-empty doc"
@@ -150,13 +144,7 @@ pub(crate) fn decode_snapshot_inner(
         ));
     }
 
-    let mut state = doc.app_state().lock().map_err(|_| {
-        LoroError::DecodeError(
-            "decode_snapshot: failed to lock app state"
-                .to_string()
-                .into_boxed_str(),
-        )
-    })?;
+    let mut state = doc.app_state().lock();
 
     state.check_before_decode_snapshot()?;
 
@@ -247,8 +235,8 @@ pub(crate) fn encode_snapshot_inner(doc: &LoroDoc) -> Snapshot {
     assert!(doc.drop_pending_events().is_empty());
     let old_state_frontiers = doc.state_frontiers();
     let was_detached = doc.is_detached();
-    let oplog = doc.oplog().lock_unpoisoned();
-    let mut state = doc.app_state().lock_unpoisoned();
+    let oplog = doc.oplog().lock();
+    let mut state = doc.app_state().lock();
     let is_gc = state.store.shallow_root_store().is_some();
     if is_gc {
         // TODO: PERF: this can be optimized by reusing the bytes of gc store
@@ -273,7 +261,7 @@ pub(crate) fn encode_snapshot_inner(doc: &LoroDoc) -> Snapshot {
         drop(oplog);
         doc._checkout_without_emitting(&latest, false, true)
             .unwrap();
-        state = doc.app_state().lock_unpoisoned();
+        state = doc.app_state().lock();
     }
     state.ensure_all_alive_containers();
     let state_bytes = state.store.encode();
@@ -301,9 +289,9 @@ pub(crate) fn decode_oplog(oplog: &mut OpLog, bytes: &[u8]) -> Result<Vec<Change
             .try_into()
             .expect("slice length checked to be exactly 4"),
     ) as usize;
-    let oplog_bytes = bytes.get(4..4 + oplog_len).ok_or_else(|| {
-        LoroError::DecodeError("decode_oplog: invalid oplog length".into())
-    })?;
+    let oplog_bytes = bytes
+        .get(4..4 + oplog_len)
+        .ok_or_else(|| LoroError::DecodeError("decode_oplog: invalid oplog length".into()))?;
     let mut changes = ChangeStore::decode_snapshot_for_updates(
         oplog_bytes.to_vec().into(),
         &oplog.arena,
@@ -314,7 +302,7 @@ pub(crate) fn decode_oplog(oplog: &mut OpLog, bytes: &[u8]) -> Result<Vec<Change
 }
 
 pub(crate) fn encode_updates<W: std::io::Write>(doc: &LoroDoc, vv: &VersionVector, w: &mut W) {
-    let oplog = doc.oplog().lock_unpoisoned();
+    let oplog = doc.oplog().lock();
     oplog.export_blocks_from(vv, w);
 }
 
@@ -363,7 +351,7 @@ mod tests {
     #[test]
     fn decode_updates_rejects_truncated_block() {
         let doc = LoroDoc::new();
-        let mut oplog = doc.oplog.lock_unpoisoned();
+        let mut oplog = doc.oplog.lock();
         let err = decode_updates(&mut oplog, Bytes::from_static(&[0x02, 0x01]))
             .expect_err("truncated update block should be rejected");
         assert!(matches!(err, LoroError::DecodeError(_)));
@@ -381,7 +369,7 @@ pub(crate) fn decode_snapshot_blob_meta(
     };
 
     let doc = LoroDoc::new();
-    let mut oplog = doc.oplog.lock_unpoisoned();
+    let mut oplog = doc.oplog.lock();
     oplog.decode_change_store(oplog_bytes.to_vec().into())?;
     let timestamp = oplog.get_greatest_timestamp(oplog.dag.frontiers());
     let f = oplog.dag.shallow_since_frontiers().clone();
@@ -403,7 +391,7 @@ pub(crate) fn decode_updates_blob_meta(
     parsed: ParsedHeaderAndBody,
 ) -> LoroResult<ImportBlobMetadata> {
     let doc = LoroDoc::new();
-    let mut oplog = doc.oplog.lock_unpoisoned();
+    let mut oplog = doc.oplog.lock();
     let changes = decode_updates(&mut oplog, parsed.body.to_vec().into())?;
     let mut start_vv = VersionVector::new();
     let mut end_vv = VersionVector::new();

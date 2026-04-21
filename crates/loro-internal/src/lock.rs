@@ -28,8 +28,9 @@ use std::sync::Arc;
 ///
 /// Create instances via [`LoroLockGroup::new_lock`]. Calling [`LoroMutex::lock`]
 /// will panic if the current thread has already acquired a lock with a kind that
-/// is greater than or equal to this lock’s kind. Release order is also checked;
-/// dropping the guard out of LIFO order results in a panic.
+/// is greater than or equal to this lock’s kind, or if the underlying mutex was
+/// poisoned by an earlier panic. Release order is also checked; dropping the
+/// guard out of LIFO order results in a panic.
 ///
 /// This type wraps [`crate::sync::Mutex`], so it remains compatible with loom-based
 /// concurrency testing.
@@ -127,14 +128,13 @@ impl<T> LoroMutex<T> {
     /// recorded to improve panic diagnostics.
     ///
     /// Panics:
+    /// - If the underlying mutex was poisoned by an earlier panic.
     /// - If the current thread already holds a lock with kind `>= self.kind`.
     /// - If the guard is later dropped out of acquisition order.
-    pub fn lock(&self) -> Result<LoroMutexGuard<'_, T>, std::sync::PoisonError<MutexGuard<'_, T>>> {
+    pub fn lock(&self) -> LoroMutexGuard<'_, T> {
         let caller = Location::caller();
         let v = self.currently_locked_in_this_thread.get_or_default();
-        let last = *v
-            .lock()
-            .expect("poisoned lock-order tracking mutex");
+        let last = *v.lock();
         let this = LockInfo {
             kind: self.kind,
             caller_location: Some(caller),
@@ -146,21 +146,16 @@ impl<T> LoroMutex<T> {
             );
         }
 
-        let ans = self.lock.lock()?;
-        *v.lock().expect("poisoned lock-order tracking mutex") = this;
-        let ans = LoroMutexGuard {
-            guard: ans,
+        let guard = self.lock.lock_with_kind("LoroMutex");
+        *v.lock() = this;
+        LoroMutexGuard {
+            guard,
             _inner: LoroMutexGuardInner {
                 inner: self,
                 this,
                 last,
             },
-        };
-        Ok(ans)
-    }
-
-    pub fn lock_unpoisoned(&self) -> LoroMutexGuard<'_, T> {
-        self.lock().expect("poisoned LoroMutex")
+        }
     }
 
     /// Returns whether the mutex appears locked at this instant.
@@ -169,7 +164,7 @@ impl<T> LoroMutex<T> {
     /// diagnostics. It is race-prone and should not be used to implement logic
     /// that depends on the lock state.
     pub fn is_locked(&self) -> bool {
-        self.lock.try_lock().is_err()
+        self.lock.is_locked()
     }
 }
 
@@ -233,9 +228,7 @@ impl<'a, T> LoroMutexGuard<'a, T> {
 impl<T> Drop for LoroMutexGuardInner<'_, T> {
     fn drop(&mut self) {
         let cur = self.inner.currently_locked_in_this_thread.get_or_default();
-        let current_lock_info = *cur
-            .lock()
-            .expect("poisoned lock-order tracking mutex");
+        let current_lock_info = *cur.lock();
         if current_lock_info.kind != self.this.kind {
             let bt = Backtrace::capture();
             eprintln!("Locking release order violation callstack:\n{}", bt);
@@ -245,7 +238,7 @@ impl<T> Drop for LoroMutexGuardInner<'_, T> {
             );
         }
 
-        *cur.lock().expect("poisoned lock-order tracking mutex") = self.last;
+        *cur.lock() = self.last;
     }
 }
 
@@ -260,8 +253,8 @@ mod tests {
         let mutex1 = group.new_lock(1, LockKind::DocState);
         let mutex2 = group.new_lock(2, LockKind::Txn);
 
-        let _guard1 = mutex1.lock_unpoisoned(); // Lock higher priority first
-        let _guard2 = mutex2.lock_unpoisoned(); // This should panic with caller info
+        let _guard1 = mutex1.lock(); // Lock higher priority first
+        let _guard2 = mutex2.lock(); // This should panic with caller info
     }
 
     #[test]
@@ -270,11 +263,11 @@ mod tests {
         let mutex1 = group.new_lock(1, LockKind::Txn);
         let mutex2 = group.new_lock(2, LockKind::OpLog);
         let mutex3 = group.new_lock(3, LockKind::DocState);
-        let _guard1 = mutex1.lock_unpoisoned();
+        let _guard1 = mutex1.lock();
         drop(_guard1);
-        let _guard2 = mutex2.lock_unpoisoned();
+        let _guard2 = mutex2.lock();
         drop(_guard2);
-        let _guard3 = mutex3.lock_unpoisoned();
+        let _guard3 = mutex3.lock();
     }
 
     #[test]
@@ -283,8 +276,8 @@ mod tests {
         let group = LoroLockGroup::new();
         let mutex1 = group.new_lock(1, LockKind::Txn);
         let mutex2 = group.new_lock(2, LockKind::OpLog);
-        let _guard1 = mutex1.lock_unpoisoned();
-        let _guard2 = mutex2.lock_unpoisoned();
+        let _guard1 = mutex1.lock();
+        let _guard2 = mutex2.lock();
         drop(_guard1);
         drop(_guard2);
     }
@@ -295,10 +288,10 @@ mod tests {
         let mutex1 = group.new_lock(1, LockKind::Txn);
         let mutex2 = group.new_lock(2, LockKind::OpLog);
         let mutex3 = group.new_lock(3, LockKind::DocState);
-        let _guard1 = mutex1.lock_unpoisoned();
-        let _guard3 = mutex3.lock_unpoisoned();
+        let _guard1 = mutex1.lock();
+        let _guard3 = mutex3.lock();
         drop(_guard3);
-        let _guard2 = mutex2.lock_unpoisoned();
+        let _guard2 = mutex2.lock();
         drop(_guard2);
     }
 
@@ -309,10 +302,10 @@ mod tests {
         let mutex1 = group.new_lock(1, LockKind::Txn);
         let mutex2 = group.new_lock(2, LockKind::OpLog);
         let mutex3 = group.new_lock(3, LockKind::DocState);
-        let _guard2 = mutex2.lock_unpoisoned();
-        let _guard3 = mutex3.lock_unpoisoned();
+        let _guard2 = mutex2.lock();
+        let _guard3 = mutex3.lock();
         drop(_guard3);
-        let _guard1 = mutex1.lock_unpoisoned();
+        let _guard1 = mutex1.lock();
     }
 
     #[test]
@@ -321,12 +314,12 @@ mod tests {
         let mutex1 = group.new_lock(1, LockKind::Txn);
         let mutex2 = group.new_lock(2, LockKind::Txn);
 
-        let guard1 = mutex1.lock_unpoisoned();
+        let guard1 = mutex1.lock();
         // Locking same kind should work (cur >= self.kind, so this would fail)
         // Actually, let's test this properly - same kind should fail
         drop(guard1);
 
-        let _guard2 = mutex2.lock_unpoisoned(); // This should work when guard1 is dropped
+        let _guard2 = mutex2.lock(); // This should work when guard1 is dropped
     }
 
     #[test]
@@ -345,7 +338,7 @@ mod tests {
 
         assert!(!mutex.is_locked());
 
-        let _guard = mutex.lock_unpoisoned();
+        let _guard = mutex.lock();
         assert!(mutex.is_locked());
     }
 
@@ -357,10 +350,10 @@ mod tests {
         let mutex1 = group.new_lock(1, LockKind::DocState);
         let mutex2 = group.new_lock(2, LockKind::Txn);
 
-        let _guard1 = mutex1.lock_unpoisoned();
+        let _guard1 = mutex1.lock();
 
         // This line should be reported in the panic message
-        let _guard2 = mutex2.lock_unpoisoned();
+        let _guard2 = mutex2.lock();
     }
 
     #[test]
@@ -370,10 +363,10 @@ mod tests {
         let mutex = group.new_lock(42, LockKind::Txn);
 
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _guard = mutex.lock_unpoisoned();
+            let _guard = mutex.lock();
             panic!("poison the lock");
         }));
 
-        let _ = mutex.lock_unpoisoned();
+        let _ = mutex.lock();
     }
 }

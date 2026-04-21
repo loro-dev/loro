@@ -1760,14 +1760,14 @@ impl LoroDoc {
     #[wasm_bindgen(js_name = "debugHistory")]
     pub fn debug_history(&self) {
         let borrow_mut = &self.doc;
-        let oplog = borrow_mut.oplog().lock().unwrap();
+        let oplog = borrow_mut.oplog().lock();
         console_log!("{:#?}", oplog.diagnose_size());
     }
 
     /// Get the number of changes in the oplog.
     pub fn changeCount(&self) -> usize {
         let borrow_mut = &self.doc;
-        let oplog = borrow_mut.oplog().lock().unwrap();
+        let oplog = borrow_mut.oplog().lock();
         oplog.len_changes()
     }
 
@@ -1799,7 +1799,7 @@ impl LoroDoc {
     #[wasm_bindgen(js_name = "getAllChanges")]
     pub fn get_all_changes(&self) -> JsChanges {
         let borrow_mut = &self.doc;
-        let oplog = borrow_mut.oplog().lock().unwrap();
+        let oplog = borrow_mut.oplog().lock();
         let mut changes: FxHashMap<PeerID, Vec<ChangeMeta>> = FxHashMap::default();
         oplog.change_store().visit_all_changes(&mut |c| {
             let change_meta = ChangeMeta {
@@ -1839,7 +1839,7 @@ impl LoroDoc {
     pub fn get_change_at(&self, id: JsID) -> JsResult<JsChange> {
         let id = js_id_to_id(id)?;
         let borrow_mut = &self.doc;
-        let oplog = borrow_mut.oplog().lock().unwrap();
+        let oplog = borrow_mut.oplog().lock();
         let change = oplog
             .get_change_at(id)
             .ok_or_else(|| JsError::new(&format!("Change {:?} not found", id)))?;
@@ -1870,7 +1870,7 @@ impl LoroDoc {
         lamport: u32,
     ) -> JsResult<JsChangeOrUndefined> {
         let borrow_mut = &self.doc;
-        let oplog = borrow_mut.oplog().lock().unwrap();
+        let oplog = borrow_mut.oplog().lock();
         let peer_id = peer_id
             .parse()
             .map_err(|_| JsValue::from_str(ID_CONVERT_ERROR))?;
@@ -1902,7 +1902,7 @@ impl LoroDoc {
     pub fn get_ops_in_change(&self, id: JsID) -> JsResult<Vec<JsValue>> {
         let id = js_id_to_id(id)?;
         let borrow_mut = &self.doc;
-        let oplog = borrow_mut.oplog().lock().unwrap();
+        let oplog = borrow_mut.oplog().lock();
 
         let serializer =
             serde_wasm_bindgen::Serializer::new().serialize_large_number_types_as_bigints(true);
@@ -1937,7 +1937,7 @@ impl LoroDoc {
     pub fn frontiers_to_vv(&self, frontiers: Vec<JsID>) -> JsResult<VersionVector> {
         let frontiers = ids_to_frontiers(frontiers)?;
         let borrow_mut = &self.doc;
-        let oplog = borrow_mut.oplog().lock().unwrap();
+        let oplog = borrow_mut.oplog().lock();
         oplog
             .dag()
             .frontiers_to_vv(&frontiers)
@@ -1959,13 +1959,7 @@ impl LoroDoc {
     /// ```
     #[wasm_bindgen(js_name = "vvToFrontiers")]
     pub fn vv_to_frontiers(&self, vv: &VersionVector) -> JsResult<JsIDs> {
-        let f = self
-            .doc
-            .oplog()
-            .lock()
-            .unwrap()
-            .dag()
-            .vv_to_frontiers(&vv.0);
+        let f = self.doc.oplog().lock().dag().vv_to_frontiers(&vv.0);
         frontiers_to_ids(&f)
     }
 

@@ -384,10 +384,7 @@ pub(crate) fn export_shallow_snapshot(
 }
 
 fn check_target_version_reachable(doc: &LoroDoc, f: &Frontiers) -> Result<(), LoroEncodeError> {
-    let oplog = doc
-        .oplog
-        .lock()
-        .map_err(|_| LoroEncodeError::from(LoroError::LockError))?;
+    let oplog = doc.oplog.lock();
     if !oplog.dag.can_export_shallow_snapshot_on(f) {
         return Err(LoroEncodeError::FrontiersNotFound(format!("{f:?}")));
     }

@@ -3,7 +3,6 @@ pub(crate) mod loro_dag;
 mod pending_changes;
 
 use crate::sync::Mutex;
-use crate::sync::MutexExt as _;
 use bytes::Bytes;
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -139,7 +138,6 @@ impl OpLog {
         self.dag.handle_new_change(&change, from_local);
         self.history_cache
             .lock()
-            .unwrap()
             .insert_by_new_change(&change, true, true);
         self.register_container_and_parent_link(&change);
         self.change_store.insert_change(change, true, from_local);
@@ -150,16 +148,16 @@ impl OpLog {
     where
         F: FnOnce(&mut ContainerHistoryCache) -> R,
     {
-        let mut history_cache = self.history_cache.lock_unpoisoned();
+        let mut history_cache = self.history_cache.lock();
         f(&mut history_cache)
     }
 
     pub fn has_history_cache(&self) -> bool {
-        self.history_cache.lock_unpoisoned().has_cache()
+        self.history_cache.lock().has_cache()
     }
 
     pub fn free_history_cache(&self) {
-        let mut history_cache = self.history_cache.lock_unpoisoned();
+        let mut history_cache = self.history_cache.lock();
         history_cache.free();
     }
 

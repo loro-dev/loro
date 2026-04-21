@@ -1,4 +1,3 @@
-use crate::sync::MutexExt as _;
 use crate::sync::{AtomicU64, Mutex, RwLock};
 use std::sync::{Arc, Weak};
 use std::{borrow::Cow, io::Write, sync::atomic::Ordering};
@@ -915,7 +914,7 @@ impl DocState {
         let roots = self.arena.root_containers(flag);
         let mut ans = FxHashMap::with_capacity_and_hasher(roots.len(), Default::default());
         let binding = self.config.deleted_root_containers.clone();
-        let deleted_root_container = binding.lock_unpoisoned();
+        let deleted_root_container = binding.lock();
         let should_hide_empty_root_container = self
             .config
             .hide_empty_root_containers

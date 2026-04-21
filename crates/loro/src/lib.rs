@@ -182,7 +182,7 @@ impl LoroDoc {
     ///
     /// The length of the `Change` is how many operations it contains
     pub fn get_change(&self, id: ID) -> Option<ChangeMeta> {
-        let change = self.doc.oplog().lock().unwrap().get_change_at(id)?;
+        let change = self.doc.oplog().lock().get_change_at(id)?;
         Some(ChangeMeta::from_change(&change))
     }
 
@@ -797,7 +797,7 @@ impl LoroDoc {
     /// that might re-enter the document while holding the lock.
     #[inline]
     pub fn with_oplog<R>(&self, f: impl FnOnce(&OpLog) -> R) -> R {
-        let oplog = self.doc.oplog().lock().unwrap();
+        let oplog = self.doc.oplog().lock();
         f(&oplog)
     }
 
@@ -807,7 +807,7 @@ impl LoroDoc {
     /// that might re-enter the document while holding the lock.
     #[inline]
     pub fn with_state<R>(&self, f: impl FnOnce(&mut DocState) -> R) -> R {
-        let mut state = self.doc.app_state().lock().unwrap();
+        let mut state = self.doc.app_state().lock();
         f(&mut state)
     }
 
@@ -869,11 +869,7 @@ impl LoroDoc {
 
     /// Get the entire state of the current DocState with container id
     pub fn get_deep_value_with_id(&self) -> LoroValue {
-        self.doc
-            .app_state()
-            .lock()
-            .unwrap()
-            .get_deep_value_with_id()
+        self.doc.app_state().lock().get_deep_value_with_id()
     }
 
     /// Get the `Frontiers` version of `OpLog`.

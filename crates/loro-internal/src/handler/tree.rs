@@ -1,6 +1,5 @@
 use std::{collections::VecDeque, sync::Arc};
 
-use crate::sync::MutexExt as _;
 use fractional_index::FractionalIndex;
 use loro_common::{
     ContainerID, ContainerType, Counter, IdLp, LoroError, LoroResult, LoroTreeError, LoroValue,
@@ -163,7 +162,7 @@ impl HandlerTrait for TreeHandler {
     ) -> LoroResult<Self> {
         match &self.inner {
             MaybeDetached::Detached(t) => {
-                let t = t.lock_unpoisoned();
+                let t = t.lock();
                 let inner = create_handler(parent, self_id);
                 let tree = inner.into_tree().unwrap();
 
@@ -224,7 +223,7 @@ impl HandlerTrait for TreeHandler {
     fn get_value(&self) -> LoroValue {
         match &self.inner {
             MaybeDetached::Detached(t) => {
-                let t = t.lock_unpoisoned();
+                let t = t.lock();
                 t.value.get_value(false)
             }
             MaybeDetached::Attached(a) => a.get_value(),
@@ -234,7 +233,7 @@ impl HandlerTrait for TreeHandler {
     fn get_deep_value(&self) -> LoroValue {
         match &self.inner {
             MaybeDetached::Detached(t) => {
-                let t = t.lock_unpoisoned();
+                let t = t.lock();
                 t.value.get_value(true)
             }
             MaybeDetached::Attached(a) => a.get_deep_value(),
@@ -247,7 +246,7 @@ impl HandlerTrait for TreeHandler {
 
     fn get_attached(&self) -> Option<Self> {
         match &self.inner {
-            MaybeDetached::Detached(d) => d.lock_unpoisoned().attached.clone().map(|x| Self {
+            MaybeDetached::Detached(d) => d.lock().attached.clone().map(|x| Self {
                 inner: MaybeDetached::Attached(x),
             }),
             MaybeDetached::Attached(_a) => Some(self.clone()),
@@ -293,7 +292,7 @@ impl TreeHandler {
     pub fn delete(&self, target: TreeID) -> LoroResult<()> {
         match &self.inner {
             MaybeDetached::Detached(t) => {
-                let mut t = t.lock_unpoisoned();
+                let mut t = t.lock();
                 t.value.delete(target)?;
                 Ok(())
             }
@@ -333,7 +332,7 @@ impl TreeHandler {
         let index: usize = self.children_num(&parent).unwrap_or(0);
         match &self.inner {
             MaybeDetached::Detached(t) => {
-                let t = &mut t.lock_unpoisoned().value;
+                let t = &mut t.lock().value;
                 Ok(t.create(parent.tree_id(), index))
             }
             MaybeDetached::Attached(a) => {
@@ -345,7 +344,7 @@ impl TreeHandler {
     pub fn create_at(&self, parent: TreeParentId, index: usize) -> LoroResult<TreeID> {
         match &self.inner {
             MaybeDetached::Detached(t) => {
-                let t = &mut t.lock_unpoisoned().value;
+                let t = &mut t.lock().value;
                 Ok(t.create(parent.tree_id(), index))
             }
             MaybeDetached::Attached(a) => {
@@ -595,7 +594,7 @@ impl TreeHandler {
     pub fn move_to(&self, target: TreeID, parent: TreeParentId, index: usize) -> LoroResult<()> {
         match &self.inner {
             MaybeDetached::Detached(t) => {
-                let mut t = t.lock_unpoisoned();
+                let mut t = t.lock();
                 t.value.mov(target, parent.tree_id(), index)
             }
             MaybeDetached::Attached(a) => a.with_txn(|txn| {
@@ -726,7 +725,7 @@ impl TreeHandler {
     pub fn get_meta(&self, target: TreeID) -> LoroResult<MapHandler> {
         match &self.inner {
             MaybeDetached::Detached(d) => {
-                let d = d.lock_unpoisoned();
+                let d = d.lock();
                 d.value
                     .map
                     .get(&target)
@@ -747,7 +746,7 @@ impl TreeHandler {
     pub fn is_node_unexist(&self, target: &TreeID) -> bool {
         match &self.inner {
             MaybeDetached::Detached(d) => {
-                let d = d.lock_unpoisoned();
+                let d = d.lock();
                 !d.value.map.contains_key(target)
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
@@ -760,7 +759,7 @@ impl TreeHandler {
     pub fn is_node_deleted(&self, target: &TreeID) -> LoroResult<bool> {
         match &self.inner {
             MaybeDetached::Detached(t) => {
-                let t = t.lock_unpoisoned();
+                let t = t.lock();
                 t.value
                     .map
                     .get(target)
@@ -779,7 +778,7 @@ impl TreeHandler {
     pub fn get_node_parent(&self, target: &TreeID) -> Option<TreeParentId> {
         match &self.inner {
             MaybeDetached::Detached(t) => {
-                let t = t.lock_unpoisoned();
+                let t = t.lock();
                 t.value.get_parent(target).map(TreeParentId::from)
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
@@ -793,7 +792,7 @@ impl TreeHandler {
     pub fn children(&self, parent: &TreeParentId) -> Option<Vec<TreeID>> {
         match &self.inner {
             MaybeDetached::Detached(t) => {
-                let t = t.lock_unpoisoned();
+                let t = t.lock();
                 t.value.get_children(parent.tree_id())
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
@@ -806,7 +805,7 @@ impl TreeHandler {
     pub fn children_num(&self, parent: &TreeParentId) -> Option<usize> {
         match &self.inner {
             MaybeDetached::Detached(t) => {
-                let t = t.lock_unpoisoned();
+                let t = t.lock();
                 t.value.children_num(parent.tree_id())
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
@@ -820,7 +819,7 @@ impl TreeHandler {
     pub fn contains(&self, target: TreeID) -> bool {
         match &self.inner {
             MaybeDetached::Detached(t) => {
-                let t = t.lock_unpoisoned();
+                let t = t.lock();
                 t.value.map.contains_key(&target)
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
@@ -833,7 +832,7 @@ impl TreeHandler {
     pub fn get_child_at(&self, parent: &TreeParentId, index: usize) -> Option<TreeID> {
         match &self.inner {
             MaybeDetached::Detached(t) => {
-                let t = t.lock_unpoisoned();
+                let t = t.lock();
                 t.value.get_id_by_index(&parent.tree_id(), index)
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
@@ -846,7 +845,7 @@ impl TreeHandler {
     pub fn is_parent(&self, target: &TreeID, parent: &TreeParentId) -> bool {
         match &self.inner {
             MaybeDetached::Detached(t) => {
-                let t = t.lock_unpoisoned();
+                let t = t.lock();
                 t.value.is_parent(target, &parent.tree_id())
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
@@ -860,7 +859,7 @@ impl TreeHandler {
     pub fn nodes(&self) -> Vec<TreeID> {
         match &self.inner {
             MaybeDetached::Detached(t) => {
-                let t = t.lock_unpoisoned();
+                let t = t.lock();
                 t.value.map.keys().cloned().collect()
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
@@ -902,7 +901,7 @@ impl TreeHandler {
     pub fn __internal__next_tree_id(&self) -> TreeID {
         match &self.inner {
             MaybeDetached::Detached(d) => {
-                let d = d.lock_unpoisoned();
+                let d = d.lock();
                 TreeID::new(PeerID::MAX, d.value.next_counter)
             }
             MaybeDetached::Attached(a) => a
@@ -933,7 +932,7 @@ impl TreeHandler {
     pub fn get_index_by_tree_id(&self, target: &TreeID) -> Option<usize> {
         match &self.inner {
             MaybeDetached::Detached(t) => {
-                let t = t.lock_unpoisoned();
+                let t = t.lock();
                 t.value.get_index_by_tree_id(target)
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
@@ -1046,7 +1045,7 @@ impl TreeHandler {
     pub fn is_empty(&self) -> bool {
         match &self.inner {
             MaybeDetached::Detached(t) => {
-                let t = t.lock_unpoisoned();
+                let t = t.lock();
                 t.value.map.is_empty()
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
@@ -1069,7 +1068,7 @@ impl TreeHandler {
     pub fn clear(&self) -> LoroResult<()> {
         match &self.inner {
             MaybeDetached::Detached(t) => {
-                let mut t = t.lock_unpoisoned();
+                let mut t = t.lock();
                 t.value.map.clear();
                 t.value.children_links.clear();
                 t.value.parent_links.clear();

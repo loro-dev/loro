@@ -1,7 +1,6 @@
 use self::block_encode::{decode_block, decode_header, encode_block, ChangesBlockHeader};
 use super::{loro_dag::AppDagNodeInner, AppDagNode};
 use crate::sync::Mutex;
-use crate::sync::MutexExt as _;
 use crate::{
     arena::SharedArena,
     change::Change,
@@ -136,7 +135,7 @@ impl ChangeStore {
 
     pub(super) fn encode_all(&self, vv: &VersionVector, frontiers: &Frontiers) -> Bytes {
         self.flush_and_compact(vv, frontiers);
-        let mut kv = self.external_kv.lock_unpoisoned();
+        let mut kv = self.external_kv.lock();
         kv.export_all()
     }
 
@@ -207,15 +206,15 @@ impl ChangeStore {
         latest_frontiers: &Frontiers,
     ) -> Bytes {
         {
-            let mut store = self.external_kv.lock_unpoisoned();
+            let mut store = self.external_kv.lock();
             store.set(START_VV_KEY, start_vv.encode().into());
             store.set(START_FRONTIERS_KEY, start_frontiers.encode().into());
-            let mut inner = self.inner.lock_unpoisoned();
+            let mut inner = self.inner.lock();
             inner.start_frontiers = start_frontiers.clone();
             inner.start_vv = ImVersionVector::from_vv(start_vv);
         }
         self.flush_and_compact(latest_vv, latest_frontiers);
-        self.external_kv.lock_unpoisoned().export_all()
+        self.external_kv.lock().export_all()
     }
 
     pub(crate) fn decode_snapshot_for_updates(
@@ -279,7 +278,7 @@ impl ChangeStore {
 
     pub fn visit_all_changes(&self, f: &mut dyn FnMut(&Change)) {
         self.ensure_block_loaded_in_range(Bound::Unbounded, Bound::Unbounded);
-        let mut inner = self.inner.lock_unpoisoned();
+        let mut inner = self.inner.lock();
         for (_, block) in inner.mem_parsed_kv.iter_mut() {
             block
                 .ensure_changes(&self.arena)
@@ -300,7 +299,7 @@ impl ChangeStore {
             Bound::Included(id_span.id_start()),
             Bound::Excluded(id_span.id_end()),
         );
-        let mut inner = self.inner.lock_unpoisoned();
+        let mut inner = self.inner.lock();
         let next_back = inner.mem_parsed_kv.range(..=id_span.id_start()).next_back();
         match next_back {
             None => {
@@ -393,7 +392,7 @@ impl ChangeStore {
     }
 
     pub(crate) fn get_blocks_in_range(&self, id_span: IdSpan) -> VecDeque<Arc<ChangesBlock>> {
-        let mut inner = self.inner.lock_unpoisoned();
+        let mut inner = self.inner.lock();
         let start_counter = inner
             .mem_parsed_kv
             .range(..=id_span.id_start())
@@ -422,7 +421,7 @@ impl ChangeStore {
 
     pub(crate) fn get_block_that_contains(&self, id: ID) -> Option<Arc<ChangesBlock>> {
         self.ensure_block_loaded_in_range(Bound::Included(id), Bound::Included(id));
-        let inner = self.inner.lock_unpoisoned();
+        let inner = self.inner.lock();
         let block = inner
             .mem_parsed_kv
             .range(..=id)
@@ -440,7 +439,7 @@ impl ChangeStore {
     pub(crate) fn get_the_last_block_of_peer(&self, peer: PeerID) -> Option<Arc<ChangesBlock>> {
         let end_id = ID::new(peer, Counter::MAX);
         self.ensure_id_lte(end_id);
-        let inner = self.inner.lock_unpoisoned();
+        let inner = self.inner.lock();
         let block = inner
             .mem_parsed_kv
             .range(..=end_id)
@@ -453,7 +452,7 @@ impl ChangeStore {
 
     pub fn change_num(&self) -> usize {
         self.ensure_block_loaded_in_range(Bound::Unbounded, Bound::Unbounded);
-        let mut inner = self.inner.lock_unpoisoned();
+        let mut inner = self.inner.lock();
         inner
             .mem_parsed_kv
             .iter_mut()
@@ -469,7 +468,7 @@ impl ChangeStore {
         frontiers: &Frontiers,
     ) -> Self {
         self.flush_and_compact(vv, frontiers);
-        let inner = self.inner.lock_unpoisoned();
+        let inner = self.inner.lock();
         Self {
             inner: Arc::new(Mutex::new(ChangeStoreInner {
                 start_vv: inner.start_vv.clone(),
@@ -477,8 +476,8 @@ impl ChangeStore {
                 mem_parsed_kv: BTreeMap::new(),
             })),
             arena,
-            external_vv: Arc::new(Mutex::new(self.external_vv.lock_unpoisoned().clone())),
-            external_kv: self.external_kv.lock_unpoisoned().clone_store(),
+            external_vv: Arc::new(Mutex::new(self.external_vv.lock().clone())),
+            external_kv: self.external_kv.lock().clone_store(),
             merge_interval,
         }
     }
@@ -486,7 +485,6 @@ impl ChangeStore {
     pub fn kv_size(&self) -> usize {
         self.external_kv
             .lock()
-            .unwrap()
             .scan(Bound::Unbounded, Bound::Unbounded)
             .map(|(k, v)| k.len() + v.len())
             .sum()
@@ -568,7 +566,7 @@ fn encode_blocks_in_store<W: std::io::Write>(
     arena: &SharedArena,
     w: &mut W,
 ) {
-    let mut inner = new_store.inner.lock_unpoisoned();
+    let mut inner = new_store.inner.lock();
     for (_id, block) in inner.mem_parsed_kv.iter_mut() {
         let bytes = block.to_bytes(arena);
         leb128::write::unsigned(w, bytes.bytes.len() as u64).unwrap();
@@ -584,7 +582,7 @@ mod mut_external_kv {
     impl ChangeStore {
         #[tracing::instrument(skip_all, level = "debug", name = "change_store import_all")]
         pub(crate) fn import_all(&self, bytes: Bytes) -> Result<BatchDecodeInfo, LoroError> {
-            let mut kv_store = self.external_kv.lock_unpoisoned();
+            let mut kv_store = self.external_kv.lock();
             assert!(
                 // 2 because there are vv and frontiers
                 kv_store.len() <= 2,
@@ -609,10 +607,10 @@ mod mut_external_kv {
                 for (peer, cnt) in vv.iter() {
                     self.get_change(ID::new(*peer, *cnt - 1)).unwrap();
                 }
-                kv_store = self.external_kv.lock_unpoisoned();
+                kv_store = self.external_kv.lock();
             }
 
-            *self.external_vv.lock_unpoisoned() = vv.clone();
+            *self.external_vv.lock() = vv.clone();
             let frontiers_bytes = kv_store.get(FRONTIERS_KEY).unwrap_or_default();
             let frontiers = Frontiers::decode(&frontiers_bytes).unwrap();
             let start_frontiers = kv_store.get(START_FRONTIERS_KEY).unwrap_or_default();
@@ -649,7 +647,7 @@ mod mut_external_kv {
                 start_version: if start_vv.is_empty() {
                     None
                 } else {
-                    let mut inner = self.inner.lock_unpoisoned();
+                    let mut inner = self.inner.lock();
                     inner.start_frontiers = start_frontiers.clone();
                     inner.start_vv = ImVersionVector::from_vv(&start_vv);
                     Some((start_vv, start_frontiers))
@@ -659,9 +657,9 @@ mod mut_external_kv {
 
         /// Flush the cached change to kv_store
         pub(crate) fn flush_and_compact(&self, vv: &VersionVector, frontiers: &Frontiers) {
-            let mut inner = self.inner.lock_unpoisoned();
-            let mut store = self.external_kv.lock_unpoisoned();
-            let mut external_vv = self.external_vv.lock_unpoisoned();
+            let mut inner = self.inner.lock();
+            let mut store = self.external_kv.lock();
+            let mut external_vv = self.external_vv.lock();
             for (id, block) in inner.mem_parsed_kv.iter_mut() {
                 if !block.flushed {
                     let id_bytes = id.to_bytes();
@@ -712,7 +710,7 @@ mod mut_inner_kv {
         pub fn insert_change(&self, mut change: Change, split_when_exceeds: bool, is_local: bool) {
             #[cfg(debug_assertions)]
             {
-                let vv = self.external_vv.lock_unpoisoned();
+                let vv = self.external_vv.lock();
                 assert!(vv.get(&change.id.peer).copied().unwrap_or(0) <= change.id.counter);
             }
 
@@ -725,7 +723,7 @@ mod mut_inner_kv {
             }
 
             let id = change.id;
-            let mut inner = self.inner.lock_unpoisoned();
+            let mut inner = self.inner.lock();
 
             // try to merge with previous block
             if let Some((_id, block)) = inner.mem_parsed_kv.range_mut(..id).next_back() {
@@ -778,7 +776,7 @@ mod mut_inner_kv {
         pub fn get_change_by_lamport_lte(&self, idlp: IdLp) -> Option<BlockChangeRef> {
             // This method is complicated because we impl binary search on top of the range api
             // It can be simplified
-            let mut inner = self.inner.lock_unpoisoned();
+            let mut inner = self.inner.lock();
             let mut iter = inner
                 .mem_parsed_kv
                 .range_mut(ID::new(idlp.peer, 0)..ID::new(idlp.peer, i32::MAX));
@@ -879,7 +877,7 @@ mod mut_inner_kv {
             let scan_end = ID::new(idlp.peer, counter_end).to_bytes();
 
             let (id, bytes) = 'block_scan: {
-                let kv_store = &self.external_kv.lock_unpoisoned();
+                let kv_store = &self.external_kv.lock();
                 let iter = kv_store
                     .scan(
                         Bound::Included(&ID::new(idlp.peer, 0).to_bytes()),
@@ -1001,7 +999,7 @@ mod mut_inner_kv {
         }
 
         fn get_parsed_block(&self, id: ID) -> Option<Arc<ChangesBlock>> {
-            let mut inner = self.inner.lock_unpoisoned();
+            let mut inner = self.inner.lock();
             if let Some((_id, block)) = inner.mem_parsed_kv.range_mut(..=id).next_back() {
                 if block.peer == id.peer && block.counter_range.1 > id.counter {
                     block
@@ -1011,7 +1009,7 @@ mod mut_inner_kv {
                 }
             }
 
-            let store = self.external_kv.lock_unpoisoned();
+            let store = self.external_kv.lock();
             let mut iter = store
                 .scan(Bound::Unbounded, Bound::Included(&id.to_bytes()))
                 .filter(|(id, _)| id.len() == 12);
@@ -1058,8 +1056,8 @@ mod mut_inner_kv {
             {
                 let start = start.map(|id| id.to_bytes());
                 let end = end.map(|id| id.to_bytes());
-                let kv = self.external_kv.lock_unpoisoned();
-                let mut inner = self.inner.lock_unpoisoned();
+                let kv = self.external_kv.lock();
+                let mut inner = self.inner.lock();
                 for (id, bytes) in kv
                     .scan(
                         start.as_ref().map(|x| x.as_slice()),
@@ -1089,8 +1087,8 @@ mod mut_inner_kv {
         }
 
         pub(super) fn ensure_id_lte(&self, id: ID) {
-            let kv = self.external_kv.lock_unpoisoned();
-            let mut inner = self.inner.lock_unpoisoned();
+            let kv = self.external_kv.lock();
+            let mut inner = self.inner.lock();
             let Some((next_back_id, next_back_bytes)) = kv
                 .scan(Bound::Unbounded, Bound::Included(&id.to_bytes()))
                 .filter(|(id, _)| id.len() == 12)
@@ -1561,13 +1559,13 @@ mod test {
 
     fn test_encode_decode(doc: LoroDoc) {
         doc.commit_then_renew();
-        let oplog = doc.oplog().lock_unpoisoned();
+        let oplog = doc.oplog().lock();
         let bytes = oplog
             .change_store
             .encode_all(oplog.vv(), oplog.dag.frontiers());
         let store = ChangeStore::new_for_test();
         let _ = store.import_all(bytes.clone()).unwrap();
-        assert_eq!(store.external_kv.lock_unpoisoned().export_all(), bytes);
+        assert_eq!(store.external_kv.lock().export_all(), bytes);
         let mut changes_parsed = Vec::new();
         let a = store.arena.clone();
         store.visit_all_changes(&mut |c| {

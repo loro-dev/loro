@@ -4,9 +4,21 @@ pub use loom::thread;
 pub use std::thread;
 
 #[cfg(loom)]
-pub use loom::sync::{LockResult, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
+mod raw {
+    pub use loom::sync::{
+        LockResult, Mutex as RawMutex, MutexGuard, RwLock as RawRwLock, RwLockReadGuard,
+        RwLockWriteGuard,
+    };
+}
 #[cfg(not(loom))]
-pub use std::sync::{LockResult, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
+mod raw {
+    pub use std::sync::{
+        LockResult, Mutex as RawMutex, MutexGuard, RwLock as RawRwLock, RwLockReadGuard,
+        RwLockWriteGuard,
+    };
+}
+
+pub use raw::{MutexGuard, RwLockReadGuard, RwLockWriteGuard};
 
 #[cfg(loom)]
 pub use loom::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicU8, AtomicUsize};
@@ -18,44 +30,73 @@ pub(crate) use my_thread_local::ThreadLocal;
 #[cfg(not(loom))]
 pub(crate) use thread_local::ThreadLocal;
 
-fn expect_not_poisoned<T>(result: LockResult<T>, lock_kind: &str) -> T {
+fn expect_not_poisoned<T>(result: raw::LockResult<T>, lock_kind: &str) -> T {
     result.unwrap_or_else(|_| panic!("poisoned {lock_kind}"))
 }
 
-pub(crate) trait MutexExt<T: ?Sized> {
-    fn lock_unpoisoned(&self) -> MutexGuard<'_, T>;
+#[derive(Debug)]
+pub struct Mutex<T: ?Sized> {
+    inner: raw::RawMutex<T>,
 }
 
-impl<T: ?Sized> MutexExt<T> for Mutex<T> {
-    fn lock_unpoisoned(&self) -> MutexGuard<'_, T> {
-        expect_not_poisoned(self.lock(), "mutex")
+impl<T> Mutex<T> {
+    pub fn new(value: T) -> Self {
+        Self {
+            inner: raw::RawMutex::new(value),
+        }
     }
 }
 
-#[allow(dead_code)]
-pub(crate) trait RwLockExt<T> {
-    fn read_unpoisoned(&self) -> RwLockReadGuard<'_, T>;
-    fn write_unpoisoned(&self) -> RwLockWriteGuard<'_, T>;
-    fn into_inner_unpoisoned(self) -> T
-    where
-        Self: Sized;
+impl<T: ?Sized> Mutex<T> {
+    pub fn lock(&self) -> MutexGuard<'_, T> {
+        self.lock_with_kind("mutex")
+    }
+
+    pub(crate) fn lock_with_kind(&self, lock_kind: &str) -> MutexGuard<'_, T> {
+        expect_not_poisoned(self.inner.lock(), lock_kind)
+    }
+
+    pub(crate) fn is_locked(&self) -> bool {
+        self.inner.try_lock().is_err()
+    }
 }
 
-impl<T> RwLockExt<T> for RwLock<T> {
-    fn read_unpoisoned(&self) -> RwLockReadGuard<'_, T> {
-        expect_not_poisoned(self.read(), "rwlock")
+impl<T: Default> Default for Mutex<T> {
+    fn default() -> Self {
+        Self::new(T::default())
+    }
+}
+
+#[derive(Debug)]
+pub struct RwLock<T: ?Sized> {
+    inner: raw::RawRwLock<T>,
+}
+
+impl<T> RwLock<T> {
+    pub fn new(value: T) -> Self {
+        Self {
+            inner: raw::RawRwLock::new(value),
+        }
     }
 
-    fn write_unpoisoned(&self) -> RwLockWriteGuard<'_, T> {
-        expect_not_poisoned(self.write(), "rwlock")
+    pub fn into_inner(self) -> T {
+        expect_not_poisoned(self.inner.into_inner(), "rwlock")
+    }
+}
+
+impl<T: ?Sized> RwLock<T> {
+    pub fn read(&self) -> RwLockReadGuard<'_, T> {
+        expect_not_poisoned(self.inner.read(), "rwlock")
     }
 
-    fn into_inner_unpoisoned(self) -> T
-    where
-        Self: Sized,
-    {
-        self.into_inner()
-            .unwrap_or_else(|_| panic!("poisoned rwlock"))
+    pub fn write(&self) -> RwLockWriteGuard<'_, T> {
+        expect_not_poisoned(self.inner.write(), "rwlock")
+    }
+}
+
+impl<T: Default> Default for RwLock<T> {
+    fn default() -> Self {
+        Self::new(T::default())
     }
 }
 
@@ -65,7 +106,6 @@ mod my_thread_local {
 
     use super::thread;
     use super::Mutex;
-    use super::MutexExt as _;
     use rustc_hash::FxHashMap;
 
     #[derive(Debug)]
@@ -81,7 +121,7 @@ mod my_thread_local {
         }
 
         pub fn get_or_default(&self) -> Arc<T> {
-            let mut content = self.content.lock_unpoisoned();
+            let mut content = self.content.lock();
             let v = content
                 .entry(thread::current().id())
                 .or_insert_with(|| Arc::new(T::default()));
@@ -107,11 +147,11 @@ mod tests {
     fn mutex_lock_panics_after_poison() {
         let lock = Mutex::new(7);
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _guard = lock.lock_unpoisoned();
+            let _guard = lock.lock();
             panic!("poison mutex");
         }));
 
-        drop(lock.lock_unpoisoned());
+        drop(lock.lock());
     }
 
     #[test]
@@ -119,11 +159,11 @@ mod tests {
     fn rwlock_read_panics_after_poison() {
         let lock = RwLock::new(7);
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let mut guard = lock.write_unpoisoned();
+            let mut guard = lock.write();
             *guard = 9;
             panic!("poison rwlock");
         }));
 
-        drop(lock.read_unpoisoned());
+        drop(lock.read());
     }
 }

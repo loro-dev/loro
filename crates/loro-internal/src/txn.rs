@@ -69,7 +69,7 @@ impl crate::LoroDoc {
         let obs = self.observer.clone();
         let local_update_subs_weak = self.local_update_subs.downgrade();
         txn.set_on_commit(Box::new(move |state, oplog, id_span| {
-            let mut state = state.lock_unpoisoned();
+            let mut state = state.lock();
             let events = state.take_events();
             drop(state);
             for event in events {
@@ -82,8 +82,7 @@ impl crate::LoroDoc {
 
             if let Some(local_update_subs) = local_update_subs_weak.upgrade() {
                 if !local_update_subs.inner().is_empty() {
-                    let bytes =
-                        { export_fast_updates_in_range(&oplog.lock_unpoisoned(), &[id_span]) };
+                    let bytes = { export_fast_updates_in_range(&oplog.lock(), &[id_span]) };
                     local_update_subs.emit(&(), bytes);
                 }
             }
@@ -95,7 +94,7 @@ impl crate::LoroDoc {
     pub fn start_auto_commit(&self) {
         self.auto_commit
             .store(true, std::sync::atomic::Ordering::Release);
-        let mut self_txn = self.txn.lock_unpoisoned();
+        let mut self_txn = self.txn.lock();
         if self_txn.is_some() || !self.can_edit() {
             return;
         }
@@ -109,7 +108,7 @@ impl crate::LoroDoc {
     #[inline]
     pub fn renew_txn_if_auto_commit(&self, options: Option<CommitOptions>) {
         if self.auto_commit.load(std::sync::atomic::Ordering::Acquire) && self.can_edit() {
-            let mut self_txn = self.txn.lock_unpoisoned();
+            let mut self_txn = self.txn.lock();
             if self_txn.is_some() {
                 return;
             }
@@ -339,8 +338,8 @@ impl Transaction {
     }
 
     pub fn new_with_origin(doc: Arc<LoroDocInner>, origin: InternalString) -> LoroResult<Self> {
-        let oplog_lock = doc.oplog.lock_unpoisoned();
-        let mut state_lock = doc.state.lock_unpoisoned();
+        let oplog_lock = doc.oplog.lock();
+        let mut state_lock = doc.state.lock();
         if state_lock.is_in_txn() {
             return Err(LoroError::DuplicatedTransactionError);
         }
@@ -439,7 +438,7 @@ impl Transaction {
         };
         self.finished = true;
         if self.local_ops.is_empty() {
-            let mut state = doc.state.lock_unpoisoned();
+            let mut state = doc.state.lock();
             state.abort_txn();
             return Ok(Some(self.take_options()));
         }
@@ -453,7 +452,7 @@ impl Transaction {
             id: ID::new(self.peer, self.start_counter),
             timestamp: self.latest_timestamp.max(
                 self.timestamp
-                    .unwrap_or_else(|| doc.oplog.lock_unpoisoned().get_timestamp_for_next_txn()),
+                    .unwrap_or_else(|| doc.oplog.lock().get_timestamp_for_next_txn()),
             ),
             commit_msg: take(&mut self.msg),
         };
@@ -461,7 +460,7 @@ impl Transaction {
         let change_meta = ChangeMeta::from_change(&change);
         {
             // add change to uncommit field of oplog
-            let mut oplog = doc.oplog.lock_unpoisoned();
+            let mut oplog = doc.oplog.lock();
             oplog.set_uncommitted_change(change);
         }
 
@@ -475,8 +474,8 @@ impl Transaction {
             },
         );
 
-        let mut oplog = doc.oplog.lock_unpoisoned();
-        let mut state = doc.state.lock_unpoisoned();
+        let mut oplog = doc.oplog.lock();
+        let mut state = doc.state.lock();
 
         let Some(mut change) = oplog.uncommitted_change.take() else {
             state.abort_txn();
@@ -561,13 +560,11 @@ impl Transaction {
                 expected: this_doc
                     .state
                     .lock()
-                    .unwrap()
                     .peer
                     .load(std::sync::atomic::Ordering::Relaxed),
                 found: doc
                     .state
                     .lock()
-                    .unwrap()
                     .peer
                     .load(std::sync::atomic::Ordering::Relaxed),
             });
@@ -585,8 +582,8 @@ impl Transaction {
             content,
         };
 
-        let mut oplog = doc.oplog.lock_unpoisoned();
-        let mut state = doc.state.lock_unpoisoned();
+        let mut oplog = doc.oplog.lock();
+        let mut state = doc.state.lock();
         if state.is_deleted(container) {
             return Err(LoroError::ContainerDeleted {
                 container: Box::new(state.arena.idx_to_id(container).unwrap()),
@@ -998,6 +995,6 @@ mod tests {
             err,
             LoroError::ConcurrentOpsWithSamePeerID { peer: 7, .. }
         ));
-        assert!(!doc.app_state().lock_unpoisoned().is_in_txn());
+        assert!(!doc.app_state().lock().is_in_txn());
     }
 }

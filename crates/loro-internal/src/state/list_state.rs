@@ -408,7 +408,11 @@ impl ContainerState for ListState {
         Diff::List(ans)
     }
 
-    fn apply_diff(&mut self, diff: InternalDiff, DiffApplyContext { doc, .. }: DiffApplyContext) -> LoroResult<()> {
+    fn apply_diff(
+        &mut self,
+        diff: InternalDiff,
+        DiffApplyContext { doc, .. }: DiffApplyContext,
+    ) -> LoroResult<()> {
         let doc = &doc.upgrade().unwrap();
         match diff {
             InternalDiff::ListRaw(delta) => {

@@ -1,6 +1,5 @@
 mod str_arena;
 use self::str_arena::StrArena;
-use crate::sync::MutexExt as _;
 use crate::sync::{Mutex, MutexGuard};
 use crate::{
     change::Lamport,
@@ -141,18 +140,14 @@ impl SharedArena {
     pub fn fork(&self) -> Self {
         Self {
             inner: Arc::new(InnerSharedArena {
-                container_idx_to_id: Mutex::new(
-                    self.inner.container_idx_to_id.lock_unpoisoned().clone(),
-                ),
-                depth: Mutex::new(self.inner.depth.lock_unpoisoned().clone()),
-                container_id_to_idx: Mutex::new(
-                    self.inner.container_id_to_idx.lock_unpoisoned().clone(),
-                ),
-                parents: Mutex::new(self.inner.parents.lock_unpoisoned().clone()),
-                values: Mutex::new(self.inner.values.lock_unpoisoned().clone()),
-                root_c_idx: Mutex::new(self.inner.root_c_idx.lock_unpoisoned().clone()),
+                container_idx_to_id: Mutex::new(self.inner.container_idx_to_id.lock().clone()),
+                depth: Mutex::new(self.inner.depth.lock().clone()),
+                container_id_to_idx: Mutex::new(self.inner.container_id_to_idx.lock().clone()),
+                parents: Mutex::new(self.inner.parents.lock().clone()),
+                values: Mutex::new(self.inner.values.lock().clone()),
+                root_c_idx: Mutex::new(self.inner.root_c_idx.lock().clone()),
                 str: self.inner.str.clone(),
-                parent_resolver: Mutex::new(self.inner.parent_resolver.lock_unpoisoned().clone()),
+                parent_resolver: Mutex::new(self.inner.parent_resolver.lock().clone()),
             }),
         }
     }
@@ -164,38 +159,38 @@ impl SharedArena {
 
     fn get_arena_guards(&self) -> ArenaGuards<'_> {
         ArenaGuards {
-            container_id_to_idx: self.inner.container_id_to_idx.lock_unpoisoned(),
-            container_idx_to_id: self.inner.container_idx_to_id.lock_unpoisoned(),
-            depth: self.inner.depth.lock_unpoisoned(),
-            parents: self.inner.parents.lock_unpoisoned(),
-            root_c_idx: self.inner.root_c_idx.lock_unpoisoned(),
-            parent_resolver: self.inner.parent_resolver.lock_unpoisoned(),
+            container_id_to_idx: self.inner.container_id_to_idx.lock(),
+            container_idx_to_id: self.inner.container_idx_to_id.lock(),
+            depth: self.inner.depth.lock(),
+            parents: self.inner.parents.lock(),
+            root_c_idx: self.inner.root_c_idx.lock(),
+            parent_resolver: self.inner.parent_resolver.lock(),
         }
     }
 
     pub fn register_container(&self, id: &ContainerID) -> ContainerIdx {
-        let mut container_id_to_idx = self.inner.container_id_to_idx.lock_unpoisoned();
+        let mut container_id_to_idx = self.inner.container_id_to_idx.lock();
         if let Some(&idx) = container_id_to_idx.get(id) {
             return idx;
         }
 
-        let mut container_idx_to_id = self.inner.container_idx_to_id.lock_unpoisoned();
+        let mut container_idx_to_id = self.inner.container_idx_to_id.lock();
         let idx = container_idx_to_id.len();
         container_idx_to_id.push(id.clone());
         let idx = ContainerIdx::from_index_and_type(idx as u32, id.container_type());
         container_id_to_idx.insert(id.clone(), idx);
         if id.is_root() {
-            self.inner.root_c_idx.lock_unpoisoned().push(idx);
-            self.inner.parents.lock_unpoisoned().insert(idx, None);
-            self.inner.depth.lock_unpoisoned().push(NonZeroU16::new(1));
+            self.inner.root_c_idx.lock().push(idx);
+            self.inner.parents.lock().insert(idx, None);
+            self.inner.depth.lock().push(NonZeroU16::new(1));
         } else {
-            self.inner.depth.lock_unpoisoned().push(None);
+            self.inner.depth.lock().push(None);
         }
         idx
     }
 
     pub fn get_container_id(&self, idx: ContainerIdx) -> Option<ContainerID> {
-        let lock = self.inner.container_idx_to_id.lock_unpoisoned();
+        let lock = self.inner.container_idx_to_id.lock();
         lock.get(idx.to_index() as usize).cloned()
     }
 
@@ -209,74 +204,69 @@ impl SharedArena {
     /// For existence-aware lookup that consults persisted state and performs lazy
     /// registration, prefer `DocState::resolve_idx`.
     pub fn id_to_idx(&self, id: &ContainerID) -> Option<ContainerIdx> {
-        self.inner
-            .container_id_to_idx
-            .lock()
-            .unwrap()
-            .get(id)
-            .copied()
+        self.inner.container_id_to_idx.lock().get(id).copied()
     }
 
     #[inline]
     pub fn idx_to_id(&self, id: ContainerIdx) -> Option<ContainerID> {
-        let lock = self.inner.container_idx_to_id.lock_unpoisoned();
+        let lock = self.inner.container_idx_to_id.lock();
         lock.get(id.to_index() as usize).cloned()
     }
 
     #[inline]
     pub fn with_idx_to_id<R>(&self, f: impl FnOnce(&Vec<ContainerID>) -> R) -> R {
-        let lock = self.inner.container_idx_to_id.lock_unpoisoned();
+        let lock = self.inner.container_idx_to_id.lock();
         f(&lock)
     }
 
     pub fn alloc_str(&self, str: &str) -> StrAllocResult {
-        let mut text_lock = self.inner.str.lock_unpoisoned();
+        let mut text_lock = self.inner.str.lock();
         _alloc_str(&mut text_lock, str)
     }
 
     /// return slice and unicode index
     pub fn alloc_str_with_slice(&self, str: &str) -> (BytesSlice, StrAllocResult) {
-        let mut text_lock = self.inner.str.lock_unpoisoned();
+        let mut text_lock = self.inner.str.lock();
         _alloc_str_with_slice(&mut text_lock, str)
     }
 
     /// alloc str without extra info
     pub fn alloc_str_fast(&self, bytes: &[u8]) {
-        let mut text_lock = self.inner.str.lock_unpoisoned();
+        let mut text_lock = self.inner.str.lock();
         text_lock.alloc(std::str::from_utf8(bytes).unwrap());
     }
 
     #[inline]
     pub fn utf16_len(&self) -> usize {
-        self.inner.str.lock_unpoisoned().len_utf16()
+        self.inner.str.lock().len_utf16()
     }
 
     #[inline]
     pub fn alloc_value(&self, value: LoroValue) -> usize {
-        let mut values_lock = self.inner.values.lock_unpoisoned();
+        let mut values_lock = self.inner.values.lock();
         _alloc_value(&mut values_lock, value)
     }
 
     #[inline]
     pub fn alloc_values(&self, values: impl Iterator<Item = LoroValue>) -> std::ops::Range<usize> {
-        let mut values_lock = self.inner.values.lock_unpoisoned();
+        let mut values_lock = self.inner.values.lock();
         _alloc_values(&mut values_lock, values)
     }
 
     #[inline]
     pub fn set_parent(&self, child: ContainerIdx, parent: Option<ContainerIdx>) {
-        let mut parents = self.inner.parents.lock_unpoisoned();
+        let mut parents = self.inner.parents.lock();
         parents.insert(child, parent);
-        let mut depth = self.inner.depth.lock_unpoisoned();
-        let mut root_c_idx = self.inner.root_c_idx.lock_unpoisoned();
+        let mut depth = self.inner.depth.lock();
+        let mut root_c_idx = self.inner.root_c_idx.lock();
 
         match parent {
             Some(p) => {
                 // Acquire the two maps as mutable guards so we can lazily register
                 // unknown parents while computing depth.
-                let mut idx_to_id_guard = self.inner.container_idx_to_id.lock_unpoisoned();
-                let mut id_to_idx_guard = self.inner.container_id_to_idx.lock_unpoisoned();
-                let parent_resolver_guard = self.inner.parent_resolver.lock_unpoisoned();
+                let mut idx_to_id_guard = self.inner.container_idx_to_id.lock();
+                let mut id_to_idx_guard = self.inner.container_id_to_idx.lock();
+                let parent_resolver_guard = self.inner.parent_resolver.lock();
                 if let Some(d) = get_depth(
                     p,
                     &mut depth,
@@ -299,7 +289,7 @@ impl SharedArena {
 
     pub fn log_hierarchy(&self) {
         if cfg!(debug_assertions) {
-            for (c, p) in self.inner.parents.lock_unpoisoned().iter() {
+            for (c, p) in self.inner.parents.lock().iter() {
                 tracing::info!(
                     "container {:?} {:?} {:?}",
                     c,
@@ -314,7 +304,6 @@ impl SharedArena {
         self.inner
             .container_id_to_idx
             .lock()
-            .unwrap()
             .iter()
             .for_each(|(id, idx)| {
                 tracing::info!("container {:?} {:?}", id, idx);
@@ -322,7 +311,6 @@ impl SharedArena {
         self.inner
             .container_idx_to_id
             .lock()
-            .unwrap()
             .iter()
             .enumerate()
             .for_each(|(i, id)| {
@@ -338,12 +326,12 @@ impl SharedArena {
         }
 
         // Try fast path first
-        if let Some(p) = self.inner.parents.lock_unpoisoned().get(&child).copied() {
+        if let Some(p) = self.inner.parents.lock().get(&child).copied() {
             return p;
         }
 
         // Fallback: try to resolve parent lazily via the resolver if provided.
-        let resolver = self.inner.parent_resolver.lock_unpoisoned().clone();
+        let resolver = self.inner.parent_resolver.lock().clone();
         if let Some(resolver) = resolver {
             let child_id = self.get_container_id(child).unwrap();
             if let Some(parent_id) = resolver(child_id.clone()) {
@@ -371,17 +359,17 @@ impl SharedArena {
 
     #[inline]
     pub fn slice_by_unicode(&self, range: impl RangeBounds<usize>) -> BytesSlice {
-        self.inner.str.lock_unpoisoned().slice_by_unicode(range)
+        self.inner.str.lock().slice_by_unicode(range)
     }
 
     #[inline]
     pub fn slice_by_utf8(&self, range: impl RangeBounds<usize>) -> BytesSlice {
-        self.inner.str.lock_unpoisoned().slice_bytes(range)
+        self.inner.str.lock().slice_bytes(range)
     }
 
     #[inline]
     pub fn slice_str_by_unicode_range(&self, range: Range<usize>) -> String {
-        let mut s = self.inner.str.lock_unpoisoned();
+        let mut s = self.inner.str.lock();
         let s: &mut StrArena = &mut s;
         let mut ans = String::with_capacity(range.len());
         ans.push_str(s.slice_str_by_unicode(range));
@@ -390,17 +378,17 @@ impl SharedArena {
 
     #[inline]
     pub fn with_text_slice(&self, range: Range<usize>, mut f: impl FnMut(&str)) {
-        f(self.inner.str.lock_unpoisoned().slice_str_by_unicode(range))
+        f(self.inner.str.lock().slice_str_by_unicode(range))
     }
 
     #[inline]
     pub fn get_value(&self, idx: usize) -> Option<LoroValue> {
-        self.inner.values.lock_unpoisoned().get(idx).cloned()
+        self.inner.values.lock().get(idx).cloned()
     }
 
     #[inline]
     pub fn get_values(&self, range: Range<usize>) -> Vec<LoroValue> {
-        (self.inner.values.lock_unpoisoned()[range]).to_vec()
+        (self.inner.values.lock()[range]).to_vec()
     }
 
     pub fn convert_single_op(
@@ -416,8 +404,7 @@ impl SharedArena {
     }
 
     pub fn can_import_snapshot(&self) -> bool {
-        self.inner.str.lock_unpoisoned().is_empty()
-            && self.inner.values.lock_unpoisoned().is_empty()
+        self.inner.str.lock().is_empty() && self.inner.values.lock().is_empty()
     }
 
     fn inner_convert_op(
@@ -542,12 +529,12 @@ impl SharedArena {
 
     #[inline]
     pub fn export_containers(&self) -> Vec<ContainerID> {
-        self.inner.container_idx_to_id.lock_unpoisoned().clone()
+        self.inner.container_idx_to_id.lock().clone()
     }
 
     pub fn export_parents(&self) -> Vec<Option<ContainerIdx>> {
-        let parents = self.inner.parents.lock_unpoisoned();
-        let containers = self.inner.container_idx_to_id.lock_unpoisoned();
+        let parents = self.inner.parents.lock();
+        let containers = self.inner.container_idx_to_id.lock();
         containers
             .iter()
             .enumerate()
@@ -565,17 +552,17 @@ impl SharedArena {
     /// So we need the flag type here.
     #[inline]
     pub(crate) fn root_containers(&self, _f: LoadAllFlag) -> Vec<ContainerIdx> {
-        self.inner.root_c_idx.lock_unpoisoned().clone()
+        self.inner.root_c_idx.lock().clone()
     }
 
     // TODO: this can return a u16 directly now, since the depths are always valid
     pub(crate) fn get_depth(&self, container: ContainerIdx) -> Option<NonZeroU16> {
-        let mut depth_guard = self.inner.depth.lock_unpoisoned();
-        let mut parents_guard = self.inner.parents.lock_unpoisoned();
-        let mut root_c_idx_guard = self.inner.root_c_idx.lock_unpoisoned();
-        let resolver_guard = self.inner.parent_resolver.lock_unpoisoned();
-        let mut idx_to_id_guard = self.inner.container_idx_to_id.lock_unpoisoned();
-        let mut id_to_idx_guard = self.inner.container_id_to_idx.lock_unpoisoned();
+        let mut depth_guard = self.inner.depth.lock();
+        let mut parents_guard = self.inner.parents.lock();
+        let mut root_c_idx_guard = self.inner.root_c_idx.lock();
+        let resolver_guard = self.inner.parent_resolver.lock();
+        let mut idx_to_id_guard = self.inner.container_idx_to_id.lock();
+        let mut id_to_idx_guard = self.inner.container_id_to_idx.lock();
         get_depth(
             container,
             &mut depth_guard,
@@ -591,7 +578,7 @@ impl SharedArena {
         &self,
         range: Range<usize>,
     ) -> impl Iterator<Item = LoroValue> + '_ {
-        let values = self.inner.values.lock_unpoisoned();
+        let values = self.inner.values.lock();
         range
             .into_iter()
             .map(move |i| values.get(i).unwrap().clone())
@@ -601,7 +588,7 @@ impl SharedArena {
         &self,
         root_index: &loro_common::InternalString,
     ) -> Option<ContainerIdx> {
-        let inner = self.inner.container_id_to_idx.lock_unpoisoned();
+        let inner = self.inner.container_id_to_idx.lock();
         for t in loro_common::ContainerType::ALL_TYPES.iter() {
             let cid = ContainerID::Root {
                 name: root_index.clone(),
@@ -616,7 +603,7 @@ impl SharedArena {
 
     #[allow(unused)]
     pub(crate) fn log_all_values(&self) {
-        let values = self.inner.values.lock_unpoisoned();
+        let values = self.inner.values.lock();
         for (i, v) in values.iter().enumerate() {
             loro_common::debug!("value {} {:?}", i, v);
         }
@@ -762,7 +749,7 @@ impl SharedArena {
     where
         F: Fn(ContainerID) -> Option<ContainerID> + Send + Sync + 'static,
     {
-        let mut slot = self.inner.parent_resolver.lock_unpoisoned();
+        let mut slot = self.inner.parent_resolver.lock();
         *slot = resolver.map(|f| Arc::new(f) as Arc<ParentResolver>);
     }
 }

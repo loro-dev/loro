@@ -443,7 +443,7 @@ fn test_pending() {
     // b does not has c's change
     a.import(&b.export(ExportMode::updates(&a.oplog_vv())).unwrap())
         .unwrap();
-    dbg!(&a.oplog().lock().unwrap());
+    dbg!(&a.oplog().lock());
     assert_eq!(a.get_deep_value().to_json_value(), json!({"text": "210"}));
 }
 
@@ -458,7 +458,7 @@ fn test_checkout() {
     let root_value = value.clone();
     let _g = doc_0.subscribe_root(Arc::new(move |event| {
         dbg!(&event);
-        let mut root_value = root_value.lock().unwrap();
+        let mut root_value = root_value.lock();
         for container_diff in event.events {
             root_value.apply(
                 &container_diff.path.iter().map(|x| x.1.clone()).collect(),
@@ -490,9 +490,9 @@ fn test_checkout() {
         .checkout(&Frontiers::from(vec![ID::new(0, 2)]))
         .unwrap();
 
-    assert_eq!(&doc_0.get_deep_value(), &*value.lock().unwrap());
+    assert_eq!(&doc_0.get_deep_value(), &*value.lock());
     assert_eq!(
-        value.lock().unwrap().to_json_value(),
+        value.lock().to_json_value(),
         json!({
             "map": {
                 "text": "12"
@@ -510,7 +510,7 @@ fn test_timestamp() {
     text.insert_with_txn(&mut txn, 0, "123", PosType::Unicode)
         .unwrap();
     txn.commit().unwrap();
-    let op_log = &doc.oplog().lock().unwrap();
+    let op_log = &doc.oplog().lock();
     let change = op_log.get_change_at(ID::new(doc.peer_id(), 0)).unwrap();
     assert!(change.timestamp() > 1690966970);
 }
@@ -800,7 +800,7 @@ fn missing_event_when_checkout() {
     let _g = doc.subscribe(
         &ContainerID::new_root("tree", ContainerType::Tree),
         Arc::new(move |e| {
-            let mut v = map.lock().unwrap();
+            let mut v = map.lock();
             for container_diff in e.events.iter() {
                 let from_children =
                     container_diff.id != ContainerID::new_root("tree", ContainerType::Tree);
@@ -840,7 +840,7 @@ fn missing_event_when_checkout() {
         .unwrap();
     // checkout use the same diff_calculator, the depth of calculator is not updated
     doc.attach();
-    assert!(value.lock().unwrap().contains_key("b"));
+    assert!(value.lock().contains_key("b"));
 }
 
 #[test]
@@ -1293,7 +1293,7 @@ fn test_on_first_commit_from_peer() {
     let p = Arc::new(Mutex::new(vec![]));
     let p2 = Arc::clone(&p);
     let sub = doc.subscribe_first_commit_from_peer(Box::new(move |e| {
-        p2.try_lock().unwrap().push(e.peer);
+        p2.lock().push(e.peer);
         true
     }));
     doc.get_text("text").insert_unicode(0, "a").unwrap();
@@ -1304,7 +1304,7 @@ fn test_on_first_commit_from_peer() {
     doc.get_text("text").insert_unicode(0, "c").unwrap();
     doc.commit_then_renew();
     sub.unsubscribe();
-    assert_eq!(p.try_lock().unwrap().as_slice(), &[0, 1]);
+    assert_eq!(p.lock().as_slice(), &[0, 1]);
 }
 
 #[test]
@@ -1314,12 +1314,12 @@ fn test_on_first_commit_from_peer_when_drop_doc() {
     let p = Arc::new(Mutex::new(vec![]));
     let p2 = Arc::clone(&p);
     let _sub = doc.subscribe_first_commit_from_peer(Box::new(move |e| {
-        p2.try_lock().unwrap().push(e.peer);
+        p2.lock().push(e.peer);
         true
     }));
     doc.get_text("text").insert_unicode(0, "a").unwrap();
     drop(doc);
-    assert_eq!(p.try_lock().unwrap().as_slice(), &[0]);
+    assert_eq!(p.lock().as_slice(), &[0]);
 }
 
 #[test]
@@ -1412,7 +1412,6 @@ fn test_pre_commit_with_hash() {
             let dep_msg = doc_clone
                 .oplog()
                 .lock()
-                .unwrap()
                 .get_change_at(dep)
                 .unwrap()
                 .message()
