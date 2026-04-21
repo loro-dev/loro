@@ -68,7 +68,7 @@ impl<T: Default> Default for Mutex<T> {
 }
 
 #[derive(Debug)]
-pub struct RwLock<T: ?Sized> {
+pub struct RwLock<T> {
     inner: raw::RawRwLock<T>,
 }
 
@@ -84,7 +84,7 @@ impl<T> RwLock<T> {
     }
 }
 
-impl<T: ?Sized> RwLock<T> {
+impl<T> RwLock<T> {
     pub fn read(&self) -> RwLockReadGuard<'_, T> {
         expect_not_poisoned(self.inner.read(), "rwlock")
     }
