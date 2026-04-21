@@ -341,7 +341,9 @@ impl LoroDoc {
                 }
             }
             if config.immediate_renew {
-                assert!(self.can_edit());
+                if !self.can_edit() {
+                    return (None, Some(txn_guard));
+                }
                 let mut t = self.txn().unwrap();
                 if let Some(options) = options.as_ref() {
                     t.set_options(options.clone());
@@ -829,60 +831,111 @@ impl LoroDoc {
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
     #[inline]
-    pub fn get_text<I: IntoContainerId>(&self, id: I) -> TextHandler {
+    pub fn try_get_text<I: IntoContainerId>(&self, id: I) -> Option<TextHandler> {
         let id = id.into_container_id(&self.arena, ContainerType::Text);
-        assert!(self.has_container(&id));
-        Handler::new_attached(id, self.clone()).into_text().unwrap()
+        if !self.has_container(&id) {
+            return None;
+        }
+        Some(Handler::new_attached(id, self.clone()).into_text().unwrap())
+    }
+
+    /// id can be a str, ContainerID, or ContainerIdRaw.
+    /// if it's str it will use Root container, which will not be None
+    #[inline]
+    pub fn get_text<I: IntoContainerId>(&self, id: I) -> TextHandler {
+        self.try_get_text(id)
+            .expect("The container does not exist in the document. Use `try_get_text` or `get_container` to check for existence.")
+    }
+
+    /// id can be a str, ContainerID, or ContainerIdRaw.
+    /// if it's str it will use Root container, which will not be None
+    #[inline]
+    pub fn try_get_list<I: IntoContainerId>(&self, id: I) -> Option<ListHandler> {
+        let id = id.into_container_id(&self.arena, ContainerType::List);
+        if !self.has_container(&id) {
+            return None;
+        }
+        Some(Handler::new_attached(id, self.clone()).into_list().unwrap())
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
     #[inline]
     pub fn get_list<I: IntoContainerId>(&self, id: I) -> ListHandler {
-        let id = id.into_container_id(&self.arena, ContainerType::List);
-        assert!(self.has_container(&id));
-        Handler::new_attached(id, self.clone()).into_list().unwrap()
+        self.try_get_list(id)
+            .expect("The container does not exist in the document. Use `try_get_list` or `get_container` to check for existence.")
+    }
+
+    /// id can be a str, ContainerID, or ContainerIdRaw.
+    /// if it's str it will use Root container, which will not be None
+    #[inline]
+    pub fn try_get_movable_list<I: IntoContainerId>(&self, id: I) -> Option<MovableListHandler> {
+        let id = id.into_container_id(&self.arena, ContainerType::MovableList);
+        if !self.has_container(&id) {
+            return None;
+        }
+        Some(Handler::new_attached(id, self.clone()).into_movable_list().unwrap())
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
     #[inline]
     pub fn get_movable_list<I: IntoContainerId>(&self, id: I) -> MovableListHandler {
-        let id = id.into_container_id(&self.arena, ContainerType::MovableList);
-        assert!(self.has_container(&id));
-        Handler::new_attached(id, self.clone())
-            .into_movable_list()
-            .unwrap()
+        self.try_get_movable_list(id)
+            .expect("The container does not exist in the document. Use `try_get_movable_list` or `get_container` to check for existence.")
+    }
+
+    /// id can be a str, ContainerID, or ContainerIdRaw.
+    /// if it's str it will use Root container, which will not be None
+    #[inline]
+    pub fn try_get_map<I: IntoContainerId>(&self, id: I) -> Option<MapHandler> {
+        let id = id.into_container_id(&self.arena, ContainerType::Map);
+        if !self.has_container(&id) {
+            return None;
+        }
+        Some(Handler::new_attached(id, self.clone()).into_map().unwrap())
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
     #[inline]
     pub fn get_map<I: IntoContainerId>(&self, id: I) -> MapHandler {
-        let id = id.into_container_id(&self.arena, ContainerType::Map);
-        assert!(self.has_container(&id));
-        Handler::new_attached(id, self.clone()).into_map().unwrap()
+        self.try_get_map(id)
+            .expect("The container does not exist in the document. Use `try_get_map` or `get_container` to check for existence.")
+    }
+
+    /// id can be a str, ContainerID, or ContainerIdRaw.
+    /// if it's str it will use Root container, which will not be None
+    #[inline]
+    pub fn try_get_tree<I: IntoContainerId>(&self, id: I) -> Option<TreeHandler> {
+        let id = id.into_container_id(&self.arena, ContainerType::Tree);
+        if !self.has_container(&id) {
+            return None;
+        }
+        Some(Handler::new_attached(id, self.clone()).into_tree().unwrap())
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
     #[inline]
     pub fn get_tree<I: IntoContainerId>(&self, id: I) -> TreeHandler {
-        let id = id.into_container_id(&self.arena, ContainerType::Tree);
-        assert!(self.has_container(&id));
-        Handler::new_attached(id, self.clone()).into_tree().unwrap()
+        self.try_get_tree(id)
+            .expect("The container does not exist in the document. Use `try_get_tree` or `get_container` to check for existence.")
     }
 
     #[cfg(feature = "counter")]
-    pub fn get_counter<I: IntoContainerId>(
-        &self,
-        id: I,
-    ) -> crate::handler::counter::CounterHandler {
+    pub fn try_get_counter<I: IntoContainerId>(&self, id: I) -> Option<crate::handler::counter::CounterHandler> {
         let id = id.into_container_id(&self.arena, ContainerType::Counter);
-        assert!(self.has_container(&id));
-        Handler::new_attached(id, self.clone())
-            .into_counter()
-            .unwrap()
+        if !self.has_container(&id) {
+            return None;
+        }
+        Some(Handler::new_attached(id, self.clone()).into_counter().unwrap())
+    }
+
+    #[cfg(feature = "counter")]
+    pub fn get_counter<I: IntoContainerId>(&self, id: I) -> crate::handler::counter::CounterHandler {
+        self.try_get_counter(id)
+            .expect("The container does not exist in the document. Use `try_get_counter` or `get_container` to check for existence.")
     }
 
     #[must_use]

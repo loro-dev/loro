@@ -570,9 +570,16 @@ impl TreeHandler {
         let parent = self
             .get_node_parent(&other)
             .ok_or(LoroTreeError::TreeNodeNotExist(other))?;
-        let mut index = self.get_index_by_tree_id(&other).unwrap() + 1;
-        if self.is_parent(&target, &parent) && self.get_index_by_tree_id(&target).unwrap() < index {
-            index -= 1;
+        let mut index = self
+            .get_index_by_tree_id(&other)
+            .ok_or(LoroTreeError::TreeNodeDeletedOrNotExist(other))?
+            + 1;
+        if self.is_parent(&target, &parent) {
+            if let Some(target_index) = self.get_index_by_tree_id(&target) {
+                if target_index < index {
+                    index -= 1;
+                }
+            }
         }
         self.move_to(target, parent, index)
     }
@@ -581,12 +588,15 @@ impl TreeHandler {
         let parent = self
             .get_node_parent(&other)
             .ok_or(LoroTreeError::TreeNodeNotExist(other))?;
-        let mut index = self.get_index_by_tree_id(&other).unwrap();
-        if self.is_parent(&target, &parent)
-            && index >= 1
-            && self.get_index_by_tree_id(&target).unwrap() < index
-        {
-            index -= 1;
+        let mut index = self
+            .get_index_by_tree_id(&other)
+            .ok_or(LoroTreeError::TreeNodeDeletedOrNotExist(other))?;
+        if self.is_parent(&target, &parent) && index >= 1 {
+            if let Some(target_index) = self.get_index_by_tree_id(&target) {
+                if target_index < index {
+                    index -= 1;
+                }
+            }
         }
         self.move_to(target, parent, index)
     }

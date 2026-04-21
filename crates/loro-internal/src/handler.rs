@@ -2588,6 +2588,14 @@ impl ListHandler {
         match &self.inner {
             MaybeDetached::Detached(l) => {
                 let mut list = l.lock();
+                let len = list.value.len();
+                if pos > len {
+                    return Err(LoroError::OutOfBound {
+                        pos,
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                        len,
+                    });
+                }
                 list.value.insert(pos, ValueOrHandler::Value(v.into()));
                 Ok(())
             }

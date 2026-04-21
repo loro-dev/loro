@@ -49,6 +49,19 @@ behavior or package output changes.
 
 ## Agent-Specific Notes
 
+### Principle: Avoid Breaking Changes Unless Absolutely Necessary
+
+The `loro` crate is a public library with downstream users. When fixing panics or bugs,
+prefer non-breaking solutions:
+
+- Add `try_*` methods that return `Option` or `Result` instead of changing existing
+  method signatures.
+- Replace `assert!` / `unwrap()` / `unreachable!()` with descriptive `expect()` messages
+  when the method must remain panicking for backward compatibility.
+- Only introduce breaking signature changes (e.g., changing a return type from `T` to
+  `Option<T>`) when there is no safe backward-compatible alternative and the breakage
+  is justified by a critical correctness or safety issue.
+
 ### Invariant: Flush Pending Events In `loro-wasm`
 
 In `crates/loro-wasm/src/lib.rs`, subscription callbacks (`subscribe*`,
