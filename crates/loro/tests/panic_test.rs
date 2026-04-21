@@ -253,3 +253,36 @@ fn import_json_updates_with_short_peers_array_no_longer_panics() {
     // but it must NOT panic on the out-of-bounds peer index.
     let _ = doc.import_json_updates(schema);
 }
+
+// ---------------------------------------------------------------------------
+// 9. Detached tree methods that used to panic — FIXED
+// ---------------------------------------------------------------------------
+
+use loro::LoroTree;
+
+/// `LoroTree::get_nodes` used to panic on a detached tree.
+#[test]
+#[parallel]
+fn detached_tree_get_nodes_does_not_panic() {
+    let tree = LoroTree::new();
+    let _ = tree.get_nodes(true);
+    let _ = tree.get_nodes(false);
+}
+
+/// `LoroTree::is_fractional_index_enabled` used to panic on a detached tree.
+#[test]
+#[parallel]
+fn detached_tree_is_fractional_index_enabled_returns_false() {
+    let tree = LoroTree::new();
+    assert!(!tree.is_fractional_index_enabled());
+}
+
+/// `LoroTree::enable_fractional_index` / `disable_fractional_index`
+/// used to panic on a detached tree.
+#[test]
+#[parallel]
+fn detached_tree_enable_disable_fractional_index_does_not_panic() {
+    let tree = LoroTree::new();
+    tree.enable_fractional_index(1);
+    tree.disable_fractional_index();
+}

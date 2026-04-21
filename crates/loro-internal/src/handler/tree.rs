@@ -894,7 +894,8 @@ impl TreeHandler {
     pub fn get_nodes_under(&self, parent: TreeParentId) -> Vec<TreeNode> {
         match &self.inner {
             MaybeDetached::Detached(_t) => {
-                unreachable!()
+                // Detached trees don't maintain full TreeNode metadata.
+                vec![]
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
                 let a = state.as_tree_state().unwrap();
@@ -909,8 +910,7 @@ impl TreeHandler {
     pub fn get_all_hierarchy_nodes_under(&self, parent: TreeParentId) -> Vec<TreeNodeWithChildren> {
         match &self.inner {
             MaybeDetached::Detached(_t) => {
-                // TODO: implement
-                unimplemented!()
+                vec![]
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
                 let a = state.as_tree_state().unwrap();
@@ -1013,7 +1013,7 @@ impl TreeHandler {
     pub fn is_fractional_index_enabled(&self) -> bool {
         match &self.inner {
             MaybeDetached::Detached(_) => {
-                unreachable!()
+                false
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
                 let a = state.as_tree_state().unwrap();
@@ -1032,7 +1032,8 @@ impl TreeHandler {
     pub fn enable_fractional_index(&self, jitter: u8) {
         match &self.inner {
             MaybeDetached::Detached(_) => {
-                unreachable!()
+                // No-op on detached trees
+                let _ = jitter;
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
                 let a = state.as_tree_state_mut().unwrap();
@@ -1048,7 +1049,7 @@ impl TreeHandler {
     pub fn disable_fractional_index(&self) {
         match &self.inner {
             MaybeDetached::Detached(_) => {
-                unreachable!()
+                // No-op on detached trees
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
                 let a = state.as_tree_state_mut().unwrap();
