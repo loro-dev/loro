@@ -7,7 +7,7 @@ use std::{
 };
 
 use arbitrary::Arbitrary;
-use loro::{ContainerType, ExportMode, Frontiers, ImportStatus, LoroError, LoroResult};
+use loro::{ContainerType, ExportMode, Frontiers, ImportStatus, LoroDoc, LoroError, LoroResult, TreeID};
 use rustc_hash::FxHashSet;
 use tabled::TableIteratorExt;
 use tracing::{info, info_span};
@@ -112,7 +112,29 @@ impl CRDTFuzzer {
                     *to = (*to + 1) % max_users;
                 }
             }
-
+            Action::Query { site, target, .. } => {
+                *site %= max_users;
+                *target %= self.targets.len() as u8;
+            }
+            Action::ExportShallow { site } => {
+                *site %= max_users;
+            }
+            Action::ImportShallow { site, from } => {
+                *site %= max_users;
+                *from %= max_users;
+                if site == from {
+                    *from = (*from + 1) % max_users;
+                }
+            }
+            Action::StateOnlyRoundTrip { site } => {
+                *site %= max_users;
+            }
+            Action::Commit { site } => {
+                *site %= max_users;
+            }
+            Action::SetCommitOptions { site, .. } => {
+                *site %= max_users;
+            }
         }
     }
 
@@ -243,7 +265,142 @@ impl CRDTFuzzer {
                     let _ = b.loro.apply_diff(diff);
                 }
             }
-
+            Action::Query { site, target, query_type } => {
+                let actor = &self.actors[*site as usize];
+                let targets: Vec<_> = actor.targets.keys().copied().collect();
+                if targets.is_empty() {
+                    return;
+                }
+                let ty = targets[*target as usize % targets.len()];
+                match ty {
+                    ContainerType::Text => {
+                        let text = actor.loro.get_text("text");
+                        match *query_type % 8 {
+                            0 => { let _ = text.to_delta(); }
+                            1 => { let _ = text.len_unicode(); }
+                            2 => { let _ = text.len_utf8(); }
+                            3 => {
+                                let len = text.len_unicode();
+                                if len > 0 {
+                                    let _ = text.get_cursor(len / 2, loro::cursor::Side::Left);
+                                }
+                            }
+                            4 => {
+                                let len = text.len_unicode();
+                                if len > 0 {
+                                    let _ = text.slice(0, len / 2);
+                                }
+                            }
+                            5 => {
+                                let len = text.len_utf8();
+                                if len > 0 {
+                                    let _ = text.slice(0, len / 2);
+                                }
+                            }
+                            _ => { let _ = text.to_string(); }
+                        }
+                    }
+                    ContainerType::List => {
+                        let list = actor.loro.get_list("list");
+                        match *query_type % 4 {
+                            0 => { let _ = list.len(); }
+                            1 => { let _ = list.to_vec(); }
+                            2 => {
+                                let len = list.len();
+                                if len > 0 {
+                                    let _ = list.get(len / 2);
+                                }
+                            }
+                            _ => { let _ = list.is_empty(); }
+                        }
+                    }
+                    ContainerType::Map => {
+                        let map = actor.loro.get_map("map");
+                        match *query_type % 4 {
+                            0 => { let _ = map.keys(); }
+                            1 => { let _ = map.values(); }
+                            2 => { let _ = map.len(); }
+                            _ => { let _ = map.is_empty(); }
+                        }
+                    }
+                    ContainerType::Tree => {
+                        let tree = actor.loro.get_tree("tree");
+                        match *query_type % 8 {
+                            0 => { let _ = tree.nodes(); }
+                            1 => { let _ = tree.children(None); }
+                            2 => { let _ = tree.children_num(None); }
+                            3 => { let _ = tree.contains(TreeID::new(0, 0)); }
+                            4 => { let _ = tree.is_node_deleted(&TreeID::new(0, 0)); }
+                            5 => { let _ = tree.parent(TreeID::new(0, 0)); }
+                            _ => { let _ = tree.is_empty(); }
+                        }
+                    }
+                    ContainerType::MovableList => {
+                        let list = actor.loro.get_movable_list("movable_list");
+                        match *query_type % 4 {
+                            0 => { let _ = list.len(); }
+                            1 => { let _ = list.to_vec(); }
+                            2 => {
+                                let len = list.len();
+                                if len > 0 {
+                                    let _ = list.get(len / 2);
+                                }
+                            }
+                            _ => { let _ = list.is_empty(); }
+                        }
+                    }
+                    ContainerType::Counter => {
+                        let counter = actor.loro.get_counter("counter");
+                        let _ = counter.get();
+                    }
+                    ContainerType::Unknown(_) => {}
+                }
+            }
+            Action::ExportShallow { site } => {
+                let actor = &self.actors[*site as usize];
+                let f = actor.loro.oplog_frontiers();
+                if !f.is_empty() {
+                    let _ = actor.loro.export(loro::ExportMode::shallow_snapshot(&f));
+                }
+            }
+            Action::ImportShallow { site, from } => {
+                let (a, b) =
+                    array_mut_ref!(&mut self.actors, [*site as usize, *from as usize]);
+                let f = b.loro.oplog_frontiers();
+                if !f.is_empty() {
+                    if let Ok(bytes) = b.loro.export(loro::ExportMode::shallow_snapshot(&f)) {
+                        let _ = a.loro.import(&bytes);
+                    }
+                }
+            }
+            Action::StateOnlyRoundTrip { site } => {
+                let actor = &mut self.actors[*site as usize];
+                let f = actor.loro.state_frontiers();
+                if !f.is_empty() {
+                    if let Ok(bytes) =
+                        actor.loro.export(loro::ExportMode::state_only(Some(&f)))
+                    {
+                        let new_doc = LoroDoc::new();
+                        if new_doc.import(&bytes).is_ok() {
+                            assert_eq!(new_doc.get_deep_value(), actor.loro.get_deep_value());
+                        }
+                    }
+                }
+            }
+            Action::Commit { site } => {
+                self.actors[*site as usize].loro.commit();
+            }
+            Action::SetCommitOptions { site, origin, msg } => {
+                let actor = &self.actors[*site as usize];
+                let origins = ["fuzz", "test", "a", "b", "c", "d", "e", "f"];
+                actor
+                    .loro
+                    .set_next_commit_origin(origins[*origin as usize % origins.len()]);
+                let msgs = ["msg1", "msg2", "hello", "world"];
+                actor
+                    .loro
+                    .set_next_commit_message(msgs[*msg as usize % msgs.len()]);
+            }
         }
     }
 

@@ -348,9 +348,8 @@ impl OneDocFuzzer {
             Action::SyncAllUndo { site, op_len: _ } => {
                 *site %= max_users;
             }
-            Action::ForkAt { site, to } => {
+            Action::ForkAt { site, to: _ } => {
                 *site %= max_users;
-                *to %= self.branches[*site as usize].frontiers.len() as u32 + 1;
             }
             Action::DiffApply { from, to } => {
                 *from %= max_users;
@@ -359,7 +358,38 @@ impl OneDocFuzzer {
                     *to = (*to + 1) % max_users;
                 }
             }
-
+            Action::Query { site, target, .. } => {
+                *site %= max_users;
+                // target maps to container type index
+                let valid_targets = [
+                    ContainerType::Text,
+                    ContainerType::List,
+                    ContainerType::Map,
+                    ContainerType::MovableList,
+                    ContainerType::Tree,
+                    ContainerType::Counter,
+                ];
+                *target %= valid_targets.len() as u8;
+            }
+            Action::ExportShallow { site } => {
+                *site %= max_users;
+            }
+            Action::ImportShallow { site, from } => {
+                *site %= max_users;
+                *from %= max_users;
+                if site == from {
+                    *from = (*from + 1) % max_users;
+                }
+            }
+            Action::StateOnlyRoundTrip { site } => {
+                *site %= max_users;
+            }
+            Action::Commit { site } => {
+                *site %= max_users;
+            }
+            Action::SetCommitOptions { site, .. } => {
+                *site %= max_users;
+            }
         }
     }
 
@@ -615,7 +645,148 @@ impl OneDocFuzzer {
                     let _ = self.doc.apply_diff(diff);
                 }
             }
-
+            Action::Query { site, target, query_type } => {
+                let branch = &self.branches[*site as usize];
+                self.doc.checkout(&branch.frontiers).unwrap();
+                let valid_targets = [
+                    ContainerType::Text,
+                    ContainerType::List,
+                    ContainerType::Map,
+                    ContainerType::MovableList,
+                    ContainerType::Tree,
+                    ContainerType::Counter,
+                ];
+                let ty = valid_targets[*target as usize % valid_targets.len()];
+                match ty {
+                    ContainerType::Text => {
+                        let text = self.doc.get_text("text");
+                        match *query_type % 8 {
+                            0 => { let _ = text.to_delta(); }
+                            1 => { let _ = text.len_unicode(); }
+                            2 => { let _ = text.len_utf8(); }
+                            3 => {
+                                let len = text.len_unicode();
+                                if len > 0 {
+                                    let _ = text.get_cursor(len / 2, loro::cursor::Side::Left);
+                                }
+                            }
+                            4 => {
+                                let len = text.len_unicode();
+                                if len > 0 {
+                                    let _ = text.slice(0, len / 2);
+                                }
+                            }
+                            5 => {
+                                let len = text.len_utf8();
+                                if len > 0 {
+                                    let _ = text.slice(0, len / 2);
+                                }
+                            }
+                            _ => { let _ = text.to_string(); }
+                        }
+                    }
+                    ContainerType::List => {
+                        let list = self.doc.get_list("list");
+                        match *query_type % 4 {
+                            0 => { let _ = list.len(); }
+                            1 => { let _ = list.to_vec(); }
+                            2 => {
+                                let len = list.len();
+                                if len > 0 {
+                                    let _ = list.get(len / 2);
+                                }
+                            }
+                            _ => { let _ = list.is_empty(); }
+                        }
+                    }
+                    ContainerType::Map => {
+                        let map = self.doc.get_map("map");
+                        match *query_type % 4 {
+                            0 => { let _ = map.keys(); }
+                            1 => { let _ = map.values(); }
+                            2 => { let _ = map.len(); }
+                            _ => { let _ = map.is_empty(); }
+                        }
+                    }
+                    ContainerType::Tree => {
+                        let tree = self.doc.get_tree("tree");
+                        match *query_type % 8 {
+                            0 => { let _ = tree.nodes(); }
+                            1 => { let _ = tree.children(None); }
+                            2 => { let _ = tree.children_num(None); }
+                            3 => { let _ = tree.contains(TreeID::new(0, 0)); }
+                            4 => { let _ = tree.is_node_deleted(&TreeID::new(0, 0)); }
+                            5 => { let _ = tree.parent(TreeID::new(0, 0)); }
+                            _ => { let _ = tree.is_empty(); }
+                        }
+                    }
+                    ContainerType::MovableList => {
+                        let list = self.doc.get_movable_list("movable_list");
+                        match *query_type % 4 {
+                            0 => { let _ = list.len(); }
+                            1 => { let _ = list.to_vec(); }
+                            2 => {
+                                let len = list.len();
+                                if len > 0 {
+                                    let _ = list.get(len / 2);
+                                }
+                            }
+                            _ => { let _ = list.is_empty(); }
+                        }
+                    }
+                    ContainerType::Counter => {
+                        let counter = self.doc.get_counter("counter");
+                        let _ = counter.get();
+                    }
+                    ContainerType::Unknown(_) => {}
+                }
+            }
+            Action::ExportShallow { site } => {
+                let branch = &self.branches[*site as usize];
+                self.doc.checkout(&branch.frontiers).unwrap();
+                let f = self.doc.oplog_frontiers();
+                if !f.is_empty() {
+                    let _ = self.doc.export(loro::ExportMode::shallow_snapshot(&f));
+                }
+            }
+            Action::ImportShallow { site, from } => {
+                let from_frontiers = self.branches[*from as usize].frontiers.clone();
+                self.doc.checkout(&from_frontiers).unwrap();
+                let f = self.doc.oplog_frontiers();
+                if !f.is_empty() {
+                    if let Ok(bytes) = self.doc.export(loro::ExportMode::shallow_snapshot(&f)) {
+                        let site_frontiers = self.branches[*site as usize].frontiers.clone();
+                        self.doc.checkout(&site_frontiers).unwrap();
+                        let _ = self.doc.import(&bytes);
+                    }
+                }
+            }
+            Action::StateOnlyRoundTrip { site } => {
+                let branch = &self.branches[*site as usize];
+                self.doc.checkout(&branch.frontiers).unwrap();
+                let f = self.doc.state_frontiers();
+                if !f.is_empty() {
+                    if let Ok(bytes) = self.doc.export(loro::ExportMode::state_only(Some(&f))) {
+                        let new_doc = LoroDoc::new();
+                        if new_doc.import(&bytes).is_ok() {
+                            assert_eq!(new_doc.get_deep_value(), self.doc.get_deep_value());
+                        }
+                    }
+                }
+            }
+            Action::Commit { site: _ } => {
+                self.doc.commit();
+            }
+            Action::SetCommitOptions { site, origin, msg } => {
+                let branch = &self.branches[*site as usize];
+                self.doc.checkout(&branch.frontiers).unwrap();
+                let origins = ["fuzz", "test", "a", "b", "c", "d", "e", "f"];
+                self.doc
+                    .set_next_commit_origin(origins[*origin as usize % origins.len()]);
+                let msgs = ["msg1", "msg2", "hello", "world"];
+                self.doc
+                    .set_next_commit_message(msgs[*msg as usize % msgs.len()]);
+            }
         }
     }
 
