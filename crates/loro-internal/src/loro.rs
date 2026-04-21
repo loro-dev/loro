@@ -217,7 +217,10 @@ impl LoroDoc {
 
     /// Renews the PeerID for the document.
     pub(crate) fn renew_peer_id(&self) {
-        let peer_id = DefaultRandom.next_u64();
+        let mut peer_id = DefaultRandom.next_u64();
+        while peer_id == PeerID::MAX {
+            peer_id = DefaultRandom.next_u64();
+        }
         self.set_peer_id(peer_id).unwrap();
     }
 
