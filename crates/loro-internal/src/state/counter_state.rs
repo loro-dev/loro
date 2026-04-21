@@ -97,10 +97,8 @@ mod snapshot {
         }
 
         fn decode_value(bytes: &[u8]) -> LoroResult<(LoroValue, &[u8])> {
-            Ok((
-                LoroValue::Double(f64::from_le_bytes(bytes.try_into().unwrap())),
-                bytes,
-            ))
+            let value = f64::from_le_bytes(bytes[..8].try_into().unwrap());
+            Ok((LoroValue::Double(value), &bytes[8..]))
         }
 
         fn decode_snapshot_fast(

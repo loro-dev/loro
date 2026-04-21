@@ -1315,6 +1315,7 @@ impl LoroDoc {
         }
 
         self._checkout_to_latest_without_commit(true);
+        self.emit_events();
         drop(_guard);
         self.renew_txn_if_auto_commit(options);
     }
