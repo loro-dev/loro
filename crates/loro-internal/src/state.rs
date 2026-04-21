@@ -490,7 +490,11 @@ impl DocState {
         diff_mode: DiffMode,
     ) -> LoroResult<()> {
         if self.in_txn {
-            panic!("apply_diff should not be called in a transaction");
+            return Err(LoroError::TransactionError(
+                "apply_diff should not be called in a transaction"
+                    .to_string()
+                    .into_boxed_str(),
+            ));
         }
 
         match diff_mode {

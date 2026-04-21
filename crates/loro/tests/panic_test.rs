@@ -7,6 +7,9 @@ use serial_test::parallel;
 use loro::{
     Container, ContainerID, ContainerType, CommitOptions, LoroDoc, LoroList, ID,
 };
+use loro::event::{Diff, DiffBatch};
+use loro::json::{JsonChange, JsonOp, JsonOpContent, JsonSchema, MapOp};
+use loro::{Frontiers, LoroValue};
 
 // ---------------------------------------------------------------------------
 // 1. Container getters panic on non-existent ContainerID (with clearer msg)
@@ -194,4 +197,59 @@ fn tree_mov_before_deleted_node_returns_error() {
 #[should_panic(expected = "Cannot create a detached container of type Unknown")]
 fn container_new_unknown_panics() {
     let _container = Container::new(ContainerType::Unknown(0));
+}
+
+// ---------------------------------------------------------------------------
+// 7. apply_diff with mismatched diff type — FIXED
+// ---------------------------------------------------------------------------
+
+/// `LoroDoc::apply_diff` used to panic when the diff type didn't match the
+/// target container's type (e.g. a `Text` diff sent to a `Map`).
+/// It now returns `LoroError::DecodeError`.
+#[test]
+#[parallel]
+fn apply_diff_with_wrong_type_returns_error() {
+    let doc = LoroDoc::new();
+    let mut batch = DiffBatch::default();
+    let map_id = ContainerID::new_root("map", ContainerType::Map);
+    // Push a text diff for a map container – type mismatch
+    batch.push(map_id, Diff::Text(vec![])).unwrap();
+    let err = doc.apply_diff(batch).unwrap_err();
+    assert!(matches!(err, loro::LoroError::DecodeError(..)));
+}
+
+// ---------------------------------------------------------------------------
+// 8. import_json_updates with malformed peer index — FIXED
+// ---------------------------------------------------------------------------
+
+/// `import_json_updates` used to panic when the `peers` array was shorter than
+/// a peer index referenced in a change. It now falls back to the raw peer id
+/// instead of panicking.
+#[test]
+#[parallel]
+fn import_json_updates_with_short_peers_array_no_longer_panics() {
+    let doc = LoroDoc::new();
+    let schema = JsonSchema {
+        schema_version: 1,
+        start_version: Frontiers::default(),
+        peers: Some(vec![1u64]),
+        changes: vec![JsonChange {
+            id: ID::new(5u64, 0),
+            timestamp: 0,
+            deps: vec![],
+            lamport: 0,
+            msg: None,
+            ops: vec![JsonOp {
+                content: JsonOpContent::Map(MapOp::Insert {
+                    key: "x".into(),
+                    value: LoroValue::Null,
+                }),
+                container: ContainerID::new_root("map", ContainerType::Map),
+                counter: 0,
+            }],
+        }],
+    };
+    // The import may fail for other reasons (unknown peer, missing deps, etc.)
+    // but it must NOT panic on the out-of-bounds peer index.
+    let _ = doc.import_json_updates(schema);
 }

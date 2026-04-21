@@ -241,7 +241,10 @@ fn convert_container_id(container: ContainerID, peers: &Option<Vec<PeerID>>) -> 
 
 pub(crate) fn get_peer_from_peers(peers: &Option<Vec<PeerID>>, peer: PeerID) -> PeerID {
     match peers {
-        Some(peers) => peers[peer as usize],
+        Some(peers) => peers
+            .get(peer as usize)
+            .copied()
+            .unwrap_or(peer),
         None => peer,
     }
 }
