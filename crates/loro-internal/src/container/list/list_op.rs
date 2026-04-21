@@ -7,8 +7,8 @@ use rle::{HasLength, Mergable, Sliceable};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    container::richtext::TextStyleInfoFlag,
     container::richtext::richtext_state::unicode_to_utf8_index,
+    container::richtext::TextStyleInfoFlag,
     op::{ListSlice, SliceRange},
     InternalString,
 };

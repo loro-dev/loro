@@ -205,6 +205,7 @@ impl ContainerIdRaw {
 
 #[cfg(test)]
 mod test {
+    use super::idx::ContainerIdx;
     use super::*;
 
     #[test]
@@ -226,5 +227,88 @@ mod test {
         assert_eq!(s, "cid:root-kkk:Text");
         let actual = ContainerID::try_from(s.as_str()).unwrap();
         assert_eq!(actual, container_id);
+    }
+
+    #[test]
+    fn container_idx_preserves_type_bits_and_index_bits() {
+        let idx = ContainerIdx::from_index_and_type(42, ContainerType::Text);
+        assert_eq!(idx.get_type(), ContainerType::Text);
+        assert_eq!(idx.to_index(), 42);
+        assert!(!idx.is_unknown());
+        assert_eq!(idx.to_string(), "ContainerIdx(Text 42)");
+        assert_eq!(format!("{idx:?}"), "ContainerIdx(Text 42)");
+
+        let max_index =
+            ContainerIdx::from_index_and_type(ContainerIdx::INDEX_MASK, ContainerType::MovableList);
+        assert_eq!(max_index.get_type(), ContainerType::MovableList);
+        assert_eq!(max_index.to_index(), ContainerIdx::INDEX_MASK);
+
+        let unknown = ContainerIdx::from_index_and_type(7, ContainerType::Unknown(13));
+        assert!(unknown.is_unknown());
+        assert_eq!(unknown.get_type(), ContainerType::Unknown(13));
+        assert_eq!(unknown.to_index(), 7);
+        assert_eq!(unknown.to_string(), "ContainerIdx(Unknown(13) 7)");
+    }
+
+    #[test]
+    fn container_id_raw_reapplies_type_for_root_and_normal_ids() {
+        let root = ContainerIdRaw::from("notes").with_type(ContainerType::Map);
+        assert_eq!(root, ContainerID::new_root("notes", ContainerType::Map));
+
+        let normal_id = ID::new(7, 11);
+        let normal = ContainerIdRaw::from(ContainerID::new_normal(normal_id, ContainerType::List))
+            .with_type(ContainerType::Text);
+        assert_eq!(
+            normal,
+            ContainerID::new_normal(normal_id, ContainerType::Text)
+        );
+
+        let root_again = ContainerIdRaw::from(&root).with_type(ContainerType::Tree);
+        assert_eq!(
+            root_again,
+            ContainerID::new_root("notes", ContainerType::Tree)
+        );
+    }
+
+    #[test]
+    fn into_container_id_uses_root_names_ids_and_arena_indexes() {
+        let arena = SharedArena::new();
+        assert_eq!(
+            "workspace".into_container_id(&arena, ContainerType::Map),
+            ContainerID::new_root("workspace", ContainerType::Map)
+        );
+        assert_eq!(
+            String::from("text").into_container_id(&arena, ContainerType::Text),
+            ContainerID::new_root("text", ContainerType::Text)
+        );
+
+        let normal = ContainerID::new_normal(ID::new(1, 2), ContainerType::List);
+        assert_eq!(
+            (&normal).into_container_id(&arena, ContainerType::Map),
+            normal
+        );
+        assert_eq!(
+            normal
+                .clone()
+                .into_container_id(&arena, ContainerType::Text),
+            normal
+        );
+
+        let idx = arena.register_container(&normal);
+        assert_eq!(idx.into_container_id(&arena, ContainerType::List), normal);
+        assert_eq!(
+            (&idx).into_container_id(&arena, ContainerType::List),
+            normal
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "assertion `left == right` failed")]
+    fn into_container_id_rejects_mismatched_index_type() {
+        let arena = SharedArena::new();
+        let id = ContainerID::new_root("items", ContainerType::List);
+        let idx = arena.register_container(&id);
+
+        let _ = idx.into_container_id(&arena, ContainerType::Map);
     }
 }

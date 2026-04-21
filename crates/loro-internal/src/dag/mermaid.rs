@@ -149,3 +149,172 @@ fn get_dag_break_points<T: DagNode>(dag: &impl Dag<Node = T>) -> BreakPoints {
 pub(crate) fn dag_to_mermaid<T: DagNode>(dag: &impl Dag<Node = T>) -> String {
     to_str(break_points_to_output(get_dag_break_points(dag)))
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use loro_common::{HasId, HasIdSpan};
+    use rle::{HasLength, Sliceable};
+
+    use super::*;
+
+    #[derive(Clone, Debug)]
+    struct TestNode {
+        id: ID,
+        len: usize,
+        lamport: Lamport,
+        deps: Frontiers,
+    }
+
+    impl DagNode for TestNode {
+        fn deps(&self) -> &Frontiers {
+            &self.deps
+        }
+    }
+
+    impl HasId for TestNode {
+        fn id_start(&self) -> ID {
+            self.id
+        }
+    }
+
+    impl HasLamport for TestNode {
+        fn lamport(&self) -> Lamport {
+            self.lamport
+        }
+    }
+
+    impl HasLength for TestNode {
+        fn content_len(&self) -> usize {
+            self.len
+        }
+    }
+
+    impl Sliceable for TestNode {
+        fn slice(&self, _from: usize, _to: usize) -> Self {
+            self.clone()
+        }
+    }
+
+    #[derive(Debug)]
+    struct TestDag {
+        nodes: BTreeMap<ID, TestNode>,
+        vv: VersionVector,
+        frontier: Frontiers,
+    }
+
+    impl TestDag {
+        fn new(nodes: impl IntoIterator<Item = TestNode>, frontier: Frontiers) -> Self {
+            let mut vv = VersionVector::default();
+            let nodes = nodes
+                .into_iter()
+                .map(|node| {
+                    vv.set_end(node.id_end());
+                    (node.id_start(), node)
+                })
+                .collect();
+            Self {
+                nodes,
+                vv,
+                frontier,
+            }
+        }
+    }
+
+    impl Dag for TestDag {
+        type Node = TestNode;
+
+        fn get(&self, id: ID) -> Option<Self::Node> {
+            self.nodes
+                .range(..=id)
+                .next_back()
+                .filter(|(_, node)| node.contains_id(id))
+                .map(|(_, node)| node.clone())
+        }
+
+        fn frontier(&self) -> &Frontiers {
+            &self.frontier
+        }
+
+        fn vv(&self) -> &VersionVector {
+            &self.vv
+        }
+
+        fn contains(&self, id: ID) -> bool {
+            self.get(id).is_some()
+        }
+    }
+
+    fn node(
+        peer: PeerID,
+        counter: Counter,
+        len: usize,
+        lamport: Lamport,
+        deps: Frontiers,
+    ) -> TestNode {
+        TestNode {
+            id: ID::new(peer, counter),
+            len,
+            lamport,
+            deps,
+        }
+    }
+
+    #[test]
+    fn break_points_to_output_splits_spans_and_retargets_middle_links_to_span_starts() {
+        let mut break_points = FxHashMap::default();
+        break_points.insert(1, FxHashSet::from_iter([0, 3]));
+        break_points.insert(2, FxHashSet::from_iter([0, 5, 10]));
+        let from = ID::new(1, 0);
+        let mut links = FxHashMap::default();
+        links.insert(from, vec![ID::new(2, 7)]);
+
+        let output = break_points_to_output(BreakPoints {
+            break_points,
+            links,
+        });
+
+        assert_eq!(output.clients.get(&1).unwrap(), &vec![IdSpan::new(1, 0, 3)]);
+        assert_eq!(
+            output.clients.get(&2).unwrap(),
+            &vec![IdSpan::new(2, 0, 5), IdSpan::new(2, 5, 10)]
+        );
+        assert_eq!(output.links.get(&from).unwrap(), &vec![ID::new(2, 5)]);
+    }
+
+    #[test]
+    fn dag_to_mermaid_includes_peer_subgraphs_split_spans_and_cross_peer_edges() {
+        let first = node(1, 0, 2, 0, Frontiers::default());
+        let second = node(2, 0, 1, 3, ID::new(1, 1).into());
+        let dag = TestDag::new(vec![first, second], ID::new(2, 0).into());
+
+        let graph = dag_to_mermaid(&dag);
+
+        assert!(graph.starts_with("flowchart RL"));
+        assert!(graph.contains("subgraph peer1"));
+        assert!(graph.contains("subgraph peer2"));
+        assert!(graph.contains("1-0(\"c1: [0, 1)\")"));
+        assert!(graph.contains("1-1(\"c1: [1, 2)\")"));
+        assert!(graph.contains("2-0(\"c2: [0, 1)\")"));
+        assert!(graph.contains("2-0 --> 1-1"));
+    }
+
+    #[test]
+    fn to_str_renders_all_links_without_requiring_hash_map_order() {
+        let output = Output {
+            clients: FxHashMap::from_iter([
+                (1, vec![IdSpan::new(1, 0, 1), IdSpan::new(1, 1, 2)]),
+                (2, vec![IdSpan::new(2, 0, 1)]),
+            ]),
+            links: FxHashMap::from_iter([(ID::new(2, 0), vec![ID::new(1, 0), ID::new(1, 1)])]),
+        };
+
+        let graph = to_str(output);
+
+        assert!(graph.contains("subgraph peer1"));
+        assert!(graph.contains("1-1(\"c1: [1, 2)\") --> 1-0(\"c1: [0, 1)\")"));
+        assert!(graph.contains("2-0 --> 1-0"));
+        assert!(graph.contains("2-0 --> 1-1"));
+    }
+}

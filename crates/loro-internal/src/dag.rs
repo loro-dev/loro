@@ -220,8 +220,8 @@ where
     while let Some(node_id) = stack.pop() {
         let node = get(node_id).unwrap();
         let node_id_start = node.id_start();
+        vv.try_update_last(node_id);
         if !visited.contains(&node_id_start) {
-            vv.try_update_last(node_id);
             for dep in node.deps().iter() {
                 if !visited.contains(&dep) {
                     stack.push(dep);
@@ -673,5 +673,250 @@ pub fn remove_included_frontiers(frontiers: &mut VersionVector, new_change_deps:
                 frontiers.remove(&dep.peer);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use loro_common::{HasId, HasIdSpan};
+
+    use super::*;
+
+    #[derive(Clone, Debug)]
+    struct TestNode {
+        id: ID,
+        len: usize,
+        lamport: Lamport,
+        deps: Frontiers,
+    }
+
+    impl DagNode for TestNode {
+        fn deps(&self) -> &Frontiers {
+            &self.deps
+        }
+    }
+
+    impl HasId for TestNode {
+        fn id_start(&self) -> ID {
+            self.id
+        }
+    }
+
+    impl HasLamport for TestNode {
+        fn lamport(&self) -> Lamport {
+            self.lamport
+        }
+    }
+
+    impl HasLength for TestNode {
+        fn content_len(&self) -> usize {
+            self.len
+        }
+    }
+
+    impl Sliceable for TestNode {
+        fn slice(&self, from: usize, to: usize) -> Self {
+            Self {
+                id: self.id.inc(from as i32),
+                len: to - from,
+                lamport: self.lamport + from as Lamport,
+                deps: if from == 0 {
+                    self.deps.clone()
+                } else {
+                    self.id.inc(from as i32 - 1).into()
+                },
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    struct TestDag {
+        nodes: BTreeMap<ID, TestNode>,
+        vv: VersionVector,
+        frontier: Frontiers,
+    }
+
+    impl TestDag {
+        fn new(nodes: impl IntoIterator<Item = TestNode>, frontier: Frontiers) -> Self {
+            let mut vv = VersionVector::default();
+            let nodes = nodes
+                .into_iter()
+                .map(|node| {
+                    vv.set_end(node.id_end());
+                    (node.id_start(), node)
+                })
+                .collect();
+            Self {
+                nodes,
+                vv,
+                frontier,
+            }
+        }
+    }
+
+    impl Dag for TestDag {
+        type Node = TestNode;
+
+        fn get(&self, id: ID) -> Option<Self::Node> {
+            self.nodes
+                .range(..=id)
+                .next_back()
+                .filter(|(_, node)| node.contains_id(id))
+                .map(|(_, node)| node.clone())
+        }
+
+        fn frontier(&self) -> &Frontiers {
+            &self.frontier
+        }
+
+        fn vv(&self) -> &VersionVector {
+            &self.vv
+        }
+
+        fn contains(&self, id: ID) -> bool {
+            self.get(id).is_some()
+        }
+    }
+
+    fn node(
+        peer: PeerID,
+        counter: Counter,
+        len: usize,
+        lamport: Lamport,
+        deps: Frontiers,
+    ) -> TestNode {
+        TestNode {
+            id: ID::new(peer, counter),
+            len,
+            lamport,
+            deps,
+        }
+    }
+
+    #[test]
+    fn common_ancestor_handles_empty_linear_same_span_and_parent_child_cases() {
+        let first = node(1, 0, 2, 0, Frontiers::default());
+        let second = node(1, 2, 2, 2, ID::new(1, 1).into());
+        let dag = TestDag::new(vec![first, second], ID::new(1, 3).into());
+
+        assert_eq!(
+            dag.find_common_ancestor(&Frontiers::default(), &ID::new(1, 3).into()),
+            (Frontiers::default(), DiffMode::Linear)
+        );
+        assert_eq!(
+            dag.find_common_ancestor(&ID::new(1, 3).into(), &Frontiers::default()),
+            (Frontiers::default(), DiffMode::Checkout)
+        );
+        assert_eq!(
+            dag.find_common_ancestor(&ID::new(1, 0).into(), &ID::new(1, 1).into()),
+            (ID::new(1, 0).into(), DiffMode::Linear)
+        );
+        assert_eq!(
+            dag.find_common_ancestor(&ID::new(1, 1).into(), &ID::new(1, 0).into()),
+            (ID::new(1, 0).into(), DiffMode::Checkout)
+        );
+        assert_eq!(
+            dag.find_common_ancestor(&ID::new(1, 1).into(), &ID::new(1, 3).into()),
+            (ID::new(1, 1).into(), DiffMode::Linear)
+        );
+    }
+
+    #[test]
+    fn common_ancestor_of_parallel_branches_is_shared_dependency() {
+        let root = node(1, 0, 1, 0, Frontiers::default());
+        let left = node(2, 0, 1, 1, root.id.into());
+        let right = node(3, 0, 1, 2, root.id.into());
+        let merge = node(4, 0, 1, 3, Frontiers::from([left.id, right.id]));
+        let dag = TestDag::new(
+            vec![root.clone(), left.clone(), right.clone(), merge.clone()],
+            merge.id.into(),
+        );
+
+        let (ancestor, mode) = dag.find_common_ancestor(&left.id.into(), &right.id.into());
+        assert_eq!(ancestor, root.id.into());
+        assert_eq!(mode, DiffMode::Checkout);
+
+        let (ancestor, _) = dag.find_common_ancestor(&root.id.into(), &merge.id.into());
+        assert_eq!(ancestor, root.id.into());
+    }
+
+    #[test]
+    fn find_path_reports_forward_and_retreat_spans_for_linear_and_branch_paths() {
+        let first = node(1, 0, 2, 0, Frontiers::default());
+        let second = node(1, 2, 2, 2, ID::new(1, 1).into());
+        let side = node(2, 0, 1, 1, ID::new(1, 1).into());
+        let dag = TestDag::new(
+            vec![first, second, side],
+            Frontiers::from([ID::new(1, 3), ID::new(2, 0)]),
+        );
+
+        let forward = dag.find_path(&ID::new(1, 0).into(), &ID::new(1, 3).into());
+        assert!(forward.retreat.is_empty());
+        assert_eq!(forward.forward.get(&1), Some(&CounterSpan::new(1, 4)));
+
+        let retreat = dag.find_path(&ID::new(1, 3).into(), &ID::new(1, 0).into());
+        assert!(retreat.forward.is_empty());
+        assert_eq!(retreat.retreat.get(&1), Some(&CounterSpan::new(1, 4)));
+
+        let branch = dag.find_path(&ID::new(2, 0).into(), &ID::new(1, 3).into());
+        assert_eq!(branch.retreat.get(&2), Some(&CounterSpan::new(0, 1)));
+        assert_eq!(branch.forward.get(&1), Some(&CounterSpan::new(2, 4)));
+    }
+
+    #[test]
+    fn get_version_vector_walks_dependencies_once_and_tracks_dep_ids_inside_spans() {
+        let base = node(1, 0, 3, 0, Frontiers::default());
+        let left = node(2, 0, 1, 4, ID::new(1, 1).into());
+        let right = node(3, 0, 1, 5, ID::new(1, 2).into());
+        let merge = node(4, 0, 1, 6, Frontiers::from([left.id, right.id]));
+        let dag = TestDag::new(vec![base, left, right, merge.clone()], merge.id.into());
+
+        let vv = dag.get_vv(merge.id);
+        assert_eq!(vv.get_last(1), Some(2));
+        assert_eq!(vv.get_last(2), Some(0));
+        assert_eq!(vv.get_last(3), Some(0));
+        assert_eq!(vv.get_last(4), Some(0));
+    }
+
+    #[test]
+    fn remove_included_frontiers_drops_only_dependencies_at_or_after_recorded_frontiers() {
+        let mut vv = VersionVector::default();
+        vv.set_last(ID::new(1, 3));
+        vv.set_last(ID::new(2, 4));
+        vv.set_last(ID::new(3, 1));
+
+        remove_included_frontiers(&mut vv, &[ID::new(1, 3), ID::new(2, 2), ID::new(4, 0)]);
+
+        assert_eq!(vv.get_last(1), None);
+        assert_eq!(vv.get_last(2), Some(4));
+        assert_eq!(vv.get_last(3), Some(1));
+    }
+
+    #[test]
+    fn ord_id_span_orders_by_last_lamport_peer_and_shorter_overlapping_span() {
+        let short = OrdIdSpan {
+            id: ID::new(1, 1),
+            lamport: 1,
+            len: 1,
+            deps: Cow::Owned(Frontiers::default()),
+        };
+        let long = OrdIdSpan {
+            id: ID::new(1, 0),
+            lamport: 0,
+            len: 2,
+            deps: Cow::Owned(Frontiers::default()),
+        };
+        let later_peer = OrdIdSpan {
+            id: ID::new(2, 0),
+            lamport: 1,
+            len: 1,
+            deps: Cow::Owned(Frontiers::default()),
+        };
+
+        assert!(short > long);
+        assert!(later_peer > short);
+        assert_eq!(long.get_min().len, 1);
     }
 }

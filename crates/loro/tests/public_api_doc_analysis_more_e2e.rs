@@ -1,0 +1,277 @@
+use std::ops::ControlFlow;
+
+use loro::{
+    CommitOptions, ContainerTrait, ExportMode, Frontiers, Index, LoroDoc, LoroList, LoroMap,
+    LoroText, ToJson, TreeParentId,
+};
+use pretty_assertions::assert_eq;
+use serde_json::json;
+
+fn json_value(doc: &LoroDoc) -> serde_json::Value {
+    doc.get_deep_value().to_json_value()
+}
+
+#[test]
+fn doc_analysis_compaction_and_state_correctness_follow_public_contract() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(101)?;
+    doc.set_record_timestamp(true);
+    doc.set_change_merge_interval(0);
+
+    let map = doc.get_map("root");
+    map.insert("title", "draft")?;
+    let text = map.insert_container("text", LoroText::new())?;
+    text.insert(0, "hello")?;
+    let list = map.insert_container("items", LoroList::new())?;
+    list.push("one")?;
+    list.push("two")?;
+    doc.commit_with(CommitOptions::new().timestamp(10).commit_msg("seed"));
+
+    let tree = doc.get_tree("tree");
+    tree.enable_fractional_index(0);
+    let root = tree.create(TreeParentId::Root)?;
+    tree.get_meta(root)?.insert("kind", "root")?;
+    doc.commit_with(CommitOptions::new().timestamp(20).commit_msg("tree"));
+
+    let nested = list.push_container(LoroMap::new())?;
+    nested.insert("name", "nested")?;
+    text.insert(text.len_unicode(), " world")?;
+    doc.commit_with(CommitOptions::new().timestamp(30).commit_msg("extend"));
+
+    let before_compact = json_value(&doc);
+    let analysis = doc.analyze();
+    assert!(!analysis.is_empty());
+    assert_eq!(analysis.dropped_len(), 0);
+    assert!(analysis.tiny_container_len() > 0);
+    assert!(
+        analysis
+            .containers
+            .get(&map.id())
+            .expect("root map should be analyzed")
+            .ops_num
+            > 0
+    );
+    assert!(
+        analysis
+            .containers
+            .get(&text.id())
+            .expect("text should be analyzed")
+            .last_edit_time
+            >= 30
+    );
+
+    doc.check_state_correctness_slow();
+    doc.compact_change_store();
+    assert_eq!(json_value(&doc), before_compact);
+    doc.check_state_correctness_slow();
+
+    let snapshot = doc.export(ExportMode::Snapshot)?;
+    let imported = LoroDoc::from_snapshot(&snapshot)?;
+    imported.check_state_correctness_slow();
+    assert_eq!(json_value(&imported), before_compact);
+
+    Ok(())
+}
+
+#[test]
+fn checkout_history_cache_and_diff_application_follow_public_contract() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(102)?;
+    doc.set_change_merge_interval(0);
+
+    let text = doc.get_text("text");
+    let list = doc.get_list("list");
+    let map = doc.get_map("map");
+
+    let v0 = doc.state_frontiers();
+    text.insert(0, "abc")?;
+    list.push("a")?;
+    map.insert("phase", "one")?;
+    doc.commit();
+    let v1 = doc.state_frontiers();
+
+    text.insert(1, "XYZ")?;
+    list.insert(1, "b")?;
+    map.insert("phase", "two")?;
+    doc.commit();
+    let v2 = doc.state_frontiers();
+    let expected_v2 = json_value(&doc);
+
+    let diff_v0_v2 = doc.diff(&v0, &v2)?;
+    let replay = LoroDoc::new();
+    replay.apply_diff(diff_v0_v2)?;
+    assert_eq!(json_value(&replay), expected_v2);
+
+    doc.checkout(&v1)?;
+    assert!(doc.is_detached());
+    assert_eq!(
+        json_value(&doc),
+        json!({"list": ["a"], "map": {"phase": "one"}, "text": "abc"})
+    );
+    assert!(doc.has_history_cache());
+
+    doc.free_history_cache();
+    assert!(!doc.has_history_cache());
+    doc.free_diff_calculator();
+
+    doc.checkout_to_latest();
+    assert!(!doc.is_detached());
+    assert_eq!(json_value(&doc), expected_v2);
+
+    doc.revert_to(&v1)?;
+    assert_eq!(
+        json_value(&doc),
+        json!({"list": ["a"], "map": {"phase": "one"}, "text": "abc"})
+    );
+
+    Ok(())
+}
+
+#[test]
+fn change_traversal_changed_containers_and_id_spans_are_observable_public_contract(
+) -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(103)?;
+    doc.set_change_merge_interval(0);
+
+    let root = doc.get_map("root");
+    root.insert("title", "first")?;
+    doc.commit_with(CommitOptions::new().commit_msg("first"));
+    let first = doc
+        .state_frontiers()
+        .as_single()
+        .expect("single local commit frontier");
+    let first_change = doc.get_change(first).expect("first change should exist");
+
+    let text = root.insert_container("body", LoroText::new())?;
+    text.insert(0, "hello")?;
+    doc.commit_with(CommitOptions::new().commit_msg("second"));
+    let second = doc
+        .state_frontiers()
+        .as_single()
+        .expect("single local commit frontier");
+    let second_change = doc.get_change(second).expect("second change should exist");
+
+    let list = root.insert_container("items", LoroList::new())?;
+    list.push("a")?;
+    doc.commit_with(CommitOptions::new().commit_msg("third"));
+    let third = doc
+        .state_frontiers()
+        .as_single()
+        .expect("single local commit frontier");
+
+    let changed_first = doc.get_changed_containers_in(first_change.id, first_change.len);
+    assert!(changed_first.contains(&root.id()));
+
+    let changed_second = doc.get_changed_containers_in(second_change.id, second_change.len);
+    assert!(changed_second.contains(&text.id()));
+
+    let between = doc.find_id_spans_between(&Frontiers::from_id(first), &Frontiers::from_id(third));
+    assert_eq!(
+        between.forward.get(&103).map(|span| (span.start, span.end)),
+        Some((first.counter + 1, third.counter + 1))
+    );
+
+    let mut messages = Vec::new();
+    doc.travel_change_ancestors(&[third], &mut |change| {
+        messages.push(change.message().to_string());
+        ControlFlow::Continue(())
+    })?;
+    assert_eq!(messages, vec!["third", "second", "first"]);
+
+    let mut first_two = Vec::new();
+    doc.travel_change_ancestors(&[third], &mut |change| {
+        first_two.push(change.message().to_string());
+        if first_two.len() == 2 {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    })?;
+    assert_eq!(first_two, vec!["third", "second"]);
+
+    Ok(())
+}
+
+#[test]
+fn shallow_doc_state_check_and_export_boundaries_follow_public_contract() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(104)?;
+    doc.set_change_merge_interval(0);
+
+    let text = doc.get_text("text");
+    text.insert(0, "alpha")?;
+    doc.commit_with(CommitOptions::new().timestamp(1));
+    let shallow_start = doc.state_frontiers();
+
+    text.insert(text.len_unicode(), "-beta")?;
+    doc.get_map("meta").insert("stage", "beta")?;
+    doc.commit_with(CommitOptions::new().timestamp(2));
+    let expected_latest = json_value(&doc);
+
+    let shallow_blob = doc.export(ExportMode::shallow_snapshot(&shallow_start))?;
+    let shallow = LoroDoc::new();
+    shallow.import(&shallow_blob)?;
+    assert!(shallow.is_shallow());
+    assert_eq!(shallow.shallow_since_frontiers(), shallow_start);
+    assert_eq!(json_value(&shallow), expected_latest);
+    shallow.check_state_correctness_slow();
+
+    let latest_updates = doc.export(ExportMode::updates(&shallow.shallow_since_vv().to_vv()))?;
+    let imported = LoroDoc::new();
+    imported.import(&shallow_blob)?;
+    imported.import(&latest_updates)?;
+    assert_eq!(json_value(&imported), expected_latest);
+
+    Ok(())
+}
+
+#[test]
+fn path_queries_and_root_values_preserve_public_container_contracts() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    let root = doc.get_map("root");
+    let list = root.insert_container("items", LoroList::new())?;
+    let child = list.push_container(LoroMap::new())?;
+    child.insert("name", "leaf")?;
+    let text = child.insert_container("body", LoroText::new())?;
+    text.insert(0, "content")?;
+
+    assert_eq!(
+        doc.get_by_path(&[
+            Index::Key("root".into()),
+            Index::Key("items".into()),
+            Index::Seq(0),
+            Index::Key("name".into())
+        ])
+        .unwrap()
+        .into_value()
+        .unwrap(),
+        "leaf".into()
+    );
+    assert_eq!(
+        doc.get_by_str_path("root/items/0/body")
+            .unwrap()
+            .into_container()
+            .unwrap()
+            .id(),
+        text.id()
+    );
+    assert!(doc.get_by_str_path("root/items/9").is_none());
+    assert!(doc.get_by_str_path("root/items/0/body/missing").is_none());
+
+    let shallow = doc.get_value().to_json_value();
+    let deep = doc.get_deep_value().to_json_value();
+    let deep_with_id = doc.get_deep_value_with_id().to_json_value();
+    assert_ne!(shallow, deep);
+    assert_eq!(
+        deep,
+        json!({"root": {"items": [{"body": "content", "name": "leaf"}]}})
+    );
+    assert!(deep_with_id["root"]["cid"].is_string());
+    assert_eq!(
+        deep_with_id["root"]["value"]["items"]["value"][0]["value"]["body"]["value"],
+        json!("content")
+    );
+
+    Ok(())
+}
