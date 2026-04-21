@@ -853,7 +853,9 @@ pub mod json {
 
     impl JsonChange {
         pub fn op_len(&self) -> usize {
-            let last_op = self.ops.last().unwrap();
+            let Some(last_op) = self.ops.last() else {
+                return 0;
+            };
             (last_op.counter - self.id.counter) as usize + last_op.content.op_len()
         }
     }
