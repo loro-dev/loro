@@ -15,8 +15,8 @@ use block_encode::decode_block_range;
 use bytes::Bytes;
 use itertools::Itertools;
 use loro_common::{
-    Counter, HasCounter, HasCounterSpan, HasId, HasIdSpan, HasLamportSpan, IdLp, IdSpan, Lamport,
-    LoroError, LoroResult, PeerID, ID,
+    Counter, HasCounterSpan, HasId, HasIdSpan, HasLamportSpan, IdLp, IdSpan, Lamport, LoroError,
+    LoroResult, PeerID, ID,
 };
 use loro_kv_store::{mem_store::MemKvConfig, MemKvStore};
 use once_cell::sync::OnceCell;
@@ -80,6 +80,30 @@ struct ChangeStoreInner {
     start_frontiers: Frontiers,
     /// It's more like a parsed cache for binary_kv.
     mem_parsed_kv: BTreeMap<ID, Arc<ChangesBlock>>,
+}
+
+#[derive(Debug)]
+pub(crate) struct ChangeStoreRollback {
+    old_vv: VersionVector,
+    blocks_before_mutation: BTreeMap<ID, Arc<ChangesBlock>>,
+}
+
+impl ChangeStoreRollback {
+    pub(crate) fn new(old_vv: VersionVector) -> Self {
+        Self {
+            old_vv,
+            blocks_before_mutation: BTreeMap::new(),
+        }
+    }
+
+    fn record_block_before_mutation(&mut self, id: ID, block: Arc<ChangesBlock>) {
+        let old_end = self.old_vv.get(&id.peer).copied().unwrap_or(0);
+        if id.counter >= old_end {
+            return;
+        }
+
+        self.blocks_before_mutation.entry(id).or_insert(block);
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -266,6 +290,18 @@ impl ChangeStore {
         Ok(ans)
     }
 
+    pub(crate) fn rollback_import(&self, rollback: ChangeStoreRollback) {
+        let mut inner = self.inner.lock();
+        inner.mem_parsed_kv.retain(|id, _| {
+            let old_end = rollback.old_vv.get(&id.peer).copied().unwrap_or(0);
+            id.counter < old_end
+        });
+
+        for (id, block) in rollback.blocks_before_mutation {
+            inner.mem_parsed_kv.insert(id, block);
+        }
+    }
+
     pub fn get_dag_nodes_that_contains(&self, id: ID) -> Option<Vec<AppDagNode>> {
         let block = self.get_block_that_contains(id)?;
         Some(block.content.iter_dag_nodes())
@@ -378,7 +414,7 @@ impl ChangeStore {
                     let (block, _start, end) = v.last().unwrap();
                     let changes = block.content.try_changes().unwrap();
                     assert!(changes[*end - 1].ctr_end() >= id_span.counter.end);
-                    assert!(changes[*end - 1].ctr_start() < id_span.counter.end);
+                    assert!(changes[*end - 1].id.counter < id_span.counter.end);
                 }
             }
         }
@@ -707,7 +743,27 @@ mod mut_inner_kv {
         ///
         /// The new change either merges with the previous block or is put into a new block.
         /// This method only updates the internal kv store.
-        pub fn insert_change(&self, mut change: Change, split_when_exceeds: bool, is_local: bool) {
+        pub fn insert_change(&self, change: Change, split_when_exceeds: bool, is_local: bool) {
+            self.insert_change_inner(change, split_when_exceeds, is_local, None);
+        }
+
+        pub(crate) fn insert_change_with_rollback(
+            &self,
+            change: Change,
+            split_when_exceeds: bool,
+            is_local: bool,
+            rollback: &mut ChangeStoreRollback,
+        ) {
+            self.insert_change_inner(change, split_when_exceeds, is_local, Some(rollback));
+        }
+
+        fn insert_change_inner(
+            &self,
+            mut change: Change,
+            split_when_exceeds: bool,
+            is_local: bool,
+            mut rollback: Option<&mut ChangeStoreRollback>,
+        ) {
             #[cfg(debug_assertions)]
             {
                 let vv = self.external_vv.lock();
@@ -718,7 +774,7 @@ mod mut_inner_kv {
             let _e = s.enter();
             let estimated_size = change.estimate_storage_size();
             if estimated_size > MAX_BLOCK_SIZE && split_when_exceeds {
-                self.split_change_then_insert(change);
+                self.split_change_then_insert(change, rollback.as_deref_mut());
                 return;
             }
 
@@ -730,6 +786,10 @@ mod mut_inner_kv {
                 if block.peer == change.id.peer {
                     if block.counter_range.1 != change.id.counter {
                         panic!("counter should be continuous")
+                    }
+
+                    if let Some(rollback) = rollback.as_deref_mut() {
+                        rollback.record_block_before_mutation(*_id, block.clone());
                     }
 
                     match block.push_change(
@@ -909,7 +969,11 @@ mod mut_inner_kv {
             })
         }
 
-        fn split_change_then_insert(&self, change: Change) {
+        fn split_change_then_insert(
+            &self,
+            change: Change,
+            mut rollback: Option<&mut ChangeStoreRollback>,
+        ) {
             let original_len = change.atom_len();
             let mut new_change = Change {
                 ops: RleVec::new(),
@@ -928,6 +992,7 @@ mod mut_inner_kv {
                         new_change,
                         &mut total_len,
                         &mut estimated_size,
+                        rollback.as_deref_mut(),
                     );
                 }
 
@@ -941,6 +1006,7 @@ mod mut_inner_kv {
                         new_change,
                         &mut total_len,
                         &mut estimated_size,
+                        rollback.as_deref_mut(),
                     );
 
                     if end < op.atom_len() {
@@ -956,6 +1022,7 @@ mod mut_inner_kv {
                         new_change,
                         &mut total_len,
                         &mut estimated_size,
+                        rollback.as_deref_mut(),
                     );
                     new_change.ops.push(op);
                 } else {
@@ -965,7 +1032,7 @@ mod mut_inner_kv {
 
             if !new_change.ops.is_empty() {
                 total_len += new_change.atom_len();
-                self.insert_change(new_change, false, false);
+                self.insert_change_inner(new_change, false, false, rollback.as_deref_mut());
             }
 
             assert_eq!(total_len, original_len);
@@ -976,6 +1043,7 @@ mod mut_inner_kv {
             new_change: Change,
             total_len: &mut usize,
             estimated_size: &mut usize,
+            rollback: Option<&mut ChangeStoreRollback>,
         ) -> Change {
             if new_change.atom_len() == 0 {
                 return new_change;
@@ -993,7 +1061,7 @@ mod mut_inner_kv {
                 commit_msg: new_change.commit_msg.clone(),
             };
 
-            self.insert_change(new_change, false, false);
+            self.insert_change_inner(new_change, false, false, rollback);
             *estimated_size = ans.estimate_storage_size();
             ans
         }

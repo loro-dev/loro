@@ -649,10 +649,17 @@ impl LoroDoc {
         origin: InternalString,
     ) -> Result<ImportStatus, LoroError> {
         let mut oplog = self.oplog.lock();
+        oplog.begin_import_rollback();
         if !self.is_detached() {
             let old_vv = oplog.vv().clone();
             let old_frontiers = oplog.frontiers().clone();
-            let result = f(&mut oplog);
+            let result = match f(&mut oplog) {
+                Ok(result) => result,
+                Err(e) => {
+                    oplog.rollback_import();
+                    return Err(e);
+                }
+            };
             if &old_vv != oplog.vv() {
                 let mut diff = DiffCalculator::new(false);
                 let (diff, diff_mode) = diff.calc_diff_internal(
@@ -664,7 +671,7 @@ impl LoroDoc {
                     None,
                 );
                 let mut state = self.state.lock();
-                state.apply_diff(
+                if let Err(e) = state.apply_diff(
                     InternalDocDiff {
                         origin,
                         diff: (diff).into(),
@@ -672,11 +679,24 @@ impl LoroDoc {
                         new_version: Cow::Owned(oplog.frontiers().clone()),
                     },
                     diff_mode,
-                )?;
+                ) {
+                    oplog.rollback_import();
+                    return Err(e);
+                }
             }
-            result
+            oplog.commit_import_rollback();
+            Ok(result)
         } else {
-            f(&mut oplog)
+            match f(&mut oplog) {
+                Ok(result) => {
+                    oplog.commit_import_rollback();
+                    Ok(result)
+                }
+                Err(e) => {
+                    oplog.rollback_import();
+                    Err(e)
+                }
+            }
         }
     }
 
@@ -2125,16 +2145,366 @@ impl Default for CommitOptions {
 
 #[cfg(test)]
 mod test {
-    use std::panic::AssertUnwindSafe;
+    use std::{
+        panic::AssertUnwindSafe,
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        },
+    };
 
-    use crate::{cursor::PosType, loro::ExportMode, version::Frontiers, LoroDoc, ToJson};
+    use crate::{
+        cursor::PosType,
+        encoding::json_schema::json::{JsonOpContent, JsonSchema, ListOp},
+        loro::ExportMode,
+        version::{Frontiers, VersionVector},
+        LoroDoc, ToJson, TreeParentId,
+    };
     use loro_common::ID;
+
+    fn make_json_import_stress_doc(peer: u64) -> LoroDoc {
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(peer).unwrap();
+
+        let text = doc.get_text("text");
+        let mut text_pos = 0;
+        for i in 0..32 {
+            let chunk = format!("segment-{i}-abcdefghijklmnopqrstuvwxyz;");
+            text.insert_unicode(text_pos, &chunk).unwrap();
+            text_pos += chunk.chars().count();
+        }
+
+        let list = doc.get_list("list");
+        for i in 0..32 {
+            list.insert(i, format!("item-{i}")).unwrap();
+        }
+
+        let map = doc.get_map("map");
+        for i in 0..32 {
+            let key = format!("key-{i}");
+            map.insert(&key, format!("value-{i}")).unwrap();
+        }
+
+        let tree = doc.get_tree("tree");
+        let mut parent = TreeParentId::Root;
+        for i in 0..16 {
+            let node = tree.create(parent).unwrap();
+            let meta = tree.get_meta(node).unwrap();
+            meta.insert("name", format!("node-{i}")).unwrap();
+            meta.insert("payload", format!("payload-{i}-{}", "x".repeat(16)))
+                .unwrap();
+            parent = TreeParentId::Node(node);
+        }
+
+        doc
+    }
+
+    fn make_json_list_update_with_four_ops(peer: u64) -> (LoroDoc, JsonSchema) {
+        let doc = LoroDoc::new();
+        doc.set_peer_id(peer).unwrap();
+        let map = doc.get_map("map");
+        let list = doc.get_list("list");
+        let text = doc.get_text("text");
+
+        let mut txn = doc.txn().unwrap();
+        map.insert_with_txn(&mut txn, "prefix", "map-value".into())
+            .unwrap();
+        list.insert_with_txn(&mut txn, 0, "seed".into()).unwrap();
+        text.insert_with_txn(&mut txn, 0, "text-value", PosType::Unicode)
+            .unwrap();
+        list.insert_with_txn(&mut txn, 1, "tail".into()).unwrap();
+        txn.commit().unwrap();
+
+        let json = doc.export_json_updates(&Default::default(), &doc.oplog_vv(), false);
+        assert_eq!(json.changes.len(), 1);
+        assert_eq!(json.changes[0].ops.len(), 4);
+        (doc, json)
+    }
+
+    fn move_last_list_insert_far_out_of_bounds(json: &mut JsonSchema) {
+        let last_change = json.changes.last_mut().unwrap();
+        let last_op = last_change.ops.last_mut().unwrap();
+        match &mut last_op.content {
+            JsonOpContent::List(ListOp::Insert { pos, .. }) => {
+                *pos = 1_000;
+            }
+            other => panic!("expected list insert op, got {other:?}"),
+        }
+    }
 
     #[test]
     fn test_sync() {
         fn is_send_sync<T: Send + Sync>(_v: T) {}
         let loro = super::LoroDoc::new();
         is_send_sync(loro)
+    }
+
+    #[test]
+    fn failed_import_rolls_back_oplog_and_arena() {
+        let src = LoroDoc::new();
+        src.set_peer_id(1).unwrap();
+        let text = src.get_text("text");
+        let mut txn = src.txn().unwrap();
+        text.insert_with_txn(&mut txn, 0, "hello", PosType::Unicode)
+            .unwrap();
+        txn.commit().unwrap();
+        let update = src.export(ExportMode::all_updates()).unwrap();
+
+        let dst = LoroDoc::new();
+        let vv_before_import = dst.oplog_vv();
+        let state_before_import = dst.get_deep_value();
+        let err = dst
+            .import_with(&update, "__loro_fail_import_state_apply".into())
+            .unwrap_err();
+        assert!(err.to_string().contains("state apply failpoint"));
+        assert_eq!(dst.oplog_vv(), vv_before_import);
+        assert_eq!(dst.get_deep_value(), state_before_import);
+        assert!(dst.oplog().lock().is_empty());
+
+        dst.import(&update).unwrap();
+        assert_eq!(dst.get_deep_value(), src.get_deep_value());
+    }
+
+    #[test]
+    fn failed_incremental_import_restores_previous_change_store_block() {
+        let src = LoroDoc::new();
+        src.set_peer_id(1).unwrap();
+        let text = src.get_text("text");
+        let mut txn = src.txn().unwrap();
+        text.insert_with_txn(&mut txn, 0, "a", PosType::Unicode)
+            .unwrap();
+        txn.commit().unwrap();
+        let first_update = src.export(ExportMode::all_updates()).unwrap();
+        let first_vv = src.oplog_vv();
+
+        let mut txn = src.txn().unwrap();
+        text.insert_with_txn(&mut txn, 1, "b", PosType::Unicode)
+            .unwrap();
+        txn.commit().unwrap();
+        let second_update = src.export(ExportMode::updates(&first_vv)).unwrap();
+
+        let dst = LoroDoc::new();
+        dst.import(&first_update).unwrap();
+        let vv_before_import = dst.oplog_vv();
+        let state_before_import = dst.get_deep_value();
+        dst.import_with(&second_update, "__loro_fail_import_state_apply".into())
+            .unwrap_err();
+        assert_eq!(dst.oplog_vv(), vv_before_import);
+        assert_eq!(dst.get_deep_value(), state_before_import);
+
+        dst.import(&second_update).unwrap();
+        assert_eq!(dst.get_deep_value(), src.get_deep_value());
+    }
+
+    #[test]
+    fn failed_import_json_updates_rolls_back_complex_empty_doc() {
+        let src = make_json_import_stress_doc(11);
+        let json = src.export_json_updates(&Default::default(), &src.oplog_vv(), false);
+
+        let dst = LoroDoc::new();
+        let vv_before_import = dst.oplog_vv();
+        let frontiers_before_import = dst.oplog_frontiers();
+        let state_before_import = dst.get_deep_value();
+        for _ in 0..3 {
+            crate::state::fail_next_import_state_apply_for_test();
+            let err = dst.import_json_updates(json.clone()).unwrap_err();
+            assert!(err.to_string().contains("state apply failpoint"));
+            assert_eq!(dst.oplog_vv(), vv_before_import);
+            assert_eq!(dst.oplog_frontiers(), frontiers_before_import);
+            assert_eq!(dst.get_deep_value(), state_before_import);
+            assert!(dst.oplog().lock().is_empty());
+        }
+
+        dst.import_json_updates(json).unwrap();
+        assert_eq!(dst.oplog_vv(), src.oplog_vv());
+        assert_eq!(dst.oplog_frontiers(), src.oplog_frontiers());
+        assert_eq!(dst.get_deep_value(), src.get_deep_value());
+    }
+
+    #[test]
+    fn failed_incremental_import_json_updates_restores_previous_change_store_block() {
+        let src = LoroDoc::new_auto_commit();
+        src.set_peer_id(12).unwrap();
+        let text = src.get_text("text");
+        text.insert_unicode(0, "a").unwrap();
+        let list = src.get_list("list");
+        list.push("seed").unwrap();
+        let map = src.get_map("map");
+        map.insert("seed", "value").unwrap();
+        let tree = src.get_tree("tree");
+        let root = tree.create(TreeParentId::Root).unwrap();
+        tree.get_meta(root).unwrap().insert("name", "root").unwrap();
+
+        let first_vv = src.oplog_vv();
+        let first_json = src.export_json_updates(&Default::default(), &first_vv, false);
+
+        let mut text_pos = text.len_unicode();
+        for i in 0..64 {
+            let chunk = format!("chunk-{i};");
+            text.insert_unicode(text_pos, &chunk).unwrap();
+            text_pos += chunk.chars().count();
+        }
+        for i in 0..32 {
+            list.push(format!("after-{i}")).unwrap();
+            let key = format!("after-{i}");
+            map.insert(&key, format!("value-{i}")).unwrap();
+        }
+        let child = tree.create(TreeParentId::Node(root)).unwrap();
+        tree.get_meta(child)
+            .unwrap()
+            .insert("name", "child")
+            .unwrap();
+
+        let second_json = src.export_json_updates(&first_vv, &src.oplog_vv(), false);
+
+        let dst = LoroDoc::new();
+        dst.import_json_updates(first_json).unwrap();
+        let vv_before_import = dst.oplog_vv();
+        let frontiers_before_import = dst.oplog_frontiers();
+        let state_before_import = dst.get_deep_value();
+
+        for _ in 0..2 {
+            crate::state::fail_next_import_state_apply_for_test();
+            let err = dst.import_json_updates(second_json.clone()).unwrap_err();
+            assert!(err.to_string().contains("state apply failpoint"));
+            assert_eq!(dst.oplog_vv(), vv_before_import);
+            assert_eq!(dst.oplog_frontiers(), frontiers_before_import);
+            assert_eq!(dst.get_deep_value(), state_before_import);
+        }
+
+        dst.import_json_updates(second_json).unwrap();
+        assert_eq!(dst.oplog_vv(), src.oplog_vv());
+        assert_eq!(dst.oplog_frontiers(), src.oplog_frontiers());
+        assert_eq!(dst.get_deep_value(), src.get_deep_value());
+    }
+
+    #[test]
+    fn malformed_later_import_json_update_rolls_back_after_valid_prefix_enters_oplog() {
+        let peer = 13;
+        let (src, good_json) = make_json_list_update_with_four_ops(peer);
+        let mut bad_json = good_json.clone();
+        move_last_list_insert_far_out_of_bounds(&mut bad_json);
+
+        let good_dst = LoroDoc::new();
+        good_dst.import_json_updates(good_json.clone()).unwrap();
+        assert_eq!(good_dst.get_deep_value(), src.get_deep_value());
+
+        let last_op_counter = good_json.changes[0].ops.last().unwrap().counter;
+        let prefix_vv = VersionVector::from_iter([(peer, last_op_counter)]);
+        let prefix_json = src.export_json_updates(&Default::default(), &prefix_vv, false);
+        assert_eq!(
+            prefix_json.changes[0].ops.len(),
+            good_json.changes[0].ops.len() - 1
+        );
+        let good_suffix_json = src.export_json_updates(&prefix_vv, &src.oplog_vv(), false);
+        assert_eq!(good_suffix_json.changes[0].ops.len(), 1);
+        let mut bad_suffix_json = good_suffix_json.clone();
+        move_last_list_insert_far_out_of_bounds(&mut bad_suffix_json);
+
+        let prefix_dst = LoroDoc::new();
+        prefix_dst.import_json_updates(prefix_json.clone()).unwrap();
+        let vv_before_bad_suffix = prefix_dst.oplog_vv();
+        let frontiers_before_bad_suffix = prefix_dst.oplog_frontiers();
+        let state_before_bad_suffix = prefix_dst.get_deep_value();
+
+        let bad_suffix_json = serde_json::to_string(&bad_suffix_json).unwrap();
+        let err = prefix_dst
+            .import_json_updates(&bad_suffix_json)
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("list diff"),
+            "expected state list bounds validation, got {err:?}"
+        );
+        assert_eq!(prefix_dst.oplog_vv(), vv_before_bad_suffix);
+        assert_eq!(prefix_dst.oplog_frontiers(), frontiers_before_bad_suffix);
+        assert_eq!(prefix_dst.get_deep_value(), state_before_bad_suffix);
+
+        prefix_dst.import_json_updates(good_suffix_json).unwrap();
+        assert_eq!(prefix_dst.get_deep_value(), src.get_deep_value());
+        assert_eq!(prefix_dst.oplog_vv(), src.oplog_vv());
+
+        let dst = LoroDoc::new();
+        let vv_before_import = dst.oplog_vv();
+        let frontiers_before_import = dst.oplog_frontiers();
+        let state_before_import = dst.get_deep_value();
+        let bad_json = serde_json::to_string(&bad_json).unwrap();
+        let err = dst.import_json_updates(&bad_json).unwrap_err();
+        assert!(
+            err.to_string().contains("list diff"),
+            "expected state list bounds validation, got {err:?}"
+        );
+        assert_eq!(dst.oplog_vv(), vv_before_import);
+        assert_eq!(dst.oplog_frontiers(), frontiers_before_import);
+        assert_eq!(dst.get_deep_value(), state_before_import);
+        assert!(dst.oplog().lock().is_empty());
+    }
+
+    #[test]
+    fn failed_import_restores_pending_changes_that_were_applied_during_import() {
+        let src = LoroDoc::new();
+        src.set_peer_id(14).unwrap();
+        let text = src.get_text("text");
+
+        let mut txn = src.txn().unwrap();
+        text.insert_with_txn(&mut txn, 0, "a", PosType::Unicode)
+            .unwrap();
+        txn.commit().unwrap();
+        let first_update = src.export(ExportMode::all_updates()).unwrap();
+        let first_vv = src.oplog_vv();
+
+        let mut txn = src.txn().unwrap();
+        text.insert_with_txn(&mut txn, 1, "b", PosType::Unicode)
+            .unwrap();
+        txn.commit().unwrap();
+        let second_update = src.export(ExportMode::updates(&first_vv)).unwrap();
+
+        let dst = LoroDoc::new();
+        let status = dst.import(&second_update).unwrap();
+        assert!(status.success.is_empty());
+        assert!(status.pending.is_some());
+        let vv_before_dependency = dst.oplog_vv();
+        let frontiers_before_dependency = dst.oplog_frontiers();
+        let state_before_dependency = dst.get_deep_value();
+
+        crate::state::fail_next_import_state_apply_for_test();
+        let err = dst.import(&first_update).unwrap_err();
+        assert!(err.to_string().contains("state apply failpoint"));
+        assert_eq!(dst.oplog_vv(), vv_before_dependency);
+        assert_eq!(dst.oplog_frontiers(), frontiers_before_dependency);
+        assert_eq!(dst.get_deep_value(), state_before_dependency);
+
+        dst.import(&first_update).unwrap();
+        assert_eq!(dst.oplog_vv(), src.oplog_vv());
+        assert_eq!(dst.oplog_frontiers(), src.oplog_frontiers());
+        assert_eq!(dst.get_deep_value(), src.get_deep_value());
+    }
+
+    #[test]
+    fn failed_import_json_updates_does_not_emit_or_leave_events() {
+        let (src, good_json) = make_json_list_update_with_four_ops(15);
+        let mut bad_json = good_json.clone();
+        move_last_list_insert_far_out_of_bounds(&mut bad_json);
+
+        let dst = LoroDoc::new();
+        let event_count = Arc::new(AtomicUsize::new(0));
+        let event_count_cloned = event_count.clone();
+        let _sub = dst.subscribe_root(Arc::new(move |_| {
+            event_count_cloned.fetch_add(1, Ordering::SeqCst);
+        }));
+
+        let bad_json = serde_json::to_string(&bad_json).unwrap();
+        let err = dst.import_json_updates(&bad_json).unwrap_err();
+        assert!(
+            err.to_string().contains("list diff"),
+            "expected state list bounds validation, got {err:?}"
+        );
+        assert_eq!(event_count.load(Ordering::SeqCst), 0);
+        assert!(dst.drop_pending_events().is_empty());
+        assert!(dst.oplog().lock().is_empty());
+
+        dst.import_json_updates(good_json).unwrap();
+        assert_eq!(event_count.load(Ordering::SeqCst), 1);
+        assert_eq!(dst.get_deep_value(), src.get_deep_value());
     }
 
     #[test]

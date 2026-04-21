@@ -1167,8 +1167,12 @@ fn test_shallow_import_outdated_updates() {
     let other_doc = LoroDoc::new();
     apply_random_ops(&other_doc, 123, 11);
     let updates = other_doc.export(ExportMode::all_updates()).unwrap();
+    let vv_before_import = new_doc.oplog_vv();
+    let state_before_import = new_doc.get_deep_value();
     let err = new_doc.import(&updates).unwrap_err();
     assert_eq!(err, LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
+    assert_eq!(new_doc.oplog_vv(), vv_before_import);
+    assert_eq!(new_doc.get_deep_value(), state_before_import);
 }
 
 #[test]
@@ -1191,8 +1195,12 @@ fn test_shallow_import_pending_updates_that_is_outdated() {
     let bytes_b = other_doc.export(ExportMode::updates(&vv)).unwrap();
     // pending
     new_doc.import(&bytes_b).unwrap();
+    let vv_before_import = new_doc.oplog_vv();
+    let state_before_import = new_doc.get_deep_value();
     let err = new_doc.import(&bytes_a).unwrap_err();
     assert_eq!(err, LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
+    assert_eq!(new_doc.oplog_vv(), vv_before_import);
+    assert_eq!(new_doc.get_deep_value(), state_before_import);
 }
 
 #[test]

@@ -8,7 +8,7 @@ use crate::{
 use loro_common::{Counter, CounterSpan, HasCounterSpan, HasIdSpan, LoroResult, PeerID, ID};
 use rustc_hash::FxHashMap;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum PendingChange {
     // The lamport of the change decoded by `enhanced` is unknown.
     // we need calculate it when the change can be applied
@@ -33,7 +33,74 @@ pub(crate) struct PendingChanges {
     changes: FxHashMap<PeerID, BTreeMap<Counter, Vec<PendingChange>>>,
 }
 
+#[cfg(test)]
+#[allow(dead_code)]
+impl PendingChanges {
+    pub(crate) fn len(&self) -> usize {
+        self.changes
+            .values()
+            .map(|tree| tree.values().map(Vec::len).sum::<usize>())
+            .sum()
+    }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct PendingChangesRollback {
+    added: Vec<(PeerID, Counter)>,
+    removed: Vec<(PeerID, Counter, Vec<PendingChange>)>,
+}
+
+impl PendingChangesRollback {
+    fn record_added(&mut self, id: ID) {
+        self.added.push((id.peer, id.counter));
+    }
+
+    fn record_removed(&mut self, peer: PeerID, counter: Counter, changes: Vec<PendingChange>) {
+        self.removed.push((peer, counter, changes));
+    }
+
+    pub(crate) fn rollback(self, pending_changes: &mut PendingChanges) {
+        for (peer, counter) in self.added.into_iter().rev() {
+            let Some(tree) = pending_changes.changes.get_mut(&peer) else {
+                continue;
+            };
+            let Some(changes) = tree.get_mut(&counter) else {
+                continue;
+            };
+            changes.pop();
+            if changes.is_empty() {
+                tree.remove(&counter);
+            }
+            if tree.is_empty() {
+                pending_changes.changes.remove(&peer);
+            }
+        }
+
+        for (peer, counter, changes) in self.removed.into_iter().rev() {
+            pending_changes
+                .changes
+                .entry(peer)
+                .or_default()
+                .insert(counter, changes);
+        }
+    }
+}
+
 impl OpLog {
+    fn push_pending_change(&mut self, missing_dep: ID, change: PendingChange) {
+        if let Some(rollback) = self.import_rollback.as_mut() {
+            rollback.pending.record_added(missing_dep);
+        }
+
+        self.pending_changes
+            .changes
+            .entry(missing_dep.peer)
+            .or_default()
+            .entry(missing_dep.counter)
+            .or_default()
+            .push(change);
+    }
+
     pub(super) fn extend_pending_changes_with_unknown_lamport(
         &mut self,
         remote_changes: Vec<Change>,
@@ -41,14 +108,9 @@ impl OpLog {
         for change in remote_changes {
             let local_change = PendingChange::Unknown(change);
             match remote_change_apply_state(self.vv(), self.shallow_since_vv(), &local_change) {
-                ChangeState::AwaitingMissingDependency(miss_dep) => self
-                    .pending_changes
-                    .changes
-                    .entry(miss_dep.peer)
-                    .or_default()
-                    .entry(miss_dep.counter)
-                    .or_default()
-                    .push(local_change),
+                ChangeState::AwaitingMissingDependency(miss_dep) => {
+                    self.push_pending_change(miss_dep, local_change)
+                }
                 ChangeState::Applied => unreachable!("already applied"),
                 ChangeState::CanApplyDirectly => unreachable!("can apply directly"),
             }
@@ -79,7 +141,13 @@ impl OpLog {
 
             let mut pending_set = Vec::with_capacity(to_remove.len());
             for cnt in to_remove {
-                pending_set.push(tree.remove(&cnt).unwrap());
+                let pending_changes = tree.remove(&cnt).unwrap();
+                if let Some(rollback) = self.import_rollback.as_mut() {
+                    rollback
+                        .pending
+                        .record_removed(id.peer, cnt, pending_changes.clone());
+                }
+                pending_set.push(pending_changes);
             }
 
             if tree.is_empty() {
@@ -101,14 +169,9 @@ impl OpLog {
                             );
                         }
                         ChangeState::Applied => {}
-                        ChangeState::AwaitingMissingDependency(miss_dep) => self
-                            .pending_changes
-                            .changes
-                            .entry(miss_dep.peer)
-                            .or_default()
-                            .entry(miss_dep.counter)
-                            .or_default()
-                            .push(pending_change),
+                        ChangeState::AwaitingMissingDependency(miss_dep) => {
+                            self.push_pending_change(miss_dep, pending_change)
+                        }
                     }
                 }
             }

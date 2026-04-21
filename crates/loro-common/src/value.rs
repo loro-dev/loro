@@ -565,7 +565,7 @@ impl From<ContainerID> for LoroValue {
 pub mod wasm {
     use js_sys::{Array, Object, Uint8Array};
     use rustc_hash::FxHashMap;
-    use wasm_bindgen::{JsCast, JsValue, __rt::IntoJsResult};
+    use wasm_bindgen::{__rt::IntoJsResult, JsCast, JsValue};
 
     use crate::{ContainerID, LoroError, LoroValue};
 

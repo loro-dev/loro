@@ -530,7 +530,7 @@ pub mod wasm {
     use generic_btree::rle::HasLength;
     use js_sys::{Array, Object};
     use loro_common::{LoroValue, TreeID};
-    use wasm_bindgen::{JsCast, JsValue, __rt::IntoJsResult};
+    use wasm_bindgen::{__rt::IntoJsResult, JsCast, JsValue};
 
     impl From<Index> for JsValue {
         fn from(value: Index) -> Self {

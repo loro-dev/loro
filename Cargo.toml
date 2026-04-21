@@ -14,7 +14,11 @@ members = [
     "crates/kv-store",
     "crates/loro-wasm-tools",
 ]
+exclude = ["crates/append-only-bytes"]
 resolver = "2"
+
+[patch.crates-io]
+append-only-bytes = { path = "crates/append-only-bytes" }
 
 [workspace.dependencies]
 enum_dispatch = "0.3.11"

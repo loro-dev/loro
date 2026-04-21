@@ -13,6 +13,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
 use std::fmt::Display;
 use std::ops::{ControlFlow, Deref};
+use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::sync::Arc;
 use tracing::instrument;
 
@@ -50,6 +51,27 @@ pub struct AppDag {
     /// we need to make sure it breaks at the given point.
     unhandled_dep_points: Mutex<BTreeSet<ID>>,
     pending_txn_node: Option<AppDagNode>,
+    import_rollback_has_journal: AtomicBool,
+    import_rollback: Mutex<Option<AppDagRollback>>,
+}
+
+#[derive(Debug)]
+pub(crate) struct AppDagRollback {
+    frontiers: Frontiers,
+    vv: VersionVector,
+    unparsed_vv: VersionVector,
+    shallow_since_frontiers: Frontiers,
+    shallow_root_frontiers_deps: Frontiers,
+    shallow_since_vv: ImVersionVector,
+    pending_txn_node: Option<AppDagNode>,
+    map_entries_before_mutation: BTreeMap<ID, Option<AppDagNode>>,
+    unhandled_dep_point_log: Vec<UnhandledDepPointLog>,
+}
+
+#[derive(Debug)]
+enum UnhandledDepPointLog {
+    Added(ID),
+    Removed(ID),
 }
 
 #[derive(Debug, Clone)]
@@ -108,6 +130,8 @@ impl AppDag {
             shallow_root_frontiers_deps: Default::default(),
             shallow_since_vv: Default::default(),
             pending_txn_node: None,
+            import_rollback_has_journal: AtomicBool::new(false),
+            import_rollback: Mutex::new(None),
         }
     }
 
@@ -127,12 +151,160 @@ impl AppDag {
         &self.shallow_since_frontiers
     }
 
+    pub(crate) fn begin_import_rollback(&mut self) {
+        let old_vv_is_empty = self.vv.is_empty();
+        let mut rollback = self.import_rollback.lock();
+        debug_assert!(rollback.is_none());
+        *rollback = Some(AppDagRollback {
+            frontiers: self.frontiers.clone(),
+            vv: self.vv.clone(),
+            unparsed_vv: self.unparsed_vv.lock().clone(),
+            shallow_since_frontiers: self.shallow_since_frontiers.clone(),
+            shallow_root_frontiers_deps: self.shallow_root_frontiers_deps.clone(),
+            shallow_since_vv: self.shallow_since_vv.clone(),
+            pending_txn_node: self.pending_txn_node.clone(),
+            map_entries_before_mutation: BTreeMap::new(),
+            unhandled_dep_point_log: Vec::new(),
+        });
+        self.import_rollback_has_journal
+            .store(!old_vv_is_empty, AtomicOrdering::Relaxed);
+    }
+
+    pub(crate) fn commit_import_rollback(&mut self) {
+        self.import_rollback_has_journal
+            .store(false, AtomicOrdering::Relaxed);
+        *self.import_rollback.lock() = None;
+    }
+
+    pub(crate) fn rollback_import(&mut self) {
+        self.import_rollback_has_journal
+            .store(false, AtomicOrdering::Relaxed);
+        let Some(checkpoint) = self.import_rollback.lock().take() else {
+            return;
+        };
+
+        let imported_spans = self.vv.sub_iter(&checkpoint.vv).collect::<Vec<_>>();
+        let mut map = self.map.lock();
+        for span in imported_spans {
+            let start = ID::new(span.peer, span.counter.start);
+            let end = ID::new(span.peer, span.counter.end);
+            let keys = map.range(start..end).map(|(id, _)| *id).collect::<Vec<_>>();
+            for key in keys {
+                map.remove(&key);
+            }
+        }
+
+        for (id, node) in checkpoint.map_entries_before_mutation {
+            if let Some(node) = node {
+                map.insert(id, node);
+            } else {
+                map.remove(&id);
+            }
+        }
+        drop(map);
+
+        self.frontiers = checkpoint.frontiers;
+        self.vv = checkpoint.vv.clone();
+        self.shallow_since_frontiers = checkpoint.shallow_since_frontiers;
+        self.shallow_root_frontiers_deps = checkpoint.shallow_root_frontiers_deps;
+        self.shallow_since_vv = checkpoint.shallow_since_vv;
+        *self.unparsed_vv.lock() = checkpoint.unparsed_vv;
+
+        let mut unhandled_dep_points = self.unhandled_dep_points.lock();
+        if checkpoint.vv.is_empty() {
+            unhandled_dep_points.clear();
+        }
+        for item in checkpoint.unhandled_dep_point_log.into_iter().rev() {
+            match item {
+                UnhandledDepPointLog::Added(id) => {
+                    unhandled_dep_points.remove(&id);
+                }
+                UnhandledDepPointLog::Removed(id) => {
+                    unhandled_dep_points.insert(id);
+                }
+            }
+        }
+        drop(unhandled_dep_points);
+
+        self.pending_txn_node = checkpoint.pending_txn_node;
+    }
+
+    fn record_map_entry_before_mutation(&self, map: &BTreeMap<ID, AppDagNode>, id: ID) {
+        if !self
+            .import_rollback_has_journal
+            .load(AtomicOrdering::Relaxed)
+        {
+            return;
+        }
+
+        self.record_map_entry_before_replacement(id, map.get(&id).cloned());
+    }
+
+    fn record_map_entry_before_replacement(&self, id: ID, old: Option<AppDagNode>) {
+        if !self
+            .import_rollback_has_journal
+            .load(AtomicOrdering::Relaxed)
+        {
+            return;
+        }
+
+        let mut rollback = self.import_rollback.lock();
+        let Some(rollback) = rollback.as_mut() else {
+            return;
+        };
+
+        let old_end = rollback.vv.get(&id.peer).copied().unwrap_or(0);
+        if id.counter >= old_end {
+            return;
+        }
+
+        rollback
+            .map_entries_before_mutation
+            .entry(id)
+            .or_insert(old);
+    }
+
+    fn record_unhandled_dep_point_added(&self, id: ID) {
+        if !self
+            .import_rollback_has_journal
+            .load(AtomicOrdering::Relaxed)
+        {
+            return;
+        }
+
+        if let Some(rollback) = self.import_rollback.lock().as_mut() {
+            rollback
+                .unhandled_dep_point_log
+                .push(UnhandledDepPointLog::Added(id));
+        }
+    }
+
+    fn record_unhandled_dep_point_removed(&self, id: ID) {
+        if !self
+            .import_rollback_has_journal
+            .load(AtomicOrdering::Relaxed)
+        {
+            return;
+        }
+
+        if let Some(rollback) = self.import_rollback.lock().as_mut() {
+            rollback
+                .unhandled_dep_point_log
+                .push(UnhandledDepPointLog::Removed(id));
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.vv.is_empty()
     }
 
     #[tracing::instrument(skip_all, name = "handle_new_change")]
-    pub(super) fn handle_new_change(&mut self, change: &Change, from_local: bool) {
+    pub(super) fn handle_new_change(
+        &mut self,
+        change: &Change,
+        from_local: bool,
+        rollback_old_vv: Option<&VersionVector>,
+    ) {
         let len = change.content_len();
         self.update_version_on_new_change(change, from_local);
         #[cfg(debug_assertions)]
@@ -146,30 +318,34 @@ impl AppDag {
 
         let mut inserted = false;
         if change.deps_on_self() {
+            let record_old_node_before_merge = rollback_old_vv
+                .and_then(|vv| vv.get(&change.id.peer).copied())
+                .filter(|old_end| *old_end == change.id.counter);
             // We may not need to push new element to dag because it only depends on itself
-            inserted = self.with_last_mut_of_peer(change.id.peer, |last| {
-                let last = last.unwrap();
-                if last.has_succ {
-                    // Don't merge the node if there are other nodes depending on it
-                    return false;
-                }
+            inserted =
+                self.with_last_mut_of_peer(change.id.peer, record_old_node_before_merge, |last| {
+                    let (_, last) = last.unwrap();
+                    if last.has_succ {
+                        // Don't merge the node if there are other nodes depending on it
+                        return false;
+                    }
 
-                assert_eq!(last.peer, change.id.peer, "peer id is not the same");
-                assert_eq!(
-                    last.cnt + last.len as Counter,
-                    change.id.counter,
-                    "counter is not continuous"
-                );
-                assert_eq!(
-                    last.lamport + last.len as Lamport,
-                    change.lamport,
-                    "lamport is not continuous"
-                );
-                let last = Arc::make_mut(&mut last.inner);
-                last.len = (change.id.counter - last.cnt) as usize + len;
-                last.has_succ = false;
-                true
-            });
+                    assert_eq!(last.peer, change.id.peer, "peer id is not the same");
+                    assert_eq!(
+                        last.cnt + last.len as Counter,
+                        change.id.counter,
+                        "counter is not continuous"
+                    );
+                    assert_eq!(
+                        last.lamport + last.len as Lamport,
+                        change.lamport,
+                        "lamport is not continuous"
+                    );
+                    let last = Arc::make_mut(&mut last.inner);
+                    last.len = (change.id.counter - last.cnt) as usize + len;
+                    last.has_succ = false;
+                    true
+                });
         }
 
         if !inserted {
@@ -194,12 +370,12 @@ impl AppDag {
         &self,
         map: &mut BTreeMap<ID, AppDagNode>,
         id: ID,
-        f: impl FnOnce(Option<&mut AppDagNode>) -> R,
+        f: impl FnOnce(Option<(ID, &mut AppDagNode)>) -> R,
     ) -> R {
         let x = map.range_mut(..=id).next_back();
-        if let Some((_, node)) = x {
+        if let Some((node_id, node)) = x {
             if node.contains_id(id) {
-                f(Some(node))
+                f(Some((*node_id, node)))
             } else {
                 f(None)
             }
@@ -237,14 +413,20 @@ impl AppDag {
     pub(crate) fn with_last_mut_of_peer<R>(
         &mut self,
         peer: PeerID,
-        f: impl FnOnce(Option<&mut AppDagNode>) -> R,
+        record_if_before: Option<Counter>,
+        f: impl FnOnce(Option<(ID, &mut AppDagNode)>) -> R,
     ) -> R {
         self.lazy_load_last_of_peer(peer);
         let mut binding = self.map.lock();
         let last = binding
             .range_mut(..=ID::new(peer, Counter::MAX))
             .next_back()
-            .map(|(_, v)| v);
+            .map(|(id, v)| {
+                if record_if_before.is_some_and(|old_end| id.counter < old_end) {
+                    self.record_map_entry_before_replacement(*id, Some(v.clone()));
+                }
+                (*id, v)
+            });
         f(last)
     }
 
@@ -323,6 +505,7 @@ impl AppDag {
                 .map(|id| (id.counter - node.cnt) as usize + 1)
                 .collect();
             if break_point_ends.is_empty() {
+                self.record_map_entry_before_mutation(map, node.id_start());
                 map.insert(node.id_start(), node);
             } else {
                 let mut slice_start = 0;
@@ -330,6 +513,7 @@ impl AppDag {
                     let mut slice_node = node.slice(slice_start, slice_end);
                     let inner = Arc::make_mut(&mut slice_node.inner);
                     inner.has_succ = true;
+                    self.record_map_entry_before_mutation(map, slice_node.id_start());
                     map.insert(slice_node.id_start(), slice_node);
                     slice_start = slice_end;
                 }
@@ -337,11 +521,15 @@ impl AppDag {
                 let last_break_point = break_point_ends.last().copied().unwrap();
                 if last_break_point != node.len {
                     let slice_node = node.slice(last_break_point, node.len);
+                    self.record_map_entry_before_mutation(map, slice_node.id_start());
                     map.insert(slice_node.id_start(), slice_node);
                 }
 
                 for break_point in break_point_ends.into_iter() {
-                    break_point_set.remove(&node.id_start().inc(break_point as Counter - 1));
+                    let id = node.id_start().inc(break_point as Counter - 1);
+                    if break_point_set.remove(&id) {
+                        self.record_unhandled_dep_point_removed(id);
+                    }
                 }
             }
         }
@@ -375,8 +563,9 @@ impl AppDag {
             let mut handled = false;
             let ans = self.try_with_node_mut(map, id, |target| {
                 // We don't need to break the dag node if it's not loaded yet
-                let target = target?;
+                let (target_id, target) = target?;
                 if target.ctr_last() == id.counter {
+                    self.record_map_entry_before_replacement(target_id, Some(target.clone()));
                     let target = Arc::make_mut(&mut target.inner);
                     handled = true;
                     target.has_succ = true;
@@ -388,6 +577,7 @@ impl AppDag {
 
                     let new_node =
                         target.slice(id.counter as usize - target.cnt as usize + 1, target.len);
+                    self.record_map_entry_before_replacement(target_id, Some(target.clone()));
                     let target = Arc::make_mut(&mut target.inner);
                     target.len -= new_node.len;
                     Some(new_node)
@@ -395,9 +585,13 @@ impl AppDag {
             });
 
             if let Some(new_node) = ans {
+                self.record_map_entry_before_mutation(map, new_node.id_start());
                 map.insert(new_node.id_start(), new_node);
             } else if !handled {
-                self.unhandled_dep_points.lock().insert(id);
+                let mut unhandled_dep_points = self.unhandled_dep_points.lock();
+                if unhandled_dep_points.insert(id) {
+                    self.record_unhandled_dep_point_added(id);
+                }
             }
         }
     }

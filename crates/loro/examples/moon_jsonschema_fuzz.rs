@@ -102,7 +102,11 @@ fn build_moon_cli_js(moon_bin: &str) -> anyhow::Result<PathBuf> {
     Ok(moon_dir.join("_build/js/release/build/cmd/loro_codec_cli/loro_codec_cli.js"))
 }
 
-fn run_encode_jsonschema(node_bin: &str, cli_js: &Path, input_json: &str) -> anyhow::Result<Vec<u8>> {
+fn run_encode_jsonschema(
+    node_bin: &str,
+    cli_js: &Path,
+    input_json: &str,
+) -> anyhow::Result<Vec<u8>> {
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -601,8 +605,14 @@ fn main() -> anyhow::Result<()> {
         let got_frontiers = got_doc.state_frontiers();
         let end_frontiers = doc.state_frontiers();
 
-        let expected_rich_root = expected_doc.get_text("text").get_richtext_value().to_json_value();
-        let got_rich_root = got_doc.get_text("text").get_richtext_value().to_json_value();
+        let expected_rich_root = expected_doc
+            .get_text("text")
+            .get_richtext_value()
+            .to_json_value();
+        let got_rich_root = got_doc
+            .get_text("text")
+            .get_richtext_value()
+            .to_json_value();
         let expected_rich_child = richtext_json_child_text(&expected_doc)?;
         let got_rich_child = richtext_json_child_text(&got_doc)?;
 
@@ -630,13 +640,20 @@ fn main() -> anyhow::Result<()> {
             write_json(&case_dir.join("expected.json"), &expected)?;
             write_json(&case_dir.join("got.json"), &got)?;
             write_json(&case_dir.join("expected_local.json"), &expected_local)?;
-            write_json(&case_dir.join("expected_richtext_root.json"), &expected_rich_root)?;
+            write_json(
+                &case_dir.join("expected_richtext_root.json"),
+                &expected_rich_root,
+            )?;
             write_json(&case_dir.join("got_richtext_root.json"), &got_rich_root)?;
-            write_json(&case_dir.join("expected_richtext_child.json"), &expected_rich_child)?;
+            write_json(
+                &case_dir.join("expected_richtext_child.json"),
+                &expected_rich_child,
+            )?;
             write_json(&case_dir.join("got_richtext_child.json"), &got_rich_child)?;
 
-            let start_ids: Option<Vec<String>> =
-                start_frontiers.as_ref().map(|f| f.iter().map(|id| id.to_string()).collect());
+            let start_ids: Option<Vec<String>> = start_frontiers
+                .as_ref()
+                .map(|f| f.iter().map(|id| id.to_string()).collect());
             let meta = serde_json::json!({
                 "seed": case_seed,
                 "ops": ops,

@@ -1,5 +1,5 @@
 mod str_arena;
-use self::str_arena::StrArena;
+use self::str_arena::{StrArena, StrArenaCheckpoint};
 use crate::sync::{Mutex, MutexGuard};
 use crate::{
     change::Lamport,
@@ -64,6 +64,13 @@ impl fmt::Debug for InnerSharedArena {
 #[derive(Debug, Clone)]
 pub struct SharedArena {
     inner: Arc<InnerSharedArena>,
+}
+
+pub(crate) struct SharedArenaRollback {
+    container_len: usize,
+    root_len: usize,
+    values_len: usize,
+    str: StrArenaCheckpoint,
 }
 
 #[derive(Debug)]
@@ -150,6 +157,40 @@ impl SharedArena {
                 parent_resolver: Mutex::new(self.inner.parent_resolver.lock().clone()),
             }),
         }
+    }
+
+    pub(crate) fn checkpoint_for_rollback(&self) -> SharedArenaRollback {
+        SharedArenaRollback {
+            container_len: self.inner.container_idx_to_id.lock().len(),
+            root_len: self.inner.root_c_idx.lock().len(),
+            values_len: self.inner.values.lock().len(),
+            str: self.inner.str.lock().checkpoint(),
+        }
+    }
+
+    pub(crate) fn rollback(&self, checkpoint: SharedArenaRollback) {
+        let mut idx_to_id = self.inner.container_idx_to_id.lock();
+        let removed_ids = idx_to_id.split_off(checkpoint.container_len);
+        drop(idx_to_id);
+
+        let mut id_to_idx = self.inner.container_id_to_idx.lock();
+        for id in removed_ids {
+            id_to_idx.remove(&id);
+        }
+        drop(id_to_idx);
+
+        self.inner.depth.lock().truncate(checkpoint.container_len);
+        self.inner.root_c_idx.lock().truncate(checkpoint.root_len);
+        self.inner.values.lock().truncate(checkpoint.values_len);
+        self.inner.str.lock().rollback(checkpoint.str);
+
+        self.inner.parents.lock().retain(|child, parent| {
+            let child_is_kept = (child.to_index() as usize) < checkpoint.container_len;
+            let parent_is_kept = parent
+                .map(|p| (p.to_index() as usize) < checkpoint.container_len)
+                .unwrap_or(true);
+            child_is_kept && parent_is_kept
+        });
     }
 
     pub(crate) fn with_guards(&self, f: impl FnOnce(&mut ArenaGuards)) {
