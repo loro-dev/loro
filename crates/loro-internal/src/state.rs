@@ -430,10 +430,7 @@ impl DocState {
             return;
         }
 
-        loro_common::warn!(
-            "WARNING: record_diff called without pre_txn. Skipping diff recording."
-        );
-        self.event_recorder.diffs.push(diff.into_owned());
+        panic!("should call pre_txn before record_diff")
     }
 
     /// This should be called when DocState is going to apply a transaction / a diff.
@@ -462,13 +459,8 @@ impl DocState {
         }
 
         let diffs = std::mem::take(&mut recorder.diffs);
-        let Some(start) = recorder.diff_start_version.take() else {
-            return;
-        };
-        let Some(last_diff) = diffs.last() else {
-            return;
-        };
-        recorder.diff_start_version = Some((*last_diff.new_version).to_owned());
+        let start = recorder.diff_start_version.take().unwrap();
+        recorder.diff_start_version = Some((*diffs.last().unwrap().new_version).to_owned());
         let event = self.diffs_to_event(diffs, start);
         self.event_recorder.events.push(event);
     }
@@ -1185,13 +1177,7 @@ impl DocState {
     // the event recorder to a separate module.
     fn diffs_to_event(&mut self, diffs: Vec<InternalDocDiff<'_>>, from: Frontiers) -> DocDiff {
         if diffs.is_empty() {
-            return DocDiff {
-                from: from.clone(),
-                to: from,
-                origin: InternalString::default(),
-                by: EventTriggerKind::Local,
-                diff: vec![],
-            };
+            panic!("diffs is empty");
         }
 
         let triggered_by = diffs[0].by;
@@ -1213,36 +1199,37 @@ impl DocState {
                             .idx_to_id(container_diff.idx)
                             .map(|x| x.to_string())
                             .unwrap_or_else(|| "unknown".to_string());
+                        #[cfg(feature = "logging")]
                         loro_common::warn!(
                             "⚠️ WARNING: ignore event because cannot find its path {:#?} container id:{}",
                             &container_diff,
-                            container_id
+                            _container_id
                         );
                     }
 
                     continue;
                 };
                 // TODO: PERF avoid this clone
-                if let Ok(composed) = last_container_diff.clone().compose(container_diff.diff) {
-                    *last_container_diff = composed;
-                }
+                *last_container_diff = last_container_diff
+                    .clone()
+                    .compose(container_diff.diff)
+                    .unwrap();
             }
         }
         let mut diff: Vec<_> = containers
             .into_iter()
-            .filter_map(|(container, (diff, path))| {
+            .map(|(container, (diff, path))| {
                 let idx = container;
-                let id = self.arena.get_container_id(idx)?;
+                let id = self.arena.get_container_id(idx).unwrap();
                 let is_unknown = id.is_unknown();
-                let diff = diff.into_external().ok()?;
 
-                Some(ContainerDiff {
+                ContainerDiff {
                     id,
                     idx,
-                    diff,
+                    diff: diff.into_external().unwrap(),
                     is_unknown,
                     path,
-                })
+                }
             })
             .collect();
 

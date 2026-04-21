@@ -747,18 +747,14 @@ impl TreeState {
         }
         match node_id {
             TreeParentId::Node(id) => {
-                let Some(node) = self.trees.get(id) else {
-                    return false;
-                };
-                let parent = &node.parent;
+                let parent = &self.trees.get(id).unwrap().parent;
                 if parent == node_id {
-                    // Cycle detected – treat as ancestor to prevent infinite loops
-                    return true;
+                    panic!("is_ancestor_of loop")
                 }
                 self.is_ancestor_of(maybe_ancestor, parent)
             }
             TreeParentId::Deleted | TreeParentId::Root => false,
-            TreeParentId::Unexist => false,
+            TreeParentId::Unexist => unreachable!(),
         }
     }
 
@@ -773,7 +769,7 @@ impl TreeState {
             TreeParentId::Deleted => Some(true),
             TreeParentId::Root => Some(false),
             TreeParentId::Node(p) => self.is_node_deleted(&p),
-            TreeParentId::Unexist => None,
+            TreeParentId::Unexist => unreachable!(),
         }
     }
 

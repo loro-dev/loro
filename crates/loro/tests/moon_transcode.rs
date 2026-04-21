@@ -42,10 +42,7 @@ fn build_moon_cli_js(moon_bin: &str) -> Option<PathBuf> {
     if !status.success() {
         return None;
     }
-    Some(
-        moon_dir
-            .join("_build/js/release/build/cmd/loro_codec_cli/loro_codec_cli.js"),
-    )
+    Some(moon_dir.join("_build/js/release/build/cmd/loro_codec_cli/loro_codec_cli.js"))
 }
 
 fn moon_ctx() -> Option<&'static MoonCtx> {
@@ -82,10 +79,7 @@ fn run_transcode(node_bin: &str, cli_js: &Path, input: &[u8]) -> anyhow::Result<
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let tmp = std::env::temp_dir().join(format!(
-        "loro-moon-transcode-{}-{ts}",
-        std::process::id()
-    ));
+    let tmp = std::env::temp_dir().join(format!("loro-moon-transcode-{}-{ts}", std::process::id()));
     std::fs::create_dir_all(&tmp)?;
     let in_path = tmp.join("in.blob");
     let out_path = tmp.join("out.blob");
@@ -93,7 +87,11 @@ fn run_transcode(node_bin: &str, cli_js: &Path, input: &[u8]) -> anyhow::Result<
 
     let status = Command::new(node_bin)
         .arg(cli_js)
-        .args(["transcode", in_path.to_str().unwrap(), out_path.to_str().unwrap()])
+        .args([
+            "transcode",
+            in_path.to_str().unwrap(),
+            out_path.to_str().unwrap(),
+        ])
         .status()?;
     anyhow::ensure!(status.success(), "node transcode failed");
 
@@ -170,7 +168,11 @@ fn run_export_deep_json(node_bin: &str, cli_js: &Path, input: &[u8]) -> anyhow::
     Ok(String::from_utf8(out.stdout)?)
 }
 
-fn run_encode_jsonschema(node_bin: &str, cli_js: &Path, input_json: &str) -> anyhow::Result<Vec<u8>> {
+fn run_encode_jsonschema(
+    node_bin: &str,
+    cli_js: &Path,
+    input_json: &str,
+) -> anyhow::Result<Vec<u8>> {
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -198,7 +200,11 @@ fn run_encode_jsonschema(node_bin: &str, cli_js: &Path, input_json: &str) -> any
     Ok(out)
 }
 
-fn run_transcode_output(node_bin: &str, cli_js: &Path, input: &[u8]) -> anyhow::Result<std::process::Output> {
+fn run_transcode_output(
+    node_bin: &str,
+    cli_js: &Path,
+    input: &[u8],
+) -> anyhow::Result<std::process::Output> {
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -214,11 +220,19 @@ fn run_transcode_output(node_bin: &str, cli_js: &Path, input: &[u8]) -> anyhow::
 
     Ok(Command::new(node_bin)
         .arg(cli_js)
-        .args(["transcode", in_path.to_str().unwrap(), out_path.to_str().unwrap()])
+        .args([
+            "transcode",
+            in_path.to_str().unwrap(),
+            out_path.to_str().unwrap(),
+        ])
         .output()?)
 }
 
-fn run_decode_updates_output(node_bin: &str, cli_js: &Path, input: &[u8]) -> anyhow::Result<std::process::Output> {
+fn run_decode_updates_output(
+    node_bin: &str,
+    cli_js: &Path,
+    input: &[u8],
+) -> anyhow::Result<std::process::Output> {
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -260,7 +274,11 @@ fn run_export_jsonschema_output(
         .output()?)
 }
 
-fn run_export_deep_json_output(node_bin: &str, cli_js: &Path, input: &[u8]) -> anyhow::Result<std::process::Output> {
+fn run_export_deep_json_output(
+    node_bin: &str,
+    cli_js: &Path,
+    input: &[u8],
+) -> anyhow::Result<std::process::Output> {
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -307,7 +325,12 @@ fn run_encode_jsonschema_output(
         .output()?)
 }
 
-fn apply_random_ops(doc: &LoroDoc, seed: u64, ops: usize, commit_every: usize) -> anyhow::Result<()> {
+fn apply_random_ops(
+    doc: &LoroDoc,
+    seed: u64,
+    ops: usize,
+    commit_every: usize,
+) -> anyhow::Result<()> {
     apply_random_ops_with_peers(doc, seed, ops, commit_every, &[1])
 }
 
@@ -623,7 +646,11 @@ fn apply_random_ops_with_peers(
     Ok(())
 }
 
-fn first_json_diff_path(a: &serde_json::Value, b: &serde_json::Value, path: &str) -> Option<String> {
+fn first_json_diff_path(
+    a: &serde_json::Value,
+    b: &serde_json::Value,
+    path: &str,
+) -> Option<String> {
     use serde_json::Value;
     if a == b {
         return None;
@@ -1046,7 +1073,8 @@ fn moon_transcode_e2e() -> anyhow::Result<()> {
 
     let doc_b = LoroDoc::new();
     doc_b.set_peer_id(2)?;
-    doc_b.import(&doc_a.export(ExportMode::all_updates()).unwrap())
+    doc_b
+        .import(&doc_a.export(ExportMode::all_updates()).unwrap())
         .unwrap();
     doc_b.set_next_commit_message("B-1");
     doc_b.get_map("m").insert("b", 2).unwrap();
@@ -1243,7 +1271,10 @@ fn moon_decode_ops_text_insert() -> anyhow::Result<()> {
         }
     }
 
-    anyhow::ensure!(found, "expected Text insert op not found in Moon decode output");
+    anyhow::ensure!(
+        found,
+        "expected Text insert op not found in Moon decode output"
+    );
     Ok(())
 }
 
@@ -1288,12 +1319,18 @@ fn moon_export_jsonschema_text_insert() -> anyhow::Result<()> {
             }
         }
     }
-    anyhow::ensure!(found, "expected Text insert op not found in Moon jsonschema output");
+    anyhow::ensure!(
+        found,
+        "expected Text insert op not found in Moon jsonschema output"
+    );
 
     // Roundtrip: Moon jsonschema output must be importable by Rust.
     let doc2 = LoroDoc::new();
     doc2.import_json_updates(schema).unwrap();
-    assert_eq!(doc2.get_deep_value().to_json_value(), doc.get_deep_value().to_json_value());
+    assert_eq!(
+        doc2.get_deep_value().to_json_value(),
+        doc.get_deep_value().to_json_value()
+    );
 
     Ok(())
 }
@@ -1552,11 +1589,9 @@ fn moon_export_jsonschema_updates_since_v1() -> anyhow::Result<()> {
 
     // Apply on top of SnapshotAt(v1) should yield the latest state.
     let base = LoroDoc::new();
-    base.import(
-        &doc.export(ExportMode::SnapshotAt {
-            version: std::borrow::Cow::Borrowed(&frontiers_v1),
-        })?,
-    )?;
+    base.import(&doc.export(ExportMode::SnapshotAt {
+        version: std::borrow::Cow::Borrowed(&frontiers_v1),
+    })?)?;
     base.import_json_updates(schema).unwrap();
     assert_eq!(base.get_deep_value().to_json_value(), expected);
 
@@ -1593,7 +1628,11 @@ fn moon_cli_robustness_rejects_invalid_inputs() -> anyhow::Result<()> {
 
     // Truncated blobs should be rejected.
     if snapshot.len() > 1 {
-        let out = run_export_deep_json_output(&ctx.node_bin, &ctx.cli_js, &snapshot[..snapshot.len() - 1])?;
+        let out = run_export_deep_json_output(
+            &ctx.node_bin,
+            &ctx.cli_js,
+            &snapshot[..snapshot.len() - 1],
+        )?;
         anyhow::ensure!(
             !out.status.success(),
             "expected export-deep-json to reject truncated Snapshot; stdout={} stderr={}",
@@ -1602,7 +1641,11 @@ fn moon_cli_robustness_rejects_invalid_inputs() -> anyhow::Result<()> {
         );
     }
     if updates.len() > 1 {
-        let out = run_export_jsonschema_output(&ctx.node_bin, &ctx.cli_js, &updates[..updates.len() - 1])?;
+        let out = run_export_jsonschema_output(
+            &ctx.node_bin,
+            &ctx.cli_js,
+            &updates[..updates.len() - 1],
+        )?;
         anyhow::ensure!(
             !out.status.success(),
             "expected export-jsonschema to reject truncated Updates; stdout={} stderr={}",
@@ -1659,7 +1702,8 @@ fn moon_export_jsonschema_multi_peer() -> anyhow::Result<()> {
 
     let doc_b = LoroDoc::new();
     doc_b.set_peer_id(2)?;
-    doc_b.import(&doc_a.export(ExportMode::all_updates()).unwrap())
+    doc_b
+        .import(&doc_a.export(ExportMode::all_updates()).unwrap())
         .unwrap();
     doc_b.get_map("m").insert("b", 2).unwrap();
     doc_b.commit();
@@ -1704,7 +1748,12 @@ fn moon_golden_snapshot_deep_json_matches_rust() -> anyhow::Result<()> {
     assert_snapshot_deep_json_matches_rust(&doc, ctx)
 }
 
-fn golden_random_updates(seed: u64, ops: usize, commit_every: usize, peers: &[u64]) -> anyhow::Result<()> {
+fn golden_random_updates(
+    seed: u64,
+    ops: usize,
+    commit_every: usize,
+    peers: &[u64],
+) -> anyhow::Result<()> {
     let Some(ctx) = moon_ctx() else {
         return Ok(());
     };
@@ -1713,7 +1762,12 @@ fn golden_random_updates(seed: u64, ops: usize, commit_every: usize, peers: &[u6
     assert_updates_jsonschema_matches_rust(&doc, ctx)
 }
 
-fn golden_random_snapshot(seed: u64, ops: usize, commit_every: usize, peers: &[u64]) -> anyhow::Result<()> {
+fn golden_random_snapshot(
+    seed: u64,
+    ops: usize,
+    commit_every: usize,
+    peers: &[u64],
+) -> anyhow::Result<()> {
     let Some(ctx) = moon_ctx() else {
         return Ok(());
     };

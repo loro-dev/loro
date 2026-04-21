@@ -473,7 +473,9 @@ impl LoroDoc {
     /// Returns `None` if the container does not exist in the document.
     #[inline]
     pub fn try_get_list<I: IntoContainerId>(&self, id: I) -> Option<LoroList> {
-        self.doc.try_get_list(id).map(|handler| LoroList { handler })
+        self.doc
+            .try_get_list(id)
+            .map(|handler| LoroList { handler })
     }
 
     /// Get a [LoroMap] by container id.
@@ -517,7 +519,9 @@ impl LoroDoc {
     /// Returns `None` if the container does not exist in the document.
     #[inline]
     pub fn try_get_text<I: IntoContainerId>(&self, id: I) -> Option<LoroText> {
-        self.doc.try_get_text(id).map(|handler| LoroText { handler })
+        self.doc
+            .try_get_text(id)
+            .map(|handler| LoroText { handler })
     }
 
     /// Get a [LoroTree] by container id.
@@ -539,7 +543,9 @@ impl LoroDoc {
     /// Returns `None` if the container does not exist in the document.
     #[inline]
     pub fn try_get_tree<I: IntoContainerId>(&self, id: I) -> Option<LoroTree> {
-        self.doc.try_get_tree(id).map(|handler| LoroTree { handler })
+        self.doc
+            .try_get_tree(id)
+            .map(|handler| LoroTree { handler })
     }
 
     #[cfg(feature = "counter")]

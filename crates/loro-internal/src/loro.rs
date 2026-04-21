@@ -344,14 +344,13 @@ impl LoroDoc {
                 }
             }
             if config.immediate_renew {
-                if !self.can_edit() {
-                    return (None, Some(txn_guard));
+                if self.can_edit() {
+                    let mut t = self.txn().unwrap();
+                    if let Some(options) = options.as_ref() {
+                        t.set_options(options.clone());
+                    }
+                    *txn_guard = Some(t);
                 }
-                let mut t = self.txn().unwrap();
-                if let Some(options) = options.as_ref() {
-                    t.set_options(options.clone());
-                }
-                *txn_guard = Some(t);
             }
 
             if let Some(on_commit) = on_commit {
@@ -839,7 +838,7 @@ impl LoroDoc {
         if !self.has_container(&id) {
             return None;
         }
-        Some(Handler::new_attached(id, self.clone()).into_text().unwrap())
+        Handler::new_attached(id, self.clone()).into_text().ok()
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
@@ -858,7 +857,7 @@ impl LoroDoc {
         if !self.has_container(&id) {
             return None;
         }
-        Some(Handler::new_attached(id, self.clone()).into_list().unwrap())
+        Handler::new_attached(id, self.clone()).into_list().ok()
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
@@ -877,7 +876,9 @@ impl LoroDoc {
         if !self.has_container(&id) {
             return None;
         }
-        Some(Handler::new_attached(id, self.clone()).into_movable_list().unwrap())
+        Handler::new_attached(id, self.clone())
+            .into_movable_list()
+            .ok()
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
@@ -896,7 +897,7 @@ impl LoroDoc {
         if !self.has_container(&id) {
             return None;
         }
-        Some(Handler::new_attached(id, self.clone()).into_map().unwrap())
+        Handler::new_attached(id, self.clone()).into_map().ok()
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
@@ -915,7 +916,7 @@ impl LoroDoc {
         if !self.has_container(&id) {
             return None;
         }
-        Some(Handler::new_attached(id, self.clone()).into_tree().unwrap())
+        Handler::new_attached(id, self.clone()).into_tree().ok()
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
@@ -927,16 +928,22 @@ impl LoroDoc {
     }
 
     #[cfg(feature = "counter")]
-    pub fn try_get_counter<I: IntoContainerId>(&self, id: I) -> Option<crate::handler::counter::CounterHandler> {
+    pub fn try_get_counter<I: IntoContainerId>(
+        &self,
+        id: I,
+    ) -> Option<crate::handler::counter::CounterHandler> {
         let id = id.into_container_id(&self.arena, ContainerType::Counter);
         if !self.has_container(&id) {
             return None;
         }
-        Some(Handler::new_attached(id, self.clone()).into_counter().unwrap())
+        Handler::new_attached(id, self.clone()).into_counter().ok()
     }
 
     #[cfg(feature = "counter")]
-    pub fn get_counter<I: IntoContainerId>(&self, id: I) -> crate::handler::counter::CounterHandler {
+    pub fn get_counter<I: IntoContainerId>(
+        &self,
+        id: I,
+    ) -> crate::handler::counter::CounterHandler {
         self.try_get_counter(id)
             .expect("The container does not exist in the document. Use `try_get_counter` or `get_container` to check for existence.")
     }
@@ -1095,7 +1102,7 @@ impl LoroDoc {
 
         // Always restore state regardless of whether diff calculation succeeded
         self._checkout_without_emitting(&old_frontiers, false, false)
-            .ok();
+            .unwrap();
         drop(txn);
         if !was_detached {
             self.set_detached(false);

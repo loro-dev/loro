@@ -314,7 +314,8 @@ impl TreeHandler {
             EventHint::Tree(smallvec![TreeDiffItem {
                 target,
                 action: TreeExternalDiff::Delete {
-                    old_parent: self.get_node_parent(&target)
+                    old_parent: self
+                        .get_node_parent(&target)
                         .ok_or(LoroTreeError::TreeNodeDeletedOrNotExist(target))?,
                     old_index: index
                 },
@@ -385,7 +386,7 @@ impl TreeHandler {
 
         let with_event = !parent
             .tree_id()
-            .is_some_and(|p| self.is_node_deleted(&p).unwrap_or(true));
+            .is_some_and(|p| self.is_node_deleted(&p).unwrap());
         if !with_event {
             return Ok(false);
         }
@@ -432,9 +433,7 @@ impl TreeHandler {
                 .unwrap_or_default())
         })?;
         for child in children {
-            let Some(position) = self.get_position_by_tree_id(&child) else {
-                continue;
-            };
+            let position = self.get_position_by_tree_id(&child).unwrap();
             self.create_at_with_target_for_apply_diff(TreeParentId::Node(target), position, child)?;
         }
         Ok(true)
@@ -465,12 +464,8 @@ impl TreeHandler {
             }
         }
 
-        let Some(old_parent) = self.get_node_parent(&target) else {
-            return Ok(false);
-        };
-        let Some(old_index) = self.get_index_by_tree_id(&target) else {
-            return Ok(false);
-        };
+        let old_parent = self.get_node_parent(&target).unwrap();
+        let old_index = self.get_index_by_tree_id(&target).unwrap();
         let mut index = self
             .get_index_by_fractional_index(
                 &parent,
@@ -483,9 +478,10 @@ impl TreeHandler {
         if old_parent == parent && old_index < index {
             index -= 1;
         }
-        let with_event = !parent
-            .tree_id()
-            .is_some_and(|p| self.is_node_deleted(&p).unwrap_or(true));
+        let with_event = match parent.tree_id() {
+            Some(p) => !self.is_node_deleted(&p)?,
+            None => true,
+        };
 
         if !with_event {
             return Ok(false);
@@ -731,7 +727,8 @@ impl TreeHandler {
                     parent,
                     index,
                     position,
-                    old_parent: self.get_node_parent(&target)
+                    old_parent: self
+                        .get_node_parent(&target)
                         .ok_or(LoroTreeError::TreeNodeDeletedOrNotExist(target))?,
                     old_index,
                 },
@@ -894,8 +891,7 @@ impl TreeHandler {
     pub fn get_nodes_under(&self, parent: TreeParentId) -> Vec<TreeNode> {
         match &self.inner {
             MaybeDetached::Detached(_t) => {
-                // Detached trees don't maintain full TreeNode metadata.
-                vec![]
+                unreachable!()
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
                 let a = state.as_tree_state().unwrap();
@@ -910,7 +906,7 @@ impl TreeHandler {
     pub fn get_all_hierarchy_nodes_under(&self, parent: TreeParentId) -> Vec<TreeNodeWithChildren> {
         match &self.inner {
             MaybeDetached::Detached(_t) => {
-                vec![]
+                unreachable!()
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
                 let a = state.as_tree_state().unwrap();
@@ -1012,9 +1008,7 @@ impl TreeHandler {
 
     pub fn is_fractional_index_enabled(&self) -> bool {
         match &self.inner {
-            MaybeDetached::Detached(_) => {
-                false
-            }
+            MaybeDetached::Detached(_) => false,
             MaybeDetached::Attached(a) => a.with_state(|state| {
                 let a = state.as_tree_state().unwrap();
                 a.is_fractional_index_enabled()

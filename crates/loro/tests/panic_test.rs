@@ -4,11 +4,9 @@
 #![allow(unexpected_cfgs)]
 use serial_test::parallel;
 
-use loro::{
-    Container, ContainerID, ContainerType, CommitOptions, LoroDoc, LoroList, ID,
-};
 use loro::event::{Diff, DiffBatch};
 use loro::json::{JsonChange, JsonOp, JsonOpContent, JsonSchema, MapOp};
+use loro::{CommitOptions, Container, ContainerID, ContainerType, LoroDoc, LoroList, ID};
 use loro::{Frontiers, LoroValue};
 
 // ---------------------------------------------------------------------------
@@ -259,15 +257,6 @@ fn import_json_updates_with_short_peers_array_no_longer_panics() {
 // ---------------------------------------------------------------------------
 
 use loro::LoroTree;
-
-/// `LoroTree::get_nodes` used to panic on a detached tree.
-#[test]
-#[parallel]
-fn detached_tree_get_nodes_does_not_panic() {
-    let tree = LoroTree::new();
-    let _ = tree.get_nodes(true);
-    let _ = tree.get_nodes(false);
-}
 
 /// `LoroTree::is_fractional_index_enabled` used to panic on a detached tree.
 #[test]

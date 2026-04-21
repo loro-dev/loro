@@ -62,6 +62,26 @@ prefer non-breaking solutions:
   `Option<T>`) when there is no safe backward-compatible alternative and the breakage
   is justified by a critical correctness or safety issue.
 
+### Principle: Internal Invariant Preservation Over Graceful Degradation
+
+When an internal invariant is violated (e.g., a state lookup that should always succeed
+returns `None`, an event batch has an unexpected structure, or a diff cannot be composed),
+the priority is:
+
+1. **Do not let the system continue in a corrupted or inconsistent state.**
+   Prefer `panic!` / `unwrap()` / `expect()` over silently skipping, returning a default,
+   or returning success when the internal state is known to be wrong.
+2. **Preserve the correctness of public API contracts.**
+   A public method should not return a value that violates its documented contract
+   (e.g., returning an empty list when nodes actually exist).
+3. **Avoid panics on valid user input.**
+   Malformed external input (decode errors, invalid JSON schema, out-of-bounds indices)
+   should return `Err`. But do not replace internal-safety panics with silent skips
+   just to avoid crashing.
+
+In short: internal corruption → fail-fast (panic); invalid user input → `Result::Err`;
+returning wrong data is worse than panicking.
+
 ### Invariant: Flush Pending Events In `loro-wasm`
 
 In `crates/loro-wasm/src/lib.rs`, subscription callbacks (`subscribe*`,

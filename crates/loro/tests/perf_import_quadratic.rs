@@ -30,7 +30,10 @@ fn perf_import_insert_split_quadratic_e2e() {
     text_a.insert(0, &base).unwrap();
     doc_a.commit();
     let size_a = doc_a.with_oplog(|oplog| oplog.diagnose_size());
-    println!("doc_a: atom_ops={}, ops={}", size_a.total_atom_ops, size_a.total_ops);
+    println!(
+        "doc_a: atom_ops={}, ops={}",
+        size_a.total_atom_ops, size_a.total_ops
+    );
     let updates_a = doc_a.export(ExportMode::all_updates()).unwrap();
 
     let doc_b = LoroDoc::new();
