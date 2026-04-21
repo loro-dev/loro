@@ -195,6 +195,24 @@ impl OpLog {
         self.arena.rollback(rollback.arena);
     }
 
+    pub(crate) fn reset_to_empty_for_failed_snapshot_import(
+        &mut self,
+        arena_checkpoint: SharedArenaRollback,
+    ) {
+        let arena = self.arena.clone();
+        let configure = self.configure.clone();
+        arena.rollback(arena_checkpoint);
+        let change_store = ChangeStore::new_mem(&arena, configure.merge_interval_in_s.clone());
+        self.history_cache = Mutex::new(ContainerHistoryCache::new(change_store.clone(), None));
+        self.dag = AppDag::new(change_store.clone());
+        self.change_store = change_store;
+        self.pending_changes = Default::default();
+        self.batch_importing = false;
+        self.configure = configure;
+        self.uncommitted_change = None;
+        self.import_rollback = None;
+    }
+
     #[inline(always)]
     pub(crate) fn with_history_cache<F, R>(&self, f: F) -> R
     where

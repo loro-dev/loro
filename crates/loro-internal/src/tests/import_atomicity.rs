@@ -16,6 +16,24 @@ fn pending_len(doc: &LoroDoc) -> usize {
     doc.oplog().lock().pending_changes_len()
 }
 
+fn corrupt_snapshot_state_bytes(snapshot: &mut [u8]) {
+    let body_start = 22;
+    let oplog_len =
+        u32::from_le_bytes(snapshot[body_start..body_start + 4].try_into().unwrap()) as usize;
+    let state_len_pos = body_start + 4 + oplog_len;
+    let state_len = u32::from_le_bytes(
+        snapshot[state_len_pos..state_len_pos + 4]
+            .try_into()
+            .unwrap(),
+    ) as usize;
+    assert!(state_len > 0);
+    let state_start = state_len_pos + 4;
+    snapshot[state_start] ^= 0xff;
+
+    let checksum = xxhash_rust::xxh32::xxh32(&snapshot[20..], u32::from_le_bytes(*b"LORO"));
+    snapshot[16..20].copy_from_slice(&checksum.to_le_bytes());
+}
+
 fn make_json_list_update_with_four_ops(peer: u64) -> (LoroDoc, JsonSchema) {
     let doc = LoroDoc::new();
     doc.set_peer_id(peer).unwrap();
@@ -223,4 +241,34 @@ fn failed_import_does_not_emit_events() {
     let good_json = serde_json::to_string(&good_json).unwrap();
     doc.import_json_updates(&good_json).unwrap();
     assert!(hit.load(Ordering::SeqCst) > 0);
+}
+
+#[test]
+fn corrupt_snapshot_import_rolls_back_empty_doc() {
+    let src = LoroDoc::new_auto_commit();
+    src.set_peer_id(9).unwrap();
+    src.get_text("text").insert_unicode(0, "snapshot").unwrap();
+    src.get_list("list").push("value").unwrap();
+    let snapshot = src.export(ExportMode::Snapshot).unwrap();
+    let mut corrupt_snapshot = snapshot.clone();
+    corrupt_snapshot_state_bytes(&mut corrupt_snapshot);
+
+    let dst = LoroDoc::new();
+    let vv_before_import = dst.oplog_vv();
+    let frontiers_before_import = dst.oplog_frontiers();
+    let state_before_import = dst.get_deep_value();
+    let err = dst.import(&corrupt_snapshot).unwrap_err();
+    assert!(
+        err.to_string().contains("decode_snapshot")
+            || err.to_string().contains("Decode")
+            || err.to_string().contains("snapshot"),
+        "unexpected error: {err:?}"
+    );
+    assert_eq!(dst.oplog_vv(), vv_before_import);
+    assert_eq!(dst.oplog_frontiers(), frontiers_before_import);
+    assert_eq!(dst.get_deep_value(), state_before_import);
+    assert!(dst.oplog().lock().is_empty());
+
+    dst.import(&snapshot).unwrap();
+    assert_eq!(dst.get_deep_value(), src.get_deep_value());
 }

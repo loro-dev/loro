@@ -162,7 +162,9 @@ impl InnerStore {
     ) -> Result<Option<Frontiers>, loro_common::LoroError> {
         assert!(self.kv.is_empty());
         let mut fr = None;
-        self.kv.import(bytes);
+        self.kv
+            .import(bytes)
+            .map_err(|e| loro_common::LoroError::DecodeError(e.into_boxed_str()))?;
         if let Some(f) = self.kv.remove(FRONTIERS_KEY) {
             fr = Some(Frontiers::decode(&f)?);
         }
@@ -188,8 +190,12 @@ impl InnerStore {
     ) -> Result<(), loro_common::LoroError> {
         assert!(self.kv.is_empty());
         // TODO: add assert that all containers in the store should be empty right now
-        self.kv.import(bytes_a);
-        self.kv.import(bytes_b);
+        self.kv
+            .import(bytes_a)
+            .map_err(|e| loro_common::LoroError::DecodeError(e.into_boxed_str()))?;
+        self.kv
+            .import(bytes_b)
+            .map_err(|e| loro_common::LoroError::DecodeError(e.into_boxed_str()))?;
         self.kv.remove(FRONTIERS_KEY);
         self.kv.with_kv(|kv| {
             self.arena.with_guards(|guards| {

@@ -944,6 +944,16 @@ impl DocState {
         !self.in_txn && self.arena.can_import_snapshot() && self.store.can_import_snapshot()
     }
 
+    pub(crate) fn reset_to_empty_for_failed_snapshot_import(&mut self) {
+        self.frontiers = Frontiers::default();
+        self.store =
+            ContainerStore::new(self.arena.clone(), self.config.clone(), self.peer.clone());
+        self.in_txn = false;
+        self.changed_idx_in_txn.clear();
+        self.event_recorder = Default::default();
+        self.dead_containers_cache = Default::default();
+    }
+
     pub fn get_value(&mut self) -> LoroValue {
         let flag = self.store.load_all();
         let roots = self.arena.root_containers(flag);

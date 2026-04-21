@@ -146,9 +146,16 @@ impl StrArena {
     }
 
     pub(crate) fn rollback(&mut self, checkpoint: StrArenaCheckpoint) {
-        // SAFETY: import rollback removes every op/state reference created after
-        // the checkpoint before the shared string arena is truncated.
-        unsafe { self.bytes.truncate_unchecked(checkpoint.bytes_len) };
+        if checkpoint.bytes_len == 0 {
+            *self = Self::default();
+            return;
+        }
+
+        if checkpoint.bytes_len < self.bytes.len() {
+            let mut bytes = AppendOnlyBytes::with_capacity(checkpoint.bytes_len);
+            bytes.push_slice(&self.bytes[..checkpoint.bytes_len]);
+            self.bytes = bytes;
+        }
         self.unicode_indexes
             .truncate(checkpoint.unicode_indexes_len);
         self.len = checkpoint.len;
