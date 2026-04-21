@@ -410,6 +410,14 @@ impl CRDTFuzzer {
                 let _s = info_span!("checking eq", ?i, ?j);
                 let _g = _s.enter();
                 let (a, b) = array_mut_ref!(&mut self.actors, [i, j]);
+                let a_shallow = a.loro.is_shallow();
+                let b_shallow = b.loro.is_shallow();
+                // Shallow docs cannot export ops before the shallow root, so
+                // they cannot sync complete history to empty peers. Skip sync
+                // checks for pairs where either side is shallow.
+                if a_shallow || b_shallow {
+                    continue;
+                }
                 let a_doc = &mut a.loro;
                 let b_doc = &mut b.loro;
                 info_span!("Attach", peer = i).in_scope(|| {
