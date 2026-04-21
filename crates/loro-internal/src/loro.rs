@@ -1080,17 +1080,19 @@ impl LoroDoc {
             state.stop_and_clear_recording();
             is_recording
         };
-        self._checkout_without_emitting(a, true, false).unwrap();
-        self.state.lock().start_recording();
-        self._checkout_without_emitting(b, true, false).unwrap();
-        let e = {
+        let result = (|| {
+            self._checkout_without_emitting(a, true, false)?;
+            self.state.lock().start_recording();
+            self._checkout_without_emitting(b, true, false)?;
             let mut state = self.state.lock();
             let e = state.take_events();
             state.stop_and_clear_recording();
-            e
-        };
+            Ok::<_, LoroError>(e)
+        })();
+
+        // Always restore state regardless of whether diff calculation succeeded
         self._checkout_without_emitting(&old_frontiers, false, false)
-            .unwrap();
+            .ok();
         drop(txn);
         if !was_detached {
             self.set_detached(false);
@@ -1099,7 +1101,7 @@ impl LoroDoc {
         if was_recording {
             self.state.lock().start_recording();
         }
-        Ok(DiffBatch::new(e))
+        result.map(DiffBatch::new)
     }
 
     /// Apply a diff to the current state.
