@@ -83,6 +83,7 @@ impl ActorTrait for MapActor {
 pub enum MapAction {
     Insert { key: u8, value: FuzzValue },
     Delete { key: u8 },
+    Clear,
 }
 
 impl Debug for MapAction {
@@ -96,6 +97,7 @@ impl Debug for MapAction {
                 )
             }
             MapAction::Delete { key } => write!(f, "MapAction::Delete {{ key: {} }}", key),
+            MapAction::Clear => write!(f, "MapAction::Clear"),
         }
     }
 }
@@ -105,6 +107,7 @@ impl MapAction {
         match self {
             MapAction::Insert { key, .. } => *key,
             MapAction::Delete { key, .. } => *key,
+            MapAction::Clear => 0,
         }
     }
 
@@ -112,20 +115,23 @@ impl MapAction {
         match self {
             MapAction::Insert { value, .. } => value.to_string(),
             MapAction::Delete { .. } => "null".to_string(),
+            MapAction::Clear => "null".to_string(),
         }
     }
 }
 
 impl FromGenericAction for MapAction {
     fn from_generic_action(action: &GenericAction) -> Self {
-        match action.bool {
-            true => MapAction::Insert {
+        match action.prop % 3 {
+            0 => MapAction::Insert {
                 key: (action.key % 256) as u8,
                 value: action.value,
             },
-            false => MapAction::Delete {
+            1 => MapAction::Delete {
                 key: (action.key % 256) as u8,
             },
+            2 => MapAction::Clear,
+            _ => unreachable!(),
         }
     }
 }
@@ -154,6 +160,10 @@ impl Actionable for MapAction {
                 unwrap(handler.delete(&key.to_string()));
                 None
             }
+            MapAction::Clear => {
+                unwrap(handler.clear());
+                None
+            }
         }
     }
 
@@ -164,6 +174,7 @@ impl Actionable for MapAction {
                 _ => None,
             },
             MapAction::Delete { .. } => None,
+            MapAction::Clear => None,
         }
     }
 

@@ -101,6 +101,18 @@ impl CRDTFuzzer {
                 let actor = &mut self.actors[*site as usize];
                 *op_len %= actor.undo_manager.can_undo_length as u32 + 1;
             }
+            Action::ForkAt { site, to } => {
+                *site %= max_users;
+                *to %= self.actors[*site as usize].history.len() as u32;
+            }
+            Action::DiffApply { from, to } => {
+                *from %= max_users;
+                *to %= max_users;
+                if from == to {
+                    *to = (*to + 1) % max_users;
+                }
+            }
+
         }
     }
 
@@ -217,6 +229,21 @@ impl CRDTFuzzer {
                     actor.test_undo(undo_len);
                 }
             }
+            Action::ForkAt { site, to } => {
+                let actor = &mut self.actors[*site as usize];
+                let f = actor.history.keys().nth(*to as usize).unwrap();
+                let f = Frontiers::from(f);
+                let _forked = actor.loro.fork_at(&f);
+            }
+            Action::DiffApply { from, to } => {
+                let (a, b) = array_mut_ref!(&mut self.actors, [*from as usize, *to as usize]);
+                let a_frontiers = a.loro.oplog_frontiers();
+                let b_frontiers = b.loro.oplog_frontiers();
+                if let Ok(diff) = a.loro.diff(&a_frontiers, &b_frontiers) {
+                    let _ = b.loro.apply_diff(diff);
+                }
+            }
+
         }
     }
 
@@ -348,6 +375,7 @@ impl FuzzTarget {
                 set.insert(ContainerType::Text);
                 set.insert(ContainerType::Tree);
                 set.insert(ContainerType::MovableList);
+                set.insert(ContainerType::Counter);
             }
             FuzzTarget::Map => {
                 set.insert(ContainerType::Map);

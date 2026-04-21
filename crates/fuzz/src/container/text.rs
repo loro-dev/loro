@@ -22,6 +22,12 @@ pub enum TextActionInner {
     Insert,
     Delete,
     Mark(usize),
+    Update,
+    InsertUtf8,
+    DeleteUtf8,
+    MarkUtf8(usize),
+    Splice,
+    Unmark(usize),
 }
 
 pub struct TextActor {
@@ -89,24 +95,60 @@ impl Actionable for TextAction {
     fn pre_process(&mut self, actor: &mut ActionExecutor, container: usize) {
         let actor = actor.as_text_actor_mut().unwrap();
         let text = actor.containers.get(container).unwrap();
-        let length = text.len_unicode();
+        let unicode_len = text.len_unicode();
+        let utf8_len = text.len_utf8();
         let TextAction { pos, len, action } = self;
-        if matches!(action, TextActionInner::Delete | TextActionInner::Mark(_)) && length == 0 {
+        if matches!(
+            action,
+            TextActionInner::Delete
+                | TextActionInner::Mark(_)
+                | TextActionInner::DeleteUtf8
+                | TextActionInner::MarkUtf8(_)
+                | TextActionInner::Splice
+                | TextActionInner::Unmark(_)
+        ) && unicode_len == 0
+        {
             *action = TextActionInner::Insert;
         }
 
         match &mut self.action {
             TextActionInner::Insert => {
-                *pos %= length + 1;
+                *pos %= unicode_len + 1;
             }
             TextActionInner::Delete => {
-                *pos %= length;
-                *len %= length - *pos;
+                *pos %= unicode_len;
+                *len %= unicode_len - *pos;
                 *len = 1.max(*len);
             }
             TextActionInner::Mark(i) => {
-                *pos %= length;
-                *len %= length - *pos;
+                *pos %= unicode_len;
+                *len %= unicode_len - *pos;
+                *len = 1.max(*len);
+                *i %= STYLES_NAME.len();
+            }
+            TextActionInner::Update => {}
+            TextActionInner::InsertUtf8 => {
+                *pos %= utf8_len + 1;
+            }
+            TextActionInner::DeleteUtf8 => {
+                *pos %= utf8_len;
+                *len %= utf8_len - *pos;
+                *len = 1.max(*len);
+            }
+            TextActionInner::MarkUtf8(i) => {
+                *pos %= utf8_len;
+                *len %= utf8_len - *pos;
+                *len = 1.max(*len);
+                *i %= STYLES_NAME.len();
+            }
+            TextActionInner::Splice => {
+                *pos %= unicode_len;
+                *len %= unicode_len - *pos;
+                *len = 1.max(*len);
+            }
+            TextActionInner::Unmark(i) => {
+                *pos %= unicode_len;
+                *len %= unicode_len - *pos;
                 *len = 1.max(*len);
                 *i %= STYLES_NAME.len();
             }
@@ -132,6 +174,25 @@ impl Actionable for TextAction {
             TextActionInner::Mark(i) => {
                 unwrap(text.mark(*pos..*pos + *len, STYLES_NAME[*i], *pos as i32));
             }
+            TextActionInner::Update => {
+                let new_text = format!("u{}", *len);
+                text.update(&new_text, Default::default()).ok();
+            }
+            TextActionInner::InsertUtf8 => {
+                unwrap(text.insert_utf8(*pos, &format!("[{len}]")));
+            }
+            TextActionInner::DeleteUtf8 => {
+                unwrap(text.delete_utf8(*pos, *len));
+            }
+            TextActionInner::MarkUtf8(i) => {
+                unwrap(text.mark_utf8(*pos..*pos + *len, STYLES_NAME[*i], *pos as i32));
+            }
+            TextActionInner::Splice => {
+                text.splice(*pos, *len, &format!("s{len}")).ok();
+            }
+            TextActionInner::Unmark(i) => {
+                text.unmark(*pos..*pos + *len, STYLES_NAME[*i]).ok();
+            }
         }
         None
     }
@@ -150,6 +211,24 @@ impl Actionable for TextAction {
                 format!("mark {} ", STYLES_NAME[i]).into(),
                 format!("{} with-len {}", pos, len).into(),
             ],
+            TextActionInner::Update => ["update".into(), format!("to {}", len).into()],
+            TextActionInner::InsertUtf8 => {
+                [format!("insert_utf8 {}", pos).into(), len.to_string().into()]
+            }
+            TextActionInner::DeleteUtf8 => {
+                ["delete_utf8".into(), format!("{} ~ {}", pos, pos + len).into()]
+            }
+            TextActionInner::MarkUtf8(i) => [
+                format!("mark_utf8 {} ", STYLES_NAME[i]).into(),
+                format!("{} with-len {}", pos, len).into(),
+            ],
+            TextActionInner::Splice => {
+                ["splice".into(), format!("{} ~ {}", pos, pos + len).into()]
+            }
+            TextActionInner::Unmark(i) => [
+                format!("unmark {} ", STYLES_NAME[i]).into(),
+                format!("{} with-len {}", pos, len).into(),
+            ],
         }
     }
 
@@ -160,10 +239,16 @@ impl Actionable for TextAction {
 
 impl FromGenericAction for TextAction {
     fn from_generic_action(action: &GenericAction) -> Self {
-        let action_inner = match action.prop % 3 {
+        let action_inner = match action.prop % 9 {
             0 => TextActionInner::Insert,
             1 => TextActionInner::Delete,
             2 => TextActionInner::Mark((action.key % 4) as usize),
+            3 => TextActionInner::Update,
+            4 => TextActionInner::InsertUtf8,
+            5 => TextActionInner::DeleteUtf8,
+            6 => TextActionInner::MarkUtf8((action.key % 4) as usize),
+            7 => TextActionInner::Splice,
+            8 => TextActionInner::Unmark((action.key % 4) as usize),
             _ => unreachable!(),
         };
 

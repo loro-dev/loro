@@ -14,6 +14,9 @@ use crate::{
 pub enum ListAction {
     Insert { pos: u8, value: FuzzValue },
     Delete { pos: u8, len: u8 },
+    Push { value: FuzzValue },
+    Pop,
+    Clear,
 }
 
 pub struct ListActor {
@@ -89,19 +92,31 @@ impl Actionable for ListAction {
         let list = actor.containers.get(container).unwrap();
         let length = list.len();
 
-        if let ListAction::Insert { pos, .. } = self {
-            *pos %= length.max(1) as u8;
-        } else if length == 0 {
-            *self = ListAction::Insert {
-                pos: 0,
-                value: FuzzValue::I32(0),
-            };
-        } else {
-            let ListAction::Delete { pos, len } = self else {
-                unreachable!()
-            };
-            *pos %= length.max(1) as u8;
-            *len %= length as u8 - *pos;
+        match self {
+            ListAction::Insert { pos, .. } => {
+                *pos %= length.max(1) as u8;
+            }
+            ListAction::Delete { pos, len } => {
+                if length == 0 {
+                    *self = ListAction::Insert {
+                        pos: 0,
+                        value: FuzzValue::I32(0),
+                    };
+                } else {
+                    *pos %= length.max(1) as u8;
+                    *len %= length as u8 - *pos;
+                }
+            }
+            ListAction::Push { .. } => {}
+            ListAction::Pop => {
+                if length == 0 {
+                    *self = ListAction::Insert {
+                        pos: 0,
+                        value: FuzzValue::I32(0),
+                    };
+                }
+            }
+            ListAction::Clear => {}
         }
     }
 
@@ -127,6 +142,25 @@ impl Actionable for ListAction {
                 super::unwrap(list.delete(pos, len));
                 None
             }
+            ListAction::Push { value } => {
+                match value {
+                    FuzzValue::Container(c) => {
+                        super::unwrap(list.push_container(Container::new(*c)))
+                    }
+                    FuzzValue::I32(v) => {
+                        super::unwrap(list.push(*v));
+                        None
+                    }
+                }
+            }
+            ListAction::Pop => {
+                super::unwrap(list.pop());
+                None
+            }
+            ListAction::Clear => {
+                super::unwrap(list.clear());
+                None
+            }
         }
     }
 
@@ -142,6 +176,15 @@ impl Actionable for ListAction {
             ListAction::Delete { pos, len } => {
                 ["delete".into(), format!("{} ~ {}", pos, pos + len).into()]
             }
+            ListAction::Push { value } => {
+                ["push".into(), value.to_string().into()]
+            }
+            ListAction::Pop => {
+                ["pop".into(), "".into()]
+            }
+            ListAction::Clear => {
+                ["clear".into(), "".into()]
+            }
         }
     }
 
@@ -155,23 +198,34 @@ impl Actionable for ListAction {
                 FuzzValue::Container(c) => Some(c),
                 _ => None,
             },
+            ListAction::Push { value } => match value {
+                FuzzValue::Container(c) => Some(c),
+                _ => None,
+            },
             ListAction::Delete { .. } => None,
+            ListAction::Pop => None,
+            ListAction::Clear => None,
         }
     }
 }
 
 impl FromGenericAction for ListAction {
     fn from_generic_action(action: &GenericAction) -> Self {
-        if action.bool {
-            ListAction::Insert {
+        match action.prop % 5 {
+            0 => ListAction::Insert {
                 pos: (action.pos % 256) as u8,
                 value: action.value,
-            }
-        } else {
-            ListAction::Delete {
+            },
+            1 => ListAction::Delete {
                 pos: (action.pos % 256) as u8,
                 len: (action.length % 256) as u8,
-            }
+            },
+            2 => ListAction::Push {
+                value: action.value,
+            },
+            3 => ListAction::Pop,
+            4 => ListAction::Clear,
+            _ => unreachable!(),
         }
     }
 }

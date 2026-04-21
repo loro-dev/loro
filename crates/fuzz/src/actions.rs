@@ -80,6 +80,14 @@ pub enum Action {
         to: u8,
     },
     SyncAll,
+    ForkAt {
+        site: u8,
+        to: u32,
+    },
+    DiffApply {
+        from: u8,
+        to: u8,
+    },
 }
 
 #[derive(Debug, Clone, EnumAsInner)]
@@ -170,6 +178,18 @@ impl Tabled for Action {
                 "sync all undo".into(),
                 format!("{site}").into(),
                 format!("{op_len} op len").into(),
+                "".into(),
+            ],
+            Action::ForkAt { site, to } => vec![
+                "fork_at".into(),
+                format!("{site}").into(),
+                format!("to {to}").into(),
+                "".into(),
+            ],
+            Action::DiffApply { from, to } => vec![
+                "diff_apply".into(),
+                format!("{} -> {}", from, to).into(),
+                "".into(),
                 "".into(),
             ],
         }

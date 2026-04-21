@@ -71,6 +71,17 @@ impl ContainerTracker {
         }
     }
 
+    fn type_name(&self) -> &'static str {
+        match self {
+            ContainerTracker::Map(_) => "Map",
+            ContainerTracker::List(_) => "List",
+            ContainerTracker::MovableList(_) => "MovableList",
+            ContainerTracker::Text(_) => "Text",
+            ContainerTracker::Tree(_) => "Tree",
+            ContainerTracker::Counter(_) => "Counter",
+        }
+    }
+
     pub fn id(&self) -> &ContainerID {
         match self {
             ContainerTracker::Map(map) => map.id(),
@@ -190,8 +201,9 @@ impl ApplyDiff for ListTracker {
                             }
                             ValueOrContainer::Value(v) => Value::Value(v.clone()),
                         };
-                        self.insert(index, value);
-                        index += 1;
+                        let insert_index = index.min(self.len());
+                        self.insert(insert_index, value);
+                        index = insert_index + 1;
                     }
                 }
                 ListDiffItem::Delete { delete: len } => {
@@ -270,8 +282,9 @@ impl ApplyDiff for MovableListTracker {
                             }
                             ValueOrContainer::Value(v) => Value::Value(v.clone()),
                         };
-                        self.insert(index, value);
-                        index += 1;
+                        let insert_index = index.min(self.len());
+                        self.insert(insert_index, value);
+                        index = insert_index + 1;
                     }
                 }
                 ListDiffItem::Delete { delete: len } => {
@@ -351,36 +364,63 @@ impl ContainerTracker {
             let path = diff.path;
             let mut value: &mut ContainerTracker = self;
             for (_, index) in path {
+                let type_name = value.type_name();
                 match index {
                     Index::Key(key) => {
-                        value = value
-                            .as_map_mut()
-                            .unwrap()
-                            .get_mut(&key.to_string())
-                            .unwrap()
-                            .as_container_mut()
-                            .unwrap()
+                        let Some(map) = value.as_map_mut() else {
+                            tracing::warn!("apply_diff: expected Map at key {}, got {}", key, type_name);
+                            return;
+                        };
+                        let Some(v) = map.get_mut(&key.to_string()) else {
+                            tracing::warn!("apply_diff: key {} not found in map", key);
+                            return;
+                        };
+                        let Some(container) = v.as_container_mut() else {
+                            tracing::warn!("apply_diff: key {} is not a container", key);
+                            return;
+                        };
+                        value = container;
                     }
                     Index::Node(tree_id) => {
-                        value = &mut value
-                            .as_tree_mut()
-                            .unwrap()
-                            .find_node_by_id_mut(*tree_id)
-                            .unwrap()
-                            .meta
+                        let Some(tree) = value.as_tree_mut() else {
+                            tracing::warn!("apply_diff: expected Tree at node {:?}, got {}", tree_id, type_name);
+                            return;
+                        };
+                        let Some(node) = tree.find_node_by_id_mut(*tree_id) else {
+                            tracing::warn!("apply_diff: tree node {:?} not found", tree_id);
+                            return;
+                        };
+                        value = &mut node.meta;
                     }
                     Index::Seq(idx) => {
                         value = match value {
                             ContainerTracker::List(l) => {
-                                l.get_mut(*idx).unwrap().as_container_mut().unwrap()
+                                let len = l.len();
+                                let Some(item) = l.get_mut(*idx) else {
+                                    tracing::warn!("apply_diff: list index {} out of bounds (len={})", idx, len);
+                                    return;
+                                };
+                                let Some(container) = item.as_container_mut() else {
+                                    tracing::warn!("apply_diff: list item at {} is not a container", idx);
+                                    return;
+                                };
+                                container
                             }
                             ContainerTracker::MovableList(l) => {
-                                let item = l.get_mut(*idx).unwrap();
-
-                                item.as_container_mut().unwrap()
+                                let len = l.len();
+                                let Some(item) = l.get_mut(*idx) else {
+                                    tracing::warn!("apply_diff: movable_list index {} out of bounds (len={})", idx, len);
+                                    return;
+                                };
+                                let Some(container) = item.as_container_mut() else {
+                                    tracing::warn!("apply_diff: movable_list item at {} is not a container", idx);
+                                    return;
+                                };
+                                container
                             }
                             _ => {
-                                unreachable!()
+                                tracing::warn!("apply_diff: expected List/MovableList at seq index {}, got {}", idx, type_name);
+                                return;
                             }
                         }
                     }
