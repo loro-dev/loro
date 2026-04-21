@@ -322,7 +322,7 @@ impl EphemeralStore {
     /// // Subscribe and collect first 3 updates, then auto-unsubscribe
     /// let sub = store.subscribe_local_updates(Box::new(move |bytes| {
     ///     println!("Received {} bytes of ephemeral data", bytes.len());
-    ///     let mut count = count_clone.lock();
+    ///     let mut count = count_clone.lock().unwrap();
     ///     *count += 1;
     ///     *count < 3  // Auto-unsubscribe after 3 updates
     /// }));
