@@ -246,7 +246,8 @@ pub(crate) fn decode_oplog(
         mut imported,
         latest_ids,
         pending_changes,
-    } = import_changes_to_oplog(changes, oplog)?;
+        changes_that_have_deps_before_shallow_root,
+    } = import_changes_to_oplog(changes, oplog);
 
     let mut pending = VersionRange::default();
     pending_changes.iter().for_each(|c| {
@@ -255,6 +256,9 @@ pub(crate) fn decode_oplog(
     // TODO: PERF: should we use hashmap to filter latest_ids with the same peer first?
     oplog.try_apply_pending(latest_ids, Some(&mut imported));
     oplog.import_unknown_lamport_pending_changes(pending_changes)?;
+    if !changes_that_have_deps_before_shallow_root.is_empty() {
+        return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
+    }
     Ok(ImportStatus {
         success: imported,
         pending: (!pending.is_empty()).then_some(pending),

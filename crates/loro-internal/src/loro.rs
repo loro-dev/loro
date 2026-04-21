@@ -653,13 +653,7 @@ impl LoroDoc {
         if !self.is_detached() {
             let old_vv = oplog.vv().clone();
             let old_frontiers = oplog.frontiers().clone();
-            let result = match f(&mut oplog) {
-                Ok(result) => result,
-                Err(e) => {
-                    oplog.rollback_import();
-                    return Err(e);
-                }
-            };
+            let result = f(&mut oplog);
             if &old_vv != oplog.vv() {
                 let mut diff = DiffCalculator::new(false);
                 let (diff, diff_mode) = diff.calc_diff_internal(
@@ -684,8 +678,24 @@ impl LoroDoc {
                     return Err(e);
                 }
             }
-            oplog.commit_import_rollback();
-            Ok(result)
+            match result {
+                Ok(result) => {
+                    oplog.commit_import_rollback();
+                    Ok(result)
+                }
+                Err(e) => {
+                    // Some import errors are reported after a valid prefix has
+                    // been inserted into the oplog. Keep that prefix if it was
+                    // also applied to state; rollback is for failed state apply
+                    // or decode errors that made no visible oplog progress.
+                    if &old_vv == oplog.vv() {
+                        oplog.rollback_import();
+                    } else {
+                        oplog.commit_import_rollback();
+                    }
+                    Err(e)
+                }
+            }
         } else {
             match f(&mut oplog) {
                 Ok(result) => {
