@@ -1074,13 +1074,14 @@ pub mod json {
                     where
                         A: MapAccess<'de>,
                     {
-                        let (_key, container) = map.next_entry::<String, String>()?.unwrap();
+                        let (_key, container) = map.next_entry::<String, String>()?
+                            .ok_or_else(|| serde::de::Error::custom("missing container field"))?;
                         let is_unknown = container.ends_with(')');
                         let container = ContainerID::try_from(container.as_str())
                             .map_err(|_| serde::de::Error::custom("invalid container id"))?;
                         let op = if is_unknown {
-                            let (_key, op) =
-                                map.next_entry::<String, super::FutureOpWrapper>()?.unwrap();
+                            let (_key, op) = map.next_entry::<String, super::FutureOpWrapper>()?
+                                .ok_or_else(|| serde::de::Error::custom("missing op field for unknown container"))?;
                             super::JsonOpContent::Future(op)
                         } else {
                             match container.container_type() {
@@ -1090,29 +1091,29 @@ pub mod json {
                                     super::JsonOpContent::List(op)
                                 }
                                 ContainerType::MovableList => {
-                                    let (_key, op) =
-                                        map.next_entry::<String, super::MovableListOp>()?.unwrap();
+                                    let (_key, op) = map.next_entry::<String, super::MovableListOp>()?
+                                        .ok_or_else(|| serde::de::Error::custom("missing op field for movable list"))?;
                                     super::JsonOpContent::MovableList(op)
                                 }
                                 ContainerType::Map => {
-                                    let (_key, op) =
-                                        map.next_entry::<String, super::MapOp>()?.unwrap();
+                                    let (_key, op) = map.next_entry::<String, super::MapOp>()?
+                                        .ok_or_else(|| serde::de::Error::custom("missing op field for map"))?;
                                     super::JsonOpContent::Map(op)
                                 }
                                 ContainerType::Text => {
-                                    let (_key, op) =
-                                        map.next_entry::<String, super::TextOp>()?.unwrap();
+                                    let (_key, op) = map.next_entry::<String, super::TextOp>()?
+                                    .ok_or_else(|| serde::de::Error::custom("missing op field for text"))?;
                                     super::JsonOpContent::Text(op)
                                 }
                                 ContainerType::Tree => {
-                                    let (_key, op) =
-                                        map.next_entry::<String, super::TreeOp>()?.unwrap();
+                                    let (_key, op) = map.next_entry::<String, super::TreeOp>()?
+                                    .ok_or_else(|| serde::de::Error::custom("missing op field for tree"))?;
                                     super::JsonOpContent::Tree(op)
                                 }
                                 #[cfg(feature = "counter")]
                                 ContainerType::Counter => {
-                                    let (_key, value) =
-                                        map.next_entry::<String, OwnedValue>()?.unwrap();
+                                    let (_key, value) = map.next_entry::<String, OwnedValue>()?
+                                        .ok_or_else(|| serde::de::Error::custom("missing value field for counter"))?;
                                     super::JsonOpContent::Future(super::FutureOpWrapper {
                                         prop: 0,
                                         value: super::FutureOp::Counter(value),
@@ -1121,7 +1122,8 @@ pub mod json {
                                 _ => unreachable!(),
                             }
                         };
-                        let (_, counter) = map.next_entry::<String, i32>()?.unwrap();
+                        let (_, counter) = map.next_entry::<String, i32>()?
+                            .ok_or_else(|| serde::de::Error::custom("missing counter field"))?;
                         Ok(super::JsonOp {
                             container,
                             content: op,
@@ -1151,7 +1153,8 @@ pub mod json {
             {
                 // NOTE: https://github.com/serde-rs/serde/issues/2467    we use String here
                 let str: String = Deserialize::deserialize(d)?;
-                let id: ID = ID::try_from(str.as_str()).unwrap();
+                let id: ID = ID::try_from(str.as_str())
+                    .map_err(|_| serde::de::Error::custom("invalid ID format"))?;
                 Ok(id)
             }
         }
@@ -1195,7 +1198,10 @@ pub mod json {
                     {
                         let mut f = Frontiers::default();
                         while let Some((k, v)) = map.next_entry::<String, i32>()? {
-                            f.push(ID::new(k.parse().unwrap(), v))
+                            f.push(ID::new(
+                                k.parse().map_err(|_| serde::de::Error::custom("invalid peer id in frontiers"))?, 
+                                v
+                            ))
                         }
                         Ok(f)
                     }
@@ -1222,8 +1228,9 @@ pub mod json {
                 let deps: Vec<String> = Deserialize::deserialize(d)?;
                 Ok(deps
                     .into_iter()
-                    .map(|x| ID::try_from(x.as_str()).unwrap())
-                    .collect())
+                    .map(|x| ID::try_from(x.as_str())
+                        .map_err(|_| serde::de::Error::custom("invalid ID in deps")))
+                    .collect::<Result<Vec<_>, _>>()?)
             }
         }
 
@@ -1246,7 +1253,10 @@ pub mod json {
                 D: Deserializer<'de>,
             {
                 let peers: Option<Vec<String>> = Deserialize::deserialize(d)?;
-                Ok(peers.map(|x| x.into_iter().map(|x| x.parse().unwrap()).collect()))
+                Ok(peers.map(|x| x.into_iter()
+                    .map(|x| x.parse().map_err(|_| serde::de::Error::custom("invalid peer id")))
+                    .collect::<Result<Vec<_>, _>>())
+                    .transpose()?)
             }
         }
 
@@ -1266,7 +1276,8 @@ pub mod json {
                 D: Deserializer<'de>,
             {
                 let str: String = Deserialize::deserialize(d)?;
-                let id: IdLp = IdLp::try_from(str.as_str()).unwrap();
+                let id: IdLp = IdLp::try_from(str.as_str())
+                    .map_err(|_| serde::de::Error::custom("invalid IdLp format"))?;
                 Ok(id)
             }
         }
@@ -1287,7 +1298,8 @@ pub mod json {
                 D: Deserializer<'de>,
             {
                 let str: String = Deserialize::deserialize(d)?;
-                let id: TreeID = TreeID::try_from(str.as_str()).unwrap();
+                let id: TreeID = TreeID::try_from(str.as_str())
+                    .map_err(|_| serde::de::Error::custom("invalid TreeID format"))?;
                 Ok(id)
             }
         }
@@ -1313,7 +1325,8 @@ pub mod json {
                 let str: Option<String> = Deserialize::deserialize(d)?;
                 match str {
                     Some(str) => {
-                        let id: TreeID = TreeID::try_from(str.as_str()).unwrap();
+                        let id: TreeID = TreeID::try_from(str.as_str())
+                            .map_err(|_| serde::de::Error::custom("invalid TreeID format"))?;
                         Ok(Some(id))
                     }
                     None => Ok(None),
