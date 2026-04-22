@@ -1151,3 +1151,365 @@ fn get_loro_value_kind(value: &LoroValue) -> LoroValueKind {
         LoroValue::Container(_) => LoroValueKind::ContainerType,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{container::tree::tree_op::TreeOp, fx_map};
+
+    #[derive(Default)]
+    struct TestRegisters {
+        key: ValueRegister<InternalString>,
+        peer: ValueRegister<PeerID>,
+    }
+
+    impl ValueEncodeRegister for TestRegisters {
+        fn key_mut(&mut self) -> &mut ValueRegister<InternalString> {
+            &mut self.key
+        }
+
+        fn peer_mut(&mut self) -> &mut ValueRegister<PeerID> {
+            &mut self.peer
+        }
+
+        fn encode_tree_op(&mut self, op: &TreeOp) -> Value<'static> {
+            let target = match op {
+                TreeOp::Create { target, .. }
+                | TreeOp::Move { target, .. }
+                | TreeOp::Delete { target } => *target,
+            };
+
+            Value::TreeMove(EncodedTreeMove {
+                target_idx: self.peer.register(&target.peer),
+                is_parent_null: true,
+                parent_idx: 0,
+                position: 0,
+            })
+        }
+    }
+
+    struct TestArenas {
+        keys: Vec<InternalString>,
+        peers: Vec<PeerID>,
+    }
+
+    impl ValueDecodedArenasTrait for TestArenas {
+        fn keys(&self) -> &[InternalString] {
+            &self.keys
+        }
+
+        fn peers(&self) -> &[PeerID] {
+            &self.peers
+        }
+
+        fn decode_tree_op(
+            &self,
+            positions: &[Vec<u8>],
+            op: EncodedTreeMove,
+            id: ID,
+        ) -> LoroResult<TreeOp> {
+            op.as_tree_op(&self.peers, positions, &[], id)
+        }
+    }
+
+    fn encode_then_decode_owned(value: Value<'_>) -> OwnedValue {
+        let mut writer = ValueWriter::new();
+        let mut registers = TestRegisters::default();
+        let (kind, _) = value.encode(&mut writer, &mut registers);
+        let bytes = writer.finish();
+        let arenas = TestArenas {
+            keys: registers.key.unwrap_vec(),
+            peers: registers.peer.unwrap_vec(),
+        };
+        let mut reader = ValueReader::new(&bytes);
+        Value::decode(kind, &mut reader, &arenas, ID::new(9, 1))
+            .unwrap()
+            .into_owned()
+    }
+
+    #[test]
+    fn value_kind_tags_roundtrip_including_future_kinds() {
+        let kinds = [
+            ValueKind::Null,
+            ValueKind::True,
+            ValueKind::False,
+            ValueKind::I64,
+            ValueKind::F64,
+            ValueKind::Str,
+            ValueKind::Binary,
+            ValueKind::ContainerType,
+            ValueKind::DeleteOnce,
+            ValueKind::DeleteSeq,
+            ValueKind::DeltaInt,
+            ValueKind::LoroValue,
+            ValueKind::MarkStart,
+            ValueKind::TreeMove,
+            ValueKind::ListMove,
+            ValueKind::ListSet,
+            ValueKind::RawTreeMove,
+        ];
+
+        for kind in kinds {
+            let tag = kind.to_u8();
+            assert_eq!(ValueKind::from_u8(tag).to_u8(), tag);
+        }
+
+        let future = ValueKind::Future(FutureValueKind::Unknown(42));
+        assert_eq!(future.to_u8(), 42 | 0x80);
+        match ValueKind::from_u8(future.to_u8()) {
+            ValueKind::Future(FutureValueKind::Unknown(kind)) => assert_eq!(kind, 42),
+            other => panic!("expected future kind, got {other:?}"),
+        }
+
+        let loro_kinds = [
+            LoroValueKind::Null,
+            LoroValueKind::True,
+            LoroValueKind::False,
+            LoroValueKind::I64,
+            LoroValueKind::F64,
+            LoroValueKind::Str,
+            LoroValueKind::Binary,
+            LoroValueKind::List,
+            LoroValueKind::Map,
+            LoroValueKind::ContainerType,
+        ];
+        for kind in loro_kinds {
+            assert_eq!(
+                LoroValueKind::from_u8(kind.to_u8())
+                    .expect("known value kind tag should decode")
+                    .to_u8(),
+                kind.to_u8()
+            );
+        }
+    }
+
+    #[test]
+    fn owned_value_conversion_is_lossless_for_all_current_variants() {
+        let mark = MarkStart {
+            len: 3,
+            key: "bold".into(),
+            value: true.into(),
+            info: 7,
+        };
+        let tree_move = EncodedTreeMove {
+            target_idx: 2,
+            is_parent_null: false,
+            parent_idx: 1,
+            position: 4,
+        };
+        let raw_tree_move = RawTreeMove {
+            subject_peer_idx: 3,
+            subject_cnt: 9,
+            is_parent_null: false,
+            parent_peer_idx: 4,
+            parent_cnt: 8,
+            position_idx: 6,
+        };
+        let values = vec![
+            OwnedValue::Null,
+            OwnedValue::True,
+            OwnedValue::False,
+            OwnedValue::I64(-123),
+            OwnedValue::F64(1.25),
+            OwnedValue::Str(Arc::new("hello".to_string())),
+            OwnedValue::Binary(Arc::new(vec![1, 2, 3])),
+            OwnedValue::ContainerIdx(42),
+            OwnedValue::DeleteOnce,
+            OwnedValue::DeleteSeq,
+            OwnedValue::DeltaInt(-9),
+            OwnedValue::LoroValue(
+                fx_map!(
+                    "k".to_string() =>
+                        LoroValue::from(vec![LoroValue::from(1_i64), LoroValue::from("v")])
+                )
+                .into(),
+            ),
+            OwnedValue::MarkStart(mark),
+            OwnedValue::TreeMove(tree_move),
+            OwnedValue::RawTreeMove(raw_tree_move),
+            OwnedValue::ListMove {
+                from: 1,
+                from_idx: 2,
+                lamport: 3,
+            },
+            OwnedValue::ListSet {
+                peer_idx: 4,
+                lamport: 5,
+                value: "set".into(),
+            },
+            OwnedValue::Future(OwnedFutureValue::Unknown {
+                kind: 99,
+                data: Arc::new(vec![4, 5, 6]),
+            }),
+        ];
+
+        for owned in values {
+            assert_eq!(Value::from_owned(&owned).into_owned(), owned);
+        }
+    }
+
+    #[test]
+    fn value_encode_decode_roundtrips_non_loro_value_variants() {
+        let cases = vec![
+            (Value::Null, OwnedValue::Null),
+            (Value::True, OwnedValue::True),
+            (Value::False, OwnedValue::False),
+            (Value::I64(-42), OwnedValue::I64(-42)),
+            (Value::F64(3.5), OwnedValue::F64(3.5)),
+            (
+                Value::Str("encoded"),
+                OwnedValue::Str(Arc::new("encoded".to_string())),
+            ),
+            (
+                Value::Binary(&[9, 8, 7]),
+                OwnedValue::Binary(Arc::new(vec![9, 8, 7])),
+            ),
+            (Value::ContainerIdx(17), OwnedValue::ContainerIdx(17)),
+            (Value::DeleteOnce, OwnedValue::DeleteOnce),
+            (Value::DeleteSeq, OwnedValue::DeleteSeq),
+            (Value::DeltaInt(-17), OwnedValue::DeltaInt(-17)),
+            (
+                Value::LoroValue(fx_map!("nested".to_string() => LoroValue::from(1_i64)).into()),
+                OwnedValue::LoroValue(
+                    fx_map!("nested".to_string() => LoroValue::from(1_i64)).into(),
+                ),
+            ),
+            (
+                Value::MarkStart(MarkStart {
+                    len: 2,
+                    key: "italic".into(),
+                    value: "yes".into(),
+                    info: 3,
+                }),
+                OwnedValue::MarkStart(MarkStart {
+                    len: 2,
+                    key: "italic".into(),
+                    value: "yes".into(),
+                    info: 3,
+                }),
+            ),
+            (
+                Value::TreeMove(EncodedTreeMove {
+                    target_idx: 5,
+                    is_parent_null: true,
+                    parent_idx: 0,
+                    position: 7,
+                }),
+                OwnedValue::TreeMove(EncodedTreeMove {
+                    target_idx: 5,
+                    is_parent_null: true,
+                    parent_idx: 0,
+                    position: 7,
+                }),
+            ),
+            (
+                Value::RawTreeMove(RawTreeMove {
+                    subject_peer_idx: 1,
+                    subject_cnt: 2,
+                    is_parent_null: true,
+                    parent_peer_idx: 0,
+                    parent_cnt: 0,
+                    position_idx: 3,
+                }),
+                OwnedValue::RawTreeMove(RawTreeMove {
+                    subject_peer_idx: 1,
+                    subject_cnt: 2,
+                    is_parent_null: true,
+                    parent_peer_idx: 0,
+                    parent_cnt: 0,
+                    position_idx: 3,
+                }),
+            ),
+            (
+                Value::ListMove {
+                    from: 3,
+                    from_idx: 4,
+                    lamport: 5,
+                },
+                OwnedValue::ListMove {
+                    from: 3,
+                    from_idx: 4,
+                    lamport: 5,
+                },
+            ),
+            (
+                Value::ListSet {
+                    peer_idx: 1,
+                    lamport: 2,
+                    value: vec![LoroValue::from(1_i64), LoroValue::from(2_i64)].into(),
+                },
+                OwnedValue::ListSet {
+                    peer_idx: 1,
+                    lamport: 2,
+                    value: vec![LoroValue::from(1_i64), LoroValue::from(2_i64)].into(),
+                },
+            ),
+            (
+                Value::Future(FutureValue::Unknown {
+                    kind: 100,
+                    data: &[1, 3, 5],
+                }),
+                OwnedValue::Future(OwnedFutureValue::Unknown {
+                    kind: 100,
+                    data: Arc::new(vec![1, 3, 5]),
+                }),
+            ),
+        ];
+
+        for (value, expected) in cases {
+            assert_eq!(encode_then_decode_owned(value), expected);
+        }
+    }
+
+    #[test]
+    fn loro_value_writer_reader_roundtrips_nested_scalars_collections_and_containers() {
+        let container = ContainerID::new_normal(ID::new(7, 2), ContainerType::Tree);
+        let value: LoroValue = fx_map!(
+            "null".to_string() => LoroValue::Null,
+            "true".to_string() => true.into(),
+            "false".to_string() => false.into(),
+            "int".to_string() => (-9_i64).into(),
+            "float".to_string() => 2.25.into(),
+            "string".to_string() => "text".into(),
+            "binary".to_string() => vec![1_u8, 2, 3].into(),
+            "container".to_string() => container.into(),
+            "list".to_string() => vec![
+                LoroValue::Null,
+                true.into(),
+                fx_map!("child".to_string() => "value".into()).into(),
+            ].into()
+        )
+        .into();
+
+        let mut writer = ValueWriter::new();
+        let mut registers = TestRegisters::default();
+        writer.write_value_type_and_content(&value, &mut registers);
+        let keys = registers.key.unwrap_vec();
+        assert!(keys.iter().any(|key| key.as_ref() == "child"));
+
+        let bytes = writer.finish();
+        let mut reader = ValueReader::new(&bytes);
+        let decoded = reader
+            .read_value_type_and_content(&keys, ID::new(7, 2))
+            .unwrap();
+        assert_eq!(decoded, value);
+    }
+
+    #[test]
+    fn reader_reports_corruption_for_truncated_or_invalid_value_payloads() {
+        assert!(ValueReader::new(&[]).read_i64().is_err());
+        assert!(ValueReader::new(&[1, 2, 3]).read_f64().is_err());
+        assert!(ValueReader::new(&[5, b'a']).read_str().is_err());
+        assert!(ValueReader::new(&[5, 1, 2]).read_binary().is_err());
+
+        let mut writer = ValueWriter::new();
+        writer.write_usize(1);
+        writer.write_usize(9);
+        writer.write_value_type_and_content(&"value".into(), &mut TestRegisters::default());
+        let bytes = writer.finish();
+        let mut reader = ValueReader::new(&bytes);
+        assert!(reader
+            .read_value_content(LoroValueKind::Map, &[], ID::new(1, 0))
+            .is_err());
+    }
+}

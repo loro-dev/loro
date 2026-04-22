@@ -122,8 +122,10 @@ impl SecureRandomGenerator for DefaultRandom {
         // SAFETY: this is only used in test
         unsafe {
             #[allow(static_mut_refs)]
-            let bytes = TEST_RANDOM.fetch_add(1, std::sync::atomic::Ordering::Release);
-            dest.copy_from_slice(&bytes.to_le_bytes());
+            let bytes = TEST_RANDOM
+                .fetch_add(1, std::sync::atomic::Ordering::Release)
+                .to_le_bytes();
+            dest.copy_from_slice(&bytes[..dest.len()]);
         }
     }
 }
@@ -152,5 +154,138 @@ pub trait SecureRandomGenerator: Send + Sync {
         let mut buf = [0u8; 4];
         self.fill_byte(&mut buf);
         i32::from_le_bytes(buf)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{atomic::Ordering, Mutex, OnceLock};
+
+    use loro_common::{ContainerID, ContainerType, InternalString};
+
+    use crate::container::richtext::ExpandType;
+
+    use super::*;
+
+    fn random_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    #[test]
+    fn configure_default_values_and_setters_match_the_public_contract() {
+        let config = Configure::default();
+
+        assert!(!config.record_timestamp());
+        assert!(!config.detached_editing());
+        assert_eq!(config.merge_interval(), 1000);
+        assert!(!config.hide_empty_root_containers.load(Ordering::Relaxed));
+        assert!(config.deleted_root_containers.lock().is_empty());
+
+        let styles = config.text_style_config.read();
+        assert_eq!(
+            styles.get(&InternalString::from("bold")),
+            Some(StyleConfig {
+                expand: ExpandType::After,
+            })
+        );
+        assert_eq!(
+            styles.get(&InternalString::from("italic")),
+            Some(StyleConfig {
+                expand: ExpandType::After,
+            })
+        );
+        assert_eq!(
+            styles.get(&InternalString::from("link")),
+            Some(StyleConfig {
+                expand: ExpandType::None,
+            })
+        );
+        assert_eq!(styles.get(&InternalString::from("missing")), None);
+
+        config.set_record_timestamp(true);
+        config.set_detached_editing(true);
+        config.set_merge_interval(42);
+        config.set_hide_empty_root_containers(true);
+
+        assert!(config.record_timestamp());
+        assert!(config.detached_editing());
+        assert_eq!(config.merge_interval(), 42);
+        assert!(config.hide_empty_root_containers.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn configure_fork_copies_current_state_and_then_diverges() {
+        let config = Configure::default();
+        config.set_record_timestamp(true);
+        config.set_detached_editing(true);
+        config.set_merge_interval(25);
+        config.set_hide_empty_root_containers(true);
+        config
+            .deleted_root_containers
+            .lock()
+            .insert(ContainerID::Root {
+                name: InternalString::from("root"),
+                container_type: ContainerType::Map,
+            });
+        config.text_style_config.write().insert(
+            InternalString::from("custom"),
+            StyleConfig {
+                expand: ExpandType::None,
+            },
+        );
+
+        let forked = config.fork();
+
+        assert!(forked.record_timestamp());
+        assert!(forked.detached_editing());
+        assert_eq!(forked.merge_interval(), 25);
+        assert!(forked.hide_empty_root_containers.load(Ordering::Relaxed));
+        assert_eq!(forked.deleted_root_containers.lock().len(), 1);
+        assert_eq!(
+            forked
+                .text_style_config
+                .read()
+                .get(&InternalString::from("custom")),
+            Some(StyleConfig {
+                expand: ExpandType::None,
+            })
+        );
+
+        config.set_record_timestamp(false);
+        config.set_detached_editing(false);
+        config.set_merge_interval(99);
+        config.set_hide_empty_root_containers(false);
+        config.deleted_root_containers.lock().clear();
+        config
+            .text_style_config
+            .write()
+            .insert(InternalString::from("fork-only"), StyleConfig::default());
+
+        assert!(forked.record_timestamp());
+        assert!(forked.detached_editing());
+        assert_eq!(forked.merge_interval(), 25);
+        assert!(forked.hide_empty_root_containers.load(Ordering::Relaxed));
+        assert_eq!(forked.deleted_root_containers.lock().len(), 1);
+        assert!(forked
+            .text_style_config
+            .read()
+            .get(&InternalString::from("fork-only"))
+            .is_none());
+    }
+
+    #[test]
+    fn default_random_test_mode_uses_the_incrementing_counter_for_integer_helpers() {
+        let _guard = random_lock().lock().unwrap();
+        let random = DefaultRandom;
+
+        let a = random.next_u64();
+        let b = random.next_u32();
+        let c = random.next_i64();
+        let d = random.next_i32();
+
+        assert_eq!(b as u64, (a + 1) as u32 as u64);
+        assert_eq!(c as u64, a + 2);
+        assert_eq!(d as u64, (a + 3) as u32 as u64);
     }
 }

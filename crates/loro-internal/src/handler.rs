@@ -64,7 +64,9 @@ pub trait HandlerTrait: Clone + Sized {
     fn idx(&self) -> ContainerIdx {
         self.attached_handler()
             .map(|x| x.container_idx)
-            .unwrap_or_else(|| ContainerIdx::from_index_and_type(u32::MAX, self.kind()))
+            .unwrap_or_else(|| {
+                ContainerIdx::from_index_and_type(ContainerIdx::INDEX_MASK, self.kind())
+            })
     }
 
     fn id(&self) -> ContainerID {
@@ -1466,6 +1468,26 @@ impl TextHandler {
         }
     }
 
+    fn validate_text_boundary(&self, pos: usize, pos_type: PosType) -> LoroResult<()> {
+        let err = match pos_type {
+            PosType::Bytes => Some(LoroError::UTF8InUnicodeCodePoint { pos }),
+            PosType::Utf16 => Some(LoroError::UTF16InUnicodeCodePoint { pos }),
+            _ => None,
+        };
+
+        let Some(err) = err else {
+            return Ok(());
+        };
+        let Some(unicode_pos) = self.convert_pos(pos, pos_type, PosType::Unicode) else {
+            return Ok(());
+        };
+        if self.convert_pos(unicode_pos, PosType::Unicode, pos_type) != Some(pos) {
+            return Err(err);
+        }
+
+        Ok(())
+    }
+
     pub fn diagnose(&self) {
         match &self.inner {
             MaybeDetached::Detached(t) => {
@@ -1617,6 +1639,27 @@ impl TextHandler {
         end_index: usize,
         pos_type: PosType,
     ) -> LoroResult<Vec<TextDelta>> {
+        if end_index < start_index {
+            return Err(LoroError::EndIndexLessThanStartIndex {
+                start: start_index,
+                end: end_index,
+            });
+        }
+        if start_index == end_index {
+            return Ok(Vec::new());
+        }
+
+        let len = self.len(pos_type);
+        if end_index > len {
+            return Err(LoroError::OutOfBound {
+                pos: end_index,
+                len,
+                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+            });
+        }
+        self.validate_text_boundary(start_index, pos_type)?;
+        self.validate_text_boundary(end_index, pos_type)?;
+
         match &self.inner {
             MaybeDetached::Detached(t) => {
                 let t = t.lock();
@@ -1625,7 +1668,7 @@ impl TextHandler {
                     .into_iter()
                     .map(|(s, a)| TextDelta::Insert {
                         insert: s,
-                        attributes: a.to_option_map(),
+                        attributes: a.to_option_map_without_null_value(),
                     })
                     .collect())
             }
@@ -1639,7 +1682,7 @@ impl TextHandler {
                     .into_iter()
                     .map(|(s, a)| TextDelta::Insert {
                         insert: s,
-                        attributes: a.to_option_map(),
+                        attributes: a.to_option_map_without_null_value(),
                     })
                     .collect())
             }),
@@ -1676,6 +1719,16 @@ impl TextHandler {
     ///
     /// This method requires auto_commit to be enabled.
     pub fn insert(&self, pos: usize, s: &str, pos_type: PosType) -> LoroResult<()> {
+        let len = self.len(pos_type);
+        if pos > len {
+            return Err(LoroError::OutOfBound {
+                pos,
+                len,
+                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+            });
+        }
+        self.validate_text_boundary(pos, pos_type)?;
+
         match &self.inner {
             MaybeDetached::Detached(t) => {
                 let mut t = t.lock();
@@ -1733,6 +1786,21 @@ impl TextHandler {
     ///
     /// This method requires auto_commit to be enabled.
     pub fn delete(&self, pos: usize, len: usize, pos_type: PosType) -> LoroResult<()> {
+        if len == 0 {
+            return Ok(());
+        }
+
+        let text_len = self.len(pos_type);
+        if pos + len > text_len {
+            return Err(LoroError::OutOfBound {
+                pos: pos + len,
+                len: text_len,
+                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+            });
+        }
+        self.validate_text_boundary(pos, pos_type)?;
+        self.validate_text_boundary(pos + len, pos_type)?;
+
         match &self.inner {
             MaybeDetached::Detached(t) => {
                 let mut t = t.lock();
@@ -1814,6 +1882,7 @@ impl TextHandler {
                 }
             }
         }
+        self.validate_text_boundary(pos, pos_type)?;
 
         let inner = self.inner.try_attached_state()?;
         let (entity_index, event_index, styles) = inner.with_state(|state| {
@@ -1947,6 +2016,8 @@ impl TextHandler {
                 info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
             });
         }
+        self.validate_text_boundary(pos, pos_type)?;
+        self.validate_text_boundary(pos + len, pos_type)?;
 
         let inner = self.inner.try_attached_state()?;
         let s = tracing::span!(tracing::Level::INFO, "delete", "pos={} len={}", pos, len);
@@ -2723,6 +2794,13 @@ impl ListHandler {
         match &self.inner {
             MaybeDetached::Detached(l) => {
                 let mut list = l.lock();
+                if pos > list.value.len() {
+                    return Err(LoroError::OutOfBound {
+                        pos,
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                        len: list.value.len(),
+                    });
+                }
                 list.value
                     .insert(pos, ValueOrHandler::Handler(child.to_handler()));
                 Ok(child)
@@ -2772,6 +2850,13 @@ impl ListHandler {
         match &self.inner {
             MaybeDetached::Detached(l) => {
                 let mut list = l.lock();
+                if pos + len > list.value.len() {
+                    return Err(LoroError::OutOfBound {
+                        pos: pos + len,
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                        len: list.value.len(),
+                    });
+                }
                 list.value.drain(pos..pos + len);
                 Ok(())
             }
@@ -3250,6 +3335,9 @@ impl MovableListHandler {
                 Ok(d.value.pop())
             }
             MaybeDetached::Attached(a) => {
+                if self.len() == 0 {
+                    return Ok(None);
+                }
                 let last = self.len() - 1;
                 let ans = self.get_(last);
                 a.with_txn(|txn| self.pop_with_txn(txn))?;
@@ -3397,6 +3485,13 @@ impl MovableListHandler {
         match &self.inner {
             MaybeDetached::Detached(d) => {
                 let mut d = d.lock();
+                if pos >= d.value.len() {
+                    return Err(LoroError::OutOfBound {
+                        pos,
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                        len: d.value.len(),
+                    });
+                }
                 d.value[pos] = ValueOrHandler::Handler(child.to_handler());
                 Ok(child)
             }
@@ -3452,6 +3547,13 @@ impl MovableListHandler {
         match &self.inner {
             MaybeDetached::Detached(d) => {
                 let mut d = d.lock();
+                if pos + len > d.value.len() {
+                    return Err(LoroError::OutOfBound {
+                        pos: pos + len,
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                        len: d.value.len(),
+                    });
+                }
                 d.value.drain(pos..pos + len);
                 Ok(())
             }
@@ -4357,7 +4459,9 @@ pub mod counter {
                 MaybeDetached::Attached(a) => Some(Self {
                     inner: MaybeDetached::Attached(a.clone()),
                 }),
-                MaybeDetached::Detached(_) => None,
+                MaybeDetached::Detached(v) => v.lock().attached.clone().map(|x| Self {
+                    inner: MaybeDetached::Attached(x),
+                }),
             }
         }
 
@@ -4374,7 +4478,9 @@ pub mod counter {
 mod test {
     use std::borrow::Cow;
 
-    use super::{HandlerTrait, TextDelta};
+    use super::{
+        Handler, HandlerTrait, ListHandler, MapHandler, MovableListHandler, TextDelta, TextHandler,
+    };
     use crate::container::list::list_op::ListOp;
     use crate::cursor::PosType;
     use crate::loro::ExportMode;
@@ -4384,7 +4490,7 @@ mod test {
     use crate::version::Frontiers;
     use crate::LoroDoc;
     use crate::{fx_map, ToJson};
-    use loro_common::{LoroValue, ID};
+    use loro_common::{ContainerID, ContainerType, LoroValue, ID};
     use serde_json::json;
 
     fn insert_many_with_single_list_op(
@@ -4716,5 +4822,146 @@ mod test {
             text.get_richtext_value().to_json_value(),
             json!([{"insert": "seed"}])
         );
+    }
+
+    #[test]
+    fn handler_trait_dispatch_reports_attached_container_identity() {
+        let loro = LoroDoc::new_auto_commit();
+        let handlers = [
+            (loro.get_text("text").to_handler(), ContainerType::Text),
+            (loro.get_map("map").to_handler(), ContainerType::Map),
+            (loro.get_list("list").to_handler(), ContainerType::List),
+            (
+                loro.get_movable_list("movable").to_handler(),
+                ContainerType::MovableList,
+            ),
+            (loro.get_tree("tree").to_handler(), ContainerType::Tree),
+        ];
+
+        for (handler, expected_type) in handlers {
+            assert!(handler.is_attached());
+            assert!(handler.attached_handler().is_some());
+            assert!(handler.doc().is_some());
+            assert!(handler.get_attached().is_some());
+            assert_eq!(handler.kind(), expected_type);
+            assert_eq!(handler.c_type(), expected_type);
+            assert_eq!(handler.id().container_type(), expected_type);
+            assert_eq!(
+                Handler::from_handler(handler.clone()).unwrap().c_type(),
+                expected_type
+            );
+
+            handler.get_value();
+            handler.get_deep_value();
+            handler.clear().unwrap();
+        }
+    }
+
+    #[test]
+    fn handler_trait_dispatch_reports_detached_container_identity() {
+        let handlers = [
+            (
+                Handler::new_unattached(ContainerType::Text),
+                ContainerType::Text,
+            ),
+            (
+                Handler::new_unattached(ContainerType::Map),
+                ContainerType::Map,
+            ),
+            (
+                Handler::new_unattached(ContainerType::List),
+                ContainerType::List,
+            ),
+            (
+                Handler::new_unattached(ContainerType::MovableList),
+                ContainerType::MovableList,
+            ),
+            (
+                Handler::new_unattached(ContainerType::Tree),
+                ContainerType::Tree,
+            ),
+        ];
+
+        for (handler, expected_type) in handlers {
+            assert!(!handler.is_attached());
+            assert!(handler.attached_handler().is_none());
+            assert!(handler.doc().is_none());
+            assert!(handler.get_attached().is_none());
+            assert_eq!(handler.kind(), expected_type);
+            assert_eq!(handler.c_type(), expected_type);
+            assert_eq!(handler.id().container_type(), expected_type);
+            assert_eq!(handler.idx().get_type(), expected_type);
+            assert_eq!(
+                Handler::from_handler(handler.clone()).unwrap().c_type(),
+                expected_type
+            );
+        }
+    }
+
+    #[test]
+    fn attaching_detached_handlers_sets_parent_and_attached_back_reference() {
+        let loro = LoroDoc::new_auto_commit();
+
+        let map = loro.get_map("map");
+        let detached_text = TextHandler::new_detached();
+        detached_text
+            .insert(0, "detached", PosType::Unicode)
+            .unwrap();
+        let attached_text = map.insert_container("text", detached_text.clone()).unwrap();
+        assert!(attached_text.is_attached());
+        assert_eq!(attached_text.to_string(), "detached");
+        assert_eq!(attached_text.parent().unwrap().c_type(), ContainerType::Map);
+        assert_eq!(
+            detached_text.get_attached().unwrap().id(),
+            attached_text.id()
+        );
+
+        let list = loro.get_list("list");
+        let detached_map = MapHandler::new_detached();
+        detached_map.insert("k", 1_i64).unwrap();
+        let attached_map = list.insert_container(0, detached_map.clone()).unwrap();
+        assert!(attached_map.is_attached());
+        assert_eq!(attached_map.parent().unwrap().c_type(), ContainerType::List);
+        assert_eq!(detached_map.get_attached().unwrap().id(), attached_map.id());
+
+        let movable = loro.get_movable_list("movable");
+        let detached_list = ListHandler::new_detached();
+        detached_list.push("item").unwrap();
+        let attached_list = movable.insert_container(0, detached_list.clone()).unwrap();
+        assert!(attached_list.is_attached());
+        assert_eq!(
+            attached_list.parent().unwrap().c_type(),
+            ContainerType::MovableList
+        );
+        assert_eq!(
+            detached_list.get_attached().unwrap().id(),
+            attached_list.id()
+        );
+
+        let nested = attached_map
+            .insert_container("movable", MovableListHandler::new_detached())
+            .unwrap();
+        assert_eq!(nested.parent().unwrap().id(), attached_map.id());
+    }
+
+    #[test]
+    fn unknown_handler_reports_identity_without_materializing_value() {
+        let loro = LoroDoc::new_auto_commit();
+        let id = ContainerID::Root {
+            name: "unknown".into(),
+            container_type: ContainerType::Unknown(7),
+        };
+        let handler = Handler::new_attached(id.clone(), loro.clone());
+        let unknown = handler.as_unknown().unwrap();
+
+        assert!(unknown.is_attached());
+        assert_eq!(unknown.kind(), ContainerType::Unknown(7));
+        assert_eq!(unknown.id(), id);
+        assert_eq!(unknown.to_handler().c_type(), ContainerType::Unknown(7));
+        assert!(unknown.doc().is_some());
+        assert!(!unknown.is_deleted());
+        assert_eq!(format!("{unknown:?}"), "UnknownHandler");
+        assert!(unknown.get_attached().is_some());
+        assert!(super::UnknownHandler::from_handler(handler).is_some());
     }
 }

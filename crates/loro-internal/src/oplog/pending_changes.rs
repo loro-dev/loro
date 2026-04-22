@@ -37,6 +37,19 @@ impl PendingChanges {
     pub(crate) fn is_empty(&self) -> bool {
         self.changes.is_empty()
     }
+
+    pub(crate) fn version_range(&self) -> VersionRange {
+        let mut range = VersionRange::default();
+        for tree in self.changes.values() {
+            for pending_changes in tree.values() {
+                for pending_change in pending_changes {
+                    range.extends_to_include_id_span(pending_change.id_span());
+                }
+            }
+        }
+
+        range
+    }
 }
 
 #[cfg(test)]

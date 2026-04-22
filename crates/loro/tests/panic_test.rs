@@ -261,9 +261,9 @@ use loro::LoroTree;
 /// `LoroTree::is_fractional_index_enabled` used to panic on a detached tree.
 #[test]
 #[parallel]
-fn detached_tree_is_fractional_index_enabled_returns_false() {
+fn detached_tree_is_fractional_index_enabled_reports_enabled() {
     let tree = LoroTree::new();
-    assert!(!tree.is_fractional_index_enabled());
+    assert!(tree.is_fractional_index_enabled());
 }
 
 /// `LoroTree::enable_fractional_index` / `disable_fractional_index`

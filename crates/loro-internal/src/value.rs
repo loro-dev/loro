@@ -518,6 +518,251 @@ pub(crate) fn unresolved_to_collection(v: &ValueOrHandler) -> LoroValue {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use loro_common::IdLp;
+    use loro_delta::{array_vec::ArrayVec, DeltaItem as EventDeltaItem};
+    use rustc_hash::FxHashMap;
+
+    use crate::{
+        delta::{Delta, DeltaItem},
+        event::{ListDeltaMeta, ListDiff, ListDiffInsertItem},
+        handler::{Handler, HandlerTrait},
+        LoroDoc,
+    };
+
+    use super::*;
+
+    fn text_diff(items: Vec<TextDiffItem>) -> TextDiff {
+        let mut diff = TextDiff::new();
+        for item in items {
+            diff.push(item);
+        }
+        diff
+    }
+
+    fn list_values(values: Vec<LoroValue>) -> ListDiffInsertItem {
+        let mut array = ArrayVec::new();
+        for value in values {
+            array.push(ValueOrHandler::Value(value)).unwrap();
+        }
+        array
+    }
+
+    fn list_diff(items: Vec<crate::event::ListDiffItem>) -> ListDiff {
+        let mut diff = ListDiff::new();
+        for item in items {
+            diff.push(item);
+        }
+        diff
+    }
+
+    fn map_value(value: Option<LoroValue>, lamport: u32) -> crate::delta::ResolvedMapValue {
+        crate::delta::ResolvedMapValue {
+            value: value.map(ValueOrHandler::Value),
+            idlp: IdLp::new(1, lamport),
+        }
+    }
+
+    #[test]
+    fn text_delta_json_roundtrip_preserves_attributes_and_operation_order() {
+        let mut attributes = FxHashMap::default();
+        attributes.insert("bold".to_string(), LoroValue::Bool(true));
+        let meta = TextMeta(attributes);
+
+        let item = DeltaItem::Insert {
+            insert: StringSlice::from("hi"),
+            attributes: meta.clone(),
+        };
+        assert_eq!(
+            item.to_json_value(),
+            serde_json::json!({"insert": "hi", "attributes": {"bold": true}})
+        );
+        assert_eq!(
+            DeltaItem::<StringSlice, TextMeta>::from_json(
+                r#"{"insert":"hi","attributes":{"bold":true}}"#
+            ),
+            item
+        );
+
+        let mut delta = Delta::<StringSlice, TextMeta>::new();
+        delta.push(DeltaItem::Retain {
+            retain: 2,
+            attributes: meta.clone(),
+        });
+        delta.push(DeltaItem::Insert {
+            insert: StringSlice::from("!"),
+            attributes: TextMeta::default(),
+        });
+        delta.push(DeltaItem::Delete {
+            delete: 1,
+            attributes: TextMeta::default(),
+        });
+
+        let json = delta.to_json();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&json).unwrap(),
+            serde_json::json!([
+                {"retain": 2, "attributes": {"bold": true}},
+                {"insert": "!"},
+                {"delete": 1}
+            ])
+        );
+        assert_eq!(Delta::<StringSlice, TextMeta>::from_json(&json), delta);
+    }
+
+    #[test]
+    fn text_diff_json_splits_replace_with_insert_and_delete_entries() {
+        let diff = text_diff(vec![TextDiffItem::Replace {
+            value: StringSlice::from("new"),
+            attr: TextMeta::default(),
+            delete: 2,
+        }]);
+
+        assert_eq!(
+            diff.to_json_value(),
+            serde_json::json!([{"insert": "new"}, {"delete": 2}])
+        );
+        assert_eq!(
+            TextDiff::from_json(r#"[{"retain":1},{"insert":"x"},{"delete":2}]"#).to_json_value(),
+            serde_json::json!([{"retain": 1}, {"insert": "x"}, {"delete": 2}])
+        );
+
+        let (empty_replace, follow_up) = diff_item_to_json_value(&TextDiffItem::Replace {
+            value: StringSlice::from(""),
+            attr: TextMeta::default(),
+            delete: 0,
+        });
+        assert_eq!(empty_replace, serde_json::json!({"retain": 0}));
+        assert_eq!(follow_up, None);
+    }
+
+    #[test]
+    fn apply_diff_updates_string_list_and_map_values() {
+        let mut text = LoroValue::String("aéz".into());
+        text.apply_diff_shallow(&[Diff::Text(text_diff(vec![
+            TextDiffItem::Retain {
+                len: 1,
+                attr: TextMeta::default(),
+            },
+            TextDiffItem::Replace {
+                value: StringSlice::from("bc"),
+                attr: TextMeta::default(),
+                delete: 1,
+            },
+        ]))]);
+        assert_eq!(text, LoroValue::String("abcz".into()));
+
+        let mut list =
+            LoroValue::List(vec![LoroValue::I64(1), LoroValue::I64(2), LoroValue::I64(3)].into());
+        list.apply_diff(&[Diff::List(list_diff(vec![
+            EventDeltaItem::Retain {
+                len: 1,
+                attr: ListDeltaMeta::default(),
+            },
+            EventDeltaItem::Replace {
+                value: list_values(vec![LoroValue::I64(20), LoroValue::I64(21)]),
+                attr: ListDeltaMeta::default(),
+                delete: 1,
+            },
+        ]))]);
+        assert_eq!(
+            list,
+            LoroValue::List(
+                vec![
+                    LoroValue::I64(1),
+                    LoroValue::I64(20),
+                    LoroValue::I64(21),
+                    LoroValue::I64(3),
+                ]
+                .into()
+            )
+        );
+
+        let mut map = LoroValue::Map(
+            FxHashMap::from_iter([
+                ("keep".to_string(), LoroValue::I64(1)),
+                ("remove".to_string(), LoroValue::I64(2)),
+            ])
+            .into(),
+        );
+        map.apply_diff(&[Diff::Map(
+            crate::delta::ResolvedMapDelta::new()
+                .with_entry("add".into(), map_value(Some(LoroValue::I64(3)), 1))
+                .with_entry("remove".into(), map_value(None, 2)),
+        )]);
+        let map = map.as_map().unwrap();
+        assert_eq!(map.get("keep"), Some(&LoroValue::I64(1)));
+        assert_eq!(map.get("add"), Some(&LoroValue::I64(3)));
+        assert_eq!(map.get("remove"), None);
+    }
+
+    #[test]
+    fn apply_creates_missing_nested_values_from_path_and_diff_hint() {
+        let mut root = LoroValue::Map(Default::default());
+        let mut title_path = Path::new();
+        title_path.push(Index::Key("doc".into()));
+        title_path.push(Index::Key("title".into()));
+        root.apply(
+            &title_path,
+            &[Diff::Text(text_diff(vec![TextDiffItem::Replace {
+                value: StringSlice::from("Loro"),
+                attr: TextMeta::default(),
+                delete: 0,
+            }]))],
+        );
+
+        assert_eq!(
+            root.to_json_value(),
+            serde_json::json!({"doc": {"title": "Loro"}})
+        );
+
+        let mut tags_path = Path::new();
+        tags_path.push(Index::Key("doc".into()));
+        tags_path.push(Index::Key("tags".into()));
+        root.apply(
+            &tags_path,
+            &[Diff::List(list_diff(vec![EventDeltaItem::Replace {
+                value: list_values(vec![
+                    LoroValue::String("crdt".into()),
+                    LoroValue::String("rust".into()),
+                ]),
+                attr: ListDeltaMeta::default(),
+                delete: 0,
+            }]))],
+        );
+        assert_eq!(
+            root.to_json_value(),
+            serde_json::json!({"doc": {"title": "Loro", "tags": ["crdt", "rust"]}})
+        );
+    }
+
+    #[test]
+    fn unresolved_container_handlers_apply_as_default_collection_values() {
+        let doc = LoroDoc::new_auto_commit();
+        let map_handler = Handler::new_unattached(ContainerType::Map);
+        let text_handler = Handler::new_unattached(ContainerType::Text);
+        let attached_list = doc.get_list("list").to_handler();
+
+        assert_eq!(
+            unresolved_to_collection(&ValueOrHandler::Handler(map_handler)),
+            LoroValue::Map(Default::default())
+        );
+        assert_eq!(
+            unresolved_to_collection(&ValueOrHandler::Handler(text_handler)),
+            LoroValue::String(Default::default())
+        );
+        assert_eq!(
+            unresolved_to_collection(&ValueOrHandler::Handler(attached_list)),
+            LoroValue::List(Default::default())
+        );
+        assert_eq!(
+            unresolved_to_collection(&ValueOrHandler::Value(LoroValue::Bool(true))),
+            LoroValue::Bool(true)
+        );
+    }
+}
+
 #[cfg(feature = "wasm")]
 pub mod wasm {
     use crate::{
