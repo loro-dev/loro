@@ -9,7 +9,7 @@ use crate::{
     loro::ExportMode,
     state::fail_next_import_state_apply_for_test,
     version::{Frontiers, VersionVector},
-    LoroDoc, TreeParentId,
+    LoroDoc, LoroError, TreeParentId,
 };
 
 fn pending_len(doc: &LoroDoc) -> usize {
@@ -99,6 +99,17 @@ fn make_multi_peer_frontier_doc() -> LoroDoc {
     target.import(&peer2_updates).unwrap();
     target.import(&peer3_updates).unwrap();
     target
+}
+
+fn assert_doc_unchanged(
+    doc: &LoroDoc,
+    vv: &VersionVector,
+    frontiers: &Frontiers,
+    state: &crate::LoroValue,
+) {
+    assert_eq!(&doc.oplog_vv(), vv);
+    assert_eq!(&doc.oplog_frontiers(), frontiers);
+    assert_eq!(&doc.get_deep_value(), state);
 }
 
 #[test]
@@ -215,6 +226,25 @@ fn failed_import_keeps_multi_peer_frontiers_intact() {
     assert_eq!(target.oplog_vv(), vv_before_import);
     assert_eq!(target.oplog_frontiers(), frontiers_before_import);
     assert_eq!(target.get_deep_value(), state_before_import);
+}
+
+#[test]
+fn malformed_json_import_returns_error_without_mutating_doc() {
+    let doc = make_multi_peer_frontier_doc();
+    let vv_before_import = doc.oplog_vv();
+    let frontiers_before_import = doc.oplog_frontiers();
+    let state_before_import = doc.get_deep_value();
+
+    let err = doc
+        .import_json_updates("[3,{ \"('  k\" :\n\n42222 }]")
+        .unwrap_err();
+    assert_eq!(err, LoroError::InvalidJsonSchema);
+    assert_doc_unchanged(
+        &doc,
+        &vv_before_import,
+        &frontiers_before_import,
+        &state_before_import,
+    );
 }
 
 #[test]

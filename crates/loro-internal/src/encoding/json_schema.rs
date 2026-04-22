@@ -1071,45 +1071,61 @@ pub mod json {
                     where
                         A: MapAccess<'de>,
                     {
-                        let (_key, container) = map.next_entry::<String, String>()?.unwrap();
+                        let (_key, container) = map
+                            .next_entry::<String, String>()?
+                            .ok_or_else(|| serde::de::Error::missing_field("container"))?;
                         let is_unknown = container.ends_with(')');
                         let container = ContainerID::try_from(container.as_str())
                             .map_err(|_| serde::de::Error::custom("invalid container id"))?;
                         let op = if is_unknown {
-                            let (_key, op) =
-                                map.next_entry::<String, super::FutureOpWrapper>()?.unwrap();
+                            let (_key, op) = map
+                                .next_entry::<String, super::FutureOpWrapper>()?
+                                .ok_or_else(|| serde::de::Error::missing_field("content"))?;
                             super::JsonOpContent::Future(op)
                         } else {
                             match container.container_type() {
                                 ContainerType::List => {
                                     let (_key, op) =
-                                        map.next_entry::<String, super::ListOp>()?.unwrap();
+                                        map.next_entry::<String, super::ListOp>()?.ok_or_else(
+                                            || serde::de::Error::missing_field("content"),
+                                        )?;
                                     super::JsonOpContent::List(op)
                                 }
                                 ContainerType::MovableList => {
-                                    let (_key, op) =
-                                        map.next_entry::<String, super::MovableListOp>()?.unwrap();
+                                    let (_key, op) = map
+                                        .next_entry::<String, super::MovableListOp>()?
+                                        .ok_or_else(|| {
+                                            serde::de::Error::missing_field("content")
+                                        })?;
                                     super::JsonOpContent::MovableList(op)
                                 }
                                 ContainerType::Map => {
                                     let (_key, op) =
-                                        map.next_entry::<String, super::MapOp>()?.unwrap();
+                                        map.next_entry::<String, super::MapOp>()?.ok_or_else(
+                                            || serde::de::Error::missing_field("content"),
+                                        )?;
                                     super::JsonOpContent::Map(op)
                                 }
                                 ContainerType::Text => {
                                     let (_key, op) =
-                                        map.next_entry::<String, super::TextOp>()?.unwrap();
+                                        map.next_entry::<String, super::TextOp>()?.ok_or_else(
+                                            || serde::de::Error::missing_field("content"),
+                                        )?;
                                     super::JsonOpContent::Text(op)
                                 }
                                 ContainerType::Tree => {
                                     let (_key, op) =
-                                        map.next_entry::<String, super::TreeOp>()?.unwrap();
+                                        map.next_entry::<String, super::TreeOp>()?.ok_or_else(
+                                            || serde::de::Error::missing_field("content"),
+                                        )?;
                                     super::JsonOpContent::Tree(op)
                                 }
                                 #[cfg(feature = "counter")]
                                 ContainerType::Counter => {
                                     let (_key, value) =
-                                        map.next_entry::<String, OwnedValue>()?.unwrap();
+                                        map.next_entry::<String, OwnedValue>()?.ok_or_else(
+                                            || serde::de::Error::missing_field("content"),
+                                        )?;
                                     super::JsonOpContent::Future(super::FutureOpWrapper {
                                         prop: 0,
                                         value: super::FutureOp::Counter(value),
@@ -1118,7 +1134,9 @@ pub mod json {
                                 _ => unreachable!(),
                             }
                         };
-                        let (_, counter) = map.next_entry::<String, i32>()?.unwrap();
+                        let (_, counter) = map
+                            .next_entry::<String, i32>()?
+                            .ok_or_else(|| serde::de::Error::missing_field("counter"))?;
                         Ok(super::JsonOp {
                             container,
                             content: op,
@@ -1148,7 +1166,8 @@ pub mod json {
             {
                 // NOTE: https://github.com/serde-rs/serde/issues/2467    we use String here
                 let str: String = Deserialize::deserialize(d)?;
-                let id: ID = ID::try_from(str.as_str()).unwrap();
+                let id: ID = ID::try_from(str.as_str())
+                    .map_err(|e| serde::de::Error::custom(format!("invalid id: {e}")))?;
                 Ok(id)
             }
         }
@@ -1192,7 +1211,10 @@ pub mod json {
                     {
                         let mut f = Frontiers::default();
                         while let Some((k, v)) = map.next_entry::<String, i32>()? {
-                            f.push(ID::new(k.parse().unwrap(), v))
+                            let peer = k.parse().map_err(|e| {
+                                serde::de::Error::custom(format!("invalid frontier peer id: {e}"))
+                            })?;
+                            f.push(ID::new(peer, v))
                         }
                         Ok(f)
                     }
@@ -1217,10 +1239,12 @@ pub mod json {
                 D: Deserializer<'de>,
             {
                 let deps: Vec<String> = Deserialize::deserialize(d)?;
-                Ok(deps
-                    .into_iter()
-                    .map(|x| ID::try_from(x.as_str()).unwrap())
-                    .collect())
+                deps.into_iter()
+                    .map(|x| {
+                        ID::try_from(x.as_str())
+                            .map_err(|e| serde::de::Error::custom(format!("invalid dep id: {e}")))
+                    })
+                    .collect()
             }
         }
 
@@ -1243,7 +1267,18 @@ pub mod json {
                 D: Deserializer<'de>,
             {
                 let peers: Option<Vec<String>> = Deserialize::deserialize(d)?;
-                Ok(peers.map(|x| x.into_iter().map(|x| x.parse().unwrap()).collect()))
+                peers
+                    .map(|peers| {
+                        peers
+                            .into_iter()
+                            .map(|peer| {
+                                peer.parse().map_err(|e| {
+                                    serde::de::Error::custom(format!("invalid peer id: {e}"))
+                                })
+                            })
+                            .collect()
+                    })
+                    .transpose()
             }
         }
 
@@ -1263,7 +1298,8 @@ pub mod json {
                 D: Deserializer<'de>,
             {
                 let str: String = Deserialize::deserialize(d)?;
-                let id: IdLp = IdLp::try_from(str.as_str()).unwrap();
+                let id: IdLp = IdLp::try_from(str.as_str())
+                    .map_err(|e| serde::de::Error::custom(format!("invalid idlp: {e}")))?;
                 Ok(id)
             }
         }
@@ -1284,7 +1320,8 @@ pub mod json {
                 D: Deserializer<'de>,
             {
                 let str: String = Deserialize::deserialize(d)?;
-                let id: TreeID = TreeID::try_from(str.as_str()).unwrap();
+                let id: TreeID = TreeID::try_from(str.as_str())
+                    .map_err(|e| serde::de::Error::custom(format!("invalid tree id: {e}")))?;
                 Ok(id)
             }
         }
@@ -1310,7 +1347,9 @@ pub mod json {
                 let str: Option<String> = Deserialize::deserialize(d)?;
                 match str {
                     Some(str) => {
-                        let id: TreeID = TreeID::try_from(str.as_str()).unwrap();
+                        let id: TreeID = TreeID::try_from(str.as_str()).map_err(|e| {
+                            serde::de::Error::custom(format!("invalid tree id: {e}"))
+                        })?;
                         Ok(Some(id))
                     }
                     None => Ok(None),
@@ -1334,8 +1373,21 @@ pub mod json {
                 D: Deserializer<'de>,
             {
                 let str: String = Deserialize::deserialize(d)?;
-                let fi = FractionalIndex::from_hex_string(str);
-                Ok(fi)
+                if str.len() % 2 != 0 {
+                    return Err(serde::de::Error::custom(
+                        "invalid fractional index hex length",
+                    ));
+                }
+
+                let mut bytes = Vec::with_capacity(str.len() / 2);
+                for i in 0..str.len() / 2 {
+                    let byte = u8::from_str_radix(&str[i * 2..i * 2 + 2], 16).map_err(|e| {
+                        serde::de::Error::custom(format!("invalid fractional index hex: {e}"))
+                    })?;
+                    bytes.push(byte);
+                }
+
+                Ok(FractionalIndex::from_bytes(bytes))
             }
         }
     }
