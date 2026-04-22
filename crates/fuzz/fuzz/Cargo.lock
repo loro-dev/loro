@@ -341,7 +341,7 @@ dependencies = [
  "enum_dispatch",
  "itertools 0.12.1",
  "loro 0.16.12",
- "loro 1.10.3",
+ "loro 1.10.8",
  "loro 1.8.1",
  "num_cpus",
  "pretty_assertions",
@@ -359,7 +359,7 @@ version = "0.0.0"
 dependencies = [
  "fuzz",
  "libfuzzer-sys",
- "loro 1.10.3",
+ "loro 1.10.8",
 ]
 
 [[package]]
@@ -668,13 +668,13 @@ dependencies = [
 
 [[package]]
 name = "loro"
-version = "1.10.3"
+version = "1.10.8"
 dependencies = [
  "enum-as-inner 0.6.0",
  "generic-btree",
  "loro-common 1.10.0",
  "loro-delta 1.9.1",
- "loro-internal 1.10.3",
+ "loro-internal 1.10.8",
  "loro-kv-store 1.10.0",
  "rustc-hash",
  "tracing",
@@ -852,7 +852,7 @@ dependencies = [
 
 [[package]]
 name = "loro-internal"
-version = "1.10.3"
+version = "1.10.8"
 dependencies = [
  "append-only-bytes",
  "arref",

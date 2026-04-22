@@ -7,7 +7,7 @@ use std::{
 };
 
 use arbitrary::Arbitrary;
-use loro::{ContainerType, ExportMode, Frontiers, ImportStatus, LoroError, LoroResult};
+use loro::{ContainerType, ExportMode, Frontiers, ImportStatus, LoroDoc, LoroError, LoroResult, TreeID};
 use rustc_hash::FxHashSet;
 use tabled::TableIteratorExt;
 use tracing::{info, info_span};
@@ -100,6 +100,40 @@ impl CRDTFuzzer {
                 *site %= max_users;
                 let actor = &mut self.actors[*site as usize];
                 *op_len %= actor.undo_manager.can_undo_length as u32 + 1;
+            }
+            Action::ForkAt { site, to } => {
+                *site %= max_users;
+                *to %= self.actors[*site as usize].history.len() as u32;
+            }
+            Action::DiffApply { from, to } => {
+                *from %= max_users;
+                *to %= max_users;
+                if from == to {
+                    *to = (*to + 1) % max_users;
+                }
+            }
+            Action::Query { site, target, .. } => {
+                *site %= max_users;
+                *target %= self.targets.len() as u8;
+            }
+            Action::ExportShallow { site } => {
+                *site %= max_users;
+            }
+            Action::ImportShallow { site, from } => {
+                *site %= max_users;
+                *from %= max_users;
+                if site == from {
+                    *from = (*from + 1) % max_users;
+                }
+            }
+            Action::StateOnlyRoundTrip { site } => {
+                *site %= max_users;
+            }
+            Action::Commit { site } => {
+                *site %= max_users;
+            }
+            Action::SetCommitOptions { site, .. } => {
+                *site %= max_users;
             }
         }
     }
@@ -217,6 +251,156 @@ impl CRDTFuzzer {
                     actor.test_undo(undo_len);
                 }
             }
+            Action::ForkAt { site, to } => {
+                let actor = &mut self.actors[*site as usize];
+                let f = actor.history.keys().nth(*to as usize).unwrap();
+                let f = Frontiers::from(f);
+                let _forked = actor.loro.fork_at(&f);
+            }
+            Action::DiffApply { from, to } => {
+                let (a, b) = array_mut_ref!(&mut self.actors, [*from as usize, *to as usize]);
+                let a_frontiers = a.loro.oplog_frontiers();
+                let b_frontiers = b.loro.oplog_frontiers();
+                if let Ok(diff) = a.loro.diff(&a_frontiers, &b_frontiers) {
+                    let _ = b.loro.apply_diff(diff);
+                }
+            }
+            Action::Query { site, target, query_type } => {
+                let actor = &self.actors[*site as usize];
+                let targets: Vec<_> = actor.targets.keys().copied().collect();
+                if targets.is_empty() {
+                    return;
+                }
+                let ty = targets[*target as usize % targets.len()];
+                match ty {
+                    ContainerType::Text => {
+                        let text = actor.loro.get_text("text");
+                        match *query_type % 8 {
+                            0 => { let _ = text.to_delta(); }
+                            1 => { let _ = text.len_unicode(); }
+                            2 => { let _ = text.len_utf8(); }
+                            3 => {
+                                let len = text.len_unicode();
+                                if len > 0 {
+                                    let _ = text.get_cursor(len / 2, loro::cursor::Side::Left);
+                                }
+                            }
+                            4 => {
+                                let len = text.len_unicode();
+                                if len > 0 {
+                                    let _ = text.slice(0, len / 2);
+                                }
+                            }
+                            5 => {
+                                let len = text.len_utf8();
+                                if len > 0 {
+                                    let _ = text.slice(0, len / 2);
+                                }
+                            }
+                            _ => { let _ = text.to_string(); }
+                        }
+                    }
+                    ContainerType::List => {
+                        let list = actor.loro.get_list("list");
+                        match *query_type % 4 {
+                            0 => { let _ = list.len(); }
+                            1 => { let _ = list.to_vec(); }
+                            2 => {
+                                let len = list.len();
+                                if len > 0 {
+                                    let _ = list.get(len / 2);
+                                }
+                            }
+                            _ => { let _ = list.is_empty(); }
+                        }
+                    }
+                    ContainerType::Map => {
+                        let map = actor.loro.get_map("map");
+                        match *query_type % 4 {
+                            0 => { let _ = map.keys(); }
+                            1 => { let _ = map.values(); }
+                            2 => { let _ = map.len(); }
+                            _ => { let _ = map.is_empty(); }
+                        }
+                    }
+                    ContainerType::Tree => {
+                        let tree = actor.loro.get_tree("tree");
+                        match *query_type % 8 {
+                            0 => { let _ = tree.nodes(); }
+                            1 => { let _ = tree.children(None); }
+                            2 => { let _ = tree.children_num(None); }
+                            3 => { let _ = tree.contains(TreeID::new(0, 0)); }
+                            4 => { let _ = tree.is_node_deleted(&TreeID::new(0, 0)); }
+                            5 => { let _ = tree.parent(TreeID::new(0, 0)); }
+                            _ => { let _ = tree.is_empty(); }
+                        }
+                    }
+                    ContainerType::MovableList => {
+                        let list = actor.loro.get_movable_list("movable_list");
+                        match *query_type % 4 {
+                            0 => { let _ = list.len(); }
+                            1 => { let _ = list.to_vec(); }
+                            2 => {
+                                let len = list.len();
+                                if len > 0 {
+                                    let _ = list.get(len / 2);
+                                }
+                            }
+                            _ => { let _ = list.is_empty(); }
+                        }
+                    }
+                    ContainerType::Counter => {
+                        let counter = actor.loro.get_counter("counter");
+                        let _ = counter.get();
+                    }
+                    ContainerType::Unknown(_) => {}
+                }
+            }
+            Action::ExportShallow { site } => {
+                let actor = &self.actors[*site as usize];
+                let f = actor.loro.oplog_frontiers();
+                if !f.is_empty() {
+                    let _ = actor.loro.export(loro::ExportMode::shallow_snapshot(&f));
+                }
+            }
+            Action::ImportShallow { site, from } => {
+                let (a, b) =
+                    array_mut_ref!(&mut self.actors, [*site as usize, *from as usize]);
+                let f = b.loro.oplog_frontiers();
+                if !f.is_empty() {
+                    if let Ok(bytes) = b.loro.export(loro::ExportMode::shallow_snapshot(&f)) {
+                        let _ = a.import_with_tracking(&bytes);
+                    }
+                }
+            }
+            Action::StateOnlyRoundTrip { site } => {
+                let actor = &mut self.actors[*site as usize];
+                let f = actor.loro.state_frontiers();
+                if !f.is_empty() {
+                    if let Ok(bytes) =
+                        actor.loro.export(loro::ExportMode::state_only(Some(&f)))
+                    {
+                        let new_doc = LoroDoc::new();
+                        if new_doc.import(&bytes).is_ok() {
+                            assert_eq!(new_doc.get_deep_value(), actor.loro.get_deep_value());
+                        }
+                    }
+                }
+            }
+            Action::Commit { site } => {
+                self.actors[*site as usize].loro.commit();
+            }
+            Action::SetCommitOptions { site, origin, msg } => {
+                let actor = &self.actors[*site as usize];
+                let origins = ["fuzz", "test", "a", "b", "c", "d", "e", "f"];
+                actor
+                    .loro
+                    .set_next_commit_origin(origins[*origin as usize % origins.len()]);
+                let msgs = ["msg1", "msg2", "hello", "world"];
+                actor
+                    .loro
+                    .set_next_commit_message(msgs[*msg as usize % msgs.len()]);
+            }
         }
     }
 
@@ -226,6 +410,14 @@ impl CRDTFuzzer {
                 let _s = info_span!("checking eq", ?i, ?j);
                 let _g = _s.enter();
                 let (a, b) = array_mut_ref!(&mut self.actors, [i, j]);
+                let a_shallow = a.loro.is_shallow();
+                let b_shallow = b.loro.is_shallow();
+                // Shallow docs cannot export ops before the shallow root, so
+                // they cannot sync complete history to empty peers. Skip sync
+                // checks for pairs where either side is shallow.
+                if a_shallow || b_shallow {
+                    continue;
+                }
                 let a_doc = &mut a.loro;
                 let b_doc = &mut b.loro;
                 info_span!("Attach", peer = i).in_scope(|| {
@@ -292,6 +484,42 @@ impl CRDTFuzzer {
                         });
                     }
                 }
+
+                // If one side had pending changes, the first sync may apply
+                // them locally without the peer receiving them (pending ops
+                // are not included in exports). Retry with Updates until the
+                // version vectors converge.
+                for round in 0..15 {
+                    if a_doc.oplog_vv() == b_doc.oplog_vv() {
+                        break;
+                    }
+                    info_span!("RetryUpdates", round, from = j, to = i).in_scope(|| {
+                        let _ = a_doc.import(
+                            &b_doc
+                                .export(ExportMode::updates(&a_doc.oplog_vv()))
+                                .unwrap(),
+                        );
+                    });
+                    info_span!("RetryUpdates", round, from = i, to = j).in_scope(|| {
+                        let _ = b_doc.import(
+                            &a_doc
+                                .export(ExportMode::updates(&b_doc.oplog_vv()))
+                                .unwrap(),
+                        );
+                    });
+                }
+
+                if a_doc.oplog_vv() != b_doc.oplog_vv() {
+                    panic!(
+                        "CRDTFuzzer: sync failed to converge after 16 rounds. \
+                         actor {} vv={:?} actor {} vv={:?}",
+                        i,
+                        a_doc.oplog_vv(),
+                        j,
+                        b_doc.oplog_vv()
+                    );
+                }
+
                 a.check_eq(b);
                 a.record_history();
                 b.record_history();
@@ -348,6 +576,7 @@ impl FuzzTarget {
                 set.insert(ContainerType::Text);
                 set.insert(ContainerType::Tree);
                 set.insert(ContainerType::MovableList);
+                set.insert(ContainerType::Counter);
             }
             FuzzTarget::Map => {
                 set.insert(ContainerType::Map);

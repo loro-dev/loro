@@ -7,6 +7,40 @@ use super::gen_action;
 use loro::{cursor::CannotFindRelativePosition, ExportMode, Frontiers, LoroDoc, ID};
 
 #[test]
+fn state_only_at_concurrent_frontiers_excludes_later_ops() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(0)?;
+    doc.set_detached_editing(true);
+
+    doc.get_list("list").insert(0, "Counter")?;
+    let list_frontiers = doc.oplog_frontiers();
+
+    doc.checkout(&Frontiers::default())?;
+    let tree = doc.get_tree("tree");
+    tree.enable_fractional_index(0);
+    let root = tree.create(None)?;
+    let mut target_frontiers = list_frontiers;
+    target_frontiers.merge_with_greater(&doc.state_frontiers());
+    let target_frontiers = doc
+        .minimize_frontiers(&target_frontiers)
+        .expect("target frontiers should be reachable");
+
+    doc.checkout(&target_frontiers)?;
+    let expected = doc.get_deep_value();
+
+    doc.get_tree("tree").create(Some(root))?;
+    let latest = doc.get_deep_value();
+    assert_ne!(expected, latest);
+
+    let bytes = doc.export(ExportMode::state_only(Some(&target_frontiers)))?;
+    let new_doc = LoroDoc::new();
+    new_doc.import(&bytes)?;
+
+    assert_eq!(new_doc.get_deep_value(), expected);
+    Ok(())
+}
+
+#[test]
 fn test_gc() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(1)?;

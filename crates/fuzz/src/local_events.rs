@@ -23,6 +23,7 @@ pub fn fuzz_local_events(actions: Vec<Action>) {
     actor.register(ContainerType::MovableList);
     actor.register(ContainerType::Text);
     actor.register(ContainerType::Tree);
+    actor.register(ContainerType::Counter);
 
     let valid_targets = [
         ContainerType::Map,
@@ -30,6 +31,7 @@ pub fn fuzz_local_events(actions: Vec<Action>) {
         ContainerType::MovableList,
         ContainerType::Text,
         ContainerType::Tree,
+        ContainerType::Counter,
     ];
 
     let count = Arc::new(AtomicU64::new(0));

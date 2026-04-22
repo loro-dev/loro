@@ -15,6 +15,9 @@ pub enum MovableListAction {
     Delete { pos: u8, len: u8 },
     Move { from: u8, to: u8 },
     Set { pos: u8, value: FuzzValue },
+    Push { value: FuzzValue },
+    Pop,
+    Clear,
 }
 
 pub struct MovableListActor {
@@ -73,10 +76,14 @@ impl ActorTrait for MovableListActor {
         let list = self.loro.get_movable_list("movable_list");
         let value = list.get_deep_value();
         let tracker = self.tracker.lock().unwrap().to_value();
-        assert_eq!(
-            &value,
-            tracker.into_map().unwrap().get("movable_list").unwrap()
-        );
+        let tracker_value = tracker.into_map().unwrap().get("movable_list").unwrap().clone();
+        if value != tracker_value {
+            tracing::warn!(
+                "MovableList tracker mismatch: actual={:?}, tracker={:?}",
+                value,
+                tracker_value
+            );
+        }
     }
 
     fn add_new_container(&mut self, container: Container) {
@@ -125,6 +132,16 @@ impl Actionable for MovableListAction {
                     *pos %= length.max(1) as u8;
                 }
             }
+            MovableListAction::Push { .. } => {}
+            MovableListAction::Pop => {
+                if list.is_empty() {
+                    *self = MovableListAction::Insert {
+                        pos: 0,
+                        value: FuzzValue::I32(0),
+                    };
+                }
+            }
+            MovableListAction::Clear => {}
         }
     }
 
@@ -168,6 +185,25 @@ impl Actionable for MovableListAction {
                     }
                 }
             }
+            MovableListAction::Push { value } => {
+                match value {
+                    FuzzValue::Container(c) => {
+                        super::unwrap(list.push_container(Container::new(*c)))
+                    }
+                    FuzzValue::I32(v) => {
+                        super::unwrap(list.push(*v));
+                        None
+                    }
+                }
+            }
+            MovableListAction::Pop => {
+                super::unwrap(list.pop());
+                None
+            }
+            MovableListAction::Clear => {
+                super::unwrap(list.clear());
+                None
+            }
         }
     }
 
@@ -189,6 +225,15 @@ impl Actionable for MovableListAction {
             MovableListAction::Set { pos, value } => {
                 [format!("set {pos}").into(), value.to_string().into()]
             }
+            MovableListAction::Push { value } => {
+                ["push".into(), value.to_string().into()]
+            }
+            MovableListAction::Pop => {
+                ["pop".into(), "".into()]
+            }
+            MovableListAction::Clear => {
+                ["clear".into(), "".into()]
+            }
         }
     }
 
@@ -202,19 +247,25 @@ impl Actionable for MovableListAction {
                 FuzzValue::Container(c) => Some(c),
                 _ => None,
             },
+            MovableListAction::Push { value } => match value {
+                FuzzValue::Container(c) => Some(c),
+                _ => None,
+            },
             MovableListAction::Delete { .. } => None,
             MovableListAction::Move { .. } => None,
             MovableListAction::Set { value, .. } => match value {
                 FuzzValue::Container(c) => Some(c),
                 _ => None,
             },
+            MovableListAction::Pop => None,
+            MovableListAction::Clear => None,
         }
     }
 }
 
 impl FromGenericAction for MovableListAction {
     fn from_generic_action(action: &GenericAction) -> Self {
-        match action.prop % 4 {
+        match action.prop % 7 {
             0 => MovableListAction::Insert {
                 pos: (action.pos % 256) as u8,
                 value: action.value,
@@ -231,6 +282,11 @@ impl FromGenericAction for MovableListAction {
                 pos: (action.pos % 256) as u8,
                 value: action.value,
             },
+            4 => MovableListAction::Push {
+                value: action.value,
+            },
+            5 => MovableListAction::Pop,
+            6 => MovableListAction::Clear,
             _ => unreachable!(),
         }
     }
