@@ -1,6 +1,6 @@
 use generic_btree::{rle::HasLength, rle::Sliceable as _, Cursor};
 use loro_common::{ContainerID, InternalString, LoroError, LoroResult, LoroValue, ID};
-use loro_delta::DeltaRopeBuilder;
+use loro_delta::{delta_trait::DeltaAttr, DeltaRopeBuilder};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::ops::Range;
 use std::sync::{Arc, Weak};
@@ -41,6 +41,66 @@ pub struct RichtextState {
 struct Pos {
     entity_index: usize,
     event_index: usize,
+}
+
+fn flush_pending_style_delta(style_delta: &mut TextDiff, pending_delta: &mut TextDiff) {
+    if !pending_delta.is_empty() {
+        style_delta.compose(pending_delta);
+        *pending_delta = TextDiff::new();
+    }
+}
+
+fn try_append_retain_only_style_delta(
+    pending_delta: &mut TextDiff,
+    pending_len: &mut usize,
+    delta: &TextDiff,
+) -> bool {
+    // Adjacent, non-overlapping style retains can be composed once as a batch.
+    // Overlapping deltas are flushed to preserve the original compose order.
+    let mut index = 0;
+    let mut first_styled_start = None;
+    for item in delta.iter() {
+        match item {
+            loro_delta::DeltaItem::Retain { len, attr } => {
+                if !attr.attr_is_empty() {
+                    first_styled_start.get_or_insert(index);
+                }
+                index += len;
+            }
+            loro_delta::DeltaItem::Replace { .. } => return false,
+        }
+    }
+
+    let Some(first_styled_start) = first_styled_start else {
+        return true;
+    };
+
+    if first_styled_start < *pending_len {
+        return false;
+    }
+
+    index = 0;
+    for item in delta.iter() {
+        let loro_delta::DeltaItem::Retain { len, attr } = item else {
+            unreachable!("non-retain style deltas are rejected in the first pass")
+        };
+        if !attr.attr_is_empty() {
+            if index < *pending_len {
+                return false;
+            }
+
+            if index > *pending_len {
+                pending_delta.push_retain(index - *pending_len, Default::default());
+                *pending_len = index;
+            }
+
+            pending_delta.push_retain(*len, attr.clone());
+            *pending_len += len;
+        }
+        index += len;
+    }
+
+    true
 }
 
 impl RichtextState {
@@ -568,9 +628,20 @@ impl ContainerState for RichtextState {
             }
         }
 
+        let mut pending_style_delta = TextDiff::new();
+        let mut pending_style_delta_len = 0;
         for s in new_style_deltas {
-            style_delta.compose(&s);
+            if !try_append_retain_only_style_delta(
+                &mut pending_style_delta,
+                &mut pending_style_delta_len,
+                &s,
+            ) {
+                flush_pending_style_delta(&mut style_delta, &mut pending_style_delta);
+                pending_style_delta_len = 0;
+                style_delta.compose(&s);
+            }
         }
+        flush_pending_style_delta(&mut style_delta, &mut pending_style_delta);
         // self.check_consistency_between_content_and_style_ranges();
         ans.compose(&style_delta);
         Diff::Text(ans)
