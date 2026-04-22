@@ -314,7 +314,9 @@ impl TreeHandler {
             EventHint::Tree(smallvec![TreeDiffItem {
                 target,
                 action: TreeExternalDiff::Delete {
-                    old_parent: self.get_node_parent(&target).unwrap(),
+                    old_parent: self
+                        .get_node_parent(&target)
+                        .ok_or(LoroTreeError::TreeNodeDeletedOrNotExist(target))?,
                     old_index: index
                 },
             }]),
@@ -476,9 +478,10 @@ impl TreeHandler {
         if old_parent == parent && old_index < index {
             index -= 1;
         }
-        let with_event = !parent
-            .tree_id()
-            .is_some_and(|p| self.is_node_deleted(&p).unwrap());
+        let with_event = match parent.tree_id() {
+            Some(p) => !self.is_node_deleted(&p)?,
+            None => true,
+        };
 
         if !with_event {
             return Ok(false);
@@ -570,9 +573,16 @@ impl TreeHandler {
         let parent = self
             .get_node_parent(&other)
             .ok_or(LoroTreeError::TreeNodeNotExist(other))?;
-        let mut index = self.get_index_by_tree_id(&other).unwrap() + 1;
-        if self.is_parent(&target, &parent) && self.get_index_by_tree_id(&target).unwrap() < index {
-            index -= 1;
+        let mut index = self
+            .get_index_by_tree_id(&other)
+            .ok_or(LoroTreeError::TreeNodeDeletedOrNotExist(other))?
+            + 1;
+        if self.is_parent(&target, &parent) {
+            if let Some(target_index) = self.get_index_by_tree_id(&target) {
+                if target_index < index {
+                    index -= 1;
+                }
+            }
         }
         self.move_to(target, parent, index)
     }
@@ -581,12 +591,15 @@ impl TreeHandler {
         let parent = self
             .get_node_parent(&other)
             .ok_or(LoroTreeError::TreeNodeNotExist(other))?;
-        let mut index = self.get_index_by_tree_id(&other).unwrap();
-        if self.is_parent(&target, &parent)
-            && index >= 1
-            && self.get_index_by_tree_id(&target).unwrap() < index
-        {
-            index -= 1;
+        let mut index = self
+            .get_index_by_tree_id(&other)
+            .ok_or(LoroTreeError::TreeNodeDeletedOrNotExist(other))?;
+        if self.is_parent(&target, &parent) && index >= 1 {
+            if let Some(target_index) = self.get_index_by_tree_id(&target) {
+                if target_index < index {
+                    index -= 1;
+                }
+            }
         }
         self.move_to(target, parent, index)
     }
@@ -714,7 +727,9 @@ impl TreeHandler {
                     parent,
                     index,
                     position,
-                    old_parent: self.get_node_parent(&target).unwrap(),
+                    old_parent: self
+                        .get_node_parent(&target)
+                        .ok_or(LoroTreeError::TreeNodeDeletedOrNotExist(target))?,
                     old_index,
                 },
             }]),
@@ -738,7 +753,11 @@ impl TreeHandler {
                 }
                 let map_container_id = target.associated_meta_container();
                 let handler = create_handler(a, map_container_id);
-                Ok(handler.into_map().unwrap())
+                handler.into_map().map_err(|_| {
+                    LoroError::DecodeError(
+                        "Tree node's associated meta container is not a map".into(),
+                    )
+                })
             }
         }
     }
@@ -887,8 +906,7 @@ impl TreeHandler {
     pub fn get_all_hierarchy_nodes_under(&self, parent: TreeParentId) -> Vec<TreeNodeWithChildren> {
         match &self.inner {
             MaybeDetached::Detached(_t) => {
-                // TODO: implement
-                unimplemented!()
+                unreachable!()
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
                 let a = state.as_tree_state().unwrap();
@@ -990,9 +1008,7 @@ impl TreeHandler {
 
     pub fn is_fractional_index_enabled(&self) -> bool {
         match &self.inner {
-            MaybeDetached::Detached(_) => {
-                unreachable!()
-            }
+            MaybeDetached::Detached(_) => false,
             MaybeDetached::Attached(a) => a.with_state(|state| {
                 let a = state.as_tree_state().unwrap();
                 a.is_fractional_index_enabled()
@@ -1010,7 +1026,8 @@ impl TreeHandler {
     pub fn enable_fractional_index(&self, jitter: u8) {
         match &self.inner {
             MaybeDetached::Detached(_) => {
-                unreachable!()
+                // No-op on detached trees
+                let _ = jitter;
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
                 let a = state.as_tree_state_mut().unwrap();
@@ -1026,7 +1043,7 @@ impl TreeHandler {
     pub fn disable_fractional_index(&self) {
         match &self.inner {
             MaybeDetached::Detached(_) => {
-                unreachable!()
+                // No-op on detached trees
             }
             MaybeDetached::Attached(a) => a.with_state(|state| {
                 let a = state.as_tree_state_mut().unwrap();

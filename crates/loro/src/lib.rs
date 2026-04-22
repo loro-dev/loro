@@ -435,6 +435,8 @@ impl LoroDoc {
     /// Get a [LoroMovableList] by container id.
     ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
+    ///
+    /// Panics if the container does not exist. Use [`try_get_movable_list`] for a safe alternative.
     #[inline]
     pub fn get_movable_list<I: IntoContainerId>(&self, id: I) -> LoroMovableList {
         LoroMovableList {
@@ -442,11 +444,23 @@ impl LoroDoc {
         }
     }
 
+    /// Try to get a [LoroMovableList] by container id.
+    ///
+    /// Returns `None` if the container does not exist in the document.
+    #[inline]
+    pub fn try_get_movable_list<I: IntoContainerId>(&self, id: I) -> Option<LoroMovableList> {
+        self.doc
+            .try_get_movable_list(id)
+            .map(|handler| LoroMovableList { handler })
+    }
+
     /// Get a [LoroList] by container id.
     ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
     /// Note: creating/accessing a root container does not record history; creating nested
     /// containers (e.g., `Map::insert_container`) does.
+    ///
+    /// Panics if the container does not exist. Use [`try_get_list`] for a safe alternative.
     #[inline]
     pub fn get_list<I: IntoContainerId>(&self, id: I) -> LoroList {
         LoroList {
@@ -454,11 +468,23 @@ impl LoroDoc {
         }
     }
 
+    /// Try to get a [LoroList] by container id.
+    ///
+    /// Returns `None` if the container does not exist in the document.
+    #[inline]
+    pub fn try_get_list<I: IntoContainerId>(&self, id: I) -> Option<LoroList> {
+        self.doc
+            .try_get_list(id)
+            .map(|handler| LoroList { handler })
+    }
+
     /// Get a [LoroMap] by container id.
     ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
     /// Note: creating/accessing a root container does not record history; creating nested
     /// containers (e.g., `Map::insert_container`) does.
+    ///
+    /// Panics if the container does not exist. Use [`try_get_map`] for a safe alternative.
     #[inline]
     pub fn get_map<I: IntoContainerId>(&self, id: I) -> LoroMap {
         LoroMap {
@@ -466,11 +492,21 @@ impl LoroDoc {
         }
     }
 
+    /// Try to get a [LoroMap] by container id.
+    ///
+    /// Returns `None` if the container does not exist in the document.
+    #[inline]
+    pub fn try_get_map<I: IntoContainerId>(&self, id: I) -> Option<LoroMap> {
+        self.doc.try_get_map(id).map(|handler| LoroMap { handler })
+    }
+
     /// Get a [LoroText] by container id.
     ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
     /// Note: creating/accessing a root container does not record history; creating nested
     /// containers (e.g., `Map::insert_container`) does.
+    ///
+    /// Panics if the container does not exist. Use [`try_get_text`] for a safe alternative.
     #[inline]
     pub fn get_text<I: IntoContainerId>(&self, id: I) -> LoroText {
         LoroText {
@@ -478,11 +514,23 @@ impl LoroDoc {
         }
     }
 
+    /// Try to get a [LoroText] by container id.
+    ///
+    /// Returns `None` if the container does not exist in the document.
+    #[inline]
+    pub fn try_get_text<I: IntoContainerId>(&self, id: I) -> Option<LoroText> {
+        self.doc
+            .try_get_text(id)
+            .map(|handler| LoroText { handler })
+    }
+
     /// Get a [LoroTree] by container id.
     ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
     /// Note: creating/accessing a root container does not record history; creating nested
     /// containers (e.g., `Map::insert_container`) does.
+    ///
+    /// Panics if the container does not exist. Use [`try_get_tree`] for a safe alternative.
     #[inline]
     pub fn get_tree<I: IntoContainerId>(&self, id: I) -> LoroTree {
         LoroTree {
@@ -490,15 +538,38 @@ impl LoroDoc {
         }
     }
 
+    /// Try to get a [LoroTree] by container id.
+    ///
+    /// Returns `None` if the container does not exist in the document.
+    #[inline]
+    pub fn try_get_tree<I: IntoContainerId>(&self, id: I) -> Option<LoroTree> {
+        self.doc
+            .try_get_tree(id)
+            .map(|handler| LoroTree { handler })
+    }
+
     #[cfg(feature = "counter")]
     /// Get a [LoroCounter] by container id.
     ///
     /// If the provided id is string, it will be converted into a root container id with the name of the string.
+    ///
+    /// Panics if the container does not exist. Use [`try_get_counter`] for a safe alternative.
     #[inline]
     pub fn get_counter<I: IntoContainerId>(&self, id: I) -> LoroCounter {
         LoroCounter {
             handler: self.doc.get_counter(id),
         }
+    }
+
+    #[cfg(feature = "counter")]
+    /// Try to get a [LoroCounter] by container id.
+    ///
+    /// Returns `None` if the container does not exist in the document.
+    #[inline]
+    pub fn try_get_counter<I: IntoContainerId>(&self, id: I) -> Option<LoroCounter> {
+        self.doc
+            .try_get_counter(id)
+            .map(|handler| LoroCounter { handler })
     }
 
     /// Commit the cumulative auto commit transaction.
@@ -3560,7 +3631,9 @@ impl Container {
             ContainerType::Tree => Container::Tree(LoroTree::new()),
             #[cfg(feature = "counter")]
             ContainerType::Counter => Container::Counter(counter::LoroCounter::new()),
-            ContainerType::Unknown(_) => unreachable!(),
+            ContainerType::Unknown(_) => {
+                panic!("Cannot create a detached container of type Unknown");
+            }
         }
     }
 

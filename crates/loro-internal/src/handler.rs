@@ -1128,7 +1128,14 @@ impl Handler {
         };
         match self {
             Self::Map(x) => {
-                let diff = diff.into_map().unwrap();
+                let diff = match diff {
+                    crate::event::Diff::Map(d) => d,
+                    _ => {
+                        return Err(LoroError::DecodeError(
+                            "Invalid diff type for map container".into(),
+                        ));
+                    }
+                };
                 for (key, value) in diff.updated.into_iter() {
                     match value.value {
                         Some(ValueOrHandler::Handler(h)) => {
@@ -1158,15 +1165,36 @@ impl Handler {
                 }
             }
             Self::Text(x) => {
-                let delta = diff.into_text().unwrap();
+                let delta = match diff {
+                    crate::event::Diff::Text(d) => d,
+                    _ => {
+                        return Err(LoroError::DecodeError(
+                            "Invalid diff type for text container".into(),
+                        ));
+                    }
+                };
                 x.apply_delta(&TextDelta::from_text_diff(delta.iter()))?;
             }
             Self::List(x) => {
-                let delta = diff.into_list().unwrap();
+                let delta = match diff {
+                    crate::event::Diff::List(d) => d,
+                    _ => {
+                        return Err(LoroError::DecodeError(
+                            "Invalid diff type for list container".into(),
+                        ));
+                    }
+                };
                 x.apply_delta(delta, on_container_remap)?;
             }
             Self::MovableList(x) => {
-                let delta = diff.into_list().unwrap();
+                let delta = match diff {
+                    crate::event::Diff::List(d) => d,
+                    _ => {
+                        return Err(LoroError::DecodeError(
+                            "Invalid diff type for movable list container".into(),
+                        ));
+                    }
+                };
                 x.apply_delta(delta, container_remap)?;
             }
             Self::Tree(x) => {
@@ -1187,7 +1215,15 @@ impl Handler {
                         )
                     }
                 }
-                for diff in diff.into_tree().unwrap().diff {
+                let tree_diff = match diff {
+                    crate::event::Diff::Tree(d) => d,
+                    _ => {
+                        return Err(LoroError::DecodeError(
+                            "Invalid diff type for tree container".into(),
+                        ));
+                    }
+                };
+                for diff in tree_diff.diff {
                     let mut target = diff.target;
                     match diff.action {
                         TreeExternalDiff::Create {
@@ -1237,7 +1273,7 @@ impl Handler {
                             }
                             remap_tree_id(&mut target, container_remap);
                             // determine if the target is deleted
-                            if x.is_node_unexist(&target) || x.is_node_deleted(&target).unwrap() {
+                            if x.is_node_unexist(&target) || x.is_node_deleted(&target)? {
                                 // create the target node, we should use the new target id
                                 let new_target = x.__internal__next_tree_id();
                                 if x.create_at_with_target_for_apply_diff(
@@ -1254,7 +1290,7 @@ impl Handler {
                         }
                         TreeExternalDiff::Delete { .. } => {
                             remap_tree_id(&mut target, container_remap);
-                            if !x.is_node_deleted(&target).unwrap() {
+                            if !x.is_node_deleted(&target)? {
                                 x.delete(target)?;
                             }
                         }
@@ -1263,7 +1299,14 @@ impl Handler {
             }
             #[cfg(feature = "counter")]
             Self::Counter(x) => {
-                let delta = diff.into_counter().unwrap();
+                let delta = match diff {
+                    crate::event::Diff::Counter(d) => d,
+                    _ => {
+                        return Err(LoroError::DecodeError(
+                            "Invalid diff type for counter container".into(),
+                        ));
+                    }
+                };
                 x.increment(delta)?;
             }
             Self::Unknown(_) => {
@@ -2588,6 +2631,14 @@ impl ListHandler {
         match &self.inner {
             MaybeDetached::Detached(l) => {
                 let mut list = l.lock();
+                let len = list.value.len();
+                if pos > len {
+                    return Err(LoroError::OutOfBound {
+                        pos,
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                        len,
+                    });
+                }
                 list.value.insert(pos, ValueOrHandler::Value(v.into()));
                 Ok(())
             }

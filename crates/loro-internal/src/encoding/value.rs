@@ -72,19 +72,19 @@ pub enum LoroValueKind {
     ContainerType,
 }
 impl LoroValueKind {
-    fn from_u8(kind: u8) -> Self {
+    fn from_u8(kind: u8) -> Option<Self> {
         match kind {
-            0 => LoroValueKind::Null,
-            1 => LoroValueKind::True,
-            2 => LoroValueKind::False,
-            3 => LoroValueKind::I64,
-            4 => LoroValueKind::F64,
-            5 => LoroValueKind::Str,
-            6 => LoroValueKind::Binary,
-            7 => LoroValueKind::List,
-            8 => LoroValueKind::Map,
-            9 => LoroValueKind::ContainerType,
-            _ => unreachable!(),
+            0 => Some(LoroValueKind::Null),
+            1 => Some(LoroValueKind::True),
+            2 => Some(LoroValueKind::False),
+            3 => Some(LoroValueKind::I64),
+            4 => Some(LoroValueKind::F64),
+            5 => Some(LoroValueKind::Str),
+            6 => Some(LoroValueKind::Binary),
+            7 => Some(LoroValueKind::List),
+            8 => Some(LoroValueKind::Map),
+            9 => Some(LoroValueKind::ContainerType),
+            _ => None,
         }
     }
 
@@ -611,7 +611,8 @@ impl<'a> ValueReader<'a> {
         id: ID,
     ) -> LoroResult<LoroValue> {
         let kind = self.read_u8()?;
-        self.read_value_content(LoroValueKind::from_u8(kind), keys, id)
+        let kind = LoroValueKind::from_u8(kind).ok_or(LoroError::DecodeDataCorruptionError)?;
+        self.read_value_content(kind, keys, id)
     }
 
     pub fn read_value_content(
@@ -728,7 +729,8 @@ impl<'a> ValueReader<'a> {
                     0
                 };
                 let kind = self.read_u8()?;
-                let kind = LoroValueKind::from_u8(kind);
+                let kind =
+                    LoroValueKind::from_u8(kind).ok_or(LoroError::DecodeDataCorruptionError)?;
                 let value = match kind {
                     LoroValueKind::Null => LoroValue::Null,
                     LoroValueKind::True => LoroValue::Bool(true),
@@ -893,7 +895,8 @@ impl<'a> ValueReader<'a> {
             return Err(LoroError::DecodeDataCorruptionError);
         }
 
-        let ans = std::str::from_utf8(&self.raw[..len]).unwrap();
+        let ans = std::str::from_utf8(&self.raw[..len])
+            .map_err(|_| LoroError::DecodeDataCorruptionError)?;
         self.raw = &self.raw[len..];
         Ok(ans)
     }
