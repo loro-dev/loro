@@ -1,6 +1,6 @@
 mod str_arena;
 use self::str_arena::{StrArena, StrArenaCheckpoint};
-use crate::sync::{Mutex, MutexGuard};
+use crate::sync::{Mutex, MutexGuard, RwLock, RwLockWriteGuard};
 use crate::{
     change::Lamport,
     container::{
@@ -27,34 +27,35 @@ pub(crate) struct LoadAllFlag;
 type ParentResolver = dyn Fn(ContainerID) -> Option<ContainerID> + Send + Sync + 'static;
 
 #[derive(Default)]
-struct InnerSharedArena {
-    // The locks should not be exposed outside this file.
-    // It might be better to use RwLock in the future
-    container_idx_to_id: Mutex<Vec<ContainerID>>,
+struct ArenaContainers {
+    container_idx_to_id: Vec<ContainerID>,
     // 0 stands for unknown, 1 stands for root containers
-    depth: Mutex<Vec<Option<NonZeroU16>>>,
-    container_id_to_idx: Mutex<FxHashMap<ContainerID, ContainerIdx>>,
+    depth: Vec<Option<NonZeroU16>>,
+    container_id_to_idx: FxHashMap<ContainerID, ContainerIdx>,
     /// The parent of each container.
-    parents: Mutex<FxHashMap<ContainerIdx, Option<ContainerIdx>>>,
-    values: Mutex<Vec<LoroValue>>,
-    root_c_idx: Mutex<Vec<ContainerIdx>>,
-    str: Arc<Mutex<StrArena>>,
+    parents: FxHashMap<ContainerIdx, Option<ContainerIdx>>,
+    root_c_idx: Vec<ContainerIdx>,
     /// Optional resolver used when querying parent for a container that has not been registered yet.
     /// If set, `get_parent` will try this resolver to lazily fetch and register the parent.
-    parent_resolver: Mutex<Option<Arc<ParentResolver>>>,
+    parent_resolver: Option<Arc<ParentResolver>>,
+}
+
+#[derive(Default)]
+struct InnerSharedArena {
+    // Container metadata is a single consistency domain. Keep it under one
+    // mutex so container id/index/parent/depth updates cannot acquire locks in
+    // inconsistent orders.
+    containers: RwLock<ArenaContainers>,
+    values: Mutex<Vec<LoroValue>>,
+    str: Arc<Mutex<StrArena>>,
 }
 
 impl fmt::Debug for InnerSharedArena {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("InnerSharedArena")
-            .field("container_idx_to_id", &"<Mutex<_>>")
-            .field("depth", &"<Mutex<_>>")
-            .field("container_id_to_idx", &"<Mutex<_>>")
-            .field("parents", &"<Mutex<_>>")
+            .field("containers", &"<Mutex<_>>")
             .field("values", &"<Mutex<_>>")
-            .field("root_c_idx", &"<Mutex<_>>")
             .field("str", &"<Arc<Mutex<_>>>")
-            .field("parent_resolver", &"<Mutex<Option<...>>>")
             .finish()
     }
 }
@@ -81,17 +82,8 @@ pub struct StrAllocResult {
     pub end: usize,
 }
 
-pub(crate) struct ArenaGuards<'a> {
-    container_id_to_idx: MutexGuard<'a, FxHashMap<ContainerID, ContainerIdx>>,
-    container_idx_to_id: MutexGuard<'a, Vec<ContainerID>>,
-    depth: MutexGuard<'a, Vec<Option<NonZeroU16>>>,
-    parents: MutexGuard<'a, FxHashMap<ContainerIdx, Option<ContainerIdx>>>,
-    root_c_idx: MutexGuard<'a, Vec<ContainerIdx>>,
-    parent_resolver: MutexGuard<'a, Option<Arc<ParentResolver>>>,
-}
-
-impl ArenaGuards<'_> {
-    pub fn register_container(&mut self, id: &ContainerID) -> ContainerIdx {
+impl ArenaContainers {
+    fn register_container(&mut self, id: &ContainerID) -> ContainerIdx {
         if let Some(&idx) = self.container_id_to_idx.get(id) {
             return idx;
         }
@@ -110,20 +102,12 @@ impl ArenaGuards<'_> {
         idx
     }
 
-    pub fn set_parent(&mut self, child: ContainerIdx, parent: Option<ContainerIdx>) {
+    fn set_parent(&mut self, child: ContainerIdx, parent: Option<ContainerIdx>) {
         self.parents.insert(child, parent);
 
         match parent {
             Some(p) => {
-                if let Some(d) = get_depth(
-                    p,
-                    &mut self.depth,
-                    &mut self.parents,
-                    &self.parent_resolver,
-                    &mut self.container_idx_to_id,
-                    &mut self.container_id_to_idx,
-                    &mut self.root_c_idx,
-                ) {
+                if let Some(d) = self.get_depth(p) {
                     self.depth[child.to_index() as usize] = NonZeroU16::new(d.get() + 1);
                 } else {
                     self.depth[child.to_index() as usize] = None;
@@ -133,6 +117,38 @@ impl ArenaGuards<'_> {
                 self.depth[child.to_index() as usize] = NonZeroU16::new(1);
             }
         }
+    }
+
+    fn get_depth(&mut self, container: ContainerIdx) -> Option<NonZeroU16> {
+        get_depth(
+            container,
+            &mut self.depth,
+            &mut self.parents,
+            &self.parent_resolver,
+            &mut self.container_idx_to_id,
+            &mut self.container_id_to_idx,
+            &mut self.root_c_idx,
+        )
+    }
+
+    fn container_id(&self, idx: ContainerIdx) -> Option<ContainerID> {
+        self.container_idx_to_id
+            .get(idx.to_index() as usize)
+            .cloned()
+    }
+}
+
+pub(crate) struct ArenaGuards<'a> {
+    containers: RwLockWriteGuard<'a, ArenaContainers>,
+}
+
+impl ArenaGuards<'_> {
+    pub fn register_container(&mut self, id: &ContainerID) -> ContainerIdx {
+        self.containers.register_container(id)
+    }
+
+    pub fn set_parent(&mut self, child: ContainerIdx, parent: Option<ContainerIdx>) {
+        self.containers.set_parent(child, parent);
     }
 }
 
@@ -147,21 +163,28 @@ impl SharedArena {
     pub fn fork(&self) -> Self {
         Self {
             inner: Arc::new(InnerSharedArena {
-                container_idx_to_id: Mutex::new(self.inner.container_idx_to_id.lock().clone()),
-                depth: Mutex::new(self.inner.depth.lock().clone()),
-                container_id_to_idx: Mutex::new(self.inner.container_id_to_idx.lock().clone()),
-                parents: Mutex::new(self.inner.parents.lock().clone()),
+                containers: RwLock::new({
+                    let containers = self.inner.containers.read();
+                    ArenaContainers {
+                        container_idx_to_id: containers.container_idx_to_id.clone(),
+                        depth: containers.depth.clone(),
+                        container_id_to_idx: containers.container_id_to_idx.clone(),
+                        parents: containers.parents.clone(),
+                        root_c_idx: containers.root_c_idx.clone(),
+                        parent_resolver: containers.parent_resolver.clone(),
+                    }
+                }),
                 values: Mutex::new(self.inner.values.lock().clone()),
-                root_c_idx: Mutex::new(self.inner.root_c_idx.lock().clone()),
                 str: self.inner.str.clone(),
-                parent_resolver: Mutex::new(self.inner.parent_resolver.lock().clone()),
             }),
         }
     }
 
     pub(crate) fn checkpoint_for_rollback(&self) -> SharedArenaRollback {
-        let container_len = self.inner.container_idx_to_id.lock().len();
-        let root_len = self.inner.root_c_idx.lock().len();
+        let containers = self.inner.containers.read();
+        let container_len = containers.container_idx_to_id.len();
+        let root_len = containers.root_c_idx.len();
+        drop(containers);
         let values_len = self.inner.values.lock().len();
         let str = self.inner.str.lock().checkpoint();
         SharedArenaRollback {
@@ -173,28 +196,26 @@ impl SharedArena {
     }
 
     pub(crate) fn rollback(&self, checkpoint: SharedArenaRollback) {
-        let mut idx_to_id = self.inner.container_idx_to_id.lock();
-        let removed_ids = idx_to_id.split_off(checkpoint.container_len);
-        drop(idx_to_id);
-
-        let mut id_to_idx = self.inner.container_id_to_idx.lock();
+        let mut containers = self.inner.containers.write();
+        let removed_ids = containers
+            .container_idx_to_id
+            .split_off(checkpoint.container_len);
         for id in removed_ids {
-            id_to_idx.remove(&id);
+            containers.container_id_to_idx.remove(&id);
         }
-        drop(id_to_idx);
-
-        self.inner.depth.lock().truncate(checkpoint.container_len);
-        self.inner.root_c_idx.lock().truncate(checkpoint.root_len);
-        self.inner.values.lock().truncate(checkpoint.values_len);
-        self.inner.str.lock().rollback(checkpoint.str);
-
-        self.inner.parents.lock().retain(|child, parent| {
+        containers.depth.truncate(checkpoint.container_len);
+        containers.root_c_idx.truncate(checkpoint.root_len);
+        containers.parents.retain(|child, parent| {
             let child_is_kept = (child.to_index() as usize) < checkpoint.container_len;
             let parent_is_kept = parent
                 .map(|p| (p.to_index() as usize) < checkpoint.container_len)
                 .unwrap_or(true);
             child_is_kept && parent_is_kept
         });
+        drop(containers);
+
+        self.inner.values.lock().truncate(checkpoint.values_len);
+        self.inner.str.lock().rollback(checkpoint.str);
     }
 
     pub(crate) fn with_guards(&self, f: impl FnOnce(&mut ArenaGuards)) {
@@ -204,39 +225,16 @@ impl SharedArena {
 
     fn get_arena_guards(&self) -> ArenaGuards<'_> {
         ArenaGuards {
-            container_id_to_idx: self.inner.container_id_to_idx.lock(),
-            container_idx_to_id: self.inner.container_idx_to_id.lock(),
-            depth: self.inner.depth.lock(),
-            parents: self.inner.parents.lock(),
-            root_c_idx: self.inner.root_c_idx.lock(),
-            parent_resolver: self.inner.parent_resolver.lock(),
+            containers: self.inner.containers.write(),
         }
     }
 
     pub fn register_container(&self, id: &ContainerID) -> ContainerIdx {
-        let mut container_id_to_idx = self.inner.container_id_to_idx.lock();
-        if let Some(&idx) = container_id_to_idx.get(id) {
-            return idx;
-        }
-
-        let mut container_idx_to_id = self.inner.container_idx_to_id.lock();
-        let idx = container_idx_to_id.len();
-        container_idx_to_id.push(id.clone());
-        let idx = ContainerIdx::from_index_and_type(idx as u32, id.container_type());
-        container_id_to_idx.insert(id.clone(), idx);
-        if id.is_root() {
-            self.inner.root_c_idx.lock().push(idx);
-            self.inner.parents.lock().insert(idx, None);
-            self.inner.depth.lock().push(NonZeroU16::new(1));
-        } else {
-            self.inner.depth.lock().push(None);
-        }
-        idx
+        self.inner.containers.write().register_container(id)
     }
 
     pub fn get_container_id(&self, idx: ContainerIdx) -> Option<ContainerID> {
-        let lock = self.inner.container_idx_to_id.lock();
-        lock.get(idx.to_index() as usize).cloned()
+        self.inner.containers.read().container_id(idx)
     }
 
     /// Fast map from `ContainerID` to `ContainerIdx` for containers already registered
@@ -249,19 +247,18 @@ impl SharedArena {
     /// For existence-aware lookup that consults persisted state and performs lazy
     /// registration, prefer `DocState::resolve_idx`.
     pub fn id_to_idx(&self, id: &ContainerID) -> Option<ContainerIdx> {
-        self.inner.container_id_to_idx.lock().get(id).copied()
+        self.inner.containers.read().container_id_to_idx.get(id).copied()
     }
 
     #[inline]
     pub fn idx_to_id(&self, id: ContainerIdx) -> Option<ContainerID> {
-        let lock = self.inner.container_idx_to_id.lock();
-        lock.get(id.to_index() as usize).cloned()
+        self.inner.containers.read().container_id(id)
     }
 
     #[inline]
     pub fn with_idx_to_id<R>(&self, f: impl FnOnce(&Vec<ContainerID>) -> R) -> R {
-        let lock = self.inner.container_idx_to_id.lock();
-        f(&lock)
+        let containers = self.inner.containers.read();
+        f(&containers.container_idx_to_id)
     }
 
     pub fn alloc_str(&self, str: &str) -> StrAllocResult {
@@ -300,62 +297,33 @@ impl SharedArena {
 
     #[inline]
     pub fn set_parent(&self, child: ContainerIdx, parent: Option<ContainerIdx>) {
-        let mut parents = self.inner.parents.lock();
-        parents.insert(child, parent);
-        let mut depth = self.inner.depth.lock();
-        let mut root_c_idx = self.inner.root_c_idx.lock();
-
-        match parent {
-            Some(p) => {
-                // Acquire the two maps as mutable guards so we can lazily register
-                // unknown parents while computing depth.
-                let mut idx_to_id_guard = self.inner.container_idx_to_id.lock();
-                let mut id_to_idx_guard = self.inner.container_id_to_idx.lock();
-                let parent_resolver_guard = self.inner.parent_resolver.lock();
-                if let Some(d) = get_depth(
-                    p,
-                    &mut depth,
-                    &mut parents,
-                    &parent_resolver_guard,
-                    &mut idx_to_id_guard,
-                    &mut id_to_idx_guard,
-                    &mut root_c_idx,
-                ) {
-                    depth[child.to_index() as usize] = NonZeroU16::new(d.get() + 1);
-                } else {
-                    depth[child.to_index() as usize] = None;
-                }
-            }
-            None => {
-                depth[child.to_index() as usize] = NonZeroU16::new(1);
-            }
-        }
+        self.inner.containers.write().set_parent(child, parent);
     }
 
     pub fn log_hierarchy(&self) {
         if cfg!(debug_assertions) {
-            for (c, p) in self.inner.parents.lock().iter() {
+            let containers = self.inner.containers.read();
+            for (c, p) in containers.parents.iter() {
                 tracing::info!(
                     "container {:?} {:?} {:?}",
                     c,
-                    self.get_container_id(*c),
-                    p.map(|x| self.get_container_id(x))
+                    containers.container_id(*c),
+                    p.and_then(|x| containers.container_id(x))
                 );
             }
         }
     }
 
     pub fn log_all_containers(&self) {
-        self.inner
+        let containers = self.inner.containers.read();
+        containers
             .container_id_to_idx
-            .lock()
             .iter()
             .for_each(|(id, idx)| {
                 tracing::info!("container {:?} {:?}", id, idx);
             });
-        self.inner
+        containers
             .container_idx_to_id
-            .lock()
             .iter()
             .enumerate()
             .for_each(|(i, id)| {
@@ -364,21 +332,24 @@ impl SharedArena {
     }
 
     pub fn get_parent(&self, child: ContainerIdx) -> Option<ContainerIdx> {
-        if self.get_container_id(child).unwrap().is_root() {
-            // TODO: PERF: we can speed this up by use a special bit in ContainerIdx to indicate
-            // whether the target is a root container
-            return None;
-        }
+        let (child_id, resolver) = {
+            let containers = self.inner.containers.read();
+            let child_id = containers.container_id(child).unwrap();
+            if child_id.is_root() {
+                // TODO: PERF: we can speed this up by use a special bit in ContainerIdx to indicate
+                // whether the target is a root container
+                return None;
+            }
 
-        // Try fast path first
-        if let Some(p) = self.inner.parents.lock().get(&child).copied() {
-            return p;
-        }
+            // Try fast path first
+            if let Some(p) = containers.parents.get(&child).copied() {
+                return p;
+            }
 
-        // Fallback: try to resolve parent lazily via the resolver if provided.
-        let resolver = self.inner.parent_resolver.lock().clone();
+            // Fallback: try to resolve parent lazily via the resolver if provided.
+            (child_id, containers.parent_resolver.clone())
+        };
         if let Some(resolver) = resolver {
-            let child_id = self.get_container_id(child).unwrap();
             if let Some(parent_id) = resolver(child_id.clone()) {
                 let parent_idx = self.register_container(&parent_id);
                 self.set_parent(child, Some(parent_idx));
@@ -449,7 +420,9 @@ impl SharedArena {
     }
 
     pub fn can_import_snapshot(&self) -> bool {
-        self.inner.str.lock().is_empty() && self.inner.values.lock().is_empty()
+        let str_empty = self.inner.str.lock().is_empty();
+        let values_empty = self.inner.values.lock().is_empty();
+        str_empty && values_empty
     }
 
     fn inner_convert_op(
@@ -574,18 +547,18 @@ impl SharedArena {
 
     #[inline]
     pub fn export_containers(&self) -> Vec<ContainerID> {
-        self.inner.container_idx_to_id.lock().clone()
+        self.inner.containers.read().container_idx_to_id.clone()
     }
 
     pub fn export_parents(&self) -> Vec<Option<ContainerIdx>> {
-        let parents = self.inner.parents.lock();
-        let containers = self.inner.container_idx_to_id.lock();
+        let containers = self.inner.containers.read();
         containers
+            .container_idx_to_id
             .iter()
             .enumerate()
             .map(|(x, id)| {
                 let idx = ContainerIdx::from_index_and_type(x as u32, id.container_type());
-                let parent_idx = parents.get(&idx)?;
+                let parent_idx = containers.parents.get(&idx)?;
                 *parent_idx
             })
             .collect()
@@ -597,26 +570,12 @@ impl SharedArena {
     /// So we need the flag type here.
     #[inline]
     pub(crate) fn root_containers(&self, _f: LoadAllFlag) -> Vec<ContainerIdx> {
-        self.inner.root_c_idx.lock().clone()
+        self.inner.containers.read().root_c_idx.clone()
     }
 
     // TODO: this can return a u16 directly now, since the depths are always valid
     pub(crate) fn get_depth(&self, container: ContainerIdx) -> Option<NonZeroU16> {
-        let mut depth_guard = self.inner.depth.lock();
-        let mut parents_guard = self.inner.parents.lock();
-        let mut root_c_idx_guard = self.inner.root_c_idx.lock();
-        let resolver_guard = self.inner.parent_resolver.lock();
-        let mut idx_to_id_guard = self.inner.container_idx_to_id.lock();
-        let mut id_to_idx_guard = self.inner.container_id_to_idx.lock();
-        get_depth(
-            container,
-            &mut depth_guard,
-            &mut parents_guard,
-            &resolver_guard,
-            &mut idx_to_id_guard,
-            &mut id_to_idx_guard,
-            &mut root_c_idx_guard,
-        )
+        self.inner.containers.write().get_depth(container)
     }
 
     pub(crate) fn iter_value_slice(
@@ -633,13 +592,13 @@ impl SharedArena {
         &self,
         root_index: &loro_common::InternalString,
     ) -> Option<ContainerIdx> {
-        let inner = self.inner.container_id_to_idx.lock();
+        let containers = self.inner.containers.read();
         for t in loro_common::ContainerType::ALL_TYPES.iter() {
             let cid = ContainerID::Root {
                 name: root_index.clone(),
                 container_type: *t,
             };
-            if let Some(idx) = inner.get(&cid) {
+            if let Some(idx) = containers.container_id_to_idx.get(&cid) {
                 return Some(*idx);
             }
         }
@@ -794,7 +753,7 @@ impl SharedArena {
     where
         F: Fn(ContainerID) -> Option<ContainerID> + Send + Sync + 'static,
     {
-        let mut slot = self.inner.parent_resolver.lock();
-        *slot = resolver.map(|f| Arc::new(f) as Arc<ParentResolver>);
+        self.inner.containers.write().parent_resolver =
+            resolver.map(|f| Arc::new(f) as Arc<ParentResolver>);
     }
 }
