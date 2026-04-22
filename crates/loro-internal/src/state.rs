@@ -490,7 +490,11 @@ impl DocState {
         diff_mode: DiffMode,
     ) -> LoroResult<()> {
         if self.in_txn {
-            panic!("apply_diff should not be called in a transaction");
+            return Err(LoroError::TransactionError(
+                "apply_diff should not be called in a transaction"
+                    .to_string()
+                    .into_boxed_str(),
+            ));
         }
 
         match diff_mode {
@@ -744,8 +748,10 @@ impl DocState {
     pub(crate) fn commit_txn(&mut self, new_frontiers: Frontiers, diff: Option<InternalDocDiff>) {
         self.in_txn = false;
         self.frontiers = new_frontiers;
-        if self.is_recording() {
-            self.record_diff(diff.unwrap());
+        if let Some(diff) = diff {
+            if self.is_recording() {
+                self.record_diff(diff);
+            }
         }
     }
 
@@ -1188,10 +1194,16 @@ impl DocState {
                     } else {
                         // if we cannot find the path to the container, the container must be overwritten afterwards.
                         // So we can ignore the diff from it.
+                        let _container_id = self
+                            .arena
+                            .idx_to_id(container_diff.idx)
+                            .map(|x| x.to_string())
+                            .unwrap_or_else(|| "unknown".to_string());
+                        #[cfg(feature = "logging")]
                         loro_common::warn!(
                             "⚠️ WARNING: ignore event because cannot find its path {:#?} container id:{}",
                             &container_diff,
-                            self.arena.idx_to_id(container_diff.idx).unwrap()
+                            _container_id
                         );
                     }
 

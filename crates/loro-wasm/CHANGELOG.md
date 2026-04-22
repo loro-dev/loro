@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.11.1
+
+### Patch Changes
+
+- 6f5b7a9: Fix production panic regressions
+
 ## 1.11.0
 
 ### Minor Changes

@@ -584,8 +584,7 @@ mod tests {
         let mut target = IdSpanVector::default();
         target.insert(1, CounterSpan::new(0, 10));
 
-        let mut iter =
-            DagCausalIter::new(&dag, Frontiers::default(), target);
+        let mut iter = DagCausalIter::new(&dag, Frontiers::default(), target);
 
         let a = iter.next().expect("first peer-1 segment");
         assert_eq!(a.data.id_start(), ID::new(1, 0));

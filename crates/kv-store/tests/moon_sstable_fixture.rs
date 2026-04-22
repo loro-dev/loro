@@ -16,4 +16,3 @@ fn import_moon_encoded_sstable() {
         ]
     );
 }
-

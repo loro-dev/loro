@@ -592,12 +592,14 @@ mod mut_external_kv {
                 .import_all(bytes)
                 .map_err(|e| LoroError::DecodeError(e.into_boxed_str()))?;
             let vv_bytes = kv_store.get(VV_KEY).unwrap_or_default();
-            let vv = VersionVector::decode(&vv_bytes).unwrap();
+            let vv = VersionVector::decode(&vv_bytes)
+                .map_err(|_| LoroError::DecodeDataCorruptionError)?;
             let start_vv_bytes = kv_store.get(START_VV_KEY).unwrap_or_default();
             let start_vv = if start_vv_bytes.is_empty() {
                 Default::default()
             } else {
-                VersionVector::decode(&start_vv_bytes).unwrap()
+                VersionVector::decode(&start_vv_bytes)
+                    .map_err(|_| LoroError::DecodeDataCorruptionError)?
             };
 
             #[cfg(test)]
@@ -605,26 +607,31 @@ mod mut_external_kv {
                 // This is for tests
                 drop(kv_store);
                 for (peer, cnt) in vv.iter() {
-                    self.get_change(ID::new(*peer, *cnt - 1)).unwrap();
+                    self.get_change(ID::new(*peer, *cnt - 1))
+                        .ok_or(LoroError::DecodeDataCorruptionError)?;
                 }
                 kv_store = self.external_kv.lock();
             }
 
             *self.external_vv.lock() = vv.clone();
             let frontiers_bytes = kv_store.get(FRONTIERS_KEY).unwrap_or_default();
-            let frontiers = Frontiers::decode(&frontiers_bytes).unwrap();
+            let frontiers = Frontiers::decode(&frontiers_bytes)
+                .map_err(|_| LoroError::DecodeDataCorruptionError)?;
             let start_frontiers = kv_store.get(START_FRONTIERS_KEY).unwrap_or_default();
             let start_frontiers = if start_frontiers.is_empty() {
                 Default::default()
             } else {
-                Frontiers::decode(&start_frontiers).unwrap()
+                Frontiers::decode(&start_frontiers)
+                    .map_err(|_| LoroError::DecodeDataCorruptionError)?
             };
 
             let mut max_lamport = None;
             let mut max_timestamp = 0;
             drop(kv_store);
             for id in frontiers.iter() {
-                let c = self.get_change(id).unwrap();
+                let c = self
+                    .get_change(id)
+                    .ok_or(LoroError::DecodeDataCorruptionError)?;
                 debug_assert_ne!(c.atom_len(), 0);
                 let l = c.lamport_last();
                 if let Some(x) = max_lamport {

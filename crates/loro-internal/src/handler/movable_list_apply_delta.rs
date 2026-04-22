@@ -103,7 +103,6 @@ impl MovableListHandler {
                             );
                             delta_change.push(-((index - old_index) as isize));
 
-                            let old_index = index;
                             // Process the insertions and moves.
                             let mut context = ReplacementContext {
                                 index: &mut index,
@@ -116,7 +115,7 @@ impl MovableListHandler {
 
                             self.process_replacements(value, attr, &mut context)
                                 .unwrap();
-                            delta_change.push((index - old_index) as isize);
+                            delta_change.push(value.len() as isize);
                         }
                     }
                 }
@@ -268,7 +267,7 @@ impl MovableListHandler {
             context.deleted_indices.push(old_index);
             Self::update_positions_on_delete(context.to_delete, old_index);
             Self::update_positions_on_insert(context.to_delete, *context.index, 1);
-        } else if !attr.from_move {
+        } else if !attr.from_move || !self.contains_container(&old_id) {
             // Insert a new container if not moved.
             let new_handler = self.insert_container(
                 *context.index,
@@ -281,6 +280,15 @@ impl MovableListHandler {
             *context.index_shift += 1;
         }
         Ok(())
+    }
+
+    fn contains_container(&self, id: &ContainerID) -> bool {
+        (0..self.len()).any(|index| {
+            matches!(
+                self.get(index),
+                Some(LoroValue::Container(container_id)) if container_id == *id
+            )
+        })
     }
 
     /// Applies any remaining deletions after processing insertions and moves.

@@ -236,7 +236,9 @@ pub(crate) fn decode_op(
                 )
             }
             Value::DeleteSeq => {
-                let del_start = del_iter.next().unwrap()?;
+                let del_start = del_iter
+                    .next()
+                    .ok_or(LoroError::DecodeDataCorruptionError)??;
                 let peer_idx = del_start.peer_idx;
                 let cnt = del_start.counter;
                 let len = del_start.len;
@@ -260,7 +262,7 @@ pub(crate) fn decode_op(
             Value::Null => crate::op::InnerContent::List(
                 crate::container::list::list_op::InnerListOp::StyleEnd,
             ),
-            _ => unreachable!(),
+            _ => return Err(LoroError::DecodeDataCorruptionError),
         },
         ContainerType::Map => {
             let key = arenas
@@ -278,14 +280,17 @@ pub(crate) fn decode_op(
                         value: Some(v.clone()),
                     })
                 }
-                _ => unreachable!(),
+                _ => return Err(LoroError::DecodeDataCorruptionError),
             }
         }
         ContainerType::List => {
             let pos = prop as usize;
             match value {
                 Value::LoroValue(arr) => {
-                    let range = shared_arena.alloc_values(arr.into_list().unwrap().iter().cloned());
+                    let list = arr
+                        .into_list()
+                        .map_err(|_| LoroError::DecodeDataCorruptionError)?;
+                    let range = shared_arena.alloc_values(list.iter().cloned());
                     crate::op::InnerContent::List(
                         crate::container::list::list_op::InnerListOp::Insert {
                             slice: SliceRange::new(range.start as u32..range.end as u32),
@@ -294,7 +299,9 @@ pub(crate) fn decode_op(
                     )
                 }
                 Value::DeleteSeq => {
-                    let del_start = del_iter.next().unwrap()?;
+                    let del_start = del_iter
+                        .next()
+                        .ok_or(LoroError::DecodeDataCorruptionError)??;
                     let peer_idx = del_start.peer_idx;
                     let cnt = del_start.counter;
                     let len = del_start.len;
@@ -308,7 +315,7 @@ pub(crate) fn decode_op(
                         ),
                     )
                 }
-                _ => unreachable!(),
+                _ => return Err(LoroError::DecodeDataCorruptionError),
             }
         }
         ContainerType::Tree => match value {
@@ -351,15 +358,16 @@ pub(crate) fn decode_op(
                 };
                 crate::op::InnerContent::Tree(Arc::new(ans))
             }
-            _ => {
-                unreachable!()
-            }
+            _ => return Err(LoroError::DecodeDataCorruptionError),
         },
         ContainerType::MovableList => {
             let pos = prop as usize;
             match value {
                 Value::LoroValue(arr) => {
-                    let range = shared_arena.alloc_values(arr.into_list().unwrap().iter().cloned());
+                    let list = arr
+                        .into_list()
+                        .map_err(|_| LoroError::DecodeDataCorruptionError)?;
+                    let range = shared_arena.alloc_values(list.iter().cloned());
                     crate::op::InnerContent::List(
                         crate::container::list::list_op::InnerListOp::Insert {
                             slice: SliceRange::new(range.start as u32..range.end as u32),
@@ -368,7 +376,9 @@ pub(crate) fn decode_op(
                     )
                 }
                 Value::DeleteSeq => {
-                    let del_start = del_iter.next().unwrap()?;
+                    let del_start = del_iter
+                        .next()
+                        .ok_or(LoroError::DecodeDataCorruptionError)??;
                     let peer_idx = del_start.peer_idx;
                     let cnt = del_start.counter;
                     let len = del_start.len;
@@ -403,14 +413,14 @@ pub(crate) fn decode_op(
                         value,
                     },
                 ),
-                _ => unreachable!(),
+                _ => return Err(LoroError::DecodeDataCorruptionError),
             }
         }
         #[cfg(feature = "counter")]
         ContainerType::Counter => match value {
             Value::F64(c) => crate::op::InnerContent::Future(FutureInnerContent::Counter(c)),
             Value::I64(c) => crate::op::InnerContent::Future(FutureInnerContent::Counter(c as f64)),
-            _ => unreachable!(),
+            _ => return Err(LoroError::DecodeDataCorruptionError),
         },
         // NOTE: The future container type need also try to parse the unknown type
         ContainerType::Unknown(_) => crate::op::InnerContent::Future(FutureInnerContent::Unknown {
