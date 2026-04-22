@@ -369,7 +369,7 @@ impl CRDTFuzzer {
                 let f = b.loro.oplog_frontiers();
                 if !f.is_empty() {
                     if let Ok(bytes) = b.loro.export(loro::ExportMode::shallow_snapshot(&f)) {
-                        let _ = a.loro.import(&bytes);
+                        let _ = a.import_with_tracking(&bytes);
                     }
                 }
             }
@@ -484,6 +484,42 @@ impl CRDTFuzzer {
                         });
                     }
                 }
+
+                // If one side had pending changes, the first sync may apply
+                // them locally without the peer receiving them (pending ops
+                // are not included in exports). Retry with Updates until the
+                // version vectors converge.
+                for round in 0..15 {
+                    if a_doc.oplog_vv() == b_doc.oplog_vv() {
+                        break;
+                    }
+                    info_span!("RetryUpdates", round, from = j, to = i).in_scope(|| {
+                        let _ = a_doc.import(
+                            &b_doc
+                                .export(ExportMode::updates(&a_doc.oplog_vv()))
+                                .unwrap(),
+                        );
+                    });
+                    info_span!("RetryUpdates", round, from = i, to = j).in_scope(|| {
+                        let _ = b_doc.import(
+                            &a_doc
+                                .export(ExportMode::updates(&b_doc.oplog_vv()))
+                                .unwrap(),
+                        );
+                    });
+                }
+
+                if a_doc.oplog_vv() != b_doc.oplog_vv() {
+                    panic!(
+                        "CRDTFuzzer: sync failed to converge after 16 rounds. \
+                         actor {} vv={:?} actor {} vv={:?}",
+                        i,
+                        a_doc.oplog_vv(),
+                        j,
+                        b_doc.oplog_vv()
+                    );
+                }
+
                 a.check_eq(b);
                 a.record_history();
                 b.record_history();

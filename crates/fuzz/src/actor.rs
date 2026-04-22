@@ -8,8 +8,8 @@ use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use itertools::Itertools;
 use loro::{
-    Container, ContainerID, ContainerType, Frontiers, LoroDoc, LoroError, LoroValue, PeerID,
-    UndoManager, ID,
+    Container, ContainerID, ContainerType, Frontiers, LoroDoc, LoroError, LoroResult, LoroValue,
+    PeerID, UndoManager, ID,
 };
 use pretty_assertions::assert_eq;
 use rand::{rngs::StdRng, Rng, SeedableRng};
@@ -41,6 +41,11 @@ pub struct Actor {
     pub history: FxHashMap<Vec<ID>, LoroValue>,
     pub undo_manager: Undo,
     pub rng: StdRng,
+    /// Whether this actor has pending changes from a previous import that
+    /// could not be applied due to missing dependencies. Such actors may
+    /// diverge from peers during sync because pending changes are not
+    /// included in exports.
+    pub has_pending_changes: bool,
 }
 
 impl Actor {
@@ -79,7 +84,18 @@ impl Actor {
                 seed[..8].copy_from_slice(&bytes); // Copy the 8 bytes into the start of the seed array
                 seed
             }),
+            has_pending_changes: false,
         }
+    }
+
+    pub fn import_with_tracking(&mut self, bytes: &[u8]) -> LoroResult<loro::ImportStatus> {
+        let result = self.loro.import(bytes);
+        if let Ok(status) = &result {
+            if status.pending.is_some() {
+                self.has_pending_changes = true;
+            }
+        }
+        result
     }
 
     pub fn add_new_container(&mut self, container: Container) {
