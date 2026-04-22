@@ -1,8 +1,8 @@
 use loro::{
     cursor::{PosType, Side},
     event::Diff,
-    ExpandType, ExportMode, LoroDoc, LoroResult, StyleConfig, StyleConfigMap, TextDelta, ToJson,
-    UndoManager,
+    ExpandType, ExportMode, LoroDoc, LoroResult, LoroValue, StyleConfig, StyleConfigMap, TextDelta,
+    ToJson, UndoItemMeta, UndoManager, UndoOrRedo,
 };
 use pretty_assertions::assert_eq;
 use serde_json::{json, Value};
@@ -197,6 +197,85 @@ fn grouped_undo_survives_remote_imports_and_tracks_stack_state() -> LoroResult<(
     let remote_updates = local.export(ExportMode::updates(&remote.oplog_vv()))?;
     remote.import(&remote_updates)?;
     assert_eq!(deep_json(&local), deep_json(&remote));
+
+    Ok(())
+}
+
+#[test]
+fn undo_callbacks_metadata_limits_and_excluded_origins_follow_contract() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(88)?;
+    doc.set_change_merge_interval(0);
+    let text = doc.get_text("text");
+    let mut undo = UndoManager::new(&doc);
+    assert_eq!(undo.peer(), 88);
+
+    undo.add_exclude_origin_prefix("skip");
+    doc.set_next_commit_origin("skip:typing");
+    text.insert(0, "ignored")?;
+    doc.commit();
+    assert!(!undo.can_undo());
+    assert_eq!(undo.undo_count(), 0);
+
+    let pushed = std::sync::Arc::new(std::sync::Mutex::new(Vec::<UndoOrRedo>::new()));
+    let pushed_clone = std::sync::Arc::clone(&pushed);
+    undo.set_on_push(Some(Box::new(move |kind, _span, _event| {
+        pushed_clone.lock().unwrap().push(kind);
+        let mut meta = UndoItemMeta::new();
+        meta.set_value(LoroValue::from("meta"));
+        meta
+    })));
+
+    let popped = std::sync::Arc::new(std::sync::Mutex::new(Vec::<(UndoOrRedo, LoroValue)>::new()));
+    let popped_clone = std::sync::Arc::clone(&popped);
+    undo.set_on_pop(Some(Box::new(move |kind, _span, meta| {
+        popped_clone.lock().unwrap().push((kind, meta.value));
+    })));
+
+    text.insert(text.len_unicode(), " one")?;
+    doc.commit();
+    assert!(undo.can_undo());
+    assert_eq!(undo.undo_count(), 1);
+    assert_eq!(undo.top_undo_value(), Some(LoroValue::from("meta")));
+
+    assert!(undo.undo()?);
+    assert!(undo.can_redo());
+    assert_eq!(undo.redo_count(), 1);
+    assert_eq!(undo.top_redo_value(), Some(LoroValue::from("meta")));
+    assert_eq!(
+        popped.lock().unwrap().as_slice(),
+        &[(UndoOrRedo::Undo, LoroValue::from("meta"))]
+    );
+
+    assert!(undo.redo()?);
+    let pushed_events = pushed.lock().unwrap().clone();
+    assert!(pushed_events.starts_with(&[UndoOrRedo::Undo, UndoOrRedo::Redo]));
+    assert_eq!(undo.top_undo_value(), Some(LoroValue::from("meta")));
+    assert_eq!(
+        popped.lock().unwrap().as_slice(),
+        &[
+            (UndoOrRedo::Undo, LoroValue::from("meta")),
+            (UndoOrRedo::Redo, LoroValue::from("meta")),
+        ]
+    );
+
+    undo.set_max_undo_steps(1);
+    text.insert(text.len_unicode(), " two")?;
+    doc.commit();
+    text.insert(text.len_unicode(), " three")?;
+    doc.commit();
+    assert_eq!(undo.undo_count(), 1);
+
+    undo.clear();
+    assert!(!undo.can_undo());
+    assert!(!undo.can_redo());
+    assert!(!undo.undo()?);
+    assert!(!undo.redo()?);
+
+    undo.set_on_push(None);
+    undo.set_on_pop(None);
+    undo.record_new_checkpoint()?;
+    assert!(undo.top_undo_meta().is_none());
 
     Ok(())
 }

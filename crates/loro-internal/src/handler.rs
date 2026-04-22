@@ -1604,7 +1604,7 @@ impl TextHandler {
                     .into_iter()
                     .map(|(s, a)| TextDelta::Insert {
                         insert: s,
-                        attributes: a.to_option_map(),
+                        attributes: a.to_option_map_without_null_value(),
                     })
                     .collect())
             }
@@ -1618,7 +1618,7 @@ impl TextHandler {
                     .into_iter()
                     .map(|(s, a)| TextDelta::Insert {
                         insert: s,
-                        attributes: a.to_option_map(),
+                        attributes: a.to_option_map_without_null_value(),
                     })
                     .collect())
             }),

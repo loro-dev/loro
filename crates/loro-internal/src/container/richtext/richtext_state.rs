@@ -1760,8 +1760,7 @@ impl RichtextState {
             };
 
             visited.push((style, anchor_type, iter, entity_index));
-            if anchor_type == AnchorType::Start
-                && (!style.value.is_null() || !style.value.is_false())
+            if anchor_type == AnchorType::Start && (style.value.is_null() || style.value.is_false())
             {
                 // case 1. should be before this anchor
                 break;

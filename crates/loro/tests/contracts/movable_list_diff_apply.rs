@@ -62,3 +62,91 @@ fn movable_list_diff_apply_preserves_moves_container_replacements_and_reverse_pa
 
     Ok(())
 }
+
+#[test]
+fn movable_list_creator_mover_and_editor_metadata_survives_remote_imports() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(201)?;
+    let list = doc.get_movable_list("queue");
+    list.push("draft")?;
+    list.push("review")?;
+    list.push("ship")?;
+    let note = list.push_container(LoroText::new())?;
+    note.insert(0, "note")?;
+    doc.commit();
+
+    let base_vv = doc.oplog_vv();
+    for index in 0..list.len() {
+        assert_eq!(list.get_creator_at(index), Some(201));
+        assert_eq!(list.get_last_mover_at(index), Some(201));
+        assert_eq!(list.get_last_editor_at(index), Some(201));
+    }
+
+    let remote = doc.fork();
+    remote.set_peer_id(202)?;
+    let remote_list = remote.get_movable_list("queue");
+    remote_list.mov(2, 0)?;
+    remote_list.set(1, "draft-updated")?;
+    let replacement = remote_list.set_container(3, LoroMap::new())?;
+    replacement.insert("kind", "replacement")?;
+    remote.commit();
+
+    let updates = remote.export(ExportMode::updates(&base_vv))?;
+    doc.import(&updates)?;
+
+    assert_eq!(
+        list.get_deep_value().to_json_value(),
+        json!(["ship", "draft-updated", "review", {"kind": "replacement"}])
+    );
+    assert_eq!(list.get_creator_at(0), Some(201));
+    assert_eq!(list.get_last_mover_at(0), Some(202));
+    assert_eq!(list.get_last_editor_at(0), Some(201));
+
+    assert_eq!(list.get_creator_at(1), Some(201));
+    assert_eq!(list.get_last_editor_at(1), Some(202));
+    assert_eq!(list.get_creator_at(3), Some(201));
+    assert_eq!(list.get_last_editor_at(3), Some(202));
+
+    let restored = LoroDoc::from_snapshot(&doc.export(ExportMode::Snapshot)?)?;
+    let restored_list = restored.get_movable_list("queue");
+    assert_eq!(restored_list.get_creator_at(0), Some(201));
+    assert_eq!(restored_list.get_last_mover_at(0), Some(202));
+    assert_eq!(restored_list.get_last_editor_at(1), Some(202));
+    assert_eq!(restored_list.get_last_editor_at(3), Some(202));
+    assert_eq!(deep_json(&restored), deep_json(&doc));
+
+    Ok(())
+}
+
+#[test]
+fn movable_list_pop_and_out_of_bounds_set_container_follow_contract() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    let list = doc.get_movable_list("queue");
+    assert!(list.pop()?.is_none());
+
+    list.push("a")?;
+    list.push("b")?;
+    assert_eq!(
+        list.pop()?.unwrap().get_deep_value().to_json_value(),
+        json!("b")
+    );
+    assert_eq!(
+        list.pop()?.unwrap().get_deep_value().to_json_value(),
+        json!("a")
+    );
+    assert!(list.pop()?.is_none());
+    assert!(list.set_container(0, LoroMap::new()).is_err());
+
+    let detached = loro::LoroMovableList::new();
+    assert!(detached.pop()?.is_none());
+    assert!(detached.set_container(0, LoroMap::new()).is_err());
+    detached.push("x")?;
+    let map = detached.set_container(0, LoroMap::new())?;
+    map.insert("ok", true)?;
+    assert_eq!(
+        detached.get_deep_value().to_json_value(),
+        json!([{"ok": true}])
+    );
+
+    Ok(())
+}

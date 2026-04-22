@@ -1,6 +1,6 @@
 use loro::{
     cursor::{PosType, Side},
-    ExpandType, ExportMode, LoroDoc, LoroResult, StyleConfig, StyleConfigMap, TextDelta,
+    ExpandType, ExportMode, LoroDoc, LoroResult, StyleConfig, StyleConfigMap, TextDelta, ToJson,
 };
 use pretty_assertions::assert_eq;
 
@@ -307,6 +307,100 @@ fn cursor_editor_and_checkout_survive_remote_imports() -> LoroResult<()> {
             .current
             .pos,
         4
+    );
+
+    Ok(())
+}
+
+#[test]
+fn richtext_expand_modes_apply_at_documented_boundaries() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    let mut styles = StyleConfigMap::new();
+    styles.insert("after".into(), StyleConfig::new().expand(ExpandType::After));
+    styles.insert("none".into(), StyleConfig::new().expand(ExpandType::None));
+    doc.config_text_style(styles);
+
+    let after = doc.get_text("after");
+    after.insert(0, "ab")?;
+    after.mark(0..2, "after", true)?;
+    doc.commit();
+    after.insert(2, "R")?;
+    assert_eq!(
+        after.to_delta(),
+        vec![TextDelta::Insert {
+            insert: "abR".to_string(),
+            attributes: Some([("after".to_string(), true.into())].into_iter().collect()),
+        }]
+    );
+
+    let none = doc.get_text("none");
+    none.insert(0, "ab")?;
+    none.mark(0..2, "none", true)?;
+    doc.commit();
+    none.insert(0, "L")?;
+    none.insert(none.len_unicode(), "R")?;
+    assert_eq!(
+        none.to_delta(),
+        vec![
+            TextDelta::Insert {
+                insert: "L".to_string(),
+                attributes: None,
+            },
+            TextDelta::Insert {
+                insert: "ab".to_string(),
+                attributes: Some([("none".to_string(), true.into())].into_iter().collect()),
+            },
+            TextDelta::Insert {
+                insert: "R".to_string(),
+                attributes: None,
+            },
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn richtext_partial_unmark_unicode_and_snapshot_roundtrip_preserve_spans() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    let mut styles = StyleConfigMap::new();
+    styles.insert("note".into(), StyleConfig::new().expand(ExpandType::After));
+    doc.config_text_style(styles);
+
+    let text = doc.get_text("text");
+    text.insert(0, "a😀b文c")?;
+    text.mark(0..text.len_unicode(), "note", "whole")?;
+    text.unmark(1..4, "note")?;
+    assert_eq!(
+        text.to_delta(),
+        vec![
+            TextDelta::Insert {
+                insert: "a".to_string(),
+                attributes: Some([("note".to_string(), "whole".into())].into_iter().collect()),
+            },
+            TextDelta::Insert {
+                insert: "😀b文".to_string(),
+                attributes: None,
+            },
+            TextDelta::Insert {
+                insert: "c".to_string(),
+                attributes: Some([("note".to_string(), "whole".into())].into_iter().collect()),
+            },
+        ]
+    );
+
+    let snapshot = doc.export(ExportMode::Snapshot)?;
+    let restored = LoroDoc::from_snapshot(&snapshot)?;
+    assert_eq!(
+        restored.get_text("text").to_delta(),
+        doc.get_text("text").to_delta()
+    );
+    assert_eq!(
+        restored
+            .get_text("text")
+            .get_richtext_value()
+            .to_json_value(),
+        doc.get_text("text").get_richtext_value().to_json_value()
     );
 
     Ok(())

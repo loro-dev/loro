@@ -153,6 +153,15 @@ impl StyleMeta {
 
         Some(self.to_map())
     }
+
+    pub(crate) fn to_option_map_without_null_value(&self) -> Option<FxHashMap<String, LoroValue>> {
+        let map = self.to_map_without_null_value();
+        if map.is_empty() {
+            None
+        } else {
+            Some(map)
+        }
+    }
 }
 
 impl ToJson for TextMeta {

@@ -1,3 +1,5 @@
+#[allow(deprecated)]
+use loro::awareness::Awareness;
 use loro::{
     awareness::{EphemeralEventTrigger, EphemeralStore},
     LoroValue,
@@ -114,4 +116,76 @@ fn ephemeral_store_omits_expired_payloads_and_removes_them_by_timeout() {
             vec!["status".to_string()],
         ))
     );
+}
+
+#[allow(deprecated)]
+#[test]
+fn legacy_awareness_selected_sync_stale_updates_and_timeout_follow_contract() {
+    let mut alice = Awareness::new(1, 30_000);
+    let mut bob = Awareness::new(2, 30_000);
+
+    assert_eq!(alice.peer(), 1);
+    assert_eq!(alice.get_local_state(), None);
+    alice.set_local_state("typing");
+    assert_eq!(alice.get_local_state(), Some(LoroValue::from("typing")));
+
+    let selected = alice.encode(&[1]);
+    let (updated, added) = bob.apply(&selected);
+    assert!(updated.is_empty());
+    assert_eq!(added, vec![1]);
+    assert_eq!(
+        bob.get_all_states().get(&1).map(|info| info.state.clone()),
+        Some(LoroValue::from("typing"))
+    );
+
+    let stale = selected.clone();
+    alice.set_local_state("idle");
+    let all = alice.encode_all();
+    let (updated, added) = bob.apply(&all);
+    assert_eq!(updated, vec![1]);
+    assert!(added.is_empty());
+    assert_eq!(
+        bob.get_all_states().get(&1).map(|info| info.state.clone()),
+        Some(LoroValue::from("idle"))
+    );
+
+    let (updated, added) = bob.apply(&stale);
+    assert!(updated.is_empty());
+    assert!(added.is_empty());
+    assert_eq!(
+        bob.get_all_states().get(&1).map(|info| info.state.clone()),
+        Some(LoroValue::from("idle"))
+    );
+
+    let empty_selection = alice.encode(&[42]);
+    let (updated, added) = bob.apply(&empty_selection);
+    assert!(updated.is_empty());
+    assert!(added.is_empty());
+}
+
+#[test]
+fn ephemeral_store_rejects_invalid_payloads_and_unsubscribes_false_callbacks() {
+    let store = EphemeralStore::new(30_000);
+
+    let local_payloads = Arc::new(Mutex::new(Vec::<Vec<u8>>::new()));
+    let payloads_clone = Arc::clone(&local_payloads);
+    let _local_updates = store.subscribe_local_updates(Box::new(move |bytes| {
+        payloads_clone.lock().unwrap().push(bytes.clone());
+        false
+    }));
+
+    store.set("cursor", 1);
+    store.set("cursor", 2);
+    assert_eq!(local_payloads.lock().unwrap().len(), 1);
+    assert!(store.apply(&[0xff, 0xff, 0xff, 0xff]).is_err());
+
+    let events = Arc::new(Mutex::new(0));
+    let events_clone = Arc::clone(&events);
+    let _sub = store.subscribe(Box::new(move |_| {
+        *events_clone.lock().unwrap() += 1;
+        false
+    }));
+    store.delete("cursor");
+    store.set("cursor", 3);
+    assert_eq!(*events.lock().unwrap(), 1);
 }

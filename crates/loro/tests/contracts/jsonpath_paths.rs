@@ -220,6 +220,90 @@ fn jsonpath_filters_cover_root_and_current_refs_for_bool_null_number_and_string_
 }
 
 #[test]
+fn jsonpath_filter_functions_literals_and_empty_path_results_follow_contract() -> anyhow::Result<()>
+{
+    let doc = build_catalog_doc()?;
+
+    assert_eq!(
+        strings(doc.jsonpath("$.catalog.books[?(count(@.isbn) == 0)].title")?),
+        vec![
+            "1984".to_string(),
+            "Animal Farm".to_string(),
+            "Brave New World".to_string(),
+            "Fahrenheit 451".to_string(),
+            "Pride and Prejudice".to_string(),
+        ]
+    );
+    assert_eq!(
+        strings(doc.jsonpath("$.catalog.books[?(length(value(@.title)) > 10)].title")?),
+        vec![
+            "Animal Farm".to_string(),
+            "Brave New World".to_string(),
+            "Fahrenheit 451".to_string(),
+            "Pride and Prejudice".to_string(),
+        ]
+    );
+    assert_eq!(
+        strings(doc.jsonpath(
+            "$.catalog.books[?(value(@.author) in ['George Orwell', 'Ray Bradbury'])].title"
+        )?),
+        vec![
+            "1984".to_string(),
+            "Animal Farm".to_string(),
+            "Fahrenheit 451".to_string(),
+        ]
+    );
+    assert_eq!(
+        strings(doc.jsonpath("$.catalog.books[?(@.price in [null, 6, 12])].title")?),
+        vec![
+            "Animal Farm".to_string(),
+            "Brave New World".to_string(),
+            "Fahrenheit 451".to_string(),
+        ]
+    );
+    assert_eq!(
+        strings(doc.jsonpath("$.catalog.books[?(@.available != false && @.title >= 'F')].title")?),
+        vec![
+            "Fahrenheit 451".to_string(),
+            "Pride and Prejudice".to_string(),
+        ]
+    );
+    assert!(doc
+        .jsonpath("$.catalog.books[?(@.missing == $.catalog.missing)].title")?
+        .is_empty());
+    assert!(doc
+        .jsonpath("$.catalog.books[?(@.price in $.catalog.missing)].title")?
+        .is_empty());
+
+    Ok(())
+}
+
+#[test]
+fn jsonpath_root_wildcards_negative_indexes_and_scalar_paths_follow_contract() -> anyhow::Result<()>
+{
+    let doc = build_catalog_doc()?;
+
+    assert_eq!(doc.jsonpath("$.*")?.len(), 1);
+    assert_eq!(
+        results_json(doc.jsonpath("$.catalog.books[-1].title")?),
+        json!(["Pride and Prejudice"])
+    );
+    assert!(doc.jsonpath("$.catalog.books[-99].title")?.is_empty());
+    assert!(doc.jsonpath("$.catalog.featured_author[0]")?.is_empty());
+    assert!(doc.jsonpath("$.catalog.featured_authors.title")?.is_empty());
+    assert_eq!(
+        results_json(doc.jsonpath("$.catalog.books[::-2].title")?),
+        json!(["Pride and Prejudice", "Brave New World", "1984"])
+    );
+    assert_eq!(
+        results_json(doc.jsonpath("$.catalog.books[99:120].title")?),
+        json!([])
+    );
+
+    Ok(())
+}
+
+#[test]
 fn jsonpath_nested_subscriptions_follow_deep_paths_and_roundtrip_cleanly() -> anyhow::Result<()> {
     let doc = build_catalog_doc()?;
 

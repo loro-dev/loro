@@ -1,4 +1,7 @@
-use loro::{cursor::Side, LoroDoc, ToJson};
+use loro::{
+    cursor::{Cursor, Side},
+    LoroDoc, LoroMap, ToJson,
+};
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
@@ -77,6 +80,78 @@ fn cursors_resolve_after_target_content_is_deleted_for_text_list_and_movable_lis
             "movable": ["a", "middle", "d"],
         })
     );
+
+    Ok(())
+}
+
+#[test]
+fn cursor_encoding_side_values_and_cache_rebuilds_follow_contract() -> anyhow::Result<()> {
+    assert_eq!(Side::from_i32(-1), Some(Side::Left));
+    assert_eq!(Side::from_i32(0), Some(Side::Middle));
+    assert_eq!(Side::from_i32(1), Some(Side::Right));
+    assert_eq!(Side::from_i32(2), None);
+    assert_eq!(Side::Left.to_i32(), -1);
+    assert_eq!(Side::Middle.to_i32(), 0);
+    assert_eq!(Side::Right.to_i32(), 1);
+
+    let doc = LoroDoc::new();
+    doc.set_peer_id(122)?;
+    let text = doc.get_text("text");
+    text.insert(0, "a😀bc")?;
+    let list = doc.get_list("list");
+    list.push("a")?;
+    list.push("b")?;
+    list.push("c")?;
+    let movable = doc.get_movable_list("movable");
+    movable.push("a")?;
+    movable.push("b")?;
+    movable.push("c")?;
+    doc.commit();
+
+    let text_cursor = text.get_cursor(2, Side::Middle).unwrap();
+    let list_cursor = list.get_cursor(1, Side::Left).unwrap();
+    let movable_cursor = movable.get_cursor(2, Side::Right).unwrap();
+
+    for cursor in [&text_cursor, &list_cursor, &movable_cursor] {
+        let decoded = Cursor::decode(&cursor.encode())?;
+        assert_eq!(doc.get_cursor_pos(&decoded)?, doc.get_cursor_pos(cursor)?);
+    }
+    assert!(Cursor::decode(&[0xff, 0xff]).is_err());
+
+    let checkpoint = doc.state_frontiers();
+    text.insert(0, "zz")?;
+    list.insert(0, "front")?;
+    movable.insert(0, "front")?;
+    doc.commit();
+
+    assert_eq!(doc.get_cursor_pos(&text_cursor)?.current.pos, 4);
+    assert_eq!(doc.get_cursor_pos(&list_cursor)?.current.pos, 2);
+    assert_eq!(doc.get_cursor_pos(&movable_cursor)?.current.pos, 3);
+
+    doc.free_diff_calculator();
+    doc.checkout(&checkpoint)?;
+    assert_eq!(doc.get_cursor_pos(&text_cursor)?.current.pos, 2);
+    assert_eq!(doc.get_cursor_pos(&list_cursor)?.current.pos, 1);
+    assert_eq!(doc.get_cursor_pos(&movable_cursor)?.current.pos, 2);
+
+    Ok(())
+}
+
+#[test]
+fn cursors_survive_parent_container_delete_while_history_is_available() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    let root = doc.get_map("root");
+    let holder = root.insert_container("holder", LoroMap::new())?;
+    let text = holder.insert_container("text", loro::LoroText::new())?;
+    text.insert(0, "abc")?;
+    let cursor = text.get_cursor(1, Side::Middle).unwrap();
+    doc.commit();
+
+    assert_eq!(doc.get_cursor_pos(&cursor)?.current.pos, 1);
+    root.delete("holder")?;
+    doc.commit();
+
+    assert_eq!(doc.get_cursor_pos(&cursor)?.current.pos, 1);
 
     Ok(())
 }
