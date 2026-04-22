@@ -41,6 +41,37 @@ fn state_only_at_concurrent_frontiers_excludes_later_ops() -> anyhow::Result<()>
 }
 
 #[test]
+fn state_only_import_allows_frontiers_that_include_shallow_root() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    doc.set_change_merge_interval(0);
+
+    let text = doc.get_text("text");
+    text.insert(0, "root")?;
+    doc.commit();
+    let shallow_root = doc.state_frontiers();
+
+    doc.set_peer_id(2)?;
+    text.insert(text.len_unicode(), " latest")?;
+    doc.commit();
+    let latest = doc.state_frontiers();
+    let expected = doc.get_deep_value();
+
+    let target = Frontiers::from([
+        shallow_root.as_single().unwrap(),
+        latest.as_single().unwrap(),
+    ]);
+    let bytes = doc.export(ExportMode::state_only(Some(&target)))?;
+    let new_doc = LoroDoc::new();
+    new_doc.import(&bytes)?;
+
+    assert!(new_doc.is_shallow());
+    assert_eq!(new_doc.shallow_since_frontiers(), shallow_root);
+    assert_eq!(new_doc.get_deep_value(), expected);
+    Ok(())
+}
+
+#[test]
 fn test_gc() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(1)?;

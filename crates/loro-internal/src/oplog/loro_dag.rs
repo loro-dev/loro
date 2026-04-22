@@ -585,15 +585,14 @@ impl AppDag {
             return true;
         }
 
-        if deps.iter().any(|x| self.shallow_since_vv.includes_id(x)) {
-            return true;
-        }
+        for id in deps.iter() {
+            if self.shallow_since_frontiers.contains(&id) {
+                continue;
+            }
 
-        if deps
-            .iter()
-            .any(|x| self.shallow_since_frontiers.contains(&x))
-        {
-            return deps != &self.shallow_since_frontiers;
+            if self.shallow_since_vv.includes_id(id) {
+                return true;
+            }
         }
 
         false
