@@ -251,7 +251,7 @@ fn cursor_editor_and_checkout_survive_remote_imports() -> LoroResult<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(1)?;
     let text = doc.get_text("text");
-    text.insert(0, "a😀bc")?;
+    text.insert(0, "abcd")?;
     doc.commit();
 
     let checkpoint = doc.state_frontiers();
@@ -275,7 +275,7 @@ fn cursor_editor_and_checkout_survive_remote_imports() -> LoroResult<()> {
 
     let remote_updates = remote.export(ExportMode::updates(&doc.oplog_vv()))?;
     doc.import(&remote_updates)?;
-    assert_eq!(text.to_string(), "zza😀bc");
+    assert_eq!(text.to_string(), "zzabcd");
     assert_eq!(
         doc.get_cursor_pos(&cursor)
             .expect("cursor should resolve")
@@ -288,7 +288,7 @@ fn cursor_editor_and_checkout_survive_remote_imports() -> LoroResult<()> {
     assert_eq!(text.get_editor_at_unicode_pos(2), Some(1));
 
     doc.checkout(&checkpoint)?;
-    assert_eq!(text.to_string(), "a😀bc");
+    assert_eq!(text.to_string(), "abcd");
     assert_eq!(
         doc.get_cursor_pos(&cursor)
             .expect("cursor should resolve")

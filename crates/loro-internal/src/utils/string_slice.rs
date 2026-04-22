@@ -363,10 +363,12 @@ mod tests {
         assert_eq!(slice.len_bytes(), 8);
         assert_eq!(slice.len_unicode(), 4);
         assert_eq!(slice.len_utf16(), 5);
-        assert_eq!(slice.length(), 4);
-        assert_eq!(slice.rle_len(), 4);
+        let event_len = if cfg!(feature = "wasm") { 5 } else { 4 };
+        assert_eq!(slice.length(), event_len);
+        assert_eq!(slice.rle_len(), event_len);
 
-        let middle = slice._slice(1..3);
+        let middle_range = if cfg!(feature = "wasm") { 1..4 } else { 1..3 };
+        let middle = slice._slice(middle_range);
         assert_eq!(middle.as_str(), "é😀");
 
         let right = slice.split(2);

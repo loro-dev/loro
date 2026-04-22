@@ -1429,9 +1429,6 @@ impl TextHandler {
         let err = match pos_type {
             PosType::Bytes => Some(LoroError::UTF8InUnicodeCodePoint { pos }),
             PosType::Utf16 => Some(LoroError::UTF16InUnicodeCodePoint { pos }),
-            PosType::Event if cfg!(feature = "wasm") => {
-                Some(LoroError::UTF16InUnicodeCodePoint { pos })
-            }
             _ => None,
         };
 

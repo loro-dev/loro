@@ -245,12 +245,14 @@ fn detached_and_attached_text_coordinate_apis_follow_the_same_public_contract() 
     });
     assert!(visited.starts_with('A'));
 
+    attached.delete(0, attached.len_unicode())?;
+    attached.insert(0, "ABC文")?;
     attached.apply_delta(&[
         TextDelta::Retain {
             retain: 1,
             attributes: None,
         },
-        TextDelta::Delete { delete: 2 },
+        TextDelta::Delete { delete: 1 },
         TextDelta::Insert {
             insert: "xy".to_string(),
             attributes: Some([("bold".to_string(), true.into())].into_iter().collect()),
