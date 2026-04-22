@@ -7,7 +7,7 @@ use loro_common::{ContainerID, ContainerType, LoroEncodeError, LoroError, ID};
 use crate::{
     container::list::list_op::InnerListOp,
     dag::DagUtils,
-    encoding::fast_snapshot::{Snapshot, _encode_snapshot},
+    encoding::fast_snapshot::{_encode_snapshot, Snapshot},
     state::container_store::FRONTIERS_KEY,
     version::{Frontiers, VersionVector},
     LoroDoc,
@@ -135,11 +135,11 @@ fn has_unknown_container<'a>(mut cids: impl Iterator<Item = &'a ContainerID>) ->
 
 pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
     doc: &LoroDoc,
-    start_from: &Frontiers,
+    target_frontiers: &Frontiers,
     w: &mut W,
 ) -> Result<Frontiers, LoroEncodeError> {
     let oplog = doc.oplog().lock();
-    let start_from = calc_shallow_doc_start(&oplog, start_from);
+    let start_from = calc_shallow_doc_start(&oplog, target_frontiers);
     let mut start_vv =
         frontiers_to_vv_for_export(&oplog, &start_from, "export_state_only_snapshot")?;
     for id in start_from.iter() {
@@ -153,22 +153,10 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
         &start_from,
     );
 
-    let mut to_vv = start_vv.clone();
-    for id in start_from.iter() {
-        to_vv.insert(id.peer, id.counter + 1);
-    }
-
-    let to_frontiers = if start_from.is_empty() {
-        oplog.frontiers().clone()
-    } else {
-        start_from.clone()
-    };
-    if start_from.is_empty() {
-        to_vv = oplog.vv().clone();
-    }
+    let to_vv = frontiers_to_vv_for_export(&oplog, target_frontiers, "export_state_only_snapshot")?;
 
     let oplog_bytes =
-        oplog.export_change_store_in_range(&start_vv, &start_from, &to_vv, &to_frontiers);
+        oplog.export_change_store_in_range(&start_vv, &start_from, &to_vv, target_frontiers);
     let state_frontiers = doc.state_frontiers();
     let is_attached = !doc.is_detached();
     drop(oplog);
