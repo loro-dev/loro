@@ -70,7 +70,7 @@ fn utf8_edits_around_multibyte_text_preserve_delta_and_json_contracts() -> LoroR
 }
 
 #[test]
-fn styled_text_markers_do_not_shift_public_text_coordinates() -> LoroResult<()> {
+fn styled_text_markers_do_not_shift_text_coordinates() -> LoroResult<()> {
     let doc = LoroDoc::new();
 
     let mut styles = StyleConfigMap::default_rich_text_config();
@@ -236,7 +236,7 @@ fn detached_children_attach_through_get_or_create_and_keep_identity() -> LoroRes
 }
 
 #[test]
-fn detached_and_attached_text_coordinate_apis_follow_the_same_public_contract() -> LoroResult<()> {
+fn detached_and_attached_text_coordinate_apis_follow_the_same_contract() -> LoroResult<()> {
     let detached = LoroText::new();
     assert!(detached.is_empty());
     assert!(detached.apply_delta(&[]).is_err());

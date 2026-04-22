@@ -12,8 +12,7 @@ fn deep_json(doc: &LoroDoc) -> Value {
 }
 
 #[test]
-fn commit_metadata_empty_commit_and_json_updates_roundtrip_follow_public_contract(
-) -> anyhow::Result<()> {
+fn commit_metadata_empty_commit_and_json_updates_roundtrip_follow_contract() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(41)?;
     doc.set_change_merge_interval(0);
@@ -201,7 +200,7 @@ fn commit_metadata_empty_commit_and_json_updates_roundtrip_follow_public_contrac
 }
 
 #[test]
-fn checkout_diff_apply_diff_and_path_queries_follow_public_contract() -> anyhow::Result<()> {
+fn checkout_diff_apply_diff_and_path_queries_follow_contract() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(52)?;
     doc.set_change_merge_interval(0);

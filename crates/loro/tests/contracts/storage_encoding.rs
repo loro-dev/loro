@@ -228,7 +228,7 @@ fn kv_store_trait_and_mem_store_roundtrip_sorted_keys_and_tombstones() -> anyhow
 }
 
 #[test]
-fn storage_blobs_and_json_schema_roundtrip_public_state_and_metadata() -> anyhow::Result<()> {
+fn storage_blobs_and_json_schema_roundtrip_state_and_metadata() -> anyhow::Result<()> {
     let (doc, _text, _list, _movable, _tree, v1, _v2) = build_snapshot_doc()?;
     let peer = doc.peer_id();
     let end_counter = *doc.oplog_vv().get(&peer).unwrap();

@@ -98,7 +98,7 @@ fn tree_many_siblings_keep_order_positions_and_snapshot_contracts() -> LoroResul
 }
 
 #[test]
-fn tree_fractional_index_guardrails_are_public_contracts() -> LoroResult<()> {
+fn tree_fractional_index_guardrails_are_enforced() -> LoroResult<()> {
     let doc = LoroDoc::new();
     let tree = doc.get_tree("guarded");
     assert!(tree.is_fractional_index_enabled());

@@ -77,7 +77,7 @@ fn build_doc() -> anyhow::Result<LoroDoc> {
 }
 
 #[test]
-fn jsonpath_functions_and_compound_filters_follow_public_contract() -> anyhow::Result<()> {
+fn jsonpath_functions_and_compound_filters_follow_contract() -> anyhow::Result<()> {
     let doc = build_doc()?;
 
     assert_eq!(

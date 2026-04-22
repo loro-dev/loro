@@ -25,7 +25,7 @@ fn sync_all(a: &LoroDoc, b: &LoroDoc) -> LoroResult<()> {
 }
 
 #[test]
-fn nested_public_state_roundtrips_through_snapshots_checkout_and_revert() -> LoroResult<()> {
+fn nested_state_roundtrips_through_snapshots_checkout_and_revert() -> LoroResult<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(10)?;
 
@@ -141,7 +141,7 @@ fn nested_public_state_roundtrips_through_snapshots_checkout_and_revert() -> Lor
 }
 
 #[test]
-fn concurrent_public_updates_converge_with_incremental_and_batch_imports() -> LoroResult<()> {
+fn concurrent_updates_converge_with_incremental_and_batch_imports() -> LoroResult<()> {
     let a = LoroDoc::new();
     a.set_peer_id(1)?;
     let b = LoroDoc::new();
@@ -209,7 +209,7 @@ fn concurrent_public_updates_converge_with_incremental_and_batch_imports() -> Lo
 }
 
 #[test]
-fn rich_text_unicode_styles_cursors_and_diffs_follow_public_contracts() -> LoroResult<()> {
+fn rich_text_unicode_styles_cursors_and_diffs_follow_contracts() -> LoroResult<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(7)?;
 
@@ -283,7 +283,7 @@ fn rich_text_unicode_styles_cursors_and_diffs_follow_public_contracts() -> LoroR
 }
 
 #[test]
-fn undo_redo_tracks_public_changes_without_undoing_remote_updates() -> LoroResult<()> {
+fn undo_redo_tracks_changes_without_undoing_remote_updates() -> LoroResult<()> {
     let local = LoroDoc::new();
     local.set_peer_id(31)?;
     let mut undo = UndoManager::new(&local);

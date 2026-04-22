@@ -54,7 +54,7 @@ fn build_doc() -> anyhow::Result<LoroDoc> {
 }
 
 #[test]
-fn jsonpath_returns_container_and_value_nodes_for_nested_public_state() -> anyhow::Result<()> {
+fn jsonpath_returns_container_and_value_nodes_for_nested_state() -> anyhow::Result<()> {
     let doc = build_doc()?;
     let expected = deep_json(&doc);
 

@@ -127,7 +127,7 @@ fn mixed_doc() -> anyhow::Result<(
 }
 
 #[test]
-fn mixed_public_state_roundtrips_through_updates_json_and_snapshots() -> anyhow::Result<()> {
+fn mixed_state_roundtrips_through_updates_json_and_snapshots() -> anyhow::Result<()> {
     let (
         doc,
         _body,
@@ -268,7 +268,7 @@ fn mixed_public_state_roundtrips_through_updates_json_and_snapshots() -> anyhow:
 }
 
 #[test]
-fn public_value_apply_diff_and_apply_path_cover_nested_container_and_tree_contracts(
+fn loro_value_apply_diff_and_apply_path_cover_nested_container_and_tree_contracts(
 ) -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     let attached_map = doc.get_map("attached_map");
@@ -453,7 +453,7 @@ fn public_value_apply_diff_and_apply_path_cover_nested_container_and_tree_contra
 }
 
 #[test]
-fn jsonpath_value_length_and_invalid_function_contracts_follow_public_api() -> anyhow::Result<()> {
+fn jsonpath_value_length_and_invalid_function_errors_match_contract() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     let root = doc.get_map("root");
     root.insert("title", "Hello")?;

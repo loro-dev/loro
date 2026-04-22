@@ -12,7 +12,7 @@ fn json_value(doc: &LoroDoc) -> serde_json::Value {
 }
 
 #[test]
-fn doc_analysis_compaction_and_state_correctness_follow_public_contract() -> anyhow::Result<()> {
+fn doc_analysis_compaction_and_state_correctness_follow_contract() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(101)?;
     doc.set_record_timestamp(true);
@@ -74,7 +74,7 @@ fn doc_analysis_compaction_and_state_correctness_follow_public_contract() -> any
 }
 
 #[test]
-fn checkout_history_cache_and_diff_application_follow_public_contract() -> anyhow::Result<()> {
+fn checkout_history_cache_and_diff_application_follow_contract() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(102)?;
     doc.set_change_merge_interval(0);
@@ -128,8 +128,7 @@ fn checkout_history_cache_and_diff_application_follow_public_contract() -> anyho
 }
 
 #[test]
-fn change_traversal_changed_containers_and_id_spans_are_observable_public_contract(
-) -> anyhow::Result<()> {
+fn change_traversal_exposes_changed_containers_and_id_spans() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(103)?;
     doc.set_change_merge_interval(0);
@@ -194,7 +193,7 @@ fn change_traversal_changed_containers_and_id_spans_are_observable_public_contra
 }
 
 #[test]
-fn shallow_doc_state_check_and_export_boundaries_follow_public_contract() -> anyhow::Result<()> {
+fn shallow_doc_state_check_and_export_boundaries_follow_contract() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(104)?;
     doc.set_change_merge_interval(0);
@@ -227,7 +226,7 @@ fn shallow_doc_state_check_and_export_boundaries_follow_public_contract() -> any
 }
 
 #[test]
-fn path_queries_and_root_values_preserve_public_container_contracts() -> anyhow::Result<()> {
+fn path_queries_and_root_values_preserve_container_contracts() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     let root = doc.get_map("root");
     let list = root.insert_container("items", LoroList::new())?;

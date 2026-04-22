@@ -98,8 +98,7 @@ fn build_value_doc() -> anyhow::Result<(
 }
 
 #[test]
-fn loro_value_public_contracts_roundtrip_for_scalars_collections_and_containers(
-) -> anyhow::Result<()> {
+fn loro_value_contracts_roundtrip_for_scalars_collections_and_containers() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(7)?;
     let map = doc.get_map("root");
@@ -258,7 +257,7 @@ fn loro_value_public_contracts_roundtrip_for_scalars_collections_and_containers(
 }
 
 #[test]
-fn public_api_json_updates_roundtrip_nested_values_and_peer_compression() -> anyhow::Result<()> {
+fn json_updates_roundtrip_nested_values_and_peer_compression() -> anyhow::Result<()> {
     let (doc, root, list, mlist, text, tree) = build_value_doc()?;
     let start = VersionVector::default();
     let end = doc.oplog_vv();
@@ -333,8 +332,7 @@ fn public_api_json_updates_roundtrip_nested_values_and_peer_compression() -> any
 }
 
 #[test]
-fn public_api_json_update_schema_covers_list_map_text_tree_and_movable_list_ops(
-) -> anyhow::Result<()> {
+fn json_update_schema_covers_list_map_text_tree_and_movable_list_ops() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(31)?;
 

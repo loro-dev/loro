@@ -110,7 +110,7 @@ fn build_catalog() -> anyhow::Result<LoroDoc> {
 }
 
 #[test]
-fn jsonpath_filters_root_refs_and_roundtrips_public_state() -> anyhow::Result<()> {
+fn jsonpath_filters_root_refs_and_roundtrips_state() -> anyhow::Result<()> {
     let doc = build_catalog()?;
 
     assert_eq!(
@@ -157,7 +157,7 @@ fn jsonpath_filters_root_refs_and_roundtrips_public_state() -> anyhow::Result<()
 }
 
 #[test]
-fn jsonpath_quoted_keys_and_invalid_queries_follow_public_contract() -> anyhow::Result<()> {
+fn jsonpath_quoted_keys_and_invalid_queries_follow_contract() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     let store = doc.get_map("store");
     let dashed = store.insert_container("book-with-dash", LoroMap::new())?;
@@ -191,7 +191,7 @@ fn jsonpath_quoted_keys_and_invalid_queries_follow_public_contract() -> anyhow::
 }
 
 #[test]
-fn jsonpath_subscriptions_are_public_no_false_negative_notifications() -> anyhow::Result<()> {
+fn jsonpath_subscriptions_have_no_false_negative_notifications() -> anyhow::Result<()> {
     let doc = build_catalog()?;
     let hits = Arc::new(AtomicUsize::new(0));
     let hits_ref = Arc::clone(&hits);

@@ -21,7 +21,7 @@ fn nested_body(doc: &LoroDoc) -> LoroText {
 }
 
 #[test]
-fn all_updates_snapshot_and_incremental_updates_roundtrip_public_state() -> LoroResult<()> {
+fn all_updates_snapshot_and_incremental_updates_roundtrip_state() -> LoroResult<()> {
     let source = LoroDoc::new();
     source.set_peer_id(1)?;
 
@@ -109,8 +109,7 @@ fn detached_checkout_can_receive_remote_updates_and_return_to_latest() -> LoroRe
 }
 
 #[test]
-fn concurrent_public_peers_converge_via_incremental_sync_and_snapshot_roundtrip() -> LoroResult<()>
-{
+fn concurrent_peers_converge_via_incremental_sync_and_snapshot_roundtrip() -> LoroResult<()> {
     let seed = LoroDoc::new();
     seed.set_peer_id(1)?;
 

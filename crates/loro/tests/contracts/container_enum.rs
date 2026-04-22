@@ -20,7 +20,7 @@ fn seed_container(container: &Container, label: &str) -> LoroResult<()> {
         }
         #[cfg(feature = "counter")]
         Container::Counter(counter) => counter.increment(label.len() as f64)?,
-        Container::Unknown(_) => unreachable!("public Container::new cannot create Unknown"),
+        Container::Unknown(_) => unreachable!("Container::new cannot create Unknown"),
     }
     Ok(())
 }
@@ -54,7 +54,7 @@ fn expected_json(kind: ContainerType, label: &str) -> Value {
         }]),
         #[cfg(feature = "counter")]
         ContainerType::Counter => json!(label.len() as f64),
-        ContainerType::Unknown(_) => unreachable!("public Container::new cannot create Unknown"),
+        ContainerType::Unknown(_) => unreachable!("Container::new cannot create Unknown"),
     }
 }
 
@@ -83,7 +83,7 @@ fn assert_container_value(container: &Container, label: &str) {
 }
 
 #[test]
-fn container_enum_trait_dispatch_attaches_all_public_container_kinds() -> LoroResult<()> {
+fn container_enum_trait_dispatch_attaches_all_container_kinds() -> LoroResult<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(101)?;
     let root = doc.get_map("root");

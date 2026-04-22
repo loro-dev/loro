@@ -111,8 +111,7 @@ fn build_catalog_doc() -> anyhow::Result<LoroDoc> {
 }
 
 #[test]
-fn jsonpath_recursive_descent_wildcard_union_and_slices_follow_public_contract(
-) -> anyhow::Result<()> {
+fn jsonpath_recursive_descent_wildcard_union_and_slices_follow_contract() -> anyhow::Result<()> {
     let doc = build_catalog_doc()?;
 
     assert_eq!(

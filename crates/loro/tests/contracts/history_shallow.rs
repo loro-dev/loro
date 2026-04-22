@@ -10,7 +10,7 @@ fn deep_json(doc: &LoroDoc) -> serde_json::Value {
 }
 
 #[test]
-fn fork_and_detached_editing_follow_public_contract() -> anyhow::Result<()> {
+fn fork_and_detached_editing_follow_contract() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(1)?;
 
@@ -39,7 +39,7 @@ fn fork_and_detached_editing_follow_public_contract() -> anyhow::Result<()> {
 }
 
 #[test]
-fn checkout_and_history_cache_follow_public_contract() -> anyhow::Result<()> {
+fn checkout_and_history_cache_follow_contract() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(2)?;
 
@@ -77,7 +77,7 @@ fn checkout_and_history_cache_follow_public_contract() -> anyhow::Result<()> {
 }
 
 #[test]
-fn shallow_snapshot_cursor_and_meta_follow_public_contract() -> anyhow::Result<()> {
+fn shallow_snapshot_cursor_and_meta_follow_contract() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(3)?;
 
@@ -158,7 +158,7 @@ fn shallow_snapshot_cursor_and_meta_follow_public_contract() -> anyhow::Result<(
 }
 
 #[test]
-fn updates_range_import_batch_and_compaction_follow_public_contract() -> anyhow::Result<()> {
+fn updates_range_import_batch_and_compaction_follow_contract() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(4)?;
     doc.set_change_merge_interval(0);

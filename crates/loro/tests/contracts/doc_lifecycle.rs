@@ -39,7 +39,7 @@ fn make_lifecycle_doc(peer_id: u64) -> LoroResult<(LoroDoc, Frontiers)> {
 }
 
 #[test]
-fn peer_commit_options_and_event_origin_follow_public_contract() -> anyhow::Result<()> {
+fn peer_commit_options_and_event_origin_follow_contract() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     let peer_changes = Arc::new(Mutex::new(Vec::<ID>::new()));
     let peer_changes_clone = Arc::clone(&peer_changes);
@@ -118,7 +118,7 @@ fn peer_commit_options_and_event_origin_follow_public_contract() -> anyhow::Resu
 }
 
 #[test]
-fn checkout_detach_attach_fork_paths_and_frontiers_follow_public_contract() -> anyhow::Result<()> {
+fn checkout_detach_attach_fork_paths_and_frontiers_follow_contract() -> anyhow::Result<()> {
     let (doc, v1) = make_lifecycle_doc(31)?;
     let expected_v1_doc = doc.fork_at(&v1)?;
     let expected_v1_json = deep_json(&expected_v1_doc);
@@ -206,7 +206,7 @@ fn checkout_detach_attach_fork_paths_and_frontiers_follow_public_contract() -> a
 }
 
 #[test]
-fn storage_blobs_json_updates_and_batch_import_follow_public_contract() -> anyhow::Result<()> {
+fn storage_blobs_json_updates_and_batch_import_follow_contract() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(41)?;
     doc.set_change_merge_interval(0);

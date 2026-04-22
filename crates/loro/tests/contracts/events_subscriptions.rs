@@ -331,7 +331,7 @@ fn empty_commits_do_not_carry_explicit_options_but_barriers_preserve_message_and
 }
 
 #[test]
-fn local_update_peer_id_and_first_commit_subscriptions_follow_their_public_contracts(
+fn local_update_peer_id_and_first_commit_subscriptions_follow_their_contracts(
 ) -> loro::LoroResult<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(21)?;

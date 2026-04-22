@@ -322,7 +322,7 @@ fn detached_containers_keep_local_state_until_reattached_and_then_expose_live_cl
 }
 
 #[test]
-fn detached_container_error_branches_follow_the_public_contract() -> LoroResult<()> {
+fn detached_container_error_branches_follow_the_contract() -> LoroResult<()> {
     let map = LoroMap::new();
     let list = LoroList::new();
     let movable = LoroMovableList::new();

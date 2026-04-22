@@ -28,7 +28,7 @@ fn capture_events(store: &EphemeralStore) -> (loro::Subscription, Arc<Mutex<Vec<
 }
 
 #[test]
-fn ephemeral_store_syncs_presence_by_public_payloads_and_reports_events() {
+fn ephemeral_store_syncs_presence_by_payloads_and_reports_events() {
     let sender = EphemeralStore::new(30_000);
     let receiver = EphemeralStore::new(30_000);
 

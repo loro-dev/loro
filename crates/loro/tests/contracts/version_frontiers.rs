@@ -53,7 +53,7 @@ fn range_map(pairs: &[(u64, (i32, i32))]) -> FxHashMap<u64, (i32, i32)> {
 }
 
 #[test]
-fn version_vector_contracts_follow_public_semantics() -> anyhow::Result<()> {
+fn version_vector_contracts_follow_semantics() -> anyhow::Result<()> {
     let equal = vv_pairs(&[(1, 2), (2, 2)]);
     let greater = vv_pairs(&[(1, 3), (2, 2)]);
     let less = vv_pairs(&[(1, 1), (2, 2)]);
@@ -204,7 +204,7 @@ fn version_vector_contracts_follow_public_semantics() -> anyhow::Result<()> {
 }
 
 #[test]
-fn version_range_contracts_follow_public_semantics() -> anyhow::Result<()> {
+fn version_range_contracts_follow_semantics() -> anyhow::Result<()> {
     let vv_from_ids = vv(&[ID::new(1, 3), ID::new(2, 2)]);
     let from_vv = VersionRange::from_vv(&vv_from_ids);
     assert_eq!(from_vv.get(&1), Some(&(0, 4)));
@@ -252,7 +252,7 @@ fn version_range_contracts_follow_public_semantics() -> anyhow::Result<()> {
 }
 
 #[test]
-fn frontiers_contracts_follow_public_semantics() -> anyhow::Result<()> {
+fn frontiers_contracts_follow_semantics() -> anyhow::Result<()> {
     let mut frontiers = Frontiers::new();
     assert!(frontiers.is_empty());
     assert_eq!(frontiers.as_single(), None);

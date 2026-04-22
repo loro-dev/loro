@@ -15,7 +15,7 @@ fn assert_tree_error<T: core::fmt::Debug>(result: LoroResult<T>, expected: &str)
 }
 
 #[test]
-fn detached_tree_attaches_into_map_and_keeps_public_contracts() -> LoroResult<()> {
+fn detached_tree_attaches_into_map_and_keeps_contracts() -> LoroResult<()> {
     let tree = LoroTree::new();
     let probe = tree.clone();
 

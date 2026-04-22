@@ -40,7 +40,7 @@ fn assert_to_json_roundtrip(value: &LoroValue) {
 }
 
 #[test]
-fn loro_value_defaults_and_to_json_roundtrip_cover_public_contracts() -> anyhow::Result<()> {
+fn loro_value_defaults_and_to_json_roundtrip_cover_contracts() -> anyhow::Result<()> {
     assert_eq!(LoroValue::default(), LoroValue::Null);
     assert_eq!(
         ContainerType::Map.default_value(),
@@ -222,7 +222,7 @@ fn apply_diff_handles_nested_paths_existing_list_indexes_and_missing_tree_nodes(
 }
 
 #[test]
-fn json_schema_roundtrip_keeps_value_types_and_imports_back_public_state() -> anyhow::Result<()> {
+fn json_schema_roundtrip_keeps_value_types_and_imports_back_state() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(17)?;
 

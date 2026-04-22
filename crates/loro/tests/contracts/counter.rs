@@ -7,7 +7,7 @@ use loro::{
 use serde_json::json;
 
 #[test]
-fn detached_counter_attaches_with_value_and_keeps_public_identity() -> LoroResult<()> {
+fn detached_counter_attaches_with_value_and_keeps_identity() -> LoroResult<()> {
     let doc = LoroDoc::new();
     let root = doc.get_map("root");
     let detached = LoroCounter::new();
@@ -63,7 +63,7 @@ fn detached_counter_attaches_with_value_and_keeps_public_identity() -> LoroResul
 }
 
 #[test]
-fn counter_events_json_updates_and_deletion_follow_public_contract() -> LoroResult<()> {
+fn counter_events_json_updates_and_deletion_follow_contract() -> LoroResult<()> {
     let doc = LoroDoc::new();
     let events = Arc::new(Mutex::new(Vec::new()));
     let captured = Arc::clone(&events);

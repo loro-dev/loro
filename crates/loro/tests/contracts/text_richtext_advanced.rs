@@ -80,7 +80,7 @@ fn apply_delta_mixes_retain_insert_delete_and_ignores_empty_inserts() -> LoroRes
 }
 
 #[test]
-fn richtext_mark_slice_unmark_and_encoding_conversions_follow_public_contract() -> LoroResult<()> {
+fn richtext_mark_slice_unmark_and_encoding_conversions_follow_contract() -> LoroResult<()> {
     let doc = LoroDoc::new();
     let mut styles = StyleConfigMap::default_rich_text_config();
     styles.insert("after".into(), StyleConfig::new().expand(ExpandType::After));

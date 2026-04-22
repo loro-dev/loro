@@ -29,7 +29,7 @@ fn mark_segment<'a>(delta: &'a [TextDelta], needle: char) -> &'a TextDelta {
 }
 
 #[test]
-fn mark_expand_policies_follow_public_boundary_rules() -> LoroResult<()> {
+fn mark_expand_policies_follow_boundary_rules() -> LoroResult<()> {
     {
         let doc = LoroDoc::new();
         let mut styles = StyleConfigMap::default_rich_text_config();
