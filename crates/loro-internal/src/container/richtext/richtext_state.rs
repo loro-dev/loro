@@ -716,6 +716,7 @@ impl RichtextStateChunk {
             RichtextStateChunk::Text(t) => match pos_type {
                 PosType::Bytes => t.utf8_len() as usize,
                 PosType::Utf16 => t.utf16_len() as usize,
+                PosType::Event if cfg!(feature = "wasm") => t.utf16_len() as usize,
                 PosType::Event => t.unicode_len() as usize,
                 PosType::Entity => t.unicode_len() as usize,
                 PosType::Unicode => t.unicode_len() as usize,
@@ -2747,7 +2748,10 @@ fn entity_offset_to_pos_type_offset(
             RichtextStateChunk::Text(t) => unicode_to_utf8_index(t.as_str(), offset).unwrap(),
             RichtextStateChunk::Style { .. } => 0,
         },
-        PosType::Unicode => offset,
+        PosType::Unicode => match elem {
+            RichtextStateChunk::Text(_) => offset,
+            RichtextStateChunk::Style { .. } => 0,
+        },
         PosType::Utf16 => match elem {
             RichtextStateChunk::Text(t) => unicode_to_utf16_index(t.as_str(), offset).unwrap(),
             RichtextStateChunk::Style { .. } => 0,

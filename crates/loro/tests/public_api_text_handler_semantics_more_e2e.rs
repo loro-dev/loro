@@ -70,6 +70,56 @@ fn utf8_edits_around_multibyte_text_preserve_delta_and_json_contracts() -> LoroR
 }
 
 #[test]
+fn styled_text_markers_do_not_shift_public_text_coordinates() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+
+    let mut styles = StyleConfigMap::default_rich_text_config();
+    styles.insert(
+        "link".into(),
+        StyleConfig::new().expand(loro::ExpandType::None),
+    );
+    doc.config_text_style(styles);
+
+    let text = doc.get_text("text");
+    text.insert(0, "a😀")?;
+    text.mark(0..2, "link", true)?;
+    doc.commit();
+
+    assert_eq!(text.len_unicode(), 2);
+    assert_eq!(text.len_utf16(), 3);
+    assert_eq!(
+        text.convert_pos(3, PosType::Utf16, PosType::Unicode),
+        Some(2)
+    );
+    assert_eq!(
+        text.convert_pos("a😀".len(), PosType::Bytes, PosType::Unicode),
+        Some(2)
+    );
+    assert_eq!(
+        text.convert_pos(2, PosType::Unicode, PosType::Utf16),
+        Some(3)
+    );
+
+    text.insert_utf16(3, "b")?;
+    assert_eq!(text.to_string(), "a😀b");
+    assert_eq!(
+        text.to_delta(),
+        vec![
+            TextDelta::Insert {
+                insert: "a😀".to_string(),
+                attributes: Some([("link".to_string(), true.into())].into_iter().collect()),
+            },
+            TextDelta::Insert {
+                insert: "b".to_string(),
+                attributes: None,
+            },
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
 fn detached_children_attach_through_get_or_create_and_keep_identity() -> LoroResult<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(41)?;
