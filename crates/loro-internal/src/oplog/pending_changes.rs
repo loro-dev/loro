@@ -33,6 +33,21 @@ pub(crate) struct PendingChanges {
     changes: FxHashMap<PeerID, BTreeMap<Counter, Vec<PendingChange>>>,
 }
 
+impl PendingChanges {
+    pub(crate) fn version_range(&self) -> VersionRange {
+        let mut range = VersionRange::default();
+        for tree in self.changes.values() {
+            for pending_changes in tree.values() {
+                for pending_change in pending_changes {
+                    range.extends_to_include_id_span(pending_change.id_span());
+                }
+            }
+        }
+
+        range
+    }
+}
+
 impl OpLog {
     pub(super) fn extend_pending_changes_with_unknown_lamport(
         &mut self,

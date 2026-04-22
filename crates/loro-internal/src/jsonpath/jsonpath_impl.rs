@@ -340,6 +340,9 @@ fn to_logical(v: ExprValue) -> bool {
 fn compare_expr(l: ExprValue, op: &ComparisonOperator, r: ExprValue) -> bool {
     match (l, r) {
         (ExprValue::Value(l), ExprValue::Value(r)) => compare_values(&l, op, &r),
+        (ExprValue::Value(l), ExprValue::Bool(r)) => compare_values(&l, op, &LoroValue::Bool(r)),
+        (ExprValue::Bool(l), ExprValue::Value(r)) => compare_values(&LoroValue::Bool(l), op, &r),
+        (ExprValue::Bool(l), ExprValue::Bool(r)) => compare_bools(l, op, r),
         (ExprValue::Nodes(ls), ExprValue::Nodes(rs)) => {
             // Optimized: check if either is empty first
             if ls.is_empty() || rs.is_empty() {
@@ -364,7 +367,6 @@ fn compare_expr(l: ExprValue, op: &ComparisonOperator, r: ExprValue) -> bool {
             let l_val = get_other_value(&v);
             rs.iter().any(|b| compare_values(&l_val, op, &get_value(b)))
         }
-        _ => false,
     }
 }
 

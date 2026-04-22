@@ -1298,7 +1298,6 @@ impl LoroDoc {
         }
 
         let mut success = VersionRange::default();
-        let mut pending = VersionRange::default();
         let mut meta_arr = bytes
             .iter()
             .map(|b| Ok((LoroDoc::decode_import_blob_meta(b, false)?, b)))
@@ -1350,20 +1349,6 @@ impl LoroDoc {
                             }
                         }
                     }
-
-                    if let Some(p) = s.pending.as_ref() {
-                        for (&peer, &(start, end)) in p.iter() {
-                            match pending.0.entry(peer) {
-                                Entry::Occupied(mut e) => {
-                                    e.get_mut().0 = start.min(e.get().0);
-                                    e.get_mut().1 = end.min(e.get().1);
-                                }
-                                Entry::Vacant(e) => {
-                                    e.insert((start, end));
-                                }
-                            }
-                        }
-                    }
                 }
                 Err(e) => {
                     err = Some(e);
@@ -1373,6 +1358,7 @@ impl LoroDoc {
 
         let mut oplog = self.oplog.lock();
         oplog.batch_importing = false;
+        let pending = oplog.pending_changes.version_range();
         drop(oplog);
         if !is_detached {
             self._checkout_to_latest_with_guard(txn);
@@ -1422,6 +1408,7 @@ impl LoroDoc {
         }
 
         self._checkout_to_latest_without_commit(true);
+        self.emit_events();
         drop(_guard);
         self.renew_txn_if_auto_commit(options);
     }

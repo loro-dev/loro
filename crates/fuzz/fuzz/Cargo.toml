@@ -55,6 +55,12 @@ test = false
 doc = false
 
 [[bin]]
+name = "movable_list"
+path = "fuzz_targets/movable_list.rs"
+test = false
+doc = false
+
+[[bin]]
 name = "tree"
 path = "fuzz_targets/tree.rs"
 test = false

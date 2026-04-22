@@ -80,6 +80,43 @@ pub enum Action {
         to: u8,
     },
     SyncAll,
+    ForkAt {
+        site: u8,
+        to: u32,
+    },
+    DiffApply {
+        from: u8,
+        to: u8,
+    },
+    /// Call query APIs (get, len, keys, values, etc.) to exercise read-only paths.
+    Query {
+        site: u8,
+        target: u8,
+        query_type: u8,
+    },
+    /// Export a shallow snapshot from the given site (exercises shallow_snapshot encoding).
+    ExportShallow {
+        site: u8,
+    },
+    /// Import a shallow snapshot from `from` into `site`.
+    ImportShallow {
+        site: u8,
+        from: u8,
+    },
+    /// Export state-only snapshot and re-import it at the same site.
+    StateOnlyRoundTrip {
+        site: u8,
+    },
+    /// Explicitly commit the current document's pending changes.
+    Commit {
+        site: u8,
+    },
+    /// Set next commit options (origin, message) before the next operation.
+    SetCommitOptions {
+        site: u8,
+        origin: u8,
+        msg: u8,
+    },
 }
 
 #[derive(Debug, Clone, EnumAsInner)]
@@ -170,6 +207,54 @@ impl Tabled for Action {
                 "sync all undo".into(),
                 format!("{site}").into(),
                 format!("{op_len} op len").into(),
+                "".into(),
+            ],
+            Action::ForkAt { site, to } => vec![
+                "fork_at".into(),
+                format!("{site}").into(),
+                format!("to {to}").into(),
+                "".into(),
+            ],
+            Action::DiffApply { from, to } => vec![
+                "diff_apply".into(),
+                format!("{} -> {}", from, to).into(),
+                "".into(),
+                "".into(),
+            ],
+            Action::Query { site, target, query_type } => vec![
+                "query".into(),
+                format!("{site}").into(),
+                format!("target {target} type {query_type}").into(),
+                "".into(),
+            ],
+            Action::ExportShallow { site } => vec![
+                "export_shallow".into(),
+                format!("{site}").into(),
+                "".into(),
+                "".into(),
+            ],
+            Action::ImportShallow { site, from } => vec![
+                "import_shallow".into(),
+                format!("{site} <- {from}").into(),
+                "".into(),
+                "".into(),
+            ],
+            Action::StateOnlyRoundTrip { site } => vec![
+                "state_only_round_trip".into(),
+                format!("{site}").into(),
+                "".into(),
+                "".into(),
+            ],
+            Action::Commit { site } => vec![
+                "commit".into(),
+                format!("{site}").into(),
+                "".into(),
+                "".into(),
+            ],
+            Action::SetCommitOptions { site, origin, msg } => vec![
+                "set_commit_options".into(),
+                format!("{site}").into(),
+                format!("origin={origin} msg={msg}").into(),
                 "".into(),
             ],
         }

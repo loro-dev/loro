@@ -346,3 +346,119 @@ pub fn unicode_range_to_byte_range(s: &str, start: usize, end: usize) -> (usize,
 
     (start_byte, end_byte)
 }
+
+#[cfg(test)]
+mod tests {
+    use append_only_bytes::AppendOnlyBytes;
+    use generic_btree::rle::{HasLength, Mergeable, Sliceable, TryInsert};
+
+    use crate::delta::DeltaValue;
+
+    use super::*;
+
+    #[test]
+    fn owned_slice_lengths_and_unicode_boundaries_use_logical_char_indices() {
+        let mut slice = StringSlice::from("aé😀b");
+        assert_eq!(slice.as_str(), "aé😀b");
+        assert_eq!(slice.len_bytes(), 8);
+        assert_eq!(slice.len_unicode(), 4);
+        assert_eq!(slice.len_utf16(), 5);
+        let event_len = if cfg!(feature = "wasm") { 5 } else { 4 };
+        assert_eq!(slice.length(), event_len);
+        assert_eq!(slice.rle_len(), event_len);
+
+        let middle_range = if cfg!(feature = "wasm") { 1..4 } else { 1..3 };
+        let middle = slice._slice(middle_range);
+        assert_eq!(middle.as_str(), "é😀");
+
+        let right = slice.split(2);
+        assert_eq!(slice.as_str(), "aé");
+        assert_eq!(right.as_str(), "😀b");
+
+        let prefix = slice.take(1);
+        assert_eq!(prefix.as_str(), "a");
+        assert_eq!(slice.as_str(), "é");
+    }
+
+    #[test]
+    fn owned_slice_insert_and_merge_respect_capacity_contracts() {
+        let mut backing = String::with_capacity(16);
+        backing.push_str("a😀");
+        let mut slice = StringSlice::from(backing);
+        slice.try_insert(1, StringSlice::from("é")).unwrap();
+        assert_eq!(slice.as_str(), "aé😀");
+
+        let mut tight = StringSlice::from(String::from("ab"));
+        let rejected = tight.try_insert(1, StringSlice::from("c")).unwrap_err();
+        assert_eq!(tight.as_str(), "ab");
+        assert_eq!(rejected.as_str(), "c");
+
+        let mut left_text = String::with_capacity(8);
+        left_text.push_str("ab");
+        let mut left = StringSlice::from(left_text);
+        let right = StringSlice::from("cd");
+        assert!(left.can_merge(&right));
+        left.merge_right(&right);
+        assert_eq!(left.as_str(), "abcd");
+
+        let mut suffix = StringSlice::from("cd");
+        suffix.merge_left(&StringSlice::from("ab"));
+        assert_eq!(suffix.as_str(), "abcd");
+    }
+
+    #[test]
+    fn bytes_slice_variant_keeps_append_only_slice_semantics() {
+        let mut bytes = AppendOnlyBytes::new();
+        bytes.push_str("left");
+        let left_bytes = bytes.slice(..);
+        bytes.push_str("right");
+        let right_bytes = bytes.slice(4..);
+
+        let mut left = StringSlice::from(left_bytes.clone());
+        let right = StringSlice::from(right_bytes.clone());
+        assert_eq!(left.as_str(), "left");
+        assert_eq!(right.as_str(), "right");
+        assert!(left.can_merge(&right));
+        left.value_extend(right).unwrap();
+        assert_eq!(left.as_str(), "leftright");
+
+        let mut whole = StringSlice::from(bytes.slice(..));
+        let tail = whole.split(4);
+        assert_eq!(whole.as_str(), "left");
+        assert_eq!(tail.as_str(), "right");
+        assert_eq!(
+            StringSlice::from(bytes.slice(..))._slice(1..5).as_str(),
+            "eftr"
+        );
+
+        let mut converted_to_owned = StringSlice::from(left_bytes);
+        converted_to_owned.extend("!");
+        assert_eq!(converted_to_owned.as_str(), "left!");
+
+        let mut byte_slice = StringSlice::from(right_bytes);
+        let rejected = byte_slice
+            .try_insert(1, StringSlice::from("!"))
+            .unwrap_err();
+        assert_eq!(byte_slice.as_str(), "right");
+        assert_eq!(rejected.as_str(), "!");
+    }
+
+    #[test]
+    fn serde_display_default_and_range_conversion_are_string_like() {
+        let empty = StringSlice::default();
+        assert!(empty.is_empty());
+
+        let slice = StringSlice::from("aé😀b");
+        assert_eq!(slice.to_string(), "aé😀b");
+        assert_eq!(format!("{slice:?}"), r#"StringSlice { bytes: "aé😀b" }"#);
+
+        let encoded = serde_json::to_string(&slice).unwrap();
+        assert_eq!(encoded, r#""aé😀b""#);
+        let decoded: StringSlice = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded, slice);
+
+        let (start, end) = unicode_range_to_byte_range("aé😀b", 1, 3);
+        assert_eq!(&"aé😀b"[start..end], "é😀");
+        assert_eq!(unicode_range_to_byte_range("aé😀b", 2, 4), (3, 8));
+    }
+}

@@ -403,8 +403,18 @@ pub(crate) fn decode_updates_blob_meta(
     let mut start_vv = VersionVector::new();
     let mut end_vv = VersionVector::new();
     for c in changes.iter() {
-        start_vv.insert(c.id.peer, c.id.counter);
-        end_vv.insert(c.id.peer, c.ctr_end());
+        match start_vv.get(&c.id.peer).copied() {
+            Some(start) if start <= c.id.counter => {}
+            _ => {
+                start_vv.insert(c.id.peer, c.id.counter);
+            }
+        }
+        match end_vv.get(&c.id.peer).copied() {
+            Some(end) if end >= c.ctr_end() => {}
+            _ => {
+                end_vv.insert(c.id.peer, c.ctr_end());
+            }
+        }
     }
 
     let mut start_frontiers = Frontiers::new();

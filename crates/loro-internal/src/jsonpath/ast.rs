@@ -280,3 +280,179 @@ impl fmt::Display for ComparisonOperator {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(expr: &str) -> Query {
+        Query::standard(expr).unwrap()
+    }
+
+    fn relative_query(selector: Selector) -> Query {
+        Query {
+            segments: Segment::Child {
+                left: Box::new(Segment::Root {}),
+                selectors: vec![selector],
+            },
+        }
+    }
+
+    #[test]
+    fn query_standard_reports_singular_queries_correctly() {
+        let cases = [
+            ("$", true),
+            ("$.store", true),
+            ("$['store']", true),
+            ("$.store.books[0]", true),
+            ("$.store.books[0][1]", true),
+            ("$.store.books[0, 1]", false),
+            ("$.store.books[*]", false),
+            ("$.store.books[?(@.available == true)]", false),
+            ("$.store..title", false),
+        ];
+
+        for (expr, expected) in cases {
+            assert_eq!(
+                parse(expr).is_singular(),
+                expected,
+                "{expr} should have singular={expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn filter_expression_is_literal_matches_jsonpath_contract() {
+        let literal_cases = [
+            FilterExpression::True_ {},
+            FilterExpression::False_ {},
+            FilterExpression::Null {},
+            FilterExpression::StringLiteral {
+                value: "hello".to_owned(),
+            },
+            FilterExpression::Int { value: 42 },
+            FilterExpression::Float { value: 3.5 },
+            FilterExpression::Array {
+                values: vec![
+                    FilterExpression::Int { value: 1 },
+                    FilterExpression::StringLiteral {
+                        value: "two".to_owned(),
+                    },
+                    FilterExpression::Array {
+                        values: vec![FilterExpression::Null {}],
+                    },
+                ],
+            },
+        ];
+
+        for expr in literal_cases {
+            assert!(expr.is_literal(), "{expr:?} should be literal");
+        }
+
+        let non_literal_cases = [
+            FilterExpression::RelativeQuery {
+                query: Box::new(relative_query(Selector::Name {
+                    name: "title".to_owned(),
+                })),
+            },
+            FilterExpression::RootQuery {
+                query: Box::new(parse("$.store.books[0]")),
+            },
+            FilterExpression::Function {
+                name: "count".to_owned(),
+                args: vec![FilterExpression::RelativeQuery {
+                    query: Box::new(relative_query(Selector::Name {
+                        name: "title".to_owned(),
+                    })),
+                }],
+            },
+            FilterExpression::Not {
+                expression: Box::new(FilterExpression::True_ {}),
+            },
+            FilterExpression::Logical {
+                left: Box::new(FilterExpression::True_ {}),
+                operator: LogicalOperator::And,
+                right: Box::new(FilterExpression::False_ {}),
+            },
+            FilterExpression::Comparison {
+                left: Box::new(FilterExpression::Int { value: 1 }),
+                operator: ComparisonOperator::Eq,
+                right: Box::new(FilterExpression::Int { value: 2 }),
+            },
+        ];
+
+        for expr in non_literal_cases {
+            assert!(!expr.is_literal(), "{expr:?} should not be literal");
+        }
+    }
+
+    #[test]
+    fn query_and_ast_display_are_stable() {
+        let query = parse("$.store.books[0]");
+        assert_eq!(query.to_string(), "$['store']['books'][0]");
+        assert_eq!(
+            parse("$.store.books[0, 1]").to_string(),
+            "$['store']['books'][0, 1]"
+        );
+        assert_eq!(parse("$.store..title").to_string(), "$['store']..['title']");
+
+        let selector_display = [
+            (
+                Selector::Name {
+                    name: "field".into(),
+                },
+                "'field'",
+            ),
+            (Selector::Index { index: -2 }, "-2"),
+            (
+                Selector::Slice {
+                    start: Some(1),
+                    stop: Some(3),
+                    step: None,
+                },
+                "1:3:1",
+            ),
+            (Selector::Wild {}, "*"),
+        ];
+
+        for (selector, expected) in selector_display {
+            assert_eq!(selector.to_string(), expected);
+        }
+
+        let filter_display = FilterExpression::Logical {
+            left: Box::new(FilterExpression::Comparison {
+                left: Box::new(FilterExpression::RelativeQuery {
+                    query: Box::new(relative_query(Selector::Name {
+                        name: "available".to_owned(),
+                    })),
+                }),
+                operator: ComparisonOperator::Eq,
+                right: Box::new(FilterExpression::True_ {}),
+            }),
+            operator: LogicalOperator::And,
+            right: Box::new(FilterExpression::Not {
+                expression: Box::new(FilterExpression::Function {
+                    name: "count".to_owned(),
+                    args: vec![FilterExpression::RootQuery {
+                        query: Box::new(parse("$.store.books[*]")),
+                    }],
+                }),
+            }),
+        };
+        assert_eq!(
+            filter_display.to_string(),
+            "(@['available'] == true && !count($['store']['books'][*]))"
+        );
+
+        assert_eq!(LogicalOperator::And.to_string(), "&&");
+        assert_eq!(LogicalOperator::Or.to_string(), "||");
+        assert_eq!(ComparisonOperator::Eq.to_string(), "==");
+        assert_eq!(ComparisonOperator::Ne.to_string(), "!=");
+        assert_eq!(ComparisonOperator::Ge.to_string(), ">=");
+        assert_eq!(ComparisonOperator::Gt.to_string(), ">");
+        assert_eq!(ComparisonOperator::Le.to_string(), "<=");
+        assert_eq!(ComparisonOperator::Lt.to_string(), "<");
+        assert_eq!(ComparisonOperator::Contains.to_string(), "contains");
+        assert_eq!(ComparisonOperator::In.to_string(), "in");
+    }
+}

@@ -44,6 +44,16 @@ pub enum TreeActionInner {
     Meta {
         meta: (String, FuzzValue),
     },
+    MetaDelete {
+        key: String,
+    },
+    MetaClear,
+    CreateWithoutIndex {
+        parent: (u64, i32),
+    },
+    Mov {
+        parent: (u64, i32),
+    },
 }
 
 impl Debug for TreeActionInner {
@@ -79,6 +89,16 @@ impl Debug for TreeActionInner {
                 "TreeActionInner::Meta{{meta:(\"{}\".into(),{:?})}}",
                 meta.0, meta.1
             ),
+            TreeActionInner::MetaDelete { key } => {
+                write!(f, "TreeActionInner::MetaDelete{{key:{}}}", key)
+            }
+            TreeActionInner::MetaClear => write!(f, "TreeActionInner::MetaClear"),
+            TreeActionInner::CreateWithoutIndex { parent } => {
+                write!(f, "TreeActionInner::CreateWithoutIndex{{parent:{:?}}}", parent)
+            }
+            TreeActionInner::Mov { parent } => {
+                write!(f, "TreeActionInner::Mov{{parent:{:?}}}", parent)
+            }
         }
     }
 }
@@ -162,7 +182,10 @@ impl Actionable for TreeAction {
             || node_num < 2
                 && (matches!(
                     action,
-                    TreeActionInner::Move { .. } | TreeActionInner::Meta { .. }
+                    TreeActionInner::Move { .. }
+                        | TreeActionInner::MoveBefore { .. }
+                        | TreeActionInner::MoveAfter { .. }
+                        | TreeActionInner::Meta { .. }
                 ))
         {
             *action = TreeActionInner::Create { index: 0 };
@@ -216,17 +239,51 @@ impl Actionable for TreeAction {
                     *v = FuzzValue::I32(0);
                 }
             }
+            TreeActionInner::MetaDelete { key } => {
+                let target_index = target.0 as usize % node_num;
+                *target = (nodes[target_index].peer, nodes[target_index].counter);
+                if key.is_empty() {
+                    *key = "0".to_string();
+                }
+            }
+            TreeActionInner::MetaClear => {
+                let target_index = target.0 as usize % node_num;
+                *target = (nodes[target_index].peer, nodes[target_index].counter);
+            }
+            TreeActionInner::CreateWithoutIndex { parent } => {
+                if node_num == 0 {
+                    *parent = (0, 0);
+                } else {
+                    let parent_idx = parent.0 as usize % node_num;
+                    *parent = (nodes[parent_idx].peer, nodes[parent_idx].counter);
+                }
+                let id = tree.__internal__next_tree_id();
+                *target = (id.peer, id.counter);
+            }
+            TreeActionInner::Mov { parent } => {
+                let target_index = target.0 as usize % node_num;
+                *target = (nodes[target_index].peer, nodes[target_index].counter);
+                if node_num < 2 {
+                    *action = TreeActionInner::Create { index: 0 };
+                } else {
+                    let mut parent_idx = parent.0 as usize % node_num;
+                    while target_index == parent_idx {
+                        parent_idx = (parent_idx + 1) % node_num;
+                    }
+                    *parent = (nodes[parent_idx].peer, nodes[parent_idx].counter);
+                }
+            }
         }
     }
 
     fn pre_process_container_value(&mut self) -> Option<&mut ContainerType> {
-        if let TreeActionInner::Meta {
-            meta: (_, FuzzValue::Container(c)),
-        } = &mut self.action
-        {
-            Some(c)
-        } else {
-            None
+        match &mut self.action {
+            TreeActionInner::Meta {
+                meta: (_, FuzzValue::Container(c)),
+            } => Some(c),
+            TreeActionInner::MetaDelete { .. } => None,
+            TreeActionInner::MetaClear => None,
+            _ => None,
         }
     }
 
@@ -299,6 +356,36 @@ impl Actionable for TreeAction {
                     }
                 }
             }
+            TreeActionInner::MetaDelete { key } => {
+                let meta = super::unwrap(tree.get_meta(target))?;
+                meta.delete(key);
+                None
+            }
+            TreeActionInner::MetaClear => {
+                let meta = super::unwrap(tree.get_meta(target))?;
+                meta.clear().unwrap();
+                None
+            }
+            TreeActionInner::CreateWithoutIndex { parent } => {
+                let parent = if parent.0 == 0 && parent.1 == 0 {
+                    None
+                } else {
+                    Some(TreeID::new(parent.0, parent.1))
+                };
+                super::unwrap(tree.create(parent));
+                None
+            }
+            TreeActionInner::Mov { parent } => {
+                let parent = if parent.0 == 0 && parent.1 == 0 {
+                    None
+                } else {
+                    Some(TreeID::new(parent.0, parent.1))
+                };
+                if let Err(LoroError::TreeError(e)) = tree.mov(target, parent) {
+                    tracing::warn!("mov error {}", e);
+                }
+                None
+            }
         }
     }
 
@@ -324,6 +411,16 @@ impl Actionable for TreeAction {
                 after: (ai, ac),
             } => [format!("move {tc}@{ti} after {ac}@{ai}").into(), target],
             TreeActionInner::Meta { meta } => [format!("meta\n {:?}", meta).into(), target],
+            TreeActionInner::MetaDelete { key } => {
+                [format!("meta_delete {}", key).into(), target]
+            }
+            TreeActionInner::MetaClear => ["meta_clear".into(), target],
+            TreeActionInner::CreateWithoutIndex { parent: (pi, pc) } => {
+                [format!("create under {pc}@{pi}").into(), target]
+            }
+            TreeActionInner::Mov { parent: (pi, pc) } => {
+                [format!("mov to {pc}@{pi}").into(), target]
+            }
         }
     }
 
@@ -337,7 +434,7 @@ impl FromGenericAction for TreeAction {
         let target = (action.pos as u64, 0);
         let parent = (action.length as u64, 0);
         let index = action.prop as usize;
-        let action = match action.prop % 4 {
+        let action = match action.prop % 10 {
             0 => TreeActionInner::Create { index },
             1 => TreeActionInner::Delete,
             2 => TreeActionInner::Move { parent, index },
@@ -352,6 +449,12 @@ impl FromGenericAction for TreeAction {
                 target,
                 after: parent,
             },
+            6 => TreeActionInner::MetaDelete {
+                key: action.key.to_string(),
+            },
+            7 => TreeActionInner::MetaClear,
+            8 => TreeActionInner::CreateWithoutIndex { parent },
+            9 => TreeActionInner::Mov { parent },
             _ => unreachable!(),
         };
         Self { target, action }
