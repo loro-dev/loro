@@ -1,6 +1,6 @@
 use loro_common::ContainerID;
 
-use crate::{container::idx::ContainerIdx, event::InternalDiff, OpLog};
+use crate::{container::idx::ContainerIdx, event::InternalDiff, version::CausalVersion, OpLog};
 
 use super::{DiffCalcVersionInfo, DiffCalculatorTrait, DiffMode};
 
@@ -14,7 +14,7 @@ impl DiffCalculatorTrait for UnknownDiffCalculator {
         &mut self,
         _oplog: &OpLog,
         _op: crate::op::RichOp,
-        _vv: Option<&crate::VersionVector>,
+        _vv: Option<CausalVersion<'_>>,
     ) {
     }
 

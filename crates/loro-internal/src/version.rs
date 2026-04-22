@@ -2,6 +2,7 @@ mod frontiers;
 pub use frontiers::Frontiers;
 
 use crate::{
+    dag::Dag,
     id::{Counter, ID},
     oplog::AppDag,
     span::{CounterSpan, IdSpan},
@@ -158,6 +159,66 @@ impl VersionRange {
 #[repr(transparent)]
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ImVersionVector(im::HashMap<PeerID, Counter, rustc_hash::FxBuildHasher>);
+
+/// A lightweight causal version used while replaying changes in causal order.
+///
+/// It represents `base` plus the current peer advanced to at least `peer_end`.
+/// This avoids rebuilding a full mutable [VersionVector] for every replayed
+/// DAG node/op in checkout diff calculation.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct CausalVersion<'a> {
+    base: &'a ImVersionVector,
+    peer: PeerID,
+    peer_end: Counter,
+    single_frontier: Option<ID>,
+}
+
+impl<'a> CausalVersion<'a> {
+    #[inline]
+    pub(crate) fn new(
+        base: &'a ImVersionVector,
+        peer: PeerID,
+        peer_end: Counter,
+        single_frontier: Option<ID>,
+    ) -> Self {
+        Self {
+            base,
+            peer,
+            peer_end,
+            single_frontier,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn base(&self) -> &'a ImVersionVector {
+        self.base
+    }
+
+    #[inline]
+    pub(crate) fn peer(&self) -> PeerID {
+        self.peer
+    }
+
+    #[inline]
+    pub(crate) fn peer_end(&self) -> Counter {
+        self.peer_end
+    }
+
+    #[inline]
+    pub(crate) fn single_frontier(&self) -> Option<ID> {
+        self.single_frontier
+    }
+
+    #[inline]
+    pub(crate) fn end_for_peer(&self, peer: PeerID) -> Counter {
+        let base_end = self.base.get(&peer).copied().unwrap_or(0);
+        if peer == self.peer {
+            base_end.max(self.peer_end)
+        } else {
+            base_end
+        }
+    }
+}
 
 impl ImVersionVector {
     pub fn new() -> Self {
@@ -885,6 +946,30 @@ pub fn shrink_frontiers(last_ids: &Frontiers, dag: &AppDag) -> Result<Frontiers,
 
         last_ids
     };
+
+    if last_ids.len() > 1 {
+        let first_id = last_ids[0].id();
+        let Some(first_node) = dag.get(first_id) else {
+            return Err(first_id);
+        };
+        let first_deps = first_node.deps.clone();
+        let mut all_share_deps = true;
+        for id in &last_ids[1..] {
+            let frontier = id.id();
+            let Some(node) = dag.get(frontier) else {
+                return Err(frontier);
+            };
+            if node.deps != first_deps {
+                all_share_deps = false;
+                break;
+            }
+        }
+
+        if all_share_deps {
+            last_ids.sort_by_key(|x| x.lamport);
+            return Ok(last_ids.into_iter().rev().map(|x| x.id()).collect());
+        }
+    }
 
     let mut frontiers = Vec::new();
     // Iterate from the greatest lamport to the smallest

@@ -5,9 +5,7 @@ mod pending_changes;
 use crate::sync::Mutex;
 use bytes::Bytes;
 use std::borrow::Cow;
-use std::cell::RefCell;
 use std::cmp::Ordering;
-use std::rc::Rc;
 use tracing::trace_span;
 
 use self::change_store::iter::MergedChangeIter;
@@ -392,7 +390,7 @@ impl OpLog {
 
     /// iterates over all changes between LCA(common ancestors) to the merged version of (`from` and `to`) causally
     ///
-    /// Tht iterator will include a version vector when the change is applied
+    /// The iterator includes the causal base version and frontiers before each change is applied.
     ///
     /// returns: (common_ancestor_vv, iterator)
     ///
@@ -414,7 +412,8 @@ impl OpLog {
                 Item = (
                     BlockChangeRef,
                     (Counter, Counter),
-                    Rc<RefCell<VersionVector>>,
+                    ImVersionVector,
+                    Frontiers,
                 ),
             > + '_,
     ) {
@@ -433,17 +432,20 @@ impl OpLog {
         let mut iter = self.dag.iter_causal(common_ancestors, diff);
         let mut node = iter.next();
         let mut cur_cnt = 0;
-        let vv = Rc::new(RefCell::new(VersionVector::default()));
         (
             common_ancestors_vv.clone(),
             diff_mode,
             std::iter::from_fn(move || {
                 if let Some(inner) = &node {
-                    let mut inner_vv = vv.borrow_mut();
-                    // FIXME: PERF: it looks slow for large vv, like 10000+ entries
-                    inner_vv.clear();
-                    self.dag.ensure_vv_for(&inner.data);
-                    inner_vv.extend_to_include_vv(inner.data.vv.get().unwrap().iter());
+                    #[cfg(feature = "test_utils")]
+                    let vv_prepare_start = std::time::Instant::now();
+                    let base_vv = self.dag.ensure_vv_for(&inner.data);
+                    #[cfg(feature = "test_utils")]
+                    crate::diff_calc::profiling::record_causal_vv_materialize(
+                        vv_prepare_start.elapsed(),
+                        base_vv.len(),
+                    );
+                    let base_frontiers = inner.data.deps.clone();
                     let peer = inner.data.peer;
                     let cnt = inner
                         .data
@@ -461,9 +463,7 @@ impl OpLog {
                         cur_cnt = 0;
                     }
 
-                    inner_vv.extend_to_include_end_id(change.id);
-
-                    Some((change, (cnt, dag_node_end), vv.clone()))
+                    Some((change, (cnt, dag_node_end), base_vv, base_frontiers))
                 } else {
                     None
                 }

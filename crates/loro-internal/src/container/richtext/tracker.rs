@@ -6,9 +6,10 @@ use generic_btree::{
 };
 use loro_common::{Counter, HasId, HasIdSpan, IdFull, IdSpan, Lamport, PeerID, ID};
 use rle::HasLength as _;
+use smallvec::SmallVec;
 use tracing::instrument;
 
-use crate::{cursor::AbsolutePosition, VersionVector};
+use crate::{cursor::AbsolutePosition, version::CausalVersion, VersionVector};
 
 use self::{crdt_rope::CrdtRope, id_to_cursor::IdToCursor};
 
@@ -25,6 +26,7 @@ pub(crate) use crdt_rope::CrdtRopeDelta;
 pub(crate) struct Tracker {
     applied_vv: VersionVector,
     current_vv: VersionVector,
+    current_frontier_hint: Option<ID>,
     rope: CrdtRope,
     id_to_cursor: IdToCursor,
 }
@@ -43,6 +45,7 @@ impl Tracker {
             id_to_cursor: IdToCursor::default(),
             applied_vv: Default::default(),
             current_vv: Default::default(),
+            current_frontier_hint: None,
         };
 
         let result = this.rope.tree.push(FugueSpan {
@@ -68,6 +71,7 @@ impl Tracker {
             id_to_cursor: IdToCursor::default(),
             applied_vv: Default::default(),
             current_vv: Default::default(),
+            current_frontier_hint: None,
         }
     }
 
@@ -137,6 +141,7 @@ impl Tracker {
         let end_id = op_id.inc(content.len() as Counter);
         self.current_vv.extend_to_include_end_id(end_id.id());
         self.applied_vv.extend_to_include_end_id(end_id.id());
+        self.current_frontier_hint = Some(ID::new(end_id.peer, end_id.counter - 1));
     }
 
     fn update_insert_by_split(&mut self, split: &[LeafIndex]) {
@@ -229,6 +234,7 @@ impl Tracker {
         let end_id = op_id.inc(len as Counter);
         self.current_vv.extend_to_include_end_id(end_id);
         self.applied_vv.extend_to_include_end_id(end_id);
+        self.current_frontier_hint = Some(ID::new(end_id.peer, end_id.counter - 1));
     }
 
     fn skip_applied(
@@ -324,6 +330,7 @@ impl Tracker {
         let end_id = op_id.inc(1);
         self.current_vv.extend_to_include_end_id(end_id.id());
         self.applied_vv.extend_to_include_end_id(end_id.id());
+        self.current_frontier_hint = Some(end_id.id().inc(-1));
     }
 
     #[inline]
@@ -331,16 +338,81 @@ impl Tracker {
         self._checkout(vv, false);
     }
 
+    #[inline]
+    pub(crate) fn checkout_causal(&mut self, vv: CausalVersion<'_>) {
+        self._checkout_causal(vv, false);
+    }
+
     fn _checkout(&mut self, vv: &VersionVector, on_diff_status: bool) {
         // tracing::info!("Checkout to {:?} from {:?}", vv, self.current_vv);
+        let current_vv = std::mem::take(&mut self.current_vv);
+        let retreat: SmallVec<[IdSpan; 4]> = current_vv.sub_iter(vv).collect();
+        let forward: SmallVec<[IdSpan; 4]> = vv.sub_iter(&current_vv).collect();
+        self._checkout_spans(current_vv, retreat, forward, on_diff_status, None);
+    }
+
+    fn _checkout_causal(&mut self, vv: CausalVersion<'_>, on_diff_status: bool) {
+        if !on_diff_status
+            && vv
+                .single_frontier()
+                .is_some_and(|frontier| self.current_frontier_hint == Some(frontier))
+        {
+            return;
+        }
+
+        let current_vv = std::mem::take(&mut self.current_vv);
+        let mut retreat: SmallVec<[IdSpan; 4]> = SmallVec::new();
+        for (&peer, &counter) in current_vv.iter() {
+            let target_end = vv.end_for_peer(peer);
+            if counter > target_end {
+                retreat.push(IdSpan::new(peer, target_end, counter));
+            }
+        }
+
+        let mut forward: SmallVec<[IdSpan; 4]> = SmallVec::new();
+        for (&peer, &base_end) in vv.base().iter() {
+            let target_end = if peer == vv.peer() {
+                base_end.max(vv.peer_end())
+            } else {
+                base_end
+            };
+            let current_end = current_vv.get(&peer).copied().unwrap_or(0);
+            if target_end > current_end {
+                forward.push(IdSpan::new(peer, current_end, target_end));
+            }
+        }
+
+        if !vv.base().contains_key(&vv.peer()) {
+            let target_end = vv.peer_end();
+            let current_end = current_vv.get(&vv.peer()).copied().unwrap_or(0);
+            if target_end > current_end {
+                forward.push(IdSpan::new(vv.peer(), current_end, target_end));
+            }
+        }
+
+        self._checkout_spans(
+            current_vv,
+            retreat,
+            forward,
+            on_diff_status,
+            vv.single_frontier(),
+        );
+    }
+
+    fn _checkout_spans(
+        &mut self,
+        mut current_vv: VersionVector,
+        retreat: SmallVec<[IdSpan; 4]>,
+        forward: SmallVec<[IdSpan; 4]>,
+        on_diff_status: bool,
+        frontier_hint: Option<ID>,
+    ) {
         if on_diff_status {
             self.rope.clear_diff_status();
         }
 
-        let current_vv = std::mem::take(&mut self.current_vv);
-        let (retreat, forward) = current_vv.diff_iter(vv);
         let mut updates = Vec::new();
-        for span in retreat {
+        for &span in &retreat {
             for c in self.id_to_cursor.iter(span) {
                 match c {
                     id_to_cursor::IterCursor::Insert { leaf, id_span } => {
@@ -427,12 +499,19 @@ impl Tracker {
             }
         }
 
-        for span in forward {
+        for &span in &forward {
             self.forward(span, &mut updates);
         }
 
         if !on_diff_status {
-            self.current_vv = vv.clone();
+            for span in retreat {
+                current_vv.set_end(ID::new(span.peer, span.counter.start));
+            }
+            for span in forward {
+                current_vv.set_end(ID::new(span.peer, span.counter.end));
+            }
+            self.current_vv = current_vv;
+            self.current_frontier_hint = frontier_hint;
         } else {
             self.current_vv = current_vv;
         }

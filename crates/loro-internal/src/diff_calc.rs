@@ -36,7 +36,7 @@ use crate::{
     event::{DiffVariant, InternalDiff},
     op::{InnerContent, RichOp, SliceRange, SliceWithId},
     span::{HasId, HasLamport},
-    version::Frontiers,
+    version::{CausalVersion, Frontiers},
     InternalString, VersionVector,
 };
 
@@ -45,6 +45,91 @@ use self::tree::TreeDiffCalculator;
 use self::unknown::UnknownDiffCalculator;
 
 use super::{event::InternalContainerDiff, oplog::OpLog};
+
+#[cfg(feature = "test_utils")]
+pub(crate) mod profiling {
+    use std::{cell::RefCell, time::Duration};
+
+    #[derive(Debug, Clone, Copy, Default)]
+    pub(crate) struct DiffCalcProfile {
+        pub richtext_tracker_checkout: Duration,
+        pub richtext_tracker_diff: Duration,
+        pub richtext_delta_build: Duration,
+        pub richtext_insert_future_scan: Duration,
+        pub causal_vv_materialize: Duration,
+        pub richtext_tracker_checkout_count: u64,
+        pub richtext_tracker_diff_count: u64,
+        pub richtext_delta_build_count: u64,
+        pub richtext_insert_future_scan_count: u64,
+        pub richtext_insert_future_scan_visited: u64,
+        pub richtext_insert_future_scan_max_visited: usize,
+        pub causal_vv_materialize_count: u64,
+        pub max_causal_vv_width: usize,
+    }
+
+    thread_local! {
+        static PROFILE: RefCell<Option<DiffCalcProfile>> = RefCell::new(None);
+    }
+
+    pub(crate) fn begin() {
+        PROFILE.with(|profile| {
+            *profile.borrow_mut() = Some(DiffCalcProfile::default());
+        });
+    }
+
+    pub(crate) fn finish() -> DiffCalcProfile {
+        PROFILE.with(|profile| profile.borrow_mut().take().unwrap_or_default())
+    }
+
+    pub(crate) fn record_richtext_tracker_checkout(duration: Duration) {
+        PROFILE.with(|profile| {
+            if let Some(profile) = profile.borrow_mut().as_mut() {
+                profile.richtext_tracker_checkout += duration;
+                profile.richtext_tracker_checkout_count += 1;
+            }
+        });
+    }
+
+    pub(crate) fn record_richtext_tracker_diff(duration: Duration) {
+        PROFILE.with(|profile| {
+            if let Some(profile) = profile.borrow_mut().as_mut() {
+                profile.richtext_tracker_diff += duration;
+                profile.richtext_tracker_diff_count += 1;
+            }
+        });
+    }
+
+    pub(crate) fn record_richtext_delta_build(duration: Duration) {
+        PROFILE.with(|profile| {
+            if let Some(profile) = profile.borrow_mut().as_mut() {
+                profile.richtext_delta_build += duration;
+                profile.richtext_delta_build_count += 1;
+            }
+        });
+    }
+
+    pub(crate) fn record_richtext_insert_future_scan(duration: Duration, visited: usize) {
+        PROFILE.with(|profile| {
+            if let Some(profile) = profile.borrow_mut().as_mut() {
+                profile.richtext_insert_future_scan += duration;
+                profile.richtext_insert_future_scan_count += 1;
+                profile.richtext_insert_future_scan_visited += visited as u64;
+                profile.richtext_insert_future_scan_max_visited =
+                    profile.richtext_insert_future_scan_max_visited.max(visited);
+            }
+        });
+    }
+
+    pub(crate) fn record_causal_vv_materialize(duration: Duration, width: usize) {
+        PROFILE.with(|profile| {
+            if let Some(profile) = profile.borrow_mut().as_mut() {
+                profile.causal_vv_materialize += duration;
+                profile.causal_vv_materialize_count += 1;
+                profile.max_causal_vv_width = profile.max_causal_vv_width.max(width);
+            }
+        });
+    }
+}
 
 /// Calculate the diff between two versions. given [OpLog][super::oplog::OpLog]
 /// and [AppState][super::state::AppState].
@@ -172,7 +257,7 @@ impl DiffCalculator {
         let affected_set = {
             loro_common::debug!("LCA: {:?} mode={:?}", &lca, diff_mode);
             let mut started_set = FxHashSet::default();
-            for (change, (start_counter, end_counter), vv) in iter {
+            for (change, (start_counter, end_counter), base_vv, base_frontiers) in iter {
                 let iter_start = change
                     .ops
                     .binary_search_by(|op| op.ctr_last().cmp(&start_counter))
@@ -205,8 +290,14 @@ impl DiffCalculator {
                         op = stack_sliced_op.as_ref().unwrap();
                     }
 
-                    let vv = &mut vv.borrow_mut();
-                    vv.extend_to_include_end_id(ID::new(change.peer(), op.counter));
+                    let base_peer_end = base_vv.get(&change.peer()).copied().unwrap_or(0);
+                    let single_frontier = if op.counter > base_peer_end {
+                        Some(ID::new(change.peer(), op.counter - 1))
+                    } else {
+                        base_frontiers.as_single()
+                    };
+                    let causal_vv =
+                        CausalVersion::new(&base_vv, change.peer(), op.counter, single_frontier);
                     let container = op.container;
                     let depth = oplog.arena.get_depth(container);
                     let (old_depth, calculator) = self.get_or_create_calc(container, depth);
@@ -228,7 +319,7 @@ impl DiffCalculator {
                         calculator.apply_change(
                             oplog,
                             RichOp::new_by_change(&change, op),
-                            Some(vv),
+                            Some(causal_vv),
                         );
                         visited.insert(container);
                     }
@@ -389,12 +480,7 @@ impl DiffCalculator {
 #[enum_dispatch]
 pub(crate) trait DiffCalculatorTrait {
     fn start_tracking(&mut self, oplog: &OpLog, vv: &crate::VersionVector, mode: DiffMode);
-    fn apply_change(
-        &mut self,
-        oplog: &OpLog,
-        op: crate::op::RichOp,
-        vv: Option<&crate::VersionVector>,
-    );
+    fn apply_change(&mut self, oplog: &OpLog, op: crate::op::RichOp, vv: Option<CausalVersion<'_>>);
     fn calculate_diff(
         &mut self,
         idx: ContainerIdx,
@@ -451,7 +537,7 @@ impl DiffCalculatorTrait for MapDiffCalculator {
         &mut self,
         _oplog: &crate::OpLog,
         op: crate::op::RichOp,
-        _vv: Option<&crate::VersionVector>,
+        _vv: Option<CausalVersion<'_>>,
     ) {
         if matches!(self.current_mode, DiffMode::Checkout) {
             // We need to use history cache anyway
@@ -594,10 +680,10 @@ impl DiffCalculatorTrait for ListDiffCalculator {
         &mut self,
         _oplog: &OpLog,
         op: crate::op::RichOp,
-        vv: Option<&crate::VersionVector>,
+        vv: Option<CausalVersion<'_>>,
     ) {
         if let Some(vv) = vv {
-            self.tracker.checkout(vv);
+            self.tracker.checkout_causal(vv);
         }
 
         match &op.op().content {
@@ -795,6 +881,30 @@ impl RichtextDiffCalculator {
     }
 }
 
+#[cfg(feature = "test_utils")]
+fn richtext_tracker_checkout(tracker: &mut RichtextTracker, vv: &VersionVector) {
+    let start = std::time::Instant::now();
+    tracker.checkout(vv);
+    profiling::record_richtext_tracker_checkout(start.elapsed());
+}
+
+#[cfg(feature = "test_utils")]
+fn richtext_tracker_checkout_causal(tracker: &mut RichtextTracker, vv: CausalVersion<'_>) {
+    let start = std::time::Instant::now();
+    tracker.checkout_causal(vv);
+    profiling::record_richtext_tracker_checkout(start.elapsed());
+}
+
+#[cfg(not(feature = "test_utils"))]
+fn richtext_tracker_checkout(tracker: &mut RichtextTracker, vv: &VersionVector) {
+    tracker.checkout(vv);
+}
+
+#[cfg(not(feature = "test_utils"))]
+fn richtext_tracker_checkout_causal(tracker: &mut RichtextTracker, vv: CausalVersion<'_>) {
+    tracker.checkout_causal(vv);
+}
+
 impl DiffCalculatorTrait for RichtextDiffCalculator {
     fn start_tracking(
         &mut self,
@@ -828,7 +938,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                     *start_vv = vv.clone();
                 }
 
-                tracker.checkout(vv);
+                richtext_tracker_checkout(tracker, vv);
             }
             RichtextCalcMode::Linear { .. } => {}
         }
@@ -838,7 +948,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
         &mut self,
         oplog: &super::oplog::OpLog,
         op: crate::op::RichOp,
-        vv: Option<&crate::VersionVector>,
+        vv: Option<CausalVersion<'_>>,
     ) {
         match &mut *self.mode {
             RichtextCalcMode::Linear {
@@ -941,7 +1051,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                 start_vv: _,
             } => {
                 if let Some(vv) = vv {
-                    tracker.checkout(vv);
+                    richtext_tracker_checkout_causal(tracker, vv);
                 }
                 match &op.raw_op().content {
                     crate::op::InnerContent::List(l) => match l {
@@ -1078,7 +1188,14 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                 tracker, styles, ..
             } => {
                 let mut delta = DeltaRope::new();
-                for item in tracker.diff(info.from_vv, info.to_vv) {
+                #[cfg(feature = "test_utils")]
+                let tracker_diff_start = std::time::Instant::now();
+                let diff_iter = tracker.diff(info.from_vv, info.to_vv);
+                #[cfg(feature = "test_utils")]
+                profiling::record_richtext_tracker_diff(tracker_diff_start.elapsed());
+                #[cfg(feature = "test_utils")]
+                let delta_build_start = std::time::Instant::now();
+                for item in diff_iter {
                     match item {
                         CrdtRopeDelta::Retain(len) => {
                             delta.push_retain(len, ());
@@ -1167,6 +1284,8 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                         }
                     }
                 }
+                #[cfg(feature = "test_utils")]
+                profiling::record_richtext_delta_build(delta_build_start.elapsed());
 
                 (InternalDiff::RichtextRaw(delta), DiffMode::Checkout)
             }
@@ -1215,7 +1334,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
         &mut self,
         oplog: &OpLog,
         op: crate::op::RichOp,
-        vv: Option<&crate::VersionVector>,
+        vv: Option<CausalVersion<'_>>,
     ) {
         let InnerContent::List(l) = &op.raw_op().content else {
             unreachable!()
@@ -1301,7 +1420,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
             // Apply change on the list items
             let this = &mut self.list;
             if let Some(vv) = vv {
-                this.tracker.checkout(vv);
+                this.tracker.checkout_causal(vv);
             }
 
             let real_op = op.op();

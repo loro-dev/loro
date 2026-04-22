@@ -134,6 +134,16 @@ impl StyleRangeMap {
         }
     }
 
+    #[cfg(feature = "test_utils")]
+    pub(super) fn debug_node_len(&self) -> usize {
+        self.tree.node_len()
+    }
+
+    #[cfg(feature = "test_utils")]
+    pub(super) fn debug_chunk_len(&self) -> usize {
+        self.tree.iter().count()
+    }
+
     pub fn annotate(
         &mut self,
         range: Range<usize>,

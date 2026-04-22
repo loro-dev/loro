@@ -61,6 +61,48 @@ use std::{
 };
 use tracing::{debug_span, info_span, instrument, warn};
 
+#[cfg(feature = "test_utils")]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CheckoutProfile {
+    pub total: std::time::Duration,
+    pub frontier_prepare: std::time::Duration,
+    pub frontiers_to_vv: std::time::Duration,
+    pub diff_calc: std::time::Duration,
+    pub state_apply: std::time::Duration,
+    pub emit_events: std::time::Duration,
+    pub richtext_tracker_checkout: std::time::Duration,
+    pub richtext_tracker_diff: std::time::Duration,
+    pub richtext_delta_build: std::time::Duration,
+    pub richtext_insert_future_scan: std::time::Duration,
+    pub causal_vv_materialize: std::time::Duration,
+    pub diff_container_count: usize,
+    pub from_frontiers_len: usize,
+    pub to_frontiers_len: usize,
+    pub from_vv_len: usize,
+    pub to_vv_len: usize,
+    pub richtext_tracker_checkout_count: u64,
+    pub richtext_tracker_diff_count: u64,
+    pub richtext_delta_build_count: u64,
+    pub richtext_insert_future_scan_count: u64,
+    pub richtext_insert_future_scan_visited: u64,
+    pub richtext_insert_future_scan_max_visited: usize,
+    pub causal_vv_materialize_count: u64,
+    pub max_causal_vv_width: usize,
+    pub recording_events: bool,
+    pub forward_diff_calculator: bool,
+}
+
+#[cfg(feature = "test_utils")]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TextStateProfile {
+    pub richtext_tree_node_count: usize,
+    pub richtext_chunk_count: usize,
+    pub text_chunk_count: usize,
+    pub style_anchor_count: usize,
+    pub style_range_tree_node_count: usize,
+    pub style_range_chunk_count: usize,
+}
+
 impl Default for LoroDoc {
     fn default() -> Self {
         Self::new()
@@ -1440,6 +1482,66 @@ impl LoroDoc {
         result
     }
 
+    #[cfg(feature = "test_utils")]
+    pub fn checkout_with_profile(&self, frontiers: &Frontiers) -> LoroResult<CheckoutProfile> {
+        let total_start = std::time::Instant::now();
+        let was_detached = self.is_detached();
+        let (options, guard) = self.implicit_commit_then_stop();
+        let mut result = self._checkout_without_emitting_profile(frontiers, true, true);
+        if let Ok(profile) = result.as_mut() {
+            let emit_start = std::time::Instant::now();
+            self.emit_events();
+            profile.emit_events = emit_start.elapsed();
+        }
+        drop(guard);
+        if self.config.detached_editing() {
+            if result.is_ok() {
+                self.renew_peer_id();
+            }
+            self.renew_txn_if_auto_commit(options);
+        } else if result.is_err() {
+            if !was_detached {
+                self.renew_txn_if_auto_commit(options);
+            }
+        } else if !self.is_detached() {
+            self.renew_txn_if_auto_commit(options);
+        }
+
+        if let Ok(profile) = result.as_mut() {
+            profile.total = total_start.elapsed();
+        }
+
+        result
+    }
+
+    #[cfg(feature = "test_utils")]
+    pub fn text_state_profile(&self, name: &str) -> Option<TextStateProfile> {
+        let id = ContainerID::new_root(name, ContainerType::Text);
+        let idx = self.arena.id_to_idx(&id)?;
+        let mut state = self.state.lock();
+        let (
+            richtext_tree_node_count,
+            richtext_chunk_count,
+            text_chunk_count,
+            style_anchor_count,
+            style_range_tree_node_count,
+            style_range_chunk_count,
+        ) = state.with_state_mut(idx, |state| {
+            state
+                .as_richtext_state_mut()
+                .map(|state| state.debug_counts())
+        })?;
+
+        Some(TextStateProfile {
+            richtext_tree_node_count,
+            richtext_chunk_count,
+            text_chunk_count,
+            style_anchor_count,
+            style_range_tree_node_count,
+            style_range_chunk_count,
+        })
+    }
+
     /// NOTE: The caller of this method should ensure the txn is locked and set to None
     #[instrument(level = "info", skip(self))]
     pub(crate) fn _checkout_without_emitting(
@@ -1483,7 +1585,6 @@ impl LoroDoc {
         }
 
         let mut state = self.state.lock();
-        let mut calc = self.diff_calculator.lock();
         for i in frontiers.iter() {
             if !oplog.dag.contains(i) {
                 return Err(LoroError::FrontiersNotFound(i));
@@ -1506,8 +1607,14 @@ impl LoroDoc {
         };
 
         self.set_detached(true);
-        let (diff, diff_mode) =
-            calc.calc_diff_internal(&oplog, &before, &state.frontiers, after, &frontiers, None);
+        let use_forward_diff_calculator = should_use_forward_diff_calculator(&before, after);
+        let (diff, diff_mode) = if use_forward_diff_calculator {
+            let mut calc = DiffCalculator::new(false);
+            calc.calc_diff_internal(&oplog, &before, &state.frontiers, after, &frontiers, None)
+        } else {
+            let mut calc = self.diff_calculator.lock();
+            calc.calc_diff_internal(&oplog, &before, &state.frontiers, after, &frontiers, None)
+        };
         state.apply_diff(
             InternalDocDiff {
                 origin: "checkout".into(),
@@ -1519,6 +1626,127 @@ impl LoroDoc {
         )?;
 
         Ok(())
+    }
+
+    #[cfg(feature = "test_utils")]
+    fn _checkout_without_emitting_profile(
+        &self,
+        frontiers: &Frontiers,
+        to_shrink_frontiers: bool,
+        _to_commit_then_renew: bool,
+    ) -> Result<CheckoutProfile, LoroError> {
+        let mut profile = CheckoutProfile::default();
+        let prepare_start = std::time::Instant::now();
+        if !self.txn.is_locked() {
+            return Err(LoroError::TransactionError(
+                "checkout requires the transaction mutex to be held"
+                    .to_string()
+                    .into_boxed_str(),
+            ));
+        }
+        let from_frontiers = self.state_frontiers();
+        profile.from_frontiers_len = from_frontiers.len();
+        profile.to_frontiers_len = frontiers.len();
+        loro_common::info!(
+            "checkout from={:?} to={:?} cur_vv={:?}",
+            from_frontiers,
+            frontiers,
+            self.oplog_vv()
+        );
+
+        if &from_frontiers == frontiers {
+            profile.frontier_prepare = prepare_start.elapsed();
+            return Ok(profile);
+        }
+
+        let oplog = self.oplog.lock();
+        if oplog.dag.is_before_shallow_root(frontiers) {
+            return Err(LoroError::SwitchToVersionBeforeShallowRoot);
+        }
+
+        let frontiers = if to_shrink_frontiers {
+            shrink_frontiers(frontiers, &oplog.dag).map_err(LoroError::FrontiersNotFound)?
+        } else {
+            frontiers.clone()
+        };
+        profile.to_frontiers_len = frontiers.len();
+
+        if from_frontiers == frontiers {
+            profile.frontier_prepare = prepare_start.elapsed();
+            return Ok(profile);
+        }
+
+        let mut state = self.state.lock();
+        for i in frontiers.iter() {
+            if !oplog.dag.contains(i) {
+                return Err(LoroError::FrontiersNotFound(i));
+            }
+        }
+        profile.frontier_prepare = prepare_start.elapsed();
+
+        let vv_start = std::time::Instant::now();
+        let before = oplog.dag.frontiers_to_vv(&state.frontiers).ok_or_else(|| {
+            LoroError::NotFoundError(
+                format!(
+                    "Cannot find the current state version {:?}",
+                    state.frontiers
+                )
+                .into_boxed_str(),
+            )
+        })?;
+        let Some(after) = &oplog.dag.frontiers_to_vv(&frontiers) else {
+            return Err(LoroError::NotFoundError(
+                format!("Cannot find the specified version {:?}", frontiers).into_boxed_str(),
+            ));
+        };
+        profile.frontiers_to_vv = vv_start.elapsed();
+        profile.from_vv_len = before.len();
+        profile.to_vv_len = after.len();
+        profile.recording_events = state.is_recording();
+
+        self.set_detached(true);
+        let diff_start = std::time::Instant::now();
+        crate::diff_calc::profiling::begin();
+        profile.forward_diff_calculator = should_use_forward_diff_calculator(&before, after);
+        let (diff, diff_mode) = if profile.forward_diff_calculator {
+            let mut calc = DiffCalculator::new(false);
+            calc.calc_diff_internal(&oplog, &before, &state.frontiers, after, &frontiers, None)
+        } else {
+            let mut calc = self.diff_calculator.lock();
+            calc.calc_diff_internal(&oplog, &before, &state.frontiers, after, &frontiers, None)
+        };
+        let diff_profile = crate::diff_calc::profiling::finish();
+        profile.diff_calc = diff_start.elapsed();
+        profile.richtext_tracker_checkout = diff_profile.richtext_tracker_checkout;
+        profile.richtext_tracker_diff = diff_profile.richtext_tracker_diff;
+        profile.richtext_delta_build = diff_profile.richtext_delta_build;
+        profile.richtext_insert_future_scan = diff_profile.richtext_insert_future_scan;
+        profile.causal_vv_materialize = diff_profile.causal_vv_materialize;
+        profile.richtext_tracker_checkout_count = diff_profile.richtext_tracker_checkout_count;
+        profile.richtext_tracker_diff_count = diff_profile.richtext_tracker_diff_count;
+        profile.richtext_delta_build_count = diff_profile.richtext_delta_build_count;
+        profile.richtext_insert_future_scan_count = diff_profile.richtext_insert_future_scan_count;
+        profile.richtext_insert_future_scan_visited =
+            diff_profile.richtext_insert_future_scan_visited;
+        profile.richtext_insert_future_scan_max_visited =
+            diff_profile.richtext_insert_future_scan_max_visited;
+        profile.causal_vv_materialize_count = diff_profile.causal_vv_materialize_count;
+        profile.max_causal_vv_width = diff_profile.max_causal_vv_width;
+        profile.diff_container_count = diff.len();
+
+        let apply_start = std::time::Instant::now();
+        state.apply_diff(
+            InternalDocDiff {
+                origin: "checkout".into(),
+                diff: Cow::Owned(diff),
+                by: EventTriggerKind::Checkout,
+                new_version: Cow::Owned(frontiers.clone()),
+            },
+            diff_mode,
+        )?;
+        profile.state_apply = apply_start.elapsed();
+
+        Ok(profile)
     }
 
     #[inline]
@@ -2096,6 +2324,10 @@ fn find_last_delete_op(oplog: &OpLog, id: ID, idx: ContainerIdx) -> Option<ID> {
     None
 }
 
+fn should_use_forward_diff_calculator(before: &VersionVector, after: &VersionVector) -> bool {
+    matches!(before.partial_cmp(after), Some(Ordering::Less))
+}
+
 #[derive(Debug)]
 pub struct CommitWhenDrop<'a> {
     doc: &'a LoroDoc,
@@ -2192,7 +2424,10 @@ impl Default for CommitOptions {
 mod test {
     use std::panic::AssertUnwindSafe;
 
-    use crate::{cursor::PosType, loro::ExportMode, version::Frontiers, LoroDoc, ToJson};
+    use crate::{
+        cursor::PosType, handler::HandlerTrait, loro::ExportMode, version::Frontiers, LoroDoc,
+        ToJson,
+    };
     use loro_common::ID;
 
     #[test]
@@ -2255,6 +2490,125 @@ mod test {
                 serde_json::json!({"text":"9876543210","list":[9,8,7,6,5,4,3,2,1,0],"map":{"key":9}})
             );
         }
+    }
+
+    #[test]
+    fn text_checkout_wide_causal_multi_peer() {
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        let text = doc.get_text("text");
+        text.insert(0, "base", PosType::Unicode).unwrap();
+        doc.commit_then_renew();
+
+        let mut frontiers = vec![doc.oplog_frontiers()];
+        let mut expected = vec!["base".to_string()];
+        let mut len = 4;
+        for peer in 0..32 {
+            let snapshot = doc.export(ExportMode::snapshot()).unwrap();
+            let base_vv = doc.oplog_vv();
+            let peer_doc = LoroDoc::new_auto_commit();
+            peer_doc.import(&snapshot).unwrap();
+            peer_doc.set_peer_id(peer + 2).unwrap();
+            let peer_text = peer_doc.get_text("text");
+            peer_text.insert(len, "x", PosType::Unicode).unwrap();
+            peer_doc.commit_then_renew();
+            let update = peer_doc.export(ExportMode::updates(&base_vv)).unwrap();
+            doc.import(&update).unwrap();
+            len += 1;
+            frontiers.push(doc.oplog_frontiers());
+            expected.push(format!("base{}", "x".repeat(peer as usize + 1)));
+        }
+
+        for idx in (0..frontiers.len()).rev() {
+            doc.checkout(&frontiers[idx]).unwrap();
+            assert_eq!(
+                text.get_value().as_string().unwrap().as_str(),
+                expected[idx]
+            );
+        }
+
+        for idx in 0..frontiers.len() {
+            doc.checkout(&frontiers[idx]).unwrap();
+            assert_eq!(
+                text.get_value().as_string().unwrap().as_str(),
+                expected[idx]
+            );
+        }
+    }
+
+    #[test]
+    fn checkout_same_deps_same_position_frontiers_text_consistent() {
+        let base_doc = LoroDoc::new_auto_commit();
+        base_doc.set_peer_id(1).unwrap();
+        let base_text = base_doc.get_text("text");
+        base_text.insert(0, "base", PosType::Unicode).unwrap();
+        base_doc.commit_then_renew();
+        let snapshot = base_doc.export(ExportMode::snapshot()).unwrap();
+        let base_vv = base_doc.oplog_vv();
+        let base_frontiers = base_doc.oplog_frontiers();
+
+        let doc = LoroDoc::new_auto_commit();
+        doc.import(&snapshot).unwrap();
+        let text = doc.get_text("text");
+        for peer in 0..32 {
+            let peer_doc = LoroDoc::new_auto_commit();
+            peer_doc.import(&snapshot).unwrap();
+            peer_doc.set_peer_id(peer + 2).unwrap();
+            let peer_text = peer_doc.get_text("text");
+            peer_text.insert(0, "x", PosType::Unicode).unwrap();
+            peer_doc.commit_then_renew();
+            let update = peer_doc.export(ExportMode::updates(&base_vv)).unwrap();
+            doc.import(&update).unwrap();
+        }
+
+        let latest_frontiers = doc.oplog_frontiers();
+        assert_eq!(latest_frontiers.len(), 32);
+        let expected = text.get_value().as_string().unwrap().to_string();
+
+        doc.checkout(&base_frontiers).unwrap();
+        assert_eq!(text.get_value().as_string().unwrap().as_str(), "base");
+
+        doc.checkout(&latest_frontiers).unwrap();
+        assert_eq!(
+            text.get_value().as_string().unwrap().as_str(),
+            expected.as_str()
+        );
+        doc.check_state_diff_calc_consistency_slow();
+    }
+
+    #[test]
+    fn checkout_to_latest_linear_text_state_consistent() {
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        let text = doc.get_text("text");
+        text.insert(0, "base", PosType::Unicode).unwrap();
+        doc.commit_then_renew();
+
+        let mut frontiers = vec![doc.oplog_frontiers()];
+        let mut expected = vec!["base".to_string()];
+        for _ in 0..24 {
+            let pos = text.get_value().as_string().unwrap().chars().count();
+            text.insert(pos, "x", PosType::Unicode).unwrap();
+            doc.commit_then_renew();
+            frontiers.push(doc.oplog_frontiers());
+            expected.push(format!("base{}", "x".repeat(expected.len())));
+        }
+
+        let old_idx = 7;
+        doc.checkout(&frontiers[old_idx]).unwrap();
+        assert!(doc.is_detached());
+        assert_eq!(
+            text.get_value().as_string().unwrap().as_str(),
+            expected[old_idx]
+        );
+
+        doc.checkout_to_latest();
+        assert!(!doc.is_detached());
+        assert_eq!(
+            text.get_value().as_string().unwrap().as_str(),
+            expected.last().unwrap()
+        );
+        doc.check_state_diff_calc_consistency_slow();
     }
 
     #[test]

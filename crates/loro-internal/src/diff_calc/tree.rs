@@ -11,7 +11,7 @@ use crate::{
     delta::{TreeDelta, TreeDeltaItem, TreeInternalDiff},
     event::InternalDiff,
     state::TreeParentId,
-    version::Frontiers,
+    version::{CausalVersion, Frontiers},
     OpLog, VersionVector,
 };
 
@@ -52,7 +52,7 @@ impl DiffCalculatorTrait for TreeDiffCalculator {
         &mut self,
         _oplog: &OpLog,
         op: crate::op::RichOp,
-        _vv: Option<&crate::VersionVector>,
+        _vv: Option<CausalVersion<'_>>,
     ) {
         match &mut self.mode {
             TreeDiffCalculatorMode::Crdt => {}

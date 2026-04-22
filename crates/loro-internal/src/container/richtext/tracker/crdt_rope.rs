@@ -136,84 +136,111 @@ impl CrdtRope {
         let mut insert_pos = start.cursor;
 
         if !in_between.is_empty() {
+            #[cfg(feature = "test_utils")]
+            let future_scan_start = std::time::Instant::now();
+            #[cfg(feature = "test_utils")]
+            let future_scan_visited = in_between.len();
             // find insert pos
-            let mut scanning = false;
-            let mut visited: SmallVec<[IdSpan; 4]> = Default::default();
-            for (other_leaf, other_elem) in in_between.iter() {
-                // tracing::info!("Visiting {}", &other_elem.id);
-                let other_origin_left = other_elem.origin_left;
-                if other_origin_left != content.origin_left
-                    && other_origin_left
-                        .map(|left| visited.iter().all(|x| !x.contains_id(left.to_id())))
-                        .unwrap_or(true)
-                {
-                    // The other_elem's origin_left must be at the left side of content's origin_left.
-                    // So the content must be at the left side of other_elem.
-
-                    // tracing::info!("Break because the node's origin_left is at the left side of new_elem's origin left");
-                    break;
+            if in_between.iter().all(|(_, other_elem)| {
+                other_elem.origin_left == content.origin_left
+                    && other_elem.origin_right == content.origin_right
+            }) {
+                debug_assert!(in_between
+                    .windows(2)
+                    .all(|window| window[0].1.id.peer <= window[1].1.id.peer));
+                let insert_index = in_between
+                    .partition_point(|(_, other_elem)| other_elem.id.peer <= content.id.peer);
+                if insert_index > 0 {
+                    let (other_leaf, other_elem) = in_between[insert_index - 1];
+                    insert_pos = Cursor {
+                        leaf: other_leaf,
+                        offset: other_elem.rle_len(),
+                    };
                 }
+            } else {
+                let mut scanning = false;
+                let mut visited: SmallVec<[IdSpan; 4]> = Default::default();
+                for (other_leaf, other_elem) in in_between.iter() {
+                    // tracing::info!("Visiting {}", &other_elem.id);
+                    let other_origin_left = other_elem.origin_left;
+                    if other_origin_left != content.origin_left
+                        && other_origin_left
+                            .map(|left| visited.iter().all(|x| !x.contains_id(left.to_id())))
+                            .unwrap_or(true)
+                    {
+                        // The other_elem's origin_left must be at the left side of content's origin_left.
+                        // So the content must be at the left side of other_elem.
 
-                visited.push(IdSpan::new(
-                    other_elem.id.peer,
-                    other_elem.id.counter,
-                    other_elem.id.counter + other_elem.rle_len() as Counter,
-                ));
+                        // tracing::info!("Break because the node's origin_left is at the left side of new_elem's origin left");
+                        break;
+                    }
 
-                if content.origin_left == other_origin_left {
-                    if other_elem.origin_right == content.origin_right {
-                        // tracing::info!("Same right parent");
-                        // Same right parent
-                        if other_elem.id.peer > content.id.peer {
-                            // tracing::info!("Break on larger peer");
-                            break;
+                    visited.push(IdSpan::new(
+                        other_elem.id.peer,
+                        other_elem.id.counter,
+                        other_elem.id.counter + other_elem.rle_len() as Counter,
+                    ));
+
+                    if content.origin_left == other_origin_left {
+                        if other_elem.origin_right == content.origin_right {
+                            // tracing::info!("Same right parent");
+                            // Same right parent
+                            if other_elem.id.peer > content.id.peer {
+                                // tracing::info!("Break on larger peer");
+                                break;
+                            } else {
+                                scanning = false;
+                            }
                         } else {
-                            scanning = false;
-                        }
-                    } else {
-                        // tracing::info!("Different right parent");
-                        // Different right parent, we need to compare the right parents' position
+                            // tracing::info!("Different right parent");
+                            // Different right parent, we need to compare the right parents' position
 
-                        let other_parent_right_idx =
-                            if let Some(other_origin_right) = other_elem.origin_right {
-                                let elem_idx = find_elem(other_origin_right.to_id());
-                                let elem = self.tree.get_elem(elem_idx).unwrap();
-                                // It must be the start of the elem
-                                assert_eq!(elem.id.id(), other_origin_right.to_id());
-                                if elem.origin_left == content.origin_left {
-                                    Some(elem_idx)
+                            let other_parent_right_idx =
+                                if let Some(other_origin_right) = other_elem.origin_right {
+                                    let elem_idx = find_elem(other_origin_right.to_id());
+                                    let elem = self.tree.get_elem(elem_idx).unwrap();
+                                    // It must be the start of the elem
+                                    assert_eq!(elem.id.id(), other_origin_right.to_id());
+                                    if elem.origin_left == content.origin_left {
+                                        Some(elem_idx)
+                                    } else {
+                                        None
+                                    }
                                 } else {
                                     None
-                                }
-                            } else {
-                                None
-                            };
+                                };
 
-                        match self.cmp_pos(other_parent_right_idx, parent_right_leaf) {
-                            Ordering::Less => {
-                                // tracing::info!("Less");
-                                scanning = true;
-                            }
-                            Ordering::Equal if other_elem.id.peer > content.id.peer => {
-                                // tracing::info!("Break on eq");
-                                break;
-                            }
-                            _ => {
-                                // tracing::info!("Scanning");
-                                scanning = false;
+                            match self.cmp_pos(other_parent_right_idx, parent_right_leaf) {
+                                Ordering::Less => {
+                                    // tracing::info!("Less");
+                                    scanning = true;
+                                }
+                                Ordering::Equal if other_elem.id.peer > content.id.peer => {
+                                    // tracing::info!("Break on eq");
+                                    break;
+                                }
+                                _ => {
+                                    // tracing::info!("Scanning");
+                                    scanning = false;
+                                }
                             }
                         }
                     }
-                }
 
-                if !scanning {
-                    insert_pos = Cursor {
-                        leaf: *other_leaf,
-                        offset: other_elem.rle_len(),
-                    };
-                    // tracing::info!("updating insert pos {:?}", &insert_pos);
+                    if !scanning {
+                        insert_pos = Cursor {
+                            leaf: *other_leaf,
+                            offset: other_elem.rle_len(),
+                        };
+                        // tracing::info!("updating insert pos {:?}", &insert_pos);
+                    }
                 }
             }
+            #[cfg(feature = "test_utils")]
+            crate::diff_calc::profiling::record_richtext_insert_future_scan(
+                future_scan_start.elapsed(),
+                future_scan_visited,
+            );
         }
 
         // tracing::info!("Inserting at {:?}", insert_pos);
@@ -717,6 +744,38 @@ mod test {
         span
     }
 
+    fn leaf_of(rope: &CrdtRope, id: ID) -> LeafIndex {
+        for iter in rope.tree.iter_range(..) {
+            if iter.elem.id_span().contains_id(id) {
+                return iter.cursor().leaf;
+            }
+        }
+
+        panic!("cannot find leaf for {id:?}")
+    }
+
+    fn leaf_lookup(rope: &CrdtRope) -> Vec<(IdSpan, LeafIndex)> {
+        rope.tree
+            .iter_range(..)
+            .map(|iter| (iter.elem.id_span(), iter.cursor().leaf))
+            .collect()
+    }
+
+    fn lookup_leaf(lookup: &[(IdSpan, LeafIndex)], id: ID) -> LeafIndex {
+        lookup
+            .iter()
+            .find_map(|(span, leaf)| span.contains_id(id).then_some(*leaf))
+            .unwrap_or_else(|| panic!("cannot find leaf for {id:?}"))
+    }
+
+    fn future_peers(rope: &CrdtRope) -> Vec<PeerID> {
+        rope.tree
+            .iter()
+            .filter(|span| span.status.future)
+            .map(|span| span.id.peer)
+            .collect()
+    }
+
     #[test]
     fn len_test() {
         let mut rope = CrdtRope::new();
@@ -850,6 +909,75 @@ mod test {
 
         assert_eq!(rope.len(), 10);
         assert_eq!(split.len(), 0);
+    }
+
+    #[test]
+    fn same_parent_future_spans_keep_peer_order() {
+        let mut rope = CrdtRope::new();
+        rope.insert(0, span(0, 0..10), |_| panic!());
+        for peer in [5, 3, 7, 4] {
+            rope.insert(5, future_span(peer, peer * 10..peer * 10 + 1), |_| panic!());
+        }
+
+        assert_eq!(future_peers(&rope), vec![3, 4, 5, 7]);
+        for span in rope.tree.iter().filter(|span| span.status.future) {
+            assert_eq!(span.origin_left, Some(CompactId::new(0, 4)));
+            assert_eq!(span.origin_right, Some(CompactId::new(0, 5)));
+        }
+    }
+
+    #[test]
+    fn same_parent_future_spans_keep_order_after_retreat_forward() {
+        let mut rope = CrdtRope::new();
+        rope.insert(0, span(0, 0..10), |_| panic!());
+        rope.insert(5, future_span(5, 50..51), |_| panic!());
+        rope.insert(5, future_span(3, 30..31), |_| panic!());
+        assert_eq!(future_peers(&rope), vec![3, 5]);
+
+        let leaf = leaf_of(&rope, ID::new(3, 0));
+        rope.update(
+            vec![LeafUpdate {
+                leaf,
+                id_span: IdSpan::new(3, 0, 1),
+                set_future: Some(false),
+                delete_times_diff: 0,
+            }],
+            false,
+        );
+        assert_eq!(future_peers(&rope), vec![5]);
+
+        let leaf = leaf_of(&rope, ID::new(3, 0));
+        rope.update(
+            vec![LeafUpdate {
+                leaf,
+                id_span: IdSpan::new(3, 0, 1),
+                set_future: Some(true),
+                delete_times_diff: 0,
+            }],
+            false,
+        );
+        rope.insert(5, future_span(4, 40..41), |_| panic!());
+
+        assert_eq!(future_peers(&rope), vec![3, 4, 5]);
+    }
+
+    #[test]
+    fn mixed_right_parent_future_spans_fall_back_to_general_ordering() {
+        let mut rope = CrdtRope::new();
+        rope.insert(0, span(0, 0..10), |_| panic!());
+        rope.insert(5, future_span(2, 20..21), |_| panic!());
+        rope.insert(5, span(9, 90..91), |_| panic!());
+
+        let lookup = leaf_lookup(&rope);
+        let inserted = rope.insert(5, future_span(3, 30..31), |id| lookup_leaf(&lookup, id));
+        assert_eq!(inserted.content.origin_left, Some(CompactId::new(0, 4)));
+        assert_eq!(inserted.content.origin_right, Some(CompactId::new(9, 0)));
+        assert_eq!(future_peers(&rope), vec![2, 3]);
+
+        rope.delete(ID::new(10, 0), 5, 1, false, &mut |_| {});
+        let lookup = leaf_lookup(&rope);
+        rope.insert(5, future_span(4, 40..41), |id| lookup_leaf(&lookup, id));
+        assert_eq!(future_peers(&rope), vec![2, 3, 4]);
     }
 
     #[test]
