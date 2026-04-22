@@ -27,7 +27,7 @@ use crate::span::{HasCounterSpan, HasLamportSpan};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
 use change_store::{BlockOpRef, ChangeStoreRollback};
-use loro_common::{HasIdSpan, IdLp, IdSpan};
+use loro_common::{ContainerType, HasIdSpan, IdLp, IdSpan};
 use rle::{HasLength, RleVec, Sliceable};
 use smallvec::SmallVec;
 
@@ -65,6 +65,13 @@ pub(crate) struct ImportRollback {
     arena: SharedArenaRollback,
     change_store: ChangeStoreRollback,
     pending: PendingChangesRollback,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct ImportChangesPreflight {
+    pub applies_to_dag: bool,
+    pub has_deps_before_shallow_root: bool,
+    pub needs_state_apply_rollback: bool,
 }
 
 impl std::fmt::Debug for OpLog {
@@ -167,12 +174,17 @@ impl OpLog {
     }
 
     pub(crate) fn begin_import_rollback(&mut self) {
+        let arena = self.arena.checkpoint_for_rollback();
+        self.begin_import_rollback_with_arena(arena);
+    }
+
+    pub(crate) fn begin_import_rollback_with_arena(&mut self, arena: SharedArenaRollback) {
         debug_assert!(self.import_rollback.is_none());
         let old_vv = self.vv().clone();
         self.dag.begin_import_rollback();
         self.import_rollback = Some(ImportRollback {
             old_vv: old_vv.clone(),
-            arena: self.arena.checkpoint_for_rollback(),
+            arena,
             change_store: ChangeStoreRollback::new(old_vv),
             pending: Default::default(),
         });
@@ -181,6 +193,52 @@ impl OpLog {
     pub(crate) fn commit_import_rollback(&mut self) {
         self.dag.commit_import_rollback();
         self.import_rollback = None;
+    }
+
+    pub(crate) fn preflight_import_changes(&self, changes: &[Change]) -> ImportChangesPreflight {
+        let mut ans = ImportChangesPreflight::default();
+        let has_pending = !self.pending_changes.is_empty();
+        for change in changes {
+            if change.ctr_end() <= self.vv().get(&change.id.peer).copied().unwrap_or(0) {
+                continue;
+            }
+
+            if self.dag.is_before_shallow_root(&change.deps) {
+                ans.has_deps_before_shallow_root = true;
+                continue;
+            }
+
+            if self
+                .dag
+                .get_change_lamport_from_deps(&change.deps)
+                .is_none()
+            {
+                continue;
+            }
+
+            ans.applies_to_dag = true;
+            if change.ops.iter().any(|op| {
+                matches!(
+                    op.container.get_type(),
+                    ContainerType::List | ContainerType::Tree
+                )
+            }) {
+                ans.needs_state_apply_rollback = true;
+            }
+        }
+
+        // Any newly applied change can unlock pending changes whose ops are not
+        // visible in `changes`, so keep the rollback guard when pending exists.
+        if ans.applies_to_dag && has_pending {
+            ans.needs_state_apply_rollback = true;
+        }
+
+        #[cfg(test)]
+        if ans.applies_to_dag {
+            ans.needs_state_apply_rollback = true;
+        }
+
+        ans
     }
 
     pub(crate) fn rollback_import(&mut self) {

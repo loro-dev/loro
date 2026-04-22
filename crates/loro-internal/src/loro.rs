@@ -6,7 +6,7 @@ use crate::sync::AtomicBool;
 pub(crate) use crate::LoroDocInner;
 use crate::{
     arena::SharedArena,
-    change::Timestamp,
+    change::{Change, Timestamp},
     configure::{Configure, DefaultRandom, SecureRandomGenerator, StyleConfig},
     container::{
         idx::ContainerIdx, list::list_op::InnerListOp, richtext::config::StyleConfigMap,
@@ -621,8 +621,8 @@ impl LoroDoc {
                     loro_common::info!("Init by fast snapshot {}", self.peer_id());
                     decode_snapshot(self, parsed.mode, parsed.body, origin)
                 } else {
-                    self.update_oplog_and_apply_delta_to_state_if_needed(
-                        |oplog| oplog.decode(parsed),
+                    self.import_changes_and_apply_delta_to_state_if_needed(
+                        |oplog| encoding::decode_oplog_changes(oplog, parsed),
                         origin,
                     )
 
@@ -632,8 +632,8 @@ impl LoroDoc {
                     // return self.import_with(updates.as_slice(), origin);
                 }
             }
-            EncodeMode::FastUpdates => self.update_oplog_and_apply_delta_to_state_if_needed(
-                |oplog| oplog.decode(parsed),
+            EncodeMode::FastUpdates => self.import_changes_and_apply_delta_to_state_if_needed(
+                |oplog| encoding::decode_oplog_changes(oplog, parsed),
                 origin,
             ),
             EncodeMode::Auto => {
@@ -714,6 +714,99 @@ impl LoroDoc {
         }
     }
 
+    #[tracing::instrument(skip_all)]
+    pub(crate) fn import_changes_and_apply_delta_to_state_if_needed(
+        &self,
+        decode_changes: impl FnOnce(&mut OpLog) -> Result<Vec<Change>, LoroError>,
+        origin: InternalString,
+    ) -> Result<ImportStatus, LoroError> {
+        let mut oplog = self.oplog.lock();
+        let arena_checkpoint = oplog.arena.checkpoint_for_rollback();
+        let changes = match decode_changes(&mut oplog) {
+            Ok(changes) => changes,
+            Err(e) => {
+                oplog.arena.rollback(arena_checkpoint);
+                return Err(e);
+            }
+        };
+
+        let preflight = oplog.preflight_import_changes(&changes);
+        if preflight.has_deps_before_shallow_root
+            && (self.is_detached() || !preflight.applies_to_dag)
+        {
+            oplog.arena.rollback(arena_checkpoint);
+            return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
+        }
+
+        if self.is_detached() {
+            let result = encoding::apply_decoded_changes_to_oplog(&mut oplog, changes);
+            if result.has_deps_before_shallow_root {
+                return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
+            }
+
+            return Ok(result.status);
+        }
+
+        if !preflight.applies_to_dag {
+            let result = encoding::apply_decoded_changes_to_oplog(&mut oplog, changes);
+            if result.has_deps_before_shallow_root {
+                oplog.arena.rollback(arena_checkpoint);
+                return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
+            }
+
+            return Ok(result.status);
+        }
+
+        let old_vv = oplog.vv().clone();
+        let old_frontiers = oplog.frontiers().clone();
+        let rollback_enabled = preflight.needs_state_apply_rollback;
+        if rollback_enabled {
+            oplog.begin_import_rollback_with_arena(arena_checkpoint);
+        }
+
+        let result = encoding::apply_decoded_changes_to_oplog(&mut oplog, changes);
+        if &old_vv != oplog.vv() {
+            let mut diff = DiffCalculator::new(false);
+            let (diff, diff_mode) = diff.calc_diff_internal(
+                &oplog,
+                &old_vv,
+                &old_frontiers,
+                oplog.vv(),
+                oplog.dag.get_frontiers(),
+                None,
+            );
+            let mut state = self.state.lock();
+            if let Err(e) = state.apply_diff(
+                InternalDocDiff {
+                    origin,
+                    diff: (diff).into(),
+                    by: EventTriggerKind::Import,
+                    new_version: Cow::Owned(oplog.frontiers().clone()),
+                },
+                diff_mode,
+            ) {
+                if rollback_enabled {
+                    oplog.rollback_import();
+                    return Err(e);
+                }
+
+                panic!("state apply returned Err for import without rollback guard: {e}");
+            }
+        }
+
+        if result.has_deps_before_shallow_root {
+            if rollback_enabled {
+                oplog.commit_import_rollback();
+            }
+            return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
+        }
+
+        if rollback_enabled {
+            oplog.commit_import_rollback();
+        }
+        Ok(result.status)
+    }
+
     fn emit_events(&self) {
         // we should not hold the lock when emitting events
         let events = {
@@ -737,8 +830,8 @@ impl LoroDoc {
     pub fn import_json_updates<T: TryInto<JsonSchema>>(&self, json: T) -> LoroResult<ImportStatus> {
         let json = json.try_into().map_err(|_| LoroError::InvalidJsonSchema)?;
         self.with_barrier(|| {
-            let result = self.update_oplog_and_apply_delta_to_state_if_needed(
-                |oplog| crate::encoding::json_schema::import_json(oplog, json),
+            let result = self.import_changes_and_apply_delta_to_state_if_needed(
+                |oplog| crate::encoding::json_schema::decode_json_changes(json, &oplog.arena),
                 Default::default(),
             );
             self.emit_events();

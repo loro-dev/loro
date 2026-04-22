@@ -11,6 +11,7 @@ pub(crate) use outdated_encode_reordered::{
 use outdated_encode_reordered::{import_changes_to_oplog, ImportChangesResult};
 pub(crate) use value::OwnedValue;
 
+use crate::change::Change;
 use crate::version::{Frontiers, VersionRange};
 use crate::LoroDoc;
 use crate::{oplog::OpLog, LoroError, VersionVector};
@@ -233,15 +234,39 @@ pub(crate) fn decode_oplog(
     oplog: &mut OpLog,
     parsed: ParsedHeaderAndBody,
 ) -> Result<ImportStatus, LoroError> {
+    let changes = decode_oplog_changes(oplog, parsed)?;
+    let result = apply_decoded_changes_to_oplog(oplog, changes);
+    if result.has_deps_before_shallow_root {
+        return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
+    }
+
+    Ok(result.status)
+}
+
+pub(crate) fn decode_oplog_changes(
+    oplog: &mut OpLog,
+    parsed: ParsedHeaderAndBody,
+) -> Result<Vec<Change>, LoroError> {
     let ParsedHeaderAndBody { mode, body, .. } = parsed;
-    let changes = match mode {
+    match mode {
         EncodeMode::OutdatedRle | EncodeMode::OutdatedSnapshot => {
-            return Err(LoroError::ImportUnsupportedEncodingMode);
+            Err(LoroError::ImportUnsupportedEncodingMode)
         }
         EncodeMode::FastSnapshot => fast_snapshot::decode_oplog(oplog, body),
         EncodeMode::FastUpdates => fast_snapshot::decode_updates(oplog, body.to_vec().into()),
         EncodeMode::Auto => unreachable!(),
-    }?;
+    }
+}
+
+pub(crate) struct ApplyDecodedChangesResult {
+    pub status: ImportStatus,
+    pub has_deps_before_shallow_root: bool,
+}
+
+pub(crate) fn apply_decoded_changes_to_oplog(
+    oplog: &mut OpLog,
+    changes: Vec<Change>,
+) -> ApplyDecodedChangesResult {
     let ImportChangesResult {
         mut imported,
         latest_ids,
@@ -255,14 +280,16 @@ pub(crate) fn decode_oplog(
     });
     // TODO: PERF: should we use hashmap to filter latest_ids with the same peer first?
     oplog.try_apply_pending(latest_ids, Some(&mut imported));
-    oplog.import_unknown_lamport_pending_changes(pending_changes)?;
-    if !changes_that_have_deps_before_shallow_root.is_empty() {
-        return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
+    oplog
+        .import_unknown_lamport_pending_changes(pending_changes)
+        .expect("importing unknown-lamport pending changes is infallible");
+    ApplyDecodedChangesResult {
+        status: ImportStatus {
+            success: imported,
+            pending: (!pending.is_empty()).then_some(pending),
+        },
+        has_deps_before_shallow_root: !changes_that_have_deps_before_shallow_root.is_empty(),
     }
-    Ok(ImportStatus {
-        success: imported,
-        pending: (!pending.is_empty()).then_some(pending),
-    })
 }
 
 pub(crate) struct ParsedHeaderAndBody<'a> {

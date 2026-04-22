@@ -33,6 +33,12 @@ pub(crate) struct PendingChanges {
     changes: FxHashMap<PeerID, BTreeMap<Counter, Vec<PendingChange>>>,
 }
 
+impl PendingChanges {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.changes.is_empty()
+    }
+}
+
 #[cfg(test)]
 #[allow(dead_code)]
 impl PendingChanges {

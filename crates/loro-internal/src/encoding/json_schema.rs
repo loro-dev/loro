@@ -1,7 +1,4 @@
-use super::{
-    outdated_encode_reordered::{import_changes_to_oplog, ImportChangesResult, ValueRegister},
-    ImportStatus,
-};
+use super::outdated_encode_reordered::ValueRegister;
 use crate::{
     arena::SharedArena,
     change::{Change, ChangeRef},
@@ -13,15 +10,15 @@ use crate::{
     },
     op::{FutureInnerContent, InnerContent, Op, SliceRange},
     oplog::BlockChangeRef,
-    version::{Frontiers, VersionRange},
+    version::Frontiers,
     OpLog, VersionVector,
 };
 use either::Either;
 use itertools::Itertools;
 use json::{JsonChange, JsonOpContent, JsonSchema};
 use loro_common::{
-    ContainerID, ContainerType, HasCounterSpan, HasId, HasIdSpan, IdLp, IdSpan, LoroError,
-    LoroResult, LoroValue, PeerID, TreeID, ID,
+    ContainerID, ContainerType, HasCounterSpan, HasId, IdLp, IdSpan, LoroError, LoroResult,
+    LoroValue, PeerID, TreeID, ID,
 };
 use rle::{HasLength, RleVec, Sliceable};
 use std::sync::Arc;
@@ -114,31 +111,11 @@ pub(crate) fn export_json_in_id_span(oplog: &OpLog, mut id_span: IdSpan) -> Vec<
     encode_changes(&diff_changes, &oplog.arena, None)
 }
 
-pub(crate) fn import_json(oplog: &mut OpLog, json: JsonSchema) -> LoroResult<ImportStatus> {
-    let changes = decode_changes(json, &oplog.arena)?;
-    let ImportChangesResult {
-        latest_ids,
-        pending_changes,
-        changes_that_have_deps_before_shallow_root,
-        mut imported,
-    } = import_changes_to_oplog(changes, oplog);
-    let mut pending = VersionRange::default();
-    pending_changes.iter().for_each(|c| {
-        pending.extends_to_include_id_span(c.id_span());
-    });
-    oplog.try_apply_pending(latest_ids, Some(&mut imported));
-    oplog.import_unknown_lamport_pending_changes(pending_changes)?;
-    if !changes_that_have_deps_before_shallow_root.is_empty() {
-        return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
-    };
-    Ok(ImportStatus {
-        success: imported,
-        pending: if pending.is_empty() {
-            None
-        } else {
-            Some(pending)
-        },
-    })
+pub(crate) fn decode_json_changes(
+    json: JsonSchema,
+    arena: &SharedArena,
+) -> LoroResult<Vec<Change>> {
+    decode_changes(json, arena)
 }
 
 fn init_encode<'s, 'a: 's>(
