@@ -1,4 +1,4 @@
-use loro::{ExportMode, LoroDoc, LoroMap, LoroResult, LoroText, ToJson};
+use loro::{ExportMode, Index, LoroDoc, LoroMap, LoroMovableList, LoroResult, LoroText, ToJson};
 use pretty_assertions::assert_eq;
 use serde_json::{json, Value};
 
@@ -114,6 +114,115 @@ fn movable_list_creator_mover_and_editor_metadata_survives_remote_imports() -> L
     assert_eq!(restored_list.get_last_editor_at(1), Some(202));
     assert_eq!(restored_list.get_last_editor_at(3), Some(202));
     assert_eq!(deep_json(&restored), deep_json(&doc));
+
+    Ok(())
+}
+
+#[test]
+fn movable_list_diff_apply_roundtrips_mixed_values_and_path_lookups() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(202)?;
+
+    let root = doc.get_map("root");
+    let queue = root.insert_container("queue", LoroMovableList::new())?;
+
+    let first = queue.push_container(LoroMap::new())?;
+    first.insert("name", "alpha")?;
+    first.insert("bytes", vec![1_u8, 2, 3, 255])?;
+
+    let second = queue.push_container(LoroText::new())?;
+    second.insert(0, "beta")?;
+
+    queue.push(true)?;
+    doc.commit();
+
+    let before = doc.state_frontiers();
+    let before_snapshot = doc.export(ExportMode::Snapshot)?;
+    let before_doc = LoroDoc::from_snapshot(&before_snapshot)?;
+
+    assert_eq!(
+        doc.get_by_str_path("root/queue/0/name")
+            .expect("map child should resolve by path")
+            .get_deep_value()
+            .to_json_value(),
+        json!("alpha")
+    );
+    assert_eq!(
+        doc.get_by_path(&[
+            Index::Key("root".into()),
+            Index::Key("queue".into()),
+            Index::Seq(1),
+        ])
+        .expect("text child should resolve by path")
+        .get_deep_value()
+        .to_json_value(),
+        json!("beta")
+    );
+    assert_eq!(
+        doc.get_by_str_path("root/queue/2")
+            .expect("scalar value should resolve by path")
+            .get_deep_value()
+            .to_json_value(),
+        json!(true)
+    );
+
+    queue.mov(1, 0)?;
+    first.insert("rank", 1)?;
+    queue.set(2, false)?;
+    let third = queue.set_container(2, LoroMap::new())?;
+    third.insert("kind", "replacement")?;
+    doc.commit();
+
+    let after = doc.state_frontiers();
+    let after_snapshot = doc.export(ExportMode::Snapshot)?;
+
+    assert_eq!(
+        doc.get_by_str_path("root/queue/1/name")
+            .expect("moved map child should still resolve")
+            .get_deep_value()
+            .to_json_value(),
+        json!("alpha")
+    );
+    assert_eq!(
+        doc.get_by_str_path("root/queue/0")
+            .expect("moved text child should resolve")
+            .get_deep_value()
+            .to_json_value(),
+        json!("beta")
+    );
+    assert_eq!(
+        doc.get_by_str_path("root/queue/2/kind")
+            .expect("replacement map should resolve")
+            .get_deep_value()
+            .to_json_value(),
+        json!("replacement")
+    );
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({
+            "root": {
+                "queue": [
+                    "beta",
+                    {"name": "alpha", "bytes": [1, 2, 3, 255], "rank": 1},
+                    {"kind": "replacement"}
+                ]
+            }
+        })
+    );
+
+    let forward = doc.diff(&before, &after)?;
+    let patched = LoroDoc::from_snapshot(&before_snapshot)?;
+    patched.apply_diff(forward)?;
+    assert_eq!(deep_json(&patched), deep_json(&doc));
+
+    let reverse = doc.diff(&after, &before)?;
+    let restored = LoroDoc::from_snapshot(&after_snapshot)?;
+    restored.apply_diff(reverse)?;
+    assert_eq!(deep_json(&restored), deep_json(&before_doc));
+
+    assert_eq!(queue.get_creator_at(0), Some(202));
+    assert_eq!(queue.get_last_mover_at(0), Some(202));
+    assert_eq!(queue.get_last_editor_at(1), Some(202));
 
     Ok(())
 }

@@ -1,6 +1,7 @@
 use loro::{
-    cursor::PosType, Container, ContainerTrait, ExportMode, LoroDoc, LoroList, LoroMap, LoroResult,
-    LoroText, StyleConfig, StyleConfigMap, TextDelta, ToJson, ValueOrContainer,
+    cursor::{Cursor, PosType, Side},
+    Container, ContainerTrait, ExportMode, LoroDoc, LoroList, LoroMap, LoroResult, LoroText,
+    StyleConfig, StyleConfigMap, TextDelta, ToJson, ValueOrContainer,
 };
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -344,7 +345,6 @@ fn text_coordinate_error_and_event_position_contracts_are_consistent() -> LoroRe
             Some(unicode_pos)
         );
     }
-
     assert!(matches!(
         text.insert_utf8(2, "!"),
         Err(loro::LoroError::UTF8InUnicodeCodePoint { pos: 2 })
@@ -378,6 +378,97 @@ fn text_coordinate_error_and_event_position_contracts_are_consistent() -> LoroRe
     let detached = LoroText::new();
     detached.push_str("xy")?;
     assert_eq!(detached.to_string(), "xy");
+
+    Ok(())
+}
+
+#[test]
+fn text_iter_stops_after_first_callback_and_works_after_snapshot() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    doc.config_text_style(StyleConfigMap::default_rich_text_config());
+
+    let text = doc.get_text("text");
+    text.insert(0, "alpha beta gamma")?;
+    text.mark(0..5, "bold", true)?;
+    text.mark(6..10, "link", "https://example.com")?;
+
+    let mut seen = Vec::new();
+    text.iter(|chunk| {
+        seen.push(chunk.to_string());
+        false
+    });
+    assert_eq!(seen.len(), 1);
+    assert!(!seen[0].is_empty());
+    assert!(text.to_string().starts_with(&seen[0]));
+
+    let restored = LoroDoc::from_snapshot(&doc.export(ExportMode::Snapshot)?)?;
+    let restored_text = restored.get_text("text");
+    let mut restored_seen = Vec::new();
+    restored_text.iter(|chunk| {
+        restored_seen.push(chunk.to_string());
+        false
+    });
+    assert_eq!(restored_seen.len(), 1);
+    assert!(!restored_seen[0].is_empty());
+    assert!(restored_text.to_string().starts_with(&restored_seen[0]));
+    assert_eq!(restored_text.to_string(), text.to_string());
+
+    Ok(())
+}
+
+#[test]
+fn empty_container_cursors_roundtrip_and_resolve_to_zero() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+
+    let text = doc.get_text("text");
+    let list = doc.get_list("list");
+    let movable = doc.get_movable_list("movable");
+
+    let text_cursor = text.get_cursor(0, Side::Middle).unwrap();
+    let list_cursor = list.get_cursor(0, Side::Middle).unwrap();
+    let movable_cursor = movable.get_cursor(0, Side::Middle).unwrap();
+
+    assert_eq!(text_cursor.side, Side::Left);
+    assert_eq!(list_cursor.side, Side::Left);
+    assert_eq!(movable_cursor.side, Side::Left);
+
+    for cursor in [&text_cursor, &list_cursor, &movable_cursor] {
+        let decoded = Cursor::decode(&cursor.encode()).unwrap();
+        assert_eq!(decoded, *cursor);
+        let pos = doc
+            .get_cursor_pos(&decoded)
+            .expect("empty cursor should resolve");
+        assert_eq!(pos.current.pos, 0);
+        assert!(pos.update.is_none());
+    }
+
+    let text_right = text.get_cursor(0, Side::Right).unwrap();
+    let list_right = list.get_cursor(0, Side::Right).unwrap();
+    let movable_right = movable.get_cursor(0, Side::Right).unwrap();
+    assert_eq!(text_right.side, Side::Right);
+    assert_eq!(list_right.side, Side::Right);
+    assert_eq!(movable_right.side, Side::Right);
+    assert_eq!(
+        doc.get_cursor_pos(&text_right)
+            .expect("text cursor should resolve")
+            .current
+            .pos,
+        0
+    );
+    assert_eq!(
+        doc.get_cursor_pos(&list_right)
+            .expect("list cursor should resolve")
+            .current
+            .pos,
+        0
+    );
+    assert_eq!(
+        doc.get_cursor_pos(&movable_right)
+            .expect("movable cursor should resolve")
+            .current
+            .pos,
+        0
+    );
 
     Ok(())
 }

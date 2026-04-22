@@ -429,6 +429,58 @@ fn subscriptions_auto_unsubscribe_and_drop_follow_contract() -> loro::LoroResult
 }
 
 #[test]
+fn subscription_callbacks_can_queue_recursive_document_changes() -> loro::LoroResult<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(30)?;
+    let text = doc.get_text("text");
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let calls_clone = Arc::clone(&calls);
+    let doc_clone = doc.clone();
+    let text_clone = text.clone();
+    let _sub = doc.subscribe_root(Arc::new(move |_| {
+        let call_index = calls_clone.fetch_add(1, Ordering::SeqCst);
+        if call_index < 2 {
+            let len = text_clone.len_unicode();
+            text_clone.insert(len, "x").unwrap();
+            doc_clone.commit();
+        }
+    }));
+
+    text.insert(0, "x")?;
+    doc.commit();
+
+    assert_eq!(text.to_string(), "xxx");
+    assert_eq!(calls.load(Ordering::SeqCst), 3);
+
+    Ok(())
+}
+
+#[test]
+fn detached_subscription_handle_keeps_callback_registered_for_document_lifetime(
+) -> loro::LoroResult<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(32)?;
+    let text = doc.get_text("text");
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let calls_clone = Arc::clone(&calls);
+    let sub = doc.subscribe_root(Arc::new(move |_| {
+        calls_clone.fetch_add(1, Ordering::SeqCst);
+    }));
+    sub.detach();
+
+    text.insert(0, "a")?;
+    doc.commit();
+    text.insert(1, "b")?;
+    doc.commit();
+
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+
+    Ok(())
+}
+
+#[test]
 fn change_merge_interval_merges_adjacent_changes_with_matching_metadata() -> loro::LoroResult<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(31)?;

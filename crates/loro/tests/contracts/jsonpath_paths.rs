@@ -1,7 +1,7 @@
 #![cfg(feature = "jsonpath")]
 
 use loro::{
-    ContainerTrait, ExportMode, Index, LoroDoc, LoroList, LoroMap, LoroValue, ToJson,
+    loro_value, ContainerTrait, ExportMode, Index, LoroDoc, LoroList, LoroMap, LoroValue, ToJson,
     ValueOrContainer,
 };
 use pretty_assertions::assert_eq;
@@ -426,6 +426,63 @@ fn jsonpath_root_wildcards_negative_indexes_and_scalar_paths_follow_contract() -
     assert_eq!(
         results_json(doc.jsonpath("$.catalog.books[99:120].title")?),
         json!([])
+    );
+
+    Ok(())
+}
+
+#[test]
+fn jsonpath_queries_json_values_embedded_in_containers_follow_contract() -> anyhow::Result<()> {
+    let doc = build_catalog_doc()?;
+    let catalog = doc.get_map("catalog");
+    catalog.insert(
+        "inline",
+        loro_value!({
+            "records": [
+                {"name": "alpha", "score": 1, "enabled": true},
+                {"name": "beta", "score": 2, "enabled": false},
+                {"name": "gamma", "score": 3, "enabled": true}
+            ],
+            "nested": {
+                "flags": [true, false],
+                "label": "embedded"
+            },
+            "empty": []
+        }),
+    )?;
+    doc.commit();
+
+    assert_eq!(
+        results_json(doc.jsonpath("$.catalog.inline.records[*].name")?),
+        json!(["alpha", "beta", "gamma"])
+    );
+    assert_eq!(
+        results_json(doc.jsonpath("$.catalog.inline.records[-1].score")?),
+        json!([3])
+    );
+    assert_eq!(
+        results_json(doc.jsonpath("$.catalog.inline.records[?(@.score >= 2)].name")?),
+        json!(["beta", "gamma"])
+    );
+    assert_eq!(
+        results_json(doc.jsonpath("$.catalog.inline.records[?(@.enabled == true)].name")?),
+        json!(["alpha", "gamma"])
+    );
+    assert_eq!(
+        results_json(doc.jsonpath("$.catalog.inline.nested.flags[0]")?),
+        json!([true])
+    );
+    assert_eq!(
+        results_json(doc.jsonpath("$.catalog.inline.nested[?(@ == 'embedded')]")?),
+        json!(["embedded"])
+    );
+    assert!(doc.jsonpath("$.catalog.inline.empty[*]")?.is_empty());
+
+    let replica = LoroDoc::new();
+    replica.import(&doc.export(ExportMode::all_updates())?)?;
+    assert_eq!(
+        results_json(replica.jsonpath("$.catalog.inline.records[1:].name")?),
+        json!(["beta", "gamma"])
     );
 
     Ok(())

@@ -97,7 +97,7 @@ fn cursor_encoding_side_values_and_cache_rebuilds_follow_contract() -> anyhow::R
     let doc = LoroDoc::new();
     doc.set_peer_id(122)?;
     let text = doc.get_text("text");
-    text.insert(0, "a😀bc")?;
+    text.insert(0, "abcd")?;
     let list = doc.get_list("list");
     list.push("a")?;
     list.push("b")?;

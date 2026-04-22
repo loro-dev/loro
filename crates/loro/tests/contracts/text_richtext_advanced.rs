@@ -421,6 +421,36 @@ fn richtext_before_and_both_expand_types_follow_documented_boundaries() -> LoroR
 }
 
 #[test]
+fn richtext_default_style_config_applies_to_unconfigured_marks() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    doc.config_default_text_style(Some(StyleConfig::new().expand(ExpandType::Both)));
+
+    let text = doc.get_text("text");
+    text.insert(0, "ab")?;
+    text.mark(0..2, "custom_mark", true)?;
+    doc.commit();
+
+    text.insert(0, "L")?;
+    text.insert(text.len_unicode(), "R")?;
+    assert_eq!(
+        text.to_delta(),
+        vec![TextDelta::Insert {
+            insert: "LabR".to_string(),
+            attributes: Some(
+                [("custom_mark".to_string(), true.into())]
+                    .into_iter()
+                    .collect(),
+            ),
+        }]
+    );
+
+    let restored = LoroDoc::from_snapshot(&doc.export(ExportMode::Snapshot)?)?;
+    assert_eq!(restored.get_text("text").to_delta(), text.to_delta());
+
+    Ok(())
+}
+
+#[test]
 fn richtext_partial_unmark_unicode_and_snapshot_roundtrip_preserve_spans() -> LoroResult<()> {
     let doc = LoroDoc::new();
     let mut styles = StyleConfigMap::new();
@@ -461,6 +491,63 @@ fn richtext_partial_unmark_unicode_and_snapshot_roundtrip_preserve_spans() -> Lo
             .get_richtext_value()
             .to_json_value(),
         doc.get_text("text").get_richtext_value().to_json_value()
+    );
+
+    Ok(())
+}
+
+#[test]
+fn richtext_delete_across_overlapping_style_boundaries_keeps_public_delta_clean() -> LoroResult<()>
+{
+    let doc = LoroDoc::new();
+    doc.config_text_style(StyleConfigMap::default_rich_text_config());
+
+    let text = doc.get_text("text");
+    text.insert(0, "abcdefghi")?;
+    text.mark(1..7, "bold", true)?;
+    text.mark(3..9, "link", "https://example.com")?;
+
+    text.delete(2, 4)?;
+    let expected = vec![
+        TextDelta::Insert {
+            insert: "a".to_string(),
+            attributes: None,
+        },
+        TextDelta::Insert {
+            insert: "b".to_string(),
+            attributes: Some([("bold".to_string(), true.into())].into_iter().collect()),
+        },
+        TextDelta::Insert {
+            insert: "g".to_string(),
+            attributes: Some(
+                [
+                    ("bold".to_string(), true.into()),
+                    ("link".to_string(), "https://example.com".into()),
+                ]
+                .into_iter()
+                .collect(),
+            ),
+        },
+        TextDelta::Insert {
+            insert: "hi".to_string(),
+            attributes: Some(
+                [("link".to_string(), "https://example.com".into())]
+                    .into_iter()
+                    .collect(),
+            ),
+        },
+    ];
+
+    assert_eq!(text.to_string(), "abghi");
+    assert_eq!(text.to_delta(), expected);
+    assert_eq!(
+        text.get_richtext_value().to_json_value(),
+        serde_json::json!([
+            { "insert": "a" },
+            { "insert": "b", "attributes": { "bold": true } },
+            { "insert": "g", "attributes": { "bold": true, "link": "https://example.com" } },
+            { "insert": "hi", "attributes": { "link": "https://example.com" } }
+        ])
     );
 
     Ok(())

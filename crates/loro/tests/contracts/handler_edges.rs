@@ -2,9 +2,9 @@ use std::collections::BTreeSet;
 
 use loro::{
     cursor::{PosType, Side},
-    Container, ContainerTrait, ExpandType, LoroDoc, LoroError, LoroList, LoroMap, LoroMovableList,
-    LoroResult, LoroText, LoroTree, LoroValue, StyleConfig, StyleConfigMap, TextDelta, ToJson,
-    TreeParentId, ValueOrContainer,
+    Container, ContainerTrait, ExpandType, Index, LoroDoc, LoroError, LoroList, LoroMap,
+    LoroMovableList, LoroResult, LoroText, LoroTree, LoroValue, StyleConfig, StyleConfigMap,
+    TextDelta, ToJson, TreeParentId, ValueOrContainer,
 };
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -504,6 +504,209 @@ fn text_contracts_cover_positions_deltas_update_by_line_apply_delta_and_clear() 
     assert_eq!(text.len_unicode(), 0);
     assert!(text.get_richtext_value().to_json_value().is_array());
     assert!(text.delete(0, 1).is_err());
+
+    Ok(())
+}
+
+#[test]
+fn handler_path_lookups_track_movable_list_reorders_and_deleted_containers() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(15)?;
+
+    let root = doc.get_map("root");
+    let queue = root.insert_container("queue", LoroMovableList::new())?;
+
+    let map_child = queue.push_container(LoroMap::new())?;
+    map_child.insert("name", "alpha")?;
+    let text_child = queue.push_container(LoroText::new())?;
+    text_child.insert(0, "beta")?;
+    queue.push("tail")?;
+    doc.commit();
+
+    assert_eq!(
+        doc.get_by_str_path("root/queue/0/name")
+            .expect("map child should resolve by string path")
+            .get_deep_value(),
+        "alpha".into()
+    );
+    assert_eq!(
+        doc.get_by_path(&[
+            Index::Key("root".into()),
+            Index::Key("queue".into()),
+            Index::Seq(1),
+        ])
+        .expect("text child should resolve by path")
+        .get_deep_value()
+        .to_json_value(),
+        json!("beta")
+    );
+
+    queue.mov(1, 0)?;
+    doc.commit();
+    assert_eq!(
+        doc.get_by_str_path("root/queue/1/name")
+            .expect("moved map child should still resolve")
+            .get_deep_value(),
+        "alpha".into()
+    );
+    assert_eq!(
+        doc.get_by_str_path("root/queue/0")
+            .expect("moved text child should still resolve")
+            .get_deep_value()
+            .to_json_value(),
+        json!("beta")
+    );
+
+    root.delete("queue")?;
+    doc.commit();
+    assert!(doc.get_by_str_path("root/queue/0").is_none());
+    assert!(queue.insert(0, "after-delete").is_err());
+    assert_container_deleted(map_child.insert("after", "x"));
+    assert_container_deleted(text_child.insert(0, "!"));
+
+    Ok(())
+}
+
+#[test]
+fn inserting_attached_containers_copies_state_without_aliasing() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(16)?;
+
+    let source = doc.get_map("source");
+    source.insert("title", "source")?;
+
+    let source_text = source.insert_container("text", LoroText::new())?;
+    source_text.insert(0, "alpha")?;
+    let source_list = source.insert_container("list", LoroList::new())?;
+    source_list.push("one")?;
+    let source_list_map = source_list.push_container(LoroMap::new())?;
+    source_list_map.insert("kind", "nested")?;
+
+    let source_moves = source.insert_container("moves", LoroMovableList::new())?;
+    source_moves.push("first")?;
+    let source_move_text = source_moves.push_container(LoroText::new())?;
+    source_move_text.insert(0, "second")?;
+    source_moves.mov(1, 0)?;
+
+    let source_tree = source.insert_container("tree", LoroTree::new())?;
+    source_tree.enable_fractional_index(0);
+    let tree_root = source_tree.create(TreeParentId::Root)?;
+    let tree_child = source_tree.create_at(tree_root, 0)?;
+    source_tree.get_meta(tree_root)?.insert("title", "root")?;
+    source_tree.get_meta(tree_child)?.insert("title", "child")?;
+    doc.commit();
+
+    let target = doc.get_map("target");
+    let copied_map = target.insert_container("map", source.clone())?;
+    let copied_text = target.insert_container("text", source_text.clone())?;
+    let copied_list = target.insert_container("list", source_list.clone())?;
+    let copied_moves = target.insert_container("moves", source_moves.clone())?;
+    let copied_tree = target.insert_container("tree", source_tree.clone())?;
+    doc.commit();
+
+    assert_ne!(copied_map.id(), source.id());
+    assert_ne!(copied_text.id(), source_text.id());
+    assert_ne!(copied_list.id(), source_list.id());
+    assert_ne!(copied_moves.id(), source_moves.id());
+    assert_ne!(copied_tree.id(), source_tree.id());
+    assert_eq!(
+        copied_map.get("title").unwrap().get_deep_value(),
+        "source".into()
+    );
+    assert_eq!(
+        copied_map
+            .get("text")
+            .unwrap()
+            .get_deep_value()
+            .to_json_value(),
+        json!("alpha")
+    );
+    assert_eq!(copied_text.to_string(), "alpha");
+    assert_eq!(
+        copied_list.get_deep_value().to_json_value(),
+        json!(["one", {"kind": "nested"}])
+    );
+    assert_eq!(
+        copied_moves.get_deep_value().to_json_value(),
+        json!(["second", "first"])
+    );
+    let copied_map_tree = expect_tree(copied_map.get("tree").unwrap());
+    let copied_map_root = copied_map_tree.roots()[0];
+    let copied_map_child = copied_map_tree.children(copied_map_root).unwrap()[0];
+    assert_eq!(
+        copied_map_tree
+            .get_meta(copied_map_child)?
+            .get("title")
+            .unwrap()
+            .get_deep_value()
+            .to_json_value(),
+        json!("child")
+    );
+    assert!(!copied_tree.contains(tree_root));
+    let copied_roots = copied_tree.roots();
+    assert_eq!(copied_roots.len(), 1);
+    let copied_root = copied_roots[0];
+    let copied_children = copied_tree.children(copied_root).unwrap();
+    assert_eq!(copied_children.len(), 1);
+    let copied_child = copied_children[0];
+    assert_eq!(
+        copied_tree
+            .get_meta(copied_child)?
+            .get("title")
+            .unwrap()
+            .get_deep_value()
+            .to_json_value(),
+        json!("child")
+    );
+
+    source.insert("title", "mutated")?;
+    source_text.insert(source_text.len_unicode(), "!")?;
+    source_list.push("source-only")?;
+    source_moves.set(1, "changed")?;
+    source_tree
+        .get_meta(tree_child)?
+        .insert("title", "mutated-child")?;
+    doc.commit();
+
+    assert_eq!(
+        copied_map.get("title").unwrap().get_deep_value(),
+        "source".into()
+    );
+    assert_eq!(
+        copied_map
+            .get("text")
+            .unwrap()
+            .get_deep_value()
+            .to_json_value(),
+        json!("alpha")
+    );
+    assert_eq!(copied_text.to_string(), "alpha");
+    assert_eq!(
+        copied_list.get_deep_value().to_json_value(),
+        json!(["one", {"kind": "nested"}])
+    );
+    assert_eq!(
+        copied_moves.get_deep_value().to_json_value(),
+        json!(["second", "first"])
+    );
+    assert_eq!(
+        copied_map_tree
+            .get_meta(copied_map_child)?
+            .get("title")
+            .unwrap()
+            .get_deep_value()
+            .to_json_value(),
+        json!("child")
+    );
+    assert_eq!(
+        copied_tree
+            .get_meta(copied_child)?
+            .get("title")
+            .unwrap()
+            .get_deep_value()
+            .to_json_value(),
+        json!("child")
+    );
 
     Ok(())
 }

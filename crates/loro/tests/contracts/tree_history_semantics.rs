@@ -402,3 +402,107 @@ fn tree_diff_apply_roundtrips_moves_creates_deletes_and_meta() -> LoroResult<()>
 
     Ok(())
 }
+
+#[test]
+fn tree_diff_applies_move_into_deleted_parent_and_preserves_deleted_subtree_meta() -> LoroResult<()>
+{
+    let base = LoroDoc::new();
+    base.set_peer_id(68)?;
+
+    let tree = base.get_tree("outline");
+    tree.enable_fractional_index(0);
+
+    let root = tree.create(TreeParentId::Root)?;
+    let live = tree.create_at(root, 0)?;
+    let deleted_parent = tree.create_at(root, 1)?;
+    let moved = tree.create_at(root, 2)?;
+
+    tree.get_meta(root)?.insert("title", "base-root")?;
+    tree.get_meta(live)?.insert("title", "live")?;
+    tree.get_meta(deleted_parent)?.insert("title", "parent")?;
+    tree.get_meta(moved)?.insert("title", "moved")?;
+    base.commit();
+
+    let base_frontiers = base.state_frontiers();
+    let base_vv = base.oplog_vv();
+    let base_snapshot = base.export(ExportMode::Snapshot)?;
+    let base_updates = base.export(ExportMode::all_updates())?;
+
+    let alice = LoroDoc::new();
+    alice.set_peer_id(69)?;
+    alice.import(&base_updates)?;
+    let alice_tree = alice.get_tree("outline");
+    alice_tree.delete(deleted_parent)?;
+    alice.commit();
+    let alice_updates = alice.export(ExportMode::updates(&base_vv))?;
+
+    let bob = LoroDoc::new();
+    bob.set_peer_id(70)?;
+    bob.import(&base_updates)?;
+    let bob_tree = bob.get_tree("outline");
+    bob_tree.mov_to(moved, deleted_parent, 0)?;
+    bob_tree.get_meta(moved)?.insert("branch", "bob")?;
+    bob.commit();
+    let bob_updates = bob.export(ExportMode::updates(&base_vv))?;
+
+    let merged = LoroDoc::from_snapshot(&base_snapshot)?;
+    merged.import(&alice_updates)?;
+    merged.import(&bob_updates)?;
+
+    let merged_tree = merged.get_tree("outline");
+    assert_eq!(merged_tree.parent(root), Some(TreeParentId::Root));
+    assert_eq!(merged_tree.parent(live), Some(TreeParentId::Node(root)));
+    assert_eq!(
+        merged_tree.parent(deleted_parent),
+        Some(TreeParentId::Deleted)
+    );
+    assert_eq!(
+        merged_tree.parent(moved),
+        Some(TreeParentId::Node(deleted_parent))
+    );
+    assert!(merged_tree.is_node_deleted(&deleted_parent)?);
+    assert!(merged_tree.is_node_deleted(&moved)?);
+    assert_eq!(merged_tree.children(root), Some(vec![live]));
+    assert_eq!(merged_tree.children(deleted_parent), Some(vec![moved]));
+    assert_eq!(
+        merged_tree
+            .get_meta(deleted_parent)?
+            .get("title")
+            .unwrap()
+            .get_deep_value()
+            .to_json_value(),
+        json!("parent")
+    );
+    assert_eq!(
+        merged_tree
+            .get_meta(moved)?
+            .get("branch")
+            .unwrap()
+            .get_deep_value()
+            .to_json_value(),
+        json!("bob")
+    );
+    assert!(merged_tree
+        .get_nodes(true)
+        .iter()
+        .any(|n| n.id == deleted_parent));
+    assert!(merged_tree.get_nodes(true).iter().any(|n| n.id == moved));
+    assert_eq!(
+        merged_tree.get_nodes(false).iter().all(|n| n.id != moved),
+        true
+    );
+
+    let merged_frontiers = merged.state_frontiers();
+    let forward = merged.diff(&base_frontiers, &merged_frontiers)?;
+    let patched = LoroDoc::from_snapshot(&base_snapshot)?;
+    patched.apply_diff(forward)?;
+    assert_eq!(deep_json(&patched), deep_json(&merged));
+    assert!(patched.get_tree("outline").is_node_deleted(&moved)?);
+    assert!(patched
+        .get_tree("outline")
+        .get_nodes(false)
+        .iter()
+        .all(|n| n.id != moved));
+
+    Ok(())
+}

@@ -333,3 +333,62 @@ fn path_queries_and_root_values_preserve_container_contracts() -> anyhow::Result
 
     Ok(())
 }
+
+#[test]
+fn deleted_containers_snapshot_and_compaction_follow_contract() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(108)?;
+    doc.set_change_merge_interval(0);
+
+    let root = doc.get_map("root");
+    let body = root.insert_container("body", LoroText::new())?;
+    body.insert(0, "hello")?;
+    let items = root.insert_container("items", LoroList::new())?;
+    items.push("one")?;
+    items.push("two")?;
+    doc.commit();
+
+    let body_id = body.id();
+    let items_id = items.id();
+    assert_eq!(
+        doc.get_path_to_container(&body_id)
+            .unwrap()
+            .last()
+            .unwrap()
+            .1,
+        Index::Key("body".into())
+    );
+    assert_eq!(
+        doc.get_path_to_container(&items_id)
+            .unwrap()
+            .last()
+            .unwrap()
+            .1,
+        Index::Key("items".into())
+    );
+
+    root.delete("body")?;
+    root.delete("items")?;
+    doc.commit();
+
+    let expected = json_value(&doc);
+    assert_eq!(expected, json!({"root": {}}));
+    doc.check_state_correctness_slow();
+
+    let snapshot = doc.export(ExportMode::Snapshot)?;
+    let restored = LoroDoc::from_snapshot(&snapshot)?;
+    assert_eq!(json_value(&restored), expected);
+    restored.check_state_correctness_slow();
+
+    restored.compact_change_store();
+    assert_eq!(json_value(&restored), expected);
+    restored.check_state_correctness_slow();
+
+    let shallow = doc.export(ExportMode::state_only(Some(&doc.state_frontiers())))?;
+    let shallow_doc = LoroDoc::new();
+    shallow_doc.import(&shallow)?;
+    assert!(shallow_doc.is_shallow());
+    assert_eq!(json_value(&shallow_doc), expected);
+
+    Ok(())
+}

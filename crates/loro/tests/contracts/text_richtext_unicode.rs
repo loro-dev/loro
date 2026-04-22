@@ -18,6 +18,17 @@ fn attr_delta(text: &str, key: &str) -> TextDelta {
     }
 }
 
+fn byte_pos(s: &str, char_index: usize) -> usize {
+    s.char_indices()
+        .nth(char_index)
+        .map(|(idx, _)| idx)
+        .unwrap_or_else(|| s.len())
+}
+
+fn utf16_pos(s: &str, char_index: usize) -> usize {
+    s.chars().take(char_index).map(|c| c.len_utf16()).sum()
+}
+
 #[test]
 fn richtext_mixed_unicode_slices_and_deltas_follow_position_contracts() -> LoroResult<()> {
     let doc = LoroDoc::new();
@@ -64,6 +75,81 @@ fn richtext_mixed_unicode_slices_and_deltas_follow_position_contracts() -> LoroR
     assert_eq!(
         text.slice_delta(2, 4, PosType::Unicode)?,
         vec![attr_delta("文𐐷", "accent")]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn slice_delta_on_multibyte_prefix_suffix_and_middle_preserves_attributes() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    configure_styles(&doc, &["warm", "wide"]);
+    let text = doc.get_text("text");
+    let content = "α😀文β";
+    text.insert(0, content)?;
+    text.mark_utf8(byte_pos(content, 0)..byte_pos(content, 2), "warm", true)?;
+    text.mark_utf16(utf16_pos(content, 1)..utf16_pos(content, 3), "wide", "yes")?;
+
+    assert_eq!(
+        text.slice_delta(0, utf16_pos(content, 2), PosType::Utf16)?,
+        vec![
+            attr_delta("α", "warm"),
+            TextDelta::Insert {
+                insert: "😀".to_string(),
+                attributes: Some(
+                    [
+                        ("warm".to_string(), true.into()),
+                        ("wide".to_string(), "yes".into()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                ),
+            },
+        ]
+    );
+    assert_eq!(
+        text.slice_delta(byte_pos(content, 1), content.len(), PosType::Bytes)?,
+        vec![
+            TextDelta::Insert {
+                insert: "😀".to_string(),
+                attributes: Some(
+                    [
+                        ("warm".to_string(), true.into()),
+                        ("wide".to_string(), "yes".into()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                ),
+            },
+            TextDelta::Insert {
+                insert: "文".to_string(),
+                attributes: Some([("wide".to_string(), "yes".into())].into_iter().collect()),
+            },
+            TextDelta::Insert {
+                insert: "β".to_string(),
+                attributes: None,
+            },
+        ]
+    );
+    assert_eq!(
+        text.slice_delta(1, 3, PosType::Unicode)?,
+        vec![
+            TextDelta::Insert {
+                insert: "😀".to_string(),
+                attributes: Some(
+                    [
+                        ("warm".to_string(), true.into()),
+                        ("wide".to_string(), "yes".into()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                ),
+            },
+            TextDelta::Insert {
+                insert: "文".to_string(),
+                attributes: Some([("wide".to_string(), "yes".into())].into_iter().collect()),
+            },
+        ]
     );
 
     Ok(())
