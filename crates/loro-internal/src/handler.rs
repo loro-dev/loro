@@ -8,7 +8,7 @@ use crate::{
     },
     cursor::{Cursor, Side},
     delta::{DeltaItem, Meta, StyleMeta, TreeExternalDiff},
-    diff::{diff, diff_impl::UpdateTimeoutError, OperateProxy},
+    diff::{diff, OperateProxy},
     event::{Diff, TextDiff, TextDiffItem, TextMeta},
     op::ListSlice,
     state::{IndexType, State, TreeParentId},
@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, cmp::Reverse, collections::BinaryHeap, fmt::Debug, ops::Deref, sync::Arc};
 use tracing::{error, instrument};
 
-pub use crate::diff::diff_impl::UpdateOptions;
+pub use crate::diff::diff_impl::{UpdateOptions, UpdateTimeoutError};
 pub use tree::TreeHandler;
 mod movable_list_apply_delta;
 mod tree;
@@ -2398,6 +2398,7 @@ impl TextHandler {
     }
 
     pub fn update(&self, text: &str, options: UpdateOptions) -> Result<(), UpdateTimeoutError> {
+        self.ensure_not_deleted_for_update()?;
         let old_str = self.to_string();
         let new = text.chars().map(|x| x as u32).collect::<Vec<u32>>();
         let old = old_str.chars().map(|x| x as u32).collect::<Vec<u32>>();
@@ -2415,6 +2416,7 @@ impl TextHandler {
         text: &str,
         options: UpdateOptions,
     ) -> Result<(), UpdateTimeoutError> {
+        self.ensure_not_deleted_for_update()?;
         let hook = text_update::DiffHookForLine::new(self, text);
         let old_lines = hook.get_old_arr().to_vec();
         let new_lines = hook.get_new_arr().to_vec();
@@ -2424,6 +2426,16 @@ impl TextHandler {
             &old_lines,
             &new_lines,
         )
+    }
+
+    fn ensure_not_deleted_for_update(&self) -> Result<(), UpdateTimeoutError> {
+        if self.is_deleted() {
+            return Err(UpdateTimeoutError::ContainerDeleted {
+                container: Box::new(self.id()),
+            });
+        }
+
+        Ok(())
     }
 
     #[allow(clippy::inherent_to_string)]

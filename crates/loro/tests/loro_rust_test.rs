@@ -18,7 +18,7 @@ use loro::{
     event::{Diff, DiffBatch, ListDiffItem},
     loro_value, CommitOptions, ContainerID, ContainerTrait, ContainerType, ExportMode, Frontiers,
     FrontiersNotIncluded, IdSpan, Index, LoroDoc, LoroError, LoroList, LoroMap, LoroMapValue,
-    LoroStringValue, LoroText, LoroValue, ToJson, TreeParentId,
+    LoroStringValue, LoroText, LoroValue, ToJson, TreeParentId, UpdateTimeoutError,
 };
 use loro_internal::{
     encoding::EncodedBlobMode, fx_map, handler::TextDelta, id::ID, version_range, vv, LoroResult,
@@ -1778,6 +1778,24 @@ fn perform_action_on_deleted_container_should_return_error() {
         _ => panic!("Expected ContainerDeleted error, but got something else"),
     }
     assert!(text.is_deleted());
+}
+
+#[test]
+#[parallel]
+fn update_deleted_text_should_return_error() {
+    let doc = LoroDoc::new();
+    let list = doc.get_movable_list("list");
+    let text = list.push_container(LoroText::new()).unwrap();
+    list.set(0, 1).unwrap();
+
+    assert!(matches!(
+        text.update("Hello", Default::default()),
+        Err(UpdateTimeoutError::ContainerDeleted { .. })
+    ));
+    assert!(matches!(
+        text.update_by_line("Hello", Default::default()),
+        Err(UpdateTimeoutError::ContainerDeleted { .. })
+    ));
 }
 
 #[test]

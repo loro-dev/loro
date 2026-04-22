@@ -15,6 +15,7 @@
 //! The implementation of this algorithm is based on the implementation by
 //! Brandon Williams.
 use crate::change::get_sys_timestamp;
+use loro_common::ContainerID;
 use rustc_hash::FxHashMap;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
@@ -44,6 +45,10 @@ impl Default for UpdateOptions {
 pub enum UpdateTimeoutError {
     #[error("Timeout")]
     Timeout,
+    #[error(
+        "The container {container} is deleted. You cannot apply the op on a deleted container."
+    )]
+    ContainerDeleted { container: Box<ContainerID> },
 }
 
 /// Utility function to check if a range is empty that works on older rust versions

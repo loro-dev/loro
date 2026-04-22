@@ -352,14 +352,6 @@ impl Tracker {
     }
 
     fn _checkout_causal(&mut self, vv: CausalVersion<'_>, on_diff_status: bool) {
-        if !on_diff_status
-            && vv
-                .single_frontier()
-                .is_some_and(|frontier| self.current_frontier_hint == Some(frontier))
-        {
-            return;
-        }
-
         let current_vv = std::mem::take(&mut self.current_vv);
         let mut retreat: SmallVec<[IdSpan; 4]> = SmallVec::new();
         for (&peer, &counter) in current_vv.iter() {
@@ -715,7 +707,11 @@ impl Tracker {
 
 #[cfg(test)]
 mod test {
-    use crate::{container::richtext::RichtextChunk, vv};
+    use crate::{
+        container::richtext::RichtextChunk,
+        version::{CausalVersion, ImVersionVector},
+        vv,
+    };
     use generic_btree::rle::HasLength;
 
     use super::*;
@@ -733,6 +729,21 @@ mod test {
         t.checkout(&v);
         assert_eq!(&t.applied_vv, &v);
         assert_eq!(t.rope.len(), 4);
+    }
+
+    #[test]
+    fn checkout_causal_same_frontier_hint_retreats_other_peers() {
+        let mut t = Tracker::new();
+        t.insert(IdFull::new(2, 0, 0), 0, RichtextChunk::new_text(0..2));
+        t.insert(IdFull::new(1, 0, 0), 2, RichtextChunk::new_text(2..4));
+        assert_eq!(t.rope.len(), 4);
+        assert_eq!(t.current_frontier_hint, Some(ID::new(1, 1)));
+
+        let base = ImVersionVector::new();
+        t.checkout_causal(CausalVersion::new(&base, 1, 2, Some(ID::new(1, 1))));
+
+        assert_eq!(t.rope.len(), 2);
+        assert_eq!(t.current_vv, vv!(1 => 2));
     }
 
     #[test]
