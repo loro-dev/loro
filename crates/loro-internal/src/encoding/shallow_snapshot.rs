@@ -7,7 +7,7 @@ use loro_common::{ContainerID, ContainerType, LoroEncodeError, LoroError, ID};
 use crate::{
     container::list::list_op::InnerListOp,
     dag::DagUtils,
-    encoding::fast_snapshot::{Snapshot, _encode_snapshot},
+    encoding::fast_snapshot::{_encode_snapshot, Snapshot},
     state::container_store::FRONTIERS_KEY,
     version::{Frontiers, VersionVector},
     LoroDoc,

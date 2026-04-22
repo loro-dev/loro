@@ -1,6 +1,6 @@
 use loro::{
-    ContainerTrait, ExportMode, LoroDoc, LoroMap, LoroResult, LoroTree, ToJson, TreeID, TreeNode,
-    TreeParentId,
+    Container, ContainerTrait, ExportMode, LoroDoc, LoroMap, LoroResult, LoroTree, ToJson, TreeID,
+    TreeNode, TreeParentId, ValueOrContainer,
 };
 use pretty_assertions::assert_eq;
 use serde_json::{json, Value};
@@ -28,6 +28,13 @@ fn summarize_nodes(nodes: &[TreeNode]) -> Value {
 fn assert_tree_error<T: core::fmt::Debug>(result: LoroResult<T>, expected: &str) {
     let err = result.expect_err("tree operation should fail");
     assert_eq!(err.to_string(), expected);
+}
+
+fn expect_tree(value: ValueOrContainer) -> LoroTree {
+    match value {
+        ValueOrContainer::Container(Container::Tree(tree)) => tree,
+        other => panic!("expected tree container, found {other:?}"),
+    }
 }
 
 #[test]
@@ -320,6 +327,130 @@ fn detached_tree_create_move_delete_and_reset_state_stay_local() -> LoroResult<(
     assert_eq!(tree.children(fresh_root), Some(vec![fresh_child]));
     assert_eq!(tree.fractional_index(fresh_root).as_deref(), Some("80"));
     assert_eq!(tree.fractional_index(fresh_child).as_deref(), Some("80"));
+
+    Ok(())
+}
+
+#[test]
+fn detached_tree_attach_to_doc_then_continue_editing_keeps_structure_and_meta() -> LoroResult<()> {
+    let tree = LoroTree::new();
+    tree.enable_fractional_index(5);
+
+    let root = tree.create(TreeParentId::Root)?;
+    let child_a = tree.create_at(root, 0)?;
+    let child_b = tree.create_at(root, 1)?;
+    let grandchild = tree.create_at(child_a, 0)?;
+    tree.get_meta(root)?.insert("title", "detached-root")?;
+    tree.get_meta(child_a)?.insert("title", "detached-a")?;
+    tree.get_meta(child_b)?.insert("title", "detached-b")?;
+    tree.get_meta(grandchild)?
+        .insert("title", "detached-grandchild")?;
+    tree.get_meta(child_a)?
+        .insert_container("details", LoroMap::new())?
+        .insert("status", "draft")?;
+
+    let doc = LoroDoc::new();
+    doc.set_peer_id(8)?;
+    let attached_tree = doc.get_map("root").insert_container("tree", tree)?;
+    assert!(attached_tree.is_attached());
+    assert_eq!(attached_tree.roots().len(), 1);
+    let attached_root = attached_tree.roots()[0];
+    let attached_children = attached_tree.children(attached_root).unwrap();
+    assert_eq!(attached_children.len(), 2);
+    assert_eq!(
+        attached_tree
+            .get_meta(attached_root)?
+            .get("title")
+            .unwrap()
+            .get_deep_value()
+            .to_json_value(),
+        json!("detached-root")
+    );
+    let attached_child_a = attached_children[0];
+    let attached_child_b = attached_children[1];
+    let attached_grandchild = attached_tree.children(attached_child_a).unwrap()[0];
+    assert_eq!(
+        attached_tree
+            .get_meta(attached_child_a)?
+            .get("details")
+            .unwrap()
+            .get_deep_value()
+            .to_json_value(),
+        json!({"status": "draft"})
+    );
+    assert_eq!(
+        attached_tree.parent(attached_grandchild),
+        Some(TreeParentId::Node(attached_child_a))
+    );
+    assert_eq!(
+        attached_tree.children(attached_child_a),
+        Some(vec![attached_grandchild])
+    );
+
+    attached_tree.mov_before(attached_child_b, attached_child_a)?;
+    let inserted = attached_tree.create_at(attached_root, 1)?;
+    attached_tree
+        .get_meta(inserted)?
+        .insert("title", "attached-new")?;
+    attached_tree.delete(attached_child_a)?;
+    assert_eq!(attached_tree.children(attached_root).unwrap().len(), 2);
+    assert_eq!(
+        attached_tree
+            .get_meta(attached_root)?
+            .get("title")
+            .unwrap()
+            .get_deep_value()
+            .to_json_value(),
+        json!("detached-root")
+    );
+
+    let snapshot = doc.export(ExportMode::Snapshot)?;
+    let restored = LoroDoc::from_snapshot(&snapshot)?;
+    let restored_tree = expect_tree(restored.get_map("root").get("tree").unwrap());
+    let restored_root = restored_tree.roots()[0];
+    let restored_children = restored_tree.children(restored_root).unwrap();
+    assert_eq!(restored_children.len(), 2);
+    assert_eq!(
+        restored_tree
+            .get_meta(restored_root)?
+            .get("title")
+            .unwrap()
+            .get_deep_value()
+            .to_json_value(),
+        json!("detached-root")
+    );
+    let restored_titles = restored_children
+        .iter()
+        .map(|id| {
+            restored_tree
+                .get_meta(*id)
+                .unwrap()
+                .get("title")
+                .unwrap()
+                .get_deep_value()
+                .to_json_value()
+        })
+        .collect::<Vec<_>>();
+    assert!(restored_titles.contains(&json!("attached-new")));
+    assert!(restored_titles.contains(&json!("detached-b")));
+    assert_eq!(
+        restored_tree
+            .get_meta(attached_child_a)
+            .unwrap()
+            .get("details")
+            .unwrap()
+            .get_deep_value()
+            .to_json_value(),
+        json!({"status": "draft"})
+    );
+    assert_eq!(
+        restored_tree.parent(attached_child_a),
+        Some(TreeParentId::Deleted)
+    );
+    assert_eq!(
+        restored_tree.parent(attached_grandchild),
+        Some(TreeParentId::Node(attached_child_a))
+    );
 
     Ok(())
 }

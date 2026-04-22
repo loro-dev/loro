@@ -279,6 +279,134 @@ fn jsonpath_filter_functions_literals_and_empty_path_results_follow_contract() -
 }
 
 #[test]
+fn jsonpath_comparison_matrix_and_value_function_follow_contract() -> anyhow::Result<()> {
+    let doc = build_catalog_doc()?;
+    let records = doc.get_list("records");
+    let flags = records.insert_container(0, LoroMap::new())?;
+    flags.insert("truthy_string", "non-empty")?;
+    flags.insert("empty_string", "")?;
+    flags.insert("truthy_int", 7)?;
+    flags.insert("zero_int", 0)?;
+    flags.insert("truthy_float", 1.5)?;
+    flags.insert("zero_float", 0.0)?;
+    flags.insert("truthy_bool", true)?;
+    flags.insert("false_bool", false)?;
+    flags.insert("null_value", LoroValue::Null)?;
+    let list = flags.insert_container("list", LoroList::new())?;
+    list.push("item")?;
+    flags.insert_container("empty_list", LoroList::new())?;
+    let map = flags.insert_container("map", LoroMap::new())?;
+    map.insert("key", "value")?;
+    flags.insert_container("empty_map", LoroMap::new())?;
+    doc.commit();
+
+    for query in [
+        "$.records[?(value(@.truthy_string) == 'non-empty')].truthy_string",
+        "$.records[?(value(@.empty_string) == '')].truthy_string",
+        "$.records[?(value(@.truthy_int) == 7)].truthy_string",
+        "$.records[?(value(@.zero_int) == 0)].truthy_string",
+        "$.records[?(value(@.truthy_float) == 1.5)].truthy_string",
+        "$.records[?(value(@.zero_float) == 0.0)].truthy_string",
+        "$.records[?(value(@.truthy_bool) == true)].truthy_string",
+        "$.records[?(value(@.false_bool) == false)].truthy_string",
+        "$.records[?(value(@.null_value) == null)].truthy_string",
+        "$.records[?(length(value(@.list)) == 1)].truthy_string",
+        "$.records[?(length(value(@.empty_list)) == 0)].truthy_string",
+        "$.records[?(length(value(@.map)) == 1)].truthy_string",
+        "$.records[?(length(value(@.empty_map)) == 0)].truthy_string",
+    ] {
+        assert_eq!(
+            results_json(doc.jsonpath(query)?),
+            json!(["non-empty"]),
+            "{query}"
+        );
+    }
+
+    assert_eq!(
+        strings(doc.jsonpath("$.catalog.books[?(count(@.title) == 1)].title")?),
+        vec![
+            "1984".to_string(),
+            "Animal Farm".to_string(),
+            "Brave New World".to_string(),
+            "Fahrenheit 451".to_string(),
+            "Pride and Prejudice".to_string(),
+        ]
+    );
+    assert_eq!(
+        results_json(doc.jsonpath("$.catalog.books[?(value(@.title) == '1984')]")?),
+        json!([{
+            "title": "1984",
+            "author": "George Orwell",
+            "price": 10,
+            "available": true,
+        }])
+    );
+    assert_eq!(
+        strings(doc.jsonpath("$.catalog.books[?(value(@.*) == null)].title")?),
+        vec![
+            "1984".to_string(),
+            "Animal Farm".to_string(),
+            "Brave New World".to_string(),
+            "Fahrenheit 451".to_string(),
+            "Pride and Prejudice".to_string(),
+        ]
+    );
+
+    assert_eq!(
+        strings(doc.jsonpath("$.catalog.books[?(@.price != 10 && @.price <= 7)].title")?),
+        vec!["Animal Farm".to_string(), "Pride and Prejudice".to_string(),]
+    );
+    assert_eq!(
+        strings(doc.jsonpath("$.catalog.books[?(@.price < 10.5 && @.price >= 6)].title")?),
+        vec![
+            "1984".to_string(),
+            "Animal Farm".to_string(),
+            "Pride and Prejudice".to_string(),
+        ]
+    );
+    assert_eq!(
+        strings(doc.jsonpath("$.catalog.books[?(@.title <= 'Animal Farm')].title")?),
+        vec!["1984".to_string(), "Animal Farm".to_string()]
+    );
+    assert_eq!(
+        strings(doc.jsonpath("$.catalog.books[?(@.title > 'F')].title")?),
+        vec![
+            "Fahrenheit 451".to_string(),
+            "Pride and Prejudice".to_string()
+        ]
+    );
+    assert_eq!(
+        strings(doc.jsonpath("$.catalog.books[?(@.available != true)].title")?),
+        vec!["Brave New World".to_string()]
+    );
+    assert_eq!(
+        strings(doc.jsonpath("$.catalog.books[?(@.author == @.author)].title")?),
+        vec![
+            "1984".to_string(),
+            "Animal Farm".to_string(),
+            "Brave New World".to_string(),
+            "Fahrenheit 451".to_string(),
+            "Pride and Prejudice".to_string(),
+        ]
+    );
+    assert!(doc
+        .jsonpath("$.catalog.books[?(@.missing == 1)].title")?
+        .is_empty());
+    assert_eq!(
+        strings(doc.jsonpath("$.catalog.books[?(length(value(@)) == 4)].title")?),
+        vec![
+            "1984".to_string(),
+            "Animal Farm".to_string(),
+            "Brave New World".to_string(),
+            "Fahrenheit 451".to_string(),
+            "Pride and Prejudice".to_string(),
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
 fn jsonpath_root_wildcards_negative_indexes_and_scalar_paths_follow_contract() -> anyhow::Result<()>
 {
     let doc = build_catalog_doc()?;

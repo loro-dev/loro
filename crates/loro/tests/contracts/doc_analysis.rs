@@ -1,8 +1,8 @@
 use std::ops::ControlFlow;
 
 use loro::{
-    CommitOptions, ContainerTrait, ExportMode, Frontiers, Index, LoroDoc, LoroList, LoroMap,
-    LoroText, ToJson, TreeParentId,
+    ChangeTravelError, CommitOptions, ContainerTrait, ExportMode, Frontiers, Index, LoroDoc,
+    LoroList, LoroMap, LoroText, ToJson, TreeParentId, ID,
 };
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -188,6 +188,65 @@ fn change_traversal_exposes_changed_containers_and_id_spans() -> anyhow::Result<
         }
     })?;
     assert_eq!(first_two, vec!["third", "second"]);
+
+    Ok(())
+}
+
+#[test]
+fn version_comparison_travel_errors_and_snapshot_mode_contracts() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(106)?;
+    doc.set_change_merge_interval(0);
+
+    let root = doc.get_map("root");
+    assert_eq!(doc.get_pending_txn_len(), 0);
+    root.insert("phase", "one")?;
+    assert_eq!(doc.get_pending_txn_len(), 1);
+    let exported_from_pending_txn = doc.export(ExportMode::all_updates())?;
+    assert_eq!(doc.get_pending_txn_len(), 0);
+    assert!(LoroDoc::from_snapshot(&exported_from_pending_txn).is_err());
+    let first = doc.state_frontiers();
+    let first_id = first.as_single().expect("first commit frontier");
+
+    root.insert("phase", "two")?;
+    doc.commit_with(CommitOptions::new().commit_msg("second"));
+    let second = doc.state_frontiers();
+    let second_id = second.as_single().expect("second commit frontier");
+
+    assert_eq!(
+        doc.cmp_frontiers(&first, &second)
+            .expect("frontiers should be included"),
+        Some(std::cmp::Ordering::Less)
+    );
+    assert_eq!(doc.cmp_with_frontiers(&second), std::cmp::Ordering::Equal);
+    assert!(doc
+        .cmp_frontiers(&Frontiers::from_id(ID::new(999, 0)), &second)
+        .is_err());
+
+    let missing =
+        doc.travel_change_ancestors(&[ID::new(106, 999)], &mut |_| ControlFlow::Continue(()));
+    assert!(matches!(
+        missing,
+        Err(ChangeTravelError::TargetIdNotFound(_))
+    ));
+
+    let shallow_blob = doc.export(ExportMode::shallow_snapshot(&second))?;
+    let shallow = LoroDoc::new();
+    shallow.import(&shallow_blob)?;
+    let shallow_err =
+        shallow.travel_change_ancestors(&[first_id], &mut |_| ControlFlow::Continue(()));
+    assert!(matches!(
+        shallow_err,
+        Err(ChangeTravelError::TargetVersionNotIncluded)
+    ));
+
+    let mut visited = Vec::new();
+    doc.travel_change_ancestors(&[second_id], &mut |change| {
+        visited.push(change.id);
+        ControlFlow::Continue(())
+    })?;
+    assert_eq!(visited.first(), Some(&second_id));
+    assert!(visited.contains(&first_id));
 
     Ok(())
 }

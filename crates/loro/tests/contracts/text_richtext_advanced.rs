@@ -361,6 +361,66 @@ fn richtext_expand_modes_apply_at_documented_boundaries() -> LoroResult<()> {
 }
 
 #[test]
+fn richtext_before_and_both_expand_types_follow_documented_boundaries() -> LoroResult<()> {
+    let before_doc = LoroDoc::new();
+    let mut styles = StyleConfigMap::default_rich_text_config();
+    styles.insert(
+        "before".into(),
+        StyleConfig::new().expand(ExpandType::Before),
+    );
+    styles.insert("both".into(), StyleConfig::new().expand(ExpandType::Both));
+    before_doc.config_text_style(styles.clone());
+
+    let before = before_doc.get_text("before");
+    before.insert(0, "ab")?;
+    before.mark(0..2, "before", true)?;
+    before_doc.commit();
+    before.insert(0, "L")?;
+    before.insert(before.len_unicode(), "R")?;
+    assert_eq!(
+        before.to_delta(),
+        vec![
+            TextDelta::Insert {
+                insert: "Lab".to_string(),
+                attributes: Some([("before".to_string(), true.into())].into_iter().collect()),
+            },
+            TextDelta::Insert {
+                insert: "R".to_string(),
+                attributes: None,
+            },
+        ]
+    );
+
+    let both_doc = LoroDoc::new();
+    both_doc.config_text_style(styles);
+    let both = both_doc.get_text("both");
+    both.insert(0, "ab")?;
+    both.mark(0..2, "both", true)?;
+    both_doc.commit();
+    both.insert(0, "L")?;
+    both.insert(both.len_unicode(), "R")?;
+    assert_eq!(
+        both.to_delta(),
+        vec![TextDelta::Insert {
+            insert: "LabR".to_string(),
+            attributes: Some([("both".to_string(), true.into())].into_iter().collect()),
+        }]
+    );
+    assert_eq!(
+        both.get_richtext_value().to_json_value(),
+        serde_json::json!([
+            { "insert": "LabR", "attributes": { "both": true } }
+        ])
+    );
+
+    let snapshot = both_doc.export(ExportMode::Snapshot)?;
+    let restored = LoroDoc::from_snapshot(&snapshot)?;
+    assert_eq!(restored.get_text("both").to_delta(), both.to_delta());
+
+    Ok(())
+}
+
+#[test]
 fn richtext_partial_unmark_unicode_and_snapshot_roundtrip_preserve_spans() -> LoroResult<()> {
     let doc = LoroDoc::new();
     let mut styles = StyleConfigMap::new();
@@ -401,6 +461,73 @@ fn richtext_partial_unmark_unicode_and_snapshot_roundtrip_preserve_spans() -> Lo
             .get_richtext_value()
             .to_json_value(),
         doc.get_text("text").get_richtext_value().to_json_value()
+    );
+
+    Ok(())
+}
+
+#[test]
+fn richtext_overlapping_styles_keep_neighbor_intersections_after_insert_and_snapshot(
+) -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    let styles = StyleConfigMap::default_rich_text_config();
+    doc.config_text_style(styles);
+
+    let text = doc.get_text("text");
+    text.insert(0, "abcd")?;
+    text.mark(0..4, "bold", true)?;
+    text.mark(1..3, "link", "https://example.com")?;
+    text.unmark(2..3, "bold")?;
+    assert_eq!(
+        text.to_delta(),
+        vec![
+            TextDelta::Insert {
+                insert: "a".to_string(),
+                attributes: Some([("bold".to_string(), true.into())].into_iter().collect()),
+            },
+            TextDelta::Insert {
+                insert: "b".to_string(),
+                attributes: Some(
+                    [
+                        ("bold".to_string(), true.into()),
+                        ("link".to_string(), "https://example.com".into()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                ),
+            },
+            TextDelta::Insert {
+                insert: "c".to_string(),
+                attributes: Some(
+                    [("link".to_string(), "https://example.com".into())]
+                        .into_iter()
+                        .collect()
+                ),
+            },
+            TextDelta::Insert {
+                insert: "d".to_string(),
+                attributes: Some([("bold".to_string(), true.into())].into_iter().collect()),
+            },
+        ]
+    );
+    assert_eq!(
+        text.get_richtext_value().to_json_value(),
+        serde_json::json!([
+            { "insert": "a", "attributes": { "bold": true } },
+            { "insert": "b", "attributes": { "bold": true, "link": "https://example.com" } },
+            { "insert": "c", "attributes": { "link": "https://example.com" } },
+            { "insert": "d", "attributes": { "bold": true } }
+        ])
+    );
+
+    let snapshot = doc.export(ExportMode::Snapshot)?;
+    let restored = LoroDoc::from_snapshot(&snapshot)?;
+    let restored_text = restored.get_text("text");
+    assert_eq!(restored_text.to_string(), text.to_string());
+    assert_eq!(restored_text.to_delta(), text.to_delta());
+    assert_eq!(
+        restored_text.get_richtext_value().to_json_value(),
+        text.get_richtext_value().to_json_value()
     );
 
     Ok(())

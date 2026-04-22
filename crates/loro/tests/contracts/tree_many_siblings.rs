@@ -186,3 +186,50 @@ fn tree_reenabled_fractional_index_positions_after_unpositioned_inserts() -> Lor
 
     Ok(())
 }
+
+#[test]
+fn tree_fractional_index_jitter_rebalances_dense_siblings_and_survives_snapshot() -> LoroResult<()>
+{
+    let doc = LoroDoc::new();
+    doc.set_peer_id(603)?;
+    let tree = doc.get_tree("outline");
+    let root = tree.create(TreeParentId::Root)?;
+
+    tree.disable_fractional_index();
+    let mut children = Vec::new();
+    for _ in 0..18 {
+        children.push(tree.create(root)?);
+    }
+    assert_eq!(tree.children(root), Some(children.clone()));
+
+    tree.enable_fractional_index(7);
+    let inserted = tree.create_at(root, 9)?;
+    children.insert(9, inserted);
+    assert_eq!(tree.children(root), Some(children.clone()));
+    assert!(tree
+        .children(root)
+        .unwrap()
+        .iter()
+        .all(|id| tree.fractional_index(*id).is_some()));
+
+    let anchor = children[4];
+    let moved_id = children[13];
+    tree.mov_before(moved_id, anchor)?;
+    let moved = children.remove(13);
+    let before = children.iter().position(|id| *id == anchor).unwrap();
+    children.insert(before, moved);
+    assert_eq!(tree.children(root), Some(children.clone()));
+
+    let snapshot = doc.export(ExportMode::Snapshot)?;
+    let restored = LoroDoc::from_snapshot(&snapshot)?;
+    assert_eq!(
+        restored.get_tree("outline").children(root),
+        Some(children.clone())
+    );
+    assert_eq!(
+        restored.get_tree("outline").children(root).unwrap().len(),
+        19
+    );
+
+    Ok(())
+}

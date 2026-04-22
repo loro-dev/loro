@@ -159,6 +159,18 @@ fn checkout_detach_attach_fork_paths_and_frontiers_follow_contract() -> anyhow::
         Some(&Index::Key("body".into()))
     );
 
+    let foreign = LoroDoc::new();
+    foreign.set_peer_id(32)?;
+    foreign.get_text("foreign").insert(0, "x")?;
+    foreign.commit();
+    assert!(doc.frontiers_to_vv(&foreign.state_frontiers()).is_none());
+    assert_eq!(
+        doc.minimize_frontiers(&foreign.state_frontiers())
+            .expect("foreign frontiers should remain unchanged"),
+        foreign.state_frontiers()
+    );
+    assert!(doc.checkout(&foreign.state_frontiers()).is_err());
+
     let vv = doc
         .frontiers_to_vv(&v1)
         .expect("frontiers should be in doc");

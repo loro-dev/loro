@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use loro::{
     event::Diff, Container, ContainerTrait, ContainerType, ExportMode, LoroCounter, LoroDoc,
-    LoroResult, ToJson, VersionVector,
+    LoroResult, ToJson, TreeParentId, VersionVector,
 };
 use serde_json::json;
 
@@ -118,6 +118,63 @@ fn counter_events_json_updates_and_deletion_follow_contract() -> LoroResult<()> 
     doc.delete_root_container(root.id());
     doc.commit();
     assert!(second.is_deleted());
+
+    Ok(())
+}
+
+#[test]
+fn counters_nested_in_tree_meta_and_movable_list_survive_diff_and_snapshot() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(151)?;
+
+    let tree = doc.get_tree("outline");
+    let root = tree.create(TreeParentId::Root)?;
+    let meta_counter = tree
+        .get_meta(root)?
+        .insert_container("score", LoroCounter::new())?;
+    meta_counter.increment(4.0)?;
+
+    let movable = doc.get_movable_list("totals");
+    let list_counter = movable.push_container(LoroCounter::new())?;
+    list_counter.increment(2.5)?;
+    movable.push("tail")?;
+    doc.commit();
+
+    let v1 = doc.state_frontiers();
+    let snapshot_v1 = doc.export(ExportMode::Snapshot)?;
+    let json_v1 = doc.get_deep_value().to_json_value();
+    assert_eq!(json_v1["outline"][0]["meta"]["score"], json!(4.0));
+    assert_eq!(json_v1["totals"][0], json!(2.5));
+
+    meta_counter.decrement(1.25)?;
+    list_counter.increment(3.5)?;
+    movable.mov(1, 0)?;
+    doc.commit();
+    let v2 = doc.state_frontiers();
+    let json_v2 = doc.get_deep_value().to_json_value();
+    assert_eq!(json_v2["outline"][0]["meta"]["score"], json!(2.75));
+    assert_eq!(json_v2["totals"], json!(["tail", 6.0]));
+
+    let forward = doc.diff(&v1, &v2)?;
+    let patched = LoroDoc::from_snapshot(&snapshot_v1)?;
+    patched.apply_diff(forward)?;
+    assert_eq!(
+        patched.get_deep_value().to_json_value(),
+        doc.get_deep_value().to_json_value()
+    );
+
+    let reverse = doc.diff(&v2, &v1)?;
+    let restored = LoroDoc::from_snapshot(&doc.export(ExportMode::Snapshot)?)?;
+    restored.apply_diff(reverse)?;
+    assert_eq!(restored.get_deep_value().to_json_value(), json_v1);
+
+    let json_updates = doc.export_json_updates(&VersionVector::default(), &doc.oplog_vv());
+    let imported = LoroDoc::new();
+    imported.import_json_updates(json_updates)?;
+    assert_eq!(
+        imported.get_deep_value().to_json_value(),
+        doc.get_deep_value().to_json_value()
+    );
 
     Ok(())
 }

@@ -319,3 +319,65 @@ fn detached_and_attached_text_coordinate_apis_follow_the_same_contract() -> Loro
 
     Ok(())
 }
+
+#[test]
+fn text_coordinate_error_and_event_position_contracts_are_consistent() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+
+    let mut styles = StyleConfigMap::default_rich_text_config();
+    styles.insert(
+        "mark".into(),
+        StyleConfig::new().expand(loro::ExpandType::Both),
+    );
+    doc.config_text_style(styles);
+
+    let text = doc.get_text("text");
+    text.insert(0, "A😀BC文")?;
+    text.mark_utf16(1..4, "mark", true)?;
+
+    for unicode_pos in 0..=text.len_unicode() {
+        let event_pos = text
+            .convert_pos(unicode_pos, PosType::Unicode, PosType::Event)
+            .expect("unicode positions should convert to event positions");
+        assert_eq!(
+            text.convert_pos(event_pos, PosType::Event, PosType::Unicode),
+            Some(unicode_pos)
+        );
+    }
+
+    assert!(matches!(
+        text.insert_utf8(2, "!"),
+        Err(loro::LoroError::UTF8InUnicodeCodePoint { pos: 2 })
+    ));
+    assert!(matches!(
+        text.insert_utf16(2, "!"),
+        Err(loro::LoroError::UTF16InUnicodeCodePoint { pos: 2 })
+    ));
+    assert!(text.delete_utf8(2, 1).is_err());
+    assert!(text.delete_utf16(2, 1).is_err());
+    assert!(text
+        .slice_delta(text.len_utf8() + 1, text.len_utf8() + 2, PosType::Bytes)
+        .is_err());
+    assert!(text
+        .slice_delta(text.len_utf16() + 1, text.len_utf16() + 2, PosType::Utf16)
+        .is_err());
+
+    assert_eq!(
+        text.slice_delta(2, 2, PosType::Unicode)?,
+        Vec::<TextDelta>::new()
+    );
+    text.unmark_utf16(1..4, "mark")?;
+    assert_eq!(
+        text.to_delta(),
+        vec![TextDelta::Insert {
+            insert: "A😀BC文".to_string(),
+            attributes: None,
+        }]
+    );
+
+    let detached = LoroText::new();
+    detached.push_str("xy")?;
+    assert_eq!(detached.to_string(), "xy");
+
+    Ok(())
+}

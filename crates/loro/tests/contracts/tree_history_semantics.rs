@@ -1,9 +1,10 @@
 use loro::{
-    EncodedBlobMode, ExportMode, LoroDoc, LoroError, LoroList, LoroMap, LoroResult, ToJson,
-    TreeParentId,
+    ChangeTravelError, EncodedBlobMode, ExportMode, LoroDoc, LoroError, LoroList, LoroMap,
+    LoroResult, ToJson, TreeParentId, ID,
 };
 use pretty_assertions::assert_eq;
 use serde_json::{json, Value};
+use std::ops::ControlFlow;
 
 fn deep_json(doc: &LoroDoc) -> Value {
     doc.get_deep_value().to_json_value()
@@ -218,5 +219,186 @@ fn tree_import_batch_and_checkout_to_latest_preserve_divergent_history() -> Loro
             .to_json_value(),
         json!("bob")
     );
+    Ok(())
+}
+
+#[test]
+fn version_comparison_and_travel_change_ancestors_follow_contract() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(67)?;
+
+    let map = doc.get_map("state");
+    map.insert("title", "draft")?;
+    doc.commit();
+    let v1 = doc.state_frontiers();
+    let v1_id = v1.iter().next().unwrap();
+
+    map.insert("count", 1)?;
+    doc.commit();
+    let v2 = doc.state_frontiers();
+
+    assert_eq!(
+        doc.cmp_frontiers(&v1, &v1),
+        Ok(Some(std::cmp::Ordering::Equal))
+    );
+    assert_eq!(
+        doc.cmp_frontiers(&v1, &v2),
+        Ok(Some(std::cmp::Ordering::Less))
+    );
+    assert_eq!(
+        doc.cmp_frontiers(&v2, &v1),
+        Ok(Some(std::cmp::Ordering::Greater))
+    );
+
+    let mut noop = |_| ControlFlow::Continue(());
+    let err = doc
+        .travel_change_ancestors(&[ID::new(999, 0)], &mut noop)
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        ChangeTravelError::TargetIdNotFound(id) if id == ID::new(999, 0)
+    ));
+
+    let shallow = doc.export(ExportMode::shallow_snapshot(&v2))?;
+    let shallow_doc = LoroDoc::new();
+    shallow_doc.import(&shallow)?;
+    let mut noop = |_| ControlFlow::Continue(());
+    let err = shallow_doc
+        .travel_change_ancestors(&[v1_id], &mut noop)
+        .unwrap_err();
+    assert!(matches!(err, ChangeTravelError::TargetVersionNotIncluded));
+
+    Ok(())
+}
+
+#[test]
+fn tree_diff_apply_roundtrips_moves_creates_deletes_and_meta() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(66)?;
+
+    let tree = doc.get_tree("outline");
+    tree.enable_fractional_index(0);
+
+    let root = tree.create(TreeParentId::Root)?;
+    let child_a = tree.create_at(root, 0)?;
+    let child_b = tree.create_at(root, 1)?;
+    let child_c = tree.create_at(root, 2)?;
+    tree.get_meta(root)?.insert("title", "v1-root")?;
+    let details = tree
+        .get_meta(root)?
+        .insert_container("details", LoroMap::new())?;
+    details.insert("owner", "alice")?;
+    tree.get_meta(child_a)?.insert("title", "v1-a")?;
+    tree.get_meta(child_b)?.insert("title", "v1-b")?;
+    tree.get_meta(child_c)?.insert("title", "v1-c")?;
+    doc.commit();
+
+    let v1 = doc.state_frontiers();
+    let snapshot_v1 = doc.export(ExportMode::Snapshot)?;
+
+    tree.mov_before(child_c, child_a)?;
+    let inserted = tree.create_at(root, 1)?;
+    tree.get_meta(inserted)?.insert("title", "v2-inserted")?;
+    tree.delete(child_b)?;
+    tree.get_meta(root)?.insert("title", "v2-root")?;
+    details.insert("status", "ready")?;
+    doc.commit();
+
+    let v2 = doc.state_frontiers();
+    let snapshot_v2 = doc.export(ExportMode::Snapshot)?;
+    assert_eq!(
+        doc.get_tree("outline").children(root),
+        Some(vec![child_c, inserted, child_a])
+    );
+    assert_eq!(
+        doc.get_tree("outline")
+            .get_meta(root)?
+            .get("title")
+            .unwrap()
+            .get_deep_value()
+            .to_json_value(),
+        json!("v2-root")
+    );
+
+    let forward = doc.diff(&v1, &v2)?;
+    let patched = LoroDoc::from_snapshot(&snapshot_v1)?;
+    patched.apply_diff(forward)?;
+    let patched_tree = patched.get_tree("outline");
+    let patched_children = patched_tree.children(root).unwrap();
+    assert_eq!(patched_children.len(), 3);
+    assert_eq!(
+        patched_children
+            .iter()
+            .map(|id| {
+                patched_tree
+                    .get_meta(*id)
+                    .unwrap()
+                    .get("title")
+                    .unwrap()
+                    .get_deep_value()
+                    .to_json_value()
+            })
+            .collect::<Vec<_>>(),
+        vec![json!("v1-c"), json!("v2-inserted"), json!("v1-a")]
+    );
+    assert_eq!(
+        patched_tree
+            .get_meta(root)?
+            .get("title")
+            .unwrap()
+            .get_deep_value()
+            .to_json_value(),
+        json!("v2-root")
+    );
+    assert_eq!(
+        patched_tree
+            .get_meta(root)?
+            .get("details")
+            .unwrap()
+            .get_deep_value()
+            .to_json_value(),
+        json!({"owner": "alice", "status": "ready"})
+    );
+
+    let reverse = doc.diff(&v2, &v1)?;
+    let restored = LoroDoc::from_snapshot(&snapshot_v2)?;
+    restored.apply_diff(reverse)?;
+    let restored_tree = restored.get_tree("outline");
+    let restored_children = restored_tree.children(root).unwrap();
+    assert_eq!(restored_children.len(), 3);
+    assert_eq!(
+        restored_children
+            .iter()
+            .map(|id| {
+                restored_tree
+                    .get_meta(*id)
+                    .unwrap()
+                    .get("title")
+                    .unwrap()
+                    .get_deep_value()
+                    .to_json_value()
+            })
+            .collect::<Vec<_>>(),
+        vec![json!("v1-a"), json!("v1-b"), json!("v1-c")]
+    );
+    assert_eq!(
+        restored_tree
+            .get_meta(root)?
+            .get("title")
+            .unwrap()
+            .get_deep_value()
+            .to_json_value(),
+        json!("v1-root")
+    );
+    assert_eq!(
+        restored_tree
+            .get_meta(root)?
+            .get("details")
+            .unwrap()
+            .get_deep_value()
+            .to_json_value(),
+        json!({"owner": "alice"})
+    );
+
     Ok(())
 }

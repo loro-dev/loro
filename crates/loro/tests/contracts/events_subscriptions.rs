@@ -384,6 +384,51 @@ fn local_update_peer_id_and_first_commit_subscriptions_follow_their_contracts(
 }
 
 #[test]
+fn subscriptions_auto_unsubscribe_and_drop_follow_contract() -> loro::LoroResult<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(29)?;
+    let text = doc.get_text("text");
+
+    let one_shot_roots = Arc::new(AtomicUsize::new(0));
+    let one_shot_roots_clone = Arc::clone(&one_shot_roots);
+    let _root = doc.subscribe_root(Arc::new(move |_| {
+        one_shot_roots_clone.fetch_add(1, Ordering::SeqCst);
+    }));
+    let one_shot_pre_commit = Arc::new(AtomicUsize::new(0));
+    let one_shot_pre_commit_clone = Arc::clone(&one_shot_pre_commit);
+    let _pre_commit = doc.subscribe_pre_commit(Box::new(move |_| {
+        one_shot_pre_commit_clone.fetch_add(1, Ordering::SeqCst);
+        false
+    }));
+
+    text.insert(0, "a")?;
+    doc.commit();
+    text.insert(1, "b")?;
+    doc.commit();
+    assert_eq!(one_shot_roots.load(Ordering::SeqCst), 2);
+    assert_eq!(one_shot_pre_commit.load(Ordering::SeqCst), 1);
+
+    let container_events = Arc::new(AtomicUsize::new(0));
+    let container_events_clone = Arc::clone(&container_events);
+    let sub = doc.subscribe(
+        &text.id(),
+        Arc::new(move |_| {
+            container_events_clone.fetch_add(1, Ordering::SeqCst);
+        }),
+    );
+    text.insert(2, "c")?;
+    doc.commit();
+    assert_eq!(container_events.load(Ordering::SeqCst), 1);
+
+    drop(sub);
+    text.insert(3, "d")?;
+    doc.commit();
+    assert_eq!(container_events.load(Ordering::SeqCst), 1);
+
+    Ok(())
+}
+
+#[test]
 fn change_merge_interval_merges_adjacent_changes_with_matching_metadata() -> loro::LoroResult<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(31)?;

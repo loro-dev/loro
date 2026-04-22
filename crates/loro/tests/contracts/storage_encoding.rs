@@ -282,6 +282,17 @@ fn storage_blobs_and_json_schema_roundtrip_state_and_metadata() -> anyhow::Resul
 
     let snapshot_doc = LoroDoc::from_snapshot(&snapshot)?;
     assert_eq!(deep_json(&snapshot_doc), deep_json(&snapshot_source));
+    let shallow_from_snapshot = LoroDoc::from_snapshot(&shallow)?;
+    assert!(shallow_from_snapshot.is_shallow());
+    assert_eq!(shallow_from_snapshot.shallow_since_frontiers(), v1);
+    let state_only_from_snapshot = LoroDoc::from_snapshot(&state_only)?;
+    assert!(state_only_from_snapshot.is_shallow());
+    assert_eq!(state_only_from_snapshot.shallow_since_frontiers(), v1);
+    assert!(LoroDoc::from_snapshot(&updates).is_err());
+    let mut corrupted_snapshot = snapshot.clone();
+    corrupted_snapshot.truncate(corrupted_snapshot.len().saturating_sub(1));
+    assert!(LoroDoc::decode_import_blob_meta(&corrupted_snapshot, true).is_err());
+    assert!(LoroDoc::from_snapshot(&corrupted_snapshot).is_err());
 
     let shallow_doc = LoroDoc::new();
     shallow_doc.import(&shallow)?;

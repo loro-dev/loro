@@ -3,8 +3,8 @@ use std::collections::BTreeSet;
 use loro::{
     cursor::{PosType, Side},
     Container, ContainerTrait, ExpandType, LoroDoc, LoroError, LoroList, LoroMap, LoroMovableList,
-    LoroResult, LoroText, LoroTree, StyleConfig, StyleConfigMap, TextDelta, ToJson, TreeParentId,
-    ValueOrContainer,
+    LoroResult, LoroText, LoroTree, LoroValue, StyleConfig, StyleConfigMap, TextDelta, ToJson,
+    TreeParentId, ValueOrContainer,
 };
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -504,6 +504,117 @@ fn text_contracts_cover_positions_deltas_update_by_line_apply_delta_and_clear() 
     assert_eq!(text.len_unicode(), 0);
     assert!(text.get_richtext_value().to_json_value().is_array());
     assert!(text.delete(0, 1).is_err());
+
+    Ok(())
+}
+
+#[test]
+fn detached_sequence_and_map_handlers_cover_lookup_bounds_and_iteration() -> LoroResult<()> {
+    let list = LoroList::new();
+    assert!(list.is_empty());
+    assert_eq!(list.pop()?, None);
+    list.push("alpha")?;
+    let list_child = list.push_container(LoroMap::new())?;
+    list_child.insert("kind", "child")?;
+    list.push("omega")?;
+
+    assert_eq!(list.len(), 3);
+    assert_eq!(list.to_vec()[0], LoroValue::from("alpha"));
+    assert!(matches!(
+        list.get(1),
+        Some(ValueOrContainer::Container(Container::Map(_)))
+    ));
+    assert!(matches!(
+        Container::from_handler(list.to_handler().get_child_handler(1)?),
+        Container::Map(_)
+    ));
+    assert!(list.to_handler().get_child_handler(0).is_err());
+    assert!(list.to_handler().get_child_handler(99).is_err());
+    assert!(list.insert(9, "too far").is_err());
+    assert!(list.delete(9, 1).is_err());
+
+    let mut list_seen = Vec::new();
+    list.for_each(|value| list_seen.push(value_kind(&value)));
+    assert_eq!(list_seen.len(), 3);
+    assert!(list_seen.iter().any(|value| value == "container:map"));
+    assert_eq!(list.pop()?, Some(LoroValue::from("omega")));
+    assert_eq!(
+        list.get_deep_value().to_json_value(),
+        json!(["alpha", {"kind": "child"}])
+    );
+
+    let movable = LoroMovableList::new();
+    assert!(movable.is_empty());
+    assert!(matches!(movable.pop()?, None));
+    movable.push("a")?;
+    let movable_child = movable.push_container(LoroText::new())?;
+    movable_child.insert(0, "body")?;
+    movable.push("c")?;
+    movable.mov(0, 2)?;
+    assert!(matches!(
+        movable.get(0),
+        Some(ValueOrContainer::Container(Container::Text(_)))
+    ));
+    assert!(matches!(
+        Container::from_handler(movable.to_handler().get_child_handler(0)?),
+        Container::Text(_)
+    ));
+    movable.set(1, "B")?;
+
+    assert_eq!(movable.to_vec()[1], LoroValue::from("B"));
+    assert!(matches!(
+        Container::from_handler(movable.to_handler().get_child_handler(0)?),
+        Container::Text(_)
+    ));
+    assert!(movable.to_handler().get_child_handler(1).is_err());
+    assert!(movable.to_handler().get_child_handler(99).is_err());
+    assert!(movable.insert(8, "too far").is_err());
+    assert!(movable.set(8, "too far").is_err());
+    assert!(movable.delete(8, 1).is_err());
+    assert!(movable.mov(8, 0).is_err());
+    assert!(movable.mov(0, 8).is_err());
+
+    let mut movable_seen = Vec::new();
+    movable.for_each(|value| movable_seen.push(value_kind(&value)));
+    assert_eq!(movable_seen.len(), 3);
+    assert!(matches!(
+        movable.pop()?,
+        Some(ValueOrContainer::Value(value)) if value == LoroValue::from("a")
+    ));
+    assert_eq!(
+        movable.get_deep_value().to_json_value(),
+        json!(["body", "B"])
+    );
+
+    let map = LoroMap::new();
+    assert!(map.is_empty());
+    map.insert("nullish", LoroValue::Null)?;
+    let text = map.get_or_create_container("nullish", LoroText::new())?;
+    text.insert(0, "created")?;
+    map.insert("scalar", "value")?;
+    assert!(map
+        .get_or_create_container("scalar", LoroList::new())
+        .is_err());
+    assert!(map.to_handler().get_child_handler("scalar").is_err());
+    assert!(matches!(
+        Container::from_handler(map.to_handler().get_child_handler("nullish")?),
+        Container::Text(_)
+    ));
+
+    let mut map_seen = BTreeSet::new();
+    map.for_each(|key, value| {
+        map_seen.insert(format!("{key}={}", value_kind(&value)));
+    });
+    assert!(map_seen.contains("nullish=container:text"));
+    assert!(map_seen
+        .iter()
+        .any(|value| value.starts_with("scalar=value:")));
+    assert_eq!(
+        map.get_deep_value().to_json_value(),
+        json!({"nullish": "created", "scalar": "value"})
+    );
+    map.delete("scalar")?;
+    assert_eq!(map.len(), 1);
 
     Ok(())
 }

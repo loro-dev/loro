@@ -351,6 +351,18 @@ fn frontiers_contracts_follow_semantics() -> anyhow::Result<()> {
         doc.frontiers_to_vv(&Frontiers::None),
         Some(VersionVector::new())
     );
+
+    let foreign = LoroDoc::new();
+    foreign.set_peer_id(77)?;
+    foreign.get_text("foreign").insert(0, "x")?;
+    foreign.commit();
+    assert!(doc.frontiers_to_vv(&foreign.state_frontiers()).is_none());
+    assert_eq!(
+        doc.minimize_frontiers(&foreign.state_frontiers())
+            .expect("foreign frontiers should remain unchanged"),
+        foreign.state_frontiers()
+    );
+
     let minimized = doc
         .minimize_frontiers(&doc_frontiers)
         .expect("frontiers from the same doc should be minimizable");

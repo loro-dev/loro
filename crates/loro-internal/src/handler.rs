@@ -1596,6 +1596,27 @@ impl TextHandler {
         end_index: usize,
         pos_type: PosType,
     ) -> LoroResult<Vec<TextDelta>> {
+        if end_index < start_index {
+            return Err(LoroError::EndIndexLessThanStartIndex {
+                start: start_index,
+                end: end_index,
+            });
+        }
+        if start_index == end_index {
+            return Ok(Vec::new());
+        }
+
+        let len = self.len(pos_type);
+        if end_index > len {
+            return Err(LoroError::OutOfBound {
+                pos: end_index,
+                len,
+                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+            });
+        }
+        self.validate_text_boundary(start_index, pos_type)?;
+        self.validate_text_boundary(end_index, pos_type)?;
+
         match &self.inner {
             MaybeDetached::Detached(t) => {
                 let t = t.lock();
@@ -2638,6 +2659,13 @@ impl ListHandler {
         match &self.inner {
             MaybeDetached::Detached(l) => {
                 let mut list = l.lock();
+                if pos > list.value.len() {
+                    return Err(LoroError::OutOfBound {
+                        pos,
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                        len: list.value.len(),
+                    });
+                }
                 list.value.insert(pos, ValueOrHandler::Value(v.into()));
                 Ok(())
             }
@@ -2778,6 +2806,13 @@ impl ListHandler {
         match &self.inner {
             MaybeDetached::Detached(l) => {
                 let mut list = l.lock();
+                if pos + len > list.value.len() {
+                    return Err(LoroError::OutOfBound {
+                        pos: pos + len,
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                        len: list.value.len(),
+                    });
+                }
                 list.value.drain(pos..pos + len);
                 Ok(())
             }
@@ -3468,6 +3503,13 @@ impl MovableListHandler {
         match &self.inner {
             MaybeDetached::Detached(d) => {
                 let mut d = d.lock();
+                if pos + len > d.value.len() {
+                    return Err(LoroError::OutOfBound {
+                        pos: pos + len,
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                        len: d.value.len(),
+                    });
+                }
                 d.value.drain(pos..pos + len);
                 Ok(())
             }
