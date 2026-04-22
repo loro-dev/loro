@@ -160,11 +160,15 @@ impl SharedArena {
     }
 
     pub(crate) fn checkpoint_for_rollback(&self) -> SharedArenaRollback {
+        let container_len = self.inner.container_idx_to_id.lock().len();
+        let root_len = self.inner.root_c_idx.lock().len();
+        let values_len = self.inner.values.lock().len();
+        let str = self.inner.str.lock().checkpoint();
         SharedArenaRollback {
-            container_len: self.inner.container_idx_to_id.lock().len(),
-            root_len: self.inner.root_c_idx.lock().len(),
-            values_len: self.inner.values.lock().len(),
-            str: self.inner.str.lock().checkpoint(),
+            container_len,
+            root_len,
+            values_len,
+            str,
         }
     }
 

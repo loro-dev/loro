@@ -5,7 +5,9 @@ use crate::{
     version::{ImVersionVector, VersionRange},
     OpLog, VersionVector,
 };
-use loro_common::{Counter, CounterSpan, HasCounterSpan, HasIdSpan, LoroResult, PeerID, ID};
+use loro_common::{
+    ContainerType, Counter, CounterSpan, HasCounterSpan, HasIdSpan, LoroResult, PeerID, ID,
+};
 use rustc_hash::FxHashMap;
 
 #[derive(Debug, Clone)]
@@ -34,8 +36,19 @@ pub(crate) struct PendingChanges {
 }
 
 impl PendingChanges {
-    pub(crate) fn is_empty(&self) -> bool {
-        self.changes.is_empty()
+    pub(crate) fn has_state_apply_rollback_ops(&self) -> bool {
+        self.changes.values().any(|tree| {
+            tree.values().any(|changes| {
+                changes.iter().any(|change| {
+                    change.ops.iter().any(|op| {
+                        matches!(
+                            op.container.get_type(),
+                            ContainerType::List | ContainerType::Tree
+                        )
+                    })
+                })
+            })
+        })
     }
 
     pub(crate) fn version_range(&self) -> VersionRange {
