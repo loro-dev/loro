@@ -49,6 +49,39 @@ behavior or package output changes.
 
 ## Agent-Specific Notes
 
+### Principle: Avoid Breaking Changes Unless Absolutely Necessary
+
+The `loro` crate is a public library with downstream users. When fixing panics or bugs,
+prefer non-breaking solutions:
+
+- Add `try_*` methods that return `Option` or `Result` instead of changing existing
+  method signatures.
+- Replace `assert!` / `unwrap()` / `unreachable!()` with descriptive `expect()` messages
+  when the method must remain panicking for backward compatibility.
+- Only introduce breaking signature changes (e.g., changing a return type from `T` to
+  `Option<T>`) when there is no safe backward-compatible alternative and the breakage
+  is justified by a critical correctness or safety issue.
+
+### Principle: Internal Invariant Preservation Over Graceful Degradation
+
+When an internal invariant is violated (e.g., a state lookup that should always succeed
+returns `None`, an event batch has an unexpected structure, or a diff cannot be composed),
+the priority is:
+
+1. **Do not let the system continue in a corrupted or inconsistent state.**
+   Prefer `panic!` / `unwrap()` / `expect()` over silently skipping, returning a default,
+   or returning success when the internal state is known to be wrong.
+2. **Preserve the correctness of public API contracts.**
+   A public method should not return a value that violates its documented contract
+   (e.g., returning an empty list when nodes actually exist).
+3. **Avoid panics on valid user input.**
+   Malformed external input (decode errors, invalid JSON schema, out-of-bounds indices)
+   should return `Err`. But do not replace internal-safety panics with silent skips
+   just to avoid crashing.
+
+In short: internal corruption → fail-fast (panic); invalid user input → `Result::Err`;
+returning wrong data is worse than panicking.
+
 ### Invariant: Flush Pending Events In `loro-wasm`
 
 In `crates/loro-wasm/src/lib.rs`, subscription callbacks (`subscribe*`,

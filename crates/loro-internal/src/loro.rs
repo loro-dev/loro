@@ -217,7 +217,10 @@ impl LoroDoc {
 
     /// Renews the PeerID for the document.
     pub(crate) fn renew_peer_id(&self) {
-        let peer_id = DefaultRandom.next_u64();
+        let mut peer_id = DefaultRandom.next_u64();
+        while peer_id == PeerID::MAX {
+            peer_id = DefaultRandom.next_u64();
+        }
         self.set_peer_id(peer_id).unwrap();
     }
 
@@ -341,12 +344,13 @@ impl LoroDoc {
                 }
             }
             if config.immediate_renew {
-                assert!(self.can_edit());
-                let mut t = self.txn().unwrap();
-                if let Some(options) = options.as_ref() {
-                    t.set_options(options.clone());
+                if self.can_edit() {
+                    let mut t = self.txn().unwrap();
+                    if let Some(options) = options.as_ref() {
+                        t.set_options(options.clone());
+                    }
+                    *txn_guard = Some(t);
                 }
-                *txn_guard = Some(t);
             }
 
             if let Some(on_commit) = on_commit {
@@ -829,48 +833,110 @@ impl LoroDoc {
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
     #[inline]
-    pub fn get_text<I: IntoContainerId>(&self, id: I) -> TextHandler {
+    pub fn try_get_text<I: IntoContainerId>(&self, id: I) -> Option<TextHandler> {
         let id = id.into_container_id(&self.arena, ContainerType::Text);
-        assert!(self.has_container(&id));
-        Handler::new_attached(id, self.clone()).into_text().unwrap()
+        if !self.has_container(&id) {
+            return None;
+        }
+        Handler::new_attached(id, self.clone()).into_text().ok()
+    }
+
+    /// id can be a str, ContainerID, or ContainerIdRaw.
+    /// if it's str it will use Root container, which will not be None
+    #[inline]
+    pub fn get_text<I: IntoContainerId>(&self, id: I) -> TextHandler {
+        self.try_get_text(id)
+            .expect("The container does not exist in the document. Use `try_get_text` or `get_container` to check for existence.")
+    }
+
+    /// id can be a str, ContainerID, or ContainerIdRaw.
+    /// if it's str it will use Root container, which will not be None
+    #[inline]
+    pub fn try_get_list<I: IntoContainerId>(&self, id: I) -> Option<ListHandler> {
+        let id = id.into_container_id(&self.arena, ContainerType::List);
+        if !self.has_container(&id) {
+            return None;
+        }
+        Handler::new_attached(id, self.clone()).into_list().ok()
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
     #[inline]
     pub fn get_list<I: IntoContainerId>(&self, id: I) -> ListHandler {
-        let id = id.into_container_id(&self.arena, ContainerType::List);
-        assert!(self.has_container(&id));
-        Handler::new_attached(id, self.clone()).into_list().unwrap()
+        self.try_get_list(id)
+            .expect("The container does not exist in the document. Use `try_get_list` or `get_container` to check for existence.")
+    }
+
+    /// id can be a str, ContainerID, or ContainerIdRaw.
+    /// if it's str it will use Root container, which will not be None
+    #[inline]
+    pub fn try_get_movable_list<I: IntoContainerId>(&self, id: I) -> Option<MovableListHandler> {
+        let id = id.into_container_id(&self.arena, ContainerType::MovableList);
+        if !self.has_container(&id) {
+            return None;
+        }
+        Handler::new_attached(id, self.clone())
+            .into_movable_list()
+            .ok()
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
     #[inline]
     pub fn get_movable_list<I: IntoContainerId>(&self, id: I) -> MovableListHandler {
-        let id = id.into_container_id(&self.arena, ContainerType::MovableList);
-        assert!(self.has_container(&id));
-        Handler::new_attached(id, self.clone())
-            .into_movable_list()
-            .unwrap()
+        self.try_get_movable_list(id)
+            .expect("The container does not exist in the document. Use `try_get_movable_list` or `get_container` to check for existence.")
+    }
+
+    /// id can be a str, ContainerID, or ContainerIdRaw.
+    /// if it's str it will use Root container, which will not be None
+    #[inline]
+    pub fn try_get_map<I: IntoContainerId>(&self, id: I) -> Option<MapHandler> {
+        let id = id.into_container_id(&self.arena, ContainerType::Map);
+        if !self.has_container(&id) {
+            return None;
+        }
+        Handler::new_attached(id, self.clone()).into_map().ok()
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
     #[inline]
     pub fn get_map<I: IntoContainerId>(&self, id: I) -> MapHandler {
-        let id = id.into_container_id(&self.arena, ContainerType::Map);
-        assert!(self.has_container(&id));
-        Handler::new_attached(id, self.clone()).into_map().unwrap()
+        self.try_get_map(id)
+            .expect("The container does not exist in the document. Use `try_get_map` or `get_container` to check for existence.")
+    }
+
+    /// id can be a str, ContainerID, or ContainerIdRaw.
+    /// if it's str it will use Root container, which will not be None
+    #[inline]
+    pub fn try_get_tree<I: IntoContainerId>(&self, id: I) -> Option<TreeHandler> {
+        let id = id.into_container_id(&self.arena, ContainerType::Tree);
+        if !self.has_container(&id) {
+            return None;
+        }
+        Handler::new_attached(id, self.clone()).into_tree().ok()
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
     /// if it's str it will use Root container, which will not be None
     #[inline]
     pub fn get_tree<I: IntoContainerId>(&self, id: I) -> TreeHandler {
-        let id = id.into_container_id(&self.arena, ContainerType::Tree);
-        assert!(self.has_container(&id));
-        Handler::new_attached(id, self.clone()).into_tree().unwrap()
+        self.try_get_tree(id)
+            .expect("The container does not exist in the document. Use `try_get_tree` or `get_container` to check for existence.")
+    }
+
+    #[cfg(feature = "counter")]
+    pub fn try_get_counter<I: IntoContainerId>(
+        &self,
+        id: I,
+    ) -> Option<crate::handler::counter::CounterHandler> {
+        let id = id.into_container_id(&self.arena, ContainerType::Counter);
+        if !self.has_container(&id) {
+            return None;
+        }
+        Handler::new_attached(id, self.clone()).into_counter().ok()
     }
 
     #[cfg(feature = "counter")]
@@ -878,11 +944,8 @@ impl LoroDoc {
         &self,
         id: I,
     ) -> crate::handler::counter::CounterHandler {
-        let id = id.into_container_id(&self.arena, ContainerType::Counter);
-        assert!(self.has_container(&id));
-        Handler::new_attached(id, self.clone())
-            .into_counter()
-            .unwrap()
+        self.try_get_counter(id)
+            .expect("The container does not exist in the document. Use `try_get_counter` or `get_container` to check for existence.")
     }
 
     #[must_use]
@@ -1027,15 +1090,17 @@ impl LoroDoc {
             state.stop_and_clear_recording();
             is_recording
         };
-        self._checkout_without_emitting(a, true, false).unwrap();
-        self.state.lock().start_recording();
-        self._checkout_without_emitting(b, true, false).unwrap();
-        let e = {
+        let result = (|| {
+            self._checkout_without_emitting(a, true, false)?;
+            self.state.lock().start_recording();
+            self._checkout_without_emitting(b, true, false)?;
             let mut state = self.state.lock();
             let e = state.take_events();
             state.stop_and_clear_recording();
-            e
-        };
+            Ok::<_, LoroError>(e)
+        })();
+
+        // Always restore state regardless of whether diff calculation succeeded
         self._checkout_without_emitting(&old_frontiers, false, false)
             .unwrap();
         drop(txn);
@@ -1046,7 +1111,7 @@ impl LoroDoc {
         if was_recording {
             self.state.lock().start_recording();
         }
-        Ok(DiffBatch::new(e))
+        result.map(DiffBatch::new)
     }
 
     /// Apply a diff to the current state.

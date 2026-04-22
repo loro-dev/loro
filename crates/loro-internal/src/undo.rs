@@ -34,7 +34,7 @@ impl DiffBatch {
         for d in diff.into_iter() {
             for item in d.diff.into_iter() {
                 let old = map.insert(item.id.clone(), item.diff);
-                assert!(old.is_none());
+                assert!(old.is_none(), "Duplicate container ID in diff events");
                 order.push(item.id.clone());
             }
         }
@@ -679,7 +679,10 @@ impl UndoManager {
             return Err(LoroError::UndoGroupAlreadyStarted);
         }
 
-        inner.group = Some(UndoGroup::new(inner.next_counter.unwrap()));
+        inner.group =
+            Some(UndoGroup::new(inner.next_counter.ok_or_else(|| {
+                LoroError::Unknown("UndoManager is not ready".into())
+            })?));
 
         Ok(())
     }

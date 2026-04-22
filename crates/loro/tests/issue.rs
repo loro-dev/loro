@@ -233,7 +233,8 @@ fn test_undo_counter_after_remote_update_issue_905() {
 
     let doc_b = LoroDoc::new();
     doc_b.set_peer_id(2).unwrap();
-    doc_b.import(&doc_a.export(ExportMode::all_updates()).unwrap())
+    doc_b
+        .import(&doc_a.export(ExportMode::all_updates()).unwrap())
         .unwrap();
 
     let counter_b = doc_b.get_counter("counter");
@@ -241,7 +242,8 @@ fn test_undo_counter_after_remote_update_issue_905() {
     counter_b.increment(1.0).unwrap();
     doc_b.commit();
 
-    doc_a.import(&doc_b.export(ExportMode::all_updates()).unwrap())
+    doc_a
+        .import(&doc_b.export(ExportMode::all_updates()).unwrap())
         .unwrap();
     assert_eq!(counter_a.get_value(), 2.0);
 

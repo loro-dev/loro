@@ -224,47 +224,52 @@ fn register_container_id(
     }
 }
 
-fn convert_container_id(container: ContainerID, peers: &Option<Vec<PeerID>>) -> ContainerID {
+fn convert_container_id(
+    container: ContainerID,
+    peers: &Option<Vec<PeerID>>,
+) -> LoroResult<ContainerID> {
     match container {
         ContainerID::Normal {
             peer,
             counter,
             container_type,
-        } => ContainerID::Normal {
-            peer: get_peer_from_peers(peers, peer),
+        } => Ok(ContainerID::Normal {
+            peer: get_peer_from_peers(peers, peer)?,
             counter,
             container_type,
-        },
-        r => r,
+        }),
+        r => Ok(r),
     }
 }
 
-pub(crate) fn get_peer_from_peers(peers: &Option<Vec<PeerID>>, peer: PeerID) -> PeerID {
+pub(crate) fn get_peer_from_peers(peers: &Option<Vec<PeerID>>, peer: PeerID) -> LoroResult<PeerID> {
     match peers {
-        Some(peers) => peers[peer as usize],
-        None => peer,
+        Some(peers) => peers.get(peer as usize).copied().ok_or_else(|| {
+            LoroError::DecodeError("peer index out of range in compressed peer table".into())
+        }),
+        None => Ok(peer),
     }
 }
 
-fn convert_id(id: &ID, peers: &Option<Vec<PeerID>>) -> ID {
-    ID {
-        peer: get_peer_from_peers(peers, id.peer),
+fn convert_id(id: &ID, peers: &Option<Vec<PeerID>>) -> LoroResult<ID> {
+    Ok(ID {
+        peer: get_peer_from_peers(peers, id.peer)?,
         counter: id.counter,
-    }
+    })
 }
 
-fn convert_idlp(idlp: &IdLp, peers: &Option<Vec<PeerID>>) -> IdLp {
-    IdLp {
+fn convert_idlp(idlp: &IdLp, peers: &Option<Vec<PeerID>>) -> LoroResult<IdLp> {
+    Ok(IdLp {
         lamport: idlp.lamport,
-        peer: get_peer_from_peers(peers, idlp.peer),
-    }
+        peer: get_peer_from_peers(peers, idlp.peer)?,
+    })
 }
 
-fn convert_tree_id(tree: &TreeID, peers: &Option<Vec<PeerID>>) -> TreeID {
-    TreeID {
-        peer: get_peer_from_peers(peers, tree.peer),
+fn convert_tree_id(tree: &TreeID, peers: &Option<Vec<PeerID>>) -> LoroResult<TreeID> {
+    Ok(TreeID {
+        peer: get_peer_from_peers(peers, tree.peer)?,
         counter: tree.counter,
-    }
+    })
 }
 pub(crate) fn encode_change_to_json(change: ChangeRef<'_>, arena: &SharedArena) -> JsonSchema {
     let f = change.deps.clone();
@@ -559,7 +564,7 @@ fn decode_changes(json: JsonSchema, arena: &SharedArena) -> LoroResult<Vec<Chang
         ops: json_ops,
     } in changes
     {
-        let id = convert_id(&id, &peers);
+        let id = convert_id(&id, &peers)?;
         let mut ops: RleVec<[Op; 1]> = RleVec::new();
         for op in json_ops {
             ops.push(decode_op(op, arena, &peers)?);
@@ -568,7 +573,11 @@ fn decode_changes(json: JsonSchema, arena: &SharedArena) -> LoroResult<Vec<Chang
         let change = Change {
             id,
             timestamp,
-            deps: Frontiers::from_iter(deps.into_iter().map(|id| convert_id(&id, &peers))),
+            deps: Frontiers::from_iter(
+                deps.into_iter()
+                    .map(|id| convert_id(&id, &peers))
+                    .collect::<LoroResult<Vec<_>>>()?,
+            ),
             lamport,
             ops,
             commit_msg: msg.map(|x| x.into()),
@@ -584,7 +593,7 @@ fn decode_op(op: json::JsonOp, arena: &SharedArena, peers: &Option<Vec<PeerID>>)
         container,
         content,
     } = op;
-    let container = convert_container_id(container, peers);
+    let container = convert_container_id(container, peers)?;
     let idx = arena.register_container(&container);
     let content = match container.container_type() {
         ContainerType::Text => match content {
@@ -603,7 +612,7 @@ fn decode_op(op: json::JsonOp, arena: &SharedArena, peers: &Option<Vec<PeerID>>)
                     len,
                     start_id: id_start,
                 } => {
-                    let id_start = convert_id(&id_start, peers);
+                    let id_start = convert_id(&id_start, peers)?;
                     InnerContent::List(InnerListOp::Delete(DeleteSpanWithId {
                         id_start,
                         span: DeleteSpan {
@@ -627,7 +636,11 @@ fn decode_op(op: json::JsonOp, arena: &SharedArena, peers: &Option<Vec<PeerID>>)
                 }),
                 json::TextOp::MarkEnd => InnerContent::List(InnerListOp::StyleEnd),
             },
-            _ => unreachable!(),
+            _ => {
+                return Err(LoroError::DecodeError(
+                    "invalid op content for text container".into(),
+                ))
+            }
         },
         ContainerType::List => match content {
             JsonOpContent::List(list) => match list {
@@ -635,13 +648,13 @@ fn decode_op(op: json::JsonOp, arena: &SharedArena, peers: &Option<Vec<PeerID>>)
                     pos,
                     value: mut values,
                 } => {
-                    values.iter_mut().for_each(|v| {
+                    for v in values.iter_mut() {
                         if let LoroValue::Container(id) = v {
                             if id.is_normal() {
-                                *id = convert_container_id(id.clone(), peers);
+                                *id = convert_container_id(id.clone(), peers)?;
                             }
                         }
-                    });
+                    }
                     let range = arena.alloc_values(values.iter().cloned());
                     InnerContent::List(InnerListOp::Insert {
                         slice: SliceRange::new(range.start as u32..range.end as u32),
@@ -650,7 +663,7 @@ fn decode_op(op: json::JsonOp, arena: &SharedArena, peers: &Option<Vec<PeerID>>)
                 }
                 json::ListOp::Delete { pos, len, start_id } => {
                     InnerContent::List(InnerListOp::Delete(DeleteSpanWithId {
-                        id_start: convert_id(&start_id, peers),
+                        id_start: convert_id(&start_id, peers)?,
                         span: DeleteSpan {
                             pos: pos as isize,
                             signed_len: len as isize,
@@ -658,7 +671,11 @@ fn decode_op(op: json::JsonOp, arena: &SharedArena, peers: &Option<Vec<PeerID>>)
                     }))
                 }
             },
-            _ => unreachable!(),
+            _ => {
+                return Err(LoroError::DecodeError(
+                    "invalid op content for list container".into(),
+                ))
+            }
         },
         ContainerType::MovableList => match content {
             JsonOpContent::MovableList(list) => match list {
@@ -666,13 +683,13 @@ fn decode_op(op: json::JsonOp, arena: &SharedArena, peers: &Option<Vec<PeerID>>)
                     pos,
                     value: mut values,
                 } => {
-                    values.iter_mut().for_each(|v| {
+                    for v in values.iter_mut() {
                         if let LoroValue::Container(id) = v {
                             if id.is_normal() {
-                                *id = convert_container_id(id.clone(), peers);
+                                *id = convert_container_id(id.clone(), peers)?;
                             }
                         }
-                    });
+                    }
                     let range = arena.alloc_values(values.iter().cloned());
                     InnerContent::List(InnerListOp::Insert {
                         slice: SliceRange::new(range.start as u32..range.end as u32),
@@ -681,7 +698,7 @@ fn decode_op(op: json::JsonOp, arena: &SharedArena, peers: &Option<Vec<PeerID>>)
                 }
                 json::MovableListOp::Delete { pos, len, start_id } => {
                     InnerContent::List(InnerListOp::Delete(DeleteSpanWithId {
-                        id_start: convert_id(&start_id, peers),
+                        id_start: convert_id(&start_id, peers)?,
                         span: DeleteSpan {
                             pos: pos as isize,
                             signed_len: len as isize,
@@ -693,7 +710,7 @@ fn decode_op(op: json::JsonOp, arena: &SharedArena, peers: &Option<Vec<PeerID>>)
                     elem_id: from_id,
                     to,
                 } => {
-                    let from_id = convert_idlp(&from_id, peers);
+                    let from_id = convert_idlp(&from_id, peers)?;
                     InnerContent::List(InnerListOp::Move {
                         from,
                         elem_id: from_id,
@@ -701,20 +718,24 @@ fn decode_op(op: json::JsonOp, arena: &SharedArena, peers: &Option<Vec<PeerID>>)
                     })
                 }
                 json::MovableListOp::Set { elem_id, mut value } => {
-                    let elem_id = convert_idlp(&elem_id, peers);
+                    let elem_id = convert_idlp(&elem_id, peers)?;
                     if let LoroValue::Container(id) = &mut value {
-                        *id = convert_container_id(id.clone(), peers);
+                        *id = convert_container_id(id.clone(), peers)?;
                     }
                     InnerContent::List(InnerListOp::Set { elem_id, value })
                 }
             },
-            _ => unreachable!(),
+            _ => {
+                return Err(LoroError::DecodeError(
+                    "invalid op content for movable list container".into(),
+                ))
+            }
         },
         ContainerType::Map => match content {
             JsonOpContent::Map(map) => match map {
                 json::MapOp::Insert { key, mut value } => {
                     if let LoroValue::Container(id) = &mut value {
-                        *id = convert_container_id(id.clone(), peers);
+                        *id = convert_container_id(id.clone(), peers)?;
                     }
                     InnerContent::Map(MapSet {
                         key: key.into(),
@@ -726,7 +747,11 @@ fn decode_op(op: json::JsonOp, arena: &SharedArena, peers: &Option<Vec<PeerID>>)
                     value: None,
                 }),
             },
-            _ => unreachable!(),
+            _ => {
+                return Err(LoroError::DecodeError(
+                    "invalid op content for map container".into(),
+                ))
+            }
         },
         ContainerType::Tree => match content {
             JsonOpContent::Tree(tree) => match tree {
@@ -735,8 +760,11 @@ fn decode_op(op: json::JsonOp, arena: &SharedArena, peers: &Option<Vec<PeerID>>)
                     parent,
                     fractional_index,
                 } => InnerContent::Tree(Arc::new(TreeOp::Create {
-                    target: convert_tree_id(&target, peers),
-                    parent: parent.map(|p| convert_tree_id(&p, peers)),
+                    target: convert_tree_id(&target, peers)?,
+                    parent: match parent {
+                        Some(p) => Some(convert_tree_id(&p, peers)?),
+                        None => None,
+                    },
                     position: fractional_index,
                 })),
                 json::TreeOp::Move {
@@ -744,15 +772,22 @@ fn decode_op(op: json::JsonOp, arena: &SharedArena, peers: &Option<Vec<PeerID>>)
                     parent,
                     fractional_index,
                 } => InnerContent::Tree(Arc::new(TreeOp::Move {
-                    target: convert_tree_id(&target, peers),
-                    parent: parent.map(|p| convert_tree_id(&p, peers)),
+                    target: convert_tree_id(&target, peers)?,
+                    parent: match parent {
+                        Some(p) => Some(convert_tree_id(&p, peers)?),
+                        None => None,
+                    },
                     position: fractional_index,
                 })),
                 json::TreeOp::Delete { target } => InnerContent::Tree(Arc::new(TreeOp::Delete {
-                    target: convert_tree_id(&target, peers),
+                    target: convert_tree_id(&target, peers)?,
                 })),
             },
-            _ => unreachable!(),
+            _ => {
+                return Err(LoroError::DecodeError(
+                    "invalid op content for tree container".into(),
+                ))
+            }
         },
         ContainerType::Unknown(_) => match content {
             JsonOpContent::Future(json::FutureOpWrapper {
@@ -762,12 +797,18 @@ fn decode_op(op: json::JsonOp, arena: &SharedArena, peers: &Option<Vec<PeerID>>)
                 prop,
                 value: Box::new(value),
             }),
-            _ => unreachable!(),
+            _ => {
+                return Err(LoroError::DecodeError(
+                    "invalid op content for unknown container".into(),
+                ))
+            }
         },
         #[cfg(feature = "counter")]
         ContainerType::Counter => {
             let JsonOpContent::Future(json::FutureOpWrapper { prop: _, value }) = content else {
-                unreachable!()
+                return Err(LoroError::DecodeError(
+                    "invalid op content for counter container".into(),
+                ));
             };
             use crate::encoding::OwnedValue;
             match value {
@@ -779,7 +820,11 @@ fn decode_op(op: json::JsonOp, arena: &SharedArena, peers: &Option<Vec<PeerID>>)
                 | json::FutureOp::Unknown(OwnedValue::I64(c)) => {
                     InnerContent::Future(FutureInnerContent::Counter(c as f64))
                 }
-                _ => unreachable!(),
+                _ => {
+                    return Err(LoroError::DecodeError(
+                        "invalid counter op value type".into(),
+                    ))
+                }
             }
         } // Note: The Future Type need try to parse Op from the unknown content
     };
@@ -850,7 +895,9 @@ pub mod json {
 
     impl JsonChange {
         pub fn op_len(&self) -> usize {
-            let last_op = self.ops.last().unwrap();
+            let Some(last_op) = self.ops.last() else {
+                return 0;
+            };
             (last_op.counter - self.id.counter) as usize + last_op.content.op_len()
         }
     }
@@ -1071,45 +1118,73 @@ pub mod json {
                     where
                         A: MapAccess<'de>,
                     {
-                        let (_key, container) = map.next_entry::<String, String>()?.unwrap();
+                        let (_key, container) = map
+                            .next_entry::<String, String>()?
+                            .ok_or_else(|| serde::de::Error::custom("missing container field"))?;
                         let is_unknown = container.ends_with(')');
                         let container = ContainerID::try_from(container.as_str())
                             .map_err(|_| serde::de::Error::custom("invalid container id"))?;
                         let op = if is_unknown {
-                            let (_key, op) =
-                                map.next_entry::<String, super::FutureOpWrapper>()?.unwrap();
+                            let (_key, op) = map
+                                .next_entry::<String, super::FutureOpWrapper>()?
+                                .ok_or_else(|| {
+                                    serde::de::Error::custom(
+                                        "missing op field for unknown container",
+                                    )
+                                })?;
                             super::JsonOpContent::Future(op)
                         } else {
                             match container.container_type() {
                                 ContainerType::List => {
-                                    let (_key, op) =
-                                        map.next_entry::<String, super::ListOp>()?.unwrap();
+                                    let (_key, op) = map
+                                        .next_entry::<String, super::ListOp>()?
+                                        .ok_or_else(|| {
+                                            serde::de::Error::custom("missing op field for list")
+                                        })?;
                                     super::JsonOpContent::List(op)
                                 }
                                 ContainerType::MovableList => {
-                                    let (_key, op) =
-                                        map.next_entry::<String, super::MovableListOp>()?.unwrap();
+                                    let (_key, op) = map
+                                        .next_entry::<String, super::MovableListOp>()?
+                                        .ok_or_else(|| {
+                                            serde::de::Error::custom(
+                                                "missing op field for movable list",
+                                            )
+                                        })?;
                                     super::JsonOpContent::MovableList(op)
                                 }
                                 ContainerType::Map => {
                                     let (_key, op) =
-                                        map.next_entry::<String, super::MapOp>()?.unwrap();
+                                        map.next_entry::<String, super::MapOp>()?.ok_or_else(
+                                            || serde::de::Error::custom("missing op field for map"),
+                                        )?;
                                     super::JsonOpContent::Map(op)
                                 }
                                 ContainerType::Text => {
-                                    let (_key, op) =
-                                        map.next_entry::<String, super::TextOp>()?.unwrap();
+                                    let (_key, op) = map
+                                        .next_entry::<String, super::TextOp>()?
+                                        .ok_or_else(|| {
+                                            serde::de::Error::custom("missing op field for text")
+                                        })?;
                                     super::JsonOpContent::Text(op)
                                 }
                                 ContainerType::Tree => {
-                                    let (_key, op) =
-                                        map.next_entry::<String, super::TreeOp>()?.unwrap();
+                                    let (_key, op) = map
+                                        .next_entry::<String, super::TreeOp>()?
+                                        .ok_or_else(|| {
+                                            serde::de::Error::custom("missing op field for tree")
+                                        })?;
                                     super::JsonOpContent::Tree(op)
                                 }
                                 #[cfg(feature = "counter")]
                                 ContainerType::Counter => {
-                                    let (_key, value) =
-                                        map.next_entry::<String, OwnedValue>()?.unwrap();
+                                    let (_key, value) = map
+                                        .next_entry::<String, OwnedValue>()?
+                                        .ok_or_else(|| {
+                                            serde::de::Error::custom(
+                                                "missing value field for counter",
+                                            )
+                                        })?;
                                     super::JsonOpContent::Future(super::FutureOpWrapper {
                                         prop: 0,
                                         value: super::FutureOp::Counter(value),
@@ -1118,7 +1193,9 @@ pub mod json {
                                 _ => unreachable!(),
                             }
                         };
-                        let (_, counter) = map.next_entry::<String, i32>()?.unwrap();
+                        let (_, counter) = map
+                            .next_entry::<String, i32>()?
+                            .ok_or_else(|| serde::de::Error::custom("missing counter field"))?;
                         Ok(super::JsonOp {
                             container,
                             content: op,
@@ -1148,7 +1225,8 @@ pub mod json {
             {
                 // NOTE: https://github.com/serde-rs/serde/issues/2467    we use String here
                 let str: String = Deserialize::deserialize(d)?;
-                let id: ID = ID::try_from(str.as_str()).unwrap();
+                let id: ID = ID::try_from(str.as_str())
+                    .map_err(|_| serde::de::Error::custom("invalid ID format"))?;
                 Ok(id)
             }
         }
@@ -1192,7 +1270,12 @@ pub mod json {
                     {
                         let mut f = Frontiers::default();
                         while let Some((k, v)) = map.next_entry::<String, i32>()? {
-                            f.push(ID::new(k.parse().unwrap(), v))
+                            f.push(ID::new(
+                                k.parse().map_err(|_| {
+                                    serde::de::Error::custom("invalid peer id in frontiers")
+                                })?,
+                                v,
+                            ))
                         }
                         Ok(f)
                     }
@@ -1219,8 +1302,11 @@ pub mod json {
                 let deps: Vec<String> = Deserialize::deserialize(d)?;
                 Ok(deps
                     .into_iter()
-                    .map(|x| ID::try_from(x.as_str()).unwrap())
-                    .collect())
+                    .map(|x| {
+                        ID::try_from(x.as_str())
+                            .map_err(|_| serde::de::Error::custom("invalid ID in deps"))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?)
             }
         }
 
@@ -1243,7 +1329,16 @@ pub mod json {
                 D: Deserializer<'de>,
             {
                 let peers: Option<Vec<String>> = Deserialize::deserialize(d)?;
-                Ok(peers.map(|x| x.into_iter().map(|x| x.parse().unwrap()).collect()))
+                Ok(peers
+                    .map(|x| {
+                        x.into_iter()
+                            .map(|x| {
+                                x.parse()
+                                    .map_err(|_| serde::de::Error::custom("invalid peer id"))
+                            })
+                            .collect::<Result<Vec<_>, _>>()
+                    })
+                    .transpose()?)
             }
         }
 
@@ -1263,7 +1358,8 @@ pub mod json {
                 D: Deserializer<'de>,
             {
                 let str: String = Deserialize::deserialize(d)?;
-                let id: IdLp = IdLp::try_from(str.as_str()).unwrap();
+                let id: IdLp = IdLp::try_from(str.as_str())
+                    .map_err(|_| serde::de::Error::custom("invalid IdLp format"))?;
                 Ok(id)
             }
         }
@@ -1284,7 +1380,8 @@ pub mod json {
                 D: Deserializer<'de>,
             {
                 let str: String = Deserialize::deserialize(d)?;
-                let id: TreeID = TreeID::try_from(str.as_str()).unwrap();
+                let id: TreeID = TreeID::try_from(str.as_str())
+                    .map_err(|_| serde::de::Error::custom("invalid TreeID format"))?;
                 Ok(id)
             }
         }
@@ -1310,7 +1407,8 @@ pub mod json {
                 let str: Option<String> = Deserialize::deserialize(d)?;
                 match str {
                     Some(str) => {
-                        let id: TreeID = TreeID::try_from(str.as_str()).unwrap();
+                        let id: TreeID = TreeID::try_from(str.as_str())
+                            .map_err(|_| serde::de::Error::custom("invalid TreeID format"))?;
                         Ok(Some(id))
                     }
                     None => Ok(None),
@@ -1344,6 +1442,8 @@ pub mod json {
     pub enum RedactError {
         #[error("unknown operation type")]
         UnknownOperationType,
+        #[error("invalid schema: {0}")]
+        InvalidSchema(String),
     }
 
     /// Redacts sensitive content within the specified range by replacing it with default values.
@@ -1366,7 +1466,8 @@ pub mod json {
         let peers = json.peers.clone();
         let mut errors = Vec::new();
         for change in json.changes.iter_mut() {
-            let real_peer = get_peer_from_peers(&peers, change.id.peer);
+            let real_peer = get_peer_from_peers(&peers, change.id.peer)
+                .map_err(|_| RedactError::InvalidSchema("peer index out of range".to_string()))?;
             let real_id = ID::new(real_peer, change.id.counter);
             if !range.has_overlap_with(real_id.to_span(change.op_len())) {
                 continue;

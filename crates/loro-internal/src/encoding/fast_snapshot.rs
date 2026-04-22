@@ -86,21 +86,28 @@ pub(super) fn _decode_snapshot_bytes(bytes: Bytes) -> LoroResult<Snapshot> {
     })
 }
 
-pub(super) fn _decode_snapshot_meta_partial(bytes: &[u8]) -> (&[u8], bool) {
+pub(super) fn _decode_snapshot_meta_partial(bytes: &[u8]) -> LoroResult<(&[u8], bool)> {
     let mut r = bytes;
-    let oplog_bytes_len = read_u32_le_slice(&mut r) as usize;
+    let oplog_bytes_len = read_u32_le_slice(&mut r)? as usize;
+    if r.len() < oplog_bytes_len {
+        return Err(LoroError::DecodeDataCorruptionError);
+    }
     let oplog_bytes = &r[..oplog_bytes_len];
     r = &r[oplog_bytes_len..];
-    let state_bytes_len = read_u32_le_slice(&mut r) as usize;
+    let state_bytes_len = read_u32_le_slice(&mut r)? as usize;
+    if r.len() < state_bytes_len {
+        return Err(LoroError::DecodeDataCorruptionError);
+    }
     r = &r[state_bytes_len..];
-    let shallow_bytes_len = read_u32_le_slice(&mut r) as usize;
-    (oplog_bytes, shallow_bytes_len > 0)
+    let shallow_bytes_len = read_u32_le_slice(&mut r)? as usize;
+    Ok((oplog_bytes, shallow_bytes_len > 0))
 }
 
-fn read_u32_le_slice(r: &mut &[u8]) -> u32 {
+fn read_u32_le_slice(r: &mut &[u8]) -> LoroResult<u32> {
     let mut buf = [0; 4];
-    r.read_exact(&mut buf).unwrap();
-    u32::from_le_bytes(buf)
+    r.read_exact(&mut buf)
+        .map_err(|_| LoroError::DecodeDataCorruptionError)?;
+    Ok(u32::from_le_bytes(buf))
 }
 
 fn read_u32_le(r: &mut bytes::buf::Reader<Bytes>) -> LoroResult<u32> {
@@ -361,7 +368,7 @@ mod tests {
 pub(crate) fn decode_snapshot_blob_meta(
     parsed: ParsedHeaderAndBody,
 ) -> LoroResult<ImportBlobMetadata> {
-    let (oplog_bytes, is_shallow) = _decode_snapshot_meta_partial(parsed.body);
+    let (oplog_bytes, is_shallow) = _decode_snapshot_meta_partial(parsed.body)?;
     let mode = if is_shallow {
         EncodedBlobMode::ShallowSnapshot
     } else {
