@@ -158,8 +158,17 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
         to_vv.insert(id.peer, id.counter + 1);
     }
 
+    let to_frontiers = if start_from.is_empty() {
+        oplog.frontiers().clone()
+    } else {
+        start_from.clone()
+    };
+    if start_from.is_empty() {
+        to_vv = oplog.vv().clone();
+    }
+
     let oplog_bytes =
-        oplog.export_change_store_in_range(&start_vv, &start_from, &to_vv, &start_from);
+        oplog.export_change_store_in_range(&start_vv, &start_from, &to_vv, &to_frontiers);
     let state_frontiers = doc.state_frontiers();
     let is_attached = !doc.is_detached();
     drop(oplog);
@@ -231,19 +240,36 @@ fn restore_export_doc_state(
 /// It should be the LCA of the user given version and the latest version.
 /// Otherwise, users cannot replay the history from the initial version till the latest version.
 fn calc_shallow_doc_start(oplog: &crate::OpLog, frontiers: &Frontiers) -> Frontiers {
-    // start is the real start frontiers
-    let (mut start, _) = oplog
-        .dag()
-        .find_common_ancestor(frontiers, oplog.frontiers());
-
-    while start.len() > 1 {
-        start.keep_one();
-        let (new_start, _) = oplog.dag().find_common_ancestor(&start, oplog.frontiers());
-        start = new_start;
+    // Find the LCA of the given frontiers by iteratively pairwise GCA.
+    // This converges to a single frontier or empty if there is no common ancestor.
+    let mut current = frontiers.clone();
+    while current.len() > 1 {
+        let ids: Vec<ID> = current.iter().collect();
+        let mut next = Frontiers::new();
+        let mut i = 0;
+        while i < ids.len() {
+            if i + 1 < ids.len() {
+                let (gca, _) = oplog
+                    .dag()
+                    .find_common_ancestor(&Frontiers::from(ids[i]), &Frontiers::from(ids[i + 1]));
+                for id in gca.iter() {
+                    next.push(id);
+                }
+            } else {
+                next.push(ids[i]);
+            }
+            i += 2;
+        }
+        if next == current {
+            // Cannot converge further (pairwise GCAs are the nodes themselves).
+            // Fall back to empty frontiers, meaning export full history.
+            return Frontiers::default();
+        }
+        current = next;
     }
 
     let mut ans = Frontiers::new();
-    for id in start.iter() {
+    for id in current.iter() {
         let mut processed = false;
         if let Some(op) = oplog.get_op_that_includes(id) {
             if let crate::op::InnerContent::List(InnerListOp::StyleStart { .. }) = &op.content {
