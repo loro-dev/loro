@@ -4,6 +4,7 @@ fn init() {
 }
 
 mod import_atomicity;
+mod op_count;
 
 use crate::{op::ListSlice, LoroValue};
 

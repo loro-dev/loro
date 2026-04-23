@@ -2,7 +2,7 @@ use crate::encoding::json_schema::{encode_change, export_json_in_id_span};
 pub use crate::encoding::ExportMode;
 use crate::pre_commit::{FirstCommitFromPeerCallback, FirstCommitFromPeerPayload};
 pub use crate::state::analyzer::{ContainerAnalysisInfo, DocAnalysis};
-use crate::sync::AtomicBool;
+use crate::sync::{AtomicBool, AtomicUsize};
 pub(crate) use crate::LoroDocInner;
 use crate::{
     arena::SharedArena,
@@ -98,7 +98,8 @@ impl LoroDoc {
     }
 
     pub fn new() -> Self {
-        let oplog = OpLog::new();
+        let visible_op_count = Arc::new(AtomicUsize::new(0));
+        let oplog = OpLog::new(visible_op_count.clone());
         let arena = oplog.arena.clone();
         let config: Configure = oplog.configure.clone();
         let lock_group = LoroLockGroup::new();
@@ -109,6 +110,7 @@ impl LoroDoc {
                 oplog: Arc::new(lock_group.new_lock(oplog, LockKind::OpLog)),
                 state,
                 config,
+                visible_op_count,
                 detached: AtomicBool::new(false),
                 auto_commit: AtomicBool::new(false),
                 observer: Arc::new(Observer::new(arena.clone())),
@@ -1655,18 +1657,7 @@ impl LoroDoc {
 
     #[inline]
     pub fn len_ops(&self) -> usize {
-        let oplog = self.oplog.lock();
-        let ans = oplog.vv().values().sum::<i32>() as usize;
-        if oplog.is_shallow() {
-            let sub = oplog
-                .shallow_since_vv()
-                .iter()
-                .map(|(_, ops)| *ops)
-                .sum::<i32>() as usize;
-            ans - sub
-        } else {
-            ans
-        }
+        self.visible_op_count.load(Acquire)
     }
 
     #[inline]

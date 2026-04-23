@@ -610,6 +610,7 @@ impl Transaction {
                 self.next_lamport,
                 len,
             );
+            oplog.refresh_visible_op_count();
             self.next_lamport += len as Lamport;
             // set frontiers to the last op id
             let last_id = start_id.inc(len as Counter - 1);

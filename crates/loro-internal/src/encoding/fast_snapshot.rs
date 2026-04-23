@@ -241,6 +241,7 @@ impl OpLog {
     pub(super) fn decode_change_store(&mut self, bytes: bytes::Bytes) -> LoroResult<()> {
         let v = self.change_store().import_all(bytes)?;
         self.dag.set_version_by_fast_snapshot_import(v);
+        self.refresh_visible_op_count();
         Ok(())
     }
 }

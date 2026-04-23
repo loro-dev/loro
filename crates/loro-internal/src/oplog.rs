@@ -2,12 +2,13 @@ mod change_store;
 pub(crate) mod loro_dag;
 mod pending_changes;
 
-use crate::sync::Mutex;
+use crate::sync::{AtomicUsize, Mutex};
 use bytes::Bytes;
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::rc::Rc;
+use std::sync::Arc;
 use tracing::trace_span;
 
 use self::change_store::iter::MergedChangeIter;
@@ -44,6 +45,7 @@ pub use change_store::{BlockChangeRef, ChangeStore};
 pub struct OpLog {
     pub(crate) dag: AppDag,
     pub(crate) arena: SharedArena,
+    visible_op_count: Arc<AtomicUsize>,
     change_store: ChangeStore,
     history_cache: Mutex<ContainerHistoryCache>,
     /// Pending changes that haven't been applied to the dag.
@@ -85,11 +87,12 @@ impl std::fmt::Debug for OpLog {
 
 impl OpLog {
     #[inline]
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(visible_op_count: Arc<AtomicUsize>) -> Self {
         let arena = SharedArena::new();
         let cfg = Configure::default();
         let change_store = ChangeStore::new_mem(&arena, cfg.merge_interval_in_s.clone());
         Self {
+            visible_op_count,
             history_cache: Mutex::new(ContainerHistoryCache::new(change_store.clone(), None)),
             dag: AppDag::new(change_store.clone()),
             change_store,
@@ -100,6 +103,26 @@ impl OpLog {
             uncommitted_change: None,
             import_rollback: None,
         }
+    }
+
+    #[inline]
+    fn calc_visible_op_count(&self) -> usize {
+        let total = self.dag.vv().values().sum::<i32>() as usize;
+        let shallow = self
+            .dag
+            .shallow_since_vv()
+            .iter()
+            .map(|(_, ops)| *ops)
+            .sum::<i32>() as usize;
+        total - shallow
+    }
+
+    #[inline]
+    pub(crate) fn refresh_visible_op_count(&self) -> usize {
+        let count = self.calc_visible_op_count();
+        self.visible_op_count
+            .store(count, std::sync::atomic::Ordering::Release);
+        count
     }
 
     #[inline]
@@ -171,6 +194,7 @@ impl OpLog {
         } else {
             self.change_store.insert_change(change, true, from_local);
         }
+        self.refresh_visible_op_count();
     }
 
     pub(crate) fn begin_import_rollback(&mut self) {
@@ -255,6 +279,7 @@ impl OpLog {
         rollback.pending.rollback(&mut self.pending_changes);
         self.history_cache.lock().free_all();
         self.arena.rollback(rollback.arena);
+        self.refresh_visible_op_count();
     }
 
     pub(crate) fn reset_to_empty_for_failed_snapshot_import(
@@ -273,6 +298,8 @@ impl OpLog {
         self.configure = configure;
         self.uncommitted_change = None;
         self.import_rollback = None;
+        self.visible_op_count
+            .store(0, std::sync::atomic::Ordering::Release);
     }
 
     #[inline(always)]
