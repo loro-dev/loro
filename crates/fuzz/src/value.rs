@@ -368,7 +368,11 @@ impl ContainerTracker {
                 match index {
                     Index::Key(key) => {
                         let Some(map) = value.as_map_mut() else {
-                            tracing::warn!("apply_diff: expected Map at key {}, got {}", key, type_name);
+                            tracing::warn!(
+                                "apply_diff: expected Map at key {}, got {}",
+                                key,
+                                type_name
+                            );
                             return;
                         };
                         let Some(v) = map.get_mut(&key.to_string()) else {
@@ -383,7 +387,11 @@ impl ContainerTracker {
                     }
                     Index::Node(tree_id) => {
                         let Some(tree) = value.as_tree_mut() else {
-                            tracing::warn!("apply_diff: expected Tree at node {:?}, got {}", tree_id, type_name);
+                            tracing::warn!(
+                                "apply_diff: expected Tree at node {:?}, got {}",
+                                tree_id,
+                                type_name
+                            );
                             return;
                         };
                         let Some(node) = tree.find_node_by_id_mut(*tree_id) else {
@@ -397,11 +405,18 @@ impl ContainerTracker {
                             ContainerTracker::List(l) => {
                                 let len = l.len();
                                 let Some(item) = l.get_mut(*idx) else {
-                                    tracing::warn!("apply_diff: list index {} out of bounds (len={})", idx, len);
+                                    tracing::warn!(
+                                        "apply_diff: list index {} out of bounds (len={})",
+                                        idx,
+                                        len
+                                    );
                                     return;
                                 };
                                 let Some(container) = item.as_container_mut() else {
-                                    tracing::warn!("apply_diff: list item at {} is not a container", idx);
+                                    tracing::warn!(
+                                        "apply_diff: list item at {} is not a container",
+                                        idx
+                                    );
                                     return;
                                 };
                                 container
@@ -409,17 +424,28 @@ impl ContainerTracker {
                             ContainerTracker::MovableList(l) => {
                                 let len = l.len();
                                 let Some(item) = l.get_mut(*idx) else {
-                                    tracing::warn!("apply_diff: movable_list index {} out of bounds (len={})", idx, len);
+                                    tracing::warn!(
+                                        "apply_diff: movable_list index {} out of bounds (len={})",
+                                        idx,
+                                        len
+                                    );
                                     return;
                                 };
                                 let Some(container) = item.as_container_mut() else {
-                                    tracing::warn!("apply_diff: movable_list item at {} is not a container", idx);
+                                    tracing::warn!(
+                                        "apply_diff: movable_list item at {} is not a container",
+                                        idx
+                                    );
                                     return;
                                 };
                                 container
                             }
                             _ => {
-                                tracing::warn!("apply_diff: expected List/MovableList at seq index {}, got {}", idx, type_name);
+                                tracing::warn!(
+                                    "apply_diff: expected List/MovableList at seq index {}, got {}",
+                                    idx,
+                                    type_name
+                                );
                                 return;
                             }
                         }

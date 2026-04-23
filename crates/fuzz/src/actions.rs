@@ -221,7 +221,11 @@ impl Tabled for Action {
                 "".into(),
                 "".into(),
             ],
-            Action::Query { site, target, query_type } => vec![
+            Action::Query {
+                site,
+                target,
+                query_type,
+            } => vec![
                 "query".into(),
                 format!("{site}").into(),
                 format!("target {target} type {query_type}").into(),

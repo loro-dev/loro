@@ -7,7 +7,9 @@ use std::{
 };
 
 use arbitrary::Arbitrary;
-use loro::{ContainerType, ExportMode, Frontiers, ImportStatus, LoroDoc, LoroError, LoroResult, TreeID};
+use loro::{
+    ContainerType, ExportMode, Frontiers, ImportStatus, LoroDoc, LoroError, LoroResult, TreeID,
+};
 use rustc_hash::FxHashSet;
 use tabled::TableIteratorExt;
 use tracing::{info, info_span};
@@ -265,7 +267,11 @@ impl CRDTFuzzer {
                     let _ = b.loro.apply_diff(diff);
                 }
             }
-            Action::Query { site, target, query_type } => {
+            Action::Query {
+                site,
+                target,
+                query_type,
+            } => {
                 let actor = &self.actors[*site as usize];
                 let targets: Vec<_> = actor.targets.keys().copied().collect();
                 if targets.is_empty() {
@@ -276,9 +282,15 @@ impl CRDTFuzzer {
                     ContainerType::Text => {
                         let text = actor.loro.get_text("text");
                         match *query_type % 8 {
-                            0 => { let _ = text.to_delta(); }
-                            1 => { let _ = text.len_unicode(); }
-                            2 => { let _ = text.len_utf8(); }
+                            0 => {
+                                let _ = text.to_delta();
+                            }
+                            1 => {
+                                let _ = text.len_unicode();
+                            }
+                            2 => {
+                                let _ = text.len_utf8();
+                            }
                             3 => {
                                 let len = text.len_unicode();
                                 if len > 0 {
@@ -297,56 +309,92 @@ impl CRDTFuzzer {
                                     let _ = text.slice(0, len / 2);
                                 }
                             }
-                            _ => { let _ = text.to_string(); }
+                            _ => {
+                                let _ = text.to_string();
+                            }
                         }
                     }
                     ContainerType::List => {
                         let list = actor.loro.get_list("list");
                         match *query_type % 4 {
-                            0 => { let _ = list.len(); }
-                            1 => { let _ = list.to_vec(); }
+                            0 => {
+                                let _ = list.len();
+                            }
+                            1 => {
+                                let _ = list.to_vec();
+                            }
                             2 => {
                                 let len = list.len();
                                 if len > 0 {
                                     let _ = list.get(len / 2);
                                 }
                             }
-                            _ => { let _ = list.is_empty(); }
+                            _ => {
+                                let _ = list.is_empty();
+                            }
                         }
                     }
                     ContainerType::Map => {
                         let map = actor.loro.get_map("map");
                         match *query_type % 4 {
-                            0 => { let _ = map.keys(); }
-                            1 => { let _ = map.values(); }
-                            2 => { let _ = map.len(); }
-                            _ => { let _ = map.is_empty(); }
+                            0 => {
+                                let _ = map.keys();
+                            }
+                            1 => {
+                                let _ = map.values();
+                            }
+                            2 => {
+                                let _ = map.len();
+                            }
+                            _ => {
+                                let _ = map.is_empty();
+                            }
                         }
                     }
                     ContainerType::Tree => {
                         let tree = actor.loro.get_tree("tree");
                         match *query_type % 8 {
-                            0 => { let _ = tree.nodes(); }
-                            1 => { let _ = tree.children(None); }
-                            2 => { let _ = tree.children_num(None); }
-                            3 => { let _ = tree.contains(TreeID::new(0, 0)); }
-                            4 => { let _ = tree.is_node_deleted(&TreeID::new(0, 0)); }
-                            5 => { let _ = tree.parent(TreeID::new(0, 0)); }
-                            _ => { let _ = tree.is_empty(); }
+                            0 => {
+                                let _ = tree.nodes();
+                            }
+                            1 => {
+                                let _ = tree.children(None);
+                            }
+                            2 => {
+                                let _ = tree.children_num(None);
+                            }
+                            3 => {
+                                let _ = tree.contains(TreeID::new(0, 0));
+                            }
+                            4 => {
+                                let _ = tree.is_node_deleted(&TreeID::new(0, 0));
+                            }
+                            5 => {
+                                let _ = tree.parent(TreeID::new(0, 0));
+                            }
+                            _ => {
+                                let _ = tree.is_empty();
+                            }
                         }
                     }
                     ContainerType::MovableList => {
                         let list = actor.loro.get_movable_list("movable_list");
                         match *query_type % 4 {
-                            0 => { let _ = list.len(); }
-                            1 => { let _ = list.to_vec(); }
+                            0 => {
+                                let _ = list.len();
+                            }
+                            1 => {
+                                let _ = list.to_vec();
+                            }
                             2 => {
                                 let len = list.len();
                                 if len > 0 {
                                     let _ = list.get(len / 2);
                                 }
                             }
-                            _ => { let _ = list.is_empty(); }
+                            _ => {
+                                let _ = list.is_empty();
+                            }
                         }
                     }
                     ContainerType::Counter => {
@@ -364,8 +412,7 @@ impl CRDTFuzzer {
                 }
             }
             Action::ImportShallow { site, from } => {
-                let (a, b) =
-                    array_mut_ref!(&mut self.actors, [*site as usize, *from as usize]);
+                let (a, b) = array_mut_ref!(&mut self.actors, [*site as usize, *from as usize]);
                 let f = b.loro.oplog_frontiers();
                 if !f.is_empty() {
                     if let Ok(bytes) = b.loro.export(loro::ExportMode::shallow_snapshot(&f)) {
@@ -377,9 +424,7 @@ impl CRDTFuzzer {
                 let actor = &mut self.actors[*site as usize];
                 let f = actor.loro.state_frontiers();
                 if !f.is_empty() {
-                    if let Ok(bytes) =
-                        actor.loro.export(loro::ExportMode::state_only(Some(&f)))
-                    {
+                    if let Ok(bytes) = actor.loro.export(loro::ExportMode::state_only(Some(&f))) {
                         let new_doc = LoroDoc::new();
                         if new_doc.import(&bytes).is_ok() {
                             assert_eq!(new_doc.get_deep_value(), actor.loro.get_deep_value());

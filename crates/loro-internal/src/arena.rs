@@ -247,7 +247,12 @@ impl SharedArena {
     /// For existence-aware lookup that consults persisted state and performs lazy
     /// registration, prefer `DocState::resolve_idx`.
     pub fn id_to_idx(&self, id: &ContainerID) -> Option<ContainerIdx> {
-        self.inner.containers.read().container_id_to_idx.get(id).copied()
+        self.inner
+            .containers
+            .read()
+            .container_id_to_idx
+            .get(id)
+            .copied()
     }
 
     #[inline]
@@ -316,12 +321,9 @@ impl SharedArena {
 
     pub fn log_all_containers(&self) {
         let containers = self.inner.containers.read();
-        containers
-            .container_id_to_idx
-            .iter()
-            .for_each(|(id, idx)| {
-                tracing::info!("container {:?} {:?}", id, idx);
-            });
+        containers.container_id_to_idx.iter().for_each(|(id, idx)| {
+            tracing::info!("container {:?} {:?}", id, idx);
+        });
         containers
             .container_idx_to_id
             .iter()

@@ -76,7 +76,12 @@ impl ActorTrait for MovableListActor {
         let list = self.loro.get_movable_list("movable_list");
         let value = list.get_deep_value();
         let tracker = self.tracker.lock().unwrap().to_value();
-        let tracker_value = tracker.into_map().unwrap().get("movable_list").unwrap().clone();
+        let tracker_value = tracker
+            .into_map()
+            .unwrap()
+            .get("movable_list")
+            .unwrap()
+            .clone();
         if value != tracker_value {
             tracing::warn!(
                 "MovableList tracker mismatch: actual={:?}, tracker={:?}",
@@ -185,17 +190,13 @@ impl Actionable for MovableListAction {
                     }
                 }
             }
-            MovableListAction::Push { value } => {
-                match value {
-                    FuzzValue::Container(c) => {
-                        super::unwrap(list.push_container(Container::new(*c)))
-                    }
-                    FuzzValue::I32(v) => {
-                        super::unwrap(list.push(*v));
-                        None
-                    }
+            MovableListAction::Push { value } => match value {
+                FuzzValue::Container(c) => super::unwrap(list.push_container(Container::new(*c))),
+                FuzzValue::I32(v) => {
+                    super::unwrap(list.push(*v));
+                    None
                 }
-            }
+            },
             MovableListAction::Pop => {
                 super::unwrap(list.pop());
                 None
@@ -225,15 +226,9 @@ impl Actionable for MovableListAction {
             MovableListAction::Set { pos, value } => {
                 [format!("set {pos}").into(), value.to_string().into()]
             }
-            MovableListAction::Push { value } => {
-                ["push".into(), value.to_string().into()]
-            }
-            MovableListAction::Pop => {
-                ["pop".into(), "".into()]
-            }
-            MovableListAction::Clear => {
-                ["clear".into(), "".into()]
-            }
+            MovableListAction::Push { value } => ["push".into(), value.to_string().into()],
+            MovableListAction::Pop => ["pop".into(), "".into()],
+            MovableListAction::Clear => ["clear".into(), "".into()],
         }
     }
 
