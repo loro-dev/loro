@@ -2289,8 +2289,8 @@ impl LoroText {
     /// returned `&str` within the callback.
     /// If the callback returns `false`, the iteration will stop.
     ///
-    /// Limitation: you cannot access or alter the doc state when iterating.
-    /// If you need to access or alter the doc state, please use `to_string` instead.
+    /// The current text chunks are snapshotted before callbacks run, so the callback
+    /// may read or mutate the document without re-entering internal state locks.
     pub fn iter(&self, callback: impl FnMut(&str) -> bool) {
         self.handler.iter(callback);
     }

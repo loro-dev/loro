@@ -58,7 +58,7 @@ it("#211", () => {
   show(text1, loro1, text2, loro2);
 });
 
-it("#957 should allow opCount inside public JS callbacks that hold state lock", () => {
+it("#957 should allow doc access inside text iter callback", () => {
   const doc = new LoroDoc();
   const text = doc.getText("text");
   text.insert(0, "abc");
@@ -66,6 +66,7 @@ it("#957 should allow opCount inside public JS callbacks that hold state lock", 
 
   let seen = 0;
   text.iter(() => {
+    expect(text.toString()).toBe("abc");
     expect(doc.opCount()).toBe(3);
     seen += 1;
     return true;

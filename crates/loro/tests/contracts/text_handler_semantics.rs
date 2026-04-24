@@ -417,6 +417,24 @@ fn text_iter_stops_after_first_callback_and_works_after_snapshot() -> LoroResult
 }
 
 #[test]
+fn text_iter_callback_can_access_doc_state() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    let text = doc.get_text("text");
+    text.insert(0, "abc")?;
+
+    let mut seen = 0;
+    text.iter(|chunk| {
+        assert_eq!(text.to_string(), "abc");
+        assert_eq!(chunk, "abc");
+        seen += 1;
+        true
+    });
+
+    assert_eq!(seen, 1);
+    Ok(())
+}
+
+#[test]
 fn empty_container_cursors_roundtrip_and_resolve_to_zero() -> LoroResult<()> {
     let doc = LoroDoc::new();
 

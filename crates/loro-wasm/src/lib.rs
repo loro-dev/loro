@@ -2528,8 +2528,8 @@ impl LoroText {
     /// The callback function will be called for each span in the text.
     /// If the callback returns `false`, the iteration will stop.
     ///
-    /// Limitation: you cannot access or alter the doc state when iterating (this is for performance consideration).
-    /// If you need to access or alter the doc state, please use `toString` instead.
+    /// The current text chunks are snapshotted before callbacks run, so the callback
+    /// may read or mutate the document without re-entering internal state locks.
     ///
     /// @example
     /// ```ts
