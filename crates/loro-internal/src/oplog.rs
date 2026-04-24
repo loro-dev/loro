@@ -118,6 +118,11 @@ impl OpLog {
     }
 
     #[inline]
+    pub(crate) fn visible_op_count_exact(&self) -> usize {
+        self.calc_visible_op_count()
+    }
+
+    #[inline]
     pub(crate) fn refresh_visible_op_count(&self) -> usize {
         let count = self.calc_visible_op_count();
         self.visible_op_count

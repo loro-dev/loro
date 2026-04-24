@@ -1657,6 +1657,10 @@ impl LoroDoc {
 
     #[inline]
     pub fn len_ops(&self) -> usize {
+        if self.oplog.can_lock_in_this_thread() {
+            return self.oplog.lock().visible_op_count_exact();
+        }
+
         self.visible_op_count.load(Acquire)
     }
 
