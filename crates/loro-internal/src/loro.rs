@@ -2,7 +2,7 @@ use crate::encoding::json_schema::{encode_change, export_json_in_id_span};
 pub use crate::encoding::ExportMode;
 use crate::pre_commit::{FirstCommitFromPeerCallback, FirstCommitFromPeerPayload};
 pub use crate::state::analyzer::{ContainerAnalysisInfo, DocAnalysis};
-use crate::sync::AtomicBool;
+use crate::sync::{AtomicBool, AtomicUsize};
 pub(crate) use crate::LoroDocInner;
 use crate::{
     arena::SharedArena,
@@ -55,7 +55,7 @@ use std::{
     collections::{hash_map::Entry, BinaryHeap},
     ops::ControlFlow,
     sync::{
-        atomic::Ordering::{Acquire, Release},
+        atomic::Ordering as AtomicOrdering,
         Arc,
     },
 };
@@ -121,6 +121,8 @@ impl LoroDoc {
                 peer_id_change_subs: SubscriberSetWithQueue::new(),
                 pre_commit_subs: SubscriberSetWithQueue::new(),
                 first_commit_from_peer_subs: SubscriberSetWithQueue::new(),
+                op_count_cache: AtomicUsize::new(0),
+                change_count_cache: AtomicUsize::new(0),
             }
         });
         LoroDoc { inner }
@@ -183,7 +185,7 @@ impl LoroDoc {
             return Err(LoroError::InvalidPeerID);
         }
         let next_id = self.oplog.lock().next_id(peer);
-        if self.auto_commit.load(Acquire) {
+        if self.auto_commit.load(AtomicOrdering::Acquire) {
             let doc_state = self.state.lock();
             doc_state
                 .peer
@@ -300,7 +302,7 @@ impl LoroDoc {
         Option<CommitOptions>,
         Option<LoroMutexGuard<'_, Option<Transaction>>>,
     ) {
-        if !self.auto_commit.load(Acquire) {
+        if !self.auto_commit.load(AtomicOrdering::Acquire) {
             let txn_guard = self.txn.lock();
             // if not auto_commit, nothing should happen
             // because the global txn is not used
@@ -514,11 +516,11 @@ impl LoroDoc {
     /// You need to call `checkout` to make it take effect.
     #[inline(always)]
     pub fn is_detached(&self) -> bool {
-        self.detached.load(Acquire)
+        self.detached.load(AtomicOrdering::Acquire)
     }
 
     pub(crate) fn set_detached(&self, detached: bool) {
-        self.detached.store(detached, Release);
+        self.detached.store(detached, AtomicOrdering::Release);
     }
 
     #[inline(always)]
@@ -668,6 +670,22 @@ impl LoroDoc {
                     oplog.dag.get_frontiers(),
                     None,
                 );
+                {
+                    let ans = oplog.vv().values().sum::<i32>() as usize;
+                    let ans = if oplog.is_shallow() {
+                        let sub = oplog
+                            .shallow_since_vv()
+                            .iter()
+                            .map(|(_, ops)| *ops)
+                            .sum::<i32>() as usize;
+                        ans - sub
+                    } else {
+                        ans
+                    };
+                    self.op_count_cache.store(ans, AtomicOrdering::Release);
+                    self.change_count_cache
+                        .store(oplog.len_changes(), AtomicOrdering::Release);
+                }
                 let mut state = self.state.lock();
                 if let Err(e) = state.apply_diff(
                     InternalDocDiff {
@@ -775,6 +793,22 @@ impl LoroDoc {
                 oplog.dag.get_frontiers(),
                 None,
             );
+            {
+                let ans = oplog.vv().values().sum::<i32>() as usize;
+                let ans = if oplog.is_shallow() {
+                    let sub = oplog
+                        .shallow_since_vv()
+                        .iter()
+                        .map(|(_, ops)| *ops)
+                        .sum::<i32>() as usize;
+                    ans - sub
+                } else {
+                    ans
+                };
+                self.op_count_cache.store(ans, AtomicOrdering::Release);
+                self.change_count_cache
+                    .store(oplog.len_changes(), AtomicOrdering::Release);
+            }
             let mut state = self.state.lock();
             if let Err(e) = state.apply_diff(
                 InternalDocDiff {
@@ -1655,9 +1689,12 @@ impl LoroDoc {
 
     #[inline]
     pub fn len_ops(&self) -> usize {
+        if self.oplog.is_locked() {
+            return self.op_count_cache.load(AtomicOrdering::Acquire);
+        }
         let oplog = self.oplog.lock();
         let ans = oplog.vv().values().sum::<i32>() as usize;
-        if oplog.is_shallow() {
+        let ans = if oplog.is_shallow() {
             let sub = oplog
                 .shallow_since_vv()
                 .iter()
@@ -1666,13 +1703,20 @@ impl LoroDoc {
             ans - sub
         } else {
             ans
-        }
+        };
+        self.op_count_cache.store(ans, AtomicOrdering::Release);
+        ans
     }
 
     #[inline]
     pub fn len_changes(&self) -> usize {
+        if self.oplog.is_locked() {
+            return self.change_count_cache.load(AtomicOrdering::Acquire);
+        }
         let oplog = self.oplog.lock();
-        oplog.len_changes()
+        let ans = oplog.len_changes();
+        self.change_count_cache.store(ans, AtomicOrdering::Release);
+        ans
     }
 
     pub fn config(&self) -> &Configure {
@@ -1688,11 +1732,11 @@ impl LoroDoc {
         {
             static IS_CHECKING: std::sync::atomic::AtomicBool =
                 std::sync::atomic::AtomicBool::new(false);
-            if IS_CHECKING.load(std::sync::atomic::Ordering::Acquire) {
+            if IS_CHECKING.load(AtomicOrdering::Acquire) {
                 return;
             }
 
-            IS_CHECKING.store(true, std::sync::atomic::Ordering::Release);
+            IS_CHECKING.store(true, AtomicOrdering::Release);
             let peer_id = self.peer_id();
             let s = info_span!("CheckStateDiffCalcConsistencySlow", ?peer_id);
             let _g = s.enter();
@@ -1746,7 +1790,7 @@ impl LoroDoc {
             }
 
             self.renew_txn_if_auto_commit(options);
-            IS_CHECKING.store(false, std::sync::atomic::Ordering::Release);
+            IS_CHECKING.store(false, AtomicOrdering::Release);
         }
     }
 

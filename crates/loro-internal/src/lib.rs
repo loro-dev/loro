@@ -13,7 +13,7 @@ pub mod diff;
 pub mod diff_calc;
 pub mod handler;
 pub mod sync;
-use crate::sync::AtomicBool;
+use crate::sync::{AtomicBool, AtomicUsize};
 use std::sync::Arc;
 mod change_meta;
 pub(crate) mod lock;
@@ -167,6 +167,8 @@ pub struct LoroDocInner {
     first_commit_from_peer_subs:
         SubscriberSetWithQueue<(), FirstCommitFromPeerCallback, FirstCommitFromPeerPayload>,
     pre_commit_subs: SubscriberSetWithQueue<(), PreCommitCallback, PreCommitCallbackPayload>,
+    op_count_cache: AtomicUsize,
+    change_count_cache: AtomicUsize,
 }
 
 /// The version of the loro crate
