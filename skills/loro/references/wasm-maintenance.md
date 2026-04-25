@@ -15,7 +15,8 @@
 
 ## Existing Decorated Areas
 
-- `LoroDoc` mutators and barriers such as `commit`, `checkout`, `checkoutToLatest`, `attach`, `detach`, `export`, `import`, `importBatch`, `revertTo`, `diff`, and `applyDiff`
+- Audit the exact current allowlist in `crates/loro-wasm/index.ts`.
+- `LoroDoc` mutators and barriers such as `setDetachedEditing`, `attach`, `detach`, `fork`, `forkAt`, `checkoutToLatest`, `checkout`, `commit`, `getCursorPos`, `revertTo`, `export`, `exportJsonUpdates`, `exportJsonInIdSpan`, `importJsonUpdates`, `import`, `importUpdateBatch`, `importBatch`, `travelChangeAncestors`, `getChangedContainersIn`, `diff`, `applyDiff`, and `setPeerId`
 - `EphemeralStoreWasm` mutators such as `set`, `delete`, `apply`, and `removeOutdated`
 - `UndoManager.undo()` and `UndoManager.redo()`
 

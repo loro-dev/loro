@@ -14,6 +14,8 @@ Use this file to choose the right chapter inside the unified `loro` skill.
   - Read `richtext-and-editors.md`
 - “How do I use loro-mirror with React?”
   - Read `mirror-and-react.md`
+- “Where should I change or test this in the Loro repo?”
+  - Read `repo-development.md`
 - “How do I change crates/loro-wasm safely?”
   - Read `wasm-maintenance.md`
 - “Why does Loro behave this way, and what are the performance tradeoffs?”
@@ -67,6 +69,15 @@ Use this file to choose the right chapter inside the unified `loro` skill.
   - Read `mirror-and-react.md`
 - `loro-mirror-react`, selectors, provider/hooks patterns
   - Read `mirror-and-react.md`
+
+## Repository Development
+
+- Workspace layout, API lookup paths, compatibility rules, test placement
+  - Read `repo-development.md`
+- Validation commands, release packaging commands, fuzz/loom escalation
+  - Read `repo-development.md`
+- Mapping `llms-full.txt` docs to current source
+  - Read `repo-development.md`
 
 ## WASM Binding Maintenance
 

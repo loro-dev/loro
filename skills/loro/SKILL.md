@@ -1,6 +1,6 @@
 ---
 name: loro
-description: "Comprehensive guide for using Loro across document modeling, synchronization, versioning, rich text editors, app-state mirroring, performance tradeoffs, and wasm bindings. Use when Codex needs to work with `loro-crdt`, `loro`, `loro-prosemirror`, `loro-mirror`, or `crates/loro-wasm` for: (1) Choosing CRDT container types and document structure, (2) Designing sync, persistence, checkout, or history workflows, (3) Integrating rich-text editors and stable selections, (4) Mirroring app state with schemas and React, (5) Reasoning about versions, events, import status, or Inspector output, or (6) Maintaining the WASM binding layer."
+description: "Comprehensive guide for using and maintaining Loro across document modeling, synchronization, versioning, rich text editors, app-state mirroring, performance tradeoffs, Rust internals, tests, and wasm bindings. Use when Codex needs to work with `loro-crdt`, `loro`, `loro-internal`, `loro-prosemirror`, `loro-mirror`, or this repository for: (1) Choosing CRDT container types and document structure, (2) Designing sync, persistence, checkout, or history workflows, (3) Integrating rich-text editors and stable selections, (4) Mirroring app state with schemas and React, (5) Reasoning about versions, events, import status, or Inspector output, (6) Maintaining Rust/JS/WASM APIs and tests, or (7) Understanding Loro performance and research tradeoffs."
 ---
 
 # Loro
@@ -15,6 +15,7 @@ Use this skill as the single entry point for all Loro work. Load one primary cha
 - Read [references/sync-versioning-and-events.md](references/sync-versioning-and-events.md) for sync flows, frontiers, version vectors, checkout, import status, timestamps, event timing, and Inspector.
 - Read [references/richtext-and-editors.md](references/richtext-and-editors.md) for `LoroText`, cursors, `applyDelta`, `updateByLine`, `loro-prosemirror`, Tiptap, and CodeMirror.
 - Read [references/mirror-and-react.md](references/mirror-and-react.md) for `loro-mirror`, `$cid`, `idSelector`, validation, selectors, and React integration.
+- Read [references/repo-development.md](references/repo-development.md) for this repository's crate layout, API source files, test placement, validation commands, and compatibility rules.
 - Read [references/wasm-maintenance.md](references/wasm-maintenance.md) for `crates/loro-wasm`, `#[wasm_bindgen]`, pending-event flushing, wrapper decoration, and tests.
 - Read [references/performance-and-research.md](references/performance-and-research.md) for benchmarks, Eg-Walker tradeoffs, movable-tree context, rich-text design context, and project history.
 
@@ -31,6 +32,9 @@ Use this skill as the single entry point for all Loro work. Load one primary cha
 - “Model app state with loro-mirror or loro-mirror-react”
   - Start with `mirror-and-react.md`
   - Add `containers-and-encoding.md` if schema semantics depend on container choice
+- “Modify Loro source, public APIs, tests, docs, or package output”
+  - Start with `repo-development.md`
+  - Add `wasm-maintenance.md` when the change touches `crates/loro-wasm`
 - “Change wasm bindings or debug pending event flushing”
   - Start with `wasm-maintenance.md`
 - “Decide whether Loro is even the right tool / explain tradeoffs”
@@ -46,7 +50,7 @@ Use this skill as the single entry point for all Loro work. Load one primary cha
    - choose data types by merge behavior,
    - distinguish state version from history version,
    - keep ephemeral state out of persisted CRDT data,
-   - respect the binding/runtime invariants in `crates/loro-wasm`.
+   - respect public API compatibility and binding/runtime invariants.
 
 ## Keep Guardrails
 
@@ -54,4 +58,5 @@ Use this skill as the single entry point for all Loro work. Load one primary cha
 - Do not model editable text as plain strings when user intent requires merged edits.
 - Do not reuse peer IDs across concurrent sessions.
 - Do not confuse detached documents with detached containers.
+- Do not silently continue after internal invariant violations; invalid external input should become `Result::Err`, but corrupted internal state should fail fast.
 - Do not change wasm-exposed mutators without checking pending-event flushing behavior.
