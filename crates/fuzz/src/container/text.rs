@@ -175,6 +175,9 @@ impl Actionable for TextAction {
                 unwrap(text.mark(*pos..*pos + *len, STYLES_NAME[*i], *pos as i32));
             }
             TextActionInner::Update => {
+                if text.is_deleted() {
+                    return None;
+                }
                 let new_text = format!("u{}", *len);
                 text.update(&new_text, Default::default()).ok();
             }

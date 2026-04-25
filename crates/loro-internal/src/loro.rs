@@ -1490,7 +1490,8 @@ impl LoroDoc {
             return;
         }
 
-        self._checkout_to_latest_without_commit(true);
+        self._checkout_to_latest_without_commit(true)
+            .expect("checkout to oplog frontiers should succeed");
         self.emit_events();
         drop(_guard);
         self.renew_txn_if_auto_commit(options);
@@ -1502,26 +1503,30 @@ impl LoroDoc {
             return;
         }
 
-        self._checkout_to_latest_without_commit(true);
+        self._checkout_to_latest_without_commit(true)
+            .expect("checkout to oplog frontiers should succeed");
         self._renew_txn_if_auto_commit_with_guard(None, guard);
     }
 
     /// NOTE: The caller of this method should ensure the txn is locked and set to None
-    pub(crate) fn _checkout_to_latest_without_commit(&self, to_commit_then_renew: bool) {
+    pub(crate) fn _checkout_to_latest_without_commit(
+        &self,
+        to_commit_then_renew: bool,
+    ) -> LoroResult<()> {
         tracing::info_span!("CheckoutToLatest", peer = self.peer_id()).in_scope(|| {
             let f = self.oplog_frontiers();
             let this = &self;
             let frontiers = &f;
-            this._checkout_without_emitting(frontiers, false, to_commit_then_renew)
-                .unwrap(); // we don't need to shrink frontiers
-                           // because oplog's frontiers are already shrinked
+            this._checkout_without_emitting(frontiers, false, to_commit_then_renew)?;
+            // We don't need to shrink frontiers because oplog's frontiers are already shrinked.
             this.emit_events();
             if this.config.detached_editing() {
                 this.renew_peer_id();
             }
 
             self.set_detached(false);
-        });
+            Ok(())
+        })
     }
 
     /// Checkout [DocState] to a specific version.
@@ -2306,11 +2311,59 @@ mod test {
     use crate::{
         cursor::PosType,
         encoding::json_schema::json::{JsonOpContent, JsonSchema, ListOp},
+        encoding::{fast_snapshot::EMPTY_MARK, EncodeMode},
         loro::ExportMode,
         version::{Frontiers, VersionVector},
         LoroDoc, ToJson, TreeParentId,
     };
+    use bytes::{BufMut, Bytes};
     use loro_common::ID;
+    use loro_kv_store::{mem_store::MemKvConfig, MemKvStore};
+
+    const XXH_SEED: u32 = u32::from_le_bytes(*b"LORO");
+
+    fn encode_import_blob(mode: EncodeMode, body: &[u8]) -> Vec<u8> {
+        let mut ans = Vec::new();
+        ans.extend_from_slice(b"loro");
+        ans.extend_from_slice(&[0; 16]);
+        ans.extend_from_slice(&mode.to_bytes());
+        ans.extend_from_slice(body);
+        let checksum = xxhash_rust::xxh32::xxh32(&ans[20..], XXH_SEED);
+        ans[16..20].copy_from_slice(&checksum.to_le_bytes());
+        ans
+    }
+
+    fn encode_fast_snapshot_import(oplog_bytes: &[u8]) -> Vec<u8> {
+        let mut body = Vec::new();
+        body.put_u32_le(oplog_bytes.len() as u32);
+        body.extend_from_slice(oplog_bytes);
+        body.put_u32_le(EMPTY_MARK.len() as u32);
+        body.extend_from_slice(EMPTY_MARK);
+        body.put_u32_le(0);
+        encode_import_blob(EncodeMode::FastSnapshot, &body)
+    }
+
+    fn sstable_with_huge_meta_block_count() -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"LORO");
+        bytes.push(0);
+        bytes.put_u32_le(10_000_000);
+        bytes.put_u32_le(xxhash_rust::xxh32::xxh32(&[], XXH_SEED));
+        bytes.put_u32_le(5);
+        bytes
+    }
+
+    fn snapshot_oplog_with_malformed_block() -> Vec<u8> {
+        let peer = 1;
+        let id = ID::new(peer, 0);
+        let vv = VersionVector::from_iter([(peer, 1)]);
+        let frontiers = Frontiers::from_id(id);
+        let mut store = MemKvStore::new(MemKvConfig::default());
+        store.set(b"vv", vv.encode().into());
+        store.set(b"fr", frontiers.encode().into());
+        store.set(&id.to_bytes(), Bytes::from_static(&[0]));
+        store.export_all().to_vec()
+    }
 
     fn make_json_import_stress_doc(peer: u64) -> LoroDoc {
         let doc = LoroDoc::new_auto_commit();
@@ -2387,6 +2440,24 @@ mod test {
         fn is_send_sync<T: Send + Sync>(_v: T) {}
         let loro = super::LoroDoc::new();
         is_send_sync(loro)
+    }
+
+    #[test]
+    fn import_rejects_huge_sstable_meta_block_count_without_panic() {
+        let bytes = encode_fast_snapshot_import(&sstable_with_huge_meta_block_count());
+
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| LoroDoc::new().import(&bytes)));
+        assert!(result.is_ok(), "malformed import should not panic");
+        assert!(result.unwrap().is_err());
+    }
+
+    #[test]
+    fn import_rejects_malformed_change_block_without_panic() {
+        let bytes = encode_fast_snapshot_import(&snapshot_oplog_with_malformed_block());
+
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| LoroDoc::new().import(&bytes)));
+        assert!(result.is_ok(), "malformed import should not panic");
+        assert!(result.unwrap().is_err());
     }
 
     #[test]

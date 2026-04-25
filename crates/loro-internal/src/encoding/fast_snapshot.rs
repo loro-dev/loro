@@ -230,7 +230,16 @@ pub(crate) fn decode_snapshot_inner(
     drop(oplog);
     if need_calc {
         doc.set_detached(true);
-        doc._checkout_to_latest_without_commit(false);
+        if let Err(e) = doc._checkout_to_latest_without_commit(false) {
+            doc.set_detached(false);
+            doc.app_state()
+                .lock()
+                .reset_to_empty_for_failed_snapshot_import();
+            doc.oplog()
+                .lock()
+                .reset_to_empty_for_failed_snapshot_import(arena_checkpoint);
+            return Err(e);
+        }
         debug_assert_eq!(doc.state_frontiers(), doc.oplog_frontiers());
     }
 

@@ -627,10 +627,16 @@ mod mut_external_kv {
             kv_store
                 .import_all(bytes)
                 .map_err(|e| LoroError::DecodeError(e.into_boxed_str()))?;
-            let vv_bytes = kv_store.get(VV_KEY).unwrap_or_default();
+            drop(kv_store);
+            self.validate_imported_change_blocks()?;
+            let vv_bytes = self.external_kv.lock().get(VV_KEY).unwrap_or_default();
             let vv = VersionVector::decode(&vv_bytes)
                 .map_err(|_| LoroError::DecodeDataCorruptionError)?;
-            let start_vv_bytes = kv_store.get(START_VV_KEY).unwrap_or_default();
+            let start_vv_bytes = self
+                .external_kv
+                .lock()
+                .get(START_VV_KEY)
+                .unwrap_or_default();
             let start_vv = if start_vv_bytes.is_empty() {
                 Default::default()
             } else {
@@ -641,19 +647,25 @@ mod mut_external_kv {
             #[cfg(test)]
             {
                 // This is for tests
-                drop(kv_store);
                 for (peer, cnt) in vv.iter() {
                     self.get_change(ID::new(*peer, *cnt - 1))
                         .ok_or(LoroError::DecodeDataCorruptionError)?;
                 }
-                kv_store = self.external_kv.lock();
             }
 
             *self.external_vv.lock() = vv.clone();
-            let frontiers_bytes = kv_store.get(FRONTIERS_KEY).unwrap_or_default();
+            let frontiers_bytes = self
+                .external_kv
+                .lock()
+                .get(FRONTIERS_KEY)
+                .unwrap_or_default();
             let frontiers = Frontiers::decode(&frontiers_bytes)
                 .map_err(|_| LoroError::DecodeDataCorruptionError)?;
-            let start_frontiers = kv_store.get(START_FRONTIERS_KEY).unwrap_or_default();
+            let start_frontiers = self
+                .external_kv
+                .lock()
+                .get(START_FRONTIERS_KEY)
+                .unwrap_or_default();
             let start_frontiers = if start_frontiers.is_empty() {
                 Default::default()
             } else {
@@ -663,7 +675,6 @@ mod mut_external_kv {
 
             let mut max_lamport = None;
             let mut max_timestamp = 0;
-            drop(kv_store);
             for id in frontiers.iter() {
                 let c = self
                     .get_change(id)
@@ -696,6 +707,24 @@ mod mut_external_kv {
                     Some((start_vv, start_frontiers))
                 },
             })
+        }
+
+        fn validate_imported_change_blocks(&self) -> LoroResult<()> {
+            let blocks: Vec<(ID, Bytes)> = {
+                let kv_store = self.external_kv.lock();
+                kv_store
+                    .scan(Bound::Unbounded, Bound::Unbounded)
+                    .filter(|(id, _)| id.len() == 12)
+                    .map(|(id, bytes)| (ID::from_bytes(&id), bytes))
+                    .collect()
+            };
+
+            for (_id, bytes) in blocks {
+                let mut block = Arc::new(ChangesBlock::from_bytes(bytes)?);
+                block.ensure_changes(&self.arena)?;
+            }
+
+            Ok(())
         }
 
         /// Flush the cached change to kv_store
@@ -964,7 +993,10 @@ mod mut_inner_kv {
             };
 
             let block_id = ID::from_bytes(&id);
-            let mut block = Arc::new(ChangesBlock::from_bytes(bytes).unwrap());
+            let mut block = Arc::new(
+                ChangesBlock::from_bytes(bytes)
+                    .expect("validated external change block should decode"),
+            );
             block
                 .ensure_changes(&self.arena)
                 .expect("Parse block error");
@@ -1101,7 +1133,8 @@ mod mut_inner_kv {
 
             let (b_id, b_bytes) = iter.next_back()?;
             let block_id: ID = ID::from_bytes(&b_id[..]);
-            let block = ChangesBlock::from_bytes(b_bytes).unwrap();
+            let block = ChangesBlock::from_bytes(b_bytes)
+                .expect("validated external change block should decode");
             if block_id.peer == id.peer
                 && block_id.counter <= id.counter
                 && block.counter_range.1 > id.counter
@@ -1151,7 +1184,8 @@ mod mut_inner_kv {
                         continue;
                     }
 
-                    let block = ChangesBlock::from_bytes(bytes.clone()).unwrap();
+                    let block = ChangesBlock::from_bytes(bytes.clone())
+                        .expect("validated external change block should decode");
                     inner.mem_parsed_kv.insert(id, Arc::new(block));
                 }
             }
@@ -1178,7 +1212,8 @@ mod mut_inner_kv {
                     return;
                 }
 
-                let block = ChangesBlock::from_bytes(next_back_bytes).unwrap();
+                let block = ChangesBlock::from_bytes(next_back_bytes)
+                    .expect("validated external change block should decode");
                 inner.mem_parsed_kv.insert(next_back_id, Arc::new(block));
             }
         }
@@ -1247,10 +1282,27 @@ impl BlockOpRef {
 impl ChangesBlock {
     fn from_bytes(bytes: Bytes) -> LoroResult<Self> {
         let len = bytes.len();
-        let mut bytes = ChangesBlockBytes::new(bytes);
-        let peer = bytes.peer();
-        let counter_range = bytes.counter_range();
-        let lamport_range = bytes.lamport_range();
+        let bytes = ChangesBlockBytes::new(bytes);
+        bytes.ensure_header()?;
+        let header = bytes
+            .header
+            .get()
+            .expect("header should be initialized after ensure_header");
+        let peer = header.peer;
+        let counter_range = (
+            header.counter,
+            *header.counters.last().ok_or_else(|| {
+                LoroError::DecodeError("Decode block error: missing counters".into())
+            })?,
+        );
+        let lamport_range = (
+            *header.lamports.first().ok_or_else(|| {
+                LoroError::DecodeError("Decode block error: missing lamports".into())
+            })?,
+            *header.lamports.last().ok_or_else(|| {
+                LoroError::DecodeError("Decode block error: missing lamports".into())
+            })?,
+        );
         let content = ChangesBlockContent::Bytes(bytes);
         Ok(Self {
             peer,
@@ -1571,7 +1623,7 @@ impl ChangesBlockBytes {
 
     fn ensure_header(&self) -> LoroResult<()> {
         self.header
-            .get_or_init(|| Arc::new(decode_header(&self.bytes).unwrap()));
+            .get_or_try_init(|| decode_header(&self.bytes).map(Arc::new))?;
         Ok(())
     }
 
@@ -1592,19 +1644,6 @@ impl ChangesBlockBytes {
         let bytes = ChangesBlockBytes::new(Bytes::from(bytes));
         bytes.ensure_header().unwrap();
         bytes
-    }
-
-    fn peer(&mut self) -> PeerID {
-        self.ensure_header().unwrap();
-        self.header.get().as_ref().unwrap().peer
-    }
-
-    fn counter_range(&mut self) -> (Counter, Counter) {
-        if let Some(header) = self.header.get() {
-            (header.counter, *header.counters.last().unwrap())
-        } else {
-            decode_block_range(&self.bytes).unwrap().0
-        }
     }
 
     fn lamport_range(&mut self) -> (Lamport, Lamport) {

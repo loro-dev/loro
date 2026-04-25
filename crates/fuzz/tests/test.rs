@@ -32,6 +32,111 @@ fn test_empty() {
 }
 
 #[test]
+fn all_fuzz_text_update_deleted_container() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            Handle {
+                site: 0,
+                target: 151,
+                container: 255,
+                action: Generic(GenericAction {
+                    value: Container(Text),
+                    bool: true,
+                    key: 4294967295,
+                    pos: 7855264012064260095,
+                    length: 4234229503,
+                    prop: 18446628625246257152,
+                }),
+            },
+            Handle {
+                site: 0,
+                target: 151,
+                container: 255,
+                action: Generic(GenericAction {
+                    value: Container(Map),
+                    bool: true,
+                    key: 255,
+                    pos: 18417189267106168832,
+                    length: 10880713583243624447,
+                    prop: 252482779231551487,
+                }),
+            },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 255,
+                action: Generic(GenericAction {
+                    value: Container(Unknown(255)),
+                    bool: true,
+                    key: 4294967295,
+                    pos: 18402046724551180543,
+                    length: 241787004994453504,
+                    prop: 7340844,
+                }),
+            },
+        ],
+    )
+}
+
+#[test]
+fn all_fuzz_state_only_before_shallow_root() {
+    test_multi_sites_on_one_doc(
+        5,
+        &mut [
+            Handle {
+                site: 151,
+                target: 4,
+                container: 118,
+                action: Generic(GenericAction {
+                    value: I32(285213969),
+                    bool: true,
+                    key: 1613705007,
+                    pos: 3111757746563825408,
+                    length: 3429582925463550,
+                    prop: 15119091759471251967,
+                }),
+            },
+            StateOnlyRoundTrip { site: 209 },
+            StateOnlyRoundTrip { site: 163 },
+            Handle {
+                site: 32,
+                target: 130,
+                container: 4,
+                action: Generic(GenericAction {
+                    value: Container(Counter),
+                    bool: true,
+                    key: 1634534272,
+                    pos: 6763844172968254720,
+                    length: 6727636073941130589,
+                    prop: 15086316982340771165,
+                }),
+            },
+            Handle {
+                site: 123,
+                target: 128,
+                container: 3,
+                action: Generic(GenericAction {
+                    value: I32(7364062),
+                    bool: false,
+                    key: 1566399837,
+                    pos: 6727636073941130589,
+                    length: 6727636073941130589,
+                    prop: 6727636073941130589,
+                }),
+            },
+            SyncAll,
+            SyncAll,
+            SyncAll,
+            SyncAll,
+            SyncAll,
+            StateOnlyRoundTrip { site: 15 },
+        ],
+    )
+}
+
+#[test]
 fn test_local_events() {
     fuzz_local_events(vec![
         Handle {
@@ -9908,6 +10013,59 @@ fn shallow_arb_test() {
     }
 
     arbtest::builder().budget_ms(1000).run(|u| prop(u, 5))
+}
+
+#[test]
+fn shallow_fuzz_seed_7458f1c30000eecc() {
+    test_multi_sites_with_gc(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            Handle {
+                site: 74,
+                target: 231,
+                container: 133,
+                action: Generic(GenericAction {
+                    value: Container(Map),
+                    bool: false,
+                    key: 3518739048,
+                    pos: 242382499964152877,
+                    length: 15294447956588521314,
+                    prop: 796528703252047870,
+                }),
+            },
+            Handle {
+                site: 253,
+                target: 147,
+                container: 68,
+                action: Generic(GenericAction {
+                    value: I32(-1446013275),
+                    bool: true,
+                    key: 3326442925,
+                    pos: 18227973322994619787,
+                    length: 7658325028885264402,
+                    prop: 2020415845346249432,
+                }),
+            },
+            ImportShallow {
+                site: 225,
+                from: 209,
+            },
+            Query {
+                site: 139,
+                target: 206,
+                query_type: 47,
+            },
+            ImportShallow {
+                site: 251,
+                from: 93,
+            },
+            Checkout {
+                site: 76,
+                to: 396527220,
+            },
+        ],
+    )
 }
 
 #[test]

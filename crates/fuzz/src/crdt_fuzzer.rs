@@ -600,6 +600,17 @@ fn handle_import_result(e: LoroResult<ImportStatus>) {
     }
 }
 
+fn handle_gc_sync_import_result(e: LoroResult<ImportStatus>) -> bool {
+    match e {
+        Ok(_) => true,
+        Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion) => {
+            info!("Skipped GC sync due to ImportUpdatesThatDependsOnOutdatedVersion");
+            false
+        }
+        Err(e) => panic!("{}", e),
+    }
+}
+
 #[derive(Eq, Hash, PartialEq, Clone)]
 pub enum FuzzTarget {
     Map,
@@ -726,50 +737,66 @@ pub fn test_multi_sites_with_gc(
                 info_span!("Attach", peer = j).in_scope(|| {
                     b_doc.attach();
                 });
+                let mut can_check_eq = true;
                 match (i + j) % 4 {
                     0 => {
-                        info_span!("Updates", from = j, to = i).in_scope(|| {
-                            a_doc
-                                .import(
+                        let synced = info_span!("Updates", from = j, to = i).in_scope(|| {
+                            handle_gc_sync_import_result(
+                                a_doc.import(
                                     &b_doc
                                         .export(ExportMode::updates(&a_doc.oplog_vv()))
                                         .unwrap(),
-                                )
-                                .unwrap();
+                                ),
+                            )
                         });
-                        info_span!("Updates", from = i, to = j).in_scope(|| {
-                            b_doc
-                                .import(
-                                    &a_doc
-                                        .export(ExportMode::updates(&b_doc.oplog_vv()))
-                                        .unwrap(),
+                        can_check_eq &= synced;
+                        if can_check_eq {
+                            let synced = info_span!("Updates", from = i, to = j).in_scope(|| {
+                                handle_gc_sync_import_result(
+                                    b_doc.import(
+                                        &a_doc
+                                            .export(ExportMode::updates(&b_doc.oplog_vv()))
+                                            .unwrap(),
+                                    ),
                                 )
-                                .unwrap();
-                        });
+                            });
+                            can_check_eq &= synced;
+                        }
                     }
                     1 => {
-                        info_span!("Snapshot", from = i, to = j).in_scope(|| {
-                            b_doc
-                                .import(&a_doc.export(ExportMode::Snapshot).unwrap())
-                                .unwrap();
+                        let synced = info_span!("Snapshot", from = i, to = j).in_scope(|| {
+                            handle_gc_sync_import_result(
+                                b_doc.import(&a_doc.export(ExportMode::Snapshot).unwrap()),
+                            )
                         });
-                        info_span!("Snapshot", from = j, to = i).in_scope(|| {
-                            a_doc
-                                .import(&b_doc.export(ExportMode::Snapshot).unwrap())
-                                .unwrap();
-                        });
+                        can_check_eq &= synced;
+                        if can_check_eq {
+                            let synced = info_span!("Snapshot", from = j, to = i).in_scope(|| {
+                                handle_gc_sync_import_result(
+                                    a_doc.import(&b_doc.export(ExportMode::Snapshot).unwrap()),
+                                )
+                            });
+                            can_check_eq &= synced;
+                        }
                     }
                     2 => {
-                        info_span!("FastSnapshot", from = i, to = j).in_scope(|| {
-                            b_doc
-                                .import(&a_doc.export(loro::ExportMode::Snapshot).unwrap())
-                                .unwrap();
+                        let synced = info_span!("FastSnapshot", from = i, to = j).in_scope(|| {
+                            handle_gc_sync_import_result(
+                                b_doc.import(&a_doc.export(loro::ExportMode::Snapshot).unwrap()),
+                            )
                         });
-                        info_span!("FastSnapshot", from = j, to = i).in_scope(|| {
-                            a_doc
-                                .import(&b_doc.export(loro::ExportMode::Snapshot).unwrap())
-                                .unwrap();
-                        });
+                        can_check_eq &= synced;
+                        if can_check_eq {
+                            let synced =
+                                info_span!("FastSnapshot", from = j, to = i).in_scope(|| {
+                                    handle_gc_sync_import_result(
+                                        a_doc.import(
+                                            &b_doc.export(loro::ExportMode::Snapshot).unwrap(),
+                                        ),
+                                    )
+                                });
+                            can_check_eq &= synced;
+                        }
                     }
                     _ => {
                         info_span!("JsonFormat", from = i, to = j).in_scope(|| {
@@ -785,33 +812,39 @@ pub fn test_multi_sites_with_gc(
                     }
                 }
 
-                if a.loro.oplog_vv() != b.loro.oplog_vv() {
+                if can_check_eq && a.loro.oplog_vv() != b.loro.oplog_vv() {
                     // There is chance this happens when a pending update is applied because of the previous import
                     let a_doc = &mut a.loro;
                     let b_doc = &mut b.loro;
-                    info_span!("Updates", from = j, to = i).in_scope(|| {
-                        a_doc
-                            .import(
+                    let synced = info_span!("Updates", from = j, to = i).in_scope(|| {
+                        handle_gc_sync_import_result(
+                            a_doc.import(
                                 &b_doc
                                     .export(ExportMode::updates(&a_doc.oplog_vv()))
                                     .unwrap(),
-                            )
-                            .unwrap();
+                            ),
+                        )
                     });
-                    info_span!("Updates", from = i, to = j).in_scope(|| {
-                        b_doc
-                            .import(
-                                &a_doc
-                                    .export(ExportMode::updates(&b_doc.oplog_vv()))
-                                    .unwrap(),
+                    can_check_eq &= synced;
+                    if can_check_eq {
+                        let synced = info_span!("Updates", from = i, to = j).in_scope(|| {
+                            handle_gc_sync_import_result(
+                                b_doc.import(
+                                    &a_doc
+                                        .export(ExportMode::updates(&b_doc.oplog_vv()))
+                                        .unwrap(),
+                                ),
                             )
-                            .unwrap();
-                    });
+                        });
+                        can_check_eq &= synced;
+                    }
                 }
 
-                a.check_eq(b);
-                a.record_history();
-                b.record_history();
+                if can_check_eq {
+                    a.check_eq(b);
+                    a.record_history();
+                    b.record_history();
+                }
             }
         }
 
@@ -819,15 +852,18 @@ pub fn test_multi_sites_with_gc(
             let (a, b) = array_mut_ref!(&mut this.actors, [0, 1]);
             a.loro.attach();
             b.loro.attach();
-            info_span!("0 => 1").in_scope(|| {
-                b.loro
-                    .import(
+            let synced = info_span!("0 => 1").in_scope(|| {
+                handle_gc_sync_import_result(
+                    b.loro.import(
                         &a.loro
                             .export(ExportMode::updates(&b.loro.oplog_vv()))
                             .unwrap(),
-                    )
-                    .unwrap();
+                    ),
+                )
             });
+            if !synced {
+                return;
+            }
             let result = info_span!("1 => 0").in_scope(|| {
                 a.loro.import(
                     &b.loro

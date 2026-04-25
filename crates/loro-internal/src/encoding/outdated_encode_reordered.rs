@@ -244,7 +244,13 @@ pub(crate) fn decode_op(
                 let len = del_start.len;
                 crate::op::InnerContent::List(crate::container::list::list_op::InnerListOp::Delete(
                     DeleteSpanWithId::new(
-                        ID::new(arenas.peers()[peer_idx], cnt as Counter),
+                        ID::new(
+                            *arenas
+                                .peers()
+                                .get(peer_idx)
+                                .ok_or(LoroError::DecodeDataCorruptionError)?,
+                            cnt as Counter,
+                        ),
                         prop as isize,
                         len,
                     ),
@@ -308,7 +314,13 @@ pub(crate) fn decode_op(
                     crate::op::InnerContent::List(
                         crate::container::list::list_op::InnerListOp::Delete(
                             DeleteSpanWithId::new(
-                                ID::new(arenas.peers()[peer_idx], cnt as Counter),
+                                ID::new(
+                                    *arenas
+                                        .peers()
+                                        .get(peer_idx)
+                                        .ok_or(LoroError::DecodeDataCorruptionError)?,
+                                    cnt as Counter,
+                                ),
                                 pos as isize,
                                 len,
                             ),
@@ -324,14 +336,22 @@ pub(crate) fn decode_op(
             )),
             Value::RawTreeMove(op) => {
                 let subject = TreeID::new(
-                    arenas.peers()[op.subject_peer_idx],
+                    *arenas
+                        .peers()
+                        .get(op.subject_peer_idx)
+                        .ok_or(LoroError::DecodeDataCorruptionError)?,
                     op.subject_cnt as Counter,
                 );
                 let parent = if op.is_parent_null {
                     None
                 } else {
-                    let parent_id =
-                        TreeID::new(arenas.peers()[op.parent_peer_idx], op.parent_cnt as Counter);
+                    let parent_id = TreeID::new(
+                        *arenas
+                            .peers()
+                            .get(op.parent_peer_idx)
+                            .ok_or(LoroError::DecodeDataCorruptionError)?,
+                        op.parent_cnt as Counter,
+                    );
                     if parent_id.is_deleted_root() {
                         return Ok(crate::op::InnerContent::Tree(Arc::new(TreeOp::Delete {
                             target: subject,
@@ -341,7 +361,12 @@ pub(crate) fn decode_op(
                     Some(parent_id)
                 };
 
-                let fi = FractionalIndex::from_bytes(positions[op.position_idx].clone());
+                let fi = FractionalIndex::from_bytes(
+                    positions
+                        .get(op.position_idx)
+                        .ok_or(LoroError::DecodeDataCorruptionError)?
+                        .clone(),
+                );
                 let is_create = subject.id() == op_id;
                 let ans = if is_create {
                     TreeOp::Create {
@@ -385,7 +410,13 @@ pub(crate) fn decode_op(
                     crate::op::InnerContent::List(
                         crate::container::list::list_op::InnerListOp::Delete(
                             DeleteSpanWithId::new(
-                                ID::new(arenas.peers()[peer_idx], cnt as Counter),
+                                ID::new(
+                                    *arenas
+                                        .peers()
+                                        .get(peer_idx)
+                                        .ok_or(LoroError::DecodeDataCorruptionError)?,
+                                    cnt as Counter,
+                                ),
                                 pos as isize,
                                 len,
                             ),
@@ -399,7 +430,13 @@ pub(crate) fn decode_op(
                 } => crate::op::InnerContent::List(
                     crate::container::list::list_op::InnerListOp::Move {
                         from: from as u32,
-                        elem_id: IdLp::new(arenas.peers()[from_idx], lamport as Lamport),
+                        elem_id: IdLp::new(
+                            *arenas
+                                .peers()
+                                .get(from_idx)
+                                .ok_or(LoroError::DecodeDataCorruptionError)?,
+                            lamport as Lamport,
+                        ),
                         to: prop as u32,
                     },
                 ),
@@ -409,7 +446,13 @@ pub(crate) fn decode_op(
                     value,
                 } => crate::op::InnerContent::List(
                     crate::container::list::list_op::InnerListOp::Set {
-                        elem_id: IdLp::new(arenas.peers()[peer_idx], lamport as Lamport),
+                        elem_id: IdLp::new(
+                            *arenas
+                                .peers()
+                                .get(peer_idx)
+                                .ok_or(LoroError::DecodeDataCorruptionError)?,
+                            lamport as Lamport,
+                        ),
                         value,
                     },
                 ),
