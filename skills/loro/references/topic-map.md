@@ -6,6 +6,8 @@ Use this file to choose the right user-facing chapter inside the unified `loro` 
 
 - “I am new to Loro. How do I start?”
   - Read `fit-and-architecture.md`
+- “Which package, language binding, or platform should I use?”
+  - Read `fit-and-architecture.md`
 - “Should I use Loro here?”
   - Read `fit-and-architecture.md`
 - “Which container should I choose?”
@@ -21,7 +23,7 @@ Use this file to choose the right user-facing chapter inside the unified `loro` 
 
 ## Getting Started And Product Fit
 
-- Install choices, first example, local-first framing
+- Install choices, language bindings, first example, local-first framing
   - Read `fit-and-architecture.md`
 - When CRDTs are the wrong fit
   - Read `fit-and-architecture.md`

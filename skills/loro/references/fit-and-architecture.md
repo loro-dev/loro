@@ -23,6 +23,19 @@
   - `loro-codemirror` for CodeMirror 6.
 - Use `loro-mirror` and `loro-mirror-react` when the app already thinks in immutable state and actions.
 
+## Language And Package Index
+
+- JavaScript/TypeScript: [`loro-crdt`](https://www.npmjs.com/package/loro-crdt). Start here for web apps and most examples in the Loro docs.
+- Rust: [`loro`](https://crates.io/crates/loro) and [`docs.rs/loro`](https://docs.rs/loro). Use for native Rust apps, services, CLIs, and custom infrastructure.
+- Swift: [`loro-swift`](https://github.com/loro-dev/loro-swift). Use for Swift/iOS/macOS experiments and native apps.
+- Python: [`loro-py`](https://github.com/loro-dev/loro-py). Use for Python apps, scripts, and server-side tooling.
+- React Native: [`loro-react-native`](https://github.com/loro-dev/loro-react-native). Use for mobile apps that need native React Native bindings.
+- C#: [`loro-cs`](https://github.com/sensslen/loro-cs). Community-maintained .NET/C# binding; check its README and release state before adopting.
+- Go: [`loro-go`](https://github.com/aholstenson/loro-go). Community-maintained Go binding; check platform support and API completeness before adopting.
+- Cross-language FFI base: [`loro-ffi`](https://github.com/loro-dev/loro-ffi). Use this as the reference for generated/native bindings and as a starting point for new language bindings.
+
+Prefer the official JS/TS or Rust package when there is no product reason to choose another language. For community bindings, verify platform binaries, Loro core version, and API coverage before making product commitments.
+
 ## First JavaScript Example
 
 ```ts
@@ -63,11 +76,8 @@ console.log(docB.toJSON()); // { items: ["A", "B"] }
 
 ## Entry Points
 
-- JS/TS: `loro-crdt`
-- Rust: `loro`
-- Swift: `loro-swift`
-- Python: `loro-py`
-- Ecosystem integrations include editor bindings, state-mirroring layers, and Inspector.
+- Core packages and language bindings are listed in `Language And Package Index`.
+- Ecosystem integrations include editor bindings, state-mirroring layers, React Native, and Inspector.
 
 ## Practical Start Path
 
