@@ -30,7 +30,7 @@
 - Use two cursors for selections: anchor and head.
 - Resolve live offsets with `doc.getCursorPos(...)`.
 - Persist updated cursors returned from resolution to reduce replay cost.
-- WASM text offsets are UTF-16 indices.
+- JavaScript text offsets are UTF-16 indices.
 
 ## ProseMirror And Tiptap
 
@@ -55,4 +55,4 @@
 
 - Do not model editable prose as `string` in a `LoroMap`.
 - Do not store collaborative selections as plain indices.
-- Do not mix old and new ProseMirror cursor APIs accidentally; inspect the package version and current codebase first.
+- Do not mix old and new ProseMirror cursor APIs accidentally; check the installed package version and current API docs first.

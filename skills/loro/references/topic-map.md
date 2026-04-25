@@ -1,36 +1,34 @@
 # Topic Map
 
-Use this file to choose the right chapter inside the unified `loro` skill.
+Use this file to choose the right user-facing chapter inside the unified `loro` skill.
 
 ## Route By User Ask
 
+- “I am new to Loro. How do I start?”
+  - Read `fit-and-architecture.md`
 - “Should I use Loro here?”
   - Read `fit-and-architecture.md`
 - “Which container should I choose?”
   - Read `containers-and-encoding.md`
-- “How should I sync, persist, time-travel, or debug imports?”
+- “How should I sync, persist, time-travel, use undo, or debug imports?”
   - Read `sync-versioning-and-events.md`
 - “How do I integrate rich text editors?”
   - Read `richtext-and-editors.md`
 - “How do I use loro-mirror with React?”
   - Read `mirror-and-react.md`
-- “Where should I change or test this in the Loro repo?”
-  - Read `repo-development.md`
-- “How do I change crates/loro-wasm safely?”
-  - Read `wasm-maintenance.md`
-- “Why does Loro behave this way, and what are the performance tradeoffs?”
-  - Read `performance-and-research.md`
+- “How will Loro behave at scale?”
+  - Read `performance-and-tradeoffs.md`
 
-## Product Fit And High-Level Architecture
+## Getting Started And Product Fit
 
-- CRDT basics, CAP tradeoffs, local-first framing, OT comparison
+- Install choices, first example, local-first framing
   - Read `fit-and-architecture.md`
 - When CRDTs are the wrong fit
   - Read `fit-and-architecture.md`
-- Package entry points, setup notes, ecosystem overview
+- Package entry points and ecosystem overview
   - Read `fit-and-architecture.md`
 
-## Containers, Composition, Encoding, Persistence
+## Containers, Composition, Storage
 
 - Choosing between `LoroMap`, `LoroList`, `LoroMovableList`, `LoroTree`, `LoroCounter`, `LoroText`
   - Read `containers-and-encoding.md`
@@ -53,6 +51,8 @@ Use this file to choose the right chapter inside the unified `loro` skill.
   - Read `sync-versioning-and-events.md`
 - Event timing, `subscribePreCommit`, Inspector
   - Read `sync-versioning-and-events.md`
+- Undo, cursors, and ephemeral presence
+  - Read `sync-versioning-and-events.md`
 
 ## Text, Rich Text, And Editors
 
@@ -70,29 +70,11 @@ Use this file to choose the right chapter inside the unified `loro` skill.
 - `loro-mirror-react`, selectors, provider/hooks patterns
   - Read `mirror-and-react.md`
 
-## Repository Development
+## Performance And Tradeoffs
 
-- Workspace layout, API lookup paths, compatibility rules, test placement
-  - Read `repo-development.md`
-- Validation commands, release packaging commands, fuzz/loom escalation
-  - Read `repo-development.md`
-- Mapping `llms-full.txt` docs to current source
-  - Read `repo-development.md`
-
-## WASM Binding Maintenance
-
-- `crates/loro-wasm` API changes
-  - Read `wasm-maintenance.md`
-- Pending-event flushing and JS decorator allowlists
-  - Read `wasm-maintenance.md`
-- Binding aliases, generated TS docs, wasm tests
-  - Read `wasm-maintenance.md`
-
-## Performance And Research Context
-
-- Benchmark interpretation
-  - Read `performance-and-research.md`
-- Event-graph replay and efficiency tradeoffs
-  - Read `performance-and-research.md`
-- Movable-tree algorithm context, rich-text algorithm context, project history
-  - Read `performance-and-research.md`
+- Loading speed, encoded size, memory, update size
+  - Read `performance-and-tradeoffs.md`
+- Conflict-heavy vs low-conflict workloads
+  - Read `performance-and-tradeoffs.md`
+- When to use snapshots, shallow snapshots, or update streams
+  - Read `performance-and-tradeoffs.md`

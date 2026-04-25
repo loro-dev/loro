@@ -65,7 +65,7 @@
 
 - Some older examples describe JS events as microtask-delayed.
 - Modern `loro-crdt` dispatches events synchronously at the JS boundary.
-- Always check the package version and current codebase before assuming old timing semantics.
+- Check the installed package version and current API docs before relying on old timing examples.
 
 ## Event Sources
 
@@ -93,7 +93,7 @@
 
 - If imports arrive out of order, inspect `ImportStatus.pending`.
 - If checkout seems stale, compare DocState version to OpLog version.
-- If a hook missed an implicit commit, audit `subscribePreCommit(...)` rather than adding ad hoc commit calls.
+- If commit metadata hooks miss implicit commits, use `subscribePreCommit(...)` rather than adding ad hoc commit calls.
 
 ## Undo, Cursor, And Ephemeral Presence
 
