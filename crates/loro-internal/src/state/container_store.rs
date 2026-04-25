@@ -125,6 +125,16 @@ impl ContainerStore {
             .map(|x| &x.shallow_root_frontiers)
     }
 
+    pub(crate) fn encode_shallow_root_state(&self) -> Option<Bytes> {
+        let shallow_root = self.shallow_root_store.as_ref()?;
+        let shallow_root_kv = shallow_root.store.lock().get_kv_clone();
+        shallow_root_kv.insert(
+            FRONTIERS_KEY,
+            shallow_root.shallow_root_frontiers.encode().into(),
+        );
+        Some(shallow_root_kv.export())
+    }
+
     pub(crate) fn decode(&mut self, bytes: Bytes) -> LoroResult<Option<Frontiers>> {
         self.store.decode(bytes)
     }

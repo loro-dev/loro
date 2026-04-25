@@ -186,6 +186,35 @@ fn export_snapshot_on_a_shallow_doc() -> anyhow::Result<()> {
 }
 
 #[test]
+fn export_snapshot_on_shallow_doc_with_small_tail_updates() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    gen_action(&doc, 123, 32);
+    doc.commit();
+
+    let shallow_frontiers = doc.oplog_frontiers();
+    let shallow_value = doc.get_deep_value();
+    gen_action(&doc, 456, 4);
+    doc.commit();
+    let latest_value = doc.get_deep_value();
+
+    let shallow_bytes = doc.export(loro::ExportMode::shallow_snapshot(&shallow_frontiers))?;
+    let shallow_doc = LoroDoc::new();
+    shallow_doc.import(&shallow_bytes)?;
+
+    let snapshot_from_shallow = shallow_doc.export(loro::ExportMode::Snapshot)?;
+    let restored = LoroDoc::new();
+    restored.import(&snapshot_from_shallow)?;
+
+    assert!(restored.is_shallow());
+    assert_eq!(restored.shallow_since_frontiers(), shallow_frontiers);
+    assert_eq!(restored.get_deep_value(), latest_value);
+    restored.checkout(&shallow_frontiers)?;
+    assert_eq!(restored.get_deep_value(), shallow_value);
+    Ok(())
+}
+
+#[test]
 fn test_richtext_gc() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(1)?;
