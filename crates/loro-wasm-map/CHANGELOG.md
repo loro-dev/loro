@@ -1,5 +1,49 @@
 # loro-crdt-map
 
+## 1.12.0
+
+### Minor Changes
+
+- 7dfda87: Make update imports atomic across oplog and document state application.
+
+  - `import` and `import_json_updates` now roll back imported oplog changes when state application fails, so malformed updates do not leave the document with oplog/state divergence.
+  - Pending changes that are activated during import are included in the rollback boundary when they can affect state application.
+  - Import rollback uses conditional guards to avoid adding fixed overhead to successful detached or no-op imports.
+
+### Patch Changes
+
+- 64aa97c: Harden encoding, snapshot, and import paths against malformed input
+
+  - JSON schema import (`import_json_updates`): out-of-range compressed peer indices now return `DecodeError` instead of being silently accepted as raw peer IDs; mismatched `JsonOpContent` vs container type returns `DecodeError` instead of panicking.
+  - Outdated binary encoding decoder (`decode_op`): malformed op streams (missing delete iterators, type mismatches) now return `DecodeDataCorruptionError` instead of panicking.
+  - Fast snapshot decoder (`decode_snapshot_blob_meta`): truncated or oversized section lengths now return `DecodeDataCorruptionError` instead of panicking on slice indexing.
+  - Change store KV import (`import_all`): corrupted `VersionVector`/`Frontiers` metadata now returns `DecodeDataCorruptionError` instead of panicking.
+  - Value encoding (`LoroValueKind::from_u8`, `read_str`): invalid byte values and invalid UTF-8 now return `DecodeDataCorruptionError` instead of panicking.
+  - `LoroDoc::diff()`: checkout failures during diff calculation are now propagated as `LoroError` instead of panicking; state restore uses `unwrap()` to fail-fast on internal errors.
+  - `try_get_text/list/map/tree/movable_list/counter`: now return `None` for wrong root container types instead of panicking.
+  - Detached list insert out-of-bounds: returns `LoroError::OutOfBound` instead of panicking.
+  - Tree `mov_after`/`mov_before` on deleted node: returns `TreeNodeDeletedOrNotExist` instead of panicking.
+  - `JsonChange::op_len`: empty ops array returns `0` instead of panicking.
+  - `renew_peer_id`: avoids theoretical collision with `PeerID::MAX`.
+
+- 0977ad1: Fix lock-order panics when JavaScript callbacks re-enter Loro APIs.
+
+  - `opCount()` no longer reacquires the OpLog lock while the current thread already holds a higher-order lock.
+  - `LoroText.iter()` snapshots text chunks before invoking the user callback, so callback code can safely read or mutate the document.
+
+- ef100e6: Reduce memory spikes when exporting snapshots from shallow documents.
+
+  When a shallow document is re-exported from its existing shallow root with only a small tail of updates, Loro now reuses the stored shallow-root state instead of decoding all containers just to re-encode the same state.
+
+- 933d5d6: feat: add clearRedo and clearUndo methods
+  #921
+- 17dc6c0: Fix several edge-case contract violations in document, text, and JSONPath APIs.
+
+  - JSONPath `value(...)` comparisons now handle boolean values consistently with other scalar comparisons.
+  - Rich text mark expansion now follows `ExpandType::Before` and `ExpandType::Both` at documented insertion boundaries.
+  - Text delta slicing now validates invalid ranges and UTF-8/UTF-16 boundaries before slicing, and public deltas omit removed-style tombstones after unmarking.
+  - Detached list and movable-list out-of-bounds operations now return `LoroError::OutOfBound` instead of panicking.
+
 ## 1.11.1
 
 ### Patch Changes
