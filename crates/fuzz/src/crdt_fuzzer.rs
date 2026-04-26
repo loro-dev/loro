@@ -714,7 +714,7 @@ pub fn test_multi_sites_with_gc(
                     let bytes = fuzzer.actors[1]
                         .loro
                         .export(loro::ExportMode::shallow_snapshot(&f));
-                    fuzzer.actors[0].loro.import(&bytes.unwrap()).unwrap();
+                    handle_gc_sync_import_result(fuzzer.actors[0].loro.import(&bytes.unwrap()));
                 }
             })
         }

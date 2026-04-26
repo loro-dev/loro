@@ -10016,6 +10016,38 @@ fn shallow_arb_test() {
 }
 
 #[test]
+fn shallow_fuzz_snapshot_after_shallow_import_and_diff_apply() {
+    test_multi_sites_with_gc(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            Handle {
+                site: 63,
+                target: 110,
+                container: 238,
+                action: Generic(GenericAction {
+                    value: I32(668980276),
+                    bool: false,
+                    key: 4269178473,
+                    pos: 12625296297236294579,
+                    length: 15175141303419283236,
+                    prop: 10028589373875963754,
+                }),
+            },
+            ImportShallow {
+                site: 195,
+                from: 158,
+            },
+            DiffApply { from: 58, to: 116 },
+            Checkout {
+                site: 7,
+                to: 3865256491,
+            },
+        ],
+    )
+}
+
+#[test]
 fn shallow_fuzz_seed_7458f1c30000eecc() {
     test_multi_sites_with_gc(
         5,
