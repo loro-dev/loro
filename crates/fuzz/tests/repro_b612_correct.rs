@@ -1,5 +1,5 @@
-use fuzz::{test_multi_sites, Action, FuzzTarget};
 use fuzz::actions::{ActionInner, ActionWrapper, FuzzValue};
+use fuzz::{test_multi_sites, Action, FuzzTarget};
 use loro::ContainerType;
 
 #[test]
@@ -23,12 +23,10 @@ fn repro_crash_b612_correct_actions() {
             site: 1,
             target: 5,
             container: 0,
-            action: ActionWrapper::Action(ActionInner::List(
-                fuzz::actions::ListAction::Insert {
-                    pos: 0,
-                    value: FuzzValue::I32(671162369),
-                },
-            )),
+            action: ActionWrapper::Action(ActionInner::List(fuzz::actions::ListAction::Insert {
+                pos: 0,
+                value: FuzzValue::I32(671162369),
+            })),
         },
         Action::ImportShallow { site: 0, from: 1 },
     ];

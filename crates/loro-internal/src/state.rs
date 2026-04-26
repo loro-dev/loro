@@ -1,4 +1,6 @@
 use crate::sync::{AtomicU64, Mutex, RwLock};
+#[cfg(test)]
+use std::cell::Cell;
 use std::sync::{Arc, Weak};
 use std::{borrow::Cow, io::Write, sync::atomic::Ordering};
 
@@ -55,6 +57,16 @@ use self::{container_store::ContainerWrapper, unknown_state::UnknownState};
 use self::counter_state::CounterState;
 
 use super::{arena::SharedArena, event::InternalDocDiff};
+
+#[cfg(test)]
+thread_local! {
+    static FAIL_NEXT_IMPORT_STATE_APPLY: Cell<bool> = Cell::new(false);
+}
+
+#[cfg(test)]
+pub(crate) fn fail_next_import_state_apply_for_test() {
+    FAIL_NEXT_IMPORT_STATE_APPLY.with(|fail| fail.set(true));
+}
 
 pub struct DocState {
     pub(super) peer: Arc<AtomicU64>,
@@ -128,6 +140,13 @@ pub(crate) trait ContainerState {
     /// doc-state panicking inside a lock.
     fn apply_diff(&mut self, diff: InternalDiff, ctx: DiffApplyContext) -> LoroResult<()>;
 
+    /// Validate a state diff before it is applied. Implementations should keep
+    /// this check proportional to the diff size and must not mutate container
+    /// state.
+    fn validate_diff(&self, _diff: &InternalDiff) -> LoroResult<()> {
+        Ok(())
+    }
+
     fn apply_local_op(&mut self, raw_op: &RawOp, op: &Op) -> LoroResult<ApplyLocalOpReturn>;
     /// Convert a state to a diff, such that an empty state will be transformed into the same as this state when it's applied.
     fn to_diff(&mut self, doc: &Weak<LoroDocInner>) -> Diff;
@@ -183,6 +202,10 @@ impl<T: ContainerState> ContainerState for Box<T> {
 
     fn apply_diff(&mut self, diff: InternalDiff, ctx: DiffApplyContext) -> LoroResult<()> {
         self.as_mut().apply_diff(diff, ctx)
+    }
+
+    fn validate_diff(&self, diff: &InternalDiff) -> LoroResult<()> {
+        self.as_ref().validate_diff(diff)
     }
 
     fn apply_local_op(&mut self, raw_op: &RawOp, op: &Op) -> LoroResult<ApplyLocalOpReturn> {
@@ -479,10 +502,9 @@ impl DocState {
     /// It's expected that diff only contains [`InternalDiff`]
     ///
     /// Returns `Err` if any container state rejects its diff as malformed
-    /// (see `ContainerState::apply_diff`). The oplog has already accepted
-    /// the changes at this point; a returned error means the doc-state
-    /// view is incomplete and the caller should surface the failure
-    /// rather than treat the import as successful.
+    /// (see `ContainerState::validate_diff`). Validation runs before mutating
+    /// any container state, so a returned error leaves the doc-state view at
+    /// the previous version.
     #[instrument(skip_all)]
     pub(crate) fn apply_diff(
         &mut self,
@@ -497,6 +519,28 @@ impl DocState {
             ));
         }
 
+        let is_recording = self.is_recording();
+        let Cow::Owned(mut diffs) = std::mem::take(&mut diff.diff) else {
+            unreachable!()
+        };
+        self.validate_diff_batch(&diffs)?;
+        #[cfg(test)]
+        if diff.origin.as_str() == "__loro_fail_import_state_apply" {
+            return Err(LoroError::internal("state apply failpoint"));
+        }
+        #[cfg(test)]
+        if diff.by == EventTriggerKind::Import {
+            let should_fail = FAIL_NEXT_IMPORT_STATE_APPLY.with(|fail| {
+                let should_fail = fail.get();
+                if should_fail {
+                    fail.set(false);
+                }
+                should_fail
+            });
+            if should_fail {
+                return Err(LoroError::internal("state apply failpoint"));
+            }
+        }
         match diff_mode {
             DiffMode::Checkout => {
                 self.dead_containers_cache.clear();
@@ -505,12 +549,7 @@ impl DocState {
                 self.dead_containers_cache.clear_alive();
             }
         }
-
-        let is_recording = self.is_recording();
         self.pre_txn(diff.origin.clone(), diff.by);
-        let Cow::Owned(mut diffs) = std::mem::take(&mut diff.diff) else {
-            unreachable!()
-        };
 
         // # Revival
         //
@@ -692,6 +731,22 @@ impl DocState {
         if self.is_recording() {
             self.record_diff(diff)
         }
+        Ok(())
+    }
+
+    fn validate_diff_batch(&mut self, diffs: &[InternalContainerDiff]) -> LoroResult<()> {
+        for diff in diffs {
+            let crate::event::DiffVariant::Internal(internal_diff) = &diff.diff else {
+                continue;
+            };
+            if let Some(state) = self.store.get_container(diff.idx) {
+                state.validate_diff(internal_diff)?;
+            } else {
+                let state = create_state_(diff.idx, &self.config, self.peer_id());
+                state.validate_diff(internal_diff)?;
+            }
+        }
+
         Ok(())
     }
 
@@ -893,6 +948,16 @@ impl DocState {
 
     pub fn can_import_snapshot(&self) -> bool {
         !self.in_txn && self.arena.can_import_snapshot() && self.store.can_import_snapshot()
+    }
+
+    pub(crate) fn reset_to_empty_for_failed_snapshot_import(&mut self) {
+        self.frontiers = Frontiers::default();
+        self.store =
+            ContainerStore::new(self.arena.clone(), self.config.clone(), self.peer.clone());
+        self.in_txn = false;
+        self.changed_idx_in_txn.clear();
+        self.event_recorder = Default::default();
+        self.dead_containers_cache = Default::default();
     }
 
     pub fn get_value(&mut self) -> LoroValue {

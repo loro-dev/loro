@@ -175,6 +175,9 @@ impl Actionable for TextAction {
                 unwrap(text.mark(*pos..*pos + *len, STYLES_NAME[*i], *pos as i32));
             }
             TextActionInner::Update => {
+                if text.is_deleted() {
+                    return None;
+                }
                 let new_text = format!("u{}", *len);
                 text.update(&new_text, Default::default()).ok();
             }
@@ -212,19 +215,19 @@ impl Actionable for TextAction {
                 format!("{} with-len {}", pos, len).into(),
             ],
             TextActionInner::Update => ["update".into(), format!("to {}", len).into()],
-            TextActionInner::InsertUtf8 => {
-                [format!("insert_utf8 {}", pos).into(), len.to_string().into()]
-            }
-            TextActionInner::DeleteUtf8 => {
-                ["delete_utf8".into(), format!("{} ~ {}", pos, pos + len).into()]
-            }
+            TextActionInner::InsertUtf8 => [
+                format!("insert_utf8 {}", pos).into(),
+                len.to_string().into(),
+            ],
+            TextActionInner::DeleteUtf8 => [
+                "delete_utf8".into(),
+                format!("{} ~ {}", pos, pos + len).into(),
+            ],
             TextActionInner::MarkUtf8(i) => [
                 format!("mark_utf8 {} ", STYLES_NAME[i]).into(),
                 format!("{} with-len {}", pos, len).into(),
             ],
-            TextActionInner::Splice => {
-                ["splice".into(), format!("{} ~ {}", pos, pos + len).into()]
-            }
+            TextActionInner::Splice => ["splice".into(), format!("{} ~ {}", pos, pos + len).into()],
             TextActionInner::Unmark(i) => [
                 format!("unmark {} ", STYLES_NAME[i]).into(),
                 format!("{} with-len {}", pos, len).into(),

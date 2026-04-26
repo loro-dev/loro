@@ -1,9 +1,6 @@
-use std::{
-    borrow::Cow,
-    collections::HashMap,
-    iter::FromIterator,
-    panic::{catch_unwind, AssertUnwindSafe},
-};
+#[cfg(feature = "jsonpath")]
+use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::{borrow::Cow, collections::HashMap, iter::FromIterator};
 
 use loro::{
     event::{Diff, ListDiffItem, MapDelta},
@@ -453,6 +450,7 @@ fn loro_value_apply_diff_and_apply_path_cover_nested_container_and_tree_contract
 }
 
 #[test]
+#[cfg(feature = "jsonpath")]
 fn jsonpath_value_length_and_invalid_function_errors_match_contract() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     let root = doc.get_map("root");

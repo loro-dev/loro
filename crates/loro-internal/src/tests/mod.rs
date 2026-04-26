@@ -3,6 +3,9 @@ fn init() {
     dev_utils::setup_test_log();
 }
 
+mod import_atomicity;
+mod op_count;
+
 use crate::{op::ListSlice, LoroValue};
 
 pub const PROPTEST_FACTOR_10: usize = 1;

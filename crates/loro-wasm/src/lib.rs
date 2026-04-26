@@ -2535,8 +2535,8 @@ impl LoroText {
     /// The callback function will be called for each span in the text.
     /// If the callback returns `false`, the iteration will stop.
     ///
-    /// Limitation: you cannot access or alter the doc state when iterating (this is for performance consideration).
-    /// If you need to access or alter the doc state, please use `toString` instead.
+    /// The current text chunks are snapshotted before callbacks run, so the callback
+    /// may read or mutate the document without re-entering internal state locks.
     ///
     /// @example
     /// ```ts
@@ -5334,6 +5334,20 @@ impl UndoManager {
     pub fn clear(&self) {
         self.undo.lock().clear();
     }
+
+    /// Clear only the redo stack, preserving the undo stack.
+    ///
+    /// This is useful when coordinating undo/redo across multiple participants
+    /// (e.g., multiple editors) where a new edit in one participant should
+    /// invalidate redo in all other participants.
+    pub fn clearRedo(&self) {
+        self.undo.lock().clear_redo();
+    }
+
+    /// Clear only the undo stack, preserving the redo stack.
+    pub fn clearUndo(&self) {
+        self.undo.lock().clear_undo();
+    }
 }
 
 /// Use this function to throw an error after the micro task.
@@ -6560,6 +6574,20 @@ interface UndoManager {
      * Ends the current grouping of undo operations.
      */
     groupEnd(): void;
+
+    /**
+     * Clear only the redo stack, preserving the undo stack.
+     *
+     * This is useful when coordinating undo/redo across multiple participants
+     * (e.g., multiple editors) where a new edit in one participant should
+     * invalidate redo in all other participants.
+     */
+    clearRedo(): void;
+
+    /**
+     * Clear only the undo stack, preserving the redo stack.
+     */
+    clearUndo(): void;
 }
 interface LoroDoc<T extends Record<string, Container> = Record<string, Container>> {
     /**

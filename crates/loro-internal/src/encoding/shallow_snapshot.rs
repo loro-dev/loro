@@ -73,6 +73,22 @@ pub(crate) fn export_shallow_snapshot_inner(
     let oplog_bytes = oplog.export_change_store_from(&start_vv, &start_from);
     let latest_vv = oplog.vv();
     let ops_num: usize = latest_vv.sub_iter(&start_vv).map(|x| x.atom_len()).sum();
+    if &start_from == oplog.shallow_since_frontiers()
+        && state_frontiers == latest_frontiers
+        && ops_num <= MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE
+    {
+        let state = doc.app_state().lock();
+        if let Some(shallow_root_state_bytes) = state.store.encode_shallow_root_state() {
+            return Ok((
+                Snapshot {
+                    oplog_bytes,
+                    state_bytes: None,
+                    shallow_root_state_bytes,
+                },
+                start_from,
+            ));
+        }
+    }
     drop(oplog);
     let result = (|| -> Result<Snapshot, LoroEncodeError> {
         doc._checkout_without_emitting(&start_from, false, false)

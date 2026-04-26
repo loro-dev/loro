@@ -94,7 +94,11 @@ impl Debug for TreeActionInner {
             }
             TreeActionInner::MetaClear => write!(f, "TreeActionInner::MetaClear"),
             TreeActionInner::CreateWithoutIndex { parent } => {
-                write!(f, "TreeActionInner::CreateWithoutIndex{{parent:{:?}}}", parent)
+                write!(
+                    f,
+                    "TreeActionInner::CreateWithoutIndex{{parent:{:?}}}",
+                    parent
+                )
             }
             TreeActionInner::Mov { parent } => {
                 write!(f, "TreeActionInner::Mov{{parent:{:?}}}", parent)
@@ -411,9 +415,7 @@ impl Actionable for TreeAction {
                 after: (ai, ac),
             } => [format!("move {tc}@{ti} after {ac}@{ai}").into(), target],
             TreeActionInner::Meta { meta } => [format!("meta\n {:?}", meta).into(), target],
-            TreeActionInner::MetaDelete { key } => {
-                [format!("meta_delete {}", key).into(), target]
-            }
+            TreeActionInner::MetaDelete { key } => [format!("meta_delete {}", key).into(), target],
             TreeActionInner::MetaClear => ["meta_clear".into(), target],
             TreeActionInner::CreateWithoutIndex { parent: (pi, pc) } => {
                 [format!("create under {pc}@{pi}").into(), target]

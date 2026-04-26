@@ -170,55 +170,76 @@ pub(crate) fn decode_snapshot_inner(
                 .into_boxed_str(),
         ));
     }
-    oplog.decode_change_store(oplog_bytes)?;
     let need_calc = state_bytes.is_none();
-    let state_frontiers;
-    if shallow_root_state_bytes.is_empty() {
-        ensure_cov::notify_cov("loro_internal::import::snapshot::normal");
-        if let Some(bytes) = state_bytes {
-            state.store.decode(bytes)?;
-        }
-        state_frontiers = oplog.frontiers().clone();
-    } else {
-        ensure_cov::notify_cov("loro_internal::import::snapshot::gc");
-        let shallow_root_state_frontiers = state.store.decode_gc(
-            shallow_root_state_bytes.clone(),
-            oplog.dag().shallow_since_frontiers().clone(),
-            doc.config.clone(),
-        )?;
-        state
-            .store
-            .decode_state_by_two_bytes(shallow_root_state_bytes, state_bytes.unwrap_or_default())?;
 
-        let shallow_root_store = state.shallow_root_store().cloned();
-        oplog.with_history_cache(|h| {
-            h.set_shallow_root_store(shallow_root_store);
-        });
-
-        if need_calc {
-            ensure_cov::notify_cov("shallow_snapshot::need_calc");
-            state_frontiers = shallow_root_state_frontiers.ok_or_else(|| {
-                LoroError::DecodeError(
-                    "decode_snapshot: shallow root frontiers are missing"
-                        .to_string()
-                        .into_boxed_str(),
-                )
-            })?;
-        } else {
-            ensure_cov::notify_cov("shallow_snapshot::dont_need_calc");
+    let arena_checkpoint = oplog.arena.checkpoint_for_rollback();
+    let decode_result = (|| -> LoroResult<()> {
+        oplog.decode_change_store(oplog_bytes)?;
+        let state_frontiers;
+        if shallow_root_state_bytes.is_empty() {
+            ensure_cov::notify_cov("loro_internal::import::snapshot::normal");
+            if let Some(bytes) = state_bytes {
+                state.store.decode(bytes)?;
+            }
             state_frontiers = oplog.frontiers().clone();
+        } else {
+            ensure_cov::notify_cov("loro_internal::import::snapshot::gc");
+            let shallow_root_state_frontiers = state.store.decode_gc(
+                shallow_root_state_bytes.clone(),
+                oplog.dag().shallow_since_frontiers().clone(),
+                doc.config.clone(),
+            )?;
+            state.store.decode_state_by_two_bytes(
+                shallow_root_state_bytes,
+                state_bytes.unwrap_or_default(),
+            )?;
+
+            let shallow_root_store = state.shallow_root_store().cloned();
+            oplog.with_history_cache(|h| {
+                h.set_shallow_root_store(shallow_root_store);
+            });
+
+            if need_calc {
+                ensure_cov::notify_cov("shallow_snapshot::need_calc");
+                state_frontiers = shallow_root_state_frontiers.ok_or_else(|| {
+                    LoroError::DecodeError(
+                        "decode_snapshot: shallow root frontiers are missing"
+                            .to_string()
+                            .into_boxed_str(),
+                    )
+                })?;
+            } else {
+                ensure_cov::notify_cov("shallow_snapshot::dont_need_calc");
+                state_frontiers = oplog.frontiers().clone();
+            }
         }
+
+        // FIXME: we may need to extract the unknown containers here?
+        // Or we should lazy load it when the time comes?
+
+        state.init_with_states_and_version(state_frontiers, &oplog, vec![], false, origin)?;
+        Ok(())
+    })();
+
+    if let Err(e) = decode_result {
+        state.reset_to_empty_for_failed_snapshot_import();
+        oplog.reset_to_empty_for_failed_snapshot_import(arena_checkpoint);
+        return Err(e);
     }
-
-    // FIXME: we may need to extract the unknown containers here?
-    // Or we should lazy load it when the time comes?
-
-    state.init_with_states_and_version(state_frontiers, &oplog, vec![], false, origin)?;
     drop(state);
     drop(oplog);
     if need_calc {
         doc.set_detached(true);
-        doc._checkout_to_latest_without_commit(false);
+        if let Err(e) = doc._checkout_to_latest_without_commit(false) {
+            doc.set_detached(false);
+            doc.app_state()
+                .lock()
+                .reset_to_empty_for_failed_snapshot_import();
+            doc.oplog()
+                .lock()
+                .reset_to_empty_for_failed_snapshot_import(arena_checkpoint);
+            return Err(e);
+        }
         debug_assert_eq!(doc.state_frontiers(), doc.oplog_frontiers());
     }
 
@@ -229,6 +250,7 @@ impl OpLog {
     pub(super) fn decode_change_store(&mut self, bytes: bytes::Bytes) -> LoroResult<()> {
         let v = self.change_store().import_all(bytes)?;
         self.dag.set_version_by_fast_snapshot_import(v);
+        self.refresh_visible_op_count();
         Ok(())
     }
 }

@@ -142,17 +142,13 @@ impl Actionable for ListAction {
                 super::unwrap(list.delete(pos, len));
                 None
             }
-            ListAction::Push { value } => {
-                match value {
-                    FuzzValue::Container(c) => {
-                        super::unwrap(list.push_container(Container::new(*c)))
-                    }
-                    FuzzValue::I32(v) => {
-                        super::unwrap(list.push(*v));
-                        None
-                    }
+            ListAction::Push { value } => match value {
+                FuzzValue::Container(c) => super::unwrap(list.push_container(Container::new(*c))),
+                FuzzValue::I32(v) => {
+                    super::unwrap(list.push(*v));
+                    None
                 }
-            }
+            },
             ListAction::Pop => {
                 super::unwrap(list.pop());
                 None
@@ -176,15 +172,9 @@ impl Actionable for ListAction {
             ListAction::Delete { pos, len } => {
                 ["delete".into(), format!("{} ~ {}", pos, pos + len).into()]
             }
-            ListAction::Push { value } => {
-                ["push".into(), value.to_string().into()]
-            }
-            ListAction::Pop => {
-                ["pop".into(), "".into()]
-            }
-            ListAction::Clear => {
-                ["clear".into(), "".into()]
-            }
+            ListAction::Push { value } => ["push".into(), value.to_string().into()],
+            ListAction::Pop => ["pop".into(), "".into()],
+            ListAction::Clear => ["clear".into(), "".into()],
         }
     }
 

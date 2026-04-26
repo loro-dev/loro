@@ -1,4 +1,4 @@
-use loro_common::{Counter, Lamport, PeerID, ID};
+use loro_common::{Counter, Lamport, LoroError, LoroResult, PeerID, ID};
 use once_cell::sync::OnceCell;
 use rle::HasLength;
 use serde_columnar::{
@@ -94,15 +94,36 @@ pub(crate) fn decode_changes_header(
     counter_len: Counter,
     lamport_start: Lamport,
     lamport_len: Lamport,
-) -> ChangesBlockHeader {
+) -> LoroResult<ChangesBlockHeader> {
+    if n_changes == 0 {
+        return Err(LoroError::DecodeError(
+            "Decode block error: empty change block".into(),
+        ));
+    }
+
     let mut this_counter = first_counter;
-    let peer_num = leb128::read::unsigned(&mut bytes).unwrap() as usize;
+    let peer_num = leb128::read::unsigned(&mut bytes)
+        .map_err(|e| LoroError::DecodeError(format!("Decode block error {e}").into_boxed_str()))?
+        as usize;
+    let peers_bytes_len = peer_num
+        .checked_mul(8)
+        .ok_or_else(|| LoroError::DecodeError("Decode block error: peer length overflow".into()))?;
+    if peer_num == 0 || bytes.len() < peers_bytes_len {
+        return Err(LoroError::DecodeError(
+            "Decode block error: invalid peer table".into(),
+        ));
+    }
     let mut peers = Vec::with_capacity(peer_num);
     for i in 0..peer_num {
-        let peer_id = PeerID::from_le_bytes((&bytes[(8 * i)..(8 * (i + 1))]).try_into().unwrap());
+        let start = 8 * i;
+        let peer_id = PeerID::from_le_bytes(
+            bytes[start..start + 8]
+                .try_into()
+                .expect("peer byte range should be checked"),
+        );
         peers.push(peer_id);
     }
-    let mut bytes = &bytes[8 * peer_num..];
+    let mut bytes = &bytes[peers_bytes_len..];
 
     // ┌───────────────────┬──────────────────────────────────────────┐    │
     // │ LEB First Counter │         N LEB128 Change AtomLen          │◁───┼─────  Important metadata
@@ -110,62 +131,104 @@ pub(crate) fn decode_changes_header(
 
     let mut lengths = Vec::with_capacity(n_changes);
     for _ in 0..n_changes - 1 {
-        lengths.push(leb128::read::unsigned(&mut bytes).unwrap() as Counter);
+        lengths.push(leb128::read::unsigned(&mut bytes).map_err(|e| {
+            LoroError::DecodeError(format!("Decode block error {e}").into_boxed_str())
+        })? as Counter);
     }
-    lengths.push(counter_len - lengths.iter().sum::<i32>());
+    let known_len = lengths.iter().try_fold(0i32, |acc, len| {
+        acc.checked_add(*len).ok_or_else(|| {
+            LoroError::DecodeError("Decode block error: counter length overflow".into())
+        })
+    })?;
+    lengths.push(counter_len.checked_sub(known_len).ok_or_else(|| {
+        LoroError::DecodeError("Decode block error: invalid counter length".into())
+    })?);
 
     // ┌───────────────────┬────────────────────────┬─────────────────┐    │
     // │N DepOnSelf BoolRle│ N Delta Rle Deps Lens  │    N Dep IDs    │◁───┘
     // └───────────────────┴────────────────────────┴─────────────────┘
 
     let dep_self_decoder = BoolRleDecoder::new(bytes);
-    let (dep_self, bytes) = dep_self_decoder.take_n_finalize(n_changes).unwrap();
+    let (dep_self, bytes) = dep_self_decoder
+        .take_n_finalize(n_changes)
+        .map_err(|_| LoroError::DecodeError("Decode block error: invalid deps".into()))?;
     let dep_len_decoder = AnyRleDecoder::<usize>::new(bytes);
-    let (deps_len, bytes) = dep_len_decoder.take_n_finalize(n_changes).unwrap();
+    let (deps_len, bytes) = dep_len_decoder
+        .take_n_finalize(n_changes)
+        .map_err(|_| LoroError::DecodeError("Decode block error: invalid deps".into()))?;
     let other_dep_num = deps_len.iter().sum::<usize>();
     let dep_peer_decoder = AnyRleDecoder::<usize>::new(bytes);
-    let (dep_peers, bytes) = dep_peer_decoder.take_n_finalize(other_dep_num).unwrap();
+    let (dep_peers, bytes) = dep_peer_decoder
+        .take_n_finalize(other_dep_num)
+        .map_err(|_| LoroError::DecodeError("Decode block error: invalid deps".into()))?;
     let mut deps_peers_iter = dep_peers.into_iter();
-    let dep_counter_decoder = DeltaOfDeltaDecoder::<u32>::new(bytes).unwrap();
-    let (dep_counters, bytes) = dep_counter_decoder.take_n_finalize(other_dep_num).unwrap();
+    let dep_counter_decoder = DeltaOfDeltaDecoder::<u32>::new(bytes)
+        .map_err(|_| LoroError::DecodeError("Decode block error: invalid deps".into()))?;
+    let (dep_counters, bytes) = dep_counter_decoder
+        .take_n_finalize(other_dep_num)
+        .map_err(|_| LoroError::DecodeError("Decode block error: invalid deps".into()))?;
     let mut deps_counters_iter = dep_counters.into_iter();
     let mut deps = Vec::with_capacity(n_changes);
     for i in 0..n_changes {
         let mut f = Frontiers::default();
         if dep_self[i] {
-            f.push(ID::new(peers[0], this_counter - 1))
+            let dep_counter = this_counter.checked_sub(1).ok_or_else(|| {
+                LoroError::DecodeError("Decode block error: invalid self dependency".into())
+            })?;
+            f.push(ID::new(peers[0], dep_counter))
         }
 
         let len = deps_len[i];
         for _ in 0..len {
-            let peer_idx = deps_peers_iter.next().unwrap();
-            let peer = peers[peer_idx];
-            let counter = deps_counters_iter.next().unwrap() as Counter;
+            let peer_idx = deps_peers_iter
+                .next()
+                .ok_or_else(|| LoroError::DecodeError("Decode block error: invalid deps".into()))?;
+            let peer = peers.get(peer_idx).copied().ok_or_else(|| {
+                LoroError::DecodeError("Decode block error: invalid peer index".into())
+            })?;
+            let counter = deps_counters_iter
+                .next()
+                .ok_or_else(|| LoroError::DecodeError("Decode block error: invalid deps".into()))?
+                as Counter;
             f.push(ID::new(peer, counter));
         }
 
         deps.push(f);
-        this_counter += lengths[i];
+        this_counter = this_counter
+            .checked_add(lengths[i])
+            .ok_or_else(|| LoroError::DecodeError("Decode block error: counter overflow".into()))?;
     }
     let mut counters = Vec::with_capacity(n_changes);
     let mut last = first_counter;
     for len in lengths.iter() {
         counters.push(last);
-        last += *len;
+        last = last
+            .checked_add(*len)
+            .ok_or_else(|| LoroError::DecodeError("Decode block error: counter overflow".into()))?;
     }
 
-    let lamport_decoder = DeltaOfDeltaDecoder::new(bytes).unwrap();
+    let lamport_decoder = DeltaOfDeltaDecoder::new(bytes)
+        .map_err(|_| LoroError::DecodeError("Decode block error: invalid lamport".into()))?;
     let (mut lamports, rest) = lamport_decoder
         .take_n_finalize(n_changes.saturating_sub(1))
-        .unwrap();
+        .map_err(|_| LoroError::DecodeError("Decode block error: invalid lamport".into()))?;
     // the last lamport
-    lamports.push((lamport_start + lamport_len - *lengths.last().unwrap_or(&0) as u32) as Lamport);
+    let last_len = *lengths.last().unwrap_or(&0) as u32;
+    let last_lamport = lamport_start
+        .checked_add(lamport_len)
+        .and_then(|end| end.checked_sub(last_len))
+        .ok_or_else(|| LoroError::DecodeError("Decode block error: invalid lamport".into()))?;
+    lamports.push(last_lamport as Lamport);
 
     // we need counter range, so encode
-    counters.push(first_counter + counter_len);
+    counters.push(
+        first_counter
+            .checked_add(counter_len)
+            .ok_or_else(|| LoroError::DecodeError("Decode block error: counter overflow".into()))?,
+    );
     debug_assert!(rest.is_empty());
 
-    ChangesBlockHeader {
+    Ok(ChangesBlockHeader {
         peer: peers[0],
         counter: first_counter,
         n_changes,
@@ -175,7 +238,7 @@ pub(crate) fn decode_changes_header(
         lamports,
         keys: OnceCell::new(),
         cids: OnceCell::new(),
-    }
+    })
 }
 
 struct EncodedDeps {

@@ -287,16 +287,21 @@ fn encode_keys(keys: Vec<loro_common::InternalString>) -> Vec<u8> {
     keys_bytes
 }
 
-fn decode_keys(mut bytes: &[u8]) -> Vec<InternalString> {
+fn decode_keys(mut bytes: &[u8]) -> LoroResult<Vec<InternalString>> {
     let mut keys = Vec::new();
     while !bytes.is_empty() {
-        let len = leb128::read::unsigned(&mut bytes).unwrap();
-        let key = std::str::from_utf8(&bytes[..len as usize]).unwrap();
+        let len = leb128::read::unsigned(&mut bytes)
+            .map_err(|_| LoroError::DecodeDataCorruptionError)? as usize;
+        if bytes.len() < len {
+            return Err(LoroError::DecodeDataCorruptionError);
+        }
+        let key =
+            std::str::from_utf8(&bytes[..len]).map_err(|_| LoroError::DecodeDataCorruptionError)?;
         keys.push(key.into());
-        bytes = &bytes[len as usize..];
+        bytes = &bytes[len..];
     }
 
-    keys
+    Ok(keys)
 }
 
 struct Registers {
@@ -405,7 +410,7 @@ fn decode_header_from_doc(doc: &EncodedBlock) -> Result<ChangesBlockHeader, Loro
         *counter_len as Counter,
         *lamport_start,
         *lamport_len,
-    );
+    )?;
     Ok(ans)
 }
 
@@ -454,7 +459,7 @@ impl ValueDecodedArenasTrait for ValueDecodeArena<'_> {
         _op: encoding::value::EncodedTreeMove,
         _id: ID,
     ) -> LoroResult<tree_op::TreeOp> {
-        unreachable!()
+        Err(LoroError::DecodeDataCorruptionError)
     }
 }
 
@@ -503,23 +508,18 @@ pub fn decode_cids(
     }
 
     let EncodedBlock { cids, keys, .. } = doc;
-    let keys = header.keys.get_or_init(|| decode_keys(&keys));
+    let keys = header.keys.get_or_try_init(|| decode_keys(&keys))?;
     let decode_arena = ValueDecodeArena {
         peers: &header.peers,
         keys,
     };
 
-    header
-        .cids
-        .set(
-            ContainerArena::decode(&cids)
-                .unwrap()
-                .iter()
-                .map(|x| x.as_container_id(&decode_arena))
-                .try_collect()
-                .unwrap(),
-        )
-        .unwrap();
+    header.cids.get_or_try_init(|| {
+        ContainerArena::decode(&cids)?
+            .iter()
+            .map(|x| x.as_container_id(&decode_arena))
+            .try_collect()
+    })?;
     Ok(header)
 }
 
@@ -531,11 +531,13 @@ pub fn decode_block(
 ) -> LoroResult<Vec<Change>> {
     let doc = postcard::from_bytes(m_bytes)
         .map_err(|e| LoroError::DecodeError(format!("Decode block error {e}").into_boxed_str()))?;
-    let mut header_on_stack = None;
-    let header = header.unwrap_or_else(|| {
-        header_on_stack = Some(decode_header_from_doc(&doc).unwrap());
-        header_on_stack.as_ref().unwrap()
-    });
+    let header_on_stack;
+    let header = if let Some(header) = header {
+        header
+    } else {
+        header_on_stack = decode_header_from_doc(&doc)?;
+        &header_on_stack
+    };
     let EncodedBlock {
         n_changes,
         counter_start: first_counter,
@@ -550,35 +552,38 @@ pub fn decode_block(
     } = doc;
     let n_changes = n_changes as usize;
     let mut changes = Vec::with_capacity(n_changes);
-    let timestamp_decoder = DeltaOfDeltaDecoder::<i64>::new(&change_meta).unwrap();
-    let (timestamps, bytes) = timestamp_decoder.take_n_finalize(n_changes).unwrap();
+    let timestamp_decoder = DeltaOfDeltaDecoder::<i64>::new(&change_meta)
+        .map_err(|_| LoroError::DecodeDataCorruptionError)?;
+    let (timestamps, bytes) = timestamp_decoder
+        .take_n_finalize(n_changes)
+        .map_err(|_| LoroError::DecodeDataCorruptionError)?;
     let commit_msg_len_decoder = AnyRleDecoder::<u32>::new(bytes);
-    let (commit_msg_lens, commit_msgs) = commit_msg_len_decoder.take_n_finalize(n_changes).unwrap();
-    let mut commit_msg_index = 0;
-    let keys = header.keys.get_or_init(|| decode_keys(&keys));
+    let (commit_msg_lens, commit_msgs) = commit_msg_len_decoder
+        .take_n_finalize(n_changes)
+        .map_err(|_| LoroError::DecodeDataCorruptionError)?;
+    let mut commit_msg_index = 0u32;
+    let keys = header.keys.get_or_try_init(|| decode_keys(&keys))?;
     let decode_arena = ValueDecodeArena {
         peers: &header.peers,
         keys,
     };
     let positions = PositionArena::decode_v2(&positions)?;
     let positions = positions.parse_to_positions();
-    let cids: &Vec<ContainerID> = header.cids.get_or_init(|| {
-        ContainerArena::decode(&cids)
-            .unwrap()
+    let cids: &Vec<ContainerID> = header.cids.get_or_try_init(|| {
+        ContainerArena::decode(&cids)?
             .iter()
             .map(|x| x.as_container_id(&decode_arena))
             .try_collect()
-            .unwrap()
-    });
+    })?;
     let mut value_reader = ValueReader::new(&values);
-    let encoded_ops_iters = serde_columnar::iter_from_bytes::<EncodedOps>(&ops).unwrap();
+    let encoded_ops_iters = serde_columnar::iter_from_bytes::<EncodedOps>(&ops)?;
     let op_iter = encoded_ops_iters.ops;
     let encoded_delete_id_starts: EncodedDeleteStartIds = if delete_start_ids.is_empty() {
         EncodedDeleteStartIds {
             delete_start_ids: Vec::new(),
         }
     } else {
-        serde_columnar::from_bytes(&delete_start_ids).unwrap()
+        serde_columnar::from_bytes(&delete_start_ids)?
     };
     let mut del_iter = encoded_delete_id_starts
         .delete_start_ids
@@ -586,11 +591,18 @@ pub fn decode_block(
         .map(Ok);
     for i in 0..n_changes {
         let commit_msg: Option<Arc<str>> = {
-            let len = commit_msg_lens[i];
+            let len = *commit_msg_lens
+                .get(i)
+                .ok_or(LoroError::DecodeDataCorruptionError)?;
             if len == 0 {
                 None
             } else {
-                let end = commit_msg_index + len;
+                let end = commit_msg_index
+                    .checked_add(len)
+                    .ok_or(LoroError::DecodeDataCorruptionError)?;
+                if commit_msgs.len() < end as usize {
+                    return Err(LoroError::DecodeDataCorruptionError);
+                }
                 match std::str::from_utf8(&commit_msgs[commit_msg_index as usize..end as usize]) {
                     Ok(s) => {
                         commit_msg_index = end;
@@ -605,10 +617,25 @@ pub fn decode_block(
         };
         changes.push(Change {
             ops: Default::default(),
-            deps: header.deps_groups[i].clone(),
-            id: ID::new(header.peer, header.counters[i]),
-            lamport: header.lamports[i],
-            timestamp: timestamps[i] as Timestamp,
+            deps: header
+                .deps_groups
+                .get(i)
+                .ok_or(LoroError::DecodeDataCorruptionError)?
+                .clone(),
+            id: ID::new(
+                header.peer,
+                *header
+                    .counters
+                    .get(i)
+                    .ok_or(LoroError::DecodeDataCorruptionError)?,
+            ),
+            lamport: *header
+                .lamports
+                .get(i)
+                .ok_or(LoroError::DecodeDataCorruptionError)?,
+            timestamp: *timestamps
+                .get(i)
+                .ok_or(LoroError::DecodeDataCorruptionError)? as Timestamp,
             commit_msg,
         })
     }
@@ -630,7 +657,9 @@ pub fn decode_block(
             ID::new(peer, counter),
         )?;
 
-        let cid = &cids[container_index as usize];
+        let cid = cids
+            .get(container_index as usize)
+            .ok_or(LoroError::DecodeDataCorruptionError)?;
         let content = decode_op(
             cid,
             value,
@@ -649,9 +678,19 @@ pub fn decode_block(
             content,
         };
 
-        changes[change_index].ops.push(op);
-        counter += len as Counter;
-        if counter >= header.counters[change_index + 1] {
+        changes
+            .get_mut(change_index)
+            .ok_or(LoroError::DecodeDataCorruptionError)?
+            .ops
+            .push(op);
+        counter = counter
+            .checked_add(len as Counter)
+            .ok_or(LoroError::DecodeDataCorruptionError)?;
+        let next_counter = header
+            .counters
+            .get(change_index + 1)
+            .ok_or(LoroError::DecodeDataCorruptionError)?;
+        if counter >= *next_counter {
             change_index += 1;
         }
     }
@@ -660,7 +699,76 @@ pub fn decode_block(
 
 #[cfg(test)]
 mod test {
+    use std::{borrow::Cow, panic::AssertUnwindSafe};
+
+    use loro_common::ContainerType;
+
+    use crate::encoding::value::{EncodedTreeMove, Value};
     use crate::{cursor::PosType, delta::DeltaValue, loro::ExportMode, LoroDoc};
+
+    use super::*;
+
+    #[test]
+    fn decode_block_rejects_corrupt_payload_without_panic() {
+        let doc = LoroDoc::new_auto_commit();
+        doc.get_map("map").insert("x", 100).unwrap();
+        doc.commit_then_renew();
+
+        let oplog = doc.oplog.lock();
+        let mut changes = Vec::new();
+        oplog
+            .change_store()
+            .visit_all_changes(&mut |change| changes.push(change.clone()));
+        let block_bytes = encode_block(&changes, &oplog.arena);
+        let mut encoded: EncodedBlock = postcard::from_bytes(&block_bytes).unwrap();
+        encoded.change_meta = Cow::Owned(vec![0x80]);
+        let corrupt = postcard::to_allocvec(&encoded).unwrap();
+
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            decode_block(&corrupt, &oplog.arena, None)
+        }));
+        assert!(result.is_ok(), "corrupt block payload should not panic");
+        assert!(result.unwrap().is_err());
+    }
+
+    #[test]
+    fn tree_move_payload_is_rejected_without_panic() {
+        let arena = SharedArena::new();
+        let value_arena = ValueDecodeArena {
+            peers: &[1],
+            keys: &[],
+        };
+        let cid = ContainerID::Root {
+            name: "tree".into(),
+            container_type: ContainerType::Tree,
+        };
+        let value = Value::TreeMove(EncodedTreeMove {
+            target_idx: 0,
+            is_parent_null: true,
+            parent_idx: 0,
+            position: 0,
+        });
+        let mut deletes = std::iter::empty();
+
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            decode_op(
+                &cid,
+                value,
+                &mut deletes,
+                &arena,
+                &value_arena,
+                &[],
+                0,
+                ID::new(1, 0),
+            )
+        }));
+
+        assert!(result.is_ok(), "tree move payload should not panic");
+        assert!(matches!(
+            result.unwrap(),
+            Err(LoroError::DecodeDataCorruptionError)
+        ));
+    }
 
     #[test]
     pub fn encode_single_text_edit() {

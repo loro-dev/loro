@@ -297,6 +297,11 @@ impl ContainerHistoryCache {
         self.for_checkout = None;
     }
 
+    pub(crate) fn free_all(&mut self) {
+        self.for_checkout = None;
+        self.for_importing = None;
+    }
+
     pub(crate) fn set_shallow_root_store(&mut self, shallow_root_store: Option<Arc<GcStore>>) {
         self.shallow_root_state = shallow_root_store;
     }

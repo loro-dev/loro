@@ -1,4 +1,4 @@
-import { it } from "vitest";
+import { expect, it } from "vitest";
 import { LoroDoc } from "../bundler/index";
 import { LoroText, OpId } from "../bundler/index";
 
@@ -56,6 +56,23 @@ it("#211", () => {
   // console.log("----------------------------------------------------------");
   loro2.checkout(frontiers2Before7);
   show(text1, loro1, text2, loro2);
+});
+
+it("#957 should allow doc access inside text iter callback", () => {
+  const doc = new LoroDoc();
+  const text = doc.getText("text");
+  text.insert(0, "abc");
+  doc.commit();
+
+  let seen = 0;
+  text.iter(() => {
+    expect(text.toString()).toBe("abc");
+    expect(doc.opCount()).toBe(3);
+    seen += 1;
+    return true;
+  });
+
+  expect(seen).toBe(1);
 });
 
 function show(

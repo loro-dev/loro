@@ -12,6 +12,13 @@ pub(crate) struct StrArena {
     len: Index,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct StrArenaCheckpoint {
+    bytes_len: usize,
+    unicode_indexes_len: usize,
+    len: Index,
+}
+
 #[derive(Debug, Default, Clone, Copy)]
 struct Index {
     bytes: u32,
@@ -128,6 +135,31 @@ impl StrArena {
     pub fn slice_bytes(&self, range: impl RangeBounds<usize>) -> BytesSlice {
         self.bytes.slice(range)
     }
+
+    #[inline]
+    pub(crate) fn checkpoint(&self) -> StrArenaCheckpoint {
+        StrArenaCheckpoint {
+            bytes_len: self.bytes.len(),
+            unicode_indexes_len: self.unicode_indexes.len(),
+            len: self.len,
+        }
+    }
+
+    pub(crate) fn rollback(&mut self, checkpoint: StrArenaCheckpoint) {
+        if checkpoint.bytes_len == 0 {
+            *self = Self::default();
+            return;
+        }
+
+        if checkpoint.bytes_len < self.bytes.len() {
+            let mut bytes = AppendOnlyBytes::with_capacity(checkpoint.bytes_len);
+            bytes.push_slice(&self.bytes[..checkpoint.bytes_len]);
+            self.bytes = bytes;
+        }
+        self.unicode_indexes
+            .truncate(checkpoint.unicode_indexes_len);
+        self.len = checkpoint.len;
+    }
 }
 
 fn unicode_to_byte_index(index: &[Index], unicode_index: u32, bytes: &AppendOnlyBytes) -> usize {
@@ -199,5 +231,18 @@ mod test {
         assert_eq!(slice.deref(), src.as_bytes());
         let slice = arena.slice_by_unicode(111..121);
         assert_eq!(slice.deref(), "二34567八九零一".as_bytes());
+    }
+
+    #[test]
+    fn rollback_truncates_bytes_without_losing_prefix() {
+        let mut arena = StrArena::default();
+        arena.alloc("hello");
+        let checkpoint = arena.checkpoint();
+        arena.alloc(" transient");
+        arena.rollback(checkpoint);
+        arena.alloc("!");
+
+        let slice = arena.slice_by_unicode(..);
+        assert_eq!(slice.deref(), b"hello!");
     }
 }

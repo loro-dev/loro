@@ -150,10 +150,11 @@ impl OneDocFuzzer {
                                 crate::actions::MovableListAction::Pop => {
                                     let len = self.doc.get_movable_list("movable_list").len();
                                     if len == 0 {
-                                        *movable_list_action = crate::actions::MovableListAction::Insert {
-                                            pos: 0,
-                                            value: FuzzValue::I32(0),
-                                        };
+                                        *movable_list_action =
+                                            crate::actions::MovableListAction::Insert {
+                                                pos: 0,
+                                                value: FuzzValue::I32(0),
+                                            };
                                     }
                                 }
                                 crate::actions::MovableListAction::Clear => {}
@@ -313,12 +314,15 @@ impl OneDocFuzzer {
                                     *target =
                                         (nodes[target_index].peer, nodes[target_index].counter);
                                 }
-                                crate::container::TreeActionInner::CreateWithoutIndex { parent } => {
+                                crate::container::TreeActionInner::CreateWithoutIndex {
+                                    parent,
+                                } => {
                                     if node_num == 0 {
                                         *parent = (0, 0);
                                     } else {
                                         let parent_idx = parent.0 as usize % node_num;
-                                        *parent = (nodes[parent_idx].peer, nodes[parent_idx].counter);
+                                        *parent =
+                                            (nodes[parent_idx].peer, nodes[parent_idx].counter);
                                     }
                                     let id = tree.__internal__next_tree_id();
                                     *target = (id.peer, id.counter);
@@ -328,13 +332,15 @@ impl OneDocFuzzer {
                                     *target =
                                         (nodes[target_index].peer, nodes[target_index].counter);
                                     if node_num < 2 {
-                                        *action = crate::container::TreeActionInner::Create { index: 0 };
+                                        *action =
+                                            crate::container::TreeActionInner::Create { index: 0 };
                                     } else {
                                         let mut parent_idx = parent.0 as usize % node_num;
                                         while target_index == parent_idx {
                                             parent_idx = (parent_idx + 1) % node_num;
                                         }
-                                        *parent = (nodes[parent_idx].peer, nodes[parent_idx].counter);
+                                        *parent =
+                                            (nodes[parent_idx].peer, nodes[parent_idx].counter);
                                     }
                                 }
                             }
@@ -422,7 +428,7 @@ impl OneDocFuzzer {
                             } else {
                                 counter.increment(counter_action.value as f64).unwrap();
                             }
-                        },
+                        }
                         crate::actions::ActionInner::List(list_action) => match list_action {
                             crate::actions::ListAction::Insert { pos, value } => {
                                 let list = doc.get_list("list");
@@ -570,7 +576,9 @@ impl OneDocFuzzer {
                                     let meta = tree.get_meta(target).unwrap();
                                     meta.clear().unwrap();
                                 }
-                                crate::container::TreeActionInner::CreateWithoutIndex { parent } => {
+                                crate::container::TreeActionInner::CreateWithoutIndex {
+                                    parent,
+                                } => {
                                     let parent = if parent.0 == 0 && parent.1 == 0 {
                                         None
                                     } else {
@@ -610,7 +618,9 @@ impl OneDocFuzzer {
                 let undo = &mut self.undo_managers[*site as usize];
                 let undo_len = *op_len % 16;
                 if undo_len != 0 && undo.can_undo() {
-                    self.doc.checkout(&self.branches[*site as usize].frontiers).unwrap();
+                    self.doc
+                        .checkout(&self.branches[*site as usize].frontiers)
+                        .unwrap();
                     for _ in 0..undo_len {
                         undo.undo().unwrap();
                     }
@@ -626,7 +636,9 @@ impl OneDocFuzzer {
                 let undo = &mut self.undo_managers[*site as usize];
                 let undo_len = *op_len % 8;
                 if undo_len != 0 && undo.can_undo() {
-                    self.doc.checkout(&self.branches[*site as usize].frontiers).unwrap();
+                    self.doc
+                        .checkout(&self.branches[*site as usize].frontiers)
+                        .unwrap();
                     for _ in 0..undo_len {
                         undo.undo().unwrap();
                     }
@@ -645,7 +657,11 @@ impl OneDocFuzzer {
                     let _ = self.doc.apply_diff(diff);
                 }
             }
-            Action::Query { site, target, query_type } => {
+            Action::Query {
+                site,
+                target,
+                query_type,
+            } => {
                 let branch = &self.branches[*site as usize];
                 self.doc.checkout(&branch.frontiers).unwrap();
                 let valid_targets = [
@@ -661,9 +677,15 @@ impl OneDocFuzzer {
                     ContainerType::Text => {
                         let text = self.doc.get_text("text");
                         match *query_type % 8 {
-                            0 => { let _ = text.to_delta(); }
-                            1 => { let _ = text.len_unicode(); }
-                            2 => { let _ = text.len_utf8(); }
+                            0 => {
+                                let _ = text.to_delta();
+                            }
+                            1 => {
+                                let _ = text.len_unicode();
+                            }
+                            2 => {
+                                let _ = text.len_utf8();
+                            }
                             3 => {
                                 let len = text.len_unicode();
                                 if len > 0 {
@@ -682,56 +704,92 @@ impl OneDocFuzzer {
                                     let _ = text.slice(0, len / 2);
                                 }
                             }
-                            _ => { let _ = text.to_string(); }
+                            _ => {
+                                let _ = text.to_string();
+                            }
                         }
                     }
                     ContainerType::List => {
                         let list = self.doc.get_list("list");
                         match *query_type % 4 {
-                            0 => { let _ = list.len(); }
-                            1 => { let _ = list.to_vec(); }
+                            0 => {
+                                let _ = list.len();
+                            }
+                            1 => {
+                                let _ = list.to_vec();
+                            }
                             2 => {
                                 let len = list.len();
                                 if len > 0 {
                                     let _ = list.get(len / 2);
                                 }
                             }
-                            _ => { let _ = list.is_empty(); }
+                            _ => {
+                                let _ = list.is_empty();
+                            }
                         }
                     }
                     ContainerType::Map => {
                         let map = self.doc.get_map("map");
                         match *query_type % 4 {
-                            0 => { let _ = map.keys(); }
-                            1 => { let _ = map.values(); }
-                            2 => { let _ = map.len(); }
-                            _ => { let _ = map.is_empty(); }
+                            0 => {
+                                let _ = map.keys();
+                            }
+                            1 => {
+                                let _ = map.values();
+                            }
+                            2 => {
+                                let _ = map.len();
+                            }
+                            _ => {
+                                let _ = map.is_empty();
+                            }
                         }
                     }
                     ContainerType::Tree => {
                         let tree = self.doc.get_tree("tree");
                         match *query_type % 8 {
-                            0 => { let _ = tree.nodes(); }
-                            1 => { let _ = tree.children(None); }
-                            2 => { let _ = tree.children_num(None); }
-                            3 => { let _ = tree.contains(TreeID::new(0, 0)); }
-                            4 => { let _ = tree.is_node_deleted(&TreeID::new(0, 0)); }
-                            5 => { let _ = tree.parent(TreeID::new(0, 0)); }
-                            _ => { let _ = tree.is_empty(); }
+                            0 => {
+                                let _ = tree.nodes();
+                            }
+                            1 => {
+                                let _ = tree.children(None);
+                            }
+                            2 => {
+                                let _ = tree.children_num(None);
+                            }
+                            3 => {
+                                let _ = tree.contains(TreeID::new(0, 0));
+                            }
+                            4 => {
+                                let _ = tree.is_node_deleted(&TreeID::new(0, 0));
+                            }
+                            5 => {
+                                let _ = tree.parent(TreeID::new(0, 0));
+                            }
+                            _ => {
+                                let _ = tree.is_empty();
+                            }
                         }
                     }
                     ContainerType::MovableList => {
                         let list = self.doc.get_movable_list("movable_list");
                         match *query_type % 4 {
-                            0 => { let _ = list.len(); }
-                            1 => { let _ = list.to_vec(); }
+                            0 => {
+                                let _ = list.len();
+                            }
+                            1 => {
+                                let _ = list.to_vec();
+                            }
                             2 => {
                                 let len = list.len();
                                 if len > 0 {
                                     let _ = list.get(len / 2);
                                 }
                             }
-                            _ => { let _ = list.is_empty(); }
+                            _ => {
+                                let _ = list.is_empty();
+                            }
                         }
                     }
                     ContainerType::Counter => {

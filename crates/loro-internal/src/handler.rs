@@ -1501,19 +1501,28 @@ impl TextHandler {
     }
 
     pub fn iter(&self, mut callback: impl FnMut(&str) -> bool) {
-        match &self.inner {
+        // Do not call user callbacks while holding the state lock; callbacks may re-enter Loro.
+        let spans: Vec<String> = match &self.inner {
             MaybeDetached::Detached(t) => {
                 let t = t.lock();
-                for span in t.value.iter() {
-                    if !callback(span.text.as_str()) {
-                        return;
-                    }
-                }
+                t.value
+                    .iter()
+                    .map(|span| span.text.as_str().to_owned())
+                    .collect()
             }
-            MaybeDetached::Attached(a) => {
-                a.with_state(|state| {
-                    state.as_richtext_state_mut().unwrap().iter(callback);
+            MaybeDetached::Attached(a) => a.with_state(|state| {
+                let mut spans = Vec::new();
+                state.as_richtext_state_mut().unwrap().iter(|span| {
+                    spans.push(span.to_owned());
+                    true
                 });
+                spans
+            }),
+        };
+
+        for span in spans {
+            if !callback(span.as_str()) {
+                return;
             }
         }
     }

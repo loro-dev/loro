@@ -13,7 +13,7 @@ pub mod diff;
 pub mod diff_calc;
 pub mod handler;
 pub mod sync;
-use crate::sync::AtomicBool;
+use crate::sync::{AtomicBool, AtomicUsize};
 use std::sync::Arc;
 mod change_meta;
 pub(crate) mod lock;
@@ -143,6 +143,7 @@ pub struct LoroDocInner {
     state: Arc<LoroMutex<DocState>>,
     arena: SharedArena,
     config: Configure,
+    visible_op_count: Arc<AtomicUsize>,
     observer: Arc<Observer>,
     diff_calculator: Arc<LoroMutex<DiffCalculator>>,
     /// When dropping the doc, the txn will be committed

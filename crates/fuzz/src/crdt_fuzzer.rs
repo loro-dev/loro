@@ -7,7 +7,9 @@ use std::{
 };
 
 use arbitrary::Arbitrary;
-use loro::{ContainerType, ExportMode, Frontiers, ImportStatus, LoroDoc, LoroError, LoroResult, TreeID};
+use loro::{
+    ContainerType, ExportMode, Frontiers, ImportStatus, LoroDoc, LoroError, LoroResult, TreeID,
+};
 use rustc_hash::FxHashSet;
 use tabled::TableIteratorExt;
 use tracing::{info, info_span};
@@ -265,7 +267,11 @@ impl CRDTFuzzer {
                     let _ = b.loro.apply_diff(diff);
                 }
             }
-            Action::Query { site, target, query_type } => {
+            Action::Query {
+                site,
+                target,
+                query_type,
+            } => {
                 let actor = &self.actors[*site as usize];
                 let targets: Vec<_> = actor.targets.keys().copied().collect();
                 if targets.is_empty() {
@@ -276,9 +282,15 @@ impl CRDTFuzzer {
                     ContainerType::Text => {
                         let text = actor.loro.get_text("text");
                         match *query_type % 8 {
-                            0 => { let _ = text.to_delta(); }
-                            1 => { let _ = text.len_unicode(); }
-                            2 => { let _ = text.len_utf8(); }
+                            0 => {
+                                let _ = text.to_delta();
+                            }
+                            1 => {
+                                let _ = text.len_unicode();
+                            }
+                            2 => {
+                                let _ = text.len_utf8();
+                            }
                             3 => {
                                 let len = text.len_unicode();
                                 if len > 0 {
@@ -297,56 +309,92 @@ impl CRDTFuzzer {
                                     let _ = text.slice(0, len / 2);
                                 }
                             }
-                            _ => { let _ = text.to_string(); }
+                            _ => {
+                                let _ = text.to_string();
+                            }
                         }
                     }
                     ContainerType::List => {
                         let list = actor.loro.get_list("list");
                         match *query_type % 4 {
-                            0 => { let _ = list.len(); }
-                            1 => { let _ = list.to_vec(); }
+                            0 => {
+                                let _ = list.len();
+                            }
+                            1 => {
+                                let _ = list.to_vec();
+                            }
                             2 => {
                                 let len = list.len();
                                 if len > 0 {
                                     let _ = list.get(len / 2);
                                 }
                             }
-                            _ => { let _ = list.is_empty(); }
+                            _ => {
+                                let _ = list.is_empty();
+                            }
                         }
                     }
                     ContainerType::Map => {
                         let map = actor.loro.get_map("map");
                         match *query_type % 4 {
-                            0 => { let _ = map.keys(); }
-                            1 => { let _ = map.values(); }
-                            2 => { let _ = map.len(); }
-                            _ => { let _ = map.is_empty(); }
+                            0 => {
+                                let _ = map.keys();
+                            }
+                            1 => {
+                                let _ = map.values();
+                            }
+                            2 => {
+                                let _ = map.len();
+                            }
+                            _ => {
+                                let _ = map.is_empty();
+                            }
                         }
                     }
                     ContainerType::Tree => {
                         let tree = actor.loro.get_tree("tree");
                         match *query_type % 8 {
-                            0 => { let _ = tree.nodes(); }
-                            1 => { let _ = tree.children(None); }
-                            2 => { let _ = tree.children_num(None); }
-                            3 => { let _ = tree.contains(TreeID::new(0, 0)); }
-                            4 => { let _ = tree.is_node_deleted(&TreeID::new(0, 0)); }
-                            5 => { let _ = tree.parent(TreeID::new(0, 0)); }
-                            _ => { let _ = tree.is_empty(); }
+                            0 => {
+                                let _ = tree.nodes();
+                            }
+                            1 => {
+                                let _ = tree.children(None);
+                            }
+                            2 => {
+                                let _ = tree.children_num(None);
+                            }
+                            3 => {
+                                let _ = tree.contains(TreeID::new(0, 0));
+                            }
+                            4 => {
+                                let _ = tree.is_node_deleted(&TreeID::new(0, 0));
+                            }
+                            5 => {
+                                let _ = tree.parent(TreeID::new(0, 0));
+                            }
+                            _ => {
+                                let _ = tree.is_empty();
+                            }
                         }
                     }
                     ContainerType::MovableList => {
                         let list = actor.loro.get_movable_list("movable_list");
                         match *query_type % 4 {
-                            0 => { let _ = list.len(); }
-                            1 => { let _ = list.to_vec(); }
+                            0 => {
+                                let _ = list.len();
+                            }
+                            1 => {
+                                let _ = list.to_vec();
+                            }
                             2 => {
                                 let len = list.len();
                                 if len > 0 {
                                     let _ = list.get(len / 2);
                                 }
                             }
-                            _ => { let _ = list.is_empty(); }
+                            _ => {
+                                let _ = list.is_empty();
+                            }
                         }
                     }
                     ContainerType::Counter => {
@@ -364,8 +412,7 @@ impl CRDTFuzzer {
                 }
             }
             Action::ImportShallow { site, from } => {
-                let (a, b) =
-                    array_mut_ref!(&mut self.actors, [*site as usize, *from as usize]);
+                let (a, b) = array_mut_ref!(&mut self.actors, [*site as usize, *from as usize]);
                 let f = b.loro.oplog_frontiers();
                 if !f.is_empty() {
                     if let Ok(bytes) = b.loro.export(loro::ExportMode::shallow_snapshot(&f)) {
@@ -377,9 +424,7 @@ impl CRDTFuzzer {
                 let actor = &mut self.actors[*site as usize];
                 let f = actor.loro.state_frontiers();
                 if !f.is_empty() {
-                    if let Ok(bytes) =
-                        actor.loro.export(loro::ExportMode::state_only(Some(&f)))
-                    {
+                    if let Ok(bytes) = actor.loro.export(loro::ExportMode::state_only(Some(&f))) {
                         let new_doc = LoroDoc::new();
                         if new_doc.import(&bytes).is_ok() {
                             assert_eq!(new_doc.get_deep_value(), actor.loro.get_deep_value());
@@ -555,6 +600,17 @@ fn handle_import_result(e: LoroResult<ImportStatus>) {
     }
 }
 
+fn handle_gc_sync_import_result(e: LoroResult<ImportStatus>) -> bool {
+    match e {
+        Ok(_) => true,
+        Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion) => {
+            info!("Skipped GC sync due to ImportUpdatesThatDependsOnOutdatedVersion");
+            false
+        }
+        Err(e) => panic!("{}", e),
+    }
+}
+
 #[derive(Eq, Hash, PartialEq, Clone)]
 pub enum FuzzTarget {
     Map,
@@ -658,7 +714,7 @@ pub fn test_multi_sites_with_gc(
                     let bytes = fuzzer.actors[1]
                         .loro
                         .export(loro::ExportMode::shallow_snapshot(&f));
-                    fuzzer.actors[0].loro.import(&bytes.unwrap()).unwrap();
+                    handle_gc_sync_import_result(fuzzer.actors[0].loro.import(&bytes.unwrap()));
                 }
             })
         }
@@ -681,50 +737,66 @@ pub fn test_multi_sites_with_gc(
                 info_span!("Attach", peer = j).in_scope(|| {
                     b_doc.attach();
                 });
+                let mut can_check_eq = true;
                 match (i + j) % 4 {
                     0 => {
-                        info_span!("Updates", from = j, to = i).in_scope(|| {
-                            a_doc
-                                .import(
+                        let synced = info_span!("Updates", from = j, to = i).in_scope(|| {
+                            handle_gc_sync_import_result(
+                                a_doc.import(
                                     &b_doc
                                         .export(ExportMode::updates(&a_doc.oplog_vv()))
                                         .unwrap(),
-                                )
-                                .unwrap();
+                                ),
+                            )
                         });
-                        info_span!("Updates", from = i, to = j).in_scope(|| {
-                            b_doc
-                                .import(
-                                    &a_doc
-                                        .export(ExportMode::updates(&b_doc.oplog_vv()))
-                                        .unwrap(),
+                        can_check_eq &= synced;
+                        if can_check_eq {
+                            let synced = info_span!("Updates", from = i, to = j).in_scope(|| {
+                                handle_gc_sync_import_result(
+                                    b_doc.import(
+                                        &a_doc
+                                            .export(ExportMode::updates(&b_doc.oplog_vv()))
+                                            .unwrap(),
+                                    ),
                                 )
-                                .unwrap();
-                        });
+                            });
+                            can_check_eq &= synced;
+                        }
                     }
                     1 => {
-                        info_span!("Snapshot", from = i, to = j).in_scope(|| {
-                            b_doc
-                                .import(&a_doc.export(ExportMode::Snapshot).unwrap())
-                                .unwrap();
+                        let synced = info_span!("Snapshot", from = i, to = j).in_scope(|| {
+                            handle_gc_sync_import_result(
+                                b_doc.import(&a_doc.export(ExportMode::Snapshot).unwrap()),
+                            )
                         });
-                        info_span!("Snapshot", from = j, to = i).in_scope(|| {
-                            a_doc
-                                .import(&b_doc.export(ExportMode::Snapshot).unwrap())
-                                .unwrap();
-                        });
+                        can_check_eq &= synced;
+                        if can_check_eq {
+                            let synced = info_span!("Snapshot", from = j, to = i).in_scope(|| {
+                                handle_gc_sync_import_result(
+                                    a_doc.import(&b_doc.export(ExportMode::Snapshot).unwrap()),
+                                )
+                            });
+                            can_check_eq &= synced;
+                        }
                     }
                     2 => {
-                        info_span!("FastSnapshot", from = i, to = j).in_scope(|| {
-                            b_doc
-                                .import(&a_doc.export(loro::ExportMode::Snapshot).unwrap())
-                                .unwrap();
+                        let synced = info_span!("FastSnapshot", from = i, to = j).in_scope(|| {
+                            handle_gc_sync_import_result(
+                                b_doc.import(&a_doc.export(loro::ExportMode::Snapshot).unwrap()),
+                            )
                         });
-                        info_span!("FastSnapshot", from = j, to = i).in_scope(|| {
-                            a_doc
-                                .import(&b_doc.export(loro::ExportMode::Snapshot).unwrap())
-                                .unwrap();
-                        });
+                        can_check_eq &= synced;
+                        if can_check_eq {
+                            let synced =
+                                info_span!("FastSnapshot", from = j, to = i).in_scope(|| {
+                                    handle_gc_sync_import_result(
+                                        a_doc.import(
+                                            &b_doc.export(loro::ExportMode::Snapshot).unwrap(),
+                                        ),
+                                    )
+                                });
+                            can_check_eq &= synced;
+                        }
                     }
                     _ => {
                         info_span!("JsonFormat", from = i, to = j).in_scope(|| {
@@ -740,33 +812,39 @@ pub fn test_multi_sites_with_gc(
                     }
                 }
 
-                if a.loro.oplog_vv() != b.loro.oplog_vv() {
+                if can_check_eq && a.loro.oplog_vv() != b.loro.oplog_vv() {
                     // There is chance this happens when a pending update is applied because of the previous import
                     let a_doc = &mut a.loro;
                     let b_doc = &mut b.loro;
-                    info_span!("Updates", from = j, to = i).in_scope(|| {
-                        a_doc
-                            .import(
+                    let synced = info_span!("Updates", from = j, to = i).in_scope(|| {
+                        handle_gc_sync_import_result(
+                            a_doc.import(
                                 &b_doc
                                     .export(ExportMode::updates(&a_doc.oplog_vv()))
                                     .unwrap(),
-                            )
-                            .unwrap();
+                            ),
+                        )
                     });
-                    info_span!("Updates", from = i, to = j).in_scope(|| {
-                        b_doc
-                            .import(
-                                &a_doc
-                                    .export(ExportMode::updates(&b_doc.oplog_vv()))
-                                    .unwrap(),
+                    can_check_eq &= synced;
+                    if can_check_eq {
+                        let synced = info_span!("Updates", from = i, to = j).in_scope(|| {
+                            handle_gc_sync_import_result(
+                                b_doc.import(
+                                    &a_doc
+                                        .export(ExportMode::updates(&b_doc.oplog_vv()))
+                                        .unwrap(),
+                                ),
                             )
-                            .unwrap();
-                    });
+                        });
+                        can_check_eq &= synced;
+                    }
                 }
 
-                a.check_eq(b);
-                a.record_history();
-                b.record_history();
+                if can_check_eq {
+                    a.check_eq(b);
+                    a.record_history();
+                    b.record_history();
+                }
             }
         }
 
@@ -774,15 +852,18 @@ pub fn test_multi_sites_with_gc(
             let (a, b) = array_mut_ref!(&mut this.actors, [0, 1]);
             a.loro.attach();
             b.loro.attach();
-            info_span!("0 => 1").in_scope(|| {
-                b.loro
-                    .import(
+            let synced = info_span!("0 => 1").in_scope(|| {
+                handle_gc_sync_import_result(
+                    b.loro.import(
                         &a.loro
                             .export(ExportMode::updates(&b.loro.oplog_vv()))
                             .unwrap(),
-                    )
-                    .unwrap();
+                    ),
+                )
             });
+            if !synced {
+                return;
+            }
             let result = info_span!("1 => 0").in_scope(|| {
                 a.loro.import(
                     &b.loro

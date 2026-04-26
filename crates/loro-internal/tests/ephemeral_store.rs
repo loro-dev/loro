@@ -57,3 +57,38 @@ fn import_preserves_remote_timestamp_for_timeout() {
     assert!(store.get("cursor").is_none());
     assert!(store.get_all_states().is_empty());
 }
+
+#[test]
+fn import_rejects_too_deep_loro_value() {
+    let mut payload = vec![0x01u8, 0x00, 0x01];
+    for _ in 0..600 {
+        payload.push(0x05);
+        payload.push(0x01);
+    }
+    payload.extend_from_slice(&[0x00, 0x00]);
+
+    let store = EphemeralStore::new(30_000);
+    let err = store.apply(&payload).unwrap_err();
+
+    assert!(err.contains("Failed to decode data"));
+}
+
+#[test]
+fn import_accepts_loro_value_at_depth_511() {
+    let mut value = LoroValue::Null;
+    for _ in 0..511 {
+        value = LoroValue::List(vec![value].into());
+    }
+
+    let payload = postcard::to_allocvec(&vec![WireState {
+        key: "deep".into(),
+        value: Some(value),
+        timestamp: now_ms(),
+    }])
+    .unwrap();
+
+    let store = EphemeralStore::new(30_000);
+
+    assert!(store.apply(&payload).is_ok());
+    assert!(store.get("deep").is_some());
+}

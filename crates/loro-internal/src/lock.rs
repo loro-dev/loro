@@ -166,6 +166,17 @@ impl<T> LoroMutex<T> {
     pub fn is_locked(&self) -> bool {
         self.lock.is_locked()
     }
+
+    /// Returns whether acquiring this lock would satisfy the current thread's
+    /// lock-order constraints.
+    ///
+    /// This only checks the order tracker for the current thread. It does not
+    /// guarantee that acquiring the underlying mutex will be non-blocking.
+    pub(crate) fn can_lock_in_this_thread(&self) -> bool {
+        let v = self.currently_locked_in_this_thread.get_or_default();
+        let last = *v.lock();
+        last.kind < self.kind
+    }
 }
 
 /// Guard returned by [`LoroMutex::lock`].

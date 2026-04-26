@@ -15,7 +15,8 @@ use std::sync::Arc;
 
 use loro_common::{LoroValue, PeerID};
 use rustc_hash::FxHashMap;
-use serde::{Deserialize, Serialize};
+use serde::de::{DeserializeSeed, EnumAccess, MapAccess, SeqAccess, VariantAccess};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::change::{get_sys_timestamp, Timestamp};
 use crate::{SubscriberSetWithQueue, Subscription};
@@ -46,6 +47,14 @@ pub struct PeerInfo {
 struct EncodedPeerInfo {
     peer: PeerID,
     counter: i32,
+    record: LoroValue,
+}
+
+#[derive(Deserialize)]
+struct DecodedPeerInfo {
+    peer: PeerID,
+    counter: i32,
+    #[serde(deserialize_with = "deserialize_depth_limited_loro_value")]
     record: LoroValue,
 }
 
@@ -101,7 +110,8 @@ impl Awareness {
 
     /// Returns (updated, added)
     pub fn apply(&mut self, encoded_peers_info: &[u8]) -> (Vec<PeerID>, Vec<PeerID>) {
-        let peers_info: Vec<EncodedPeerInfo> = postcard::from_bytes(encoded_peers_info).unwrap();
+        let peers_info: Vec<DecodedPeerInfo> =
+            postcard::from_bytes(encoded_peers_info).expect("Failed to decode awareness data");
         let mut changed_peers = Vec::new();
         let mut added_peers = Vec::new();
         let now = get_sys_timestamp() as Timestamp;
@@ -363,6 +373,243 @@ struct EncodedState<'a> {
     timestamp: i64,
 }
 
+#[derive(Deserialize)]
+struct DecodedState<'a> {
+    #[serde(borrow)]
+    key: &'a str,
+    #[serde(deserialize_with = "deserialize_optional_depth_limited_loro_value")]
+    value: Option<LoroValue>,
+    timestamp: i64,
+}
+
+const EPHEMERAL_VALUE_MAX_DEPTH: usize = 512;
+
+fn deserialize_optional_depth_limited_loro_value<'de, D>(
+    deserializer: D,
+) -> Result<Option<LoroValue>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<DepthLimitedLoroValue>::deserialize(deserializer)
+        .map(|value| value.map(DepthLimitedLoroValue::into_inner))
+}
+
+fn deserialize_depth_limited_loro_value<'de, D>(deserializer: D) -> Result<LoroValue, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    LoroValueSeed {
+        remaining_depth: EPHEMERAL_VALUE_MAX_DEPTH,
+    }
+    .deserialize(deserializer)
+}
+
+struct DepthLimitedLoroValue(LoroValue);
+
+impl DepthLimitedLoroValue {
+    fn into_inner(self) -> LoroValue {
+        self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for DepthLimitedLoroValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserialize_depth_limited_loro_value(deserializer).map(Self)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct LoroValueSeed {
+    remaining_depth: usize,
+}
+
+impl LoroValueSeed {
+    fn nested<E>(self) -> Result<Self, E>
+    where
+        E: serde::de::Error,
+    {
+        let remaining_depth = self
+            .remaining_depth
+            .checked_sub(1)
+            .ok_or_else(|| E::custom("LoroValue nesting depth exceeded"))?;
+        Ok(Self { remaining_depth })
+    }
+}
+
+impl<'de> DeserializeSeed<'de> for LoroValueSeed {
+    type Value = LoroValue;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        if deserializer.is_human_readable() {
+            return Err(serde::de::Error::custom(
+                "human-readable LoroValue is not supported by the awareness decoder",
+            ));
+        }
+
+        deserializer.deserialize_enum(
+            "LoroValue",
+            &[
+                "Null",
+                "Bool",
+                "Double",
+                "I32",
+                "String",
+                "List",
+                "Map",
+                "Container",
+                "Binary",
+            ],
+            LoroValueSeedVisitor { seed: self },
+        )
+    }
+}
+
+struct LoroValueSeedVisitor {
+    seed: LoroValueSeed,
+}
+
+impl<'de> serde::de::Visitor<'de> for LoroValueSeedVisitor {
+    type Value = LoroValue;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("a depth-limited LoroValue")
+    }
+
+    fn visit_enum<A>(self, data: A) -> Result<Self::Value, A::Error>
+    where
+        A: EnumAccess<'de>,
+    {
+        match data.variant()? {
+            (DepthLimitedLoroValueField::Null, v) => {
+                v.unit_variant()?;
+                Ok(LoroValue::Null)
+            }
+            (DepthLimitedLoroValueField::Bool, v) => v.newtype_variant().map(LoroValue::Bool),
+            (DepthLimitedLoroValueField::Double, v) => v.newtype_variant().map(LoroValue::Double),
+            (DepthLimitedLoroValueField::I32, v) => v.newtype_variant().map(LoroValue::I64),
+            (DepthLimitedLoroValueField::String, v) => v
+                .newtype_variant()
+                .map(|value: String| LoroValue::String(value.into())),
+            (DepthLimitedLoroValueField::List, v) => v
+                .newtype_variant_seed(LoroListSeed {
+                    value_seed: self.seed.nested()?,
+                })
+                .map(|value| LoroValue::List(value.into())),
+            (DepthLimitedLoroValueField::Map, v) => v
+                .newtype_variant_seed(LoroMapSeed {
+                    value_seed: self.seed.nested()?,
+                })
+                .map(|value| LoroValue::Map(value.into())),
+            (DepthLimitedLoroValueField::Container, v) => {
+                v.newtype_variant().map(LoroValue::Container)
+            }
+            (DepthLimitedLoroValueField::Binary, v) => v
+                .newtype_variant()
+                .map(|value: Vec<u8>| LoroValue::Binary(value.into())),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+enum DepthLimitedLoroValueField {
+    Null,
+    Bool,
+    Double,
+    I32,
+    String,
+    List,
+    Map,
+    Container,
+    Binary,
+}
+
+struct LoroListSeed {
+    value_seed: LoroValueSeed,
+}
+
+impl<'de> DeserializeSeed<'de> for LoroListSeed {
+    type Value = Vec<LoroValue>;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_seq(LoroListVisitor {
+            value_seed: self.value_seed,
+        })
+    }
+}
+
+struct LoroListVisitor {
+    value_seed: LoroValueSeed,
+}
+
+impl<'de> serde::de::Visitor<'de> for LoroListVisitor {
+    type Value = Vec<LoroValue>;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("a depth-limited LoroValue list")
+    }
+
+    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let mut list = Vec::new();
+        while let Some(value) = seq.next_element_seed(self.value_seed)? {
+            list.push(value);
+        }
+        Ok(list)
+    }
+}
+
+struct LoroMapSeed {
+    value_seed: LoroValueSeed,
+}
+
+impl<'de> DeserializeSeed<'de> for LoroMapSeed {
+    type Value = FxHashMap<String, LoroValue>;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_map(LoroMapVisitor {
+            value_seed: self.value_seed,
+        })
+    }
+}
+
+struct LoroMapVisitor {
+    value_seed: LoroValueSeed,
+}
+
+impl<'de> serde::de::Visitor<'de> for LoroMapVisitor {
+    type Value = FxHashMap<String, LoroValue>;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("a depth-limited LoroValue map")
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut value = FxHashMap::default();
+        while let Some(key) = map.next_key()? {
+            let entry = map.next_value_seed(self.value_seed)?;
+            value.insert(key, entry);
+        }
+        Ok(value)
+    }
+}
+
 #[derive(Debug, Clone)]
 struct State {
     state: Option<LoroValue>,
@@ -419,7 +666,7 @@ impl EphemeralStoreInner {
     }
 
     pub fn apply(&self, data: &[u8]) -> Result<(), Box<str>> {
-        let peers_info = match postcard::from_bytes::<Vec<EncodedState>>(data) {
+        let peers_info = match postcard::from_bytes::<Vec<DecodedState>>(data) {
             Ok(ans) => ans,
             Err(err) => return Err(format!("Failed to decode data: {}", err).into()),
         };
@@ -430,7 +677,7 @@ impl EphemeralStoreInner {
         let now = get_sys_timestamp() as Timestamp;
         let timeout = self.timeout.load(std::sync::atomic::Ordering::Relaxed);
         let mut states = self.states.lock();
-        for EncodedState {
+        for DecodedState {
             key,
             value: record,
             timestamp,

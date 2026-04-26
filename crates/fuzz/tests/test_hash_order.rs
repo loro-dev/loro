@@ -1,5 +1,5 @@
-use rustc_hash::FxHashSet;
 use loro::ContainerType;
+use rustc_hash::FxHashSet;
 
 #[test]
 fn test_fxhashset_order() {

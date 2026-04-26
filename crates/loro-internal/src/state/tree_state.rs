@@ -1243,17 +1243,14 @@ impl ContainerState for TreeState {
                             self.mov(target, *parent, last_move_op, Some(position.clone()), true)
                                 .unwrap_or_default();
                         } else {
-                            self.mov(target, *parent, last_move_op, Some(position.clone()), false)
-                                .unwrap();
+                            self.mov(target, *parent, last_move_op, Some(position.clone()), false)?;
                         }
                     }
                     TreeInternalDiff::Delete { parent, position } => {
-                        self.mov(target, *parent, last_move_op, position.clone(), false)
-                            .unwrap();
+                        self.mov(target, *parent, last_move_op, position.clone(), false)?;
                     }
                     TreeInternalDiff::MoveInDelete { parent, position } => {
-                        self.mov(target, *parent, last_move_op, position.clone(), false)
-                            .unwrap();
+                        self.mov(target, *parent, last_move_op, position.clone(), false)?;
                     }
                     TreeInternalDiff::UnCreate => {
                         // delete it from state

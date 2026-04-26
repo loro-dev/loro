@@ -945,6 +945,16 @@ impl UndoManager {
         self.inner.lock().borrow_mut().redo_stack.clear();
     }
 
+    /// Clear only the redo stack, preserving the undo stack.
+    pub fn clear_redo(&self) {
+        self.inner.lock().borrow_mut().redo_stack.clear();
+    }
+
+    /// Clear only the undo stack, preserving the redo stack.
+    pub fn clear_undo(&self) {
+        self.inner.lock().borrow_mut().undo_stack.clear();
+    }
+
     pub fn set_top_undo_meta(&self, meta: UndoItemMeta) {
         self.inner.lock().borrow_mut().undo_stack.set_top_meta(meta);
     }

@@ -93,10 +93,18 @@ impl BlockMeta {
         if num > MAX_BLOCK_NUM {
             return Err(LoroError::DecodeError("Invalid bytes".into()));
         }
-        let mut ans = Vec::with_capacity(num as usize);
-        if data.len() < SIZE_OF_U32 {
+        let meta_payload_len = data
+            .len()
+            .checked_sub(SIZE_OF_U32)
+            .ok_or_else(|| LoroError::DecodeError("Invalid bytes".into()))?;
+        let min_meta_entry_len = SIZE_OF_U32 + SIZE_OF_U16 + SIZE_OF_U8;
+        if (num as usize)
+            .checked_mul(min_meta_entry_len)
+            .is_none_or(|min_len| min_len > meta_payload_len)
+        {
             return Err(LoroError::DecodeError("Invalid bytes".into()));
         }
+        let mut ans = Vec::with_capacity(num as usize);
         let checksum = xxhash_rust::xxh32::xxh32(&data[..data.len() - SIZE_OF_U32], XXH_SEED);
         for _ in 0..num {
             let (offset, buf) = get_u32_le(data)?;
