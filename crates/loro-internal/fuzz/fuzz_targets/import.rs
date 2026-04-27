@@ -64,6 +64,11 @@ fn fuzz_binary_import(data: &[u8]) {
     }
 }
 
+fn fuzz_import_blob_meta(data: &[u8]) {
+    let _ = LoroDoc::decode_import_blob_meta(data, false);
+    let _ = LoroDoc::decode_import_blob_meta(data, true);
+}
+
 fn fuzz_json_import(data: &[u8]) {
     let Ok(json) = std::str::from_utf8(data) else {
         return;
@@ -81,5 +86,6 @@ fn fuzz_json_import(data: &[u8]) {
 
 fuzz_target!(|data: &[u8]| {
     fuzz_binary_import(data);
+    fuzz_import_blob_meta(data);
     fuzz_json_import(data);
 });

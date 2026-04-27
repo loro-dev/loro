@@ -349,6 +349,13 @@ pub(crate) fn parse_header_and_body(
     let checksum_body = reader;
     let (mode_bytes, reader) = reader.split_at(2);
     let mode: EncodeMode = [mode_bytes[0], mode_bytes[1]].try_into()?;
+    if mode == EncodeMode::Auto {
+        return Err(LoroError::DecodeError(
+            "Invalid import mode `Auto` in encoded blob"
+                .to_string()
+                .into_boxed_str(),
+        ));
+    }
     let mut checksum_arr = [0; 16];
     checksum_arr.copy_from_slice(checksum);
 
