@@ -7,25 +7,19 @@ pub(crate) struct TinyVec<T, const N: usize> {
 
 impl<T: Debug, const N: usize> Debug for TinyVec<T, N> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_list()
-            .entries(self.data[0..self.len as usize].iter())
-            .finish()
+        f.debug_list().entries(self.iter()).finish()
     }
 }
 
 impl<T: Clone, const N: usize> Clone for TinyVec<T, N> {
     fn clone(&self) -> Self {
         let mut result = Self::new();
-        // SAFETY: This is safe because we know that the data within range is initialized
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                self.data[..self.len()].as_ptr(),
-                result.data.as_mut_ptr(),
-                self.len as usize,
-            );
+        for item in self.iter() {
+            result
+                .push(item.clone())
+                .ok()
+                .expect("TinyVec clone should fit in the same capacity");
         }
-
-        result.len = self.len;
         result
     }
 }
@@ -104,76 +98,75 @@ impl<T, const N: usize> TinyVec<T, N> {
     }
 
     pub fn can_merge(&self, other: &Self) -> bool {
-        if self.len + other.len > N as u8 {
+        if self.len() + other.len() > N {
             return false;
         }
 
-        self.len + other.len <= self.data.len() as u8
+        self.len() + other.len() <= self.data.len()
     }
 
-    pub fn merge(&mut self, other: &Self) {
+    pub fn merge(&mut self, other: &Self)
+    where
+        T: Clone,
+    {
         if !self.can_merge(other) {
             panic!("TinyVec cannot merge");
         }
 
-        let start = self.len();
-        // SAFETY: this is safe because we know that it's within the bounds
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                other.data[..].as_ptr(),
-                self.data[start..].as_mut_ptr(),
-                other.len(),
-            );
+        for item in other.iter() {
+            self.push(item.clone())
+                .ok()
+                .expect("TinyVec merge should fit after can_merge");
         }
-
-        self.len += other.len;
     }
 
-    pub fn merge_left(&mut self, left: &Self) {
+    pub fn merge_left(&mut self, left: &Self)
+    where
+        T: Clone,
+    {
         if !self.can_merge(left) {
             panic!("TinyVec cannot merge");
         }
 
-        // SAFETY: this is safe because we know that it's within the bounds
-        unsafe {
-            std::ptr::copy(
-                self.data[..].as_ptr(),
-                self.data[left.len as usize..].as_mut_ptr(),
-                self.len as usize,
-            );
-            std::ptr::copy_nonoverlapping(
-                left.data[..].as_ptr(),
-                self.data[..].as_mut_ptr(),
-                left.len as usize,
-            );
+        let mut result = Self::new();
+        for item in left.iter().chain(self.iter()) {
+            result
+                .push(item.clone())
+                .ok()
+                .expect("TinyVec merge_left should fit after can_merge");
         }
-
-        self.len += left.len;
+        *self = result;
     }
 
-    pub fn slice(&self, start: usize, end: usize) -> Self {
+    pub fn slice(&self, start: usize, end: usize) -> Self
+    where
+        T: Clone,
+    {
         assert!(start <= end && end <= self.len as usize);
         let mut result = Self::new();
-        if start == end {
-            return result;
+        for item in self.iter().skip(start).take(end - start) {
+            result
+                .push(item.clone())
+                .ok()
+                .expect("TinyVec slice should fit in the same capacity");
         }
-
-        // SAFETY: This is safe because we know that the data within range is initialized
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                self.data[start..end].as_ptr(),
-                result.data.as_mut_ptr(),
-                end - start,
-            );
-        }
-
-        result.len = (end - start) as u8;
         result
     }
 
     #[inline]
     pub fn split(&mut self, pos: usize) -> Self {
-        let result = self.slice(pos, self.len());
+        assert!(pos <= self.len());
+        let old_len = self.len();
+        let mut result = Self::new();
+        for i in pos..old_len {
+            // SAFETY: indexes below old_len are initialized. The value is moved
+            // into result and self.len is truncated below before self is dropped.
+            let value = unsafe { self.data[i].assume_init_read() };
+            result
+                .push(value)
+                .ok()
+                .expect("TinyVec split should fit in the same capacity");
+        }
         self.len = pos as u8;
         result
     }
@@ -281,5 +274,16 @@ mod test {
         let new = arr.clone();
         assert_eq!(arr, new);
         assert_eq!(new.to_vec(), [1, 2, 3, 4, 5]);
+    }
+
+    #[cfg(miri)]
+    #[test]
+    fn clone_of_owned_values_does_not_duplicate_ownership_with_raw_copy() {
+        let mut arr: TinyVec<Box<i32>, 2> = TinyVec::new();
+        arr.push(Box::new(1)).unwrap();
+
+        let cloned = arr.clone();
+        drop(arr);
+        drop(cloned);
     }
 }

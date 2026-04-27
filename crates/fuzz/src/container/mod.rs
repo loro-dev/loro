@@ -17,6 +17,7 @@ fn unwrap<T>(r: LoroResult<T>) -> Option<T> {
     match r {
         Ok(v) => Some(v),
         Err(LoroError::ContainerDeleted { .. }) => None,
+        Err(LoroError::TreeError(LoroTreeError::CyclicMoveError)) => None,
         Err(LoroError::TreeError(LoroTreeError::TreeNodeDeletedOrNotExist(..))) => None,
         Err(e) => panic!("Error: {}", e),
     }

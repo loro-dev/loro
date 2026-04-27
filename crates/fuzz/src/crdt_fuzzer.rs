@@ -799,16 +799,21 @@ pub fn test_multi_sites_with_gc(
                         }
                     }
                     _ => {
-                        info_span!("JsonFormat", from = i, to = j).in_scope(|| {
+                        let synced = info_span!("JsonFormat", from = i, to = j).in_scope(|| {
                             let a_json =
                                 a_doc.export_json_updates(&b_doc.oplog_vv(), &a_doc.oplog_vv());
-                            b_doc.import_json_updates(a_json).unwrap();
+                            handle_gc_sync_import_result(b_doc.import_json_updates(a_json))
                         });
-                        info_span!("JsonFormat", from = j, to = i).in_scope(|| {
-                            let b_json =
-                                b_doc.export_json_updates(&a_doc.oplog_vv(), &b_doc.oplog_vv());
-                            a_doc.import_json_updates(b_json).unwrap();
-                        });
+                        can_check_eq &= synced;
+                        if can_check_eq {
+                            let synced =
+                                info_span!("JsonFormat", from = j, to = i).in_scope(|| {
+                                    let b_json = b_doc
+                                        .export_json_updates(&a_doc.oplog_vv(), &b_doc.oplog_vv());
+                                    handle_gc_sync_import_result(a_doc.import_json_updates(b_json))
+                                });
+                            can_check_eq &= synced;
+                        }
                     }
                 }
 
