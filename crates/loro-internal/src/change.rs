@@ -284,7 +284,7 @@ impl Change {
 
 /// [Unix time](https://en.wikipedia.org/wiki/Unix_time)
 /// It is the number of milliseconds that have elapsed since 00:00:00 UTC on 1 January 1970.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(not(target_arch = "wasm32"), target_os = "emscripten"))]
 pub(crate) fn get_sys_timestamp() -> f64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
@@ -295,8 +295,8 @@ pub(crate) fn get_sys_timestamp() -> f64 {
 }
 
 /// [Unix time](https://en.wikipedia.org/wiki/Unix_time)
-/// It is the number of seconds that have elapsed since 00:00:00 UTC on 1 January 1970.
-#[cfg(target_arch = "wasm32")]
+/// It is the number of milliseconds that have elapsed since 00:00:00 UTC on 1 January 1970.
+#[cfg(all(target_arch = "wasm32", not(target_os = "emscripten")))]
 pub fn get_sys_timestamp() -> f64 {
     use wasm_bindgen::prelude::wasm_bindgen;
     #[wasm_bindgen]
