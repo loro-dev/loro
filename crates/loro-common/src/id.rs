@@ -42,12 +42,12 @@ impl TryFrom<&str> for ID {
         let mut iter = value.split('@');
         let counter = iter
             .next()
-            .unwrap()
+            .ok_or_else(|| LoroError::DecodeError("Invalid ID format".into()))?
             .parse::<Counter>()
             .map_err(|_| LoroError::DecodeError("Invalid ID format".into()))?;
         let client_id = iter
             .next()
-            .unwrap()
+            .ok_or_else(|| LoroError::DecodeError("Invalid ID format".into()))?
             .parse::<u64>()
             .map_err(|_| LoroError::DecodeError("Invalid ID format".into()))?;
         Ok(ID {
@@ -68,12 +68,12 @@ impl TryFrom<&str> for IdLp {
         let mut iter = value[1..].split('@');
         let lamport = iter
             .next()
-            .unwrap()
+            .ok_or_else(|| LoroError::DecodeError("Invalid ID format".into()))?
             .parse::<Lamport>()
             .map_err(|_| LoroError::DecodeError("Invalid ID format".into()))?;
         let client_id = iter
             .next()
-            .unwrap()
+            .ok_or_else(|| LoroError::DecodeError("Invalid ID format".into()))?
             .parse::<u64>()
             .map_err(|_| LoroError::DecodeError("Invalid ID format".into()))?;
         Ok(IdLp {

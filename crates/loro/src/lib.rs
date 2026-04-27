@@ -3622,17 +3622,19 @@ impl Container {
     /// A detached container is a container that is not attached to a document.
     /// The edits on a detached container will not be persisted.
     /// To attach the container to the document, please insert it into an attached container.
-    pub fn new(kind: ContainerType) -> Self {
+    pub fn new(kind: ContainerType) -> Result<Self, LoroError> {
         match kind {
-            ContainerType::List => Container::List(LoroList::new()),
-            ContainerType::MovableList => Container::MovableList(LoroMovableList::new()),
-            ContainerType::Map => Container::Map(LoroMap::new()),
-            ContainerType::Text => Container::Text(LoroText::new()),
-            ContainerType::Tree => Container::Tree(LoroTree::new()),
+            ContainerType::List => Ok(Container::List(LoroList::new())),
+            ContainerType::MovableList => Ok(Container::MovableList(LoroMovableList::new())),
+            ContainerType::Map => Ok(Container::Map(LoroMap::new())),
+            ContainerType::Text => Ok(Container::Text(LoroText::new())),
+            ContainerType::Tree => Ok(Container::Tree(LoroTree::new())),
             #[cfg(feature = "counter")]
-            ContainerType::Counter => Container::Counter(counter::LoroCounter::new()),
+            ContainerType::Counter => Ok(Container::Counter(counter::LoroCounter::new())),
             ContainerType::Unknown(_) => {
-                panic!("Cannot create a detached container of type Unknown");
+                Err(LoroError::NotImplemented(
+                    "Cannot create a detached container of type Unknown",
+                ))
             }
         }
     }

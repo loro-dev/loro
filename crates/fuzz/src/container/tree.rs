@@ -115,18 +115,18 @@ pub struct TreeActor {
 
 impl TreeActor {
     pub fn new(loro: Arc<LoroDoc>) -> Self {
-        let mut tracker = MapTracker::empty(ContainerID::new_root("sys:root", ContainerType::Map));
+        let mut tracker = MapTracker::empty(ContainerID::new_root("sys:root", ContainerType::Map).unwrap());
         tracker.insert(
             "tree".to_string(),
             Value::empty_container(
                 ContainerType::Tree,
-                ContainerID::new_root("tree", ContainerType::Tree),
+                ContainerID::new_root("tree", ContainerType::Tree).unwrap(),
             ),
         );
         let tracker = Arc::new(Mutex::new(ContainerTracker::Map(tracker)));
         let tree = tracker.clone();
         loro.subscribe(
-            &ContainerID::new_root("tree", ContainerType::Tree),
+            &ContainerID::new_root("tree", ContainerType::Tree).unwrap(),
             Arc::new(move |event| {
                 // println!("\nbefore {:?}", tree.lock().unwrap().as_map().unwrap());
                 // println!(
@@ -356,7 +356,7 @@ impl Actionable for TreeAction {
                         None
                     }
                     FuzzValue::Container(c) => {
-                        super::unwrap(meta.insert_container(k, Container::new(*c)))
+                        super::unwrap(meta.insert_container(k, Container::new(*c).unwrap()))
                     }
                 }
             }

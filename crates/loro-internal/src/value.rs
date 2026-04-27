@@ -6,7 +6,7 @@ use crate::{
     utils::string_slice::StringSlice,
 };
 use generic_btree::rle::HasLength;
-use loro_common::ContainerType;
+use loro_common::{ContainerType, LoroError};
 pub use loro_common::LoroValue;
 
 // TODO: rename this trait
@@ -18,7 +18,9 @@ pub trait ToJson {
     fn to_json_pretty(&self) -> String {
         serde_json::to_string_pretty(&self.to_json_value()).unwrap()
     }
-    fn from_json(s: &str) -> Self;
+    fn from_json(s: &str) -> Result<Self, LoroError>
+    where
+        Self: Sized;
 }
 
 impl ToJson for LoroValue {
@@ -34,9 +36,8 @@ impl ToJson for LoroValue {
         serde_json::to_string_pretty(self).unwrap()
     }
 
-    #[allow(unused)]
-    fn from_json(s: &str) -> Self {
-        serde_json::from_str(s).unwrap()
+    fn from_json(s: &str) -> Result<Self, LoroError> {
+        serde_json::from_str(s).map_err(|e| LoroError::DecodeError(e.to_string().into()))
     }
 }
 
@@ -76,38 +77,41 @@ impl ToJson for DeltaItem<StringSlice, TextMeta> {
         }
     }
 
-    fn from_json(s: &str) -> Self {
-        let map: serde_json::Map<String, serde_json::Value> = serde_json::from_str(s).unwrap();
+    fn from_json(s: &str) -> Result<Self, LoroError> {
+        let map: serde_json::Map<String, serde_json::Value> = serde_json::from_str(s)
+            .map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
         if map.contains_key("retain") {
             let len = map["retain"].as_u64().unwrap();
             let meta = if let Some(meta) = map.get("attributes") {
-                TextMeta::from_json(meta.to_string().as_str())
+                TextMeta::from_json(meta.to_string().as_str())?
             } else {
                 TextMeta::default()
             };
-            DeltaItem::Retain {
+            Ok(DeltaItem::Retain {
                 retain: len as usize,
                 attributes: meta,
-            }
+            })
         } else if map.contains_key("insert") {
             let value = map["insert"].as_str().unwrap().to_string().into();
             let meta = if let Some(meta) = map.get("attributes") {
-                TextMeta::from_json(meta.to_string().as_str())
+                TextMeta::from_json(meta.to_string().as_str())?
             } else {
                 TextMeta::default()
             };
-            DeltaItem::Insert {
+            Ok(DeltaItem::Insert {
                 insert: value,
                 attributes: meta,
-            }
+            })
         } else if map.contains_key("delete") {
             let len = map["delete"].as_u64().unwrap();
-            DeltaItem::Delete {
+            Ok(DeltaItem::Delete {
                 delete: len as usize,
                 attributes: Default::default(),
-            }
+            })
         } else {
-            panic!("Invalid delta item: {}", s);
+            Err(LoroError::DecodeError(
+                format!("Invalid delta item: {}", s).into(),
+            ))
         }
     }
 }
@@ -156,38 +160,42 @@ fn diff_item_to_json_value(item: &TextDiffItem) -> (serde_json::Value, Option<se
     }
 }
 
-fn diff_item_from_json(v: serde_json::Value) -> TextDiffItem {
+fn diff_item_from_json(v: serde_json::Value) -> Result<TextDiffItem, LoroError> {
     let serde_json::Value::Object(map) = v else {
-        panic!("Invalid delta item: {:?}", v);
+        return Err(LoroError::DecodeError(
+            format!("Invalid delta item: {:?}", v).into(),
+        ));
     };
     if map.contains_key("retain") {
         let len = map["retain"].as_u64().unwrap();
         let meta = if let Some(meta) = map.get("attributes") {
-            TextMeta::from_json(meta.to_string().as_str())
+            TextMeta::from_json(meta.to_string().as_str())?
         } else {
             TextMeta::default()
         };
-        TextDiffItem::Retain {
+        Ok(TextDiffItem::Retain {
             len: len as usize,
             attr: meta,
-        }
+        })
     } else if map.contains_key("insert") {
         let value = map["insert"].as_str().unwrap().to_string().into();
         let meta = if let Some(meta) = map.get("attributes") {
-            TextMeta::from_json(meta.to_string().as_str())
+            TextMeta::from_json(meta.to_string().as_str())?
         } else {
             TextMeta::default()
         };
-        TextDiffItem::Replace {
+        Ok(TextDiffItem::Replace {
             value,
             attr: meta,
             delete: 0,
-        }
+        })
     } else if map.contains_key("delete") {
         let len = map["delete"].as_u64().unwrap();
-        TextDiffItem::new_delete(len as usize)
+        Ok(TextDiffItem::new_delete(len as usize))
     } else {
-        panic!("Invalid delta item: {:?}", map);
+        Err(LoroError::DecodeError(
+            format!("Invalid delta item: {:?}", map).into(),
+        ))
     }
 }
 
@@ -204,13 +212,14 @@ impl ToJson for TextDiff {
         serde_json::Value::Array(vec)
     }
 
-    fn from_json(s: &str) -> Self {
-        let vec: Vec<serde_json::Value> = serde_json::from_str(s).unwrap();
+    fn from_json(s: &str) -> Result<Self, LoroError> {
+        let vec: Vec<serde_json::Value> = serde_json::from_str(s)
+            .map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
         let mut ans = TextDiff::new();
         for item in vec.into_iter() {
-            ans.push(diff_item_from_json(item));
+            ans.push(diff_item_from_json(item)?);
         }
-        ans
+        Ok(ans)
     }
 }
 
@@ -223,13 +232,14 @@ impl ToJson for Delta<StringSlice, TextMeta> {
         serde_json::Value::Array(vec)
     }
 
-    fn from_json(s: &str) -> Self {
-        let vec: Vec<serde_json::Value> = serde_json::from_str(s).unwrap();
+    fn from_json(s: &str) -> Result<Self, LoroError> {
+        let vec: Vec<serde_json::Value> = serde_json::from_str(s)
+            .map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
         let mut ans = Delta::new();
         for item in vec.into_iter() {
-            ans.push(DeltaItem::from_json(item.to_string().as_str()));
+            ans.push(DeltaItem::from_json(item.to_string().as_str())?);
         }
-        ans
+        Ok(ans)
     }
 }
 
@@ -581,7 +591,8 @@ mod tests {
         assert_eq!(
             DeltaItem::<StringSlice, TextMeta>::from_json(
                 r#"{"insert":"hi","attributes":{"bold":true}}"#
-            ),
+            )
+            .unwrap(),
             item
         );
 
@@ -608,7 +619,7 @@ mod tests {
                 {"delete": 1}
             ])
         );
-        assert_eq!(Delta::<StringSlice, TextMeta>::from_json(&json), delta);
+        assert_eq!(Delta::<StringSlice, TextMeta>::from_json(&json).unwrap(), delta);
     }
 
     #[test]
@@ -624,7 +635,7 @@ mod tests {
             serde_json::json!([{"insert": "new"}, {"delete": 2}])
         );
         assert_eq!(
-            TextDiff::from_json(r#"[{"retain":1},{"insert":"x"},{"delete":2}]"#).to_json_value(),
+            TextDiff::from_json(r#"[{"retain":1},{"insert":"x"},{"delete":2}]"#).unwrap().to_json_value(),
             serde_json::json!([{"retain": 1}, {"insert": "x"}, {"delete": 2}])
         );
 

@@ -1,4 +1,4 @@
-use loro_common::{InternalString, LoroValue, PeerID};
+use loro_common::{InternalString, LoroError, LoroValue, PeerID};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
@@ -175,9 +175,10 @@ impl ToJson for TextMeta {
         serde_json::Value::Object(map)
     }
 
-    fn from_json(s: &str) -> Self {
-        let map: FxHashMap<String, LoroValue> = serde_json::from_str(s).unwrap();
-        TextMeta(map)
+    fn from_json(s: &str) -> Result<Self, LoroError> {
+        let map: FxHashMap<String, LoroValue> = serde_json::from_str(s)
+            .map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
+        Ok(TextMeta(map))
     }
 }
 
@@ -292,7 +293,7 @@ mod tests {
         assert!(left.is_mergeable(&left.clone()));
 
         let json = left.to_json_value();
-        let decoded = TextMeta::from_json(&json.to_string());
+        let decoded = TextMeta::from_json(&json.to_string()).unwrap();
         assert_eq!(decoded.0, left.0);
     }
 }

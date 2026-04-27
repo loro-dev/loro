@@ -20,18 +20,18 @@ pub struct MapActor {
 
 impl MapActor {
     pub fn new(loro: Arc<LoroDoc>) -> Self {
-        let mut tracker = MapTracker::empty(ContainerID::new_root("sys:root", ContainerType::Map));
+        let mut tracker = MapTracker::empty(ContainerID::new_root("sys:root", ContainerType::Map).unwrap());
         tracker.insert(
             "map".to_string(),
             Value::empty_container(
                 ContainerType::Map,
-                ContainerID::new_root("map", ContainerType::Map),
+                ContainerID::new_root("map", ContainerType::Map).unwrap(),
             ),
         );
         let tracker = Arc::new(Mutex::new(ContainerTracker::Map(tracker)));
         let map = tracker.clone();
         loro.subscribe(
-            &ContainerID::new_root("map", ContainerType::Map),
+            &ContainerID::new_root("map", ContainerType::Map).unwrap(),
             Arc::new(move |event| {
                 let mut map = map.lock().unwrap();
                 map.apply_diff(event);
@@ -152,7 +152,7 @@ impl Actionable for MapAction {
                         None
                     }
                     FuzzValue::Container(c) => {
-                        unwrap(handler.insert_container(key, Container::new(*c)))
+                        unwrap(handler.insert_container(key, Container::new(*c).unwrap()))
                     }
                 }
             }

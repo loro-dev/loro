@@ -36,12 +36,12 @@ impl LoroCounter {
 
     /// Get the current value of the counter.
     pub fn get_value(&self) -> f64 {
-        self.handler.get_value().into_double().unwrap()
+        self.handler.get_value().into_double().unwrap_or(0.0)
     }
 
     /// Get the current value of the counter
     pub fn get(&self) -> f64 {
-        self.handler.get_value().into_double().unwrap()
+        self.handler.get_value().into_double().unwrap_or(0.0)
     }
 }
 

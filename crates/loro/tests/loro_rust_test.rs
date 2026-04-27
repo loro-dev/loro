@@ -2427,8 +2427,8 @@ fn get_changed_containers_in() {
     assert_eq!(
         changed_set,
         vec![
-            ContainerID::new_root("text", ContainerType::Text),
-            ContainerID::new_root("map", ContainerType::Map),
+            ContainerID::new_root("text", ContainerType::Text).unwrap(),
+            ContainerID::new_root("map", ContainerType::Map).unwrap(),
         ]
         .into_iter()
         .collect()
@@ -3563,8 +3563,8 @@ fn test_delete_root_containers() {
     let _map = doc.get_map("map");
     doc.get_map("m");
     let _text = doc.get_text("text");
-    doc.delete_root_container(ContainerID::new_root("map", ContainerType::Map));
-    doc.delete_root_container(ContainerID::new_root("text", ContainerType::Text));
+    doc.delete_root_container(ContainerID::new_root("map", ContainerType::Map).unwrap());
+    doc.delete_root_container(ContainerID::new_root("text", ContainerType::Text).unwrap());
     let mut m = LoroMapValue::default();
     m.make_mut()
         .insert("m".into(), LoroValue::Map(LoroMapValue::default()));

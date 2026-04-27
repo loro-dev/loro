@@ -4385,7 +4385,7 @@ pub mod counter {
         }
 
         pub fn clear(&self) -> LoroResult<()> {
-            self.decrement(self.get_value().into_double().unwrap())
+            self.decrement(self.get_value().into_double().unwrap_or(0.0))
         }
     }
 
