@@ -28,10 +28,205 @@ These model types are the ergonomic, high-fidelity path for reading and writing 
 
 For interoperability with application-owned data types, the model layer also provides:
 
-- `try_project`: project or materialize model data into user structs and standard Rust collections.
-- `try_reconcile_from`: reconcile user structs and standard Rust collections back into the model while preserving existing Loro containers where possible.
+- `read_as`: project or materialize model data into user structs and standard Rust collections.
+- `update_from`: reconcile user structs and standard Rust collections back into the model while preserving existing Loro containers where possible.
 
 This gives users both a convenient typed model and a boundary conversion API, without forcing every application to use Loro model types everywhere.
+
+## End-to-End Example
+
+This section is the most important API fixture. It should stay near the top of the plan because it describes the intended developer experience and exposes whether the design is technically feasible.
+
+The derive macro should let users define one Rust shape and get:
+
+- DTO-style projection and update support through `FromLoroModel` and `ToLoroModel`.
+- A generated concrete model wrapper such as `ProjectModel`.
+- Generated field accessors for efficient local updates.
+- Stable keyed-list accessors when a field is marked with `#[loro(key)]`.
+
+The generated concrete wrapper is important. Rust cannot let a user crate add inherent methods directly to a foreign generic type such as `loro_model::LoroModel<Project>`. A derive macro can, however, generate a local wrapper type:
+
+```rust
+// Generated shape, conceptually:
+pub struct ProjectModel {
+    inner: loro_model::LoroModel<Project>,
+}
+```
+
+That wrapper can have normal inherent methods such as `todos_mut()`, `notes_mut()`, and `read_as()`.
+
+### Define the Data Shape
+
+```rust
+use loro::{ExportMode, LoroDoc};
+use loro_model::{FromLoroModel, LoroModel, ToLoroModel};
+
+#[derive(Clone, Debug, PartialEq, LoroModel, FromLoroModel, ToLoroModel)]
+#[loro(model = ProjectModel)]
+struct Project {
+    title: String,
+
+    #[loro(vec, key = "id")]
+    todos: Vec<Todo>,
+
+    #[loro(text)]
+    notes: String,
+}
+
+#[derive(Clone, Debug, PartialEq, LoroModel, FromLoroModel, ToLoroModel)]
+#[loro(model = TodoModel)]
+struct Todo {
+    #[loro(key)]
+    id: String,
+    title: String,
+    done: bool,
+}
+```
+
+The plain structs remain useful as application DTOs. The generated model wrappers are the preferred live model for collaborative reads and writes.
+
+Suggested mapping:
+
+| Field | Loro model backing |
+| --- | --- |
+| `Project.title: String` | scalar string value |
+| `Project.todos: Vec<Todo>` | `LoroVec<TodoModel>` backed by `LoroList` |
+| `Project.notes: #[loro(text)] String` | `LoroTextValue` backed by `LoroText` |
+| `Todo.id: #[loro(key)] String` | scalar string plus keyed-list identity |
+| `Todo.done: bool` | scalar bool value |
+
+### Full Reconcile and Full Hydrate
+
+```rust
+let doc = LoroDoc::new();
+let mut project = ProjectModel::attach(doc.get_map("project"))?;
+
+let initial = Project {
+    title: "Issue 888 design".to_string(),
+    todos: vec![
+        Todo {
+            id: "todo-1".to_string(),
+            title: "Write model plan".to_string(),
+            done: false,
+        },
+        Todo {
+            id: "todo-2".to_string(),
+            title: "Validate API examples".to_string(),
+            done: false,
+        },
+    ],
+    notes: "Design notes\n".to_string(),
+};
+
+// Full boundary write from a plain Rust value into the Loro-backed model.
+// This reconciles structure and preserves existing containers when possible.
+project.update_from(&initial)?;
+
+// Full boundary read from the Loro-backed model into a plain Rust value.
+// This allocates an owned Project and is O(output size).
+let hydrated: Project = project.read_as()?;
+assert_eq!(hydrated, initial);
+```
+
+### Partial Local Update Through Generated Model Methods
+
+```rust
+// Local scalar update. This writes one map key and updates the model cache.
+project.title_mut().set("Typed model plan")?;
+
+// Keyed list lookup avoids treating all following items as changed when the
+// list changes near the front.
+let todo = project.todos_mut().by_key_mut("todo-1")?;
+todo.title_mut().set("Write the typed model plan")?;
+todo.done_mut().set(true)?;
+
+// Text fields use text CRDT operations rather than replacing a scalar string.
+project.notes_mut().splice(0, 0, "Decision log\n")?;
+```
+
+The intended cost of these operations is proportional to the edited path and edited value, not the whole project document.
+
+### Import Updates and Refresh the Model
+
+```rust
+let alice = LoroDoc::new();
+let mut alice_project = ProjectModel::attach(alice.get_map("project"))?;
+alice_project.update_from(&initial)?;
+
+let bob = LoroDoc::new();
+bob.import(&alice.export(ExportMode::Snapshot)?)?;
+let mut bob_project = ProjectModel::attach(bob.get_map("project"))?;
+
+let bob_seen = bob.oplog_vv();
+
+alice_project
+    .todos_mut()
+    .by_key_mut("todo-1")?
+    .done_mut()
+    .set(true)?;
+
+let update = alice.export(ExportMode::updates(&bob_seen))?;
+bob.import(&update)?;
+
+// Explicit refresh path for the MVP. Internally this can compute:
+// doc.diff(cached_frontiers, doc.state_frontiers())
+// and patch only affected model nodes through the ContainerID route table.
+bob_project.pull()?;
+
+let todo = bob_project.todos().by_key("todo-1")?;
+assert_eq!(todo.done().get(), true);
+```
+
+An automatic subscription-based mode can be layered on later:
+
+```rust
+let _sync = bob_project.auto_pull()?;
+```
+
+The explicit `pull()` API is still useful because it makes hidden work visible and gives applications control over when model caches are refreshed.
+
+### Subscribe to a Model Path
+
+```rust
+let _sub = bob_project
+    .todos()
+    .by_key("todo-1")?
+    .title()
+    .subscribe(|change| {
+        tracing::info!(
+            old = ?change.old(),
+            new = ?change.new(),
+            "todo title changed"
+        );
+    })?;
+```
+
+The subscription should be implemented on top of the model route table and Loro container diffs. A keyed path such as `todos.by_key("todo-1").title` should remain stable when list indices shift.
+
+### Read a Subtree as a Custom Struct
+
+```rust
+#[derive(Debug, FromLoroModel)]
+struct TodoSummary {
+    id: String,
+    title: String,
+}
+
+let summaries: Vec<TodoSummary> = bob_project.todos().read_as()?;
+```
+
+This is a projection boundary. It should be easy and reliable, but it is not the incremental hot path. Its cost is proportional to the projected output.
+
+### Example Requirements
+
+The design should be considered healthy only if the example above is implementable with these properties:
+
+- Full `update_from` and `read_as` work for plain Rust structs.
+- Direct generated setters update Loro and the model cache without scanning the full model.
+- `pull()` after import patches from Loro diffs instead of rehydrating the full model.
+- Model-path subscriptions are stable for keyed list entries.
+- `todos().read_as::<Vec<TodoSummary>>()` works for application-specific projected structs.
+- The generated wrapper avoids Rust's inherent-impl limitation on foreign generic types.
 
 ## Background
 
@@ -76,51 +271,51 @@ Loro already exposes container-level diffs and subscriptions. That makes a more 
 - Trait bounds should be layered. `LoroVec<T>` should not require all possible capabilities from `T` up front.
 - Use Loro events and container IDs for incremental updates instead of scanning the full document after every change.
 
-## Target User Experience
+## API Shape Summary
 
-### Preferred Path: Operate on Loro Model Types
-
-```rust
-use loro_model::{LoroModel, LoroString, LoroTextValue, LoroVec};
-
-let mut project = LoroModel::attach(doc.get_map("project"))?;
-
-project.todos().by_key(&todo_id)?.title().set("new title")?;
-project.todos_mut().push(TodoModel::new(todo_id, "write plan"))?;
-
-let title = project.todos().by_key(&todo_id)?.title().get();
-```
-
-This path should be the most ergonomic and the most efficient. Setters and collection operations can directly update the local model cache and write the corresponding Loro operation.
-
-### Boundary Path: Project into Application Types
+The user-facing method traits should be implemented directly by model handles and model containers:
 
 ```rust
-#[derive(TryProjectFromLoro)]
-struct ProjectDto {
-    todos: Vec<TodoDto>,
-    notes: String,
+pub trait ReadAs {
+    fn read_as<T>(&self) -> Result<T, ReadError>
+    where
+        T: FromLoroModel;
 }
 
-let dto: ProjectDto = project.try_project()?;
-let todos: Vec<rustc_hash::FxHashMap<String, String>> = project.todos().try_project()?;
+pub trait UpdateFrom {
+    fn update_from<T>(&mut self, value: &T) -> Result<(), UpdateError>
+    where
+        T: ToLoroModel;
+}
 ```
 
-Projection may allocate and may fail. Errors should include the model path where conversion failed.
+These traits should be implemented for generated model wrappers, `LoroModel<T>`, `LoroVec<T>`, and `loro_model::LoroMap<K, V>` where applicable.
 
-### Boundary Path: Reconcile Application Types Back into Model
+Application-owned data types implement the conversion traits:
 
 ```rust
-#[derive(TryReconcileToLoro)]
-struct ProjectDto {
-    todos: Vec<TodoDto>,
-    notes: String,
+pub trait FromLoroModel: Sized {
+    fn from_loro_model(node: LoroNodeRef<'_>) -> Result<Self, ReadError>;
 }
 
-project.try_reconcile_from(&dto)?;
+pub trait ToLoroModel {
+    fn update_loro_model(&self, target: LoroNodeMut<'_>) -> Result<(), UpdateError>;
+}
 ```
 
-The name `try_reconcile_from` is intentionally preferred over `try_set`. It indicates that the operation should diff and preserve existing Loro containers where possible, not blindly replace the whole model.
+This separation keeps the call sites simple:
+
+```rust
+let dto: Project = project.read_as()?;
+project.update_from(&dto)?;
+let summaries: Vec<TodoSummary> = project.todos().read_as()?;
+```
+
+while keeping trait responsibilities clear:
+
+- Model handles know how to expose a readable or writable Loro node.
+- User structs and collections know how to read from or update that node.
+- Generated model wrappers provide schema-specific local update methods.
 
 ## Core Types
 
@@ -134,7 +329,7 @@ Responsibilities:
 - Keep the current state frontiers for cache validity.
 - Route incoming diffs by `ContainerID`.
 - Expose typed model fields and mutation APIs.
-- Provide `try_project` and `try_reconcile_from`.
+- Provide `read_as` and `update_from`.
 
 ### `LoroVec<T>`
 
@@ -209,13 +404,37 @@ This avoids ambiguity between "replace this string scalar" and "edit this collab
 
 ## Core Traits
 
-### `TryProjectFromLoro`
+### `ReadAs`
+
+Implemented by model handles and model containers. This is the trait users normally call.
+
+```rust
+pub trait ReadAs {
+    fn read_as<T>(&self) -> Result<T, ReadError>
+    where
+        T: FromLoroModel;
+}
+```
+
+### `UpdateFrom`
+
+Implemented by writable model handles and model containers. This is the trait users normally call for boundary writes from plain Rust values.
+
+```rust
+pub trait UpdateFrom {
+    fn update_from<T>(&mut self, value: &T) -> Result<(), UpdateError>
+    where
+        T: ToLoroModel;
+}
+```
+
+### `FromLoroModel`
 
 Projects a Loro model node into an application-owned value.
 
 ```rust
-pub trait TryProjectFromLoro: Sized {
-    fn try_project_from(node: LoroNodeRef<'_>) -> Result<Self, ProjectError>;
+pub trait FromLoroModel: Sized {
+    fn from_loro_model(node: LoroNodeRef<'_>) -> Result<Self, ReadError>;
 }
 ```
 
@@ -234,13 +453,13 @@ Implementations should be provided for:
 - model wrapper types
 - derive-generated structs and enums
 
-### `TryReconcileToLoro`
+### `ToLoroModel`
 
 Reconciles an application-owned value into a target Loro model node.
 
 ```rust
-pub trait TryReconcileToLoro {
-    fn try_reconcile_to(&self, target: LoroNodeMut<'_>) -> Result<(), ReconcileError>;
+pub trait ToLoroModel {
+    fn update_loro_model(&self, target: LoroNodeMut<'_>) -> Result<(), UpdateError>;
 }
 ```
 
@@ -256,7 +475,7 @@ pub trait LoroHydrate: Sized {
 }
 ```
 
-This is different from `TryProjectFromLoro`: hydration creates model objects and binding metadata, while projection creates application-owned values.
+This is different from `FromLoroModel`: hydration creates model objects and binding metadata, while projection creates application-owned values.
 
 ### `LoroReconcile`
 
@@ -264,7 +483,7 @@ Internal or semi-public trait for writing model-compatible values into Loro slot
 
 ```rust
 pub trait LoroReconcile {
-    fn reconcile(&self, target: LoroNodeMut<'_>, ctx: &mut ReconcileCtx) -> Result<(), ReconcileError>;
+    fn reconcile(&self, target: LoroNodeMut<'_>, ctx: &mut ReconcileCtx) -> Result<(), UpdateError>;
 }
 ```
 
@@ -293,9 +512,9 @@ pub trait LoroKeyed {
 
 `#[loro(key)]` derive support can generate this for model types and DTO types.
 
-## Projection Semantics
+## Read-As Semantics
 
-`try_project` should:
+`read_as` should:
 
 - Walk the requested subtree and build an owned target value.
 - Return a path-rich error on type mismatch, missing required fields, failed key parse, or numeric overflow.
@@ -308,16 +527,16 @@ Example error:
 project.todos[3].metadata["title"]: expected string, found map container
 ```
 
-`try_project` should not be called `cast` because:
+`read_as` should not be called `cast` because:
 
 - It can allocate.
 - It can fail.
 - It can recursively convert values.
 - It is not a representation-level reinterpretation.
 
-## Reconcile-From Semantics
+## Update-From Semantics
 
-`try_reconcile_from` should:
+`update_from` should:
 
 - Update the model and underlying Loro document to match the input value.
 - Reuse existing containers when the target shape and identity match.
@@ -346,9 +565,9 @@ Expected complexity:
 | Operation | Expected Complexity |
 | --- | --- |
 | Initial attach/hydrate | `O(model_subtree_size)` |
-| `try_project::<T>()` | `O(output_size)` |
-| `try_reconcile_from(&plain)` without keys | up to `O(input_size + affected_existing_size)` |
-| `try_reconcile_from(&plain)` with keys | `O(input_size + matching_cost + changed_subtree_size)` |
+| `read_as::<T>()` | `O(output_size)` |
+| `update_from(&plain)` without keys | up to `O(input_size + affected_existing_size)` |
+| `update_from(&plain)` with keys | `O(input_size + matching_cost + changed_subtree_size)` |
 | Direct model setter | `O(path_depth + changed_value_size)` |
 | Remote event patch | `O(diff_size * route_cost + changed_subtree_size)` |
 
@@ -405,8 +624,8 @@ The MVP should include:
 - scalar projection and reconcile for common Rust primitives.
 - `String` as scalar string.
 - explicit `LoroTextValue` for text container support.
-- `try_project` for model to plain Rust data.
-- `try_reconcile_from` for plain Rust data to model.
+- `read_as` for model to plain Rust data.
+- `update_from` for plain Rust data to model.
 - derive support for named structs.
 - path-rich error reporting.
 - tests for roundtrip, projection failure, reconcile preservation, and remote diff patching.
@@ -433,8 +652,8 @@ Validate the public API shape with a small non-published prototype before commit
 
 - [ ] Create a design fixture with `Project`, `Todo`, `LoroVec<Todo>`, and `LoroTextValue`.
 - [ ] Write example code for direct model operations.
-- [ ] Write example code for `try_project` into DTO structs.
-- [ ] Write example code for `try_reconcile_from` from DTO structs.
+- [ ] Write example code for `read_as` into DTO structs.
+- [ ] Write example code for `update_from` from DTO structs.
 - [ ] Identify names that feel ambiguous or misleading.
 
 ### Deliverables
@@ -464,9 +683,10 @@ Implement the runtime traits, node references, errors, and basic model container
 
 - [ ] Add `crates/loro-model`.
 - [ ] Define `LoroNodeRef` and `LoroNodeMut`.
-- [ ] Define `ProjectError`, `ReconcileError`, `HydrateError`, and `PatchError`.
-- [ ] Define `TryProjectFromLoro`.
-- [ ] Define `TryReconcileToLoro`.
+- [ ] Define `ReadError`, `UpdateError`, `HydrateError`, and `PatchError`.
+- [ ] Define user-facing `ReadAs` and `UpdateFrom` method traits.
+- [ ] Define `FromLoroModel`.
+- [ ] Define `ToLoroModel`.
 - [ ] Define `LoroHydrate`, `LoroReconcile`, `LoroPatch`, and `LoroKeyed`.
 - [ ] Implement primitive scalar conversions.
 - [ ] Implement `Option<T>`.
@@ -503,8 +723,8 @@ Provide first-party model containers that users can operate on directly.
 - [ ] Implement `loro_model::LoroMap<String, V>` backed by `LoroMap`.
 - [ ] Add read APIs: `len`, `is_empty`, `get`, `iter`.
 - [ ] Add write APIs: `push`, `insert`, `remove`, map `insert`, map `remove`.
-- [ ] Add `try_project` methods on model containers.
-- [ ] Add `try_reconcile_from` methods on model containers.
+- [ ] Add `read_as` methods on model containers.
+- [ ] Add `update_from` methods on model containers.
 - [ ] Preserve existing child containers during reconcile when types match.
 - [ ] Define how detached vs attached model containers behave.
 
@@ -614,8 +834,8 @@ Generate model/projection/reconcile implementations for user structs.
 
 ### Deliverables
 
-- `#[derive(TryProjectFromLoro, TryReconcileToLoro)]`
-- Optional `#[derive(LoroModel)]` if the model-wrapper design is ready.
+- `#[derive(FromLoroModel, ToLoroModel)]`
+- `#[derive(LoroModel)]` that generates concrete wrappers such as `ProjectModel`.
 
 ### Exit Criteria
 
@@ -641,8 +861,10 @@ Expose the model layer in a way that is discoverable and safe for downstream use
 - [ ] Add docs explaining model vs projection vs reconcile.
 - [ ] Add examples:
   - direct model operation
-  - projection to DTO
-  - reconcile from DTO
+  - full `update_from` and `read_as`
+  - import followed by model `pull`
+  - subscribe to a generated model path
+  - read a model subtree as a custom struct
   - keyed list
   - text container field
 - [ ] Document complexity expectations.
@@ -703,8 +925,8 @@ Expose the model layer in a way that is discoverable and safe for downstream use
 
 | Concept | Preferred Name | Avoid |
 | --- | --- | --- |
-| model to user data | `try_project` | `cast`, `as`, `into_plain` as the only API |
-| user data to model | `try_reconcile_from` | `try_set`, `replace`, `assign` |
+| model to user data | `read_as` | `cast`, `as`, `into_plain` as the only API |
+| user data to model | `update_from` | `try_set`, `replace`, `assign` |
 | model-owned collection | `LoroVec`, `loro_model::LoroMap` | exposing raw third-party persistent collection types |
 | CRDT text field | `LoroTextValue` or explicit `#[loro(text)]` | treating every `String` as text CRDT |
 
@@ -719,9 +941,9 @@ Expose the model layer in a way that is discoverable and safe for downstream use
 
 ## Open Questions
 
-- Should `LoroModel` be generic over a generated schema type, or should derive generate concrete model wrapper structs?
+- Should generated wrapper names default to `${TypeName}Model`, require `#[loro(model = ...)]`, or support both?
 - Should model containers use `Rc` by default and offer a `sync` feature for `Arc`, or default to thread-safe `Arc`?
-- Should `try_reconcile_from` delete unknown extra map keys by default, or preserve them unless configured?
+- Should `update_from` delete unknown extra map keys by default, or preserve them unless configured?
 - How should key changes be represented: delete old item and insert new item, or error by default?
 - Should `LoroVec<T>` support both list and movable-list backends in the same type, or use separate `LoroMovableVec<T>`?
 - How much of this should eventually be available in `loro-wasm`?
@@ -729,6 +951,8 @@ Expose the model layer in a way that is discoverable and safe for downstream use
 ## Decision Log
 
 - 2026-04-27: Prefer first-party model types over making plain user structs the primary live model.
-- 2026-04-27: Use `try_project` for model-to-user conversion; avoid `cast`.
-- 2026-04-27: Use `try_reconcile_from` for user-to-model writes; avoid `try_set` because it implies replacement.
+- 2026-04-27: Use `read_as` for model-to-user conversion; avoid `cast`.
+- 2026-04-27: Use `update_from` for user-to-model writes; avoid `try_set` because it implies replacement.
+- 2026-04-27: Have model handles and model containers implement user-facing `ReadAs` and `UpdateFrom` method traits.
+- 2026-04-27: Have derive generate concrete wrapper types such as `ProjectModel` so schema-specific methods are technically feasible in Rust.
 - 2026-04-27: Keep projection/reconcile as boundary APIs and direct model operations as the preferred hot path.
