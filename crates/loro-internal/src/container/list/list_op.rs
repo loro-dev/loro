@@ -299,7 +299,7 @@ impl DeleteSpan {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn start(&self) -> isize {
         if self.signed_len > 0 {
             self.pos
@@ -308,7 +308,7 @@ impl DeleteSpan {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn last(&self) -> isize {
         if self.signed_len > 0 {
             self.pos + self.signed_len - 1
@@ -317,7 +317,7 @@ impl DeleteSpan {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn end(&self) -> isize {
         if self.signed_len > 0 {
             self.pos + self.signed_len
@@ -326,27 +326,27 @@ impl DeleteSpan {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn to_range(self) -> Range<isize> {
         self.start()..self.end()
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn to_urange(self) -> Range<usize> {
         self.start() as usize..self.end() as usize
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn bidirectional(&self) -> bool {
         self.signed_len.abs() == 1
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn is_reversed(&self) -> bool {
         self.signed_len < 0
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn direction(&self) -> isize {
         if self.signed_len > 0 {
             1
@@ -355,7 +355,7 @@ impl DeleteSpan {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn next_pos(&self) -> isize {
         if self.signed_len > 0 {
             self.start()
@@ -364,7 +364,7 @@ impl DeleteSpan {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn prev_pos(&self) -> isize {
         if self.signed_len > 0 {
             self.pos

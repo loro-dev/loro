@@ -129,7 +129,7 @@ pub struct LengthFinder {
 }
 
 impl LengthFinder {
-    #[inline(always)]
+    #[inline]
     pub fn new() -> Self {
         Self {
             left: 0,
@@ -140,7 +140,7 @@ impl LengthFinder {
 }
 
 impl Default for LengthFinder {
-    #[inline(always)]
+    #[inline]
     fn default() -> Self {
         Self::new()
     }
@@ -151,7 +151,7 @@ impl<V: DeltaValue + Debug, Attr: DeltaAttr + Debug> Query<DeltaTreeTrait<V, Att
 {
     type QueryArg = usize;
 
-    #[inline(always)]
+    #[inline]
     fn init(target: &Self::QueryArg) -> Self {
         Self {
             left: *target,
@@ -160,7 +160,7 @@ impl<V: DeltaValue + Debug, Attr: DeltaAttr + Debug> Query<DeltaTreeTrait<V, Att
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn find_node(
         &mut self,
         _: &Self::QueryArg,
@@ -192,7 +192,7 @@ impl<V: DeltaValue + Debug, Attr: DeltaAttr + Debug> Query<DeltaTreeTrait<V, Att
         FindResult::new_missing(child_caches.len() - 1, last_left)
     }
 
-    #[inline(always)]
+    #[inline]
     fn confirm_elem(&mut self, _: &Self::QueryArg, elem: &DeltaItem<V, Attr>) -> (usize, bool) {
         (self.left, self.left < elem.data_len())
     }

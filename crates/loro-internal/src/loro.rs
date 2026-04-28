@@ -179,7 +179,7 @@ impl LoroDoc {
         doc
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn set_peer_id(&self, peer: PeerID) -> LoroResult<()> {
         if peer == PeerID::MAX {
             return Err(LoroError::InvalidPeerID);
@@ -495,7 +495,7 @@ impl LoroDoc {
     }
 
     /// Is the document empty? (no ops)
-    #[inline(always)]
+    #[inline]
     pub fn can_reset_with_snapshot(&self) -> bool {
         let oplog = self.oplog.lock();
         if oplog.batch_importing {
@@ -514,7 +514,7 @@ impl LoroDoc {
     /// If so, the document is in readonly mode by default and importing will not change the state of the document.
     /// It also doesn't change the version of the [DocState]. The changes will be recorded into [OpLog] only.
     /// You need to call `checkout` to make it take effect.
-    #[inline(always)]
+    #[inline]
     pub fn is_detached(&self) -> bool {
         self.detached.load(Acquire)
     }
@@ -523,7 +523,7 @@ impl LoroDoc {
         self.detached.store(detached, Release);
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn peer_id(&self) -> PeerID {
         self.state
             .lock()
@@ -531,12 +531,12 @@ impl LoroDoc {
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn detach(&self) {
         self.with_barrier(|| self.set_detached(true));
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn attach(&self) {
         self.checkout_to_latest()
     }
@@ -549,7 +549,7 @@ impl LoroDoc {
         self.oplog.lock().get_timestamp_of_version(&f)
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn app_state(&self) -> &Arc<LoroMutex<DocState>> {
         &self.state
     }
@@ -559,12 +559,12 @@ impl LoroDoc {
         self.state.lock().get_deep_value()
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn oplog(&self) -> &Arc<LoroMutex<OpLog>> {
         &self.oplog
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn import(&self, bytes: &[u8]) -> Result<ImportStatus, LoroError> {
         let s = debug_span!("import", peer = self.peer_id());
         let _e = s.enter();
@@ -1240,7 +1240,7 @@ impl LoroDoc {
     }
 
     /// Apply a diff to the current state.
-    #[inline(always)]
+    #[inline]
     pub fn apply_diff(&self, diff: DiffBatch) -> LoroResult<()> {
         self._apply_diff(diff, &mut Default::default(), true)
     }

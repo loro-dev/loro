@@ -1,0 +1,499 @@
+default:
+    @just --list
+
+build-dev:
+    just build-wasm dev full all
+    just rollup
+    just post-rollup
+    just test
+
+build-release:
+    just build-wasm release full all
+    just build-wasm release min all
+    just rollup
+    just post-rollup
+    just test
+
+build-min:
+    just build-wasm release min all
+
+build-wasm profile="dev" variant="full" target="all":
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    profile="{{profile}}"
+    variant="{{variant}}"
+    target="{{target}}"
+
+    case "$profile" in
+      dev|debug)
+        profile="dev"
+        profile_dir="debug"
+        ;;
+      release)
+        profile_dir="release"
+        ;;
+      *)
+        echo "invalid profile: $profile" >&2
+        exit 1
+        ;;
+    esac
+
+    case "$variant" in
+      full|min) ;;
+      *)
+        echo "invalid variant: $variant" >&2
+        exit 1
+        ;;
+    esac
+
+    if [ "$target" = "all" ]; then
+      targets=(bundler nodejs web)
+    else
+      targets=("$target")
+    fi
+
+    for wasm_target in "${targets[@]}"; do
+      case "$wasm_target" in
+        bundler|nodejs|web) ;;
+        *)
+          echo "invalid wasm-bindgen target: $wasm_target" >&2
+          exit 1
+          ;;
+      esac
+    done
+
+    wasm_dir="$(pwd)"
+    workspace_root="$(cd ../.. && pwd)"
+    raw_wasm="$workspace_root/target/wasm32-unknown-unknown/$profile_dir/loro_wasm.wasm"
+    artifact_root="$wasm_dir"
+    if [ "$variant" = "min" ]; then
+      artifact_root="$wasm_dir/min"
+    fi
+
+    cargo_cmd=(cargo build --target wasm32-unknown-unknown --profile "$profile")
+    if [ "$variant" = "min" ]; then
+      cargo_cmd+=(--no-default-features --features min)
+    fi
+
+    echo "> ${cargo_cmd[*]}"
+    if [ "$profile" = "release" ] && [ "$variant" = "min" ]; then
+      env \
+        CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 \
+        CARGO_PROFILE_RELEASE_LTO=fat \
+        CARGO_PROFILE_RELEASE_OPT_LEVEL=z \
+        CARGO_PROFILE_RELEASE_PANIC=abort \
+        CARGO_PROFILE_RELEASE_STRIP=symbols \
+        "${cargo_cmd[@]}"
+    elif [ "$profile" = "release" ]; then
+      rustflags="${RUSTFLAGS:-}"
+      if [ -n "$rustflags" ]; then
+        rustflags="$rustflags -C debuginfo=2"
+      else
+        rustflags="-C debuginfo=2"
+      fi
+      env \
+        RUSTFLAGS="$rustflags" \
+        CARGO_PROFILE_RELEASE_DEBUG=true \
+        CARGO_PROFILE_RELEASE_STRIP=none \
+        "${cargo_cmd[@]}"
+    else
+      "${cargo_cmd[@]}"
+    fi
+
+    cargo run --quiet --manifest-path "$workspace_root/Cargo.toml" -p loro-wasm-tools -- strip-custom "$raw_wasm" "$raw_wasm" target_features
+
+    for wasm_target in "${targets[@]}"; do
+      target_dir="$artifact_root/$wasm_target"
+      rm -rf "$target_dir"
+      mkdir -p "$target_dir"
+
+      bindgen_cmd=(wasm-bindgen --weak-refs --target "$wasm_target" --out-dir "$target_dir")
+      if [ "$variant" = "min" ]; then
+        bindgen_cmd+=(--remove-name-section --remove-producers-section)
+      else
+        bindgen_cmd+=(--keep-debug)
+      fi
+      bindgen_cmd+=("$raw_wasm")
+
+      echo "> ${bindgen_cmd[*]}"
+      "${bindgen_cmd[@]}"
+
+      wasm_path="$target_dir/loro_wasm_bg.wasm"
+      if [ ! -f "$wasm_path" ]; then
+        echo "missing wasm-bindgen output: $wasm_path" >&2
+        exit 1
+      fi
+
+      if [ "$variant" = "min" ]; then
+        if [ "$profile" = "release" ]; then
+          cargo run --quiet --manifest-path "$workspace_root/Cargo.toml" -p loro-wasm-tools -- strip-debug "$wasm_path" "$wasm_path"
+          pnpm exec wasm-opt "$wasm_path" -o "$wasm_path" \
+            --enable-bulk-memory \
+            --enable-bulk-memory-opt \
+            --enable-nontrapping-float-to-int \
+            --enable-reference-types \
+            --duplicate-function-elimination \
+            --merge-blocks \
+            --duplicate-function-elimination \
+            --merge-blocks \
+            --duplicate-function-elimination \
+            --remove-unused-module-elements \
+            --remove-unused-names \
+            --vacuum \
+            --strip-debug \
+            --strip-producers \
+            --strip-target-features
+        fi
+        TARGET_DIR="$target_dir" node <<'NODE'
+    const fs = require("node:fs");
+    const path = require("node:path");
+
+    const removedMethods = [
+      "subscribeJsonpath",
+      "exportJsonUpdates",
+      "exportJsonInIdSpan",
+    ];
+
+    function stripMinOnlyTypes(content) {
+      const lines = content.split("\n");
+      const keep = new Array(lines.length).fill(true);
+
+      for (let i = 0; i < lines.length; i++) {
+        const trimmed = lines[i].trimStart();
+        if (!removedMethods.some((method) => trimmed.startsWith(`${method}(`))) {
+          continue;
+        }
+
+        keep[i] = false;
+        let cursor = i - 1;
+        while (cursor >= 0 && lines[cursor].trim() === "") {
+          keep[cursor] = false;
+          cursor--;
+        }
+
+        if (cursor >= 0 && lines[cursor].trim() === "*/") {
+          while (cursor >= 0) {
+            keep[cursor] = false;
+            if (lines[cursor].trimStart().startsWith("/**")) {
+              break;
+            }
+            cursor--;
+          }
+        }
+      }
+
+      return lines.filter((_, index) => keep[index]).join("\n");
+    }
+
+    for (const fileName of ["loro_wasm.d.ts", "loro_wasm_bg.wasm.d.ts"]) {
+      const filePath = path.join(process.env.TARGET_DIR, fileName);
+      if (!fs.existsSync(filePath)) {
+        continue;
+      }
+      fs.writeFileSync(filePath, stripMinOnlyTypes(fs.readFileSync(filePath, "utf8")));
+    }
+    NODE
+      else
+        sourcemap_path="$target_dir/loro_wasm_bg.wasm.map"
+        if [ "$profile" = "release" ]; then
+          sourcemap_ref="$(node -p "'https://unpkg.com/loro-crdt-map@' + require('./package.json').version + '/$wasm_target/loro_wasm_bg.wasm.map'")"
+        else
+          sourcemap_ref="./loro_wasm_bg.wasm.map"
+        fi
+
+        cargo run --quiet --manifest-path "$workspace_root/Cargo.toml" -p loro-wasm-tools -- sourcemap "$wasm_path" "$sourcemap_path" "$sourcemap_ref"
+
+        if [ "$profile" = "release" ]; then
+          cargo run --quiet --manifest-path "$workspace_root/Cargo.toml" -p loro-wasm-tools -- strip-debug "$wasm_path" "$wasm_path"
+        fi
+
+        if [ -f "$sourcemap_path" ]; then
+          node "$workspace_root/scripts/embed-wasm-sourcemap.mjs" --map "$sourcemap_path" --workspace-root "$workspace_root"
+          if [ "$profile" = "release" ]; then
+            map_target="$workspace_root/crates/loro-wasm-map/$wasm_target"
+            mkdir -p "$map_target"
+            cp "$sourcemap_path" "$map_target/loro_wasm_bg.wasm.map"
+            rm "$sourcemap_path"
+          fi
+        fi
+      fi
+
+      if [ "$wasm_target" = "nodejs" ]; then
+        printf '\n' >> "$target_dir/loro_wasm.js"
+        cat "$wasm_dir/scripts/nodejs_patch.js" >> "$target_dir/loro_wasm.js"
+      fi
+
+      if [ "$wasm_target" = "bundler" ]; then
+        cp "$wasm_dir/scripts/bundler_patch.js" "$target_dir/loro_wasm.js"
+      fi
+    done
+
+    if [ "$profile" = "release" ]; then
+      just size-report "$variant"
+    fi
+
+rollup:
+    pnpm exec rollup -c
+
+post-rollup:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    node <<'NODE'
+    const fs = require("node:fs");
+    const path = require("node:path");
+
+    const dirsToScan = [
+      "./nodejs",
+      "./bundler",
+      "./web",
+      "./min/nodejs",
+      "./min/bundler",
+      "./min/web",
+    ];
+    const removedMethods = [
+      "subscribeJsonpath",
+      "exportJsonUpdates",
+      "exportJsonInIdSpan",
+    ];
+
+    function stripMinOnlyTypes(content) {
+      const lines = content.split("\n");
+      const keep = new Array(lines.length).fill(true);
+
+      for (let i = 0; i < lines.length; i++) {
+        const trimmed = lines[i].trimStart();
+        if (!removedMethods.some((method) => trimmed.startsWith(`${method}(`))) {
+          continue;
+        }
+
+        keep[i] = false;
+        let cursor = i - 1;
+        while (cursor >= 0 && lines[cursor].trim() === "") {
+          keep[cursor] = false;
+          cursor--;
+        }
+
+        if (cursor >= 0 && lines[cursor].trim() === "*/") {
+          while (cursor >= 0) {
+            keep[cursor] = false;
+            if (lines[cursor].trimStart().startsWith("/**")) {
+              break;
+            }
+            cursor--;
+          }
+        }
+      }
+
+      return lines.filter((_, index) => keep[index]).join("\n");
+    }
+
+    function walkFiles(dir) {
+      if (!fs.existsSync(dir)) {
+        return [];
+      }
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      return entries.flatMap((entry) => {
+        const entryPath = path.join(dir, entry.name);
+        return entry.isDirectory() ? walkFiles(entryPath) : [entryPath];
+      });
+    }
+
+    function replaceInFile(filePath) {
+      let content = fs.readFileSync(filePath, "utf8");
+      const pathParts = filePath.split(path.sep);
+      const isWebIndexJs = pathParts.includes("web") &&
+        path.basename(filePath) === "index.js";
+      const target = isWebIndexJs ? "./loro_wasm.js" : "./loro_wasm";
+
+      content = content.replace(/from ["']loro-wasm["']/g, `from "${target}"`);
+      content = content.replace(/require\(["']loro-wasm["']\)/g, `require("${target}")`);
+      content = content.replace(/import\(["']loro-wasm["']\)/g, `import("${target}")`);
+
+      if (isWebIndexJs && !content.startsWith('export { default } from "./loro_wasm.js";')) {
+        content = `export { default } from "./loro_wasm.js";\n${content}`;
+      }
+
+      fs.writeFileSync(filePath, content);
+    }
+
+    function patchMinTypeDeclarations(dir) {
+      if (!dir.startsWith("./min/")) {
+        return;
+      }
+
+      for (const fileName of ["index.d.ts", "loro_wasm.d.ts"]) {
+        const filePath = path.join(dir, fileName);
+        if (!fs.existsSync(filePath)) {
+          continue;
+        }
+        fs.writeFileSync(filePath, stripMinOnlyTypes(fs.readFileSync(filePath, "utf8")));
+      }
+    }
+
+    for (const dir of dirsToScan) {
+      for (const filePath of walkFiles(dir)) {
+        if (/index\.(js|d\.ts)$/.test(filePath)) {
+          replaceInFile(filePath);
+        }
+      }
+      patchMinTypeDeclarations(dir);
+    }
+    NODE
+
+    pnpm exec rollup --config ./rollup.base64.config.mjs
+
+    node <<'NODE'
+    const fs = require("node:fs");
+    const path = require("node:path");
+
+    function injectBase64WasmBranch(content, filePath) {
+      if (content.includes('typeof wasmModuleOrExports === "function"')) {
+        return content;
+      }
+
+      const bunBranchPattern = /}\s*else if\s*\(\s*(["'])Bun\1\s+in\s+globalThis\s*\)\s*\{/;
+      if (!bunBranchPattern.test(content)) {
+        throw new Error(`Could not locate Bun branch while patching ${filePath}`);
+      }
+
+      const base64Branch = `} else if (typeof wasmModuleOrExports === "function") {
+      const moduleOrInstance = wasmModuleOrExports({
+        "./loro_wasm_bg.js": imports,
+      });
+      const instance =
+        moduleOrInstance instanceof WebAssembly.Instance
+          ? moduleOrInstance
+          : new WebAssembly.Instance(moduleOrInstance, {
+            "./loro_wasm_bg.js": imports,
+          });
+      finalize(instance.exports ?? instance);
+    } else if ("Bun" in globalThis) {`;
+
+      return content.replace(bunBranchPattern, base64Branch);
+    }
+
+    const base64IndexPath = "./base64/index.js";
+    const content = fs.readFileSync(base64IndexPath, "utf8");
+    fs.writeFileSync(base64IndexPath, injectBase64WasmBranch(content, base64IndexPath));
+
+    fs.copyFileSync("./bundler/loro_wasm.d.ts", "./base64/loro_wasm.d.ts");
+
+    for (const filePath of ["./base64/index.js", "./base64/index.d.ts"]) {
+      if (!fs.existsSync(filePath)) {
+        continue;
+      }
+      let next = fs.readFileSync(filePath, "utf8");
+      next = next.replace(/from ["']loro-wasm["']/g, 'from "./loro_wasm"');
+      next = next.replace(/require\(["']loro-wasm["']\)/g, 'require("./loro_wasm")');
+      next = next.replace(/import\(["']loro-wasm["']\)/g, 'import("./loro_wasm")');
+      fs.writeFileSync(filePath, next);
+    }
+    NODE
+
+test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    node --expose-gc ./node_modules/vitest/vitest.mjs run
+    npx tsc --noEmit
+    cd ./deno_tests && deno test -A
+    cd ../bun_tests && bun test
+
+size-report variant="full":
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    variant="{{variant}}"
+    case "$variant" in
+      full)
+        wasm_path="./bundler/loro_wasm_bg.wasm"
+        ;;
+      min)
+        wasm_path="./min/bundler/loro_wasm_bg.wasm"
+        ;;
+      *)
+        echo "invalid variant: $variant" >&2
+        exit 1
+        ;;
+    esac
+
+    WASM_PATH="$wasm_path" VARIANT="$variant" node <<'NODE'
+    const fs = require("node:fs");
+    const zlib = require("node:zlib");
+
+    const wasmPath = process.env.WASM_PATH;
+    const variant = process.env.VARIANT;
+    const wasm = fs.readFileSync(wasmPath);
+    const gzip = zlib.gzipSync(wasm, { level: 9 });
+    const brotli = zlib.brotliCompressSync(wasm, {
+      params: {
+        [zlib.constants.BROTLI_PARAM_QUALITY]: 11,
+      },
+    });
+
+    function kib(bytes) {
+      return `${(bytes / 1024).toFixed(2)} KiB`;
+    }
+
+    console.log(`${variant} wasm size: ${kib(wasm.length)} (${wasm.length} bytes)`);
+    console.log(`${variant} gzip -9: ${kib(gzip.length)} (${gzip.length} bytes)`);
+    console.log(`${variant} brotli -q 11: ${kib(brotli.length)} (${brotli.length} bytes)`);
+
+    async function reportToPr() {
+      const isCI = process.env.CI === "true";
+      const githubToken = process.env.GITHUB_TOKEN;
+      const githubEventPath = process.env.GITHUB_EVENT_PATH;
+      if (!isCI || !githubToken || !githubEventPath) {
+        return;
+      }
+
+      try {
+        const { getOctokit } = require("@actions/github");
+        const event = JSON.parse(fs.readFileSync(githubEventPath, "utf8"));
+        if (!event.pull_request) {
+          return;
+        }
+
+        const prNumber = event.pull_request.number;
+        const [owner, repo] = event.repository.full_name.split("/");
+        const reportTitle = variant === "min" ? "WASM Min Size Report" : "WASM Size Report";
+        const reportMarker = variant === "min"
+          ? "<!-- loro-wasm-min-size-report -->"
+          : "<!-- loro-wasm-size-report -->";
+        const body = `## ${reportTitle}
+    ${reportMarker}
+    - Original size: ${(wasm.length / 1024).toFixed(2)} KB
+    - Gzipped size: ${(gzip.length / 1024).toFixed(2)} KB
+    - Brotli size: ${(brotli.length / 1024).toFixed(2)} KB`;
+
+        const octokit = getOctokit(githubToken);
+        const { data: comments } = await octokit.rest.issues.listComments({
+          owner,
+          repo,
+          issue_number: prNumber,
+        });
+        const existingComment = comments.find((comment) => comment.body?.includes(reportMarker));
+
+        if (existingComment) {
+          await octokit.rest.issues.updateComment({
+            owner,
+            repo,
+            comment_id: existingComment.id,
+            body,
+          });
+        } else {
+          await octokit.rest.issues.createComment({
+            owner,
+            repo,
+            issue_number: prNumber,
+            body,
+          });
+        }
+      } catch (error) {
+        console.error("Failed to report wasm sizes to PR:", error);
+      }
+    }
+
+    reportToPr();
+    NODE

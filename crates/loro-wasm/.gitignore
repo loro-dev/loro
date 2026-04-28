@@ -5,3 +5,7 @@ bundler/
 web/
 docs/
 base64/
+min/bundler/
+min/nodejs/
+min/web/
+min/base64/

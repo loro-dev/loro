@@ -36,4 +36,9 @@ export default [
 
   // ESM for bundler
   createConfig('es', 'ES2020', 'bundler'),
+
+  // Minified feature-set entrypoints.
+  createConfig('cjs', 'ES2020', 'min/nodejs'),
+  createConfig('es', 'ES2020', 'min/web'),
+  createConfig('es', 'ES2020', 'min/bundler'),
 ];

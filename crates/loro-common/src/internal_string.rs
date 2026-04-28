@@ -131,7 +131,7 @@ impl AsRef<str> for InternalString {
 }
 
 impl From<&str> for InternalString {
-    #[inline(always)]
+    #[inline]
     fn from(s: &str) -> Self {
         if s.len() <= 7 {
             let mut v: u64 = (INLINE_TAG as u64) | ((s.len() as u64) << LEN_OFFSET);
@@ -150,7 +150,7 @@ impl From<&str> for InternalString {
     }
 }
 
-#[inline(always)]
+#[inline]
 fn inline_atom_slice(x: &NonZeroU64) -> &[u8] {
     unsafe {
         let x: *const NonZeroU64 = x;
@@ -164,7 +164,7 @@ fn inline_atom_slice(x: &NonZeroU64) -> &[u8] {
     }
 }
 
-#[inline(always)]
+#[inline]
 fn inline_atom_slice_mut(x: &mut u64) -> &mut [u8] {
     unsafe {
         let x: *mut u64 = x;
@@ -185,7 +185,7 @@ impl From<String> for InternalString {
 }
 
 impl From<&InternalString> for String {
-    #[inline(always)]
+    #[inline]
     fn from(value: &InternalString) -> Self {
         value.as_str().to_string()
     }

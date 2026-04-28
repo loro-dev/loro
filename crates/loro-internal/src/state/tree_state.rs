@@ -562,7 +562,7 @@ mod btree {
     impl Query<ChildTreeTrait> for KeyQuery {
         type QueryArg = NodePosition;
 
-        #[inline(always)]
+        #[inline]
         fn init(_target: &Self::QueryArg) -> Self {
             KeyQuery
         }
@@ -593,7 +593,7 @@ mod btree {
             }
         }
 
-        #[inline(always)]
+        #[inline]
         fn confirm_elem(
             &mut self,
             q: &Self::QueryArg,

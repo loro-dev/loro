@@ -97,7 +97,7 @@ impl StyleOp {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn id(&self) -> ID {
         ID::new(self.peer, self.cnt)
     }
@@ -182,12 +182,12 @@ pub enum AnchorType {
 }
 
 impl ExpandType {
-    #[inline(always)]
+    #[inline]
     pub const fn expand_before(&self) -> bool {
         matches!(self, ExpandType::Before | ExpandType::Both)
     }
 
-    #[inline(always)]
+    #[inline]
     pub const fn expand_after(&self) -> bool {
         matches!(self, ExpandType::After | ExpandType::Both)
     }
@@ -227,13 +227,13 @@ impl ExpandType {
 
 impl TextStyleInfoFlag {
     /// When inserting new text around this style, prefer inserting after it.
-    #[inline(always)]
+    #[inline]
     pub const fn expand_before(self) -> bool {
         self.data & EXPAND_BEFORE_MASK != 0
     }
 
     /// When inserting new text around this style, prefer inserting before it.
-    #[inline(always)]
+    #[inline]
     pub const fn expand_after(self) -> bool {
         self.data & EXPAND_AFTER_MASK != 0
     }
@@ -274,7 +274,7 @@ impl TextStyleInfoFlag {
         TextStyleInfoFlag { data }
     }
 
-    #[inline(always)]
+    #[inline]
     pub const fn to_delete(self) -> Self {
         TextStyleInfoFlag::new(self.expand_type().reverse())
     }

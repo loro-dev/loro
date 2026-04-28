@@ -1,0 +1,5 @@
+{
+  "main": "nodejs/index.js",
+  "module": "bundler/index.js",
+  "types": "bundler/index.d.ts"
+}

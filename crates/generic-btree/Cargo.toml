@@ -1,0 +1,28 @@
+[package]
+name = "generic-btree"
+version = "0.10.7"
+edition = "2021"
+description = "Generic BTree for versatile purposes"
+readme = "README.md"
+license = "MIT"
+homepage = "https://github.com/loro-dev/generic-btree"
+repository = "https://github.com/loro-dev/generic-btree"
+authors = ["zxch3n <remch183@outlook.com>"]
+keywords = ["btree", "data-structure"]
+documentation = "https://docs.rs/generic-btree"
+
+[features]
+test = []
+
+[lib]
+name = "generic_btree"
+path = "src/lib.rs"
+
+[dependencies]
+arref = "0.1.0"
+heapless = "0.9.1"
+thunderdome = { version = "0.6.2", package = "loro-thunderdome" }
+
+[dev-dependencies]
+arbitrary = { version = "1.2.3", features = ["derive"] }
+rand = "0.8.5"

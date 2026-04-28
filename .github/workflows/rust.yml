@@ -38,6 +38,8 @@ jobs:
         uses: taiki-e/install-action@v1
         with:
           tool: nextest
+      - name: Install just
+        run: brew install just
 
       - run: rustup toolchain install 1.85.0 --profile minimal
       - run: rustup target add wasm32-unknown-unknown

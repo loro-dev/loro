@@ -1096,12 +1096,12 @@ impl BTreeTrait for RichtextTreeTrait {
         diff
     }
 
-    #[inline(always)]
+    #[inline]
     fn merge_cache_diff(diff1: &mut Self::CacheDiff, diff2: &Self::CacheDiff) {
         *diff1 += *diff2;
     }
 
-    #[inline(always)]
+    #[inline]
     fn apply_cache_diff(cache: &mut Self::Cache, diff: &Self::CacheDiff) {
         *cache += *diff;
     }
@@ -1124,12 +1124,12 @@ impl BTreeTrait for RichtextTreeTrait {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn new_cache_to_diff(cache: &Self::Cache) -> Self::CacheDiff {
         *cache
     }
 
-    #[inline(always)]
+    #[inline]
     fn sub_cache(cache_lhs: &Self::Cache, cache_rhs: &Self::Cache) -> Self::CacheDiff {
         PosCache {
             bytes: cache_lhs.bytes - cache_rhs.bytes,
@@ -2465,32 +2465,32 @@ impl RichtextState {
         dbg!(&self.style_ranges);
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn len_unicode(&self) -> usize {
         self.tree.root_cache().unicode_len as usize
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn len_utf16(&self) -> usize {
         self.tree.root_cache().utf16_len as usize
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn len_utf8(&self) -> usize {
         self.tree.root_cache().bytes as usize
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.tree.root_cache().entity_len == 0
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn len_entity(&self) -> usize {
         self.tree.root_cache().entity_len as usize
     }
 
-    #[inline(always)]
+    #[inline]
     pub(crate) fn content_node_len(&self) -> usize {
         self.tree.node_len()
     }

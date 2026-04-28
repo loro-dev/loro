@@ -74,7 +74,7 @@ Loro is a [CRDTs(Conflict-free Replicated Data Types)](https://crdt.tech/) libra
 
 ## Debugging the Wasm build
 
-The standard build pipeline (`deno run -A ./scripts/build.ts dev|release`) now keeps DWARF debugging information through `wasm-bindgen` and emits two helper files alongside every `loro_wasm_bg.wasm` artifact:
+The standard build pipeline (`just build-wasm dev|release` or `just build-dev|build-release`) now keeps DWARF debugging information through `wasm-bindgen` and emits two helper files alongside every `loro_wasm_bg.wasm` artifact:
 
 - `loro_wasm_bg.wasm.map` &mdash; a v3 source map derived from DWARF so that Chrome, Edge, and Firefox can show original Rust locations when inspecting stack traces.
 

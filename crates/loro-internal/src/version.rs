@@ -839,12 +839,12 @@ impl VersionVector {
         ans
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn encode(&self) -> Vec<u8> {
         postcard::to_allocvec(self).unwrap()
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn decode(bytes: &[u8]) -> Result<Self, LoroError> {
         postcard::from_bytes(bytes).map_err(|_| LoroError::DecodeVersionVectorError)
     }

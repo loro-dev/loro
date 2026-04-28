@@ -98,7 +98,7 @@ impl RichtextChunk {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn len(&self) -> usize {
         match self.start {
             Self::UNKNOWN => self.end as usize,
@@ -152,7 +152,7 @@ impl Mergeable for RichtextChunk {
 }
 
 impl HasLength for RichtextChunk {
-    #[inline(always)]
+    #[inline]
     fn rle_len(&self) -> usize {
         self.len()
     }
@@ -213,7 +213,7 @@ pub(super) enum DiffStatus {
 }
 
 impl FugueSpan {
-    #[inline(always)]
+    #[inline]
     pub fn id_span(&self) -> IdSpan {
         IdSpan::new(
             self.id.peer,
@@ -279,7 +279,7 @@ impl Sliceable for FugueSpan {
 }
 
 impl HasLength for FugueSpan {
-    #[inline(always)]
+    #[inline]
     fn rle_len(&self) -> usize {
         self.content.len()
     }
@@ -350,7 +350,7 @@ impl FugueSpan {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn is_activated(&self) -> bool {
         self.status.is_activated()
     }
@@ -379,7 +379,7 @@ pub(super) struct Status {
 }
 
 impl Status {
-    #[inline(always)]
+    #[inline]
     pub fn is_activated(&self) -> bool {
         self.delete_times == 0 && !self.future
     }

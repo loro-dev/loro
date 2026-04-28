@@ -55,8 +55,8 @@ ensure-cov = { workspace = true }
 pretty_assertions = "1.4.1"
 thread_local = "1.1.8"
 parking_lot = "0.12.5"
-pest = "2.8.3"
-pest_derive = "2.8.3"
+pest = { version = "2.8.3", optional = true }
+pest_derive = { version = "2.8.3", optional = true }
 
 [target.'cfg(loom)'.dependencies]
 loom = { version = "0.7", features = ["checkpoint"] }
@@ -95,7 +95,7 @@ test_utils = ["arbitrary", "tabled"]
 # whether enable the counter container
 counter = ["loro-common/counter"]
 logging = ["loro-common/logging"]
-jsonpath = []
+jsonpath = ["dep:pest", "dep:pest_derive"]
 
 [[bench]]
 name = "text_r"

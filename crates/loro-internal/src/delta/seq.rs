@@ -252,7 +252,7 @@ impl<V: DeltaValue, M: Meta> DeltaIterator<V, M> {
         Self { ops }
     }
 
-    #[inline(always)]
+    #[inline]
     fn next<L: Into<Option<usize>>>(&mut self, len: L) -> DeltaItem<V, M> {
         self.next_impl(len.into())
     }

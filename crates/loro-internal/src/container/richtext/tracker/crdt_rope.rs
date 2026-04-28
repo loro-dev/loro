@@ -29,13 +29,13 @@ impl CrdtRope {
         Self { tree: BTree::new() }
     }
 
-    #[inline(always)]
+    #[inline]
     #[allow(unused)]
     pub fn len(&self) -> usize {
         self.tree.root_cache().len as usize
     }
 
-    #[inline(always)]
+    #[inline]
     pub(super) fn tree(&self) -> &BTree<CrdtRopeTrait> {
         &self.tree
     }
@@ -484,7 +484,7 @@ impl BTreeTrait for CrdtRopeTrait {
     type CacheDiff = Cache;
     const USE_DIFF: bool = true;
 
-    #[inline(always)]
+    #[inline]
     fn calc_cache_internal(
         cache: &mut Self::Cache,
         caches: &[generic_btree::Child<Self>],
@@ -501,19 +501,19 @@ impl BTreeTrait for CrdtRopeTrait {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn apply_cache_diff(cache: &mut Self::Cache, diff: &Self::CacheDiff) {
         cache.len += diff.len;
         cache.changed_num += diff.changed_num;
     }
 
-    #[inline(always)]
+    #[inline]
     fn merge_cache_diff(diff1: &mut Self::CacheDiff, diff2: &Self::CacheDiff) {
         diff1.len += diff2.len;
         diff1.changed_num += diff2.changed_num;
     }
 
-    #[inline(always)]
+    #[inline]
     fn get_elem_cache(elem: &Self::Elem) -> Self::Cache {
         Cache {
             len: elem.activated_len() as i32,
@@ -521,7 +521,7 @@ impl BTreeTrait for CrdtRopeTrait {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn new_cache_to_diff(cache: &Self::Cache) -> Self::CacheDiff {
         *cache
     }

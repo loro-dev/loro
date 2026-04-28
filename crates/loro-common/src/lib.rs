@@ -651,7 +651,7 @@ pub struct TreeID {
 }
 
 impl TreeID {
-    #[inline(always)]
+    #[inline]
     pub fn new(peer: PeerID, counter: Counter) -> Self {
         Self { peer, counter }
     }

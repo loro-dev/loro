@@ -163,7 +163,7 @@ impl<T: Dag + ?Sized> DagUtils for T {
         ans
     }
 
-    #[inline(always)]
+    #[inline]
     fn iter_with_vv(&self) -> DagIteratorVV<'_, Self::Node>
     where
         Self: Sized,
@@ -171,7 +171,7 @@ impl<T: Dag + ?Sized> DagUtils for T {
         iter_dag_with_vv(self)
     }
 
-    #[inline(always)]
+    #[inline]
     fn iter_causal(&self, from: Frontiers, target: IdSpanVector) -> DagCausalIter<'_, Self>
     where
         Self: Sized,
@@ -179,7 +179,7 @@ impl<T: Dag + ?Sized> DagUtils for T {
         DagCausalIter::new(self, from, target)
     }
 
-    #[inline(always)]
+    #[inline]
     fn iter(&self) -> DagIterator<'_, Self::Node>
     where
         Self: Sized,
@@ -315,7 +315,7 @@ impl<'a> OrdIdSpan<'a> {
     }
 }
 
-#[inline(always)]
+#[inline]
 fn find_common_ancestor<'a, F, D>(
     get: &'a F,
     a_id: &Frontiers,

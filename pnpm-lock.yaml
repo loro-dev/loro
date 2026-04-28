@@ -44,6 +44,9 @@ importers:
       '@vitest/ui':
         specifier: ^1.0.4
         version: 1.6.0(vitest@1.6.0)
+      binaryen:
+        specifier: 129.0.0
+        version: 129.0.0
       brotli-wasm:
         specifier: ^3.0.1
         version: 3.0.1
@@ -1489,6 +1492,10 @@ packages:
     resolution: {integrity: sha512-pbnl5XzGBdrFU/wT4jqmJVPn2B6UHPBOhzMQkY/SPUPB6QtUXtmBHBIwCbXJol93mOpGMnQyP/+BB19q04xj7g==}
     engines: {node: '>=4'}
 
+  binaryen@129.0.0:
+    resolution: {integrity: sha512-NyF5J0SfRoLDthpPh36FGTycOEv3Eqnkq3+mP5Cqt6iD9BLGGJMEVuPzu81nhLy2MMpPKmRTM9VLZihfyRQv8A==}
+    hasBin: true
+
   brace-expansion@1.1.11:
     resolution: {integrity: sha512-iCuPHDFgrHX7H2vEI/5xpz07zSHB00TpugqhmYtVmMO6518mCuRMoOYFldEBl0g187ufozdaHgWKcYFb61qGiA==}
 
@@ -1960,7 +1967,7 @@ packages:
 
   glob@7.2.3:
     resolution: {integrity: sha512-nFR0zLpU2YCaRxwoCJvL6UvCH2JFyFVIvwTLsIf21AuHlMskA1hhTdk+LlYJtOlYt9v6dvszD2BGRqBL+iQK9Q==}
-    deprecated: Glob versions prior to v9 are no longer supported
+    deprecated: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
 
   globals@13.24.0:
     resolution: {integrity: sha512-AhO5QUcj8llrbG09iWhPU2B204J1xnPeL8kQmVorSsy+Sjj1sk8gIyh6cUocGmH4L0UuhAJy+hJMRA4mgA4mFQ==}
@@ -2303,9 +2310,6 @@ packages:
   loose-envify@1.4.0:
     resolution: {integrity: sha512-lyuxPGr/Wfhrlem2CL/UcnUc1zcqKAImBDzukY7Y5F/yQiNdko6+fRLevlw1HgMySw7f611UIY408EtxRSoK3Q==}
     hasBin: true
-
-  loro-crdt@0.16.0:
-    resolution: {integrity: sha512-U/fwXPfe3GjE96tP97qzIjGoDOz5K/zSNPs1QZ7ZO4pqOAkjkLhBifSYZWW2v1t7ufFgUa4XqXpS1pn7Hyze2A==}
 
   loro-crdt@1.0.0-alpha.4:
     resolution: {integrity: sha512-WFVf/goGbiC9wmA7GNf9Fmdwry5hJq/CcQkXjoEp4QC9OYMUGm6QqKsrI7M4q05e2l7JeTc0RU858C7FRtg7qw==}
@@ -4412,6 +4416,8 @@ snapshots:
     dependencies:
       is-windows: 1.0.2
 
+  binaryen@129.0.0: {}
+
   brace-expansion@1.1.11:
     dependencies:
       balanced-match: 1.0.2
@@ -5365,10 +5371,6 @@ snapshots:
   loose-envify@1.4.0:
     dependencies:
       js-tokens: 4.0.0
-
-  loro-crdt@0.16.0:
-    dependencies:
-      loro-wasm: 0.16.0
 
   loro-crdt@1.0.0-alpha.4:
     dependencies:

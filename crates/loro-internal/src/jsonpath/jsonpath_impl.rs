@@ -317,7 +317,7 @@ fn eval_function(
     }
 }
 
-#[inline(always)]
+#[inline]
 fn to_logical(v: ExprValue) -> bool {
     match v {
         ExprValue::Bool(b) => b,
@@ -370,7 +370,7 @@ fn compare_expr(l: ExprValue, op: &ComparisonOperator, r: ExprValue) -> bool {
     }
 }
 
-#[inline(always)]
+#[inline]
 fn compare_values(l: &LoroValue, op: &ComparisonOperator, r: &LoroValue) -> bool {
     match op {
         ComparisonOperator::In => {
@@ -396,7 +396,7 @@ fn compare_values(l: &LoroValue, op: &ComparisonOperator, r: &LoroValue) -> bool
     }
 }
 
-#[inline(always)]
+#[inline]
 fn compare_i64(a: i64, op: &ComparisonOperator, b: i64) -> bool {
     match op {
         ComparisonOperator::Eq => a == b,
@@ -409,7 +409,7 @@ fn compare_i64(a: i64, op: &ComparisonOperator, b: i64) -> bool {
     }
 }
 
-#[inline(always)]
+#[inline]
 fn compare_nums(a: f64, op: &ComparisonOperator, b: f64) -> bool {
     match op {
         ComparisonOperator::Eq => (a - b).abs() < f64::EPSILON,
@@ -422,7 +422,7 @@ fn compare_nums(a: f64, op: &ComparisonOperator, b: f64) -> bool {
     }
 }
 
-#[inline(always)]
+#[inline]
 fn compare_strs(a: &str, op: &ComparisonOperator, b: &str) -> bool {
     match op {
         ComparisonOperator::Eq => a == b,
@@ -436,7 +436,7 @@ fn compare_strs(a: &str, op: &ComparisonOperator, b: &str) -> bool {
     }
 }
 
-#[inline(always)]
+#[inline]
 fn compare_bools(a: bool, op: &ComparisonOperator, b: bool) -> bool {
     match op {
         ComparisonOperator::Eq => a == b,
@@ -445,7 +445,7 @@ fn compare_bools(a: bool, op: &ComparisonOperator, b: bool) -> bool {
     }
 }
 
-#[inline(always)]
+#[inline]
 fn get_value(node: &ValueOrHandler) -> LoroValue {
     match node {
         ValueOrHandler::Value(v) => v.clone(),
@@ -453,7 +453,7 @@ fn get_value(node: &ValueOrHandler) -> LoroValue {
     }
 }
 
-#[inline(always)]
+#[inline]
 fn get_other_value(v: &ExprValue) -> LoroValue {
     match v {
         ExprValue::Value(v) => v.clone(),

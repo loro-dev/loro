@@ -67,12 +67,12 @@ impl CounterSpan {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn bidirectional(&self) -> bool {
         (self.end - self.start).abs() == 1
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn direction(&self) -> i32 {
         if self.start < self.end {
             1
@@ -81,7 +81,7 @@ impl CounterSpan {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn is_reversed(&self) -> bool {
         self.end < self.start
     }
@@ -103,7 +103,7 @@ impl CounterSpan {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn max(&self) -> Counter {
         if self.start > self.end {
             self.start
@@ -112,7 +112,7 @@ impl CounterSpan {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     /// Normalized end value.
     ///
     /// This is different from end. start may be greater than end. This is the max of start+1 and end
@@ -300,17 +300,17 @@ impl IdSpan {
         self.peer == id.peer && self.counter.contains(id.counter)
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn is_reversed(&self) -> bool {
         self.counter.end < self.counter.start
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn reverse(&mut self) {
         self.counter.reverse();
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn normalize_(&mut self) {
         self.counter.normalize_();
     }

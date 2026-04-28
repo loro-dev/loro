@@ -59,7 +59,7 @@ impl<T, const N: usize> TinyVec<T, N> {
         Ok(())
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn get(&self, index: usize) -> &T {
         &self[index]
     }
@@ -74,12 +74,12 @@ impl<T, const N: usize> TinyVec<T, N> {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn len(&self) -> usize {
         self.len as usize
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }

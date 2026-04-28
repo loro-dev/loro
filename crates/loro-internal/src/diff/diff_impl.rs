@@ -47,12 +47,12 @@ pub enum UpdateTimeoutError {
 }
 
 /// Utility function to check if a range is empty that works on older rust versions
-#[inline(always)]
+#[inline]
 fn is_empty_range(start: usize, end: usize) -> bool {
     start >= end
 }
 
-#[inline(always)]
+#[inline]
 fn is_not_empty_range(start: usize, end: usize) -> bool {
     start < end
 }

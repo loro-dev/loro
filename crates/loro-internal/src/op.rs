@@ -411,22 +411,22 @@ pub struct SliceRange(pub Range<u32>);
 
 const UNKNOWN_START: u32 = u32::MAX / 2;
 impl SliceRange {
-    #[inline(always)]
+    #[inline]
     pub fn is_unknown(&self) -> bool {
         self.0.start == UNKNOWN_START
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn new_unknown(size: u32) -> Self {
         Self(UNKNOWN_START..UNKNOWN_START + size)
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn new(range: Range<u32>) -> Self {
         Self(range)
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn to_range(&self) -> Range<usize> {
         self.0.start as usize..self.0.end as usize
     }
@@ -472,14 +472,14 @@ impl Mergable for SliceRange {
 }
 
 impl ListSlice<'_> {
-    #[inline(always)]
+    #[inline]
     pub fn unknown_range(len: usize) -> SliceRange {
         let start = UNKNOWN_START;
         let end = len as u32 + UNKNOWN_START;
         SliceRange(start..end)
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn is_unknown(range: &SliceRange) -> bool {
         range.is_unknown()
     }

@@ -307,7 +307,7 @@ impl OpLog {
             .store(0, std::sync::atomic::Ordering::Release);
     }
 
-    #[inline(always)]
+    #[inline]
     pub(crate) fn with_history_cache<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&mut ContainerHistoryCache) -> R,
@@ -519,13 +519,13 @@ impl OpLog {
         self.change_store.get_change(id)
     }
 
-    #[inline(always)]
+    #[inline]
     pub(crate) fn export_change_store_from(&self, vv: &VersionVector, f: &Frontiers) -> Bytes {
         self.change_store
             .export_from(vv, f, self.vv(), self.frontiers())
     }
 
-    #[inline(always)]
+    #[inline]
     pub(crate) fn export_change_store_in_range(
         &self,
         vv: &VersionVector,
@@ -536,13 +536,13 @@ impl OpLog {
         self.change_store.export_from(vv, f, to_vv, to_frontiers)
     }
 
-    #[inline(always)]
+    #[inline]
     pub(crate) fn export_blocks_from<W: std::io::Write>(&self, vv: &VersionVector, w: &mut W) {
         self.change_store
             .export_blocks_from(vv, self.shallow_since_vv(), self.vv(), w)
     }
 
-    #[inline(always)]
+    #[inline]
     pub(crate) fn export_blocks_in_range<W: std::io::Write>(&self, spans: &[IdSpan], w: &mut W) {
         self.change_store.export_blocks_in_range(spans, w)
     }
@@ -555,7 +555,7 @@ impl OpLog {
         )
     }
 
-    #[inline(always)]
+    #[inline]
     pub(crate) fn decode(&mut self, data: ParsedHeaderAndBody) -> Result<ImportStatus, LoroError> {
         decode_oplog(self, data)
     }

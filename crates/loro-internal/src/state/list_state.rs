@@ -93,7 +93,7 @@ impl BTreeTrait for ListImpl {
     type CacheDiff = isize;
     const USE_DIFF: bool = true;
 
-    #[inline(always)]
+    #[inline]
     fn calc_cache_internal(
         cache: &mut Self::Cache,
         caches: &[generic_btree::Child<Self>],
@@ -108,22 +108,22 @@ impl BTreeTrait for ListImpl {
         diff
     }
 
-    #[inline(always)]
+    #[inline]
     fn apply_cache_diff(cache: &mut Self::Cache, diff: &Self::CacheDiff) {
         *cache += diff;
     }
 
-    #[inline(always)]
+    #[inline]
     fn merge_cache_diff(diff1: &mut Self::CacheDiff, diff2: &Self::CacheDiff) {
         *diff1 += diff2
     }
 
-    #[inline(always)]
+    #[inline]
     fn get_elem_cache(_elem: &Self::Elem) -> Self::Cache {
         1
     }
 
-    #[inline(always)]
+    #[inline]
     fn new_cache_to_diff(cache: &Self::Cache) -> Self::CacheDiff {
         *cache
     }

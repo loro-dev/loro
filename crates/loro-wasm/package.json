@@ -22,15 +22,16 @@
     "./nodejs",
     "./web",
     "./base64",
+    "./min",
     "CHANGELOG.md",
     "README.md",
     "LICENSE",
     "package.json"
   ],
   "scripts": {
-    "build-dev": "deno run -A ./scripts/build.ts dev && rollup -c && deno run -A ./scripts/post-rollup.ts && npm run test",
-    "build-release": "deno run -A ./scripts/build.ts release && rollup -c && deno run -A ./scripts/post-rollup.ts && npm run test",
-    "test": "node --expose-gc ./node_modules/vitest/vitest.mjs run && npx tsc --noEmit && cd ./deno_tests && deno test -A && cd ../bun_tests && bun test"
+    "build-dev": "just build-dev",
+    "build-release": "just build-release",
+    "test": "just test"
   },
   "homepage": "https://loro.dev",
   "author": "",
@@ -44,6 +45,7 @@
     "@rollup/plugin-wasm": "^6.2.2",
     "@typescript-eslint/parser": "^6.2.0",
     "@vitest/ui": "^1.0.4",
+    "binaryen": "129.0.0",
     "brotli-wasm": "^3.0.1",
     "esbuild": "^0.18.20",
     "eslint": "^8.46.0",

@@ -486,32 +486,32 @@ impl<A: Array> From<RleVec<A>> for SmallVec<A> {
 }
 
 impl<A: Array> RleVec<A> {
-    #[inline(always)]
+    #[inline]
     pub fn merged_len(&self) -> usize {
         self.vec.len()
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn vec(&self) -> &SmallVec<A> {
         &self.vec
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn vec_mut(&mut self) -> &mut SmallVec<A> {
         &mut self.vec
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn iter(&self) -> std::slice::Iter<'_, A::Item> {
         self.vec.iter()
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, A::Item> {
         self.vec.iter_mut()
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn get_merged(&self, index: usize) -> Option<&A::Item> {
         self.vec.get(index)
     }

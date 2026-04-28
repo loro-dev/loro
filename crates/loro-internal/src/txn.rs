@@ -48,7 +48,7 @@ impl crate::LoroDoc {
     /// [Change].
     ///
     /// There can only be one active transaction at a time for a [LoroDoc].
-    #[inline(always)]
+    #[inline]
     pub fn txn(&self) -> Result<Transaction, LoroError> {
         self.txn_with_origin("")
     }

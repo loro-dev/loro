@@ -404,12 +404,12 @@ impl DocState {
         self.event_recorder.diff_start_version = Some(self.frontiers.clone());
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn stop_and_clear_recording(&mut self) {
         self.event_recorder = Default::default();
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn is_recording(&self) -> bool {
         self.event_recorder.recording_diff
     }
@@ -922,7 +922,7 @@ impl DocState {
         Ok(())
     }
 
-    #[inline(always)]
+    #[inline]
     #[allow(unused)]
     pub(crate) fn with_state<F, R>(&mut self, idx: ContainerIdx, f: F) -> R
     where
@@ -933,7 +933,7 @@ impl DocState {
         f(state)
     }
 
-    #[inline(always)]
+    #[inline]
     pub(crate) fn with_state_mut<F, R>(&mut self, idx: ContainerIdx, f: F) -> R
     where
         F: FnOnce(&mut State) -> R,

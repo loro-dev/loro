@@ -7,8 +7,11 @@
 
 use convert::{
     import_blob_metadata_to_js, import_status_to_js_value, js_diff_to_inner_diff,
-    js_json_schema_to_loro_json_schema, js_to_id_span, js_to_version_vector,
-    js_value_to_loro_value, loro_json_schema_to_js_json_schema, resolved_diff_to_js,
+    js_to_version_vector, js_value_to_loro_value, resolved_diff_to_js,
+};
+#[cfg(feature = "json-schema")]
+use convert::{
+    js_json_schema_to_loro_json_schema, js_to_id_span, loro_json_schema_to_js_json_schema,
 };
 use js_sys::{Array, Object, Promise, Reflect, Uint8Array};
 use loro_internal::{
@@ -26,11 +29,13 @@ use loro_internal::{
     loro::{CommitOptions, ExportMode},
     loro_common::{check_root_container_name, IdSpanVector},
     undo::{DiffBatch, UndoItemMeta, UndoOrRedo},
-    version::{Frontiers, VersionRange},
+    version::Frontiers,
     ContainerType, DiffEvent, FxHashMap, HandlerTrait, IdSpan, LoroDoc as LoroDocInner, LoroResult,
     LoroValue, MovableListHandler, SubscriberSetWithQueue, Subscription, TreeNodeWithChildren,
     TreeParentId, UndoManager as InnerUndoManager, VersionVector as InternalVersionVector,
 };
+#[cfg(feature = "json-schema")]
+use loro_internal::version::VersionRange;
 use parking_lot::lock_api::ReentrantMutex;
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
@@ -61,6 +66,7 @@ pub fn LORO_VERSION() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
+#[cfg(feature = "debug-hooks")]
 #[wasm_bindgen(start)]
 fn run() {
     console_error_panic_hook::set_once();
@@ -81,6 +87,7 @@ pub fn decodeFrontiers(bytes: &[u8]) -> JsResult<JsIDs> {
 }
 
 /// Enable debug info of Loro
+#[cfg(feature = "debug-hooks")]
 #[wasm_bindgen(js_name = setDebug)]
 pub fn set_debug() {
     tracing_wasm::set_as_global_default();
@@ -1288,6 +1295,7 @@ impl LoroDoc {
     }
 
     /// Evaluate JSONPath against a LoroDoc
+    #[cfg(feature = "jsonpath")]
     #[wasm_bindgen(js_name = "JSONPath")]
     pub fn json_path(&self, jsonpath: &str) -> JsResult<Array> {
         let ans = Array::new();
@@ -1310,6 +1318,7 @@ impl LoroDoc {
     /// The callback receives no query result; it is a lightweight notifier and may
     /// fire false positives so callers can debounce/throttle before running JSONPath
     /// themselves.
+    #[cfg(feature = "jsonpath")]
     #[wasm_bindgen(js_name = "subscribeJsonpath", skip_typescript)]
     pub fn subscribe_jsonpath(&self, jsonpath: &str, f: js_sys::Function) -> JsResult<JsValue> {
         let observer = observer::Observer::new(f);
@@ -1481,6 +1490,7 @@ impl LoroDoc {
     }
 
     /// Export updates in the given range in JSON format.
+    #[cfg(feature = "json-schema")]
     #[wasm_bindgen(js_name = "exportJsonUpdates", skip_typescript)]
     pub fn export_json_updates(
         &self,
@@ -1509,6 +1519,7 @@ impl LoroDoc {
         loro_json_schema_to_js_json_schema(json_schema)
     }
 
+    #[cfg(feature = "json-schema")]
     #[wasm_bindgen(js_name = "exportJsonInIdSpan", skip_typescript)]
     pub fn exportJsonInIdSpan(&self, idSpan: JsIdSpan) -> JsResult<JsValue> {
         let id_span = js_to_id_span(idSpan)?;
@@ -1532,6 +1543,7 @@ impl LoroDoc {
     /// Import updates from the JSON format.
     ///
     /// only supports backward compatibility but not forward compatibility.
+    #[cfg(feature = "json-schema")]
     #[wasm_bindgen(js_name = "importJsonUpdates")]
     pub fn import_json_updates(&self, json: JsJsonSchemaOrString) -> JsResult<JsImportStatus> {
         let json_schema = js_json_schema_to_loro_json_schema(json)?;
@@ -2197,6 +2209,7 @@ impl LoroDoc {
     /// doc.commit();
     /// const emptyOps = doc.getPendingOpsFromCurrentTxnAsJson(); // this is undefined
     /// ```
+    #[cfg(feature = "json-schema")]
     pub fn getUncommittedOpsAsJson(&self) -> JsResult<Option<JsJsonSchema>> {
         let json_schema = self.doc.get_uncommitted_ops_as_json();
         json_schema
@@ -5627,6 +5640,7 @@ impl ChangeModifier {
     }
 }
 
+#[cfg(feature = "json-schema")]
 fn js_value_to_version_range(value: JsValue) -> JsResult<VersionRange> {
     let obj = js_sys::Object::from(value);
     let entries = js_sys::Object::entries(&obj);
@@ -5682,6 +5696,7 @@ fn js_value_to_version_range(value: JsValue) -> JsResult<VersionRange> {
 /// @param {Object} versionRange - Version range defining what content to redact,
 ///                  format: { peerId: [startCounter, endCounter], ... }
 /// @returns {Object} The redacted JSON updates
+#[cfg(feature = "json-schema")]
 #[wasm_bindgen(js_name = "redactJsonUpdates")]
 pub fn redact_json_updates(
     json_updates: JsJsonSchemaOrString,

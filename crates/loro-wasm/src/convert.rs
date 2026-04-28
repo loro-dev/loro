@@ -5,18 +5,21 @@ use loro_internal::delta::{ResolvedMapDelta, ResolvedMapValue};
 use loro_internal::encoding::{ImportBlobMetadata, ImportStatus};
 use loro_internal::event::{Diff, ListDeltaMeta, ListDiff, TextDiff, TextMeta};
 use loro_internal::handler::{Handler, TextDelta, ValueOrHandler};
-use loro_internal::json::JsonSchema;
 use loro_internal::version::VersionRange;
 use loro_internal::StringSlice;
-use loro_internal::{Counter, CounterSpan, FxHashMap, IdSpan, ListDiffItem};
+use loro_internal::{CounterSpan, FxHashMap, ListDiffItem};
+#[cfg(feature = "json-schema")]
+use loro_internal::{json::JsonSchema, Counter, IdSpan};
+#[cfg(feature = "json-schema")]
 use serde::Serialize;
 use wasm_bindgen::{JsCast, JsValue};
 
 use crate::{
-    frontiers_to_ids, Container, Cursor, JsContainer, JsIdSpan, JsImportBlobMetadata, JsJsonSchema,
-    JsJsonSchemaOrString, JsResult, LoroCounter, LoroList, LoroMap, LoroMovableList, LoroText,
-    LoroTree, VersionVector,
+    frontiers_to_ids, Container, Cursor, JsContainer, JsImportBlobMetadata, JsResult, LoroCounter,
+    LoroList, LoroMap, LoroMovableList, LoroText, LoroTree, VersionVector,
 };
+#[cfg(feature = "json-schema")]
+use crate::{JsIdSpan, JsJsonSchema, JsJsonSchemaOrString};
 use wasm_bindgen::__rt::{IntoJsResult, RcRef, WasmRefCell};
 use wasm_bindgen::convert::RefFromWasmAbi;
 
@@ -123,6 +126,7 @@ pub(crate) fn js_to_container(js: JsContainer) -> JsResult<Container> {
     Ok(container)
 }
 
+#[cfg(feature = "json-schema")]
 pub(crate) fn js_to_id_span(js: JsIdSpan) -> JsResult<IdSpan> {
     let value: JsValue = js.into();
     let peer = Reflect::get(&value, &JsValue::from_str("peer"))?
@@ -713,6 +717,7 @@ pub(crate) fn js_value_to_loro_value(js: &JsValue) -> JsResult<LoroValue> {
 }
 
 /// Convert a JavaScript JsonSchema (or string) to Loro's internal JsonSchema
+#[cfg(feature = "json-schema")]
 pub(crate) fn js_json_schema_to_loro_json_schema(
     json: JsJsonSchemaOrString,
 ) -> JsResult<JsonSchema> {
@@ -731,6 +736,7 @@ pub(crate) fn js_json_schema_to_loro_json_schema(
 }
 
 /// Convert Loro's internal JsonSchema to JavaScript JsonSchema
+#[cfg(feature = "json-schema")]
 pub(crate) fn loro_json_schema_to_js_json_schema(
     json_schema: JsonSchema,
 ) -> JsResult<JsJsonSchema> {

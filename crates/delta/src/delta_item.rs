@@ -163,7 +163,7 @@ impl<V: DeltaValue, Attr: DeltaAttr> Sliceable for DeltaItem<V, Attr> {
     }
 
     /// slice in-place
-    #[inline(always)]
+    #[inline]
     fn slice_(&mut self, range: impl RangeBounds<usize>) {
         *self = self.slice(range);
     }

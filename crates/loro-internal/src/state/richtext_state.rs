@@ -76,7 +76,7 @@ impl RichtextState {
     }
 
     #[allow(unused)]
-    #[inline(always)]
+    #[inline]
     pub(crate) fn is_empty(&self) -> bool {
         match &self.state {
             LazyLoad::Src(s) => s.elements.is_empty(),
@@ -906,22 +906,22 @@ impl ContainerState for RichtextState {
 }
 
 impl RichtextState {
-    #[inline(always)]
+    #[inline]
     pub fn len_utf8(&mut self) -> usize {
         self.state.get_mut().len_utf8()
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn len(&mut self, pos_type: PosType) -> usize {
         self.state.get_mut().len(pos_type)
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn len_utf16(&mut self) -> usize {
         self.state.get_mut().len_utf16()
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn len_entity(&self) -> usize {
         match &self.state {
             LazyLoad::Src(s) => s.entity_index,
