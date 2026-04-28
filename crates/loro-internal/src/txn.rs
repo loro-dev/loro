@@ -725,9 +725,8 @@ impl Drop for Transaction {
     #[tracing::instrument(level = "debug", skip(self))]
     fn drop(&mut self) {
         if !self.finished {
-            if let Err(e) = self._commit() {
-                tracing::error!("Failed to commit transaction on drop: {}", e);
-            }
+            self._commit()
+                .expect("Failed to commit transaction on drop");
         }
     }
 }

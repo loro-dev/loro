@@ -27,8 +27,8 @@ fn assert_to_json_roundtrip(value: &LoroValue) {
     let compact = value.to_json();
     let pretty = value.to_json_pretty();
 
-    assert_eq!(LoroValue::from_json(&compact).unwrap(), value.clone());
-    assert_eq!(LoroValue::from_json(&pretty).unwrap(), value.clone());
+    assert_eq!(LoroValue::from_json(&compact), value.clone());
+    assert_eq!(LoroValue::from_json(&pretty), value.clone());
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&compact).unwrap(),
         value.to_json_value()
