@@ -46,7 +46,20 @@ impl ID {
         bytes
     }
 
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, LoroError> {
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        assert_eq!(
+            bytes.len(),
+            12,
+            "Invalid ID bytes. Expected 12 bytes but got {} bytes",
+            bytes.len()
+        );
+        Self {
+            peer: u64::from_be_bytes(bytes[..8].try_into().unwrap()),
+            counter: i32::from_be_bytes(bytes[8..].try_into().unwrap()),
+        }
+    }
+
+    pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, LoroError> {
         if bytes.len() != 12 {
             return Err(LoroError::DecodeError(
                 format!(
@@ -56,7 +69,6 @@ impl ID {
                 .into(),
             ));
         }
-
         Ok(Self {
             peer: u64::from_be_bytes(bytes[..8].try_into().unwrap()),
             counter: i32::from_be_bytes(bytes[8..].try_into().unwrap()),
@@ -555,7 +567,20 @@ mod container {
         }
 
         #[inline]
-        pub fn new_root(name: &str, container_type: ContainerType) -> Result<Self, LoroError> {
+        pub fn new_root(name: &str, container_type: ContainerType) -> Self {
+            if !check_root_container_name(name) {
+                panic!(
+                    "Invalid root container name, it should not be empty or contain '/' or '\\0'"
+                );
+            }
+            ContainerID::Root {
+                name: name.into(),
+                container_type,
+            }
+        }
+
+        #[inline]
+        pub fn try_new_root(name: &str, container_type: ContainerType) -> Result<Self, LoroError> {
             if !check_root_container_name(name) {
                 return Err(LoroError::InvalidRootContainerName);
             }
@@ -747,7 +772,7 @@ mod test {
         let id = ContainerID::try_from("cid:root-a:b:c:Tree").unwrap();
         assert_eq!(
             id,
-            ContainerID::new_root("a:b:c", crate::ContainerType::Tree).unwrap()
+            ContainerID::new_root("a:b:c", crate::ContainerType::Tree)
         );
     }
 
@@ -771,7 +796,7 @@ mod test {
         let bytes = id.to_bytes();
         assert_eq!(ContainerID::from_bytes(&bytes), id);
 
-        let id = ContainerID::new_root("test_root", ContainerType::List).unwrap();
+        let id = ContainerID::new_root("test_root", ContainerType::List);
         let bytes = id.to_bytes();
         assert_eq!(ContainerID::from_bytes(&bytes), id);
 
@@ -779,7 +804,7 @@ mod test {
         let bytes = id.to_bytes();
         assert_eq!(ContainerID::from_bytes(&bytes), id);
 
-        let id = ContainerID::new_root(&"x".repeat(1024), ContainerType::Tree).unwrap();
+        let id = ContainerID::new_root(&"x".repeat(1024), ContainerType::Tree);
         let bytes = id.to_bytes();
         assert_eq!(ContainerID::from_bytes(&bytes), id);
 

@@ -715,7 +715,7 @@ mod mut_external_kv {
                 kv_store
                     .scan(Bound::Unbounded, Bound::Unbounded)
                     .filter(|(id, _)| id.len() == 12)
-                    .map(|(id, bytes)| (ID::from_bytes(&id).expect("valid 12-byte key"), bytes))
+                    .map(|(id, bytes)| (ID::from_bytes(&id), bytes))
                     .collect()
             };
 
@@ -992,7 +992,7 @@ mod mut_inner_kv {
                 return None;
             };
 
-            let block_id = ID::from_bytes(&id).expect("valid 12-byte key");
+            let block_id = ID::from_bytes(&id);
             let mut block = Arc::new(
                 ChangesBlock::from_bytes(bytes)
                     .expect("validated external change block should decode"),
@@ -1132,7 +1132,7 @@ mod mut_inner_kv {
             // println!("id {:?}", id);
 
             let (b_id, b_bytes) = iter.next_back()?;
-            let block_id: ID = ID::from_bytes(&b_id[..]).expect("valid 12-byte key");
+            let block_id: ID = ID::from_bytes(&b_id[..]);
             let block = ChangesBlock::from_bytes(b_bytes)
                 .expect("validated external change block should decode");
             if block_id.peer == id.peer
@@ -1173,7 +1173,7 @@ mod mut_inner_kv {
                     )
                     .filter(|(id, _)| id.len() == 12)
                 {
-                    let id = ID::from_bytes(&id).expect("valid 12-byte key");
+                    let id = ID::from_bytes(&id);
                     if let Some(expected_start_id) = whether_need_scan_backward {
                         if id == expected_start_id {
                             whether_need_scan_backward = None;
@@ -1206,7 +1206,7 @@ mod mut_inner_kv {
                 return;
             };
 
-            let next_back_id = ID::from_bytes(&next_back_id).expect("valid 12-byte key");
+            let next_back_id = ID::from_bytes(&next_back_id);
             if next_back_id.peer == id.peer {
                 if inner.mem_parsed_kv.contains_key(&next_back_id) {
                     return;

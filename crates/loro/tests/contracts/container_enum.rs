@@ -102,7 +102,7 @@ fn container_enum_trait_dispatch_attaches_all_container_kinds() -> LoroResult<()
     let mut detached = Vec::new();
     for kind in kinds {
         let label = format!("{kind:?}").to_lowercase();
-        let container = Container::new(kind).unwrap();
+        let container = Container::new(kind);
         seed_container(&container, &label)?;
 
         assert!(!container.is_attached());
@@ -163,11 +163,11 @@ fn container_enum_trait_dispatch_attaches_inside_lists_and_converts_back() -> Lo
     doc.set_peer_id(202)?;
     let list = doc.get_list("containers");
 
-    let text = Container::new(ContainerType::Text).unwrap();
+    let text = Container::new(ContainerType::Text);
     seed_container(&text, "inside-list")?;
-    let map = Container::new(ContainerType::Map).unwrap();
+    let map = Container::new(ContainerType::Map);
     seed_container(&map, "inside-list-map")?;
-    let tree = Container::new(ContainerType::Tree).unwrap();
+    let tree = Container::new(ContainerType::Tree);
     seed_container(&tree, "inside-list-tree")?;
 
     let attached_text = list.push_container(text.clone())?;

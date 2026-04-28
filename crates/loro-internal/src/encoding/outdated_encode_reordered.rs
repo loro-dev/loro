@@ -546,8 +546,8 @@ mod test {
         test_loro_value_read_write("sldk;ajfas;dlkfas测试", None);
         // we won't encode root container by `value content`
         // test_loro_value_read_write(
-        //     LoroValue::Container(ContainerID::new_root("name", ContainerType::Text).unwrap()),
-        //     Some(ContainerID::new_root("name", ContainerType::Text).unwrap()),
+        //     LoroValue::Container(ContainerID::new_root("name", ContainerType::Text)),
+        //     Some(ContainerID::new_root("name", ContainerType::Text)),
         // );
         test_loro_value_read_write(
             LoroValue::Container(ContainerID::new_normal(

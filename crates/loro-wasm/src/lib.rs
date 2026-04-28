@@ -378,7 +378,7 @@ fn js_value_to_container_id(
     if let Ok(cid) = ContainerID::try_from(s.as_str()) {
         Ok(cid)
     } else if check_root_container_name(s.as_str()) {
-        Ok(ContainerID::new_root(s.as_str(), kind).map_err(JsValue::from)?)
+        Ok(ContainerID::try_new_root(s.as_str(), kind).map_err(JsValue::from)?)
     } else {
         Err(JsValue::from_str(
             "Invalid root container name! Don't include '/' or '\\0'",

@@ -54,7 +54,7 @@ impl Actor {
         loro.set_peer_id(id).unwrap();
         let undo = UndoManager::new(&loro);
         let tracker = Arc::new(Mutex::new(ContainerTracker::Map(MapTracker::empty(
-            ContainerID::new_root("sys:root", ContainerType::Map).unwrap(),
+            ContainerID::new_root("sys:root", ContainerType::Map),
         ))));
         let cb_tracker = tracker.clone();
         loro.subscribe_root(Arc::new(move |e| {
@@ -340,7 +340,7 @@ impl Actor {
                     "map".to_string(),
                     Value::empty_container(
                         ContainerType::Map,
-                        ContainerID::new_root("map", ContainerType::Map).unwrap(),
+                        ContainerID::new_root("map", ContainerType::Map),
                     ),
                 );
                 self.targets.insert(
@@ -353,7 +353,7 @@ impl Actor {
                     "list".to_string(),
                     Value::empty_container(
                         ContainerType::List,
-                        ContainerID::new_root("list", ContainerType::List).unwrap(),
+                        ContainerID::new_root("list", ContainerType::List),
                     ),
                 );
                 self.targets.insert(
@@ -366,7 +366,7 @@ impl Actor {
                     "movable_list".to_string(),
                     Value::empty_container(
                         ContainerType::MovableList,
-                        ContainerID::new_root("movable_list", ContainerType::MovableList).unwrap(),
+                        ContainerID::new_root("movable_list", ContainerType::MovableList),
                     ),
                 );
                 self.targets.insert(
@@ -379,7 +379,7 @@ impl Actor {
                     "text".to_string(),
                     Value::empty_container(
                         ContainerType::Text,
-                        ContainerID::new_root("text", ContainerType::Text).unwrap(),
+                        ContainerID::new_root("text", ContainerType::Text),
                     ),
                 );
                 self.targets.insert(
@@ -392,7 +392,7 @@ impl Actor {
                     "tree".to_string(),
                     Value::empty_container(
                         ContainerType::Tree,
-                        ContainerID::new_root("tree", ContainerType::Tree).unwrap(),
+                        ContainerID::new_root("tree", ContainerType::Tree),
                     ),
                 );
                 self.targets.insert(
@@ -405,7 +405,7 @@ impl Actor {
                     "counter".to_string(),
                     Value::empty_container(
                         ContainerType::Counter,
-                        ContainerID::new_root("counter", ContainerType::Counter).unwrap(),
+                        ContainerID::new_root("counter", ContainerType::Counter),
                     ),
                 );
                 self.targets.insert(

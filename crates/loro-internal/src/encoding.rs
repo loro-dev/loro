@@ -591,7 +591,7 @@ mod test {
             5,
         );
         assert_size(
-            LoroValue::Container(ContainerID::new_root("a", ContainerType::Map).unwrap()),
+            LoroValue::Container(ContainerID::new_root("a", ContainerType::Map)),
             5,
         );
     }

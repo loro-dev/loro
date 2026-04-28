@@ -366,7 +366,7 @@ fn insert_richtext_event() {
 fn import_after_init_handlers() {
     let a = LoroDoc::new_auto_commit();
     let _g = a.subscribe(
-        &ContainerID::new_root("text", ContainerType::Text).unwrap(),
+        &ContainerID::new_root("text", ContainerType::Text),
         Arc::new(|event| {
             assert!(matches!(
                 event.events[0].diff,
@@ -375,7 +375,7 @@ fn import_after_init_handlers() {
         }),
     );
     let _g = a.subscribe(
-        &ContainerID::new_root("map", ContainerType::Map).unwrap(),
+        &ContainerID::new_root("map", ContainerType::Map),
         Arc::new(|event| {
             assert!(matches!(
                 event.events[0].diff,
@@ -384,7 +384,7 @@ fn import_after_init_handlers() {
         }),
     );
     let _g = a.subscribe(
-        &ContainerID::new_root("list", ContainerType::List).unwrap(),
+        &ContainerID::new_root("list", ContainerType::List),
         Arc::new(|event| {
             assert!(matches!(
                 event.events[0].diff,
@@ -798,12 +798,12 @@ fn missing_event_when_checkout() {
     let value = Arc::new(Mutex::new(FxHashMap::default()));
     let map = value.clone();
     let _g = doc.subscribe(
-        &ContainerID::new_root("tree", ContainerType::Tree).unwrap(),
+        &ContainerID::new_root("tree", ContainerType::Tree),
         Arc::new(move |e| {
             let mut v = map.lock();
             for container_diff in e.events.iter() {
                 let from_children =
-                    container_diff.id != ContainerID::new_root("tree", ContainerType::Tree).unwrap();
+                    container_diff.id != ContainerID::new_root("tree", ContainerType::Tree);
                 if from_children {
                     if let Diff::Map(map) = &container_diff.diff {
                         for (k, ResolvedMapValue { value, .. }) in map.updated.iter() {

@@ -188,13 +188,12 @@ fn tree_mov_before_deleted_node_returns_error() {
 // 6. Container::new with ContainerType::Unknown
 // ---------------------------------------------------------------------------
 
-/// `Container::new(ContainerType::Unknown(_))` returns `Err(LoroError::NotImplemented)`,
-/// which will panic when `.unwrap()` is called on it.
+/// `Container::new(ContainerType::Unknown(_))` panics.
 #[test]
 #[parallel]
 #[should_panic(expected = "Cannot create a detached container of type Unknown")]
 fn container_new_unknown_panics() {
-    let _container = Container::new(ContainerType::Unknown(0)).unwrap();
+    let _container = Container::new(ContainerType::Unknown(0));
 }
 
 // ---------------------------------------------------------------------------
@@ -209,7 +208,7 @@ fn container_new_unknown_panics() {
 fn apply_diff_with_wrong_type_returns_error() {
     let doc = LoroDoc::new();
     let mut batch = DiffBatch::default();
-    let map_id = ContainerID::new_root("map", ContainerType::Map).unwrap();
+    let map_id = ContainerID::new_root("map", ContainerType::Map);
     // Push a text diff for a map container – type mismatch
     batch.push(map_id, Diff::Text(vec![])).unwrap();
     let err = doc.apply_diff(batch).unwrap_err();
@@ -242,7 +241,7 @@ fn import_json_updates_with_short_peers_array_no_longer_panics() {
                     key: "x".into(),
                     value: LoroValue::Null,
                 }),
-                container: ContainerID::new_root("map", ContainerType::Map).unwrap(),
+                container: ContainerID::new_root("map", ContainerType::Map),
                 counter: 0,
             }],
         }],

@@ -28,19 +28,19 @@ pub struct MovableListActor {
 
 impl MovableListActor {
     pub fn new(loro: Arc<LoroDoc>) -> Self {
-        let mut tracker = MapTracker::empty(ContainerID::new_root("sys:root", ContainerType::Map).unwrap());
+        let mut tracker = MapTracker::empty(ContainerID::new_root("sys:root", ContainerType::Map));
         tracker.insert(
             "movable_list".to_string(),
             Value::empty_container(
                 ContainerType::MovableList,
-                ContainerID::new_root("movable_list", ContainerType::MovableList).unwrap(),
+                ContainerID::new_root("movable_list", ContainerType::MovableList),
             ),
         );
         let tracker = Arc::new(Mutex::new(ContainerTracker::Map(tracker)));
         let list = tracker.clone();
 
         loro.subscribe(
-            &ContainerID::new_root("movable_list", ContainerType::MovableList).unwrap(),
+            &ContainerID::new_root("movable_list", ContainerType::MovableList),
             Arc::new(move |event| {
                 let mut list = list.lock().unwrap();
                 list.apply_diff(event);
@@ -158,7 +158,7 @@ impl Actionable for MovableListAction {
                 let pos = *pos as usize;
                 match value {
                     FuzzValue::Container(c) => {
-                        super::unwrap(list.insert_container(pos, Container::new(*c).unwrap()))
+                        super::unwrap(list.insert_container(pos, Container::new(*c)))
                     }
                     FuzzValue::I32(v) => {
                         super::unwrap(list.insert(pos, *v));
@@ -182,7 +182,7 @@ impl Actionable for MovableListAction {
                 let pos = *pos as usize;
                 match value {
                     FuzzValue::Container(c) => {
-                        super::unwrap(list.set_container(pos, Container::new(*c).unwrap()))
+                        super::unwrap(list.set_container(pos, Container::new(*c)))
                     }
                     FuzzValue::I32(v) => {
                         super::unwrap(list.set(pos, *v));
@@ -191,7 +191,7 @@ impl Actionable for MovableListAction {
                 }
             }
             MovableListAction::Push { value } => match value {
-                FuzzValue::Container(c) => super::unwrap(list.push_container(Container::new(*c).unwrap())),
+                FuzzValue::Container(c) => super::unwrap(list.push_container(Container::new(*c))),
                 FuzzValue::I32(v) => {
                     super::unwrap(list.push(*v));
                     None
