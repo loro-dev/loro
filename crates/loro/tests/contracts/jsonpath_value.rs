@@ -20,6 +20,33 @@ fn results_json(results: &[ValueOrContainer]) -> Value {
     )
 }
 
+#[test]
+fn jsonpath_prefers_non_empty_root_when_same_name_has_empty_container() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.get_list("items");
+    let items = doc.get_movable_list("items");
+    let first = items.push_container(LoroMap::new())?;
+    first.insert("id", "a")?;
+    first.insert("value", 1)?;
+    doc.commit();
+
+    let restored = LoroDoc::from_snapshot(&doc.export(ExportMode::Snapshot)?)?;
+    assert_eq!(
+        results_json(&restored.jsonpath("$.items")?),
+        json!([[{ "id": "a", "value": 1 }]])
+    );
+    assert_eq!(
+        results_json(&restored.jsonpath("$.items[0].id")?),
+        json!(["a"])
+    );
+    assert_eq!(
+        results_json(&restored.jsonpath("$.*")?),
+        json!([[{ "id": "a", "value": 1 }]])
+    );
+
+    Ok(())
+}
+
 fn build_doc() -> anyhow::Result<LoroDoc> {
     let doc = LoroDoc::new();
     doc.set_peer_id(11)?;

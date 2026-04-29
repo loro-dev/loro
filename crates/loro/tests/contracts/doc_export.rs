@@ -1,14 +1,41 @@
 use std::sync::{Arc, Mutex};
 
 use loro::{
-    CommitOptions, ExportMode, IdSpan, Index, LoroDoc, LoroList, LoroText, Timestamp, ToJson,
-    TreeParentId, VersionVector, ID,
+    CommitOptions, ExportMode, IdSpan, Index, LoroDoc, LoroList, LoroMap, LoroText, Timestamp,
+    ToJson, TreeParentId, VersionVector, ID,
 };
 use pretty_assertions::assert_eq;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 fn deep_json(doc: &LoroDoc) -> Value {
     doc.get_deep_value().to_json_value()
+}
+
+#[test]
+fn deep_value_prefers_non_empty_root_when_same_name_has_empty_container() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.get_list("items");
+    let items = doc.get_movable_list("items");
+    let first = items.push_container(LoroMap::new())?;
+    first.insert("id", "a")?;
+    first.insert("value", 1)?;
+    let second = items.push_container(LoroMap::new())?;
+    second.insert("id", "b")?;
+    second.insert("value", 2)?;
+    doc.commit();
+
+    let expected = json!({
+        "items": [
+            { "id": "a", "value": 1 },
+            { "id": "b", "value": 2 }
+        ]
+    });
+    assert_eq!(deep_json(&doc), expected);
+
+    let restored = LoroDoc::from_snapshot(&doc.export(ExportMode::Snapshot)?)?;
+    assert_eq!(deep_json(&restored), expected);
+
+    Ok(())
 }
 
 #[test]
