@@ -80,6 +80,16 @@ The standard build pipeline (`just build-wasm dev|release` or `just build-dev|bu
 
 Load the source map in browser devtools; when devtools fetches the debug companion it can map instructions back to Rust source files and line numbers without inflating the shipped `.wasm`.
 
+## Min Package
+
+The package also publishes a smaller entrypoint:
+
+```ts
+import { LoroDoc } from "loro-crdt/min";
+```
+
+`loro-crdt/min` keeps the core document/container APIs but removes JSONPath, JSON-schema import/export helpers, debug hooks, panic hook setup, and tracing support. It is intended for production bundles where binary size is more important than optional diagnostics. Because panic hooks are not installed in this build, Rust panics may appear as opaque WebAssembly traps; use the default `loro-crdt` entrypoint when debugging.
+
 # Example
 
 [![Open in StackBlitz](https://developer.stackblitz.com/img/open_in_stackblitz.svg)](https://stackblitz.com/edit/loro-basic-test?file=test%2Floro-sync.test.ts)

@@ -12,6 +12,7 @@ build-release:
     just build-wasm release min all
     just rollup
     just post-rollup
+    just test-min
     just test
 
 build-min:
@@ -399,6 +400,77 @@ test:
     npx tsc --noEmit
     cd ./deno_tests && deno test -A
     cd ../bun_tests && bun test
+
+test-min:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    node <<'NODE'
+    const assert = require("node:assert/strict");
+    const fs = require("node:fs");
+
+    const min = require("./min");
+    const full = require("./nodejs");
+
+    assert.equal(typeof min.LoroDoc, "function");
+    assert.equal(typeof full.LoroDoc, "function");
+
+    const a = new min.LoroDoc();
+    a.setPeerId(1);
+    const text = a.getText("text");
+    text.insert(0, "hi");
+    const list = a.getList("list");
+    list.push("a");
+    list.push("b");
+    const map = a.getMap("map");
+    map.set("k", "v");
+    a.commit();
+
+    assert.deepEqual(a.toJSON(), {
+      text: "hi",
+      list: ["a", "b"],
+      map: { k: "v" },
+    });
+
+    const b = new min.LoroDoc();
+    b.import(a.export({ mode: "update" }));
+    assert.deepEqual(b.toJSON(), a.toJSON());
+
+    assert.equal(typeof a.JSONPath, "undefined");
+    assert.equal(typeof a.subscribeJsonpath, "undefined");
+    assert.equal(typeof a.exportJsonUpdates, "undefined");
+    assert.equal(typeof a.importJsonUpdates, "undefined");
+    assert.equal(typeof a.getUncommittedOpsAsJson, "undefined");
+    assert.equal(typeof min.setDebug, "undefined");
+    assert.equal(typeof min.redactJsonUpdates, "undefined");
+
+    assert.equal(typeof full.setDebug, "function");
+
+    const strippedDeclarations = [
+      /\nexport function setDebug\(/,
+      /\nexport function redactJsonUpdates\(/,
+      /\n\s+JSONPath\(/,
+      /\n\s+subscribeJsonpath\(/,
+      /\n\s+exportJsonUpdates\(/,
+      /\n\s+exportJsonInIdSpan\(/,
+      /\n\s+importJsonUpdates\(/,
+      /\n\s+getUncommittedOpsAsJson\(/,
+    ];
+    for (const filePath of [
+      "./min/bundler/loro_wasm.d.ts",
+      "./min/bundler/loro_wasm_bg.wasm.d.ts",
+      "./min/bundler/index.d.ts",
+    ]) {
+      const content = fs.readFileSync(filePath, "utf8");
+      for (const declaration of strippedDeclarations) {
+        assert.equal(
+          declaration.test(content),
+          false,
+          `${filePath} should not contain ${declaration}`,
+        );
+      }
+    }
+    NODE
 
 size-report variant="full":
     #!/usr/bin/env bash
