@@ -61,6 +61,42 @@ use std::{
 };
 use tracing::{debug_span, info_span, instrument, warn};
 
+#[cfg(feature = "min")]
+const MISSING_TEXT_CONTAINER_MESSAGE: &str = "Container missing";
+#[cfg(not(feature = "min"))]
+const MISSING_TEXT_CONTAINER_MESSAGE: &str =
+    "The container does not exist in the document. Use `try_get_text` or `get_container` to check for existence.";
+
+#[cfg(feature = "min")]
+const MISSING_LIST_CONTAINER_MESSAGE: &str = "Container missing";
+#[cfg(not(feature = "min"))]
+const MISSING_LIST_CONTAINER_MESSAGE: &str =
+    "The container does not exist in the document. Use `try_get_list` or `get_container` to check for existence.";
+
+#[cfg(feature = "min")]
+const MISSING_MOVABLE_LIST_CONTAINER_MESSAGE: &str = "Container missing";
+#[cfg(not(feature = "min"))]
+const MISSING_MOVABLE_LIST_CONTAINER_MESSAGE: &str =
+    "The container does not exist in the document. Use `try_get_movable_list` or `get_container` to check for existence.";
+
+#[cfg(feature = "min")]
+const MISSING_MAP_CONTAINER_MESSAGE: &str = "Container missing";
+#[cfg(not(feature = "min"))]
+const MISSING_MAP_CONTAINER_MESSAGE: &str =
+    "The container does not exist in the document. Use `try_get_map` or `get_container` to check for existence.";
+
+#[cfg(feature = "min")]
+const MISSING_TREE_CONTAINER_MESSAGE: &str = "Container missing";
+#[cfg(not(feature = "min"))]
+const MISSING_TREE_CONTAINER_MESSAGE: &str =
+    "The container does not exist in the document. Use `try_get_tree` or `get_container` to check for existence.";
+
+#[cfg(all(feature = "counter", feature = "min"))]
+const MISSING_COUNTER_CONTAINER_MESSAGE: &str = "Container missing";
+#[cfg(all(feature = "counter", not(feature = "min")))]
+const MISSING_COUNTER_CONTAINER_MESSAGE: &str =
+    "The container does not exist in the document. Use `try_get_counter` or `get_container` to check for existence.";
+
 impl Default for LoroDoc {
     fn default() -> Self {
         Self::new()
@@ -970,8 +1006,7 @@ impl LoroDoc {
     /// if it's str it will use Root container, which will not be None
     #[inline]
     pub fn get_text<I: IntoContainerId>(&self, id: I) -> TextHandler {
-        self.try_get_text(id)
-            .expect("The container does not exist in the document. Use `try_get_text` or `get_container` to check for existence.")
+        self.try_get_text(id).expect(MISSING_TEXT_CONTAINER_MESSAGE)
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
@@ -989,8 +1024,7 @@ impl LoroDoc {
     /// if it's str it will use Root container, which will not be None
     #[inline]
     pub fn get_list<I: IntoContainerId>(&self, id: I) -> ListHandler {
-        self.try_get_list(id)
-            .expect("The container does not exist in the document. Use `try_get_list` or `get_container` to check for existence.")
+        self.try_get_list(id).expect(MISSING_LIST_CONTAINER_MESSAGE)
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
@@ -1011,7 +1045,7 @@ impl LoroDoc {
     #[inline]
     pub fn get_movable_list<I: IntoContainerId>(&self, id: I) -> MovableListHandler {
         self.try_get_movable_list(id)
-            .expect("The container does not exist in the document. Use `try_get_movable_list` or `get_container` to check for existence.")
+            .expect(MISSING_MOVABLE_LIST_CONTAINER_MESSAGE)
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
@@ -1029,8 +1063,7 @@ impl LoroDoc {
     /// if it's str it will use Root container, which will not be None
     #[inline]
     pub fn get_map<I: IntoContainerId>(&self, id: I) -> MapHandler {
-        self.try_get_map(id)
-            .expect("The container does not exist in the document. Use `try_get_map` or `get_container` to check for existence.")
+        self.try_get_map(id).expect(MISSING_MAP_CONTAINER_MESSAGE)
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
@@ -1048,8 +1081,7 @@ impl LoroDoc {
     /// if it's str it will use Root container, which will not be None
     #[inline]
     pub fn get_tree<I: IntoContainerId>(&self, id: I) -> TreeHandler {
-        self.try_get_tree(id)
-            .expect("The container does not exist in the document. Use `try_get_tree` or `get_container` to check for existence.")
+        self.try_get_tree(id).expect(MISSING_TREE_CONTAINER_MESSAGE)
     }
 
     #[cfg(feature = "counter")]
@@ -1070,7 +1102,7 @@ impl LoroDoc {
         id: I,
     ) -> crate::handler::counter::CounterHandler {
         self.try_get_counter(id)
-            .expect("The container does not exist in the document. Use `try_get_counter` or `get_container` to check for existence.")
+            .expect(MISSING_COUNTER_CONTAINER_MESSAGE)
     }
 
     #[must_use]

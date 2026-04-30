@@ -13,7 +13,7 @@ use crate::{
     op::ListSlice,
     state::{IndexType, State, TreeParentId},
     txn::EventHint,
-    utils::{string_slice::StringSlice, utf16::count_utf16_len},
+    utils::{source_position_info, string_slice::StringSlice, utf16::count_utf16_len},
     LoroDoc, LoroDocInner,
 };
 use append_only_bytes::BytesSlice;
@@ -1534,7 +1534,7 @@ impl TextHandler {
             return Err(LoroError::OutOfBound {
                 pos,
                 len,
-                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                info: source_position_info(file!(), line!()),
             });
         }
         if let Ok(c) = match &self.inner {
@@ -1560,7 +1560,7 @@ impl TextHandler {
             Err(LoroError::OutOfBound {
                 pos,
                 len,
-                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                info: source_position_info(file!(), line!()),
             })
         }
     }
@@ -1599,7 +1599,7 @@ impl TextHandler {
             return Ok(String::new());
         }
 
-        let info = || format!("Position: {}:{}", file!(), line!()).into_boxed_str();
+        let info = || source_position_info(file!(), line!());
         match &self.inner {
             MaybeDetached::Detached(t) => {
                 let t = t.lock();
@@ -1663,7 +1663,7 @@ impl TextHandler {
             return Err(LoroError::OutOfBound {
                 pos: end_index,
                 len,
-                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                info: source_position_info(file!(), line!()),
             });
         }
         self.validate_text_boundary(start_index, pos_type)?;
@@ -1733,7 +1733,7 @@ impl TextHandler {
             return Err(LoroError::OutOfBound {
                 pos,
                 len,
-                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                info: source_position_info(file!(), line!()),
             });
         }
         self.validate_text_boundary(pos, pos_type)?;
@@ -1804,7 +1804,7 @@ impl TextHandler {
             return Err(LoroError::OutOfBound {
                 pos: pos + len,
                 len: text_len,
-                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                info: source_position_info(file!(), line!()),
             });
         }
         self.validate_text_boundary(pos, pos_type)?;
@@ -1858,7 +1858,7 @@ impl TextHandler {
                     return Err(LoroError::OutOfBound {
                         pos,
                         len: self.len_event(),
-                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                        info: source_position_info(file!(), line!()),
                     });
                 }
             }
@@ -1867,7 +1867,7 @@ impl TextHandler {
                     return Err(LoroError::OutOfBound {
                         pos,
                         len: self.len_utf8(),
-                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                        info: source_position_info(file!(), line!()),
                     });
                 }
             }
@@ -1876,7 +1876,7 @@ impl TextHandler {
                     return Err(LoroError::OutOfBound {
                         pos,
                         len: self.len_unicode(),
-                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                        info: source_position_info(file!(), line!()),
                     });
                 }
             }
@@ -1886,7 +1886,7 @@ impl TextHandler {
                     return Err(LoroError::OutOfBound {
                         pos,
                         len: self.len_utf16(),
-                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                        info: source_position_info(file!(), line!()),
                     });
                 }
             }
@@ -2022,7 +2022,7 @@ impl TextHandler {
             return Err(LoroError::OutOfBound {
                 pos: pos + len,
                 len: self.len_event(),
-                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                info: source_position_info(file!(), line!()),
             });
         }
         self.validate_text_boundary(pos, pos_type)?;
@@ -2114,7 +2114,7 @@ impl TextHandler {
             return Err(LoroError::OutOfBound {
                 pos: end,
                 len,
-                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                info: source_position_info(file!(), line!()),
             });
         }
         let (entity_range, styles) =
@@ -2202,7 +2202,7 @@ impl TextHandler {
             return Err(LoroError::OutOfBound {
                 pos: end,
                 len,
-                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                info: source_position_info(file!(), line!()),
             });
         }
 
@@ -2715,7 +2715,7 @@ impl ListHandler {
                 if pos > len {
                     return Err(LoroError::OutOfBound {
                         pos,
-                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                        info: source_position_info(file!(), line!()),
                         len,
                     });
                 }
@@ -2737,7 +2737,7 @@ impl ListHandler {
         if pos > self.len() {
             return Err(LoroError::OutOfBound {
                 pos,
-                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                info: source_position_info(file!(), line!()),
                 len: self.len(),
             });
         }
@@ -2806,7 +2806,7 @@ impl ListHandler {
                 if pos > list.value.len() {
                     return Err(LoroError::OutOfBound {
                         pos,
-                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                        info: source_position_info(file!(), line!()),
                         len: list.value.len(),
                     });
                 }
@@ -2833,7 +2833,7 @@ impl ListHandler {
         if pos > self.len() {
             return Err(LoroError::OutOfBound {
                 pos,
-                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                info: source_position_info(file!(), line!()),
                 len: self.len(),
             });
         }
@@ -2862,7 +2862,7 @@ impl ListHandler {
                 if pos + len > list.value.len() {
                     return Err(LoroError::OutOfBound {
                         pos: pos + len,
-                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                        info: source_position_info(file!(), line!()),
                         len: list.value.len(),
                     });
                 }
@@ -2881,7 +2881,7 @@ impl ListHandler {
         if pos + len > self.len() {
             return Err(LoroError::OutOfBound {
                 pos: pos + len,
-                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                info: source_position_info(file!(), line!()),
                 len: self.len(),
             });
         }
@@ -2916,7 +2916,7 @@ impl ListHandler {
                 let list = l.lock();
                 let value = list.value.get(index).ok_or(LoroError::OutOfBound {
                     pos: index,
-                    info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                    info: source_position_info(file!(), line!()),
                     len: list.value.len(),
                 })?;
                 match value {
@@ -2936,7 +2936,7 @@ impl ListHandler {
                 }) else {
                     return Err(LoroError::OutOfBound {
                         pos: index,
-                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                        info: source_position_info(file!(), line!()),
                         len: a.with_state(|state| state.as_list_state().unwrap().len()),
                     });
                 };
@@ -3184,7 +3184,7 @@ impl MovableListHandler {
                 if pos > d.value.len() {
                     return Err(LoroError::OutOfBound {
                         pos,
-                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                        info: source_position_info(file!(), line!()),
                         len: d.value.len(),
                     });
                 }
@@ -3207,7 +3207,7 @@ impl MovableListHandler {
         if pos > self.len() {
             return Err(LoroError::OutOfBound {
                 pos,
-                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                info: source_position_info(file!(), line!()),
                 len: self.len(),
             });
         }
@@ -3247,14 +3247,14 @@ impl MovableListHandler {
                 if from >= d.value.len() {
                     return Err(LoroError::OutOfBound {
                         pos: from,
-                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                        info: source_position_info(file!(), line!()),
                         len: d.value.len(),
                     });
                 }
                 if to >= d.value.len() {
                     return Err(LoroError::OutOfBound {
                         pos: to,
-                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                        info: source_position_info(file!(), line!()),
                         len: d.value.len(),
                     });
                 }
@@ -3276,7 +3276,7 @@ impl MovableListHandler {
         if from >= self.len() {
             return Err(LoroError::OutOfBound {
                 pos: from,
-                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                info: source_position_info(file!(), line!()),
                 len: self.len(),
             });
         }
@@ -3284,7 +3284,7 @@ impl MovableListHandler {
         if to >= self.len() {
             return Err(LoroError::OutOfBound {
                 pos: to,
-                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                info: source_position_info(file!(), line!()),
                 len: self.len(),
             });
         }
@@ -3383,7 +3383,7 @@ impl MovableListHandler {
                 if pos > d.value.len() {
                     return Err(LoroError::OutOfBound {
                         pos,
-                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                        info: source_position_info(file!(), line!()),
                         len: d.value.len(),
                     });
                 }
@@ -3410,7 +3410,7 @@ impl MovableListHandler {
         if pos > self.len() {
             return Err(LoroError::OutOfBound {
                 pos,
-                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                info: source_position_info(file!(), line!()),
                 len: self.len(),
             });
         }
@@ -3445,7 +3445,7 @@ impl MovableListHandler {
                 if index >= d.value.len() {
                     return Err(LoroError::OutOfBound {
                         pos: index,
-                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                        info: source_position_info(file!(), line!()),
                         len: d.value.len(),
                     });
                 }
@@ -3467,7 +3467,7 @@ impl MovableListHandler {
         if index >= self.len() {
             return Err(LoroError::OutOfBound {
                 pos: index,
-                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                info: source_position_info(file!(), line!()),
                 len: self.len(),
             });
         }
@@ -3497,7 +3497,7 @@ impl MovableListHandler {
                 if pos >= d.value.len() {
                     return Err(LoroError::OutOfBound {
                         pos,
-                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                        info: source_position_info(file!(), line!()),
                         len: d.value.len(),
                     });
                 }
@@ -3559,7 +3559,7 @@ impl MovableListHandler {
                 if pos + len > d.value.len() {
                     return Err(LoroError::OutOfBound {
                         pos: pos + len,
-                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                        info: source_position_info(file!(), line!()),
                         len: d.value.len(),
                     });
                 }
@@ -3579,7 +3579,7 @@ impl MovableListHandler {
         if pos + len > self.len() {
             return Err(LoroError::OutOfBound {
                 pos: pos + len,
-                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                info: source_position_info(file!(), line!()),
                 len: self.len(),
             });
         }
@@ -3627,7 +3627,7 @@ impl MovableListHandler {
                 let list = l.lock();
                 let value = list.value.get(index).ok_or(LoroError::OutOfBound {
                     pos: index,
-                    info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                    info: source_position_info(file!(), line!()),
                     len: list.value.len(),
                 })?;
                 match value {
@@ -3652,7 +3652,7 @@ impl MovableListHandler {
                 }) else {
                     return Err(LoroError::OutOfBound {
                         pos: index,
-                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                        info: source_position_info(file!(), line!()),
                         len: a.with_state(|state| state.as_list_state().unwrap().len()),
                     });
                 };

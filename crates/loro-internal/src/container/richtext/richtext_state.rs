@@ -21,7 +21,10 @@ use tracing::instrument;
 use crate::{
     container::richtext::style_range_map::EMPTY_STYLES,
     delta::{DeltaValue, StyleMeta},
-    utils::query_by_len::{EntityIndexQueryWithEventIndex, IndexQueryWithEntityIndex, QueryByLen},
+    utils::{
+        query_by_len::{EntityIndexQueryWithEventIndex, IndexQueryWithEntityIndex, QueryByLen},
+        source_position_info,
+    },
 };
 
 use self::query::{
@@ -1933,7 +1936,7 @@ impl RichtextState {
                 return Err(LoroError::OutOfBound {
                     pos: pos + len,
                     len: self.len_event(),
-                    info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                    info: source_position_info(file!(), line!()),
                 });
             }
 

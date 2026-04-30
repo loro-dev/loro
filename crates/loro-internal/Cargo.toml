@@ -96,6 +96,7 @@ test_utils = ["arbitrary", "tabled"]
 counter = ["loro-common/counter"]
 logging = ["loro-common/logging"]
 jsonpath = ["dep:pest", "dep:pest_derive"]
+min = []
 
 [[bench]]
 name = "text_r"

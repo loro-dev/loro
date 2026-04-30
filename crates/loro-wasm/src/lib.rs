@@ -14,6 +14,8 @@ use convert::{
     js_json_schema_to_loro_json_schema, js_to_id_span, loro_json_schema_to_js_json_schema,
 };
 use js_sys::{Array, Object, Promise, Reflect, Uint8Array};
+#[cfg(feature = "json-schema")]
+use loro_internal::version::VersionRange;
 use loro_internal::{
     change::Lamport,
     configure::{StyleConfig, StyleConfigMap},
@@ -34,8 +36,6 @@ use loro_internal::{
     LoroValue, MovableListHandler, SubscriberSetWithQueue, Subscription, TreeNodeWithChildren,
     TreeParentId, UndoManager as InnerUndoManager, VersionVector as InternalVersionVector,
 };
-#[cfg(feature = "json-schema")]
-use loro_internal::version::VersionRange;
 use parking_lot::lock_api::ReentrantMutex;
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
@@ -95,6 +95,20 @@ pub fn set_debug() {
 
 type JsResult<T> = Result<T, JsValue>;
 type EventCallback = Box<dyn Fn(&SafeJsValue) -> bool + Send + Sync + 'static>;
+
+#[cfg(feature = "min")]
+const INVALID_SIDE_MESSAGE: &str = "Invalid side";
+#[cfg(not(feature = "min"))]
+const INVALID_SIDE_MESSAGE: &str = "Side must be -1 | 0 | 1";
+
+fn js_side_to_side(side: JsSide) -> Side {
+    if !side.is_truthy() {
+        return Side::Middle;
+    }
+
+    let num = side.as_f64().expect(INVALID_SIDE_MESSAGE);
+    Side::from_i32(num as i32).expect(INVALID_SIDE_MESSAGE)
+}
 
 thread_local! {
     static IN_PRE_COMMIT_CALLBACK: Cell<bool> = Cell::new(false);
@@ -3016,13 +3030,8 @@ impl LoroText {
     /// - The second argument is the side: `-1` for left, `0` for middle, `1` for right.
     #[wasm_bindgen(skip_typescript)]
     pub fn getCursor(&self, pos: usize, side: JsSide) -> Option<Cursor> {
-        let mut side_value = Side::Middle;
-        if side.is_truthy() {
-            let num = side.as_f64().expect("Side must be -1 | 0 | 1");
-            side_value = Side::from_i32(num as i32).expect("Side must be -1 | 0 | 1");
-        }
         self.handler
-            .get_cursor(pos, side_value)
+            .get_cursor(pos, js_side_to_side(side))
             .map(|pos| Cursor { pos })
     }
 
@@ -3714,13 +3723,8 @@ impl LoroList {
     /// - The second argument is the side: `-1` for left, `0` for middle, `1` for right.
     #[wasm_bindgen(skip_typescript)]
     pub fn getCursor(&self, pos: usize, side: JsSide) -> Option<Cursor> {
-        let mut side_value = Side::Middle;
-        if side.is_truthy() {
-            let num = side.as_f64().expect("Side must be -1 | 0 | 1");
-            side_value = Side::from_i32(num as i32).expect("Side must be -1 | 0 | 1");
-        }
         self.handler
-            .get_cursor(pos, side_value)
+            .get_cursor(pos, js_side_to_side(side))
             .map(|pos| Cursor { pos })
     }
 
@@ -4072,13 +4076,8 @@ impl LoroMovableList {
     /// Get the cursor of the container.
     #[wasm_bindgen(skip_typescript)]
     pub fn getCursor(&self, pos: usize, side: JsSide) -> Option<Cursor> {
-        let mut side_value = Side::Middle;
-        if side.is_truthy() {
-            let num = side.as_f64().expect("Side must be -1 | 0 | 1");
-            side_value = Side::from_i32(num as i32).expect("Side must be -1 | 0 | 1");
-        }
         self.handler
-            .get_cursor(pos, side_value)
+            .get_cursor(pos, js_side_to_side(side))
             .map(|pos| Cursor { pos })
     }
 
