@@ -9,7 +9,7 @@ use crate::sync::Mutex;
 use either::Either;
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
-use generic_btree::rle::Sliceable;
+use generic_btree::rle::{HasLength as _, Sliceable};
 use loro_common::{
     ContainerType, Counter, HasLamport, IdFull, IdLp, InternalString, LoroValue, PeerID, ID,
 };
@@ -19,8 +19,10 @@ use rustc_hash::FxHashMap;
 use crate::{
     change::{Change, Lamport},
     container::{
-        idx::ContainerIdx, list::list_op::InnerListOp,
-        richtext::richtext_state::RichtextStateChunk, tree::tree_op::TreeOp,
+        idx::ContainerIdx,
+        list::list_op::InnerListOp,
+        richtext::{richtext_state::RichtextStateChunk, AnchorType, StyleOp},
+        tree::tree_op::TreeOp,
     },
     delta::MapValue,
     diff_calc::tree::{MoveLamportAndID, TreeCacheForDiff},
@@ -343,6 +345,104 @@ impl ContainerHistoryCache {
         });
 
         ans.sort_unstable_by_key(|x| x.counter());
+        let mut normalized = Vec::with_capacity(ans.len());
+        let mut covered_end = target_span.counter.start;
+        for chunk in ans {
+            let span = chunk.get_id_span();
+            let start = span.counter.start.max(covered_end);
+            let end = span.counter.end.min(target_span.counter.end);
+            if start >= end {
+                continue;
+            }
+
+            normalized.push(
+                chunk.slice(
+                    (start - span.counter.start) as usize..(end - span.counter.start) as usize,
+                ),
+            );
+            covered_end = end;
+        }
+
+        normalized
+    }
+
+    pub(crate) fn find_text_chunks_in_shallow_root_order(
+        &self,
+        idx: ContainerIdx,
+    ) -> Vec<RichtextStateChunk> {
+        ensure_cov::notify_cov(
+            "loro_internal::history_cache::find_text_chunks_in_shallow_root_order",
+        );
+        let Some(state) = self.shallow_root_state.as_ref() else {
+            return Vec::new();
+        };
+
+        let mut binding = state.store.lock();
+        let Some(text) = binding.get_mut(idx) else {
+            return Vec::new();
+        };
+
+        let text_state = text
+            .get_state(
+                idx,
+                ContainerCreationContext {
+                    configure: &Default::default(),
+                    peer: 0,
+                },
+            )
+            .as_richtext_state()
+            .unwrap();
+
+        let mut ans = Vec::new();
+        text_state.iter_raw(&mut |chunk| {
+            ans.push(chunk.slice(0..chunk.rle_len()));
+        });
+
+        ans
+    }
+
+    pub(crate) fn find_text_style_end_in_shallow_root(
+        &self,
+        idx: ContainerIdx,
+        style_start_id: ID,
+    ) -> Option<(StyleOp, usize)> {
+        ensure_cov::notify_cov("loro_internal::history_cache::find_text_style_end_in_shallow_root");
+        let state = self.shallow_root_state.as_ref()?;
+
+        let mut binding = state.store.lock();
+        let text = binding.get_mut(idx)?;
+
+        let text_state = text
+            .get_state(
+                idx,
+                ContainerCreationContext {
+                    configure: &Default::default(),
+                    peer: 0,
+                },
+            )
+            .as_richtext_state()
+            .unwrap();
+
+        let mut entity_index = 0;
+        let mut ans = None;
+        text_state.iter_raw(&mut |chunk| {
+            if ans.is_some() {
+                return;
+            }
+
+            match chunk {
+                RichtextStateChunk::Text(text) => {
+                    entity_index += text.unicode_len() as usize;
+                }
+                RichtextStateChunk::Style { style, anchor_type } => {
+                    if style.id() == style_start_id && *anchor_type == AnchorType::End {
+                        ans = Some((style.as_ref().clone(), entity_index.saturating_sub(1)));
+                    }
+                    entity_index += 1;
+                }
+            }
+        });
+
         ans
     }
 

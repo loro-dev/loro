@@ -175,7 +175,8 @@ fn test_clear_redo() {
     // Make some edits
     text.update("hello", UpdateOptions::default()).unwrap();
     doc.commit_then_renew();
-    text.update("hello world", UpdateOptions::default()).unwrap();
+    text.update("hello world", UpdateOptions::default())
+        .unwrap();
     doc.commit_then_renew();
 
     // Undo to create redo stack
@@ -187,7 +188,10 @@ fn test_clear_redo() {
     // Clear only redo stack
     undo_manager.clear_redo();
     assert!(!undo_manager.can_redo(), "redo stack should be empty");
-    assert!(undo_manager.can_undo(), "undo stack should still have items");
+    assert!(
+        undo_manager.can_undo(),
+        "undo stack should still have items"
+    );
 
     // Verify undo still works
     undo_manager.undo().unwrap();
@@ -203,7 +207,8 @@ fn test_clear_undo() {
     // Make some edits
     text.update("hello", UpdateOptions::default()).unwrap();
     doc.commit_then_renew();
-    text.update("hello world", UpdateOptions::default()).unwrap();
+    text.update("hello world", UpdateOptions::default())
+        .unwrap();
     doc.commit_then_renew();
 
     // Undo to create redo stack
@@ -214,7 +219,10 @@ fn test_clear_undo() {
 
     // Clear only undo stack
     undo_manager.clear_undo();
-    assert!(undo_manager.can_redo(), "redo stack should still have items");
+    assert!(
+        undo_manager.can_redo(),
+        "redo stack should still have items"
+    );
     assert!(!undo_manager.can_undo(), "undo stack should be empty");
 
     // Verify redo still works

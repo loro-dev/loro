@@ -333,7 +333,9 @@ impl Actionable for TreeAction {
                     peer: before.0,
                     counter: before.1,
                 };
-                super::unwrap(tree.mov_before(target, before));
+                if let Err(LoroError::TreeError(e)) = tree.mov_before(target, before) {
+                    tracing::warn!("move before error {}", e);
+                }
                 None
             }
             TreeActionInner::MoveAfter { target, after } => {
@@ -345,7 +347,9 @@ impl Actionable for TreeAction {
                     peer: after.0,
                     counter: after.1,
                 };
-                super::unwrap(tree.mov_after(target, after));
+                if let Err(LoroError::TreeError(e)) = tree.mov_after(target, after) {
+                    tracing::warn!("move after error {}", e);
+                }
                 None
             }
             TreeActionInner::Meta { meta: (k, v) } => {
@@ -362,7 +366,7 @@ impl Actionable for TreeAction {
             }
             TreeActionInner::MetaDelete { key } => {
                 let meta = super::unwrap(tree.get_meta(target))?;
-                meta.delete(key);
+                let _ = meta.delete(key);
                 None
             }
             TreeActionInner::MetaClear => {

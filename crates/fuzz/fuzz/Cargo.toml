@@ -31,6 +31,12 @@ test = false
 doc = false
 
 [[bin]]
+name = "diff_calc"
+path = "fuzz_targets/diff_calc.rs"
+test = false
+doc = false
+
+[[bin]]
 name = "gc_fuzz"
 path = "fuzz_targets/gc_fuzz.rs"
 test = false

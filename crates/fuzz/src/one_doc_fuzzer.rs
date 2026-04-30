@@ -13,17 +13,65 @@ struct OneDocFuzzer {
     doc: LoroDoc,
     branches: Vec<Branch>,
     undo_managers: Vec<UndoManager>,
+    peer_seed: u64,
+    valid_targets: Vec<ContainerType>,
+}
+
+fn default_targets() -> Vec<ContainerType> {
+    vec![
+        ContainerType::Text,
+        ContainerType::List,
+        ContainerType::Map,
+        ContainerType::MovableList,
+        ContainerType::Tree,
+        ContainerType::Counter,
+    ]
 }
 
 impl OneDocFuzzer {
-    pub fn new(site_num: usize) -> Self {
+    pub fn new_with_peer_seed_and_targets(
+        site_num: usize,
+        peer_seed: u64,
+        valid_targets: Vec<ContainerType>,
+    ) -> Self {
+        assert!(!valid_targets.is_empty());
         let doc = LoroDoc::new();
         doc.set_detached_editing(true);
-        Self {
+        let mut fuzzer = Self {
             doc: doc.clone(),
             branches: (0..site_num).map(|_| Branch::default()).collect(),
             undo_managers: (0..site_num).map(|_| UndoManager::new(&doc)).collect(),
+            peer_seed,
+            valid_targets,
+        };
+        fuzzer.use_next_peer_id();
+        fuzzer
+    }
+
+    fn next_peer_id(&mut self) -> u64 {
+        self.peer_seed = self.peer_seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.peer_seed;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        let peer = z ^ (z >> 31);
+        if peer == u64::MAX {
+            0
+        } else {
+            peer
         }
+    }
+
+    fn use_next_peer_id(&mut self) {
+        let peer = self.next_peer_id();
+        self.doc.set_peer_id(peer).unwrap();
+    }
+
+    fn checkout(&mut self, frontiers: &Frontiers) -> loro::LoroResult<()> {
+        let result = self.doc.checkout(frontiers);
+        if result.is_ok() {
+            self.use_next_peer_id();
+        }
+        result
     }
 
     fn site_num(&self) -> usize {
@@ -53,17 +101,11 @@ impl OneDocFuzzer {
                 }
                 *site %= max_users;
                 let branch = &mut self.branches[*site as usize];
-                let valid_targets = [
-                    ContainerType::Text,
-                    ContainerType::List,
-                    ContainerType::Map,
-                    ContainerType::MovableList,
-                    ContainerType::Tree,
-                    ContainerType::Counter,
-                ];
-                *target %= valid_targets.len() as u8;
-                action.convert_to_inner(&valid_targets[*target as usize]);
-                self.doc.checkout(&branch.frontiers).unwrap();
+                *target %= self.valid_targets.len() as u8;
+                let target_ty = self.valid_targets[*target as usize];
+                action.convert_to_inner(&target_ty);
+                let frontiers = branch.frontiers.clone();
+                self.checkout(&frontiers).unwrap();
                 if let Some(action) = action.as_action_mut() {
                     match action {
                         crate::actions::ActionInner::Map(..) => {}
@@ -367,15 +409,7 @@ impl OneDocFuzzer {
             Action::Query { site, target, .. } => {
                 *site %= max_users;
                 // target maps to container type index
-                let valid_targets = [
-                    ContainerType::Text,
-                    ContainerType::List,
-                    ContainerType::Map,
-                    ContainerType::MovableList,
-                    ContainerType::Tree,
-                    ContainerType::Counter,
-                ];
-                *target %= valid_targets.len() as u8;
+                *target %= self.valid_targets.len() as u8;
             }
             Action::ExportShallow { site } => {
                 *site %= max_users;
@@ -402,9 +436,9 @@ impl OneDocFuzzer {
     fn apply_action(&mut self, action: &mut Action) {
         match action {
             Action::Handle { site, action, .. } => {
+                let branch_frontiers = self.branches[*site as usize].frontiers.clone();
+                self.checkout(&branch_frontiers).unwrap();
                 let doc = &mut self.doc;
-                let branch = &mut self.branches[*site as usize];
-                doc.checkout(&branch.frontiers).unwrap();
                 match action {
                     ActionWrapper::Action(action_inner) => match action_inner {
                         crate::actions::ActionInner::Map(map_action) => match map_action {
@@ -551,7 +585,11 @@ impl OneDocFuzzer {
                                         peer: before.0,
                                         counter: before.1,
                                     };
-                                    tree.mov_before(target, before).unwrap();
+                                    if let Err(LoroError::TreeError(e)) =
+                                        tree.mov_before(target, before)
+                                    {
+                                        tracing::warn!("move before error {}", e);
+                                    }
                                 }
                                 crate::container::TreeActionInner::MoveAfter { target, after } => {
                                     let target = TreeID {
@@ -562,7 +600,11 @@ impl OneDocFuzzer {
                                         peer: after.0,
                                         counter: after.1,
                                     };
-                                    tree.mov_after(target, after).unwrap();
+                                    if let Err(LoroError::TreeError(e)) =
+                                        tree.mov_after(target, after)
+                                    {
+                                        tracing::warn!("move after error {}", e);
+                                    }
                                 }
                                 crate::container::TreeActionInner::Meta { meta: (k, v) } => {
                                     let meta = tree.get_meta(target).unwrap();
@@ -615,12 +657,11 @@ impl OneDocFuzzer {
                 }
             }
             Action::Undo { site, op_len } => {
-                let undo = &mut self.undo_managers[*site as usize];
                 let undo_len = *op_len % 16;
-                if undo_len != 0 && undo.can_undo() {
-                    self.doc
-                        .checkout(&self.branches[*site as usize].frontiers)
-                        .unwrap();
+                if undo_len != 0 && self.undo_managers[*site as usize].can_undo() {
+                    let branch_frontiers = self.branches[*site as usize].frontiers.clone();
+                    self.checkout(&branch_frontiers).unwrap();
+                    let undo = &mut self.undo_managers[*site as usize];
                     for _ in 0..undo_len {
                         undo.undo().unwrap();
                     }
@@ -633,12 +674,11 @@ impl OneDocFuzzer {
                 for b in self.branches.iter_mut() {
                     b.frontiers = f.clone();
                 }
-                let undo = &mut self.undo_managers[*site as usize];
                 let undo_len = *op_len % 8;
-                if undo_len != 0 && undo.can_undo() {
-                    self.doc
-                        .checkout(&self.branches[*site as usize].frontiers)
-                        .unwrap();
+                if undo_len != 0 && self.undo_managers[*site as usize].can_undo() {
+                    let branch_frontiers = self.branches[*site as usize].frontiers.clone();
+                    self.checkout(&branch_frontiers).unwrap();
+                    let undo = &mut self.undo_managers[*site as usize];
                     for _ in 0..undo_len {
                         undo.undo().unwrap();
                     }
@@ -646,7 +686,7 @@ impl OneDocFuzzer {
                     undo.clear();
                 }
             }
-            Action::ForkAt { site, to } => {
+            Action::ForkAt { site, to: _ } => {
                 let frontiers = self.branches[*site as usize].frontiers.clone();
                 let _forked = self.doc.fork_at(&frontiers);
             }
@@ -654,7 +694,11 @@ impl OneDocFuzzer {
                 let from_frontiers = self.branches[*from as usize].frontiers.clone();
                 let to_frontiers = self.branches[*to as usize].frontiers.clone();
                 if let Ok(diff) = self.doc.diff(&from_frontiers, &to_frontiers) {
-                    let _ = self.doc.apply_diff(diff);
+                    let before_apply = self.doc.state_frontiers();
+                    let result = self.doc.apply_diff(diff);
+                    if result.is_ok() || self.doc.state_frontiers() != before_apply {
+                        self.doc.commit();
+                    }
                 }
             }
             Action::Query {
@@ -662,17 +706,9 @@ impl OneDocFuzzer {
                 target,
                 query_type,
             } => {
-                let branch = &self.branches[*site as usize];
-                self.doc.checkout(&branch.frontiers).unwrap();
-                let valid_targets = [
-                    ContainerType::Text,
-                    ContainerType::List,
-                    ContainerType::Map,
-                    ContainerType::MovableList,
-                    ContainerType::Tree,
-                    ContainerType::Counter,
-                ];
-                let ty = valid_targets[*target as usize % valid_targets.len()];
+                let branch_frontiers = self.branches[*site as usize].frontiers.clone();
+                self.checkout(&branch_frontiers).unwrap();
+                let ty = self.valid_targets[*target as usize % self.valid_targets.len()];
                 match ty {
                     ContainerType::Text => {
                         let text = self.doc.get_text("text");
@@ -800,8 +836,8 @@ impl OneDocFuzzer {
                 }
             }
             Action::ExportShallow { site } => {
-                let branch = &self.branches[*site as usize];
-                self.doc.checkout(&branch.frontiers).unwrap();
+                let branch_frontiers = self.branches[*site as usize].frontiers.clone();
+                self.checkout(&branch_frontiers).unwrap();
                 let f = self.doc.oplog_frontiers();
                 if !f.is_empty() {
                     let _ = self.doc.export(loro::ExportMode::shallow_snapshot(&f));
@@ -809,25 +845,38 @@ impl OneDocFuzzer {
             }
             Action::ImportShallow { site, from } => {
                 let from_frontiers = self.branches[*from as usize].frontiers.clone();
-                self.doc.checkout(&from_frontiers).unwrap();
+                self.checkout(&from_frontiers).unwrap();
                 let f = self.doc.oplog_frontiers();
                 if !f.is_empty() {
                     if let Ok(bytes) = self.doc.export(loro::ExportMode::shallow_snapshot(&f)) {
                         let site_frontiers = self.branches[*site as usize].frontiers.clone();
-                        self.doc.checkout(&site_frontiers).unwrap();
+                        self.checkout(&site_frontiers).unwrap();
                         let _ = self.doc.import(&bytes);
                     }
                 }
             }
             Action::StateOnlyRoundTrip { site } => {
-                let branch = &self.branches[*site as usize];
-                self.doc.checkout(&branch.frontiers).unwrap();
+                let branch_frontiers = self.branches[*site as usize].frontiers.clone();
+                self.checkout(&branch_frontiers).unwrap();
                 let f = self.doc.state_frontiers();
                 if !f.is_empty() {
                     if let Ok(bytes) = self.doc.export(loro::ExportMode::state_only(Some(&f))) {
                         let new_doc = LoroDoc::new();
                         if new_doc.import(&bytes).is_ok() {
-                            assert_eq!(new_doc.get_deep_value(), self.doc.get_deep_value());
+                            let imported = new_doc.get_deep_value();
+                            let current = self.doc.get_deep_value();
+                            assert_eq!(
+                                imported,
+                                current,
+                                "site={site} state_frontiers={:?} oplog_frontiers={:?} oplog_vv={:?} imported_frontiers={:?} imported_vv={:?} shallow_frontiers={:?} shallow_vv={:?}",
+                                self.doc.state_frontiers(),
+                                self.doc.oplog_frontiers(),
+                                self.doc.oplog_vv(),
+                                new_doc.oplog_frontiers(),
+                                new_doc.oplog_vv(),
+                                new_doc.shallow_since_frontiers(),
+                                new_doc.shallow_since_vv()
+                            );
                         }
                     }
                 }
@@ -836,8 +885,8 @@ impl OneDocFuzzer {
                 self.doc.commit();
             }
             Action::SetCommitOptions { site, origin, msg } => {
-                let branch = &self.branches[*site as usize];
-                self.doc.checkout(&branch.frontiers).unwrap();
+                let branch_frontiers = self.branches[*site as usize].frontiers.clone();
+                self.checkout(&branch_frontiers).unwrap();
                 let origins = ["fuzz", "test", "a", "b", "c", "d", "e", "f"];
                 self.doc
                     .set_next_commit_origin(origins[*origin as usize % origins.len()]);
@@ -848,18 +897,43 @@ impl OneDocFuzzer {
         }
     }
 
-    fn check_sync(&self) {
+    fn check_sync(&mut self) {
         self.doc.checkout_to_latest();
+        self.use_next_peer_id();
         self.doc.check_state_correctness_slow();
-        for b in self.branches.iter() {
-            self.doc.checkout(&b.frontiers).unwrap();
+        for i in 0..self.branches.len() {
+            let frontiers = self.branches[i].frontiers.clone();
+            self.checkout(&frontiers).unwrap();
             self.doc.check_state_correctness_slow();
         }
     }
 }
 
 pub fn test_multi_sites_on_one_doc(site_num: u8, actions: &mut [Action]) {
-    let mut fuzzer = OneDocFuzzer::new(site_num as usize);
+    test_multi_sites_on_one_doc_with_peer_seed(site_num, 0, actions);
+}
+
+pub fn test_multi_sites_on_one_doc_with_peer_seed(
+    site_num: u8,
+    peer_seed: u64,
+    actions: &mut [Action],
+) {
+    test_multi_sites_on_one_doc_with_peer_seed_and_targets(
+        site_num,
+        peer_seed,
+        default_targets(),
+        actions,
+    );
+}
+
+pub fn test_multi_sites_on_one_doc_with_peer_seed_and_targets(
+    site_num: u8,
+    peer_seed: u64,
+    valid_targets: Vec<ContainerType>,
+    actions: &mut [Action],
+) {
+    let mut fuzzer =
+        OneDocFuzzer::new_with_peer_seed_and_targets(site_num as usize, peer_seed, valid_targets);
     let mut applied = Vec::new();
     for action in actions.iter_mut() {
         fuzzer.pre_process(action);

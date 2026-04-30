@@ -1074,7 +1074,13 @@ impl AppDag {
                 } else {
                     let mut all_deps_processed = true;
                     for id in top_node.deps.iter() {
-                        let node = self.get(id).expect("deps should be in the dag");
+                        let Some(node) = self.get(id) else {
+                            if self.shallow_since_vv.includes_id(id) {
+                                continue;
+                            }
+
+                            panic!("deps should be in the dag");
+                        };
                         if node.vv.get().is_none() {
                             if all_deps_processed {
                                 stack.push(top_node.clone());
@@ -1090,7 +1096,14 @@ impl AppDag {
                     }
 
                     for id in top_node.deps.iter() {
-                        let node = self.get(id).expect("deps should be in the dag");
+                        let Some(node) = self.get(id) else {
+                            if self.shallow_since_vv.includes_id(id) {
+                                ans_vv.extend_to_include_vv(self.shallow_since_vv.iter());
+                                continue;
+                            }
+
+                            panic!("deps should be in the dag");
+                        };
                         let dep_vv = node.vv.get().unwrap();
                         if ans_vv.is_empty() {
                             ans_vv = dep_vv.clone();

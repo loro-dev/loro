@@ -15,11 +15,12 @@ use fuzz::{
         FuzzTarget,
         FuzzValue::*,
     },
-    fuzz_local_events, test_multi_sites_on_one_doc, test_multi_sites_with_gc,
+    fuzz_local_events, test_multi_sites_on_one_doc, test_multi_sites_on_one_doc_with_peer_seed,
+    test_multi_sites_with_gc,
 };
-use loro::{ContainerType::*, ExportMode, LoroCounter, LoroDoc};
+use loro::{ContainerID, ContainerType::*, ExportMode, LoroCounter, LoroDoc, LoroError};
 use loro_without_counter::ContainerTrait as _;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 #[ctor::ctor]
 fn init() {
@@ -132,6 +133,67 @@ fn all_fuzz_state_only_before_shallow_root() {
             SyncAll,
             SyncAll,
             StateOnlyRoundTrip { site: 15 },
+        ],
+    )
+}
+
+#[test]
+fn one_doc_tree_move_before_cycle_error_is_ignored() {
+    test_multi_sites_on_one_doc(
+        5,
+        &mut [
+            Handle {
+                site: 0,
+                target: 4,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 0,
+                    prop: 0,
+                }),
+            },
+            Handle {
+                site: 0,
+                target: 4,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 0,
+                    prop: 0,
+                }),
+            },
+            Handle {
+                site: 0,
+                target: 4,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 0,
+                    pos: 1,
+                    length: 0,
+                    prop: 2,
+                }),
+            },
+            Handle {
+                site: 0,
+                target: 4,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 1,
+                    prop: 4,
+                }),
+            },
         ],
     )
 }
@@ -8688,6 +8750,1446 @@ fn diff_calc_fuzz_err_3() {
                     prop: 18764998447377,
                 }),
             },
+        ],
+    )
+}
+
+#[test]
+fn diff_calc_text_lca_biased_regression() {
+    fn text_handle(site: u8, prop: u64, pos: usize, length: usize) -> Action {
+        Handle {
+            site,
+            target: 0,
+            container: 0,
+            action: Generic(GenericAction {
+                value: I32(length as i32),
+                bool: false,
+                key: prop as u32,
+                pos,
+                length,
+                prop,
+            }),
+        }
+    }
+
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::Text],
+        &mut [
+            text_handle(0, 0, 0, 10),
+            text_handle(0, 0, 1, 20),
+            Sync { from: 0, to: 1 },
+            Sync { from: 0, to: 2 },
+            text_handle(0, 1, 1, 1),
+            text_handle(0, 2, 0, 2),
+            text_handle(1, 0, 0, 100),
+            text_handle(1, 7, 1, 3),
+            text_handle(2, 0, 0, 200),
+            text_handle(2, 4, 0, 300),
+            DiffApply { from: 0, to: 1 },
+            Checkout { site: 1, to: 1 },
+            ForkAt { site: 2, to: 2 },
+            ImportShallow { site: 3, from: 0 },
+            DiffApply { from: 3, to: 1 },
+            Sync { from: 0, to: 3 },
+            text_handle(3, 6, 0, 1),
+            ExportShallow { site: 1 },
+            StateOnlyRoundTrip { site: 0 },
+            SyncAll,
+            DiffApply { from: 4, to: 0 },
+            SyncAll,
+        ],
+    )
+}
+
+fn diff_calc_lca_biased_actions(actions: Vec<Action>) -> Vec<Action> {
+    let mut biased = Vec::with_capacity(actions.len().saturating_mul(2).min(128));
+    for (i, action) in actions.into_iter().take(48).enumerate() {
+        biased.push(action);
+
+        let site = ((i * 37) % 251) as u8;
+        let other = site.wrapping_add(1);
+        let version = (i as u32).wrapping_mul(97);
+        let injected = match i % 8 {
+            0 => Action::Sync {
+                from: site,
+                to: other,
+            },
+            1 => Action::DiffApply {
+                from: site,
+                to: other,
+            },
+            2 => Action::Checkout { site, to: version },
+            3 => Action::ForkAt { site, to: version },
+            4 => Action::ImportShallow { site, from: other },
+            5 => Action::ExportShallow { site },
+            6 => Action::StateOnlyRoundTrip { site },
+            _ => Action::Commit { site },
+        };
+        biased.push(injected);
+    }
+
+    biased
+}
+
+#[test]
+fn diff_calc_text_shallow_partial_delete_state_only_regression() {
+    let mut actions = diff_calc_lca_biased_actions(vec![
+        SyncAll,
+        Handle {
+            site: 0,
+            target: 0,
+            container: 107,
+            action: Generic(GenericAction {
+                value: Container(Map),
+                bool: true,
+                key: 2981738929,
+                pos: 234368343062969,
+                length: 10489240066702020864,
+                prop: 10510998633284997521,
+            }),
+        },
+        DiffApply { from: 145, to: 145 },
+        SyncAllUndo {
+            site: 145,
+            op_len: 2442236305,
+        },
+        DiffApply { from: 145, to: 145 },
+        DiffApply { from: 145, to: 107 },
+        SyncAll,
+        Handle {
+            site: 0,
+            target: 255,
+            container: 255,
+            action: Generic(GenericAction {
+                value: Container(Unknown(0)),
+                bool: false,
+                key: 4294967253,
+                pos: 13961544589419610111,
+                length: 10489324899457679809,
+                prop: 10489238200097457195,
+            }),
+        },
+        Commit { site: 145 },
+        DiffApply { from: 145, to: 222 },
+        DiffApply { from: 145, to: 145 },
+        DiffApply { from: 145, to: 145 },
+        DiffApply { from: 222, to: 145 },
+        DiffApply { from: 145, to: 145 },
+        SyncAllUndo {
+            site: 145,
+            op_len: 2442236305,
+        },
+        DiffApply { from: 145, to: 145 },
+        DiffApply { from: 145, to: 107 },
+        SyncAll,
+        Handle {
+            site: 0,
+            target: 255,
+            container: 255,
+            action: Generic(GenericAction {
+                value: Container(Counter),
+                bool: true,
+                key: 4294967295,
+                pos: 18446675634996717601,
+                length: 940423290353090559,
+                prop: 940422246894996749,
+            }),
+        },
+        DiffApply { from: 145, to: 145 },
+        Commit { site: 145 },
+        DiffApply { from: 145, to: 145 },
+        DiffApply { from: 37, to: 107 },
+        Handle {
+            site: 0,
+            target: 0,
+            container: 51,
+            action: Generic(GenericAction {
+                value: I32(0),
+                bool: false,
+                key: 0,
+                pos: 0,
+                length: 0,
+                prop: 0,
+            }),
+        },
+    ]);
+
+    test_multi_sites(5, vec![FuzzTarget::Text], &mut actions)
+}
+
+#[test]
+fn diff_calc_text_state_only_target_state_delta_regression() {
+    let mut actions = diff_calc_lca_biased_actions(vec![
+        Handle {
+            site: 50,
+            target: 11,
+            container: 11,
+            action: Generic(GenericAction {
+                value: Container(Tree),
+                bool: true,
+                key: 1074771381,
+                pos: 11619076483642895195,
+                length: 10923366098549577594,
+                prop: 14250796595886039674,
+            }),
+        },
+        Handle {
+            site: 0,
+            target: 48,
+            container: 102,
+            action: Generic(GenericAction {
+                value: I32(0),
+                bool: true,
+                key: 2644362693,
+                pos: 11357407136651739293,
+                length: 1683503609540921722,
+                prop: 7382525687876616192,
+            }),
+        },
+        DiffApply { from: 39, to: 190 },
+        SetCommitOptions {
+            site: 255,
+            origin: 254,
+            msg: 249,
+        },
+        DiffApply { from: 11, to: 11 },
+        Handle {
+            site: 121,
+            target: 121,
+            container: 121,
+            action: Generic(GenericAction {
+                value: Container(List),
+                bool: true,
+                key: 1802201899,
+                pos: 13910329915888855935,
+                length: 7740398493640649563,
+                prop: 4340356560781419,
+            }),
+        },
+        SyncAll,
+        SyncAll,
+        SyncAll,
+        SyncAll,
+        Handle {
+            site: 3,
+            target: 136,
+            container: 107,
+            action: Generic(GenericAction {
+                value: Container(Text),
+                bool: false,
+                key: 1536884736,
+                pos: 1080864967130854165,
+                length: 313532612608,
+                prop: 18446659501508528384,
+            }),
+        },
+        Handle {
+            site: 52,
+            target: 52,
+            container: 52,
+            action: Generic(GenericAction {
+                value: I32(589824),
+                bool: false,
+                key: 589824,
+                pos: 269380348805120,
+                length: 3761688987579973647,
+                prop: 150994944,
+            }),
+        },
+        Handle {
+            site: 0,
+            target: 0,
+            container: 0,
+            action: Generic(GenericAction {
+                value: I32(65535),
+                bool: true,
+                key: 3318072772,
+                pos: 18430354503300924869,
+                length: 4467548590027359531,
+                prop: 9476562491464173885,
+            }),
+        },
+        DiffApply { from: 131, to: 131 },
+        SyncAll,
+        Handle {
+            site: 0,
+            target: 0,
+            container: 0,
+            action: Generic(GenericAction {
+                value: I32(0),
+                bool: false,
+                key: 0,
+                pos: 0,
+                length: 0,
+                prop: 0,
+            }),
+        },
+    ]);
+
+    test_multi_sites(5, vec![FuzzTarget::Text], &mut actions)
+}
+
+#[test]
+fn diff_calc_text_lca_crash_246468929277f72f() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::Text],
+        &mut [
+            Handle {
+                site: 46,
+                target: 32,
+                container: 130,
+                action: Generic(GenericAction {
+                    value: I32(939524287),
+                    bool: false,
+                    key: 4294967287,
+                    pos: 10016005571271983106,
+                    length: 18446742974198019702,
+                    prop: 3387553543993819034,
+                }),
+            },
+            Sync { from: 0, to: 1 },
+            Handle {
+                site: 2,
+                target: 243,
+                container: 255,
+                action: Generic(GenericAction {
+                    value: Container(Map),
+                    bool: false,
+                    key: 3570717697,
+                    pos: 144680349937369088,
+                    length: 18446464806379717122,
+                    prop: 513691898498514943,
+                }),
+            },
+            DiffApply { from: 37, to: 38 },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 0,
+                    prop: 0,
+                }),
+            },
+            Checkout { site: 74, to: 194 },
+        ],
+    )
+}
+
+#[test]
+fn diff_calc_text_rollback_with_sliced_concurrent_insert_regression() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::Text],
+        &mut [
+            Handle {
+                site: 0,
+                target: 17,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(-184602613),
+                    bool: false,
+                    key: 1414812741,
+                    pos: 6076574518398440532,
+                    length: 464807907718091860,
+                    prop: 12080808962634274303,
+                }),
+            },
+            Sync { from: 0, to: 1 },
+            Handle {
+                site: 3,
+                target: 190,
+                container: 238,
+                action: Generic(GenericAction {
+                    value: Container(Tree),
+                    bool: true,
+                    key: 3187870631,
+                    pos: 797321472558737319,
+                    length: 12080808863958810115,
+                    prop: 12080833445734360999,
+                }),
+            },
+            DiffApply { from: 37, to: 38 },
+            Handle {
+                site: 11,
+                target: 3,
+                container: 190,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 0,
+                    prop: 0,
+                }),
+            },
+            Checkout { site: 74, to: 194 },
+        ],
+    )
+}
+
+#[test]
+fn diff_calc_text_checkout_then_splice_position_regression() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::Text],
+        &mut [
+            Handle {
+                site: 94,
+                target: 193,
+                container: 44,
+                action: Generic(GenericAction {
+                    value: I32(-12845057),
+                    bool: true,
+                    key: 16777215,
+                    pos: 7366546743523016704,
+                    length: 14788478684628962674,
+                    prop: 4268070197446523707,
+                }),
+            },
+            Sync { from: 0, to: 1 },
+            StateOnlyRoundTrip { site: 205 },
+            DiffApply { from: 37, to: 38 },
+            Sync { from: 88, to: 94 },
+            Checkout { site: 74, to: 194 },
+            Handle {
+                site: 59,
+                target: 205,
+                container: 205,
+                action: Generic(GenericAction {
+                    value: I32(-1144177861),
+                    bool: true,
+                    key: 990039486,
+                    pos: 15564440312192434177,
+                    length: 13748851727568419771,
+                    prop: 14788479554049213133,
+                }),
+            },
+            ForkAt { site: 111, to: 291 },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 0,
+                    prop: 0,
+                }),
+            },
+            ImportShallow {
+                site: 148,
+                from: 149,
+            },
+        ],
+    )
+}
+
+#[test]
+fn diff_calc_text_update_tracker_regression() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::Text],
+        &mut [
+            Handle {
+                site: 102,
+                target: 13,
+                container: 114,
+                action: Generic(GenericAction {
+                    value: I32(-12573),
+                    bool: true,
+                    key: 3825205247,
+                    pos: 17870283321406115343,
+                    length: 11646817304741675007,
+                    prop: 11659273617933336335,
+                }),
+            },
+            Sync { from: 0, to: 1 },
+            Handle {
+                site: 4,
+                target: 97,
+                container: 137,
+                action: Generic(GenericAction {
+                    value: I32(3618560),
+                    bool: false,
+                    key: 4278190080,
+                    pos: 11646768017753543804,
+                    length: 12686045370614353259,
+                    prop: 4991472726644998155,
+                }),
+            },
+            DiffApply { from: 37, to: 38 },
+            Sync { from: 85, to: 85 },
+            Checkout { site: 74, to: 194 },
+            Sync { from: 85, to: 85 },
+            ForkAt { site: 111, to: 291 },
+            DiffApply { from: 129, to: 129 },
+            ImportShallow {
+                site: 148,
+                from: 149,
+            },
+            DiffApply { from: 129, to: 129 },
+            ExportShallow { site: 185 },
+            SyncAllUndo {
+                site: 69,
+                op_len: 4294788595,
+            },
+            StateOnlyRoundTrip { site: 222 },
+            SetCommitOptions {
+                site: 213,
+                origin: 185,
+                msg: 185,
+            },
+            Commit { site: 8 },
+            ImportShallow {
+                site: 161,
+                from: 115,
+            },
+            Sync { from: 45, to: 46 },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 0,
+                    prop: 0,
+                }),
+            },
+            DiffApply { from: 82, to: 83 },
+        ],
+    )
+}
+
+#[test]
+fn diff_calc_text_shallow_split_style_end_regression() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::Text],
+        &mut [
+            SyncAll,
+            Sync { from: 0, to: 1 },
+            Handle {
+                site: 1,
+                target: 1,
+                container: 1,
+                action: Generic(GenericAction {
+                    value: I32(16843009),
+                    bool: true,
+                    key: 3520188881,
+                    pos: 15119096123158024657,
+                    length: 14106333700171092433,
+                    prop: 14106333089244627907,
+                }),
+            },
+            DiffApply { from: 37, to: 38 },
+            DiffApply { from: 195, to: 1 },
+            Checkout { site: 74, to: 194 },
+            Handle {
+                site: 1,
+                target: 1,
+                container: 53,
+                action: Generic(GenericAction {
+                    value: I32(16843009),
+                    bool: true,
+                    key: 19792129,
+                    pos: 72340172838076673,
+                    length: 3314931904544833793,
+                    prop: 1953167796008487780,
+                }),
+            },
+            ForkAt { site: 111, to: 291 },
+            ImportShallow {
+                site: 195,
+                from: 195,
+            },
+            ImportShallow {
+                site: 148,
+                from: 149,
+            },
+            ForkAt {
+                site: 115,
+                to: 1936946035,
+            },
+            ExportShallow { site: 185 },
+            Checkout {
+                site: 65,
+                to: 16843009,
+            },
+            StateOnlyRoundTrip { site: 222 },
+            Handle {
+                site: 1,
+                target: 1,
+                container: 1,
+                action: Generic(GenericAction {
+                    value: Container(Counter),
+                    bool: true,
+                    key: 16841217,
+                    pos: 72340172838076673,
+                    length: 72340172841484545,
+                    prop: 72340172838076673,
+                }),
+            },
+            Commit { site: 8 },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 0,
+                    prop: 0,
+                }),
+            },
+            Sync { from: 45, to: 46 },
+        ],
+    )
+}
+
+#[test]
+fn diff_calc_text_shallow_export_clamps_start_regression() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::Text],
+        &mut [
+            SyncAll,
+            Sync { from: 0, to: 1 },
+            Handle {
+                site: 0,
+                target: 129,
+                container: 95,
+                action: Generic(GenericAction {
+                    value: Container(MovableList),
+                    bool: true,
+                    key: 2172748161,
+                    pos: 9331882296112087425,
+                    length: 9331882296112152961,
+                    prop: 9331882296111890817,
+                }),
+            },
+            DiffApply { from: 37, to: 38 },
+            ImportShallow {
+                site: 199,
+                from: 199,
+            },
+            Checkout { site: 74, to: 194 },
+            Handle {
+                site: 129,
+                target: 129,
+                container: 3,
+                action: Generic(GenericAction {
+                    value: Container(Unknown(255)),
+                    bool: true,
+                    key: 2172748287,
+                    pos: 9548055078225674625,
+                    length: 9331891092204913025,
+                    prop: 9331882296111890821,
+                }),
+            },
+            ForkAt { site: 111, to: 291 },
+            DiffApply { from: 129, to: 255 },
+            ImportShallow {
+                site: 148,
+                from: 149,
+            },
+            SetCommitOptions {
+                site: 255,
+                origin: 251,
+                msg: 255,
+            },
+            ExportShallow { site: 185 },
+        ],
+    )
+}
+
+#[test]
+fn diff_calc_text_tracker_after_diff_apply_regression() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::Text],
+        &mut [
+            SyncAll,
+            Sync { from: 0, to: 1 },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(1800732672),
+                    bool: true,
+                    key: 1802174471,
+                    pos: 9325641373152144235,
+                    length: 7242212069011980673,
+                    prop: 6174271723265851391,
+                }),
+            },
+            DiffApply { from: 37, to: 38 },
+            Handle {
+                site: 141,
+                target: 3,
+                container: 97,
+                action: Generic(GenericAction {
+                    value: Container(MovableList),
+                    bool: true,
+                    key: 4287718529,
+                    pos: 4611685380279500799,
+                    length: 288230373237456895,
+                    prop: 128837181699,
+                }),
+            },
+            Checkout { site: 74, to: 194 },
+            Query {
+                site: 149,
+                target: 149,
+                query_type: 149,
+            },
+            ForkAt { site: 111, to: 291 },
+            Query {
+                site: 149,
+                target: 149,
+                query_type: 149,
+            },
+            ImportShallow {
+                site: 148,
+                from: 149,
+            },
+            Query {
+                site: 149,
+                target: 149,
+                query_type: 149,
+            },
+            ExportShallow { site: 185 },
+            DiffApply { from: 129, to: 129 },
+            StateOnlyRoundTrip { site: 222 },
+            DiffApply { from: 129, to: 129 },
+            Commit { site: 8 },
+            DiffApply { from: 129, to: 129 },
+            Sync { from: 45, to: 46 },
+            Handle {
+                site: 129,
+                target: 255,
+                container: 107,
+                action: Generic(GenericAction {
+                    value: Container(Unknown(255)),
+                    bool: true,
+                    key: 1811939327,
+                    pos: 9346575856848732149,
+                    length: 10127809810591351169,
+                    prop: 9331870154437528973,
+                }),
+            },
+            DiffApply { from: 82, to: 83 },
+            Sync { from: 209, to: 209 },
+            Checkout { site: 119, to: 970 },
+            SetCommitOptions {
+                site: 141,
+                origin: 141,
+                msg: 141,
+            },
+            ForkAt {
+                site: 156,
+                to: 1067,
+            },
+            DiffApply { from: 141, to: 177 },
+            ImportShallow {
+                site: 193,
+                from: 194,
+            },
+        ],
+    )
+}
+
+#[test]
+fn shallow_snapshot_import_notifies_text_subscription() {
+    let source = LoroDoc::new();
+    let text = source.get_text("text");
+    text.insert(0, "[7242212069011980673]").unwrap();
+    text.insert(text.len_unicode(), "[288230373237456895]")
+        .unwrap();
+    text.insert(text.len_unicode(), "[10127809810591351169]")
+        .unwrap();
+    source.commit();
+
+    let target = LoroDoc::new();
+    let seen = Arc::new(Mutex::new(0usize));
+    let seen_in_sub = seen.clone();
+    target
+        .subscribe(
+            &ContainerID::new_root("text", Text),
+            Arc::new(move |event| {
+                *seen_in_sub.lock().unwrap() += event.events.len();
+            }),
+        )
+        .detach();
+    let _ = target.get_text("text");
+
+    let bytes = source
+        .export(ExportMode::shallow_snapshot(&source.oplog_frontiers()))
+        .unwrap();
+    target.import(&bytes).unwrap();
+
+    assert_eq!(
+        target.get_text("text").to_string(),
+        source.get_text("text").to_string()
+    );
+    assert_ne!(*seen.lock().unwrap(), 0);
+}
+
+#[test]
+fn failed_shallow_snapshot_import_keeps_text_subscription_recording() {
+    let a = LoroDoc::new();
+    a.set_peer_id(0).unwrap();
+    a.get_text("text")
+        .insert(0, "[7242212069011980673]")
+        .unwrap();
+    a.commit();
+
+    let b = LoroDoc::new();
+    b.set_peer_id(1).unwrap();
+    b.get_text("text")
+        .insert(0, "[288230373237456895]")
+        .unwrap();
+    b.commit();
+
+    let c = LoroDoc::new();
+    c.set_peer_id(4).unwrap();
+    c.get_text("text")
+        .insert(0, "[10127809810591351169]")
+        .unwrap();
+    c.commit();
+    c.import(&a.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    c.import(&b.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+
+    let target = LoroDoc::new();
+    let seen = Arc::new(Mutex::new(0usize));
+    let seen_in_sub = seen.clone();
+    target
+        .subscribe(
+            &ContainerID::new_root("text", Text),
+            Arc::new(move |event| {
+                *seen_in_sub.lock().unwrap() += event.events.len();
+            }),
+        )
+        .detach();
+    let _ = target.get_text("text");
+
+    let bytes = c
+        .export(ExportMode::shallow_snapshot(&c.oplog_frontiers()))
+        .unwrap();
+    assert!(matches!(
+        target.import(&bytes),
+        Err(LoroError::SwitchToVersionBeforeShallowRoot)
+    ));
+
+    let json = c.export_json_updates(&Default::default(), &c.oplog_vv());
+    target.import_json_updates(json).unwrap();
+    assert_eq!(
+        target.get_text("text").to_string(),
+        c.get_text("text").to_string()
+    );
+    assert_ne!(*seen.lock().unwrap(), 0);
+}
+
+#[test]
+fn diff_calc_text_state_only_after_undo_regression() {
+    test_multi_sites_on_one_doc_with_peer_seed(
+        5,
+        0x689d_de15_de3a_9ddc,
+        &mut [
+            Handle {
+                site: 17,
+                target: 255,
+                container: 255,
+                action: Generic(GenericAction {
+                    value: Container(List),
+                    bool: true,
+                    key: 1802201963,
+                    pos: 7740329224441654123,
+                    length: 7740398493674204011,
+                    prop: 7740398493674204011,
+                }),
+            },
+            Sync { from: 0, to: 1 },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: Container(Tree),
+                    bool: true,
+                    key: 4294914303,
+                    pos: 7740561856774864895,
+                    length: 2951253807997335659,
+                    prop: 4297100540780611861,
+                }),
+            },
+            DiffApply { from: 37, to: 38 },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: Container(Unknown(88)),
+                    bool: false,
+                    key: 1799444692,
+                    pos: 7740398493674204011,
+                    length: 7740398223091264363,
+                    prop: 7740398493674138475,
+                }),
+            },
+            Checkout { site: 74, to: 194 },
+            SyncAll,
+            ForkAt { site: 111, to: 291 },
+            SyncAll,
+            ImportShallow {
+                site: 148,
+                from: 149,
+            },
+            Handle {
+                site: 107,
+                target: 3,
+                container: 174,
+                action: Generic(GenericAction {
+                    value: Container(Unknown(255)),
+                    bool: true,
+                    key: 16777215,
+                    pos: 280480043325875,
+                    length: 7740561856774799360,
+                    prop: 2951253807997335659,
+                }),
+            },
+            ExportShallow { site: 185 },
+            Handle {
+                site: 115,
+                target: 102,
+                container: 94,
+                action: Generic(GenericAction {
+                    value: I32(31),
+                    bool: false,
+                    key: 3573547008,
+                    pos: 4268213989382922846,
+                    length: 5690226776453947,
+                    prop: 4268070707552569852,
+                }),
+            },
+            StateOnlyRoundTrip { site: 222 },
+            SyncAllUndo {
+                site: 59,
+                op_len: 3443211067,
+            },
+            Commit { site: 8 },
+            StateOnlyRoundTrip { site: 195 },
+            Sync { from: 45, to: 46 },
+            Commit { site: 195 },
+            DiffApply { from: 82, to: 83 },
+        ],
+    )
+}
+
+#[test]
+fn diff_calc_text_shallow_trimmed_deps_lca_regression() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::Text],
+        &mut [
+            Handle {
+                site: 82,
+                target: 82,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(131072),
+                    bool: false,
+                    key: 5373952,
+                    pos: 6004234347672895488,
+                    length: 11357130451341398481,
+                    prop: 11644104115566411873,
+                }),
+            },
+            Sync { from: 0, to: 1 },
+            SyncAllUndo {
+                site: 37,
+                op_len: 185310621,
+            },
+            DiffApply { from: 37, to: 38 },
+            Sync { from: 36, to: 146 },
+            Checkout { site: 74, to: 194 },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: Container(Unknown(255)),
+                    bool: true,
+                    key: 2113929471,
+                    pos: 7033950412504562129,
+                    length: 11646767317412478976,
+                    prop: 7885201674638920353,
+                }),
+            },
+            ForkAt { site: 111, to: 291 },
+            SyncAll,
+            ImportShallow {
+                site: 148,
+                from: 149,
+            },
+            SyncAll,
+            ExportShallow { site: 185 },
+            Handle {
+                site: 0,
+                target: 109,
+                container: 147,
+                action: Generic(GenericAction {
+                    value: I32(755031808),
+                    bool: true,
+                    key: 1162167621,
+                    pos: 7740398495797169455,
+                    length: 1157443155982815248,
+                    prop: 17666513099442622480,
+                }),
+            },
+            StateOnlyRoundTrip { site: 222 },
+            Handle {
+                site: 16,
+                target: 16,
+                container: 16,
+                action: Generic(GenericAction {
+                    value: I32(269488144),
+                    bool: false,
+                    key: 4113305616,
+                    pos: 7740398493674204131,
+                    length: 2913105066323845023,
+                    prop: 18446744073709551519,
+                }),
+            },
+            Commit { site: 8 },
+            SetCommitOptions {
+                site: 255,
+                origin: 255,
+                msg: 255,
+            },
+            Sync { from: 45, to: 46 },
+            SetCommitOptions {
+                site: 255,
+                origin: 255,
+                msg: 255,
+            },
+            DiffApply { from: 82, to: 83 },
+            SetCommitOptions {
+                site: 255,
+                origin: 255,
+                msg: 255,
+            },
+            Checkout { site: 119, to: 970 },
+            SetCommitOptions {
+                site: 255,
+                origin: 255,
+                msg: 255,
+            },
+            ForkAt {
+                site: 156,
+                to: 1067,
+            },
+            SetCommitOptions {
+                site: 255,
+                origin: 255,
+                msg: 255,
+            },
+            ImportShallow {
+                site: 193,
+                from: 194,
+            },
+            SetCommitOptions {
+                site: 109,
+                origin: 109,
+                msg: 109,
+            },
+            ExportShallow { site: 230 },
+            SetCommitOptions {
+                site: 147,
+                origin: 0,
+                msg: 0,
+            },
+            StateOnlyRoundTrip { site: 16 },
+        ],
+    )
+}
+
+#[test]
+fn diff_calc_text_shallow_seed_split_unknown_regression() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::Text],
+        &mut [
+            SyncAll,
+            Sync { from: 0, to: 1 },
+            Handle {
+                site: 0,
+                target: 129,
+                container: 95,
+                action: Generic(GenericAction {
+                    value: Container(MovableList),
+                    bool: true,
+                    key: 2172748161,
+                    pos: 9331882296112087425,
+                    length: 9331882296112152961,
+                    prop: 9331882296111890817,
+                }),
+            },
+            DiffApply { from: 37, to: 38 },
+            ImportShallow {
+                site: 199,
+                from: 199,
+            },
+            Checkout { site: 74, to: 194 },
+            Handle {
+                site: 129,
+                target: 129,
+                container: 3,
+                action: Generic(GenericAction {
+                    value: Container(Unknown(255)),
+                    bool: true,
+                    key: 2172748287,
+                    pos: 9548055078225674625,
+                    length: 9620112672263602561,
+                    prop: 9331882296111890817,
+                }),
+            },
+            ForkAt { site: 111, to: 291 },
+            DiffApply { from: 129, to: 255 },
+            ImportShallow {
+                site: 148,
+                from: 149,
+            },
+            SetCommitOptions {
+                site: 255,
+                origin: 251,
+                msg: 255,
+            },
+            ExportShallow { site: 185 },
+            DiffApply { from: 3, to: 255 },
+            StateOnlyRoundTrip { site: 222 },
+            SetCommitOptions {
+                site: 255,
+                origin: 250,
+                msg: 255,
+            },
+            Commit { site: 8 },
+            SyncAllUndo {
+                site: 56,
+                op_len: 2172748231,
+            },
+            Sync { from: 45, to: 46 },
+            DiffApply { from: 129, to: 129 },
+            DiffApply { from: 82, to: 83 },
+            Handle {
+                site: 0,
+                target: 129,
+                container: 129,
+                action: Generic(GenericAction {
+                    value: Container(Counter),
+                    bool: true,
+                    key: 455,
+                    pos: 18446743390868570368,
+                    length: 4607,
+                    prop: 9367487224930631424,
+                }),
+            },
+            Checkout { site: 119, to: 970 },
+            SyncAll,
+            ForkAt {
+                site: 156,
+                to: 1067,
+            },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 0,
+                    prop: 0,
+                }),
+            },
+            ImportShallow {
+                site: 193,
+                from: 194,
+            },
+        ],
+    )
+}
+
+#[test]
+fn diff_calc_text_shallow_insert_origin_left_regression() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::Text],
+        &mut [
+            Handle {
+                site: 118,
+                target: 118,
+                container: 11,
+                action: Generic(GenericAction {
+                    value: Container(List),
+                    bool: false,
+                    key: 4294967141,
+                    pos: 6148914691236517338,
+                    length: 21845,
+                    prop: 15367429818727531264,
+                }),
+            },
+            Sync { from: 0, to: 1 },
+            ImportShallow { site: 0, from: 193 },
+            DiffApply { from: 37, to: 38 },
+            ForkAt {
+                site: 11,
+                to: 4294967236,
+            },
+            Checkout { site: 74, to: 194 },
+            Handle {
+                site: 0,
+                target: 42,
+                container: 255,
+                action: Generic(GenericAction {
+                    value: Container(Unknown(60)),
+                    bool: false,
+                    key: 0,
+                    pos: 14178739001845810944,
+                    length: 3978712807997649348,
+                    prop: 3978709506094217015,
+                }),
+            },
+            ForkAt { site: 111, to: 291 },
+            SyncAllUndo {
+                site: 55,
+                op_len: 926365495,
+            },
+            ImportShallow {
+                site: 148,
+                from: 149,
+            },
+            SyncAllUndo {
+                site: 55,
+                op_len: 4294967095,
+            },
+            ExportShallow { site: 185 },
+            ForkAt {
+                site: 0,
+                to: 4294901760,
+            },
+            StateOnlyRoundTrip { site: 222 },
+            Handle {
+                site: 170,
+                target: 170,
+                container: 153,
+                action: Generic(GenericAction {
+                    value: Container(Map),
+                    bool: true,
+                    key: 704643073,
+                    pos: 18446744073709551615,
+                    length: 15615,
+                    prop: 14178674130659835655,
+                }),
+            },
+            Commit { site: 8 },
+            SyncAllUndo {
+                site: 55,
+                op_len: 926365495,
+            },
+            Sync { from: 45, to: 46 },
+            SetCommitOptions {
+                site: 255,
+                origin: 255,
+                msg: 255,
+            },
+            DiffApply { from: 82, to: 83 },
+            Undo {
+                site: 48,
+                op_len: 3293926656,
+            },
+            Checkout { site: 119, to: 970 },
+            Handle {
+                site: 0,
+                target: 107,
+                container: 107,
+                action: Generic(GenericAction {
+                    value: I32(286331153),
+                    bool: false,
+                    key: 1154864597,
+                    pos: 7297027664991289668,
+                    length: 255,
+                    prop: 0,
+                }),
+            },
+            ForkAt {
+                site: 156,
+                to: 1067,
+            },
+        ],
+    )
+}
+
+#[test]
+fn diff_calc_text_shallow_diff_apply_duplicate_regression() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::Text],
+        &mut [
+            Handle {
+                site: 36,
+                target: 0,
+                container: 176,
+                action: Generic(GenericAction {
+                    value: Container(Tree),
+                    bool: false,
+                    key: 2728567458,
+                    pos: 756277224098,
+                    length: 19232863551488,
+                    prop: 1513249057215086592,
+                }),
+            },
+            Sync { from: 0, to: 1 },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 119,
+                action: Generic(GenericAction {
+                    value: I32(65280),
+                    bool: false,
+                    key: 1431661312,
+                    pos: 13933808665473959108,
+                    length: 10489283573281046977,
+                    prop: 10489325060224199569,
+                }),
+            },
+            DiffApply { from: 37, to: 38 },
+            Commit { site: 145 },
+            Checkout { site: 74, to: 194 },
+            DiffApply { from: 145, to: 145 },
+            ForkAt { site: 111, to: 291 },
+            DiffApply { from: 145, to: 145 },
+            ImportShallow {
+                site: 148,
+                from: 149,
+            },
+            Commit { site: 145 },
+            ExportShallow { site: 185 },
+            DiffApply { from: 145, to: 145 },
+            StateOnlyRoundTrip { site: 222 },
+            SyncAllUndo {
+                site: 145,
+                op_len: 2442236305,
+            },
+            Commit { site: 8 },
+            DiffApply { from: 145, to: 145 },
+            Sync { from: 45, to: 46 },
+            DiffApply { from: 145, to: 107 },
+            DiffApply { from: 82, to: 83 },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 0,
+                    prop: 7740439813752356864,
+                }),
+            },
+            Checkout { site: 119, to: 970 },
+            Handle {
+                site: 255,
+                target: 33,
+                container: 41,
+                action: Generic(GenericAction {
+                    value: Container(Counter),
+                    bool: true,
+                    key: 730960273,
+                    pos: 7462906111928124484,
+                    length: 18446743418314385255,
+                    prop: 7451037802321897471,
+                }),
+            },
+            ForkAt {
+                site: 156,
+                to: 1067,
+            },
+            SyncAll,
+            ImportShallow {
+                site: 193,
+                from: 194,
+            },
+            SyncAll,
+            ExportShallow { site: 230 },
+            SyncAll,
+            StateOnlyRoundTrip { site: 16 },
+            SyncAll,
+            Commit { site: 53 },
+            SyncAll,
+            Sync { from: 90, to: 91 },
+            SyncAll,
+            DiffApply { from: 127, to: 128 },
+            SyncAll,
+            Checkout {
+                site: 164,
+                to: 1746,
+            },
+            SyncAll,
+            ForkAt {
+                site: 201,
+                to: 1843,
+            },
+            Handle {
+                site: 103,
+                target: 103,
+                container: 103,
+                action: Generic(GenericAction {
+                    value: I32(1734829927),
+                    bool: true,
+                    key: 1734829927,
+                    pos: 7451037800654241791,
+                    length: 4294967143,
+                    prop: 18403682804614299647,
+                }),
+            },
+            ImportShallow {
+                site: 238,
+                from: 239,
+            },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 0,
+                    prop: 0,
+                }),
+            },
+            ExportShallow { site: 24 },
         ],
     )
 }

@@ -591,13 +591,23 @@ impl OpLog {
         let mut merged_vv = from.clone();
         merged_vv.merge(to);
         loro_common::debug!("to_frontiers={:?} vv={:?}", &to_frontiers, to);
-        let (common_ancestors, mut diff_mode) =
+        let (mut common_ancestors, mut diff_mode) =
             self.dag.find_common_ancestor(from_frontiers, to_frontiers);
         if diff_mode == DiffMode::Checkout && to > from {
             diff_mode = DiffMode::Import;
         }
 
-        let common_ancestors_vv = self.dag.frontiers_to_vv(&common_ancestors).unwrap();
+        let mut common_ancestors_vv = self.dag.frontiers_to_vv(&common_ancestors).unwrap();
+        let shallow_since_vv = self.dag.shallow_since_vv().to_vv();
+        if !common_ancestors_vv.includes_vv(&shallow_since_vv) {
+            // The replay base cannot point before shallow history because those
+            // ops are no longer available to the causal iterator.
+            common_ancestors = self.dag.shallow_since_frontiers().clone();
+            common_ancestors_vv = self
+                .dag
+                .frontiers_to_vv(&common_ancestors)
+                .unwrap_or(shallow_since_vv);
+        }
         // go from lca to merged_vv
         let diff = common_ancestors_vv.diff(&merged_vv).forward;
         let mut iter = self.dag.iter_causal(common_ancestors, diff);

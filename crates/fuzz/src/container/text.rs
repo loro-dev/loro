@@ -83,7 +83,7 @@ impl ActorTrait for TextActor {
             .unwrap()
             .text
             .to_delta();
-        assert_eq!(value, text_h);
+        assert_eq!(value, text_h, "peer={}", loro.peer_id());
     }
 
     fn add_new_container(&mut self, container: Container) {

@@ -937,11 +937,6 @@ impl RichtextState {
         }
     }
 
-    #[inline]
-    pub(crate) fn has_styles(&mut self) -> bool {
-        self.state.get_mut().has_styles()
-    }
-
     pub(crate) fn has_style_key_in_entity_range(
         &mut self,
         range: Range<usize>,
