@@ -1382,6 +1382,23 @@ mod ensure_vv_for_tests {
         .into()
     }
 
+    fn make_shallow_dag_for_import_deps() -> AppDag {
+        let change_store = ChangeStore::new_mem(&SharedArena::new(), Arc::new(AtomicI64::new(0)));
+        let mut dag = AppDag::new(change_store);
+        let root_deps = Frontiers::from_id(ID::new(1, 1));
+        let boundary = make_dag_node(1, 2, 1, root_deps.clone());
+
+        {
+            let mut map = dag.map.lock();
+            map.insert(boundary.id_start(), boundary);
+        }
+
+        dag.shallow_since_vv.insert(1, 2);
+        dag.shallow_since_frontiers = Frontiers::from_id(ID::new(1, 2));
+        dag.shallow_root_frontiers_deps = root_deps;
+        dag
+    }
+
     /// Regression for loro-dev/loro#929: when computing the vv for a node
     /// whose DAG fan-in contains a shared ancestor reached through multiple
     /// paths, the iterative DFS used to push the shared ancestor onto the
@@ -1425,5 +1442,34 @@ mod ensure_vv_for_tests {
         assert_eq!(vv.get(&1).copied(), Some(1));
         assert_eq!(vv.get(&2).copied(), Some(1));
         assert!(vv.get(&3).is_none());
+    }
+
+    #[test]
+    fn import_deps_before_shallow_root_rejects_trimmed_history_dep() {
+        let dag = make_shallow_dag_for_import_deps();
+        let deps = Frontiers::from_id(ID::new(1, 0));
+
+        assert!(dag.frontiers_to_vv(&deps).is_none());
+        assert!(dag.import_deps_before_shallow_root(&deps));
+    }
+
+    #[test]
+    fn import_deps_before_shallow_root_allows_boundary_with_missing_peer() {
+        let dag = make_shallow_dag_for_import_deps();
+        let mut deps = Frontiers::default();
+        deps.push(ID::new(1, 2));
+        deps.push(ID::new(2, 0));
+
+        assert!(dag.frontiers_to_vv(&deps).is_none());
+        assert!(!dag.import_deps_before_shallow_root(&deps));
+    }
+
+    #[test]
+    fn import_deps_before_shallow_root_allows_missing_non_trimmed_dep() {
+        let dag = make_shallow_dag_for_import_deps();
+        let deps = Frontiers::from_id(ID::new(2, 0));
+
+        assert!(dag.frontiers_to_vv(&deps).is_none());
+        assert!(!dag.import_deps_before_shallow_root(&deps));
     }
 }

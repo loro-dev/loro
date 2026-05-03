@@ -1251,7 +1251,12 @@ impl RichtextDiffCalculator {
         }
 
         let seed_items = normalized_items;
-        let mut inserted = Fenwick::new(seed_items.len());
+        let fenwick_len = seed_items
+            .iter()
+            .map(|item| item.order)
+            .max()
+            .map_or(0, |order| order + 1);
+        let mut inserted = Fenwick::new(fenwick_len);
         for item in seed_items {
             let pos = inserted.prefix_sum(item.order);
             tracker.insert_seeded(pos, item.content, item.id);
