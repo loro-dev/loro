@@ -425,14 +425,10 @@ fn test_export_shallow_snapshot_from_shallow_doc() -> anyhow::Result<()> {
 /// `shallow_since_frontiers = [2@1]`). A second peer commits one cross-peer op
 /// whose deps equal mid_f (`[2@1, 2@2, 2@3]`).
 ///
-/// On `main` the import succeeds. On the branch it fails with
-/// `ImportUpdatesThatDependsOnOutdatedVersion` because the new
-/// `OpLog::preflight_import_changes` (added by this branch) calls
-/// `AppDag::is_before_shallow_root(&change.deps)`, which has *checkout*
-/// semantics: any dep that hits `shallow_since_frontiers` while `deps !=
-/// shallow_since_frontiers` returns `true`. For an import that's wrong — deps
-/// that touch the boundary together with valid same-or-other-peer post-shallow
-/// ids should be importable.
+/// The import preflight should not reuse checkout's conservative
+/// `is_before_shallow_root` semantics here: deps that touch the boundary
+/// together with valid same-or-other-peer post-shallow ids should be
+/// importable.
 #[test]
 fn shallow_doc_accepts_cross_peer_op_whose_deps_include_boundary() -> anyhow::Result<()> {
     let p1 = LoroDoc::new();

@@ -793,6 +793,34 @@ impl AppDag {
         false
     }
 
+    pub(crate) fn import_deps_before_shallow_root(&self, deps: &Frontiers) -> bool {
+        if self.shallow_since_vv.is_empty() {
+            return false;
+        }
+
+        if deps.is_empty() {
+            return true;
+        }
+
+        let shallow_vv = VersionVector::from_im_vv(&self.shallow_since_vv);
+        if let Some(vv) = self.frontiers_to_vv(deps) {
+            return !vv.includes_vv(&shallow_vv);
+        }
+
+        // Import only needs to reject updates whose causal source is older than
+        // the shallow root. A dependency set that touches the retained boundary
+        // can still be a valid post-root update, even when the rest of the deps
+        // are imported later in the same batch.
+        if deps
+            .iter()
+            .any(|id| self.shallow_since_frontiers.contains(&id))
+        {
+            return false;
+        }
+
+        deps.iter().any(|id| self.shallow_since_vv.includes_id(id))
+    }
+
     /// Travel the ancestors of the given id, and call the callback for each node
     ///
     /// It will travel the ancestors in the reverse order (from the greatest lamport to the smallest)

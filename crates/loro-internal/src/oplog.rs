@@ -233,7 +233,7 @@ impl OpLog {
                 continue;
             }
 
-            if self.dag.is_before_shallow_root(&change.deps) {
+            if self.dag.import_deps_before_shallow_root(&change.deps) {
                 ans.has_deps_before_shallow_root = true;
                 continue;
             }

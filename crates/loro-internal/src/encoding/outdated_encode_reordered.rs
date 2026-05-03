@@ -51,7 +51,7 @@ pub(crate) fn import_changes_to_oplog(
             continue;
         }
 
-        if oplog.dag.is_before_shallow_root(&change.deps) {
+        if oplog.dag.import_deps_before_shallow_root(&change.deps) {
             changes_before_shallow_root.push(change);
             continue;
         }
