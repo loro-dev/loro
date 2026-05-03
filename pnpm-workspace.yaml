@@ -3,5 +3,6 @@ packages:
   - "crates/loro-wasm"
   - "crates/loro-wasm-map"
   - "examples/loro-quill"
+  - "examples/bundler-smoke-tests"
   - "examples/test-rsbuild"
   - "examples/test-esbuild"

@@ -14,6 +14,7 @@ const __dirname = path.dirname(path.fromFileUrl(import.meta.url));
 
 // deno run -A build.ts debug
 // deno run -A build.ts release
+// deno run -A build.ts release browser
 // deno run -A build.ts release web
 // deno run -A build.ts release nodejs
 let profile = "dev";
@@ -22,7 +23,7 @@ if (Deno.args[0] == "release") {
   profile = "release";
   profileDir = "release";
 }
-const TARGETS = ["bundler", "nodejs", "web"];
+const TARGETS = ["bundler", "browser", "nodejs", "web"];
 const startTime = performance.now();
 const LoroWasmDir = path.resolve(__dirname, "..");
 const WorkspaceCargoToml = path.resolve(__dirname, "../../../Cargo.toml");
@@ -224,8 +225,9 @@ async function buildTarget(target: string) {
   }
 
   // TODO: polyfill FinalizationRegistry
+  const bindgenTarget = target === "browser" ? "bundler" : target;
   const cmd =
-    `wasm-bindgen --keep-debug --weak-refs --target ${target} --out-dir ${target} ${RawWasmPath}`;
+    `wasm-bindgen --keep-debug --weak-refs --target ${bindgenTarget} --out-dir ${target} ${RawWasmPath}`;
   console.log(">", cmd);
   await Deno.run({ cmd: cmd.split(" "), cwd: LoroWasmDir }).status();
   console.log();
@@ -249,6 +251,16 @@ async function buildTarget(target: string) {
     console.log("🔨  Patching bundler target");
     const patch = await Deno.readTextFile(
       path.resolve(__dirname, "./bundler_patch.js"),
+    );
+    await Deno.writeTextFile(
+      path.resolve(targetDirPath, "loro_wasm.js"),
+      patch,
+    );
+  }
+  if (target === "browser") {
+    console.log("🔨  Patching browser target");
+    const patch = await Deno.readTextFile(
+      path.resolve(__dirname, "./browser_patch.js"),
     );
     await Deno.writeTextFile(
       path.resolve(targetDirPath, "loro_wasm.js"),

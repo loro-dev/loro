@@ -1,6 +1,6 @@
 import { walk } from "https://deno.land/std@0.224.0/fs/mod.ts";
 
-const DIRS_TO_SCAN = ["./nodejs", "./bundler", "./web"];
+const DIRS_TO_SCAN = ["./nodejs", "./bundler", "./browser", "./web"];
 const FILES_TO_PROCESS = ["index.js", "index.d.ts"];
 
 async function replaceInFile(filePath: string) {
@@ -73,7 +73,12 @@ async function rollupBase64() {
 
     const base64IndexPath = "./base64/index.js";
     const content = await Deno.readTextFile(base64IndexPath);
-    const nextContent = injectBase64WasmBranch(content, base64IndexPath);
+    let nextContent = injectBase64WasmBranch(content, base64IndexPath);
+    nextContent = simplifyBase64WasmInitialization(
+        nextContent,
+        base64IndexPath,
+    );
+    nextContent = patchBase64NodeRequires(nextContent, base64IndexPath);
     await Deno.writeTextFile(base64IndexPath, nextContent);
 
     await Deno.copyFile("./bundler/loro_wasm.d.ts", "./base64/loro_wasm.d.ts");
@@ -109,13 +114,74 @@ function injectBase64WasmBranch(content: string, filePath: string): string {
     return content.replace(bunBranchPattern, base64Branch);
 }
 
+function simplifyBase64WasmInitialization(
+    content: string,
+    filePath: string,
+): string {
+    const startMarker =
+        "// Normalize how bundlers expose the wasm module/exports.";
+    const endMarker = `\n\n/**
+ * @deprecated Please use LoroDoc
+ */`;
+    const start = content.indexOf(startMarker);
+    const end = start === -1 ? -1 : content.indexOf(endMarker, start);
+    if (start === -1 || end === -1) {
+        throw new Error(
+            `Could not locate wasm initialization block while patching ${filePath}`,
+        );
+    }
+
+    const replacement = `// Instantiate the inlined base64 wasm synchronously.
+const wasmModuleOrInstance = rawWasm.default({
+  "./loro_wasm_bg.js": imports,
+});
+const wasmInstance =
+  wasmModuleOrInstance instanceof WebAssembly.Instance
+    ? wasmModuleOrInstance
+    : new WebAssembly.Instance(wasmModuleOrInstance, {
+      "./loro_wasm_bg.js": imports,
+    });
+__wbg_set_wasm(wasmInstance.exports ?? wasmInstance);
+if (typeof imports.__wbindgen_start === "function") {
+  imports.__wbindgen_start();
+}`;
+
+    return content.slice(0, start) + replacement + content.slice(end);
+}
+
+function patchBase64NodeRequires(content: string, filePath: string): string {
+    const directRequires = `var fs = require("fs");
+var path = require("path");`;
+    const indirectRequires = `var nodeRequire = typeof require === "function" ? require : null;
+var fs = nodeRequire && nodeRequire("fs");
+var path = nodeRequire && nodeRequire("path");`;
+    const browserSafeRequires = `var fs = null;
+var path = null;`;
+
+    if (content.includes(browserSafeRequires)) {
+        return content;
+    }
+
+    if (content.includes(directRequires)) {
+        return content.replace(directRequires, browserSafeRequires);
+    }
+
+    if (content.includes(indirectRequires)) {
+        return content.replace(indirectRequires, browserSafeRequires);
+    }
+
+    throw new Error(
+        `Could not locate Node require block while patching ${filePath}`,
+    );
+}
+
 async function main() {
     for (const dir of DIRS_TO_SCAN) {
         await transform(dir);
     }
 
     await rollupBase64();
-    transform("./base64");
+    await transform("./base64");
 }
 
 if (import.meta.main) {

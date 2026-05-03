@@ -15,10 +15,15 @@
     "url": "git+https://github.com/loro-dev/loro.git"
   },
   "main": "nodejs/index.js",
+  "browser": {
+    "./bundler/loro_wasm": "./browser/loro_wasm.js",
+    "./bundler/loro_wasm.js": "./browser/loro_wasm.js"
+  },
   "module": "bundler/index.js",
   "types": "bundler/index.d.ts",
   "files": [
     "./bundler",
+    "./browser",
     "./nodejs",
     "./web",
     "./base64",
