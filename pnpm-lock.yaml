@@ -89,6 +89,8 @@ importers:
 
   crates/loro-wasm-map: {}
 
+  examples/bundler-smoke-tests: {}
+
   examples/loro-quill:
     dependencies:
       is-equal:
@@ -165,6 +167,15 @@ importers:
       typescript:
         specifier: ^5.6.3
         version: 5.6.3
+
+  packages/fractional-index:
+    devDependencies:
+      typescript:
+        specifier: ^5.6.3
+        version: 5.6.3
+      vitest:
+        specifier: ^1.4.0
+        version: 1.6.0(@vitest/ui@1.6.0)
 
 packages:
 
@@ -1960,7 +1971,7 @@ packages:
 
   glob@7.2.3:
     resolution: {integrity: sha512-nFR0zLpU2YCaRxwoCJvL6UvCH2JFyFVIvwTLsIf21AuHlMskA1hhTdk+LlYJtOlYt9v6dvszD2BGRqBL+iQK9Q==}
-    deprecated: Glob versions prior to v9 are no longer supported
+    deprecated: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
 
   globals@13.24.0:
     resolution: {integrity: sha512-AhO5QUcj8llrbG09iWhPU2B204J1xnPeL8kQmVorSsy+Sjj1sk8gIyh6cUocGmH4L0UuhAJy+hJMRA4mgA4mFQ==}
@@ -2303,9 +2314,6 @@ packages:
   loose-envify@1.4.0:
     resolution: {integrity: sha512-lyuxPGr/Wfhrlem2CL/UcnUc1zcqKAImBDzukY7Y5F/yQiNdko6+fRLevlw1HgMySw7f611UIY408EtxRSoK3Q==}
     hasBin: true
-
-  loro-crdt@0.16.0:
-    resolution: {integrity: sha512-U/fwXPfe3GjE96tP97qzIjGoDOz5K/zSNPs1QZ7ZO4pqOAkjkLhBifSYZWW2v1t7ufFgUa4XqXpS1pn7Hyze2A==}
 
   loro-crdt@1.0.0-alpha.4:
     resolution: {integrity: sha512-WFVf/goGbiC9wmA7GNf9Fmdwry5hJq/CcQkXjoEp4QC9OYMUGm6QqKsrI7M4q05e2l7JeTc0RU858C7FRtg7qw==}
@@ -2980,9 +2988,6 @@ packages:
     resolution: {integrity: sha512-hjcS1mhfuyi4WW8IWtjP7brDrG2cuDZukyrYrSauoXGNgx0S7zceP07adYkJycEr56BOUTNPzbInooiN3fn1qw==}
     engines: {node: '>=14.17'}
     hasBin: true
-
-  ufo@1.5.3:
-    resolution: {integrity: sha512-Y7HYmWaFwPUmkoQCUIAYpKqkOf+SbVj/2fJJZ4RJMCfZp0rTGwRbzQD+HghfnhKOjL9E01okqz+ncJskGYfBNw==}
 
   ufo@1.6.1:
     resolution: {integrity: sha512-9a4/uxlTWJ4+a5i0ooc1rU7C7YOw3wT+UGqdeNNHWnOF9qcMBgLRS+4IYUqbczewFx4mLEig6gawh7X6mFlEkA==}
@@ -5366,10 +5371,6 @@ snapshots:
     dependencies:
       js-tokens: 4.0.0
 
-  loro-crdt@0.16.0:
-    dependencies:
-      loro-wasm: 0.16.0
-
   loro-crdt@1.0.0-alpha.4:
     dependencies:
       loro-wasm: 1.0.0-alpha.4
@@ -5445,7 +5446,7 @@ snapshots:
       acorn: 8.11.3
       pathe: 1.1.2
       pkg-types: 1.1.1
-      ufo: 1.5.3
+      ufo: 1.6.1
 
   mrmime@2.0.0: {}
 
@@ -6092,8 +6093,6 @@ snapshots:
       possible-typed-array-names: 1.0.0
 
   typescript@5.6.3: {}
-
-  ufo@1.5.3: {}
 
   ufo@1.6.1: {}
 

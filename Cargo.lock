@@ -1873,7 +1873,7 @@ checksum = "3f3d053a135388e6b1df14e8af1212af5064746e9b87a06a345a7a779ee9695a"
 
 [[package]]
 name = "loro-wasm"
-version = "1.12.0"
+version = "1.12.1"
 dependencies = [
  "console_error_panic_hook",
  "js-sys",
@@ -1921,6 +1921,7 @@ dependencies = [
  "once_cell",
  "rand 0.8.5",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

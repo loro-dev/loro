@@ -1,0 +1,54 @@
+{
+  "name": "@loro-dev/fractional-index",
+  "version": "0.1.0",
+  "description": "TypeScript implementation of Loro's fractional index algorithm.",
+  "keywords": [
+    "fractional-index",
+    "ordering",
+    "crdt",
+    "local-first",
+    "loro"
+  ],
+  "homepage": "https://loro.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/loro-dev/loro.git",
+    "directory": "packages/fractional-index"
+  },
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "package.json"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "check": "pnpm typecheck && pnpm test && pnpm build",
+    "clean": "rm -rf dist",
+    "fixtures:generate": "cargo run -q -p loro_fractional_index --example npm_fixture > tests/fixtures/rust-golden.json",
+    "prepack": "pnpm build",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vitest": "^1.4.0"
+  }
+}
