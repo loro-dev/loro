@@ -8,6 +8,10 @@ import {
   newBetween,
 } from "../src/index";
 
+interface BufferConstructor {
+  from(input: readonly number[]): Uint8Array;
+}
+
 function lcg(seed: number): () => number {
   let state = seed >>> 0;
   return () => {
@@ -26,6 +30,37 @@ describe("FractionalIndex API", () => {
     const copy = index.toBytes();
     copy[0] = 0x00;
     expect(index.toString()).toBe("80");
+  });
+
+  test("Node Buffer inputs and outputs do not share backing storage", () => {
+    const BufferCtor = (
+      globalThis as typeof globalThis & { Buffer?: BufferConstructor }
+    ).Buffer;
+    expect(BufferCtor).toBeDefined();
+    if (!BufferCtor) {
+      return;
+    }
+
+    const bytes = BufferCtor.from([0x80]);
+    const index = FractionalIndex.fromBytes(bytes);
+    bytes[0] = 0x00;
+    expect(index.toString()).toBe("80");
+
+    const copy = index.toBytes();
+    copy[0] = 0xff;
+    expect(index.toString()).toBe("80");
+  });
+
+  test("runtime internals are not writable through ordinary JS properties", () => {
+    const index = FractionalIndex.default();
+    const exposedIndex = index as unknown as Record<string, unknown>;
+    exposedIndex.bytes_ = new Uint8Array([0x00]);
+    expect(index.toString()).toBe("80");
+    expect(FractionalIndex.default().toString()).toBe("80");
+
+    const exposedClass = FractionalIndex as unknown as Record<string, unknown>;
+    exposedClass.DEFAULT_INDEX = FractionalIndex.fromHexString("00");
+    expect(FractionalIndex.default().toString()).toBe("80");
   });
 
   test("JSON and primitive string conversion use Rust-compatible uppercase hex", () => {

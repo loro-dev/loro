@@ -27,18 +27,18 @@ const HEX_TABLE = Array.from({ length: 256 }, (_, i) =>
 export class FractionalIndex {
   static readonly TERMINATOR = TERMINATOR;
 
-  private static readonly DEFAULT_INDEX = new FractionalIndex(
+  static readonly #DEFAULT_INDEX = new FractionalIndex(
     new Uint8Array([TERMINATOR]),
   );
 
-  private readonly bytes_: Uint8Array;
+  readonly #bytes: Uint8Array;
 
   private constructor(bytes: Uint8Array) {
-    this.bytes_ = bytes;
+    this.#bytes = bytes;
   }
 
   static default(): FractionalIndex {
-    return FractionalIndex.DEFAULT_INDEX;
+    return FractionalIndex.#DEFAULT_INDEX;
   }
 
   static fromBytes(bytes: BytesLike): FractionalIndex {
@@ -73,12 +73,12 @@ export class FractionalIndex {
 
   static newBefore(index: FractionalIndex): FractionalIndex {
     assertFractionalIndex(index, "index");
-    return FractionalIndex.fromUnterminated(newBeforeBytes(index.bytes_));
+    return FractionalIndex.fromUnterminated(newBeforeBytes(index.#bytes));
   }
 
   static newAfter(index: FractionalIndex): FractionalIndex {
     assertFractionalIndex(index, "index");
-    return FractionalIndex.fromUnterminated(newAfterBytes(index.bytes_));
+    return FractionalIndex.fromUnterminated(newAfterBytes(index.#bytes));
   }
 
   static newBetween(
@@ -87,7 +87,7 @@ export class FractionalIndex {
   ): FractionalIndex | undefined {
     assertFractionalIndex(left, "left");
     assertFractionalIndex(right, "right");
-    const bytes = newBetweenBytes(left.bytes_, right.bytes_);
+    const bytes = newBetweenBytes(left.#bytes, right.#bytes);
     return bytes ? FractionalIndex.fromUnterminated(bytes) : undefined;
   }
 
@@ -179,7 +179,7 @@ export class FractionalIndex {
     options: JitterOptions = {},
   ): FractionalIndex {
     assertFractionalIndex(index, "index");
-    return FractionalIndex.jitter(newBeforeBytes(index.bytes_), options);
+    return FractionalIndex.jitter(newBeforeBytes(index.#bytes), options);
   }
 
   static newAfterJitter(
@@ -187,7 +187,7 @@ export class FractionalIndex {
     options: JitterOptions = {},
   ): FractionalIndex {
     assertFractionalIndex(index, "index");
-    return FractionalIndex.jitter(newAfterBytes(index.bytes_), options);
+    return FractionalIndex.jitter(newAfterBytes(index.#bytes), options);
   }
 
   static newBetweenJitter(
@@ -197,7 +197,7 @@ export class FractionalIndex {
   ): FractionalIndex | undefined {
     assertFractionalIndex(left, "left");
     assertFractionalIndex(right, "right");
-    const bytes = newBetweenBytes(left.bytes_, right.bytes_);
+    const bytes = newBetweenBytes(left.#bytes, right.#bytes);
     return bytes ? FractionalIndex.jitter(bytes, options) : undefined;
   }
 
@@ -266,11 +266,11 @@ export class FractionalIndex {
   }
 
   get length(): number {
-    return this.bytes_.length;
+    return this.#bytes.length;
   }
 
   toBytes(): Uint8Array {
-    return this.bytes_.slice();
+    return new Uint8Array(this.#bytes);
   }
 
   asBytes(): Uint8Array {
@@ -279,15 +279,15 @@ export class FractionalIndex {
 
   compare(other: FractionalIndex): number {
     assertFractionalIndex(other, "other");
-    return compareBytes(this.bytes_, other.bytes_);
+    return compareBytes(this.#bytes, other.#bytes);
   }
 
   equals(other: FractionalIndex): boolean {
-    return isFractionalIndex(other) && compareBytes(this.bytes_, other.bytes_) === 0;
+    return isFractionalIndex(other) && compareBytes(this.#bytes, other.#bytes) === 0;
   }
 
   toString(): string {
-    return bytesToHexUnchecked(this.bytes_);
+    return bytesToHexUnchecked(this.#bytes);
   }
 
   toJSON(): string {
@@ -338,20 +338,20 @@ export class FractionalIndex {
     options: NormalizedJitterOptions,
   ): FractionalIndex | undefined {
     if (lower && upper) {
-      const bytes = newBetweenBytes(lower.bytes_, upper.bytes_);
+      const bytes = newBetweenBytes(lower.#bytes, upper.#bytes);
       return bytes ? FractionalIndex.jitterWithNormalized(bytes, options) : undefined;
     }
 
     if (lower) {
       return FractionalIndex.jitterWithNormalized(
-        newAfterBytes(lower.bytes_),
+        newAfterBytes(lower.#bytes),
         options,
       );
     }
 
     if (upper) {
       return FractionalIndex.jitterWithNormalized(
-        newBeforeBytes(upper.bytes_),
+        newBeforeBytes(upper.#bytes),
         options,
       );
     }
@@ -448,7 +448,7 @@ export const TERMINATOR_BYTE = TERMINATOR;
 
 function copyBytes(bytes: BytesLike): Uint8Array {
   if (bytes instanceof Uint8Array) {
-    return bytes.slice();
+    return new Uint8Array(bytes);
   }
 
   if (!Array.isArray(bytes)) {
