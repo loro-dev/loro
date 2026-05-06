@@ -10,7 +10,7 @@
     "test": "cargo nextest run --features=test_utils,jsonpath --no-fail-fast && cargo test --doc",
     "test-all": "pnpm test && pnpm test-fractional-index && pnpm release-wasm && pnpm test-loom",
     "test-wasm": "cd crates/loro-wasm && pnpm i && pnpm build-dev",
-    "test-fractional-index": "pnpm --filter @loro-dev/fractional-index check",
+    "test-fractional-index": "pnpm --filter @loro-dev/fractional-index install --frozen-lockfile && pnpm --filter @loro-dev/fractional-index check",
     "test-loom": "LOOM_MAX_PREEMPTIONS=2 RUSTFLAGS='--cfg loom' cargo test -p loro --test multi_thread_test --release",
     "test-loom-reproduce": "LOOM_MAX_PREEMPTIONS=2 LOOM_LOG=info LOOM_LOCATION=1 LOOM_CHECKPOINT_INTERVAL=1 LOOM_CHECKPOINT_FILE=loom_test.json RUSTFLAGS='--cfg loom' cargo test -p loro --test multi_thread_test --release",
     "watch-loom": "RUSTFLAGS='--cfg loom' bacon",
