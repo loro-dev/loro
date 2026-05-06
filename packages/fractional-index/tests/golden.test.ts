@@ -4,12 +4,12 @@ import { FractionalIndex, compare } from "../src/index";
 
 type MaybeHex = string | null;
 
-function idx(hex: string): FractionalIndex {
+function idx(hex: string): string {
   return FractionalIndex.fromHexString(hex);
 }
 
-function maybeToHex(value: FractionalIndex | undefined): MaybeHex {
-  return value?.toString() ?? null;
+function maybeToHex(value: string | undefined): MaybeHex {
+  return value ?? null;
 }
 
 function byteRng(byte: number): () => number {
@@ -19,18 +19,11 @@ function byteRng(byte: number): () => number {
 describe("Rust golden fixtures", () => {
   test("basic construction and hex encoding match Rust", () => {
     expect(FractionalIndex.TERMINATOR).toBe(fixture.basic.terminator);
-    expect(FractionalIndex.default().toString()).toBe(fixture.basic.default);
-    expect(FractionalIndex.newBefore(idx("80")).toString()).toBe(
-      fixture.basic.beforeDefault,
-    );
-    expect(FractionalIndex.newAfter(idx("80")).toString()).toBe(
-      fixture.basic.afterDefault,
-    );
-    expect(FractionalIndex.fromHexString("80ffA").toString()).toBe(
+    expect(FractionalIndex.default()).toBe(fixture.basic.default);
+    expect(FractionalIndex.newBefore(idx("80"))).toBe(fixture.basic.beforeDefault);
+    expect(FractionalIndex.newAfter(idx("80"))).toBe(fixture.basic.afterDefault);
+    expect(FractionalIndex.fromHexString("80ffA")).toBe(
       fixture.basic.fromHexOddLength,
-    );
-    expect(FractionalIndex.fromBytes([0, 15, 128, 255]).toString()).toBe(
-      fixture.basic.fromBytes,
     );
   });
 
@@ -38,7 +31,7 @@ describe("Rust golden fixtures", () => {
     let current = FractionalIndex.default();
     for (const expected of fixture.chains.after) {
       current = FractionalIndex.newAfter(current);
-      expect(current.toString()).toBe(expected);
+      expect(current).toBe(expected);
     }
   });
 
@@ -46,7 +39,7 @@ describe("Rust golden fixtures", () => {
     let current = FractionalIndex.default();
     for (const expected of fixture.chains.before) {
       current = FractionalIndex.newBefore(current);
-      expect(current.toString()).toBe(expected);
+      expect(current).toBe(expected);
     }
   });
 
@@ -74,7 +67,7 @@ describe("Rust golden fixtures", () => {
       const lower = c.lower == null ? undefined : idx(c.lower);
       const upper = c.upper == null ? undefined : idx(c.upper);
       const value = FractionalIndex.generateNEvenly(lower, upper, c.n);
-      expect(value?.map((x) => x.toString()) ?? null).toEqual(c.value);
+      expect(value ?? null).toEqual(c.value);
     }
   });
 
@@ -83,28 +76,28 @@ describe("Rust golden fixtures", () => {
       FractionalIndex.jitterDefault({
         jitter: fixture.jitter.defaultJitter0.jitter,
         randomByte: byteRng(fixture.jitter.defaultJitter0.byte),
-      }).toString(),
+      }),
     ).toBe(fixture.jitter.defaultJitter0.value);
 
     expect(
       FractionalIndex.jitterDefault({
         jitter: fixture.jitter.defaultJitter3.jitter,
         randomByte: byteRng(fixture.jitter.defaultJitter3.byte),
-      }).toString(),
+      }),
     ).toBe(fixture.jitter.defaultJitter3.value);
 
     expect(
       FractionalIndex.newBeforeJitter(idx(fixture.jitter.before.input), {
         jitter: fixture.jitter.before.jitter,
         randomByte: byteRng(fixture.jitter.before.byte),
-      }).toString(),
+      }),
     ).toBe(fixture.jitter.before.value);
 
     expect(
       FractionalIndex.newAfterJitter(idx(fixture.jitter.after.input), {
         jitter: fixture.jitter.after.jitter,
         randomByte: byteRng(fixture.jitter.after.byte),
-      }).toString(),
+      }),
     ).toBe(fixture.jitter.after.value);
 
     expect(
@@ -156,9 +149,7 @@ describe("Rust golden fixtures", () => {
         randomByte: byteRng(fixture.jitter.generateN.byte),
       },
     );
-    expect(generated?.map((x) => x.toString()) ?? null).toEqual(
-      fixture.jitter.generateN.value,
-    );
+    expect(generated ?? null).toEqual(fixture.jitter.generateN.value);
   });
 
   test("fixture outputs are ordered with the package comparator", () => {

@@ -197,7 +197,6 @@ fn main() {
             "beforeDefault": before.to_string(),
             "afterDefault": after.to_string(),
             "fromHexOddLength": FractionalIndex::from_hex_string("80ffA").to_string(),
-            "fromBytes": FractionalIndex::from_bytes(vec![0, 15, 128, 255]).to_string(),
         },
         "chains": {
             "after": after_chain,

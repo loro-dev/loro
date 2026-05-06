@@ -1,16 +1,16 @@
 import { describe, expect, test } from "vitest";
+import type { FractionalIndex as FractionalIndexString } from "../src/index";
 import {
   FractionalIndex,
   compare,
+  defaultIndex,
+  equals,
   isFractionalIndex,
   newAfter,
   newBefore,
   newBetween,
+  newIndex,
 } from "../src/index";
-
-interface BufferConstructor {
-  from(input: readonly number[]): Uint8Array;
-}
 
 function lcg(seed: number): () => number {
   let state = seed >>> 0;
@@ -20,56 +20,23 @@ function lcg(seed: number): () => number {
   };
 }
 
-describe("FractionalIndex API", () => {
-  test("byte arrays are copied on input and output", () => {
-    const bytes = new Uint8Array([0x80]);
-    const index = FractionalIndex.fromBytes(bytes);
-    bytes[0] = 0x00;
-    expect(index.toString()).toBe("80");
+describe("FractionalIndex string API", () => {
+  test("public indexes are plain strings", () => {
+    const index: FractionalIndexString = FractionalIndex.default();
 
-    const copy = index.toBytes();
-    copy[0] = 0x00;
-    expect(index.toString()).toBe("80");
-  });
-
-  test("Node Buffer inputs and outputs do not share backing storage", () => {
-    const BufferCtor = (
-      globalThis as typeof globalThis & { Buffer?: BufferConstructor }
-    ).Buffer;
-    expect(BufferCtor).toBeDefined();
-    if (!BufferCtor) {
-      return;
-    }
-
-    const bytes = BufferCtor.from([0x80]);
-    const index = FractionalIndex.fromBytes(bytes);
-    bytes[0] = 0x00;
-    expect(index.toString()).toBe("80");
-
-    const copy = index.toBytes();
-    copy[0] = 0xff;
-    expect(index.toString()).toBe("80");
-  });
-
-  test("runtime internals are not writable through ordinary JS properties", () => {
-    const index = FractionalIndex.default();
-    const exposedIndex = index as unknown as Record<string, unknown>;
-    exposedIndex.bytes_ = new Uint8Array([0x00]);
-    expect(index.toString()).toBe("80");
-    expect(FractionalIndex.default().toString()).toBe("80");
-
-    const exposedClass = FractionalIndex as unknown as Record<string, unknown>;
-    exposedClass.DEFAULT_INDEX = FractionalIndex.fromHexString("00");
-    expect(FractionalIndex.default().toString()).toBe("80");
+    expect(index).toBe("80");
+    expect(typeof index).toBe("string");
+    expect(JSON.stringify(index)).toBe('"80"');
+    expect(index < FractionalIndex.newAfter(index)).toBe(true);
   });
 
   test("JSON and primitive string conversion use Rust-compatible uppercase hex", () => {
-    const index = FractionalIndex.fromBytes([0x0f, 0x80, 0xff]);
-    expect(index.toString()).toBe("0F80FF");
-    expect(index.toJSON()).toBe("0F80FF");
-    expect(`${index}`).toBe("0F80FF");
-    expect(FractionalIndex.fromHexString("80Z").toString()).toBe("80");
-    expect(FractionalIndex.fromHexString("G").toString()).toBe("");
+    const index = FractionalIndex.fromHexString("0f80ff");
+    expect(index).toBe("0F80FF");
+    expect(JSON.stringify(index)).toBe('"0F80FF"');
+    expect(FractionalIndex.fromHexString("80ffA")).toBe("80FF");
+    expect(FractionalIndex.fromHexString("80Z")).toBe("80");
+    expect(FractionalIndex.fromHexString("G")).toBe("");
   });
 
   test("comparison helpers use byte lexicographic order", () => {
@@ -77,30 +44,25 @@ describe("FractionalIndex API", () => {
     const b = FractionalIndex.default();
     const c = FractionalIndex.fromHexString("8180");
 
-    expect(a.compare(b)).toBeLessThan(0);
-    expect(b.compare(a)).toBeGreaterThan(0);
+    expect(compare(a, b)).toBeLessThan(0);
+    expect(compare(b, a)).toBeGreaterThan(0);
     expect(compare(b, FractionalIndex.default())).toBe(0);
-    expect(b.equals(FractionalIndex.default())).toBe(true);
-    expect([c, a, b].sort(compare).map((x) => x.toString())).toEqual([
-      "7F80",
-      "80",
-      "8180",
-    ]);
+    expect(equals(b, FractionalIndex.default())).toBe(true);
+    expect([c, a, b].sort(compare)).toEqual(["7F80", "80", "8180"]);
   });
 
-  test("top-level helpers mirror the class methods", () => {
+  test("top-level helpers mirror the namespace methods", () => {
     const base = FractionalIndex.default();
-    expect(newBefore(base).equals(FractionalIndex.newBefore(base))).toBe(true);
-    expect(newAfter(base).equals(FractionalIndex.newAfter(base))).toBe(true);
-    expect(newBetween(base, FractionalIndex.newAfter(base))?.toString()).toBe(
-      FractionalIndex.newBetween(base, FractionalIndex.newAfter(base))?.toString(),
+    expect(defaultIndex()).toBe(FractionalIndex.default());
+    expect(newIndex(base, undefined)).toBe(FractionalIndex.new(base, undefined));
+    expect(newBefore(base)).toBe(FractionalIndex.newBefore(base));
+    expect(newAfter(base)).toBe(FractionalIndex.newAfter(base));
+    expect(newBetween(base, FractionalIndex.newAfter(base))).toBe(
+      FractionalIndex.newBetween(base, FractionalIndex.newAfter(base)),
     );
   });
 
-  test("invalid JS values are rejected before they can create non-byte indexes", () => {
-    expect(() => FractionalIndex.fromBytes([-1])).toThrow(RangeError);
-    expect(() => FractionalIndex.fromBytes([256])).toThrow(RangeError);
-    expect(() => FractionalIndex.fromBytes([1.5])).toThrow(RangeError);
+  test("invalid JS values are rejected before they can create invalid indexes", () => {
     expect(() => FractionalIndex.fromHexString("GG")).toThrow(SyntaxError);
     expect(() => FractionalIndex.generateNEvenly(undefined, undefined, -1)).toThrow(
       RangeError,
@@ -110,6 +72,15 @@ describe("FractionalIndex API", () => {
     expect(() =>
       FractionalIndex.jitterDefault({ jitter: 1, randomByte: () => 1.5 }),
     ).toThrow(RangeError);
+    expect(() => FractionalIndex.newBefore(80 as unknown as string)).toThrow(
+      TypeError,
+    );
+  });
+
+  test("public namespace does not expose byte-array helpers", () => {
+    expect("fromBytes" in FractionalIndex).toBe(false);
+    expect("toBytes" in FractionalIndex).toBe(false);
+    expect("bytesToHex" in FractionalIndex).toBe(false);
   });
 
   test("new returns indexes inside the requested open interval", () => {
@@ -117,16 +88,18 @@ describe("FractionalIndex API", () => {
     const middle = FractionalIndex.default();
     const after = FractionalIndex.newAfter(middle);
 
-    expect(FractionalIndex.new(undefined, middle)?.compare(middle)).toBeLessThan(0);
-    expect(FractionalIndex.new(middle, undefined)?.compare(middle)).toBeGreaterThan(0);
+    expect(compare(FractionalIndex.new(undefined, middle)!, middle)).toBeLessThan(0);
+    expect(compare(FractionalIndex.new(middle, undefined)!, middle)).toBeGreaterThan(
+      0,
+    );
 
     const leftMiddle = FractionalIndex.new(before, middle);
-    expect(leftMiddle?.compare(before)).toBeGreaterThan(0);
-    expect(leftMiddle?.compare(middle)).toBeLessThan(0);
+    expect(compare(leftMiddle!, before)).toBeGreaterThan(0);
+    expect(compare(leftMiddle!, middle)).toBeLessThan(0);
 
     const rightMiddle = FractionalIndex.new(middle, after);
-    expect(rightMiddle?.compare(middle)).toBeGreaterThan(0);
-    expect(rightMiddle?.compare(after)).toBeLessThan(0);
+    expect(compare(rightMiddle!, middle)).toBeGreaterThan(0);
+    expect(compare(rightMiddle!, after)).toBeLessThan(0);
   });
 
   test("newBetween handles generated indexes with a zero shared prefix", () => {
@@ -136,22 +109,22 @@ describe("FractionalIndex API", () => {
     }
 
     const lower = FractionalIndex.newBefore(upper);
-    expect(lower.toString()).toBe("0080");
-    expect(upper.toString()).toBe("0180");
+    expect(lower).toBe("0080");
+    expect(upper).toBe("0180");
 
     const middle = FractionalIndex.newBetween(lower, upper);
-    expect(middle?.toString()).toBe("008180");
+    expect(middle).toBe("008180");
 
     const between = FractionalIndex.newBetween(lower, middle!);
-    expect(between?.toString()).toBe("00817F80");
-    expect(between!.compare(lower)).toBeGreaterThan(0);
-    expect(between!.compare(middle!)).toBeLessThan(0);
+    expect(between).toBe("00817F80");
+    expect(compare(between!, lower)).toBeGreaterThan(0);
+    expect(compare(between!, middle!)).toBeLessThan(0);
 
     const jittered = FractionalIndex.newBetweenJitter(lower, middle!, {
       jitter: 1,
       randomByte: () => 0xaa,
     });
-    expect(jittered?.toString()).toBe("00817F80AA");
+    expect(jittered).toBe("00817F80AA");
   });
 
   test("generateNEvenly returns strictly sorted values within bounds", () => {
@@ -160,10 +133,10 @@ describe("FractionalIndex API", () => {
     const values = FractionalIndex.generateNEvenly(lower, upper, 256);
 
     expect(values).toHaveLength(256);
-    expect(values![0]!.compare(lower)).toBeGreaterThan(0);
-    expect(values![values!.length - 1]!.compare(upper)).toBeLessThan(0);
+    expect(compare(values![0]!, lower)).toBeGreaterThan(0);
+    expect(compare(values![values!.length - 1]!, upper)).toBeLessThan(0);
     for (let i = 1; i < values!.length; i++) {
-      expect(values![i - 1]!.compare(values![i]!)).toBeLessThan(0);
+      expect(compare(values![i - 1]!, values![i]!)).toBeLessThan(0);
     }
   });
 
@@ -181,7 +154,7 @@ describe("FractionalIndex API", () => {
     }
 
     for (let i = 1; i < values.length; i++) {
-      expect(values[i - 1]!.compare(values[i]!)).toBeLessThan(0);
+      expect(compare(values[i - 1]!, values[i]!)).toBeLessThan(0);
     }
   });
 
@@ -190,14 +163,18 @@ describe("FractionalIndex API", () => {
     let offset = 0;
     const randomByte = () => bytes[offset++ % bytes.length]!;
 
-    expect(
-      FractionalIndex.jitterDefault({ jitter: 4, randomByte }).toString(),
-    ).toBe("8001020304");
+    expect(FractionalIndex.jitterDefault({ jitter: 4, randomByte })).toBe(
+      "8001020304",
+    );
   });
 
-  test("runtime type guard recognizes package instances", () => {
-    const index = FractionalIndex.default();
-    expect(isFractionalIndex(index)).toBe(true);
-    expect(isFractionalIndex("80")).toBe(false);
+  test("runtime type guard recognizes canonical fractional index strings", () => {
+    expect(isFractionalIndex("80")).toBe(true);
+    expect(isFractionalIndex("80FF")).toBe(true);
+    expect(isFractionalIndex("80ff")).toBe(false);
+    expect(isFractionalIndex("80Z")).toBe(false);
+    expect(isFractionalIndex("GG")).toBe(false);
+    expect(isFractionalIndex("")).toBe(false);
+    expect(isFractionalIndex(80)).toBe(false);
   });
 });

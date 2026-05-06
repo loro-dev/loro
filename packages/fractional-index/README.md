@@ -2,18 +2,15 @@
 
 TypeScript implementation of Loro's Rust `loro_fractional_index` crate.
 
-It creates compact byte-string positions that sort lexicographically. This is
-useful when a list or tree needs stable order keys and callers want to insert
-new items before, after, or between existing items without renumbering the whole
-collection.
-
-The package is intentionally small:
+This package creates compact string positions that sort lexicographically. The
+public API always accepts and returns canonical uppercase hex strings, so indexes
+are easy to store, compare, serialize, and use as object or map keys.
 
 - No runtime dependencies.
 - ESM output with TypeScript declarations.
-- Uses `Uint8Array` internally.
-- Hex strings are byte-for-byte compatible with the Rust crate's `Display`
-  output.
+- Public indexes are plain strings.
+- Generated strings are byte-for-byte compatible with the Rust crate's
+  `Display` output.
 - Golden tests are generated from the Rust implementation in this repository.
 
 ## Install
@@ -36,35 +33,43 @@ yarn add @loro-dev/fractional-index
 import { FractionalIndex, compare } from "@loro-dev/fractional-index";
 
 const first = FractionalIndex.default();
-console.log(first.toString()); // "80"
-
 const before = FractionalIndex.newBefore(first);
 const after = FractionalIndex.newAfter(first);
 const middle = FractionalIndex.newBetween(first, after);
 
-console.log(before.toString()); // "7F80"
-console.log(after.toString()); // "8180"
-console.log(middle?.toString()); // "817F80"
+console.log(first); // "80"
+console.log(before); // "7F80"
+console.log(after); // "8180"
+console.log(middle); // "817F80"
 
 const ordered = [after, first, before].sort(compare);
-console.log(ordered.map(String)); // ["7F80", "80", "8180"]
+console.log(ordered); // ["7F80", "80", "8180"]
+
+JSON.stringify({ position: first }); // "{\"position\":\"80\"}"
 ```
+
+Generated indexes are canonical uppercase hex strings. For generated values,
+ordinary string comparison also follows byte order:
+
+```ts
+before < first; // true
+first < after; // true
+```
+
+Use `compare(a, b)` when sorting values that may have been parsed from external
+input, because it compares by bytes after parsing.
 
 ## Data Model
 
-A fractional index is an immutable wrapper around bytes. Valid indexes generated
-by this package include the same `0x80` terminator byte used by Rust.
+An index string is the uppercase hex encoding of the same bytes used by Rust.
+Generated indexes include the `0x80` terminator byte.
 
 ```ts
-const index = FractionalIndex.default();
-
-index.toBytes(); // Uint8Array [0x80]
-index.toString(); // "80"
-JSON.stringify(index); // "\"80\""
+const index = FractionalIndex.default(); // "80"
 ```
 
-Ordering is byte lexicographic order, not locale string order and not numeric
-order. Use `index.compare(other)` or the exported `compare(a, b)` helper.
+The public API does not expose byte arrays. Internally, the implementation still
+uses bytes to stay aligned with the Rust algorithm.
 
 ## Creating Indexes
 
@@ -90,11 +95,11 @@ const after = FractionalIndex.newAfter(base); // "8180"
 ```ts
 const left = FractionalIndex.default();
 const right = FractionalIndex.newAfter(left);
-
 const between = FractionalIndex.newBetween(left, right);
+
 if (between) {
-  console.log(left.compare(between) < 0);
-  console.log(between.compare(right) < 0);
+  console.log(left < between); // true for canonical generated strings
+  console.log(between < right); // true
 }
 ```
 
@@ -123,7 +128,7 @@ strictly sorted indexes inside the open interval `(lower, upper)`.
 ```ts
 const values = FractionalIndex.generateNEvenly(undefined, undefined, 5);
 
-console.log(values?.map(String));
+console.log(values);
 // ["7E80", "7F80", "80", "817F80", "8180"]
 ```
 
@@ -145,7 +150,7 @@ the same behavior through `JitterOptions`.
 
 ```ts
 const index = FractionalIndex.jitterDefault({ jitter: 3 });
-console.log(index.length); // 4 bytes: 0x80 plus 3 random bytes
+console.log(index.length); // 8 hex chars: 0x80 plus 3 random bytes
 ```
 
 For deterministic tests or replicated fixtures, provide `randomByte`:
@@ -159,7 +164,7 @@ const index = FractionalIndex.jitterDefault({
   randomByte: () => bytes[offset++],
 });
 
-console.log(index.toString()); // "80010203"
+console.log(index); // "80010203"
 ```
 
 Jitter variants:
@@ -180,95 +185,70 @@ FractionalIndex.generateNEvenlyJitter(lower, upper, 10, { jitter: 2 });
 
 ```ts
 const fromHex = FractionalIndex.fromHexString("80ff");
-console.log(fromHex.toString()); // "80FF"
-
-const fromBytes = FractionalIndex.fromBytes(new Uint8Array([0x80]));
-console.log(fromBytes.toString()); // "80"
+console.log(fromHex); // "80FF"
 ```
 
 Compatibility notes:
 
-- `fromHexString()` accepts uppercase or lowercase hex.
+- `fromHexString()` accepts uppercase or lowercase hex and returns canonical
+  uppercase hex.
 - Like Rust, `fromHexString()` ignores a trailing odd nibble. `"80A"` parses as
   `"80"`.
 - Invalid hex pairs throw `SyntaxError`.
-- `fromBytes()` copies input bytes and rejects non-byte JavaScript numbers.
-- `toBytes()` and `asBytes()` return a copy.
 
 ## API Reference
 
-### Class
-
 ```ts
+type FractionalIndex = string;
+
 interface JitterOptions {
   jitter?: number;
   randomByte?: () => number;
 }
+```
 
-class FractionalIndex {
-  static readonly TERMINATOR: 128;
+### Namespace API
 
-  static default(): FractionalIndex;
-  static fromBytes(bytes: Uint8Array | readonly number[]): FractionalIndex;
-  static fromHexString(hex: string): FractionalIndex;
+```ts
+FractionalIndex.TERMINATOR; // 128
 
-  static new(
-    lower?: FractionalIndex | null,
-    upper?: FractionalIndex | null,
-  ): FractionalIndex | undefined;
-  static newBefore(index: FractionalIndex): FractionalIndex;
-  static newAfter(index: FractionalIndex): FractionalIndex;
-  static newBetween(
-    left: FractionalIndex,
-    right: FractionalIndex,
-  ): FractionalIndex | undefined;
+FractionalIndex.default(): FractionalIndex;
+FractionalIndex.fromHexString(hex): FractionalIndex;
 
-  static generateNEvenly(
-    lower: FractionalIndex | null | undefined,
-    upper: FractionalIndex | null | undefined,
-    n: number,
-  ): FractionalIndex[] | undefined;
+FractionalIndex.new(lower?, upper?): FractionalIndex | undefined;
+FractionalIndex.newBefore(index): FractionalIndex;
+FractionalIndex.newAfter(index): FractionalIndex;
+FractionalIndex.newBetween(left, right): FractionalIndex | undefined;
+FractionalIndex.generateNEvenly(lower, upper, n): FractionalIndex[] | undefined;
 
-  static jitterDefault(options?: JitterOptions): FractionalIndex;
-  static newJitter(
-    lower: FractionalIndex | null | undefined,
-    upper: FractionalIndex | null | undefined,
-    options?: JitterOptions,
-  ): FractionalIndex | undefined;
-  static newBeforeJitter(
-    index: FractionalIndex,
-    options?: JitterOptions,
-  ): FractionalIndex;
-  static newAfterJitter(
-    index: FractionalIndex,
-    options?: JitterOptions,
-  ): FractionalIndex;
-  static newBetweenJitter(
-    left: FractionalIndex,
-    right: FractionalIndex,
-    options?: JitterOptions,
-  ): FractionalIndex | undefined;
-  static generateNEvenlyJitter(
-    lower: FractionalIndex | null | undefined,
-    upper: FractionalIndex | null | undefined,
-    n: number,
-    options?: JitterOptions,
-  ): FractionalIndex[] | undefined;
+FractionalIndex.jitterDefault(options?): FractionalIndex;
+FractionalIndex.newJitter(lower, upper, options?): FractionalIndex | undefined;
+FractionalIndex.newBeforeJitter(index, options?): FractionalIndex;
+FractionalIndex.newAfterJitter(index, options?): FractionalIndex;
+FractionalIndex.newBetweenJitter(left, right, options?): FractionalIndex | undefined;
+FractionalIndex.generateNEvenlyJitter(
+  lower,
+  upper,
+  n,
+  options?,
+): FractionalIndex[] | undefined;
 
-  readonly length: number;
-  toBytes(): Uint8Array;
-  asBytes(): Uint8Array;
-  compare(other: FractionalIndex): number;
-  equals(other: FractionalIndex): boolean;
-  toString(): string;
-  toJSON(): string;
-}
+FractionalIndex.compare(left, right): number;
+FractionalIndex.equals(left, right): boolean;
+FractionalIndex.isFractionalIndex(value): value is FractionalIndex;
 ```
 
 ### Top-Level Helpers
 
+Namespace methods are also available as named exports. Since `new` is a
+JavaScript keyword, `FractionalIndex.new()` is exported as `newIndex()`:
+
 ```ts
+defaultIndex();
+fromHexString(hex);
 compare(left, right);
+equals(left, right);
+newIndex(lower, upper);
 newBefore(index);
 newAfter(index);
 newBetween(left, right);
@@ -279,7 +259,6 @@ newBeforeJitter(index, options);
 newAfterJitter(index, options);
 newBetweenJitter(left, right, options);
 generateNEvenlyJitter(lower, upper, n, options);
-bytesToHex(bytes);
 isFractionalIndex(value);
 ```
 
@@ -300,11 +279,12 @@ The fixture covers:
 - `None` cases.
 - Rust panic edge cases.
 - Jitter byte placement.
-- Hex and byte serialization.
+- Hex serialization.
 
 ## Performance Notes
 
-Generated indexes are small `Uint8Array` values. The implementation avoids
-decimal arithmetic, `BigInt`, string parsing during comparisons, and runtime
-dependencies. Prefer storing `FractionalIndex` instances while actively editing
-or sorting, and serialize to hex only at API/storage boundaries.
+String indexes are optimized for JavaScript ergonomics: comparison, JSON,
+storage, and use as keys are all straightforward. The implementation parses
+strings to byte arrays internally for generation so it can stay aligned with the
+Rust byte algorithm. For the expected workload of normal list/tree positioning,
+this keeps the API simple without a meaningful practical performance cost.

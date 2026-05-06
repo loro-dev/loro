@@ -3,7 +3,6 @@
     "afterDefault": "8180",
     "beforeDefault": "7F80",
     "default": "80",
-    "fromBytes": "000F80FF",
     "fromHexOddLength": "80FF",
     "terminator": 128
   },

@@ -1,4 +1,4 @@
-export type BytesLike = Uint8Array | readonly number[];
+export type FractionalIndex = string;
 
 export interface JitterOptions {
   /**
@@ -17,376 +17,122 @@ export interface JitterOptions {
   randomByte?: () => number;
 }
 
+export interface FractionalIndexNamespace {
+  readonly TERMINATOR: 128;
+  default(): FractionalIndex;
+  fromHexString(hex: string): FractionalIndex;
+  "new"(
+    lower?: FractionalIndex | null,
+    upper?: FractionalIndex | null,
+  ): FractionalIndex | undefined;
+  newBefore(index: FractionalIndex): FractionalIndex;
+  newAfter(index: FractionalIndex): FractionalIndex;
+  newBetween(
+    left: FractionalIndex,
+    right: FractionalIndex,
+  ): FractionalIndex | undefined;
+  generateNEvenly(
+    lower: FractionalIndex | null | undefined,
+    upper: FractionalIndex | null | undefined,
+    n: number,
+  ): FractionalIndex[] | undefined;
+  jitterDefault(options?: JitterOptions): FractionalIndex;
+  newJitter(
+    lower: FractionalIndex | null | undefined,
+    upper: FractionalIndex | null | undefined,
+    options?: JitterOptions,
+  ): FractionalIndex | undefined;
+  newBeforeJitter(
+    index: FractionalIndex,
+    options?: JitterOptions,
+  ): FractionalIndex;
+  newAfterJitter(index: FractionalIndex, options?: JitterOptions): FractionalIndex;
+  newBetweenJitter(
+    left: FractionalIndex,
+    right: FractionalIndex,
+    options?: JitterOptions,
+  ): FractionalIndex | undefined;
+  generateNEvenlyJitter(
+    lower: FractionalIndex | null | undefined,
+    upper: FractionalIndex | null | undefined,
+    n: number,
+    options?: JitterOptions,
+  ): FractionalIndex[] | undefined;
+  compare(left: FractionalIndex, right: FractionalIndex): number;
+  equals(left: FractionalIndex, right: FractionalIndex): boolean;
+  isFractionalIndex(value: unknown): value is FractionalIndex;
+}
+
 const TERMINATOR = 0x80;
 const BYTE_MIN = 0x00;
 const BYTE_MAX = 0xff;
+const DEFAULT_INDEX = "80";
 const HEX_TABLE = Array.from({ length: 256 }, (_, i) =>
   i.toString(16).padStart(2, "0").toUpperCase(),
 );
 
-export class FractionalIndex {
-  static readonly TERMINATOR = TERMINATOR;
-
-  static readonly #DEFAULT_INDEX = new FractionalIndex(
-    new Uint8Array([TERMINATOR]),
-  );
-
-  readonly #bytes: Uint8Array;
-
-  private constructor(bytes: Uint8Array) {
-    this.#bytes = bytes;
-  }
-
-  static default(): FractionalIndex {
-    return FractionalIndex.#DEFAULT_INDEX;
-  }
-
-  static fromBytes(bytes: BytesLike): FractionalIndex {
-    return new FractionalIndex(copyBytes(bytes));
-  }
-
-  static fromHexString(hex: string): FractionalIndex {
-    return new FractionalIndex(hexToBytes(hex));
-  }
-
-  static new(
-    lower?: FractionalIndex | null,
-    upper?: FractionalIndex | null,
-  ): FractionalIndex | undefined {
-    const lowerIndex = optionalIndex(lower, "lower");
-    const upperIndex = optionalIndex(upper, "upper");
-
-    if (lowerIndex && upperIndex) {
-      return FractionalIndex.newBetween(lowerIndex, upperIndex);
-    }
-
-    if (lowerIndex) {
-      return FractionalIndex.newAfter(lowerIndex);
-    }
-
-    if (upperIndex) {
-      return FractionalIndex.newBefore(upperIndex);
-    }
-
-    return FractionalIndex.default();
-  }
-
-  static newBefore(index: FractionalIndex): FractionalIndex {
-    assertFractionalIndex(index, "index");
-    return FractionalIndex.fromUnterminated(newBeforeBytes(index.#bytes));
-  }
-
-  static newAfter(index: FractionalIndex): FractionalIndex {
-    assertFractionalIndex(index, "index");
-    return FractionalIndex.fromUnterminated(newAfterBytes(index.#bytes));
-  }
-
-  static newBetween(
-    left: FractionalIndex,
-    right: FractionalIndex,
-  ): FractionalIndex | undefined {
-    assertFractionalIndex(left, "left");
-    assertFractionalIndex(right, "right");
-    const bytes = newBetweenBytes(left.#bytes, right.#bytes);
-    return bytes ? FractionalIndex.fromUnterminated(bytes) : undefined;
-  }
-
-  static generateNEvenly(
-    lower: FractionalIndex | null | undefined,
-    upper: FractionalIndex | null | undefined,
-    n: number,
-  ): FractionalIndex[] | undefined {
-    assertNonNegativeSafeInteger(n, "n");
-
-    if (n === 0) {
-      return [];
-    }
-
-    const lowerIndex = optionalIndex(lower, "lower");
-    const upperIndex = optionalIndex(upper, "upper");
-    if (lowerIndex && upperIndex && lowerIndex.compare(upperIndex) >= 0) {
-      return undefined;
-    }
-
-    const values: FractionalIndex[] = new Array(n);
-    let offset = 0;
-    const push = (value: FractionalIndex) => {
-      values[offset++] = value;
-    };
-
-    const generate = (
-      lo: FractionalIndex | undefined,
-      hi: FractionalIndex | undefined,
-      count: number,
-    ) => {
-      if (count === 0) {
-        return;
-      }
-
-      const mid = Math.floor(count / 2);
-      const midValue = FractionalIndex.new(lo, hi);
-      if (!midValue) {
-        throw new Error("FractionalIndex.new returned undefined inside generateNEvenly");
-      }
-
-      if (count === 1) {
-        push(midValue);
-        return;
-      }
-
-      generate(lo, midValue, mid);
-      push(midValue);
-
-      const rightCount = count - mid - 1;
-      if (rightCount !== 0) {
-        generate(midValue, hi, rightCount);
-      }
-    };
-
-    generate(lowerIndex, upperIndex, n);
-    return values;
-  }
-
-  static jitterDefault(options: JitterOptions = {}): FractionalIndex {
-    return FractionalIndex.jitter(new Uint8Array(0), options);
-  }
-
-  static newJitter(
-    lower: FractionalIndex | null | undefined,
-    upper: FractionalIndex | null | undefined,
-    options: JitterOptions = {},
-  ): FractionalIndex | undefined {
-    const lowerIndex = optionalIndex(lower, "lower");
-    const upperIndex = optionalIndex(upper, "upper");
-
-    if (lowerIndex && upperIndex) {
-      return FractionalIndex.newBetweenJitter(lowerIndex, upperIndex, options);
-    }
-
-    if (lowerIndex) {
-      return FractionalIndex.newAfterJitter(lowerIndex, options);
-    }
-
-    if (upperIndex) {
-      return FractionalIndex.newBeforeJitter(upperIndex, options);
-    }
-
-    return FractionalIndex.jitterDefault(options);
-  }
-
-  static newBeforeJitter(
-    index: FractionalIndex,
-    options: JitterOptions = {},
-  ): FractionalIndex {
-    assertFractionalIndex(index, "index");
-    return FractionalIndex.jitter(newBeforeBytes(index.#bytes), options);
-  }
-
-  static newAfterJitter(
-    index: FractionalIndex,
-    options: JitterOptions = {},
-  ): FractionalIndex {
-    assertFractionalIndex(index, "index");
-    return FractionalIndex.jitter(newAfterBytes(index.#bytes), options);
-  }
-
-  static newBetweenJitter(
-    left: FractionalIndex,
-    right: FractionalIndex,
-    options: JitterOptions = {},
-  ): FractionalIndex | undefined {
-    assertFractionalIndex(left, "left");
-    assertFractionalIndex(right, "right");
-    const bytes = newBetweenBytes(left.#bytes, right.#bytes);
-    return bytes ? FractionalIndex.jitter(bytes, options) : undefined;
-  }
-
-  static generateNEvenlyJitter(
-    lower: FractionalIndex | null | undefined,
-    upper: FractionalIndex | null | undefined,
-    n: number,
-    options: JitterOptions = {},
-  ): FractionalIndex[] | undefined {
-    assertNonNegativeSafeInteger(n, "n");
-
-    if (n === 0) {
-      return [];
-    }
-
-    const lowerIndex = optionalIndex(lower, "lower");
-    const upperIndex = optionalIndex(upper, "upper");
-    if (lowerIndex && upperIndex && lowerIndex.compare(upperIndex) >= 0) {
-      return undefined;
-    }
-
-    const normalized = normalizeJitterOptions(options);
-    const values: FractionalIndex[] = new Array(n);
-    let offset = 0;
-    const push = (value: FractionalIndex) => {
-      values[offset++] = value;
-    };
-
-    const generate = (
-      lo: FractionalIndex | undefined,
-      hi: FractionalIndex | undefined,
-      count: number,
-    ) => {
-      if (count === 0) {
-        return;
-      }
-
-      const mid = Math.floor(count / 2);
-      const midValue = FractionalIndex.newJitterWithNormalized(
-        lo,
-        hi,
-        normalized,
-      );
-      if (!midValue) {
-        throw new Error(
-          "FractionalIndex.newJitter returned undefined inside generateNEvenlyJitter",
-        );
-      }
-
-      if (count === 1) {
-        push(midValue);
-        return;
-      }
-
-      generate(lo, midValue, mid);
-      push(midValue);
-
-      const rightCount = count - mid - 1;
-      if (rightCount !== 0) {
-        generate(midValue, hi, rightCount);
-      }
-    };
-
-    generate(lowerIndex, upperIndex, n);
-    return values;
-  }
-
-  get length(): number {
-    return this.#bytes.length;
-  }
-
-  toBytes(): Uint8Array {
-    return new Uint8Array(this.#bytes);
-  }
-
-  asBytes(): Uint8Array {
-    return this.toBytes();
-  }
-
-  compare(other: FractionalIndex): number {
-    assertFractionalIndex(other, "other");
-    return compareBytes(this.#bytes, other.#bytes);
-  }
-
-  equals(other: FractionalIndex): boolean {
-    return isFractionalIndex(other) && compareBytes(this.#bytes, other.#bytes) === 0;
-  }
-
-  toString(): string {
-    return bytesToHexUnchecked(this.#bytes);
-  }
-
-  toJSON(): string {
-    return this.toString();
-  }
-
-  valueOf(): string {
-    return this.toString();
-  }
-
-  [Symbol.toPrimitive](): string {
-    return this.toString();
-  }
-
-  private static fromUnterminated(bytes: Uint8Array): FractionalIndex {
-    const output = new Uint8Array(bytes.length + 1);
-    output.set(bytes);
-    output[bytes.length] = TERMINATOR;
-    return new FractionalIndex(output);
-  }
-
-  private static jitter(
-    bytes: Uint8Array,
-    options: JitterOptions,
-  ): FractionalIndex {
-    const normalized = normalizeJitterOptions(options);
-    return FractionalIndex.jitterWithNormalized(bytes, normalized);
-  }
-
-  private static jitterWithNormalized(
-    bytes: Uint8Array,
-    options: NormalizedJitterOptions,
-  ): FractionalIndex {
-    const output = new Uint8Array(bytes.length + 1 + options.jitter);
-    output.set(bytes);
-    output[bytes.length] = TERMINATOR;
-
-    for (let i = 0; i < options.jitter; i++) {
-      output[bytes.length + 1 + i] = readRandomByte(options.randomByte);
-    }
-
-    return new FractionalIndex(output);
-  }
-
-  private static newJitterWithNormalized(
-    lower: FractionalIndex | undefined,
-    upper: FractionalIndex | undefined,
-    options: NormalizedJitterOptions,
-  ): FractionalIndex | undefined {
-    if (lower && upper) {
-      const bytes = newBetweenBytes(lower.#bytes, upper.#bytes);
-      return bytes ? FractionalIndex.jitterWithNormalized(bytes, options) : undefined;
-    }
-
-    if (lower) {
-      return FractionalIndex.jitterWithNormalized(
-        newAfterBytes(lower.#bytes),
-        options,
-      );
-    }
-
-    if (upper) {
-      return FractionalIndex.jitterWithNormalized(
-        newBeforeBytes(upper.#bytes),
-        options,
-      );
-    }
-
-    return FractionalIndex.jitterWithNormalized(new Uint8Array(0), options);
-  }
-}
+export const FractionalIndex: FractionalIndexNamespace = Object.freeze({
+  TERMINATOR,
+  default: defaultIndex,
+  fromHexString,
+  "new": newIndex,
+  newBefore,
+  newAfter,
+  newBetween,
+  generateNEvenly,
+  jitterDefault,
+  newJitter,
+  newBeforeJitter,
+  newAfterJitter,
+  newBetweenJitter,
+  generateNEvenlyJitter,
+  compare,
+  equals,
+  isFractionalIndex,
+});
 
 interface NormalizedJitterOptions {
   jitter: number;
   randomByte: () => number;
 }
 
-export function isFractionalIndex(value: unknown): value is FractionalIndex {
-  return value instanceof FractionalIndex;
+export function defaultIndex(): FractionalIndex {
+  return DEFAULT_INDEX;
 }
 
-export function compare(left: FractionalIndex, right: FractionalIndex): number {
-  assertFractionalIndex(left, "left");
-  return left.compare(right);
+export function fromHexString(hex: string): FractionalIndex {
+  return bytesToHexUnchecked(hexToBytes(hex));
+}
+
+export function newIndex(
+  lower?: FractionalIndex | null,
+  upper?: FractionalIndex | null,
+): FractionalIndex | undefined {
+  const value = newBytes(
+    optionalIndexBytes(lower, "lower"),
+    optionalIndexBytes(upper, "upper"),
+  );
+  return value ? bytesToHexUnchecked(value) : undefined;
 }
 
 export function newBefore(index: FractionalIndex): FractionalIndex {
-  return FractionalIndex.newBefore(index);
+  return bytesToHexUnchecked(
+    fromUnterminatedBytes(newBeforeBytes(parseIndex(index, "index"))),
+  );
 }
 
 export function newAfter(index: FractionalIndex): FractionalIndex {
-  return FractionalIndex.newAfter(index);
+  return bytesToHexUnchecked(
+    fromUnterminatedBytes(newAfterBytes(parseIndex(index, "index"))),
+  );
 }
 
 export function newBetween(
   left: FractionalIndex,
   right: FractionalIndex,
 ): FractionalIndex | undefined {
-  return FractionalIndex.newBetween(left, right);
+  const bytes = newBetweenBytes(parseIndex(left, "left"), parseIndex(right, "right"));
+  return bytes ? bytesToHexUnchecked(fromUnterminatedBytes(bytes)) : undefined;
 }
 
 export function generateNEvenly(
@@ -394,11 +140,59 @@ export function generateNEvenly(
   upper: FractionalIndex | null | undefined,
   n: number,
 ): FractionalIndex[] | undefined {
-  return FractionalIndex.generateNEvenly(lower, upper, n);
+  assertNonNegativeSafeInteger(n, "n");
+
+  if (n === 0) {
+    return [];
+  }
+
+  const lowerBytes = optionalIndexBytes(lower, "lower");
+  const upperBytes = optionalIndexBytes(upper, "upper");
+  if (lowerBytes && upperBytes && compareBytes(lowerBytes, upperBytes) >= 0) {
+    return undefined;
+  }
+
+  const values: FractionalIndex[] = new Array(n);
+  let offset = 0;
+  const push = (value: Uint8Array) => {
+    values[offset++] = bytesToHexUnchecked(value);
+  };
+
+  const generate = (
+    lo: Uint8Array | undefined,
+    hi: Uint8Array | undefined,
+    count: number,
+  ) => {
+    if (count === 0) {
+      return;
+    }
+
+    const mid = Math.floor(count / 2);
+    const midValue = newBytes(lo, hi);
+    if (!midValue) {
+      throw new Error("newBytes returned undefined inside generateNEvenly");
+    }
+
+    if (count === 1) {
+      push(midValue);
+      return;
+    }
+
+    generate(lo, midValue, mid);
+    push(midValue);
+
+    const rightCount = count - mid - 1;
+    if (rightCount !== 0) {
+      generate(midValue, hi, rightCount);
+    }
+  };
+
+  generate(lowerBytes, upperBytes, n);
+  return values;
 }
 
 export function jitterDefault(options: JitterOptions = {}): FractionalIndex {
-  return FractionalIndex.jitterDefault(options);
+  return bytesToHexUnchecked(jitterBytes(new Uint8Array(0), options));
 }
 
 export function newJitter(
@@ -406,21 +200,31 @@ export function newJitter(
   upper: FractionalIndex | null | undefined,
   options: JitterOptions = {},
 ): FractionalIndex | undefined {
-  return FractionalIndex.newJitter(lower, upper, options);
+  const normalized = normalizeJitterOptions(options);
+  const value = newJitterBytes(
+    optionalIndexBytes(lower, "lower"),
+    optionalIndexBytes(upper, "upper"),
+    normalized,
+  );
+  return value ? bytesToHexUnchecked(value) : undefined;
 }
 
 export function newBeforeJitter(
   index: FractionalIndex,
   options: JitterOptions = {},
 ): FractionalIndex {
-  return FractionalIndex.newBeforeJitter(index, options);
+  return bytesToHexUnchecked(
+    jitterBytes(newBeforeBytes(parseIndex(index, "index")), options),
+  );
 }
 
 export function newAfterJitter(
   index: FractionalIndex,
   options: JitterOptions = {},
 ): FractionalIndex {
-  return FractionalIndex.newAfterJitter(index, options);
+  return bytesToHexUnchecked(
+    jitterBytes(newAfterBytes(parseIndex(index, "index")), options),
+  );
 }
 
 export function newBetweenJitter(
@@ -428,7 +232,8 @@ export function newBetweenJitter(
   right: FractionalIndex,
   options: JitterOptions = {},
 ): FractionalIndex | undefined {
-  return FractionalIndex.newBetweenJitter(left, right, options);
+  const bytes = newBetweenBytes(parseIndex(left, "left"), parseIndex(right, "right"));
+  return bytes ? bytesToHexUnchecked(jitterBytes(bytes, options)) : undefined;
 }
 
 export function generateNEvenlyJitter(
@@ -437,32 +242,169 @@ export function generateNEvenlyJitter(
   n: number,
   options: JitterOptions = {},
 ): FractionalIndex[] | undefined {
-  return FractionalIndex.generateNEvenlyJitter(lower, upper, n, options);
+  assertNonNegativeSafeInteger(n, "n");
+
+  if (n === 0) {
+    return [];
+  }
+
+  const lowerBytes = optionalIndexBytes(lower, "lower");
+  const upperBytes = optionalIndexBytes(upper, "upper");
+  if (lowerBytes && upperBytes && compareBytes(lowerBytes, upperBytes) >= 0) {
+    return undefined;
+  }
+
+  const normalized = normalizeJitterOptions(options);
+  const values: FractionalIndex[] = new Array(n);
+  let offset = 0;
+  const push = (value: Uint8Array) => {
+    values[offset++] = bytesToHexUnchecked(value);
+  };
+
+  const generate = (
+    lo: Uint8Array | undefined,
+    hi: Uint8Array | undefined,
+    count: number,
+  ) => {
+    if (count === 0) {
+      return;
+    }
+
+    const mid = Math.floor(count / 2);
+    const midValue = newJitterBytes(lo, hi, normalized);
+    if (!midValue) {
+      throw new Error("newJitterBytes returned undefined inside generateNEvenlyJitter");
+    }
+
+    if (count === 1) {
+      push(midValue);
+      return;
+    }
+
+    generate(lo, midValue, mid);
+    push(midValue);
+
+    const rightCount = count - mid - 1;
+    if (rightCount !== 0) {
+      generate(midValue, hi, rightCount);
+    }
+  };
+
+  generate(lowerBytes, upperBytes, n);
+  return values;
 }
 
-export function bytesToHex(bytes: BytesLike): string {
-  return bytesToHexUnchecked(copyBytes(bytes));
+export function compare(left: FractionalIndex, right: FractionalIndex): number {
+  return compareBytes(parseIndex(left, "left"), parseIndex(right, "right"));
+}
+
+export function equals(left: FractionalIndex, right: FractionalIndex): boolean {
+  return compare(left, right) === 0;
+}
+
+export function isFractionalIndex(value: unknown): value is FractionalIndex {
+  if (typeof value !== "string" || value.length === 0 || value.length % 2 !== 0) {
+    return false;
+  }
+
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    const isDigit = code >= 48 && code <= 57;
+    const isUpperHex = code >= 65 && code <= 70;
+    if (!isDigit && !isUpperHex) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 export const TERMINATOR_BYTE = TERMINATOR;
 
-function copyBytes(bytes: BytesLike): Uint8Array {
-  if (bytes instanceof Uint8Array) {
-    return new Uint8Array(bytes);
+function newBytes(
+  lower: Uint8Array | undefined,
+  upper: Uint8Array | undefined,
+): Uint8Array | undefined {
+  if (lower && upper) {
+    const bytes = newBetweenBytes(lower, upper);
+    return bytes ? fromUnterminatedBytes(bytes) : undefined;
   }
 
-  if (!Array.isArray(bytes)) {
-    throw new TypeError("bytes must be a Uint8Array or an array of byte values");
+  if (lower) {
+    return fromUnterminatedBytes(newAfterBytes(lower));
   }
 
-  const output = new Uint8Array(bytes.length);
-  for (let i = 0; i < bytes.length; i++) {
-    const byte = bytes[i];
-    assertByte(byte, `bytes[${i}]`);
-    output[i] = byte;
+  if (upper) {
+    return fromUnterminatedBytes(newBeforeBytes(upper));
+  }
+
+  return new Uint8Array([TERMINATOR]);
+}
+
+function newJitterBytes(
+  lower: Uint8Array | undefined,
+  upper: Uint8Array | undefined,
+  options: NormalizedJitterOptions,
+): Uint8Array | undefined {
+  if (lower && upper) {
+    const bytes = newBetweenBytes(lower, upper);
+    return bytes ? jitterBytesWithNormalized(bytes, options) : undefined;
+  }
+
+  if (lower) {
+    return jitterBytesWithNormalized(newAfterBytes(lower), options);
+  }
+
+  if (upper) {
+    return jitterBytesWithNormalized(newBeforeBytes(upper), options);
+  }
+
+  return jitterBytesWithNormalized(new Uint8Array(0), options);
+}
+
+function fromUnterminatedBytes(bytes: Uint8Array): Uint8Array {
+  const output = new Uint8Array(bytes.length + 1);
+  output.set(bytes);
+  output[bytes.length] = TERMINATOR;
+  return output;
+}
+
+function jitterBytes(bytes: Uint8Array, options: JitterOptions): Uint8Array {
+  return jitterBytesWithNormalized(bytes, normalizeJitterOptions(options));
+}
+
+function jitterBytesWithNormalized(
+  bytes: Uint8Array,
+  options: NormalizedJitterOptions,
+): Uint8Array {
+  const output = new Uint8Array(bytes.length + 1 + options.jitter);
+  output.set(bytes);
+  output[bytes.length] = TERMINATOR;
+
+  for (let i = 0; i < options.jitter; i++) {
+    output[bytes.length + 1 + i] = readRandomByte(options.randomByte);
   }
 
   return output;
+}
+
+function optionalIndexBytes(
+  value: FractionalIndex | null | undefined,
+  name: string,
+): Uint8Array | undefined {
+  if (value == null) {
+    return undefined;
+  }
+
+  return parseIndex(value, name);
+}
+
+function parseIndex(value: FractionalIndex, name: string): Uint8Array {
+  if (typeof value !== "string") {
+    throw new TypeError(`${name} must be a fractional index string`);
+  }
+
+  return hexToBytes(value);
 }
 
 function hexToBytes(hex: string): Uint8Array {
@@ -558,7 +500,7 @@ function newBetweenBytes(
 
     if (diff > 1) {
       const output = left.slice(0, i + 1);
-      output[i] = leftByte + Math.floor((rightByte - leftByte) / 2);
+      output[i] = leftByte + Math.floor(diff / 2);
       return output;
     }
 
@@ -613,27 +555,6 @@ function compareBytes(left: Uint8Array, right: Uint8Array): number {
   }
 
   return left.length - right.length;
-}
-
-function optionalIndex(
-  value: FractionalIndex | null | undefined,
-  name: string,
-): FractionalIndex | undefined {
-  if (value == null) {
-    return undefined;
-  }
-
-  assertFractionalIndex(value, name);
-  return value;
-}
-
-function assertFractionalIndex(
-  value: unknown,
-  name: string,
-): asserts value is FractionalIndex {
-  if (!isFractionalIndex(value)) {
-    throw new TypeError(`${name} must be a FractionalIndex`);
-  }
 }
 
 function normalizeJitterOptions(options: JitterOptions): NormalizedJitterOptions {
