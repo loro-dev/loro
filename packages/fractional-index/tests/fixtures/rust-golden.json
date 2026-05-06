@@ -81,6 +81,12 @@
       "value": "008180"
     },
     {
+      "left": "0080",
+      "panics": false,
+      "right": "008180",
+      "value": "00817F80"
+    },
+    {
       "left": "FE80",
       "panics": false,
       "right": "FF80",

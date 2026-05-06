@@ -129,6 +129,31 @@ describe("FractionalIndex API", () => {
     expect(rightMiddle?.compare(after)).toBeLessThan(0);
   });
 
+  test("newBetween handles generated indexes with a zero shared prefix", () => {
+    let upper = FractionalIndex.default();
+    for (let i = 0; i < 127; i++) {
+      upper = FractionalIndex.newBefore(upper);
+    }
+
+    const lower = FractionalIndex.newBefore(upper);
+    expect(lower.toString()).toBe("0080");
+    expect(upper.toString()).toBe("0180");
+
+    const middle = FractionalIndex.newBetween(lower, upper);
+    expect(middle?.toString()).toBe("008180");
+
+    const between = FractionalIndex.newBetween(lower, middle!);
+    expect(between?.toString()).toBe("00817F80");
+    expect(between!.compare(lower)).toBeGreaterThan(0);
+    expect(between!.compare(middle!)).toBeLessThan(0);
+
+    const jittered = FractionalIndex.newBetweenJitter(lower, middle!, {
+      jitter: 1,
+      randomByte: () => 0xaa,
+    });
+    expect(jittered?.toString()).toBe("00817F80AA");
+  });
+
   test("generateNEvenly returns strictly sorted values within bounds", () => {
     const lower = FractionalIndex.newBefore(FractionalIndex.default());
     const upper = FractionalIndex.newAfter(FractionalIndex.default());

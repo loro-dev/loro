@@ -78,12 +78,15 @@ pub(crate) fn new_after(bytes: &[u8]) -> Vec<u8> {
 pub(crate) fn new_between(left: &[u8], right: &[u8], extra_capacity: usize) -> Option<Vec<u8>> {
     let shorter_len = left.len().min(right.len()) - 1;
     for i in 0..shorter_len {
-        if left[i] < right[i] - 1 {
+        let left_byte = left[i];
+        let right_byte = right[i];
+        let diff = i16::from(right_byte) - i16::from(left_byte);
+        if diff > 1 {
             let mut ans: Vec<u8> = left[0..=i].into();
-            ans[i] += (right[i] - left[i]) / 2;
+            ans[i] += (right_byte - left_byte) / 2;
             return ans.into();
         }
-        if left[i] == right[i] - 1 {
+        if diff == 1 {
             let (prefix, suffix) = left.split_at(i + 1);
             let new_suffix = new_after(suffix);
             let mut ans = Vec::with_capacity(prefix.len() + new_suffix.len() + extra_capacity);
@@ -91,7 +94,7 @@ pub(crate) fn new_between(left: &[u8], right: &[u8], extra_capacity: usize) -> O
             ans.extend_from_slice(&new_suffix);
             return ans.into();
         }
-        if left[i] > right[i] {
+        if diff < 0 {
             return None;
         }
     }
@@ -203,4 +206,20 @@ pub fn bytes_to_hex(bytes: &[u8]) -> String {
         let _ = write!(output, "{b:02X}");
         output
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FractionalIndex;
+
+    #[test]
+    fn new_between_handles_zero_shared_prefix() {
+        let lower = FractionalIndex::from_hex_string("0080");
+        let upper = FractionalIndex::from_hex_string("008180");
+        let index = FractionalIndex::new_between(&lower, &upper).unwrap();
+
+        assert!(lower < index);
+        assert!(index < upper);
+        assert_eq!(index.to_string(), "00817F80");
+    }
 }

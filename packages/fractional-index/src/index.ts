@@ -554,24 +554,21 @@ function newBetweenBytes(
   for (let i = 0; i < shorterLen; i++) {
     const leftByte = left[i]!;
     const rightByte = right[i]!;
+    const diff = rightByte - leftByte;
 
-    if (rightByte === BYTE_MIN) {
-      throw new Error("attempt to subtract with overflow");
-    }
-
-    if (leftByte < rightByte - 1) {
+    if (diff > 1) {
       const output = left.slice(0, i + 1);
       output[i] = leftByte + Math.floor((rightByte - leftByte) / 2);
       return output;
     }
 
-    if (leftByte === rightByte - 1) {
+    if (diff === 1) {
       const prefix = left.slice(0, i + 1);
       const suffix = left.slice(i + 1);
       return concatBytes(prefix, newAfterBytes(suffix));
     }
 
-    if (leftByte > rightByte) {
+    if (diff < 0) {
       return undefined;
     }
   }
