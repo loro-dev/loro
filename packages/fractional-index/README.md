@@ -281,6 +281,23 @@ The fixture covers:
 - Jitter byte placement.
 - Hex serialization.
 
+## Development Commands
+
+This package uses Vite+ (`vp`) for build, test, lint, and format orchestration.
+
+```sh
+pnpm --filter @loro-dev/fractional-index format
+pnpm --filter @loro-dev/fractional-index lint
+pnpm --filter @loro-dev/fractional-index typecheck
+pnpm --filter @loro-dev/fractional-index test
+pnpm --filter @loro-dev/fractional-index build
+pnpm --filter @loro-dev/fractional-index check
+```
+
+`lint` runs oxlint in type-aware mode with warnings denied. `format` and
+`format:check` use oxfmt. `typecheck` uses `tsgo`. `build` runs `vp pack` and
+emits the ESM bundle, declarations, and sourcemap to `dist/`.
+
 ## Performance Notes
 
 String indexes are optimized for JavaScript ergonomics: comparison, JSON,

@@ -22,9 +22,7 @@ describe("Rust golden fixtures", () => {
     expect(FractionalIndex.default()).toBe(fixture.basic.default);
     expect(FractionalIndex.newBefore(idx("80"))).toBe(fixture.basic.beforeDefault);
     expect(FractionalIndex.newAfter(idx("80"))).toBe(fixture.basic.afterDefault);
-    expect(FractionalIndex.fromHexString("80ffA")).toBe(
-      fixture.basic.fromHexOddLength,
-    );
+    expect(FractionalIndex.fromHexString("80ffA")).toBe(fixture.basic.fromHexOddLength);
   });
 
   test("newAfter chains match Rust", () => {
@@ -52,13 +50,14 @@ describe("Rust golden fixtures", () => {
   });
 
   test("newBetween matches Rust edge cases", () => {
-    for (const c of fixture.between) {
+    for (const c of fixture.between.filter((c) => c.panics)) {
       const run = () => FractionalIndex.newBetween(idx(c.left), idx(c.right));
-      if (c.panics) {
-        expect(run).toThrow();
-      } else {
-        expect(maybeToHex(run())).toBe(c.value);
-      }
+      expect(run).toThrow("internal error: entered unreachable code");
+    }
+
+    for (const c of fixture.between.filter((c) => !c.panics)) {
+      const run = () => FractionalIndex.newBetween(idx(c.left), idx(c.right));
+      expect(maybeToHex(run())).toBe(c.value);
     }
   });
 

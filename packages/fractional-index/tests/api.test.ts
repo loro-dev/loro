@@ -72,9 +72,7 @@ describe("FractionalIndex string API", () => {
     expect(() =>
       FractionalIndex.jitterDefault({ jitter: 1, randomByte: () => 1.5 }),
     ).toThrow(RangeError);
-    expect(() => FractionalIndex.newBefore(80 as unknown as string)).toThrow(
-      TypeError,
-    );
+    expect(() => FractionalIndex.newBefore(80 as unknown as string)).toThrow(TypeError);
   });
 
   test("public namespace does not expose byte-array helpers", () => {
@@ -89,9 +87,7 @@ describe("FractionalIndex string API", () => {
     const after = FractionalIndex.newAfter(middle);
 
     expect(compare(FractionalIndex.new(undefined, middle)!, middle)).toBeLessThan(0);
-    expect(compare(FractionalIndex.new(middle, undefined)!, middle)).toBeGreaterThan(
-      0,
-    );
+    expect(compare(FractionalIndex.new(middle, undefined)!, middle)).toBeGreaterThan(0);
 
     const leftMiddle = FractionalIndex.new(before, middle);
     expect(compare(leftMiddle!, before)).toBeGreaterThan(0);
@@ -163,9 +159,7 @@ describe("FractionalIndex string API", () => {
     let offset = 0;
     const randomByte = () => bytes[offset++ % bytes.length]!;
 
-    expect(FractionalIndex.jitterDefault({ jitter: 4, randomByte })).toBe(
-      "8001020304",
-    );
+    expect(FractionalIndex.jitterDefault({ jitter: 4, randomByte })).toBe("8001020304");
   });
 
   test("runtime type guard recognizes canonical fractional index strings", () => {

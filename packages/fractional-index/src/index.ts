@@ -27,10 +27,7 @@ export interface FractionalIndexNamespace {
   ): FractionalIndex | undefined;
   newBefore(index: FractionalIndex): FractionalIndex;
   newAfter(index: FractionalIndex): FractionalIndex;
-  newBetween(
-    left: FractionalIndex,
-    right: FractionalIndex,
-  ): FractionalIndex | undefined;
+  newBetween(left: FractionalIndex, right: FractionalIndex): FractionalIndex | undefined;
   generateNEvenly(
     lower: FractionalIndex | null | undefined,
     upper: FractionalIndex | null | undefined,
@@ -42,10 +39,7 @@ export interface FractionalIndexNamespace {
     upper: FractionalIndex | null | undefined,
     options?: JitterOptions,
   ): FractionalIndex | undefined;
-  newBeforeJitter(
-    index: FractionalIndex,
-    options?: JitterOptions,
-  ): FractionalIndex;
+  newBeforeJitter(index: FractionalIndex, options?: JitterOptions): FractionalIndex;
   newAfterJitter(index: FractionalIndex, options?: JitterOptions): FractionalIndex;
   newBetweenJitter(
     left: FractionalIndex,
@@ -75,7 +69,7 @@ export const FractionalIndex: FractionalIndexNamespace = Object.freeze({
   TERMINATOR,
   default: defaultIndex,
   fromHexString,
-  "new": newIndex,
+  new: newIndex,
   newBefore,
   newAfter,
   newBetween,
@@ -483,10 +477,7 @@ function newAfterBytes(bytes: Uint8Array): Uint8Array {
   throw new Error("internal error: entered unreachable code");
 }
 
-function newBetweenBytes(
-  left: Uint8Array,
-  right: Uint8Array,
-): Uint8Array | undefined {
+function newBetweenBytes(left: Uint8Array, right: Uint8Array): Uint8Array | undefined {
   const minLen = Math.min(left.length, right.length);
   if (minLen === 0) {
     throw new Error("attempt to subtract with overflow");
@@ -590,12 +581,11 @@ function assertByte(value: unknown, name: string): asserts value is number {
   }
 }
 
-function assertNonNegativeSafeInteger(value: unknown, name: string): asserts value is number {
-  if (
-    typeof value !== "number" ||
-    !Number.isSafeInteger(value) ||
-    value < 0
-  ) {
+function assertNonNegativeSafeInteger(
+  value: unknown,
+  name: string,
+): asserts value is number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
     throw new RangeError(`${name} must be a non-negative safe integer`);
   }
 }
