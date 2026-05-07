@@ -2412,26 +2412,48 @@ impl LoroDoc {
     }
 }
 
-// FIXME: PERF: This method is quite slow because it iterates all the changes
 fn find_last_delete_op(oplog: &OpLog, id: ID, idx: ContainerIdx) -> Option<ID> {
+    // Any delete op that covers `id` must have observed it, so its peer's counter
+    // at delete time was > id.counter. start_vv (the vv at `id`) is therefore a
+    // valid lower bound: changes at or before start_vv[peer] predate `id` and can
+    // be skipped. We scan peer-by-peer rather than using the DAG-ordered
+    // iter_changes_causally_rev, which is O(total changes).
+    //
+    // We choose the matching delete op with the greatest (op_lamport, peer, counter)
+    // ordering. op_lamport is the Lamport of the specific op within the change
+    // (change.lamport + op offset), not just the change's starting Lamport, so
+    // concurrent deletes with equal change Lamports are broken deterministically.
     let start_vv = oplog
         .dag
         .frontiers_to_vv(&id.into())
         .unwrap_or_else(|| oplog.shallow_since_vv().to_vv());
-    for change in oplog.iter_changes_causally_rev(&start_vv, oplog.vv()) {
-        for op in change.ops.iter().rev() {
+
+    // (op_lamport, peer) gives a deterministic total order for concurrent deletes.
+    // A single peer cannot produce two ops with the same lamport, so peer suffices
+    // as a tie-breaker.
+    let mut best: Option<((loro_common::Lamport, loro_common::PeerID), ID)> = None;
+
+    for change in oplog.iter_changes_peer_by_peer(&start_vv, oplog.vv()) {
+        let peer = change.peer();
+        for op in change.ops.iter() {
             if op.container != idx {
                 continue;
             }
             if let InnerContent::List(InnerListOp::Delete(d)) = &op.content {
                 if d.id_start.to_span(d.atom_len()).contains(id) {
-                    return Some(ID::new(change.peer(), op.counter));
+                    debug_assert!(op.counter >= change.id().counter);
+                    let op_lamport = change.lamport
+                        + (op.counter - change.id().counter) as loro_common::Lamport;
+                    let key = (op_lamport, peer);
+                    if best.map_or(true, |(bk, _)| key > bk) {
+                        best = Some((key, ID::new(peer, op.counter)));
+                    }
                 }
             }
         }
     }
 
-    None
+    best.map(|(_, op_id)| op_id)
 }
 
 fn should_use_forward_diff_calculator(before: &VersionVector, after: &VersionVector) -> bool {

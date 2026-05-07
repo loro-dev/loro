@@ -80,6 +80,14 @@ The standard build pipeline (`deno run -A ./scripts/build.ts dev|release`) now k
 
 Load the source map in browser devtools; when devtools fetches the debug companion it can map instructions back to Rust source files and line numbers without inflating the shipped `.wasm`.
 
+## Bundler entries
+
+Bare `import { LoroDoc } from "loro-crdt"` in browser bundlers that respect the package `browser` field remaps the WASM glue to a synchronous browser build, which avoids Vite/Rolldown production chunk cycles around `.wasm` wrappers. Runtimes that need native `.wasm` module imports can still use the `bundler` entry, and apps that prefer explicit async initialization can use `loro-crdt/web`.
+
+Vite and Webpack understand `new URL("./loro_wasm_bg.wasm", import.meta.url)` and emit the WASM asset automatically. Plain esbuild and plain Rollup do not copy that asset by default. For those tools, either import `loro-crdt/base64` to inline the WASM into the JS bundle without top-level await, or keep the default `loro-crdt` import and copy `node_modules/loro-crdt/browser/loro_wasm_bg.wasm` next to the emitted JS bundle as a build step.
+
+Next.js Turbopack can use the default browser entry. If a Next.js Webpack build resolves the `bundler` entry instead of the package `browser` remap, use `loro-crdt/base64`.
+
 # Example
 
 [![Open in StackBlitz](https://developer.stackblitz.com/img/open_in_stackblitz.svg)](https://stackblitz.com/edit/loro-basic-test?file=test%2Floro-sync.test.ts)

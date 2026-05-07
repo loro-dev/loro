@@ -590,23 +590,6 @@ impl SharedArena {
             .map(move |i| values.get(i).unwrap().clone())
     }
 
-    pub(crate) fn get_root_container_idx_by_key(
-        &self,
-        root_index: &loro_common::InternalString,
-    ) -> Option<ContainerIdx> {
-        let containers = self.inner.containers.read();
-        for t in loro_common::ContainerType::ALL_TYPES.iter() {
-            let cid = ContainerID::Root {
-                name: root_index.clone(),
-                container_type: *t,
-            };
-            if let Some(idx) = containers.container_id_to_idx.get(&cid) {
-                return Some(*idx);
-            }
-        }
-        None
-    }
-
     #[allow(unused)]
     pub(crate) fn log_all_values(&self) {
         let values = self.inner.values.lock();

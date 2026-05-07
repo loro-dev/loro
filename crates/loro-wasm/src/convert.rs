@@ -17,8 +17,45 @@ use crate::{
     JsJsonSchemaOrString, JsResult, LoroCounter, LoroList, LoroMap, LoroMovableList, LoroText,
     LoroTree, VersionVector,
 };
-use wasm_bindgen::__rt::IntoJsResult;
+use wasm_bindgen::__rt::{IntoJsResult, RcRef, WasmRefCell};
 use wasm_bindgen::convert::RefFromWasmAbi;
+
+fn js_wbg_ptr(js: &JsValue) -> JsResult<u32> {
+    let Ok(ptr) = Reflect::get(js, &JsValue::from_str("__wbg_ptr")) else {
+        return Err(JsValue::from_str("Cannot find pointer field"));
+    };
+
+    let ptr = ptr
+        .as_f64()
+        .ok_or_else(|| JsValue::from_str("__wbg_ptr must be a number"))?;
+    if !ptr.is_finite() || ptr.fract() != 0.0 || ptr <= 0.0 || ptr > u32::MAX as f64 {
+        return Err(JsValue::from_str("__wbg_ptr must be a valid non-zero u32"));
+    }
+
+    Ok(ptr as u32)
+}
+
+fn validate_wbg_ptr_alignment<T>(ptr: u32) -> Result<(), &'static str> {
+    if (ptr as usize) % std::mem::align_of::<WasmRefCell<T>>() != 0 {
+        return Err("Invalid wasm-bindgen pointer alignment");
+    }
+
+    Ok(())
+}
+
+fn ref_from_checked_abi<T>(ptr: u32, type_name: &str) -> JsResult<RcRef<T>>
+where
+    T: RefFromWasmAbi<Abi = u32, Anchor = RcRef<T>>,
+{
+    if let Err(msg) = validate_wbg_ptr_alignment::<T>(ptr) {
+        return Err(JsValue::from_str(&format!("{msg} for {type_name}")));
+    }
+
+    // SAFETY: `ptr` passed the only representation checks available on the
+    // Rust side. The remaining invariant is wasm-bindgen's JS glue contract:
+    // the pointer must come from an actual live `{type_name}` object.
+    Ok(unsafe { T::ref_from_abi(ptr) })
+}
 
 /// Convert a `JsValue` to `T` by constructor's name.
 ///
@@ -32,6 +69,7 @@ pub(crate) fn js_to_container(js: JsContainer) -> JsResult<Container> {
         )));
     }
 
+    let ptr_u32 = js_wbg_ptr(&js)?;
     let kind_method = Reflect::get(&js, &JsValue::from_str("kind"));
     let kind = match kind_method {
         Ok(kind_method) if kind_method.is_function() => {
@@ -46,35 +84,29 @@ pub(crate) fn js_to_container(js: JsContainer) -> JsResult<Container> {
         _ => return Err(JsValue::from_str("No kind method found or not a function")),
     };
 
-    let Ok(ptr) = Reflect::get(&js, &JsValue::from_str("__wbg_ptr")) else {
-        return Err(JsValue::from_str("Cannot find pointer field"));
-    };
-    let ptr_u32: u32 =
-        ptr.as_f64()
-            .ok_or_else(|| JsValue::from_str("__wbg_ptr must be a number"))? as u32;
     let container = match kind.as_str() {
         "Text" => {
-            let obj = unsafe { LoroText::ref_from_abi(ptr_u32) };
+            let obj = ref_from_checked_abi::<LoroText>(ptr_u32, "LoroText")?;
             Container::Text(obj.clone())
         }
         "Map" => {
-            let obj = unsafe { LoroMap::ref_from_abi(ptr_u32) };
+            let obj = ref_from_checked_abi::<LoroMap>(ptr_u32, "LoroMap")?;
             Container::Map(obj.clone())
         }
         "List" => {
-            let obj = unsafe { LoroList::ref_from_abi(ptr_u32) };
+            let obj = ref_from_checked_abi::<LoroList>(ptr_u32, "LoroList")?;
             Container::List(obj.clone())
         }
         "Tree" => {
-            let obj = unsafe { LoroTree::ref_from_abi(ptr_u32) };
+            let obj = ref_from_checked_abi::<LoroTree>(ptr_u32, "LoroTree")?;
             Container::Tree(obj.clone())
         }
         "MovableList" => {
-            let obj = unsafe { LoroMovableList::ref_from_abi(ptr_u32) };
+            let obj = ref_from_checked_abi::<LoroMovableList>(ptr_u32, "LoroMovableList")?;
             Container::MovableList(obj.clone())
         }
         "Counter" => {
-            let obj = unsafe { LoroCounter::ref_from_abi(ptr_u32) };
+            let obj = ref_from_checked_abi::<LoroCounter>(ptr_u32, "LoroCounter")?;
             Container::Counter(obj.clone())
         }
         _ => {
@@ -128,14 +160,8 @@ pub(crate) fn js_to_version_vector(
         return Err(JsValue::from_str("Expected an object or Uint8Array"));
     }
 
-    let Ok(ptr) = Reflect::get(&js, &JsValue::from_str("__wbg_ptr")) else {
-        return Err(JsValue::from_str("Cannot find pointer field"));
-    };
-
-    let ptr_u32: u32 =
-        ptr.as_f64()
-            .ok_or_else(|| JsValue::from_str("__wbg_ptr must be a number"))? as u32;
-    let vv = unsafe { VersionVector::ref_from_abi(ptr_u32) };
+    let ptr_u32 = js_wbg_ptr(&js)?;
+    let vv = ref_from_checked_abi::<VersionVector>(ptr_u32, "VersionVector")?;
     Ok(vv)
 }
 
@@ -301,6 +327,7 @@ pub(crate) fn js_to_cursor(js: JsValue) -> JsResult<Cursor> {
         )));
     }
 
+    let ptr_u32 = js_wbg_ptr(&js)?;
     let kind_method = Reflect::get(&js, &JsValue::from_str("kind"));
     let kind = match kind_method {
         Ok(kind_method) if kind_method.is_function() => {
@@ -319,13 +346,7 @@ pub(crate) fn js_to_cursor(js: JsValue) -> JsResult<Cursor> {
         return Err(JsValue::from_str("Value is not a Cursor"));
     }
 
-    let Ok(ptr) = Reflect::get(&js, &JsValue::from_str("__wbg_ptr")) else {
-        return Err(JsValue::from_str("Cannot find pointer field"));
-    };
-    let ptr_u32: u32 =
-        ptr.as_f64()
-            .ok_or_else(|| JsValue::from_str("__wbg_ptr must be a number"))? as u32;
-    let cursor = unsafe { Cursor::ref_from_abi(ptr_u32) };
+    let cursor = ref_from_checked_abi::<Cursor>(ptr_u32, "Cursor")?;
     Ok(cursor.clone())
 }
 
@@ -820,4 +841,14 @@ fn set_style_attributes(
         }
     }
     Ok(())
+}
+
+#[cfg(all(test, miri))]
+mod miri_tests {
+    use super::{validate_wbg_ptr_alignment, LoroText};
+
+    #[test]
+    fn checked_ref_from_abi_rejects_invalid_wasm_bindgen_pointer() {
+        assert!(validate_wbg_ptr_alignment::<LoroText>(1).is_err());
+    }
 }

@@ -34,6 +34,9 @@ export default [
   // ESM for Web
   createConfig('es', 'ES2020', 'web'),
 
+  // ESM for browser bundlers that do not support top-level await.
+  createConfig('es', 'ES2020', 'browser'),
+
   // ESM for bundler
   createConfig('es', 'ES2020', 'bundler'),
 ];

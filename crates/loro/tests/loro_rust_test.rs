@@ -689,6 +689,29 @@ fn decode_import_blob_meta_1() -> LoroResult<()> {
 
 #[test]
 #[parallel]
+fn decode_import_blob_meta_rejects_malformed_unchecked_blobs() {
+    let invalid_blobs: &[&[u8]] = &[
+        &[
+            108, 111, 114, 111, 255, 255, 255, 255, 255, 255, 255, 255, 255, 3, 0, 0, 0, 0, 0, 0,
+            0, 255, 255, 44,
+        ],
+        &[
+            0x6c, 0x6f, 0x72, 0x6f, 0xff, 0xff, 0x26, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0xff, 0x2c,
+        ],
+        &[
+            0x6c, 0x6f, 0x72, 0x6f, 0xff, 0xff, 0xfb, 0xff, 0x6c, 0x6f, 0xf2, 0x6c, 0x6b, 0x72,
+            0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x72, 0x00,
+        ],
+    ];
+
+    for blob in invalid_blobs {
+        assert!(LoroDoc::decode_import_blob_meta(blob, false).is_err());
+    }
+}
+
+#[test]
+#[parallel]
 fn init_example() {
     // create meta/users/0/new_user/{name: string, bio: Text}
     let doc = LoroDoc::new();

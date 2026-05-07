@@ -135,6 +135,7 @@ impl Mergeable for TextChunk {
     }
 
     fn merge_left(&mut self, left: &Self) {
+        assert!(self.can_merge(left), "TextChunk cannot merge over capacity");
         let ptr = self.0.as_mut_ptr();
         // Safety: `self.0` is a valid `ArrayString` and `left.0` is a valid `ArrayString`.
         unsafe {
@@ -173,3 +174,18 @@ impl TryInsert for TextChunk {
 }
 
 impl DeltaValue for TextChunk {}
+
+#[cfg(all(test, miri))]
+mod miri_tests {
+    use super::TextChunk;
+    use generic_btree::rle::Mergeable;
+
+    #[test]
+    #[should_panic(expected = "TextChunk cannot merge over capacity")]
+    fn merge_left_rejects_over_capacity_before_raw_copy() {
+        let mut right = TextChunk::try_from_str("12345678").unwrap();
+        let left = TextChunk::try_from_str("9").unwrap();
+
+        right.merge_left(&left);
+    }
+}

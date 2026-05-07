@@ -10,48 +10,20 @@ use std::{
     sync::{atomic::AtomicUsize, Arc, Mutex},
 };
 
-const DYNAMIC_TAG: u8 = 0b_00;
 const INLINE_TAG: u8 = 0b_01;
 const TAG_MASK: u64 = 0b_11;
 const LEN_OFFSET: u64 = 4;
 const LEN_MASK: u64 = 0xF0;
 
-#[repr(transparent)]
 #[derive(Clone)]
 pub struct InternalString {
-    unsafe_data: UnsafeData,
+    data: InternalStringData,
 }
 
-union UnsafeData {
-    inline: NonZeroU64,
-    dynamic: *const Box<str>,
-}
-
-unsafe impl Sync for UnsafeData {}
-unsafe impl Send for UnsafeData {}
-
-impl UnsafeData {
-    #[inline(always)]
-    fn is_inline(&self) -> bool {
-        unsafe { (self.inline.get() & TAG_MASK) as u8 == INLINE_TAG }
-    }
-}
-
-impl Clone for UnsafeData {
-    fn clone(&self) -> Self {
-        if self.is_inline() {
-            Self {
-                inline: unsafe { self.inline },
-            }
-        } else {
-            unsafe {
-                Arc::increment_strong_count(self.dynamic);
-                Self {
-                    dynamic: self.dynamic,
-                }
-            }
-        }
-    }
+#[derive(Clone)]
+enum InternalStringData {
+    Inline(NonZeroU64),
+    Dynamic(Arc<Box<str>>),
 }
 
 impl std::fmt::Debug for InternalString {
@@ -112,29 +84,41 @@ impl Default for InternalString {
         let v: u64 = INLINE_TAG as u64;
         Self {
             // SAFETY: INLINE_TAG is non-zero
-            unsafe_data: UnsafeData {
-                inline: unsafe { NonZeroU64::new_unchecked(v) },
-            },
+            data: InternalStringData::new_inline(unsafe { NonZeroU64::new_unchecked(v) }),
         }
     }
 }
 
 impl InternalString {
     pub fn as_str(&self) -> &str {
-        unsafe {
-            match (self.unsafe_data.inline.get() & TAG_MASK) as u8 {
-                INLINE_TAG => {
-                    let len = (self.unsafe_data.inline.get() & LEN_MASK) >> LEN_OFFSET;
-                    let src = inline_atom_slice(&self.unsafe_data.inline);
-                    // SAFETY: the chosen range is guaranteed to be valid str
-                    std::str::from_utf8_unchecked(&src[..(len as usize)])
-                }
-                DYNAMIC_TAG => {
-                    let ptr = self.unsafe_data.dynamic;
-                    // SAFETY: ptr is valid
-                    (*ptr).deref()
-                }
-                _ => unreachable!(),
+        match &self.data {
+            InternalStringData::Inline(inline) => unsafe {
+                let len = (inline.get() & LEN_MASK) >> LEN_OFFSET;
+                let src = inline_atom_slice(inline);
+                // SAFETY: the chosen range is guaranteed to be valid str
+                std::str::from_utf8_unchecked(&src[..(len as usize)])
+            },
+            InternalStringData::Dynamic(dynamic) => dynamic.deref(),
+        }
+    }
+}
+
+impl InternalStringData {
+    fn new_inline(inline: NonZeroU64) -> Self {
+        debug_assert_eq!((inline.get() & TAG_MASK) as u8, INLINE_TAG);
+        Self::Inline(inline)
+    }
+
+    fn new_dynamic(dynamic: Arc<Box<str>>) -> Self {
+        Self::Dynamic(dynamic)
+    }
+}
+
+impl Drop for InternalStringData {
+    fn drop(&mut self) {
+        if let InternalStringData::Dynamic(arc) = self {
+            if Arc::strong_count(arc) == 2 {
+                drop_cache(arc.clone());
             }
         }
     }
@@ -154,17 +138,13 @@ impl From<&str> for InternalString {
             let arr = inline_atom_slice_mut(&mut v);
             arr[..s.len()].copy_from_slice(s.as_bytes());
             Self {
-                unsafe_data: UnsafeData {
-                    // SAFETY: The tag is 1
-                    inline: unsafe { NonZeroU64::new_unchecked(v) },
-                },
+                // SAFETY: The tag is 1
+                data: InternalStringData::new_inline(unsafe { NonZeroU64::new_unchecked(v) }),
             }
         } else {
             let ans: Arc<Box<str>> = get_or_init_internalized_string(s);
-            let raw = Arc::into_raw(ans);
-            // SAFETY: Pointer is non-zero
             Self {
-                unsafe_data: UnsafeData { dynamic: raw },
+                data: InternalStringData::new_dynamic(ans),
             }
         }
     }
@@ -270,23 +250,6 @@ fn drop_cache(s: Arc<Box<str>>) {
     }
 }
 
-impl Drop for InternalString {
-    fn drop(&mut self) {
-        unsafe {
-            if (self.unsafe_data.inline.get() & TAG_MASK) as u8 == DYNAMIC_TAG {
-                let ptr = self.unsafe_data.dynamic;
-                // SAFETY: ptr is a valid Arc
-                let arc: Arc<Box<str>> = Arc::from_raw(ptr);
-                if Arc::strong_count(&arc) == 2 {
-                    drop_cache(arc);
-                } else {
-                    drop(arc)
-                }
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -299,6 +262,14 @@ mod tests {
         // Content should match
         assert_eq!("hello", s1.as_str());
         assert_eq!(s3.as_str(), "world");
+    }
+
+    #[cfg(all(miri, target_pointer_width = "32"))]
+    #[test]
+    fn miri_dynamic_string_does_not_read_uninitialized_tag_bytes_on_32_bit() {
+        let s = InternalString::from("long enough to use the dynamic representation");
+
+        assert_eq!(s.as_str(), "long enough to use the dynamic representation");
     }
 
     #[test]

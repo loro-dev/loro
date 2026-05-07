@@ -15,6 +15,8 @@ mod fugue_span;
 pub(crate) mod richtext_state;
 pub(crate) mod str_slice;
 mod style_range_map;
+#[cfg(all(test, miri))]
+mod tinyvec;
 mod tracker;
 
 use crate::{change::Lamport, delta::StyleMeta, utils::string_slice::StringSlice, InternalString};

@@ -961,8 +961,7 @@ impl DocState {
     }
 
     pub fn get_value(&mut self) -> LoroValue {
-        let flag = self.store.load_all();
-        let roots = self.arena.root_containers(flag);
+        let roots = self.preferred_root_containers();
         let ans: loro_common::LoroMapValue = roots
             .into_iter()
             .map(|idx| {
@@ -981,8 +980,7 @@ impl DocState {
     }
 
     pub fn get_deep_value(&mut self) -> LoroValue {
-        let flag = self.store.load_all();
-        let roots = self.arena.root_containers(flag);
+        let roots = self.preferred_root_containers();
         let mut ans = FxHashMap::with_capacity_and_hasher(roots.len(), Default::default());
         let binding = self.config.deleted_root_containers.clone();
         let deleted_root_container = binding.lock();
@@ -1013,8 +1011,7 @@ impl DocState {
     }
 
     pub fn get_deep_value_with_id(&mut self) -> LoroValue {
-        let flag = self.store.load_all();
-        let roots = self.arena.root_containers(flag);
+        let roots = self.preferred_root_containers();
         let mut ans = FxHashMap::with_capacity_and_hasher(roots.len(), Default::default());
         for root_idx in roots {
             let id = self.arena.idx_to_id(root_idx).unwrap();
@@ -1032,6 +1029,83 @@ impl DocState {
         }
 
         LoroValue::Map(ans.into())
+    }
+
+    pub(crate) fn preferred_root_containers(&mut self) -> Vec<ContainerIdx> {
+        let flag = self.store.load_all();
+        let roots = self.arena.root_containers(flag);
+        let mut selected = FxHashMap::default();
+        let mut names = Vec::new();
+
+        for idx in roots {
+            let Some(name) = self.root_container_name(idx) else {
+                continue;
+            };
+            let is_empty = self.root_container_is_empty(idx);
+            match selected.entry(name.clone()) {
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    names.push(name);
+                    entry.insert((idx, is_empty));
+                }
+                std::collections::hash_map::Entry::Occupied(mut entry) => {
+                    let (_, selected_is_empty) = entry.get();
+                    // Keep the previous last-root-wins behavior, except an empty
+                    // root should not hide a non-empty root with the same name.
+                    if *selected_is_empty || !is_empty {
+                        entry.insert((idx, is_empty));
+                    }
+                }
+            }
+        }
+
+        names
+            .into_iter()
+            .filter_map(|name| selected.remove(&name).map(|(idx, _)| idx))
+            .collect()
+    }
+
+    pub(crate) fn preferred_root_container_idx_by_key(
+        &mut self,
+        root_index: &InternalString,
+    ) -> Option<ContainerIdx> {
+        let flag = self.store.load_all();
+        let roots = self.arena.root_containers(flag);
+        let mut selected = None;
+
+        for idx in roots {
+            let Some(name) = self.root_container_name(idx) else {
+                continue;
+            };
+            if &name != root_index {
+                continue;
+            }
+
+            let is_empty = self.root_container_is_empty(idx);
+            match selected {
+                None => selected = Some((idx, is_empty)),
+                Some((_, selected_is_empty)) => {
+                    if selected_is_empty || !is_empty {
+                        selected = Some((idx, is_empty));
+                    }
+                }
+            }
+        }
+
+        selected.map(|(idx, _)| idx)
+    }
+
+    fn root_container_name(&self, idx: ContainerIdx) -> Option<InternalString> {
+        match self.arena.idx_to_id(idx)? {
+            ContainerID::Root { name, .. } => Some(name),
+            ContainerID::Normal { .. } => None,
+        }
+    }
+
+    fn root_container_is_empty(&mut self, idx: ContainerIdx) -> bool {
+        self.store
+            .get_value(idx)
+            .unwrap_or_else(|| idx.get_type().default_value())
+            .is_empty_collection()
     }
 
     pub fn get_all_container_value_flat(&mut self) -> LoroValue {
@@ -1542,7 +1616,7 @@ impl DocState {
 
         let mut state_idx = {
             let root_index = path[0].as_key()?;
-            CurContainer::Container(self.arena.get_root_container_idx_by_key(root_index)?)
+            CurContainer::Container(self.preferred_root_container_idx_by_key(root_index)?)
         };
 
         if path.len() == 1 {

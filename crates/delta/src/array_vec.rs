@@ -19,16 +19,22 @@ impl<V, const C: usize> ArrayVec<V, C> {
     }
 
     pub fn insert_many(&mut self, pos: usize, values: Self) -> Result<(), Self> {
-        if C < self.len() + values.len() {
+        let self_len = self.len();
+        let values_len = values.len();
+        let Some(new_len) = self_len.checked_add(values_len) else {
+            return Err(values);
+        };
+
+        if pos > self_len || C < new_len {
             return Err(values);
         }
 
         // SAFETY: We have the ownership of the values
         unsafe {
             let ptr_start = self.vec.as_mut_ptr().add(pos);
-            ptr_start.copy_to(ptr_start.add(values.len()), self.len() - pos);
-            ptr_start.copy_from_nonoverlapping(values.as_ptr(), values.len());
-            self.vec.set_len(self.len() + values.len());
+            ptr_start.copy_to(ptr_start.add(values_len), self_len - pos);
+            ptr_start.copy_from_nonoverlapping(values.as_ptr(), values_len);
+            self.vec.set_len(new_len);
         }
 
         // This will not cause memory leak because the vec is on the stack
@@ -185,6 +191,16 @@ mod test {
             ArrayVec::from([Arc::new(1), Arc::new(2), Arc::new(3)]);
         let b = ArrayVec::from([Arc::new(1), Arc::new(2), Arc::new(3)]);
         array_vec.insert_many(1, b).unwrap();
+    }
+
+    #[cfg(miri)]
+    #[test]
+    fn miri_insert_many_rejects_out_of_bounds_position_before_pointer_arithmetic() {
+        let mut array_vec: ArrayVec<i32, 8> = ArrayVec::from([1, 2, 3]);
+        let values = ArrayVec::from([4]);
+
+        assert!(array_vec.insert_many(usize::MAX, values).is_err());
+        assert_eq!(array_vec.as_slice(), &[1, 2, 3]);
     }
 
     #[test]
