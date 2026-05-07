@@ -1,5 +1,6 @@
 packages:
   - "loro-js"
+  - "packages/*"
   - "crates/loro-wasm"
   - "crates/loro-wasm-map"
   - "examples/loro-quill"
