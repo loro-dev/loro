@@ -2,7 +2,7 @@
 #![allow(unexpected_cfgs)]
 use loro::{
     cursor::Cursor, ContainerID, ContainerTrait, EncodedBlobMode, ExportMode, LoroDoc, LoroError,
-    LoroList, LoroText, UndoManager,
+    LoroList, LoroMap, LoroText, UndoManager,
 };
 use std::sync::{Arc, Mutex};
 use tracing::{trace, trace_span};
@@ -467,4 +467,198 @@ fn get_unknown_cursor_position_but_its_in_pending() {
     assert!(doc_1.get_container(text.id()).is_none());
     assert!(!doc_1.has_container(&text.id()));
     assert_eq!(doc_1.get_path_to_container(&text.id()), None);
+}
+
+#[test]
+fn test_undo_nested_text_in_tree_after_independent_import_issue_915() {
+    // undo() returned false for a text edit inside a tree node's meta map after
+    // importing from a completely independent document (issue #915).
+    let doc_a = LoroDoc::new();
+    doc_a.set_peer_id(1).unwrap();
+
+    let tree = doc_a.get_tree("tree");
+    let node = tree.create(None).unwrap();
+    let meta = tree.get_meta(node).unwrap();
+    let text = meta.insert_container("content", LoroText::new()).unwrap();
+    text.insert(0, "Hello").unwrap();
+    doc_a.commit();
+
+    // UndoManager created after initial content (matches the reported condition)
+    let mut undo = UndoManager::new(&doc_a);
+    undo.set_merge_interval(0);
+
+    text.insert(5, " world").unwrap();
+    doc_a.commit();
+    assert_eq!(text.to_string(), "Hello world");
+    assert!(undo.can_undo());
+
+    // Import from a completely independent doc (no shared history)
+    let doc_b = LoroDoc::new();
+    doc_b.set_peer_id(2).unwrap();
+    let tree_b = doc_b.get_tree("tree");
+    let node_b = tree_b.create(None).unwrap();
+    tree_b
+        .get_meta(node_b)
+        .unwrap()
+        .insert_container("content", LoroText::new())
+        .unwrap()
+        .insert(0, "From B")
+        .unwrap();
+    doc_b.commit();
+
+    doc_a
+        .import(&doc_b.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+
+    assert!(undo.can_undo());
+    assert!(undo.undo().unwrap());
+    assert_eq!(text.to_string(), "Hello");
+}
+
+#[test]
+fn test_undo_deeply_nested_text_in_tree_after_independent_import_issue_915() {
+    // Deeper nesting: tree node meta -> child map -> LoroText
+    let doc_a = LoroDoc::new();
+    doc_a.set_peer_id(1).unwrap();
+
+    let tree = doc_a.get_tree("tree");
+    let node = tree.create(None).unwrap();
+    let child_map = tree
+        .get_meta(node)
+        .unwrap()
+        .insert_container("data", LoroMap::new())
+        .unwrap();
+    let text = child_map
+        .insert_container("content", LoroText::new())
+        .unwrap();
+    text.insert(0, "Hello").unwrap();
+    doc_a.commit();
+
+    let mut undo = UndoManager::new(&doc_a);
+    undo.set_merge_interval(0);
+
+    text.insert(5, " world").unwrap();
+    doc_a.commit();
+
+    let doc_b = LoroDoc::new();
+    doc_b.set_peer_id(2).unwrap();
+    let node_b = doc_b.get_tree("tree").create(None).unwrap();
+    doc_b
+        .get_tree("tree")
+        .get_meta(node_b)
+        .unwrap()
+        .insert("kind", "paragraph")
+        .unwrap();
+    doc_b.commit();
+
+    doc_a
+        .import(&doc_b.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+
+    assert!(undo.can_undo());
+    assert!(undo.undo().unwrap());
+    assert_eq!(text.to_string(), "Hello");
+}
+
+#[test]
+fn test_undo_multi_node_reindex_after_independent_import_issue_915() {
+    // Multiple local tree nodes reindexed by a single independent import
+    let doc_a = LoroDoc::new();
+    doc_a.set_peer_id(1).unwrap();
+
+    let tree = doc_a.get_tree("tree");
+    let node1 = tree.create(None).unwrap();
+    let node2 = tree.create(None).unwrap();
+    let text1 = tree
+        .get_meta(node1)
+        .unwrap()
+        .insert_container("t", LoroText::new())
+        .unwrap();
+    let text2 = tree
+        .get_meta(node2)
+        .unwrap()
+        .insert_container("t", LoroText::new())
+        .unwrap();
+    text1.insert(0, "A").unwrap();
+    text2.insert(0, "B").unwrap();
+    doc_a.commit();
+
+    let mut undo = UndoManager::new(&doc_a);
+    undo.set_merge_interval(0);
+
+    text1.insert(1, "1").unwrap();
+    text2.insert(1, "2").unwrap();
+    doc_a.commit();
+    assert_eq!(text1.to_string(), "A1");
+    assert_eq!(text2.to_string(), "B2");
+
+    // Independent doc adds two root nodes, forcing reindex of both peer-1 nodes
+    let doc_b = LoroDoc::new();
+    doc_b.set_peer_id(2).unwrap();
+    doc_b.get_tree("tree").create(None).unwrap();
+    doc_b.get_tree("tree").create(None).unwrap();
+    doc_b.commit();
+
+    doc_a
+        .import(&doc_b.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+
+    assert!(undo.can_undo());
+    assert!(undo.undo().unwrap());
+    assert_eq!(text1.to_string(), "A");
+    assert_eq!(text2.to_string(), "B");
+}
+
+#[test]
+fn test_undo_preserves_real_remote_edit_on_revived_node_issue_915() {
+    // Risk case: same-event Delete+Create on a node whose text was also concurrently
+    // edited by the remote peer. The real remote edit must survive the undo transform.
+    //
+    // doc_a: node with "Hello", undo target = append " world"
+    // doc_b: (1) adds its own root node (triggers node reindex in merge diff)
+    //        (2) concurrently prepends "Hi " to the same text
+    // After undo: text should be "Hi Hello" — remote prepend stays, local append removed.
+    let doc_a = LoroDoc::new();
+    doc_a.set_peer_id(1).unwrap();
+
+    let tree = doc_a.get_tree("tree");
+    let node = tree.create(None).unwrap();
+    let text = tree
+        .get_meta(node)
+        .unwrap()
+        .insert_container("content", LoroText::new())
+        .unwrap();
+    text.insert(0, "Hello").unwrap();
+    doc_a.commit();
+
+    let mut undo = UndoManager::new(&doc_a);
+    undo.set_merge_interval(0);
+
+    text.insert(5, " world").unwrap();
+    doc_a.commit();
+    assert_eq!(text.to_string(), "Hello world");
+
+    // doc_b starts from doc_a's state, then diverges
+    let doc_b = LoroDoc::new();
+    doc_b.set_peer_id(2).unwrap();
+    doc_b
+        .import(&doc_a.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+
+    doc_b.get_tree("tree").create(None).unwrap();
+    let text_b: LoroText = match doc_b.get_container(text.id().clone()).unwrap() {
+        loro::Container::Text(t) => t,
+        _ => panic!("expected text"),
+    };
+    text_b.insert(0, "Hi ").unwrap();
+    doc_b.commit();
+
+    doc_a
+        .import(&doc_b.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    assert_eq!(text.to_string(), "Hi Hello world");
+
+    assert!(undo.can_undo());
+    assert!(undo.undo().unwrap());
+    assert_eq!(text.to_string(), "Hi Hello");
 }
