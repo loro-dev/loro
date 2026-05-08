@@ -33,6 +33,72 @@ fn multi_frontier_shallow_snapshot() -> anyhow::Result<(Vec<u8>, Frontiers, loro
     Ok((bytes, shallow_root, expected))
 }
 
+fn three_frontier_shallow_snapshot() -> anyhow::Result<(Vec<u8>, Frontiers, loro::LoroValue)> {
+    let doc = LoroDoc::new();
+    doc.set_detached_editing(true);
+
+    let mut root = Frontiers::default();
+    for peer in 1..=3 {
+        doc.checkout(&Frontiers::default())?;
+        doc.set_peer_id(peer)?;
+        doc.get_text(format!("text_{peer}"))
+            .insert(0, &format!("value_{peer}"))?;
+        doc.commit();
+        root.merge_with_greater(&doc.state_frontiers());
+    }
+
+    let root = doc
+        .minimize_frontiers(&root)
+        .expect("frontiers should be reachable");
+    assert_eq!(root.len(), 3);
+    doc.checkout(&root)?;
+    let expected = doc.get_deep_value();
+
+    let bytes = doc.export(ExportMode::shallow_snapshot(&root))?;
+    Ok((bytes, root, expected))
+}
+
+#[test]
+fn import_three_frontier_shallow_root_snapshot_does_not_crash() -> anyhow::Result<()> {
+    const CHILD_ENV: &str = "LORO_IMPORT_THREE_FRONTIER_SHALLOW_ROOT_CHILD";
+    const TEST_NAME: &str =
+        "integration_test::shallow_snapshot_test::import_three_frontier_shallow_root_snapshot_does_not_crash";
+
+    if std::env::var_os(CHILD_ENV).is_some() {
+        return import_three_frontier_shallow_root_snapshot_does_not_crash_inner();
+    }
+
+    let output = std::process::Command::new(std::env::current_exe()?)
+        .arg("--exact")
+        .arg(TEST_NAME)
+        .arg("--nocapture")
+        .env(CHILD_ENV, "1")
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "importing a three-frontier shallow root snapshot should not crash\nstatus: {}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(())
+}
+
+fn import_three_frontier_shallow_root_snapshot_does_not_crash_inner() -> anyhow::Result<()> {
+    let (bytes, shallow_root, expected) = three_frontier_shallow_snapshot()?;
+    let meta = LoroDoc::decode_import_blob_meta(&bytes, false)?;
+    assert_eq!(meta.start_frontiers, shallow_root);
+    let imported = LoroDoc::new();
+    imported.import(&bytes)?;
+
+    assert!(imported.is_shallow());
+    assert_eq!(imported.shallow_since_frontiers(), shallow_root);
+    assert_eq!(imported.get_deep_value(), expected);
+    imported.check_state_correctness_slow();
+    Ok(())
+}
+
 #[test]
 fn state_only_at_concurrent_frontiers_excludes_later_ops() -> anyhow::Result<()> {
     let doc = LoroDoc::new();

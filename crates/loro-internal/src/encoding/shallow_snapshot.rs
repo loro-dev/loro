@@ -265,8 +265,13 @@ fn calc_shallow_doc_start_from(oplog: &crate::OpLog, frontiers: Frontiers) -> Fr
                 let (gca, _) = oplog
                     .dag()
                     .find_common_ancestor(&Frontiers::from(ids[i]), &Frontiers::from(ids[i + 1]));
-                for id in gca.iter() {
-                    next.push(id);
+                if gca.is_empty() {
+                    next.push(ids[i]);
+                    next.push(ids[i + 1]);
+                } else {
+                    for id in gca.iter() {
+                        next.push(id);
+                    }
                 }
             } else {
                 next.push(ids[i]);
