@@ -785,7 +785,9 @@ impl AppDag {
         }
 
         let Some(vv) = self.frontiers_to_vv(deps) else {
-            return deps.iter().any(|id| self.shallow_since_vv.includes_id(id));
+            return deps.iter().any(|id| {
+                self.shallow_since_vv.includes_id(id) || self.shallow_since_frontiers.contains(&id)
+            });
         };
 
         self.vv_is_before_shallow_root(&vv)

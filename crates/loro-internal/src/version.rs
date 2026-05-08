@@ -924,6 +924,13 @@ impl VersionVector {
 pub fn shrink_frontiers(last_ids: &Frontiers, dag: &AppDag) -> Result<Frontiers, ID> {
     // it only keep the ids of ops that are concurrent to each other
 
+    if !last_ids.is_empty() && dag.is_before_shallow_root(last_ids) {
+        return Err(last_ids
+            .iter()
+            .next()
+            .expect("non-empty frontiers should have at least one id"));
+    }
+
     if last_ids.len() <= 1 {
         return Ok(last_ids.clone());
     }

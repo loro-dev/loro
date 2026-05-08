@@ -144,6 +144,7 @@ fn frontiers_to_vv_rejects_unrepresentable_shallow_root_versions() -> anyhow::Re
         .cmp_frontiers(&Frontiers::default(), &shallow_root)
         .is_err());
     assert!(shallow_doc.cmp_frontiers(&subset, &shallow_root).is_err());
+    assert!(shallow_doc.minimize_frontiers(&subset).is_err());
     assert_eq!(
         shallow_doc.cmp_with_frontiers(&Frontiers::default()),
         std::cmp::Ordering::Less
@@ -191,6 +192,7 @@ fn frontiers_to_vv_rejects_shallow_root_deps() -> anyhow::Result<()> {
     assert!(shallow_doc
         .cmp_frontiers(&before_root, &shallow_root)
         .is_err());
+    assert!(shallow_doc.minimize_frontiers(&before_root).is_err());
     assert_eq!(
         shallow_doc.cmp_with_frontiers(&before_root),
         std::cmp::Ordering::Less
@@ -296,6 +298,42 @@ fn shallow_doc_with_multi_frontier_root_can_export_concurrent_tail() -> anyhow::
     imported.checkout(&shallow_root)?;
     imported.checkout(&target)?;
     assert_eq!(imported.get_deep_value(), expected);
+
+    let root_to_target = imported.find_id_spans_between(&shallow_root, &target);
+    assert!(root_to_target.retreat.is_empty());
+    assert!(root_to_target.forward.contains_key(&3));
+    assert!(root_to_target.forward.contains_key(&4));
+
+    let target_to_root = imported.find_id_spans_between(&target, &shallow_root);
+    assert!(target_to_root.forward.is_empty());
+    assert!(target_to_root.retreat.contains_key(&3));
+    assert!(target_to_root.retreat.contains_key(&4));
+
+    let tail_updates = imported.export(ExportMode::updates_in_range(
+        root_to_target.get_id_spans_right().collect::<Vec<_>>(),
+    ))?;
+    let updated_from_root = LoroDoc::new();
+    updated_from_root.import(&bytes)?;
+    updated_from_root.import(&tail_updates)?;
+    assert_eq!(updated_from_root.get_deep_value(), expected);
+
+    let root_vv = imported
+        .frontiers_to_vv(&shallow_root)
+        .expect("shallow root should be included");
+    let target_vv = imported
+        .frontiers_to_vv(&target)
+        .expect("target should be included");
+    let tail_json = imported.export_json_updates(&root_vv, &target_vv);
+    let json_updated_from_root = LoroDoc::new();
+    json_updated_from_root.import(&bytes)?;
+    json_updated_from_root.import_json_updates(tail_json)?;
+    assert_eq!(json_updated_from_root.get_deep_value(), expected);
+
+    let all_tail_json = imported.export_json_updates(&Default::default(), &target_vv);
+    let json_all_updated_from_root = LoroDoc::new();
+    json_all_updated_from_root.import(&bytes)?;
+    json_all_updated_from_root.import_json_updates(all_tail_json)?;
+    assert_eq!(json_all_updated_from_root.get_deep_value(), expected);
 
     let bytes = imported.export(ExportMode::shallow_snapshot(&target))?;
     let imported_again = LoroDoc::new();

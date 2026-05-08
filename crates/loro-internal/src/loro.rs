@@ -13,7 +13,7 @@ use crate::{
         IntoContainerId,
     },
     cursor::{AbsolutePosition, CannotFindRelativePosition, Cursor, PosQueryResult},
-    dag::{Dag, DagUtils},
+    dag::Dag,
     diff_calc::DiffCalculator,
     encoding::{
         self, decode_snapshot, export_fast_snapshot, export_fast_updates,
@@ -2259,7 +2259,20 @@ impl LoroDoc {
 
     #[inline]
     pub fn find_id_spans_between(&self, from: &Frontiers, to: &Frontiers) -> VersionVectorDiff {
-        self.oplog().lock().dag.find_path(from, to)
+        let oplog = self.oplog().lock();
+        let from_vv = oplog
+            .dag
+            .frontiers_to_vv(from)
+            .expect("from frontiers should be included by the document history");
+        let to_vv = oplog
+            .dag
+            .frontiers_to_vv(to)
+            .expect("to frontiers should be included by the document history");
+
+        VersionVectorDiff {
+            retreat: from_vv.sub_vec(&to_vv),
+            forward: to_vv.sub_vec(&from_vv),
+        }
     }
 
     /// Subscribe to the first commit from a peer. Operations performed on the `LoroDoc` within this callback
