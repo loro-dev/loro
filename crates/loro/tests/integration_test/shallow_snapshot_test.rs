@@ -157,6 +157,10 @@ fn frontiers_to_vv_rejects_unrepresentable_shallow_root_versions() -> anyhow::Re
     let shallow_root_vv = shallow_doc
         .frontiers_to_vv(&shallow_root)
         .expect("complete shallow root should be included");
+    assert_eq!(
+        shallow_doc.vv_to_frontiers(&VersionVector::default()),
+        shallow_root
+    );
     assert_eq!(shallow_doc.vv_to_frontiers(&shallow_root_vv), shallow_root);
     let mut subset_vv = VersionVector::new();
     subset_vv.set_last(subset.as_single().unwrap());

@@ -1233,15 +1233,15 @@ impl AppDag {
     }
 
     pub fn im_vv_to_frontiers(&self, vv: &ImVersionVector) -> Frontiers {
-        if vv.is_empty() {
-            return Default::default();
-        }
-
         if !self.shallow_since_vv.is_empty() {
             let version = VersionVector::from_im_vv(vv);
             if self.vv_is_before_shallow_root(&version) {
                 return self.shallow_since_frontiers.clone();
             }
+        }
+
+        if vv.is_empty() {
+            return Default::default();
         }
 
         let this = vv;
@@ -1271,12 +1271,12 @@ impl AppDag {
     }
 
     pub fn vv_to_frontiers(&self, vv: &VersionVector) -> Frontiers {
-        if vv.is_empty() {
-            return Default::default();
-        }
-
         if self.vv_is_before_shallow_root(vv) {
             return self.shallow_since_frontiers.clone();
+        }
+
+        if vv.is_empty() {
+            return Default::default();
         }
 
         let this = vv;
