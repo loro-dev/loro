@@ -224,7 +224,10 @@ fn restore_export_doc_state(
 /// It should be the LCA of the user given version and the latest version.
 /// Otherwise, users cannot replay the history from the initial version till the latest version.
 fn calc_shallow_doc_start(oplog: &crate::OpLog, frontiers: &Frontiers) -> Frontiers {
-    if !oplog.shallow_since_vv().is_empty() && frontiers == oplog.shallow_since_frontiers() {
+    if !oplog.shallow_since_vv().is_empty() {
+        // The target frontiers have already been checked by the caller. On a
+        // shallow doc, searching for a lower GCA can walk into trimmed history.
+        // Keep the requested boundary instead.
         return frontiers.clone();
     }
 

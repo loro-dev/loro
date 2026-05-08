@@ -6,6 +6,33 @@ use std::{
 use super::gen_action;
 use loro::{cursor::CannotFindRelativePosition, ExportMode, Frontiers, LoroDoc, ID};
 
+fn multi_frontier_shallow_snapshot() -> anyhow::Result<(Vec<u8>, Frontiers, loro::LoroValue)> {
+    let doc = LoroDoc::new();
+    doc.set_detached_editing(true);
+
+    doc.set_peer_id(1)?;
+    doc.get_text("left").insert(0, "left")?;
+    doc.commit();
+    let left = doc.state_frontiers();
+
+    doc.checkout(&Frontiers::default())?;
+    doc.set_peer_id(2)?;
+    doc.get_text("right").insert(0, "right")?;
+    doc.commit();
+    let right = doc.state_frontiers();
+
+    let mut shallow_root = left.clone();
+    shallow_root.merge_with_greater(&right);
+    let shallow_root = doc
+        .minimize_frontiers(&shallow_root)
+        .expect("frontiers should be reachable");
+    doc.checkout(&shallow_root)?;
+    let expected = doc.get_deep_value();
+
+    let bytes = doc.export(ExportMode::shallow_snapshot(&shallow_root))?;
+    Ok((bytes, shallow_root, expected))
+}
+
 #[test]
 fn state_only_at_concurrent_frontiers_excludes_later_ops() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
@@ -106,29 +133,7 @@ fn checkout_subset_of_multi_frontier_shallow_root_should_error() -> anyhow::Resu
 
 #[test]
 fn reexport_multi_frontier_shallow_root_snapshot_imports() -> anyhow::Result<()> {
-    let doc = LoroDoc::new();
-    doc.set_detached_editing(true);
-
-    doc.set_peer_id(1)?;
-    doc.get_text("left").insert(0, "left")?;
-    doc.commit();
-    let left = doc.state_frontiers();
-
-    doc.checkout(&Frontiers::default())?;
-    doc.set_peer_id(2)?;
-    doc.get_text("right").insert(0, "right")?;
-    doc.commit();
-    let right = doc.state_frontiers();
-
-    let mut shallow_root = left.clone();
-    shallow_root.merge_with_greater(&right);
-    let shallow_root = doc
-        .minimize_frontiers(&shallow_root)
-        .expect("frontiers should be reachable");
-    doc.checkout(&shallow_root)?;
-    let expected = doc.get_deep_value();
-
-    let bytes = doc.export(ExportMode::shallow_snapshot(&shallow_root))?;
+    let (bytes, shallow_root, expected) = multi_frontier_shallow_snapshot()?;
     let imported = LoroDoc::new();
     imported.import(&bytes)?;
 
@@ -147,6 +152,111 @@ fn reexport_multi_frontier_shallow_root_snapshot_imports() -> anyhow::Result<()>
     assert!(imported_again.is_shallow());
     assert_eq!(imported_again.shallow_since_frontiers(), shallow_root);
     assert_eq!(imported_again.get_deep_value(), expected);
+    Ok(())
+}
+
+#[test]
+fn snapshot_export_preserves_multi_frontier_shallow_root() -> anyhow::Result<()> {
+    let (bytes, shallow_root, expected) = multi_frontier_shallow_snapshot()?;
+    let imported = LoroDoc::new();
+    imported.import(&bytes)?;
+
+    let snapshot = imported.export(ExportMode::Snapshot)?;
+    let imported_again = LoroDoc::new();
+    imported_again.import(&snapshot)?;
+
+    assert!(imported_again.is_shallow());
+    assert_eq!(imported_again.shallow_since_frontiers(), shallow_root);
+    assert_eq!(imported_again.get_deep_value(), expected);
+    Ok(())
+}
+
+#[test]
+fn state_only_export_preserves_multi_frontier_shallow_root() -> anyhow::Result<()> {
+    let (bytes, shallow_root, expected) = multi_frontier_shallow_snapshot()?;
+    let imported = LoroDoc::new();
+    imported.import(&bytes)?;
+
+    let state_only = imported.export(ExportMode::state_only(Some(&shallow_root)))?;
+    let imported_again = LoroDoc::new();
+    imported_again.import(&state_only)?;
+
+    assert!(imported_again.is_shallow());
+    assert_eq!(imported_again.shallow_since_frontiers(), shallow_root);
+    assert_eq!(imported_again.get_deep_value(), expected);
+    Ok(())
+}
+
+#[test]
+fn state_correctness_check_handles_multi_frontier_shallow_root() -> anyhow::Result<()> {
+    let (bytes, _, _) = multi_frontier_shallow_snapshot()?;
+    let imported = LoroDoc::new();
+    imported.import(&bytes)?;
+
+    imported.check_state_correctness_slow();
+    Ok(())
+}
+
+#[test]
+fn shallow_doc_with_multi_frontier_root_can_export_concurrent_tail() -> anyhow::Result<()> {
+    let (bytes, shallow_root, _) = multi_frontier_shallow_snapshot()?;
+    let imported = LoroDoc::new();
+    imported.import(&bytes)?;
+    imported.set_detached_editing(true);
+
+    imported.checkout(&shallow_root)?;
+    imported.set_peer_id(3)?;
+    imported.get_text("tail_a").insert(0, "a")?;
+    imported.get_tree("tail_tree").create(None)?;
+    imported.commit();
+    let tail_a = imported.state_frontiers();
+
+    imported.checkout(&shallow_root)?;
+    imported.set_peer_id(4)?;
+    imported.get_text("tail_b").insert(0, "b")?;
+    imported.get_tree("tail_tree").create(None)?;
+    imported.commit();
+    let tail_b = imported.state_frontiers();
+
+    let mut target = tail_a;
+    target.merge_with_greater(&tail_b);
+    let target = imported
+        .minimize_frontiers(&target)
+        .expect("tail frontiers should be reachable");
+    imported.checkout(&target)?;
+    let expected = imported.get_deep_value();
+
+    imported.checkout(&shallow_root)?;
+    imported.checkout(&target)?;
+    assert_eq!(imported.get_deep_value(), expected);
+
+    let bytes = imported.export(ExportMode::shallow_snapshot(&target))?;
+    let imported_again = LoroDoc::new();
+    imported_again.import(&bytes)?;
+
+    assert!(imported_again.is_shallow());
+    assert_eq!(imported_again.get_deep_value(), expected);
+
+    let state_only = imported.export(ExportMode::state_only(Some(&target)))?;
+    let state_only_imported = LoroDoc::new();
+    state_only_imported.import(&state_only)?;
+
+    assert!(state_only_imported.is_shallow());
+    assert_eq!(state_only_imported.get_deep_value(), expected);
+
+    let latest_state_only = imported.export(ExportMode::state_only(None))?;
+    let latest_state_only_imported = LoroDoc::new();
+    latest_state_only_imported.import(&latest_state_only)?;
+
+    assert!(latest_state_only_imported.is_shallow());
+    assert_eq!(latest_state_only_imported.get_deep_value(), expected);
+
+    let snapshot = imported.export(ExportMode::Snapshot)?;
+    let snapshot_imported = LoroDoc::new();
+    snapshot_imported.import(&snapshot)?;
+
+    assert!(snapshot_imported.is_shallow());
+    assert_eq!(snapshot_imported.get_deep_value(), expected);
     Ok(())
 }
 
