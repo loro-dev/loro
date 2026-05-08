@@ -1771,6 +1771,30 @@ impl DocState {
     pub(crate) fn shallow_root_store(&self) -> Option<&Arc<GcStore>> {
         self.store.shallow_root_store()
     }
+
+    pub(crate) fn restore_to_shallow_root(&mut self) -> bool {
+        let Some(frontiers) = self.store.restore_to_shallow_root() else {
+            return false;
+        };
+
+        self.frontiers = frontiers;
+        self.dead_containers_cache.clear();
+        true
+    }
+
+    pub(crate) fn cache_current_as_shallow_latest(&mut self, frontiers: Frontiers) {
+        self.store.cache_current_as_shallow_latest(frontiers);
+    }
+
+    pub(crate) fn restore_to_shallow_latest(&mut self, frontiers: &Frontiers) -> bool {
+        if !self.store.restore_to_shallow_latest(frontiers) {
+            return false;
+        }
+
+        self.frontiers = frontiers.clone();
+        self.dead_containers_cache.clear();
+        true
+    }
 }
 
 fn create_state_(idx: ContainerIdx, config: &Configure, peer: u64) -> State {

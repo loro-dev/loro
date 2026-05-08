@@ -231,15 +231,22 @@ impl OpLog {
                 continue;
             }
 
-            if self.dag.is_before_shallow_root(&change.deps) {
+            let deps_are_before_shallow_root = self.dag.is_before_shallow_root(&change.deps);
+            let deps_start_at_shallow_root = !change.deps.is_empty()
+                && change
+                    .deps
+                    .iter()
+                    .all(|dep| self.shallow_since_frontiers().contains(&dep));
+            if deps_are_before_shallow_root && !deps_start_at_shallow_root {
                 ans.has_deps_before_shallow_root = true;
                 continue;
             }
 
-            if self
-                .dag
-                .get_change_lamport_from_deps(&change.deps)
-                .is_none()
+            if !deps_are_before_shallow_root
+                && self
+                    .dag
+                    .get_change_lamport_from_deps(&change.deps)
+                    .is_none()
             {
                 continue;
             }
@@ -590,25 +597,11 @@ impl OpLog {
         let mut merged_vv = from.clone();
         merged_vv.merge(to);
         loro_common::debug!("to_frontiers={:?} vv={:?}", &to_frontiers, to);
-        let (mut common_ancestors, mut diff_mode) =
-            self.dag.find_common_ancestor(from_frontiers, to_frontiers);
-        if diff_mode == DiffMode::Checkout && to > from {
-            diff_mode = DiffMode::Import;
-        }
-
-        let mut common_ancestors_vv = self.dag.frontiers_to_vv(&common_ancestors);
-        if common_ancestors_vv.is_none() {
-            if to.includes_vv(from) {
-                common_ancestors = from_frontiers.clone();
-                common_ancestors_vv = self.dag.frontiers_to_vv(&common_ancestors);
-                diff_mode = DiffMode::Import;
-            } else if from.includes_vv(to) {
-                common_ancestors = to_frontiers.clone();
-                common_ancestors_vv = self.dag.frontiers_to_vv(&common_ancestors);
-                diff_mode = DiffMode::Checkout;
-            }
-        }
-        let common_ancestors_vv = common_ancestors_vv
+        let (common_ancestors, diff_mode) =
+            self.find_common_ancestor_for_diff(from, from_frontiers, to, to_frontiers);
+        let common_ancestors_vv = self
+            .dag
+            .frontiers_to_vv(&common_ancestors)
             .expect("common ancestors should be representable in the current DAG");
         // go from lca to merged_vv
         let diff = common_ancestors_vv.diff(&merged_vv).forward;
@@ -652,6 +645,43 @@ impl OpLog {
                 }
             }),
         )
+    }
+
+    pub(crate) fn find_common_ancestor_for_diff(
+        &self,
+        from: &VersionVector,
+        from_frontiers: &Frontiers,
+        to: &VersionVector,
+        to_frontiers: &Frontiers,
+    ) -> (Frontiers, DiffMode) {
+        let shallow_root_frontiers = self.dag.shallow_since_frontiers();
+        if !shallow_root_frontiers.is_empty() {
+            if from_frontiers == shallow_root_frontiers && to.includes_vv(from) {
+                return (from_frontiers.clone(), DiffMode::Import);
+            }
+
+            if to_frontiers == shallow_root_frontiers && from.includes_vv(to) {
+                return (to_frontiers.clone(), DiffMode::Checkout);
+            }
+        }
+
+        let (mut common_ancestors, mut diff_mode) =
+            self.dag.find_common_ancestor(from_frontiers, to_frontiers);
+        if diff_mode == DiffMode::Checkout && to > from {
+            diff_mode = DiffMode::Import;
+        }
+
+        if self.dag.frontiers_to_vv(&common_ancestors).is_none() {
+            if to.includes_vv(from) {
+                common_ancestors = from_frontiers.clone();
+                diff_mode = DiffMode::Import;
+            } else if from.includes_vv(to) {
+                common_ancestors = to_frontiers.clone();
+                diff_mode = DiffMode::Checkout;
+            }
+        }
+
+        (common_ancestors, diff_mode)
     }
 
     pub fn len_changes(&self) -> usize {

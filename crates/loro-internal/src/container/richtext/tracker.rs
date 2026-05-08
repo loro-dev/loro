@@ -15,7 +15,8 @@ use self::{crdt_rope::CrdtRope, id_to_cursor::IdToCursor};
 
 use super::{
     fugue_span::{FugueSpan, Status},
-    RichtextChunk,
+    richtext_state::RichtextStateChunk,
+    RichtextChunk, StyleOp,
 };
 
 mod crdt_rope;
@@ -73,6 +74,40 @@ impl Tracker {
             current_vv: Default::default(),
             current_frontier_hint: None,
         }
+    }
+
+    pub(crate) fn new_from_state_chunks(
+        chunks: &[RichtextStateChunk],
+        _styles: &mut Vec<(StyleOp, usize)>,
+    ) -> Option<Self> {
+        let mut last_lamport = None;
+        for chunk in chunks {
+            let RichtextStateChunk::Text(text) = chunk else {
+                return None;
+            };
+            let id = text.id_full();
+            if last_lamport.is_some_and(|last| last > id.lamport) {
+                return None;
+            }
+            last_lamport = Some(id.lamport);
+        }
+
+        let mut this = Self::new();
+        let mut pos = 0;
+        for chunk in chunks {
+            let RichtextStateChunk::Text(text) = chunk else {
+                unreachable!("style chunks are rejected before seeding richtext tracker")
+            };
+            let len = text.unicode_len() as usize;
+            if len == 0 {
+                continue;
+            }
+
+            this._insert(pos, RichtextChunk::new_unknown(len as u32), text.id_full());
+            pos += len;
+        }
+
+        Some(this)
     }
 
     #[inline]

@@ -7,7 +7,6 @@ use rustc_hash::FxHashMap;
 
 use crate::{
     container::{idx::ContainerIdx, tree::tree_op::TreeOp},
-    dag::DagUtils,
     delta::{TreeDelta, TreeDeltaItem, TreeInternalDiff},
     event::InternalDiff,
     state::TreeParentId,
@@ -238,8 +237,12 @@ impl TreeDiffCalculator {
             let _e = s.enter();
             let to_frontiers = info.to_frontiers;
             let from_frontiers = info.from_frontiers;
-            let (mut common_ancestors, _mode) =
-                oplog.dag.find_common_ancestor(from_frontiers, to_frontiers);
+            let (mut common_ancestors, _mode) = oplog.find_common_ancestor_for_diff(
+                info.from_vv,
+                from_frontiers,
+                info.to_vv,
+                to_frontiers,
+            );
             let mut lca_vv = oplog.dag.frontiers_to_vv(&common_ancestors);
             if lca_vv.is_none() {
                 if info.to_vv.includes_vv(info.from_vv) {

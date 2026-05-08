@@ -100,6 +100,130 @@ fn import_three_frontier_shallow_root_snapshot_does_not_crash_inner() -> anyhow:
 }
 
 #[test]
+fn import_random_multi_frontier_shallow_snapshot_does_not_crash() -> anyhow::Result<()> {
+    const CHILD_ENV: &str = "LORO_IMPORT_RANDOM_MULTI_FRONTIER_SHALLOW_CHILD";
+    const TEST_NAME: &str =
+        "integration_test::shallow_snapshot_test::import_random_multi_frontier_shallow_snapshot_does_not_crash";
+
+    if std::env::var_os(CHILD_ENV).is_some() {
+        return import_random_multi_frontier_shallow_snapshot_does_not_crash_inner();
+    }
+
+    let output = std::process::Command::new(std::env::current_exe()?)
+        .arg("--exact")
+        .arg(TEST_NAME)
+        .arg("--nocapture")
+        .env(CHILD_ENV, "1")
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "importing random multi-frontier shallow snapshots should not crash\nstatus: {}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(())
+}
+
+fn import_random_multi_frontier_shallow_snapshot_does_not_crash_inner() -> anyhow::Result<()> {
+    use rand::{Rng, SeedableRng};
+
+    let doc = LoroDoc::new();
+    doc.set_detached_editing(true);
+    doc.set_change_merge_interval(0);
+    let text = doc.get_text("text");
+    let list = doc.get_list("list");
+    let map = doc.get_map("map");
+    let mut rng = rand::rngs::StdRng::seed_from_u64(0x5a11_0cab);
+    let mut recorded = vec![(doc.state_frontiers(), doc.get_deep_value())];
+
+    for step in 0..80 {
+        let base_idx = rng.gen_range(0..recorded.len());
+        doc.checkout(&recorded[base_idx].0)?;
+        doc.set_peer_id((step + 10) as u64)?;
+
+        for _ in 0..rng.gen_range(1..=3) {
+            match rng.gen_range(0..8) {
+                0 | 1 => {
+                    let pos = rng.gen_range(0..=text.len_unicode());
+                    text.insert(pos, ["a", "b", "中"][rng.gen_range(0..3)])?;
+                }
+                2 => {
+                    if text.len_unicode() > 0 {
+                        text.delete(rng.gen_range(0..text.len_unicode()), 1)?;
+                    }
+                }
+                3 => {
+                    let pos = rng.gen_range(0..=list.len());
+                    list.insert(pos, step as i32)?;
+                }
+                4 => {
+                    if !list.is_empty() {
+                        list.delete(rng.gen_range(0..list.len()), 1)?;
+                    }
+                }
+                5 | 6 => {
+                    map.insert(&format!("k{}", rng.gen_range(0..12)), step as i32)?;
+                }
+                _ => {}
+            }
+        }
+
+        doc.commit();
+        recorded.push((doc.state_frontiers(), doc.get_deep_value()));
+    }
+
+    doc.checkout_to_latest();
+    let mut checked = 0;
+    for _ in 0..120 {
+        let mut target = Frontiers::default();
+        for _ in 0..rng.gen_range(2..=5) {
+            let id = recorded[rng.gen_range(0..recorded.len())].0.iter().next();
+            if let Some(id) = id {
+                target.push(id);
+            }
+        }
+
+        let Ok(target) = doc.minimize_frontiers(&target) else {
+            continue;
+        };
+        if target.is_empty() || target.len() < 2 {
+            continue;
+        }
+
+        let latest_frontiers = doc.oplog_frontiers();
+        doc.checkout(&latest_frontiers)?;
+        let latest_value = doc.get_deep_value();
+
+        doc.checkout(&target)?;
+        let bytes = doc.export(ExportMode::shallow_snapshot(&target))?;
+        let meta = LoroDoc::decode_import_blob_meta(&bytes, false)?;
+        doc.checkout(&meta.start_frontiers)?;
+        let shallow_root_value = doc.get_deep_value();
+        doc.checkout(&target)?;
+
+        let imported = LoroDoc::new();
+        imported.import(&bytes)?;
+        assert_eq!(imported.shallow_since_frontiers(), meta.start_frontiers);
+        assert_eq!(imported.get_deep_value(), latest_value);
+        let root_state_only =
+            imported.export(ExportMode::state_only(Some(&meta.start_frontiers)))?;
+        let root_doc = LoroDoc::new();
+        root_doc.import(&root_state_only)?;
+        imported.checkout(&meta.start_frontiers)?;
+        assert_eq!(imported.get_deep_value(), shallow_root_value);
+        assert_eq!(root_doc.get_deep_value(), shallow_root_value);
+        imported.checkout_to_latest();
+        assert_eq!(imported.get_deep_value(), latest_value);
+        checked += 1;
+    }
+
+    assert!(checked > 0);
+    Ok(())
+}
+
+#[test]
 fn state_only_at_concurrent_frontiers_excludes_later_ops() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(0)?;

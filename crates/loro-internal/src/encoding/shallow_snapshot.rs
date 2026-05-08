@@ -33,6 +33,7 @@ pub(crate) fn export_shallow_snapshot_inner(
     doc: &LoroDoc,
     start_from: &Frontiers,
 ) -> Result<(Snapshot, Frontiers), LoroEncodeError> {
+    let requested_start_from_len = start_from.len();
     let oplog = doc.oplog().lock();
     let start_from = calc_shallow_doc_start(&oplog, start_from);
     let mut start_vv = frontiers_to_vv_for_export(&oplog, &start_from, "export_shallow_snapshot")?;
@@ -85,7 +86,10 @@ pub(crate) fn export_shallow_snapshot_inner(
         drop(state);
         doc._checkout_without_emitting(&latest_frontiers, false, false)
             .map_err(LoroEncodeError::from)?;
-        let state_bytes = if ops_num > MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE {
+        let should_encode_latest_state = requested_start_from_len > 1
+            || start_from.len() > 1
+            || ops_num > MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE;
+        let state_bytes = if should_encode_latest_state {
             let mut state = doc.app_state().lock();
             state.ensure_all_alive_containers();
             state.store.encode();
@@ -229,7 +233,7 @@ fn restore_export_doc_state(
 /// It should be the LCA of the user given version and the latest version.
 /// Otherwise, users cannot replay the history from the initial version till the latest version.
 fn calc_shallow_doc_start(oplog: &crate::OpLog, frontiers: &Frontiers) -> Frontiers {
-    let frontiers = shrink_frontiers(frontiers, oplog.dag()).unwrap_or_else(|_| frontiers.clone());
+    let frontiers = shrink_frontiers_preserving_shallow_root(oplog, frontiers);
     calc_shallow_doc_start_from(oplog, frontiers)
 }
 
@@ -239,10 +243,33 @@ fn calc_state_only_doc_start(oplog: &crate::OpLog, frontiers: &Frontiers) -> Fro
 
 fn normalize_state_only_target_frontiers(oplog: &crate::OpLog, frontiers: &Frontiers) -> Frontiers {
     if oplog.is_shallow() {
-        shrink_frontiers(frontiers, oplog.dag()).unwrap_or_else(|_| frontiers.clone())
+        shrink_frontiers_preserving_shallow_root(oplog, frontiers)
     } else {
         frontiers.clone()
     }
+}
+
+fn shrink_frontiers_preserving_shallow_root(
+    oplog: &crate::OpLog,
+    frontiers: &Frontiers,
+) -> Frontiers {
+    if oplog.is_shallow() && frontiers_eq_unordered(frontiers, oplog.shallow_since_frontiers()) {
+        return oplog.shallow_since_frontiers().clone();
+    }
+
+    let shrunk = shrink_frontiers(frontiers, oplog.dag()).unwrap_or_else(|_| frontiers.clone());
+    if oplog.is_shallow()
+        && oplog.dag().is_before_shallow_root(&shrunk)
+        && !oplog.dag().is_before_shallow_root(frontiers)
+    {
+        frontiers.clone()
+    } else {
+        shrunk
+    }
+}
+
+fn frontiers_eq_unordered(a: &Frontiers, b: &Frontiers) -> bool {
+    a.len() == b.len() && a.iter().all(|id| b.contains(&id))
 }
 
 fn calc_shallow_doc_start_from(oplog: &crate::OpLog, frontiers: Frontiers) -> Frontiers {

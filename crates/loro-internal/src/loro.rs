@@ -1692,7 +1692,8 @@ impl LoroDoc {
         }
 
         let frontiers = if to_shrink_frontiers {
-            shrink_frontiers(frontiers, &oplog.dag).map_err(LoroError::FrontiersNotFound)?
+            shrink_frontiers_for_checkout(&oplog, frontiers)
+                .map_err(LoroError::FrontiersNotFound)?
         } else {
             frontiers.clone()
         };
@@ -1705,6 +1706,20 @@ impl LoroDoc {
         for i in frontiers.iter() {
             if !oplog.dag.contains(i) {
                 return Err(LoroError::FrontiersNotFound(i));
+            }
+        }
+        if !to_commit_then_renew || !state.is_recording() {
+            let shallow_root = oplog.shallow_since_frontiers();
+            let is_shallow_root = frontiers.len() == shallow_root.len()
+                && frontiers.iter().all(|id| shallow_root.contains(&id));
+            if is_shallow_root && state.restore_to_shallow_root() {
+                self.set_detached(true);
+                return Ok(());
+            }
+
+            if state.restore_to_shallow_latest(&frontiers) {
+                self.set_detached(true);
+                return Ok(());
             }
         }
 
@@ -1750,7 +1765,7 @@ impl LoroDoc {
         &self,
         frontiers: &Frontiers,
         to_shrink_frontiers: bool,
-        _to_commit_then_renew: bool,
+        to_commit_then_renew: bool,
     ) -> Result<CheckoutProfile, LoroError> {
         let mut profile = CheckoutProfile::default();
         let prepare_start = std::time::Instant::now();
@@ -1782,7 +1797,8 @@ impl LoroDoc {
         }
 
         let frontiers = if to_shrink_frontiers {
-            shrink_frontiers(frontiers, &oplog.dag).map_err(LoroError::FrontiersNotFound)?
+            shrink_frontiers_for_checkout(&oplog, frontiers)
+                .map_err(LoroError::FrontiersNotFound)?
         } else {
             frontiers.clone()
         };
@@ -1800,6 +1816,20 @@ impl LoroDoc {
             }
         }
         profile.frontier_prepare = prepare_start.elapsed();
+        if !to_commit_then_renew || !state.is_recording() {
+            let shallow_root = oplog.shallow_since_frontiers();
+            let is_shallow_root = frontiers.len() == shallow_root.len()
+                && frontiers.iter().all(|id| shallow_root.contains(&id));
+            if is_shallow_root && state.restore_to_shallow_root() {
+                self.set_detached(true);
+                return Ok(profile);
+            }
+
+            if state.restore_to_shallow_latest(&frontiers) {
+                self.set_detached(true);
+                return Ok(profile);
+            }
+        }
 
         let vv_start = std::time::Instant::now();
         let before = oplog.dag.frontiers_to_vv(&state.frontiers).ok_or_else(|| {
@@ -1937,23 +1967,24 @@ impl LoroDoc {
                 // 5. Compare the states of the new document and the current document.
 
                 // Step 1: Export the initial state from the GC snapshot.
+                let shallow_root = self.shallow_since_frontiers();
                 let initial_snapshot = self
-                    .export(ExportMode::state_only(Some(
-                        &self.shallow_since_frontiers(),
-                    )))
+                    .export(ExportMode::state_only(Some(&shallow_root)))
                     .unwrap();
 
                 // Step 2: Create a new document and import the initial snapshot.
                 let doc = LoroDoc::new();
                 doc.import(&initial_snapshot).unwrap();
-                self.checkout(&self.shallow_since_frontiers()).unwrap();
+                self.checkout(&shallow_root).unwrap();
                 assert_eq!(self.get_deep_value(), doc.get_deep_value());
 
-                // Step 3: Export updates since the shallow start version vector to the current version.
-                let updates = self.export(ExportMode::all_updates()).unwrap();
+                // Step 3: Export updates after the complete shallow root state.
+                let shallow_root_vv = self.frontiers_to_vv(&shallow_root).unwrap();
+                let updates = self.export(ExportMode::updates(&shallow_root_vv)).unwrap();
 
                 // Step 4: Import these updates into the new document.
                 doc.import(&updates).unwrap();
+                doc.checkout_to_latest();
                 self.checkout_to_latest();
 
                 // Step 5: Checkout to the current state's frontiers and compare the states.
@@ -2479,6 +2510,26 @@ fn find_last_delete_op(oplog: &OpLog, id: ID, idx: ContainerIdx) -> Option<ID> {
 
 fn should_use_forward_diff_calculator(before: &VersionVector, after: &VersionVector) -> bool {
     matches!(before.partial_cmp(after), Some(Ordering::Less))
+}
+
+fn shrink_frontiers_for_checkout(oplog: &OpLog, frontiers: &Frontiers) -> Result<Frontiers, ID> {
+    if oplog.is_shallow() && frontiers_eq_unordered(frontiers, oplog.shallow_since_frontiers()) {
+        return Ok(oplog.shallow_since_frontiers().clone());
+    }
+
+    let shrunk = shrink_frontiers(frontiers, &oplog.dag)?;
+    if oplog.is_shallow()
+        && oplog.dag.is_before_shallow_root(&shrunk)
+        && !oplog.dag.is_before_shallow_root(frontiers)
+    {
+        Ok(frontiers.clone())
+    } else {
+        Ok(shrunk)
+    }
+}
+
+fn frontiers_eq_unordered(a: &Frontiers, b: &Frontiers) -> bool {
+    a.len() == b.len() && a.iter().all(|id| b.contains(&id))
 }
 
 #[derive(Debug)]

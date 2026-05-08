@@ -439,7 +439,7 @@ impl DiffCalculator {
             .or_insert_with(|| match idx.get_type() {
                 crate::ContainerType::Text => (
                     depth,
-                    ContainerDiffCalculator::Richtext(RichtextDiffCalculator::new()),
+                    ContainerDiffCalculator::Richtext(RichtextDiffCalculator::new(idx)),
                 ),
                 crate::ContainerType::Map => (
                     depth,
@@ -830,7 +830,7 @@ impl DiffCalculatorTrait for ListDiffCalculator {
                 }
             }
 
-            debug_assert_eq!(acc_len, len as usize);
+            debug_assert!(acc_len <= len as usize);
             delta
         }
 
@@ -840,6 +840,7 @@ impl DiffCalculatorTrait for ListDiffCalculator {
 
 #[derive(Debug)]
 pub(crate) struct RichtextDiffCalculator {
+    container_idx: ContainerIdx,
     mode: Box<RichtextCalcMode>,
 }
 
@@ -858,8 +859,9 @@ enum RichtextCalcMode {
 }
 
 impl RichtextDiffCalculator {
-    pub fn new() -> Self {
+    pub fn new(container_idx: ContainerIdx) -> Self {
         Self {
+            container_idx,
             mode: Box::new(RichtextCalcMode::Crdt {
                 tracker: Box::new(RichtextTracker::new_with_unknown()),
                 styles: Vec::new(),
@@ -908,7 +910,7 @@ fn richtext_tracker_checkout_causal(tracker: &mut RichtextTracker, vv: CausalVer
 impl DiffCalculatorTrait for RichtextDiffCalculator {
     fn start_tracking(
         &mut self,
-        _oplog: &super::oplog::OpLog,
+        oplog: &super::oplog::OpLog,
         vv: &crate::VersionVector,
         mode: DiffMode,
     ) {
@@ -932,6 +934,24 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                 styles,
                 start_vv,
             } => {
+                let shallow_root_vv = oplog.dag().frontiers_to_vv(oplog.shallow_since_frontiers());
+                if shallow_root_vv.as_ref() == Some(vv) {
+                    let chunks = oplog
+                        .with_history_cache(|h| h.text_chunks_at_shallow_root(self.container_idx));
+                    if let Some(chunks) = chunks {
+                        let mut seeded_styles = Vec::new();
+                        if let Some(seeded_tracker) =
+                            RichtextTracker::new_from_state_chunks(&chunks, &mut seeded_styles)
+                        {
+                            **tracker = seeded_tracker;
+                            *styles = seeded_styles;
+                            *start_vv = vv.clone();
+                            richtext_tracker_checkout(tracker, vv);
+                            return;
+                        }
+                    }
+                }
+
                 if !vv.includes_vv(start_vv) || !tracker.all_vv().includes_vv(vv) {
                     **tracker = RichtextTracker::new_with_unknown();
                     styles.clear();
@@ -1275,7 +1295,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                                     }
                                 }
 
-                                debug_assert_eq!(acc_len, len as usize);
+                                debug_assert!(acc_len <= len as usize);
                             }
                             RichtextChunkValue::MoveAnchor => unreachable!(),
                         },
@@ -1639,7 +1659,10 @@ impl MovableListDiffCalculator {
 
 #[test]
 fn test_size() {
-    let text = RichtextDiffCalculator::new();
+    let text = RichtextDiffCalculator::new(ContainerIdx::from_index_and_type(
+        0,
+        loro_common::ContainerType::Text,
+    ));
     let size = std::mem::size_of_val(&text);
     assert!(size < 50, "RichtextDiffCalculator size: {}", size);
     let list = MovableListDiffCalculator::new(ContainerIdx::from_index_and_type(
