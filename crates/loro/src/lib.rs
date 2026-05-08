@@ -17,7 +17,7 @@ pub use loro_internal::pre_commit::{
     PreCommitCallbackPayload,
 };
 pub use loro_internal::sync;
-pub use loro_internal::undo::{OnPop, UndoItemMeta, UndoOrRedo};
+pub use loro_internal::undo::{OnPop, UndoItemMeta, UndoOrRedo, UndoScope};
 use loro_internal::version::shrink_frontiers;
 pub use loro_internal::version::ImVersionVector;
 use loro_internal::DocState;
@@ -3902,6 +3902,19 @@ impl UndoManager {
     /// undo stack.
     pub fn add_exclude_origin_prefix(&mut self, prefix: &str) {
         self.0.add_exclude_origin_prefix(prefix)
+    }
+
+    /// Restrict this manager to a specific [`UndoScope`].
+    ///
+    /// See [`loro_internal::UndoManager::set_scope`] for the full semantics.
+    pub fn set_scope(&mut self, scope: UndoScope) {
+        self.0.set_scope(scope)
+    }
+
+    /// Builder-style variant of [`Self::set_scope`].
+    pub fn with_scope(self, scope: UndoScope) -> Self {
+        self.0.set_scope(scope);
+        self
     }
 
     /// Set the maximum number of undo steps. The default value is 100.
