@@ -362,6 +362,8 @@ fn frontiers_contracts_follow_semantics() -> anyhow::Result<()> {
             .expect("foreign frontiers should remain unchanged"),
         foreign.state_frontiers()
     );
+    let foreign_vv = foreign.frontiers_to_vv(&foreign.state_frontiers()).unwrap();
+    assert_eq!(doc.vv_to_frontiers(&foreign_vv), foreign.state_frontiers());
 
     let minimized = doc
         .minimize_frontiers(&doc_frontiers)

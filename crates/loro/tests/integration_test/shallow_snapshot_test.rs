@@ -4,7 +4,7 @@ use std::{
 };
 
 use super::gen_action;
-use loro::{cursor::CannotFindRelativePosition, ExportMode, Frontiers, LoroDoc, ID};
+use loro::{cursor::CannotFindRelativePosition, ExportMode, Frontiers, LoroDoc, VersionVector, ID};
 
 fn multi_frontier_shallow_snapshot() -> anyhow::Result<(Vec<u8>, Frontiers, loro::LoroValue)> {
     let doc = LoroDoc::new();
@@ -158,6 +158,9 @@ fn frontiers_to_vv_rejects_unrepresentable_shallow_root_versions() -> anyhow::Re
         .frontiers_to_vv(&shallow_root)
         .expect("complete shallow root should be included");
     assert_eq!(shallow_doc.vv_to_frontiers(&shallow_root_vv), shallow_root);
+    let mut subset_vv = VersionVector::new();
+    subset_vv.set_last(subset.as_single().unwrap());
+    assert_eq!(shallow_doc.vv_to_frontiers(&subset_vv), shallow_root);
     assert_eq!(
         shallow_doc
             .cmp_frontiers(&shallow_root, &shallow_root)
@@ -304,10 +307,16 @@ fn shallow_doc_with_multi_frontier_root_can_export_concurrent_tail() -> anyhow::
     assert!(root_to_target.forward.contains_key(&3));
     assert!(root_to_target.forward.contains_key(&4));
 
+    let clamped_start_to_target = imported.find_id_spans_between(&Frontiers::default(), &target);
+    assert_eq!(clamped_start_to_target, root_to_target);
+
     let target_to_root = imported.find_id_spans_between(&target, &shallow_root);
     assert!(target_to_root.forward.is_empty());
     assert!(target_to_root.retreat.contains_key(&3));
     assert!(target_to_root.retreat.contains_key(&4));
+
+    let target_to_clamped_start = imported.find_id_spans_between(&target, &Frontiers::default());
+    assert_eq!(target_to_clamped_start, target_to_root);
 
     let tail_updates = imported.export(ExportMode::updates_in_range(
         root_to_target.get_id_spans_right().collect::<Vec<_>>(),

@@ -1237,6 +1237,13 @@ impl AppDag {
             return Default::default();
         }
 
+        if !self.shallow_since_vv.is_empty() {
+            let version = VersionVector::from_im_vv(vv);
+            if self.vv_is_before_shallow_root(&version) {
+                return self.shallow_since_frontiers.clone();
+            }
+        }
+
         let this = vv;
         let last_ids: Frontiers = this
             .iter()
@@ -1266,6 +1273,10 @@ impl AppDag {
     pub fn vv_to_frontiers(&self, vv: &VersionVector) -> Frontiers {
         if vv.is_empty() {
             return Default::default();
+        }
+
+        if self.vv_is_before_shallow_root(vv) {
+            return self.shallow_since_frontiers.clone();
         }
 
         let this = vv;

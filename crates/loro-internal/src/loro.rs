@@ -2260,14 +2260,22 @@ impl LoroDoc {
     #[inline]
     pub fn find_id_spans_between(&self, from: &Frontiers, to: &Frontiers) -> VersionVectorDiff {
         let oplog = self.oplog().lock();
-        let from_vv = oplog
-            .dag
-            .frontiers_to_vv(from)
-            .expect("from frontiers should be included by the document history");
-        let to_vv = oplog
-            .dag
-            .frontiers_to_vv(to)
-            .expect("to frontiers should be included by the document history");
+        let frontiers_to_vv = |frontiers: &Frontiers, side: &str| {
+            if let Some(vv) = oplog.dag.frontiers_to_vv(frontiers) {
+                return vv;
+            }
+
+            if oplog.dag.is_before_shallow_root(frontiers) {
+                return oplog
+                    .dag
+                    .frontiers_to_vv(oplog.dag.shallow_since_frontiers())
+                    .expect("shallow root frontiers should be included by the document history");
+            }
+
+            panic!("{side} frontiers should be included by the document history");
+        };
+        let from_vv = frontiers_to_vv(from, "from");
+        let to_vv = frontiers_to_vv(to, "to");
 
         VersionVectorDiff {
             retreat: from_vv.sub_vec(&to_vv),
