@@ -325,6 +325,53 @@ fn reexport_shallow_snapshot_with_redundant_root_frontier_imports() -> anyhow::R
 }
 
 #[test]
+fn shallow_snapshot_export_normalizes_redundant_target_frontiers() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_detached_editing(true);
+
+    doc.set_peer_id(1)?;
+    doc.get_text("left").insert(0, "left")?;
+    doc.commit();
+    let left = doc.state_frontiers();
+
+    doc.checkout(&Frontiers::default())?;
+    doc.set_peer_id(2)?;
+    doc.get_text("right").insert(0, "right")?;
+    doc.commit();
+    let right = doc.state_frontiers();
+
+    let mut root = left.clone();
+    root.merge_with_greater(&right);
+    let root = doc
+        .minimize_frontiers(&root)
+        .expect("root should be reachable");
+    doc.checkout(&root)?;
+
+    doc.set_peer_id(3)?;
+    doc.get_text("tail").insert(0, "tail")?;
+    doc.commit();
+    let tail = doc.state_frontiers();
+    let expected = doc.get_deep_value();
+
+    let mut redundant_target = tail.clone();
+    redundant_target.push(left.as_single().unwrap());
+    let minimized_target = doc
+        .minimize_frontiers(&redundant_target)
+        .expect("target should be reachable");
+    assert_eq!(minimized_target, tail);
+    assert_ne!(minimized_target, redundant_target);
+
+    let snapshot = doc.export(ExportMode::shallow_snapshot(&redundant_target))?;
+    let imported = LoroDoc::new();
+    imported.import(&snapshot)?;
+
+    assert!(imported.is_shallow());
+    assert_eq!(imported.shallow_since_frontiers(), minimized_target);
+    assert_eq!(imported.get_deep_value(), expected);
+    Ok(())
+}
+
+#[test]
 fn shallow_doc_with_multi_frontier_root_can_export_concurrent_tail() -> anyhow::Result<()> {
     let (bytes, shallow_root, _) = multi_frontier_shallow_snapshot()?;
     let imported = LoroDoc::new();

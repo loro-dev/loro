@@ -135,7 +135,7 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
     w: &mut W,
 ) -> Result<Frontiers, LoroEncodeError> {
     let oplog = doc.oplog().lock();
-    let start_from = calc_shallow_doc_start(&oplog, target_frontiers);
+    let start_from = calc_state_only_doc_start(&oplog, target_frontiers);
     let mut start_vv =
         frontiers_to_vv_for_export(&oplog, &start_from, "export_state_only_snapshot")?;
     for id in start_from.iter() {
@@ -224,17 +224,25 @@ fn restore_export_doc_state(
 /// It should be the LCA of the user given version and the latest version.
 /// Otherwise, users cannot replay the history from the initial version till the latest version.
 fn calc_shallow_doc_start(oplog: &crate::OpLog, frontiers: &Frontiers) -> Frontiers {
+    let frontiers = shrink_frontiers(frontiers, oplog.dag()).unwrap_or_else(|_| frontiers.clone());
+    calc_shallow_doc_start_from(oplog, frontiers)
+}
+
+fn calc_state_only_doc_start(oplog: &crate::OpLog, frontiers: &Frontiers) -> Frontiers {
+    calc_shallow_doc_start_from(oplog, frontiers.clone())
+}
+
+fn calc_shallow_doc_start_from(oplog: &crate::OpLog, frontiers: Frontiers) -> Frontiers {
     if !oplog.shallow_since_vv().is_empty() {
         // The target frontiers have already been checked by the caller. On a
         // shallow doc, searching for a lower GCA can walk into trimmed history.
-        // Keep the requested boundary, but normalize redundant frontiers so the
-        // exported shallow root does not include an op and its ancestor together.
-        return shrink_frontiers(frontiers, oplog.dag()).unwrap_or_else(|_| frontiers.clone());
+        // Keep the requested boundary.
+        return frontiers;
     }
 
     // Find the LCA of the given frontiers by iteratively pairwise GCA.
     // This converges to a single frontier or empty if there is no common ancestor.
-    let mut current = frontiers.clone();
+    let mut current = frontiers;
     while current.len() > 1 {
         let ids: Vec<ID> = current.iter().collect();
         let mut next = Frontiers::new();
