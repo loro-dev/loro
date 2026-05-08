@@ -788,6 +788,14 @@ impl AppDag {
             return deps.iter().any(|id| self.shallow_since_vv.includes_id(id));
         };
 
+        self.vv_is_before_shallow_root(&vv)
+    }
+
+    fn vv_is_before_shallow_root(&self, vv: &VersionVector) -> bool {
+        if self.shallow_since_vv.is_empty() {
+            return false;
+        }
+
         if self
             .shallow_since_vv
             .iter()
@@ -1186,6 +1194,10 @@ impl AppDag {
             vv.extend_to_include_last_id(id);
         }
 
+        if self.vv_is_before_shallow_root(&vv) {
+            return None;
+        }
+
         Some(vv)
     }
 
@@ -1316,7 +1328,7 @@ impl AppDag {
     pub fn cmp_with_frontiers(&self, other: &Frontiers) -> Ordering {
         if &self.frontiers == other {
             Ordering::Equal
-        } else if other.iter().all(|id| self.vv.includes_id(id)) {
+        } else if self.frontiers_to_vv(other).is_some() {
             Ordering::Greater
         } else {
             Ordering::Less

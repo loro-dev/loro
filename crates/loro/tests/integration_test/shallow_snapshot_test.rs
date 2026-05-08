@@ -132,6 +132,41 @@ fn checkout_subset_of_multi_frontier_shallow_root_should_error() -> anyhow::Resu
 }
 
 #[test]
+fn frontiers_to_vv_rejects_unrepresentable_shallow_root_versions() -> anyhow::Result<()> {
+    let (bytes, shallow_root, _) = multi_frontier_shallow_snapshot()?;
+    let shallow_doc = LoroDoc::new();
+    shallow_doc.import(&bytes)?;
+
+    let subset = Frontiers::from([shallow_root.iter().next().unwrap()]);
+    assert!(shallow_doc.frontiers_to_vv(&Frontiers::default()).is_none());
+    assert!(shallow_doc.frontiers_to_vv(&subset).is_none());
+    assert!(shallow_doc
+        .cmp_frontiers(&Frontiers::default(), &shallow_root)
+        .is_err());
+    assert!(shallow_doc.cmp_frontiers(&subset, &shallow_root).is_err());
+    assert_eq!(
+        shallow_doc.cmp_with_frontiers(&Frontiers::default()),
+        std::cmp::Ordering::Less
+    );
+    assert_eq!(
+        shallow_doc.cmp_with_frontiers(&subset),
+        std::cmp::Ordering::Less
+    );
+
+    let shallow_root_vv = shallow_doc
+        .frontiers_to_vv(&shallow_root)
+        .expect("complete shallow root should be included");
+    assert_eq!(shallow_doc.vv_to_frontiers(&shallow_root_vv), shallow_root);
+    assert_eq!(
+        shallow_doc
+            .cmp_frontiers(&shallow_root, &shallow_root)
+            .expect("complete shallow root should be comparable"),
+        Some(std::cmp::Ordering::Equal)
+    );
+    Ok(())
+}
+
+#[test]
 fn reexport_multi_frontier_shallow_root_snapshot_imports() -> anyhow::Result<()> {
     let (bytes, shallow_root, expected) = multi_frontier_shallow_snapshot()?;
     let imported = LoroDoc::new();
