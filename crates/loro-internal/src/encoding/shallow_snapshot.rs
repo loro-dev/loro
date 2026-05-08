@@ -135,7 +135,8 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
     w: &mut W,
 ) -> Result<Frontiers, LoroEncodeError> {
     let oplog = doc.oplog().lock();
-    let start_from = calc_state_only_doc_start(&oplog, target_frontiers);
+    let target_frontiers = normalize_state_only_target_frontiers(&oplog, target_frontiers);
+    let start_from = calc_state_only_doc_start(&oplog, &target_frontiers);
     let start_inclusive_vv =
         frontiers_to_vv_for_export(&oplog, &start_from, "export_state_only_snapshot")?;
     let mut start_vv = start_inclusive_vv.clone();
@@ -151,7 +152,7 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
     );
 
     let mut to_vv =
-        frontiers_to_vv_for_export(&oplog, target_frontiers, "export_state_only_snapshot")?;
+        frontiers_to_vv_for_export(&oplog, &target_frontiers, "export_state_only_snapshot")?;
     to_vv.merge(&start_inclusive_vv);
     let to_frontiers = oplog.dag().vv_to_frontiers(&to_vv);
 
@@ -234,6 +235,14 @@ fn calc_shallow_doc_start(oplog: &crate::OpLog, frontiers: &Frontiers) -> Fronti
 
 fn calc_state_only_doc_start(oplog: &crate::OpLog, frontiers: &Frontiers) -> Frontiers {
     calc_shallow_doc_start_from(oplog, frontiers.clone())
+}
+
+fn normalize_state_only_target_frontiers(oplog: &crate::OpLog, frontiers: &Frontiers) -> Frontiers {
+    if oplog.is_shallow() {
+        shrink_frontiers(frontiers, oplog.dag()).unwrap_or_else(|_| frontiers.clone())
+    } else {
+        frontiers.clone()
+    }
 }
 
 fn calc_shallow_doc_start_from(oplog: &crate::OpLog, frontiers: Frontiers) -> Frontiers {
