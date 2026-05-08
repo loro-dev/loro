@@ -72,6 +72,39 @@ fn state_only_import_allows_frontiers_that_include_shallow_root() -> anyhow::Res
 }
 
 #[test]
+fn checkout_subset_of_multi_frontier_shallow_root_should_error() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_detached_editing(true);
+
+    doc.set_peer_id(1)?;
+    doc.get_text("left").insert(0, "left")?;
+    doc.commit();
+    let left = doc.state_frontiers();
+
+    doc.checkout(&Frontiers::default())?;
+    doc.set_peer_id(2)?;
+    doc.get_text("right").insert(0, "right")?;
+    doc.commit();
+    let right = doc.state_frontiers();
+
+    let mut shallow_root = left.clone();
+    shallow_root.merge_with_greater(&right);
+    let shallow_root = doc
+        .minimize_frontiers(&shallow_root)
+        .expect("frontiers should be reachable");
+    assert_eq!(shallow_root.len(), 2);
+
+    doc.checkout(&shallow_root)?;
+    let bytes = doc.export(ExportMode::shallow_snapshot(&shallow_root))?;
+    let shallow_doc = LoroDoc::new();
+    shallow_doc.import(&bytes)?;
+
+    let subset = Frontiers::from([shallow_root.iter().next().unwrap()]);
+    assert!(shallow_doc.checkout(&subset).is_err());
+    Ok(())
+}
+
+#[test]
 fn test_gc() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(1)?;

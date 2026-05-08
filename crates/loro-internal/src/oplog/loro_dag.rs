@@ -635,11 +635,16 @@ impl AppDag {
         self.frontiers = v.frontiers;
         if let Some((vv, f)) = v.start_version {
             if !f.is_empty() {
-                assert!(f.len() == 1);
-                let id = f.as_single().unwrap();
-                let node = self.get(id).unwrap();
-                assert!(node.cnt == id.counter);
-                self.shallow_root_frontiers_deps = node.deps.clone();
+                let deps: Frontiers = vv
+                    .iter()
+                    .filter_map(|(&peer, &counter)| {
+                        (counter > 0).then_some(ID::new(peer, counter - 1))
+                    })
+                    .collect();
+                for id in f.iter() {
+                    self.get(id).unwrap();
+                }
+                self.shallow_root_frontiers_deps = deps;
             }
             self.shallow_since_frontiers = f;
             self.shallow_since_vv = ImVersionVector::from_vv(&vv);
@@ -779,17 +784,24 @@ impl AppDag {
             return true;
         }
 
-        for id in deps.iter() {
-            if self.shallow_since_frontiers.contains(&id) {
-                continue;
-            }
+        let Some(vv) = self.frontiers_to_vv(deps) else {
+            return deps.iter().any(|id| self.shallow_since_vv.includes_id(id));
+        };
 
-            if self.shallow_since_vv.includes_id(id) {
-                return true;
-            }
+        if self
+            .shallow_since_vv
+            .iter()
+            .any(|(&peer, &counter)| vv.get(&peer).copied().unwrap_or(0) < counter)
+        {
+            return true;
         }
 
-        false
+        // The shallow boundary can be a multi-frontier root. A target at that
+        // boundary must include every root frontier; a proper subset is not a
+        // representable state in the shallow history.
+        self.shallow_since_frontiers
+            .iter()
+            .any(|id| !vv.includes_id(id))
     }
 
     /// Travel the ancestors of the given id, and call the callback for each node
@@ -1073,6 +1085,10 @@ impl AppDag {
                 } else {
                     let mut all_deps_processed = true;
                     for id in top_node.deps.iter() {
+                        if self.shallow_since_vv.includes_id(id) {
+                            continue;
+                        }
+
                         let node = self.get(id).expect("deps should be in the dag");
                         if node.vv.get().is_none() {
                             if all_deps_processed {
@@ -1089,6 +1105,15 @@ impl AppDag {
                     }
 
                     for id in top_node.deps.iter() {
+                        if self.shallow_since_vv.includes_id(id) {
+                            if ans_vv.is_empty() {
+                                ans_vv = self.shallow_since_vv.clone();
+                            } else {
+                                ans_vv.extend_to_include_vv(self.shallow_since_vv.iter());
+                            }
+                            continue;
+                        }
+
                         let node = self.get(id).expect("deps should be in the dag");
                         let dep_vv = node.vv.get().unwrap();
                         if ans_vv.is_empty() {

@@ -41,26 +41,6 @@ pub(crate) fn export_shallow_snapshot_inner(
         start_vv.insert(id.peer, id.counter);
     }
 
-    #[cfg(debug_assertions)]
-    {
-        use crate::dag::Dag;
-        if !start_from.is_empty() {
-            assert!(start_from.len() == 1);
-            let id = start_from.as_single().unwrap();
-            let node = oplog.dag.get(id).unwrap();
-            if id.counter == node.cnt {
-                let vv = oplog.dag().frontiers_to_vv(&node.deps).unwrap();
-                assert_eq!(vv, start_vv);
-            } else {
-                let vv = oplog
-                    .dag()
-                    .frontiers_to_vv(&Frontiers::from(id.inc(-1)))
-                    .unwrap();
-                assert_eq!(vv, start_vv);
-            }
-        }
-    }
-
     loro_common::debug!(
         "start version vv={:?} frontiers={:?}",
         &start_vv,
@@ -264,10 +244,12 @@ fn calc_shallow_doc_start(oplog: &crate::OpLog, frontiers: &Frontiers) -> Fronti
             }
             i += 2;
         }
-        if next == current {
-            // Cannot converge further (pairwise GCAs are the nodes themselves).
-            // Fall back to empty frontiers, meaning export full history.
-            return Frontiers::default();
+        if next.is_empty() || next == current {
+            // Cannot converge further (no non-empty GCA, or pairwise GCAs are
+            // the nodes themselves).
+            // Keep the multi-frontier start so the shallow root still represents
+            // the complete boundary instead of falling back to full history.
+            break;
         }
         current = next;
     }
