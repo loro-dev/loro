@@ -264,12 +264,63 @@ fn state_only_export_preserves_multi_frontier_shallow_root() -> anyhow::Result<(
 }
 
 #[test]
+fn state_only_multi_frontier_shallow_root_can_accept_local_edits() -> anyhow::Result<()> {
+    let (bytes, shallow_root, _) = multi_frontier_shallow_snapshot()?;
+    let imported = LoroDoc::new();
+    imported.import(&bytes)?;
+    let state_only = imported.export(ExportMode::state_only(Some(&shallow_root)))?;
+
+    let edited = LoroDoc::new();
+    edited.import(&state_only)?;
+    edited.set_peer_id(3)?;
+    edited.get_text("tail").insert(0, "tail")?;
+    edited.commit();
+
+    assert!(edited.is_shallow());
+    assert_eq!(edited.shallow_since_frontiers(), shallow_root);
+    assert_eq!(edited.get_text("tail").to_string(), "tail");
+    Ok(())
+}
+
+#[test]
 fn state_correctness_check_handles_multi_frontier_shallow_root() -> anyhow::Result<()> {
     let (bytes, _, _) = multi_frontier_shallow_snapshot()?;
     let imported = LoroDoc::new();
     imported.import(&bytes)?;
 
     imported.check_state_correctness_slow();
+    Ok(())
+}
+
+#[test]
+fn reexport_shallow_snapshot_with_redundant_root_frontier_imports() -> anyhow::Result<()> {
+    let (bytes, shallow_root, _) = multi_frontier_shallow_snapshot()?;
+    let imported = LoroDoc::new();
+    imported.import(&bytes)?;
+    imported.set_detached_editing(true);
+
+    imported.checkout(&shallow_root)?;
+    imported.set_peer_id(3)?;
+    imported.get_text("tail").insert(0, "tail")?;
+    imported.commit();
+    let tail = imported.state_frontiers();
+    let expected = imported.get_deep_value();
+
+    let mut redundant_target = tail.clone();
+    redundant_target.push(shallow_root.iter().next().unwrap());
+    let minimized_target = imported
+        .minimize_frontiers(&redundant_target)
+        .expect("target should be reachable");
+    assert_ne!(minimized_target, redundant_target);
+
+    let snapshot = imported.export(ExportMode::shallow_snapshot(&redundant_target))?;
+    let imported_again = LoroDoc::new();
+    imported_again.import(&snapshot)?;
+
+    assert!(imported_again.is_shallow());
+    assert_eq!(imported_again.shallow_since_frontiers(), minimized_target);
+    assert_eq!(imported_again.get_deep_value(), expected);
+    assert!(imported_again.frontiers_to_vv(&minimized_target).is_some());
     Ok(())
 }
 
@@ -337,12 +388,14 @@ fn shallow_doc_with_multi_frontier_root_can_export_concurrent_tail() -> anyhow::
         .frontiers_to_vv(&target)
         .expect("target should be included");
     let tail_json = imported.export_json_updates(&root_vv, &target_vv);
+    assert_eq!(tail_json.start_version, shallow_root);
     let json_updated_from_root = LoroDoc::new();
     json_updated_from_root.import(&bytes)?;
     json_updated_from_root.import_json_updates(tail_json)?;
     assert_eq!(json_updated_from_root.get_deep_value(), expected);
 
     let all_tail_json = imported.export_json_updates(&Default::default(), &target_vv);
+    assert_eq!(all_tail_json.start_version, shallow_root);
     let json_all_updated_from_root = LoroDoc::new();
     json_all_updated_from_root.import(&bytes)?;
     json_all_updated_from_root.import_json_updates(all_tail_json)?;

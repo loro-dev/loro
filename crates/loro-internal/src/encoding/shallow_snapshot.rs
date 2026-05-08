@@ -9,7 +9,7 @@ use crate::{
     dag::DagUtils,
     encoding::fast_snapshot::{_encode_snapshot, Snapshot},
     state::container_store::FRONTIERS_KEY,
-    version::{Frontiers, VersionVector},
+    version::{shrink_frontiers, Frontiers, VersionVector},
     LoroDoc,
 };
 
@@ -227,8 +227,9 @@ fn calc_shallow_doc_start(oplog: &crate::OpLog, frontiers: &Frontiers) -> Fronti
     if !oplog.shallow_since_vv().is_empty() {
         // The target frontiers have already been checked by the caller. On a
         // shallow doc, searching for a lower GCA can walk into trimmed history.
-        // Keep the requested boundary instead.
-        return frontiers.clone();
+        // Keep the requested boundary, but normalize redundant frontiers so the
+        // exported shallow root does not include an op and its ancestor together.
+        return shrink_frontiers(frontiers, oplog.dag()).unwrap_or_else(|_| frontiers.clone());
     }
 
     // Find the LCA of the given frontiers by iteratively pairwise GCA.
