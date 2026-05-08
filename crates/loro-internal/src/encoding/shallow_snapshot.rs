@@ -224,6 +224,10 @@ fn restore_export_doc_state(
 /// It should be the LCA of the user given version and the latest version.
 /// Otherwise, users cannot replay the history from the initial version till the latest version.
 fn calc_shallow_doc_start(oplog: &crate::OpLog, frontiers: &Frontiers) -> Frontiers {
+    if !oplog.shallow_since_vv().is_empty() && frontiers == oplog.shallow_since_frontiers() {
+        return frontiers.clone();
+    }
+
     // Find the LCA of the given frontiers by iteratively pairwise GCA.
     // This converges to a single frontier or empty if there is no common ancestor.
     let mut current = frontiers.clone();

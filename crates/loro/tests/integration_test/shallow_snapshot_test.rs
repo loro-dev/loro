@@ -105,6 +105,52 @@ fn checkout_subset_of_multi_frontier_shallow_root_should_error() -> anyhow::Resu
 }
 
 #[test]
+fn reexport_multi_frontier_shallow_root_snapshot_imports() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_detached_editing(true);
+
+    doc.set_peer_id(1)?;
+    doc.get_text("left").insert(0, "left")?;
+    doc.commit();
+    let left = doc.state_frontiers();
+
+    doc.checkout(&Frontiers::default())?;
+    doc.set_peer_id(2)?;
+    doc.get_text("right").insert(0, "right")?;
+    doc.commit();
+    let right = doc.state_frontiers();
+
+    let mut shallow_root = left.clone();
+    shallow_root.merge_with_greater(&right);
+    let shallow_root = doc
+        .minimize_frontiers(&shallow_root)
+        .expect("frontiers should be reachable");
+    doc.checkout(&shallow_root)?;
+    let expected = doc.get_deep_value();
+
+    let bytes = doc.export(ExportMode::shallow_snapshot(&shallow_root))?;
+    let imported = LoroDoc::new();
+    imported.import(&bytes)?;
+
+    let reexported = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        imported.export(ExportMode::shallow_snapshot(&shallow_root))
+    })) {
+        Ok(result) => result?,
+        Err(_) => {
+            std::mem::forget(imported);
+            panic!("re-exporting a multi-frontier shallow root snapshot should not panic");
+        }
+    };
+    let imported_again = LoroDoc::new();
+    imported_again.import(&reexported)?;
+
+    assert!(imported_again.is_shallow());
+    assert_eq!(imported_again.shallow_since_frontiers(), shallow_root);
+    assert_eq!(imported_again.get_deep_value(), expected);
+    Ok(())
+}
+
+#[test]
 fn test_gc() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(1)?;
