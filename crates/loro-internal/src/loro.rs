@@ -2442,8 +2442,8 @@ fn find_last_delete_op(oplog: &OpLog, id: ID, idx: ContainerIdx) -> Option<ID> {
             if let InnerContent::List(InnerListOp::Delete(d)) = &op.content {
                 if d.id_start.to_span(d.atom_len()).contains(id) {
                     debug_assert!(op.counter >= change.id().counter);
-                    let op_lamport = change.lamport
-                        + (op.counter - change.id().counter) as loro_common::Lamport;
+                    let op_lamport =
+                        change.lamport + (op.counter - change.id().counter) as loro_common::Lamport;
                     let key = (op_lamport, peer);
                     if best.map_or(true, |(bk, _)| key > bk) {
                         best = Some((key, ID::new(peer, op.counter)));

@@ -541,13 +541,10 @@ impl DocState {
                 return Err(LoroError::internal("state apply failpoint"));
             }
         }
-        match diff_mode {
-            DiffMode::Checkout => {
-                self.dead_containers_cache.clear();
-            }
-            _ => {
-                self.dead_containers_cache.clear_alive();
-            }
+        if diff.by.is_checkout() || diff_mode == DiffMode::Checkout {
+            self.dead_containers_cache.clear();
+        } else {
+            self.dead_containers_cache.clear_alive();
         }
         self.pre_txn(diff.origin.clone(), diff.by);
 
