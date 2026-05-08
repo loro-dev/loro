@@ -902,7 +902,13 @@ impl UndoManager {
                 let inner = self.inner.clone();
                 // We need to clone this because otherwise <transform_delta> will be applied to the same remote diff
                 let remote_change_clone = remote_diff.lock().clone();
-                let commit = doc.undo_internal(
+                // Snapshot the scope set so undo_internal can mask out-of-scope
+                // entries from the computed diff before applying it.
+                let scope_set = match &self.inner.lock().borrow().scope {
+                    UndoScope::Doc => None,
+                    UndoScope::Containers(set) => Some(set.clone()),
+                };
+                let commit = doc.undo_internal_with_scope(
                     IdSpan {
                         peer: self.peer(),
                         counter: span.span,
@@ -916,6 +922,7 @@ impl UndoManager {
                             get_stack(&mut inner.borrow_mut()).transform_based_on_this_delta(diff);
                         });
                     },
+                    scope_set.as_ref(),
                 )?;
                 drop(commit);
                 let inner = self.inner.lock();
