@@ -1183,7 +1183,7 @@ impl AppDag {
     pub fn frontiers_to_vv(&self, frontiers: &Frontiers) -> Option<VersionVector> {
         if frontiers == &self.shallow_root_frontiers_deps {
             let vv = VersionVector::from_im_vv(&self.shallow_since_vv);
-            return Some(vv);
+            return (!self.vv_is_before_shallow_root(&vv)).then_some(vv);
         }
 
         let mut vv: VersionVector = Default::default();

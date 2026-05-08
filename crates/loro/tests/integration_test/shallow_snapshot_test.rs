@@ -167,6 +167,38 @@ fn frontiers_to_vv_rejects_unrepresentable_shallow_root_versions() -> anyhow::Re
 }
 
 #[test]
+fn frontiers_to_vv_rejects_shallow_root_deps() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    doc.get_text("text").insert(0, "abcdef")?;
+    doc.commit();
+
+    let shallow_root = Frontiers::from_id(ID::new(1, 3));
+    let before_root = Frontiers::from_id(ID::new(1, 2));
+    let bytes = doc.export(ExportMode::shallow_snapshot(&shallow_root))?;
+    let shallow_doc = LoroDoc::new();
+    shallow_doc.import(&bytes)?;
+
+    assert_eq!(shallow_doc.shallow_since_frontiers(), shallow_root);
+    assert!(shallow_doc.checkout(&before_root).is_err());
+    assert!(shallow_doc
+        .export(ExportMode::shallow_snapshot(&before_root))
+        .is_err());
+    assert!(shallow_doc
+        .export(ExportMode::state_only(Some(&before_root)))
+        .is_err());
+    assert!(shallow_doc.frontiers_to_vv(&before_root).is_none());
+    assert!(shallow_doc
+        .cmp_frontiers(&before_root, &shallow_root)
+        .is_err());
+    assert_eq!(
+        shallow_doc.cmp_with_frontiers(&before_root),
+        std::cmp::Ordering::Less
+    );
+    Ok(())
+}
+
+#[test]
 fn reexport_multi_frontier_shallow_root_snapshot_imports() -> anyhow::Result<()> {
     let (bytes, shallow_root, expected) = multi_frontier_shallow_snapshot()?;
     let imported = LoroDoc::new();
