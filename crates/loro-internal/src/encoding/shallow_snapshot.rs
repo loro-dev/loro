@@ -319,10 +319,11 @@ pub(crate) fn encode_snapshot_at<W: std::io::Write>(
                 "encode_snapshot_at: state is unexpectedly still in a transaction",
             ));
         }
-        let Some(oplog_bytes) = oplog.fork_changes_up_to(frontiers) else {
+        let target_frontiers = state.frontiers.clone();
+        let Some(oplog_bytes) = oplog.fork_changes_up_to(&target_frontiers) else {
             break 'block Err(LoroEncodeError::FrontiersNotFound(format!(
                 "frontiers: {:?} when export in SnapshotAt mode",
-                frontiers
+                target_frontiers
             )));
         };
 
