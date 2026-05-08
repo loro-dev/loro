@@ -676,6 +676,47 @@ fn test_richtext_gc() -> anyhow::Result<()> {
 }
 
 #[test]
+fn reexport_shallow_doc_at_style_start_advances_to_style_end() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    let text = doc.get_text("text");
+    text.insert(0, "1")?; // 0
+    text.insert(0, "2")?; // 1
+    text.insert(0, "3")?; // 2
+    doc.commit();
+    text.mark(0..2, "bold", "value")?; // 3, 4
+    text.insert(3, "456")?; // 5, 6, 7
+
+    let bytes = doc.export(loro::ExportMode::shallow_snapshot_since(ID::new(1, 2)))?;
+    let shallow_doc = LoroDoc::new();
+    shallow_doc.import(&bytes)?;
+
+    let reexported = shallow_doc.export(loro::ExportMode::shallow_snapshot_since(ID::new(1, 3)))?;
+    let imported = LoroDoc::new();
+    imported.import(&reexported)?;
+
+    assert_eq!(
+        imported.shallow_since_frontiers(),
+        Frontiers::from_id(ID::new(1, 4))
+    );
+    imported.checkout(&Frontiers::from_id(ID::new(1, 4)))?;
+    assert_eq!(imported.get_text("text").to_string(), "321");
+    imported.checkout_to_latest();
+    assert_eq!(imported.get_text("text").to_string(), "321456");
+
+    let style_start = Frontiers::from_id(ID::new(1, 3));
+    let state_only = shallow_doc.export(ExportMode::state_only(Some(&style_start)))?;
+    let state_only_imported = LoroDoc::new();
+    state_only_imported.import(&state_only)?;
+    assert_eq!(
+        state_only_imported.shallow_since_frontiers(),
+        Frontiers::from_id(ID::new(1, 4))
+    );
+    state_only_imported.check_state_correctness_slow();
+    Ok(())
+}
+
+#[test]
 fn import_updates_depend_on_shallow_history_should_raise_error() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(1)?;

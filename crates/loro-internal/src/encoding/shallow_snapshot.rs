@@ -136,8 +136,9 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
 ) -> Result<Frontiers, LoroEncodeError> {
     let oplog = doc.oplog().lock();
     let start_from = calc_state_only_doc_start(&oplog, target_frontiers);
-    let mut start_vv =
+    let start_inclusive_vv =
         frontiers_to_vv_for_export(&oplog, &start_from, "export_state_only_snapshot")?;
+    let mut start_vv = start_inclusive_vv.clone();
     for id in start_from.iter() {
         // we need to include the ops in start_from, this can make things easier
         start_vv.insert(id.peer, id.counter);
@@ -149,7 +150,9 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
         &start_from,
     );
 
-    let to_vv = frontiers_to_vv_for_export(&oplog, target_frontiers, "export_state_only_snapshot")?;
+    let mut to_vv =
+        frontiers_to_vv_for_export(&oplog, target_frontiers, "export_state_only_snapshot")?;
+    to_vv.merge(&start_inclusive_vv);
     let to_frontiers = oplog.dag().vv_to_frontiers(&to_vv);
 
     let oplog_bytes =
@@ -238,7 +241,7 @@ fn calc_shallow_doc_start_from(oplog: &crate::OpLog, frontiers: Frontiers) -> Fr
         // The target frontiers have already been checked by the caller. On a
         // shallow doc, searching for a lower GCA can walk into trimmed history.
         // Keep the requested boundary.
-        return frontiers;
+        return advance_style_start_frontiers(oplog, frontiers);
     }
 
     // Find the LCA of the given frontiers by iteratively pairwise GCA.
@@ -271,8 +274,12 @@ fn calc_shallow_doc_start_from(oplog: &crate::OpLog, frontiers: Frontiers) -> Fr
         current = next;
     }
 
+    advance_style_start_frontiers(oplog, current)
+}
+
+fn advance_style_start_frontiers(oplog: &crate::OpLog, frontiers: Frontiers) -> Frontiers {
     let mut ans = Frontiers::new();
-    for id in current.iter() {
+    for id in frontiers.iter() {
         let mut processed = false;
         if let Some(op) = oplog.get_op_that_includes(id) {
             if let crate::op::InnerContent::List(InnerListOp::StyleStart { .. }) = &op.content {
