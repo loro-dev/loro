@@ -238,9 +238,19 @@ impl TreeDiffCalculator {
             let _e = s.enter();
             let to_frontiers = info.to_frontiers;
             let from_frontiers = info.from_frontiers;
-            let (common_ancestors, _mode) =
+            let (mut common_ancestors, _mode) =
                 oplog.dag.find_common_ancestor(from_frontiers, to_frontiers);
-            let lca_vv = oplog.dag.frontiers_to_vv(&common_ancestors).unwrap();
+            let mut lca_vv = oplog.dag.frontiers_to_vv(&common_ancestors);
+            if lca_vv.is_none() {
+                if info.to_vv.includes_vv(info.from_vv) {
+                    common_ancestors = from_frontiers.clone();
+                    lca_vv = oplog.dag.frontiers_to_vv(&common_ancestors);
+                } else if info.from_vv.includes_vv(info.to_vv) {
+                    common_ancestors = to_frontiers.clone();
+                    lca_vv = oplog.dag.frontiers_to_vv(&common_ancestors);
+                }
+            }
+            let lca_vv = lca_vv.expect("tree diff LCA should be representable in the current DAG");
             let lca_frontiers = common_ancestors;
             let to_max_lamport = self.get_max_lamport_by_frontiers(to_frontiers, oplog);
             let lca_min_lamport = self.get_min_lamport_by_frontiers(&lca_frontiers, oplog);

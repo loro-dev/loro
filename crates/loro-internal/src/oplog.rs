@@ -590,13 +590,26 @@ impl OpLog {
         let mut merged_vv = from.clone();
         merged_vv.merge(to);
         loro_common::debug!("to_frontiers={:?} vv={:?}", &to_frontiers, to);
-        let (common_ancestors, mut diff_mode) =
+        let (mut common_ancestors, mut diff_mode) =
             self.dag.find_common_ancestor(from_frontiers, to_frontiers);
         if diff_mode == DiffMode::Checkout && to > from {
             diff_mode = DiffMode::Import;
         }
 
-        let common_ancestors_vv = self.dag.frontiers_to_vv(&common_ancestors).unwrap();
+        let mut common_ancestors_vv = self.dag.frontiers_to_vv(&common_ancestors);
+        if common_ancestors_vv.is_none() {
+            if to.includes_vv(from) {
+                common_ancestors = from_frontiers.clone();
+                common_ancestors_vv = self.dag.frontiers_to_vv(&common_ancestors);
+                diff_mode = DiffMode::Import;
+            } else if from.includes_vv(to) {
+                common_ancestors = to_frontiers.clone();
+                common_ancestors_vv = self.dag.frontiers_to_vv(&common_ancestors);
+                diff_mode = DiffMode::Checkout;
+            }
+        }
+        let common_ancestors_vv = common_ancestors_vv
+            .expect("common ancestors should be representable in the current DAG");
         // go from lca to merged_vv
         let diff = common_ancestors_vv.diff(&merged_vv).forward;
         let mut iter = self.dag.iter_causal(common_ancestors, diff);
