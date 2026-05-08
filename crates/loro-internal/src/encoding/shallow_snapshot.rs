@@ -150,9 +150,10 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
     );
 
     let to_vv = frontiers_to_vv_for_export(&oplog, target_frontiers, "export_state_only_snapshot")?;
+    let to_frontiers = oplog.dag().vv_to_frontiers(&to_vv);
 
     let oplog_bytes =
-        oplog.export_change_store_in_range(&start_vv, &start_from, &to_vv, target_frontiers);
+        oplog.export_change_store_in_range(&start_vv, &start_from, &to_vv, &to_frontiers);
     let state_frontiers = doc.state_frontiers();
     let is_attached = !doc.is_detached();
     drop(oplog);

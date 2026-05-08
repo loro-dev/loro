@@ -94,7 +94,9 @@ fn state_only_import_allows_frontiers_that_include_shallow_root() -> anyhow::Res
 
     assert!(new_doc.is_shallow());
     assert_eq!(new_doc.shallow_since_frontiers(), shallow_root);
+    assert_eq!(new_doc.oplog_frontiers(), latest);
     assert_eq!(new_doc.get_deep_value(), expected);
+    new_doc.check_state_correctness_slow();
     Ok(())
 }
 
