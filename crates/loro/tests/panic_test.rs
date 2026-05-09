@@ -327,6 +327,48 @@ fn import_json_updates_with_text_mark_empty_range_should_error_without_panic() {
     assert_eq!(dst.get_deep_value(), before_value);
 }
 
+#[test]
+#[parallel]
+fn import_json_updates_with_text_mark_end_without_mark_should_error_without_panic() {
+    let src = LoroDoc::new();
+    src.set_peer_id(34).unwrap();
+    let text = src.get_text("text");
+    text.insert(0, "abc").unwrap();
+    src.commit();
+    let first = src.export_json_updates(&Default::default(), &src.oplog_vv());
+    let first_vv = src.oplog_vv();
+
+    text.mark(0..2, "bold", true).unwrap();
+    src.commit();
+    let mut suffix = src.export_json_updates(&first_vv, &src.oplog_vv());
+    match &mut suffix.changes[0].ops[0].content {
+        content @ JsonOpContent::Text(TextOp::Mark { .. }) => {
+            *content = JsonOpContent::Text(TextOp::MarkEnd);
+        }
+        other => panic!("expected text mark, got {other:?}"),
+    }
+
+    let dst = ManuallyDrop::new(LoroDoc::new());
+    dst.import_json_updates(first).unwrap();
+    let before_vv = dst.oplog_vv();
+    let before_frontiers = dst.oplog_frontiers();
+    let before_value = dst.get_deep_value();
+
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| dst.import_json_updates(suffix)));
+    assert!(
+        result.is_ok(),
+        "malformed text MarkEnd JSON import should not panic"
+    );
+    assert!(
+        result.unwrap().is_err(),
+        "malformed text MarkEnd JSON import unexpectedly succeeded; imported value = {:?}",
+        dst.get_deep_value()
+    );
+    assert_eq!(dst.oplog_vv(), before_vv);
+    assert_eq!(dst.oplog_frontiers(), before_frontiers);
+    assert_eq!(dst.get_deep_value(), before_value);
+}
+
 // ---------------------------------------------------------------------------
 // 9. Detached tree methods that used to panic — FIXED
 // ---------------------------------------------------------------------------
