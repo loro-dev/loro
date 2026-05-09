@@ -604,13 +604,21 @@ fn decode_op(op: json::JsonOp, arena: &SharedArena, peers: &Option<Vec<PeerID>>)
                     style_key,
                     style_value,
                     info,
-                } => InnerContent::List(InnerListOp::StyleStart {
-                    start,
-                    end,
-                    key: style_key.into(),
-                    value: style_value,
-                    info: TextStyleInfoFlag::from_byte(info),
-                }),
+                } => {
+                    if start >= end {
+                        return Err(LoroError::DecodeError(
+                            "text mark start must be less than end".into(),
+                        ));
+                    }
+
+                    InnerContent::List(InnerListOp::StyleStart {
+                        start,
+                        end,
+                        key: style_key.into(),
+                        value: style_value,
+                        info: TextStyleInfoFlag::from_byte(info),
+                    })
+                }
                 json::TextOp::MarkEnd => InnerContent::List(InnerListOp::StyleEnd),
             },
             _ => {
