@@ -3,9 +3,10 @@
 
 #![allow(unexpected_cfgs)]
 use serial_test::parallel;
+use std::panic::AssertUnwindSafe;
 
 use loro::event::{Diff, DiffBatch};
-use loro::json::{JsonChange, JsonOp, JsonOpContent, JsonSchema, MapOp};
+use loro::json::{JsonChange, JsonOp, JsonOpContent, JsonSchema, MapOp, TextOp};
 use loro::{CommitOptions, Container, ContainerID, ContainerType, LoroDoc, LoroList, ID};
 use loro::{Frontiers, LoroValue};
 
@@ -250,6 +251,36 @@ fn import_json_updates_with_short_peers_array_no_longer_panics() {
     // The import may fail for other reasons (unknown peer, missing deps, etc.)
     // but it must NOT panic on the out-of-bounds peer index.
     let _ = doc.import_json_updates(schema);
+}
+
+#[test]
+#[parallel]
+fn import_json_updates_with_text_insert_out_of_bounds_should_error_without_mutating_doc() {
+    let src = LoroDoc::new();
+    src.set_peer_id(31).unwrap();
+    src.get_text("text").insert(0, "a").unwrap();
+    src.commit();
+
+    let mut json = src.export_json_updates(&Default::default(), &src.oplog_vv());
+    match &mut json.changes[0].ops[0].content {
+        JsonOpContent::Text(TextOp::Insert { pos, .. }) => {
+            *pos = 1_000;
+        }
+        other => panic!("expected text insert, got {other:?}"),
+    }
+
+    let dst = LoroDoc::new();
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| dst.import_json_updates(json)));
+    assert!(
+        result.is_ok(),
+        "malformed text JSON import should not panic"
+    );
+    assert!(
+        result.unwrap().is_err(),
+        "malformed text JSON import unexpectedly succeeded; imported value = {:?}",
+        dst.get_deep_value()
+    );
+    assert_eq!(dst.get_deep_value(), LoroValue::Map(Default::default()));
 }
 
 // ---------------------------------------------------------------------------
