@@ -32,6 +32,21 @@ fn sorted_ids(frontiers: &Frontiers) -> Vec<(u64, i32)> {
     ids
 }
 
+#[test]
+fn frontiers_constructors_canonicalize_same_peer_ids() {
+    let ids = [ID::new(1, 0), ID::new(1, 1)];
+    let cases = [
+        ("array", Frontiers::from(ids)),
+        ("vec", Frontiers::from(ids.to_vec())),
+        ("slice", Frontiers::from(ids.as_slice())),
+    ];
+
+    for (name, frontiers) in cases {
+        assert_eq!(frontiers.len(), 1, "{name}");
+        assert_eq!(frontiers.as_single(), Some(ID::new(1, 1)), "{name}");
+    }
+}
+
 fn sorted_spans<I>(spans: I) -> Vec<(u64, i32, i32)>
 where
     I: IntoIterator<Item = loro::IdSpan>,
