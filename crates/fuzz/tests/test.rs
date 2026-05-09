@@ -137,6 +137,80 @@ fn all_fuzz_state_only_before_shallow_root() {
 }
 
 #[test]
+fn all_fuzz_state_only_roundtrip_after_diff_apply_text_update() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            Handle {
+                site: 196,
+                target: 0,
+                container: 151,
+                action: Generic(GenericAction {
+                    value: Container(List),
+                    bool: true,
+                    key: 1835887981,
+                    pos: 15359179523395251565,
+                    length: 6845301837235606980,
+                    prop: 4959913191460359423,
+                }),
+            },
+            SyncAll,
+            SyncAll,
+            SetCommitOptions {
+                site: 255,
+                origin: 255,
+                msg: 93,
+            },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: Container(Unknown(255)),
+                    bool: true,
+                    key: 4294967295,
+                    pos: 3225938275189391359,
+                    length: 7885078839350357357,
+                    prop: 3617008642897571181,
+                }),
+            },
+            DiffApply { from: 125, to: 178 },
+            SetCommitOptions {
+                site: 242,
+                origin: 242,
+                msg: 242,
+            },
+            DiffApply { from: 255, to: 255 },
+            SetCommitOptions {
+                site: 109,
+                origin: 109,
+                msg: 109,
+            },
+            SyncAll,
+            ForkAt {
+                site: 109,
+                to: 1835887981,
+            },
+            SyncAll,
+            SyncAll,
+            SyncAll,
+            SyncAll,
+            SyncAll,
+            SyncAll,
+            SyncAll,
+            SyncAll,
+            Sync { from: 91, to: 91 },
+            Sync { from: 91, to: 91 },
+            SyncAll,
+            StateOnlyRoundTrip { site: 213 },
+            SyncAll,
+            StateOnlyRoundTrip { site: 255 },
+        ],
+    )
+}
+
+#[test]
 fn test_local_events() {
     fuzz_local_events(vec![
         Handle {

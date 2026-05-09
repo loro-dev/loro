@@ -238,7 +238,17 @@ fn calc_shallow_doc_start(oplog: &crate::OpLog, frontiers: &Frontiers) -> Fronti
 }
 
 fn calc_state_only_doc_start(oplog: &crate::OpLog, frontiers: &Frontiers) -> Frontiers {
-    calc_shallow_doc_start_from(oplog, frontiers.clone())
+    let shrunk = shrink_frontiers(frontiers, oplog.dag()).unwrap_or_else(|_| frontiers.clone());
+    if shrunk == *frontiers {
+        // A canonical state-only target should become the shallow root itself.
+        // Lowering a concurrent target to its LCA would require replaying ops back
+        // to the target and can lose the exact target-state boundary.
+        advance_style_start_frontiers(oplog, frontiers.clone())
+    } else {
+        // Non-canonical targets are used to spell "this shallow root plus later
+        // frontiers"; preserve that explicit root boundary.
+        calc_shallow_doc_start_from(oplog, frontiers.clone())
+    }
 }
 
 fn normalize_state_only_target_frontiers(oplog: &crate::OpLog, frontiers: &Frontiers) -> Frontiers {
