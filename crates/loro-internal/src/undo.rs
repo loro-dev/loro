@@ -447,12 +447,27 @@ impl Stack {
             return;
         }
 
+        // Undo pop can leave an empty front row that only carries remote diffs.
+        // There is no older stack item for that diff to transform during trimming.
+        while self
+            .stack
+            .front()
+            .is_some_and(|(items, _)| items.is_empty())
+        {
+            self.stack.pop_front();
+        }
+
         self.size -= 1;
         let first = self.stack.front_mut().unwrap();
         let f = first.0.pop_front();
         assert!(f.is_some());
         if first.0.is_empty() {
             self.stack.pop_front();
+        }
+
+        if self.stack.is_empty() {
+            self.stack
+                .push_back((VecDeque::new(), Arc::new(Mutex::new(Default::default()))));
         }
     }
 
