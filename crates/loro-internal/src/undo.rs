@@ -442,11 +442,7 @@ impl Stack {
         self.size
     }
 
-    fn pop_front(&mut self) {
-        if self.is_empty() {
-            return;
-        }
-
+    fn discard_empty_front_rows(&mut self) {
         // Undo pop can leave an empty front row that only carries remote diffs.
         // There is no older stack item for that diff to transform during trimming.
         while self
@@ -456,7 +452,21 @@ impl Stack {
         {
             self.stack.pop_front();
         }
+    }
 
+    fn ensure_trailing_empty_row(&mut self) {
+        if self.stack.is_empty() {
+            self.stack
+                .push_back((VecDeque::new(), Arc::new(Mutex::new(Default::default()))));
+        }
+    }
+
+    fn pop_front(&mut self) {
+        if self.is_empty() {
+            return;
+        }
+
+        self.discard_empty_front_rows();
         self.size -= 1;
         let first = self.stack.front_mut().unwrap();
         let f = first.0.pop_front();
@@ -465,10 +475,7 @@ impl Stack {
             self.stack.pop_front();
         }
 
-        if self.stack.is_empty() {
-            self.stack
-                .push_back((VecDeque::new(), Arc::new(Mutex::new(Default::default()))));
-        }
+        self.ensure_trailing_empty_row();
     }
 
     fn set_top_meta(&mut self, meta: UndoItemMeta) {
