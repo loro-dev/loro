@@ -2358,66 +2358,69 @@ impl LoroDoc {
     ) -> Result<(), ChangeTravelError> {
         let (options, guard) = self.implicit_commit_then_stop();
         drop(guard);
-        struct PendingNode(ChangeMeta);
-        impl PartialEq for PendingNode {
-            fn eq(&self, other: &Self) -> bool {
-                self.0.lamport_last() == other.0.lamport_last() && self.0.id.peer == other.0.id.peer
-            }
-        }
-
-        impl Eq for PendingNode {}
-        impl PartialOrd for PendingNode {
-            fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-                Some(self.cmp(other))
-            }
-        }
-
-        impl Ord for PendingNode {
-            fn cmp(&self, other: &Self) -> Ordering {
-                self.0
-                    .lamport_last()
-                    .cmp(&other.0.lamport_last())
-                    .then_with(|| self.0.id.peer.cmp(&other.0.id.peer))
-            }
-        }
-
-        for id in ids {
-            let op_log = &self.oplog().lock();
-            if !op_log.vv().includes_id(*id) {
-                return Err(ChangeTravelError::TargetIdNotFound(*id));
-            }
-            if op_log.dag.shallow_since_vv().includes_id(*id) {
-                return Err(ChangeTravelError::TargetVersionNotIncluded);
-            }
-        }
-
-        let mut visited = FxHashSet::default();
-        let mut pending: BinaryHeap<PendingNode> = BinaryHeap::new();
-        for id in ids {
-            pending.push(PendingNode(ChangeMeta::from_change(
-                &self.oplog().lock().get_change_at(*id).unwrap(),
-            )));
-        }
-        while let Some(PendingNode(node)) = pending.pop() {
-            let deps = node.deps.clone();
-            if f(node).is_break() {
-                break;
+        let ans = 'travel: {
+            struct PendingNode(ChangeMeta);
+            impl PartialEq for PendingNode {
+                fn eq(&self, other: &Self) -> bool {
+                    self.0.lamport_last() == other.0.lamport_last()
+                        && self.0.id.peer == other.0.id.peer
+                }
             }
 
-            for dep in deps.iter() {
-                let Some(dep_node) = self.oplog().lock().get_change_at(dep) else {
-                    continue;
-                };
-                if visited.contains(&dep_node.id) {
-                    continue;
+            impl Eq for PendingNode {}
+            impl PartialOrd for PendingNode {
+                fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+                    Some(self.cmp(other))
+                }
+            }
+
+            impl Ord for PendingNode {
+                fn cmp(&self, other: &Self) -> Ordering {
+                    self.0
+                        .lamport_last()
+                        .cmp(&other.0.lamport_last())
+                        .then_with(|| self.0.id.peer.cmp(&other.0.id.peer))
+                }
+            }
+
+            for id in ids {
+                let op_log = &self.oplog().lock();
+                if !op_log.vv().includes_id(*id) {
+                    break 'travel Err(ChangeTravelError::TargetIdNotFound(*id));
+                }
+                if op_log.dag.shallow_since_vv().includes_id(*id) {
+                    break 'travel Err(ChangeTravelError::TargetVersionNotIncluded);
+                }
+            }
+
+            let mut visited = FxHashSet::default();
+            let mut pending: BinaryHeap<PendingNode> = BinaryHeap::new();
+            for id in ids {
+                pending.push(PendingNode(ChangeMeta::from_change(
+                    &self.oplog().lock().get_change_at(*id).unwrap(),
+                )));
+            }
+            while let Some(PendingNode(node)) = pending.pop() {
+                let deps = node.deps.clone();
+                if f(node).is_break() {
+                    break;
                 }
 
-                visited.insert(dep_node.id);
-                pending.push(PendingNode(ChangeMeta::from_change(&dep_node)));
-            }
-        }
+                for dep in deps.iter() {
+                    let Some(dep_node) = self.oplog().lock().get_change_at(dep) else {
+                        continue;
+                    };
+                    if visited.contains(&dep_node.id) {
+                        continue;
+                    }
 
-        let ans = Ok(());
+                    visited.insert(dep_node.id);
+                    pending.push(PendingNode(ChangeMeta::from_change(&dep_node)));
+                }
+            }
+
+            Ok(())
+        };
         self.renew_txn_if_auto_commit(options);
         ans
     }
