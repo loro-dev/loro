@@ -1333,13 +1333,13 @@ pub mod json {
                 D: Deserializer<'de>,
             {
                 let deps: Vec<String> = Deserialize::deserialize(d)?;
-                Ok(deps
+                deps
                     .into_iter()
                     .map(|x| {
                         ID::try_from(x.as_str())
                             .map_err(|_| serde::de::Error::custom("invalid ID in deps"))
                     })
-                    .collect::<Result<Vec<_>, _>>()?)
+                    .collect::<Result<Vec<_>, _>>()
             }
         }
 
@@ -1362,7 +1362,7 @@ pub mod json {
                 D: Deserializer<'de>,
             {
                 let peers: Option<Vec<String>> = Deserialize::deserialize(d)?;
-                Ok(peers
+                peers
                     .map(|x| {
                         x.into_iter()
                             .map(|x| {
@@ -1371,7 +1371,7 @@ pub mod json {
                             })
                             .collect::<Result<Vec<_>, _>>()
                     })
-                    .transpose()?)
+                    .transpose()
             }
         }
 
@@ -1465,7 +1465,7 @@ pub mod json {
                 D: Deserializer<'de>,
             {
                 let str: String = Deserialize::deserialize(d)?;
-                if str.len() % 2 != 0 {
+                if !str.len().is_multiple_of(2) {
                     return Err(serde::de::Error::custom(
                         "invalid fractional index hex length",
                     ));

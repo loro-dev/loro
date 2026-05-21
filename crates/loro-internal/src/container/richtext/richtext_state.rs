@@ -1523,7 +1523,7 @@ impl RichtextState {
     ) {
         self.check_cache();
         {
-            debug_assert!(self.style_ranges.as_ref().map_or(true, |x| !x.has_style()));
+            debug_assert!(self.style_ranges.as_ref().is_none_or(|x| !x.has_style()));
             let elem = RichtextStateChunk::Text(text);
             self.clear_cache();
             match self.tree.query::<EntityQuery>(&entity_index) {
@@ -2366,7 +2366,7 @@ impl RichtextState {
             len,
             &self.len_entity(),
         );
-        debug_assert!(self.style_ranges.as_ref().map_or(true, |x| !x.has_style()));
+        debug_assert!(self.style_ranges.as_ref().is_none_or(|x| !x.has_style()));
 
         self.clear_cache();
         let range = pos..pos + len;

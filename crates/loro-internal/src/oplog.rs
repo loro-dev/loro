@@ -255,7 +255,7 @@ impl OpLog {
             if change.ops.iter().any(|op| {
                 matches!(
                     op.container.get_type(),
-                    ContainerType::List | ContainerType::Text | ContainerType::Tree
+                    ContainerType::List | ContainerType::Tree
                 )
             }) {
                 ans.needs_state_apply_rollback = true;
@@ -264,9 +264,9 @@ impl OpLog {
 
         // Any newly applied change can unlock pending changes whose ops are not
         // visible in `changes`, so include pending in the rollback decision.
-        // Keep this narrow: map-only pending changes cannot return a state-apply
-        // error, and forcing rollback there adds lock traffic to small
-        // sync/import workloads.
+        // Keep this narrow: text/map-only pending changes cannot return a
+        // state-apply error, and forcing rollback there adds lock traffic to
+        // small sync/import workloads.
         if ans.applies_to_dag && pending_needs_state_apply_rollback {
             ans.needs_state_apply_rollback = true;
         }
@@ -722,6 +722,7 @@ impl OpLog {
             .flat_map(move |span| self.change_store.iter_changes(span))
     }
 
+    #[allow(dead_code)]
     pub(crate) fn iter_changes_causally_rev<'a>(
         &'a self,
         from: &VersionVector,

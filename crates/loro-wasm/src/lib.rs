@@ -90,7 +90,7 @@ type JsResult<T> = Result<T, JsValue>;
 type EventCallback = Box<dyn Fn(&SafeJsValue) -> bool + Send + Sync + 'static>;
 
 thread_local! {
-    static IN_PRE_COMMIT_CALLBACK: Cell<bool> = Cell::new(false);
+    static IN_PRE_COMMIT_CALLBACK: Cell<bool> = const { Cell::new(false) };
 }
 
 /// The CRDTs document. Loro supports different CRDTs include [**List**](LoroList),

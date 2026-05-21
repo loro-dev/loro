@@ -68,7 +68,7 @@ pub(crate) mod profiling {
     }
 
     thread_local! {
-        static PROFILE: RefCell<Option<DiffCalcProfile>> = RefCell::new(None);
+        static PROFILE: RefCell<Option<DiffCalcProfile>> = const { RefCell::new(None) };
     }
 
     pub(crate) fn begin() {

@@ -387,14 +387,12 @@ impl LoroDoc {
                     options = None;
                 }
             }
-            if config.immediate_renew {
-                if self.can_edit() {
-                    let mut t = self.txn().unwrap();
-                    if let Some(options) = options.as_ref() {
-                        t.set_options(options.clone());
-                    }
-                    *txn_guard = Some(t);
+            if config.immediate_renew && self.can_edit() {
+                let mut t = self.txn().unwrap();
+                if let Some(options) = options.as_ref() {
+                    t.set_options(options.clone());
                 }
+                *txn_guard = Some(t);
             }
 
             if let Some(on_commit) = on_commit {
@@ -668,6 +666,7 @@ impl LoroDoc {
                     self.import_changes_and_apply_delta_to_state_if_needed(
                         |oplog| encoding::decode_oplog_changes(oplog, parsed),
                         origin,
+                        false,
                     )
 
                     // let new_doc = LoroDoc::new();
@@ -679,6 +678,7 @@ impl LoroDoc {
             EncodeMode::FastUpdates => self.import_changes_and_apply_delta_to_state_if_needed(
                 |oplog| encoding::decode_oplog_changes(oplog, parsed),
                 origin,
+                false,
             ),
             EncodeMode::Auto => {
                 unreachable!()
@@ -763,6 +763,7 @@ impl LoroDoc {
         &self,
         decode_changes: impl FnOnce(&mut OpLog) -> Result<Vec<Change>, LoroError>,
         origin: InternalString,
+        force_state_apply_rollback: bool,
     ) -> Result<ImportStatus, LoroError> {
         let mut oplog = self.oplog.lock();
         let arena_checkpoint = oplog.arena.checkpoint_for_rollback();
@@ -803,7 +804,8 @@ impl LoroDoc {
 
         let old_vv = oplog.vv().clone();
         let old_frontiers = oplog.frontiers().clone();
-        let rollback_enabled = preflight.needs_state_apply_rollback;
+        let rollback_enabled =
+            force_state_apply_rollback || preflight.needs_state_apply_rollback;
         if rollback_enabled {
             oplog.begin_import_rollback_with_arena(arena_checkpoint);
         }
@@ -877,6 +879,7 @@ impl LoroDoc {
             let result = self.import_changes_and_apply_delta_to_state_if_needed(
                 |oplog| crate::encoding::json_schema::decode_json_changes(json, &oplog.arena),
                 Default::default(),
+                true,
             );
             self.emit_events();
             result
@@ -2500,7 +2503,7 @@ fn find_last_delete_op(oplog: &OpLog, id: ID, idx: ContainerIdx) -> Option<ID> {
                     let op_lamport =
                         change.lamport + (op.counter - change.id().counter) as loro_common::Lamport;
                     let key = (op_lamport, peer);
-                    if best.map_or(true, |(bk, _)| key > bk) {
+                    if best.is_none_or(|(bk, _)| key > bk) {
                         best = Some((key, ID::new(peer, op.counter)));
                     }
                 }

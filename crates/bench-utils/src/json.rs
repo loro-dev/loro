@@ -53,10 +53,8 @@ impl ActionTrait for JsonAction {
 
 fn normalize_value(value: &mut LoroValue) {
     match value {
-        LoroValue::Double(f) => {
-            if f.is_nan() {
-                *f = 0.0;
-            }
+        LoroValue::Double(f) if f.is_nan() => {
+            *f = 0.0;
         }
         LoroValue::List(l) => {
             for v in l.make_mut().iter_mut() {

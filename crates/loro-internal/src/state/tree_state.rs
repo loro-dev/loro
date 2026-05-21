@@ -1715,7 +1715,7 @@ mod snapshot {
                 .iter()
                 .map(|x| TreeID::new(peers[x.peer_idx], x.counter))
                 .collect_vec();
-            for (node_id, node) in node_ids.iter().zip(encoded.nodes.into_iter()) {
+            for (node_id, node) in node_ids.iter().zip(encoded.nodes) {
                 // PERF: we don't need to mov the deleted node, instead we can cache them
                 // If the parent is TreeParentId::Deleted, then all the nodes afterwards are deleted
                 tree._init_push_tree_node_in_order(
