@@ -80,6 +80,35 @@ describe("undo", () => {
     expect(doc.getText("text").length).toBe(100);
   });
 
+  test("max undo steps after remote update and undo", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    const text = doc.getText("text");
+    const undo = new UndoManager(doc, { maxUndoSteps: 3, mergeInterval: 0 });
+
+    text.insert(0, "A");
+    doc.commit();
+
+    const remote = new LoroDoc();
+    remote.setPeerId(2);
+    remote.import(doc.export({ mode: "snapshot" }));
+    remote.getText("text").insert(0, "R");
+    remote.commit();
+
+    doc.import(remote.export({ mode: "update" }));
+    expect(undo.undo()).toBeTruthy();
+    expect(text.toString()).toBe("R");
+
+    for (let i = 0; i < 4; i++) {
+      text.insert(text.length, i.toString());
+      doc.commit();
+    }
+
+    expect(doc.toJSON()).toStrictEqual({
+      text: "R0123",
+    });
+  });
+
   test("Skip chosen events", () => {
     const doc = new LoroDoc();
     const undo = new UndoManager(doc, {
