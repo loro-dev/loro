@@ -804,8 +804,7 @@ impl LoroDoc {
 
         let old_vv = oplog.vv().clone();
         let old_frontiers = oplog.frontiers().clone();
-        let rollback_enabled =
-            force_state_apply_rollback || preflight.needs_state_apply_rollback;
+        let rollback_enabled = force_state_apply_rollback || preflight.needs_state_apply_rollback;
         if rollback_enabled {
             oplog.begin_import_rollback_with_arena(arena_checkpoint);
         }

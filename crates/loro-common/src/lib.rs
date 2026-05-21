@@ -333,6 +333,26 @@ impl ContainerType {
         }
     }
 
+    /// Returns whether importing ops for this container type may need import
+    /// rollback protection during state diff application.
+    ///
+    /// This is used by import preflight: if an imported or newly-unblocked
+    /// pending change touches one of these container types, the oplog enables
+    /// rollback bookkeeping before applying the change to the document state.
+    /// Keep this list aligned with container states whose diff validation or
+    /// application can return an error after the oplog has already advanced.
+    ///
+    /// Container types not listed here may still be complex, but their current
+    /// state-apply path does not report recoverable errors through
+    /// `LoroResult`, so enabling rollback for them would only add import
+    /// overhead.
+    pub fn may_need_state_apply_rollback(&self) -> bool {
+        matches!(
+            self,
+            ContainerType::List | ContainerType::Text | ContainerType::Tree
+        )
+    }
+
     pub fn to_u8(self) -> u8 {
         match self {
             ContainerType::Map => 0,

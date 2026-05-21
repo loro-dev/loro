@@ -1333,8 +1333,7 @@ pub mod json {
                 D: Deserializer<'de>,
             {
                 let deps: Vec<String> = Deserialize::deserialize(d)?;
-                deps
-                    .into_iter()
+                deps.into_iter()
                     .map(|x| {
                         ID::try_from(x.as_str())
                             .map_err(|_| serde::de::Error::custom("invalid ID in deps"))

@@ -26,7 +26,7 @@ use crate::span::{HasCounterSpan, HasLamportSpan};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
 use change_store::{BlockOpRef, ChangeStoreRollback};
-use loro_common::{ContainerType, HasIdSpan, IdLp, IdSpan};
+use loro_common::{HasIdSpan, IdLp, IdSpan};
 use rle::{HasLength, RleVec, Sliceable};
 use smallvec::SmallVec;
 
@@ -252,12 +252,11 @@ impl OpLog {
             }
 
             ans.applies_to_dag = true;
-            if change.ops.iter().any(|op| {
-                matches!(
-                    op.container.get_type(),
-                    ContainerType::List | ContainerType::Tree
-                )
-            }) {
+            if change
+                .ops
+                .iter()
+                .any(|op| op.container.get_type().may_need_state_apply_rollback())
+            {
                 ans.needs_state_apply_rollback = true;
             }
         }
