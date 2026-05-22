@@ -92,6 +92,7 @@ impl RichtextState {
         }
     }
 
+    #[allow(unused)]
     pub(crate) fn get_text_slice_by_event_index(
         &mut self,
         pos: usize,
@@ -111,6 +112,7 @@ impl RichtextState {
             .slice_delta(start_index, end_index, pos_type)
     }
 
+    #[allow(unused)]
     pub(crate) fn get_char_by_event_index(&mut self, pos: usize) -> Result<char, ()> {
         self.state.get_mut().get_char_by_event_index(pos)
     }

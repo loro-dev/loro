@@ -166,6 +166,11 @@ impl InnerStore {
         None
     }
 
+    pub(crate) fn has_decoded_state(&mut self, idx: ContainerIdx) -> bool {
+        self.get_entry_mut(idx)
+            .is_some_and(|entry| entry.try_get_state().is_some())
+    }
+
     pub(crate) fn contains_id(&mut self, id: &ContainerID) -> bool {
         if let Some(idx) = self.arena.id_to_idx(id) {
             if self.contains_idx(idx) {

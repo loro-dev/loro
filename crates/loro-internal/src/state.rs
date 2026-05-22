@@ -877,6 +877,10 @@ impl DocState {
         self.store.list_values(container_idx)
     }
 
+    pub(crate) fn has_decoded_container_state(&mut self, container_idx: ContainerIdx) -> bool {
+        self.store.has_decoded_state(container_idx)
+    }
+
     /// Set the state of the container with the given container idx.
     /// This is only used for decode.
     ///
@@ -1168,10 +1172,9 @@ impl DocState {
         id: Option<ContainerID>,
     ) -> LoroValue {
         let id = id.unwrap_or_else(|| self.arena.idx_to_id(container).unwrap());
-        let Some(state) = self.store.get_container_mut(container) else {
+        let Some(value) = self.store.get_value(container) else {
             return container.get_type().default_value();
         };
-        let value = state.get_value();
         let cid_str = LoroValue::String(format!("idx:{}, id:{}", container.to_index(), id).into());
         match value {
             LoroValue::Container(_) => unreachable!(),

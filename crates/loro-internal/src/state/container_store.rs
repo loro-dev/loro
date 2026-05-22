@@ -156,6 +156,10 @@ impl ContainerStore {
             .unwrap_or_default()
     }
 
+    pub fn has_decoded_state(&mut self, idx: ContainerIdx) -> bool {
+        self.store.has_decoded_state(idx)
+    }
+
     pub fn encode(&mut self) -> Bytes {
         self.store.encode()
     }

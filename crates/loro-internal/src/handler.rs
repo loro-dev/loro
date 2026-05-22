@@ -250,6 +250,10 @@ impl BasicHandler {
     fn is_deleted(&self) -> bool {
         self.doc.state.lock().is_deleted(self.container_idx)
     }
+
+    fn has_decoded_state(&self) -> bool {
+        self.with_doc_state(|state| state.has_decoded_container_state(self.container_idx))
+    }
 }
 
 /// Flatten attributes that allow overlap
@@ -1416,9 +1420,10 @@ impl TextHandler {
     pub fn is_empty(&self) -> bool {
         match &self.inner {
             MaybeDetached::Detached(t) => t.lock().value.is_empty(),
-            MaybeDetached::Attached(a) => {
+            MaybeDetached::Attached(a) if a.has_decoded_state() => {
                 a.with_state(|state| state.as_richtext_state_mut().unwrap().is_empty())
             }
+            MaybeDetached::Attached(a) => a.get_value().as_string().unwrap().is_empty(),
         }
     }
 
@@ -1428,9 +1433,10 @@ impl TextHandler {
                 let t = t.lock();
                 t.value.len_utf8()
             }
-            MaybeDetached::Attached(a) => {
+            MaybeDetached::Attached(a) if a.has_decoded_state() => {
                 a.with_state(|state| state.as_richtext_state_mut().unwrap().len_utf8())
             }
+            MaybeDetached::Attached(a) => a.get_value().as_string().unwrap().len(),
         }
     }
 
@@ -1440,8 +1446,11 @@ impl TextHandler {
                 let t = t.lock();
                 t.value.len_utf16()
             }
-            MaybeDetached::Attached(a) => {
+            MaybeDetached::Attached(a) if a.has_decoded_state() => {
                 a.with_state(|state| state.as_richtext_state_mut().unwrap().len_utf16())
+            }
+            MaybeDetached::Attached(a) => {
+                count_utf16_len(a.get_value().as_string().unwrap().as_bytes())
             }
         }
     }
@@ -1452,9 +1461,10 @@ impl TextHandler {
                 let t = t.lock();
                 t.value.len_unicode()
             }
-            MaybeDetached::Attached(a) => {
+            MaybeDetached::Attached(a) if a.has_decoded_state() => {
                 a.with_state(|state| state.as_richtext_state_mut().unwrap().len_unicode())
             }
+            MaybeDetached::Attached(a) => a.get_value().as_string().unwrap().chars().count(),
         }
     }
 
@@ -1471,8 +1481,14 @@ impl TextHandler {
     fn len(&self, pos_type: PosType) -> usize {
         match &self.inner {
             MaybeDetached::Detached(t) => t.lock().value.len(pos_type),
-            MaybeDetached::Attached(a) => {
+            MaybeDetached::Attached(a) if a.has_decoded_state() || pos_type == PosType::Entity => {
                 a.with_state(|state| state.as_richtext_state_mut().unwrap().len(pos_type))
+            }
+            MaybeDetached::Attached(a) => {
+                match text_len(a.get_value().as_string().unwrap(), pos_type) {
+                    Some(len) => len,
+                    None => unreachable!("entity length is handled by the state path"),
+                }
             }
         }
     }
@@ -1555,14 +1571,18 @@ impl TextHandler {
                 };
                 t.value.get_char_by_event_index(event_pos)
             }
-            MaybeDetached::Attached(a) => a.with_state(|state| {
-                let state = state.as_richtext_state_mut().unwrap();
-                let event_pos = match pos_type {
-                    PosType::Event => pos,
-                    _ => state.index_to_event_index(pos, pos_type),
-                };
-                state.get_char_by_event_index(event_pos)
-            }),
+            MaybeDetached::Attached(a) if a.has_decoded_state() || pos_type == PosType::Entity => a
+                .with_state(|state| {
+                    let state = state.as_richtext_state_mut().unwrap();
+                    let event_pos = match pos_type {
+                        PosType::Event => pos,
+                        _ => state.index_to_event_index(pos, pos_type),
+                    };
+                    state.get_char_by_event_index(event_pos)
+                }),
+            MaybeDetached::Attached(a) => {
+                return text_char_at(a.get_value().as_string().unwrap(), pos, pos_type);
+            }
         } {
             Ok(c)
         } else {
@@ -1629,24 +1649,39 @@ impl TextHandler {
                 };
                 t.value.get_text_slice_by_event_index(start, end - start)
             }
-            MaybeDetached::Attached(a) => a.with_state(|state| {
-                let state = state.as_richtext_state_mut().unwrap();
-                let len = state.len(pos_type);
-                if end_index > len {
-                    return Err(LoroError::OutOfBound {
-                        pos: end_index,
-                        len,
-                        info: info(),
-                    });
-                }
-                let (start, end) = match pos_type {
-                    PosType::Event => (start_index, end_index),
-                    _ => (
-                        state.index_to_event_index(start_index, pos_type),
-                        state.index_to_event_index(end_index, pos_type),
-                    ),
-                };
-                state.get_text_slice_by_event_index(start, end - start)
+            MaybeDetached::Attached(a) if a.has_decoded_state() || pos_type == PosType::Entity => a
+                .with_state(|state| {
+                    let state = state.as_richtext_state_mut().unwrap();
+                    let len = state.len(pos_type);
+                    if end_index > len {
+                        return Err(LoroError::OutOfBound {
+                            pos: end_index,
+                            len,
+                            info: info(),
+                        });
+                    }
+                    let (start, end) = match pos_type {
+                        PosType::Event => (start_index, end_index),
+                        _ => (
+                            state.index_to_event_index(start_index, pos_type),
+                            state.index_to_event_index(end_index, pos_type),
+                        ),
+                    };
+                    state.get_text_slice_by_event_index(start, end - start)
+                }),
+            MaybeDetached::Attached(a) => text_slice(
+                a.get_value().as_string().unwrap(),
+                start_index,
+                end_index,
+                pos_type,
+            )
+            .map_err(|err| match err {
+                LoroError::OutOfBound { pos, len, .. } => LoroError::OutOfBound {
+                    pos,
+                    len,
+                    info: info(),
+                },
+                err => err,
             }),
         }
     }
@@ -2628,7 +2663,7 @@ impl TextHandler {
                 };
                 (event_index, unicode_index)
             }
-            MaybeDetached::Attached(a) => {
+            MaybeDetached::Attached(a) if a.has_decoded_state() => {
                 let res: Option<(usize, usize)> = a.with_state(|state| {
                     let state = state.as_richtext_state_mut().unwrap();
                     if index > state.len(from) {
@@ -2653,6 +2688,13 @@ impl TextHandler {
                     None => return None,
                 }
             }
+            MaybeDetached::Attached(a) => {
+                let value = a.get_value();
+                let s = value.as_string().unwrap();
+                let unicode_index = text_pos_to_unicode(s, index, from)?;
+                let event_index = unicode_to_text_pos(s, unicode_index, PosType::Event)?;
+                (event_index, unicode_index)
+            }
         };
 
         let result = match to {
@@ -2668,7 +2710,7 @@ impl TextHandler {
                         }
                         t.value.get_text_slice_by_event_index(0, event_index).ok()?
                     }
-                    MaybeDetached::Attached(a) => {
+                    MaybeDetached::Attached(a) if a.has_decoded_state() => {
                         let res: Result<String, ()> = a.with_state(|state| {
                             let state = state.as_richtext_state_mut().unwrap();
                             if event_index > state.len_event() {
@@ -2683,6 +2725,11 @@ impl TextHandler {
                             Ok(v) => v,
                             Err(_) => return None,
                         }
+                    }
+                    MaybeDetached::Attached(a) => {
+                        let value = a.get_value();
+                        let s = value.as_string().unwrap();
+                        return unicode_to_text_pos(s, unicode_index, to);
                     }
                 };
 
@@ -2704,6 +2751,158 @@ fn event_len(s: &str) -> usize {
     } else {
         s.chars().count()
     }
+}
+
+fn text_len(s: &str, pos_type: PosType) -> Option<usize> {
+    Some(match pos_type {
+        PosType::Bytes => s.len(),
+        PosType::Unicode => s.chars().count(),
+        PosType::Utf16 => count_utf16_len(s.as_bytes()),
+        PosType::Event => event_len(s),
+        PosType::Entity => return None,
+    })
+}
+
+fn text_pos_to_unicode(s: &str, index: usize, pos_type: PosType) -> Option<usize> {
+    match pos_type {
+        PosType::Unicode => (index <= s.chars().count()).then_some(index),
+        PosType::Bytes => {
+            if index <= s.len() && s.is_char_boundary(index) {
+                Some(s[..index].chars().count())
+            } else {
+                None
+            }
+        }
+        PosType::Utf16 => utf16_to_unicode_pos(s, index),
+        PosType::Event if cfg!(feature = "wasm") => utf16_to_unicode_pos(s, index),
+        PosType::Event => (index <= s.chars().count()).then_some(index),
+        PosType::Entity => None,
+    }
+}
+
+fn unicode_to_text_pos(s: &str, index: usize, pos_type: PosType) -> Option<usize> {
+    match pos_type {
+        PosType::Unicode => (index <= s.chars().count()).then_some(index),
+        PosType::Bytes => unicode_to_byte_pos(s, index),
+        PosType::Utf16 => unicode_to_utf16_pos(s, index),
+        PosType::Event if cfg!(feature = "wasm") => unicode_to_utf16_pos(s, index),
+        PosType::Event => (index <= s.chars().count()).then_some(index),
+        PosType::Entity => None,
+    }
+}
+
+fn unicode_to_byte_pos(s: &str, index: usize) -> Option<usize> {
+    if index == 0 {
+        return Some(0);
+    }
+
+    let mut unicode_pos = 0;
+    for (byte_pos, _) in s.char_indices() {
+        if unicode_pos == index {
+            return Some(byte_pos);
+        }
+        unicode_pos += 1;
+    }
+
+    (unicode_pos == index).then_some(s.len())
+}
+
+fn unicode_to_utf16_pos(s: &str, index: usize) -> Option<usize> {
+    let mut unicode_pos = 0;
+    let mut utf16_pos = 0;
+    if index == 0 {
+        return Some(0);
+    }
+
+    for c in s.chars() {
+        unicode_pos += 1;
+        utf16_pos += c.len_utf16();
+        if unicode_pos == index {
+            return Some(utf16_pos);
+        }
+    }
+
+    (unicode_pos == index).then_some(utf16_pos)
+}
+
+fn utf16_to_unicode_pos(s: &str, index: usize) -> Option<usize> {
+    let mut unicode_pos = 0;
+    let mut utf16_pos = 0;
+    if index == 0 {
+        return Some(0);
+    }
+
+    for c in s.chars() {
+        let next_utf16_pos = utf16_pos + c.len_utf16();
+        if index == next_utf16_pos {
+            return Some(unicode_pos + 1);
+        }
+        if index < next_utf16_pos {
+            return None;
+        }
+        utf16_pos = next_utf16_pos;
+        unicode_pos += 1;
+    }
+
+    (index == utf16_pos).then_some(unicode_pos)
+}
+
+fn text_boundary_error(pos: usize, pos_type: PosType) -> LoroError {
+    match pos_type {
+        PosType::Bytes => LoroError::UTF8InUnicodeCodePoint { pos },
+        PosType::Utf16 => LoroError::UTF16InUnicodeCodePoint { pos },
+        PosType::Event if cfg!(feature = "wasm") => LoroError::UTF16InUnicodeCodePoint { pos },
+        _ => LoroError::OutOfBound {
+            pos,
+            len: 0,
+            info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+        },
+    }
+}
+
+fn text_char_at(s: &str, pos: usize, pos_type: PosType) -> LoroResult<char> {
+    let len = text_len(s, pos_type).unwrap_or(0);
+    if pos >= len {
+        return Err(LoroError::OutOfBound {
+            pos,
+            len,
+            info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+        });
+    }
+
+    let unicode_pos =
+        text_pos_to_unicode(s, pos, pos_type).ok_or_else(|| text_boundary_error(pos, pos_type))?;
+    s.chars().nth(unicode_pos).ok_or(LoroError::OutOfBound {
+        pos,
+        len,
+        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+    })
+}
+
+fn text_slice(s: &str, start: usize, end: usize, pos_type: PosType) -> LoroResult<String> {
+    if end < start {
+        return Err(LoroError::EndIndexLessThanStartIndex { start, end });
+    }
+    if start == end {
+        return Ok(String::new());
+    }
+
+    let len = text_len(s, pos_type).unwrap_or(0);
+    if end > len {
+        return Err(LoroError::OutOfBound {
+            pos: end,
+            len,
+            info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+        });
+    }
+
+    let start = text_pos_to_unicode(s, start, pos_type)
+        .ok_or_else(|| text_boundary_error(start, pos_type))?;
+    let end =
+        text_pos_to_unicode(s, end, pos_type).ok_or_else(|| text_boundary_error(end, pos_type))?;
+    let start = unicode_to_byte_pos(s, start).expect("unicode index must map to a byte boundary");
+    let end = unicode_to_byte_pos(s, end).expect("unicode index must map to a byte boundary");
+    Ok(s[start..end].to_string())
 }
 
 impl ListHandler {
@@ -4631,6 +4830,63 @@ mod test {
                 {"insert": " world"}
             ])
         );
+    }
+
+    #[test]
+    fn text_snapshot_string_queries_do_not_decode_state() {
+        let loro = LoroDoc::new_auto_commit();
+        let text = loro.get_text("text");
+        text.insert(0, "a😀文", PosType::Unicode).unwrap();
+        text.mark(1, 3, "bold", true.into(), PosType::Unicode)
+            .unwrap();
+
+        let restored = LoroDoc::new();
+        restored
+            .import(&loro.export(ExportMode::snapshot()).unwrap())
+            .unwrap();
+        let text = restored.get_text("text");
+        assert!(!text.attached_handler().unwrap().has_decoded_state());
+
+        assert_eq!(text.len_unicode(), 3);
+        assert_eq!(text.len_utf16(), 4);
+        assert_eq!(text.len_utf8(), "a😀文".len());
+        assert_eq!(text.char_at(1, PosType::Unicode).unwrap(), '😀');
+        assert_eq!(text.slice(1, 3, PosType::Unicode).unwrap(), "😀文");
+        assert_eq!(
+            text.convert_pos(2, PosType::Unicode, PosType::Utf16),
+            Some(3)
+        );
+        assert!(!text.attached_handler().unwrap().has_decoded_state());
+
+        assert_eq!(text.get_delta().len(), 2);
+        assert!(text.attached_handler().unwrap().has_decoded_state());
+    }
+
+    #[test]
+    fn deep_value_with_id_uses_lazy_values_for_snapshot_roots() {
+        let loro = LoroDoc::new_auto_commit();
+        let text = loro.get_text("text");
+        text.insert(0, "hello", PosType::Unicode).unwrap();
+        let map = loro.get_map("map");
+        map.insert("key", "value").unwrap();
+        let list = loro.get_list("list");
+        list.push("item").unwrap();
+
+        let restored = LoroDoc::new();
+        restored
+            .import(&loro.export(ExportMode::snapshot()).unwrap())
+            .unwrap();
+        let text = restored.get_text("text");
+        let map = restored.get_map("map");
+        let list = restored.get_list("list");
+
+        let value = restored.get_deep_value_with_id();
+        assert_eq!(value["text"]["value"], "hello".into());
+        assert_eq!(value["map"]["value"]["key"], "value".into());
+        assert_eq!(value["list"]["value"][0], "item".into());
+        assert!(!text.attached_handler().unwrap().has_decoded_state());
+        assert!(!map.attached_handler().unwrap().has_decoded_state());
+        assert!(!list.attached_handler().unwrap().has_decoded_state());
     }
 
     #[test]
