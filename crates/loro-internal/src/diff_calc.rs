@@ -257,7 +257,7 @@ impl DiffCalculator {
         let affected_set = {
             loro_common::debug!("LCA: {:?} mode={:?}", &lca, diff_mode);
             let mut started_set = FxHashSet::default();
-            for (change, (start_counter, end_counter), base_vv, base_frontiers) in iter {
+            for (change, (start_counter, end_counter), base_vv, _base_frontiers) in iter {
                 let iter_start = change
                     .ops
                     .binary_search_by(|op| op.ctr_last().cmp(&start_counter))
@@ -290,14 +290,7 @@ impl DiffCalculator {
                         op = stack_sliced_op.as_ref().unwrap();
                     }
 
-                    let base_peer_end = base_vv.get(&change.peer()).copied().unwrap_or(0);
-                    let single_frontier = if op.counter > base_peer_end {
-                        Some(ID::new(change.peer(), op.counter - 1))
-                    } else {
-                        base_frontiers.as_single()
-                    };
-                    let causal_vv =
-                        CausalVersion::new(&base_vv, change.peer(), op.counter, single_frontier);
+                    let causal_vv = CausalVersion::new(&base_vv, change.peer(), op.counter);
                     let container = op.container;
                     let depth = oplog.arena.get_depth(container);
                     let (old_depth, calculator) = self.get_or_create_calc(container, depth);

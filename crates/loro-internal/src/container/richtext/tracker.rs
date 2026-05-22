@@ -27,7 +27,6 @@ pub(crate) use crdt_rope::CrdtRopeDelta;
 pub(crate) struct Tracker {
     applied_vv: VersionVector,
     current_vv: VersionVector,
-    current_frontier_hint: Option<ID>,
     rope: CrdtRope,
     id_to_cursor: IdToCursor,
 }
@@ -46,7 +45,6 @@ impl Tracker {
             id_to_cursor: IdToCursor::default(),
             applied_vv: Default::default(),
             current_vv: Default::default(),
-            current_frontier_hint: None,
         };
 
         let result = this.rope.tree.push(FugueSpan {
@@ -72,7 +70,6 @@ impl Tracker {
             id_to_cursor: IdToCursor::default(),
             applied_vv: Default::default(),
             current_vv: Default::default(),
-            current_frontier_hint: None,
         }
     }
 
@@ -176,7 +173,6 @@ impl Tracker {
         let end_id = op_id.inc(content.len() as Counter);
         self.current_vv.extend_to_include_end_id(end_id.id());
         self.applied_vv.extend_to_include_end_id(end_id.id());
-        self.current_frontier_hint = Some(ID::new(end_id.peer, end_id.counter - 1));
     }
 
     fn update_insert_by_split(&mut self, split: &[LeafIndex]) {
@@ -269,7 +265,6 @@ impl Tracker {
         let end_id = op_id.inc(len as Counter);
         self.current_vv.extend_to_include_end_id(end_id);
         self.applied_vv.extend_to_include_end_id(end_id);
-        self.current_frontier_hint = Some(ID::new(end_id.peer, end_id.counter - 1));
     }
 
     fn skip_applied(
@@ -365,7 +360,6 @@ impl Tracker {
         let end_id = op_id.inc(1);
         self.current_vv.extend_to_include_end_id(end_id.id());
         self.applied_vv.extend_to_include_end_id(end_id.id());
-        self.current_frontier_hint = Some(end_id.id().inc(-1));
     }
 
     #[inline]
@@ -378,68 +372,67 @@ impl Tracker {
         self._checkout_causal(vv, false);
     }
 
+    /// Checkout by applying directed peer spans.
+    ///
+    /// Forward spans use the normal `[start, end)` representation. Retreat spans
+    /// must use `CounterSpan`'s reversed representation for the same covered ids.
+    pub(crate) fn checkout_peer_spans(&mut self, spans: &[IdSpan]) {
+        self._checkout_peer_spans(spans, false);
+    }
+
     fn _checkout(&mut self, vv: &VersionVector, on_diff_status: bool) {
         // tracing::info!("Checkout to {:?} from {:?}", vv, self.current_vv);
-        let current_vv = std::mem::take(&mut self.current_vv);
-        let retreat: SmallVec<[IdSpan; 4]> = current_vv.sub_iter(vv).collect();
-        let forward: SmallVec<[IdSpan; 4]> = vv.sub_iter(&current_vv).collect();
-        self._checkout_spans(current_vv, retreat, forward, on_diff_status, None);
+        let mut spans: SmallVec<[IdSpan; 4]> = SmallVec::new();
+        spans.extend(self.current_vv.sub_iter(vv).map(reversed_span));
+        spans.extend(vv.sub_iter(&self.current_vv));
+        if on_diff_status {
+            self._checkout_peer_spans(&spans, true);
+        } else {
+            self.checkout_peer_spans(&spans);
+        }
     }
 
     fn _checkout_causal(&mut self, vv: CausalVersion<'_>, on_diff_status: bool) {
-        let current_vv = std::mem::take(&mut self.current_vv);
-        let mut retreat: SmallVec<[IdSpan; 4]> = SmallVec::new();
-        for (&peer, &counter) in current_vv.iter() {
+        let mut spans: SmallVec<[IdSpan; 4]> = SmallVec::new();
+        for (&peer, &counter) in self.current_vv.iter() {
             let target_end = vv.end_for_peer(peer);
             if counter > target_end {
-                retreat.push(IdSpan::new(peer, target_end, counter));
+                spans.push(reversed_span(IdSpan::new(peer, target_end, counter)));
             }
         }
 
-        let mut forward: SmallVec<[IdSpan; 4]> = SmallVec::new();
         for (&peer, &base_end) in vv.base().iter() {
             let target_end = if peer == vv.peer() {
                 base_end.max(vv.peer_end())
             } else {
                 base_end
             };
-            let current_end = current_vv.get(&peer).copied().unwrap_or(0);
+            let current_end = self.current_vv.get(&peer).copied().unwrap_or(0);
             if target_end > current_end {
-                forward.push(IdSpan::new(peer, current_end, target_end));
+                spans.push(IdSpan::new(peer, current_end, target_end));
             }
         }
 
         if !vv.base().contains_key(&vv.peer()) {
             let target_end = vv.peer_end();
-            let current_end = current_vv.get(&vv.peer()).copied().unwrap_or(0);
+            let current_end = self.current_vv.get(&vv.peer()).copied().unwrap_or(0);
             if target_end > current_end {
-                forward.push(IdSpan::new(vv.peer(), current_end, target_end));
+                spans.push(IdSpan::new(vv.peer(), current_end, target_end));
             }
         }
 
-        self._checkout_spans(
-            current_vv,
-            retreat,
-            forward,
-            on_diff_status,
-            vv.single_frontier(),
-        );
+        self._checkout_peer_spans(&spans, on_diff_status);
     }
 
-    fn _checkout_spans(
-        &mut self,
-        mut current_vv: VersionVector,
-        retreat: SmallVec<[IdSpan; 4]>,
-        forward: SmallVec<[IdSpan; 4]>,
-        on_diff_status: bool,
-        frontier_hint: Option<ID>,
-    ) {
+    fn _checkout_peer_spans(&mut self, spans: &[IdSpan], on_diff_status: bool) {
+        debug_assert_no_mixed_peer_directions(spans);
         if on_diff_status {
             self.rope.clear_diff_status();
         }
 
+        let mut current_vv = std::mem::take(&mut self.current_vv);
         let mut updates = Vec::new();
-        for &span in &retreat {
+        for &span in spans.iter().filter(|span| span.is_reversed()) {
             for c in self.id_to_cursor.iter(span) {
                 match c {
                     id_to_cursor::IterCursor::Insert { leaf, id_span } => {
@@ -526,19 +519,19 @@ impl Tracker {
             }
         }
 
-        for &span in &forward {
+        for &span in spans.iter().filter(|span| !span.is_reversed()) {
             self.forward(span, &mut updates);
         }
 
         if !on_diff_status {
-            for span in retreat {
-                current_vv.set_end(ID::new(span.peer, span.counter.start));
-            }
-            for span in forward {
-                current_vv.set_end(ID::new(span.peer, span.counter.end));
+            for &span in spans {
+                if span.is_reversed() {
+                    current_vv.shrink_to_exclude(span);
+                } else {
+                    current_vv.extend_to_include(span);
+                }
             }
             self.current_vv = current_vv;
-            self.current_frontier_hint = frontier_hint;
         } else {
             self.current_vv = current_vv;
         }
@@ -740,6 +733,25 @@ impl Tracker {
     }
 }
 
+fn reversed_span(mut span: IdSpan) -> IdSpan {
+    span.reverse();
+    span
+}
+
+#[cfg(debug_assertions)]
+fn debug_assert_no_mixed_peer_directions(spans: &[IdSpan]) {
+    for (index, span) in spans.iter().enumerate() {
+        for other in &spans[index + 1..] {
+            if span.peer == other.peer {
+                debug_assert_eq!(span.is_reversed(), other.is_reversed());
+            }
+        }
+    }
+}
+
+#[cfg(not(debug_assertions))]
+fn debug_assert_no_mixed_peer_directions(_spans: &[IdSpan]) {}
+
 #[cfg(test)]
 mod test {
     use crate::{
@@ -767,18 +779,37 @@ mod test {
     }
 
     #[test]
-    fn checkout_causal_same_frontier_hint_retreats_other_peers() {
+    fn checkout_causal_single_frontier_retreats_other_peers() {
         let mut t = Tracker::new();
         t.insert(IdFull::new(2, 0, 0), 0, RichtextChunk::new_text(0..2));
         t.insert(IdFull::new(1, 0, 0), 2, RichtextChunk::new_text(2..4));
         assert_eq!(t.rope.len(), 4);
-        assert_eq!(t.current_frontier_hint, Some(ID::new(1, 1)));
 
         let base = ImVersionVector::new();
-        t.checkout_causal(CausalVersion::new(&base, 1, 2, Some(ID::new(1, 1))));
+        t.checkout_causal(CausalVersion::new(&base, 1, 2));
 
         assert_eq!(t.rope.len(), 2);
         assert_eq!(t.current_vv, vv!(1 => 2));
+    }
+
+    #[test]
+    fn checkout_peer_spans_uses_reversed_span_boundaries() {
+        let mut t = Tracker::new();
+        t.insert(IdFull::new(1, 0, 0), 0, RichtextChunk::new_text(0..4));
+        t.insert(IdFull::new(2, 0, 4), 4, RichtextChunk::new_text(4..6));
+        assert_eq!(t.rope.len(), 6);
+        assert_eq!(t.current_vv, vv!(1 => 4, 2 => 2));
+
+        let retreat_peer_2 = reversed_span(IdSpan::new(2, 0, 2));
+        t.checkout_peer_spans(&[retreat_peer_2]);
+
+        assert_eq!(t.rope.len(), 4);
+        assert_eq!(t.current_vv, vv!(1 => 4));
+
+        t.checkout_peer_spans(&[IdSpan::new(2, 0, 2)]);
+
+        assert_eq!(t.rope.len(), 6);
+        assert_eq!(t.current_vv, vv!(1 => 4, 2 => 2));
     }
 
     #[test]

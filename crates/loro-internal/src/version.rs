@@ -170,22 +170,15 @@ pub(crate) struct CausalVersion<'a> {
     base: &'a ImVersionVector,
     peer: PeerID,
     peer_end: Counter,
-    single_frontier: Option<ID>,
 }
 
 impl<'a> CausalVersion<'a> {
     #[inline]
-    pub(crate) fn new(
-        base: &'a ImVersionVector,
-        peer: PeerID,
-        peer_end: Counter,
-        single_frontier: Option<ID>,
-    ) -> Self {
+    pub(crate) fn new(base: &'a ImVersionVector, peer: PeerID, peer_end: Counter) -> Self {
         Self {
             base,
             peer,
             peer_end,
-            single_frontier,
         }
     }
 
@@ -202,11 +195,6 @@ impl<'a> CausalVersion<'a> {
     #[inline]
     pub(crate) fn peer_end(&self) -> Counter {
         self.peer_end
-    }
-
-    #[inline]
-    pub(crate) fn single_frontier(&self) -> Option<ID> {
-        self.single_frontier
     }
 
     #[inline]
