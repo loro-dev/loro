@@ -15,6 +15,8 @@ Implemented on branch `feat/scale-text-checkout-perf`:
 - `c350b0e8 bench: add many text checkout scenario`
 - `5c3cd62a refactor: route richtext checkout through spans`
 - `91e5ceb6 perf: filter richtext checkout spans by coverage`
+- `57bfd675 bench: report checkout span averages`
+- `f9fb539d test: compare filtered richtext diff`
 
 Current implementation covers:
 
