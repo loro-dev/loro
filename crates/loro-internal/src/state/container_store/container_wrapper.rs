@@ -148,7 +148,11 @@ impl ContainerWrapper {
                 .filter_map(|(key, value)| value.value.is_some().then(|| key.clone()))
                 .collect(),
             ContainerData::Lazy(_) => match self.get_value(idx, ctx) {
-                LoroValue::Map(map) => map.keys().map(|key| key.as_str().into()).collect(),
+                LoroValue::Map(map) => {
+                    let mut keys: Vec<_> = map.keys().map(|key| key.as_str().into()).collect();
+                    keys.sort_unstable();
+                    keys
+                }
                 _ => Vec::new(),
             },
         }
@@ -167,7 +171,15 @@ impl ContainerWrapper {
                 .filter_map(|(_, value)| value.value.clone())
                 .collect(),
             ContainerData::Lazy(_) => match self.get_value(idx, ctx) {
-                LoroValue::Map(map) => map.values().cloned().collect(),
+                LoroValue::Map(map) => {
+                    let mut entries: Vec<_> = map.iter().collect();
+                    entries
+                        .sort_unstable_by(|(left_key, _), (right_key, _)| left_key.cmp(right_key));
+                    entries
+                        .into_iter()
+                        .map(|(_, value)| value.clone())
+                        .collect()
+                }
                 _ => Vec::new(),
             },
         }
@@ -186,11 +198,15 @@ impl ContainerWrapper {
                 .filter_map(|(key, value)| value.value.clone().map(|value| (key.clone(), value)))
                 .collect(),
             ContainerData::Lazy(_) => match self.get_value(idx, ctx) {
-                LoroValue::Map(map) => map
-                    .unwrap()
-                    .into_iter()
-                    .map(|(key, value)| (key.into(), value))
-                    .collect(),
+                LoroValue::Map(map) => {
+                    let mut entries: Vec<_> = map.unwrap().into_iter().collect();
+                    entries
+                        .sort_unstable_by(|(left_key, _), (right_key, _)| left_key.cmp(right_key));
+                    entries
+                        .into_iter()
+                        .map(|(key, value)| (key.into(), value))
+                        .collect()
+                }
                 _ => Vec::new(),
             },
         }
