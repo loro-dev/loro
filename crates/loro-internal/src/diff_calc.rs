@@ -28,7 +28,7 @@ use crate::{
         richtext::{
             richtext_state::{RichtextStateChunk, TextChunk},
             AnchorType, CrdtRopeDelta, PeerSpanCoverage, RichtextChunk, RichtextChunkValue,
-            RichtextTracker, StyleOp,
+            RichtextTracker, StyleOp, TrackerMaterializedVersion,
         },
     },
     cursor::AbsolutePosition,
@@ -676,6 +676,9 @@ use rle::{HasLength as _, Sliceable};
 #[derive(Default)]
 pub(crate) struct ListDiffCalculator {
     start_vv: Box<VersionVector>,
+    // Stable version currently materialized in `tracker`. After each checkout
+    // diff calculation it must equal the coverage-local projection of `from`.
+    materialized: TrackerMaterializedVersion,
     tracker: Box<RichtextTracker>,
     coverage: Box<PeerSpanCoverage>,
 }
@@ -704,13 +707,24 @@ impl std::fmt::Debug for ListDiffCalculator {
 
 impl DiffCalculatorTrait for ListDiffCalculator {
     fn start_tracking(&mut self, _oplog: &OpLog, vv: &crate::VersionVector, _mode: DiffMode) {
-        if !vv.includes_vv(self.start_vv.as_ref()) || !self.tracker.all_vv().includes_vv(vv) {
+        if !version_includes_covered_start(vv, self.start_vv.as_ref(), self.coverage.as_ref())
+            || !tracker_has_covered_ops(&self.tracker, vv, self.coverage.as_ref())
+        {
             *self.tracker = RichtextTracker::new_with_unknown();
             *self.start_vv = vv.clone();
             self.coverage.clear();
+            self.materialized
+                .reset_to_version_projection(vv, self.coverage.as_ref());
         }
 
-        richtext_tracker_checkout_with_coverage(&mut self.tracker, vv, self.coverage.as_ref());
+        richtext_tracker_checkout_with_coverage(
+            &mut self.tracker,
+            &mut self.materialized,
+            vv,
+            self.coverage.as_ref(),
+        );
+        self.materialized
+            .debug_assert_matches_version_projection(vv, self.coverage.as_ref());
     }
 
     fn apply_change(
@@ -722,6 +736,7 @@ impl DiffCalculatorTrait for ListDiffCalculator {
         if let Some(vv) = vv {
             richtext_tracker_checkout_causal_with_coverage(
                 &mut self.tracker,
+                &mut self.materialized,
                 vv,
                 self.coverage.as_ref(),
             );
@@ -731,6 +746,7 @@ impl DiffCalculatorTrait for ListDiffCalculator {
             crate::op::InnerContent::List(l) => match l {
                 InnerListOp::Insert { slice, pos } => {
                     self.tracker.insert(
+                        &mut self.materialized,
                         op.id_full(),
                         *pos,
                         RichtextChunk::new_text(slice.0.clone()),
@@ -738,6 +754,7 @@ impl DiffCalculatorTrait for ListDiffCalculator {
                 }
                 InnerListOp::Delete(del) => {
                     self.tracker.delete(
+                        &mut self.materialized,
                         op.id_start(),
                         del.id_start,
                         del.start() as usize,
@@ -763,14 +780,12 @@ impl DiffCalculatorTrait for ListDiffCalculator {
         mut on_new_container: impl FnMut(&ContainerID),
     ) -> (InternalDiff, DiffMode) {
         let mut delta = Delta::new();
-        let diff_iter = if self.coverage.is_empty() {
-            Either::Left(self.tracker.diff(info.from_vv, info.to_vv))
-        } else {
-            Either::Right(
-                self.tracker
-                    .diff_with_coverage(info.from_vv, info.to_vv, self.coverage.as_ref()),
-            )
-        };
+        let diff_iter = self.tracker.diff_with_coverage(
+            &mut self.materialized,
+            info.from_vv,
+            info.to_vv,
+            self.coverage.as_ref(),
+        );
         for item in diff_iter {
             match item {
                 CrdtRopeDelta::Retain(len) => {
@@ -885,6 +900,8 @@ impl DiffCalculatorTrait for ListDiffCalculator {
             delta
         }
 
+        self.materialized
+            .debug_assert_matches_version_projection(info.from_vv, self.coverage.as_ref());
         (InternalDiff::ListRaw(delta), DiffMode::Checkout)
     }
 }
@@ -899,6 +916,7 @@ pub(crate) struct RichtextDiffCalculator {
 enum RichtextCalcMode {
     Crdt {
         tracker: Box<RichtextTracker>,
+        materialized: TrackerMaterializedVersion,
         /// (op, end_pos)
         styles: Vec<(StyleOp, usize)>,
         start_vv: VersionVector,
@@ -916,6 +934,7 @@ impl RichtextDiffCalculator {
             container_idx,
             mode: Box::new(RichtextCalcMode::Crdt {
                 tracker: Box::new(RichtextTracker::new_with_unknown()),
+                materialized: TrackerMaterializedVersion::default(),
                 styles: Vec::new(),
                 start_vv: VersionVector::new(),
                 coverage: PeerSpanCoverage::default(),
@@ -939,57 +958,45 @@ impl RichtextDiffCalculator {
 #[cfg(feature = "test_utils")]
 fn richtext_tracker_checkout_with_coverage(
     tracker: &mut RichtextTracker,
+    materialized: &mut TrackerMaterializedVersion,
     vv: &VersionVector,
     coverage: &PeerSpanCoverage,
 ) {
     let start = std::time::Instant::now();
-    if coverage.is_empty() {
-        tracker.checkout(vv);
-    } else {
-        tracker.checkout_with_coverage(vv, coverage);
-    }
+    materialized.checkout_to_version(tracker, vv, coverage);
     profiling::record_richtext_tracker_checkout(start.elapsed());
 }
 
 #[cfg(feature = "test_utils")]
 fn richtext_tracker_checkout_causal_with_coverage(
     tracker: &mut RichtextTracker,
+    materialized: &mut TrackerMaterializedVersion,
     vv: CausalVersion<'_>,
     coverage: &PeerSpanCoverage,
 ) {
     let start = std::time::Instant::now();
-    if coverage.is_empty() {
-        tracker.checkout_causal(vv);
-    } else {
-        tracker.checkout_causal_with_coverage(vv, coverage);
-    }
+    materialized.checkout_to_causal(tracker, vv, coverage);
     profiling::record_richtext_tracker_checkout(start.elapsed());
 }
 
 #[cfg(not(feature = "test_utils"))]
 fn richtext_tracker_checkout_with_coverage(
     tracker: &mut RichtextTracker,
+    materialized: &mut TrackerMaterializedVersion,
     vv: &VersionVector,
     coverage: &PeerSpanCoverage,
 ) {
-    if coverage.is_empty() {
-        tracker.checkout(vv);
-    } else {
-        tracker.checkout_with_coverage(vv, coverage);
-    }
+    materialized.checkout_to_version(tracker, vv, coverage);
 }
 
 #[cfg(not(feature = "test_utils"))]
 fn richtext_tracker_checkout_causal_with_coverage(
     tracker: &mut RichtextTracker,
+    materialized: &mut TrackerMaterializedVersion,
     vv: CausalVersion<'_>,
     coverage: &PeerSpanCoverage,
 ) {
-    if coverage.is_empty() {
-        tracker.checkout_causal(vv);
-    } else {
-        tracker.checkout_causal_with_coverage(vv, coverage);
-    }
+    materialized.checkout_to_causal(tracker, vv, coverage);
 }
 
 fn seed_coverage_from_state_chunks(coverage: &mut PeerSpanCoverage, chunks: &[RichtextStateChunk]) {
@@ -1038,6 +1045,44 @@ fn record_coverage_span(coverage: &mut PeerSpanCoverage, span: IdSpan) {
         .or_insert_with(|| CounterSpan::new(start, end));
 }
 
+fn version_includes_covered_start(
+    target: &VersionVector,
+    start: &VersionVector,
+    coverage: &PeerSpanCoverage,
+) -> bool {
+    // `start_vv` may include unrelated ops from the same peers. Only peers that
+    // have container-local coverage are relevant for deciding whether the
+    // reusable tracker can be moved from its stable lower bound.
+    coverage.keys().all(|peer| {
+        let start_end = start.get(peer).copied().unwrap_or(0);
+        let target_end = target.get(peer).copied().unwrap_or(0);
+        target_end >= start_end
+    })
+}
+
+fn tracker_has_covered_ops(
+    tracker: &RichtextTracker,
+    target: &VersionVector,
+    coverage: &PeerSpanCoverage,
+) -> bool {
+    if coverage.is_empty() {
+        // No coverage means the tracker has no container-local proof for ops
+        // included by a non-empty start version. Reset so `start_vv` records
+        // this lower bound. Later checkouts before that bound rebuild from unknown.
+        return target.is_empty();
+    }
+
+    coverage.iter().all(|(&peer, span)| {
+        let target_end = target.get(&peer).copied().unwrap_or(0);
+        let required_end = target_end.min(span.norm_end());
+        required_end <= span.min()
+            || tracker
+                .all_vv()
+                .get(&peer)
+                .is_some_and(|&applied_end| applied_end >= required_end)
+    })
+}
+
 impl DiffCalculatorTrait for RichtextDiffCalculator {
     fn start_tracking(
         &mut self,
@@ -1062,6 +1107,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
         match &mut *self.mode {
             RichtextCalcMode::Crdt {
                 tracker,
+                materialized,
                 styles,
                 start_vv,
                 coverage,
@@ -1079,20 +1125,31 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                             *styles = seeded_styles;
                             *start_vv = vv.clone();
                             seed_coverage_from_state_chunks(coverage, &chunks);
-                            richtext_tracker_checkout_with_coverage(tracker, vv, coverage);
+                            materialized.reset_to_version_projection(vv, coverage);
+                            richtext_tracker_checkout_with_coverage(
+                                tracker,
+                                materialized,
+                                vv,
+                                coverage,
+                            );
+                            materialized.debug_assert_matches_version_projection(vv, coverage);
                             return;
                         }
                     }
                 }
 
-                if !vv.includes_vv(start_vv) || !tracker.all_vv().includes_vv(vv) {
+                if !version_includes_covered_start(vv, start_vv, coverage)
+                    || !tracker_has_covered_ops(tracker, vv, coverage)
+                {
                     **tracker = RichtextTracker::new_with_unknown();
                     styles.clear();
                     *start_vv = vv.clone();
                     coverage.clear();
+                    materialized.reset_to_version_projection(vv, coverage);
                 }
 
-                richtext_tracker_checkout_with_coverage(tracker, vv, coverage);
+                richtext_tracker_checkout_with_coverage(tracker, materialized, vv, coverage);
+                materialized.debug_assert_matches_version_projection(vv, coverage);
             }
             RichtextCalcMode::Linear { .. } => {}
         }
@@ -1201,12 +1258,18 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
             },
             RichtextCalcMode::Crdt {
                 tracker,
+                materialized,
                 styles,
                 start_vv: _,
                 coverage,
             } => {
                 if let Some(vv) = vv {
-                    richtext_tracker_checkout_causal_with_coverage(tracker, vv, coverage);
+                    richtext_tracker_checkout_causal_with_coverage(
+                        tracker,
+                        materialized,
+                        vv,
+                        coverage,
+                    );
                 }
                 match &op.raw_op().content {
                     crate::op::InnerContent::List(l) => match l {
@@ -1222,6 +1285,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                             pos,
                         } => {
                             tracker.insert(
+                                materialized,
                                 op.id_full(),
                                 *pos as usize,
                                 RichtextChunk::new_text(*unicode_start..*unicode_start + *len),
@@ -1229,6 +1293,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                         }
                         InnerListOp::Delete(del) => {
                             tracker.delete(
+                                materialized,
                                 op.id_start(),
                                 del.id_start,
                                 del.start() as usize,
@@ -1257,6 +1322,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                                 *end as usize,
                             ));
                             tracker.insert(
+                                materialized,
                                 op.id_full(),
                                 *start as usize,
                                 RichtextChunk::new_style_anchor(style_id as u32, AnchorType::Start),
@@ -1270,6 +1336,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                                 let style_id = styles.len() - pos - 1;
                                 let (_start_op, end_pos) = &styles[style_id];
                                 tracker.insert(
+                                    materialized,
                                     op.id_full(),
                                     // need to shift 1 because we insert the start style anchor before this pos
                                     *end_pos + 1,
@@ -1310,6 +1377,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                                 ));
                                 let style_id = styles.len() - 1;
                                 tracker.insert(
+                                    materialized,
                                     op.id_full(),
                                     // need to shift 1 because we insert the start style anchor before this pos
                                     *end as usize + 1,
@@ -1342,6 +1410,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
             ),
             RichtextCalcMode::Crdt {
                 tracker,
+                materialized,
                 styles,
                 coverage,
                 ..
@@ -1349,11 +1418,8 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                 let mut delta = DeltaRope::new();
                 #[cfg(feature = "test_utils")]
                 let tracker_diff_start = std::time::Instant::now();
-                let diff_iter = if coverage.is_empty() {
-                    Either::Left(tracker.diff(info.from_vv, info.to_vv))
-                } else {
-                    Either::Right(tracker.diff_with_coverage(info.from_vv, info.to_vv, coverage))
-                };
+                let diff_iter =
+                    tracker.diff_with_coverage(materialized, info.from_vv, info.to_vv, coverage);
                 #[cfg(feature = "test_utils")]
                 profiling::record_richtext_tracker_diff(tracker_diff_start.elapsed());
                 #[cfg(feature = "test_utils")]
@@ -1450,6 +1516,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                 #[cfg(feature = "test_utils")]
                 profiling::record_richtext_delta_build(delta_build_start.elapsed());
 
+                materialized.debug_assert_matches_version_projection(info.from_vv, coverage);
                 (InternalDiff::RichtextRaw(delta), DiffMode::Checkout)
             }
         }
@@ -1484,19 +1551,26 @@ struct MovableListInner {
 
 impl DiffCalculatorTrait for MovableListDiffCalculator {
     fn start_tracking(&mut self, _oplog: &OpLog, vv: &crate::VersionVector, mode: DiffMode) {
-        if !vv.includes_vv(self.list.start_vv.as_ref())
-            || !self.list.tracker.all_vv().includes_vv(vv)
+        if !version_includes_covered_start(vv, self.list.start_vv.as_ref(), &self.list.coverage)
+            || !tracker_has_covered_ops(&self.list.tracker, vv, &self.list.coverage)
         {
             *self.list.tracker = RichtextTracker::new_with_unknown();
             *self.list.start_vv = vv.clone();
             self.list.coverage.clear();
+            self.list
+                .materialized
+                .reset_to_version_projection(vv, &self.list.coverage);
         }
 
         richtext_tracker_checkout_with_coverage(
             &mut self.list.tracker,
+            &mut self.list.materialized,
             vv,
             self.list.coverage.as_ref(),
         );
+        self.list
+            .materialized
+            .debug_assert_matches_version_projection(vv, self.list.coverage.as_ref());
         self.inner.current_mode = mode;
     }
 
@@ -1592,6 +1666,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
             if let Some(vv) = vv {
                 richtext_tracker_checkout_causal_with_coverage(
                     &mut this.tracker,
+                    &mut this.materialized,
                     vv,
                     this.coverage.as_ref(),
                 );
@@ -1604,6 +1679,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                     InnerListOp::Insert { slice, pos } => {
                         updates_tracker = true;
                         this.tracker.insert(
+                            &mut this.materialized,
                             op.id_full(),
                             *pos,
                             RichtextChunk::new_text(slice.0.clone()),
@@ -1612,6 +1688,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                     InnerListOp::Delete(del) => {
                         updates_tracker = true;
                         this.tracker.delete(
+                            &mut this.materialized,
                             op.id_start(),
                             del.id_start,
                             del.start() as usize,
@@ -1622,14 +1699,14 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                     InnerListOp::Move { from, elem_id, to } => {
                         updates_tracker = true;
                         self.inner.move_id_to_elem_id.insert(op.id(), *elem_id);
-                        if !this.tracker.current_vv().includes_id(op.id()) {
+                        if !this.materialized.includes_id(op.id()) {
                             let last_pos = if is_checkout {
                                 // TODO: PERF: this lookup can be optimized
                                 oplog.with_history_cache(|h| {
                                     let list = &h.get_checkout_index().movable_list;
                                     list.last_pos(
                                         *elem_id,
-                                        this.tracker.current_vv(),
+                                        this.materialized.as_vv(),
                                         // TODO: PERF: Provide the lamport of to version
                                         Lamport::MAX,
                                         oplog,
@@ -1652,6 +1729,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                                 FAKE_ID
                             };
                             this.tracker.move_item(
+                                &mut this.materialized,
                                 op.id_full(),
                                 last_pos,
                                 *from as usize,

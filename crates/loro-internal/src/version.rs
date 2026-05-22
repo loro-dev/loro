@@ -183,16 +183,19 @@ impl<'a> CausalVersion<'a> {
     }
 
     #[inline]
+    #[allow(dead_code)]
     pub(crate) fn base(&self) -> &'a ImVersionVector {
         self.base
     }
 
     #[inline]
+    #[allow(dead_code)]
     pub(crate) fn peer(&self) -> PeerID {
         self.peer
     }
 
     #[inline]
+    #[allow(dead_code)]
     pub(crate) fn peer_end(&self) -> Counter {
         self.peer_end
     }
