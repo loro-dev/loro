@@ -54,6 +54,7 @@ mod text_checkout {
         max_vv_width: usize,
         max_causal_vv_width: usize,
         max_diff_container_count: usize,
+        diff_container_count_sum: u64,
         richtext_tracker_checkout_count: u64,
         richtext_tracker_diff_count: u64,
         richtext_delta_build_count: u64,
@@ -61,9 +62,12 @@ mod text_checkout {
         richtext_insert_future_scan_visited: u64,
         richtext_insert_future_scan_max_visited: usize,
         causal_vv_materialize_count: u64,
+        richtext_tracker_span_filter_count: u64,
         richtext_tracker_span_count: u64,
         richtext_tracker_filtered_span_count: u64,
         richtext_tracker_skipped_span_count: u64,
+        richtext_tracker_max_span_count: usize,
+        richtext_tracker_max_filtered_span_count: usize,
         richtext_id_to_cursor_iter_count: u64,
         richtext_id_to_cursor_empty_iter_count: u64,
         recording_event_samples: u64,
@@ -96,6 +100,7 @@ mod text_checkout {
             self.max_diff_container_count = self
                 .max_diff_container_count
                 .max(profile.diff_container_count);
+            self.diff_container_count_sum += profile.diff_container_count as u64;
             self.richtext_tracker_checkout_count += profile.richtext_tracker_checkout_count;
             self.richtext_tracker_diff_count += profile.richtext_tracker_diff_count;
             self.richtext_delta_build_count += profile.richtext_delta_build_count;
@@ -105,10 +110,17 @@ mod text_checkout {
                 .richtext_insert_future_scan_max_visited
                 .max(profile.richtext_insert_future_scan_max_visited);
             self.causal_vv_materialize_count += profile.causal_vv_materialize_count;
+            self.richtext_tracker_span_filter_count += profile.richtext_tracker_span_filter_count;
             self.richtext_tracker_span_count += profile.richtext_tracker_span_count;
             self.richtext_tracker_filtered_span_count +=
                 profile.richtext_tracker_filtered_span_count;
             self.richtext_tracker_skipped_span_count += profile.richtext_tracker_skipped_span_count;
+            self.richtext_tracker_max_span_count = self
+                .richtext_tracker_max_span_count
+                .max(profile.richtext_tracker_max_span_count);
+            self.richtext_tracker_max_filtered_span_count = self
+                .richtext_tracker_max_filtered_span_count
+                .max(profile.richtext_tracker_max_filtered_span_count);
             self.richtext_id_to_cursor_iter_count += profile.richtext_id_to_cursor_iter_count;
             self.richtext_id_to_cursor_empty_iter_count +=
                 profile.richtext_id_to_cursor_empty_iter_count;
@@ -726,6 +738,18 @@ mod text_checkout {
             .richtext_insert_future_scan_visited
             .checked_div(totals.richtext_insert_future_scan_count)
             .unwrap_or(0);
+        let avg_tracker_spans_per_checkout = totals
+            .richtext_tracker_span_count
+            .checked_div(totals.richtext_tracker_span_filter_count)
+            .unwrap_or(0);
+        let avg_filtered_tracker_spans_per_checkout = totals
+            .richtext_tracker_filtered_span_count
+            .checked_div(totals.richtext_tracker_span_filter_count)
+            .unwrap_or(0);
+        let avg_diff_containers = totals
+            .diff_container_count_sum
+            .checked_div(totals.samples)
+            .unwrap_or(0);
         eprintln!(
             concat!(
                 "[text-checkout-profile] {name}: scenario={scenario}, peers={peers}, ",
@@ -752,8 +776,14 @@ mod text_checkout {
                 "tracker_spans={tracker_spans}, filtered_tracker_spans={filtered_tracker_spans}, ",
                 "skipped_tracker_spans={skipped_tracker_spans}, id_to_cursor_iters={id_to_cursor_iters}, ",
                 "empty_id_to_cursor_iters={empty_id_to_cursor_iters}, ",
+                "tracker_span_filter_calls={tracker_span_filter_calls}, ",
+                "avg_tracker_spans_per_checkout={avg_tracker_spans_per_checkout}, ",
+                "max_tracker_spans_per_checkout={max_tracker_spans_per_checkout}, ",
+                "avg_filtered_tracker_spans_per_checkout={avg_filtered_tracker_spans_per_checkout}, ",
+                "max_filtered_tracker_spans_per_checkout={max_filtered_tracker_spans_per_checkout}, ",
                 "max_frontiers_width={max_frontiers_width}, max_vv_width={max_vv_width}, ",
-                "max_diff_containers={max_diff_containers}, recording_event_samples={recording_event_samples}, ",
+                "avg_diff_containers={avg_diff_containers}, max_diff_containers={max_diff_containers}, ",
+                "recording_event_samples={recording_event_samples}, ",
                 "forward_diff_calculator_samples={forward_diff_calculator_samples}, ",
                 "richtext_tree_nodes={richtext_tree_nodes}, richtext_chunks={richtext_chunks}, ",
                 "text_chunks={text_chunks}, style_anchors={style_anchors}, ",
@@ -794,8 +824,14 @@ mod text_checkout {
             skipped_tracker_spans = totals.richtext_tracker_skipped_span_count,
             id_to_cursor_iters = totals.richtext_id_to_cursor_iter_count,
             empty_id_to_cursor_iters = totals.richtext_id_to_cursor_empty_iter_count,
+            tracker_span_filter_calls = totals.richtext_tracker_span_filter_count,
+            avg_tracker_spans_per_checkout = avg_tracker_spans_per_checkout,
+            max_tracker_spans_per_checkout = totals.richtext_tracker_max_span_count,
+            avg_filtered_tracker_spans_per_checkout = avg_filtered_tracker_spans_per_checkout,
+            max_filtered_tracker_spans_per_checkout = totals.richtext_tracker_max_filtered_span_count,
             max_frontiers_width = totals.max_frontiers_width,
             max_vv_width = totals.max_vv_width,
+            avg_diff_containers = avg_diff_containers,
             max_diff_containers = totals.max_diff_container_count,
             recording_event_samples = totals.recording_event_samples,
             forward_diff_calculator_samples = totals.forward_diff_calculator_samples,

@@ -67,9 +67,12 @@ pub(crate) mod profiling {
         pub richtext_insert_future_scan_max_visited: usize,
         pub causal_vv_materialize_count: u64,
         pub max_causal_vv_width: usize,
+        pub richtext_tracker_span_filter_count: u64,
         pub richtext_tracker_span_count: u64,
         pub richtext_tracker_filtered_span_count: u64,
         pub richtext_tracker_skipped_span_count: u64,
+        pub richtext_tracker_max_span_count: usize,
+        pub richtext_tracker_max_filtered_span_count: usize,
         pub richtext_id_to_cursor_iter_count: u64,
         pub richtext_id_to_cursor_empty_iter_count: u64,
     }
@@ -140,10 +143,15 @@ pub(crate) mod profiling {
     pub(crate) fn record_richtext_tracker_span_filter(input: usize, filtered: usize) {
         PROFILE.with(|profile| {
             if let Some(profile) = profile.borrow_mut().as_mut() {
+                profile.richtext_tracker_span_filter_count += 1;
                 profile.richtext_tracker_span_count += input as u64;
                 profile.richtext_tracker_filtered_span_count += filtered as u64;
                 profile.richtext_tracker_skipped_span_count +=
                     input.saturating_sub(filtered) as u64;
+                profile.richtext_tracker_max_span_count =
+                    profile.richtext_tracker_max_span_count.max(input);
+                profile.richtext_tracker_max_filtered_span_count =
+                    profile.richtext_tracker_max_filtered_span_count.max(filtered);
             }
         });
     }

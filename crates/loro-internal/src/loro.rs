@@ -88,9 +88,12 @@ pub struct CheckoutProfile {
     pub richtext_insert_future_scan_max_visited: usize,
     pub causal_vv_materialize_count: u64,
     pub max_causal_vv_width: usize,
+    pub richtext_tracker_span_filter_count: u64,
     pub richtext_tracker_span_count: u64,
     pub richtext_tracker_filtered_span_count: u64,
     pub richtext_tracker_skipped_span_count: u64,
+    pub richtext_tracker_max_span_count: usize,
+    pub richtext_tracker_max_filtered_span_count: usize,
     pub richtext_id_to_cursor_iter_count: u64,
     pub richtext_id_to_cursor_empty_iter_count: u64,
     pub recording_events: bool,
@@ -1886,11 +1889,16 @@ impl LoroDoc {
             diff_profile.richtext_insert_future_scan_max_visited;
         profile.causal_vv_materialize_count = diff_profile.causal_vv_materialize_count;
         profile.max_causal_vv_width = diff_profile.max_causal_vv_width;
+        profile.richtext_tracker_span_filter_count =
+            diff_profile.richtext_tracker_span_filter_count;
         profile.richtext_tracker_span_count = diff_profile.richtext_tracker_span_count;
         profile.richtext_tracker_filtered_span_count =
             diff_profile.richtext_tracker_filtered_span_count;
         profile.richtext_tracker_skipped_span_count =
             diff_profile.richtext_tracker_skipped_span_count;
+        profile.richtext_tracker_max_span_count = diff_profile.richtext_tracker_max_span_count;
+        profile.richtext_tracker_max_filtered_span_count =
+            diff_profile.richtext_tracker_max_filtered_span_count;
         profile.richtext_id_to_cursor_iter_count = diff_profile.richtext_id_to_cursor_iter_count;
         profile.richtext_id_to_cursor_empty_iter_count =
             diff_profile.richtext_id_to_cursor_empty_iter_count;

@@ -18,7 +18,7 @@ Implemented on branch `feat/scale-text-checkout-perf`:
 
 Current implementation covers:
 
-- Phase 0 profiling counters for tracker spans, filtered spans, skipped spans, `IdToCursor::iter` calls, and empty `IdToCursor::iter` calls.
+- Phase 0 profiling counters for tracker spans, filtered spans, skipped spans, max/avg spans per tracker checkout, max/avg affected containers, `IdToCursor::iter` calls, and empty `IdToCursor::iter` calls.
 - Phase 1 directed richtext tracker span checkout API, with existing `checkout`, `checkout_causal`, and `diff` APIs kept as adapters.
 - Removal of the tracker-only `current_frontier_hint`.
 - Phase 2 per-container coverage filtering for text/list/movable-list richtext trackers, with conservative fallback when coverage is unavailable.
@@ -29,7 +29,7 @@ Benchmark notes for `multi-container/latest-to-base` with the default 1000 peers
 | Version | Time | Avg total | Avg diff calc | Avg tracker checkout | Avg tracker diff |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | `c350b0e8` baseline | 905.53-908.52 ms | 916.002244 ms | 900.339939 ms | 412.268949 ms | 424.615097 ms |
-| `91e5ceb6` current | 811.54-879.43 ms | 842.044498 ms | 825.496539 ms | 476.979320 ms | 278.143902 ms |
+| current | 823.02-826.74 ms | 832.607089 ms | 816.320180 ms | 467.040713 ms | 281.617226 ms |
 
 Current profiling counters for the same run:
 
@@ -38,6 +38,13 @@ Current profiling counters for the same run:
 - `skipped_tracker_spans=253363500`
 - `id_to_cursor_iters=123753500`
 - `empty_id_to_cursor_iters=123623500`
+- `tracker_span_filter_calls=520000`
+- `avg_tracker_spans_per_checkout=725`
+- `max_tracker_spans_per_checkout=1000`
+- `avg_filtered_tracker_spans_per_checkout=237`
+- `max_filtered_tracker_spans_per_checkout=1000`
+- `avg_diff_containers=10000`
+- `max_diff_containers=10000`
 
 This shows the routing is skipping about two thirds of tracker span checks in the target benchmark. The remaining empty iterator count is still high because the first implementation stores one broad coverage span per `(container, peer)`, which intentionally allows false positives. Phase 4/5 should only be considered if this remaining cost shows up in production profiles.
 
