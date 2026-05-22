@@ -675,9 +675,9 @@ use rle::{HasLength as _, Sliceable};
 
 #[derive(Default)]
 pub(crate) struct ListDiffCalculator {
-    start_vv: VersionVector,
+    start_vv: Box<VersionVector>,
     tracker: Box<RichtextTracker>,
-    coverage: PeerSpanCoverage,
+    coverage: Box<PeerSpanCoverage>,
 }
 
 impl ListDiffCalculator {
@@ -704,13 +704,13 @@ impl std::fmt::Debug for ListDiffCalculator {
 
 impl DiffCalculatorTrait for ListDiffCalculator {
     fn start_tracking(&mut self, _oplog: &OpLog, vv: &crate::VersionVector, _mode: DiffMode) {
-        if !vv.includes_vv(&self.start_vv) || !self.tracker.all_vv().includes_vv(vv) {
+        if !vv.includes_vv(self.start_vv.as_ref()) || !self.tracker.all_vv().includes_vv(vv) {
             *self.tracker = RichtextTracker::new_with_unknown();
-            self.start_vv = vv.clone();
+            *self.start_vv = vv.clone();
             self.coverage.clear();
         }
 
-        richtext_tracker_checkout_with_coverage(&mut self.tracker, vv, &self.coverage);
+        richtext_tracker_checkout_with_coverage(&mut self.tracker, vv, self.coverage.as_ref());
     }
 
     fn apply_change(
@@ -720,7 +720,11 @@ impl DiffCalculatorTrait for ListDiffCalculator {
         vv: Option<CausalVersion<'_>>,
     ) {
         if let Some(vv) = vv {
-            richtext_tracker_checkout_causal_with_coverage(&mut self.tracker, vv, &self.coverage);
+            richtext_tracker_checkout_causal_with_coverage(
+                &mut self.tracker,
+                vv,
+                self.coverage.as_ref(),
+            );
         }
 
         match &op.op().content {
@@ -746,7 +750,7 @@ impl DiffCalculatorTrait for ListDiffCalculator {
             _ => unreachable!(),
         }
 
-        record_op_coverage(&mut self.coverage, &op);
+        record_op_coverage(self.coverage.as_mut(), &op);
     }
 
     fn finish_this_round(&mut self) {}
@@ -764,7 +768,7 @@ impl DiffCalculatorTrait for ListDiffCalculator {
         } else {
             Either::Right(
                 self.tracker
-                    .diff_with_coverage(info.from_vv, info.to_vv, &self.coverage),
+                    .diff_with_coverage(info.from_vv, info.to_vv, self.coverage.as_ref()),
             )
         };
         for item in diff_iter {
@@ -1480,13 +1484,19 @@ struct MovableListInner {
 
 impl DiffCalculatorTrait for MovableListDiffCalculator {
     fn start_tracking(&mut self, _oplog: &OpLog, vv: &crate::VersionVector, mode: DiffMode) {
-        if !vv.includes_vv(&self.list.start_vv) || !self.list.tracker.all_vv().includes_vv(vv) {
+        if !vv.includes_vv(self.list.start_vv.as_ref())
+            || !self.list.tracker.all_vv().includes_vv(vv)
+        {
             *self.list.tracker = RichtextTracker::new_with_unknown();
-            self.list.start_vv = vv.clone();
+            *self.list.start_vv = vv.clone();
             self.list.coverage.clear();
         }
 
-        richtext_tracker_checkout_with_coverage(&mut self.list.tracker, vv, &self.list.coverage);
+        richtext_tracker_checkout_with_coverage(
+            &mut self.list.tracker,
+            vv,
+            self.list.coverage.as_ref(),
+        );
         self.inner.current_mode = mode;
     }
 
@@ -1583,7 +1593,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                 richtext_tracker_checkout_causal_with_coverage(
                     &mut this.tracker,
                     vv,
-                    &this.coverage,
+                    this.coverage.as_ref(),
                 );
             }
 
@@ -1659,7 +1669,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                 _ => unreachable!(),
             }
             if updates_tracker {
-                record_op_coverage(&mut this.coverage, &op);
+                record_op_coverage(this.coverage.as_mut(), &op);
             }
         };
     }
