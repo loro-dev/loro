@@ -121,8 +121,12 @@ impl ContainerWrapper {
                 lazy.value.as_ref().unwrap().clone()
             }
             ContainerData::Lazy(_) => {
-                trace!("transient value");
-                self.decode_value_transient(idx, ctx).unwrap()
+                trace!("decode value");
+                self.decode_value(idx, ctx).unwrap();
+                match &mut self.data {
+                    ContainerData::State(state) => state.get_value(),
+                    ContainerData::Lazy(lazy) => lazy.value.as_ref().unwrap().clone(),
+                }
             }
         }
     }
@@ -348,16 +352,16 @@ impl ContainerWrapper {
         Ok(())
     }
 
-    fn decode_value_transient(
-        &mut self,
-        idx: ContainerIdx,
-        ctx: ContainerCreationContext,
-    ) -> LoroResult<LoroValue> {
-        let (value, state_offset, _) = self.decode_value_from_bytes(idx, ctx)?;
-        if let ContainerData::Lazy(lazy) = &mut self.data {
-            lazy.bytes_offset_for_state = Some(state_offset);
+    pub(super) fn has_cached_value(&self) -> bool {
+        match &self.data {
+            ContainerData::State(_) => true,
+            ContainerData::Lazy(lazy) => lazy.value.is_some(),
         }
-        Ok(value)
+    }
+
+    #[cfg(test)]
+    pub(super) fn has_cached_value_for_test(&self) -> bool {
+        self.has_cached_value()
     }
 
     fn value_bytes_and_offset(&mut self) -> Option<(Bytes, usize)> {

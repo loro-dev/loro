@@ -155,7 +155,11 @@ impl InnerStore {
             let key = id.to_bytes();
             if let Some(v) = self.kv.get(&key) {
                 let mut container = ContainerWrapper::new_from_bytes(v);
-                return Some(f(&mut container));
+                let ans = f(&mut container);
+                if container.has_cached_value() {
+                    Self::insert_entry(&mut self.store, idx, container);
+                }
+                return Some(ans);
             }
         }
 
@@ -359,6 +363,12 @@ impl InnerStore {
             .iter()
             .filter_map(|entry| entry.as_ref())
             .all(|c| c.is_state_empty())
+    }
+
+    #[cfg(test)]
+    pub(super) fn has_cached_value_for_test(&mut self, idx: ContainerIdx) -> bool {
+        self.get_entry_mut(idx)
+            .is_some_and(|entry| entry.has_cached_value_for_test())
     }
 }
 

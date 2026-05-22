@@ -349,7 +349,8 @@ impl ContainerStore {
 mod test {
     use super::*;
     use crate::{
-        cursor::PosType, state::TreeParentId, ListHandler, LoroDoc, MapHandler, MovableListHandler,
+        cursor::PosType, state::TreeParentId, ContainerType, ListHandler, LoroDoc, MapHandler,
+        MovableListHandler,
     };
 
     fn decode_container_store(bytes: Bytes) -> ContainerStore {
@@ -405,5 +406,18 @@ mod test {
         let bytes = s.store.encode();
         let mut new_store = decode_container_store(bytes);
         s.store.check_eq_after_parsing(&mut new_store);
+    }
+
+    #[test]
+    fn first_lazy_read_caches_value() {
+        let doc = init_doc();
+        let bytes = doc.app_state().lock().store.encode();
+        let mut store = decode_container_store(bytes);
+        let map_id = ContainerID::new_root("map", ContainerType::Map);
+        let map_idx = store.arena.register_container(&map_id);
+
+        assert!(!store.store.has_cached_value_for_test(map_idx));
+        assert_eq!(store.map_len(map_idx), 2);
+        assert!(store.store.has_cached_value_for_test(map_idx));
     }
 }
