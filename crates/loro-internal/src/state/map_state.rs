@@ -67,15 +67,13 @@ impl MapEntries {
     fn insert(&mut self, key: InternalString, value: MapValue) -> Option<MapValue> {
         match self {
             Self::Tiny(entries) => {
-                if let Some((_, old_value)) =
-                    entries.iter_mut().find(|(entry_key, _)| entry_key == &key)
-                {
-                    return Some(std::mem::replace(old_value, value));
-                }
-
-                if entries.len() < TINY_MAP_MAX {
-                    entries.push((key, value));
-                    return None;
+                match entries.binary_search_by(|(entry_key, _)| entry_key.cmp(&key)) {
+                    Ok(index) => return Some(std::mem::replace(&mut entries[index].1, value)),
+                    Err(index) if entries.len() < TINY_MAP_MAX => {
+                        entries.insert(index, (key, value));
+                        return None;
+                    }
+                    Err(_) => {}
                 }
 
                 let mut map = BTreeMap::new();
@@ -93,9 +91,9 @@ impl MapEntries {
     fn remove(&mut self, key: &InternalString) -> Option<MapValue> {
         match self {
             Self::Tiny(entries) => entries
-                .iter()
-                .position(|(entry_key, _)| entry_key == key)
-                .map(|index| entries.swap_remove(index).1),
+                .binary_search_by(|(entry_key, _)| entry_key.cmp(key))
+                .ok()
+                .map(|index| entries.remove(index).1),
             Self::Tree(map) => {
                 let result = map.remove(key);
                 if result.is_some() && map.len() <= TINY_MAP_MAX {
