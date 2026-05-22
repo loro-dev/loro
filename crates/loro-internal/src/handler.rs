@@ -91,6 +91,15 @@ fn create_handler(inner: &BasicHandler, id: ContainerID) -> Handler {
     Handler::new_attached(id, inner.doc.clone())
 }
 
+fn value_to_value_or_handler(inner: &BasicHandler, value: LoroValue) -> ValueOrHandler {
+    match value {
+        LoroValue::Container(container_id) => {
+            ValueOrHandler::Handler(create_handler(inner, container_id))
+        }
+        value => ValueOrHandler::Value(value),
+    }
+}
+
 /// Flatten attributes that allow overlap
 #[derive(Clone, Debug)]
 pub struct BasicHandler {
@@ -2930,19 +2939,17 @@ impl ListHandler {
                     )),
                 }
             }
-            MaybeDetached::Attached(a) => {
-                let Some(value) = a.with_state(|state| {
-                    state.as_list_state().as_ref().unwrap().get(index).cloned()
-                }) else {
+            MaybeDetached::Attached(_) => {
+                let Some(value) = self.get_(index) else {
                     return Err(LoroError::OutOfBound {
                         pos: index,
                         info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-                        len: a.with_state(|state| state.as_list_state().unwrap().len()),
+                        len: self.len(),
                     });
                 };
                 match value {
-                    LoroValue::Container(id) => Ok(create_handler(a, id)),
-                    _ => Err(LoroError::ArgErr(
+                    ValueOrHandler::Handler(handler) => Ok(handler),
+                    ValueOrHandler::Value(value) => Err(LoroError::ArgErr(
                         format!(
                             "Expected container at index {}, but found {:?}",
                             index, value
@@ -2958,7 +2965,7 @@ impl ListHandler {
         match &self.inner {
             MaybeDetached::Detached(l) => l.lock().value.len(),
             MaybeDetached::Attached(a) => {
-                a.with_state(|state| state.as_list_state().unwrap().len())
+                a.with_doc_state(|state| state.get_list_len(a.container_idx))
             }
         }
     }
@@ -2977,10 +2984,9 @@ impl ListHandler {
     pub fn get(&self, index: usize) -> Option<LoroValue> {
         match &self.inner {
             MaybeDetached::Detached(l) => l.lock().value.get(index).map(|x| x.to_value()),
-            MaybeDetached::Attached(a) => a.with_state(|state| {
-                let a = state.as_list_state().unwrap();
-                a.get(index).cloned()
-            }),
+            MaybeDetached::Attached(a) => {
+                a.with_doc_state(|state| state.get_list_value_at(a.container_idx, index))
+            }
         }
     }
 
@@ -2992,15 +2998,9 @@ impl ListHandler {
                 l.value.get(index).cloned()
             }
             MaybeDetached::Attached(inner) => {
-                let value =
-                    inner.with_state(|state| state.as_list_state().unwrap().get(index).cloned());
-                match value {
-                    Some(LoroValue::Container(container_id)) => Some(ValueOrHandler::Handler(
-                        create_handler(inner, container_id.clone()),
-                    )),
-                    Some(value) => Some(ValueOrHandler::Value(value.clone())),
-                    None => None,
-                }
+                let value = inner
+                    .with_doc_state(|state| state.get_list_value_at(inner.container_idx, index));
+                value.map(|value| value_to_value_or_handler(inner, value))
             }
         }
     }
@@ -3017,22 +3017,12 @@ impl ListHandler {
                 }
             }
             MaybeDetached::Attached(inner) => {
-                let mut temp = vec![];
-                inner.with_state(|state| {
-                    let a = state.as_list_state().unwrap();
-                    for v in a.iter() {
-                        match v {
-                            LoroValue::Container(c) => {
-                                temp.push(ValueOrHandler::Handler(create_handler(
-                                    inner,
-                                    c.clone(),
-                                )));
-                            }
-                            value => {
-                                temp.push(ValueOrHandler::Value(value.clone()));
-                            }
-                        }
-                    }
+                let temp = inner.with_doc_state(|state| {
+                    state
+                        .get_list_values(inner.container_idx)
+                        .into_iter()
+                        .map(|value| value_to_value_or_handler(inner, value))
+                        .collect::<Vec<_>>()
                 });
                 for v in temp.into_iter() {
                     f(v);
@@ -3641,24 +3631,17 @@ impl MovableListHandler {
                     )),
                 }
             }
-            MaybeDetached::Attached(a) => {
-                let Some(value) = a.with_state(|state| {
-                    state
-                        .as_movable_list_state()
-                        .as_ref()
-                        .unwrap()
-                        .get(index, IndexType::ForUser)
-                        .cloned()
-                }) else {
+            MaybeDetached::Attached(_) => {
+                let Some(value) = self.get_(index) else {
                     return Err(LoroError::OutOfBound {
                         pos: index,
                         info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-                        len: a.with_state(|state| state.as_list_state().unwrap().len()),
+                        len: self.len(),
                     });
                 };
                 match value {
-                    LoroValue::Container(id) => Ok(create_handler(a, id)),
-                    _ => Err(LoroError::ArgErr(
+                    ValueOrHandler::Handler(handler) => Ok(handler),
+                    ValueOrHandler::Value(value) => Err(LoroError::ArgErr(
                         format!(
                             "Expected container at index {}, but found {:?}",
                             index, value
@@ -3677,7 +3660,7 @@ impl MovableListHandler {
                 d.value.len()
             }
             MaybeDetached::Attached(a) => {
-                a.with_state(|state| state.as_movable_list_state().unwrap().len())
+                a.with_doc_state(|state| state.get_list_len(a.container_idx))
             }
         }
     }
@@ -3701,10 +3684,9 @@ impl MovableListHandler {
                 let d = d.lock();
                 d.value.get(index).map(|v| v.to_value())
             }
-            MaybeDetached::Attached(a) => a.with_state(|state| {
-                let a = state.as_movable_list_state().unwrap();
-                a.get(index, IndexType::ForUser).cloned()
-            }),
+            MaybeDetached::Attached(a) => {
+                a.with_doc_state(|state| state.get_list_value_at(a.container_idx, index))
+            }
         }
     }
 
@@ -3715,19 +3697,11 @@ impl MovableListHandler {
                 let d = d.lock();
                 d.value.get(index).cloned()
             }
-            MaybeDetached::Attached(m) => m.with_state(|state| {
-                let a = state.as_movable_list_state().unwrap();
-                match a.get(index, IndexType::ForUser) {
-                    Some(v) => {
-                        if let LoroValue::Container(c) = v {
-                            Some(ValueOrHandler::Handler(create_handler(m, c.clone())))
-                        } else {
-                            Some(ValueOrHandler::Value(v.clone()))
-                        }
-                    }
-                    None => None,
-                }
-            }),
+            MaybeDetached::Attached(m) => {
+                let value =
+                    m.with_doc_state(|state| state.get_list_value_at(m.container_idx, index));
+                value.map(|value| value_to_value_or_handler(m, value))
+            }
         }
     }
 
@@ -3743,19 +3717,12 @@ impl MovableListHandler {
                 }
             }
             MaybeDetached::Attached(m) => {
-                let mut temp = vec![];
-                m.with_state(|state| {
-                    let a = state.as_movable_list_state().unwrap();
-                    for v in a.iter() {
-                        match v {
-                            LoroValue::Container(c) => {
-                                temp.push(ValueOrHandler::Handler(create_handler(m, c.clone())));
-                            }
-                            value => {
-                                temp.push(ValueOrHandler::Value(value.clone()));
-                            }
-                        }
-                    }
+                let temp = m.with_doc_state(|state| {
+                    state
+                        .get_list_values(m.container_idx)
+                        .into_iter()
+                        .map(|value| value_to_value_or_handler(m, value))
+                        .collect::<Vec<_>>()
                 });
 
                 for v in temp.into_iter() {
@@ -4072,24 +4039,14 @@ impl MapHandler {
                 }
             }
             MaybeDetached::Attached(inner) => {
-                let mut temp = vec![];
-                inner.with_state(|state| {
-                    let a = state.as_map_state().unwrap();
-                    for (k, v) in a.iter() {
-                        if let Some(v) = &v.value {
-                            match v {
-                                LoroValue::Container(c) => {
-                                    temp.push((
-                                        k.to_string(),
-                                        ValueOrHandler::Handler(create_handler(inner, c.clone())),
-                                    ));
-                                }
-                                value => {
-                                    temp.push((k.to_string(), ValueOrHandler::Value(value.clone())))
-                                }
-                            }
-                        }
-                    }
+                let temp = inner.with_doc_state(|state| {
+                    state
+                        .get_map_entries(inner.container_idx)
+                        .into_iter()
+                        .map(|(key, value)| {
+                            (key.to_string(), value_to_value_or_handler(inner, value))
+                        })
+                        .collect::<Vec<_>>()
                 });
 
                 for (k, v) in temp.into_iter() {
@@ -4111,19 +4068,18 @@ impl MapHandler {
                     ValueOrHandler::Handler(h) => Ok(h.clone()),
                 }
             }
-            MaybeDetached::Attached(inner) => {
-                let container_id = inner.with_state(|state| {
-                    state
-                        .as_map_state()
-                        .as_ref()
-                        .unwrap()
-                        .get(key)
-                        .unwrap()
-                        .as_container()
-                        .unwrap()
-                        .clone()
-                });
-                Ok(create_handler(inner, container_id))
+            MaybeDetached::Attached(_) => {
+                let Some(value) = self.get_(key) else {
+                    return Err(LoroError::ArgErr(
+                        format!("Key {key} does not exist").into_boxed_str(),
+                    ));
+                };
+                match value {
+                    ValueOrHandler::Handler(handler) => Ok(handler),
+                    ValueOrHandler::Value(value) => Err(LoroError::ArgErr(
+                        format!("Expected Handler but found {:?}", value).into_boxed_str(),
+                    )),
+                }
             }
         }
     }
@@ -4146,7 +4102,7 @@ impl MapHandler {
                 m.value.get(key).map(|v| v.to_value())
             }
             MaybeDetached::Attached(inner) => {
-                inner.with_state(|state| state.as_map_state().unwrap().get(key).cloned())
+                inner.with_doc_state(|state| state.get_map_value_by_key(inner.container_idx, key))
             }
         }
     }
@@ -4159,15 +4115,9 @@ impl MapHandler {
                 m.value.get(key).cloned()
             }
             MaybeDetached::Attached(inner) => {
-                let value =
-                    inner.with_state(|state| state.as_map_state().unwrap().get(key).cloned());
-                match value {
-                    Some(LoroValue::Container(container_id)) => Some(ValueOrHandler::Handler(
-                        create_handler(inner, container_id.clone()),
-                    )),
-                    Some(value) => Some(ValueOrHandler::Value(value.clone())),
-                    None => None,
-                }
+                let value = inner
+                    .with_doc_state(|state| state.get_map_value_by_key(inner.container_idx, key));
+                value.map(|value| value_to_value_or_handler(inner, value))
             }
         }
     }
@@ -4202,7 +4152,9 @@ impl MapHandler {
     pub fn len(&self) -> usize {
         match &self.inner {
             MaybeDetached::Detached(m) => m.lock().value.len(),
-            MaybeDetached::Attached(a) => a.with_state(|state| state.as_map_state().unwrap().len()),
+            MaybeDetached::Attached(a) => {
+                a.with_doc_state(|state| state.get_map_len(a.container_idx))
+            }
         }
     }
 
@@ -4246,48 +4198,33 @@ impl MapHandler {
     }
 
     pub fn keys(&self) -> impl Iterator<Item = InternalString> + '_ {
-        let mut keys: Vec<InternalString> = Vec::with_capacity(self.len());
-        match &self.inner {
+        let keys: Vec<InternalString> = match &self.inner {
             MaybeDetached::Detached(m) => {
                 let m = m.lock();
-                keys = m.value.keys().map(|x| x.as_str().into()).collect();
+                m.value.keys().map(|x| x.as_str().into()).collect()
             }
             MaybeDetached::Attached(a) => {
-                a.with_state(|state| {
-                    for (k, v) in state.as_map_state().unwrap().iter() {
-                        if v.value.is_some() {
-                            keys.push(k.clone());
-                        }
-                    }
-                });
+                a.with_doc_state(|state| state.get_map_keys(a.container_idx))
             }
-        }
+        };
 
         keys.into_iter()
     }
 
     pub fn values(&self) -> impl Iterator<Item = ValueOrHandler> + '_ {
-        let mut values: Vec<ValueOrHandler> = Vec::with_capacity(self.len());
-        match &self.inner {
+        let values: Vec<ValueOrHandler> = match &self.inner {
             MaybeDetached::Detached(m) => {
                 let m = m.lock();
-                values = m.value.values().cloned().collect();
+                m.value.values().cloned().collect()
             }
-            MaybeDetached::Attached(a) => {
-                a.with_state(|state| {
-                    for (_, v) in state.as_map_state().unwrap().iter() {
-                        let value = match &v.value {
-                            Some(LoroValue::Container(container_id)) => {
-                                ValueOrHandler::Handler(create_handler(a, container_id.clone()))
-                            }
-                            Some(value) => ValueOrHandler::Value(value.clone()),
-                            None => continue,
-                        };
-                        values.push(value);
-                    }
-                });
-            }
-        }
+            MaybeDetached::Attached(a) => a.with_doc_state(|state| {
+                state
+                    .get_map_values(a.container_idx)
+                    .into_iter()
+                    .map(|value| value_to_value_or_handler(a, value))
+                    .collect()
+            }),
+        };
 
         values.into_iter()
     }

@@ -4,7 +4,6 @@ use crate::{
 };
 use bytes::Bytes;
 use loro_common::ContainerID;
-use rustc_hash::FxHashMap;
 use std::ops::Bound;
 
 use super::ContainerWrapper;
@@ -17,9 +16,10 @@ use super::ContainerWrapper;
 /// Invariants: it should be agnostic to the users of this struct whether a container is stored in `kv` or `store`
 pub(crate) struct InnerStore {
     arena: SharedArena,
-    store: FxHashMap<ContainerIdx, ContainerWrapper>,
+    store: Vec<Option<ContainerWrapper>>,
     kv: KvWrapper,
     all_loaded: bool,
+    roots_loaded: bool,
     config: Configure,
 }
 
@@ -31,27 +31,72 @@ impl std::fmt::Debug for InnerStore {
 
 /// This impl block contains all the mutation code that may break the invariants of this struct
 impl InnerStore {
+    #[inline]
+    fn slot(idx: ContainerIdx) -> usize {
+        idx.to_index() as usize
+    }
+
+    #[inline]
+    fn get_entry_mut_in(
+        store: &mut [Option<ContainerWrapper>],
+        idx: ContainerIdx,
+    ) -> Option<&mut ContainerWrapper> {
+        let entry = store.get_mut(Self::slot(idx))?.as_mut()?;
+        debug_assert_eq!(entry.kind(), idx.get_type());
+        Some(entry)
+    }
+
+    #[inline]
+    fn get_entry_mut(&mut self, idx: ContainerIdx) -> Option<&mut ContainerWrapper> {
+        Self::get_entry_mut_in(&mut self.store, idx)
+    }
+
+    #[inline]
+    fn contains_idx_in(store: &[Option<ContainerWrapper>], idx: ContainerIdx) -> bool {
+        store
+            .get(Self::slot(idx))
+            .and_then(|entry| entry.as_ref())
+            .is_some_and(|entry| entry.kind() == idx.get_type())
+    }
+
+    #[inline]
+    fn contains_idx(&self, idx: ContainerIdx) -> bool {
+        Self::contains_idx_in(&self.store, idx)
+    }
+
+    fn insert_entry(
+        store: &mut Vec<Option<ContainerWrapper>>,
+        idx: ContainerIdx,
+        container: ContainerWrapper,
+    ) -> Option<ContainerWrapper> {
+        let slot = Self::slot(idx);
+        if store.len() <= slot {
+            store.resize_with(slot + 1, || None);
+        }
+
+        store[slot].replace(container)
+    }
+
     pub(super) fn get_or_insert_with(
         &mut self,
         idx: ContainerIdx,
         f: impl FnOnce() -> ContainerWrapper,
     ) -> &mut ContainerWrapper {
-        match self.store.entry(idx) {
-            std::collections::hash_map::Entry::Vacant(e) => {
-                let id = self.arena.get_container_id(idx).unwrap();
-                let key = id.to_bytes();
-                if !self.all_loaded {
-                    if let Some(v) = self.kv.get(&key) {
-                        let c = ContainerWrapper::new_from_bytes(v);
-                        return e.insert(c);
-                    }
-                }
-
-                let c = f();
-                e.insert(c)
-            }
-            std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+        if self.get_entry_mut(idx).is_none() {
+            let id = self.arena.get_container_id(idx).unwrap();
+            let key = id.to_bytes();
+            let container = if !self.all_loaded {
+                self.kv
+                    .get(&key)
+                    .map(ContainerWrapper::new_from_bytes)
+                    .unwrap_or_else(f)
+            } else {
+                f()
+            };
+            Self::insert_entry(&mut self.store, idx, container);
         }
+
+        self.get_entry_mut(idx).unwrap()
     }
 
     pub(super) fn ensure_container(
@@ -59,7 +104,7 @@ impl InnerStore {
         idx: ContainerIdx,
         f: impl FnOnce() -> ContainerWrapper,
     ) {
-        if self.store.contains_key(&idx) {
+        if self.contains_idx(idx) {
             return;
         }
 
@@ -68,45 +113,59 @@ impl InnerStore {
             let key = id.to_bytes();
             if let Some(v) = self.kv.get(&key) {
                 let c = ContainerWrapper::new_from_bytes(v);
-                self.store.insert(idx, c);
+                Self::insert_entry(&mut self.store, idx, c);
                 return;
             }
         }
 
         let c = f();
-        self.store.insert(idx, c);
+        Self::insert_entry(&mut self.store, idx, c);
     }
 
     pub(crate) fn get_mut(&mut self, idx: ContainerIdx) -> Option<&mut ContainerWrapper> {
-        if let std::collections::hash_map::Entry::Vacant(e) = self.store.entry(idx) {
-            if !self.all_loaded {
-                let id = self.arena.get_container_id(idx).unwrap();
-                let key = id.to_bytes();
-                if let Some(v) = self.kv.get(&key) {
-                    let c = ContainerWrapper::new_from_bytes(v);
-                    e.insert(c);
-                }
+        if self.get_entry_mut(idx).is_none() && !self.all_loaded {
+            let id = self.arena.get_container_id(idx).unwrap();
+            let key = id.to_bytes();
+            if let Some(v) = self.kv.get(&key) {
+                let c = ContainerWrapper::new_from_bytes(v);
+                Self::insert_entry(&mut self.store, idx, c);
             }
         }
 
-        self.store.get_mut(&idx)
+        self.get_entry_mut(idx)
+    }
+
+    pub(crate) fn with_container_for_read<R>(
+        &mut self,
+        idx: ContainerIdx,
+        f: impl FnOnce(&mut ContainerWrapper) -> R,
+    ) -> Option<R> {
+        if let Some(entry) = self.get_entry_mut(idx) {
+            return Some(f(entry));
+        }
+
+        if !self.all_loaded {
+            let id = self.arena.get_container_id(idx).unwrap();
+            let key = id.to_bytes();
+            if let Some(v) = self.kv.get(&key) {
+                let mut container = ContainerWrapper::new_from_bytes(v);
+                return Some(f(&mut container));
+            }
+        }
+
+        None
     }
 
     pub(crate) fn contains_id(&mut self, id: &ContainerID) -> bool {
         if let Some(idx) = self.arena.id_to_idx(id) {
-            if self.store.contains_key(&idx) {
+            if self.contains_idx(idx) {
                 return true;
             }
         }
 
         if !self.all_loaded {
             let key = id.to_bytes();
-            if let Some(v) = self.kv.get(&key) {
-                let idx = self.arena.register_container(id);
-                let c = ContainerWrapper::new_from_bytes(v);
-                self.store.insert(idx, c);
-                return true;
-            }
+            return self.kv.contains_key(&key);
         }
 
         false
@@ -114,17 +173,30 @@ impl InnerStore {
 
     pub(crate) fn iter_all_containers_mut(
         &mut self,
-    ) -> impl Iterator<Item = (&ContainerIdx, &mut ContainerWrapper)> {
+    ) -> impl Iterator<Item = (ContainerIdx, &mut ContainerWrapper)> {
         self.load_all();
-        self.store.iter_mut()
+        self.store
+            .iter_mut()
+            .enumerate()
+            .filter_map(|(slot, entry)| {
+                entry.as_mut().map(|container| {
+                    (
+                        ContainerIdx::from_index_and_type(slot as u32, container.kind()),
+                        container,
+                    )
+                })
+            })
     }
 
     pub(crate) fn iter_all_container_ids(&mut self) -> impl Iterator<Item = ContainerID> + '_ {
         // PERF: we don't need to load all the containers here
         self.load_all();
-        self.store
-            .keys()
-            .map(|idx| self.arena.get_container_id(*idx).unwrap())
+        self.store.iter().enumerate().filter_map(|(slot, entry)| {
+            entry.as_ref().map(|container| {
+                let idx = ContainerIdx::from_index_and_type(slot as u32, container.kind());
+                self.arena.get_container_id(idx).unwrap()
+            })
+        })
     }
 
     pub(crate) fn encode(&mut self) -> Bytes {
@@ -134,22 +206,28 @@ impl InnerStore {
 
     pub(crate) fn flush(&mut self) {
         let deleted = self.config.deleted_root_containers.lock();
-        self.kv
-            .set_all(self.store.iter_mut().filter_map(|(idx, c)| {
-                if c.is_flushed() {
-                    return None;
-                }
+        self.kv.set_all(
+            self.store
+                .iter_mut()
+                .enumerate()
+                .filter_map(|(slot, entry)| {
+                    let c = entry.as_mut()?;
+                    let idx = ContainerIdx::from_index_and_type(slot as u32, c.kind());
+                    if c.is_flushed() {
+                        return None;
+                    }
 
-                let cid = self.arena.get_container_id(*idx).unwrap();
-                if c.is_state_empty() && cid.is_root() && deleted.contains(&cid) {
-                    return None;
-                }
+                    let cid = self.arena.get_container_id(idx).unwrap();
+                    if c.is_state_empty() && cid.is_root() && deleted.contains(&cid) {
+                        return None;
+                    }
 
-                let cid: Bytes = cid.to_bytes().into();
-                let value = c.encode();
-                c.set_flushed(true);
-                Some((cid, value))
-            }));
+                    let cid: Bytes = cid.to_bytes().into();
+                    let value = c.encode();
+                    c.set_flushed(true);
+                    Some((cid, value))
+                }),
+        );
     }
 
     pub(crate) fn get_kv_clone(&self) -> KvWrapper {
@@ -180,6 +258,7 @@ impl InnerStore {
 
         self.store.clear();
         self.all_loaded = false;
+        self.roots_loaded = false;
         Ok(fr)
     }
 
@@ -197,8 +276,10 @@ impl InnerStore {
             .import(bytes_b)
             .map_err(|e| loro_common::LoroError::DecodeError(e.into_boxed_str()))?;
         self.kv.remove(FRONTIERS_KEY);
+        let store = &mut self.store;
+        let arena = &self.arena;
         self.kv.with_kv(|kv| {
-            self.arena.with_guards(|guards| {
+            arena.with_guards(|guards| {
                 let iter = kv.scan(Bound::Unbounded, Bound::Unbounded);
                 for (k, v) in iter {
                     let cid = ContainerID::from_bytes(&k);
@@ -207,12 +288,13 @@ impl InnerStore {
                     let idx = guards.register_container(&cid);
                     let p = parent.as_ref().map(|p| guards.register_container(p));
                     guards.set_parent(idx, p);
-                    if self.store.insert(idx, c).is_some() {}
+                    if Self::insert_entry(store, idx, c).is_some() {}
                 }
             });
         });
 
         self.all_loaded = true;
+        self.roots_loaded = true;
         Ok(())
     }
 
@@ -221,25 +303,48 @@ impl InnerStore {
             return;
         }
 
+        let store = &mut self.store;
+        let arena = &self.arena;
         self.kv.with_kv(|kv| {
             let iter = kv.scan(Bound::Unbounded, Bound::Unbounded);
-            self.arena.with_guards(|guards| {
+            arena.with_guards(|guards| {
                 for (k, v) in iter {
                     let cid = ContainerID::from_bytes(&k);
                     let idx = guards.register_container(&cid);
-                    if self.store.contains_key(&idx) {
+                    if Self::contains_idx_in(store, idx) {
                         // the container is already loaded
                         // the content in `store` is guaranteed to be newer than the content in `kv`
                         continue;
                     }
 
                     let container = ContainerWrapper::new_from_bytes(v);
-                    self.store.insert(idx, container);
+                    Self::insert_entry(store, idx, container);
                 }
             });
         });
 
         self.all_loaded = true;
+        self.roots_loaded = true;
+    }
+
+    pub fn load_roots(&mut self) {
+        if self.all_loaded || self.roots_loaded {
+            return;
+        }
+
+        let arena = &self.arena;
+        self.kv.with_kv(|kv| {
+            let iter = kv.scan(Bound::Unbounded, Bound::Unbounded);
+            arena.with_guards(|guards| {
+                for (k, _) in iter {
+                    let cid = ContainerID::from_bytes(&k);
+                    if cid.is_root() {
+                        guards.register_container(&cid);
+                    }
+                }
+            });
+        });
+        self.roots_loaded = true;
     }
 
     pub(crate) fn can_import_snapshot(&self) -> bool {
@@ -247,7 +352,10 @@ impl InnerStore {
             return false;
         }
 
-        self.store.iter().all(|(_, c)| c.is_state_empty())
+        self.store
+            .iter()
+            .filter_map(|entry| entry.as_ref())
+            .all(|c| c.is_state_empty())
     }
 }
 
@@ -255,9 +363,10 @@ impl InnerStore {
     pub(crate) fn new(arena: SharedArena, config: Configure) -> Self {
         Self {
             arena,
-            store: FxHashMap::default(),
+            store: Vec::new(),
             kv: KvWrapper::new_mem(),
             all_loaded: true,
+            roots_loaded: true,
             config,
         }
     }

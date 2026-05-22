@@ -1,7 +1,8 @@
 use generic_btree::{rle::HasLength, rle::Sliceable as _, Cursor};
 use loro_common::{ContainerID, InternalString, LoroError, LoroResult, LoroValue, ID};
-use loro_delta::DeltaRopeBuilder;
+use loro_delta::{DeltaRope, DeltaRopeBuilder};
 use rustc_hash::{FxHashMap, FxHashSet};
+use smallvec::SmallVec;
 use std::ops::Range;
 use std::sync::{Arc, Weak};
 
@@ -577,6 +578,12 @@ impl ContainerState for RichtextState {
             unreachable!()
         };
 
+        if let LazyLoad::Src(loader) = &mut self.state {
+            if loader.try_apply_append_delta(&richtext) {
+                return Ok(());
+            }
+        }
+
         // Fast path for plain-text deltas (no style anchors / style ranges).
         //
         // Rebuilding avoids repeated BTree queries and mutations when the delta is very "choppy"
@@ -877,7 +884,10 @@ impl ContainerState for RichtextState {
 
     // value is a list
     fn get_value(&mut self) -> LoroValue {
-        self.state.get_mut().to_string().into()
+        match &self.state {
+            LazyLoad::Src(loader) => loader.to_plain_string().into(),
+            LazyLoad::Dst(_) => self.state.get_mut().to_string().into(),
+        }
     }
 
     #[doc = r" Get the index of the child container"]
@@ -1057,7 +1067,7 @@ impl RichtextState {
 #[derive(Debug, Default, Clone)]
 pub(crate) struct RichtextStateLoader {
     start_anchor_pos: FxHashMap<ID, usize>,
-    elements: Vec<RichtextStateChunk>,
+    elements: SmallVec<[RichtextStateChunk; 1]>,
     style_ranges: Vec<(Arc<StyleOp>, Range<usize>)>,
     entity_index: usize,
 }
@@ -1105,6 +1115,68 @@ impl RichtextStateLoader {
 
     fn is_empty(&self) -> bool {
         self.elements.is_empty()
+    }
+
+    fn to_plain_string(&self) -> String {
+        let len = self
+            .elements
+            .iter()
+            .map(|elem| match elem {
+                RichtextStateChunk::Text(text) => text.bytes().len(),
+                RichtextStateChunk::Style { .. } => 0,
+            })
+            .sum();
+        let mut text = String::with_capacity(len);
+        for elem in &self.elements {
+            if let RichtextStateChunk::Text(chunk) = elem {
+                text.push_str(chunk.as_str());
+            }
+        }
+        text
+    }
+
+    fn try_apply_append_delta(&mut self, delta: &DeltaRope<RichtextStateChunk, ()>) -> bool {
+        let old_len = self.entity_index;
+        let mut current_len = self.entity_index;
+        let mut entity_index = 0;
+        let mut appended = Vec::new();
+        for span in delta.iter() {
+            match span {
+                loro_delta::DeltaItem::Retain { len, .. } => {
+                    entity_index += len;
+                    if entity_index > old_len {
+                        return false;
+                    }
+                }
+                loro_delta::DeltaItem::Replace { value, delete, .. } => {
+                    if *delete > 0 {
+                        return false;
+                    }
+
+                    let insert_len = value.rle_len();
+                    if insert_len == 0 {
+                        continue;
+                    }
+
+                    if entity_index != current_len {
+                        return false;
+                    }
+
+                    appended.push(value.clone());
+                    entity_index += insert_len;
+                    current_len += insert_len;
+                }
+            }
+        }
+
+        if appended.is_empty() {
+            return false;
+        }
+
+        for elem in appended {
+            self.push(elem);
+        }
+        true
     }
 }
 

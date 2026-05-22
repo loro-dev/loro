@@ -780,7 +780,7 @@ impl DocState {
 
     pub(crate) fn iter_all_containers_mut(
         &mut self,
-    ) -> impl Iterator<Item = (&ContainerIdx, &mut ContainerWrapper)> {
+    ) -> impl Iterator<Item = (ContainerIdx, &mut ContainerWrapper)> {
         self.store.iter_all_containers()
     }
 
@@ -832,6 +832,49 @@ impl DocState {
         self.store
             .get_value(container_idx)
             .unwrap_or_else(|| container_idx.get_type().default_value())
+    }
+
+    pub(crate) fn get_map_value_by_key(
+        &mut self,
+        container_idx: ContainerIdx,
+        key: &str,
+    ) -> Option<LoroValue> {
+        self.store.map_get(container_idx, key)
+    }
+
+    pub(crate) fn get_map_len(&mut self, container_idx: ContainerIdx) -> usize {
+        self.store.map_len(container_idx)
+    }
+
+    pub(crate) fn get_map_keys(&mut self, container_idx: ContainerIdx) -> Vec<InternalString> {
+        self.store.map_keys(container_idx)
+    }
+
+    pub(crate) fn get_map_values(&mut self, container_idx: ContainerIdx) -> Vec<LoroValue> {
+        self.store.map_values(container_idx)
+    }
+
+    pub(crate) fn get_map_entries(
+        &mut self,
+        container_idx: ContainerIdx,
+    ) -> Vec<(InternalString, LoroValue)> {
+        self.store.map_entries(container_idx)
+    }
+
+    pub(crate) fn get_list_value_at(
+        &mut self,
+        container_idx: ContainerIdx,
+        index: usize,
+    ) -> Option<LoroValue> {
+        self.store.list_get(container_idx, index)
+    }
+
+    pub(crate) fn get_list_len(&mut self, container_idx: ContainerIdx) -> usize {
+        self.store.list_len(container_idx)
+    }
+
+    pub(crate) fn get_list_values(&mut self, container_idx: ContainerIdx) -> Vec<LoroValue> {
+        self.store.list_values(container_idx)
     }
 
     /// Set the state of the container with the given container idx.
@@ -893,7 +936,7 @@ impl DocState {
             let diff: Vec<_> = self
                 .store
                 .iter_all_containers()
-                .map(|(&idx, state)| InternalContainerDiff {
+                .map(|(idx, state)| InternalContainerDiff {
                     idx,
                     bring_back: false,
                     diff: state
@@ -1032,7 +1075,7 @@ impl DocState {
     }
 
     pub(crate) fn preferred_root_containers(&mut self) -> Vec<ContainerIdx> {
-        let flag = self.store.load_all();
+        let flag = self.store.load_root_containers();
         let roots = self.arena.root_containers(flag);
         let mut selected = FxHashMap::default();
         let mut names = Vec::new();
@@ -1068,7 +1111,7 @@ impl DocState {
         &mut self,
         root_index: &InternalString,
     ) -> Option<ContainerIdx> {
-        let flag = self.store.load_all();
+        let flag = self.store.load_root_containers();
         let roots = self.arena.root_containers(flag);
         let mut selected = None;
 

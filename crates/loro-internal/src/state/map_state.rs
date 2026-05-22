@@ -2,6 +2,7 @@ use std::{collections::BTreeMap, sync::Weak};
 
 use loro_common::{ContainerID, IdLp, LoroResult, PeerID};
 use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 
 use crate::{
     configure::Configure,
@@ -16,11 +17,178 @@ use crate::{
 
 use super::{ApplyLocalOpReturn, ContainerState, DiffApplyContext};
 
+const TINY_MAP_MAX: usize = 4;
+
+#[derive(Debug, Clone)]
+enum MapEntries {
+    Tiny(SmallVec<[(InternalString, MapValue); 1]>),
+    Tree(BTreeMap<InternalString, MapValue>),
+}
+
+impl Default for MapEntries {
+    fn default() -> Self {
+        Self::Tiny(SmallVec::new())
+    }
+}
+
+enum MapEntriesIter<'a> {
+    Tiny(std::slice::Iter<'a, (InternalString, MapValue)>),
+    Tree(std::collections::btree_map::Iter<'a, InternalString, MapValue>),
+}
+
+impl<'a> Iterator for MapEntriesIter<'a> {
+    type Item = (&'a InternalString, &'a MapValue);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Tiny(iter) => iter.next().map(|(key, value)| (key, value)),
+            Self::Tree(iter) => iter.next(),
+        }
+    }
+}
+
+impl MapEntries {
+    fn is_empty(&self) -> bool {
+        match self {
+            Self::Tiny(entries) => entries.is_empty(),
+            Self::Tree(map) => map.is_empty(),
+        }
+    }
+
+    fn get(&self, key: &InternalString) -> Option<&MapValue> {
+        match self {
+            Self::Tiny(entries) => entries
+                .iter()
+                .find_map(|(entry_key, value)| (entry_key == key).then_some(value)),
+            Self::Tree(map) => map.get(key),
+        }
+    }
+
+    fn insert(&mut self, key: InternalString, value: MapValue) -> Option<MapValue> {
+        match self {
+            Self::Tiny(entries) => {
+                if let Some((_, old_value)) =
+                    entries.iter_mut().find(|(entry_key, _)| entry_key == &key)
+                {
+                    return Some(std::mem::replace(old_value, value));
+                }
+
+                if entries.len() < TINY_MAP_MAX {
+                    entries.push((key, value));
+                    return None;
+                }
+
+                let mut map = BTreeMap::new();
+                for (key, value) in entries.drain(..) {
+                    map.insert(key, value);
+                }
+                let result = map.insert(key, value);
+                *self = Self::Tree(map);
+                result
+            }
+            Self::Tree(map) => map.insert(key, value),
+        }
+    }
+
+    fn remove(&mut self, key: &InternalString) -> Option<MapValue> {
+        match self {
+            Self::Tiny(entries) => entries
+                .iter()
+                .position(|(entry_key, _)| entry_key == key)
+                .map(|index| entries.swap_remove(index).1),
+            Self::Tree(map) => {
+                let result = map.remove(key);
+                if result.is_some() && map.len() <= TINY_MAP_MAX {
+                    let entries = std::mem::take(map).into_iter().collect();
+                    *self = Self::Tiny(entries);
+                }
+                result
+            }
+        }
+    }
+
+    fn iter(&self) -> MapEntriesIter<'_> {
+        match self {
+            Self::Tiny(entries) => MapEntriesIter::Tiny(entries.iter()),
+            Self::Tree(map) => MapEntriesIter::Tree(map.iter()),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+enum ChildContainers {
+    Tiny(SmallVec<[(ContainerID, InternalString); 1]>),
+    Map(FxHashMap<ContainerID, InternalString>),
+}
+
+impl Default for ChildContainers {
+    fn default() -> Self {
+        Self::Tiny(SmallVec::new())
+    }
+}
+
+impl ChildContainers {
+    fn get(&self, id: &ContainerID) -> Option<&InternalString> {
+        match self {
+            Self::Tiny(entries) => entries
+                .iter()
+                .find_map(|(entry_id, key)| (entry_id == id).then_some(key)),
+            Self::Map(map) => map.get(id),
+        }
+    }
+
+    fn contains_key(&self, id: &ContainerID) -> bool {
+        self.get(id).is_some()
+    }
+
+    fn insert(&mut self, id: ContainerID, key: InternalString) -> Option<InternalString> {
+        match self {
+            Self::Tiny(entries) => {
+                if let Some((_, old_key)) = entries.iter_mut().find(|(entry_id, _)| entry_id == &id)
+                {
+                    return Some(std::mem::replace(old_key, key));
+                }
+
+                if entries.len() < TINY_MAP_MAX {
+                    entries.push((id, key));
+                    return None;
+                }
+
+                let mut map = FxHashMap::default();
+                for (id, key) in entries.drain(..) {
+                    map.insert(id, key);
+                }
+                let result = map.insert(id, key);
+                *self = Self::Map(map);
+                result
+            }
+            Self::Map(map) => map.insert(id, key),
+        }
+    }
+
+    fn remove(&mut self, id: &ContainerID) -> Option<InternalString> {
+        match self {
+            Self::Tiny(entries) => entries
+                .iter()
+                .position(|(entry_id, _)| entry_id == id)
+                .map(|index| entries.swap_remove(index).1),
+            Self::Map(map) => {
+                let result = map.remove(id);
+                if result.is_some() && map.len() <= TINY_MAP_MAX {
+                    let entries = std::mem::take(map).into_iter().collect();
+                    *self = Self::Tiny(entries);
+                }
+                result
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct MapState {
     idx: ContainerIdx,
-    map: BTreeMap<InternalString, MapValue>,
-    child_containers: FxHashMap<ContainerID, InternalString>,
+    map: MapEntries,
+    child_containers: ChildContainers,
     size: usize,
 }
 
@@ -119,9 +287,8 @@ impl ContainerState for MapState {
         Diff::Map(ResolvedMapDelta {
             updated: self
                 .map
-                .clone()
-                .into_iter()
-                .map(|(k, v)| (k, ResolvedMapValue::from_map_value(v, doc)))
+                .iter()
+                .map(|(k, v)| (k.clone(), ResolvedMapValue::from_map_value(v.clone(), doc)))
                 .collect::<FxHashMap<_, _>>(),
         })
     }
@@ -207,7 +374,7 @@ impl MapState {
         };
     }
 
-    pub fn iter(&self) -> std::collections::btree_map::Iter<'_, InternalString, MapValue> {
+    pub fn iter(&self) -> impl Iterator<Item = (&InternalString, &MapValue)> {
         self.map.iter()
     }
 
@@ -274,7 +441,7 @@ mod snapshot {
                 .collect_vec();
             postcard::to_io(&keys_with_none_value, &mut w).unwrap();
             let mut peer_register = ValueRegister::new();
-            for v in self.map.values() {
+            for (_, v) in self.map.iter() {
                 peer_register.register(&v.peer);
             }
 
@@ -282,7 +449,7 @@ mod snapshot {
             for p in peer_register.vec() {
                 w.write_all(&p.to_le_bytes()).unwrap();
             }
-            let mut keys: Vec<&InternalString> = self.map.keys().collect();
+            let mut keys: Vec<&InternalString> = self.map.iter().map(|(key, _)| key).collect();
             keys.sort_unstable();
             for key in keys.into_iter() {
                 let value = self.map.get(key).unwrap();
