@@ -22,6 +22,9 @@ mod text_checkout {
         peer_count: usize,
         change_count: usize,
         base_len: usize,
+        text_container_count: usize,
+        large_text_container_count: usize,
+        large_text_len: usize,
         version_count: usize,
         subscribed: bool,
     }
@@ -110,6 +113,13 @@ mod text_checkout {
         let peer_count = env_usize("LORO_TEXT_CHECKOUT_PEERS", 1000).max(1);
         let base_len = env_usize("LORO_TEXT_CHECKOUT_BASE_LEN", 8192).max(1);
         let sequential_changes = env_usize("LORO_TEXT_CHECKOUT_CHANGES", peer_count.max(1000));
+        let text_container_count = env_usize("LORO_TEXT_CHECKOUT_TEXT_CONTAINERS", 10_000).max(1);
+        let large_text_container_count =
+            env_usize("LORO_TEXT_CHECKOUT_LARGE_TEXT_CONTAINERS", 8).min(text_container_count);
+        let small_text_len = env_usize("LORO_TEXT_CHECKOUT_SMALL_TEXT_LEN", 8);
+        let large_text_len = env_usize("LORO_TEXT_CHECKOUT_LARGE_TEXT_LEN", 65_536);
+        let container_edit_count =
+            env_usize("LORO_TEXT_CHECKOUT_CONTAINER_EDITS", text_container_count).max(1);
 
         let mut group = c.benchmark_group("text checkout");
         group.sample_size(10);
@@ -164,6 +174,19 @@ mod text_checkout {
             "code/checkout-to-latest-linear",
             build_code_like_history(sequential_changes, base_len, 1, false),
         );
+        bench_checkout_latest_to_base_fixture(
+            &mut group,
+            "multi-container/latest-to-base",
+            build_many_text_container_history(
+                peer_count,
+                text_container_count,
+                large_text_container_count,
+                small_text_len,
+                large_text_len,
+                container_edit_count,
+                false,
+            ),
+        );
 
         group.finish();
     }
@@ -202,6 +225,45 @@ mod text_checkout {
                     }
 
                     start.elapsed()
+                });
+            },
+        );
+
+        let state_profile = doc.text_state_profile("text");
+        maybe_report_profile(name, stats, &totals, state_profile);
+    }
+
+    fn bench_checkout_latest_to_base_fixture(
+        group: &mut BenchmarkGroup<'_, WallTime>,
+        name: &str,
+        fixture: CheckoutFixture,
+    ) {
+        let CheckoutFixture {
+            doc,
+            frontiers,
+            stats,
+            _subscription,
+        } = fixture;
+        let base_frontier = frontiers.first().unwrap().clone();
+        let latest_frontier = frontiers.last().unwrap().clone();
+        let mut totals = ProfileTotals::default();
+
+        group.bench_with_input(
+            BenchmarkId::new(name, stats.version_count),
+            &base_frontier,
+            |b, base_frontier| {
+                b.iter_custom(|iters| {
+                    let mut measured = Duration::ZERO;
+                    for _ in 0..iters {
+                        doc.checkout(&latest_frontier).unwrap();
+                        let start = std::time::Instant::now();
+                        let profile = doc.checkout_with_profile(base_frontier).unwrap();
+                        measured += start.elapsed();
+                        totals.add(profile);
+                        black_box(profile);
+                    }
+
+                    measured
                 });
             },
         );
@@ -294,6 +356,9 @@ mod text_checkout {
                 peer_count,
                 change_count: peer_count,
                 base_len,
+                text_container_count: 1,
+                large_text_container_count: 0,
+                large_text_len: 0,
                 version_count: peer_count + 1,
                 subscribed,
             },
@@ -315,9 +380,8 @@ mod text_checkout {
         let mut frontiers = Vec::with_capacity(peer_count + 1);
         frontiers.push(doc.oplog_frontiers());
         let mut rng = StdRng::seed_from_u64(6);
-        let mut len = base_len;
 
-        for peer in 0..peer_count {
+        for (peer, len) in (0..peer_count).zip(base_len..) {
             let snapshot = doc.export(ExportMode::snapshot()).unwrap();
             let base_vv = doc.oplog_vv();
             let peer_doc = doc_from_snapshot(&snapshot, peer as PeerID + 2);
@@ -327,7 +391,6 @@ mod text_checkout {
             peer_doc.commit_then_renew();
             let update = peer_doc.export(ExportMode::updates(&base_vv)).unwrap();
             doc.import(&update).unwrap();
-            len += 1;
             frontiers.push(doc.oplog_frontiers());
         }
 
@@ -339,6 +402,9 @@ mod text_checkout {
                 peer_count,
                 change_count: peer_count,
                 base_len,
+                text_container_count: 1,
+                large_text_container_count: 0,
+                large_text_len: 0,
                 version_count: peer_count + 1,
                 subscribed,
             },
@@ -386,6 +452,9 @@ mod text_checkout {
                 peer_count,
                 change_count: peer_count,
                 base_len,
+                text_container_count: 1,
+                large_text_container_count: 0,
+                large_text_len: 0,
                 version_count: peer_count + 1,
                 subscribed,
             },
@@ -425,6 +494,9 @@ mod text_checkout {
                 peer_count,
                 change_count: peer_count,
                 base_len,
+                text_container_count: 1,
+                large_text_container_count: 0,
+                large_text_len: 0,
                 version_count: peer_count + 1,
                 subscribed,
             },
@@ -478,7 +550,75 @@ mod text_checkout {
                 peer_count: 1,
                 change_count,
                 base_len,
+                text_container_count: 1,
+                large_text_container_count: 0,
+                large_text_len: 0,
                 version_count: change_count + 1,
+                subscribed,
+            },
+            subscribed,
+        )
+    }
+
+    fn build_many_text_container_history(
+        peer_count: usize,
+        text_container_count: usize,
+        large_text_container_count: usize,
+        small_text_len: usize,
+        large_text_len: usize,
+        edit_count: usize,
+        subscribed: bool,
+    ) -> CheckoutFixture {
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        let small_text = repeated_text(small_text_len);
+        let large_text = repeated_text(large_text_len);
+        let mut texts = Vec::with_capacity(text_container_count);
+        let mut lens = Vec::with_capacity(text_container_count);
+
+        for idx in 0..text_container_count {
+            let name = text_container_name(idx);
+            let text = doc.get_text(name.as_str());
+            let initial = if idx < large_text_container_count {
+                &large_text
+            } else {
+                &small_text
+            };
+            if !initial.is_empty() {
+                text.insert(0, initial, PosType::Unicode).unwrap();
+            }
+            texts.push(text);
+            lens.push(initial.chars().count());
+        }
+
+        doc.commit_then_renew();
+        let mut frontiers = Vec::with_capacity(edit_count + 1);
+        frontiers.push(doc.oplog_frontiers());
+        let mut rng = StdRng::seed_from_u64(0x7e57_c001);
+
+        for edit in 0..edit_count {
+            let peer = edit % peer_count;
+            doc.set_peer_id(peer as PeerID + 2).unwrap();
+            let text_idx = edit % text_container_count;
+            let pos = rng.gen_range(0..=lens[text_idx]);
+            texts[text_idx].insert(pos, "x", PosType::Unicode).unwrap();
+            lens[text_idx] += 1;
+            doc.commit_then_renew();
+            frontiers.push(doc.oplog_frontiers());
+        }
+
+        attach_subscription(
+            doc,
+            frontiers,
+            FixtureStats {
+                scenario: "many text containers with wide multi-peer checkout",
+                peer_count,
+                change_count: edit_count,
+                base_len: small_text_len,
+                text_container_count,
+                large_text_container_count,
+                large_text_len,
+                version_count: edit_count + 1,
                 subscribed,
             },
             subscribed,
@@ -543,6 +683,14 @@ mod text_checkout {
         out
     }
 
+    fn text_container_name(index: usize) -> String {
+        if index == 0 {
+            "text".to_string()
+        } else {
+            format!("text_{index}")
+        }
+    }
+
     fn env_usize(name: &str, default: usize) -> usize {
         std::env::var(name)
             .ok()
@@ -562,15 +710,16 @@ mod text_checkout {
 
         let samples = totals.samples as u32;
         let state_profile = state_profile.unwrap_or_default();
-        let avg_future_scan_visited = if totals.richtext_insert_future_scan_count == 0 {
-            0
-        } else {
-            totals.richtext_insert_future_scan_visited / totals.richtext_insert_future_scan_count
-        };
+        let avg_future_scan_visited = totals
+            .richtext_insert_future_scan_visited
+            .checked_div(totals.richtext_insert_future_scan_count)
+            .unwrap_or(0);
         eprintln!(
             concat!(
                 "[text-checkout-profile] {name}: scenario={scenario}, peers={peers}, ",
                 "changes={changes}, base_len={base_len}, versions={versions}, ",
+                "text_containers={text_containers}, large_text_containers={large_text_containers}, ",
+                "large_text_len={large_text_len}, ",
                 "subscribed={subscribed}, samples={samples}, avg_total={avg_total:?}, ",
                 "avg_frontier_prepare={avg_frontier_prepare:?}, ",
                 "avg_frontiers_to_vv={avg_frontiers_to_vv:?}, avg_diff_calc={avg_diff_calc:?}, ",
@@ -601,6 +750,9 @@ mod text_checkout {
             changes = stats.change_count,
             base_len = stats.base_len,
             versions = stats.version_count,
+            text_containers = stats.text_container_count,
+            large_text_containers = stats.large_text_container_count,
+            large_text_len = stats.large_text_len,
             subscribed = stats.subscribed,
             samples = totals.samples,
             avg_total = totals.total / samples,
