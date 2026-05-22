@@ -12,7 +12,8 @@ use itertools::Itertools;
 
 use enum_dispatch::enum_dispatch;
 use loro_common::{
-    CompactIdLp, ContainerID, Counter, HasCounterSpan, IdFull, IdLp, IdSpan, LoroValue, PeerID, ID,
+    CompactIdLp, ContainerID, Counter, CounterSpan, HasCounterSpan, IdFull, IdLp, IdSpan,
+    LoroValue, PeerID, ID,
 };
 use loro_delta::DeltaRope;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -26,7 +27,8 @@ use crate::{
         list::list_op::InnerListOp,
         richtext::{
             richtext_state::{RichtextStateChunk, TextChunk},
-            AnchorType, CrdtRopeDelta, RichtextChunk, RichtextChunkValue, RichtextTracker, StyleOp,
+            AnchorType, CrdtRopeDelta, PeerSpanCoverage, RichtextChunk, RichtextChunkValue,
+            RichtextTracker, StyleOp,
         },
     },
     cursor::AbsolutePosition,
@@ -65,6 +67,11 @@ pub(crate) mod profiling {
         pub richtext_insert_future_scan_max_visited: usize,
         pub causal_vv_materialize_count: u64,
         pub max_causal_vv_width: usize,
+        pub richtext_tracker_span_count: u64,
+        pub richtext_tracker_filtered_span_count: u64,
+        pub richtext_tracker_skipped_span_count: u64,
+        pub richtext_id_to_cursor_iter_count: u64,
+        pub richtext_id_to_cursor_empty_iter_count: u64,
     }
 
     thread_local! {
@@ -126,6 +133,33 @@ pub(crate) mod profiling {
                 profile.causal_vv_materialize += duration;
                 profile.causal_vv_materialize_count += 1;
                 profile.max_causal_vv_width = profile.max_causal_vv_width.max(width);
+            }
+        });
+    }
+
+    pub(crate) fn record_richtext_tracker_span_filter(input: usize, filtered: usize) {
+        PROFILE.with(|profile| {
+            if let Some(profile) = profile.borrow_mut().as_mut() {
+                profile.richtext_tracker_span_count += input as u64;
+                profile.richtext_tracker_filtered_span_count += filtered as u64;
+                profile.richtext_tracker_skipped_span_count +=
+                    input.saturating_sub(filtered) as u64;
+            }
+        });
+    }
+
+    pub(crate) fn record_richtext_id_to_cursor_iter_call() {
+        PROFILE.with(|profile| {
+            if let Some(profile) = profile.borrow_mut().as_mut() {
+                profile.richtext_id_to_cursor_iter_count += 1;
+            }
+        });
+    }
+
+    pub(crate) fn record_richtext_id_to_cursor_empty_iter() {
+        PROFILE.with(|profile| {
+            if let Some(profile) = profile.borrow_mut().as_mut() {
+                profile.richtext_id_to_cursor_empty_iter_count += 1;
             }
         });
     }
@@ -635,6 +669,7 @@ use rle::{HasLength as _, Sliceable};
 pub(crate) struct ListDiffCalculator {
     start_vv: VersionVector,
     tracker: Box<RichtextTracker>,
+    coverage: PeerSpanCoverage,
 }
 
 impl ListDiffCalculator {
@@ -664,9 +699,10 @@ impl DiffCalculatorTrait for ListDiffCalculator {
         if !vv.includes_vv(&self.start_vv) || !self.tracker.all_vv().includes_vv(vv) {
             *self.tracker = RichtextTracker::new_with_unknown();
             self.start_vv = vv.clone();
+            self.coverage.clear();
         }
 
-        self.tracker.checkout(vv);
+        richtext_tracker_checkout_with_coverage(&mut self.tracker, vv, &self.coverage);
     }
 
     fn apply_change(
@@ -676,7 +712,7 @@ impl DiffCalculatorTrait for ListDiffCalculator {
         vv: Option<CausalVersion<'_>>,
     ) {
         if let Some(vv) = vv {
-            self.tracker.checkout_causal(vv);
+            richtext_tracker_checkout_causal_with_coverage(&mut self.tracker, vv, &self.coverage);
         }
 
         match &op.op().content {
@@ -701,6 +737,8 @@ impl DiffCalculatorTrait for ListDiffCalculator {
             },
             _ => unreachable!(),
         }
+
+        record_op_coverage(&mut self.coverage, &op);
     }
 
     fn finish_this_round(&mut self) {}
@@ -713,7 +751,15 @@ impl DiffCalculatorTrait for ListDiffCalculator {
         mut on_new_container: impl FnMut(&ContainerID),
     ) -> (InternalDiff, DiffMode) {
         let mut delta = Delta::new();
-        for item in self.tracker.diff(info.from_vv, info.to_vv) {
+        let diff_iter = if self.coverage.is_empty() {
+            Either::Left(self.tracker.diff(info.from_vv, info.to_vv))
+        } else {
+            Either::Right(
+                self.tracker
+                    .diff_with_coverage(info.from_vv, info.to_vv, &self.coverage),
+            )
+        };
+        for item in diff_iter {
             match item {
                 CrdtRopeDelta::Retain(len) => {
                     delta = delta.retain(len);
@@ -844,6 +890,7 @@ enum RichtextCalcMode {
         /// (op, end_pos)
         styles: Vec<(StyleOp, usize)>,
         start_vv: VersionVector,
+        coverage: PeerSpanCoverage,
     },
     Linear {
         diff: DeltaRope<RichtextStateChunk, ()>,
@@ -859,6 +906,7 @@ impl RichtextDiffCalculator {
                 tracker: Box::new(RichtextTracker::new_with_unknown()),
                 styles: Vec::new(),
                 start_vv: VersionVector::new(),
+                coverage: PeerSpanCoverage::default(),
             }),
         }
     }
@@ -877,27 +925,105 @@ impl RichtextDiffCalculator {
 }
 
 #[cfg(feature = "test_utils")]
-fn richtext_tracker_checkout(tracker: &mut RichtextTracker, vv: &VersionVector) {
+fn richtext_tracker_checkout_with_coverage(
+    tracker: &mut RichtextTracker,
+    vv: &VersionVector,
+    coverage: &PeerSpanCoverage,
+) {
     let start = std::time::Instant::now();
-    tracker.checkout(vv);
+    if coverage.is_empty() {
+        tracker.checkout(vv);
+    } else {
+        tracker.checkout_with_coverage(vv, coverage);
+    }
     profiling::record_richtext_tracker_checkout(start.elapsed());
 }
 
 #[cfg(feature = "test_utils")]
-fn richtext_tracker_checkout_causal(tracker: &mut RichtextTracker, vv: CausalVersion<'_>) {
+fn richtext_tracker_checkout_causal_with_coverage(
+    tracker: &mut RichtextTracker,
+    vv: CausalVersion<'_>,
+    coverage: &PeerSpanCoverage,
+) {
     let start = std::time::Instant::now();
-    tracker.checkout_causal(vv);
+    if coverage.is_empty() {
+        tracker.checkout_causal(vv);
+    } else {
+        tracker.checkout_causal_with_coverage(vv, coverage);
+    }
     profiling::record_richtext_tracker_checkout(start.elapsed());
 }
 
 #[cfg(not(feature = "test_utils"))]
-fn richtext_tracker_checkout(tracker: &mut RichtextTracker, vv: &VersionVector) {
-    tracker.checkout(vv);
+fn richtext_tracker_checkout_with_coverage(
+    tracker: &mut RichtextTracker,
+    vv: &VersionVector,
+    coverage: &PeerSpanCoverage,
+) {
+    if coverage.is_empty() {
+        tracker.checkout(vv);
+    } else {
+        tracker.checkout_with_coverage(vv, coverage);
+    }
 }
 
 #[cfg(not(feature = "test_utils"))]
-fn richtext_tracker_checkout_causal(tracker: &mut RichtextTracker, vv: CausalVersion<'_>) {
-    tracker.checkout_causal(vv);
+fn richtext_tracker_checkout_causal_with_coverage(
+    tracker: &mut RichtextTracker,
+    vv: CausalVersion<'_>,
+    coverage: &PeerSpanCoverage,
+) {
+    if coverage.is_empty() {
+        tracker.checkout_causal(vv);
+    } else {
+        tracker.checkout_causal_with_coverage(vv, coverage);
+    }
+}
+
+fn seed_coverage_from_state_chunks(coverage: &mut PeerSpanCoverage, chunks: &[RichtextStateChunk]) {
+    coverage.clear();
+    for chunk in chunks {
+        let RichtextStateChunk::Text(text) = chunk else {
+            continue;
+        };
+        let id = text.id();
+        record_coverage_span(
+            coverage,
+            IdSpan::new(
+                id.peer,
+                id.counter,
+                id.counter + text.unicode_len() as Counter,
+            ),
+        );
+    }
+}
+
+fn record_op_coverage(coverage: &mut PeerSpanCoverage, op: &crate::op::RichOp<'_>) {
+    record_coverage_span(
+        coverage,
+        IdSpan::new(
+            op.peer,
+            op.counter(),
+            op.counter() + op.atom_len() as Counter,
+        ),
+    );
+}
+
+fn record_coverage_span(coverage: &mut PeerSpanCoverage, span: IdSpan) {
+    if span.peer == PeerID::MAX || span.atom_len() == 0 {
+        return;
+    }
+
+    let start = span.counter.min();
+    let end = span.counter.norm_end();
+    coverage
+        .entry(span.peer)
+        .and_modify(|coverage| {
+            let start = coverage.min().min(start);
+            let end = coverage.norm_end().max(end);
+            *coverage = CounterSpan::new(start, end);
+        })
+        .or_insert_with(|| CounterSpan::new(start, end));
 }
 
 impl DiffCalculatorTrait for RichtextDiffCalculator {
@@ -926,6 +1052,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                 tracker,
                 styles,
                 start_vv,
+                coverage,
             } => {
                 let shallow_root_vv = oplog.dag().frontiers_to_vv(oplog.shallow_since_frontiers());
                 if shallow_root_vv.as_ref() == Some(vv) {
@@ -939,7 +1066,8 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                             **tracker = seeded_tracker;
                             *styles = seeded_styles;
                             *start_vv = vv.clone();
-                            richtext_tracker_checkout(tracker, vv);
+                            seed_coverage_from_state_chunks(coverage, &chunks);
+                            richtext_tracker_checkout_with_coverage(tracker, vv, coverage);
                             return;
                         }
                     }
@@ -949,9 +1077,10 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                     **tracker = RichtextTracker::new_with_unknown();
                     styles.clear();
                     *start_vv = vv.clone();
+                    coverage.clear();
                 }
 
-                richtext_tracker_checkout(tracker, vv);
+                richtext_tracker_checkout_with_coverage(tracker, vv, coverage);
             }
             RichtextCalcMode::Linear { .. } => {}
         }
@@ -1062,9 +1191,10 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                 tracker,
                 styles,
                 start_vv: _,
+                coverage,
             } => {
                 if let Some(vv) = vv {
-                    richtext_tracker_checkout_causal(tracker, vv);
+                    richtext_tracker_checkout_causal_with_coverage(tracker, vv, coverage);
                 }
                 match &op.raw_op().content {
                     crate::op::InnerContent::List(l) => match l {
@@ -1181,6 +1311,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                     },
                     _ => unreachable!(),
                 }
+                record_op_coverage(coverage, &op);
             }
         }
     }
@@ -1198,12 +1329,19 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                 DiffMode::Linear,
             ),
             RichtextCalcMode::Crdt {
-                tracker, styles, ..
+                tracker,
+                styles,
+                coverage,
+                ..
             } => {
                 let mut delta = DeltaRope::new();
                 #[cfg(feature = "test_utils")]
                 let tracker_diff_start = std::time::Instant::now();
-                let diff_iter = tracker.diff(info.from_vv, info.to_vv);
+                let diff_iter = if coverage.is_empty() {
+                    Either::Left(tracker.diff(info.from_vv, info.to_vv))
+                } else {
+                    Either::Right(tracker.diff_with_coverage(info.from_vv, info.to_vv, coverage))
+                };
                 #[cfg(feature = "test_utils")]
                 profiling::record_richtext_tracker_diff(tracker_diff_start.elapsed());
                 #[cfg(feature = "test_utils")]
@@ -1337,9 +1475,10 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
         if !vv.includes_vv(&self.list.start_vv) || !self.list.tracker.all_vv().includes_vv(vv) {
             *self.list.tracker = RichtextTracker::new_with_unknown();
             self.list.start_vv = vv.clone();
+            self.list.coverage.clear();
         }
 
-        self.list.tracker.checkout(vv);
+        richtext_tracker_checkout_with_coverage(&mut self.list.tracker, vv, &self.list.coverage);
         self.inner.current_mode = mode;
     }
 
@@ -1433,13 +1572,19 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
             // Apply change on the list items
             let this = &mut self.list;
             if let Some(vv) = vv {
-                this.tracker.checkout_causal(vv);
+                richtext_tracker_checkout_causal_with_coverage(
+                    &mut this.tracker,
+                    vv,
+                    &this.coverage,
+                );
             }
 
             let real_op = op.op();
+            let mut updates_tracker = false;
             match &real_op.content {
                 crate::op::InnerContent::List(l) => match l {
                     InnerListOp::Insert { slice, pos } => {
+                        updates_tracker = true;
                         this.tracker.insert(
                             op.id_full(),
                             *pos,
@@ -1447,6 +1592,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                         );
                     }
                     InnerListOp::Delete(del) => {
+                        updates_tracker = true;
                         this.tracker.delete(
                             op.id_start(),
                             del.id_start,
@@ -1456,6 +1602,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                         );
                     }
                     InnerListOp::Move { from, elem_id, to } => {
+                        updates_tracker = true;
                         self.inner.move_id_to_elem_id.insert(op.id(), *elem_id);
                         if !this.tracker.current_vv().includes_id(op.id()) {
                             let last_pos = if is_checkout {
@@ -1502,6 +1649,9 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                     | InnerListOp::StyleEnd => unreachable!(),
                 },
                 _ => unreachable!(),
+            }
+            if updates_tracker {
+                record_op_coverage(&mut this.coverage, &op);
             }
         };
     }

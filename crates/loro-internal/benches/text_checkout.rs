@@ -61,6 +61,11 @@ mod text_checkout {
         richtext_insert_future_scan_visited: u64,
         richtext_insert_future_scan_max_visited: usize,
         causal_vv_materialize_count: u64,
+        richtext_tracker_span_count: u64,
+        richtext_tracker_filtered_span_count: u64,
+        richtext_tracker_skipped_span_count: u64,
+        richtext_id_to_cursor_iter_count: u64,
+        richtext_id_to_cursor_empty_iter_count: u64,
         recording_event_samples: u64,
         forward_diff_calculator_samples: u64,
     }
@@ -100,6 +105,13 @@ mod text_checkout {
                 .richtext_insert_future_scan_max_visited
                 .max(profile.richtext_insert_future_scan_max_visited);
             self.causal_vv_materialize_count += profile.causal_vv_materialize_count;
+            self.richtext_tracker_span_count += profile.richtext_tracker_span_count;
+            self.richtext_tracker_filtered_span_count +=
+                profile.richtext_tracker_filtered_span_count;
+            self.richtext_tracker_skipped_span_count += profile.richtext_tracker_skipped_span_count;
+            self.richtext_id_to_cursor_iter_count += profile.richtext_id_to_cursor_iter_count;
+            self.richtext_id_to_cursor_empty_iter_count +=
+                profile.richtext_id_to_cursor_empty_iter_count;
             if profile.recording_events {
                 self.recording_event_samples += 1;
             }
@@ -737,6 +749,9 @@ mod text_checkout {
                 "richtext_insert_future_scan_calls={richtext_insert_future_scan_calls}, ",
                 "avg_future_scan_visited={avg_future_scan_visited}, ",
                 "max_future_scan_visited={max_future_scan_visited}, ",
+                "tracker_spans={tracker_spans}, filtered_tracker_spans={filtered_tracker_spans}, ",
+                "skipped_tracker_spans={skipped_tracker_spans}, id_to_cursor_iters={id_to_cursor_iters}, ",
+                "empty_id_to_cursor_iters={empty_id_to_cursor_iters}, ",
                 "max_frontiers_width={max_frontiers_width}, max_vv_width={max_vv_width}, ",
                 "max_diff_containers={max_diff_containers}, recording_event_samples={recording_event_samples}, ",
                 "forward_diff_calculator_samples={forward_diff_calculator_samples}, ",
@@ -774,6 +789,11 @@ mod text_checkout {
             richtext_insert_future_scan_calls = totals.richtext_insert_future_scan_count,
             avg_future_scan_visited = avg_future_scan_visited,
             max_future_scan_visited = totals.richtext_insert_future_scan_max_visited,
+            tracker_spans = totals.richtext_tracker_span_count,
+            filtered_tracker_spans = totals.richtext_tracker_filtered_span_count,
+            skipped_tracker_spans = totals.richtext_tracker_skipped_span_count,
+            id_to_cursor_iters = totals.richtext_id_to_cursor_iter_count,
+            empty_id_to_cursor_iters = totals.richtext_id_to_cursor_empty_iter_count,
             max_frontiers_width = totals.max_frontiers_width,
             max_vv_width = totals.max_vv_width,
             max_diff_containers = totals.max_diff_container_count,

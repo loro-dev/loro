@@ -4,8 +4,9 @@ use generic_btree::{
     rle::{HasLength as _, Sliceable},
     LeafIndex,
 };
-use loro_common::{Counter, HasId, HasIdSpan, IdFull, IdSpan, Lamport, PeerID, ID};
+use loro_common::{Counter, CounterSpan, HasId, HasIdSpan, IdFull, IdSpan, Lamport, PeerID, ID};
 use rle::HasLength as _;
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use tracing::instrument;
 
@@ -22,6 +23,8 @@ use super::{
 mod crdt_rope;
 mod id_to_cursor;
 pub(crate) use crdt_rope::CrdtRopeDelta;
+
+pub(crate) type PeerSpanCoverage = FxHashMap<PeerID, CounterSpan>;
 
 #[derive(Debug)]
 pub(crate) struct Tracker {
@@ -377,22 +380,58 @@ impl Tracker {
     /// Forward spans use the normal `[start, end)` representation. Retreat spans
     /// must use `CounterSpan`'s reversed representation for the same covered ids.
     pub(crate) fn checkout_peer_spans(&mut self, spans: &[IdSpan]) {
-        self._checkout_peer_spans(spans, false);
+        self._checkout_peer_spans(spans, false, None);
+    }
+
+    pub(crate) fn checkout_with_coverage(
+        &mut self,
+        vv: &VersionVector,
+        coverage: &PeerSpanCoverage,
+    ) {
+        let spans = self.checkout_spans_to_version(vv);
+        self.checkout_peer_spans_with_coverage(&spans, coverage);
+    }
+
+    pub(crate) fn checkout_peer_spans_with_coverage(
+        &mut self,
+        spans: &[IdSpan],
+        coverage: &PeerSpanCoverage,
+    ) {
+        self._checkout_peer_spans(spans, false, Some(coverage));
+    }
+
+    pub(crate) fn checkout_causal_with_coverage(
+        &mut self,
+        vv: CausalVersion<'_>,
+        coverage: &PeerSpanCoverage,
+    ) {
+        let spans = self.checkout_spans_to_causal(vv);
+        self.checkout_peer_spans_with_coverage(&spans, coverage);
     }
 
     fn _checkout(&mut self, vv: &VersionVector, on_diff_status: bool) {
         // tracing::info!("Checkout to {:?} from {:?}", vv, self.current_vv);
-        let mut spans: SmallVec<[IdSpan; 4]> = SmallVec::new();
-        spans.extend(self.current_vv.sub_iter(vv).map(reversed_span));
-        spans.extend(vv.sub_iter(&self.current_vv));
+        let spans = self.checkout_spans_to_version(vv);
         if on_diff_status {
-            self._checkout_peer_spans(&spans, true);
+            self._checkout_peer_spans(&spans, true, None);
         } else {
             self.checkout_peer_spans(&spans);
         }
     }
 
     fn _checkout_causal(&mut self, vv: CausalVersion<'_>, on_diff_status: bool) {
+        let spans = self.checkout_spans_to_causal(vv);
+        self._checkout_peer_spans(&spans, on_diff_status, None);
+    }
+
+    fn checkout_spans_to_version(&self, vv: &VersionVector) -> SmallVec<[IdSpan; 4]> {
+        let mut spans: SmallVec<[IdSpan; 4]> = SmallVec::new();
+        spans.extend(self.current_vv.sub_iter(vv).map(reversed_span));
+        spans.extend(vv.sub_iter(&self.current_vv));
+        spans
+    }
+
+    fn checkout_spans_to_causal(&self, vv: CausalVersion<'_>) -> SmallVec<[IdSpan; 4]> {
         let mut spans: SmallVec<[IdSpan; 4]> = SmallVec::new();
         for (&peer, &counter) in self.current_vv.iter() {
             let target_end = vv.end_for_peer(peer);
@@ -421,18 +460,29 @@ impl Tracker {
             }
         }
 
-        self._checkout_peer_spans(&spans, on_diff_status);
+        spans
     }
 
-    fn _checkout_peer_spans(&mut self, spans: &[IdSpan], on_diff_status: bool) {
+    fn _checkout_peer_spans(
+        &mut self,
+        spans: &[IdSpan],
+        on_diff_status: bool,
+        coverage: Option<&PeerSpanCoverage>,
+    ) {
         debug_assert_no_mixed_peer_directions(spans);
         if on_diff_status {
             self.rope.clear_diff_status();
         }
 
+        let filtered_spans = filter_spans_by_coverage(spans, coverage);
+        #[cfg(feature = "test_utils")]
+        crate::diff_calc::profiling::record_richtext_tracker_span_filter(
+            spans.len(),
+            filtered_spans.len(),
+        );
         let mut current_vv = std::mem::take(&mut self.current_vv);
         let mut updates = Vec::new();
-        for &span in spans.iter().filter(|span| span.is_reversed()) {
+        for &span in filtered_spans.iter().filter(|span| span.is_reversed()) {
             for c in self.id_to_cursor.iter(span) {
                 match c {
                     id_to_cursor::IterCursor::Insert { leaf, id_span } => {
@@ -519,7 +569,7 @@ impl Tracker {
             }
         }
 
-        for &span in spans.iter().filter(|span| !span.is_reversed()) {
+        for &span in filtered_spans.iter().filter(|span| !span.is_reversed()) {
             self.forward(span, &mut updates);
         }
 
@@ -731,11 +781,53 @@ impl Tracker {
 
         self.rope.get_diff()
     }
+
+    pub(crate) fn diff_with_coverage(
+        &mut self,
+        from: &VersionVector,
+        to: &VersionVector,
+        coverage: &PeerSpanCoverage,
+    ) -> impl Iterator<Item = CrdtRopeDelta> + '_ {
+        let spans = self.checkout_spans_to_version(from);
+        self._checkout_peer_spans(&spans, false, Some(coverage));
+        let spans = self.checkout_spans_to_version(to);
+        self._checkout_peer_spans(&spans, true, Some(coverage));
+
+        self.rope.get_diff()
+    }
 }
 
 fn reversed_span(mut span: IdSpan) -> IdSpan {
     span.reverse();
     span
+}
+
+fn filter_spans_by_coverage(
+    spans: &[IdSpan],
+    coverage: Option<&PeerSpanCoverage>,
+) -> SmallVec<[IdSpan; 4]> {
+    match coverage {
+        Some(coverage) => spans
+            .iter()
+            .filter_map(|span| intersect_span_with_coverage(*span, coverage))
+            .collect(),
+        None => spans.iter().copied().collect(),
+    }
+}
+
+fn intersect_span_with_coverage(span: IdSpan, coverage: &PeerSpanCoverage) -> Option<IdSpan> {
+    let coverage = coverage.get(&span.peer)?;
+    let start = span.counter.min().max(coverage.min());
+    let end = span.counter.norm_end().min(coverage.norm_end());
+    if start >= end {
+        return None;
+    }
+
+    let mut ans = IdSpan::new(span.peer, start, end);
+    if span.is_reversed() {
+        ans.reverse();
+    }
+    Some(ans)
 }
 
 #[cfg(debug_assertions)]
@@ -810,6 +902,39 @@ mod test {
 
         assert_eq!(t.rope.len(), 6);
         assert_eq!(t.current_vv, vv!(1 => 4, 2 => 2));
+    }
+
+    #[test]
+    fn span_coverage_intersection_preserves_direction() {
+        let mut coverage = PeerSpanCoverage::default();
+        coverage.insert(1, CounterSpan::new(3, 6));
+
+        assert_eq!(
+            intersect_span_with_coverage(IdSpan::new(1, 0, 10), &coverage),
+            Some(IdSpan::new(1, 3, 6))
+        );
+
+        let reversed = reversed_span(IdSpan::new(1, 0, 10));
+        let expected = reversed_span(IdSpan::new(1, 3, 6));
+        assert_eq!(
+            intersect_span_with_coverage(reversed, &coverage),
+            Some(expected)
+        );
+    }
+
+    #[test]
+    fn coverage_filtered_checkout_still_updates_current_vv() {
+        let mut t = Tracker::new();
+        t.insert(IdFull::new(1, 0, 0), 0, RichtextChunk::new_text(0..4));
+        t.current_vv.set_end(ID::new(2, 5));
+        assert_eq!(t.current_vv, vv!(1 => 4, 2 => 5));
+
+        let mut coverage = PeerSpanCoverage::default();
+        coverage.insert(1, CounterSpan::new(0, 4));
+        t.checkout_peer_spans_with_coverage(&[reversed_span(IdSpan::new(2, 0, 5))], &coverage);
+
+        assert_eq!(t.rope.len(), 4);
+        assert_eq!(t.current_vv, vv!(1 => 4));
     }
 
     #[test]
