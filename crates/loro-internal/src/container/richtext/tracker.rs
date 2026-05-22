@@ -938,6 +938,34 @@ mod test {
     }
 
     #[test]
+    fn coverage_filtered_diff_matches_unfiltered_for_delete_span() {
+        fn tracker_with_delete() -> Tracker {
+            let mut t = Tracker::new();
+            t.insert(IdFull::new(1, 0, 0), 0, RichtextChunk::new_text(0..10));
+            t.delete(ID::new(2, 0), ID::NONE_ID, 0, 10, true);
+            t
+        }
+
+        let from = vv!(1 => 10);
+        let to = vv!(1 => 10, 2 => 10);
+        let mut unfiltered = tracker_with_delete();
+        let mut filtered = tracker_with_delete();
+
+        let mut coverage = PeerSpanCoverage::default();
+        coverage.insert(1, CounterSpan::new(0, 10));
+        coverage.insert(2, CounterSpan::new(0, 10));
+
+        let unfiltered_delta = unfiltered.diff(&from, &to).collect::<Vec<_>>();
+        let filtered_delta = filtered
+            .diff_with_coverage(&from, &to, &coverage)
+            .collect::<Vec<_>>();
+
+        assert_eq!(filtered_delta, unfiltered_delta);
+        assert_eq!(filtered.current_vv, unfiltered.current_vv);
+        assert_eq!(filtered.rope.len(), unfiltered.rope.len());
+    }
+
+    #[test]
     fn test_retreat_and_forward_delete() {
         let mut t = Tracker::new();
         t.insert(IdFull::new(1, 0, 0), 0, RichtextChunk::new_text(0..10));
