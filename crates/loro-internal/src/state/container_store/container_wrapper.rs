@@ -1,5 +1,7 @@
 use bytes::Bytes;
-use loro_common::{ContainerID, ContainerType, InternalString, LoroResult, LoroValue};
+use loro_common::{
+    ContainerID, ContainerType, InternalString, LoroMapValue, LoroResult, LoroValue,
+};
 use tracing::trace;
 
 #[cfg(feature = "counter")]
@@ -35,6 +37,21 @@ struct LazyContainerData {
     value: Option<LoroValue>,
     bytes_offset_for_value: Option<usize>,
     bytes_offset_for_state: Option<usize>,
+}
+
+fn sorted_lazy_map_entry_refs(map: &LoroMapValue) -> Vec<(&String, &LoroValue)> {
+    let mut entries: Vec<_> = map.iter().collect();
+    entries.sort_unstable_by(|(left_key, _), (right_key, _)| left_key.cmp(right_key));
+    entries
+}
+
+fn sorted_lazy_map_owned_entries(map: LoroMapValue) -> Vec<(InternalString, LoroValue)> {
+    let mut entries: Vec<_> = map.unwrap().into_iter().collect();
+    entries.sort_unstable_by(|(left_key, _), (right_key, _)| left_key.cmp(right_key));
+    entries
+        .into_iter()
+        .map(|(key, value)| (key.into(), value))
+        .collect()
 }
 
 impl ContainerWrapper {
@@ -148,11 +165,10 @@ impl ContainerWrapper {
                 .filter_map(|(key, value)| value.value.is_some().then(|| key.clone()))
                 .collect(),
             ContainerData::Lazy(_) => match self.get_value(idx, ctx) {
-                LoroValue::Map(map) => {
-                    let mut keys: Vec<_> = map.keys().map(|key| key.as_str().into()).collect();
-                    keys.sort_unstable();
-                    keys
-                }
+                LoroValue::Map(map) => sorted_lazy_map_entry_refs(&map)
+                    .into_iter()
+                    .map(|(key, _)| key.as_str().into())
+                    .collect(),
                 _ => Vec::new(),
             },
         }
@@ -171,15 +187,10 @@ impl ContainerWrapper {
                 .filter_map(|(_, value)| value.value.clone())
                 .collect(),
             ContainerData::Lazy(_) => match self.get_value(idx, ctx) {
-                LoroValue::Map(map) => {
-                    let mut entries: Vec<_> = map.iter().collect();
-                    entries
-                        .sort_unstable_by(|(left_key, _), (right_key, _)| left_key.cmp(right_key));
-                    entries
-                        .into_iter()
-                        .map(|(_, value)| value.clone())
-                        .collect()
-                }
+                LoroValue::Map(map) => sorted_lazy_map_entry_refs(&map)
+                    .into_iter()
+                    .map(|(_, value)| value.clone())
+                    .collect(),
                 _ => Vec::new(),
             },
         }
@@ -198,15 +209,7 @@ impl ContainerWrapper {
                 .filter_map(|(key, value)| value.value.clone().map(|value| (key.clone(), value)))
                 .collect(),
             ContainerData::Lazy(_) => match self.get_value(idx, ctx) {
-                LoroValue::Map(map) => {
-                    let mut entries: Vec<_> = map.unwrap().into_iter().collect();
-                    entries
-                        .sort_unstable_by(|(left_key, _), (right_key, _)| left_key.cmp(right_key));
-                    entries
-                        .into_iter()
-                        .map(|(key, value)| (key.into(), value))
-                        .collect()
-                }
+                LoroValue::Map(map) => sorted_lazy_map_owned_entries(map),
                 _ => Vec::new(),
             },
         }

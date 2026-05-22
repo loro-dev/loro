@@ -26,7 +26,6 @@ const TINY_LIST_MAX: usize = 4;
 pub struct ListState {
     idx: ContainerIdx,
     list: ListEntries,
-    child_container_to_index: FxHashMap<ContainerID, ListChildIndex>,
 }
 
 impl Clone for ListState {
@@ -34,7 +33,6 @@ impl Clone for ListState {
         Self {
             idx: self.idx,
             list: self.list.clone(),
-            child_container_to_index: self.child_container_to_index.clone(),
         }
     }
 }
@@ -142,37 +140,44 @@ impl UseLengthFinder<ListImpl> for ListImpl {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-enum ListChildIndex {
-    Tiny(usize),
-    Tree(LeafIndex),
-}
-
 #[derive(Debug, Clone)]
 enum ListEntries {
-    Tiny(SmallVec<[Elem; 1]>),
-    Tree(BTree<ListImpl>),
+    Tiny {
+        entries: SmallVec<[Elem; 1]>,
+        child_container_to_index: FxHashMap<ContainerID, usize>,
+    },
+    Tree {
+        tree: BTree<ListImpl>,
+        child_container_to_index: FxHashMap<ContainerID, LeafIndex>,
+    },
 }
 
 impl ListEntries {
+    fn new_tiny() -> Self {
+        Self::Tiny {
+            entries: SmallVec::new(),
+            child_container_to_index: Default::default(),
+        }
+    }
+
     fn is_empty(&self) -> bool {
         match self {
-            Self::Tiny(entries) => entries.is_empty(),
-            Self::Tree(tree) => tree.is_empty(),
+            Self::Tiny { entries, .. } => entries.is_empty(),
+            Self::Tree { tree, .. } => tree.is_empty(),
         }
     }
 
     fn len(&self) -> usize {
         match self {
-            Self::Tiny(entries) => entries.len(),
-            Self::Tree(tree) => *tree.root_cache() as usize,
+            Self::Tiny { entries, .. } => entries.len(),
+            Self::Tree { tree, .. } => *tree.root_cache() as usize,
         }
     }
 
     fn iter(&self) -> Box<dyn Iterator<Item = &Elem> + '_> {
         match self {
-            Self::Tiny(entries) => Box::new(entries.iter()),
-            Self::Tree(tree) => Box::new(tree.iter()),
+            Self::Tiny { entries, .. } => Box::new(entries.iter()),
+            Self::Tree { tree, .. } => Box::new(tree.iter()),
         }
     }
 }
@@ -181,48 +186,52 @@ impl ListState {
     pub fn new(idx: ContainerIdx) -> Self {
         Self {
             idx,
-            list: ListEntries::Tiny(SmallVec::new()),
-            child_container_to_index: Default::default(),
+            list: ListEntries::new_tiny(),
         }
     }
 
     fn rebuild_tiny_child_index(&mut self) {
-        self.child_container_to_index.clear();
-        let ListEntries::Tiny(entries) = &self.list else {
+        let ListEntries::Tiny {
+            entries,
+            child_container_to_index,
+        } = &mut self.list
+        else {
             return;
         };
 
+        child_container_to_index.clear();
         for (index, elem) in entries.iter().enumerate() {
             if let LoroValue::Container(id) = &elem.v {
-                self.child_container_to_index
-                    .insert(id.clone(), ListChildIndex::Tiny(index));
+                child_container_to_index.insert(id.clone(), index);
             }
         }
     }
 
     fn upgrade_to_tree(&mut self) {
-        let ListEntries::Tiny(entries) =
-            std::mem::replace(&mut self.list, ListEntries::Tiny(SmallVec::new()))
+        let ListEntries::Tiny { entries, .. } =
+            std::mem::replace(&mut self.list, ListEntries::new_tiny())
         else {
             return;
         };
 
         let mut tree = BTree::new();
-        self.child_container_to_index.clear();
+        let mut child_container_to_index = FxHashMap::default();
         for elem in entries {
             let container = elem.v.as_container().cloned();
             let leaf = tree.push(elem);
             if let Some(container) = container {
-                self.child_container_to_index
-                    .insert(container, ListChildIndex::Tree(leaf.leaf));
+                child_container_to_index.insert(container, leaf.leaf);
             }
         }
 
-        self.list = ListEntries::Tree(tree);
+        self.list = ListEntries::Tree {
+            tree,
+            child_container_to_index,
+        };
     }
 
     fn downgrade_tree_if_tiny(&mut self) {
-        let ListEntries::Tree(tree) = &self.list else {
+        let ListEntries::Tree { tree, .. } = &self.list else {
             return;
         };
 
@@ -231,33 +240,46 @@ impl ListState {
         }
 
         let entries = tree.iter().cloned().collect();
-        self.list = ListEntries::Tiny(entries);
+        self.list = ListEntries::Tiny {
+            entries,
+            child_container_to_index: Default::default(),
+        };
         self.rebuild_tiny_child_index();
     }
 
     pub fn contains_child_container(&self, id: &ContainerID) -> bool {
-        let Some(index) = self.child_container_to_index.get(id) else {
-            return false;
-        };
-
-        match (index, &self.list) {
-            (ListChildIndex::Tiny(index), ListEntries::Tiny(entries)) => entries
-                .get(*index)
-                .is_some_and(|elem| elem.v.as_container() == Some(id)),
-            (ListChildIndex::Tree(leaf), ListEntries::Tree(tree)) => tree.get_elem(*leaf).is_some(),
-            _ => false,
+        match &self.list {
+            ListEntries::Tiny {
+                entries,
+                child_container_to_index,
+            } => child_container_to_index.get(id).is_some_and(|index| {
+                entries
+                    .get(*index)
+                    .is_some_and(|elem| elem.v.as_container() == Some(id))
+            }),
+            ListEntries::Tree {
+                tree,
+                child_container_to_index,
+            } => child_container_to_index
+                .get(id)
+                .is_some_and(|leaf| tree.get_elem(*leaf).is_some()),
         }
     }
 
     pub fn get_child_container_index(&self, id: &ContainerID) -> Option<usize> {
-        let index = *self.child_container_to_index.get(id)?;
-        let (leaf, list) = match (index, &self.list) {
-            (ListChildIndex::Tiny(index), ListEntries::Tiny(entries)) => {
+        let (leaf, list) = match &self.list {
+            ListEntries::Tiny {
+                entries,
+                child_container_to_index,
+            } => {
+                let index = *child_container_to_index.get(id)?;
                 entries.get(index)?;
                 return Some(index);
             }
-            (ListChildIndex::Tree(leaf), ListEntries::Tree(list)) => (leaf, list),
-            _ => return None,
+            ListEntries::Tree {
+                tree,
+                child_container_to_index,
+            } => (*child_container_to_index.get(id)?, tree),
         };
 
         list.get_elem(leaf)?;
@@ -280,7 +302,7 @@ impl ListState {
             panic!("Index {index} out of range. The length is {}", self.len());
         }
 
-        if let ListEntries::Tiny(entries) = &mut self.list {
+        if let ListEntries::Tiny { entries, .. } = &mut self.list {
             if entries.len() < TINY_LIST_MAX {
                 entries.insert(
                     index,
@@ -296,10 +318,14 @@ impl ListState {
             self.upgrade_to_tree();
         }
 
-        let ListEntries::Tree(list) = &mut self.list else {
+        let ListEntries::Tree {
+            tree,
+            child_container_to_index,
+        } = &mut self.list
+        else {
             unreachable!()
         };
-        let (leaf, data) = list.insert::<LengthFinder>(
+        let (leaf, data) = tree.insert::<LengthFinder>(
             &index,
             Elem {
                 v: value.clone(),
@@ -308,17 +334,14 @@ impl ListState {
         );
 
         if value.is_container() {
-            self.child_container_to_index.insert(
-                value.into_container().unwrap(),
-                ListChildIndex::Tree(leaf.leaf),
-            );
+            child_container_to_index.insert(value.into_container().unwrap(), leaf.leaf);
         }
 
         assert!(data.arr.is_empty());
     }
 
     pub fn push(&mut self, value: LoroValue, id: IdFull) {
-        if let ListEntries::Tiny(entries) = &mut self.list {
+        if let ListEntries::Tiny { entries, .. } = &mut self.list {
             if entries.len() < TINY_LIST_MAX {
                 entries.push(Elem {
                     v: value.clone(),
@@ -331,37 +354,41 @@ impl ListState {
             self.upgrade_to_tree();
         }
 
-        let ListEntries::Tree(list) = &mut self.list else {
+        let ListEntries::Tree {
+            tree,
+            child_container_to_index,
+        } = &mut self.list
+        else {
             unreachable!()
         };
-        let leaf = list.push(Elem {
+        let leaf = tree.push(Elem {
             v: value.clone(),
             id,
         });
 
         if value.is_container() {
-            self.child_container_to_index.insert(
-                value.into_container().unwrap(),
-                ListChildIndex::Tree(leaf.leaf),
-            );
+            child_container_to_index.insert(value.into_container().unwrap(), leaf.leaf);
         }
     }
 
     pub fn delete(&mut self, index: usize) -> LoroValue {
-        if let ListEntries::Tiny(entries) = &mut self.list {
+        if let ListEntries::Tiny { entries, .. } = &mut self.list {
             let elem = entries.remove(index);
             self.rebuild_tiny_child_index();
             return elem.v;
         }
 
-        let ListEntries::Tree(list) = &mut self.list else {
+        let ListEntries::Tree {
+            tree,
+            child_container_to_index,
+        } = &mut self.list
+        else {
             unreachable!()
         };
-        let leaf = list.query::<LengthFinder>(&index);
-        let leaf = list.remove_leaf(leaf.unwrap().cursor).unwrap();
+        let leaf = tree.query::<LengthFinder>(&index);
+        let leaf = tree.remove_leaf(leaf.unwrap().cursor).unwrap();
         if leaf.v.is_container() {
-            self.child_container_to_index
-                .remove(leaf.v.as_container().unwrap());
+            child_container_to_index.remove(leaf.v.as_container().unwrap());
         }
         self.downgrade_tree_if_tiny();
         leaf.v
@@ -383,7 +410,7 @@ impl ListState {
             std::ops::Bound::Unbounded => self.len(),
         };
 
-        if let ListEntries::Tiny(entries) = &mut self.list {
+        if let ListEntries::Tiny { entries, .. } = &mut self.list {
             for elem in entries.drain(start..end) {
                 if let LoroValue::Container(c) = elem.v {
                     if let Some(notify_deletion) = &mut notify_deletion {
@@ -404,16 +431,19 @@ impl ListState {
             return;
         }
 
-        let ListEntries::Tree(list) = &mut self.list else {
+        let ListEntries::Tree {
+            tree,
+            child_container_to_index,
+        } = &mut self.list
+        else {
             unreachable!()
         };
         let q = start..end;
-        let start1 = list.query::<LengthFinder>(&q.start);
-        let end1 = list.query::<LengthFinder>(&q.end);
-        for v in iter::Drain::new(list, start1, end1) {
+        let start1 = tree.query::<LengthFinder>(&q.start);
+        let end1 = tree.query::<LengthFinder>(&q.end);
+        for v in iter::Drain::new(tree, start1, end1) {
             if v.v.is_container() {
-                self.child_container_to_index
-                    .remove(v.v.as_container().unwrap());
+                child_container_to_index.remove(v.v.as_container().unwrap());
                 if let Some(notify_deletion) = &mut notify_deletion {
                     notify_deletion.push(v.v.into_container().unwrap());
                 }
@@ -455,11 +485,11 @@ impl ListState {
 
     pub fn get(&self, index: usize) -> Option<&LoroValue> {
         match &self.list {
-            ListEntries::Tiny(entries) => entries.get(index).map(|elem| &elem.v),
-            ListEntries::Tree(list) => {
-                let result = list.query::<LengthFinder>(&index)?;
+            ListEntries::Tiny { entries, .. } => entries.get(index).map(|elem| &elem.v),
+            ListEntries::Tree { tree, .. } => {
+                let result = tree.query::<LengthFinder>(&index)?;
                 if result.found {
-                    Some(&result.elem(list).unwrap().v)
+                    Some(&result.elem(tree).unwrap().v)
                 } else {
                     None
                 }
@@ -469,11 +499,11 @@ impl ListState {
 
     pub fn get_id_at(&self, index: usize) -> Option<IdFull> {
         match &self.list {
-            ListEntries::Tiny(entries) => entries.get(index).map(|elem| elem.id),
-            ListEntries::Tree(list) => {
-                let result = list.query::<LengthFinder>(&index)?;
+            ListEntries::Tiny { entries, .. } => entries.get(index).map(|elem| elem.id),
+            ListEntries::Tree { tree, .. } => {
+                let result = tree.query::<LengthFinder>(&index)?;
                 if result.found {
-                    Some(result.elem(list).unwrap().id)
+                    Some(result.elem(tree).unwrap().id)
                 } else {
                     None
                 }

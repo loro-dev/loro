@@ -11,16 +11,22 @@ use super::ContainerWrapper;
 /// The invariants about this struct:
 ///
 /// - `kv` is either the same or older than `store`.
-/// - if `all_loaded` is true, then `store` contains all the entries from `kv`
+/// - if `load_state` is `AllLoaded`, then `store` contains all the entries from `kv`
 ///
 /// Invariants: it should be agnostic to the users of this struct whether a container is stored in `kv` or `store`
 pub(crate) struct InnerStore {
     arena: SharedArena,
     store: Vec<Option<ContainerWrapper>>,
     kv: KvWrapper,
-    all_loaded: bool,
-    roots_loaded: bool,
+    load_state: LoadState,
     config: Configure,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LoadState {
+    Lazy,
+    RootsLoaded,
+    AllLoaded,
 }
 
 impl std::fmt::Debug for InnerStore {
@@ -85,7 +91,7 @@ impl InnerStore {
         if self.get_entry_mut(idx).is_none() {
             let id = self.arena.get_container_id(idx).unwrap();
             let key = id.to_bytes();
-            let container = if !self.all_loaded {
+            let container = if self.load_state != LoadState::AllLoaded {
                 self.kv
                     .get(&key)
                     .map(ContainerWrapper::new_from_bytes)
@@ -108,7 +114,7 @@ impl InnerStore {
             return;
         }
 
-        if !self.all_loaded {
+        if self.load_state != LoadState::AllLoaded {
             let id = self.arena.get_container_id(idx).unwrap();
             let key = id.to_bytes();
             if let Some(v) = self.kv.get(&key) {
@@ -123,7 +129,7 @@ impl InnerStore {
     }
 
     pub(crate) fn get_mut(&mut self, idx: ContainerIdx) -> Option<&mut ContainerWrapper> {
-        if self.get_entry_mut(idx).is_none() && !self.all_loaded {
+        if self.get_entry_mut(idx).is_none() && self.load_state != LoadState::AllLoaded {
             let id = self.arena.get_container_id(idx).unwrap();
             let key = id.to_bytes();
             if let Some(v) = self.kv.get(&key) {
@@ -144,7 +150,7 @@ impl InnerStore {
             return Some(f(entry));
         }
 
-        if !self.all_loaded {
+        if self.load_state != LoadState::AllLoaded {
             let id = self.arena.get_container_id(idx).unwrap();
             let key = id.to_bytes();
             if let Some(v) = self.kv.get(&key) {
@@ -163,7 +169,7 @@ impl InnerStore {
             }
         }
 
-        if !self.all_loaded {
+        if self.load_state != LoadState::AllLoaded {
             let key = id.to_bytes();
             return self.kv.contains_key(&key);
         }
@@ -257,8 +263,7 @@ impl InnerStore {
             }));
 
         self.store.clear();
-        self.all_loaded = false;
-        self.roots_loaded = false;
+        self.load_state = LoadState::Lazy;
         Ok(fr)
     }
 
@@ -293,13 +298,12 @@ impl InnerStore {
             });
         });
 
-        self.all_loaded = true;
-        self.roots_loaded = true;
+        self.load_state = LoadState::AllLoaded;
         Ok(())
     }
 
     pub fn load_all(&mut self) {
-        if self.all_loaded {
+        if self.load_state == LoadState::AllLoaded {
             return;
         }
 
@@ -323,12 +327,11 @@ impl InnerStore {
             });
         });
 
-        self.all_loaded = true;
-        self.roots_loaded = true;
+        self.load_state = LoadState::AllLoaded;
     }
 
     pub fn load_roots(&mut self) {
-        if self.all_loaded || self.roots_loaded {
+        if self.load_state != LoadState::Lazy {
             return;
         }
 
@@ -344,7 +347,7 @@ impl InnerStore {
                 }
             });
         });
-        self.roots_loaded = true;
+        self.load_state = LoadState::RootsLoaded;
     }
 
     pub(crate) fn can_import_snapshot(&self) -> bool {
@@ -365,8 +368,7 @@ impl InnerStore {
             arena,
             store: Vec::new(),
             kv: KvWrapper::new_mem(),
-            all_loaded: true,
-            roots_loaded: true,
+            load_state: LoadState::AllLoaded,
             config,
         }
     }

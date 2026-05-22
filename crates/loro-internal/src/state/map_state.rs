@@ -21,18 +21,18 @@ const TINY_MAP_MAX: usize = 4;
 
 #[derive(Debug, Clone)]
 enum MapEntries {
-    Tiny(SmallVec<[(InternalString, MapValue); 1]>),
+    SortedTiny(SmallVec<[(InternalString, MapValue); 1]>),
     Tree(BTreeMap<InternalString, MapValue>),
 }
 
 impl Default for MapEntries {
     fn default() -> Self {
-        Self::Tiny(SmallVec::new())
+        Self::SortedTiny(SmallVec::new())
     }
 }
 
 enum MapEntriesIter<'a> {
-    Tiny(std::slice::Iter<'a, (InternalString, MapValue)>),
+    SortedTiny(std::slice::Iter<'a, (InternalString, MapValue)>),
     Tree(std::collections::btree_map::Iter<'a, InternalString, MapValue>),
 }
 
@@ -41,36 +41,50 @@ impl<'a> Iterator for MapEntriesIter<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
-            Self::Tiny(iter) => iter.next().map(|(key, value)| (key, value)),
+            Self::SortedTiny(iter) => iter.next().map(|(key, value)| (key, value)),
             Self::Tree(iter) => iter.next(),
         }
     }
 }
 
 impl MapEntries {
+    fn debug_assert_sorted_tiny(entries: &[(InternalString, MapValue)]) {
+        debug_assert!(entries.windows(2).all(|pair| {
+            let left = &pair[0].0;
+            let right = &pair[1].0;
+            left < right
+        }));
+    }
+
     fn is_empty(&self) -> bool {
         match self {
-            Self::Tiny(entries) => entries.is_empty(),
+            Self::SortedTiny(entries) => entries.is_empty(),
             Self::Tree(map) => map.is_empty(),
         }
     }
 
     fn get(&self, key: &InternalString) -> Option<&MapValue> {
         match self {
-            Self::Tiny(entries) => entries
-                .iter()
-                .find_map(|(entry_key, value)| (entry_key == key).then_some(value)),
+            Self::SortedTiny(entries) => {
+                Self::debug_assert_sorted_tiny(entries);
+                entries
+                    .binary_search_by(|(entry_key, _)| entry_key.cmp(key))
+                    .ok()
+                    .map(|index| &entries[index].1)
+            }
             Self::Tree(map) => map.get(key),
         }
     }
 
     fn insert(&mut self, key: InternalString, value: MapValue) -> Option<MapValue> {
         match self {
-            Self::Tiny(entries) => {
+            Self::SortedTiny(entries) => {
+                Self::debug_assert_sorted_tiny(entries);
                 match entries.binary_search_by(|(entry_key, _)| entry_key.cmp(&key)) {
                     Ok(index) => return Some(std::mem::replace(&mut entries[index].1, value)),
                     Err(index) if entries.len() < TINY_MAP_MAX => {
                         entries.insert(index, (key, value));
+                        Self::debug_assert_sorted_tiny(entries);
                         return None;
                     }
                     Err(_) => {}
@@ -90,15 +104,18 @@ impl MapEntries {
 
     fn remove(&mut self, key: &InternalString) -> Option<MapValue> {
         match self {
-            Self::Tiny(entries) => entries
-                .binary_search_by(|(entry_key, _)| entry_key.cmp(key))
-                .ok()
-                .map(|index| entries.remove(index).1),
+            Self::SortedTiny(entries) => {
+                Self::debug_assert_sorted_tiny(entries);
+                entries
+                    .binary_search_by(|(entry_key, _)| entry_key.cmp(key))
+                    .ok()
+                    .map(|index| entries.remove(index).1)
+            }
             Self::Tree(map) => {
                 let result = map.remove(key);
                 if result.is_some() && map.len() <= TINY_MAP_MAX {
                     let entries = std::mem::take(map).into_iter().collect();
-                    *self = Self::Tiny(entries);
+                    *self = Self::SortedTiny(entries);
                 }
                 result
             }
@@ -107,7 +124,10 @@ impl MapEntries {
 
     fn iter(&self) -> MapEntriesIter<'_> {
         match self {
-            Self::Tiny(entries) => MapEntriesIter::Tiny(entries.iter()),
+            Self::SortedTiny(entries) => {
+                Self::debug_assert_sorted_tiny(entries);
+                MapEntriesIter::SortedTiny(entries.iter())
+            }
             Self::Tree(map) => MapEntriesIter::Tree(map.iter()),
         }
     }
