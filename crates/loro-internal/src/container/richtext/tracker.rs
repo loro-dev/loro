@@ -145,11 +145,7 @@ impl TrackerMaterializedVersion {
     }
 
     #[cfg(test)]
-    fn checkout_peer_spans_without_coverage(
-        &mut self,
-        tracker: &mut Tracker,
-        spans: &[IdSpan],
-    ) {
+    fn checkout_peer_spans_without_coverage(&mut self, tracker: &mut Tracker, spans: &[IdSpan]) {
         self.checkout_peer_spans(tracker, spans, None);
     }
 
@@ -405,16 +401,19 @@ impl Tracker {
         //     &content
         // );
         // tracing::span!(tracing::Level::INFO, "TrackerInsert");
-        if let ControlFlow::Break(_) =
-            self.skip_applied(materialized, op_id.id(), content.len(), |applied_counter_end| {
+        if let ControlFlow::Break(_) = self.skip_applied(
+            materialized,
+            op_id.id(),
+            content.len(),
+            |applied_counter_end| {
                 // the op is partially included, need to slice the content
                 let start = (applied_counter_end - op_id.counter) as usize;
                 op_id.lamport += (applied_counter_end - op_id.counter) as Lamport;
                 op_id.counter = applied_counter_end;
                 pos += start;
                 content = content.slice(start..);
-            })
-        {
+            },
+        ) {
             return;
         }
 
@@ -1083,10 +1082,7 @@ mod test {
         assert_eq!(t.rope.len(), 4);
 
         let base = ImVersionVector::new();
-        materialized.checkout_to_causal_without_coverage(
-            &mut t,
-            CausalVersion::new(&base, 1, 2),
-        );
+        materialized.checkout_to_causal_without_coverage(&mut t, CausalVersion::new(&base, 1, 2));
 
         assert_eq!(t.rope.len(), 2);
         assert_eq!(materialized.as_vv(), &vv!(1 => 2));
@@ -1210,7 +1206,15 @@ mod test {
     fn test_retreat_and_forward_delete() {
         let (mut t, mut materialized) = tracker();
         insert_text(&mut t, &mut materialized, IdFull::new(1, 0, 0), 0, 0..10);
-        delete_text(&mut t, &mut materialized, ID::new(2, 0), ID::NONE_ID, 0, 10, true);
+        delete_text(
+            &mut t,
+            &mut materialized,
+            ID::new(2, 0),
+            ID::NONE_ID,
+            0,
+            10,
+            true,
+        );
         materialized.checkout_to_version_without_coverage(&mut t, &vv!(1 => 10, 2=>5));
         assert_eq!(t.rope.len(), 5);
         materialized.checkout_to_version_without_coverage(&mut t, &vv!(1 => 10, 2=>0));
@@ -1239,7 +1243,15 @@ mod test {
     fn test_checkout_in_doc_with_del_span() {
         let (mut t, mut materialized) = tracker();
         insert_text(&mut t, &mut materialized, IdFull::new(1, 0, 0), 0, 0..10);
-        delete_text(&mut t, &mut materialized, ID::new(2, 0), ID::NONE_ID, 0, 10, false);
+        delete_text(
+            &mut t,
+            &mut materialized,
+            ID::new(2, 0),
+            ID::NONE_ID,
+            0,
+            10,
+            false,
+        );
         materialized.checkout_to_version_without_coverage(&mut t, &vv!(1 => 10, 2=>4));
         let v: Vec<FugueSpan> = t.rope.tree().iter().copied().collect();
         assert_eq!(v.len(), 2);

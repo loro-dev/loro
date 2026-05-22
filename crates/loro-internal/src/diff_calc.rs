@@ -150,8 +150,9 @@ pub(crate) mod profiling {
                     input.saturating_sub(filtered) as u64;
                 profile.richtext_tracker_max_span_count =
                     profile.richtext_tracker_max_span_count.max(input);
-                profile.richtext_tracker_max_filtered_span_count =
-                    profile.richtext_tracker_max_filtered_span_count.max(filtered);
+                profile.richtext_tracker_max_filtered_span_count = profile
+                    .richtext_tracker_max_filtered_span_count
+                    .max(filtered);
             }
         });
     }
@@ -1048,39 +1049,36 @@ fn record_coverage_span(coverage: &mut PeerSpanCoverage, span: IdSpan) {
 fn version_includes_covered_start(
     target: &VersionVector,
     start: &VersionVector,
-    coverage: &PeerSpanCoverage,
+    _coverage: &PeerSpanCoverage,
 ) -> bool {
-    // `start_vv` may include unrelated ops from the same peers. Only peers that
-    // have container-local coverage are relevant for deciding whether the
-    // reusable tracker can be moved from its stable lower bound.
-    coverage.keys().all(|peer| {
-        let start_end = start.get(peer).copied().unwrap_or(0);
-        let target_end = target.get(peer).copied().unwrap_or(0);
-        target_end >= start_end
-    })
+    // `start_vv` is the lower bound used when the reusable tracker was last
+    // rebuilt from unknown. Even though tracker checkout only applies covered
+    // spans, the tracker sequence can contain positional anchors that are needed
+    // to replay later covered ops. Reusing it before this full lower bound risks
+    // preserving anchors from a future version.
+    target.includes_vv(start)
 }
 
 fn tracker_has_covered_ops(
     tracker: &RichtextTracker,
     target: &VersionVector,
-    coverage: &PeerSpanCoverage,
+    _coverage: &PeerSpanCoverage,
 ) -> bool {
-    if coverage.is_empty() {
-        // No coverage means the tracker has no container-local proof for ops
-        // included by a non-empty start version. Reset so `start_vv` records
-        // this lower bound. Later checkouts before that bound rebuild from unknown.
-        return target.is_empty();
+    // Coverage is only a filter for tracker checkout work; it is not a proof
+    // that every earlier op affecting positions has been materialized. Reusing
+    // a tracker across a causal gap can make later positional ops, such as text
+    // deletes or movable-list moves, apply against the wrong local sequence.
+    tracker.all_vv().includes_vv(target)
+}
+
+fn materialize_causal_version(vv: CausalVersion<'_>) -> VersionVector {
+    let mut version = VersionVector::from_im_vv(vv.base());
+    let peer_end = vv.peer_end();
+    if peer_end > version.get(&vv.peer()).copied().unwrap_or(0) {
+        version.insert(vv.peer(), peer_end);
     }
 
-    coverage.iter().all(|(&peer, span)| {
-        let target_end = target.get(&peer).copied().unwrap_or(0);
-        let required_end = target_end.min(span.norm_end());
-        required_end <= span.min()
-            || tracker
-                .all_vv()
-                .get(&peer)
-                .is_some_and(|&applied_end| applied_end >= required_end)
-    })
+    version
 }
 
 impl DiffCalculatorTrait for RichtextDiffCalculator {
@@ -1663,6 +1661,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
         {
             // Apply change on the list items
             let this = &mut self.list;
+            let causal_lookup_vv = vv.map(materialize_causal_version);
             if let Some(vv) = vv {
                 richtext_tracker_checkout_causal_with_coverage(
                     &mut this.tracker,
@@ -1704,9 +1703,12 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                                 // TODO: PERF: this lookup can be optimized
                                 oplog.with_history_cache(|h| {
                                     let list = &h.get_checkout_index().movable_list;
+                                    let lookup_vv = causal_lookup_vv
+                                        .as_ref()
+                                        .unwrap_or(this.materialized.as_vv());
                                     list.last_pos(
                                         *elem_id,
-                                        this.materialized.as_vv(),
+                                        lookup_vv,
                                         // TODO: PERF: Provide the lamport of to version
                                         Lamport::MAX,
                                         oplog,
