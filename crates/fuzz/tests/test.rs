@@ -10173,6 +10173,35 @@ fn shallow_arb_test() {
 }
 
 #[test]
+fn shallow_import_after_empty_shallow_export_and_text_edit_converges() {
+    test_multi_sites_with_gc(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            Commit { site: 54 },
+            ExportShallow { site: 160 },
+            Handle {
+                site: 85,
+                target: 222,
+                container: 228,
+                action: Generic(GenericAction {
+                    value: Container(Map),
+                    bool: false,
+                    key: 441515985,
+                    pos: 11802333225252155855,
+                    length: 9719789893245689708,
+                    prop: 1572726038975133702,
+                }),
+            },
+            ImportShallow {
+                site: 21,
+                from: 240,
+            },
+        ],
+    )
+}
+
+#[test]
 fn shallow_fuzz_snapshot_after_shallow_import_and_diff_apply() {
     test_multi_sites_with_gc(
         5,
