@@ -4648,6 +4648,7 @@ mod test {
 
     use super::{
         Handler, HandlerTrait, ListHandler, MapHandler, MovableListHandler, TextDelta, TextHandler,
+        ValueOrHandler,
     };
     use crate::container::list::list_op::ListOp;
     use crate::cursor::PosType;
@@ -4952,6 +4953,13 @@ mod test {
                         "char_at {pos_type:?} pos {pos}"
                     );
                 }
+                for end in pos..=decoded_text.len(pos_type) {
+                    assert_eq!(
+                        lazy_text.slice(pos, end, pos_type),
+                        decoded_text.slice(pos, end, pos_type),
+                        "slice {pos_type:?} {pos}..{end}"
+                    );
+                }
             }
         }
     }
@@ -4981,6 +4989,59 @@ mod test {
         assert!(!text.attached_handler().unwrap().has_decoded_state());
         assert!(!map.attached_handler().unwrap().has_decoded_state());
         assert!(!list.attached_handler().unwrap().has_decoded_state());
+    }
+
+    #[test]
+    fn lazy_value_reads_do_not_write_stale_snapshot_after_mutation() {
+        let loro = LoroDoc::new_auto_commit();
+        let map = loro.get_map("map");
+        map.insert("key", "old").unwrap();
+        let child = map
+            .insert_container("child", MapHandler::new_detached())
+            .unwrap();
+        child.insert("nested", "old").unwrap();
+        let list = loro.get_list("list");
+        list.push("old").unwrap();
+        let child_list = list.push_container(ListHandler::new_detached()).unwrap();
+        child_list.push("nested-old").unwrap();
+
+        let restored = LoroDoc::new();
+        restored
+            .import(&loro.export(ExportMode::snapshot()).unwrap())
+            .unwrap();
+        let map = restored.get_map("map");
+        let list = restored.get_list("list");
+
+        assert_eq!(map.get("key").unwrap(), "old".into());
+        assert_eq!(list.get(0).unwrap(), "old".into());
+        let child = match map.get_("child").unwrap() {
+            ValueOrHandler::Handler(handler) => handler.into_map().unwrap(),
+            ValueOrHandler::Value(value) => panic!("expected child map, got {value:?}"),
+        };
+        let child_list = match list.get_(1).unwrap() {
+            ValueOrHandler::Handler(handler) => handler.into_list().unwrap(),
+            ValueOrHandler::Value(value) => panic!("expected child list, got {value:?}"),
+        };
+
+        map.insert("key", "new").unwrap();
+        child.insert("nested", "new").unwrap();
+        list.delete(0, 1).unwrap();
+        list.insert(0, "new").unwrap();
+        child_list.delete(0, 1).unwrap();
+        child_list.insert(0, "nested-new").unwrap();
+        restored.commit_then_renew();
+
+        let roundtrip = LoroDoc::new();
+        roundtrip
+            .import(&restored.export(ExportMode::snapshot()).unwrap())
+            .unwrap();
+        assert_eq!(
+            roundtrip.get_deep_value().to_json_value(),
+            serde_json::json!({
+                "map": { "key": "new", "child": { "nested": "new" } },
+                "list": ["new", ["nested-new"]]
+            })
+        );
     }
 
     #[test]
