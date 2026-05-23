@@ -949,9 +949,17 @@ impl LoroDoc {
     #[inline]
     pub fn get_handler(&self, id: ContainerID) -> Option<Handler> {
         if self.has_container(&id) {
+            self.ensure_root_container(&id);
             Some(Handler::new_attached(id, self.clone()))
         } else {
             None
+        }
+    }
+
+    #[inline]
+    fn ensure_root_container(&self, id: &ContainerID) {
+        if id.is_root() {
+            self.state.lock().ensure_container(id);
         }
     }
 
@@ -963,6 +971,7 @@ impl LoroDoc {
         if !self.has_container(&id) {
             return None;
         }
+        self.ensure_root_container(&id);
         Handler::new_attached(id, self.clone()).into_text().ok()
     }
 
@@ -982,6 +991,7 @@ impl LoroDoc {
         if !self.has_container(&id) {
             return None;
         }
+        self.ensure_root_container(&id);
         Handler::new_attached(id, self.clone()).into_list().ok()
     }
 
@@ -1001,6 +1011,7 @@ impl LoroDoc {
         if !self.has_container(&id) {
             return None;
         }
+        self.ensure_root_container(&id);
         Handler::new_attached(id, self.clone())
             .into_movable_list()
             .ok()
@@ -1022,6 +1033,7 @@ impl LoroDoc {
         if !self.has_container(&id) {
             return None;
         }
+        self.ensure_root_container(&id);
         Handler::new_attached(id, self.clone()).into_map().ok()
     }
 
@@ -1041,6 +1053,7 @@ impl LoroDoc {
         if !self.has_container(&id) {
             return None;
         }
+        self.ensure_root_container(&id);
         Handler::new_attached(id, self.clone()).into_tree().ok()
     }
 
@@ -1061,6 +1074,7 @@ impl LoroDoc {
         if !self.has_container(&id) {
             return None;
         }
+        self.ensure_root_container(&id);
         Handler::new_attached(id, self.clone()).into_counter().ok()
     }
 
@@ -2170,11 +2184,15 @@ impl LoroDoc {
             return;
         };
 
+        self.config
+            .deleted_root_containers
+            .lock()
+            .insert(cid.clone());
         if let Err(e) = h.clear() {
+            self.config.deleted_root_containers.lock().remove(&cid);
             eprintln!("Failed to clear handler: {:?}", e);
             return;
         }
-        self.config.deleted_root_containers.lock().insert(cid);
     }
 
     pub fn set_hide_empty_root_containers(&self, hide: bool) {
@@ -2214,8 +2232,8 @@ fn find_last_delete_op(oplog: &OpLog, id: ID, idx: ContainerIdx) -> Option<ID> {
             if let InnerContent::List(InnerListOp::Delete(d)) = &op.content {
                 if d.id_start.to_span(d.atom_len()).contains(id) {
                     debug_assert!(op.counter >= change.id().counter);
-                    let op_lamport = change.lamport
-                        + (op.counter - change.id().counter) as loro_common::Lamport;
+                    let op_lamport =
+                        change.lamport + (op.counter - change.id().counter) as loro_common::Lamport;
                     let key = (op_lamport, peer);
                     if best.map_or(true, |(bk, _)| key > bk) {
                         best = Some((key, ID::new(peer, op.counter)));

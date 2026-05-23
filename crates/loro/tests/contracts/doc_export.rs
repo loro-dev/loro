@@ -42,8 +42,42 @@ fn deep_value_prefers_non_empty_root_when_same_name_has_empty_container() -> any
 fn deleted_imported_root_containers_are_removed_from_snapshots() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     doc.get_list("list");
+    doc.get_map("map");
+    doc.get_movable_list("movable");
+    doc.get_text("text");
+    doc.get_tree("tree");
     let restored = LoroDoc::from_snapshot(&doc.export(ExportMode::Snapshot)?)?;
     restored.delete_root_container(ContainerID::new_root("list", ContainerType::List));
+    restored.delete_root_container(ContainerID::new_root("map", ContainerType::Map));
+    restored.delete_root_container(ContainerID::new_root("movable", ContainerType::MovableList));
+    restored.delete_root_container(ContainerID::new_root("text", ContainerType::Text));
+    restored.delete_root_container(ContainerID::new_root("tree", ContainerType::Tree));
+    assert_eq!(deep_json(&restored), json!({}));
+
+    let restored_again = LoroDoc::from_snapshot(&restored.export(ExportMode::Snapshot)?)?;
+    assert_eq!(deep_json(&restored_again), json!({}));
+
+    Ok(())
+}
+
+#[test]
+fn deleted_imported_non_empty_root_containers_are_removed_from_snapshots() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.get_list("list").push("item")?;
+    doc.get_map("map").insert("key", "value")?;
+    doc.get_movable_list("movable").push("item")?;
+    doc.get_text("text").insert(0, "hello")?;
+    let tree = doc.get_tree("tree");
+    let node = tree.create(TreeParentId::Root)?;
+    tree.get_meta(node)?.insert("key", "value")?;
+    doc.commit();
+
+    let restored = LoroDoc::from_snapshot(&doc.export(ExportMode::Snapshot)?)?;
+    restored.delete_root_container(ContainerID::new_root("list", ContainerType::List));
+    restored.delete_root_container(ContainerID::new_root("map", ContainerType::Map));
+    restored.delete_root_container(ContainerID::new_root("movable", ContainerType::MovableList));
+    restored.delete_root_container(ContainerID::new_root("text", ContainerType::Text));
+    restored.delete_root_container(ContainerID::new_root("tree", ContainerType::Tree));
     assert_eq!(deep_json(&restored), json!({}));
 
     let restored_again = LoroDoc::from_snapshot(&restored.export(ExportMode::Snapshot)?)?;

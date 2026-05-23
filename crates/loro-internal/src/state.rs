@@ -68,6 +68,19 @@ pub(crate) fn fail_next_import_state_apply_for_test() {
     FAIL_NEXT_IMPORT_STATE_APPLY.with(|fail| fail.set(true));
 }
 
+fn visible_container_value_is_empty(kind: ContainerType, value: &LoroValue) -> bool {
+    match kind {
+        ContainerType::Text => value.as_string().is_some_and(|value| value.is_empty()),
+        ContainerType::Map | ContainerType::List | ContainerType::MovableList => {
+            value.is_empty_collection()
+        }
+        ContainerType::Tree => value.as_list().is_some_and(|value| value.is_empty()),
+        #[cfg(feature = "counter")]
+        ContainerType::Counter => false,
+        ContainerType::Unknown(_) => false,
+    }
+}
+
 pub struct DocState {
     pub(super) peer: Arc<AtomicU64>,
 
@@ -1049,7 +1062,7 @@ impl DocState {
                 loro_common::ContainerID::Root { name, .. } => {
                     let v = self.get_container_deep_value(root_idx);
                     if (should_hide_empty_root_container || deleted_root_container.contains(&id))
-                        && v.is_empty_collection()
+                        && visible_container_value_is_empty(root_idx.get_type(), &v)
                     {
                         continue;
                     }
@@ -1093,6 +1106,12 @@ impl DocState {
         let mut names = Vec::new();
 
         for idx in roots {
+            let Some(id) = self.arena.idx_to_id(idx) else {
+                continue;
+            };
+            if !self.store.contains_id(&id) {
+                continue;
+            }
             let Some(name) = self.root_container_name(idx) else {
                 continue;
             };
@@ -1128,6 +1147,12 @@ impl DocState {
         let mut selected = None;
 
         for idx in roots {
+            let Some(id) = self.arena.idx_to_id(idx) else {
+                continue;
+            };
+            if !self.store.contains_id(&id) {
+                continue;
+            }
             let Some(name) = self.root_container_name(idx) else {
                 continue;
             };
@@ -1157,10 +1182,11 @@ impl DocState {
     }
 
     fn root_container_is_empty(&mut self, idx: ContainerIdx) -> bool {
-        self.store
+        let value = self
+            .store
             .get_value(idx)
-            .unwrap_or_else(|| idx.get_type().default_value())
-            .is_empty_collection()
+            .unwrap_or_else(|| idx.get_type().default_value());
+        visible_container_value_is_empty(idx.get_type(), &value)
     }
 
     pub fn get_all_container_value_flat(&mut self) -> LoroValue {
@@ -1311,6 +1337,7 @@ impl DocState {
             .root_containers(flag)
             .iter()
             .map(|x| self.arena.get_container_id(*x).unwrap())
+            .filter(|id| self.store.contains_id(id))
             .collect_vec();
 
         while let Some(id) = to_visit.pop() {
