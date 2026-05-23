@@ -1138,6 +1138,11 @@ impl RichtextStateLoader {
     }
 
     fn try_apply_append_delta(&mut self, delta: &DeltaRope<RichtextStateChunk, ()>) -> bool {
+        // Style anchors/ranges need InnerState's range maintenance.
+        if !self.start_anchor_pos.is_empty() || !self.style_ranges.is_empty() {
+            return false;
+        }
+
         let old_len = self.entity_index;
         let mut current_len = self.entity_index;
         let mut entity_index = 0;
@@ -1158,6 +1163,10 @@ impl RichtextStateLoader {
                     let insert_len = value.rle_len();
                     if insert_len == 0 {
                         continue;
+                    }
+
+                    if !matches!(value, RichtextStateChunk::Text(_)) {
+                        return false;
                     }
 
                     if entity_index != current_len {
