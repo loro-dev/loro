@@ -381,19 +381,18 @@ impl InnerStore {
                 }
             }
 
-            for (cid, container) in containers.iter() {
-                let Some(parent_id) = container.parent() else {
-                    continue;
-                };
-                let Some(parent) = containers.get(parent_id) else {
-                    continue;
-                };
-                if !parent.try_get_state().unwrap().contains_child(cid) {
-                    return Err(loro_common::LoroError::DecodeError(
-                        "Container parent does not contain child"
-                            .to_string()
-                            .into_boxed_str(),
-                    ));
+            for (parent_id, parent) in containers.iter() {
+                for child_id in parent.try_get_state().unwrap().get_child_containers() {
+                    let Some(child) = containers.get(&child_id) else {
+                        continue;
+                    };
+                    if child.parent() != Some(parent_id) {
+                        return Err(loro_common::LoroError::DecodeError(
+                            "Container parent does not contain child"
+                                .to_string()
+                                .into_boxed_str(),
+                        ));
+                    }
                 }
             }
 

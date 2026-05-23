@@ -551,6 +551,12 @@ mod snapshot {
                 }
             }
 
+            if !bytes.is_empty() {
+                return Err(loro_common::LoroError::DecodeError(
+                    "Decode map state failed".to_string().into_boxed_str(),
+                ));
+            }
+
             Ok(ans)
         }
     }
