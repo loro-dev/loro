@@ -337,6 +337,14 @@ impl InnerStore {
                 let idx = self.arena.register_container(&cid);
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     let mut container = ContainerWrapper::new_from_bytes(v);
+                    if cid.container_type() != container.kind() {
+                        return Err(loro_common::LoroError::DecodeError(
+                            "Container type mismatch between key and state"
+                                .to_string()
+                                .into_boxed_str(),
+                        ));
+                    }
+
                     container.decode_state(idx, ctx)
                 }));
                 match result {

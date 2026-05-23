@@ -4644,7 +4644,7 @@ pub mod counter {
 
 #[cfg(test)]
 mod test {
-    use std::borrow::Cow;
+    use std::{borrow::Cow, ops::Bound};
 
     use bytes::BufMut;
     use loro_kv_store::{mem_store::MemKvConfig, MemKvStore};
@@ -4683,6 +4683,14 @@ mod test {
             .copy_from_slice(&(state_bytes.len() as u32).to_le_bytes());
         snapshot.splice(state_start..state_end, state_bytes.iter().copied());
         recheck_fast_blob(snapshot)
+    }
+
+    fn fast_snapshot_state_bytes(snapshot: &[u8]) -> &[u8] {
+        let mut body = &snapshot[22..];
+        let oplog_len = u32::from_le_bytes(body[..4].try_into().unwrap()) as usize;
+        body = &body[4 + oplog_len..];
+        let state_len = u32::from_le_bytes(body[..4].try_into().unwrap()) as usize;
+        &body[4..4 + state_len]
     }
 
     fn insert_many_with_single_list_op(
@@ -5085,6 +5093,35 @@ mod test {
         kv.set(
             &ContainerID::new_root("text", ContainerType::Text).to_bytes(),
             invalid_text_container.into(),
+        );
+        let corrupted = replace_fast_snapshot_state_bytes(snapshot, &kv.export_all());
+
+        let doc = LoroDoc::new();
+        assert!(doc.import(&corrupted).is_err());
+    }
+
+    #[test]
+    fn mismatched_lazy_snapshot_container_key_and_payload_type_is_rejected() {
+        let loro = LoroDoc::new_auto_commit();
+        loro.get_text("text")
+            .insert(0, "hello", PosType::Unicode)
+            .unwrap();
+        let snapshot = loro.export(ExportMode::snapshot()).unwrap();
+
+        let mut original_kv = MemKvStore::new(MemKvConfig::default().should_encode_none(false));
+        original_kv
+            .import_all(fast_snapshot_state_bytes(&snapshot).to_vec().into())
+            .unwrap();
+        let text_payload = original_kv
+            .scan(Bound::Unbounded, Bound::Unbounded)
+            .next()
+            .unwrap()
+            .1;
+
+        let mut kv = MemKvStore::new(MemKvConfig::default().should_encode_none(false));
+        kv.set(
+            &ContainerID::new_root("text", ContainerType::Map).to_bytes(),
+            text_payload,
         );
         let corrupted = replace_fast_snapshot_state_bytes(snapshot, &kv.export_all());
 
