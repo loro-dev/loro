@@ -2786,10 +2786,14 @@ fn text_pos_to_unicode(s: &str, index: usize, pos_type: PosType) -> Option<usize
     match pos_type {
         PosType::Unicode => (index <= s.chars().count()).then_some(index),
         PosType::Bytes => {
-            if index <= s.len() && s.is_char_boundary(index) {
-                Some(s[..index].chars().count())
-            } else {
+            if index > s.len() {
                 None
+            } else {
+                Some(
+                    s.char_indices()
+                        .take_while(|(pos, c)| *pos + c.len_utf8() <= index)
+                        .count(),
+                )
             }
         }
         PosType::Utf16 => utf16_to_unicode_pos(s, index),
@@ -2853,11 +2857,11 @@ fn utf16_to_unicode_pos(s: &str, index: usize) -> Option<usize> {
 
     for c in s.chars() {
         let next_utf16_pos = utf16_pos + c.len_utf16();
+        if index < next_utf16_pos {
+            return Some(unicode_pos);
+        }
         if index == next_utf16_pos {
             return Some(unicode_pos + 1);
-        }
-        if index < next_utf16_pos {
-            return None;
         }
         utf16_pos = next_utf16_pos;
         unicode_pos += 1;
@@ -4895,6 +4899,61 @@ mod test {
 
         assert_eq!(text.get_delta().len(), 2);
         assert!(text.attached_handler().unwrap().has_decoded_state());
+    }
+
+    #[test]
+    fn text_lazy_event_queries_match_decoded_state() {
+        let loro = LoroDoc::new_auto_commit();
+        let text = loro.get_text("text");
+        text.insert(0, "ab😀cd", PosType::Unicode).unwrap();
+        text.mark(1, 4, "bold", true.into(), PosType::Unicode)
+            .unwrap();
+        text.mark(2, 3, "link", "x".into(), PosType::Unicode)
+            .unwrap();
+
+        let lazy_doc = LoroDoc::new();
+        lazy_doc
+            .import(&loro.export(ExportMode::snapshot()).unwrap())
+            .unwrap();
+        let lazy_text = lazy_doc.get_text("text");
+
+        let decoded_doc = LoroDoc::new();
+        decoded_doc
+            .import(&loro.export(ExportMode::snapshot()).unwrap())
+            .unwrap();
+        let decoded_text = decoded_doc.get_text("text");
+        decoded_text.get_delta();
+
+        assert!(!lazy_text.attached_handler().unwrap().has_decoded_state());
+        assert!(decoded_text.attached_handler().unwrap().has_decoded_state());
+
+        for pos_type in [
+            PosType::Event,
+            PosType::Unicode,
+            PosType::Utf16,
+            PosType::Bytes,
+        ] {
+            assert_eq!(lazy_text.len(pos_type), decoded_text.len(pos_type));
+            for pos in 0..=decoded_text.len(pos_type) {
+                assert_eq!(
+                    lazy_text.convert_pos(pos, pos_type, PosType::Unicode),
+                    decoded_text.convert_pos(pos, pos_type, PosType::Unicode),
+                    "convert {pos_type:?} pos {pos} to unicode"
+                );
+                assert_eq!(
+                    lazy_text.convert_pos(pos, pos_type, PosType::Event),
+                    decoded_text.convert_pos(pos, pos_type, PosType::Event),
+                    "convert {pos_type:?} pos {pos} to event"
+                );
+                if pos < decoded_text.len(pos_type) {
+                    assert_eq!(
+                        lazy_text.char_at(pos, pos_type),
+                        decoded_text.char_at(pos, pos_type),
+                        "char_at {pos_type:?} pos {pos}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
