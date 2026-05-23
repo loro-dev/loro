@@ -46,12 +46,16 @@ fn deleted_imported_root_containers_are_removed_from_snapshots() -> anyhow::Resu
     doc.get_movable_list("movable");
     doc.get_text("text");
     doc.get_tree("tree");
+    #[cfg(feature = "counter")]
+    doc.get_counter("counter");
     let restored = LoroDoc::from_snapshot(&doc.export(ExportMode::Snapshot)?)?;
     restored.delete_root_container(ContainerID::new_root("list", ContainerType::List));
     restored.delete_root_container(ContainerID::new_root("map", ContainerType::Map));
     restored.delete_root_container(ContainerID::new_root("movable", ContainerType::MovableList));
     restored.delete_root_container(ContainerID::new_root("text", ContainerType::Text));
     restored.delete_root_container(ContainerID::new_root("tree", ContainerType::Tree));
+    #[cfg(feature = "counter")]
+    restored.delete_root_container(ContainerID::new_root("counter", ContainerType::Counter));
     assert_eq!(deep_json(&restored), json!({}));
 
     let restored_again = LoroDoc::from_snapshot(&restored.export(ExportMode::Snapshot)?)?;
@@ -70,6 +74,8 @@ fn deleted_imported_non_empty_root_containers_are_removed_from_snapshots() -> an
     let tree = doc.get_tree("tree");
     let node = tree.create(TreeParentId::Root)?;
     tree.get_meta(node)?.insert("key", "value")?;
+    #[cfg(feature = "counter")]
+    doc.get_counter("counter").increment(1.5)?;
     doc.commit();
 
     let restored = LoroDoc::from_snapshot(&doc.export(ExportMode::Snapshot)?)?;
@@ -78,6 +84,8 @@ fn deleted_imported_non_empty_root_containers_are_removed_from_snapshots() -> an
     restored.delete_root_container(ContainerID::new_root("movable", ContainerType::MovableList));
     restored.delete_root_container(ContainerID::new_root("text", ContainerType::Text));
     restored.delete_root_container(ContainerID::new_root("tree", ContainerType::Tree));
+    #[cfg(feature = "counter")]
+    restored.delete_root_container(ContainerID::new_root("counter", ContainerType::Counter));
     assert_eq!(deep_json(&restored), json!({}));
 
     let restored_again = LoroDoc::from_snapshot(&restored.export(ExportMode::Snapshot)?)?;

@@ -230,7 +230,7 @@ impl InnerStore {
             };
             let idx = ContainerIdx::from_index_and_type(slot as u32, c.kind());
             let cid = self.arena.get_container_id(idx).unwrap();
-            if cid.is_root() && deleted.contains(&cid) && c.is_visible_value_empty() {
+            if cid.is_root() && deleted.contains(&cid) && c.is_deleted_root_value_cleared() {
                 deleted_roots.push(cid.to_bytes());
                 c.set_flushed(true);
                 continue;

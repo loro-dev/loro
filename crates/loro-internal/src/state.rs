@@ -81,6 +81,14 @@ fn visible_container_value_is_empty(kind: ContainerType, value: &LoroValue) -> b
     }
 }
 
+fn deleted_root_container_value_is_cleared(kind: ContainerType, value: &LoroValue) -> bool {
+    match kind {
+        #[cfg(feature = "counter")]
+        ContainerType::Counter => value.as_double().is_some_and(|value| *value == 0.0),
+        _ => visible_container_value_is_empty(kind, value),
+    }
+}
+
 pub struct DocState {
     pub(super) peer: Arc<AtomicU64>,
 
@@ -1061,8 +1069,14 @@ impl DocState {
             match &id {
                 loro_common::ContainerID::Root { name, .. } => {
                     let v = self.get_container_deep_value(root_idx);
-                    if (should_hide_empty_root_container || deleted_root_container.contains(&id))
+                    if should_hide_empty_root_container
                         && visible_container_value_is_empty(root_idx.get_type(), &v)
+                    {
+                        continue;
+                    }
+
+                    if deleted_root_container.contains(&id)
+                        && deleted_root_container_value_is_cleared(root_idx.get_type(), &v)
                     {
                         continue;
                     }

@@ -646,8 +646,8 @@ impl ContainerWrapper {
         }
     }
 
-    pub(crate) fn is_visible_value_empty(&mut self) -> bool {
-        fn value_is_empty(kind: ContainerType, value: &LoroValue) -> bool {
+    pub(crate) fn is_deleted_root_value_cleared(&mut self) -> bool {
+        fn value_is_cleared(kind: ContainerType, value: &LoroValue) -> bool {
             match kind {
                 ContainerType::Text => value.as_string().is_some_and(|value| value.is_empty()),
                 ContainerType::Map | ContainerType::List | ContainerType::MovableList => {
@@ -655,17 +655,17 @@ impl ContainerWrapper {
                 }
                 ContainerType::Tree => value.as_list().is_some_and(|value| value.is_empty()),
                 #[cfg(feature = "counter")]
-                ContainerType::Counter => false,
+                ContainerType::Counter => value.as_double().is_some_and(|value| *value == 0.0),
                 ContainerType::Unknown(_) => false,
             }
         }
 
         match &mut self.data {
-            ContainerData::State(state) => value_is_empty(self.kind, &state.get_value()),
+            ContainerData::State(state) => value_is_cleared(self.kind, &state.get_value()),
             ContainerData::Lazy(lazy) => lazy
                 .value
                 .as_ref()
-                .is_some_and(|value| value_is_empty(self.kind, &value.to_loro_value())),
+                .is_some_and(|value| value_is_cleared(self.kind, &value.to_loro_value())),
         }
     }
 
