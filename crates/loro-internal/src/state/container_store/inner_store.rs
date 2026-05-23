@@ -355,7 +355,17 @@ impl InnerStore {
                         ));
                     }
 
+                    let lazy_value = container.get_value(idx, ctx);
                     container.decode_state(idx, ctx)?;
+                    let decoded_value = container.get_value(idx, ctx);
+                    if lazy_value != decoded_value {
+                        return Err(loro_common::LoroError::DecodeError(
+                            "Container value mismatch between lazy value and state"
+                                .to_string()
+                                .into_boxed_str(),
+                        ));
+                    }
+
                     Ok(container)
                 }));
                 match result {

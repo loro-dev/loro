@@ -4735,6 +4735,21 @@ mod test {
         output
     }
 
+    fn rewrite_list_container_value(payload: &[u8], value: Vec<LoroValue>) -> Vec<u8> {
+        let mut reader = &payload[1..];
+        let _depth = leb128::read::unsigned(&mut reader).unwrap();
+        let (_, value_and_state) =
+            postcard::take_from_bytes::<Option<ContainerID>>(reader).unwrap();
+        let (_, state) = postcard::take_from_bytes::<Vec<LoroValue>>(value_and_state).unwrap();
+        let header_len = payload.len() - value_and_state.len();
+
+        let mut output = Vec::new();
+        output.extend_from_slice(&payload[..header_len]);
+        postcard::to_io(&value, &mut output).unwrap();
+        output.extend_from_slice(state);
+        output
+    }
+
     fn insert_many_with_single_list_op(
         txn: &mut crate::txn::Transaction,
         list: &crate::handler::ListHandler,
@@ -5226,6 +5241,28 @@ mod test {
             rewrite_container_parent(&text_payload, Some(wrong_parent.id())).into(),
         );
         let corrupted = replace_fast_snapshot_shallow_root_state_bytes(snapshot, &kv.export_all());
+
+        let doc = LoroDoc::new();
+        assert!(doc.import(&corrupted).is_err());
+    }
+
+    #[test]
+    fn lazy_snapshot_rejects_list_value_and_state_length_mismatch() {
+        let loro = LoroDoc::new_auto_commit();
+        let list = loro.get_list("list");
+        list.push(1).unwrap();
+        let snapshot = loro.export(ExportMode::snapshot()).unwrap();
+
+        let mut kv = MemKvStore::new(MemKvConfig::default().should_encode_none(false));
+        kv.import_all(fast_snapshot_state_bytes(&snapshot).to_vec().into())
+            .unwrap();
+        let list_key = list.id().to_bytes();
+        let list_payload = kv.get(&list_key).unwrap();
+        kv.set(
+            &list_key,
+            rewrite_list_container_value(&list_payload, vec![1.into(), 2.into()]).into(),
+        );
+        let corrupted = replace_fast_snapshot_state_bytes(snapshot, &kv.export_all());
 
         let doc = LoroDoc::new();
         assert!(doc.import(&corrupted).is_err());
