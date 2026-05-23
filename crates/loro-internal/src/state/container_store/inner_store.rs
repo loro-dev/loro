@@ -221,28 +221,36 @@ impl InnerStore {
 
     pub(crate) fn flush(&mut self) {
         let deleted = self.config.deleted_root_containers.lock();
-        self.kv.set_all(
-            self.store
-                .iter_mut()
-                .enumerate()
-                .filter_map(|(slot, entry)| {
-                    let c = entry.as_mut()?;
-                    let idx = ContainerIdx::from_index_and_type(slot as u32, c.kind());
-                    if c.is_flushed() {
-                        return None;
-                    }
+        let mut updates = Vec::new();
+        let mut deleted_roots = Vec::new();
 
-                    let cid = self.arena.get_container_id(idx).unwrap();
-                    if c.is_state_empty() && cid.is_root() && deleted.contains(&cid) {
-                        return None;
-                    }
+        for (slot, entry) in self.store.iter_mut().enumerate() {
+            let Some(c) = entry.as_mut() else {
+                continue;
+            };
+            let idx = ContainerIdx::from_index_and_type(slot as u32, c.kind());
+            let cid = self.arena.get_container_id(idx).unwrap();
+            if cid.is_root() && deleted.contains(&cid) && c.is_visible_value_empty() {
+                deleted_roots.push(cid.to_bytes());
+                c.set_flushed(true);
+                continue;
+            }
 
-                    let cid: Bytes = cid.to_bytes().into();
-                    let value = c.encode();
-                    c.set_flushed(true);
-                    Some((cid, value))
-                }),
-        );
+            if c.is_flushed() {
+                continue;
+            }
+
+            let cid: Bytes = cid.to_bytes().into();
+            let value = c.encode();
+            c.set_flushed(true);
+            updates.push((cid, value));
+        }
+
+        drop(deleted);
+        for cid in deleted_roots {
+            self.kv.remove(&cid);
+        }
+        self.kv.set_all(updates.into_iter());
     }
 
     pub(crate) fn get_kv_clone(&self) -> KvWrapper {

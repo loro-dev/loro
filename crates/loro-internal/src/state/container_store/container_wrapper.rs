@@ -646,6 +646,29 @@ impl ContainerWrapper {
         }
     }
 
+    pub(crate) fn is_visible_value_empty(&mut self) -> bool {
+        fn value_is_empty(kind: ContainerType, value: &LoroValue) -> bool {
+            match kind {
+                ContainerType::Text => value.as_string().is_some_and(|value| value.is_empty()),
+                ContainerType::Map | ContainerType::List | ContainerType::MovableList => {
+                    value.is_empty_collection()
+                }
+                ContainerType::Tree => value.as_list().is_some_and(|value| value.is_empty()),
+                #[cfg(feature = "counter")]
+                ContainerType::Counter => false,
+                ContainerType::Unknown(_) => false,
+            }
+        }
+
+        match &mut self.data {
+            ContainerData::State(state) => value_is_empty(self.kind, &state.get_value()),
+            ContainerData::Lazy(lazy) => lazy
+                .value
+                .as_ref()
+                .is_some_and(|value| value_is_empty(self.kind, &value.to_loro_value())),
+        }
+    }
+
     pub(crate) fn clear_bytes(&mut self) {
         assert!(matches!(self.data, ContainerData::State(_)));
     }

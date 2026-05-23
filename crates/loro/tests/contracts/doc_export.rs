@@ -1,8 +1,8 @@
 use std::sync::{Arc, Mutex};
 
 use loro::{
-    CommitOptions, ExportMode, IdSpan, Index, LoroDoc, LoroList, LoroMap, LoroText, Timestamp,
-    ToJson, TreeParentId, VersionVector, ID,
+    CommitOptions, ContainerID, ContainerType, ExportMode, IdSpan, Index, LoroDoc, LoroList,
+    LoroMap, LoroText, Timestamp, ToJson, TreeParentId, VersionVector, ID,
 };
 use pretty_assertions::assert_eq;
 use serde_json::{json, Value};
@@ -34,6 +34,20 @@ fn deep_value_prefers_non_empty_root_when_same_name_has_empty_container() -> any
 
     let restored = LoroDoc::from_snapshot(&doc.export(ExportMode::Snapshot)?)?;
     assert_eq!(deep_json(&restored), expected);
+
+    Ok(())
+}
+
+#[test]
+fn deleted_imported_root_containers_are_removed_from_snapshots() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.get_list("list");
+    let restored = LoroDoc::from_snapshot(&doc.export(ExportMode::Snapshot)?)?;
+    restored.delete_root_container(ContainerID::new_root("list", ContainerType::List));
+    assert_eq!(deep_json(&restored), json!({}));
+
+    let restored_again = LoroDoc::from_snapshot(&restored.export(ExportMode::Snapshot)?)?;
+    assert_eq!(deep_json(&restored_again), json!({}));
 
     Ok(())
 }
