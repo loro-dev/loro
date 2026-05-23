@@ -195,7 +195,7 @@ impl ContainerStore {
     }
 
     pub(crate) fn decode(&mut self, bytes: Bytes) -> LoroResult<Option<Frontiers>> {
-        self.store.decode(bytes)
+        self.store.decode(bytes, ctx!(self))
     }
 
     pub(crate) fn decode_gc(
@@ -206,7 +206,7 @@ impl ContainerStore {
     ) -> LoroResult<Option<Frontiers>> {
         assert!(self.shallow_root_store.is_none());
         let mut inner = InnerStore::new(self.arena.clone(), config);
-        let f = inner.decode(shallow_bytes)?;
+        let f = inner.decode(shallow_bytes, ctx!(self))?;
         self.shallow_root_store = Some(Arc::new(GcStore {
             shallow_root_frontiers: start_frontiers,
             store: Mutex::new(inner),
@@ -220,7 +220,7 @@ impl ContainerStore {
         state_bytes: Bytes,
     ) -> LoroResult<()> {
         self.store
-            .decode_twice(shallow_bytes.clone(), state_bytes)?;
+            .decode_twice(shallow_bytes.clone(), state_bytes, ctx!(self))?;
         Ok(())
     }
 

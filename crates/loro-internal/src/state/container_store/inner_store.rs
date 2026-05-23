@@ -1,6 +1,10 @@
 use crate::{
-    arena::SharedArena, configure::Configure, container::idx::ContainerIdx,
-    state::container_store::FRONTIERS_KEY, utils::kv_wrapper::KvWrapper, version::Frontiers,
+    arena::SharedArena,
+    configure::Configure,
+    container::idx::ContainerIdx,
+    state::{container_store::FRONTIERS_KEY, ContainerCreationContext},
+    utils::kv_wrapper::KvWrapper,
+    version::Frontiers,
 };
 use bytes::Bytes;
 use loro_common::ContainerID;
@@ -260,6 +264,7 @@ impl InnerStore {
     pub(crate) fn decode(
         &mut self,
         bytes: bytes::Bytes,
+        ctx: ContainerCreationContext,
     ) -> Result<Option<Frontiers>, loro_common::LoroError> {
         assert!(self.kv.is_empty());
         let mut fr = None;
@@ -269,6 +274,7 @@ impl InnerStore {
         if let Some(f) = self.kv.remove(FRONTIERS_KEY) {
             fr = Some(Frontiers::decode(&f)?);
         }
+        self.validate_lazy_entries(ctx)?;
 
         let kv = self.kv.arc_clone();
         self.arena
@@ -288,6 +294,7 @@ impl InnerStore {
         &mut self,
         bytes_a: bytes::Bytes,
         bytes_b: bytes::Bytes,
+        ctx: ContainerCreationContext,
     ) -> Result<(), loro_common::LoroError> {
         assert!(self.kv.is_empty());
         // TODO: add assert that all containers in the store should be empty right now
@@ -298,6 +305,7 @@ impl InnerStore {
             .import(bytes_b)
             .map_err(|e| loro_common::LoroError::DecodeError(e.into_boxed_str()))?;
         self.kv.remove(FRONTIERS_KEY);
+        self.validate_lazy_entries(ctx)?;
         let store = &mut self.store;
         let arena = &self.arena;
         self.kv.with_kv(|kv| {
@@ -317,6 +325,33 @@ impl InnerStore {
 
         self.load_state = LoadState::AllLoaded;
         Ok(())
+    }
+
+    fn validate_lazy_entries(
+        &self,
+        ctx: ContainerCreationContext,
+    ) -> Result<(), loro_common::LoroError> {
+        self.kv.with_kv(|kv| {
+            for (k, v) in kv.scan(Bound::Unbounded, Bound::Unbounded) {
+                let cid = ContainerID::from_bytes(&k);
+                let idx = self.arena.register_container(&cid);
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let mut container = ContainerWrapper::new_from_bytes(v);
+                    container.decode_state(idx, ctx)
+                }));
+                match result {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => return Err(e),
+                    Err(_) => {
+                        return Err(loro_common::LoroError::DecodeError(
+                            "Decode container state failed".to_string().into_boxed_str(),
+                        ));
+                    }
+                }
+            }
+
+            Ok(())
+        })
     }
 
     pub fn load_all(&mut self) {
@@ -400,7 +435,15 @@ impl InnerStore {
         // PERF: we can try to reuse
         let bytes = self.encode();
         let mut new_store = Self::new(arena, config.clone());
-        new_store.decode(bytes).unwrap();
+        new_store
+            .decode(
+                bytes,
+                ContainerCreationContext {
+                    configure: config,
+                    peer: 0,
+                },
+            )
+            .unwrap();
         new_store
     }
 }

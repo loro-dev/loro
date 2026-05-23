@@ -4646,6 +4646,9 @@ pub mod counter {
 mod test {
     use std::borrow::Cow;
 
+    use bytes::BufMut;
+    use loro_kv_store::{mem_store::MemKvConfig, MemKvStore};
+
     use super::{
         Handler, HandlerTrait, ListHandler, MapHandler, MovableListHandler, TextDelta, TextHandler,
         ValueOrHandler,
@@ -4661,6 +4664,26 @@ mod test {
     use crate::{fx_map, ToJson};
     use loro_common::{ContainerID, ContainerType, LoroError, LoroValue, ID};
     use serde_json::json;
+
+    fn recheck_fast_blob(mut bytes: Vec<u8>) -> Vec<u8> {
+        let checksum = xxhash_rust::xxh32::xxh32(&bytes[20..], u32::from_le_bytes(*b"LORO"));
+        bytes[16..20].copy_from_slice(&checksum.to_le_bytes());
+        bytes
+    }
+
+    fn replace_fast_snapshot_state_bytes(mut snapshot: Vec<u8>, state_bytes: &[u8]) -> Vec<u8> {
+        let mut body = &snapshot[22..];
+        let oplog_len = u32::from_le_bytes(body[..4].try_into().unwrap()) as usize;
+        body = &body[4 + oplog_len..];
+        let old_state_len = u32::from_le_bytes(body[..4].try_into().unwrap()) as usize;
+        let state_len_pos = 22 + 4 + oplog_len;
+        let state_start = state_len_pos + 4;
+        let state_end = state_start + old_state_len;
+        snapshot[state_len_pos..state_start]
+            .copy_from_slice(&(state_bytes.len() as u32).to_le_bytes());
+        snapshot.splice(state_start..state_end, state_bytes.iter().copied());
+        recheck_fast_blob(snapshot)
+    }
 
     fn insert_many_with_single_list_op(
         txn: &mut crate::txn::Transaction,
@@ -5042,6 +5065,31 @@ mod test {
                 "list": ["new", ["nested-new"]]
             })
         );
+    }
+
+    #[test]
+    fn malformed_lazy_snapshot_state_is_rejected_on_import() {
+        let loro = LoroDoc::new_auto_commit();
+        loro.get_text("text")
+            .insert(0, "hello", PosType::Unicode)
+            .unwrap();
+        let snapshot = loro.export(ExportMode::snapshot()).unwrap();
+
+        let mut invalid_text_container = Vec::new();
+        invalid_text_container.push(ContainerType::Text.to_u8());
+        leb128::write::unsigned(&mut invalid_text_container, 1).unwrap();
+        postcard::to_io(&None::<ContainerID>, &mut invalid_text_container).unwrap();
+        invalid_text_container.put_slice(&[0xff]);
+
+        let mut kv = MemKvStore::new(MemKvConfig::default().should_encode_none(false));
+        kv.set(
+            &ContainerID::new_root("text", ContainerType::Text).to_bytes(),
+            invalid_text_container.into(),
+        );
+        let corrupted = replace_fast_snapshot_state_bytes(snapshot, &kv.export_all());
+
+        let doc = LoroDoc::new();
+        assert!(doc.import(&corrupted).is_err());
     }
 
     #[test]
