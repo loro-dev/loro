@@ -574,8 +574,11 @@ impl ContainerWrapper {
             }
             #[cfg(feature = "counter")]
             ContainerType::Counter => {
-                let (v, _rest) = CounterState::decode_value(b)?;
-                (LazyDecodedValue::Value(v), 0)
+                let (v, rest) = CounterState::decode_value(b)?;
+                (
+                    LazyDecodedValue::Value(v),
+                    b.len() - rest.len() + value_offset,
+                )
             }
             ContainerType::Unknown(_) => {
                 let (v, rest) = UnknownState::decode_value(b)?;

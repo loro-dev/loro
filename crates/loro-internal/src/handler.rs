@@ -4750,6 +4750,13 @@ mod test {
         output
     }
 
+    #[cfg(feature = "counter")]
+    fn append_to_container_payload(payload: &[u8], suffix: &[u8]) -> Vec<u8> {
+        let mut output = payload.to_vec();
+        output.extend_from_slice(suffix);
+        output
+    }
+
     fn insert_many_with_single_list_op(
         txn: &mut crate::txn::Transaction,
         list: &crate::handler::ListHandler,
@@ -5261,6 +5268,29 @@ mod test {
         kv.set(
             &list_key,
             rewrite_list_container_value(&list_payload, vec![1.into(), 2.into()]).into(),
+        );
+        let corrupted = replace_fast_snapshot_state_bytes(snapshot, &kv.export_all());
+
+        let doc = LoroDoc::new();
+        assert!(doc.import(&corrupted).is_err());
+    }
+
+    #[cfg(feature = "counter")]
+    #[test]
+    fn lazy_snapshot_rejects_counter_payload_with_trailing_bytes() {
+        let loro = LoroDoc::new_auto_commit();
+        let counter = loro.get_counter("counter");
+        counter.increment(1.5).unwrap();
+        let snapshot = loro.export(ExportMode::snapshot()).unwrap();
+
+        let mut kv = MemKvStore::new(MemKvConfig::default().should_encode_none(false));
+        kv.import_all(fast_snapshot_state_bytes(&snapshot).to_vec().into())
+            .unwrap();
+        let counter_key = counter.id().to_bytes();
+        let counter_payload = kv.get(&counter_key).unwrap();
+        kv.set(
+            &counter_key,
+            append_to_container_payload(&counter_payload, &[0xff]).into(),
         );
         let corrupted = replace_fast_snapshot_state_bytes(snapshot, &kv.export_all());
 
