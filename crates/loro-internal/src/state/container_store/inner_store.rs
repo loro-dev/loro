@@ -345,6 +345,14 @@ impl InnerStore {
                         ));
                     }
 
+                    if cid.is_root() != container.parent().is_none() {
+                        return Err(loro_common::LoroError::DecodeError(
+                            "Container parent mismatch between key and state"
+                                .to_string()
+                                .into_boxed_str(),
+                        ));
+                    }
+
                     container.decode_state(idx, ctx)
                 }));
                 match result {

@@ -4685,12 +4685,54 @@ mod test {
         recheck_fast_blob(snapshot)
     }
 
+    fn replace_fast_snapshot_shallow_root_state_bytes(
+        mut snapshot: Vec<u8>,
+        shallow_bytes: &[u8],
+    ) -> Vec<u8> {
+        let mut body = &snapshot[22..];
+        let oplog_len = u32::from_le_bytes(body[..4].try_into().unwrap()) as usize;
+        body = &body[4 + oplog_len..];
+        let state_len = u32::from_le_bytes(body[..4].try_into().unwrap()) as usize;
+        body = &body[4 + state_len..];
+        let old_shallow_len = u32::from_le_bytes(body[..4].try_into().unwrap()) as usize;
+        let shallow_len_pos = 22 + 4 + oplog_len + 4 + state_len;
+        let shallow_start = shallow_len_pos + 4;
+        let shallow_end = shallow_start + old_shallow_len;
+        snapshot[shallow_len_pos..shallow_start]
+            .copy_from_slice(&(shallow_bytes.len() as u32).to_le_bytes());
+        snapshot.splice(shallow_start..shallow_end, shallow_bytes.iter().copied());
+        recheck_fast_blob(snapshot)
+    }
+
     fn fast_snapshot_state_bytes(snapshot: &[u8]) -> &[u8] {
         let mut body = &snapshot[22..];
         let oplog_len = u32::from_le_bytes(body[..4].try_into().unwrap()) as usize;
         body = &body[4 + oplog_len..];
         let state_len = u32::from_le_bytes(body[..4].try_into().unwrap()) as usize;
         &body[4..4 + state_len]
+    }
+
+    fn fast_snapshot_shallow_root_state_bytes(snapshot: &[u8]) -> &[u8] {
+        let mut body = &snapshot[22..];
+        let oplog_len = u32::from_le_bytes(body[..4].try_into().unwrap()) as usize;
+        body = &body[4 + oplog_len..];
+        let state_len = u32::from_le_bytes(body[..4].try_into().unwrap()) as usize;
+        body = &body[4 + state_len..];
+        let shallow_len = u32::from_le_bytes(body[..4].try_into().unwrap()) as usize;
+        &body[4..4 + shallow_len]
+    }
+
+    fn rewrite_container_parent(payload: &[u8], parent: Option<ContainerID>) -> Vec<u8> {
+        let mut reader = &payload[1..];
+        let depth = leb128::read::unsigned(&mut reader).unwrap();
+        let (_, rest) = postcard::take_from_bytes::<Option<ContainerID>>(reader).unwrap();
+
+        let mut output = Vec::new();
+        output.push(payload[0]);
+        leb128::write::unsigned(&mut output, depth).unwrap();
+        postcard::to_io(&parent, &mut output).unwrap();
+        output.extend_from_slice(rest);
+        output
     }
 
     fn insert_many_with_single_list_op(
@@ -5124,6 +5166,35 @@ mod test {
             text_payload,
         );
         let corrupted = replace_fast_snapshot_state_bytes(snapshot, &kv.export_all());
+
+        let doc = LoroDoc::new();
+        assert!(doc.import(&corrupted).is_err());
+    }
+
+    #[test]
+    fn lazy_state_only_snapshot_rejects_child_with_missing_parent() {
+        let loro = LoroDoc::new_auto_commit();
+        let map = loro.get_map("map");
+        let text = map
+            .insert_container("text", TextHandler::new_detached())
+            .unwrap();
+        text.insert(0, "hello", PosType::Unicode).unwrap();
+        let snapshot = loro.export(ExportMode::state_only(None)).unwrap();
+
+        let mut kv = MemKvStore::new(MemKvConfig::default().should_encode_none(false));
+        kv.import_all(
+            fast_snapshot_shallow_root_state_bytes(&snapshot)
+                .to_vec()
+                .into(),
+        )
+        .unwrap();
+        let text_key = text.id().to_bytes();
+        let text_payload = kv.get(&text_key).unwrap();
+        kv.set(
+            &text_key,
+            rewrite_container_parent(&text_payload, None).into(),
+        );
+        let corrupted = replace_fast_snapshot_shallow_root_state_bytes(snapshot, &kv.export_all());
 
         let doc = LoroDoc::new();
         assert!(doc.import(&corrupted).is_err());
