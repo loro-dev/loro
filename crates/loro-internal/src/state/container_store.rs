@@ -156,6 +156,16 @@ impl ContainerStore {
             .unwrap_or_default()
     }
 
+    pub fn text_unicode_len(&mut self, idx: ContainerIdx) -> Option<usize> {
+        self.store
+            .with_container_for_read(idx, |c| c.text_unicode_len(idx, ctx!(self)))?
+    }
+
+    pub fn text_utf16_len(&mut self, idx: ContainerIdx) -> Option<usize> {
+        self.store
+            .with_container_for_read(idx, |c| c.text_utf16_len(idx, ctx!(self)))?
+    }
+
     pub fn has_decoded_state(&mut self, idx: ContainerIdx) -> bool {
         self.store.has_decoded_state(idx)
     }

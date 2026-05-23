@@ -430,6 +430,8 @@ impl MapState {
 
 mod snapshot {
 
+    use std::collections::BTreeMap;
+
     use loro_common::{InternalString, LoroValue};
     use rustc_hash::{FxHashMap, FxHashSet};
     use serde_columnar::Itertools;
@@ -550,6 +552,20 @@ mod snapshot {
             }
 
             Ok(ans)
+        }
+    }
+
+    impl MapState {
+        pub(crate) fn decode_value_as_btree_map(
+            bytes: &[u8],
+        ) -> loro_common::LoroResult<(BTreeMap<String, LoroValue>, &[u8])> {
+            let (value, bytes) = postcard::take_from_bytes::<BTreeMap<String, LoroValue>>(bytes)
+                .map_err(|_| {
+                    loro_common::LoroError::DecodeError(
+                        "Decode map value failed".to_string().into_boxed_str(),
+                    )
+                })?;
+            Ok((value, bytes))
         }
     }
 

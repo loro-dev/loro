@@ -877,6 +877,14 @@ impl DocState {
         self.store.list_values(container_idx)
     }
 
+    pub(crate) fn get_text_unicode_len(&mut self, container_idx: ContainerIdx) -> usize {
+        self.store.text_unicode_len(container_idx).unwrap_or(0)
+    }
+
+    pub(crate) fn get_text_utf16_len(&mut self, container_idx: ContainerIdx) -> usize {
+        self.store.text_utf16_len(container_idx).unwrap_or(0)
+    }
+
     pub(crate) fn has_decoded_container_state(&mut self, container_idx: ContainerIdx) -> bool {
         self.store.has_decoded_state(container_idx)
     }

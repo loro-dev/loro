@@ -1446,11 +1446,8 @@ impl TextHandler {
                 let t = t.lock();
                 t.value.len_utf16()
             }
-            MaybeDetached::Attached(a) if a.has_decoded_state() => {
-                a.with_state(|state| state.as_richtext_state_mut().unwrap().len_utf16())
-            }
             MaybeDetached::Attached(a) => {
-                count_utf16_len(a.get_value().as_string().unwrap().as_bytes())
+                a.with_doc_state(|state| state.get_text_utf16_len(a.container_idx))
             }
         }
     }
@@ -1461,10 +1458,9 @@ impl TextHandler {
                 let t = t.lock();
                 t.value.len_unicode()
             }
-            MaybeDetached::Attached(a) if a.has_decoded_state() => {
-                a.with_state(|state| state.as_richtext_state_mut().unwrap().len_unicode())
+            MaybeDetached::Attached(a) => {
+                a.with_doc_state(|state| state.get_text_unicode_len(a.container_idx))
             }
-            MaybeDetached::Attached(a) => a.get_value().as_string().unwrap().chars().count(),
         }
     }
 
@@ -1484,12 +1480,22 @@ impl TextHandler {
             MaybeDetached::Attached(a) if a.has_decoded_state() || pos_type == PosType::Entity => {
                 a.with_state(|state| state.as_richtext_state_mut().unwrap().len(pos_type))
             }
-            MaybeDetached::Attached(a) => {
-                match text_len(a.get_value().as_string().unwrap(), pos_type) {
-                    Some(len) => len,
-                    None => unreachable!("entity length is handled by the state path"),
+            MaybeDetached::Attached(a) => match pos_type {
+                PosType::Bytes => a.get_value().as_string().unwrap().len(),
+                PosType::Unicode => {
+                    a.with_doc_state(|state| state.get_text_unicode_len(a.container_idx))
                 }
-            }
+                PosType::Utf16 => {
+                    a.with_doc_state(|state| state.get_text_utf16_len(a.container_idx))
+                }
+                PosType::Event if cfg!(feature = "wasm") => {
+                    a.with_doc_state(|state| state.get_text_utf16_len(a.container_idx))
+                }
+                PosType::Event => {
+                    a.with_doc_state(|state| state.get_text_unicode_len(a.container_idx))
+                }
+                PosType::Entity => unreachable!("entity length is handled by the state path"),
+            },
         }
     }
 
@@ -1497,14 +1503,22 @@ impl TextHandler {
         let err = match pos_type {
             PosType::Bytes => Some(LoroError::UTF8InUnicodeCodePoint { pos }),
             PosType::Utf16 => Some(LoroError::UTF16InUnicodeCodePoint { pos }),
+            PosType::Event if cfg!(feature = "wasm") => {
+                Some(LoroError::UTF16InUnicodeCodePoint { pos })
+            }
             _ => None,
         };
 
         let Some(err) = err else {
             return Ok(());
         };
-        let Some(unicode_pos) = self.convert_pos(pos, pos_type, PosType::Unicode) else {
+
+        if pos > self.len(pos_type) {
             return Ok(());
+        }
+
+        let Some(unicode_pos) = self.convert_pos(pos, pos_type, PosType::Unicode) else {
+            return Err(err);
         };
         if self.convert_pos(unicode_pos, PosType::Unicode, pos_type) != Some(pos) {
             return Err(err);
@@ -2423,7 +2437,12 @@ impl TextHandler {
             }
         }
 
-        let mut len = self.len_event();
+        let mut len = match &self.inner {
+            MaybeDetached::Detached(_) => self.len_event(),
+            MaybeDetached::Attached(a) => {
+                a.with_state(|state| state.as_richtext_state_mut().unwrap().len(PosType::Event))
+            }
+        };
         for pending_mark in marks {
             if pending_mark.start >= len {
                 self.insert_with_txn(
@@ -4635,7 +4654,7 @@ mod test {
     use crate::version::Frontiers;
     use crate::LoroDoc;
     use crate::{fx_map, ToJson};
-    use loro_common::{ContainerID, ContainerType, LoroValue, ID};
+    use loro_common::{ContainerID, ContainerType, LoroError, LoroValue, ID};
     use serde_json::json;
 
     fn insert_many_with_single_list_op(
@@ -4856,6 +4875,22 @@ mod test {
             text.convert_pos(2, PosType::Unicode, PosType::Utf16),
             Some(3)
         );
+        assert!(matches!(
+            text.delete_utf16(2, 1),
+            Err(LoroError::UTF16InUnicodeCodePoint { pos: 2 })
+        ));
+        assert!(matches!(
+            text.delete_utf8(2, 1),
+            Err(LoroError::UTF8InUnicodeCodePoint { pos: 2 })
+        ));
+        assert!(matches!(
+            text.slice_delta(2, 3, PosType::Utf16),
+            Err(LoroError::UTF16InUnicodeCodePoint { pos: 2 })
+        ));
+        assert!(matches!(
+            text.slice_delta(2, 3, PosType::Bytes),
+            Err(LoroError::UTF8InUnicodeCodePoint { pos: 2 })
+        ));
         assert!(!text.attached_handler().unwrap().has_decoded_state());
 
         assert_eq!(text.get_delta().len(), 2);
