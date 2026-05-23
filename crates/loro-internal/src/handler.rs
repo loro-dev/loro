@@ -5201,6 +5201,37 @@ mod test {
     }
 
     #[test]
+    fn lazy_state_only_snapshot_rejects_child_with_wrong_parent() {
+        let loro = LoroDoc::new_auto_commit();
+        let map = loro.get_map("map");
+        let text = map
+            .insert_container("text", TextHandler::new_detached())
+            .unwrap();
+        text.insert(0, "hello", PosType::Unicode).unwrap();
+        let wrong_parent = loro.get_list("wrong_parent");
+        wrong_parent.push("not text").unwrap();
+        let snapshot = loro.export(ExportMode::state_only(None)).unwrap();
+
+        let mut kv = MemKvStore::new(MemKvConfig::default().should_encode_none(false));
+        kv.import_all(
+            fast_snapshot_shallow_root_state_bytes(&snapshot)
+                .to_vec()
+                .into(),
+        )
+        .unwrap();
+        let text_key = text.id().to_bytes();
+        let text_payload = kv.get(&text_key).unwrap();
+        kv.set(
+            &text_key,
+            rewrite_container_parent(&text_payload, Some(wrong_parent.id())).into(),
+        );
+        let corrupted = replace_fast_snapshot_shallow_root_state_bytes(snapshot, &kv.export_all());
+
+        let doc = LoroDoc::new();
+        assert!(doc.import(&corrupted).is_err());
+    }
+
+    #[test]
     fn tree_meta() {
         let loro = LoroDoc::new_auto_commit();
         loro.set_peer_id(1).unwrap();

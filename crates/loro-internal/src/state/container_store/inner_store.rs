@@ -2,12 +2,13 @@ use crate::{
     arena::SharedArena,
     configure::Configure,
     container::idx::ContainerIdx,
-    state::{container_store::FRONTIERS_KEY, ContainerCreationContext},
+    state::{container_store::FRONTIERS_KEY, ContainerCreationContext, ContainerState},
     utils::kv_wrapper::KvWrapper,
     version::Frontiers,
 };
 use bytes::Bytes;
 use loro_common::ContainerID;
+use rustc_hash::FxHashMap;
 use std::ops::Bound;
 
 use super::ContainerWrapper;
@@ -332,6 +333,7 @@ impl InnerStore {
         ctx: ContainerCreationContext,
     ) -> Result<(), loro_common::LoroError> {
         self.kv.with_kv(|kv| {
+            let mut containers = FxHashMap::default();
             for (k, v) in kv.scan(Bound::Unbounded, Bound::Unbounded) {
                 let cid = ContainerID::from_bytes(&k);
                 let idx = self.arena.register_container(&cid);
@@ -353,16 +355,35 @@ impl InnerStore {
                         ));
                     }
 
-                    container.decode_state(idx, ctx)
+                    container.decode_state(idx, ctx)?;
+                    Ok(container)
                 }));
                 match result {
-                    Ok(Ok(())) => {}
+                    Ok(Ok(container)) => {
+                        containers.insert(cid, container);
+                    }
                     Ok(Err(e)) => return Err(e),
                     Err(_) => {
                         return Err(loro_common::LoroError::DecodeError(
                             "Decode container state failed".to_string().into_boxed_str(),
                         ));
                     }
+                }
+            }
+
+            for (cid, container) in containers.iter() {
+                let Some(parent_id) = container.parent() else {
+                    continue;
+                };
+                let Some(parent) = containers.get(parent_id) else {
+                    continue;
+                };
+                if !parent.try_get_state().unwrap().contains_child(cid) {
+                    return Err(loro_common::LoroError::DecodeError(
+                        "Container parent does not contain child"
+                            .to_string()
+                            .into_boxed_str(),
+                    ));
                 }
             }
 
