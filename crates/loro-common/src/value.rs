@@ -231,9 +231,10 @@ impl LoroValue {
         match self {
             LoroValue::List(list) => {
                 if index < 0 {
-                    list.get(list.len() - (-index) as usize)
+                    let offset = usize::try_from(index.checked_neg()?).ok()?;
+                    list.get(list.len().checked_sub(offset)?)
                 } else {
-                    list.get(index as usize)
+                    list.get(usize::try_from(index).ok()?)
                 }
             }
             _ => None,

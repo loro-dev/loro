@@ -219,6 +219,9 @@ fn loro_value_contracts_roundtrip_for_scalars_collections_and_containers() -> an
         Some(&LoroValue::from(vec![4_i64, 5_i64]))
     );
     assert_eq!(list_value.get_by_index(0), Some(&LoroValue::Null));
+    assert_eq!(list_value.get_by_index(-7), None);
+    assert_eq!(list_value.get_by_index(isize::MIN), None);
+    assert_eq!(LoroValue::Null.get_by_index(-1), None);
     assert_eq!(list_value[5], LoroValue::from(vec![4_i64, 5_i64]));
     assert_eq!(map_value["missing"], LoroValue::Null);
     assert_eq!(list_value[99], LoroValue::Null);
