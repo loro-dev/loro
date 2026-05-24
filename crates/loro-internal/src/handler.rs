@@ -5209,6 +5209,27 @@ mod test {
     }
 
     #[test]
+    fn malformed_lazy_snapshot_container_key_is_rejected_on_import() {
+        let loro = LoroDoc::new_auto_commit();
+        let map = loro.get_map("map");
+        map.insert("key", "value").unwrap();
+        let snapshot = loro.export(ExportMode::snapshot()).unwrap();
+
+        let mut original_kv = MemKvStore::new(MemKvConfig::default().should_encode_none(false));
+        original_kv
+            .import_all(fast_snapshot_state_bytes(&snapshot).to_vec().into())
+            .unwrap();
+        let map_payload = original_kv.get(&map.id().to_bytes()).unwrap();
+
+        let mut kv = MemKvStore::new(MemKvConfig::default().should_encode_none(false));
+        kv.set(&[ContainerType::Map.to_u8()], map_payload);
+        let corrupted = replace_fast_snapshot_state_bytes(snapshot, &kv.export_all());
+
+        let doc = LoroDoc::new();
+        assert!(doc.import(&corrupted).is_err());
+    }
+
+    #[test]
     fn lazy_state_only_snapshot_rejects_child_with_missing_parent() {
         let loro = LoroDoc::new_auto_commit();
         let map = loro.get_map("map");

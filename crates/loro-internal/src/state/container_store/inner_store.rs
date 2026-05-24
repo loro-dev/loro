@@ -335,9 +335,9 @@ impl InnerStore {
         self.kv.with_kv(|kv| {
             let mut containers = FxHashMap::default();
             for (k, v) in kv.scan(Bound::Unbounded, Bound::Unbounded) {
-                let cid = ContainerID::from_bytes(&k);
-                let idx = self.arena.register_container(&cid);
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let cid = ContainerID::from_bytes(&k);
+                    let idx = self.arena.register_container(&cid);
                     let mut container = ContainerWrapper::new_from_bytes(v);
                     if cid.container_type() != container.kind() {
                         return Err(loro_common::LoroError::DecodeError(
@@ -366,10 +366,10 @@ impl InnerStore {
                         ));
                     }
 
-                    Ok(container)
+                    Ok((cid, container))
                 }));
                 match result {
-                    Ok(Ok(container)) => {
+                    Ok(Ok((cid, container))) => {
                         containers.insert(cid, container);
                     }
                     Ok(Err(e)) => return Err(e),
