@@ -441,6 +441,27 @@ fn import_json_updates_rejects_unsupported_schema_version() -> anyhow::Result<()
 }
 
 #[test]
+fn export_json_in_id_span_clamps_negative_counter_ranges() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(92)?;
+    doc.get_text("text").insert(0, "a")?;
+    doc.commit();
+
+    let changes = doc.export_json_in_id_span(IdSpan::new(92, i32::MIN, 1));
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].id.counter, 0);
+
+    let changes = doc.export_json_in_id_span(IdSpan::new(92, i32::MIN, -1));
+    assert!(changes.is_empty());
+
+    let changes = doc.export_json_in_id_span(IdSpan::new(92, 1, i32::MIN));
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].id.counter, 0);
+
+    Ok(())
+}
+
+#[test]
 fn import_json_updates_rejects_negative_op_counters() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     doc.get_map("root").insert("key", "value")?;
