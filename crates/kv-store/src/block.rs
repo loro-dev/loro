@@ -17,6 +17,9 @@ use crate::{
 
 use super::sstable::{SIZE_OF_U16, SIZE_OF_U8};
 
+const MAX_NORMAL_BLOCK_DATA_LEN: usize = u16::MAX as usize;
+const MAX_NORMAL_BLOCK_ENTRIES: usize = u16::MAX as usize;
+
 #[derive(Debug, Clone)]
 pub struct LargeValueBlock {
     // without checksum
@@ -371,7 +374,7 @@ impl BlockBuilder {
     pub fn add(&mut self, key: &[u8], value: &[u8]) -> bool {
         debug_assert!(!key.is_empty(), "key cannot be empty");
         if self.first_key.is_empty() {
-            if value.len() > self.block_size {
+            if value.len() > self.block_size || value.len() > MAX_NORMAL_BLOCK_DATA_LEN {
                 self.data.extend_from_slice(value);
                 self.is_large = true;
                 self.first_key = Bytes::copy_from_slice(key);
@@ -384,16 +387,39 @@ impl BlockBuilder {
             return true;
         }
 
+        if self.offsets.len() >= MAX_NORMAL_BLOCK_ENTRIES {
+            return false;
+        }
+
+        let (common, suffix) = get_common_prefix_len_and_strip(key, &self.first_key);
+        let key_len = suffix.len();
+        let Some(next_data_len) = self
+            .data
+            .len()
+            .checked_add(SIZE_OF_U8 + SIZE_OF_U16)
+            .and_then(|len| len.checked_add(key_len))
+            .and_then(|len| len.checked_add(value.len()))
+        else {
+            return false;
+        };
+        if next_data_len > MAX_NORMAL_BLOCK_DATA_LEN {
+            return false;
+        }
+
         // whether the block is full
-        if self.estimated_size() + key.len() + value.len() + SIZE_OF_U8 + SIZE_OF_U16
-            > self.block_size
-        {
+        let Some(estimated_size) = self
+            .estimated_size()
+            .checked_add(key_len)
+            .and_then(|len| len.checked_add(value.len()))
+            .and_then(|len| len.checked_add(SIZE_OF_U8 + SIZE_OF_U16))
+        else {
+            return false;
+        };
+        if estimated_size > self.block_size {
             return false;
         }
 
         self.offsets.push(self.data.len() as u16);
-        let (common, suffix) = get_common_prefix_len_and_strip(key, &self.first_key);
-        let key_len = suffix.len();
         self.data.push(common);
         self.data.extend_from_slice(&(key_len as u16).to_le_bytes());
         self.data.extend_from_slice(suffix);

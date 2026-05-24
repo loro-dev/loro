@@ -647,6 +647,41 @@ mod tests {
         assert_eq!(store.get(&e), Some(e.clone()));
     }
 
+    #[test]
+    fn large_config_splits_normal_blocks_before_u16_offsets_overflow() {
+        let mut store = MemKvStore::new(
+            MemKvConfig::default()
+                .block_size(usize::from(u16::MAX) * 2)
+                .should_encode_none(true),
+        );
+        let a = Bytes::from(vec![1; 40_000]);
+        let b = Bytes::from(vec![2; 40_000]);
+        store.set(b"a", a.clone());
+        store.set(b"b", b.clone());
+
+        let bytes = store.export_all();
+        let mut imported = new_store();
+        imported.import_all(bytes).unwrap();
+        assert_eq!(imported.get(b"a"), Some(a));
+        assert_eq!(imported.get(b"b"), Some(b));
+    }
+
+    #[test]
+    fn large_config_uses_large_block_for_values_bigger_than_normal_offsets() {
+        let mut store = MemKvStore::new(
+            MemKvConfig::default()
+                .block_size(usize::from(u16::MAX) * 2)
+                .should_encode_none(true),
+        );
+        let value = Bytes::from(vec![7; usize::from(u16::MAX) + 1]);
+        store.set(b"large", value.clone());
+
+        let bytes = store.export_all();
+        let mut imported = new_store();
+        imported.import_all(bytes).unwrap();
+        assert_eq!(imported.get(b"large"), Some(value));
+    }
+
     fn new_store() -> MemKvStore {
         MemKvStore::new(MemKvConfig::default().should_encode_none(true))
     }
