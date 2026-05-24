@@ -532,9 +532,9 @@ pub(crate) fn encode_change(
 fn decode_changes(json: JsonSchema, arena: &SharedArena) -> LoroResult<Vec<Change>> {
     let JsonSchema {
         schema_version,
+        start_version,
         peers,
         changes,
-        ..
     } = json;
     if schema_version != SCHEMA_VERSION {
         return Err(LoroError::DecodeError(
@@ -544,6 +544,7 @@ fn decode_changes(json: JsonSchema, arena: &SharedArena) -> LoroResult<Vec<Chang
             .into_boxed_str(),
         ));
     }
+    validate_json_frontiers(&start_version)?;
 
     let mut ans = Vec::with_capacity(changes.len());
     for json::JsonChange {
@@ -556,6 +557,7 @@ fn decode_changes(json: JsonSchema, arena: &SharedArena) -> LoroResult<Vec<Chang
     } in changes
     {
         let id = convert_id(&id, &peers)?;
+        validate_json_id_counter(id, "change id")?;
         let mut ops: RleVec<[Op; 1]> = RleVec::new();
         let mut expected_counter = id.counter;
         if json_ops.is_empty() {
@@ -572,14 +574,18 @@ fn decode_changes(json: JsonSchema, arena: &SharedArena) -> LoroResult<Vec<Chang
             expected_counter = next_counter;
         }
 
+        let deps = deps
+            .into_iter()
+            .map(|id| convert_id(&id, &peers))
+            .collect::<LoroResult<Vec<_>>>()?;
+        for dep in &deps {
+            validate_json_id_counter(*dep, "dependency id")?;
+        }
+
         let change = Change {
             id,
             timestamp,
-            deps: Frontiers::from_iter(
-                deps.into_iter()
-                    .map(|id| convert_id(&id, &peers))
-                    .collect::<LoroResult<Vec<_>>>()?,
-            ),
+            deps: Frontiers::from_iter(deps),
             lamport,
             ops,
             commit_msg: msg.map(|x| x.into()),
@@ -589,11 +595,58 @@ fn decode_changes(json: JsonSchema, arena: &SharedArena) -> LoroResult<Vec<Chang
     Ok(ans)
 }
 
+fn validate_json_frontiers(frontiers: &Frontiers) -> LoroResult<()> {
+    for id in frontiers.iter() {
+        validate_json_id_counter(id, "start version id")?;
+    }
+
+    Ok(())
+}
+
+fn validate_json_id_counter(id: ID, name: &str) -> LoroResult<()> {
+    if id.counter < 0 {
+        return Err(LoroError::DecodeError(
+            format!("invalid json counter: {name} counter must be non-negative").into_boxed_str(),
+        ));
+    }
+
+    Ok(())
+}
+
+fn validate_json_tree_id_counter(id: &TreeID, name: &str) -> LoroResult<()> {
+    if id.counter < 0 {
+        return Err(LoroError::DecodeError(
+            format!("invalid json counter: {name} counter must be non-negative").into_boxed_str(),
+        ));
+    }
+
+    Ok(())
+}
+
+fn validate_json_container_id_counter(id: &ContainerID, name: &str) -> LoroResult<()> {
+    if let ContainerID::Normal { counter, .. } = id {
+        if *counter < 0 {
+            return Err(LoroError::DecodeError(
+                format!("invalid json counter: {name} counter must be non-negative")
+                    .into_boxed_str(),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 fn validate_json_op_counter(expected_counter: Counter, op: &json::JsonOp) -> LoroResult<Counter> {
     let op_len = op.content.op_len();
     if op_len == 0 {
         return Err(LoroError::DecodeError(
             "invalid json op counter: op length must be greater than zero".into(),
+        ));
+    }
+
+    if expected_counter < 0 || op.counter < 0 {
+        return Err(LoroError::DecodeError(
+            "invalid json op counter: op counters must be non-negative".into(),
         ));
     }
 
@@ -694,6 +747,7 @@ fn decode_op(op: json::JsonOp, arena: &SharedArena, peers: &Option<Vec<PeerID>>)
         content,
     } = op;
     let container = convert_container_id(container, peers)?;
+    validate_json_container_id_counter(&container, "op container")?;
     let idx = arena.register_container(&container);
     let content = match container.container_type() {
         ContainerType::Text => match content {
@@ -713,6 +767,7 @@ fn decode_op(op: json::JsonOp, arena: &SharedArena, peers: &Option<Vec<PeerID>>)
                     start_id: id_start,
                 } => {
                     let id_start = convert_id(&id_start, peers)?;
+                    validate_json_id_counter(id_start, "text delete start id")?;
                     InnerContent::List(InnerListOp::Delete(DeleteSpanWithId {
                         id_start,
                         span: DeleteSpan {
@@ -762,8 +817,10 @@ fn decode_op(op: json::JsonOp, arena: &SharedArena, peers: &Option<Vec<PeerID>>)
                     })
                 }
                 json::ListOp::Delete { pos, len, start_id } => {
+                    let start_id = convert_id(&start_id, peers)?;
+                    validate_json_id_counter(start_id, "list delete start id")?;
                     InnerContent::List(InnerListOp::Delete(DeleteSpanWithId {
-                        id_start: convert_id(&start_id, peers)?,
+                        id_start: start_id,
                         span: DeleteSpan {
                             pos: pos as isize,
                             signed_len: len as isize,
@@ -797,8 +854,10 @@ fn decode_op(op: json::JsonOp, arena: &SharedArena, peers: &Option<Vec<PeerID>>)
                     })
                 }
                 json::MovableListOp::Delete { pos, len, start_id } => {
+                    let start_id = convert_id(&start_id, peers)?;
+                    validate_json_id_counter(start_id, "movable list delete start id")?;
                     InnerContent::List(InnerListOp::Delete(DeleteSpanWithId {
-                        id_start: convert_id(&start_id, peers)?,
+                        id_start: start_id,
                         span: DeleteSpan {
                             pos: pos as isize,
                             signed_len: len as isize,
@@ -859,29 +918,49 @@ fn decode_op(op: json::JsonOp, arena: &SharedArena, peers: &Option<Vec<PeerID>>)
                     target,
                     parent,
                     fractional_index,
-                } => InnerContent::Tree(Arc::new(TreeOp::Create {
-                    target: convert_tree_id(&target, peers)?,
-                    parent: match parent {
-                        Some(p) => Some(convert_tree_id(&p, peers)?),
+                } => {
+                    let target = convert_tree_id(&target, peers)?;
+                    validate_json_tree_id_counter(&target, "tree create target")?;
+                    let parent = match parent {
+                        Some(p) => {
+                            let parent = convert_tree_id(&p, peers)?;
+                            validate_json_tree_id_counter(&parent, "tree create parent")?;
+                            Some(parent)
+                        }
                         None => None,
-                    },
-                    position: fractional_index,
-                })),
+                    };
+                    InnerContent::Tree(Arc::new(TreeOp::Create {
+                        target,
+                        parent,
+                        position: fractional_index,
+                    }))
+                }
                 json::TreeOp::Move {
                     target,
                     parent,
                     fractional_index,
-                } => InnerContent::Tree(Arc::new(TreeOp::Move {
-                    target: convert_tree_id(&target, peers)?,
-                    parent: match parent {
-                        Some(p) => Some(convert_tree_id(&p, peers)?),
+                } => {
+                    let target = convert_tree_id(&target, peers)?;
+                    validate_json_tree_id_counter(&target, "tree move target")?;
+                    let parent = match parent {
+                        Some(p) => {
+                            let parent = convert_tree_id(&p, peers)?;
+                            validate_json_tree_id_counter(&parent, "tree move parent")?;
+                            Some(parent)
+                        }
                         None => None,
-                    },
-                    position: fractional_index,
-                })),
-                json::TreeOp::Delete { target } => InnerContent::Tree(Arc::new(TreeOp::Delete {
-                    target: convert_tree_id(&target, peers)?,
-                })),
+                    };
+                    InnerContent::Tree(Arc::new(TreeOp::Move {
+                        target,
+                        parent,
+                        position: fractional_index,
+                    }))
+                }
+                json::TreeOp::Delete { target } => {
+                    let target = convert_tree_id(&target, peers)?;
+                    validate_json_tree_id_counter(&target, "tree delete target")?;
+                    InnerContent::Tree(Arc::new(TreeOp::Delete { target }))
+                }
             },
             _ => {
                 return Err(LoroError::DecodeError(

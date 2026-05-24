@@ -390,6 +390,46 @@ fn import_json_updates_rejects_unsupported_schema_version() -> anyhow::Result<()
 }
 
 #[test]
+fn import_json_updates_rejects_negative_op_counters() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.get_map("root").insert("key", "value")?;
+    doc.commit();
+
+    let mut json = doc
+        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv());
+    json.changes[0].id.counter = -1;
+    json.changes[0].ops[0].counter = -1;
+
+    let err = LoroDoc::new().import_json_updates(json).unwrap_err();
+    assert!(
+        err.to_string().contains("counter"),
+        "expected counter validation error, got {err:?}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn import_json_updates_rejects_negative_dependency_counters() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(77)?;
+    doc.get_map("root").insert("key", "value")?;
+    doc.commit();
+
+    let mut json = doc
+        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv());
+    json.changes[0].deps.push(ID::new(77, -1));
+
+    let err = LoroDoc::new().import_json_updates(json).unwrap_err();
+    assert!(
+        err.to_string().contains("counter"),
+        "expected counter validation error, got {err:?}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn json_update_schema_covers_list_map_text_tree_and_movable_list_ops() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(31)?;
