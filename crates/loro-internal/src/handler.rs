@@ -5258,6 +5258,26 @@ mod test {
     }
 
     #[test]
+    fn malformed_lazy_snapshot_empty_sstable_meta_is_rejected_on_import() {
+        let loro = LoroDoc::new_auto_commit();
+        let map = loro.get_map("map");
+        map.insert("key", "value").unwrap();
+        let snapshot = loro.export(ExportMode::snapshot()).unwrap();
+
+        let mut malformed_state = Vec::new();
+        malformed_state.extend_from_slice(b"LORO");
+        malformed_state.push(0);
+        malformed_state.extend_from_slice(&0u32.to_le_bytes());
+        let checksum = xxhash_rust::xxh32::xxh32(&[], u32::from_le_bytes(*b"LORO"));
+        malformed_state.extend_from_slice(&checksum.to_le_bytes());
+        malformed_state.extend_from_slice(&5u32.to_le_bytes());
+        let corrupted = replace_fast_snapshot_state_bytes(snapshot, &malformed_state);
+
+        let doc = LoroDoc::new();
+        assert!(doc.import(&corrupted).is_err());
+    }
+
+    #[test]
     fn malformed_lazy_snapshot_container_key_is_rejected_on_import() {
         let loro = LoroDoc::new_auto_commit();
         let map = loro.get_map("map");

@@ -6,7 +6,7 @@ use std::{
 };
 
 use bytes::{Buf, Bytes};
-use loro_common::LoroResult;
+use loro_common::{LoroError, LoroResult};
 use once_cell::sync::OnceCell;
 
 use crate::{
@@ -118,22 +118,90 @@ impl NormalBlock {
         first_key: Bytes,
         compression_type: CompressionType,
     ) -> LoroResult<NormalBlock> {
+        if raw_block_and_check.len() < SIZE_OF_U32 {
+            return Err(LoroError::DecodeError("Invalid bytes".into()));
+        }
+
         let buf = raw_block_and_check.slice(..raw_block_and_check.len() - SIZE_OF_U32);
         let mut data = vec![];
         decompress(&mut data, buf, compression_type)?;
+        if data.len() < SIZE_OF_U16 {
+            return Err(LoroError::DecodeError("Invalid bytes".into()));
+        }
+
         let offsets_len = (&data[data.len() - SIZE_OF_U16..]).get_u16_le() as usize;
-        let data_end = data.len() - SIZE_OF_U16 * (offsets_len + 1);
+        if offsets_len == 0 {
+            return Err(LoroError::DecodeError("Invalid bytes".into()));
+        }
+
+        let offsets_bytes_len = SIZE_OF_U16
+            .checked_mul(offsets_len + 1)
+            .ok_or_else(|| LoroError::DecodeError("Invalid bytes".into()))?;
+        if data.len() < offsets_bytes_len {
+            return Err(LoroError::DecodeError("Invalid bytes".into()));
+        }
+
+        let data_end = data.len() - offsets_bytes_len;
+        if data_end > u16::MAX as usize {
+            return Err(LoroError::DecodeError("Invalid bytes".into()));
+        }
+
         let offsets = &data[data_end..data.len() - SIZE_OF_U16];
-        let offsets = offsets
+        let offsets: Vec<u16> = offsets
             .chunks(SIZE_OF_U16)
             .map(|mut chunk| chunk.get_u16_le())
             .collect();
+        Self::validate_decoded_data(&data[..data_end], &offsets, &first_key)?;
         Ok(NormalBlock {
             data: Bytes::copy_from_slice(&data[..data_end]),
             encoded_data: OnceCell::with_value((raw_block_and_check, compression_type)),
             offsets,
             first_key,
         })
+    }
+
+    fn validate_decoded_data(data: &[u8], offsets: &[u16], first_key: &[u8]) -> LoroResult<()> {
+        if offsets.first().copied() != Some(0) {
+            return Err(LoroError::DecodeError("Invalid bytes".into()));
+        }
+
+        let mut prev_offset = 0usize;
+        for (idx, offset) in offsets.iter().map(|x| *x as usize).enumerate() {
+            let offset_end = offsets
+                .get(idx + 1)
+                .map_or(data.len(), |next| *next as usize);
+            if offset < prev_offset || offset > offset_end || offset_end > data.len() {
+                return Err(LoroError::DecodeError("Invalid bytes".into()));
+            }
+
+            if idx > 0 {
+                let header_end = offset
+                    .checked_add(SIZE_OF_U8 + SIZE_OF_U16)
+                    .ok_or_else(|| LoroError::DecodeError("Invalid bytes".into()))?;
+                if header_end > offset_end {
+                    return Err(LoroError::DecodeError("Invalid bytes".into()));
+                }
+
+                let common_prefix_len = data[offset] as usize;
+                if common_prefix_len > first_key.len() {
+                    return Err(LoroError::DecodeError("Invalid bytes".into()));
+                }
+
+                let key_suffix_len =
+                    u16::from_le_bytes(data[offset + SIZE_OF_U8..header_end].try_into().unwrap())
+                        as usize;
+                if header_end
+                    .checked_add(key_suffix_len)
+                    .is_none_or(|key_end| key_end > offset_end)
+                {
+                    return Err(LoroError::DecodeError("Invalid bytes".into()));
+                }
+            }
+
+            prev_offset = offset;
+        }
+
+        Ok(())
     }
 }
 
@@ -189,6 +257,19 @@ impl Block {
         }
     }
 
+    pub(crate) fn try_decode(
+        raw_block_and_check: Bytes,
+        is_large: bool,
+        key: Bytes,
+        compression_type: CompressionType,
+    ) -> LoroResult<Self> {
+        if is_large {
+            return LargeValueBlock::decode(raw_block_and_check, key, compression_type)
+                .map(Block::Large);
+        }
+        NormalBlock::decode(raw_block_and_check, key, compression_type).map(Block::Normal)
+    }
+
     pub fn decode(
         raw_block_and_check: Bytes,
         is_large: bool,
@@ -196,13 +277,7 @@ impl Block {
         compression_type: CompressionType,
     ) -> Self {
         // The caller is responsible for validating SSTable integrity before lazy block reads.
-        if is_large {
-            return LargeValueBlock::decode(raw_block_and_check, key, compression_type)
-                .map(Block::Large)
-                .expect("validated SSTable block should decode");
-        }
-        NormalBlock::decode(raw_block_and_check, key, compression_type)
-            .map(Block::Normal)
+        Self::try_decode(raw_block_and_check, is_large, key, compression_type)
             .expect("validated SSTable block should decode")
     }
 
