@@ -1534,18 +1534,20 @@ mod jitter {
 }
 
 mod snapshot {
-    use std::{borrow::Cow, collections::BTreeSet, io::Read};
+    use std::{borrow::Cow, collections::BTreeSet};
 
     use fractional_index::FractionalIndex;
-    use itertools::Itertools;
-    use loro_common::{IdFull, Lamport, PeerID, TreeID};
+    use loro_common::{IdFull, PeerID, TreeID};
     use rustc_hash::FxHashMap;
 
     use serde_columnar::columnar;
 
     use crate::{
         encoding::{arena::PositionArena, value_register::ValueRegister},
-        state::FastStateSnapshot,
+        state::{
+            decode_lamport_from_delta, decode_peer_from_table, decode_peer_table,
+            state_decode_error, FastStateSnapshot,
+        },
     };
 
     use super::{TreeNode, TreeParentId, TreeState};
@@ -1698,23 +1700,29 @@ mod snapshot {
         where
             Self: Sized,
         {
-            let peer_num = leb128::read::unsigned(&mut bytes).unwrap() as usize;
-            let mut peers = Vec::with_capacity(peer_num);
-            for _ in 0..peer_num {
-                let mut buf = [0u8; 8];
-                bytes.read_exact(&mut buf).unwrap();
-                peers.push(PeerID::from_le_bytes(buf));
-            }
+            let peers = decode_peer_table(&mut bytes, "Decode tree state failed")?;
 
             let mut tree = TreeState::new(idx, ctx.peer);
-            let encoded: EncodedTree = serde_columnar::from_bytes(bytes)?;
-            let fractional_indexes = PositionArena::decode(&encoded.fractional_indexes).unwrap();
-            let fractional_indexes = fractional_indexes.parse_to_positions();
+            let encoded: EncodedTree = serde_columnar::from_bytes(bytes).map_err(|err| {
+                state_decode_error(format!("Decode tree state failed: invalid metadata: {err}"))
+            })?;
+            let fractional_indexes =
+                PositionArena::decode(&encoded.fractional_indexes)?.try_parse_to_positions()?;
+            if encoded.node_ids.len() != encoded.nodes.len() {
+                return Err(state_decode_error(
+                    "Decode tree state failed: node id/node length mismatch",
+                ));
+            }
             let node_ids = encoded
                 .node_ids
                 .iter()
-                .map(|x| TreeID::new(peers[x.peer_idx], x.counter))
-                .collect_vec();
+                .map(|x| {
+                    Ok(TreeID::new(
+                        decode_peer_from_table(&peers, x.peer_idx, "Decode tree state failed")?,
+                        x.counter,
+                    ))
+                })
+                .collect::<loro_common::LoroResult<Vec<_>>>()?;
             for (node_id, node) in node_ids.iter().zip(encoded.nodes) {
                 // PERF: we don't need to mov the deleted node, instead we can cache them
                 // If the parent is TreeParentId::Deleted, then all the nodes afterwards are deleted
@@ -1724,23 +1732,65 @@ mod snapshot {
                         0 => TreeParentId::Root,
                         1 => TreeParentId::Deleted,
                         n => {
-                            let id = node_ids[n - 2];
+                            let id = *node_ids.get(n - 2).ok_or_else(|| {
+                                state_decode_error(
+                                    "Decode tree state failed: parent index out of range",
+                                )
+                            })?;
                             TreeParentId::from(Some(id))
                         }
                     },
                     IdFull::new(
-                        peers[node.last_set_peer_idx],
+                        decode_peer_from_table(
+                            &peers,
+                            node.last_set_peer_idx,
+                            "Decode tree state failed",
+                        )?,
                         node.last_set_counter,
-                        (node.last_set_lamport_sub_counter + node.last_set_counter) as Lamport,
+                        decode_lamport_from_delta(
+                            node.last_set_counter,
+                            node.last_set_lamport_sub_counter,
+                            "Decode tree state failed",
+                        )?,
                     ),
                     Some(FractionalIndex::from_bytes(
-                        fractional_indexes[node.fractional_index_idx].clone(),
+                        fractional_indexes
+                            .get(node.fractional_index_idx)
+                            .ok_or_else(|| {
+                                state_decode_error(
+                                    "Decode tree state failed: fractional index out of range",
+                                )
+                            })?
+                            .clone(),
                     )),
                 )
-                .unwrap();
+                .map_err(|err| {
+                    state_decode_error(format!("Decode tree state failed: invalid node: {err}"))
+                })?;
             }
 
             Ok(tree)
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use loro_common::{ContainerType, LoroValue};
+
+        use crate::{container::idx::ContainerIdx, state::ContainerCreationContext};
+
+        use super::*;
+
+        #[test]
+        fn tree_fast_snapshot_rejects_corrupt_state_metadata() {
+            let idx = ContainerIdx::from_index_and_type(0, ContainerType::Tree);
+            let configure = Default::default();
+            let ctx = ContainerCreationContext {
+                configure: &configure,
+                peer: 0,
+            };
+
+            assert!(TreeState::decode_snapshot_fast(idx, (LoroValue::Null, &[1]), ctx).is_err());
         }
     }
 }

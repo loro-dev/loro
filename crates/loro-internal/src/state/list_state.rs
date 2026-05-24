@@ -744,13 +744,14 @@ impl ContainerState for ListState {
 }
 
 mod snapshot {
-    use loro_common::{Counter, Lamport, PeerID};
+    use loro_common::PeerID;
     use serde_columnar::columnar;
 
     use crate::{
         encoding::value_register::ValueRegister,
         state::{
-            decode_peer_from_table, decode_peer_table, state_decode_error, ContainerCreationContext,
+            decode_lamport_from_delta, decode_peer_from_table, decode_peer_table,
+            state_decode_error, ContainerCreationContext,
         },
     };
 
@@ -843,8 +844,12 @@ mod snapshot {
                     list[i].clone(),
                     IdFull::new(
                         peer,
-                        id.counter as Counter,
-                        (id.lamport_sub_counter + id.counter) as Lamport,
+                        id.counter,
+                        decode_lamport_from_delta(
+                            id.counter,
+                            id.lamport_sub_counter,
+                            "Decode list state failed",
+                        )?,
                     ),
                 );
             }

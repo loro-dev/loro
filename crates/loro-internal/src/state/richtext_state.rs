@@ -1196,7 +1196,7 @@ mod snapshot {
     use loro_common::{IdFull, InternalString, LoroValue, PeerID};
     use rustc_hash::FxHashMap;
     use serde_columnar::columnar;
-    use std::{io::Read, sync::Arc};
+    use std::sync::Arc;
 
     use crate::{
         container::richtext::{
@@ -1204,7 +1204,10 @@ mod snapshot {
             TextStyleInfoFlag,
         },
         encoding::value_register::ValueRegister,
-        state::{ContainerCreationContext, ContainerState, FastStateSnapshot},
+        state::{
+            decode_lamport_from_delta, decode_peer_from_table, decode_peer_table,
+            state_decode_error, ContainerCreationContext, ContainerState, FastStateSnapshot,
+        },
         utils::lazy::LazyLoad,
     };
 
@@ -1355,17 +1358,17 @@ mod snapshot {
         {
             let mut text = RichtextState::new(idx, ctx.configure.text_style_config.clone());
             let mut loader = RichtextStateLoader::default();
-            let peer_num = leb128::read::unsigned(&mut bytes).unwrap() as usize;
-            let mut peers = Vec::with_capacity(peer_num);
-            for _ in 0..peer_num {
-                let mut buf = [0u8; 8];
-                bytes.read_exact(&mut buf).unwrap();
-                peers.push(PeerID::from_le_bytes(buf));
-            }
+            let peers = decode_peer_table(&mut bytes, "Decode richtext state failed")?;
 
-            let string = string.into_string().unwrap();
+            let string = string.into_string().map_err(|_| {
+                state_decode_error("Decode richtext state failed: value is not a string")
+            })?;
             let mut s = StrSlice::new_from_str(&string);
-            let iters = serde_columnar::from_bytes::<EncodedText>(bytes).unwrap();
+            let iters = serde_columnar::from_bytes::<EncodedText>(bytes).map_err(|err| {
+                state_decode_error(format!(
+                    "Decode richtext state failed: invalid spans: {err}"
+                ))
+            })?;
             let keys = iters.keys;
             let span_iter = iters.spans.into_iter();
             let mut mark_iter = iters.marks.into_iter();
@@ -1377,11 +1380,14 @@ mod snapshot {
                     lamport_sub_counter,
                     len,
                 } = span;
-                let id_full = IdFull::new(
-                    peers[peer_idx],
+                let peer =
+                    decode_peer_from_table(&peers, peer_idx, "Decode richtext state failed")?;
+                let lamport = decode_lamport_from_delta(
                     counter,
-                    (lamport_sub_counter + counter) as u32,
-                );
+                    lamport_sub_counter,
+                    "Decode richtext state failed",
+                )?;
+                let id_full = IdFull::new(peer, counter, lamport);
                 let chunk = match len {
                     0 => {
                         // Style Start
@@ -1389,12 +1395,19 @@ mod snapshot {
                             key_idx,
                             value,
                             info,
-                        } = mark_iter.next().unwrap();
+                        } = mark_iter.next().ok_or_else(|| {
+                            state_decode_error("Decode richtext state failed: missing style mark")
+                        })?;
+                        let key = keys.get(key_idx).ok_or_else(|| {
+                            state_decode_error(
+                                "Decode richtext state failed: style key index out of range",
+                            )
+                        })?;
                         let style_op = Arc::new(StyleOp {
-                            lamport: (lamport_sub_counter + counter) as u32,
+                            lamport,
                             peer: id_full.peer,
                             cnt: id_full.counter,
-                            key: keys[key_idx].clone(),
+                            key: key.clone(),
                             value,
                             info: TextStyleInfoFlag::from_byte(info),
                         });
@@ -1403,11 +1416,25 @@ mod snapshot {
                     }
                     -1 => {
                         // Style End
-                        let style = id_to_style.remove(&id_full.id().inc(-1)).unwrap();
+                        let style = id_to_style.remove(&id_full.id().inc(-1)).ok_or_else(|| {
+                            state_decode_error("Decode richtext state failed: unmatched style end")
+                        })?;
                         RichtextStateChunk::new_style(style, richtext::AnchorType::End)
                     }
                     len => {
+                        if len < -1 {
+                            return Err(state_decode_error(
+                                "Decode richtext state failed: invalid text span length",
+                            ));
+                        }
+
                         // Text
+                        if s.as_str().chars().count() < len as usize {
+                            return Err(state_decode_error(
+                                "Decode richtext state failed: text span exceeds value length",
+                            ));
+                        }
+
                         let (new, rest) = s.split_at_unicode_pos(len as usize);
                         s = rest;
                         RichtextStateChunk::new_text(new.bytes().clone(), id_full)
@@ -1416,11 +1443,63 @@ mod snapshot {
 
                 loader.push(chunk);
             }
+            if !s.as_str().is_empty() {
+                return Err(state_decode_error(
+                    "Decode richtext state failed: text value not fully covered",
+                ));
+            }
+            if mark_iter.next().is_some() {
+                return Err(state_decode_error(
+                    "Decode richtext state failed: unused style mark",
+                ));
+            }
+            if !id_to_style.is_empty() {
+                return Err(state_decode_error(
+                    "Decode richtext state failed: unclosed style mark",
+                ));
+            }
             text.state = LazyLoad::Src(loader);
             // NOTE: We need to ensure the invariance that the version id is always increased when the richtext state is changed
             // This is used to avoid the version_id to be the same as the previous zero version
             text.version_id = 1;
             Ok(text)
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use loro_common::{ContainerType, LoroValue};
+
+        use crate::container::idx::ContainerIdx;
+
+        use super::*;
+
+        #[test]
+        fn richtext_fast_snapshot_rejects_corrupt_state_metadata() {
+            let idx = ContainerIdx::from_index_and_type(0, ContainerType::Text);
+            let configure = Default::default();
+            let ctx = ContainerCreationContext {
+                configure: &configure,
+                peer: 0,
+            };
+
+            assert!(RichtextState::decode_snapshot_fast(
+                idx,
+                (LoroValue::String("a".into()), &[1]),
+                ctx,
+            )
+            .is_err());
+
+            let mut text = RichtextState::new(idx, configure.text_style_config.clone());
+            let mut bytes = Vec::new();
+            text.encode_snapshot_fast(&mut bytes);
+            let (_, state_bytes) = RichtextState::decode_value(&bytes).unwrap();
+            assert!(RichtextState::decode_snapshot_fast(
+                idx,
+                (LoroValue::String("a".into()), state_bytes),
+                ctx,
+            )
+            .is_err());
         }
     }
 }

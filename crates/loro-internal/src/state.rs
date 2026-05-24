@@ -9,7 +9,7 @@ use dead_containers_cache::DeadContainersCache;
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use itertools::Itertools;
-use loro_common::{ContainerID, LoroError, LoroResult, TreeID};
+use loro_common::{ContainerID, Lamport, LoroError, LoroResult, TreeID};
 use loro_delta::DeltaItem;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::{info_span, instrument, warn};
@@ -130,6 +130,17 @@ fn decode_peer_from_table(peers: &[PeerID], peer_idx: usize, context: &str) -> L
 fn read_state_leb_u64(bytes: &mut &[u8], context: &str) -> LoroResult<u64> {
     leb128::read::unsigned(bytes)
         .map_err(|_| state_decode_error(format!("{context}: invalid integer")))
+}
+
+fn decode_lamport_from_delta(
+    counter: i32,
+    lamport_sub_counter: i32,
+    context: &str,
+) -> LoroResult<Lamport> {
+    let lamport = counter
+        .checked_add(lamport_sub_counter)
+        .ok_or_else(|| state_decode_error(format!("{context}: lamport overflow")))?;
+    u32::try_from(lamport).map_err(|_| state_decode_error(format!("{context}: negative lamport")))
 }
 
 pub struct DocState {
