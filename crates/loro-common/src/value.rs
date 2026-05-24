@@ -829,7 +829,9 @@ impl<'de> serde::de::Visitor<'de> for LoroValueVisitor {
     where
         E: serde::de::Error,
     {
-        Ok(LoroValue::I64(v as i64))
+        Ok(i64::try_from(v)
+            .map(LoroValue::I64)
+            .unwrap_or_else(|_| LoroValue::Double(v as f64)))
     }
 
     fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E>

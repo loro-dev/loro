@@ -163,6 +163,12 @@ fn loro_value_contracts_roundtrip_for_scalars_collections_and_containers() -> an
         serde_json::from_value::<LoroValue>(json!(i64::MAX - 3))?,
         i64_value
     );
+    let large_u64_value = LoroValue::Double(u64::MAX as f64);
+    assert_eq!(
+        serde_json::from_value::<LoroValue>(json!(u64::MAX))?,
+        large_u64_value
+    );
+    assert_eq!(LoroValue::from(json!(u64::MAX)), large_u64_value);
     assert_eq!(serde_json::to_value(&float_value)?, json!(-12.25));
     assert_eq!(
         serde_json::from_value::<LoroValue>(json!(-12.25))?,
