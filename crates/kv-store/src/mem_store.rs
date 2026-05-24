@@ -246,8 +246,6 @@ impl MemKvStore {
             return Ok(());
         }
 
-        // Since all the export format right now has its own checksum on the header,
-        // it's safe for us to skip the checksum check internally here.
         let ss_table = SsTable::import_all(bytes, false).map_err(|e| e.to_string())?;
         self.ss_table.push(ss_table);
         Ok(())

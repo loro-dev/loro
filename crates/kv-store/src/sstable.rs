@@ -344,7 +344,7 @@ impl SsTable {
     /// - [LoroError::DecodeError]
     ///    - "Invalid magic number"
     ///    - "Invalid schema version"
-    pub fn import_all(bytes: Bytes, check_checksum: bool) -> LoroResult<Self> {
+    pub fn import_all(bytes: Bytes, _check_checksum: bool) -> LoroResult<Self> {
         // magic number + schema version + meta offset
         if bytes.len() < SIZE_OF_U32 + SIZE_OF_U8 + SIZE_OF_U32 {
             return Err(LoroError::DecodeError("Invalid sstable bytes".into()));
@@ -374,9 +374,7 @@ impl SsTable {
         let meta = BlockMeta::decode_meta(raw_meta)?;
         Self::validate_block_ranges(&meta, meta_offset)?;
         Self::validate_blocks(&meta, &bytes, meta_offset)?;
-        if check_checksum {
-            Self::check_block_checksum(&meta, &bytes, meta_offset)?;
-        }
+        Self::check_block_checksum(&meta, &bytes, meta_offset)?;
         let first_key = meta
             .first()
             .map(|m| m.first_key.clone())
@@ -1352,5 +1350,21 @@ mod test {
             false
         )
         .is_err());
+    }
+
+    #[test]
+    fn sstable_import_rejects_block_checksum_mismatch_when_outer_checksum_is_skipped() {
+        let first_key = Bytes::from_static(b"key");
+        let mut block_bytes = normal_block_bytes(b"key", b"value");
+        *block_bytes.last_mut().unwrap() ^= 0xff;
+        let meta = [BlockMeta {
+            offset: SIZE_OF_U32 + SIZE_OF_U8,
+            is_large: false,
+            compression_type: CompressionType::None,
+            first_key: first_key.clone(),
+            last_key: Some(first_key),
+        }];
+
+        assert!(SsTable::import_all(malformed_sstable_bytes(&block_bytes, &meta), false).is_err());
     }
 }
