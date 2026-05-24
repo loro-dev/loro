@@ -5250,6 +5250,76 @@ mod test {
     }
 
     #[test]
+    fn malformed_lazy_snapshot_container_header_is_rejected_on_import() {
+        let loro = LoroDoc::new_auto_commit();
+        let map = loro.get_map("map");
+        map.insert("key", "value").unwrap();
+        let snapshot = loro.export(ExportMode::snapshot()).unwrap();
+
+        let mut kv = MemKvStore::new(MemKvConfig::default().should_encode_none(false));
+        kv.set(
+            &ContainerID::new_root("map", ContainerType::Map).to_bytes(),
+            vec![ContainerType::Map.to_u8()].into(),
+        );
+        let corrupted = replace_fast_snapshot_state_bytes(snapshot, &kv.export_all());
+
+        let doc = LoroDoc::new();
+        assert!(doc.import(&corrupted).is_err());
+    }
+
+    #[cfg(feature = "counter")]
+    #[test]
+    fn legacy_empty_counter_payload_imports_as_default_value() {
+        let loro = LoroDoc::new_auto_commit();
+        let counter = loro.get_counter("counter");
+        counter.increment(0.0).unwrap();
+        let snapshot = loro.export(ExportMode::snapshot()).unwrap();
+
+        let mut empty_counter_container = Vec::new();
+        empty_counter_container.push(ContainerType::Counter.to_u8());
+        leb128::write::unsigned(&mut empty_counter_container, 1).unwrap();
+        postcard::to_io(&None::<ContainerID>, &mut empty_counter_container).unwrap();
+
+        let mut kv = MemKvStore::new(MemKvConfig::default().should_encode_none(false));
+        kv.set(
+            &ContainerID::new_root("counter", ContainerType::Counter).to_bytes(),
+            empty_counter_container.into(),
+        );
+        let legacy_snapshot = replace_fast_snapshot_state_bytes(snapshot, &kv.export_all());
+
+        let doc = LoroDoc::new();
+        doc.import(&legacy_snapshot).unwrap();
+        assert_eq!(
+            doc.get_counter("counter").get_value(),
+            LoroValue::Double(0.0)
+        );
+    }
+
+    #[cfg(feature = "counter")]
+    #[test]
+    fn malformed_lazy_counter_payload_is_rejected_on_import() {
+        let loro = LoroDoc::new_auto_commit();
+        loro.get_counter("counter").increment(1.0).unwrap();
+        let snapshot = loro.export(ExportMode::snapshot()).unwrap();
+
+        let mut invalid_counter_container = Vec::new();
+        invalid_counter_container.push(ContainerType::Counter.to_u8());
+        leb128::write::unsigned(&mut invalid_counter_container, 1).unwrap();
+        postcard::to_io(&None::<ContainerID>, &mut invalid_counter_container).unwrap();
+        invalid_counter_container.push(0xff);
+
+        let mut kv = MemKvStore::new(MemKvConfig::default().should_encode_none(false));
+        kv.set(
+            &ContainerID::new_root("counter", ContainerType::Counter).to_bytes(),
+            invalid_counter_container.into(),
+        );
+        let corrupted = replace_fast_snapshot_state_bytes(snapshot, &kv.export_all());
+
+        let doc = LoroDoc::new();
+        assert!(doc.import(&corrupted).is_err());
+    }
+
+    #[test]
     fn mismatched_lazy_snapshot_container_key_and_payload_type_is_rejected() {
         let loro = LoroDoc::new_auto_commit();
         loro.get_text("text")

@@ -1,7 +1,7 @@
 use std::{cell::OnceCell, collections::BTreeMap};
 
 use bytes::Bytes;
-use loro_common::{ContainerID, ContainerType, InternalString, LoroResult, LoroValue};
+use loro_common::{ContainerID, ContainerType, InternalString, LoroError, LoroResult, LoroValue};
 use tracing::trace;
 
 #[cfg(feature = "counter")]
@@ -178,25 +178,33 @@ impl ContainerWrapper {
         }
     }
 
-    pub fn get_value(&mut self, idx: ContainerIdx, ctx: ContainerCreationContext) -> LoroValue {
+    pub(crate) fn try_get_value(
+        &mut self,
+        idx: ContainerIdx,
+        ctx: ContainerCreationContext,
+    ) -> LoroResult<LoroValue> {
         match &mut self.data {
             ContainerData::State(state) => {
                 trace!("state");
-                state.get_value()
+                Ok(state.get_value())
             }
             ContainerData::Lazy(lazy) if lazy.value.is_some() => {
                 trace!("value");
-                lazy.value.as_ref().unwrap().to_loro_value()
+                Ok(lazy.value.as_ref().unwrap().to_loro_value())
             }
             ContainerData::Lazy(_) => {
                 trace!("decode value");
-                self.decode_value(idx, ctx).unwrap();
+                self.decode_value(idx, ctx)?;
                 match &mut self.data {
-                    ContainerData::State(state) => state.get_value(),
-                    ContainerData::Lazy(lazy) => lazy.value.as_ref().unwrap().to_loro_value(),
+                    ContainerData::State(state) => Ok(state.get_value()),
+                    ContainerData::Lazy(lazy) => Ok(lazy.value.as_ref().unwrap().to_loro_value()),
                 }
             }
         }
+    }
+
+    pub fn get_value(&mut self, idx: ContainerIdx, ctx: ContainerCreationContext) -> LoroValue {
+        self.try_get_value(idx, ctx).unwrap()
     }
 
     pub fn map_get(
@@ -469,12 +477,26 @@ impl ContainerWrapper {
     }
 
     pub fn new_from_bytes(bytes: Bytes) -> Self {
-        let kind = ContainerType::try_from_u8(bytes[0]).unwrap();
+        Self::try_new_from_bytes(bytes).unwrap()
+    }
+
+    pub fn try_new_from_bytes(bytes: Bytes) -> LoroResult<Self> {
+        if bytes.is_empty() {
+            return Err(LoroError::DecodeError(
+                "Decode container state failed".to_string().into_boxed_str(),
+            ));
+        }
+
+        let kind = ContainerType::try_from_u8(bytes[0])?;
         let mut reader = &bytes[1..];
-        let depth = leb128::read::unsigned(&mut reader).unwrap();
-        let (parent, reader) = postcard::take_from_bytes(reader).unwrap();
+        let depth = leb128::read::unsigned(&mut reader).map_err(|_| {
+            LoroError::DecodeError("Decode container state failed".to_string().into_boxed_str())
+        })?;
+        let (parent, reader) = postcard::take_from_bytes(reader).map_err(|_| {
+            LoroError::DecodeError("Decode container state failed".to_string().into_boxed_str())
+        })?;
         let size = bytes.len() - reader.len();
-        Self {
+        Ok(Self {
             depth: depth as usize,
             kind,
             parent,
@@ -485,7 +507,7 @@ impl ContainerWrapper {
                 bytes_offset_for_state: None,
             })),
             flushed: true,
-        }
+        })
     }
 
     fn decode_value(&mut self, idx: ContainerIdx, ctx: ContainerCreationContext) -> LoroResult<()> {

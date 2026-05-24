@@ -339,7 +339,7 @@ impl InnerStore {
             let mut containers = FxHashMap::default();
             for (k, v) in kv.scan(Bound::Unbounded, Bound::Unbounded) {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    let cid = ContainerID::from_bytes(&k);
+                    let cid = ContainerID::try_from_bytes(&k)?;
                     if k.as_ref() != cid.to_bytes().as_slice() {
                         return Err(loro_common::LoroError::DecodeError(
                             "Container key is not canonical"
@@ -349,7 +349,7 @@ impl InnerStore {
                     }
 
                     let idx = self.arena.register_container(&cid);
-                    let mut container = ContainerWrapper::new_from_bytes(v.clone());
+                    let mut container = ContainerWrapper::try_new_from_bytes(v.clone())?;
                     if !container.has_canonical_header_bytes(&v) {
                         return Err(loro_common::LoroError::DecodeError(
                             "Container header is not canonical"
@@ -374,9 +374,9 @@ impl InnerStore {
                         ));
                     }
 
-                    let lazy_value = container.get_value(idx, ctx);
+                    let lazy_value = container.try_get_value(idx, ctx)?;
                     container.decode_state(idx, ctx)?;
-                    let decoded_value = container.get_value(idx, ctx);
+                    let decoded_value = container.try_get_value(idx, ctx)?;
                     if lazy_value != decoded_value {
                         return Err(loro_common::LoroError::DecodeError(
                             "Container value mismatch between lazy value and state"

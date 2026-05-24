@@ -225,30 +225,58 @@ impl ContainerID {
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Self {
+        Self::try_from_bytes(bytes).unwrap()
+    }
+
+    pub fn try_from_bytes(bytes: &[u8]) -> LoroResult<Self> {
+        if bytes.is_empty() {
+            return Err(LoroError::DecodeError(
+                "Decode container id failed".to_string().into_boxed_str(),
+            ));
+        }
+
         let first_byte = bytes[0];
-        let container_type = ContainerType::try_from_u8(first_byte & 0b01111111).unwrap();
+        let container_type = ContainerType::try_from_u8(first_byte & 0b01111111)?;
         let is_root = (first_byte & 0b10000000) != 0;
 
         let mut reader = &bytes[1..];
         match is_root {
             true => {
-                let name_len = leb128::read::unsigned(&mut reader).unwrap();
-                let name = InternalString::from(
-                    std::str::from_utf8(&reader[..name_len as usize]).unwrap(),
-                );
-                Self::Root {
-                    name,
-                    container_type,
+                let name_len = leb128::read::unsigned(&mut reader).map_err(|_| {
+                    LoroError::DecodeError(
+                        "Decode container id failed".to_string().into_boxed_str(),
+                    )
+                })? as usize;
+                if reader.len() < name_len {
+                    return Err(LoroError::DecodeError(
+                        "Decode container id failed".to_string().into_boxed_str(),
+                    ));
                 }
+
+                let name = std::str::from_utf8(&reader[..name_len]).map_err(|_| {
+                    LoroError::DecodeError(
+                        "Decode container id failed".to_string().into_boxed_str(),
+                    )
+                })?;
+                Ok(Self::Root {
+                    name: InternalString::from(name),
+                    container_type,
+                })
             }
             false => {
+                if reader.len() < 12 {
+                    return Err(LoroError::DecodeError(
+                        "Decode container id failed".to_string().into_boxed_str(),
+                    ));
+                }
+
                 let peer = PeerID::from_le_bytes(reader[..8].try_into().unwrap());
                 let counter = i32::from_le_bytes(reader[8..12].try_into().unwrap());
-                Self::Normal {
+                Ok(Self::Normal {
                     peer,
                     counter,
                     container_type,
-                }
+                })
             }
         }
     }
