@@ -4735,6 +4735,18 @@ mod test {
         output
     }
 
+    fn rewrite_container_depth(payload: &[u8], depth: u64) -> Vec<u8> {
+        let mut reader = &payload[1..];
+        let _depth = leb128::read::unsigned(&mut reader).unwrap();
+        let old_depth_len = payload.len() - 1 - reader.len();
+
+        let mut output = Vec::new();
+        output.push(payload[0]);
+        leb128::write::unsigned(&mut output, depth).unwrap();
+        output.extend_from_slice(&payload[1 + old_depth_len..]);
+        output
+    }
+
     fn rewrite_list_container_value(payload: &[u8], value: Vec<LoroValue>) -> Vec<u8> {
         let mut reader = &payload[1..];
         let _depth = leb128::read::unsigned(&mut reader).unwrap();
@@ -5246,6 +5258,25 @@ mod test {
         non_canonical_key.push(0xff);
         let mut kv = MemKvStore::new(MemKvConfig::default().should_encode_none(false));
         kv.set(&non_canonical_key, map_payload);
+        let corrupted = replace_fast_snapshot_state_bytes(snapshot, &kv.export_all());
+
+        let doc = LoroDoc::new();
+        assert!(doc.import(&corrupted).is_err());
+    }
+
+    #[test]
+    fn lazy_snapshot_rejects_root_container_with_wrong_depth() {
+        let loro = LoroDoc::new_auto_commit();
+        let map = loro.get_map("map");
+        map.insert("key", "value").unwrap();
+        let snapshot = loro.export(ExportMode::snapshot()).unwrap();
+
+        let mut kv = MemKvStore::new(MemKvConfig::default().should_encode_none(false));
+        kv.import_all(fast_snapshot_state_bytes(&snapshot).to_vec().into())
+            .unwrap();
+        let map_key = map.id().to_bytes();
+        let map_payload = kv.get(&map_key).unwrap();
+        kv.set(&map_key, rewrite_container_depth(&map_payload, 2).into());
         let corrupted = replace_fast_snapshot_state_bytes(snapshot, &kv.export_all());
 
         let doc = LoroDoc::new();

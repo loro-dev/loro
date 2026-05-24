@@ -389,6 +389,19 @@ impl InnerStore {
                 }
             }
 
+            for container in containers.values() {
+                let expected_depth = match container.parent() {
+                    Some(parent_id) => containers.get(parent_id).map(|parent| parent.depth() + 1),
+                    None => Some(1),
+                };
+
+                if expected_depth.is_some_and(|depth| container.depth() != depth) {
+                    return Err(loro_common::LoroError::DecodeError(
+                        "Container depth mismatch".to_string().into_boxed_str(),
+                    ));
+                }
+            }
+
             for (parent_id, parent) in containers.iter() {
                 for child_id in parent.try_get_state().unwrap().get_child_containers() {
                     let Some(child) = containers.get(&child_id) else {
