@@ -7,7 +7,7 @@ use crate::{
     version::Frontiers,
 };
 use bytes::Bytes;
-use loro_common::ContainerID;
+use loro_common::{ContainerID, ContainerType};
 use rustc_hash::FxHashMap;
 use std::ops::Bound;
 
@@ -384,7 +384,15 @@ impl InnerStore {
             for (parent_id, parent) in containers.iter() {
                 for child_id in parent.try_get_state().unwrap().get_child_containers() {
                     let Some(child) = containers.get(&child_id) else {
-                        continue;
+                        if parent_id.container_type() == ContainerType::Tree {
+                            continue;
+                        }
+
+                        return Err(loro_common::LoroError::DecodeError(
+                            "Container parent references missing child"
+                                .to_string()
+                                .into_boxed_str(),
+                        ));
                     };
                     if child.parent() != Some(parent_id) {
                         return Err(loro_common::LoroError::DecodeError(
