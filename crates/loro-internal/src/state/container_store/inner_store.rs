@@ -399,7 +399,18 @@ impl InnerStore {
 
             for container in containers.values() {
                 let expected_depth = match container.parent() {
-                    Some(parent_id) => containers.get(parent_id).map(|parent| parent.depth() + 1),
+                    Some(parent_id) => {
+                        let Some(parent) = containers.get(parent_id) else {
+                            if !parent_id.is_root() {
+                                return Err(loro_common::LoroError::DecodeError(
+                                    "Container parent is missing".to_string().into_boxed_str(),
+                                ));
+                            }
+
+                            continue;
+                        };
+                        Some(parent.depth() + 1)
+                    }
                     None => Some(1),
                 };
 

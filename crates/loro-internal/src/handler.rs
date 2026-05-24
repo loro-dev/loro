@@ -5631,6 +5631,29 @@ mod test {
         assert!(doc.import(&corrupted).is_err());
     }
 
+    #[test]
+    fn lazy_snapshot_rejects_child_when_existing_parent_payload_is_missing() {
+        let loro = LoroDoc::new_auto_commit();
+        let root = loro.get_map("map");
+        let parent = root
+            .insert_container("parent", MapHandler::new_detached())
+            .unwrap();
+        let text = parent
+            .insert_container("text", TextHandler::new_detached())
+            .unwrap();
+        text.insert(0, "orphan", PosType::Unicode).unwrap();
+        let snapshot = loro.export(ExportMode::snapshot()).unwrap();
+
+        let mut kv = MemKvStore::new(MemKvConfig::default().should_encode_none(false));
+        kv.import_all(fast_snapshot_state_bytes(&snapshot).to_vec().into())
+            .unwrap();
+        kv.remove(&parent.id().to_bytes());
+        let corrupted = replace_fast_snapshot_state_bytes(snapshot, &kv.export_all());
+
+        let doc = LoroDoc::new();
+        assert!(doc.import(&corrupted).is_err());
+    }
+
     #[cfg(feature = "counter")]
     #[test]
     fn lazy_snapshot_rejects_counter_payload_with_trailing_bytes() {
