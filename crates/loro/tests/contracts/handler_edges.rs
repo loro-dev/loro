@@ -166,6 +166,37 @@ fn range_mutations_reject_overflowing_delete_lengths() -> LoroResult<()> {
 }
 
 #[test]
+fn text_apply_delta_rejects_overflowing_retain_positions() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    let text = doc.get_text("text");
+    text.insert(0, "a")?;
+
+    assert_out_of_bound(text.apply_delta(&[
+        TextDelta::Retain {
+            retain: usize::MAX,
+            attributes: None,
+        },
+        TextDelta::Insert {
+            insert: "x".to_string(),
+            attributes: None,
+        },
+    ]));
+
+    assert_out_of_bound(text.apply_delta(&[
+        TextDelta::Retain {
+            retain: usize::MAX,
+            attributes: None,
+        },
+        TextDelta::Retain {
+            retain: 1,
+            attributes: Some([("bold".to_string(), true.into())].into_iter().collect()),
+        },
+    ]));
+
+    Ok(())
+}
+
+#[test]
 fn detached_bundle_contracts_cover_child_handler_lookup_attachment_and_deletion() -> LoroResult<()>
 {
     let doc = LoroDoc::new();

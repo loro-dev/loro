@@ -89,6 +89,14 @@ fn checked_range_end(
     Ok(end)
 }
 
+fn checked_delta_index_end(pos: usize, len: usize, container_len: usize) -> LoroResult<usize> {
+    pos.checked_add(len).ok_or_else(|| LoroError::OutOfBound {
+        pos: usize::MAX,
+        len: container_len,
+        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+    })
+}
+
 pub trait HandlerTrait: Clone + Sized {
     fn is_attached(&self) -> bool;
     fn attached_handler(&self) -> Option<&BasicHandler>;
@@ -2449,7 +2457,7 @@ impl TextHandler {
                         empty_attr.as_ref().unwrap()
                     });
 
-                    let end = index + insert_len;
+                    let end = checked_delta_index_end(index, insert_len, self.len_event())?;
                     let override_styles = self.insert_with_txn_and_attr(
                         txn,
                         index,
@@ -2473,7 +2481,7 @@ impl TextHandler {
                     self.delete_with_txn(txn, index, *delete, PosType::Event)?;
                 }
                 TextDelta::Retain { attributes, retain } => {
-                    let end = index + *retain;
+                    let end = checked_delta_index_end(index, *retain, self.len_event())?;
                     match attributes {
                         Some(attr) if !attr.is_empty() => {
                             let mut pending_mark = PendingMark {
