@@ -674,6 +674,7 @@ fn validate_json_op_created_container_ids(
             InnerListOp::Insert { slice, .. } => {
                 for (offset, value) in arena.iter_value_slice(slice.to_range()).enumerate() {
                     let LoroValue::Container(id) = value else {
+                        validate_json_value_has_no_container_refs(&value)?;
                         continue;
                     };
                     let offset = Counter::try_from(offset).map_err(|_| {
@@ -690,17 +691,25 @@ fn validate_json_op_created_container_ids(
             InnerListOp::Set { value, .. } => {
                 if let LoroValue::Container(id) = value {
                     validate_json_created_container_id(id, ID::new(peer, op.counter))?;
+                } else {
+                    validate_json_value_has_no_container_refs(value)?;
                 }
             }
             InnerListOp::Move { .. }
             | InnerListOp::InsertText { .. }
             | InnerListOp::Delete(_)
-            | InnerListOp::StyleStart { .. }
             | InnerListOp::StyleEnd => {}
+            InnerListOp::StyleStart { value, .. } => {
+                validate_json_value_has_no_container_refs(value)?;
+            }
         },
         InnerContent::Map(map) => {
-            if let Some(LoroValue::Container(id)) = &map.value {
-                validate_json_created_container_id(id, ID::new(peer, op.counter))?;
+            if let Some(value) = &map.value {
+                if let LoroValue::Container(id) = value {
+                    validate_json_created_container_id(id, ID::new(peer, op.counter))?;
+                } else {
+                    validate_json_value_has_no_container_refs(value)?;
+                }
             }
         }
         InnerContent::Tree(tree) => {
@@ -709,6 +718,33 @@ fn validate_json_op_created_container_ids(
             }
         }
         InnerContent::Future(_) => {}
+    }
+
+    Ok(())
+}
+
+fn validate_json_value_has_no_container_refs(value: &LoroValue) -> LoroResult<()> {
+    let mut stack = vec![value];
+    while let Some(value) = stack.pop() {
+        match value {
+            LoroValue::Container(_) => {
+                return Err(LoroError::DecodeError(
+                    "invalid json container id: container values must not be nested".into(),
+                ));
+            }
+            LoroValue::List(list) => {
+                stack.extend(list.iter());
+            }
+            LoroValue::Map(map) => {
+                stack.extend(map.values());
+            }
+            LoroValue::Null
+            | LoroValue::Bool(_)
+            | LoroValue::Double(_)
+            | LoroValue::I64(_)
+            | LoroValue::Binary(_)
+            | LoroValue::String(_) => {}
+        }
     }
 
     Ok(())

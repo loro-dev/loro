@@ -1,10 +1,10 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use loro::{
     cursor::{PosType, Side},
-    Container, ContainerTrait, ExpandType, Index, LoroDoc, LoroError, LoroList, LoroMap,
-    LoroMovableList, LoroResult, LoroText, LoroTree, LoroValue, StyleConfig, StyleConfigMap,
-    TextDelta, ToJson, TreeParentId, ValueOrContainer,
+    Container, ContainerID, ContainerTrait, ExpandType, Index, LoroDoc, LoroError, LoroList,
+    LoroMap, LoroMovableList, LoroResult, LoroText, LoroTree, LoroValue, StyleConfig,
+    StyleConfigMap, TextDelta, ToJson, TreeParentId, ValueOrContainer,
 };
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -61,6 +61,60 @@ fn assert_container_deleted<T>(result: LoroResult<T>) {
         Err(LoroError::ContainerDeleted { .. }) => {}
         _ => panic!("expected ContainerDeleted error"),
     }
+}
+
+fn value_with_nested_container(id: ContainerID) -> LoroValue {
+    LoroValue::from(HashMap::from([(
+        "nested".to_string(),
+        LoroValue::Container(id),
+    )]))
+}
+
+fn assert_arg_error(result: LoroResult<()>) {
+    match result {
+        Err(LoroError::ArgErr(_)) => {}
+        other => panic!("expected ArgErr, got {other:?}"),
+    }
+}
+
+#[test]
+fn regular_value_writes_reject_nested_container_refs() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    let root = doc.get_map("root");
+    let child = root.insert_container("child", LoroMap::new())?;
+    let value = value_with_nested_container(child.id());
+
+    assert_arg_error(root.insert("bad", value.clone()));
+
+    let list = doc.get_list("list");
+    assert_arg_error(list.insert(0, value.clone()));
+
+    let movable = doc.get_movable_list("movable");
+    movable.insert(0, "seed")?;
+    assert_arg_error(movable.insert(1, value.clone()));
+    assert_arg_error(movable.set(0, value.clone()));
+    assert_arg_error(movable.set(0, LoroValue::Container(child.id())));
+
+    let text = doc.get_text("text");
+    text.insert(0, "a")?;
+    assert_arg_error(text.mark(0..1, "bold", value.clone()));
+
+    let detached_map = LoroMap::new();
+    assert_arg_error(detached_map.insert("bad", value.clone()));
+
+    let detached_list = LoroList::new();
+    assert_arg_error(detached_list.insert(0, value.clone()));
+
+    let detached_movable = LoroMovableList::new();
+    detached_movable.insert(0, "seed")?;
+    assert_arg_error(detached_movable.insert(1, value.clone()));
+    assert_arg_error(detached_movable.set(0, value.clone()));
+
+    let detached_text = LoroText::new();
+    detached_text.insert(0, "a")?;
+    assert_arg_error(detached_text.mark(0..1, "bold", value));
+
+    Ok(())
 }
 
 #[test]

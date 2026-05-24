@@ -734,3 +734,102 @@ fn import_json_updates_rejects_tree_create_target_not_matching_op_id() -> anyhow
 
     Ok(())
 }
+
+#[test]
+fn import_json_updates_rejects_nested_container_values() -> anyhow::Result<()> {
+    fn nested_container_value(peer: u64, counter: i32) -> LoroValue {
+        LoroValue::from(HashMap::from([(
+            "nested".to_string(),
+            LoroValue::Container(ContainerID::new_normal(
+                ID::new(peer, counter),
+                ContainerType::Map,
+            )),
+        )]))
+    }
+
+    let doc = LoroDoc::new();
+    doc.set_peer_id(76)?;
+    doc.get_map("root").insert("key", "value")?;
+    doc.commit();
+
+    let mut json = doc
+        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv());
+    for op in &mut json.changes[0].ops {
+        if let JsonOpContent::Map(JsonMapOp::Insert { value, .. }) = &mut op.content {
+            *value = nested_container_value(76, op.counter);
+            break;
+        }
+    }
+
+    let err = LoroDoc::new().import_json_updates(json).unwrap_err();
+    assert!(
+        err.to_string().contains("container"),
+        "expected nested container validation error, got {err:?}"
+    );
+
+    let doc = LoroDoc::new();
+    doc.set_peer_id(77)?;
+    doc.get_list("list").insert(0, "value")?;
+    doc.commit();
+
+    let mut json = doc
+        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv());
+    for op in &mut json.changes[0].ops {
+        if let JsonOpContent::List(JsonListOp::Insert { value, .. }) = &mut op.content {
+            value[0] = nested_container_value(77, op.counter);
+            break;
+        }
+    }
+
+    let err = LoroDoc::new().import_json_updates(json).unwrap_err();
+    assert!(
+        err.to_string().contains("container"),
+        "expected nested list container validation error, got {err:?}"
+    );
+
+    let doc = LoroDoc::new();
+    doc.set_peer_id(78)?;
+    let text = doc.get_text("text");
+    text.insert(0, "a")?;
+    text.mark(0..1, "bold", true)?;
+    doc.commit();
+
+    let mut json = doc
+        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv());
+    for op in &mut json.changes[0].ops {
+        if let JsonOpContent::Text(JsonTextOp::Mark { style_value, .. }) = &mut op.content {
+            *style_value = nested_container_value(78, op.counter);
+            break;
+        }
+    }
+
+    let err = LoroDoc::new().import_json_updates(json).unwrap_err();
+    assert!(
+        err.to_string().contains("container"),
+        "expected nested text style container validation error, got {err:?}"
+    );
+
+    let doc = LoroDoc::new();
+    doc.set_peer_id(79)?;
+    let movable = doc.get_movable_list("movable");
+    movable.insert(0, "seed")?;
+    movable.set(0, "value")?;
+    doc.commit();
+
+    let mut json = doc
+        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv());
+    for op in &mut json.changes[0].ops {
+        if let JsonOpContent::MovableList(JsonMovableListOp::Set { value, .. }) = &mut op.content {
+            *value = nested_container_value(79, op.counter);
+            break;
+        }
+    }
+
+    let err = LoroDoc::new().import_json_updates(json).unwrap_err();
+    assert!(
+        err.to_string().contains("container"),
+        "expected nested movable list container validation error, got {err:?}"
+    );
+
+    Ok(())
+}

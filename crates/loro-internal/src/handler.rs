@@ -33,10 +33,39 @@ pub use tree::TreeHandler;
 mod movable_list_apply_delta;
 mod tree;
 
-const INSERT_CONTAINER_VALUE_ARG_ERROR: &str =
-    "Cannot insert a LoroValue::Container directly. To create child container, use insert_container";
+const REGULAR_CONTAINER_VALUE_ARG_ERROR: &str =
+    "Cannot use a LoroValue::Container as a regular value. To create child container, use insert_container or set_container";
 
 mod text_update;
+
+fn ensure_no_regular_container_value(value: &LoroValue) -> LoroResult<()> {
+    let mut stack = vec![value];
+    while let Some(value) = stack.pop() {
+        match value {
+            LoroValue::Container(_) => {
+                return Err(LoroError::ArgErr(
+                    REGULAR_CONTAINER_VALUE_ARG_ERROR
+                        .to_string()
+                        .into_boxed_str(),
+                ));
+            }
+            LoroValue::List(list) => {
+                stack.extend(list.iter());
+            }
+            LoroValue::Map(map) => {
+                stack.extend(map.values());
+            }
+            LoroValue::Null
+            | LoroValue::Bool(_)
+            | LoroValue::Double(_)
+            | LoroValue::I64(_)
+            | LoroValue::Binary(_)
+            | LoroValue::String(_) => {}
+        }
+    }
+
+    Ok(())
+}
 
 pub trait HandlerTrait: Clone + Sized {
     fn is_attached(&self) -> bool;
@@ -2166,6 +2195,7 @@ impl TextHandler {
                 "Start must be less than end".to_string().into_boxed_str(),
             ));
         }
+        ensure_no_regular_container_value(value)?;
 
         let len = state.len(pos_type);
         if end > len {
@@ -2246,6 +2276,7 @@ impl TextHandler {
                 "Start must be less than end".to_string().into_boxed_str(),
             ));
         }
+        ensure_no_regular_container_value(&value)?;
 
         let inner = self.inner.try_attached_state()?;
         let key: InternalString = key.into();
@@ -2947,7 +2978,9 @@ impl ListHandler {
                         len,
                     });
                 }
-                list.value.insert(pos, ValueOrHandler::Value(v.into()));
+                let value = v.into();
+                ensure_no_regular_container_value(&value)?;
+                list.value.insert(pos, ValueOrHandler::Value(value));
                 Ok(())
             }
             MaybeDetached::Attached(a) => {
@@ -2971,13 +3004,7 @@ impl ListHandler {
         }
 
         let inner = self.inner.try_attached_state()?;
-        if let Some(_container) = v.as_container() {
-            return Err(LoroError::ArgErr(
-                INSERT_CONTAINER_VALUE_ARG_ERROR
-                    .to_string()
-                    .into_boxed_str(),
-            ));
-        }
+        ensure_no_regular_container_value(&v)?;
 
         txn.apply_local_op(
             inner.container_idx,
@@ -2994,7 +3021,9 @@ impl ListHandler {
         match &self.inner {
             MaybeDetached::Detached(l) => {
                 let mut list = l.lock();
-                list.value.push(ValueOrHandler::Value(v.into()));
+                let value = v.into();
+                ensure_no_regular_container_value(&value)?;
+                list.value.push(ValueOrHandler::Value(value));
                 Ok(())
             }
             MaybeDetached::Attached(a) => a.with_txn(|txn| self.push_with_txn(txn, v.into())),
@@ -3397,7 +3426,9 @@ impl MovableListHandler {
                         len: d.value.len(),
                     });
                 }
-                d.value.insert(pos, ValueOrHandler::Value(v.into()));
+                let value = v.into();
+                ensure_no_regular_container_value(&value)?;
+                d.value.insert(pos, ValueOrHandler::Value(value));
                 Ok(())
             }
             MaybeDetached::Attached(a) => {
@@ -3421,13 +3452,7 @@ impl MovableListHandler {
             });
         }
 
-        if v.is_container() {
-            return Err(LoroError::ArgErr(
-                INSERT_CONTAINER_VALUE_ARG_ERROR
-                    .to_string()
-                    .into_boxed_str(),
-            ));
-        }
+        ensure_no_regular_container_value(&v)?;
 
         let op_index = self.with_state(|state| {
             let list = state.as_movable_list_state().unwrap();
@@ -3658,7 +3683,9 @@ impl MovableListHandler {
                         len: d.value.len(),
                     });
                 }
-                d.value[index] = ValueOrHandler::Value(value.into());
+                let value = value.into();
+                ensure_no_regular_container_value(&value)?;
+                d.value[index] = ValueOrHandler::Value(value);
                 Ok(())
             }
             MaybeDetached::Attached(a) => {
@@ -3689,6 +3716,7 @@ impl MovableListHandler {
         else {
             unreachable!()
         };
+        ensure_no_regular_container_value(&value)?;
 
         let op = crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Set {
             elem_id: elem_id.to_id(),
@@ -4098,8 +4126,9 @@ impl MapHandler {
         match &self.inner {
             MaybeDetached::Detached(m) => {
                 let mut m = m.lock();
-                m.value
-                    .insert(key.into(), ValueOrHandler::Value(value.into()));
+                let value = value.into();
+                ensure_no_regular_container_value(&value)?;
+                m.value.insert(key.into(), ValueOrHandler::Value(value));
                 Ok(())
             }
             MaybeDetached::Attached(a) => {
@@ -4113,20 +4142,15 @@ impl MapHandler {
         match &self.inner {
             MaybeDetached::Detached(m) => {
                 let mut m = m.lock();
-                m.value
-                    .insert(key.into(), ValueOrHandler::Value(value.into()));
+                let value = value.into();
+                ensure_no_regular_container_value(&value)?;
+                m.value.insert(key.into(), ValueOrHandler::Value(value));
                 Ok(())
             }
             MaybeDetached::Attached(a) => a.with_txn(|txn| {
                 let this = &self;
                 let value = value.into();
-                if let Some(_value) = value.as_container() {
-                    return Err(LoroError::ArgErr(
-                        INSERT_CONTAINER_VALUE_ARG_ERROR
-                            .to_string()
-                            .into_boxed_str(),
-                    ));
-                }
+                ensure_no_regular_container_value(&value)?;
 
                 let inner = this.inner.try_attached_state()?;
                 txn.apply_local_op(
@@ -4151,13 +4175,7 @@ impl MapHandler {
         key: &str,
         value: LoroValue,
     ) -> LoroResult<()> {
-        if let Some(_value) = value.as_container() {
-            return Err(LoroError::ArgErr(
-                INSERT_CONTAINER_VALUE_ARG_ERROR
-                    .to_string()
-                    .into_boxed_str(),
-            ));
-        }
+        ensure_no_regular_container_value(&value)?;
 
         if self.get(key).map(|x| x == value).unwrap_or(false) {
             // skip if the value is already set
