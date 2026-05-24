@@ -432,20 +432,19 @@ impl InnerStore {
     pub(crate) fn validate_container_ids(
         &mut self,
         ctx: ContainerCreationContext,
-        mut is_known_id: impl FnMut(loro_common::ID) -> bool,
+        mut is_valid_container_id: impl FnMut(&loro_common::ContainerID) -> bool,
     ) -> Result<(), loro_common::LoroError> {
         fn validate_id(
             container_id: loro_common::ContainerID,
-            is_known_id: &mut impl FnMut(loro_common::ID) -> bool,
+            is_valid_container_id: &mut impl FnMut(&loro_common::ContainerID) -> bool,
         ) -> Result<(), loro_common::LoroError> {
-            let loro_common::ContainerID::Normal { peer, counter, .. } = container_id else {
+            let loro_common::ContainerID::Normal { .. } = container_id else {
                 return Ok(());
             };
 
-            if !is_known_id(loro_common::ID::new(peer, counter)) {
+            if !is_valid_container_id(&container_id) {
                 return Err(loro_common::LoroError::DecodeError(
-                    "Container id is not included in the snapshot history"
-                        .to_string()
+                    format!("Container id is not created in the snapshot history: {container_id}")
                         .into_boxed_str(),
                 ));
             }
@@ -456,17 +455,17 @@ impl InnerStore {
         fn validate_container_refs(
             id: loro_common::ContainerID,
             container: &ContainerWrapper,
-            is_known_id: &mut impl FnMut(loro_common::ID) -> bool,
+            is_valid_container_id: &mut impl FnMut(&loro_common::ContainerID) -> bool,
         ) -> Result<(), loro_common::LoroError> {
-            validate_id(id, is_known_id)?;
+            validate_id(id, is_valid_container_id)?;
 
             if let Some(parent) = container.parent() {
-                validate_id(parent.clone(), is_known_id)?;
+                validate_id(parent.clone(), is_valid_container_id)?;
             }
 
             if let Some(state) = container.try_get_state() {
                 for child_id in state.get_child_containers() {
-                    validate_id(child_id, is_known_id)?;
+                    validate_id(child_id, is_valid_container_id)?;
                 }
             }
 
@@ -484,7 +483,7 @@ impl InnerStore {
                     .get_container_id(idx)
                     .expect("loaded container should be registered in the arena"),
                 container,
-                &mut is_known_id,
+                &mut is_valid_container_id,
             )?;
         }
 
@@ -495,7 +494,7 @@ impl InnerStore {
                     let idx = self.arena.register_container(&id);
                     let mut container = ContainerWrapper::new_from_bytes(value);
                     container.decode_state(idx, ctx)?;
-                    validate_container_refs(id, &container, &mut is_known_id)?;
+                    validate_container_refs(id, &container, &mut is_valid_container_id)?;
                 }
 
                 Ok::<(), loro_common::LoroError>(())

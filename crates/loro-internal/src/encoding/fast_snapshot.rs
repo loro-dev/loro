@@ -20,7 +20,8 @@ use crate::{
     OpLog, VersionVector,
 };
 use bytes::{Buf, Bytes};
-use loro_common::{HasCounterSpan, IdSpan, InternalString, LoroError, LoroResult};
+use loro_common::{ContainerID, HasCounterSpan, IdSpan, InternalString, LoroError, LoroResult, ID};
+use rustc_hash::FxHashSet;
 
 use super::{EncodedBlobMode, ImportBlobMetadata, ParsedHeaderAndBody};
 pub(crate) const EMPTY_MARK: &[u8] = b"E";
@@ -232,8 +233,16 @@ pub(crate) fn decode_snapshot_inner(
 
         // FIXME: we may need to extract the unknown containers here?
         // Or we should lazy load it when the time comes?
-        state.store.validate_container_ids(|id| {
-            oplog.vv().includes_id(id) || oplog.shallow_since_vv().includes_id(id)
+        let created_container_ids = collect_created_container_ids(&oplog);
+        state.store.validate_container_ids(|container_id| {
+            let ContainerID::Normal { peer, counter, .. } = container_id else {
+                return true;
+            };
+
+            let id = ID::new(*peer, *counter);
+            oplog.shallow_since_vv().includes_id(id)
+                || oplog.shallow_since_frontiers().contains(&id)
+                || (oplog.vv().includes_id(id) && created_container_ids.contains(container_id))
         })?;
 
         state.init_with_states_and_version(state_frontiers, &oplog, vec![], false, origin)?;
@@ -272,6 +281,20 @@ impl OpLog {
         self.refresh_visible_op_count();
         Ok(())
     }
+}
+
+fn collect_created_container_ids(oplog: &OpLog) -> FxHashSet<ContainerID> {
+    let mut created = FxHashSet::default();
+    let from = VersionVector::default();
+    for change in oplog.iter_changes_peer_by_peer(&from, oplog.vv()) {
+        for op in change.ops.iter() {
+            op.content.visit_created_children(&oplog.arena, &mut |id| {
+                created.insert(id.clone());
+            });
+        }
+    }
+
+    created
 }
 
 pub(crate) fn encode_snapshot<W: std::io::Write>(doc: &LoroDoc, w: &mut W) {

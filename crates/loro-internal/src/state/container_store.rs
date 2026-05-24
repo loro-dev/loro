@@ -256,15 +256,16 @@ impl ContainerStore {
 
     pub(crate) fn validate_container_ids(
         &mut self,
-        mut is_known_id: impl FnMut(loro_common::ID) -> bool,
+        mut is_valid_container_id: impl FnMut(&ContainerID) -> bool,
     ) -> LoroResult<()> {
         let ctx = ctx!(self);
-        self.store.validate_container_ids(ctx, &mut is_known_id)?;
+        self.store
+            .validate_container_ids(ctx, &mut is_valid_container_id)?;
         if let Some(shallow_root_store) = &self.shallow_root_store {
             shallow_root_store
                 .store
                 .lock()
-                .validate_container_ids(ctx, &mut is_known_id)?;
+                .validate_container_ids(ctx, &mut is_valid_container_id)?;
         }
 
         Ok(())

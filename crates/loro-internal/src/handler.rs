@@ -5563,6 +5563,40 @@ mod test {
     }
 
     #[test]
+    fn lazy_snapshot_rejects_container_payload_reusing_non_container_op_id() {
+        let parent_doc = LoroDoc::new_auto_commit();
+        parent_doc.set_peer_id(1).unwrap();
+        let parent_map = parent_doc.get_map("map");
+        parent_map.insert("key", "value").unwrap();
+        let parent_snapshot = parent_doc.export(ExportMode::snapshot()).unwrap();
+
+        let child_doc = LoroDoc::new_auto_commit();
+        child_doc.set_peer_id(2).unwrap();
+        let child_map = child_doc.get_map("map");
+        let orphan_text = child_map
+            .insert_container("text", TextHandler::new_detached())
+            .unwrap();
+        orphan_text.insert(0, "orphan", PosType::Unicode).unwrap();
+        let child_snapshot = child_doc.export(ExportMode::snapshot()).unwrap();
+
+        let mut parent_kv = MemKvStore::new(MemKvConfig::default().should_encode_none(false));
+        parent_kv
+            .import_all(fast_snapshot_state_bytes(&parent_snapshot).to_vec().into())
+            .unwrap();
+        let mut child_kv = MemKvStore::new(MemKvConfig::default().should_encode_none(false));
+        child_kv
+            .import_all(fast_snapshot_state_bytes(&child_snapshot).to_vec().into())
+            .unwrap();
+        let orphan_payload = child_kv.get(&orphan_text.id().to_bytes()).unwrap();
+        let known_non_container_id = ContainerID::new_normal(ID::new(1, 0), ContainerType::Text);
+        parent_kv.set(&known_non_container_id.to_bytes(), orphan_payload);
+        let corrupted = replace_fast_snapshot_state_bytes(parent_snapshot, &parent_kv.export_all());
+
+        let doc = LoroDoc::new();
+        assert!(doc.import(&corrupted).is_err());
+    }
+
+    #[test]
     fn lazy_snapshot_rejects_child_whose_parent_entry_is_missing() {
         let parent_doc = LoroDoc::new_auto_commit();
         let parent_map = parent_doc.get_map("map");
