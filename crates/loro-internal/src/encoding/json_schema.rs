@@ -17,8 +17,8 @@ use either::Either;
 use itertools::Itertools;
 use json::{JsonChange, JsonOpContent, JsonSchema};
 use loro_common::{
-    ContainerID, ContainerType, HasCounterSpan, HasId, IdLp, IdSpan, LoroError, LoroResult,
-    LoroValue, PeerID, TreeID, ID,
+    ContainerID, ContainerType, Counter, HasCounterSpan, HasId, IdLp, IdSpan, LoroError,
+    LoroResult, LoroValue, PeerID, TreeID, ID,
 };
 use rle::{HasLength, RleVec, Sliceable};
 use std::sync::Arc;
@@ -543,8 +543,19 @@ fn decode_changes(json: JsonSchema, arena: &SharedArena) -> LoroResult<Vec<Chang
     {
         let id = convert_id(&id, &peers)?;
         let mut ops: RleVec<[Op; 1]> = RleVec::new();
+        let mut expected_counter = id.counter;
+        if json_ops.is_empty() {
+            return Err(LoroError::DecodeError(
+                "invalid json change: change must contain at least one op".into(),
+            ));
+        }
+
         for op in json_ops {
-            ops.push(decode_op(op, arena, &peers)?);
+            let next_counter = validate_json_op_counter(expected_counter, &op)?;
+            let op = decode_op(op, arena, &peers)?;
+            validate_json_op_created_container_ids(id.peer, &op, arena)?;
+            ops.push(op);
+            expected_counter = next_counter;
         }
 
         let change = Change {
@@ -562,6 +573,104 @@ fn decode_changes(json: JsonSchema, arena: &SharedArena) -> LoroResult<Vec<Chang
         ans.push(change);
     }
     Ok(ans)
+}
+
+fn validate_json_op_counter(expected_counter: Counter, op: &json::JsonOp) -> LoroResult<Counter> {
+    let op_len = op.content.op_len();
+    if op_len == 0 {
+        return Err(LoroError::DecodeError(
+            "invalid json op counter: op length must be greater than zero".into(),
+        ));
+    }
+
+    let op_len = Counter::try_from(op_len).map_err(|_| {
+        LoroError::DecodeError("invalid json op counter: op length is too large".into())
+    })?;
+    if op.counter != expected_counter {
+        return Err(LoroError::DecodeError(
+            "invalid json op counter: op counters must be contiguous with the change id".into(),
+        ));
+    }
+
+    expected_counter
+        .checked_add(op_len)
+        .ok_or_else(|| LoroError::DecodeError("invalid json op counter: counter overflow".into()))
+}
+
+fn validate_json_op_created_container_ids(
+    peer: PeerID,
+    op: &Op,
+    arena: &SharedArena,
+) -> LoroResult<()> {
+    match &op.content {
+        InnerContent::List(list) => match list {
+            InnerListOp::Insert { slice, .. } => {
+                for (offset, value) in arena.iter_value_slice(slice.to_range()).enumerate() {
+                    let LoroValue::Container(id) = value else {
+                        continue;
+                    };
+                    let offset = Counter::try_from(offset).map_err(|_| {
+                        LoroError::DecodeError(
+                            "invalid json container id: list offset is too large".into(),
+                        )
+                    })?;
+                    let counter = op.counter.checked_add(offset).ok_or_else(|| {
+                        LoroError::DecodeError("invalid json container id: counter overflow".into())
+                    })?;
+                    validate_json_created_container_id(&id, ID::new(peer, counter))?;
+                }
+            }
+            InnerListOp::Set { value, .. } => {
+                if let LoroValue::Container(id) = value {
+                    validate_json_created_container_id(id, ID::new(peer, op.counter))?;
+                }
+            }
+            InnerListOp::Move { .. }
+            | InnerListOp::InsertText { .. }
+            | InnerListOp::Delete(_)
+            | InnerListOp::StyleStart { .. }
+            | InnerListOp::StyleEnd => {}
+        },
+        InnerContent::Map(map) => {
+            if let Some(LoroValue::Container(id)) = &map.value {
+                validate_json_created_container_id(id, ID::new(peer, op.counter))?;
+            }
+        }
+        InnerContent::Tree(tree) => {
+            if let TreeOp::Create { target, .. } = tree.as_ref() {
+                validate_json_tree_create_target(target, ID::new(peer, op.counter))?;
+            }
+        }
+        InnerContent::Future(_) => {}
+    }
+
+    Ok(())
+}
+
+fn validate_json_created_container_id(id: &ContainerID, expected_id: ID) -> LoroResult<()> {
+    let ContainerID::Normal { peer, counter, .. } = id else {
+        return Err(LoroError::DecodeError(
+            "invalid json container id: created child containers must be normal".into(),
+        ));
+    };
+
+    if *peer != expected_id.peer || *counter != expected_id.counter {
+        return Err(LoroError::DecodeError(
+            "invalid json container id: created child container id must match the op id".into(),
+        ));
+    }
+
+    Ok(())
+}
+
+fn validate_json_tree_create_target(target: &TreeID, expected_id: ID) -> LoroResult<()> {
+    if target.peer != expected_id.peer || target.counter != expected_id.counter {
+        return Err(LoroError::DecodeError(
+            "invalid json tree target: tree create target must match the op id".into(),
+        ));
+    }
+
+    Ok(())
 }
 
 fn decode_op(op: json::JsonOp, arena: &SharedArena, peers: &Option<Vec<PeerID>>) -> LoroResult<Op> {
@@ -1277,13 +1386,12 @@ pub mod json {
                 D: Deserializer<'de>,
             {
                 let deps: Vec<String> = Deserialize::deserialize(d)?;
-                Ok(deps
-                    .into_iter()
+                deps.into_iter()
                     .map(|x| {
                         ID::try_from(x.as_str())
                             .map_err(|_| serde::de::Error::custom("invalid ID in deps"))
                     })
-                    .collect::<Result<Vec<_>, _>>()?)
+                    .collect::<Result<Vec<_>, _>>()
             }
         }
 
@@ -1306,7 +1414,7 @@ pub mod json {
                 D: Deserializer<'de>,
             {
                 let peers: Option<Vec<String>> = Deserialize::deserialize(d)?;
-                Ok(peers
+                peers
                     .map(|x| {
                         x.into_iter()
                             .map(|x| {
@@ -1315,7 +1423,7 @@ pub mod json {
                             })
                             .collect::<Result<Vec<_>, _>>()
                     })
-                    .transpose()?)
+                    .transpose()
             }
         }
 
@@ -1409,7 +1517,7 @@ pub mod json {
                 D: Deserializer<'de>,
             {
                 let str: String = Deserialize::deserialize(d)?;
-                if str.len() % 2 != 0 {
+                if !str.len().is_multiple_of(2) {
                     return Err(serde::de::Error::custom(
                         "invalid fractional index hex length",
                     ));

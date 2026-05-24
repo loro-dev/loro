@@ -1,9 +1,9 @@
 use std::{collections::HashMap, sync::Arc};
 
 use loro::{
-    ContainerID, ContainerTrait, IdSpan, JsonListOp, JsonMapOp, JsonMovableListOp, JsonOpContent,
-    JsonTextOp, JsonTreeOp, LoroDoc, LoroList, LoroMap, LoroMovableList, LoroText, LoroTree,
-    LoroValue, ToJson, ValueOrContainer, VersionVector,
+    ContainerID, ContainerTrait, ContainerType, IdSpan, JsonListOp, JsonMapOp, JsonMovableListOp,
+    JsonOpContent, JsonTextOp, JsonTreeOp, LoroDoc, LoroList, LoroMap, LoroMovableList, LoroText,
+    LoroTree, LoroValue, ToJson, TreeID, ValueOrContainer, VersionVector, ID,
 };
 use pretty_assertions::assert_eq;
 use serde_json::{json, Value};
@@ -493,6 +493,145 @@ fn json_update_schema_covers_list_map_text_tree_and_movable_list_ops() -> anyhow
             .get_value_with_meta()
             .to_json_value(),
         doc.get_tree("tree").get_value_with_meta().to_json_value()
+    );
+
+    Ok(())
+}
+
+#[test]
+fn import_json_updates_rejects_non_contiguous_op_counters() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(71)?;
+    doc.get_map("root").insert("key", "value")?;
+    doc.commit();
+
+    let mut json = doc
+        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv());
+    json.changes[0].ops[0].counter += 1;
+
+    let err = LoroDoc::new().import_json_updates(json).unwrap_err();
+    assert!(
+        err.to_string().contains("op counter"),
+        "expected op counter validation error, got {err:?}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn import_json_updates_rejects_mismatched_created_container_id() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(72)?;
+    doc.get_map("root")
+        .insert_container("child", LoroList::new())?;
+    doc.commit();
+
+    let mut json = doc
+        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv());
+    for op in &mut json.changes[0].ops {
+        if let JsonOpContent::Map(JsonMapOp::Insert {
+            value: LoroValue::Container(id),
+            ..
+        }) = &mut op.content
+        {
+            *id = ContainerID::new_normal(ID::new(72, op.counter + 10), ContainerType::List);
+            break;
+        }
+    }
+
+    let err = LoroDoc::new().import_json_updates(json).unwrap_err();
+    assert!(
+        err.to_string().contains("container id"),
+        "expected container id validation error, got {err:?}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn import_json_updates_rejects_mismatched_list_created_container_ids() -> anyhow::Result<()> {
+    let list_doc = LoroDoc::new();
+    list_doc.set_peer_id(74)?;
+    list_doc
+        .get_list("list")
+        .insert_container(0, LoroMap::new())?;
+    list_doc.commit();
+
+    let mut list_json = list_doc.export_json_updates_without_peer_compression(
+        &VersionVector::default(),
+        &list_doc.oplog_vv(),
+    );
+    for op in &mut list_json.changes[0].ops {
+        if let JsonOpContent::List(JsonListOp::Insert { value, .. }) = &mut op.content {
+            if let Some(LoroValue::Container(id)) = value.first_mut() {
+                *id = ContainerID::new_normal(ID::new(74, op.counter + 10), ContainerType::Map);
+                break;
+            }
+        }
+    }
+
+    let err = LoroDoc::new().import_json_updates(list_json).unwrap_err();
+    assert!(
+        err.to_string().contains("container id"),
+        "expected list container id validation error, got {err:?}"
+    );
+
+    let movable_doc = LoroDoc::new();
+    movable_doc.set_peer_id(75)?;
+    let movable = movable_doc.get_movable_list("movable");
+    movable.insert(0, "seed")?;
+    movable.set_container(0, LoroText::new())?;
+    movable_doc.commit();
+
+    let mut movable_json = movable_doc.export_json_updates_without_peer_compression(
+        &VersionVector::default(),
+        &movable_doc.oplog_vv(),
+    );
+    for op in &mut movable_json.changes[0].ops {
+        if let JsonOpContent::MovableList(JsonMovableListOp::Set {
+            value: LoroValue::Container(id),
+            ..
+        }) = &mut op.content
+        {
+            *id = ContainerID::new_normal(ID::new(75, op.counter + 10), ContainerType::Text);
+            break;
+        }
+    }
+
+    let err = LoroDoc::new()
+        .import_json_updates(movable_json)
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("container id"),
+        "expected movable list container id validation error, got {err:?}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn import_json_updates_rejects_tree_create_target_not_matching_op_id() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(73)?;
+    doc.get_tree("tree").create(None)?;
+    doc.commit();
+
+    let mut json = doc
+        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv());
+    for op in &mut json.changes[0].ops {
+        if let JsonOpContent::Tree(JsonTreeOp::Create { target, .. }) = &mut op.content {
+            *target = TreeID {
+                peer: 73,
+                counter: op.counter + 10,
+            };
+            break;
+        }
+    }
+
+    let err = LoroDoc::new().import_json_updates(json).unwrap_err();
+    assert!(
+        err.to_string().contains("tree target"),
+        "expected tree target validation error, got {err:?}"
     );
 
     Ok(())
