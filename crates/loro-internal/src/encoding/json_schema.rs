@@ -28,7 +28,7 @@ const SCHEMA_VERSION: u8 = 1;
 fn refine_vv(vv: &VersionVector, oplog: &OpLog) -> VersionVector {
     let mut refined = VersionVector::new();
     for (&peer, &counter) in vv.iter() {
-        if counter == 0 {
+        if counter <= 0 {
             continue;
         }
         let end = oplog.vv().get(&peer).copied().unwrap_or(0);

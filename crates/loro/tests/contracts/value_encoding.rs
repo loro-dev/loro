@@ -462,6 +462,30 @@ fn export_json_in_id_span_clamps_negative_counter_ranges() -> anyhow::Result<()>
 }
 
 #[test]
+fn export_json_updates_clamps_negative_version_ranges() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(93)?;
+    doc.get_text("text").insert(0, "a")?;
+    doc.commit();
+
+    let mut negative_start = VersionVector::new();
+    negative_start.insert(doc.peer_id(), i32::MIN);
+    let json = doc.export_json_updates(&negative_start, &doc.oplog_vv());
+    let restored = LoroDoc::new();
+    restored.import_json_updates(json)?;
+    assert_eq!(restored.get_text("text").to_string(), "a");
+
+    let mut negative_end = VersionVector::new();
+    negative_end.insert(doc.peer_id(), -1);
+    let json = doc.export_json_updates(&VersionVector::default(), &negative_end);
+    let restored = LoroDoc::new();
+    restored.import_json_updates(json)?;
+    assert_eq!(restored.get_text("text").to_string(), "");
+
+    Ok(())
+}
+
+#[test]
 fn import_json_updates_rejects_negative_op_counters() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     doc.get_map("root").insert("key", "value")?;
