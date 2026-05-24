@@ -488,7 +488,7 @@ impl InnerStore {
             )?;
         }
 
-        if self.load_state != LoadState::AllLoaded {
+        if !self.kv.is_empty() {
             self.kv.with_kv(|kv| {
                 for (key, value) in kv.scan(Bound::Unbounded, Bound::Unbounded) {
                     let id = loro_common::ContainerID::from_bytes(&key);

@@ -5479,13 +5479,50 @@ mod test {
         let missing_child = ContainerID::new_normal(ID::new(123, 0), ContainerType::Text);
         let map_key = map.id().to_bytes();
         let map_payload = kv.get(&map_key).unwrap();
+        let mut reader = &map_payload[1..];
+        let _depth = leb128::read::unsigned(&mut reader).unwrap();
+        let (_, value_and_state) =
+            postcard::take_from_bytes::<Option<ContainerID>>(reader).unwrap();
+        let (mut map_value, _) =
+            postcard::take_from_bytes::<BTreeMap<String, LoroValue>>(value_and_state).unwrap();
+        map_value.insert("key".to_string(), LoroValue::Container(missing_child));
         kv.set(
             &map_key,
-            rewrite_map_container_value(
-                &map_payload,
-                BTreeMap::from([("key".to_string(), LoroValue::Container(missing_child))]),
-            )
-            .into(),
+            rewrite_map_container_value(&map_payload, map_value).into(),
+        );
+        let corrupted = replace_fast_snapshot_state_bytes(snapshot, &kv.export_all());
+
+        let doc = LoroDoc::new();
+        assert!(doc.import(&corrupted).is_err());
+    }
+
+    #[test]
+    fn lazy_shallow_snapshot_rejects_parent_value_with_unknown_child_in_state_bytes() {
+        let loro = LoroDoc::new_auto_commit();
+        let map = loro.get_map("map");
+        map.insert("key", "value").unwrap();
+        let start = loro.state_frontiers();
+        for i in 0..300 {
+            map.insert(&format!("key-{i}"), i).unwrap();
+        }
+        let snapshot = loro.export(ExportMode::shallow_snapshot(&start)).unwrap();
+
+        let mut kv = MemKvStore::new(MemKvConfig::default().should_encode_none(false));
+        kv.import_all(fast_snapshot_state_bytes(&snapshot).to_vec().into())
+            .unwrap();
+        let missing_child = ContainerID::new_normal(ID::new(123, 0), ContainerType::Text);
+        let map_key = map.id().to_bytes();
+        let map_payload = kv.get(&map_key).unwrap();
+        let mut reader = &map_payload[1..];
+        let _depth = leb128::read::unsigned(&mut reader).unwrap();
+        let (_, value_and_state) =
+            postcard::take_from_bytes::<Option<ContainerID>>(reader).unwrap();
+        let (mut map_value, _) =
+            postcard::take_from_bytes::<BTreeMap<String, LoroValue>>(value_and_state).unwrap();
+        map_value.insert("key".to_string(), LoroValue::Container(missing_child));
+        kv.set(
+            &map_key,
+            rewrite_map_container_value(&map_payload, map_value).into(),
         );
         let corrupted = replace_fast_snapshot_state_bytes(snapshot, &kv.export_all());
 
