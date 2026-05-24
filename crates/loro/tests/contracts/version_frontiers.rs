@@ -111,7 +111,27 @@ fn version_vector_contracts_follow_semantics() -> anyhow::Result<()> {
     assert_eq!(diff_left.distance_between(&diff_right), 3);
     assert_eq!(zero_entry.distance_between(&diff_left), 4);
     let negative = vv_pairs(&[(11, i32::MIN)]);
+    let negative_small = vv_pairs(&[(11, -1)]);
     let max_counter = vv_pairs(&[(11, i32::MAX)]);
+    assert_eq!(negative, VersionVector::new());
+    assert_eq!(negative.partial_cmp(&negative_small), Some(Ordering::Equal));
+    assert_eq!(
+        negative.diff(&VersionVector::new()),
+        VersionVectorDiff::default()
+    );
+    assert_eq!(negative.to_spans(), IdSpanVector::default());
+    assert_eq!(
+        sorted_spans(max_counter.sub_iter(&negative)),
+        vec![(11, 0, i32::MAX)]
+    );
+    assert_eq!(
+        sorted_spans(negative.sub_iter(&VersionVector::new())),
+        Vec::<(u64, i32, i32)>::new()
+    );
+    assert_eq!(
+        VersionVector::new().get_missing_span(&negative),
+        Vec::<loro::IdSpan>::new()
+    );
     assert_eq!(negative.distance_between(&VersionVector::new()), 0);
     assert_eq!(VersionVector::new().distance_between(&negative), 0);
     assert_eq!(negative.distance_between(&max_counter), i32::MAX as usize);
@@ -146,6 +166,10 @@ fn version_vector_contracts_follow_semantics() -> anyhow::Result<()> {
     assert_eq!(adjust.get(&5), Some(&3));
     adjust.set_end(ID::new(5, 0));
     assert!(!adjust.contains_key(&5));
+    assert!(!adjust.try_update_last(ID::new(6, -1)));
+    assert!(!adjust.contains_key(&6));
+    adjust.set_last(ID::new(6, i32::MAX));
+    assert_eq!(adjust.get(&6), Some(&i32::MAX));
 
     let mut span_ops = vv_pairs(&[(10, 2)]);
     span_ops.extend_to_include_last_id(ID::new(10, 3));
@@ -200,6 +224,10 @@ fn version_vector_contracts_follow_semantics() -> anyhow::Result<()> {
     assert!(im2.contains_key(&3));
     im2.set_last(ID::new(4, 1));
     assert_eq!(im2.to_vv().get(&4), Some(&2));
+    im2.set_last(ID::new(4, -1));
+    assert!(!im2.contains_key(&4));
+    im2.set_last(ID::new(4, i32::MAX));
+    assert_eq!(im2.get(&4), Some(&i32::MAX));
     let im_encoded = im2.encode();
     assert_eq!(ImVersionVector::decode(&im_encoded)?, im2);
     im2.clear();
