@@ -346,7 +346,15 @@ impl InnerStore {
                     }
 
                     let idx = self.arena.register_container(&cid);
-                    let mut container = ContainerWrapper::new_from_bytes(v);
+                    let mut container = ContainerWrapper::new_from_bytes(v.clone());
+                    if !container.has_canonical_header_bytes(&v) {
+                        return Err(loro_common::LoroError::DecodeError(
+                            "Container header is not canonical"
+                                .to_string()
+                                .into_boxed_str(),
+                        ));
+                    }
+
                     if cid.container_type() != container.kind() {
                         return Err(loro_common::LoroError::DecodeError(
                             "Container type mismatch between key and state"

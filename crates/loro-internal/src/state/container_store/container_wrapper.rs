@@ -124,6 +124,24 @@ impl ContainerWrapper {
         self.depth
     }
 
+    pub(crate) fn has_canonical_header_bytes(&self, bytes: &[u8]) -> bool {
+        let ContainerData::Lazy(lazy) = &self.data else {
+            return true;
+        };
+        let Some(header_len) = lazy.bytes_offset_for_value else {
+            return false;
+        };
+        if bytes.len() < header_len {
+            return false;
+        }
+
+        let mut header = Vec::new();
+        header.push(self.kind.to_u8());
+        leb128::write::unsigned(&mut header, self.depth as u64).unwrap();
+        postcard::to_io(&self.parent, &mut header).unwrap();
+        header.as_slice() == &bytes[..header_len]
+    }
+
     pub(crate) fn kind(&self) -> ContainerType {
         self.kind
     }
