@@ -2,6 +2,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use loro::{
     cursor::{PosType, Side},
+    event::{Diff, DiffBatch, ListDiffItem},
     Container, ContainerID, ContainerTrait, ExpandType, Index, LoroDoc, LoroError, LoroList,
     LoroMap, LoroMovableList, LoroResult, LoroText, LoroTree, LoroValue, StyleConfig,
     StyleConfigMap, TextDelta, ToJson, TreeParentId, ValueOrContainer,
@@ -192,6 +193,47 @@ fn text_apply_delta_rejects_overflowing_retain_positions() -> LoroResult<()> {
             attributes: Some([("bold".to_string(), true.into())].into_iter().collect()),
         },
     ]));
+
+    Ok(())
+}
+
+#[test]
+fn doc_apply_diff_rejects_overflowing_text_and_list_positions() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    let text = doc.get_text("text");
+    text.insert(0, "a")?;
+
+    let mut text_batch = DiffBatch::default();
+    text_batch
+        .push(
+            text.id(),
+            Diff::Text(vec![
+                TextDelta::Retain {
+                    retain: usize::MAX,
+                    attributes: None,
+                },
+                TextDelta::Retain {
+                    retain: 1,
+                    attributes: None,
+                },
+            ]),
+        )
+        .unwrap();
+    assert_out_of_bound(doc.apply_diff(text_batch));
+
+    let list = doc.get_list("list");
+    list.push(1)?;
+    let mut list_batch = DiffBatch::default();
+    list_batch
+        .push(
+            list.id(),
+            Diff::List(vec![
+                ListDiffItem::Retain { retain: usize::MAX },
+                ListDiffItem::Retain { retain: 1 },
+            ]),
+        )
+        .unwrap();
+    assert_out_of_bound(doc.apply_diff(list_batch));
 
     Ok(())
 }
