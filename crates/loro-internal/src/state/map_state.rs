@@ -361,18 +361,14 @@ impl MapState {
         }
 
         match (&result, value_yes) {
-            (Some(x), true) => {
-                if x.value.is_none() {
-                    self.size += 1;
-                }
+            (Some(x), true) if x.value.is_none() => {
+                self.size += 1;
             }
             (None, true) => {
                 self.size += 1;
             }
-            (Some(x), false) => {
-                if x.value.is_some() {
-                    self.size -= 1;
-                }
+            (Some(x), false) if x.value.is_some() => {
+                self.size -= 1;
             }
             _ => {}
         };

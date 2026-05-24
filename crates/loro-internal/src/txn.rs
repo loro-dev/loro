@@ -906,7 +906,7 @@ fn change_to_diff(
                 }),
                 EventHint::Tree(tree_diff) => {
                     let mut diff = TreeDiff::default();
-                    diff.diff.extend(tree_diff.into_iter());
+                    diff.diff.extend(tree_diff);
                     ans.push(TxnContainerDiff {
                         idx: container_idx,
                         diff: Diff::Tree(diff),

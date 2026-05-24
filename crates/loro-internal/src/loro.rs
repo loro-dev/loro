@@ -345,14 +345,12 @@ impl LoroDoc {
                     options = None;
                 }
             }
-            if config.immediate_renew {
-                if self.can_edit() {
-                    let mut t = self.txn().unwrap();
-                    if let Some(options) = options.as_ref() {
-                        t.set_options(options.clone());
-                    }
-                    *txn_guard = Some(t);
+            if config.immediate_renew && self.can_edit() {
+                let mut t = self.txn().unwrap();
+                if let Some(options) = options.as_ref() {
+                    t.set_options(options.clone());
                 }
+                *txn_guard = Some(t);
             }
 
             if let Some(on_commit) = on_commit {
@@ -2229,7 +2227,6 @@ impl LoroDoc {
         if let Err(e) = h.clear() {
             self.config.deleted_root_containers.lock().remove(&cid);
             eprintln!("Failed to clear handler: {:?}", e);
-            return;
         }
     }
 
@@ -2273,7 +2270,7 @@ fn find_last_delete_op(oplog: &OpLog, id: ID, idx: ContainerIdx) -> Option<ID> {
                     let op_lamport =
                         change.lamport + (op.counter - change.id().counter) as loro_common::Lamport;
                     let key = (op_lamport, peer);
-                    if best.map_or(true, |(bk, _)| key > bk) {
+                    if best.is_none_or(|(bk, _)| key > bk) {
                         best = Some((key, ID::new(peer, op.counter)));
                     }
                 }

@@ -362,7 +362,7 @@ impl Actionable for TreeAction {
             }
             TreeActionInner::MetaDelete { key } => {
                 let meta = super::unwrap(tree.get_meta(target))?;
-                meta.delete(key);
+                let _ = meta.delete(key);
                 None
             }
             TreeActionInner::MetaClear => {

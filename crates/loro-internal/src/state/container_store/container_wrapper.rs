@@ -244,7 +244,8 @@ impl ContainerWrapper {
                 .as_map_state()
                 .unwrap()
                 .iter()
-                .filter_map(|(key, value)| value.value.is_some().then(|| key.clone()))
+                .filter(|(_, value)| value.value.is_some())
+                .map(|(key, _)| key.clone())
                 .collect(),
             ContainerData::Lazy(_) => {
                 self.decode_value(idx, ctx).unwrap();
@@ -259,7 +260,8 @@ impl ContainerWrapper {
                         .as_map_state()
                         .unwrap()
                         .iter()
-                        .filter_map(|(key, value)| value.value.is_some().then(|| key.clone()))
+                        .filter(|(_, value)| value.value.is_some())
+                        .map(|(key, _)| key.clone())
                         .collect(),
                 }
             }

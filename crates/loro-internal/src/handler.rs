@@ -2702,10 +2702,7 @@ impl TextHandler {
                     Some((event_index, unicode_index))
                 });
 
-                match res {
-                    Some(v) => v,
-                    None => return None,
-                }
+                res?
             }
             MaybeDetached::Attached(a) => {
                 let value = a.get_value();
@@ -3556,7 +3553,7 @@ impl MovableListHandler {
                 Ok(d.value.pop())
             }
             MaybeDetached::Attached(a) => {
-                if self.len() == 0 {
+                if self.is_empty() {
                     return Ok(None);
                 }
                 let last = self.len() - 1;

@@ -950,6 +950,7 @@ impl RichtextState {
     }
 
     #[inline]
+    #[allow(dead_code)]
     pub(crate) fn has_styles(&mut self) -> bool {
         self.state.get_mut().has_styles()
     }

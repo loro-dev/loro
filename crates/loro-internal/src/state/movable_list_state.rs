@@ -1133,73 +1133,71 @@ impl ContainerState for MovableListState {
                 match self.inner.elements().get(&elem_id).cloned() {
                     Some(elem) => {
                         // Update value if needed
-                        if value_id.is_some()
-                            && elem.value != value
-                            && (!need_compare || elem.value_id < value_id.unwrap())
-                        {
-                            maybe_moved.remove(&elem_id);
-                            self.inner
-                                .update_value(elem_id, value.clone(), value_id.unwrap());
-                            let index = self.get_index_of_elem(elem_id);
-                            if let Some(index) = index {
-                                event.compose(
-                                    &DeltaRopeBuilder::new()
-                                        .retain(index, Default::default())
-                                        .delete(1)
-                                        .insert(
-                                            ArrayVec::from([ValueOrHandler::from_value(
-                                                value, doc,
-                                            )]),
-                                            ListDeltaMeta { from_move: false },
-                                        )
-                                        .build(),
-                                )
+                        if let Some(value_id) = value_id {
+                            if elem.value != value && (!need_compare || elem.value_id < value_id) {
+                                maybe_moved.remove(&elem_id);
+                                self.inner.update_value(elem_id, value.clone(), value_id);
+                                let index = self.get_index_of_elem(elem_id);
+                                if let Some(index) = index {
+                                    event.compose(
+                                        &DeltaRopeBuilder::new()
+                                            .retain(index, Default::default())
+                                            .delete(1)
+                                            .insert(
+                                                ArrayVec::from([ValueOrHandler::from_value(
+                                                    value, doc,
+                                                )]),
+                                                ListDeltaMeta { from_move: false },
+                                            )
+                                            .build(),
+                                    )
+                                }
                             }
                         }
 
                         // Update pos if needed
-                        if pos.is_some()
-                            && elem.pos != pos.unwrap()
-                            && (!need_compare || elem.pos < pos.unwrap())
-                        {
-                            // don't need to update old list item, because it's handled by list diff already
-                            let result = self.inner.update_pos(elem_id, pos.unwrap(), false);
-                            let result = self.inner.convert_update_to_event_pos(result);
-                            if let Some(new_index) = result.insert {
-                                let new_value =
-                                    self.elements().get(&elem_id).unwrap().value.clone();
-                                let from_delete = if let Some((_elem_index, elem_old_value)) =
-                                    maybe_moved.remove(&elem_id)
-                                {
-                                    elem_old_value == new_value
-                                } else {
-                                    false
-                                };
-                                let new_delta: ListDiff = DeltaRopeBuilder::new()
-                                    .retain(new_index, Default::default())
-                                    .insert(
-                                        ArrayVec::from([ValueOrHandler::from_value(
-                                            new_value, doc,
-                                        )]),
-                                        ListDeltaMeta {
-                                            from_move: (result.delete.is_some() && !value_updated)
-                                                || from_delete,
-                                        },
-                                    )
-                                    .build();
-                                event.compose(&new_delta);
-                            }
-                            if let Some(del_index) = result.delete {
-                                event.compose(
-                                    &DeltaRopeBuilder::new()
-                                        .retain(del_index, Default::default())
-                                        .delete(1)
-                                        .build(),
-                                );
-                            }
-                            if !result.activate_new_list_item {
-                                // not matched list item found, remove directly
-                                self.inner.remove_elem_by_id(&elem_id);
+                        if let Some(pos) = pos {
+                            if elem.pos != pos && (!need_compare || elem.pos < pos) {
+                                // don't need to update old list item, because it's handled by list diff already
+                                let result = self.inner.update_pos(elem_id, pos, false);
+                                let result = self.inner.convert_update_to_event_pos(result);
+                                if let Some(new_index) = result.insert {
+                                    let new_value =
+                                        self.elements().get(&elem_id).unwrap().value.clone();
+                                    let from_delete = if let Some((_elem_index, elem_old_value)) =
+                                        maybe_moved.remove(&elem_id)
+                                    {
+                                        elem_old_value == new_value
+                                    } else {
+                                        false
+                                    };
+                                    let new_delta: ListDiff = DeltaRopeBuilder::new()
+                                        .retain(new_index, Default::default())
+                                        .insert(
+                                            ArrayVec::from([ValueOrHandler::from_value(
+                                                new_value, doc,
+                                            )]),
+                                            ListDeltaMeta {
+                                                from_move: (result.delete.is_some()
+                                                    && !value_updated)
+                                                    || from_delete,
+                                            },
+                                        )
+                                        .build();
+                                    event.compose(&new_delta);
+                                }
+                                if let Some(del_index) = result.delete {
+                                    event.compose(
+                                        &DeltaRopeBuilder::new()
+                                            .retain(del_index, Default::default())
+                                            .delete(1)
+                                            .build(),
+                                    );
+                                }
+                                if !result.activate_new_list_item {
+                                    // not matched list item found, remove directly
+                                    self.inner.remove_elem_by_id(&elem_id);
+                                }
                             }
                         }
                     }

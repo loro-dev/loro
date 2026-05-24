@@ -369,10 +369,8 @@ pub(crate) fn encode_snapshot_at<W: std::io::Write>(
     }
     doc.app_state().lock().take_events();
 
-    let final_result = match result {
+    match result {
         Err(err) => Err(err),
         Ok(()) => restore_result,
-    };
-
-    final_result
+    }
 }
