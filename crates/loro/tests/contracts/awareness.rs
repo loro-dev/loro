@@ -163,6 +163,15 @@ fn legacy_awareness_selected_sync_stale_updates_and_timeout_follow_contract() {
     assert!(added.is_empty());
 }
 
+#[allow(deprecated)]
+#[test]
+fn legacy_awareness_try_apply_rejects_invalid_payloads() {
+    let mut awareness = Awareness::new(1, 30_000);
+
+    assert!(awareness.try_apply(&[0xff, 0xff, 0xff, 0xff]).is_err());
+    assert!(awareness.get_all_states().is_empty());
+}
+
 #[test]
 fn ephemeral_store_rejects_invalid_payloads_and_unsubscribes_false_callbacks() {
     let store = EphemeralStore::new(30_000);
