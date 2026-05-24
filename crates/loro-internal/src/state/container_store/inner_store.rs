@@ -7,7 +7,7 @@ use crate::{
     version::Frontiers,
 };
 use bytes::Bytes;
-use loro_common::{ContainerID, ContainerType};
+use loro_common::ContainerID;
 use rustc_hash::FxHashMap;
 use std::ops::Bound;
 
@@ -413,15 +413,7 @@ impl InnerStore {
             for (parent_id, parent) in containers.iter() {
                 for child_id in parent.try_get_state().unwrap().get_child_containers() {
                     let Some(child) = containers.get(&child_id) else {
-                        if parent_id.container_type() == ContainerType::Tree {
-                            continue;
-                        }
-
-                        return Err(loro_common::LoroError::DecodeError(
-                            "Container parent references missing child"
-                                .to_string()
-                                .into_boxed_str(),
-                        ));
+                        continue;
                     };
                     if child.parent() != Some(parent_id) {
                         return Err(loro_common::LoroError::DecodeError(
@@ -439,6 +431,7 @@ impl InnerStore {
 
     pub(crate) fn validate_container_ids(
         &mut self,
+        ctx: ContainerCreationContext,
         mut is_known_id: impl FnMut(loro_common::ID) -> bool,
     ) -> Result<(), loro_common::LoroError> {
         fn validate_id(
@@ -460,24 +453,49 @@ impl InnerStore {
             Ok(())
         }
 
+        fn validate_container_refs(
+            id: loro_common::ContainerID,
+            container: &ContainerWrapper,
+            is_known_id: &mut impl FnMut(loro_common::ID) -> bool,
+        ) -> Result<(), loro_common::LoroError> {
+            validate_id(id, is_known_id)?;
+
+            if let Some(parent) = container.parent() {
+                validate_id(parent.clone(), is_known_id)?;
+            }
+
+            if let Some(state) = container.try_get_state() {
+                for child_id in state.get_child_containers() {
+                    validate_id(child_id, is_known_id)?;
+                }
+            }
+
+            Ok(())
+        }
+
         for (slot, entry) in self.store.iter().enumerate() {
             let Some(container) = entry.as_ref() else {
                 continue;
             };
 
             let idx = ContainerIdx::from_index_and_type(slot as u32, container.kind());
-            validate_id(
+            validate_container_refs(
                 self.arena
                     .get_container_id(idx)
                     .expect("loaded container should be registered in the arena"),
+                container,
                 &mut is_known_id,
             )?;
         }
 
         if self.load_state != LoadState::AllLoaded {
             self.kv.with_kv(|kv| {
-                for (key, _) in kv.scan(Bound::Unbounded, Bound::Unbounded) {
-                    validate_id(loro_common::ContainerID::from_bytes(&key), &mut is_known_id)?;
+                for (key, value) in kv.scan(Bound::Unbounded, Bound::Unbounded) {
+                    let id = loro_common::ContainerID::from_bytes(&key);
+                    let idx = self.arena.register_container(&id);
+                    let mut container = ContainerWrapper::new_from_bytes(value);
+                    container.decode_state(idx, ctx)?;
+                    validate_container_refs(id, &container, &mut is_known_id)?;
                 }
 
                 Ok::<(), loro_common::LoroError>(())
