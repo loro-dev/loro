@@ -135,6 +135,7 @@ fn version_vector_contracts_follow_semantics() -> anyhow::Result<()> {
     assert_eq!(negative.distance_between(&VersionVector::new()), 0);
     assert_eq!(VersionVector::new().distance_between(&negative), 0);
     assert_eq!(negative.distance_between(&max_counter), i32::MAX as usize);
+    assert_eq!(VersionRange::from_vv(&negative), VersionRange::new());
     assert_eq!(diff_left.to_spans(), span_map(&[(1, (0, 3)), (2, (0, 1))]));
     assert_eq!(
         diff_left.get_frontiers(),
@@ -389,6 +390,7 @@ fn frontiers_contracts_follow_semantics() -> anyhow::Result<()> {
     assert!(!doc_frontiers.is_empty());
     let vv = doc.frontiers_to_vv(&doc_frontiers).unwrap();
     assert_eq!(doc.vv_to_frontiers(&vv), doc_frontiers);
+    assert_eq!(doc.vv_to_frontiers(&vv_pairs(&[(77, -1)])), Frontiers::None);
     assert_eq!(
         doc.frontiers_to_vv(&Frontiers::None),
         Some(VersionVector::new())

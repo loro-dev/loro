@@ -75,7 +75,10 @@ impl VersionRange {
     pub fn from_vv(vv: &VersionVector) -> Self {
         let mut ans = Self::new();
         for (peer, counter) in vv.iter() {
-            ans.insert(*peer, 0, *counter);
+            let counter = normalize_vv_counter(*counter);
+            if counter > 0 {
+                ans.insert(*peer, 0, counter);
+            }
         }
         ans
     }
