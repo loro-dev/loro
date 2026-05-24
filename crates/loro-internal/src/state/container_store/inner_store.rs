@@ -337,6 +337,14 @@ impl InnerStore {
             for (k, v) in kv.scan(Bound::Unbounded, Bound::Unbounded) {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     let cid = ContainerID::from_bytes(&k);
+                    if k.as_ref() != cid.to_bytes().as_slice() {
+                        return Err(loro_common::LoroError::DecodeError(
+                            "Container key is not canonical"
+                                .to_string()
+                                .into_boxed_str(),
+                        ));
+                    }
+
                     let idx = self.arena.register_container(&cid);
                     let mut container = ContainerWrapper::new_from_bytes(v);
                     if cid.container_type() != container.kind() {
