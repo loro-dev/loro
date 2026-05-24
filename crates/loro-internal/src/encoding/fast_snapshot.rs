@@ -79,6 +79,14 @@ pub(super) fn _decode_snapshot_bytes(bytes: Bytes) -> LoroResult<Snapshot> {
         ));
     }
     let shallow_root_state_bytes = r.get_mut().copy_to_bytes(shallow_bytes_len);
+    if r.get_ref().has_remaining() {
+        return Err(LoroError::DecodeError(
+            "decode_snapshot: trailing bytes after snapshot"
+                .to_string()
+                .into_boxed_str(),
+        ));
+    }
+
     Ok(Snapshot {
         oplog_bytes,
         state_bytes,
