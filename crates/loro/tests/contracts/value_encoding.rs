@@ -1,11 +1,17 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{hash_map::DefaultHasher, HashMap},
+    hash::{Hash, Hasher},
+    sync::Arc,
+};
 
 use loro::{
     ContainerID, ContainerTrait, ContainerType, IdSpan, JsonListOp, JsonMapOp, JsonMovableListOp,
-    JsonOpContent, JsonTextOp, JsonTreeOp, LoroDoc, LoroList, LoroMap, LoroMovableList, LoroText,
-    LoroTree, LoroValue, ToJson, TreeID, ValueOrContainer, VersionVector, ID,
+    JsonOpContent, JsonTextOp, JsonTreeOp, LoroDoc, LoroList, LoroMap, LoroMapValue,
+    LoroMovableList, LoroText, LoroTree, LoroValue, ToJson, TreeID, ValueOrContainer,
+    VersionVector, ID,
 };
 use pretty_assertions::assert_eq;
+use rustc_hash::FxHashMap;
 use serde_json::{json, Value};
 
 fn nested_value() -> LoroValue {
@@ -27,6 +33,12 @@ fn nested_value() -> LoroValue {
 
 fn value_json(value: &LoroValue) -> Value {
     value.to_json_value()
+}
+
+fn value_hash(value: &LoroValue) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    value.hash(&mut hasher);
+    hasher.finish()
 }
 
 fn nested_container<T: ContainerTrait>(map: &LoroMap, key: &str) -> T {
@@ -156,6 +168,34 @@ fn loro_value_contracts_roundtrip_for_scalars_collections_and_containers() -> an
         serde_json::from_value::<LoroValue>(json!(-12.25))?,
         float_value
     );
+    for non_finite in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        let non_finite_value = LoroValue::Double(non_finite);
+        assert_eq!(serde_json::to_value(&non_finite_value)?, Value::Null);
+        assert_eq!(value_json(&non_finite_value), Value::Null);
+        assert_eq!(Value::from(non_finite_value), Value::Null);
+    }
+    assert_eq!(LoroValue::Double(f64::NAN), LoroValue::Double(f64::NAN));
+    assert_eq!(LoroValue::Double(0.0), LoroValue::Double(-0.0));
+    assert_eq!(
+        value_hash(&LoroValue::Double(0.0)),
+        value_hash(&LoroValue::Double(-0.0))
+    );
+    let mut compact_map = FxHashMap::default();
+    compact_map.insert("a".to_string(), 1_i64.into());
+    compact_map.insert("b".to_string(), 2_i64.into());
+    let mut sparse_map = FxHashMap::default();
+    for i in 0..64 {
+        sparse_map.insert(format!("padding-{i}"), LoroValue::from(i));
+    }
+    for i in 0..64 {
+        sparse_map.remove(&format!("padding-{i}"));
+    }
+    sparse_map.insert("b".to_string(), 2_i64.into());
+    sparse_map.insert("a".to_string(), 1_i64.into());
+    let compact_value = LoroValue::Map(LoroMapValue::from(compact_map));
+    let sparse_value = LoroValue::Map(LoroMapValue::from(sparse_map));
+    assert_eq!(compact_value, sparse_value);
+    assert_eq!(value_hash(&compact_value), value_hash(&sparse_value));
     assert_eq!(serde_json::to_value(&string_value)?, json!("hello"));
     assert_eq!(
         serde_json::from_value::<LoroValue>(json!("hello"))?,
@@ -198,6 +238,8 @@ fn loro_value_contracts_roundtrip_for_scalars_collections_and_containers() -> an
     assert_eq!(bool::try_from(LoroValue::from(false)).unwrap(), false);
     assert_eq!(f64::try_from(LoroValue::from(1.5_f64)).unwrap(), 1.5);
     assert_eq!(i32::try_from(LoroValue::from(123_i64)).unwrap(), 123);
+    assert!(i32::try_from(LoroValue::from(i64::from(i32::MAX) + 1)).is_err());
+    assert!(i32::try_from(LoroValue::from(i64::from(i32::MIN) - 1)).is_err());
     assert_eq!(
         ContainerID::try_from(container_value.clone()).unwrap(),
         text.id()

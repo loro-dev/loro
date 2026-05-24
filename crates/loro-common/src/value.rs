@@ -10,7 +10,7 @@ use crate::ContainerID;
 /// [LoroValue] is used to represents the state of CRDT at a given version.
 ///
 /// This struct is cheap to clone, the time complexity is O(1).
-#[derive(Debug, PartialEq, Clone, EnumAsInner, Default)]
+#[derive(Debug, Clone, EnumAsInner, Default)]
 pub enum LoroValue {
     #[default]
     Null,
@@ -24,6 +24,23 @@ pub enum LoroValue {
     // PERF We can use InternalString as key
     Map(LoroMapValue),
     Container(ContainerID),
+}
+
+impl PartialEq for LoroValue {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (LoroValue::Null, LoroValue::Null) => true,
+            (LoroValue::Bool(a), LoroValue::Bool(b)) => a == b,
+            (LoroValue::Double(a), LoroValue::Double(b)) => a == b || (a.is_nan() && b.is_nan()),
+            (LoroValue::I64(a), LoroValue::I64(b)) => a == b,
+            (LoroValue::Binary(a), LoroValue::Binary(b)) => a == b,
+            (LoroValue::String(a), LoroValue::String(b)) => a == b,
+            (LoroValue::List(a), LoroValue::List(b)) => a == b,
+            (LoroValue::Map(a), LoroValue::Map(b)) => a == b,
+            (LoroValue::Container(a), LoroValue::Container(b)) => a == b,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Default, Debug, PartialEq, Clone, Arbitrary)]
@@ -360,7 +377,7 @@ impl TryFrom<LoroValue> for i32 {
 
     fn try_from(value: LoroValue) -> Result<Self, Self::Error> {
         match value {
-            LoroValue::I64(v) => Ok(v as i32),
+            LoroValue::I64(v) => i32::try_from(v).map_err(|_| "i64 out of i32 range"),
             _ => Err("not a i32"),
         }
     }
@@ -430,7 +447,14 @@ impl Hash for LoroValue {
                 state.write_u8(*v as u8);
             }
             LoroValue::Double(v) => {
-                state.write_u64(v.to_bits());
+                let normalized = if v.is_nan() {
+                    f64::NAN
+                } else if *v == 0.0 {
+                    0.0
+                } else {
+                    *v
+                };
+                state.write_u64(normalized.to_bits());
             }
             LoroValue::I64(v) => {
                 state.write_i64(*v);
@@ -446,7 +470,9 @@ impl Hash for LoroValue {
             }
             LoroValue::Map(v) => {
                 state.write_usize(v.len());
-                for (k, v) in v.iter() {
+                let mut entries: Vec<_> = v.iter().collect();
+                entries.sort_unstable_by_key(|(k, _)| *k);
+                for (k, v) in entries {
                     k.hash(state);
                     v.hash(state);
                 }
@@ -970,7 +996,7 @@ mod serde_json_impl {
             match value {
                 LoroValue::Null => Value::Null,
                 LoroValue::Bool(b) => Value::Bool(b),
-                LoroValue::Double(d) => Value::Number(Number::from_f64(d).unwrap()),
+                LoroValue::Double(d) => Number::from_f64(d).map_or(Value::Null, Value::Number),
                 LoroValue::I64(i) => Value::Number(Number::from(i)),
                 LoroValue::String(s) => Value::String(s.to_string()),
                 LoroValue::List(l) => Value::Array(l.iter().cloned().map(Value::from).collect()),
