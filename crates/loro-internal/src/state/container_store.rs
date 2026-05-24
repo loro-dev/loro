@@ -254,6 +254,21 @@ impl ContainerStore {
         self.store.iter_all_container_ids()
     }
 
+    pub(crate) fn validate_container_ids(
+        &mut self,
+        mut is_known_id: impl FnMut(loro_common::ID) -> bool,
+    ) -> LoroResult<()> {
+        self.store.validate_container_ids(&mut is_known_id)?;
+        if let Some(shallow_root_store) = &self.shallow_root_store {
+            shallow_root_store
+                .store
+                .lock()
+                .validate_container_ids(&mut is_known_id)?;
+        }
+
+        Ok(())
+    }
+
     pub fn load_all(&mut self) -> LoadAllFlag {
         self.store.load_all();
         LoadAllFlag

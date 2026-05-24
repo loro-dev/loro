@@ -437,6 +437,56 @@ impl InnerStore {
         })
     }
 
+    pub(crate) fn validate_container_ids(
+        &mut self,
+        mut is_known_id: impl FnMut(loro_common::ID) -> bool,
+    ) -> Result<(), loro_common::LoroError> {
+        fn validate_id(
+            container_id: loro_common::ContainerID,
+            is_known_id: &mut impl FnMut(loro_common::ID) -> bool,
+        ) -> Result<(), loro_common::LoroError> {
+            let loro_common::ContainerID::Normal { peer, counter, .. } = container_id else {
+                return Ok(());
+            };
+
+            if !is_known_id(loro_common::ID::new(peer, counter)) {
+                return Err(loro_common::LoroError::DecodeError(
+                    "Container id is not included in the snapshot history"
+                        .to_string()
+                        .into_boxed_str(),
+                ));
+            }
+
+            Ok(())
+        }
+
+        for (slot, entry) in self.store.iter().enumerate() {
+            let Some(container) = entry.as_ref() else {
+                continue;
+            };
+
+            let idx = ContainerIdx::from_index_and_type(slot as u32, container.kind());
+            validate_id(
+                self.arena
+                    .get_container_id(idx)
+                    .expect("loaded container should be registered in the arena"),
+                &mut is_known_id,
+            )?;
+        }
+
+        if self.load_state != LoadState::AllLoaded {
+            self.kv.with_kv(|kv| {
+                for (key, _) in kv.scan(Bound::Unbounded, Bound::Unbounded) {
+                    validate_id(loro_common::ContainerID::from_bytes(&key), &mut is_known_id)?;
+                }
+
+                Ok::<(), loro_common::LoroError>(())
+            })?;
+        }
+
+        Ok(())
+    }
+
     pub fn load_all(&mut self) {
         if self.load_state == LoadState::AllLoaded {
             return;

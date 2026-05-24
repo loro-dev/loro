@@ -232,6 +232,9 @@ pub(crate) fn decode_snapshot_inner(
 
         // FIXME: we may need to extract the unknown containers here?
         // Or we should lazy load it when the time comes?
+        state.store.validate_container_ids(|id| {
+            oplog.vv().includes_id(id) || oplog.shallow_since_vv().includes_id(id)
+        })?;
 
         state.init_with_states_and_version(state_frontiers, &oplog, vec![], false, origin)?;
         Ok(())

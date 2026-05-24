@@ -44,8 +44,8 @@ use crate::{
 };
 use either::Either;
 use loro_common::{
-    ContainerID, ContainerType, HasIdSpan, HasLamportSpan, IdSpan, LoroEncodeError, LoroResult,
-    LoroValue, ID,
+    ContainerID, ContainerType, HasCounterSpan, HasIdSpan, HasLamportSpan, IdSpan, LoroEncodeError,
+    LoroResult, LoroValue, ID,
 };
 use rle::HasLength;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -750,10 +750,18 @@ impl LoroDoc {
         }
 
         if !preflight.applies_to_dag {
+            let pending_root_containers = pending_root_containers_to_materialize(&oplog, &changes);
             let result = encoding::apply_decoded_changes_to_oplog(&mut oplog, changes);
             if result.has_deps_before_shallow_root {
                 oplog.arena.rollback(arena_checkpoint);
                 return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
+            }
+
+            if !pending_root_containers.is_empty() {
+                let mut state = self.state.lock();
+                for id in pending_root_containers {
+                    state.ensure_container(&id);
+                }
             }
 
             return Ok(result.status);
@@ -2074,6 +2082,36 @@ impl LoroDoc {
         enable();
         s
     }
+}
+
+fn pending_root_containers_to_materialize(oplog: &OpLog, changes: &[Change]) -> Vec<ContainerID> {
+    let mut roots = FxHashSet::default();
+    for change in changes {
+        if change.ctr_end() <= oplog.vv().get(&change.id.peer).copied().unwrap_or(0) {
+            continue;
+        }
+
+        if oplog.dag.is_before_shallow_root(&change.deps)
+            || oplog
+                .dag
+                .get_change_lamport_from_deps(&change.deps)
+                .is_some()
+        {
+            continue;
+        }
+
+        for op in change.ops.iter() {
+            let id = oplog
+                .arena
+                .get_container_id(op.container)
+                .expect("decoded op container should be registered");
+            if id.is_root() {
+                roots.insert(id);
+            }
+        }
+    }
+
+    roots.into_iter().collect()
 }
 
 #[derive(Debug, thiserror::Error)]
