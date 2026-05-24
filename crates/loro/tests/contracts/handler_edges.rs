@@ -77,6 +77,13 @@ fn assert_arg_error(result: LoroResult<()>) {
     }
 }
 
+fn assert_out_of_bound<T: std::fmt::Debug>(result: LoroResult<T>) {
+    match result {
+        Err(LoroError::OutOfBound { .. }) => {}
+        other => panic!("expected OutOfBound, got {other:?}"),
+    }
+}
+
 #[test]
 fn regular_value_writes_reject_nested_container_refs() -> LoroResult<()> {
     let doc = LoroDoc::new();
@@ -113,6 +120,47 @@ fn regular_value_writes_reject_nested_container_refs() -> LoroResult<()> {
     let detached_text = LoroText::new();
     detached_text.insert(0, "a")?;
     assert_arg_error(detached_text.mark(0..1, "bold", value));
+
+    Ok(())
+}
+
+#[test]
+fn range_mutations_reject_overflowing_delete_lengths() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+
+    let text = doc.get_text("text");
+    text.insert(0, "abc")?;
+    assert_out_of_bound(text.delete(usize::MAX, 1));
+    assert_out_of_bound(text.delete(1, usize::MAX));
+    assert_out_of_bound(text.splice(usize::MAX, 1, "x"));
+    assert_out_of_bound(text.splice(1, usize::MAX, "x"));
+
+    let list = doc.get_list("list");
+    list.push(1)?;
+    assert_out_of_bound(list.delete(usize::MAX, 1));
+    assert_out_of_bound(list.delete(1, usize::MAX));
+
+    let movable = doc.get_movable_list("movable");
+    movable.push(1)?;
+    assert_out_of_bound(movable.delete(usize::MAX, 1));
+    assert_out_of_bound(movable.delete(1, usize::MAX));
+
+    let detached_text = LoroText::new();
+    detached_text.insert(0, "abc")?;
+    assert_out_of_bound(detached_text.delete(usize::MAX, 1));
+    assert_out_of_bound(detached_text.delete(1, usize::MAX));
+    assert_out_of_bound(detached_text.splice(usize::MAX, 1, "x"));
+    assert_out_of_bound(detached_text.splice(1, usize::MAX, "x"));
+
+    let detached_list = LoroList::new();
+    detached_list.push(1)?;
+    assert_out_of_bound(detached_list.delete(usize::MAX, 1));
+    assert_out_of_bound(detached_list.delete(1, usize::MAX));
+
+    let detached_movable = LoroMovableList::new();
+    detached_movable.push(1)?;
+    assert_out_of_bound(detached_movable.delete(usize::MAX, 1));
+    assert_out_of_bound(detached_movable.delete(1, usize::MAX));
 
     Ok(())
 }

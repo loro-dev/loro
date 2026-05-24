@@ -67,6 +67,28 @@ fn ensure_no_regular_container_value(value: &LoroValue) -> LoroResult<()> {
     Ok(())
 }
 
+fn checked_range_end(
+    pos: usize,
+    len: usize,
+    container_len: usize,
+    info: Box<str>,
+) -> LoroResult<usize> {
+    let end = pos.checked_add(len).ok_or_else(|| LoroError::OutOfBound {
+        pos: usize::MAX,
+        len: container_len,
+        info: info.clone(),
+    })?;
+    if end > container_len {
+        return Err(LoroError::OutOfBound {
+            pos: end,
+            len: container_len,
+            info,
+        });
+    }
+
+    Ok(end)
+}
+
 pub trait HandlerTrait: Clone + Sized {
     fn is_attached(&self) -> bool;
     fn attached_handler(&self) -> Option<&BasicHandler>;
@@ -1792,7 +1814,13 @@ impl TextHandler {
     ///
     /// This method requires auto_commit to be enabled.
     pub fn splice(&self, pos: usize, len: usize, s: &str, pos_type: PosType) -> LoroResult<String> {
-        let x = self.slice(pos, pos + len, pos_type)?;
+        let end = checked_range_end(
+            pos,
+            len,
+            self.len(pos_type),
+            format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+        )?;
+        let x = self.slice(pos, end, pos_type)?;
         self.delete(pos, len, pos_type)?;
         self.insert(pos, s, pos_type)?;
         Ok(x)
@@ -1887,15 +1915,14 @@ impl TextHandler {
         }
 
         let text_len = self.len(pos_type);
-        if pos + len > text_len {
-            return Err(LoroError::OutOfBound {
-                pos: pos + len,
-                len: text_len,
-                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-            });
-        }
+        let end = checked_range_end(
+            pos,
+            len,
+            text_len,
+            format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+        )?;
         self.validate_text_boundary(pos, pos_type)?;
-        self.validate_text_boundary(pos + len, pos_type)?;
+        self.validate_text_boundary(end, pos_type)?;
 
         match &self.inner {
             MaybeDetached::Detached(t) => {
@@ -2104,16 +2131,16 @@ impl TextHandler {
             return Ok(());
         }
 
-        if pos + len > self.len(pos_type) {
-            error!("pos={} len={} len_event={}", pos, len, self.len_event());
-            return Err(LoroError::OutOfBound {
-                pos: pos + len,
-                len: self.len_event(),
-                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-            });
-        }
+        let text_len = self.len(pos_type);
+        let end = checked_range_end(
+            pos,
+            len,
+            text_len,
+            format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+        )
+        .inspect_err(|_| error!("pos={} len={} len={}", pos, len, text_len))?;
         self.validate_text_boundary(pos, pos_type)?;
-        self.validate_text_boundary(pos + len, pos_type)?;
+        self.validate_text_boundary(end, pos_type)?;
 
         let inner = self.inner.try_attached_state()?;
         let s = tracing::span!(tracing::Level::INFO, "delete", "pos={} len={}", pos, len);
@@ -2123,7 +2150,7 @@ impl TextHandler {
         let ranges = inner.with_state(|state| {
             let richtext_state = state.as_richtext_state_mut().unwrap();
             event_pos = richtext_state.index_to_event_index(pos, pos_type);
-            let event_end = richtext_state.index_to_event_index(pos + len, pos_type);
+            let event_end = richtext_state.index_to_event_index(end, pos_type);
             event_len = event_end - event_pos;
 
             richtext_state.get_text_entity_ranges_in_event_index_range(event_pos, event_len)
@@ -3116,14 +3143,13 @@ impl ListHandler {
         match &self.inner {
             MaybeDetached::Detached(l) => {
                 let mut list = l.lock();
-                if pos + len > list.value.len() {
-                    return Err(LoroError::OutOfBound {
-                        pos: pos + len,
-                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-                        len: list.value.len(),
-                    });
-                }
-                list.value.drain(pos..pos + len);
+                let end = checked_range_end(
+                    pos,
+                    len,
+                    list.value.len(),
+                    format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                )?;
+                list.value.drain(pos..end);
                 Ok(())
             }
             MaybeDetached::Attached(a) => a.with_txn(|txn| self.delete_with_txn(txn, pos, len)),
@@ -3135,20 +3161,18 @@ impl ListHandler {
             return Ok(());
         }
 
-        if pos + len > self.len() {
-            return Err(LoroError::OutOfBound {
-                pos: pos + len,
-                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-                len: self.len(),
-            });
-        }
+        let list_len = self.len();
+        let end = checked_range_end(
+            pos,
+            len,
+            list_len,
+            format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+        )?;
 
         let inner = self.inner.try_attached_state()?;
         let ids: Vec<_> = inner.with_state(|state| {
             let list = state.as_list_state().unwrap();
-            (pos..pos + len)
-                .map(|i| list.get_id_at(i).unwrap())
-                .collect()
+            (pos..end).map(|i| list.get_id_at(i).unwrap()).collect()
         });
 
         for id in ids.into_iter() {
@@ -3793,14 +3817,13 @@ impl MovableListHandler {
         match &self.inner {
             MaybeDetached::Detached(d) => {
                 let mut d = d.lock();
-                if pos + len > d.value.len() {
-                    return Err(LoroError::OutOfBound {
-                        pos: pos + len,
-                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-                        len: d.value.len(),
-                    });
-                }
-                d.value.drain(pos..pos + len);
+                let end = checked_range_end(
+                    pos,
+                    len,
+                    d.value.len(),
+                    format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                )?;
+                d.value.drain(pos..end);
                 Ok(())
             }
             MaybeDetached::Attached(a) => a.with_txn(|txn| self.delete_with_txn(txn, pos, len)),
@@ -3813,20 +3836,20 @@ impl MovableListHandler {
             return Ok(());
         }
 
-        if pos + len > self.len() {
-            return Err(LoroError::OutOfBound {
-                pos: pos + len,
-                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-                len: self.len(),
-            });
-        }
+        let list_len = self.len();
+        let end = checked_range_end(
+            pos,
+            len,
+            list_len,
+            format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+        )?;
 
         let (ids, new_poses) = self.with_state(|state| {
             let list = state.as_movable_list_state().unwrap();
-            let ids: Vec<_> = (pos..pos + len)
+            let ids: Vec<_> = (pos..end)
                 .map(|i| list.get_list_id_at(i, IndexType::ForUser).unwrap())
                 .collect();
-            let poses: Vec<_> = (pos..pos + len)
+            let poses: Vec<_> = (pos..end)
                 // need to -i because we delete the previous ones
                 .map(|user_index| {
                     let op_index = list
