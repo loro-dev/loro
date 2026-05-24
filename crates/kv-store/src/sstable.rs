@@ -975,6 +975,24 @@ mod test {
         bytes
     }
 
+    fn normal_block_bytes_from_pairs(pairs: &[(&[u8], &[u8])]) -> Vec<u8> {
+        let mut builder = BlockBuilder::new(4096);
+        for (key, value) in pairs {
+            assert!(builder.add(key, value));
+        }
+        let block = builder.build();
+        let mut bytes = Vec::new();
+        block.encode(&mut bytes, CompressionType::None);
+        bytes
+    }
+
+    fn large_block_bytes(value: &[u8]) -> Vec<u8> {
+        let mut bytes = value.to_vec();
+        let checksum = xxhash_rust::xxh32::xxh32(value, XXH_SEED);
+        bytes.extend_from_slice(&checksum.to_le_bytes());
+        bytes
+    }
+
     #[test]
     fn block_double_end_iter() {
         let mut builder = BlockBuilder::new(4096);
@@ -1302,5 +1320,37 @@ mod test {
         block_bytes.extend_from_slice(&second_block);
 
         assert!(SsTable::import_all(malformed_sstable_bytes(&block_bytes, &meta), false).is_err());
+    }
+
+    #[test]
+    fn sstable_import_rejects_unsorted_keys_inside_block() {
+        let block_bytes =
+            normal_block_bytes_from_pairs(&[(b"a", b"1"), (b"c", b"2"), (b"b", b"3")]);
+        let meta = [BlockMeta {
+            offset: SIZE_OF_U32 + SIZE_OF_U8,
+            is_large: false,
+            compression_type: CompressionType::None,
+            first_key: Bytes::from_static(b"a"),
+            last_key: Some(Bytes::from_static(b"b")),
+        }];
+
+        assert!(SsTable::import_all(malformed_sstable_bytes(&block_bytes, &meta), false).is_err());
+    }
+
+    #[test]
+    fn sstable_import_rejects_empty_large_block_key() {
+        let meta = [BlockMeta {
+            offset: SIZE_OF_U32 + SIZE_OF_U8,
+            is_large: true,
+            compression_type: CompressionType::None,
+            first_key: Bytes::new(),
+            last_key: None,
+        }];
+
+        assert!(SsTable::import_all(
+            malformed_sstable_bytes(&large_block_bytes(b"value"), &meta),
+            false
+        )
+        .is_err());
     }
 }

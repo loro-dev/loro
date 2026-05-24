@@ -165,6 +165,7 @@ impl NormalBlock {
             return Err(LoroError::DecodeError("Invalid bytes".into()));
         }
 
+        let mut prev_key: Option<Vec<u8>> = None;
         let mut prev_offset = 0usize;
         for (idx, offset) in offsets.iter().map(|x| *x as usize).enumerate() {
             let offset_end = offsets
@@ -174,7 +175,9 @@ impl NormalBlock {
                 return Err(LoroError::DecodeError("Invalid bytes".into()));
             }
 
-            if idx > 0 {
+            let key = if idx == 0 {
+                first_key.to_vec()
+            } else {
                 let header_end = offset
                     .checked_add(SIZE_OF_U8 + SIZE_OF_U16)
                     .ok_or_else(|| LoroError::DecodeError("Invalid bytes".into()))?;
@@ -190,15 +193,29 @@ impl NormalBlock {
                 let key_suffix_len =
                     u16::from_le_bytes(data[offset + SIZE_OF_U8..header_end].try_into().unwrap())
                         as usize;
-                if header_end
+                let key_end = header_end
                     .checked_add(key_suffix_len)
-                    .is_none_or(|key_end| key_end > offset_end)
-                {
+                    .ok_or_else(|| LoroError::DecodeError("Invalid bytes".into()))?;
+                if key_end > offset_end {
                     return Err(LoroError::DecodeError("Invalid bytes".into()));
                 }
+
+                let mut key = Vec::with_capacity(common_prefix_len + key_suffix_len);
+                key.extend_from_slice(&first_key[..common_prefix_len]);
+                key.extend_from_slice(&data[header_end..key_end]);
+                key
+            };
+
+            if key.is_empty()
+                || prev_key
+                    .as_ref()
+                    .is_some_and(|prev_key| prev_key.as_slice() >= key.as_slice())
+            {
+                return Err(LoroError::DecodeError("Invalid bytes".into()));
             }
 
             prev_offset = offset;
+            prev_key = Some(key);
         }
 
         Ok(())
@@ -263,6 +280,10 @@ impl Block {
         key: Bytes,
         compression_type: CompressionType,
     ) -> LoroResult<Self> {
+        if key.is_empty() {
+            return Err(LoroError::DecodeError("Invalid bytes".into()));
+        }
+
         if is_large {
             return LargeValueBlock::decode(raw_block_and_check, key, compression_type)
                 .map(Block::Large);
