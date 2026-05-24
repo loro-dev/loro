@@ -504,7 +504,10 @@ where
             let mut node = get(node_id).unwrap();
             while node.deps().len() == 1 {
                 node_id = node.deps().as_single().unwrap();
-                node = get(node_id).unwrap();
+                let Some(next) = get(node_id) else {
+                    return (Default::default(), DiffMode::ImportGreaterUpdates);
+                };
+                node = next;
             }
 
             if node.deps().is_empty() {
@@ -545,6 +548,7 @@ where
 
     let mut is_linear = left.len() <= 1 && right.len() == 1;
     let mut is_right_greater = true;
+    let mut has_unmatched_branch = false;
     let mut ans: Frontiers = Default::default();
     let mut queue: BinaryHeap<(SmallVec<[OrdIdSpan; 1]>, NodeType)> = BinaryHeap::new();
 
@@ -568,8 +572,121 @@ where
         Some(ans)
     }
 
-    queue.push((ids_to_ord_id_spans(left, get).unwrap(), NodeType::A));
-    queue.push((ids_to_ord_id_spans(right, get).unwrap(), NodeType::B));
+    fn push_ord_id_spans<'a>(
+        queue: &mut BinaryHeap<(SmallVec<[OrdIdSpan<'a>; 1]>, NodeType)>,
+        spans: SmallVec<[OrdIdSpan<'a>; 1]>,
+        node_type: NodeType,
+    ) {
+        for span in spans {
+            queue.push((smallvec::smallvec![span], node_type));
+        }
+    }
+
+    fn deps_to_ord_id_spans<'a, D: DagNode + 'a, F: Fn(ID) -> Option<D>>(
+        node: &OrdIdSpan<'a>,
+        get: &'a F,
+    ) -> Option<SmallVec<[OrdIdSpan<'a>; 1]>> {
+        let mut deps = ids_to_ord_id_spans(node.deps.as_ref(), get)?;
+        if node.id.counter > 0 {
+            let prev = node.id.inc(-1);
+            if let Some(prev) = OrdIdSpan::from_dag_node(prev, get) {
+                if !deps.iter().any(|dep| dep.contains_id(prev.id_last())) {
+                    deps.push(prev);
+                }
+            }
+        }
+
+        if deps.len() > 1 {
+            deps.sort_unstable_by(|a, b| b.cmp(a));
+        }
+
+        Some(deps)
+    }
+
+    fn shrink_ancestor_frontiers<'a, D: DagNode + 'a, F: Fn(ID) -> Option<D>>(
+        ids: &Frontiers,
+        get: &'a F,
+    ) -> Frontiers {
+        if ids.len() <= 1 {
+            return ids.clone();
+        }
+
+        let mut ids = ids_to_ord_id_spans(ids, get).expect("common ancestors should be in dag");
+        ids.sort_unstable();
+        let mut frontiers = Vec::with_capacity(ids.len());
+        for id in ids.iter().rev() {
+            let mut should_insert = true;
+            for frontier in frontiers.iter().rev() {
+                if contains_in_ancestors(get, *frontier, id) {
+                    should_insert = false;
+                    break;
+                }
+            }
+
+            if should_insert {
+                frontiers.push(id.id_last());
+            }
+        }
+
+        frontiers.into_iter().collect()
+    }
+
+    fn has_trimmed_history_deps<'a, D: DagNode + 'a, F: Fn(ID) -> Option<D>>(
+        ids: &Frontiers,
+        get: &'a F,
+    ) -> bool {
+        ids.iter().any(|id| {
+            let Some(node) = OrdIdSpan::from_dag_node(id, get) else {
+                return true;
+            };
+            ids_to_ord_id_spans(node.deps.as_ref(), get).is_none()
+        })
+    }
+
+    fn contains_in_ancestors<'a, D: DagNode + 'a, F: Fn(ID) -> Option<D>>(
+        get: &'a F,
+        frontier: ID,
+        target: &OrdIdSpan<'_>,
+    ) -> bool {
+        let mut visited = FxHashSet::default();
+        let mut pending = BinaryHeap::new();
+        let Some(node) = OrdIdSpan::from_dag_node(frontier, get) else {
+            return false;
+        };
+        pending.push(node);
+        while let Some(node) = pending.pop() {
+            if node.contains_id(target.id_last()) {
+                return true;
+            }
+
+            if node.lamport_last() < target.lamport_last() {
+                break;
+            }
+
+            if !visited.insert(node.id_start()) {
+                continue;
+            }
+
+            if let Some(deps) = deps_to_ord_id_spans(&node, get) {
+                for dep in deps {
+                    pending.push(dep);
+                }
+            }
+        }
+
+        false
+    }
+
+    push_ord_id_spans(
+        &mut queue,
+        ids_to_ord_id_spans(left, get).unwrap(),
+        NodeType::A,
+    );
+    push_ord_id_spans(
+        &mut queue,
+        ids_to_ord_id_spans(right, get).unwrap(),
+        NodeType::B,
+    );
     while let Some((mut node, mut node_type)) = queue.pop() {
         while let Some((other_node, other_type)) = queue.peek() {
             if node == *other_node
@@ -587,13 +704,15 @@ where
             }
         }
 
-        if queue.is_empty() {
-            if node_type == NodeType::Shared {
-                ans = node.into_iter().map(|x| x.id_last()).collect();
+        if node_type == NodeType::Shared {
+            for id in node.iter().map(|x| x.id_last()) {
+                ans.push(id);
             }
+            continue;
+        }
 
-            // Iteration is done and no common ancestor is found
-            // So the ans is empty
+        if queue.is_empty() {
+            has_unmatched_branch = true;
             is_right_greater = false;
             break;
         }
@@ -620,32 +739,46 @@ where
             }
 
             if node[0].len > 1 {
-                if other.0[0].lamport_last() > node[0].lamport {
-                    node[0].len = (other.0[0].lamport_last() - node[0].lamport)
-                        .min(node[0].len as u32 - 1) as usize;
-                    queue.push((node, node_type));
-                    continue;
+                node[0].len = if other.0[0].lamport_last() >= node[0].lamport {
+                    (other.0[0].lamport_last() - node[0].lamport + 1).min(node[0].len as u32 - 1)
+                        as usize
                 } else {
-                    node[0].len = 1;
-                    queue.push((node, node_type));
-                    continue;
-                }
+                    1
+                };
+                queue.push((node, node_type));
+                continue;
             }
         }
 
-        if !node[0].deps.is_empty() {
-            if let Some(deps) = ids_to_ord_id_spans(node[0].deps.as_ref(), get) {
-                queue.push((deps, node_type));
-            } else {
-                // dep on trimmed history
-                panic!("deps on trimmed history");
+        if let Some(deps) = deps_to_ord_id_spans(&node[0], get) {
+            if !deps.is_empty() {
+                push_ord_id_spans(&mut queue, deps, node_type);
+                is_linear = false;
+                continue;
             }
-
-            is_linear = false;
         } else {
+            // The dependency is on trimmed shallow history. The exact ancestor is
+            // not representable in the current DAG, so fall back to a conservative
+            // checkout base.
+            has_unmatched_branch = true;
             is_right_greater = false;
-            break;
+            continue;
         }
+
+        {
+            // Some checkout calculators still require replaying from a base that
+            // includes every branch whose operation positions may affect the diff.
+            // In non-linear checkout mode, an earlier common ancestor is a valid
+            // conservative base even when it is not the mathematical LCA.
+            has_unmatched_branch = true;
+            is_right_greater = false;
+            continue;
+        }
+    }
+
+    ans = shrink_ancestor_frontiers(&ans, get);
+    if has_unmatched_branch && !has_trimmed_history_deps(&ans, get) {
+        ans = Default::default();
     }
 
     let mode = if is_right_greater {
@@ -681,6 +814,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use loro_common::{HasId, HasIdSpan};
+    use rand::{rngs::StdRng, Rng, SeedableRng};
 
     use super::*;
 
@@ -762,8 +896,8 @@ mod tests {
         fn get(&self, id: ID) -> Option<Self::Node> {
             self.nodes
                 .range(..=id)
-                .next_back()
-                .filter(|(_, node)| node.contains_id(id))
+                .rev()
+                .find(|(_, node)| node.contains_id(id))
                 .map(|(_, node)| node.clone())
         }
 
@@ -795,6 +929,216 @@ mod tests {
         }
     }
 
+    fn ancestors_of_frontiers(dag: &TestDag, frontiers: &Frontiers) -> FxHashSet<ID> {
+        let mut ans = FxHashSet::default();
+        for id in frontiers.iter() {
+            collect_ancestors(dag, id, &mut ans);
+        }
+        ans
+    }
+
+    fn collect_ancestors(dag: &TestDag, id: ID, ans: &mut FxHashSet<ID>) {
+        let mut stack = vec![id];
+        let mut visited_targets = FxHashSet::default();
+        while let Some(id) = stack.pop() {
+            if !visited_targets.insert(id) {
+                continue;
+            }
+
+            for node in dag.nodes.values() {
+                if node.id_start().peer != id.peer || node.id_start().counter > id.counter {
+                    continue;
+                }
+
+                let end = node.id_last().counter.min(id.counter);
+                for counter in node.id_start().counter..=end {
+                    ans.insert(ID::new(node.id_start().peer, counter));
+                }
+
+                for dep in node.deps().iter() {
+                    stack.push(dep);
+                }
+            }
+        }
+    }
+
+    fn is_ancestor(dag: &TestDag, ancestor: ID, descendant: ID) -> bool {
+        let mut ancestors = FxHashSet::default();
+        collect_ancestors(dag, descendant, &mut ancestors);
+        ancestors.contains(&ancestor)
+    }
+
+    fn maximal_frontiers(dag: &TestDag, ids: impl IntoIterator<Item = ID>) -> Frontiers {
+        let mut ids = Vec::<ID>::from_iter(ids);
+        ids.sort_by_key(|id| dag.get(*id).unwrap().get_lamport_from_counter(id.counter));
+        let mut frontiers = Vec::new();
+        for id in ids.into_iter().rev() {
+            if frontiers
+                .iter()
+                .any(|frontier| is_ancestor(dag, id, *frontier))
+            {
+                continue;
+            }
+
+            frontiers.retain(|frontier| !is_ancestor(dag, *frontier, id));
+            frontiers.push(id);
+        }
+
+        frontiers.into_iter().collect()
+    }
+
+    fn oracle_common_ancestor(dag: &TestDag, left: &Frontiers, right: &Frontiers) -> Frontiers {
+        let left_ancestors = ancestors_of_frontiers(dag, left);
+        let right_ancestors = ancestors_of_frontiers(dag, right);
+        maximal_frontiers(
+            dag,
+            left_ancestors
+                .into_iter()
+                .filter(|id| right_ancestors.contains(id)),
+        )
+    }
+
+    fn assert_common_ancestor_valid_against_oracle(
+        dag: &TestDag,
+        left: &Frontiers,
+        right: &Frontiers,
+    ) {
+        let (actual, mode) = dag.find_common_ancestor(left, right);
+        let expected = oracle_common_ancestor(dag, left, right);
+        let left_ancestors = ancestors_of_frontiers(dag, left);
+        let right_ancestors = ancestors_of_frontiers(dag, right);
+        for id in actual.iter() {
+            assert!(
+                left_ancestors.contains(&id) && right_ancestors.contains(&id),
+                "actual LCA id {id} must be common: left={left:?} right={right:?} actual={actual:?} expected={expected:?} mode={mode:?}\ndag={dag:?}",
+            );
+        }
+
+        for a in actual.iter() {
+            for b in actual.iter() {
+                if a != b {
+                    assert!(
+                        !is_ancestor(dag, a, b),
+                        "actual LCA must be a minimal frontier set: left={left:?} right={right:?} actual={actual:?} expected={expected:?} mode={mode:?}\ndag={dag:?}",
+                    );
+                }
+            }
+        }
+
+        if !matches!(mode, DiffMode::Checkout) {
+            assert_eq!(
+                actual, expected,
+                "non-checkout mode should use the maximal common ancestor: left={left:?} right={right:?} mode={mode:?}\ndag={dag:?}",
+            );
+            assert_eq!(
+                &actual, left,
+                "non-checkout mode must use left as LCA: left={left:?} right={right:?} mode={mode:?}"
+            );
+            for id in left.iter() {
+                assert!(
+                    right_ancestors.contains(&id),
+                    "non-checkout mode requires right to include left id {id}; left={left:?} right={right:?} mode={mode:?}",
+                );
+            }
+        }
+    }
+
+    fn all_ids(dag: &TestDag) -> Vec<ID> {
+        dag.nodes
+            .values()
+            .flat_map(|node| {
+                (0..node.content_len()).map(|offset| node.id_start().inc(offset as Counter))
+            })
+            .collect()
+    }
+
+    fn random_frontiers(dag: &TestDag, ids: &[ID], rng: &mut impl Rng) -> Frontiers {
+        if ids.is_empty() || rng.gen_bool(0.1) {
+            return Frontiers::default();
+        }
+
+        let len = rng.gen_range(1..=ids.len().min(4));
+        maximal_frontiers(dag, (0..len).map(|_| ids[rng.gen_range(0..ids.len())]))
+    }
+
+    fn random_dag(seed: u64, node_count: usize) -> TestDag {
+        let mut rng = StdRng::seed_from_u64(seed);
+        let mut next_counter = [0 as Counter; 8];
+        let mut nodes = Vec::new();
+        let mut existing_ids = Vec::new();
+        for i in 0..node_count {
+            let peer = rng.gen_range(1..next_counter.len() as PeerID);
+            let counter = next_counter[peer as usize];
+            let len = rng.gen_range(1..=3);
+            next_counter[peer as usize] += len as Counter;
+            let dep_count = if existing_ids.is_empty() {
+                0
+            } else {
+                rng.gen_range(0..=existing_ids.len().min(3))
+            };
+            let deps = maximal_frontiers(
+                &TestDag::new(nodes.clone(), Frontiers::default()),
+                (0..dep_count).map(|_| existing_ids[rng.gen_range(0..existing_ids.len())]),
+            );
+            let node = node(peer, counter, len, i as Lamport * 4, deps);
+            existing_ids.extend((0..len).map(|offset| node.id_start().inc(offset as Counter)));
+            nodes.push(node);
+        }
+
+        let dag = TestDag::new(nodes, Frontiers::default());
+        let frontier = maximal_frontiers(&dag, existing_ids);
+        TestDag::new(dag.nodes.into_values(), frontier)
+    }
+
+    fn layered_merge_dag() -> TestDag {
+        let root = node(1, 0, 3, 0, Frontiers::default());
+        let left = node(1, 3, 2, 4, ID::new(1, 2).into());
+        let right = node(2, 0, 3, 5, ID::new(1, 1).into());
+        let late_right = node(2, 3, 2, 9, ID::new(2, 2).into());
+        let third = node(3, 0, 2, 6, ID::new(1, 2).into());
+        let merge_left_right = node(
+            4,
+            0,
+            1,
+            12,
+            Frontiers::from([left.id_last(), right.id_last()]),
+        );
+        let merge_all = node(
+            5,
+            0,
+            2,
+            16,
+            Frontiers::from([
+                merge_left_right.id_last(),
+                late_right.id_last(),
+                third.id_last(),
+            ]),
+        );
+        let independent = node(6, 0, 2, 20, Frontiers::default());
+        let final_merge = node(
+            7,
+            0,
+            1,
+            25,
+            Frontiers::from([merge_all.id_last(), independent.id_last()]),
+        );
+
+        TestDag::new(
+            vec![
+                root,
+                left,
+                right,
+                late_right,
+                third,
+                merge_left_right,
+                merge_all,
+                independent,
+                final_merge.clone(),
+            ],
+            final_merge.id_last().into(),
+        )
+    }
+
     #[test]
     fn common_ancestor_handles_empty_linear_same_span_and_parent_child_cases() {
         let first = node(1, 0, 2, 0, Frontiers::default());
@@ -824,6 +1168,17 @@ mod tests {
     }
 
     #[test]
+    fn common_ancestor_left_empty_stops_linear_scan_at_missing_shallow_dependency() {
+        let visible = node(1, 1, 1, 1, ID::new(1, 0).into());
+        let dag = TestDag::new(vec![visible], ID::new(1, 1).into());
+
+        assert_eq!(
+            dag.find_common_ancestor(&Frontiers::default(), &ID::new(1, 1).into()),
+            (Frontiers::default(), DiffMode::ImportGreaterUpdates)
+        );
+    }
+
+    #[test]
     fn common_ancestor_of_parallel_branches_is_shared_dependency() {
         let root = node(1, 0, 1, 0, Frontiers::default());
         let left = node(2, 0, 1, 1, root.id.into());
@@ -840,6 +1195,181 @@ mod tests {
 
         let (ancestor, _) = dag.find_common_ancestor(&root.id.into(), &merge.id.into());
         assert_eq!(ancestor, root.id.into());
+    }
+
+    #[test]
+    fn common_ancestor_falls_back_before_independent_branch() {
+        let left = node(1, 0, 1, 0, Frontiers::default());
+        let independent = node(2, 0, 1, 1, Frontiers::default());
+        let merge = node(3, 0, 1, 2, Frontiers::from([left.id, independent.id]));
+        let dag = TestDag::new(
+            vec![left.clone(), independent, merge.clone()],
+            merge.id.into(),
+        );
+
+        let (ancestor, mode) = dag.find_common_ancestor(&left.id.into(), &merge.id.into());
+        assert_eq!(ancestor, Frontiers::default());
+        assert_eq!(mode, DiffMode::Checkout);
+    }
+
+    #[test]
+    fn common_ancestor_falls_back_before_unmatched_branch_with_multiple_left_frontiers() {
+        let left_a = node(1, 0, 1, 0, Frontiers::default());
+        let left_b = node(2, 0, 1, 1, Frontiers::default());
+        let independent = node(3, 0, 1, 2, Frontiers::default());
+        let left_frontiers = Frontiers::from([left_a.id, left_b.id]);
+        let merge = node(
+            4,
+            0,
+            1,
+            3,
+            Frontiers::from([left_a.id, left_b.id, independent.id]),
+        );
+        let dag = TestDag::new(
+            vec![left_a.clone(), left_b.clone(), independent, merge.clone()],
+            merge.id.into(),
+        );
+
+        let (ancestor, mode) = dag.find_common_ancestor(&left_frontiers, &merge.id.into());
+        assert_eq!(ancestor, Frontiers::default());
+        assert_eq!(mode, DiffMode::Checkout);
+    }
+
+    #[test]
+    fn common_ancestor_marks_cross_peer_direct_dependency_as_greater_update() {
+        let left = node(1, 0, 1, 0, Frontiers::default());
+        let right = node(2, 0, 1, 1, left.id.into());
+        let dag = TestDag::new(vec![left.clone(), right.clone()], right.id.into());
+
+        let (ancestor, mode) = dag.find_common_ancestor(&left.id.into(), &right.id.into());
+        assert_eq!(ancestor, left.id.into());
+        assert_eq!(mode, DiffMode::ImportGreaterUpdates);
+    }
+
+    #[test]
+    fn common_ancestor_falls_back_when_right_adds_concurrent_branch_from_shared_root() {
+        let root = node(1, 0, 1, 0, Frontiers::default());
+        let left = node(2, 0, 1, 1, root.id.into());
+        let concurrent = node(3, 0, 1, 2, root.id.into());
+        let merge = node(4, 0, 1, 3, Frontiers::from([left.id, concurrent.id]));
+        let dag = TestDag::new(
+            vec![root, left.clone(), concurrent, merge.clone()],
+            merge.id.into(),
+        );
+
+        let (ancestor, mode) = dag.find_common_ancestor(&left.id.into(), &merge.id.into());
+        assert_eq!(ancestor, Frontiers::default());
+        assert_eq!(mode, DiffMode::Checkout);
+    }
+
+    #[test]
+    fn common_ancestor_keeps_target_when_checking_out_to_ancestor_with_extra_branch() {
+        let root = node(1, 0, 1, 0, Frontiers::default());
+        let left = node(2, 0, 2, 1, root.id.into());
+        let right = node(3, 0, 2, 3, root.id.into());
+        let extra = node(
+            4,
+            0,
+            1,
+            5,
+            Frontiers::from([left.id_last(), right.id_last()]),
+        );
+        let dag = TestDag::new(
+            vec![root, left.clone(), right.clone(), extra.clone()],
+            extra.id.into(),
+        );
+        let target = Frontiers::from([ID::new(2, 0), ID::new(3, 0)]);
+        let current = Frontiers::from([extra.id, left.id_last(), right.id_last()]);
+
+        let (ancestor, mode) = dag.find_common_ancestor(&current, &target);
+        assert_eq!(ancestor, target);
+        assert_eq!(mode, DiffMode::Checkout);
+    }
+
+    #[test]
+    fn common_ancestor_does_not_keep_ancestor_of_shared_descendant() {
+        let root = node(1, 0, 1, 0, Frontiers::default());
+        let shared = node(2, 0, 1, 1, root.id.into());
+        let left_only = node(3, 0, 1, 2, root.id.into());
+        let right_only = node(4, 0, 1, 3, root.id.into());
+        let dag = TestDag::new(
+            vec![root, shared.clone(), left_only.clone(), right_only.clone()],
+            Frontiers::from([shared.id, left_only.id, right_only.id]),
+        );
+
+        let (ancestor, mode) = dag.find_common_ancestor(
+            &Frontiers::from([shared.id, left_only.id]),
+            &Frontiers::from([shared.id, right_only.id]),
+        );
+        assert_eq!(ancestor, shared.id.into());
+        assert_eq!(mode, DiffMode::Checkout);
+    }
+
+    #[test]
+    fn common_ancestor_valid_against_slow_oracle_on_random_dags() {
+        for seed in 0..128 {
+            let mut rng = StdRng::seed_from_u64(seed);
+            let dag = random_dag(seed, rng.gen_range(1..=18));
+            let ids = all_ids(&dag);
+            for _ in 0..64 {
+                let left = random_frontiers(&dag, &ids, &mut rng);
+                let right = random_frontiers(&dag, &ids, &mut rng);
+                assert_common_ancestor_valid_against_oracle(&dag, &left, &right);
+            }
+        }
+    }
+
+    #[test]
+    fn common_ancestor_valid_against_slow_oracle_on_all_pairs_in_small_random_dags() {
+        for seed in 1000..1020 {
+            let dag = random_dag(seed, 8);
+            let ids = all_ids(&dag);
+            let mut frontiers = vec![Frontiers::default()];
+            frontiers.extend(ids.iter().copied().map(Frontiers::from));
+            for chunk in ids.chunks(3) {
+                frontiers.push(maximal_frontiers(&dag, chunk.iter().copied()));
+            }
+
+            for left in frontiers.iter() {
+                for right in frontiers.iter() {
+                    assert_common_ancestor_valid_against_oracle(&dag, left, right);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn common_ancestor_valid_against_slow_oracle_on_layered_merge_dag() {
+        let dag = layered_merge_dag();
+        let ids = all_ids(&dag);
+        let mut frontiers = vec![Frontiers::default(), dag.frontier().clone()];
+        frontiers.extend(ids.iter().copied().map(Frontiers::from));
+        frontiers.extend([
+            Frontiers::from([ID::new(1, 4), ID::new(2, 2)]),
+            Frontiers::from([ID::new(1, 4), ID::new(3, 1)]),
+            Frontiers::from([ID::new(4, 0), ID::new(2, 4), ID::new(3, 1)]),
+            Frontiers::from([ID::new(5, 1), ID::new(6, 1)]),
+        ]);
+
+        for left in frontiers.iter() {
+            for right in frontiers.iter() {
+                assert_common_ancestor_valid_against_oracle(&dag, left, right);
+            }
+        }
+    }
+
+    #[test]
+    fn common_ancestor_valid_against_slow_oracle_on_branchy_random_dags() {
+        for seed in 2000..2064 {
+            let mut rng = StdRng::seed_from_u64(seed);
+            let dag = random_dag(seed, rng.gen_range(20..=36));
+            let ids = all_ids(&dag);
+            for _ in 0..96 {
+                let left = random_frontiers(&dag, &ids, &mut rng);
+                let right = random_frontiers(&dag, &ids, &mut rng);
+                assert_common_ancestor_valid_against_oracle(&dag, &left, &right);
+            }
+        }
     }
 
     #[test]

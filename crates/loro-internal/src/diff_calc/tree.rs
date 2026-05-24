@@ -632,7 +632,22 @@ impl TreeParentToChildrenCache {
         new_parent: TreeParentId,
     ) {
         if !old_parent.is_unexist() {
-            self.cache.get_mut(&old_parent).unwrap().remove(&target);
+            let removed = if let Some(children) = self.cache.get_mut(&old_parent) {
+                children.remove(&target)
+            } else {
+                false
+            };
+
+            if !removed {
+                let removed = self
+                    .cache
+                    .values_mut()
+                    .any(|children| children.remove(&target));
+                assert!(
+                    removed,
+                    "target {target:?} should be present in TreeParentToChildrenCache before moving from {old_parent:?} to {new_parent:?}",
+                );
+            }
         }
         self.cache.entry(new_parent).or_default().insert(target);
     }

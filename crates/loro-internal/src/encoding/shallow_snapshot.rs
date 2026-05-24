@@ -170,7 +170,6 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
     );
 
     let to_vv = frontiers_to_vv_for_export(&oplog, target_frontiers, "export_state_only_snapshot")?;
-
     let oplog_bytes =
         oplog.export_change_store_in_range(&start_vv, &start_from, &to_vv, target_frontiers);
     let state_frontiers = doc.state_frontiers();
@@ -181,16 +180,41 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
             .map_err(LoroEncodeError::from)?;
         let mut state = doc.app_state().lock();
         let alive_containers = state.ensure_all_alive_containers();
-        let alive_c_bytes = cids_to_bytes(alive_containers);
+        if has_unknown_container(alive_containers.iter()) {
+            return Err(LoroEncodeError::UnknownContainer);
+        }
+        let mut alive_c_bytes = cids_to_bytes(alive_containers);
         state.store.flush();
         let shallow_state_kv = state.store.get_kv_clone();
         drop(state);
+
+        doc._checkout_without_emitting(target_frontiers, false, false)
+            .map_err(LoroEncodeError::from)?;
+        let mut state = doc.app_state().lock();
+        state.ensure_all_alive_containers();
+        state.store.encode();
+        for cid in state.store.iter_all_container_ids() {
+            if let ContainerID::Normal { peer, counter, .. } = cid {
+                let temp_id = ID::new(peer, counter);
+                if !start_from.contains(&temp_id) {
+                    alive_c_bytes.insert(cid.to_bytes());
+                }
+            } else {
+                alive_c_bytes.insert(cid.to_bytes());
+            }
+        }
+
+        let target_state_kv = state.store.get_kv_clone();
+        drop(state);
+        target_state_kv.remove_same(&shallow_state_kv);
+        target_state_kv.retain_keys(&alive_c_bytes);
+
         shallow_state_kv.retain_keys(&alive_c_bytes);
         shallow_state_kv.insert(FRONTIERS_KEY, start_from.encode().into());
         let shallow_state_bytes = shallow_state_kv.export();
         let snapshot = Snapshot {
             oplog_bytes,
-            state_bytes: None,
+            state_bytes: Some(target_state_kv.export()),
             shallow_root_state_bytes: shallow_state_bytes,
         };
         _encode_snapshot(snapshot, w);
@@ -267,7 +291,7 @@ fn calc_shallow_doc_start(oplog: &crate::OpLog, frontiers: &Frontiers) -> Fronti
         if next == current {
             // Cannot converge further (pairwise GCAs are the nodes themselves).
             // Fall back to empty frontiers, meaning export full history.
-            return Frontiers::default();
+            return clamp_to_shallow_root(oplog, Frontiers::default());
         }
         current = next;
     }
@@ -293,7 +317,23 @@ fn calc_shallow_doc_start(oplog: &crate::OpLog, frontiers: &Frontiers) -> Fronti
         }
     }
 
-    ans
+    clamp_to_shallow_root(oplog, ans)
+}
+
+fn clamp_to_shallow_root(oplog: &crate::OpLog, frontiers: Frontiers) -> Frontiers {
+    if oplog.shallow_since_vv().is_empty() {
+        return frontiers;
+    }
+
+    let Some(vv) = oplog.dag().frontiers_to_vv(&frontiers) else {
+        return oplog.shallow_since_frontiers().clone();
+    };
+
+    if vv.includes_vv(&oplog.shallow_since_vv().to_vv()) {
+        frontiers
+    } else {
+        oplog.shallow_since_frontiers().clone()
+    }
 }
 
 pub(crate) fn encode_snapshot_at<W: std::io::Write>(

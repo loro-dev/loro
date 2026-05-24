@@ -951,12 +951,16 @@ impl DocState {
     }
 
     pub(crate) fn reset_to_empty_for_failed_snapshot_import(&mut self) {
+        let was_recording = self.is_recording();
         self.frontiers = Frontiers::default();
         self.store =
             ContainerStore::new(self.arena.clone(), self.config.clone(), self.peer.clone());
         self.in_txn = false;
         self.changed_idx_in_txn.clear();
         self.event_recorder = Default::default();
+        if was_recording {
+            self.start_recording();
+        }
         self.dead_containers_cache = Default::default();
     }
 

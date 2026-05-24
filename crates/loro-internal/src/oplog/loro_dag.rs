@@ -793,6 +793,34 @@ impl AppDag {
         false
     }
 
+    pub(crate) fn import_deps_before_shallow_root(&self, deps: &Frontiers) -> bool {
+        if self.shallow_since_vv.is_empty() {
+            return false;
+        }
+
+        if deps.is_empty() {
+            return true;
+        }
+
+        let shallow_vv = VersionVector::from_im_vv(&self.shallow_since_vv);
+        if let Some(vv) = self.frontiers_to_vv(deps) {
+            return !vv.includes_vv(&shallow_vv);
+        }
+
+        // Import only needs to reject updates whose causal source is older than
+        // the shallow root. A dependency set that touches the retained boundary
+        // can still be a valid post-root update, even when the rest of the deps
+        // are imported later in the same batch.
+        if deps
+            .iter()
+            .any(|id| self.shallow_since_frontiers.contains(&id))
+        {
+            return false;
+        }
+
+        deps.iter().any(|id| self.shallow_since_vv.includes_id(id))
+    }
+
     /// Travel the ancestors of the given id, and call the callback for each node
     ///
     /// It will travel the ancestors in the reverse order (from the greatest lamport to the smallest)
@@ -1074,7 +1102,13 @@ impl AppDag {
                 } else {
                     let mut all_deps_processed = true;
                     for id in top_node.deps.iter() {
-                        let node = self.get(id).expect("deps should be in the dag");
+                        let Some(node) = self.get(id) else {
+                            if self.shallow_since_vv.includes_id(id) {
+                                continue;
+                            }
+
+                            panic!("deps should be in the dag");
+                        };
                         if node.vv.get().is_none() {
                             if all_deps_processed {
                                 stack.push(top_node.clone());
@@ -1090,7 +1124,14 @@ impl AppDag {
                     }
 
                     for id in top_node.deps.iter() {
-                        let node = self.get(id).expect("deps should be in the dag");
+                        let Some(node) = self.get(id) else {
+                            if self.shallow_since_vv.includes_id(id) {
+                                ans_vv.extend_to_include_vv(self.shallow_since_vv.iter());
+                                continue;
+                            }
+
+                            panic!("deps should be in the dag");
+                        };
                         let dep_vv = node.vv.get().unwrap();
                         if ans_vv.is_empty() {
                             ans_vv = dep_vv.clone();
@@ -1341,6 +1382,23 @@ mod ensure_vv_for_tests {
         .into()
     }
 
+    fn make_shallow_dag_for_import_deps() -> AppDag {
+        let change_store = ChangeStore::new_mem(&SharedArena::new(), Arc::new(AtomicI64::new(0)));
+        let mut dag = AppDag::new(change_store);
+        let root_deps = Frontiers::from_id(ID::new(1, 1));
+        let boundary = make_dag_node(1, 2, 1, root_deps.clone());
+
+        {
+            let mut map = dag.map.lock();
+            map.insert(boundary.id_start(), boundary);
+        }
+
+        dag.shallow_since_vv.insert(1, 2);
+        dag.shallow_since_frontiers = Frontiers::from_id(ID::new(1, 2));
+        dag.shallow_root_frontiers_deps = root_deps;
+        dag
+    }
+
     /// Regression for loro-dev/loro#929: when computing the vv for a node
     /// whose DAG fan-in contains a shared ancestor reached through multiple
     /// paths, the iterative DFS used to push the shared ancestor onto the
@@ -1384,5 +1442,34 @@ mod ensure_vv_for_tests {
         assert_eq!(vv.get(&1).copied(), Some(1));
         assert_eq!(vv.get(&2).copied(), Some(1));
         assert!(vv.get(&3).is_none());
+    }
+
+    #[test]
+    fn import_deps_before_shallow_root_rejects_trimmed_history_dep() {
+        let dag = make_shallow_dag_for_import_deps();
+        let deps = Frontiers::from_id(ID::new(1, 0));
+
+        assert!(dag.frontiers_to_vv(&deps).is_none());
+        assert!(dag.import_deps_before_shallow_root(&deps));
+    }
+
+    #[test]
+    fn import_deps_before_shallow_root_allows_boundary_with_missing_peer() {
+        let dag = make_shallow_dag_for_import_deps();
+        let mut deps = Frontiers::default();
+        deps.push(ID::new(1, 2));
+        deps.push(ID::new(2, 0));
+
+        assert!(dag.frontiers_to_vv(&deps).is_none());
+        assert!(!dag.import_deps_before_shallow_root(&deps));
+    }
+
+    #[test]
+    fn import_deps_before_shallow_root_allows_missing_non_trimmed_dep() {
+        let dag = make_shallow_dag_for_import_deps();
+        let deps = Frontiers::from_id(ID::new(2, 0));
+
+        assert!(dag.frontiers_to_vv(&deps).is_none());
+        assert!(!dag.import_deps_before_shallow_root(&deps));
     }
 }

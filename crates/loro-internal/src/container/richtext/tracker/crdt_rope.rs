@@ -40,6 +40,26 @@ impl CrdtRope {
         &self.tree
     }
 
+    pub(super) fn active_real_span_at(&self, pos: usize) -> Option<(ID, usize)> {
+        if pos >= self.len() {
+            return None;
+        }
+
+        let start = self
+            .tree
+            .query::<ActiveLenQueryPreferRight>(&(pos as i32))?;
+        let cursor = start.cursor;
+        let elem = self.tree.get_elem(cursor.leaf)?;
+        if !elem.is_activated() || cursor.offset >= elem.rle_len() {
+            return None;
+        }
+
+        Some((
+            elem.real_id().inc(cursor.offset as Counter),
+            elem.rle_len() - cursor.offset,
+        ))
+    }
+
     pub(super) fn insert(
         &mut self,
         pos: usize,

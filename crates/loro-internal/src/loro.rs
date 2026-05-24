@@ -1581,6 +1581,7 @@ impl LoroDoc {
         );
 
         if &from_frontiers == frontiers {
+            self.set_detached(frontiers != &self.oplog_frontiers());
             return Ok(());
         }
 
