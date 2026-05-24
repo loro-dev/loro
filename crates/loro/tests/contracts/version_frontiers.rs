@@ -110,6 +110,11 @@ fn version_vector_contracts_follow_semantics() -> anyhow::Result<()> {
     assert_eq!(diff_left.sub_vec(&diff_right), span_map(&[(1, (1, 3))]));
     assert_eq!(diff_left.distance_between(&diff_right), 3);
     assert_eq!(zero_entry.distance_between(&diff_left), 4);
+    let negative = vv_pairs(&[(11, i32::MIN)]);
+    let max_counter = vv_pairs(&[(11, i32::MAX)]);
+    assert_eq!(negative.distance_between(&VersionVector::new()), 0);
+    assert_eq!(VersionVector::new().distance_between(&negative), 0);
+    assert_eq!(negative.distance_between(&max_counter), i32::MAX as usize);
     assert_eq!(diff_left.to_spans(), span_map(&[(1, (0, 3)), (2, (0, 1))]));
     assert_eq!(
         diff_left.get_frontiers(),

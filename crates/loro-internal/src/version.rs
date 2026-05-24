@@ -593,22 +593,24 @@ impl VersionVector {
     }
 
     pub fn distance_between(&self, other: &Self) -> usize {
-        let mut ans = 0;
+        let mut ans = 0usize;
         for (client_id, &counter) in self.iter() {
+            let counter = counter.max(0) as i64;
             if let Some(&other_counter) = other.get(client_id) {
-                ans += (counter - other_counter).abs();
-            } else if counter > 0 {
-                ans += counter;
+                let other_counter = other_counter.max(0) as i64;
+                ans += counter.abs_diff(other_counter) as usize;
+            } else {
+                ans += counter as usize;
             }
         }
 
         for (client_id, &counter) in other.iter() {
             if !self.contains_key(client_id) {
-                ans += counter;
+                ans += counter.max(0) as usize;
             }
         }
 
-        ans as usize
+        ans
     }
 
     pub fn to_spans(&self) -> IdSpanVector {
