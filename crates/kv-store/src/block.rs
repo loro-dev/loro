@@ -372,6 +372,10 @@ impl BlockBuilder {
     /// └─────────────────────────────────────────────────────┘
     ///
     pub fn add(&mut self, key: &[u8], value: &[u8]) -> bool {
+        if key.is_empty() {
+            return false;
+        }
+
         debug_assert!(!key.is_empty(), "key cannot be empty");
         if self.first_key.is_empty() {
             if value.len() > self.block_size || value.len() > MAX_NORMAL_BLOCK_DATA_LEN {

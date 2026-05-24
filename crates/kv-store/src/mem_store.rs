@@ -99,10 +99,18 @@ impl MemKvStore {
     }
 
     pub fn set(&mut self, key: &[u8], value: Bytes) {
+        if key.is_empty() {
+            return;
+        }
+
         self.mem_table.insert(Bytes::copy_from_slice(key), value);
     }
 
     pub fn compare_and_swap(&mut self, key: &[u8], old: Option<Bytes>, new: Bytes) -> bool {
+        if key.is_empty() {
+            return false;
+        }
+
         match self.get(key) {
             Some(v) => {
                 if old == Some(v) {
@@ -131,6 +139,10 @@ impl MemKvStore {
     ///
     /// If the value is empty, it means the key is deleted
     pub fn contains_key(&self, key: &[u8]) -> bool {
+        if key.is_empty() {
+            return false;
+        }
+
         if self.mem_table.contains_key(key) {
             return !self.mem_table.get(key).unwrap().is_empty();
         }
@@ -589,6 +601,28 @@ mod tests {
 
         store.compare_and_swap(key, Some(value.clone()), large_value.clone());
         assert!(store.contains_key(key));
+    }
+
+    #[test]
+    fn empty_key_mutations_are_ignored() {
+        let mut store = new_store();
+        let value = Bytes::from_static(b"value");
+
+        store.set(&[], value.clone());
+        assert_eq!(store.get(&[]), None);
+        assert!(!store.contains_key(&[]));
+        assert_eq!(store.len(), 0);
+        assert!(store.is_empty());
+        assert!(!store.compare_and_swap(&[], None, value.clone()));
+        store.remove(&[]);
+
+        let bytes = store.export_all();
+        assert!(bytes.is_empty());
+
+        let mut imported = new_store();
+        imported.import_all(bytes).unwrap();
+        assert_eq!(imported.get(&[]), None);
+        assert_eq!(imported.len(), 0);
     }
 
     #[test]

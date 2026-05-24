@@ -178,6 +178,10 @@ impl SsTableBuilder {
     }
 
     pub fn add(&mut self, key: Bytes, value: Bytes) {
+        if key.is_empty() {
+            return;
+        }
+
         if !self.include_none && value.is_empty() {
             return;
         }
