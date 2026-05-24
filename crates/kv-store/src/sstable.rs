@@ -421,16 +421,35 @@ impl SsTable {
     }
 
     fn validate_blocks(meta: &[BlockMeta], bytes: &Bytes, meta_offset: usize) -> LoroResult<()> {
+        let mut last_key = None;
         for i in 0..meta.len() {
             let offset = meta[i].offset;
             let offset_end = meta.get(i + 1).map_or(meta_offset, |m| m.offset);
             let raw_block_and_check = bytes.slice(offset..offset_end);
-            Block::try_decode(
+            let block = Block::try_decode(
                 raw_block_and_check,
                 meta[i].is_large,
                 meta[i].first_key.clone(),
                 meta[i].compression_type,
             )?;
+
+            let block_last_key = block.last_key();
+            if meta[i].last_key.as_ref().unwrap_or(&meta[i].first_key) != &block_last_key {
+                return Err(LoroError::DecodeError("Invalid bytes".into()));
+            }
+
+            if meta[i].first_key > block_last_key {
+                return Err(LoroError::DecodeError("Invalid bytes".into()));
+            }
+
+            if last_key
+                .as_ref()
+                .is_some_and(|last_key| last_key >= &meta[i].first_key)
+            {
+                return Err(LoroError::DecodeError("Invalid bytes".into()));
+            }
+
+            last_key = Some(block_last_key);
         }
 
         Ok(())
@@ -947,6 +966,15 @@ mod test {
         bytes.into()
     }
 
+    fn normal_block_bytes(key: &[u8], value: &[u8]) -> Vec<u8> {
+        let mut builder = BlockBuilder::new(4096);
+        builder.add(key, value);
+        let block = builder.build();
+        let mut bytes = Vec::new();
+        block.encode(&mut bytes, CompressionType::None);
+        bytes
+    }
+
     #[test]
     fn block_double_end_iter() {
         let mut builder = BlockBuilder::new(4096);
@@ -1229,5 +1257,50 @@ mod test {
         assert!(
             SsTable::import_all(malformed_sstable_bytes(&checksum_only, &meta), false).is_err()
         );
+    }
+
+    #[test]
+    fn sstable_import_rejects_meta_last_key_that_mismatches_block() {
+        let first_key = Bytes::from_static(b"key");
+        let meta = [BlockMeta {
+            offset: SIZE_OF_U32 + SIZE_OF_U8,
+            is_large: false,
+            compression_type: CompressionType::None,
+            first_key: first_key.clone(),
+            last_key: Some(Bytes::from_static(b"a")),
+        }];
+
+        assert!(SsTable::import_all(
+            malformed_sstable_bytes(&normal_block_bytes(b"key", b"value"), &meta),
+            false
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn sstable_import_rejects_unsorted_block_key_ranges() {
+        let first_block = normal_block_bytes(b"b", b"value");
+        let second_block = normal_block_bytes(b"a", b"value");
+        let second_offset = SIZE_OF_U32 + SIZE_OF_U8 + first_block.len();
+        let meta = [
+            BlockMeta {
+                offset: SIZE_OF_U32 + SIZE_OF_U8,
+                is_large: false,
+                compression_type: CompressionType::None,
+                first_key: Bytes::from_static(b"b"),
+                last_key: Some(Bytes::from_static(b"b")),
+            },
+            BlockMeta {
+                offset: second_offset,
+                is_large: false,
+                compression_type: CompressionType::None,
+                first_key: Bytes::from_static(b"a"),
+                last_key: Some(Bytes::from_static(b"a")),
+            },
+        ];
+        let mut block_bytes = first_block;
+        block_bytes.extend_from_slice(&second_block);
+
+        assert!(SsTable::import_all(malformed_sstable_bytes(&block_bytes, &meta), false).is_err());
     }
 }
