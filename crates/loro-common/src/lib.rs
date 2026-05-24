@@ -246,8 +246,13 @@ impl ContainerID {
                     LoroError::DecodeError(
                         "Decode container id failed".to_string().into_boxed_str(),
                     )
-                })? as usize;
-                if reader.len() < name_len {
+                })?;
+                let name_len = usize::try_from(name_len).map_err(|_| {
+                    LoroError::DecodeError(
+                        "Decode container id failed".to_string().into_boxed_str(),
+                    )
+                })?;
+                if reader.len() != name_len {
                     return Err(LoroError::DecodeError(
                         "Decode container id failed".to_string().into_boxed_str(),
                     ));
@@ -264,7 +269,7 @@ impl ContainerID {
                 })
             }
             false => {
-                if reader.len() < 12 {
+                if reader.len() != 12 {
                     return Err(LoroError::DecodeError(
                         "Decode container id failed".to_string().into_boxed_str(),
                     ));
@@ -821,5 +826,18 @@ mod test {
         let id = ContainerID::new_normal(ID::new(1, 1), ContainerType::Unknown(100));
         let bytes = id.to_bytes();
         assert_eq!(ContainerID::from_bytes(&bytes), id);
+    }
+
+    #[test]
+    fn container_id_try_from_bytes_rejects_trailing_bytes() {
+        let normal = ContainerID::new_normal(ID::new(1, 2), ContainerType::Map);
+        let mut normal_bytes = normal.to_bytes();
+        normal_bytes.push(0);
+        assert!(ContainerID::try_from_bytes(&normal_bytes).is_err());
+
+        let root = ContainerID::new_root("root", ContainerType::List);
+        let mut root_bytes = root.to_bytes();
+        root_bytes.push(0);
+        assert!(ContainerID::try_from_bytes(&root_bytes).is_err());
     }
 }
