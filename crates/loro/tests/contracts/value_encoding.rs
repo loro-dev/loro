@@ -332,6 +332,64 @@ fn json_updates_roundtrip_nested_values_and_peer_compression() -> anyhow::Result
 }
 
 #[test]
+fn import_json_updates_accepts_reordered_op_fields() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(76)?;
+    let root = doc.get_map("root");
+    root.insert("key", "value")?;
+    doc.commit();
+
+    let json = doc
+        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv());
+    let value = serde_json::to_value(json)?;
+    let change = &value["changes"][0];
+    let op = &change["ops"][0];
+    let raw_json = format!(
+        r#"{{"schema_version":{},"start_version":{},"peers":{},"changes":[{{"id":{},"timestamp":{},"deps":{},"lamport":{},"msg":{},"ops":[{{"counter":{},"content":{},"container":{}}}]}}]}}"#,
+        serde_json::to_string(&value["schema_version"])?,
+        serde_json::to_string(&value["start_version"])?,
+        serde_json::to_string(&value["peers"])?,
+        serde_json::to_string(&change["id"])?,
+        serde_json::to_string(&change["timestamp"])?,
+        serde_json::to_string(&change["deps"])?,
+        serde_json::to_string(&change["lamport"])?,
+        serde_json::to_string(&change["msg"])?,
+        serde_json::to_string(&op["counter"])?,
+        serde_json::to_string(&op["content"])?,
+        serde_json::to_string(&op["container"])?,
+    );
+
+    let imported = LoroDoc::new();
+    imported.import_json_updates(raw_json)?;
+
+    assert_eq!(
+        imported.get_map("root").get_deep_value().to_json_value(),
+        root.get_deep_value().to_json_value()
+    );
+
+    Ok(())
+}
+
+#[test]
+fn import_json_updates_rejects_unsupported_schema_version() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.get_map("root").insert("key", "value")?;
+    doc.commit();
+
+    let mut json = doc
+        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv());
+    json.schema_version = 2;
+
+    let err = LoroDoc::new().import_json_updates(json).unwrap_err();
+    assert!(
+        err.to_string().contains("schema version"),
+        "expected schema version validation error, got {err:?}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn json_update_schema_covers_list_map_text_tree_and_movable_list_ops() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(31)?;

@@ -530,7 +530,21 @@ pub(crate) fn encode_change(
 }
 
 fn decode_changes(json: JsonSchema, arena: &SharedArena) -> LoroResult<Vec<Change>> {
-    let JsonSchema { peers, changes, .. } = json;
+    let JsonSchema {
+        schema_version,
+        peers,
+        changes,
+        ..
+    } = json;
+    if schema_version != SCHEMA_VERSION {
+        return Err(LoroError::DecodeError(
+            format!(
+                "unsupported json schema version: expected {SCHEMA_VERSION}, got {schema_version}"
+            )
+            .into_boxed_str(),
+        ));
+    }
+
     let mut ans = Vec::with_capacity(changes.len());
     for json::JsonChange {
         id,
@@ -1166,7 +1180,7 @@ pub mod json {
 
         use loro_common::{ContainerID, ContainerType};
         use serde::{
-            de::{MapAccess, Visitor},
+            de::{Error, IgnoredAny, MapAccess, Visitor},
             ser::SerializeStruct,
             Deserialize, Deserializer, Serialize, Serializer,
         };
@@ -1204,84 +1218,45 @@ pub mod json {
                     where
                         A: MapAccess<'de>,
                     {
-                        let (_key, container) = map
-                            .next_entry::<String, String>()?
-                            .ok_or_else(|| serde::de::Error::custom("missing container field"))?;
-                        let is_unknown = container.ends_with(')');
-                        let container = ContainerID::try_from(container.as_str())
-                            .map_err(|_| serde::de::Error::custom("invalid container id"))?;
-                        let op = if is_unknown {
-                            let (_key, op) = map
-                                .next_entry::<String, super::FutureOpWrapper>()?
-                                .ok_or_else(|| {
-                                    serde::de::Error::custom(
-                                        "missing op field for unknown container",
-                                    )
-                                })?;
-                            super::JsonOpContent::Future(op)
-                        } else {
-                            match container.container_type() {
-                                ContainerType::List => {
-                                    let (_key, op) = map
-                                        .next_entry::<String, super::ListOp>()?
-                                        .ok_or_else(|| {
-                                            serde::de::Error::custom("missing op field for list")
-                                        })?;
-                                    super::JsonOpContent::List(op)
+                        let mut container = None;
+                        let mut content = None;
+                        let mut counter = None;
+
+                        while let Some(key) = map.next_key::<String>()? {
+                            match key.as_str() {
+                                "container" => {
+                                    if container.is_some() {
+                                        return Err(A::Error::duplicate_field("container"));
+                                    }
+                                    let value = map.next_value::<String>()?;
+                                    container =
+                                        Some(ContainerID::try_from(value.as_str()).map_err(
+                                            |_| A::Error::custom("invalid container id"),
+                                        )?);
                                 }
-                                ContainerType::MovableList => {
-                                    let (_key, op) = map
-                                        .next_entry::<String, super::MovableListOp>()?
-                                        .ok_or_else(|| {
-                                            serde::de::Error::custom(
-                                                "missing op field for movable list",
-                                            )
-                                        })?;
-                                    super::JsonOpContent::MovableList(op)
+                                "content" => {
+                                    if content.is_some() {
+                                        return Err(A::Error::duplicate_field("content"));
+                                    }
+                                    content = Some(map.next_value::<serde_json::Value>()?);
                                 }
-                                ContainerType::Map => {
-                                    let (_key, op) =
-                                        map.next_entry::<String, super::MapOp>()?.ok_or_else(
-                                            || serde::de::Error::custom("missing op field for map"),
-                                        )?;
-                                    super::JsonOpContent::Map(op)
+                                "counter" => {
+                                    if counter.is_some() {
+                                        return Err(A::Error::duplicate_field("counter"));
+                                    }
+                                    counter = Some(map.next_value::<i32>()?);
                                 }
-                                ContainerType::Text => {
-                                    let (_key, op) = map
-                                        .next_entry::<String, super::TextOp>()?
-                                        .ok_or_else(|| {
-                                            serde::de::Error::custom("missing op field for text")
-                                        })?;
-                                    super::JsonOpContent::Text(op)
+                                _ => {
+                                    let _ = map.next_value::<IgnoredAny>()?;
                                 }
-                                ContainerType::Tree => {
-                                    let (_key, op) = map
-                                        .next_entry::<String, super::TreeOp>()?
-                                        .ok_or_else(|| {
-                                            serde::de::Error::custom("missing op field for tree")
-                                        })?;
-                                    super::JsonOpContent::Tree(op)
-                                }
-                                #[cfg(feature = "counter")]
-                                ContainerType::Counter => {
-                                    let (_key, value) = map
-                                        .next_entry::<String, OwnedValue>()?
-                                        .ok_or_else(|| {
-                                            serde::de::Error::custom(
-                                                "missing value field for counter",
-                                            )
-                                        })?;
-                                    super::JsonOpContent::Future(super::FutureOpWrapper {
-                                        prop: 0,
-                                        value: super::FutureOp::Counter(value),
-                                    })
-                                }
-                                _ => unreachable!(),
                             }
-                        };
-                        let (_, counter) = map
-                            .next_entry::<String, i32>()?
-                            .ok_or_else(|| serde::de::Error::custom("missing counter field"))?;
+                        }
+
+                        let container =
+                            container.ok_or_else(|| A::Error::missing_field("container"))?;
+                        let content = content.ok_or_else(|| A::Error::missing_field("content"))?;
+                        let op = json_op_content_from_value(&container, content)?;
+                        let counter = counter.ok_or_else(|| A::Error::missing_field("counter"))?;
                         Ok(super::JsonOp {
                             container,
                             content: op,
@@ -1291,6 +1266,46 @@ pub mod json {
                 }
                 const FIELDS: &[&str] = &["container", "content", "counter"];
                 deserializer.deserialize_struct("JsonOp", FIELDS, __Visitor)
+            }
+        }
+
+        fn json_op_content_from_value<E: Error>(
+            container: &ContainerID,
+            value: serde_json::Value,
+        ) -> Result<super::JsonOpContent, E> {
+            match container.container_type() {
+                ContainerType::List => serde_json::from_value(value)
+                    .map(super::JsonOpContent::List)
+                    .map_err(E::custom),
+                ContainerType::MovableList => serde_json::from_value(value)
+                    .map(super::JsonOpContent::MovableList)
+                    .map_err(E::custom),
+                ContainerType::Map => serde_json::from_value(value)
+                    .map(super::JsonOpContent::Map)
+                    .map_err(E::custom),
+                ContainerType::Text => serde_json::from_value(value)
+                    .map(super::JsonOpContent::Text)
+                    .map_err(E::custom),
+                ContainerType::Tree => serde_json::from_value(value)
+                    .map(super::JsonOpContent::Tree)
+                    .map_err(E::custom),
+                ContainerType::Unknown(_) => serde_json::from_value(value)
+                    .map(super::JsonOpContent::Future)
+                    .map_err(E::custom),
+                #[cfg(feature = "counter")]
+                ContainerType::Counter => {
+                    match serde_json::from_value::<super::FutureOpWrapper>(value.clone()) {
+                        Ok(op) => Ok(super::JsonOpContent::Future(op)),
+                        Err(_) => {
+                            let value =
+                                serde_json::from_value::<OwnedValue>(value).map_err(E::custom)?;
+                            Ok(super::JsonOpContent::Future(super::FutureOpWrapper {
+                                prop: 0,
+                                value: super::FutureOp::Counter(value),
+                            }))
+                        }
+                    }
+                }
             }
         }
 
