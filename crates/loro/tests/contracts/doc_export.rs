@@ -428,6 +428,51 @@ fn state_only_shallow_since_and_updates_till_cover_export_boundaries() -> anyhow
 }
 
 #[test]
+fn updates_in_range_clamps_negative_counter_ranges() -> anyhow::Result<()> {
+    let source = LoroDoc::new();
+    source.set_peer_id(92)?;
+    source.set_change_merge_interval(0);
+
+    let text = source.get_text("text");
+    text.insert(0, "a")?;
+    source.commit();
+    text.insert(1, "b")?;
+    source.commit();
+    text.insert(2, "c")?;
+    source.commit();
+
+    let peer = source.peer_id();
+    let updates = source.export(ExportMode::updates_in_range(vec![IdSpan::new(
+        peer,
+        i32::MIN,
+        1,
+    )]))?;
+    let restored = LoroDoc::new();
+    restored.import(&updates)?;
+    assert_eq!(restored.get_text("text").to_string(), "a");
+
+    let updates = source.export(ExportMode::updates_in_range(vec![IdSpan::new(
+        peer,
+        i32::MIN,
+        -1,
+    )]))?;
+    let restored = LoroDoc::new();
+    restored.import(&updates)?;
+    assert_eq!(restored.get_text("text").to_string(), "");
+
+    let updates = source.export(ExportMode::updates_in_range(vec![IdSpan::new(
+        peer,
+        1,
+        i32::MIN,
+    )]))?;
+    let restored = LoroDoc::new();
+    restored.import(&updates)?;
+    assert_eq!(restored.get_text("text").to_string(), "ab");
+
+    Ok(())
+}
+
+#[test]
 fn import_batch_reports_pending_until_dependencies_arrive() -> anyhow::Result<()> {
     let source = LoroDoc::new();
     source.set_peer_id(63)?;

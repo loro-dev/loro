@@ -205,6 +205,16 @@ impl ChangeStore {
         for span in spans {
             let mut span = *span;
             span.normalize_();
+            if span.counter.end <= 0 {
+                continue;
+            }
+
+            span.counter.start = span.counter.start.max(0);
+            span.counter.end = span.counter.end.max(0);
+            if span.counter.start >= span.counter.end {
+                continue;
+            }
+
             // PERF: this can be optimized by reusing the current encoded blocks
             // In the current method, it needs to parse and re-encode the blocks
             for c in self.iter_changes(span) {
