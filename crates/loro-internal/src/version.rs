@@ -878,24 +878,43 @@ impl VersionVector {
     }
 
     pub fn extend_to_include(&mut self, span: IdSpan) {
+        let end = normalize_vv_counter(span.counter.norm_end());
+        if end == 0 {
+            if self.0.get(&span.peer).is_some_and(|counter| *counter < 0) {
+                self.0.remove(&span.peer);
+            }
+            return;
+        }
+
         if let Some(counter) = self.get_mut(&span.peer) {
-            if *counter < span.counter.norm_end() {
-                *counter = span.counter.norm_end();
+            *counter = normalize_vv_counter(*counter);
+            if *counter < end {
+                *counter = end;
             }
         } else {
-            self.insert(span.peer, span.counter.norm_end());
+            self.insert(span.peer, end);
         }
     }
 
     pub fn shrink_to_exclude(&mut self, span: IdSpan) {
-        if span.counter.min() == 0 {
+        let start = normalize_vv_counter(span.counter.min());
+        let end = normalize_vv_counter(span.counter.norm_end());
+        if end <= start {
+            return;
+        }
+
+        if start == 0 {
             self.remove(&span.peer);
             return;
         }
 
         if let Some(counter) = self.get_mut(&span.peer) {
-            if *counter > span.counter.min() {
-                *counter = span.counter.min();
+            *counter = normalize_vv_counter(*counter);
+            if *counter > start {
+                *counter = start;
+            }
+            if *counter == 0 {
+                self.remove(&span.peer);
             }
         }
     }

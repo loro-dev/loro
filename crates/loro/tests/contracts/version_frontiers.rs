@@ -181,6 +181,15 @@ fn version_vector_contracts_follow_semantics() -> anyhow::Result<()> {
     span_ops.shrink_to_exclude(span(10, 0, 2));
     assert!(!span_ops.contains_key(&10));
 
+    let mut invalid_spans = VersionVector::new();
+    invalid_spans.extend_to_include(span(12, -3, -1));
+    assert!(!invalid_spans.contains_key(&12));
+    invalid_spans.set_end(ID::new(12, 5));
+    invalid_spans.shrink_to_exclude(span(12, -3, -1));
+    assert_eq!(invalid_spans.get(&12), Some(&5));
+    invalid_spans.shrink_to_exclude(span(12, -3, 2));
+    assert!(!invalid_spans.contains_key(&12));
+
     let mut span_ops = VersionVector::new();
     span_ops.forward(&{
         let mut spans = IdSpanVector::default();
