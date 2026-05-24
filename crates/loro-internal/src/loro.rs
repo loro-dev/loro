@@ -2195,9 +2195,23 @@ impl LoroDoc {
     pub fn get_changed_containers_in(&self, id: ID, len: usize) -> FxHashSet<ContainerID> {
         self.with_barrier(|| {
             let mut set = FxHashSet::default();
+            let len = i64::try_from(len).unwrap_or(i64::MAX);
+            let start = i64::from(id.counter);
+            let end = start.saturating_add(len);
+            if end <= 0 {
+                return set;
+            }
+
+            let start = start.max(0).min(i64::from(i32::MAX));
+            let end = end.max(0).min(i64::from(i32::MAX));
+            if start >= end {
+                return set;
+            }
+
             {
                 let oplog = self.oplog().lock();
-                for op in oplog.iter_ops(id.to_span(len)) {
+                let span = IdSpan::new(id.peer, start as i32, end as i32);
+                for op in oplog.iter_ops(span) {
                     let id = oplog.arena.get_container_id(op.container()).unwrap();
                     set.insert(id);
                 }
