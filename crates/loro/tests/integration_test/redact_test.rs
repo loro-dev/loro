@@ -1,6 +1,7 @@
-use loro::json::redact;
+use loro::json::{redact, RedactError};
 use loro::{LoroDoc, LoroList, LoroMovableList, LoroTree, LoroValue};
 use loro_internal::version::VersionRange;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 
 #[test]
 fn redact_text_doc() {
@@ -23,6 +24,29 @@ fn redact_text_doc() {
         "Hello, world! This is a ������ message."
     );
     assert_ne!(text.to_string(), redacted_text.to_string());
+}
+
+#[test]
+fn redact_rejects_overflowing_json_counters_without_panicking() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    let text = doc.get_text("text");
+    text.insert(0, "secret").unwrap();
+
+    let mut json = doc.export_json_updates(&Default::default(), &doc.oplog_vv());
+    let change = &mut json.changes[0];
+    change.id.counter = i32::MAX;
+    change.ops[0].counter = i32::MAX;
+
+    let mut range = VersionRange::new();
+    range.insert(1, 0, i32::MAX);
+    let result = catch_unwind(AssertUnwindSafe(|| redact(&mut json, range)));
+
+    assert!(result.is_ok());
+    assert!(matches!(
+        result.unwrap(),
+        Err(RedactError::InvalidSchema(_))
+    ));
 }
 
 #[test]

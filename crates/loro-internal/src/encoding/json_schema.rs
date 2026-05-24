@@ -1109,11 +1109,21 @@ pub mod json {
     }
 
     impl JsonChange {
-        pub fn op_len(&self) -> usize {
+        pub fn checked_op_len(&self) -> Option<usize> {
             let Some(last_op) = self.ops.last() else {
-                return 0;
+                return Some(0);
             };
-            (last_op.counter - self.id.counter) as usize + last_op.content.op_len()
+            if last_op.counter < self.id.counter {
+                return None;
+            }
+
+            let counter_delta = last_op.counter.checked_sub(self.id.counter)?;
+            let counter_delta = usize::try_from(counter_delta).ok()?;
+            counter_delta.checked_add(last_op.content.op_len())
+        }
+
+        pub fn op_len(&self) -> usize {
+            self.checked_op_len().unwrap_or(0)
         }
     }
 
@@ -1674,6 +1684,47 @@ pub mod json {
         InvalidSchema(String),
     }
 
+    fn invalid_schema(message: impl Into<String>) -> RedactError {
+        RedactError::InvalidSchema(message.into())
+    }
+
+    fn checked_redact_op_len(op: &JsonOp) -> Result<Counter, RedactError> {
+        let len = op.content.op_len();
+        if len == 0 {
+            return Err(invalid_schema("op length must be greater than zero"));
+        }
+
+        Counter::try_from(len).map_err(|_| invalid_schema("op length is too large"))
+    }
+
+    fn validate_redactable_change(change: &JsonChange) -> Result<usize, RedactError> {
+        if change.id.counter < 0 {
+            return Err(invalid_schema("change id counter must be non-negative"));
+        }
+
+        let mut expected_counter = change.id.counter;
+        for op in &change.ops {
+            if op.counter < 0 {
+                return Err(invalid_schema("op counter must be non-negative"));
+            }
+            if op.counter != expected_counter {
+                return Err(invalid_schema(
+                    "op counters must be contiguous with the change id",
+                ));
+            }
+
+            let len = checked_redact_op_len(op)?;
+            expected_counter = expected_counter
+                .checked_add(len)
+                .ok_or_else(|| invalid_schema("op counter overflow"))?;
+        }
+
+        let len = expected_counter
+            .checked_sub(change.id.counter)
+            .ok_or_else(|| invalid_schema("change counter overflow"))?;
+        usize::try_from(len).map_err(|_| invalid_schema("change length is too large"))
+    }
+
     /// Redacts sensitive content within the specified range by replacing it with default values.
     ///
     /// This method applies the following redaction rules:
@@ -1697,7 +1748,8 @@ pub mod json {
             let real_peer = get_peer_from_peers(&peers, change.id.peer)
                 .map_err(|_| RedactError::InvalidSchema("peer index out of range".to_string()))?;
             let real_id = ID::new(real_peer, change.id.counter);
-            if !range.has_overlap_with(real_id.to_span(change.op_len())) {
+            let change_len = validate_redactable_change(change)?;
+            if !range.has_overlap_with(real_id.to_span(change_len)) {
                 continue;
             }
 
@@ -1707,15 +1759,19 @@ pub mod json {
                     break;
                 }
 
-                let len = op.content.op_len() as Counter;
-                if op.counter + len <= redact_range.0 {
+                let len = checked_redact_op_len(op)?;
+                let op_end = op
+                    .counter
+                    .checked_add(len)
+                    .ok_or_else(|| invalid_schema("op counter overflow"))?;
+                if op_end <= redact_range.0 {
                     continue;
                 }
 
                 let result = redact_op(
                     &mut op.content,
-                    (redact_range.0 - op.counter).max(0).min(len)
-                        ..(redact_range.1 - op.counter).max(0).min(len),
+                    redact_range.0.saturating_sub(op.counter).max(0).min(len)
+                        ..redact_range.1.saturating_sub(op.counter).max(0).min(len),
                 );
                 match result {
                     Ok(()) => {}
