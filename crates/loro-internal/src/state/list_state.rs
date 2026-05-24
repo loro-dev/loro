@@ -744,12 +744,15 @@ impl ContainerState for ListState {
 }
 
 mod snapshot {
-    use std::io::Read;
-
     use loro_common::{Counter, Lamport, PeerID};
     use serde_columnar::columnar;
 
-    use crate::{encoding::value_register::ValueRegister, state::ContainerCreationContext};
+    use crate::{
+        encoding::value_register::ValueRegister,
+        state::{
+            decode_peer_from_table, decode_peer_table, state_decode_error, ContainerCreationContext,
+        },
+    };
 
     use super::*;
     #[columnar(vec, ser, de, iterable)]
@@ -819,24 +822,27 @@ mod snapshot {
         where
             Self: Sized,
         {
-            let peer_num = leb128::read::unsigned(&mut bytes).unwrap() as usize;
-            let mut peers = Vec::with_capacity(peer_num);
-            for _ in 0..peer_num {
-                let mut buf = [0u8; 8];
-                bytes.read_exact(&mut buf).unwrap();
-                peers.push(PeerID::from_le_bytes(buf));
-            }
+            let peers = decode_peer_table(&mut bytes, "Decode list state failed")?;
 
-            let EncodedListIds { ids } = serde_columnar::from_bytes(bytes).unwrap();
+            let EncodedListIds { ids } = serde_columnar::from_bytes(bytes).map_err(|err| {
+                state_decode_error(format!("Decode list state failed: invalid id table: {err}"))
+            })?;
 
             let list = v.as_list().unwrap();
+            if ids.len() != list.len() {
+                return Err(state_decode_error(
+                    "Decode list state failed: id/value length mismatch",
+                ));
+            }
+
             let mut ans = Self::new(idx);
             for (i, id) in ids.into_iter().enumerate() {
+                let peer = decode_peer_from_table(&peers, id.peer_idx, "Decode list state failed")?;
                 ans.insert(
                     i,
                     list[i].clone(),
                     IdFull::new(
-                        peers[id.peer_idx],
+                        peer,
                         id.counter as Counter,
                         (id.lamport_sub_counter + id.counter) as Lamport,
                     ),
@@ -919,5 +925,23 @@ mod test {
         assert_eq!(v[2].id.peer, 1);
         assert_eq!(v[2].id.counter, 2 as Counter);
         assert_eq!(v[2].id.lamport, 2 as Lamport);
+    }
+
+    #[test]
+    fn list_fast_snapshot_rejects_corrupt_state_metadata() {
+        let idx = ContainerIdx::from_index_and_type(0, loro_common::ContainerType::List);
+        let ctx = ContainerCreationContext {
+            configure: &Default::default(),
+            peer: 0,
+        };
+
+        let value = LoroValue::from(vec![LoroValue::I64(1)]);
+        assert!(ListState::decode_snapshot_fast(idx, (value.clone(), &[1]), ctx).is_err());
+
+        let mut empty = ListState::new(idx);
+        let mut bytes = Vec::new();
+        empty.encode_snapshot_fast(&mut bytes);
+        let (_, state_bytes) = ListState::decode_value(&bytes).unwrap();
+        assert!(ListState::decode_snapshot_fast(idx, (value, state_bytes), ctx).is_err());
     }
 }

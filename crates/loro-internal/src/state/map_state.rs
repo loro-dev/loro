@@ -435,7 +435,10 @@ mod snapshot {
     use crate::{
         delta::MapValue,
         encoding::value_register::ValueRegister,
-        state::{ContainerCreationContext, ContainerState, FastStateSnapshot},
+        state::{
+            decode_peer_from_table, decode_peer_table, read_state_leb_u64, state_decode_error,
+            ContainerCreationContext, ContainerState, FastStateSnapshot,
+        },
     };
 
     use super::MapState;
@@ -506,13 +509,7 @@ mod snapshot {
             let keys_with_none_value: FxHashSet<_> = keys_with_none_value.into_iter().collect();
 
             // peers
-            let peer_count = leb128::read::unsigned(&mut bytes).unwrap() as usize;
-            let mut peers = Vec::with_capacity(peer_count);
-            for _ in 0..peer_count {
-                let peer = u64::from_le_bytes(bytes[..8].try_into().unwrap());
-                bytes = &bytes[8..];
-                peers.push(peer);
-            }
+            let peers = decode_peer_table(&mut bytes, "Decode map state failed")?;
 
             //
             let mut ans = MapState::new(idx);
@@ -521,9 +518,17 @@ mod snapshot {
             keys.sort_unstable();
 
             for key in keys {
-                let peer_idx = leb128::read::unsigned(&mut bytes).unwrap() as usize;
-                let lamp = leb128::read::unsigned(&mut bytes).unwrap() as u32;
-                let peer = peers[peer_idx];
+                let peer_idx =
+                    usize::try_from(read_state_leb_u64(&mut bytes, "Decode map state failed")?)
+                        .map_err(|_| {
+                            state_decode_error("Decode map state failed: peer index overflow")
+                        })?;
+                let lamp =
+                    u32::try_from(read_state_leb_u64(&mut bytes, "Decode map state failed")?)
+                        .map_err(|_| {
+                            state_decode_error("Decode map state failed: lamport overflow")
+                        })?;
+                let peer = decode_peer_from_table(&peers, peer_idx, "Decode map state failed")?;
 
                 if keys_with_none_value.contains(&key) {
                     ans.insert(
@@ -649,6 +654,25 @@ mod snapshot {
                     peer: 1,
                 }
             );
+        }
+
+        #[test]
+        fn map_fast_snapshot_rejects_corrupt_state_metadata() {
+            let idx = ContainerIdx::from_index_and_type(0, loro_common::ContainerType::Map);
+            let ctx = ContainerCreationContext {
+                configure: &Default::default(),
+                peer: 0,
+            };
+            let value = LoroValue::from(std::collections::HashMap::from([(
+                "key".to_string(),
+                LoroValue::I64(1),
+            )]));
+
+            let mut empty = MapState::new(idx);
+            let mut bytes = Vec::new();
+            empty.encode_snapshot_fast(&mut bytes);
+            let (_, state_bytes) = MapState::decode_value(&bytes).unwrap();
+            assert!(MapState::decode_snapshot_fast(idx, (value, state_bytes), ctx).is_err());
         }
     }
 }

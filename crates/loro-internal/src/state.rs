@@ -89,6 +89,49 @@ fn deleted_root_container_value_is_cleared(kind: ContainerType, value: &LoroValu
     }
 }
 
+fn state_decode_error(message: impl Into<Box<str>>) -> LoroError {
+    LoroError::DecodeError(message.into())
+}
+
+fn decode_peer_table(bytes: &mut &[u8], context: &str) -> LoroResult<Vec<PeerID>> {
+    let peer_num = leb128::read::unsigned(bytes)
+        .map_err(|_| state_decode_error(format!("{context}: invalid peer table length")))?;
+    let peer_num = usize::try_from(peer_num)
+        .map_err(|_| state_decode_error(format!("{context}: peer table length overflow")))?;
+    let peer_bytes_len = peer_num
+        .checked_mul(std::mem::size_of::<PeerID>())
+        .ok_or_else(|| state_decode_error(format!("{context}: peer table byte length overflow")))?;
+    if bytes.len() < peer_bytes_len {
+        return Err(state_decode_error(format!(
+            "{context}: truncated peer table"
+        )));
+    }
+
+    let peer_bytes = &bytes[..peer_bytes_len];
+    let peers = peer_bytes
+        .chunks_exact(std::mem::size_of::<PeerID>())
+        .map(|chunk| {
+            let mut buf = [0u8; std::mem::size_of::<PeerID>()];
+            buf.copy_from_slice(chunk);
+            PeerID::from_le_bytes(buf)
+        })
+        .collect();
+    *bytes = &bytes[peer_bytes_len..];
+    Ok(peers)
+}
+
+fn decode_peer_from_table(peers: &[PeerID], peer_idx: usize, context: &str) -> LoroResult<PeerID> {
+    peers
+        .get(peer_idx)
+        .copied()
+        .ok_or_else(|| state_decode_error(format!("{context}: peer index out of range")))
+}
+
+fn read_state_leb_u64(bytes: &mut &[u8], context: &str) -> LoroResult<u64> {
+    leb128::read::unsigned(bytes)
+        .map_err(|_| state_decode_error(format!("{context}: invalid integer")))
+}
+
 pub struct DocState {
     pub(super) peer: Arc<AtomicU64>,
 
