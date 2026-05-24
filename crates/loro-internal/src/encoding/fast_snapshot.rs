@@ -108,6 +108,14 @@ pub(super) fn _decode_snapshot_meta_partial(bytes: &[u8]) -> LoroResult<(&[u8], 
     }
     r = &r[state_bytes_len..];
     let shallow_bytes_len = read_u32_le_slice(&mut r)? as usize;
+    if r.len() < shallow_bytes_len {
+        return Err(LoroError::DecodeDataCorruptionError);
+    }
+    r = &r[shallow_bytes_len..];
+    if !r.is_empty() {
+        return Err(LoroError::DecodeDataCorruptionError);
+    }
+
     Ok((oplog_bytes, shallow_bytes_len > 0))
 }
 

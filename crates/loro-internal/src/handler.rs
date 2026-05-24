@@ -5246,6 +5246,18 @@ mod test {
     }
 
     #[test]
+    fn fast_snapshot_with_trailing_bytes_is_rejected_by_meta_decoder() {
+        let loro = LoroDoc::new_auto_commit();
+        let map = loro.get_map("map");
+        map.insert("key", "value").unwrap();
+        let mut snapshot = loro.export(ExportMode::snapshot()).unwrap();
+        snapshot.push(0xff);
+        let corrupted = recheck_fast_blob(snapshot);
+
+        assert!(LoroDoc::decode_import_blob_meta(&corrupted, true).is_err());
+    }
+
+    #[test]
     fn malformed_lazy_snapshot_container_key_is_rejected_on_import() {
         let loro = LoroDoc::new_auto_commit();
         let map = loro.get_map("map");
