@@ -266,6 +266,7 @@ impl InnerStore {
         &mut self,
         bytes: bytes::Bytes,
         ctx: ContainerCreationContext,
+        allow_missing_child_payload: &mut impl FnMut(&ContainerID) -> bool,
     ) -> Result<Option<Frontiers>, loro_common::LoroError> {
         assert!(self.kv.is_empty());
         let mut fr = None;
@@ -275,7 +276,7 @@ impl InnerStore {
         if let Some(f) = self.kv.remove(FRONTIERS_KEY) {
             fr = Some(Frontiers::decode(&f)?);
         }
-        self.validate_lazy_entries(ctx)?;
+        self.validate_lazy_entries(ctx, allow_missing_child_payload)?;
 
         let kv = self.kv.arc_clone();
         self.arena
@@ -296,6 +297,7 @@ impl InnerStore {
         bytes_a: bytes::Bytes,
         bytes_b: bytes::Bytes,
         ctx: ContainerCreationContext,
+        allow_missing_child_payload: &mut impl FnMut(&ContainerID) -> bool,
     ) -> Result<(), loro_common::LoroError> {
         assert!(self.kv.is_empty());
         // TODO: add assert that all containers in the store should be empty right now
@@ -306,7 +308,7 @@ impl InnerStore {
             .import(bytes_b)
             .map_err(|e| loro_common::LoroError::DecodeError(e.into_boxed_str()))?;
         self.kv.remove(FRONTIERS_KEY);
-        self.validate_lazy_entries(ctx)?;
+        self.validate_lazy_entries(ctx, allow_missing_child_payload)?;
         let store = &mut self.store;
         let arena = &self.arena;
         self.kv.with_kv(|kv| {
@@ -331,6 +333,7 @@ impl InnerStore {
     fn validate_lazy_entries(
         &self,
         ctx: ContainerCreationContext,
+        allow_missing_child_payload: &mut impl FnMut(&ContainerID) -> bool,
     ) -> Result<(), loro_common::LoroError> {
         self.kv.with_kv(|kv| {
             let mut containers = FxHashMap::default();
@@ -422,8 +425,16 @@ impl InnerStore {
             }
 
             for (parent_id, parent) in containers.iter() {
-                for child_id in parent.try_get_state().unwrap().get_child_containers() {
+                let parent_state = parent.try_get_state().unwrap();
+                for child_id in parent_state.get_child_containers() {
                     let Some(child) = containers.get(&child_id) else {
+                        if parent_state.contains_child(&child_id)
+                            && !allow_missing_child_payload(&child_id)
+                        {
+                            return Err(loro_common::LoroError::DecodeError(
+                                "Container child is missing".to_string().into_boxed_str(),
+                            ));
+                        }
                         continue;
                     };
                     if child.parent() != Some(parent_id) {
@@ -596,6 +607,7 @@ impl InnerStore {
         // PERF: we can try to reuse
         let bytes = self.encode();
         let mut new_store = Self::new(arena, config.clone());
+        let mut allow_missing_child_payload = |_: &ContainerID| true;
         new_store
             .decode(
                 bytes,
@@ -603,6 +615,7 @@ impl InnerStore {
                     configure: config,
                     peer: 0,
                 },
+                &mut allow_missing_child_payload,
             )
             .unwrap();
         new_store

@@ -194,19 +194,31 @@ impl ContainerStore {
         Some(shallow_root_kv.export())
     }
 
+    #[cfg(test)]
     pub(crate) fn decode(&mut self, bytes: Bytes) -> LoroResult<Option<Frontiers>> {
-        self.store.decode(bytes, ctx!(self))
+        let mut allow_missing_child_payload = |_: &ContainerID| true;
+        self.decode_with_missing_child_payload_check(bytes, &mut allow_missing_child_payload)
     }
 
-    pub(crate) fn decode_gc(
+    pub(crate) fn decode_with_missing_child_payload_check(
+        &mut self,
+        bytes: Bytes,
+        allow_missing_child_payload: &mut impl FnMut(&ContainerID) -> bool,
+    ) -> LoroResult<Option<Frontiers>> {
+        self.store
+            .decode(bytes, ctx!(self), allow_missing_child_payload)
+    }
+
+    pub(crate) fn decode_gc_with_missing_child_payload_check(
         &mut self,
         shallow_bytes: Bytes,
         start_frontiers: Frontiers,
         config: Configure,
+        allow_missing_child_payload: &mut impl FnMut(&ContainerID) -> bool,
     ) -> LoroResult<Option<Frontiers>> {
         assert!(self.shallow_root_store.is_none());
         let mut inner = InnerStore::new(self.arena.clone(), config);
-        let f = inner.decode(shallow_bytes, ctx!(self))?;
+        let f = inner.decode(shallow_bytes, ctx!(self), allow_missing_child_payload)?;
         self.shallow_root_store = Some(Arc::new(GcStore {
             shallow_root_frontiers: start_frontiers,
             store: Mutex::new(inner),
@@ -214,13 +226,18 @@ impl ContainerStore {
         Ok(f)
     }
 
-    pub(crate) fn decode_state_by_two_bytes(
+    pub(crate) fn decode_state_by_two_bytes_with_missing_child_payload_check(
         &mut self,
         shallow_bytes: Bytes,
         state_bytes: Bytes,
+        allow_missing_child_payload: &mut impl FnMut(&ContainerID) -> bool,
     ) -> LoroResult<()> {
-        self.store
-            .decode_twice(shallow_bytes.clone(), state_bytes, ctx!(self))?;
+        self.store.decode_twice(
+            shallow_bytes.clone(),
+            state_bytes,
+            ctx!(self),
+            allow_missing_child_payload,
+        )?;
         Ok(())
     }
 
@@ -430,19 +447,25 @@ mod test {
         doc
     }
 
+    fn export_container_store(doc: &LoroDoc) -> Bytes {
+        let mut state = doc.app_state().lock();
+        state.ensure_all_alive_containers();
+        state.store.encode()
+    }
+
     #[test]
     fn test_container_store_exports_imports() {
         let doc = init_doc();
-        let mut s = doc.app_state().lock();
-        let bytes = s.store.encode();
+        let bytes = export_container_store(&doc);
         let mut new_store = decode_container_store(bytes);
+        let mut s = doc.app_state().lock();
         s.store.check_eq_after_parsing(&mut new_store);
     }
 
     #[test]
     fn first_lazy_read_caches_value() {
         let doc = init_doc();
-        let bytes = doc.app_state().lock().store.encode();
+        let bytes = export_container_store(&doc);
         let mut store = decode_container_store(bytes);
         let map_id = ContainerID::new_root("map", ContainerType::Map);
         let map_idx = store.arena.register_container(&map_id);

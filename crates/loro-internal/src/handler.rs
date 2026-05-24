@@ -5700,6 +5700,46 @@ mod test {
         assert!(doc.import(&corrupted).is_err());
     }
 
+    #[test]
+    fn lazy_snapshot_rejects_parent_reference_to_missing_child_payload() {
+        let loro = LoroDoc::new_auto_commit();
+        let root = loro.get_map("map");
+        let text = root
+            .insert_container("text", TextHandler::new_detached())
+            .unwrap();
+        text.insert(0, "child", PosType::Unicode).unwrap();
+        let snapshot = loro.export(ExportMode::snapshot()).unwrap();
+
+        let mut kv = MemKvStore::new(MemKvConfig::default().should_encode_none(false));
+        kv.import_all(fast_snapshot_state_bytes(&snapshot).to_vec().into())
+            .unwrap();
+        kv.remove(&text.id().to_bytes());
+        let corrupted = replace_fast_snapshot_state_bytes(snapshot, &kv.export_all());
+
+        let doc = LoroDoc::new();
+        assert!(doc.import(&corrupted).is_err());
+    }
+
+    #[test]
+    fn lazy_snapshot_allows_legacy_missing_empty_child_payload() {
+        let loro = LoroDoc::new_auto_commit();
+        let root = loro.get_map("map");
+        let empty_map = root
+            .insert_container("attrs", MapHandler::new_detached())
+            .unwrap();
+        let snapshot = loro.export(ExportMode::snapshot()).unwrap();
+
+        let mut kv = MemKvStore::new(MemKvConfig::default().should_encode_none(false));
+        kv.import_all(fast_snapshot_state_bytes(&snapshot).to_vec().into())
+            .unwrap();
+        kv.remove(&empty_map.id().to_bytes());
+        let legacy_snapshot = replace_fast_snapshot_state_bytes(snapshot, &kv.export_all());
+
+        let doc = LoroDoc::new();
+        doc.import(&legacy_snapshot).unwrap();
+        assert_eq!(doc.get_deep_value(), loro.get_deep_value());
+    }
+
     #[cfg(feature = "counter")]
     #[test]
     fn lazy_snapshot_rejects_counter_payload_with_trailing_bytes() {
