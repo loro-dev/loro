@@ -28,6 +28,15 @@ Run Next.js/Turbopack separately because it is heavier:
 pnpm --dir examples/bundler-smoke-tests run test:next
 ```
 
+To also launch each built app in Chromium and verify `doc.toJSON()` returns
+`{ t: "hi" }` in a real browser:
+
+```sh
+pnpm --dir examples/bundler-smoke-tests run test:browser
+```
+
+This command installs Playwright's Chromium browser if needed.
+
 To test an already-published package instead of the local workspace build:
 
 ```sh

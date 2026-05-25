@@ -89,7 +89,11 @@ importers:
 
   crates/loro-wasm-map: {}
 
-  examples/bundler-smoke-tests: {}
+  examples/bundler-smoke-tests:
+    devDependencies:
+      playwright:
+        specifier: ^1.40.0
+        version: 1.56.1
 
   examples/loro-quill:
     dependencies:
