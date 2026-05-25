@@ -20,8 +20,7 @@ use crate::{
     OpLog, VersionVector,
 };
 use bytes::{Buf, Bytes};
-use loro_common::{ContainerID, HasCounterSpan, IdSpan, InternalString, LoroError, LoroResult, ID};
-use rustc_hash::FxHashSet;
+use loro_common::{HasCounterSpan, IdSpan, InternalString, LoroError, LoroResult};
 
 use super::{EncodedBlobMode, ImportBlobMetadata, ParsedHeaderAndBody};
 pub(crate) const EMPTY_MARK: &[u8] = b"E";
@@ -192,38 +191,24 @@ pub(crate) fn decode_snapshot_inner(
     let arena_checkpoint = oplog.arena.checkpoint_for_rollback();
     let decode_result = (|| -> LoroResult<()> {
         oplog.decode_change_store(oplog_bytes)?;
-        let created_container_ids = collect_created_container_ids(&oplog);
-        let containers_with_ops = collect_containers_with_ops(&oplog);
-        let mut allow_missing_child_payload = |container_id: &ContainerID| {
-            created_container_ids.contains(container_id)
-                && !containers_with_ops.contains(container_id)
-        };
         let state_frontiers;
         if shallow_root_state_bytes.is_empty() {
             ensure_cov::notify_cov("loro_internal::import::snapshot::normal");
             if let Some(bytes) = state_bytes {
-                state.store.decode_with_missing_child_payload_check(
-                    bytes,
-                    &mut allow_missing_child_payload,
-                )?;
+                state.store.decode(bytes)?;
             }
             state_frontiers = oplog.frontiers().clone();
         } else {
             ensure_cov::notify_cov("loro_internal::import::snapshot::gc");
-            let shallow_root_state_frontiers =
-                state.store.decode_gc_with_missing_child_payload_check(
-                    shallow_root_state_bytes.clone(),
-                    oplog.dag().shallow_since_frontiers().clone(),
-                    doc.config.clone(),
-                    &mut allow_missing_child_payload,
-                )?;
-            state
-                .store
-                .decode_state_by_two_bytes_with_missing_child_payload_check(
-                    shallow_root_state_bytes,
-                    state_bytes.unwrap_or_default(),
-                    &mut allow_missing_child_payload,
-                )?;
+            let shallow_root_state_frontiers = state.store.decode_gc(
+                shallow_root_state_bytes.clone(),
+                oplog.dag().shallow_since_frontiers().clone(),
+                doc.config.clone(),
+            )?;
+            state.store.decode_state_by_two_bytes(
+                shallow_root_state_bytes,
+                state_bytes.unwrap_or_default(),
+            )?;
 
             let shallow_root_store = state.shallow_root_store().cloned();
             oplog.with_history_cache(|h| {
@@ -244,19 +229,6 @@ pub(crate) fn decode_snapshot_inner(
                 state_frontiers = oplog.frontiers().clone();
             }
         }
-
-        // FIXME: we may need to extract the unknown containers here?
-        // Or we should lazy load it when the time comes?
-        state.store.validate_container_ids(|container_id| {
-            let ContainerID::Normal { peer, counter, .. } = container_id else {
-                return true;
-            };
-
-            let id = ID::new(*peer, *counter);
-            oplog.shallow_since_vv().includes_id(id)
-                || oplog.shallow_since_frontiers().contains(&id)
-                || (oplog.vv().includes_id(id) && created_container_ids.contains(container_id))
-        })?;
 
         state.init_with_states_and_version(state_frontiers, &oplog, vec![], false, origin)?;
         Ok(())
@@ -294,34 +266,6 @@ impl OpLog {
         self.refresh_visible_op_count();
         Ok(())
     }
-}
-
-fn collect_created_container_ids(oplog: &OpLog) -> FxHashSet<ContainerID> {
-    let mut created = FxHashSet::default();
-    let from = VersionVector::default();
-    for change in oplog.iter_changes_peer_by_peer(&from, oplog.vv()) {
-        for op in change.ops.iter() {
-            op.content.visit_created_children(&oplog.arena, &mut |id| {
-                created.insert(id.clone());
-            });
-        }
-    }
-
-    created
-}
-
-fn collect_containers_with_ops(oplog: &OpLog) -> FxHashSet<ContainerID> {
-    let mut containers = FxHashSet::default();
-    let from = VersionVector::default();
-    for change in oplog.iter_changes_peer_by_peer(&from, oplog.vv()) {
-        for op in change.ops.iter() {
-            if let Some(id) = oplog.arena.get_container_id(op.container) {
-                containers.insert(id);
-            }
-        }
-    }
-
-    containers
 }
 
 pub(crate) fn encode_snapshot<W: std::io::Write>(doc: &LoroDoc, w: &mut W) {

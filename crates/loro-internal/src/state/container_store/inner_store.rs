@@ -1,14 +1,9 @@
 use crate::{
-    arena::SharedArena,
-    configure::Configure,
-    container::idx::ContainerIdx,
-    state::{container_store::FRONTIERS_KEY, ContainerCreationContext, ContainerState},
-    utils::kv_wrapper::KvWrapper,
-    version::Frontiers,
+    arena::SharedArena, configure::Configure, container::idx::ContainerIdx,
+    state::container_store::FRONTIERS_KEY, utils::kv_wrapper::KvWrapper, version::Frontiers,
 };
 use bytes::Bytes;
 use loro_common::ContainerID;
-use rustc_hash::FxHashMap;
 use std::ops::Bound;
 
 use super::ContainerWrapper;
@@ -265,8 +260,6 @@ impl InnerStore {
     pub(crate) fn decode(
         &mut self,
         bytes: bytes::Bytes,
-        ctx: ContainerCreationContext,
-        allow_missing_child_payload: &mut impl FnMut(&ContainerID) -> bool,
     ) -> Result<Option<Frontiers>, loro_common::LoroError> {
         assert!(self.kv.is_empty());
         let mut fr = None;
@@ -276,7 +269,6 @@ impl InnerStore {
         if let Some(f) = self.kv.remove(FRONTIERS_KEY) {
             fr = Some(Frontiers::decode(&f)?);
         }
-        self.validate_lazy_entries(ctx, allow_missing_child_payload)?;
 
         let kv = self.kv.arc_clone();
         self.arena
@@ -296,8 +288,6 @@ impl InnerStore {
         &mut self,
         bytes_a: bytes::Bytes,
         bytes_b: bytes::Bytes,
-        ctx: ContainerCreationContext,
-        allow_missing_child_payload: &mut impl FnMut(&ContainerID) -> bool,
     ) -> Result<(), loro_common::LoroError> {
         assert!(self.kv.is_empty());
         // TODO: add assert that all containers in the store should be empty right now
@@ -308,7 +298,6 @@ impl InnerStore {
             .import(bytes_b)
             .map_err(|e| loro_common::LoroError::DecodeError(e.into_boxed_str()))?;
         self.kv.remove(FRONTIERS_KEY);
-        self.validate_lazy_entries(ctx, allow_missing_child_payload)?;
         let store = &mut self.store;
         let arena = &self.arena;
         self.kv.with_kv(|kv| {
@@ -327,202 +316,6 @@ impl InnerStore {
         });
 
         self.load_state = LoadState::AllLoaded;
-        Ok(())
-    }
-
-    fn validate_lazy_entries(
-        &self,
-        ctx: ContainerCreationContext,
-        allow_missing_child_payload: &mut impl FnMut(&ContainerID) -> bool,
-    ) -> Result<(), loro_common::LoroError> {
-        self.kv.with_kv(|kv| {
-            let mut containers = FxHashMap::default();
-            for (k, v) in kv.scan(Bound::Unbounded, Bound::Unbounded) {
-                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    let cid = ContainerID::try_from_bytes(&k)?;
-                    if k.as_ref() != cid.to_bytes().as_slice() {
-                        return Err(loro_common::LoroError::DecodeError(
-                            "Container key is not canonical"
-                                .to_string()
-                                .into_boxed_str(),
-                        ));
-                    }
-
-                    let idx = self.arena.register_container(&cid);
-                    let mut container = ContainerWrapper::try_new_from_bytes(v.clone())?;
-                    if !container.has_canonical_header_bytes(&v) {
-                        return Err(loro_common::LoroError::DecodeError(
-                            "Container header is not canonical"
-                                .to_string()
-                                .into_boxed_str(),
-                        ));
-                    }
-
-                    if cid.container_type() != container.kind() {
-                        return Err(loro_common::LoroError::DecodeError(
-                            "Container type mismatch between key and state"
-                                .to_string()
-                                .into_boxed_str(),
-                        ));
-                    }
-
-                    if cid.is_root() != container.parent().is_none() {
-                        return Err(loro_common::LoroError::DecodeError(
-                            "Container parent mismatch between key and state"
-                                .to_string()
-                                .into_boxed_str(),
-                        ));
-                    }
-
-                    let lazy_value = container.try_get_value(idx, ctx)?;
-                    container.decode_state(idx, ctx)?;
-                    let decoded_value = container.try_get_value(idx, ctx)?;
-                    if lazy_value != decoded_value {
-                        return Err(loro_common::LoroError::DecodeError(
-                            "Container value mismatch between lazy value and state"
-                                .to_string()
-                                .into_boxed_str(),
-                        ));
-                    }
-
-                    Ok((cid, container))
-                }));
-                match result {
-                    Ok(Ok((cid, container))) => {
-                        containers.insert(cid, container);
-                    }
-                    Ok(Err(e)) => return Err(e),
-                    Err(_) => {
-                        return Err(loro_common::LoroError::DecodeError(
-                            "Decode container state failed".to_string().into_boxed_str(),
-                        ));
-                    }
-                }
-            }
-
-            for container in containers.values() {
-                let expected_depth = match container.parent() {
-                    Some(parent_id) => {
-                        let Some(parent) = containers.get(parent_id) else {
-                            if !parent_id.is_root() {
-                                return Err(loro_common::LoroError::DecodeError(
-                                    "Container parent is missing".to_string().into_boxed_str(),
-                                ));
-                            }
-
-                            continue;
-                        };
-                        Some(parent.depth() + 1)
-                    }
-                    None => Some(1),
-                };
-
-                if expected_depth.is_some_and(|depth| container.depth() != depth) {
-                    return Err(loro_common::LoroError::DecodeError(
-                        "Container depth mismatch".to_string().into_boxed_str(),
-                    ));
-                }
-            }
-
-            for (parent_id, parent) in containers.iter() {
-                let parent_state = parent.try_get_state().unwrap();
-                for child_id in parent_state.get_child_containers() {
-                    let Some(child) = containers.get(&child_id) else {
-                        if parent_state.contains_child(&child_id)
-                            && !allow_missing_child_payload(&child_id)
-                        {
-                            return Err(loro_common::LoroError::DecodeError(
-                                "Container child is missing".to_string().into_boxed_str(),
-                            ));
-                        }
-                        continue;
-                    };
-                    if child.parent() != Some(parent_id) {
-                        return Err(loro_common::LoroError::DecodeError(
-                            "Container parent does not contain child"
-                                .to_string()
-                                .into_boxed_str(),
-                        ));
-                    }
-                }
-            }
-
-            Ok(())
-        })
-    }
-
-    pub(crate) fn validate_container_ids(
-        &mut self,
-        ctx: ContainerCreationContext,
-        mut is_valid_container_id: impl FnMut(&loro_common::ContainerID) -> bool,
-    ) -> Result<(), loro_common::LoroError> {
-        fn validate_id(
-            container_id: loro_common::ContainerID,
-            is_valid_container_id: &mut impl FnMut(&loro_common::ContainerID) -> bool,
-        ) -> Result<(), loro_common::LoroError> {
-            let loro_common::ContainerID::Normal { .. } = container_id else {
-                return Ok(());
-            };
-
-            if !is_valid_container_id(&container_id) {
-                return Err(loro_common::LoroError::DecodeError(
-                    format!("Container id is not created in the snapshot history: {container_id}")
-                        .into_boxed_str(),
-                ));
-            }
-
-            Ok(())
-        }
-
-        fn validate_container_refs(
-            id: loro_common::ContainerID,
-            container: &ContainerWrapper,
-            is_valid_container_id: &mut impl FnMut(&loro_common::ContainerID) -> bool,
-        ) -> Result<(), loro_common::LoroError> {
-            validate_id(id, is_valid_container_id)?;
-
-            if let Some(parent) = container.parent() {
-                validate_id(parent.clone(), is_valid_container_id)?;
-            }
-
-            if let Some(state) = container.try_get_state() {
-                for child_id in state.get_child_containers() {
-                    validate_id(child_id, is_valid_container_id)?;
-                }
-            }
-
-            Ok(())
-        }
-
-        for (slot, entry) in self.store.iter().enumerate() {
-            let Some(container) = entry.as_ref() else {
-                continue;
-            };
-
-            let idx = ContainerIdx::from_index_and_type(slot as u32, container.kind());
-            validate_container_refs(
-                self.arena
-                    .get_container_id(idx)
-                    .expect("loaded container should be registered in the arena"),
-                container,
-                &mut is_valid_container_id,
-            )?;
-        }
-
-        if !self.kv.is_empty() {
-            self.kv.with_kv(|kv| {
-                for (key, value) in kv.scan(Bound::Unbounded, Bound::Unbounded) {
-                    let id = loro_common::ContainerID::from_bytes(&key);
-                    let idx = self.arena.register_container(&id);
-                    let mut container = ContainerWrapper::new_from_bytes(value);
-                    container.decode_state(idx, ctx)?;
-                    validate_container_refs(id, &container, &mut is_valid_container_id)?;
-                }
-
-                Ok::<(), loro_common::LoroError>(())
-            })?;
-        }
-
         Ok(())
     }
 
@@ -607,17 +400,7 @@ impl InnerStore {
         // PERF: we can try to reuse
         let bytes = self.encode();
         let mut new_store = Self::new(arena, config.clone());
-        let mut allow_missing_child_payload = |_: &ContainerID| true;
-        new_store
-            .decode(
-                bytes,
-                ContainerCreationContext {
-                    configure: config,
-                    peer: 0,
-                },
-                &mut allow_missing_child_payload,
-            )
-            .unwrap();
+        new_store.decode(bytes).unwrap();
         new_store
     }
 }

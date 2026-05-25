@@ -194,31 +194,19 @@ impl ContainerStore {
         Some(shallow_root_kv.export())
     }
 
-    #[cfg(test)]
     pub(crate) fn decode(&mut self, bytes: Bytes) -> LoroResult<Option<Frontiers>> {
-        let mut allow_missing_child_payload = |_: &ContainerID| true;
-        self.decode_with_missing_child_payload_check(bytes, &mut allow_missing_child_payload)
+        self.store.decode(bytes)
     }
 
-    pub(crate) fn decode_with_missing_child_payload_check(
-        &mut self,
-        bytes: Bytes,
-        allow_missing_child_payload: &mut impl FnMut(&ContainerID) -> bool,
-    ) -> LoroResult<Option<Frontiers>> {
-        self.store
-            .decode(bytes, ctx!(self), allow_missing_child_payload)
-    }
-
-    pub(crate) fn decode_gc_with_missing_child_payload_check(
+    pub(crate) fn decode_gc(
         &mut self,
         shallow_bytes: Bytes,
         start_frontiers: Frontiers,
         config: Configure,
-        allow_missing_child_payload: &mut impl FnMut(&ContainerID) -> bool,
     ) -> LoroResult<Option<Frontiers>> {
         assert!(self.shallow_root_store.is_none());
         let mut inner = InnerStore::new(self.arena.clone(), config);
-        let f = inner.decode(shallow_bytes, ctx!(self), allow_missing_child_payload)?;
+        let f = inner.decode(shallow_bytes)?;
         self.shallow_root_store = Some(Arc::new(GcStore {
             shallow_root_frontiers: start_frontiers,
             store: Mutex::new(inner),
@@ -226,18 +214,13 @@ impl ContainerStore {
         Ok(f)
     }
 
-    pub(crate) fn decode_state_by_two_bytes_with_missing_child_payload_check(
+    pub(crate) fn decode_state_by_two_bytes(
         &mut self,
         shallow_bytes: Bytes,
         state_bytes: Bytes,
-        allow_missing_child_payload: &mut impl FnMut(&ContainerID) -> bool,
     ) -> LoroResult<()> {
-        self.store.decode_twice(
-            shallow_bytes.clone(),
-            state_bytes,
-            ctx!(self),
-            allow_missing_child_payload,
-        )?;
+        self.store
+            .decode_twice(shallow_bytes.clone(), state_bytes)?;
         Ok(())
     }
 
@@ -269,23 +252,6 @@ impl ContainerStore {
 
     pub fn iter_all_container_ids(&mut self) -> impl Iterator<Item = ContainerID> + '_ {
         self.store.iter_all_container_ids()
-    }
-
-    pub(crate) fn validate_container_ids(
-        &mut self,
-        mut is_valid_container_id: impl FnMut(&ContainerID) -> bool,
-    ) -> LoroResult<()> {
-        let ctx = ctx!(self);
-        self.store
-            .validate_container_ids(ctx, &mut is_valid_container_id)?;
-        if let Some(shallow_root_store) = &self.shallow_root_store {
-            shallow_root_store
-                .store
-                .lock()
-                .validate_container_ids(ctx, &mut is_valid_container_id)?;
-        }
-
-        Ok(())
     }
 
     pub fn load_all(&mut self) -> LoadAllFlag {
