@@ -62,9 +62,13 @@ async function injectExplicitWasmReexports(
 
   const explicitExports = names.map((name) => `  ${name},`).join("\n");
   const block = `// ${marker}\nexport {\n${explicitExports}\n} from "${target}";`;
-  const sourceMapPattern = /\n\/\/# sourceMappingURL=.*$/;
+  const sourceMapPattern = /(\n\/\/# sourceMappingURL=.*?)(\s*)$/;
   if (sourceMapPattern.test(content)) {
-    return content.replace(sourceMapPattern, `\n${block}$&`);
+    return content.replace(
+      sourceMapPattern,
+      (_match, sourceMapComment: string, trailingWhitespace: string) =>
+        `\n${block}${sourceMapComment}${trailingWhitespace}`,
+    );
   }
 
   return `${content}\n${block}\n`;
