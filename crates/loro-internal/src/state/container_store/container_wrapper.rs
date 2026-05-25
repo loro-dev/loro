@@ -1,7 +1,8 @@
-use std::{cell::OnceCell, collections::BTreeMap};
+use std::collections::BTreeMap;
 
 use bytes::Bytes;
 use loro_common::{ContainerID, ContainerType, InternalString, LoroError, LoroResult, LoroValue};
+use once_cell::sync::OnceCell;
 use tracing::trace;
 
 #[cfg(feature = "counter")]

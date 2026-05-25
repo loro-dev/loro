@@ -132,11 +132,20 @@ fn read_state_leb_u64(bytes: &mut &[u8], context: &str) -> LoroResult<u64> {
         .map_err(|_| state_decode_error(format!("{context}: invalid integer")))
 }
 
+fn decode_counter(counter: i32, context: &str) -> LoroResult<i32> {
+    if counter < 0 {
+        return Err(state_decode_error(format!("{context}: negative counter")));
+    }
+
+    Ok(counter)
+}
+
 fn decode_lamport_from_delta(
     counter: i32,
     lamport_sub_counter: i32,
     context: &str,
 ) -> LoroResult<Lamport> {
+    decode_counter(counter, context)?;
     let lamport = counter
         .checked_add(lamport_sub_counter)
         .ok_or_else(|| state_decode_error(format!("{context}: lamport overflow")))?;

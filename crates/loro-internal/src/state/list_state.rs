@@ -857,6 +857,45 @@ mod snapshot {
             Ok(ans)
         }
     }
+
+    #[cfg(test)]
+    mod tests {
+        use loro_common::LoroValue;
+
+        use crate::{container::idx::ContainerIdx, state::ContainerCreationContext};
+
+        use super::*;
+
+        #[test]
+        fn list_fast_snapshot_rejects_negative_counter() {
+            let mut bytes = Vec::new();
+            postcard::to_io(&vec![LoroValue::I64(1)], &mut bytes).unwrap();
+            leb128::write::unsigned(&mut bytes, 1).unwrap();
+            bytes.extend_from_slice(&1_u64.to_le_bytes());
+            bytes.extend_from_slice(
+                &serde_columnar::to_vec(&EncodedListIds {
+                    ids: vec![EncodedListId {
+                        peer_idx: 0,
+                        counter: -1,
+                        lamport_sub_counter: 1,
+                    }],
+                })
+                .unwrap(),
+            );
+
+            let idx = ContainerIdx::from_index_and_type(0, loro_common::ContainerType::List);
+            let (value, state_bytes) = ListState::decode_value(&bytes).unwrap();
+            assert!(ListState::decode_snapshot_fast(
+                idx,
+                (value, state_bytes),
+                ContainerCreationContext {
+                    configure: &Default::default(),
+                    peer: 0,
+                },
+            )
+            .is_err());
+        }
+    }
 }
 
 #[cfg(test)]

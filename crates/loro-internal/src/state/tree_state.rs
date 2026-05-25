@@ -1545,7 +1545,7 @@ mod snapshot {
     use crate::{
         encoding::{arena::PositionArena, value_register::ValueRegister},
         state::{
-            decode_lamport_from_delta, decode_peer_from_table, decode_peer_table,
+            decode_counter, decode_lamport_from_delta, decode_peer_from_table, decode_peer_table,
             state_decode_error, FastStateSnapshot,
         },
     };
@@ -1719,7 +1719,7 @@ mod snapshot {
                 .map(|x| {
                     Ok(TreeID::new(
                         decode_peer_from_table(&peers, x.peer_idx, "Decode tree state failed")?,
-                        x.counter,
+                        decode_counter(x.counter, "Decode tree state failed")?,
                     ))
                 })
                 .collect::<loro_common::LoroResult<Vec<_>>>()?;
@@ -1791,6 +1791,41 @@ mod snapshot {
             };
 
             assert!(TreeState::decode_snapshot_fast(idx, (LoroValue::Null, &[1]), ctx).is_err());
+        }
+
+        #[test]
+        fn tree_fast_snapshot_rejects_negative_node_counter() {
+            let idx = ContainerIdx::from_index_and_type(0, ContainerType::Tree);
+            let configure = Default::default();
+            let ctx = ContainerCreationContext {
+                configure: &configure,
+                peer: 0,
+            };
+
+            let position = fractional_index::FractionalIndex::default();
+            let positions = PositionArena::from_positions([position.as_bytes()]);
+            let encoded = EncodedTree {
+                node_ids: vec![EncodedTreeNodeId {
+                    peer_idx: 0,
+                    counter: -1,
+                }],
+                nodes: vec![EncodedTreeNode {
+                    parent_idx_plus_two: 0,
+                    last_set_peer_idx: 0,
+                    last_set_counter: 0,
+                    last_set_lamport_sub_counter: 0,
+                    fractional_index_idx: 0,
+                }],
+                fractional_indexes: positions.encode().into(),
+                reserved_has_effect_bool_rle: vec![].into(),
+            };
+
+            let mut bytes = Vec::new();
+            leb128::write::unsigned(&mut bytes, 1).unwrap();
+            bytes.extend_from_slice(&1_u64.to_le_bytes());
+            bytes.extend_from_slice(&serde_columnar::to_vec(&encoded).unwrap());
+
+            assert!(TreeState::decode_snapshot_fast(idx, (LoroValue::Null, &bytes), ctx).is_err());
         }
     }
 }
