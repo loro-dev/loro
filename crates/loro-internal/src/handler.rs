@@ -33,10 +33,69 @@ pub use tree::TreeHandler;
 mod movable_list_apply_delta;
 mod tree;
 
-const INSERT_CONTAINER_VALUE_ARG_ERROR: &str =
-    "Cannot insert a LoroValue::Container directly. To create child container, use insert_container";
+const REGULAR_CONTAINER_VALUE_ARG_ERROR: &str =
+    "Cannot use a LoroValue::Container as a regular value. To create child container, use insert_container or set_container";
 
 mod text_update;
+
+fn ensure_no_regular_container_value(value: &LoroValue) -> LoroResult<()> {
+    let mut stack = vec![value];
+    while let Some(value) = stack.pop() {
+        match value {
+            LoroValue::Container(_) => {
+                return Err(LoroError::ArgErr(
+                    REGULAR_CONTAINER_VALUE_ARG_ERROR
+                        .to_string()
+                        .into_boxed_str(),
+                ));
+            }
+            LoroValue::List(list) => {
+                stack.extend(list.iter());
+            }
+            LoroValue::Map(map) => {
+                stack.extend(map.values());
+            }
+            LoroValue::Null
+            | LoroValue::Bool(_)
+            | LoroValue::Double(_)
+            | LoroValue::I64(_)
+            | LoroValue::Binary(_)
+            | LoroValue::String(_) => {}
+        }
+    }
+
+    Ok(())
+}
+
+fn checked_range_end(
+    pos: usize,
+    len: usize,
+    container_len: usize,
+    info: Box<str>,
+) -> LoroResult<usize> {
+    let end = pos.checked_add(len).ok_or_else(|| LoroError::OutOfBound {
+        pos: usize::MAX,
+        len: container_len,
+        info: info.clone(),
+    })?;
+    if end > container_len {
+        return Err(LoroError::OutOfBound {
+            pos: end,
+            len: container_len,
+            info,
+        });
+    }
+
+    Ok(end)
+}
+
+fn checked_delta_index_end(pos: usize, len: usize, container_len: usize) -> LoroResult<usize> {
+    pos.checked_add(len).ok_or_else(|| LoroError::OutOfBound {
+        pos: usize::MAX,
+        len: container_len,
+        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+    })
+}
 
 pub trait HandlerTrait: Clone + Sized {
     fn is_attached(&self) -> bool;
@@ -89,6 +148,15 @@ pub trait HandlerTrait: Clone + Sized {
 
 fn create_handler(inner: &BasicHandler, id: ContainerID) -> Handler {
     Handler::new_attached(id, inner.doc.clone())
+}
+
+fn value_to_value_or_handler(inner: &BasicHandler, value: LoroValue) -> ValueOrHandler {
+    match value {
+        LoroValue::Container(container_id) => {
+            ValueOrHandler::Handler(create_handler(inner, container_id))
+        }
+        value => ValueOrHandler::Value(value),
+    }
 }
 
 /// Flatten attributes that allow overlap
@@ -240,6 +308,10 @@ impl BasicHandler {
 
     fn is_deleted(&self) -> bool {
         self.doc.state.lock().is_deleted(self.container_idx)
+    }
+
+    fn has_decoded_state(&self) -> bool {
+        self.with_doc_state(|state| state.has_decoded_container_state(self.container_idx))
     }
 }
 
@@ -1407,9 +1479,10 @@ impl TextHandler {
     pub fn is_empty(&self) -> bool {
         match &self.inner {
             MaybeDetached::Detached(t) => t.lock().value.is_empty(),
-            MaybeDetached::Attached(a) => {
+            MaybeDetached::Attached(a) if a.has_decoded_state() => {
                 a.with_state(|state| state.as_richtext_state_mut().unwrap().is_empty())
             }
+            MaybeDetached::Attached(a) => a.get_value().as_string().unwrap().is_empty(),
         }
     }
 
@@ -1419,9 +1492,10 @@ impl TextHandler {
                 let t = t.lock();
                 t.value.len_utf8()
             }
-            MaybeDetached::Attached(a) => {
+            MaybeDetached::Attached(a) if a.has_decoded_state() => {
                 a.with_state(|state| state.as_richtext_state_mut().unwrap().len_utf8())
             }
+            MaybeDetached::Attached(a) => a.get_value().as_string().unwrap().len(),
         }
     }
 
@@ -1432,7 +1506,7 @@ impl TextHandler {
                 t.value.len_utf16()
             }
             MaybeDetached::Attached(a) => {
-                a.with_state(|state| state.as_richtext_state_mut().unwrap().len_utf16())
+                a.with_doc_state(|state| state.get_text_utf16_len(a.container_idx))
             }
         }
     }
@@ -1444,7 +1518,7 @@ impl TextHandler {
                 t.value.len_unicode()
             }
             MaybeDetached::Attached(a) => {
-                a.with_state(|state| state.as_richtext_state_mut().unwrap().len_unicode())
+                a.with_doc_state(|state| state.get_text_unicode_len(a.container_idx))
             }
         }
     }
@@ -1462,9 +1536,25 @@ impl TextHandler {
     fn len(&self, pos_type: PosType) -> usize {
         match &self.inner {
             MaybeDetached::Detached(t) => t.lock().value.len(pos_type),
-            MaybeDetached::Attached(a) => {
+            MaybeDetached::Attached(a) if a.has_decoded_state() || pos_type == PosType::Entity => {
                 a.with_state(|state| state.as_richtext_state_mut().unwrap().len(pos_type))
             }
+            MaybeDetached::Attached(a) => match pos_type {
+                PosType::Bytes => a.get_value().as_string().unwrap().len(),
+                PosType::Unicode => {
+                    a.with_doc_state(|state| state.get_text_unicode_len(a.container_idx))
+                }
+                PosType::Utf16 => {
+                    a.with_doc_state(|state| state.get_text_utf16_len(a.container_idx))
+                }
+                PosType::Event if cfg!(feature = "wasm") => {
+                    a.with_doc_state(|state| state.get_text_utf16_len(a.container_idx))
+                }
+                PosType::Event => {
+                    a.with_doc_state(|state| state.get_text_unicode_len(a.container_idx))
+                }
+                PosType::Entity => unreachable!("entity length is handled by the state path"),
+            },
         }
     }
 
@@ -1472,14 +1562,22 @@ impl TextHandler {
         let err = match pos_type {
             PosType::Bytes => Some(LoroError::UTF8InUnicodeCodePoint { pos }),
             PosType::Utf16 => Some(LoroError::UTF16InUnicodeCodePoint { pos }),
+            PosType::Event if cfg!(feature = "wasm") => {
+                Some(LoroError::UTF16InUnicodeCodePoint { pos })
+            }
             _ => None,
         };
 
         let Some(err) = err else {
             return Ok(());
         };
-        let Some(unicode_pos) = self.convert_pos(pos, pos_type, PosType::Unicode) else {
+
+        if pos > self.len(pos_type) {
             return Ok(());
+        }
+
+        let Some(unicode_pos) = self.convert_pos(pos, pos_type, PosType::Unicode) else {
+            return Err(err);
         };
         if self.convert_pos(unicode_pos, PosType::Unicode, pos_type) != Some(pos) {
             return Err(err);
@@ -1546,14 +1644,18 @@ impl TextHandler {
                 };
                 t.value.get_char_by_event_index(event_pos)
             }
-            MaybeDetached::Attached(a) => a.with_state(|state| {
-                let state = state.as_richtext_state_mut().unwrap();
-                let event_pos = match pos_type {
-                    PosType::Event => pos,
-                    _ => state.index_to_event_index(pos, pos_type),
-                };
-                state.get_char_by_event_index(event_pos)
-            }),
+            MaybeDetached::Attached(a) if a.has_decoded_state() || pos_type == PosType::Entity => a
+                .with_state(|state| {
+                    let state = state.as_richtext_state_mut().unwrap();
+                    let event_pos = match pos_type {
+                        PosType::Event => pos,
+                        _ => state.index_to_event_index(pos, pos_type),
+                    };
+                    state.get_char_by_event_index(event_pos)
+                }),
+            MaybeDetached::Attached(a) => {
+                return text_char_at(a.get_value().as_string().unwrap(), pos, pos_type);
+            }
         } {
             Ok(c)
         } else {
@@ -1620,24 +1722,39 @@ impl TextHandler {
                 };
                 t.value.get_text_slice_by_event_index(start, end - start)
             }
-            MaybeDetached::Attached(a) => a.with_state(|state| {
-                let state = state.as_richtext_state_mut().unwrap();
-                let len = state.len(pos_type);
-                if end_index > len {
-                    return Err(LoroError::OutOfBound {
-                        pos: end_index,
-                        len,
-                        info: info(),
-                    });
-                }
-                let (start, end) = match pos_type {
-                    PosType::Event => (start_index, end_index),
-                    _ => (
-                        state.index_to_event_index(start_index, pos_type),
-                        state.index_to_event_index(end_index, pos_type),
-                    ),
-                };
-                state.get_text_slice_by_event_index(start, end - start)
+            MaybeDetached::Attached(a) if a.has_decoded_state() || pos_type == PosType::Entity => a
+                .with_state(|state| {
+                    let state = state.as_richtext_state_mut().unwrap();
+                    let len = state.len(pos_type);
+                    if end_index > len {
+                        return Err(LoroError::OutOfBound {
+                            pos: end_index,
+                            len,
+                            info: info(),
+                        });
+                    }
+                    let (start, end) = match pos_type {
+                        PosType::Event => (start_index, end_index),
+                        _ => (
+                            state.index_to_event_index(start_index, pos_type),
+                            state.index_to_event_index(end_index, pos_type),
+                        ),
+                    };
+                    state.get_text_slice_by_event_index(start, end - start)
+                }),
+            MaybeDetached::Attached(a) => text_slice(
+                a.get_value().as_string().unwrap(),
+                start_index,
+                end_index,
+                pos_type,
+            )
+            .map_err(|err| match err {
+                LoroError::OutOfBound { pos, len, .. } => LoroError::OutOfBound {
+                    pos,
+                    len,
+                    info: info(),
+                },
+                err => err,
             }),
         }
     }
@@ -1705,7 +1822,13 @@ impl TextHandler {
     ///
     /// This method requires auto_commit to be enabled.
     pub fn splice(&self, pos: usize, len: usize, s: &str, pos_type: PosType) -> LoroResult<String> {
-        let x = self.slice(pos, pos + len, pos_type)?;
+        let end = checked_range_end(
+            pos,
+            len,
+            self.len(pos_type),
+            format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+        )?;
+        let x = self.slice(pos, end, pos_type)?;
         self.delete(pos, len, pos_type)?;
         self.insert(pos, s, pos_type)?;
         Ok(x)
@@ -1800,15 +1923,14 @@ impl TextHandler {
         }
 
         let text_len = self.len(pos_type);
-        if pos + len > text_len {
-            return Err(LoroError::OutOfBound {
-                pos: pos + len,
-                len: text_len,
-                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-            });
-        }
+        let end = checked_range_end(
+            pos,
+            len,
+            text_len,
+            format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+        )?;
         self.validate_text_boundary(pos, pos_type)?;
-        self.validate_text_boundary(pos + len, pos_type)?;
+        self.validate_text_boundary(end, pos_type)?;
 
         match &self.inner {
             MaybeDetached::Detached(t) => {
@@ -2017,16 +2139,16 @@ impl TextHandler {
             return Ok(());
         }
 
-        if pos + len > self.len(pos_type) {
-            error!("pos={} len={} len_event={}", pos, len, self.len_event());
-            return Err(LoroError::OutOfBound {
-                pos: pos + len,
-                len: self.len_event(),
-                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-            });
-        }
+        let text_len = self.len(pos_type);
+        let end = checked_range_end(
+            pos,
+            len,
+            text_len,
+            format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+        )
+        .inspect_err(|_| error!("pos={} len={} len={}", pos, len, text_len))?;
         self.validate_text_boundary(pos, pos_type)?;
-        self.validate_text_boundary(pos + len, pos_type)?;
+        self.validate_text_boundary(end, pos_type)?;
 
         let inner = self.inner.try_attached_state()?;
         let s = tracing::span!(tracing::Level::INFO, "delete", "pos={} len={}", pos, len);
@@ -2036,7 +2158,7 @@ impl TextHandler {
         let ranges = inner.with_state(|state| {
             let richtext_state = state.as_richtext_state_mut().unwrap();
             event_pos = richtext_state.index_to_event_index(pos, pos_type);
-            let event_end = richtext_state.index_to_event_index(pos + len, pos_type);
+            let event_end = richtext_state.index_to_event_index(end, pos_type);
             event_len = event_end - event_pos;
 
             richtext_state.get_text_entity_ranges_in_event_index_range(event_pos, event_len)
@@ -2108,6 +2230,7 @@ impl TextHandler {
                 "Start must be less than end".to_string().into_boxed_str(),
             ));
         }
+        ensure_no_regular_container_value(value)?;
 
         let len = state.len(pos_type);
         if end > len {
@@ -2188,6 +2311,7 @@ impl TextHandler {
                 "Start must be less than end".to_string().into_boxed_str(),
             ));
         }
+        ensure_no_regular_container_value(&value)?;
 
         let inner = self.inner.try_attached_state()?;
         let key: InternalString = key.into();
@@ -2333,7 +2457,7 @@ impl TextHandler {
                         empty_attr.as_ref().unwrap()
                     });
 
-                    let end = index + insert_len;
+                    let end = checked_delta_index_end(index, insert_len, self.len_event())?;
                     let override_styles = self.insert_with_txn_and_attr(
                         txn,
                         index,
@@ -2357,7 +2481,7 @@ impl TextHandler {
                     self.delete_with_txn(txn, index, *delete, PosType::Event)?;
                 }
                 TextDelta::Retain { attributes, retain } => {
-                    let end = index + *retain;
+                    let end = checked_delta_index_end(index, *retain, self.len_event())?;
                     match attributes {
                         Some(attr) if !attr.is_empty() => {
                             let mut pending_mark = PendingMark {
@@ -2379,7 +2503,12 @@ impl TextHandler {
             }
         }
 
-        let mut len = self.len_event();
+        let mut len = match &self.inner {
+            MaybeDetached::Detached(_) => self.len_event(),
+            MaybeDetached::Attached(a) => {
+                a.with_state(|state| state.as_richtext_state_mut().unwrap().len(PosType::Event))
+            }
+        };
         for pending_mark in marks {
             if pending_mark.start >= len {
                 self.insert_with_txn(
@@ -2619,7 +2748,7 @@ impl TextHandler {
                 };
                 (event_index, unicode_index)
             }
-            MaybeDetached::Attached(a) => {
+            MaybeDetached::Attached(a) if a.has_decoded_state() => {
                 let res: Option<(usize, usize)> = a.with_state(|state| {
                     let state = state.as_richtext_state_mut().unwrap();
                     if index > state.len(from) {
@@ -2639,10 +2768,14 @@ impl TextHandler {
                     Some((event_index, unicode_index))
                 });
 
-                match res {
-                    Some(v) => v,
-                    None => return None,
-                }
+                res?
+            }
+            MaybeDetached::Attached(a) => {
+                let value = a.get_value();
+                let s = value.as_string().unwrap();
+                let unicode_index = text_pos_to_unicode(s, index, from)?;
+                let event_index = unicode_to_text_pos(s, unicode_index, PosType::Event)?;
+                (event_index, unicode_index)
             }
         };
 
@@ -2659,7 +2792,7 @@ impl TextHandler {
                         }
                         t.value.get_text_slice_by_event_index(0, event_index).ok()?
                     }
-                    MaybeDetached::Attached(a) => {
+                    MaybeDetached::Attached(a) if a.has_decoded_state() => {
                         let res: Result<String, ()> = a.with_state(|state| {
                             let state = state.as_richtext_state_mut().unwrap();
                             if event_index > state.len_event() {
@@ -2674,6 +2807,11 @@ impl TextHandler {
                             Ok(v) => v,
                             Err(_) => return None,
                         }
+                    }
+                    MaybeDetached::Attached(a) => {
+                        let value = a.get_value();
+                        let s = value.as_string().unwrap();
+                        return unicode_to_text_pos(s, unicode_index, to);
                     }
                 };
 
@@ -2695,6 +2833,162 @@ fn event_len(s: &str) -> usize {
     } else {
         s.chars().count()
     }
+}
+
+fn text_len(s: &str, pos_type: PosType) -> Option<usize> {
+    Some(match pos_type {
+        PosType::Bytes => s.len(),
+        PosType::Unicode => s.chars().count(),
+        PosType::Utf16 => count_utf16_len(s.as_bytes()),
+        PosType::Event => event_len(s),
+        PosType::Entity => return None,
+    })
+}
+
+fn text_pos_to_unicode(s: &str, index: usize, pos_type: PosType) -> Option<usize> {
+    match pos_type {
+        PosType::Unicode => (index <= s.chars().count()).then_some(index),
+        PosType::Bytes => {
+            if index > s.len() {
+                None
+            } else {
+                Some(
+                    s.char_indices()
+                        .take_while(|(pos, c)| *pos + c.len_utf8() <= index)
+                        .count(),
+                )
+            }
+        }
+        PosType::Utf16 => utf16_to_unicode_pos(s, index),
+        PosType::Event if cfg!(feature = "wasm") => utf16_to_unicode_pos(s, index),
+        PosType::Event => (index <= s.chars().count()).then_some(index),
+        PosType::Entity => None,
+    }
+}
+
+fn unicode_to_text_pos(s: &str, index: usize, pos_type: PosType) -> Option<usize> {
+    match pos_type {
+        PosType::Unicode => (index <= s.chars().count()).then_some(index),
+        PosType::Bytes => unicode_to_byte_pos(s, index),
+        PosType::Utf16 => unicode_to_utf16_pos(s, index),
+        PosType::Event if cfg!(feature = "wasm") => unicode_to_utf16_pos(s, index),
+        PosType::Event => (index <= s.chars().count()).then_some(index),
+        PosType::Entity => None,
+    }
+}
+
+fn unicode_to_byte_pos(s: &str, index: usize) -> Option<usize> {
+    if index == 0 {
+        return Some(0);
+    }
+
+    let mut unicode_pos = 0;
+    for (byte_pos, _) in s.char_indices() {
+        if unicode_pos == index {
+            return Some(byte_pos);
+        }
+        unicode_pos += 1;
+    }
+
+    (unicode_pos == index).then_some(s.len())
+}
+
+fn unicode_to_utf16_pos(s: &str, index: usize) -> Option<usize> {
+    let mut unicode_pos = 0;
+    let mut utf16_pos = 0;
+    if index == 0 {
+        return Some(0);
+    }
+
+    for c in s.chars() {
+        unicode_pos += 1;
+        utf16_pos += c.len_utf16();
+        if unicode_pos == index {
+            return Some(utf16_pos);
+        }
+    }
+
+    (unicode_pos == index).then_some(utf16_pos)
+}
+
+fn utf16_to_unicode_pos(s: &str, index: usize) -> Option<usize> {
+    let mut unicode_pos = 0;
+    let mut utf16_pos = 0;
+    if index == 0 {
+        return Some(0);
+    }
+
+    for c in s.chars() {
+        let next_utf16_pos = utf16_pos + c.len_utf16();
+        if index < next_utf16_pos {
+            return Some(unicode_pos);
+        }
+        if index == next_utf16_pos {
+            return Some(unicode_pos + 1);
+        }
+        utf16_pos = next_utf16_pos;
+        unicode_pos += 1;
+    }
+
+    (index == utf16_pos).then_some(unicode_pos)
+}
+
+fn text_boundary_error(pos: usize, pos_type: PosType) -> LoroError {
+    match pos_type {
+        PosType::Bytes => LoroError::UTF8InUnicodeCodePoint { pos },
+        PosType::Utf16 => LoroError::UTF16InUnicodeCodePoint { pos },
+        PosType::Event if cfg!(feature = "wasm") => LoroError::UTF16InUnicodeCodePoint { pos },
+        _ => LoroError::OutOfBound {
+            pos,
+            len: 0,
+            info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+        },
+    }
+}
+
+fn text_char_at(s: &str, pos: usize, pos_type: PosType) -> LoroResult<char> {
+    let len = text_len(s, pos_type).unwrap_or(0);
+    if pos >= len {
+        return Err(LoroError::OutOfBound {
+            pos,
+            len,
+            info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+        });
+    }
+
+    let unicode_pos =
+        text_pos_to_unicode(s, pos, pos_type).ok_or_else(|| text_boundary_error(pos, pos_type))?;
+    s.chars().nth(unicode_pos).ok_or(LoroError::OutOfBound {
+        pos,
+        len,
+        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+    })
+}
+
+fn text_slice(s: &str, start: usize, end: usize, pos_type: PosType) -> LoroResult<String> {
+    if end < start {
+        return Err(LoroError::EndIndexLessThanStartIndex { start, end });
+    }
+    if start == end {
+        return Ok(String::new());
+    }
+
+    let len = text_len(s, pos_type).unwrap_or(0);
+    if end > len {
+        return Err(LoroError::OutOfBound {
+            pos: end,
+            len,
+            info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+        });
+    }
+
+    let start = text_pos_to_unicode(s, start, pos_type)
+        .ok_or_else(|| text_boundary_error(start, pos_type))?;
+    let end =
+        text_pos_to_unicode(s, end, pos_type).ok_or_else(|| text_boundary_error(end, pos_type))?;
+    let start = unicode_to_byte_pos(s, start).expect("unicode index must map to a byte boundary");
+    let end = unicode_to_byte_pos(s, end).expect("unicode index must map to a byte boundary");
+    Ok(s[start..end].to_string())
 }
 
 impl ListHandler {
@@ -2719,7 +3013,9 @@ impl ListHandler {
                         len,
                     });
                 }
-                list.value.insert(pos, ValueOrHandler::Value(v.into()));
+                let value = v.into();
+                ensure_no_regular_container_value(&value)?;
+                list.value.insert(pos, ValueOrHandler::Value(value));
                 Ok(())
             }
             MaybeDetached::Attached(a) => {
@@ -2743,13 +3039,7 @@ impl ListHandler {
         }
 
         let inner = self.inner.try_attached_state()?;
-        if let Some(_container) = v.as_container() {
-            return Err(LoroError::ArgErr(
-                INSERT_CONTAINER_VALUE_ARG_ERROR
-                    .to_string()
-                    .into_boxed_str(),
-            ));
-        }
+        ensure_no_regular_container_value(&v)?;
 
         txn.apply_local_op(
             inner.container_idx,
@@ -2766,7 +3056,9 @@ impl ListHandler {
         match &self.inner {
             MaybeDetached::Detached(l) => {
                 let mut list = l.lock();
-                list.value.push(ValueOrHandler::Value(v.into()));
+                let value = v.into();
+                ensure_no_regular_container_value(&value)?;
+                list.value.push(ValueOrHandler::Value(value));
                 Ok(())
             }
             MaybeDetached::Attached(a) => a.with_txn(|txn| self.push_with_txn(txn, v.into())),
@@ -2859,14 +3151,13 @@ impl ListHandler {
         match &self.inner {
             MaybeDetached::Detached(l) => {
                 let mut list = l.lock();
-                if pos + len > list.value.len() {
-                    return Err(LoroError::OutOfBound {
-                        pos: pos + len,
-                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-                        len: list.value.len(),
-                    });
-                }
-                list.value.drain(pos..pos + len);
+                let end = checked_range_end(
+                    pos,
+                    len,
+                    list.value.len(),
+                    format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                )?;
+                list.value.drain(pos..end);
                 Ok(())
             }
             MaybeDetached::Attached(a) => a.with_txn(|txn| self.delete_with_txn(txn, pos, len)),
@@ -2878,20 +3169,18 @@ impl ListHandler {
             return Ok(());
         }
 
-        if pos + len > self.len() {
-            return Err(LoroError::OutOfBound {
-                pos: pos + len,
-                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-                len: self.len(),
-            });
-        }
+        let list_len = self.len();
+        let end = checked_range_end(
+            pos,
+            len,
+            list_len,
+            format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+        )?;
 
         let inner = self.inner.try_attached_state()?;
         let ids: Vec<_> = inner.with_state(|state| {
             let list = state.as_list_state().unwrap();
-            (pos..pos + len)
-                .map(|i| list.get_id_at(i).unwrap())
-                .collect()
+            (pos..end).map(|i| list.get_id_at(i).unwrap()).collect()
         });
 
         for id in ids.into_iter() {
@@ -2930,19 +3219,17 @@ impl ListHandler {
                     )),
                 }
             }
-            MaybeDetached::Attached(a) => {
-                let Some(value) = a.with_state(|state| {
-                    state.as_list_state().as_ref().unwrap().get(index).cloned()
-                }) else {
+            MaybeDetached::Attached(_) => {
+                let Some(value) = self.get_(index) else {
                     return Err(LoroError::OutOfBound {
                         pos: index,
                         info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-                        len: a.with_state(|state| state.as_list_state().unwrap().len()),
+                        len: self.len(),
                     });
                 };
                 match value {
-                    LoroValue::Container(id) => Ok(create_handler(a, id)),
-                    _ => Err(LoroError::ArgErr(
+                    ValueOrHandler::Handler(handler) => Ok(handler),
+                    ValueOrHandler::Value(value) => Err(LoroError::ArgErr(
                         format!(
                             "Expected container at index {}, but found {:?}",
                             index, value
@@ -2958,7 +3245,7 @@ impl ListHandler {
         match &self.inner {
             MaybeDetached::Detached(l) => l.lock().value.len(),
             MaybeDetached::Attached(a) => {
-                a.with_state(|state| state.as_list_state().unwrap().len())
+                a.with_doc_state(|state| state.get_list_len(a.container_idx))
             }
         }
     }
@@ -2977,10 +3264,9 @@ impl ListHandler {
     pub fn get(&self, index: usize) -> Option<LoroValue> {
         match &self.inner {
             MaybeDetached::Detached(l) => l.lock().value.get(index).map(|x| x.to_value()),
-            MaybeDetached::Attached(a) => a.with_state(|state| {
-                let a = state.as_list_state().unwrap();
-                a.get(index).cloned()
-            }),
+            MaybeDetached::Attached(a) => {
+                a.with_doc_state(|state| state.get_list_value_at(a.container_idx, index))
+            }
         }
     }
 
@@ -2992,15 +3278,9 @@ impl ListHandler {
                 l.value.get(index).cloned()
             }
             MaybeDetached::Attached(inner) => {
-                let value =
-                    inner.with_state(|state| state.as_list_state().unwrap().get(index).cloned());
-                match value {
-                    Some(LoroValue::Container(container_id)) => Some(ValueOrHandler::Handler(
-                        create_handler(inner, container_id.clone()),
-                    )),
-                    Some(value) => Some(ValueOrHandler::Value(value.clone())),
-                    None => None,
-                }
+                let value = inner
+                    .with_doc_state(|state| state.get_list_value_at(inner.container_idx, index));
+                value.map(|value| value_to_value_or_handler(inner, value))
             }
         }
     }
@@ -3017,22 +3297,12 @@ impl ListHandler {
                 }
             }
             MaybeDetached::Attached(inner) => {
-                let mut temp = vec![];
-                inner.with_state(|state| {
-                    let a = state.as_list_state().unwrap();
-                    for v in a.iter() {
-                        match v {
-                            LoroValue::Container(c) => {
-                                temp.push(ValueOrHandler::Handler(create_handler(
-                                    inner,
-                                    c.clone(),
-                                )));
-                            }
-                            value => {
-                                temp.push(ValueOrHandler::Value(value.clone()));
-                            }
-                        }
-                    }
+                let temp = inner.with_doc_state(|state| {
+                    state
+                        .get_list_values(inner.container_idx)
+                        .into_iter()
+                        .map(|value| value_to_value_or_handler(inner, value))
+                        .collect::<Vec<_>>()
                 });
                 for v in temp.into_iter() {
                     f(v);
@@ -3188,7 +3458,9 @@ impl MovableListHandler {
                         len: d.value.len(),
                     });
                 }
-                d.value.insert(pos, ValueOrHandler::Value(v.into()));
+                let value = v.into();
+                ensure_no_regular_container_value(&value)?;
+                d.value.insert(pos, ValueOrHandler::Value(value));
                 Ok(())
             }
             MaybeDetached::Attached(a) => {
@@ -3212,13 +3484,7 @@ impl MovableListHandler {
             });
         }
 
-        if v.is_container() {
-            return Err(LoroError::ArgErr(
-                INSERT_CONTAINER_VALUE_ARG_ERROR
-                    .to_string()
-                    .into_boxed_str(),
-            ));
-        }
+        ensure_no_regular_container_value(&v)?;
 
         let op_index = self.with_state(|state| {
             let list = state.as_movable_list_state().unwrap();
@@ -3344,7 +3610,7 @@ impl MovableListHandler {
                 Ok(d.value.pop())
             }
             MaybeDetached::Attached(a) => {
-                if self.len() == 0 {
+                if self.is_empty() {
                     return Ok(None);
                 }
                 let last = self.len() - 1;
@@ -3449,7 +3715,9 @@ impl MovableListHandler {
                         len: d.value.len(),
                     });
                 }
-                d.value[index] = ValueOrHandler::Value(value.into());
+                let value = value.into();
+                ensure_no_regular_container_value(&value)?;
+                d.value[index] = ValueOrHandler::Value(value);
                 Ok(())
             }
             MaybeDetached::Attached(a) => {
@@ -3480,6 +3748,7 @@ impl MovableListHandler {
         else {
             unreachable!()
         };
+        ensure_no_regular_container_value(&value)?;
 
         let op = crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Set {
             elem_id: elem_id.to_id(),
@@ -3556,14 +3825,13 @@ impl MovableListHandler {
         match &self.inner {
             MaybeDetached::Detached(d) => {
                 let mut d = d.lock();
-                if pos + len > d.value.len() {
-                    return Err(LoroError::OutOfBound {
-                        pos: pos + len,
-                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-                        len: d.value.len(),
-                    });
-                }
-                d.value.drain(pos..pos + len);
+                let end = checked_range_end(
+                    pos,
+                    len,
+                    d.value.len(),
+                    format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                )?;
+                d.value.drain(pos..end);
                 Ok(())
             }
             MaybeDetached::Attached(a) => a.with_txn(|txn| self.delete_with_txn(txn, pos, len)),
@@ -3576,20 +3844,20 @@ impl MovableListHandler {
             return Ok(());
         }
 
-        if pos + len > self.len() {
-            return Err(LoroError::OutOfBound {
-                pos: pos + len,
-                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-                len: self.len(),
-            });
-        }
+        let list_len = self.len();
+        let end = checked_range_end(
+            pos,
+            len,
+            list_len,
+            format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+        )?;
 
         let (ids, new_poses) = self.with_state(|state| {
             let list = state.as_movable_list_state().unwrap();
-            let ids: Vec<_> = (pos..pos + len)
+            let ids: Vec<_> = (pos..end)
                 .map(|i| list.get_list_id_at(i, IndexType::ForUser).unwrap())
                 .collect();
-            let poses: Vec<_> = (pos..pos + len)
+            let poses: Vec<_> = (pos..end)
                 // need to -i because we delete the previous ones
                 .map(|user_index| {
                     let op_index = list
@@ -3641,24 +3909,17 @@ impl MovableListHandler {
                     )),
                 }
             }
-            MaybeDetached::Attached(a) => {
-                let Some(value) = a.with_state(|state| {
-                    state
-                        .as_movable_list_state()
-                        .as_ref()
-                        .unwrap()
-                        .get(index, IndexType::ForUser)
-                        .cloned()
-                }) else {
+            MaybeDetached::Attached(_) => {
+                let Some(value) = self.get_(index) else {
                     return Err(LoroError::OutOfBound {
                         pos: index,
                         info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-                        len: a.with_state(|state| state.as_list_state().unwrap().len()),
+                        len: self.len(),
                     });
                 };
                 match value {
-                    LoroValue::Container(id) => Ok(create_handler(a, id)),
-                    _ => Err(LoroError::ArgErr(
+                    ValueOrHandler::Handler(handler) => Ok(handler),
+                    ValueOrHandler::Value(value) => Err(LoroError::ArgErr(
                         format!(
                             "Expected container at index {}, but found {:?}",
                             index, value
@@ -3677,7 +3938,7 @@ impl MovableListHandler {
                 d.value.len()
             }
             MaybeDetached::Attached(a) => {
-                a.with_state(|state| state.as_movable_list_state().unwrap().len())
+                a.with_doc_state(|state| state.get_list_len(a.container_idx))
             }
         }
     }
@@ -3701,10 +3962,9 @@ impl MovableListHandler {
                 let d = d.lock();
                 d.value.get(index).map(|v| v.to_value())
             }
-            MaybeDetached::Attached(a) => a.with_state(|state| {
-                let a = state.as_movable_list_state().unwrap();
-                a.get(index, IndexType::ForUser).cloned()
-            }),
+            MaybeDetached::Attached(a) => {
+                a.with_doc_state(|state| state.get_list_value_at(a.container_idx, index))
+            }
         }
     }
 
@@ -3715,19 +3975,11 @@ impl MovableListHandler {
                 let d = d.lock();
                 d.value.get(index).cloned()
             }
-            MaybeDetached::Attached(m) => m.with_state(|state| {
-                let a = state.as_movable_list_state().unwrap();
-                match a.get(index, IndexType::ForUser) {
-                    Some(v) => {
-                        if let LoroValue::Container(c) = v {
-                            Some(ValueOrHandler::Handler(create_handler(m, c.clone())))
-                        } else {
-                            Some(ValueOrHandler::Value(v.clone()))
-                        }
-                    }
-                    None => None,
-                }
-            }),
+            MaybeDetached::Attached(m) => {
+                let value =
+                    m.with_doc_state(|state| state.get_list_value_at(m.container_idx, index));
+                value.map(|value| value_to_value_or_handler(m, value))
+            }
         }
     }
 
@@ -3743,19 +3995,12 @@ impl MovableListHandler {
                 }
             }
             MaybeDetached::Attached(m) => {
-                let mut temp = vec![];
-                m.with_state(|state| {
-                    let a = state.as_movable_list_state().unwrap();
-                    for v in a.iter() {
-                        match v {
-                            LoroValue::Container(c) => {
-                                temp.push(ValueOrHandler::Handler(create_handler(m, c.clone())));
-                            }
-                            value => {
-                                temp.push(ValueOrHandler::Value(value.clone()));
-                            }
-                        }
-                    }
+                let temp = m.with_doc_state(|state| {
+                    state
+                        .get_list_values(m.container_idx)
+                        .into_iter()
+                        .map(|value| value_to_value_or_handler(m, value))
+                        .collect::<Vec<_>>()
                 });
 
                 for v in temp.into_iter() {
@@ -3912,8 +4157,9 @@ impl MapHandler {
         match &self.inner {
             MaybeDetached::Detached(m) => {
                 let mut m = m.lock();
-                m.value
-                    .insert(key.into(), ValueOrHandler::Value(value.into()));
+                let value = value.into();
+                ensure_no_regular_container_value(&value)?;
+                m.value.insert(key.into(), ValueOrHandler::Value(value));
                 Ok(())
             }
             MaybeDetached::Attached(a) => {
@@ -3927,20 +4173,15 @@ impl MapHandler {
         match &self.inner {
             MaybeDetached::Detached(m) => {
                 let mut m = m.lock();
-                m.value
-                    .insert(key.into(), ValueOrHandler::Value(value.into()));
+                let value = value.into();
+                ensure_no_regular_container_value(&value)?;
+                m.value.insert(key.into(), ValueOrHandler::Value(value));
                 Ok(())
             }
             MaybeDetached::Attached(a) => a.with_txn(|txn| {
                 let this = &self;
                 let value = value.into();
-                if let Some(_value) = value.as_container() {
-                    return Err(LoroError::ArgErr(
-                        INSERT_CONTAINER_VALUE_ARG_ERROR
-                            .to_string()
-                            .into_boxed_str(),
-                    ));
-                }
+                ensure_no_regular_container_value(&value)?;
 
                 let inner = this.inner.try_attached_state()?;
                 txn.apply_local_op(
@@ -3965,13 +4206,7 @@ impl MapHandler {
         key: &str,
         value: LoroValue,
     ) -> LoroResult<()> {
-        if let Some(_value) = value.as_container() {
-            return Err(LoroError::ArgErr(
-                INSERT_CONTAINER_VALUE_ARG_ERROR
-                    .to_string()
-                    .into_boxed_str(),
-            ));
-        }
+        ensure_no_regular_container_value(&value)?;
 
         if self.get(key).map(|x| x == value).unwrap_or(false) {
             // skip if the value is already set
@@ -4072,24 +4307,14 @@ impl MapHandler {
                 }
             }
             MaybeDetached::Attached(inner) => {
-                let mut temp = vec![];
-                inner.with_state(|state| {
-                    let a = state.as_map_state().unwrap();
-                    for (k, v) in a.iter() {
-                        if let Some(v) = &v.value {
-                            match v {
-                                LoroValue::Container(c) => {
-                                    temp.push((
-                                        k.to_string(),
-                                        ValueOrHandler::Handler(create_handler(inner, c.clone())),
-                                    ));
-                                }
-                                value => {
-                                    temp.push((k.to_string(), ValueOrHandler::Value(value.clone())))
-                                }
-                            }
-                        }
-                    }
+                let temp = inner.with_doc_state(|state| {
+                    state
+                        .get_map_entries(inner.container_idx)
+                        .into_iter()
+                        .map(|(key, value)| {
+                            (key.to_string(), value_to_value_or_handler(inner, value))
+                        })
+                        .collect::<Vec<_>>()
                 });
 
                 for (k, v) in temp.into_iter() {
@@ -4111,19 +4336,18 @@ impl MapHandler {
                     ValueOrHandler::Handler(h) => Ok(h.clone()),
                 }
             }
-            MaybeDetached::Attached(inner) => {
-                let container_id = inner.with_state(|state| {
-                    state
-                        .as_map_state()
-                        .as_ref()
-                        .unwrap()
-                        .get(key)
-                        .unwrap()
-                        .as_container()
-                        .unwrap()
-                        .clone()
-                });
-                Ok(create_handler(inner, container_id))
+            MaybeDetached::Attached(_) => {
+                let Some(value) = self.get_(key) else {
+                    return Err(LoroError::ArgErr(
+                        format!("Key {key} does not exist").into_boxed_str(),
+                    ));
+                };
+                match value {
+                    ValueOrHandler::Handler(handler) => Ok(handler),
+                    ValueOrHandler::Value(value) => Err(LoroError::ArgErr(
+                        format!("Expected Handler but found {:?}", value).into_boxed_str(),
+                    )),
+                }
             }
         }
     }
@@ -4146,7 +4370,7 @@ impl MapHandler {
                 m.value.get(key).map(|v| v.to_value())
             }
             MaybeDetached::Attached(inner) => {
-                inner.with_state(|state| state.as_map_state().unwrap().get(key).cloned())
+                inner.with_doc_state(|state| state.get_map_value_by_key(inner.container_idx, key))
             }
         }
     }
@@ -4159,15 +4383,9 @@ impl MapHandler {
                 m.value.get(key).cloned()
             }
             MaybeDetached::Attached(inner) => {
-                let value =
-                    inner.with_state(|state| state.as_map_state().unwrap().get(key).cloned());
-                match value {
-                    Some(LoroValue::Container(container_id)) => Some(ValueOrHandler::Handler(
-                        create_handler(inner, container_id.clone()),
-                    )),
-                    Some(value) => Some(ValueOrHandler::Value(value.clone())),
-                    None => None,
-                }
+                let value = inner
+                    .with_doc_state(|state| state.get_map_value_by_key(inner.container_idx, key));
+                value.map(|value| value_to_value_or_handler(inner, value))
             }
         }
     }
@@ -4202,7 +4420,9 @@ impl MapHandler {
     pub fn len(&self) -> usize {
         match &self.inner {
             MaybeDetached::Detached(m) => m.lock().value.len(),
-            MaybeDetached::Attached(a) => a.with_state(|state| state.as_map_state().unwrap().len()),
+            MaybeDetached::Attached(a) => {
+                a.with_doc_state(|state| state.get_map_len(a.container_idx))
+            }
         }
     }
 
@@ -4246,48 +4466,33 @@ impl MapHandler {
     }
 
     pub fn keys(&self) -> impl Iterator<Item = InternalString> + '_ {
-        let mut keys: Vec<InternalString> = Vec::with_capacity(self.len());
-        match &self.inner {
+        let keys: Vec<InternalString> = match &self.inner {
             MaybeDetached::Detached(m) => {
                 let m = m.lock();
-                keys = m.value.keys().map(|x| x.as_str().into()).collect();
+                m.value.keys().map(|x| x.as_str().into()).collect()
             }
             MaybeDetached::Attached(a) => {
-                a.with_state(|state| {
-                    for (k, v) in state.as_map_state().unwrap().iter() {
-                        if v.value.is_some() {
-                            keys.push(k.clone());
-                        }
-                    }
-                });
+                a.with_doc_state(|state| state.get_map_keys(a.container_idx))
             }
-        }
+        };
 
         keys.into_iter()
     }
 
     pub fn values(&self) -> impl Iterator<Item = ValueOrHandler> + '_ {
-        let mut values: Vec<ValueOrHandler> = Vec::with_capacity(self.len());
-        match &self.inner {
+        let values: Vec<ValueOrHandler> = match &self.inner {
             MaybeDetached::Detached(m) => {
                 let m = m.lock();
-                values = m.value.values().cloned().collect();
+                m.value.values().cloned().collect()
             }
-            MaybeDetached::Attached(a) => {
-                a.with_state(|state| {
-                    for (_, v) in state.as_map_state().unwrap().iter() {
-                        let value = match &v.value {
-                            Some(LoroValue::Container(container_id)) => {
-                                ValueOrHandler::Handler(create_handler(a, container_id.clone()))
-                            }
-                            Some(value) => ValueOrHandler::Value(value.clone()),
-                            None => continue,
-                        };
-                        values.push(value);
-                    }
-                });
-            }
-        }
+            MaybeDetached::Attached(a) => a.with_doc_state(|state| {
+                state
+                    .get_map_values(a.container_idx)
+                    .into_iter()
+                    .map(|value| value_to_value_or_handler(a, value))
+                    .collect()
+            }),
+        };
 
         values.into_iter()
     }
@@ -4489,6 +4694,7 @@ mod test {
 
     use super::{
         Handler, HandlerTrait, ListHandler, MapHandler, MovableListHandler, TextDelta, TextHandler,
+        ValueOrHandler,
     };
     use crate::container::list::list_op::ListOp;
     use crate::cursor::PosType;
@@ -4499,8 +4705,28 @@ mod test {
     use crate::version::Frontiers;
     use crate::LoroDoc;
     use crate::{fx_map, ToJson};
-    use loro_common::{ContainerID, ContainerType, LoroValue, ID};
+    use loro_common::{ContainerID, ContainerType, LoroError, LoroValue, ID};
     use serde_json::json;
+
+    fn recheck_fast_blob(mut bytes: Vec<u8>) -> Vec<u8> {
+        let checksum = xxhash_rust::xxh32::xxh32(&bytes[20..], u32::from_le_bytes(*b"LORO"));
+        bytes[16..20].copy_from_slice(&checksum.to_le_bytes());
+        bytes
+    }
+
+    fn replace_fast_snapshot_state_bytes(mut snapshot: Vec<u8>, state_bytes: &[u8]) -> Vec<u8> {
+        let mut body = &snapshot[22..];
+        let oplog_len = u32::from_le_bytes(body[..4].try_into().unwrap()) as usize;
+        body = &body[4 + oplog_len..];
+        let old_state_len = u32::from_le_bytes(body[..4].try_into().unwrap()) as usize;
+        let state_len_pos = 22 + 4 + oplog_len;
+        let state_start = state_len_pos + 4;
+        let state_end = state_start + old_state_len;
+        snapshot[state_len_pos..state_start]
+            .copy_from_slice(&(state_bytes.len() as u32).to_le_bytes());
+        snapshot.splice(state_start..state_end, state_bytes.iter().copied());
+        recheck_fast_blob(snapshot)
+    }
 
     fn insert_many_with_single_list_op(
         txn: &mut crate::txn::Transaction,
@@ -4694,6 +4920,239 @@ mod test {
                 {"insert": " world"}
             ])
         );
+    }
+
+    #[test]
+    fn text_snapshot_string_queries_do_not_decode_state() {
+        let loro = LoroDoc::new_auto_commit();
+        let text = loro.get_text("text");
+        text.insert(0, "a😀文", PosType::Unicode).unwrap();
+        text.mark(1, 3, "bold", true.into(), PosType::Unicode)
+            .unwrap();
+
+        let restored = LoroDoc::new();
+        restored
+            .import(&loro.export(ExportMode::snapshot()).unwrap())
+            .unwrap();
+        let text = restored.get_text("text");
+        assert!(!text.attached_handler().unwrap().has_decoded_state());
+
+        assert_eq!(text.len_unicode(), 3);
+        assert_eq!(text.len_utf16(), 4);
+        assert_eq!(text.len_utf8(), "a😀文".len());
+        assert_eq!(text.char_at(1, PosType::Unicode).unwrap(), '😀');
+        assert_eq!(text.slice(1, 3, PosType::Unicode).unwrap(), "😀文");
+        assert_eq!(
+            text.convert_pos(2, PosType::Unicode, PosType::Utf16),
+            Some(3)
+        );
+        assert!(matches!(
+            text.delete_utf16(2, 1),
+            Err(LoroError::UTF16InUnicodeCodePoint { pos: 2 })
+        ));
+        assert!(matches!(
+            text.delete_utf8(2, 1),
+            Err(LoroError::UTF8InUnicodeCodePoint { pos: 2 })
+        ));
+        assert!(matches!(
+            text.slice_delta(2, 3, PosType::Utf16),
+            Err(LoroError::UTF16InUnicodeCodePoint { pos: 2 })
+        ));
+        assert!(matches!(
+            text.slice_delta(2, 3, PosType::Bytes),
+            Err(LoroError::UTF8InUnicodeCodePoint { pos: 2 })
+        ));
+        assert!(!text.attached_handler().unwrap().has_decoded_state());
+
+        assert_eq!(text.get_delta().len(), 2);
+        assert!(text.attached_handler().unwrap().has_decoded_state());
+    }
+
+    #[test]
+    fn text_lazy_event_queries_match_decoded_state() {
+        let loro = LoroDoc::new_auto_commit();
+        let text = loro.get_text("text");
+        text.insert(0, "ab😀cd", PosType::Unicode).unwrap();
+        text.mark(1, 4, "bold", true.into(), PosType::Unicode)
+            .unwrap();
+        text.mark(2, 3, "link", "x".into(), PosType::Unicode)
+            .unwrap();
+
+        let lazy_doc = LoroDoc::new();
+        lazy_doc
+            .import(&loro.export(ExportMode::snapshot()).unwrap())
+            .unwrap();
+        let lazy_text = lazy_doc.get_text("text");
+
+        let decoded_doc = LoroDoc::new();
+        decoded_doc
+            .import(&loro.export(ExportMode::snapshot()).unwrap())
+            .unwrap();
+        let decoded_text = decoded_doc.get_text("text");
+        decoded_text.get_delta();
+
+        assert!(!lazy_text.attached_handler().unwrap().has_decoded_state());
+        assert!(decoded_text.attached_handler().unwrap().has_decoded_state());
+
+        for pos_type in [
+            PosType::Event,
+            PosType::Unicode,
+            PosType::Utf16,
+            PosType::Bytes,
+        ] {
+            assert_eq!(lazy_text.len(pos_type), decoded_text.len(pos_type));
+            for pos in 0..=decoded_text.len(pos_type) {
+                assert_eq!(
+                    lazy_text.convert_pos(pos, pos_type, PosType::Unicode),
+                    decoded_text.convert_pos(pos, pos_type, PosType::Unicode),
+                    "convert {pos_type:?} pos {pos} to unicode"
+                );
+                assert_eq!(
+                    lazy_text.convert_pos(pos, pos_type, PosType::Event),
+                    decoded_text.convert_pos(pos, pos_type, PosType::Event),
+                    "convert {pos_type:?} pos {pos} to event"
+                );
+                if pos < decoded_text.len(pos_type) {
+                    assert_eq!(
+                        lazy_text.char_at(pos, pos_type),
+                        decoded_text.char_at(pos, pos_type),
+                        "char_at {pos_type:?} pos {pos}"
+                    );
+                }
+                for end in pos..=decoded_text.len(pos_type) {
+                    assert_eq!(
+                        lazy_text.slice(pos, end, pos_type),
+                        decoded_text.slice(pos, end, pos_type),
+                        "slice {pos_type:?} {pos}..{end}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn deep_value_with_id_uses_lazy_values_for_snapshot_roots() {
+        let loro = LoroDoc::new_auto_commit();
+        let text = loro.get_text("text");
+        text.insert(0, "hello", PosType::Unicode).unwrap();
+        let map = loro.get_map("map");
+        map.insert("key", "value").unwrap();
+        let list = loro.get_list("list");
+        list.push("item").unwrap();
+
+        let restored = LoroDoc::new();
+        restored
+            .import(&loro.export(ExportMode::snapshot()).unwrap())
+            .unwrap();
+        let text = restored.get_text("text");
+        let map = restored.get_map("map");
+        let list = restored.get_list("list");
+
+        let value = restored.get_deep_value_with_id();
+        assert_eq!(value["text"]["value"], "hello".into());
+        assert_eq!(value["map"]["value"]["key"], "value".into());
+        assert_eq!(value["list"]["value"][0], "item".into());
+        assert!(!text.attached_handler().unwrap().has_decoded_state());
+        assert!(!map.attached_handler().unwrap().has_decoded_state());
+        assert!(!list.attached_handler().unwrap().has_decoded_state());
+    }
+
+    #[test]
+    fn lazy_value_reads_do_not_write_stale_snapshot_after_mutation() {
+        let loro = LoroDoc::new_auto_commit();
+        let map = loro.get_map("map");
+        map.insert("key", "old").unwrap();
+        let child = map
+            .insert_container("child", MapHandler::new_detached())
+            .unwrap();
+        child.insert("nested", "old").unwrap();
+        let list = loro.get_list("list");
+        list.push("old").unwrap();
+        let child_list = list.push_container(ListHandler::new_detached()).unwrap();
+        child_list.push("nested-old").unwrap();
+
+        let restored = LoroDoc::new();
+        restored
+            .import(&loro.export(ExportMode::snapshot()).unwrap())
+            .unwrap();
+        let map = restored.get_map("map");
+        let list = restored.get_list("list");
+
+        assert_eq!(map.get("key").unwrap(), "old".into());
+        assert_eq!(list.get(0).unwrap(), "old".into());
+        let child = match map.get_("child").unwrap() {
+            ValueOrHandler::Handler(handler) => handler.into_map().unwrap(),
+            ValueOrHandler::Value(value) => panic!("expected child map, got {value:?}"),
+        };
+        let child_list = match list.get_(1).unwrap() {
+            ValueOrHandler::Handler(handler) => handler.into_list().unwrap(),
+            ValueOrHandler::Value(value) => panic!("expected child list, got {value:?}"),
+        };
+
+        map.insert("key", "new").unwrap();
+        child.insert("nested", "new").unwrap();
+        list.delete(0, 1).unwrap();
+        list.insert(0, "new").unwrap();
+        child_list.delete(0, 1).unwrap();
+        child_list.insert(0, "nested-new").unwrap();
+        restored.commit_then_renew();
+
+        let roundtrip = LoroDoc::new();
+        roundtrip
+            .import(&restored.export(ExportMode::snapshot()).unwrap())
+            .unwrap();
+        assert_eq!(
+            roundtrip.get_deep_value().to_json_value(),
+            serde_json::json!({
+                "map": { "key": "new", "child": { "nested": "new" } },
+                "list": ["new", ["nested-new"]]
+            })
+        );
+    }
+
+    #[test]
+    fn fast_snapshot_with_trailing_bytes_is_rejected_on_import() {
+        let loro = LoroDoc::new_auto_commit();
+        let map = loro.get_map("map");
+        map.insert("key", "value").unwrap();
+        let mut snapshot = loro.export(ExportMode::snapshot()).unwrap();
+        snapshot.push(0xff);
+        let corrupted = recheck_fast_blob(snapshot);
+
+        let doc = LoroDoc::new();
+        assert!(doc.import(&corrupted).is_err());
+    }
+
+    #[test]
+    fn fast_snapshot_with_trailing_bytes_is_rejected_by_meta_decoder() {
+        let loro = LoroDoc::new_auto_commit();
+        let map = loro.get_map("map");
+        map.insert("key", "value").unwrap();
+        let mut snapshot = loro.export(ExportMode::snapshot()).unwrap();
+        snapshot.push(0xff);
+        let corrupted = recheck_fast_blob(snapshot);
+
+        assert!(LoroDoc::decode_import_blob_meta(&corrupted, true).is_err());
+    }
+
+    #[test]
+    fn fast_snapshot_empty_sstable_meta_is_rejected_on_import() {
+        let loro = LoroDoc::new_auto_commit();
+        let map = loro.get_map("map");
+        map.insert("key", "value").unwrap();
+        let snapshot = loro.export(ExportMode::snapshot()).unwrap();
+
+        let mut malformed_state = Vec::new();
+        malformed_state.extend_from_slice(b"LORO");
+        malformed_state.push(0);
+        malformed_state.extend_from_slice(&0u32.to_le_bytes());
+        let checksum = xxhash_rust::xxh32::xxh32(&[], u32::from_le_bytes(*b"LORO"));
+        malformed_state.extend_from_slice(&checksum.to_le_bytes());
+        malformed_state.extend_from_slice(&5u32.to_le_bytes());
+        let corrupted = replace_fast_snapshot_state_bytes(snapshot, &malformed_state);
+
+        let doc = LoroDoc::new();
+        assert!(doc.import(&corrupted).is_err());
     }
 
     #[test]

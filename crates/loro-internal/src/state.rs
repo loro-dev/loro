@@ -9,7 +9,7 @@ use dead_containers_cache::DeadContainersCache;
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
 use itertools::Itertools;
-use loro_common::{ContainerID, LoroError, LoroResult, TreeID};
+use loro_common::{ContainerID, Lamport, LoroError, LoroResult, TreeID};
 use loro_delta::DeltaItem;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::{info_span, instrument, warn};
@@ -66,6 +66,90 @@ thread_local! {
 #[cfg(test)]
 pub(crate) fn fail_next_import_state_apply_for_test() {
     FAIL_NEXT_IMPORT_STATE_APPLY.with(|fail| fail.set(true));
+}
+
+fn visible_container_value_is_empty(kind: ContainerType, value: &LoroValue) -> bool {
+    match kind {
+        ContainerType::Text => value.as_string().is_some_and(|value| value.is_empty()),
+        ContainerType::Map | ContainerType::List | ContainerType::MovableList => {
+            value.is_empty_collection()
+        }
+        ContainerType::Tree => value.as_list().is_some_and(|value| value.is_empty()),
+        #[cfg(feature = "counter")]
+        ContainerType::Counter => false,
+        ContainerType::Unknown(_) => false,
+    }
+}
+
+fn deleted_root_container_value_is_cleared(kind: ContainerType, value: &LoroValue) -> bool {
+    match kind {
+        #[cfg(feature = "counter")]
+        ContainerType::Counter => value.as_double().is_some_and(|value| *value == 0.0),
+        _ => visible_container_value_is_empty(kind, value),
+    }
+}
+
+fn state_decode_error(message: impl Into<Box<str>>) -> LoroError {
+    LoroError::DecodeError(message.into())
+}
+
+fn decode_peer_table(bytes: &mut &[u8], context: &str) -> LoroResult<Vec<PeerID>> {
+    let peer_num = leb128::read::unsigned(bytes)
+        .map_err(|_| state_decode_error(format!("{context}: invalid peer table length")))?;
+    let peer_num = usize::try_from(peer_num)
+        .map_err(|_| state_decode_error(format!("{context}: peer table length overflow")))?;
+    let peer_bytes_len = peer_num
+        .checked_mul(std::mem::size_of::<PeerID>())
+        .ok_or_else(|| state_decode_error(format!("{context}: peer table byte length overflow")))?;
+    if bytes.len() < peer_bytes_len {
+        return Err(state_decode_error(format!(
+            "{context}: truncated peer table"
+        )));
+    }
+
+    let peer_bytes = &bytes[..peer_bytes_len];
+    let peers = peer_bytes
+        .chunks_exact(std::mem::size_of::<PeerID>())
+        .map(|chunk| {
+            let mut buf = [0u8; std::mem::size_of::<PeerID>()];
+            buf.copy_from_slice(chunk);
+            PeerID::from_le_bytes(buf)
+        })
+        .collect();
+    *bytes = &bytes[peer_bytes_len..];
+    Ok(peers)
+}
+
+fn decode_peer_from_table(peers: &[PeerID], peer_idx: usize, context: &str) -> LoroResult<PeerID> {
+    peers
+        .get(peer_idx)
+        .copied()
+        .ok_or_else(|| state_decode_error(format!("{context}: peer index out of range")))
+}
+
+fn read_state_leb_u64(bytes: &mut &[u8], context: &str) -> LoroResult<u64> {
+    leb128::read::unsigned(bytes)
+        .map_err(|_| state_decode_error(format!("{context}: invalid integer")))
+}
+
+fn decode_counter(counter: i32, context: &str) -> LoroResult<i32> {
+    if counter < 0 {
+        return Err(state_decode_error(format!("{context}: negative counter")));
+    }
+
+    Ok(counter)
+}
+
+fn decode_lamport_from_delta(
+    counter: i32,
+    lamport_sub_counter: i32,
+    context: &str,
+) -> LoroResult<Lamport> {
+    decode_counter(counter, context)?;
+    let lamport = counter
+        .checked_add(lamport_sub_counter)
+        .ok_or_else(|| state_decode_error(format!("{context}: lamport overflow")))?;
+    u32::try_from(lamport).map_err(|_| state_decode_error(format!("{context}: negative lamport")))
 }
 
 pub struct DocState {
@@ -780,7 +864,7 @@ impl DocState {
 
     pub(crate) fn iter_all_containers_mut(
         &mut self,
-    ) -> impl Iterator<Item = (&ContainerIdx, &mut ContainerWrapper)> {
+    ) -> impl Iterator<Item = (ContainerIdx, &mut ContainerWrapper)> {
         self.store.iter_all_containers()
     }
 
@@ -832,6 +916,61 @@ impl DocState {
         self.store
             .get_value(container_idx)
             .unwrap_or_else(|| container_idx.get_type().default_value())
+    }
+
+    pub(crate) fn get_map_value_by_key(
+        &mut self,
+        container_idx: ContainerIdx,
+        key: &str,
+    ) -> Option<LoroValue> {
+        self.store.map_get(container_idx, key)
+    }
+
+    pub(crate) fn get_map_len(&mut self, container_idx: ContainerIdx) -> usize {
+        self.store.map_len(container_idx)
+    }
+
+    pub(crate) fn get_map_keys(&mut self, container_idx: ContainerIdx) -> Vec<InternalString> {
+        self.store.map_keys(container_idx)
+    }
+
+    pub(crate) fn get_map_values(&mut self, container_idx: ContainerIdx) -> Vec<LoroValue> {
+        self.store.map_values(container_idx)
+    }
+
+    pub(crate) fn get_map_entries(
+        &mut self,
+        container_idx: ContainerIdx,
+    ) -> Vec<(InternalString, LoroValue)> {
+        self.store.map_entries(container_idx)
+    }
+
+    pub(crate) fn get_list_value_at(
+        &mut self,
+        container_idx: ContainerIdx,
+        index: usize,
+    ) -> Option<LoroValue> {
+        self.store.list_get(container_idx, index)
+    }
+
+    pub(crate) fn get_list_len(&mut self, container_idx: ContainerIdx) -> usize {
+        self.store.list_len(container_idx)
+    }
+
+    pub(crate) fn get_list_values(&mut self, container_idx: ContainerIdx) -> Vec<LoroValue> {
+        self.store.list_values(container_idx)
+    }
+
+    pub(crate) fn get_text_unicode_len(&mut self, container_idx: ContainerIdx) -> usize {
+        self.store.text_unicode_len(container_idx).unwrap_or(0)
+    }
+
+    pub(crate) fn get_text_utf16_len(&mut self, container_idx: ContainerIdx) -> usize {
+        self.store.text_utf16_len(container_idx).unwrap_or(0)
+    }
+
+    pub(crate) fn has_decoded_container_state(&mut self, container_idx: ContainerIdx) -> bool {
+        self.store.has_decoded_state(container_idx)
     }
 
     /// Set the state of the container with the given container idx.
@@ -893,7 +1032,7 @@ impl DocState {
             let diff: Vec<_> = self
                 .store
                 .iter_all_containers()
-                .map(|(&idx, state)| InternalContainerDiff {
+                .map(|(idx, state)| InternalContainerDiff {
                     idx,
                     bring_back: false,
                     diff: state
@@ -993,8 +1132,14 @@ impl DocState {
             match &id {
                 loro_common::ContainerID::Root { name, .. } => {
                     let v = self.get_container_deep_value(root_idx);
-                    if (should_hide_empty_root_container || deleted_root_container.contains(&id))
-                        && v.is_empty_collection()
+                    if should_hide_empty_root_container
+                        && visible_container_value_is_empty(root_idx.get_type(), &v)
+                    {
+                        continue;
+                    }
+
+                    if deleted_root_container.contains(&id)
+                        && deleted_root_container_value_is_cleared(root_idx.get_type(), &v)
                     {
                         continue;
                     }
@@ -1032,12 +1177,18 @@ impl DocState {
     }
 
     pub(crate) fn preferred_root_containers(&mut self) -> Vec<ContainerIdx> {
-        let flag = self.store.load_all();
+        let flag = self.store.load_root_containers();
         let roots = self.arena.root_containers(flag);
         let mut selected = FxHashMap::default();
         let mut names = Vec::new();
 
         for idx in roots {
+            let Some(id) = self.arena.idx_to_id(idx) else {
+                continue;
+            };
+            if !self.store.contains_id(&id) {
+                continue;
+            }
             let Some(name) = self.root_container_name(idx) else {
                 continue;
             };
@@ -1068,11 +1219,17 @@ impl DocState {
         &mut self,
         root_index: &InternalString,
     ) -> Option<ContainerIdx> {
-        let flag = self.store.load_all();
+        let flag = self.store.load_root_containers();
         let roots = self.arena.root_containers(flag);
         let mut selected = None;
 
         for idx in roots {
+            let Some(id) = self.arena.idx_to_id(idx) else {
+                continue;
+            };
+            if !self.store.contains_id(&id) {
+                continue;
+            }
             let Some(name) = self.root_container_name(idx) else {
                 continue;
             };
@@ -1102,10 +1259,11 @@ impl DocState {
     }
 
     fn root_container_is_empty(&mut self, idx: ContainerIdx) -> bool {
-        self.store
+        let value = self
+            .store
             .get_value(idx)
-            .unwrap_or_else(|| idx.get_type().default_value())
-            .is_empty_collection()
+            .unwrap_or_else(|| idx.get_type().default_value());
+        visible_container_value_is_empty(idx.get_type(), &value)
     }
 
     pub fn get_all_container_value_flat(&mut self) -> LoroValue {
@@ -1125,10 +1283,9 @@ impl DocState {
         id: Option<ContainerID>,
     ) -> LoroValue {
         let id = id.unwrap_or_else(|| self.arena.idx_to_id(container).unwrap());
-        let Some(state) = self.store.get_container_mut(container) else {
+        let Some(value) = self.store.get_value(container) else {
             return container.get_type().default_value();
         };
-        let value = state.get_value();
         let cid_str = LoroValue::String(format!("idx:{}, id:{}", container.to_index(), id).into());
         match value {
             LoroValue::Container(_) => unreachable!(),
@@ -1257,6 +1414,7 @@ impl DocState {
             .root_containers(flag)
             .iter()
             .map(|x| self.arena.get_container_id(*x).unwrap())
+            .filter(|id| self.store.contains_id(id))
             .collect_vec();
 
         while let Some(id) = to_visit.pop() {

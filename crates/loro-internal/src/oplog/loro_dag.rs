@@ -1203,7 +1203,7 @@ impl AppDag {
         let last_ids: Frontiers = this
             .iter()
             .filter_map(|(client_id, cnt)| {
-                if *cnt == 0 {
+                if *cnt <= 0 {
                     return None;
                 }
 
@@ -1234,7 +1234,7 @@ impl AppDag {
         let last_ids: Frontiers = this
             .iter()
             .filter_map(|(client_id, cnt)| {
-                if *cnt == 0 {
+                if *cnt <= 0 {
                     return None;
                 }
 

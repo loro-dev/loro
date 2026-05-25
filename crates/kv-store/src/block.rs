@@ -6,7 +6,7 @@ use std::{
 };
 
 use bytes::{Buf, Bytes};
-use loro_common::LoroResult;
+use loro_common::{LoroError, LoroResult};
 use once_cell::sync::OnceCell;
 
 use crate::{
@@ -16,6 +16,9 @@ use crate::{
 };
 
 use super::sstable::{SIZE_OF_U16, SIZE_OF_U8};
+
+const MAX_NORMAL_BLOCK_DATA_LEN: usize = u16::MAX as usize;
+const MAX_NORMAL_BLOCK_ENTRIES: usize = u16::MAX as usize;
 
 #[derive(Debug, Clone)]
 pub struct LargeValueBlock {
@@ -118,22 +121,107 @@ impl NormalBlock {
         first_key: Bytes,
         compression_type: CompressionType,
     ) -> LoroResult<NormalBlock> {
+        if raw_block_and_check.len() < SIZE_OF_U32 {
+            return Err(LoroError::DecodeError("Invalid bytes".into()));
+        }
+
         let buf = raw_block_and_check.slice(..raw_block_and_check.len() - SIZE_OF_U32);
         let mut data = vec![];
         decompress(&mut data, buf, compression_type)?;
+        if data.len() < SIZE_OF_U16 {
+            return Err(LoroError::DecodeError("Invalid bytes".into()));
+        }
+
         let offsets_len = (&data[data.len() - SIZE_OF_U16..]).get_u16_le() as usize;
-        let data_end = data.len() - SIZE_OF_U16 * (offsets_len + 1);
+        if offsets_len == 0 {
+            return Err(LoroError::DecodeError("Invalid bytes".into()));
+        }
+
+        let offsets_bytes_len = SIZE_OF_U16
+            .checked_mul(offsets_len + 1)
+            .ok_or_else(|| LoroError::DecodeError("Invalid bytes".into()))?;
+        if data.len() < offsets_bytes_len {
+            return Err(LoroError::DecodeError("Invalid bytes".into()));
+        }
+
+        let data_end = data.len() - offsets_bytes_len;
+        if data_end > u16::MAX as usize {
+            return Err(LoroError::DecodeError("Invalid bytes".into()));
+        }
+
         let offsets = &data[data_end..data.len() - SIZE_OF_U16];
-        let offsets = offsets
+        let offsets: Vec<u16> = offsets
             .chunks(SIZE_OF_U16)
             .map(|mut chunk| chunk.get_u16_le())
             .collect();
+        Self::validate_decoded_data(&data[..data_end], &offsets, &first_key)?;
         Ok(NormalBlock {
             data: Bytes::copy_from_slice(&data[..data_end]),
             encoded_data: OnceCell::with_value((raw_block_and_check, compression_type)),
             offsets,
             first_key,
         })
+    }
+
+    fn validate_decoded_data(data: &[u8], offsets: &[u16], first_key: &[u8]) -> LoroResult<()> {
+        if offsets.first().copied() != Some(0) {
+            return Err(LoroError::DecodeError("Invalid bytes".into()));
+        }
+
+        let mut prev_key: Option<Vec<u8>> = None;
+        let mut prev_offset = 0usize;
+        for (idx, offset) in offsets.iter().map(|x| *x as usize).enumerate() {
+            let offset_end = offsets
+                .get(idx + 1)
+                .map_or(data.len(), |next| *next as usize);
+            if offset < prev_offset || offset > offset_end || offset_end > data.len() {
+                return Err(LoroError::DecodeError("Invalid bytes".into()));
+            }
+
+            let key = if idx == 0 {
+                first_key.to_vec()
+            } else {
+                let header_end = offset
+                    .checked_add(SIZE_OF_U8 + SIZE_OF_U16)
+                    .ok_or_else(|| LoroError::DecodeError("Invalid bytes".into()))?;
+                if header_end > offset_end {
+                    return Err(LoroError::DecodeError("Invalid bytes".into()));
+                }
+
+                let common_prefix_len = data[offset] as usize;
+                if common_prefix_len > first_key.len() {
+                    return Err(LoroError::DecodeError("Invalid bytes".into()));
+                }
+
+                let key_suffix_len =
+                    u16::from_le_bytes(data[offset + SIZE_OF_U8..header_end].try_into().unwrap())
+                        as usize;
+                let key_end = header_end
+                    .checked_add(key_suffix_len)
+                    .ok_or_else(|| LoroError::DecodeError("Invalid bytes".into()))?;
+                if key_end > offset_end {
+                    return Err(LoroError::DecodeError("Invalid bytes".into()));
+                }
+
+                let mut key = Vec::with_capacity(common_prefix_len + key_suffix_len);
+                key.extend_from_slice(&first_key[..common_prefix_len]);
+                key.extend_from_slice(&data[header_end..key_end]);
+                key
+            };
+
+            if key.is_empty()
+                || prev_key
+                    .as_ref()
+                    .is_some_and(|prev_key| prev_key.as_slice() >= key.as_slice())
+            {
+                return Err(LoroError::DecodeError("Invalid bytes".into()));
+            }
+
+            prev_offset = offset;
+            prev_key = Some(key);
+        }
+
+        Ok(())
     }
 }
 
@@ -189,6 +277,23 @@ impl Block {
         }
     }
 
+    pub(crate) fn try_decode(
+        raw_block_and_check: Bytes,
+        is_large: bool,
+        key: Bytes,
+        compression_type: CompressionType,
+    ) -> LoroResult<Self> {
+        if key.is_empty() {
+            return Err(LoroError::DecodeError("Invalid bytes".into()));
+        }
+
+        if is_large {
+            return LargeValueBlock::decode(raw_block_and_check, key, compression_type)
+                .map(Block::Large);
+        }
+        NormalBlock::decode(raw_block_and_check, key, compression_type).map(Block::Normal)
+    }
+
     pub fn decode(
         raw_block_and_check: Bytes,
         is_large: bool,
@@ -196,13 +301,7 @@ impl Block {
         compression_type: CompressionType,
     ) -> Self {
         // The caller is responsible for validating SSTable integrity before lazy block reads.
-        if is_large {
-            return LargeValueBlock::decode(raw_block_and_check, key, compression_type)
-                .map(Block::Large)
-                .expect("validated SSTable block should decode");
-        }
-        NormalBlock::decode(raw_block_and_check, key, compression_type)
-            .map(Block::Normal)
+        Self::try_decode(raw_block_and_check, is_large, key, compression_type)
             .expect("validated SSTable block should decode")
     }
 
@@ -273,9 +372,13 @@ impl BlockBuilder {
     /// └─────────────────────────────────────────────────────┘
     ///
     pub fn add(&mut self, key: &[u8], value: &[u8]) -> bool {
+        if key.is_empty() {
+            return false;
+        }
+
         debug_assert!(!key.is_empty(), "key cannot be empty");
         if self.first_key.is_empty() {
-            if value.len() > self.block_size {
+            if value.len() > self.block_size || value.len() > MAX_NORMAL_BLOCK_DATA_LEN {
                 self.data.extend_from_slice(value);
                 self.is_large = true;
                 self.first_key = Bytes::copy_from_slice(key);
@@ -288,16 +391,39 @@ impl BlockBuilder {
             return true;
         }
 
+        if self.offsets.len() >= MAX_NORMAL_BLOCK_ENTRIES {
+            return false;
+        }
+
+        let (common, suffix) = get_common_prefix_len_and_strip(key, &self.first_key);
+        let key_len = suffix.len();
+        let Some(next_data_len) = self
+            .data
+            .len()
+            .checked_add(SIZE_OF_U8 + SIZE_OF_U16)
+            .and_then(|len| len.checked_add(key_len))
+            .and_then(|len| len.checked_add(value.len()))
+        else {
+            return false;
+        };
+        if next_data_len > MAX_NORMAL_BLOCK_DATA_LEN {
+            return false;
+        }
+
         // whether the block is full
-        if self.estimated_size() + key.len() + value.len() + SIZE_OF_U8 + SIZE_OF_U16
-            > self.block_size
-        {
+        let Some(estimated_size) = self
+            .estimated_size()
+            .checked_add(key_len)
+            .and_then(|len| len.checked_add(value.len()))
+            .and_then(|len| len.checked_add(SIZE_OF_U8 + SIZE_OF_U16))
+        else {
+            return false;
+        };
+        if estimated_size > self.block_size {
             return false;
         }
 
         self.offsets.push(self.data.len() as u16);
-        let (common, suffix) = get_common_prefix_len_and_strip(key, &self.first_key);
-        let key_len = suffix.len();
         self.data.push(common);
         self.data.extend_from_slice(&(key_len as u16).to_le_bytes());
         self.data.extend_from_slice(suffix);

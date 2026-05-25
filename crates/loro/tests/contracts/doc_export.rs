@@ -1,8 +1,8 @@
 use std::sync::{Arc, Mutex};
 
 use loro::{
-    CommitOptions, ExportMode, IdSpan, Index, LoroDoc, LoroList, LoroMap, LoroText, Timestamp,
-    ToJson, TreeParentId, VersionVector, ID,
+    CommitOptions, ContainerID, ContainerType, ExportMode, IdSpan, Index, LoroDoc, LoroList,
+    LoroMap, LoroText, Timestamp, ToJson, TreeParentId, VersionVector, ID,
 };
 use pretty_assertions::assert_eq;
 use serde_json::{json, Value};
@@ -34,6 +34,62 @@ fn deep_value_prefers_non_empty_root_when_same_name_has_empty_container() -> any
 
     let restored = LoroDoc::from_snapshot(&doc.export(ExportMode::Snapshot)?)?;
     assert_eq!(deep_json(&restored), expected);
+
+    Ok(())
+}
+
+#[test]
+fn deleted_imported_root_containers_are_removed_from_snapshots() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.get_list("list");
+    doc.get_map("map");
+    doc.get_movable_list("movable");
+    doc.get_text("text");
+    doc.get_tree("tree");
+    #[cfg(feature = "counter")]
+    doc.get_counter("counter");
+    let restored = LoroDoc::from_snapshot(&doc.export(ExportMode::Snapshot)?)?;
+    restored.delete_root_container(ContainerID::new_root("list", ContainerType::List));
+    restored.delete_root_container(ContainerID::new_root("map", ContainerType::Map));
+    restored.delete_root_container(ContainerID::new_root("movable", ContainerType::MovableList));
+    restored.delete_root_container(ContainerID::new_root("text", ContainerType::Text));
+    restored.delete_root_container(ContainerID::new_root("tree", ContainerType::Tree));
+    #[cfg(feature = "counter")]
+    restored.delete_root_container(ContainerID::new_root("counter", ContainerType::Counter));
+    assert_eq!(deep_json(&restored), json!({}));
+
+    let restored_again = LoroDoc::from_snapshot(&restored.export(ExportMode::Snapshot)?)?;
+    assert_eq!(deep_json(&restored_again), json!({}));
+
+    Ok(())
+}
+
+#[test]
+fn deleted_imported_non_empty_root_containers_are_removed_from_snapshots() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.get_list("list").push("item")?;
+    doc.get_map("map").insert("key", "value")?;
+    doc.get_movable_list("movable").push("item")?;
+    doc.get_text("text").insert(0, "hello")?;
+    let tree = doc.get_tree("tree");
+    let node = tree.create(TreeParentId::Root)?;
+    tree.get_meta(node)?.insert("key", "value")?;
+    #[cfg(feature = "counter")]
+    doc.get_counter("counter").increment(1.5)?;
+    doc.commit();
+
+    let restored = LoroDoc::from_snapshot(&doc.export(ExportMode::Snapshot)?)?;
+    restored.delete_root_container(ContainerID::new_root("list", ContainerType::List));
+    restored.delete_root_container(ContainerID::new_root("map", ContainerType::Map));
+    restored.delete_root_container(ContainerID::new_root("movable", ContainerType::MovableList));
+    restored.delete_root_container(ContainerID::new_root("text", ContainerType::Text));
+    restored.delete_root_container(ContainerID::new_root("tree", ContainerType::Tree));
+    #[cfg(feature = "counter")]
+    restored.delete_root_container(ContainerID::new_root("counter", ContainerType::Counter));
+    assert_eq!(deep_json(&restored), json!({}));
+
+    let restored_again = LoroDoc::from_snapshot(&restored.export(ExportMode::Snapshot)?)?;
+    assert_eq!(deep_json(&restored_again), json!({}));
 
     Ok(())
 }
@@ -367,6 +423,51 @@ fn state_only_shallow_since_and_updates_till_cover_export_boundaries() -> anyhow
     let empty_doc = LoroDoc::new();
     empty_doc.import(&empty_range)?;
     assert_eq!(deep_json(&empty_doc), serde_json::json!({}));
+
+    Ok(())
+}
+
+#[test]
+fn updates_in_range_clamps_negative_counter_ranges() -> anyhow::Result<()> {
+    let source = LoroDoc::new();
+    source.set_peer_id(92)?;
+    source.set_change_merge_interval(0);
+
+    let text = source.get_text("text");
+    text.insert(0, "a")?;
+    source.commit();
+    text.insert(1, "b")?;
+    source.commit();
+    text.insert(2, "c")?;
+    source.commit();
+
+    let peer = source.peer_id();
+    let updates = source.export(ExportMode::updates_in_range(vec![IdSpan::new(
+        peer,
+        i32::MIN,
+        1,
+    )]))?;
+    let restored = LoroDoc::new();
+    restored.import(&updates)?;
+    assert_eq!(restored.get_text("text").to_string(), "a");
+
+    let updates = source.export(ExportMode::updates_in_range(vec![IdSpan::new(
+        peer,
+        i32::MIN,
+        -1,
+    )]))?;
+    let restored = LoroDoc::new();
+    restored.import(&updates)?;
+    assert_eq!(restored.get_text("text").to_string(), "");
+
+    let updates = source.export(ExportMode::updates_in_range(vec![IdSpan::new(
+        peer,
+        1,
+        i32::MIN,
+    )]))?;
+    let restored = LoroDoc::new();
+    restored.import(&updates)?;
+    assert_eq!(restored.get_text("text").to_string(), "ab");
 
     Ok(())
 }

@@ -99,10 +99,18 @@ impl MemKvStore {
     }
 
     pub fn set(&mut self, key: &[u8], value: Bytes) {
+        if key.is_empty() {
+            return;
+        }
+
         self.mem_table.insert(Bytes::copy_from_slice(key), value);
     }
 
     pub fn compare_and_swap(&mut self, key: &[u8], old: Option<Bytes>, new: Bytes) -> bool {
+        if key.is_empty() {
+            return false;
+        }
+
         match self.get(key) {
             Some(v) => {
                 if old == Some(v) {
@@ -131,6 +139,10 @@ impl MemKvStore {
     ///
     /// If the value is empty, it means the key is deleted
     pub fn contains_key(&self, key: &[u8]) -> bool {
+        if key.is_empty() {
+            return false;
+        }
+
         if self.mem_table.contains_key(key) {
             return !self.mem_table.get(key).unwrap().is_empty();
         }
@@ -246,8 +258,6 @@ impl MemKvStore {
             return Ok(());
         }
 
-        // Since all the export format right now has its own checksum on the header,
-        // it's safe for us to skip the checksum check internally here.
         let ss_table = SsTable::import_all(bytes, false).map_err(|e| e.to_string())?;
         self.ss_table.push(ss_table);
         Ok(())
@@ -594,6 +604,28 @@ mod tests {
     }
 
     #[test]
+    fn empty_key_mutations_are_ignored() {
+        let mut store = new_store();
+        let value = Bytes::from_static(b"value");
+
+        store.set(&[], value.clone());
+        assert_eq!(store.get(&[]), None);
+        assert!(!store.contains_key(&[]));
+        assert_eq!(store.len(), 0);
+        assert!(store.is_empty());
+        assert!(!store.compare_and_swap(&[], None, value.clone()));
+        store.remove(&[]);
+
+        let bytes = store.export_all();
+        assert!(bytes.is_empty());
+
+        let mut imported = new_store();
+        imported.import_all(bytes).unwrap();
+        assert_eq!(imported.get(&[]), None);
+        assert_eq!(imported.len(), 0);
+    }
+
+    #[test]
     fn same_key() {
         let mut store = new_store();
         let key = &[0];
@@ -647,6 +679,41 @@ mod tests {
         assert_eq!(store.get(&c), Some(c.clone()));
         assert_eq!(store.get(&d), Some(d.clone()));
         assert_eq!(store.get(&e), Some(e.clone()));
+    }
+
+    #[test]
+    fn large_config_splits_normal_blocks_before_u16_offsets_overflow() {
+        let mut store = MemKvStore::new(
+            MemKvConfig::default()
+                .block_size(usize::from(u16::MAX) * 2)
+                .should_encode_none(true),
+        );
+        let a = Bytes::from(vec![1; 40_000]);
+        let b = Bytes::from(vec![2; 40_000]);
+        store.set(b"a", a.clone());
+        store.set(b"b", b.clone());
+
+        let bytes = store.export_all();
+        let mut imported = new_store();
+        imported.import_all(bytes).unwrap();
+        assert_eq!(imported.get(b"a"), Some(a));
+        assert_eq!(imported.get(b"b"), Some(b));
+    }
+
+    #[test]
+    fn large_config_uses_large_block_for_values_bigger_than_normal_offsets() {
+        let mut store = MemKvStore::new(
+            MemKvConfig::default()
+                .block_size(usize::from(u16::MAX) * 2)
+                .should_encode_none(true),
+        );
+        let value = Bytes::from(vec![7; usize::from(u16::MAX) + 1]);
+        store.set(b"large", value.clone());
+
+        let bytes = store.export_all();
+        let mut imported = new_store();
+        imported.import_all(bytes).unwrap();
+        assert_eq!(imported.get(b"large"), Some(value));
     }
 
     fn new_store() -> MemKvStore {

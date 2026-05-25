@@ -73,7 +73,10 @@ impl AwarenessWasm {
     /// Each peer's deletion countdown will be reset upon update, requiring them to pass through the `timeout`
     /// interval again before being eligible for deletion.
     pub fn apply(&mut self, encoded_peers_info: Vec<u8>) -> JsResult<JsAwarenessApplyResult> {
-        let (updated, added) = self.inner.apply(&encoded_peers_info);
+        let (updated, added) = self
+            .inner
+            .try_apply(&encoded_peers_info)
+            .map_err(|e| JsValue::from_str(&e))?;
         let ans = Object::new();
         let updated = Array::from_iter(updated.into_iter().map(peer_to_str_js));
         let added = Array::from_iter(added.into_iter().map(peer_to_str_js));

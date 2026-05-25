@@ -1133,73 +1133,71 @@ impl ContainerState for MovableListState {
                 match self.inner.elements().get(&elem_id).cloned() {
                     Some(elem) => {
                         // Update value if needed
-                        if value_id.is_some()
-                            && elem.value != value
-                            && (!need_compare || elem.value_id < value_id.unwrap())
-                        {
-                            maybe_moved.remove(&elem_id);
-                            self.inner
-                                .update_value(elem_id, value.clone(), value_id.unwrap());
-                            let index = self.get_index_of_elem(elem_id);
-                            if let Some(index) = index {
-                                event.compose(
-                                    &DeltaRopeBuilder::new()
-                                        .retain(index, Default::default())
-                                        .delete(1)
-                                        .insert(
-                                            ArrayVec::from([ValueOrHandler::from_value(
-                                                value, doc,
-                                            )]),
-                                            ListDeltaMeta { from_move: false },
-                                        )
-                                        .build(),
-                                )
+                        if let Some(value_id) = value_id {
+                            if elem.value != value && (!need_compare || elem.value_id < value_id) {
+                                maybe_moved.remove(&elem_id);
+                                self.inner.update_value(elem_id, value.clone(), value_id);
+                                let index = self.get_index_of_elem(elem_id);
+                                if let Some(index) = index {
+                                    event.compose(
+                                        &DeltaRopeBuilder::new()
+                                            .retain(index, Default::default())
+                                            .delete(1)
+                                            .insert(
+                                                ArrayVec::from([ValueOrHandler::from_value(
+                                                    value, doc,
+                                                )]),
+                                                ListDeltaMeta { from_move: false },
+                                            )
+                                            .build(),
+                                    )
+                                }
                             }
                         }
 
                         // Update pos if needed
-                        if pos.is_some()
-                            && elem.pos != pos.unwrap()
-                            && (!need_compare || elem.pos < pos.unwrap())
-                        {
-                            // don't need to update old list item, because it's handled by list diff already
-                            let result = self.inner.update_pos(elem_id, pos.unwrap(), false);
-                            let result = self.inner.convert_update_to_event_pos(result);
-                            if let Some(new_index) = result.insert {
-                                let new_value =
-                                    self.elements().get(&elem_id).unwrap().value.clone();
-                                let from_delete = if let Some((_elem_index, elem_old_value)) =
-                                    maybe_moved.remove(&elem_id)
-                                {
-                                    elem_old_value == new_value
-                                } else {
-                                    false
-                                };
-                                let new_delta: ListDiff = DeltaRopeBuilder::new()
-                                    .retain(new_index, Default::default())
-                                    .insert(
-                                        ArrayVec::from([ValueOrHandler::from_value(
-                                            new_value, doc,
-                                        )]),
-                                        ListDeltaMeta {
-                                            from_move: (result.delete.is_some() && !value_updated)
-                                                || from_delete,
-                                        },
-                                    )
-                                    .build();
-                                event.compose(&new_delta);
-                            }
-                            if let Some(del_index) = result.delete {
-                                event.compose(
-                                    &DeltaRopeBuilder::new()
-                                        .retain(del_index, Default::default())
-                                        .delete(1)
-                                        .build(),
-                                );
-                            }
-                            if !result.activate_new_list_item {
-                                // not matched list item found, remove directly
-                                self.inner.remove_elem_by_id(&elem_id);
+                        if let Some(pos) = pos {
+                            if elem.pos != pos && (!need_compare || elem.pos < pos) {
+                                // don't need to update old list item, because it's handled by list diff already
+                                let result = self.inner.update_pos(elem_id, pos, false);
+                                let result = self.inner.convert_update_to_event_pos(result);
+                                if let Some(new_index) = result.insert {
+                                    let new_value =
+                                        self.elements().get(&elem_id).unwrap().value.clone();
+                                    let from_delete = if let Some((_elem_index, elem_old_value)) =
+                                        maybe_moved.remove(&elem_id)
+                                    {
+                                        elem_old_value == new_value
+                                    } else {
+                                        false
+                                    };
+                                    let new_delta: ListDiff = DeltaRopeBuilder::new()
+                                        .retain(new_index, Default::default())
+                                        .insert(
+                                            ArrayVec::from([ValueOrHandler::from_value(
+                                                new_value, doc,
+                                            )]),
+                                            ListDeltaMeta {
+                                                from_move: (result.delete.is_some()
+                                                    && !value_updated)
+                                                    || from_delete,
+                                            },
+                                        )
+                                        .build();
+                                    event.compose(&new_delta);
+                                }
+                                if let Some(del_index) = result.delete {
+                                    event.compose(
+                                        &DeltaRopeBuilder::new()
+                                            .retain(del_index, Default::default())
+                                            .delete(1)
+                                            .build(),
+                                    );
+                                }
+                                if !result.activate_new_list_item {
+                                    // not matched list item found, remove directly
+                                    self.inner.remove_elem_by_id(&elem_id);
+                                }
                             }
                         }
                     }
@@ -1432,13 +1430,14 @@ struct EncodedFastSnapshot {
 }
 
 mod snapshot {
-    use std::io::Read;
-
     use loro_common::{IdFull, IdLp, LoroValue, PeerID};
 
     use crate::{
         encoding::value_register::ValueRegister,
-        state::{ContainerCreationContext, ContainerState, FastStateSnapshot},
+        state::{
+            decode_lamport_from_delta, decode_peer_from_table, decode_peer_table,
+            state_decode_error, ContainerCreationContext, ContainerState, FastStateSnapshot,
+        },
     };
 
     use super::{
@@ -1550,59 +1549,121 @@ mod snapshot {
         where
             Self: Sized,
         {
-            let peer_num = leb128::read::unsigned(&mut bytes).unwrap() as usize;
-            let mut peers = Vec::with_capacity(peer_num);
-            for _ in 0..peer_num {
-                let mut buf = [0u8; 8];
-                bytes.read_exact(&mut buf).unwrap();
-                peers.push(PeerID::from_le_bytes(buf));
-            }
+            let peers = decode_peer_table(&mut bytes, "Decode movable list state failed")?;
 
             let mut ans = MovableListState::new(idx);
 
-            let iters = serde_columnar::iter_from_bytes::<EncodedFastSnapshot>(bytes).unwrap();
+            let iters =
+                serde_columnar::iter_from_bytes::<EncodedFastSnapshot>(bytes).map_err(|err| {
+                    state_decode_error(format!(
+                        "Decode movable list state failed: invalid metadata: {err}"
+                    ))
+                })?;
             let mut elem_iter = iters.elem_ids;
             let item_iter = iters.items;
             let mut list_item_id_iter = iters.list_item_ids;
             let mut last_set_id_iter = iters.last_set_ids;
             let mut is_first = true;
 
-            let list_value = list_value.into_list().unwrap();
+            let list_value = list_value.into_list().map_err(|_| {
+                state_decode_error("Decode movable list state failed: value is not a list")
+            })?;
             let mut list_value_iter = list_value.iter();
             for item in item_iter {
                 let EncodedItemForFastSnapshot {
                     invisible_list_item,
                     pos_id_eq_elem_id,
                     elem_id_eq_last_set_id,
-                } = item.unwrap();
+                } = item.map_err(|err| {
+                    state_decode_error(format!(
+                        "Decode movable list state failed: invalid item: {err}"
+                    ))
+                })?;
 
                 if !is_first {
                     let EncodedIdFull {
                         peer_idx,
                         counter,
                         lamport_sub_counter,
-                    } = list_item_id_iter.next().unwrap().unwrap();
+                    } = list_item_id_iter
+                        .next()
+                        .ok_or_else(|| {
+                            state_decode_error(
+                                "Decode movable list state failed: missing list item id",
+                            )
+                        })?
+                        .map_err(|err| {
+                            state_decode_error(format!(
+                                "Decode movable list state failed: invalid list item id: {err}"
+                            ))
+                        })?;
+                    let peer = decode_peer_from_table(
+                        &peers,
+                        peer_idx,
+                        "Decode movable list state failed",
+                    )?;
                     let id_full = IdFull::new(
-                        peers[peer_idx],
+                        peer,
                         counter,
-                        (lamport_sub_counter + counter) as u32,
+                        decode_lamport_from_delta(
+                            counter,
+                            lamport_sub_counter,
+                            "Decode movable list state failed",
+                        )?,
                     );
                     let elem_id = if pos_id_eq_elem_id {
                         id_full.idlp()
                     } else {
-                        let EncodedId { peer_idx, lamport } = elem_iter.next().unwrap().unwrap();
-                        IdLp::new(peers[peer_idx], lamport)
+                        let EncodedId { peer_idx, lamport } = elem_iter
+                            .next()
+                            .ok_or_else(|| {
+                                state_decode_error(
+                                    "Decode movable list state failed: missing element id",
+                                )
+                            })?
+                            .map_err(|err| {
+                                state_decode_error(format!(
+                                    "Decode movable list state failed: invalid element id: {err}"
+                                ))
+                            })?;
+                        IdLp::new(
+                            decode_peer_from_table(
+                                &peers,
+                                peer_idx,
+                                "Decode movable list state failed",
+                            )?,
+                            lamport,
+                        )
                     };
 
                     let last_set_id = if elem_id_eq_last_set_id {
                         elem_id
                     } else {
-                        let EncodedId { peer_idx, lamport } =
-                            last_set_id_iter.next().unwrap().unwrap();
-                        IdLp::new(peers[peer_idx], lamport)
+                        let EncodedId { peer_idx, lamport } = last_set_id_iter
+                            .next()
+                            .ok_or_else(|| {
+                                state_decode_error(
+                                    "Decode movable list state failed: missing last set id",
+                                )
+                            })?
+                            .map_err(|err| {
+                                state_decode_error(format!(
+                                    "Decode movable list state failed: invalid last set id: {err}"
+                                ))
+                            })?;
+                        IdLp::new(
+                            decode_peer_from_table(
+                                &peers,
+                                peer_idx,
+                                "Decode movable list state failed",
+                            )?,
+                            lamport,
+                        )
                     };
 
-                    let value = list_value_iter.next().unwrap();
+                    let value = list_value_iter.next().ok_or_else(|| {
+                        state_decode_error("Decode movable list state failed: missing list value")
+                    })?;
                     ans.inner.push_inner(
                         id_full,
                         Some(PushElemInfo {
@@ -1619,20 +1680,88 @@ mod snapshot {
                         peer_idx,
                         counter,
                         lamport_sub_counter,
-                    } = list_item_id_iter.next().unwrap().unwrap();
+                    } = list_item_id_iter
+                        .next()
+                        .ok_or_else(|| {
+                            state_decode_error(
+                                "Decode movable list state failed: missing invisible list item id",
+                            )
+                        })?
+                        .map_err(|err| {
+                            state_decode_error(format!(
+                                "Decode movable list state failed: invalid invisible list item id: {err}"
+                            ))
+                        })?;
+                    let peer = decode_peer_from_table(
+                        &peers,
+                        peer_idx,
+                        "Decode movable list state failed",
+                    )?;
                     let id_full = IdFull::new(
-                        peers[peer_idx],
+                        peer,
                         counter,
-                        (counter + lamport_sub_counter) as u32,
+                        decode_lamport_from_delta(
+                            counter,
+                            lamport_sub_counter,
+                            "Decode movable list state failed",
+                        )?,
                     );
                     ans.inner.push_inner(id_full, None);
                 }
             }
 
-            debug_assert!(elem_iter.next().is_none());
-            debug_assert!(list_item_id_iter.next().is_none());
-            debug_assert!(last_set_id_iter.next().is_none());
-            debug_assert!(list_value_iter.next().is_none());
+            if is_first {
+                return Err(state_decode_error(
+                    "Decode movable list state failed: missing sentinel item",
+                ));
+            }
+            if elem_iter
+                .next()
+                .transpose()
+                .map_err(|err| {
+                    state_decode_error(format!(
+                        "Decode movable list state failed: invalid extra element id: {err}"
+                    ))
+                })?
+                .is_some()
+            {
+                return Err(state_decode_error(
+                    "Decode movable list state failed: unused element id",
+                ));
+            }
+            if list_item_id_iter
+                .next()
+                .transpose()
+                .map_err(|err| {
+                    state_decode_error(format!(
+                        "Decode movable list state failed: invalid extra list item id: {err}"
+                    ))
+                })?
+                .is_some()
+            {
+                return Err(state_decode_error(
+                    "Decode movable list state failed: unused list item id",
+                ));
+            }
+            if last_set_id_iter
+                .next()
+                .transpose()
+                .map_err(|err| {
+                    state_decode_error(format!(
+                        "Decode movable list state failed: invalid extra last set id: {err}"
+                    ))
+                })?
+                .is_some()
+            {
+                return Err(state_decode_error(
+                    "Decode movable list state failed: unused last set id",
+                ));
+            }
+            if list_value_iter.next().is_some() {
+                return Err(state_decode_error(
+                    "Decode movable list state failed: unused list value",
+                ));
+            }
 
             Ok(ans)
         }
@@ -1771,6 +1900,34 @@ mod snapshot {
             let mut bytes = Vec::new();
             list.encode_snapshot_fast(&mut bytes);
             assert!(bytes.len() <= 47, "{}", bytes.len());
+        }
+
+        #[test]
+        fn movable_list_fast_snapshot_rejects_corrupt_state_metadata() {
+            let idx = ContainerIdx::from_index_and_type(0, loro_common::ContainerType::MovableList);
+            let configure = Default::default();
+            let ctx = ContainerCreationContext {
+                configure: &configure,
+                peer: 0,
+            };
+
+            assert!(MovableListState::decode_snapshot_fast(
+                idx,
+                (Vec::<LoroValue>::new().into(), &[1]),
+                ctx,
+            )
+            .is_err());
+
+            let mut list = MovableListState::new(idx);
+            let mut bytes = Vec::new();
+            list.encode_snapshot_fast(&mut bytes);
+            let (_, state_bytes) = MovableListState::decode_value(&bytes).unwrap();
+            assert!(MovableListState::decode_snapshot_fast(
+                idx,
+                (vec![LoroValue::I64(1)].into(), state_bytes),
+                ctx,
+            )
+            .is_err());
         }
     }
 }

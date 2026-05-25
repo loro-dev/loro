@@ -108,10 +108,15 @@ impl Awareness {
         postcard::to_allocvec(&peers_info).unwrap()
     }
 
-    /// Returns (updated, added)
-    pub fn apply(&mut self, encoded_peers_info: &[u8]) -> (Vec<PeerID>, Vec<PeerID>) {
-        let peers_info: Vec<DecodedPeerInfo> =
-            postcard::from_bytes(encoded_peers_info).expect("Failed to decode awareness data");
+    /// Try to apply encoded updates imported from another peer/process.
+    ///
+    /// Returns (updated, added).
+    pub fn try_apply(
+        &mut self,
+        encoded_peers_info: &[u8],
+    ) -> Result<(Vec<PeerID>, Vec<PeerID>), Box<str>> {
+        let peers_info: Vec<DecodedPeerInfo> = postcard::from_bytes(encoded_peers_info)
+            .map_err(|err| format!("Failed to decode awareness data: {err}").into_boxed_str())?;
         let mut changed_peers = Vec::new();
         let mut added_peers = Vec::new();
         let now = get_sys_timestamp() as Timestamp;
@@ -138,7 +143,13 @@ impl Awareness {
             }
         }
 
-        (changed_peers, added_peers)
+        Ok((changed_peers, added_peers))
+    }
+
+    /// Returns (updated, added)
+    pub fn apply(&mut self, encoded_peers_info: &[u8]) -> (Vec<PeerID>, Vec<PeerID>) {
+        self.try_apply(encoded_peers_info)
+            .expect("Failed to decode awareness data")
     }
 
     pub fn set_local_state(&mut self, value: impl Into<LoroValue>) {

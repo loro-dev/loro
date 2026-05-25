@@ -205,6 +205,16 @@ impl ChangeStore {
         for span in spans {
             let mut span = *span;
             span.normalize_();
+            if span.counter.end <= 0 {
+                continue;
+            }
+
+            span.counter.start = span.counter.start.max(0);
+            span.counter.end = span.counter.end.max(0);
+            if span.counter.start >= span.counter.end {
+                continue;
+            }
+
             // PERF: this can be optimized by reusing the current encoded blocks
             // In the current method, it needs to parse and re-encode the blocks
             for c in self.iter_changes(span) {
@@ -427,6 +437,7 @@ impl ChangeStore {
         })
     }
 
+    #[allow(dead_code)]
     pub(crate) fn get_blocks_in_range(&self, id_span: IdSpan) -> VecDeque<Arc<ChangesBlock>> {
         let mut inner = self.inner.lock();
         let start_counter = inner
@@ -824,7 +835,7 @@ mod mut_inner_kv {
                         panic!("counter should be continuous")
                     }
 
-                    if let Some(rollback) = rollback.as_deref_mut() {
+                    if let Some(rollback) = &mut rollback {
                         rollback.record_block_before_mutation(*_id, block.clone());
                     }
 
@@ -1071,7 +1082,7 @@ mod mut_inner_kv {
 
             if !new_change.ops.is_empty() {
                 total_len += new_change.atom_len();
-                self.insert_change_inner(new_change, false, false, rollback.as_deref_mut());
+                self.insert_change_inner(new_change, false, false, rollback);
             }
 
             assert_eq!(total_len, original_len);
@@ -1200,8 +1211,7 @@ mod mut_inner_kv {
             let mut inner = self.inner.lock();
             let Some((next_back_id, next_back_bytes)) = kv
                 .scan(Bound::Unbounded, Bound::Included(&id.to_bytes()))
-                .filter(|(id, _)| id.len() == 12)
-                .next_back()
+                .rfind(|(id, _)| id.len() == 12)
             else {
                 return;
             };
@@ -1314,6 +1324,7 @@ impl ChangesBlock {
         })
     }
 
+    #[allow(dead_code)]
     pub(crate) fn content(&self) -> &ChangesBlockContent {
         &self.content
     }
@@ -1586,6 +1597,7 @@ impl ChangesBlockContent {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn len_changes(&self) -> usize {
         match self {
             ChangesBlockContent::Changes(changes) => changes.len(),

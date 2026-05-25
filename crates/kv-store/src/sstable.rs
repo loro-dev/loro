@@ -178,6 +178,10 @@ impl SsTableBuilder {
     }
 
     pub fn add(&mut self, key: Bytes, value: Bytes) {
+        if key.is_empty() {
+            return;
+        }
+
         if !self.include_none && value.is_empty() {
             return;
         }
@@ -344,7 +348,7 @@ impl SsTable {
     /// - [LoroError::DecodeError]
     ///    - "Invalid magic number"
     ///    - "Invalid schema version"
-    pub fn import_all(bytes: Bytes, check_checksum: bool) -> LoroResult<Self> {
+    pub fn import_all(bytes: Bytes, _check_checksum: bool) -> LoroResult<Self> {
         // magic number + schema version + meta offset
         if bytes.len() < SIZE_OF_U32 + SIZE_OF_U8 + SIZE_OF_U32 {
             return Err(LoroError::DecodeError("Invalid sstable bytes".into()));
@@ -372,9 +376,9 @@ impl SsTable {
         }
         let raw_meta = &bytes[meta_offset..data_len - SIZE_OF_U32];
         let meta = BlockMeta::decode_meta(raw_meta)?;
-        if check_checksum {
-            Self::check_block_checksum(&meta, &bytes, meta_offset)?;
-        }
+        Self::validate_block_ranges(&meta, meta_offset)?;
+        Self::validate_blocks(&meta, &bytes, meta_offset)?;
+        Self::check_block_checksum(&meta, &bytes, meta_offset)?;
         let first_key = meta
             .first()
             .map(|m| m.first_key.clone())
@@ -396,6 +400,61 @@ impl SsTable {
             block_cache: BlockCache::new(DEFAULT_CACHE_SIZE),
         };
         Ok(ans)
+    }
+
+    fn validate_block_ranges(meta: &[BlockMeta], meta_offset: usize) -> LoroResult<()> {
+        if meta.is_empty() {
+            return Err(LoroError::DecodeError("Invalid bytes".into()));
+        }
+
+        for i in 0..meta.len() {
+            let offset = meta[i].offset;
+            let offset_end = meta.get(i + 1).map_or(meta_offset, |m| m.offset);
+            if offset < SIZE_OF_U32 + SIZE_OF_U8
+                || offset_end > meta_offset
+                || offset >= offset_end
+                || offset_end - offset < SIZE_OF_U32
+            {
+                return Err(LoroError::DecodeError("Invalid bytes".into()));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn validate_blocks(meta: &[BlockMeta], bytes: &Bytes, meta_offset: usize) -> LoroResult<()> {
+        let mut last_key = None;
+        for i in 0..meta.len() {
+            let offset = meta[i].offset;
+            let offset_end = meta.get(i + 1).map_or(meta_offset, |m| m.offset);
+            let raw_block_and_check = bytes.slice(offset..offset_end);
+            let block = Block::try_decode(
+                raw_block_and_check,
+                meta[i].is_large,
+                meta[i].first_key.clone(),
+                meta[i].compression_type,
+            )?;
+
+            let block_last_key = block.last_key();
+            if meta[i].last_key.as_ref().unwrap_or(&meta[i].first_key) != &block_last_key {
+                return Err(LoroError::DecodeError("Invalid bytes".into()));
+            }
+
+            if meta[i].first_key > block_last_key {
+                return Err(LoroError::DecodeError("Invalid bytes".into()));
+            }
+
+            if last_key
+                .as_ref()
+                .is_some_and(|last_key| last_key >= &meta[i].first_key)
+            {
+                return Err(LoroError::DecodeError("Invalid bytes".into()));
+            }
+
+            last_key = Some(block_last_key);
+        }
+
+        Ok(())
     }
 
     fn check_block_checksum(
@@ -897,6 +956,45 @@ mod test {
 
     use super::*;
     use std::sync::Arc;
+
+    fn malformed_sstable_bytes(block_bytes: &[u8], meta: &[BlockMeta]) -> Bytes {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&MAGIC_BYTES);
+        bytes.push(CURRENT_SCHEMA_VERSION);
+        bytes.extend_from_slice(block_bytes);
+        let meta_offset = bytes.len();
+        BlockMeta::encode_meta(meta, &mut bytes);
+        bytes.extend_from_slice(&(meta_offset as u32).to_le_bytes());
+        bytes.into()
+    }
+
+    fn normal_block_bytes(key: &[u8], value: &[u8]) -> Vec<u8> {
+        let mut builder = BlockBuilder::new(4096);
+        builder.add(key, value);
+        let block = builder.build();
+        let mut bytes = Vec::new();
+        block.encode(&mut bytes, CompressionType::None);
+        bytes
+    }
+
+    fn normal_block_bytes_from_pairs(pairs: &[(&[u8], &[u8])]) -> Vec<u8> {
+        let mut builder = BlockBuilder::new(4096);
+        for (key, value) in pairs {
+            assert!(builder.add(key, value));
+        }
+        let block = builder.build();
+        let mut bytes = Vec::new();
+        block.encode(&mut bytes, CompressionType::None);
+        bytes
+    }
+
+    fn large_block_bytes(value: &[u8]) -> Vec<u8> {
+        let mut bytes = value.to_vec();
+        let checksum = xxhash_rust::xxh32::xxh32(value, XXH_SEED);
+        bytes.extend_from_slice(&checksum.to_le_bytes());
+        bytes
+    }
+
     #[test]
     fn block_double_end_iter() {
         let mut builder = BlockBuilder::new(4096);
@@ -1136,5 +1234,141 @@ mod test {
         let mut buffer = original_table.export_all().to_vec();
         buffer[11] = 123;
         assert!(SsTable::import_all(buffer.into(), true).is_err());
+    }
+
+    #[test]
+    fn sstable_import_rejects_empty_meta() {
+        assert!(SsTable::import_all(malformed_sstable_bytes(&[], &[]), false).is_err());
+    }
+
+    #[test]
+    fn sstable_import_rejects_invalid_block_ranges() {
+        let first_key = Bytes::from_static(b"key");
+        let meta = [BlockMeta {
+            offset: SIZE_OF_U32 + SIZE_OF_U8,
+            is_large: false,
+            compression_type: CompressionType::None,
+            first_key: first_key.clone(),
+            last_key: Some(first_key.clone()),
+        }];
+        assert!(SsTable::import_all(malformed_sstable_bytes(&[0, 1, 2], &meta), false).is_err());
+
+        let meta = [BlockMeta {
+            offset: SIZE_OF_U32 + SIZE_OF_U8 + 8,
+            is_large: false,
+            compression_type: CompressionType::None,
+            first_key: first_key.clone(),
+            last_key: Some(first_key),
+        }];
+        assert!(SsTable::import_all(malformed_sstable_bytes(&[0, 1, 2, 3], &meta), false).is_err());
+    }
+
+    #[test]
+    fn sstable_import_rejects_undecodable_block_payload() {
+        let first_key = Bytes::from_static(b"key");
+        let meta = [BlockMeta {
+            offset: SIZE_OF_U32 + SIZE_OF_U8,
+            is_large: false,
+            compression_type: CompressionType::None,
+            first_key: first_key.clone(),
+            last_key: Some(first_key),
+        }];
+        let checksum_only = xxhash_rust::xxh32::xxh32(&[], XXH_SEED).to_le_bytes();
+        assert!(
+            SsTable::import_all(malformed_sstable_bytes(&checksum_only, &meta), false).is_err()
+        );
+    }
+
+    #[test]
+    fn sstable_import_rejects_meta_last_key_that_mismatches_block() {
+        let first_key = Bytes::from_static(b"key");
+        let meta = [BlockMeta {
+            offset: SIZE_OF_U32 + SIZE_OF_U8,
+            is_large: false,
+            compression_type: CompressionType::None,
+            first_key: first_key.clone(),
+            last_key: Some(Bytes::from_static(b"a")),
+        }];
+
+        assert!(SsTable::import_all(
+            malformed_sstable_bytes(&normal_block_bytes(b"key", b"value"), &meta),
+            false
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn sstable_import_rejects_unsorted_block_key_ranges() {
+        let first_block = normal_block_bytes(b"b", b"value");
+        let second_block = normal_block_bytes(b"a", b"value");
+        let second_offset = SIZE_OF_U32 + SIZE_OF_U8 + first_block.len();
+        let meta = [
+            BlockMeta {
+                offset: SIZE_OF_U32 + SIZE_OF_U8,
+                is_large: false,
+                compression_type: CompressionType::None,
+                first_key: Bytes::from_static(b"b"),
+                last_key: Some(Bytes::from_static(b"b")),
+            },
+            BlockMeta {
+                offset: second_offset,
+                is_large: false,
+                compression_type: CompressionType::None,
+                first_key: Bytes::from_static(b"a"),
+                last_key: Some(Bytes::from_static(b"a")),
+            },
+        ];
+        let mut block_bytes = first_block;
+        block_bytes.extend_from_slice(&second_block);
+
+        assert!(SsTable::import_all(malformed_sstable_bytes(&block_bytes, &meta), false).is_err());
+    }
+
+    #[test]
+    fn sstable_import_rejects_unsorted_keys_inside_block() {
+        let block_bytes =
+            normal_block_bytes_from_pairs(&[(b"a", b"1"), (b"c", b"2"), (b"b", b"3")]);
+        let meta = [BlockMeta {
+            offset: SIZE_OF_U32 + SIZE_OF_U8,
+            is_large: false,
+            compression_type: CompressionType::None,
+            first_key: Bytes::from_static(b"a"),
+            last_key: Some(Bytes::from_static(b"b")),
+        }];
+
+        assert!(SsTable::import_all(malformed_sstable_bytes(&block_bytes, &meta), false).is_err());
+    }
+
+    #[test]
+    fn sstable_import_rejects_empty_large_block_key() {
+        let meta = [BlockMeta {
+            offset: SIZE_OF_U32 + SIZE_OF_U8,
+            is_large: true,
+            compression_type: CompressionType::None,
+            first_key: Bytes::new(),
+            last_key: None,
+        }];
+
+        assert!(SsTable::import_all(
+            malformed_sstable_bytes(&large_block_bytes(b"value"), &meta),
+            false
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn sstable_import_rejects_block_checksum_mismatch_when_outer_checksum_is_skipped() {
+        let first_key = Bytes::from_static(b"key");
+        let mut block_bytes = normal_block_bytes(b"key", b"value");
+        *block_bytes.last_mut().unwrap() ^= 0xff;
+        let meta = [BlockMeta {
+            offset: SIZE_OF_U32 + SIZE_OF_U8,
+            is_large: false,
+            compression_type: CompressionType::None,
+            first_key: first_key.clone(),
+            last_key: Some(first_key),
+        }];
+
+        assert!(SsTable::import_all(malformed_sstable_bytes(&block_bytes, &meta), false).is_err());
     }
 }

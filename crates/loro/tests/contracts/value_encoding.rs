@@ -1,11 +1,17 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{hash_map::DefaultHasher, HashMap},
+    hash::{Hash, Hasher},
+    sync::Arc,
+};
 
 use loro::{
-    ContainerID, ContainerTrait, IdSpan, JsonListOp, JsonMapOp, JsonMovableListOp, JsonOpContent,
-    JsonTextOp, JsonTreeOp, LoroDoc, LoroList, LoroMap, LoroMovableList, LoroText, LoroTree,
-    LoroValue, ToJson, ValueOrContainer, VersionVector,
+    ContainerID, ContainerTrait, ContainerType, IdSpan, JsonListOp, JsonMapOp, JsonMovableListOp,
+    JsonOpContent, JsonTextOp, JsonTreeOp, LoroDoc, LoroList, LoroMap, LoroMapValue,
+    LoroMovableList, LoroText, LoroTree, LoroValue, ToJson, TreeID, ValueOrContainer,
+    VersionVector, ID,
 };
 use pretty_assertions::assert_eq;
+use rustc_hash::FxHashMap;
 use serde_json::{json, Value};
 
 fn nested_value() -> LoroValue {
@@ -27,6 +33,12 @@ fn nested_value() -> LoroValue {
 
 fn value_json(value: &LoroValue) -> Value {
     value.to_json_value()
+}
+
+fn value_hash(value: &LoroValue) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    value.hash(&mut hasher);
+    hasher.finish()
 }
 
 fn nested_container<T: ContainerTrait>(map: &LoroMap, key: &str) -> T {
@@ -151,11 +163,45 @@ fn loro_value_contracts_roundtrip_for_scalars_collections_and_containers() -> an
         serde_json::from_value::<LoroValue>(json!(i64::MAX - 3))?,
         i64_value
     );
+    let large_u64_value = LoroValue::Double(u64::MAX as f64);
+    assert_eq!(
+        serde_json::from_value::<LoroValue>(json!(u64::MAX))?,
+        large_u64_value
+    );
+    assert_eq!(LoroValue::from(json!(u64::MAX)), large_u64_value);
     assert_eq!(serde_json::to_value(&float_value)?, json!(-12.25));
     assert_eq!(
         serde_json::from_value::<LoroValue>(json!(-12.25))?,
         float_value
     );
+    for non_finite in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        let non_finite_value = LoroValue::Double(non_finite);
+        assert_eq!(serde_json::to_value(&non_finite_value)?, Value::Null);
+        assert_eq!(value_json(&non_finite_value), Value::Null);
+        assert_eq!(Value::from(non_finite_value), Value::Null);
+    }
+    assert_eq!(LoroValue::Double(f64::NAN), LoroValue::Double(f64::NAN));
+    assert_eq!(LoroValue::Double(0.0), LoroValue::Double(-0.0));
+    assert_eq!(
+        value_hash(&LoroValue::Double(0.0)),
+        value_hash(&LoroValue::Double(-0.0))
+    );
+    let mut compact_map = FxHashMap::default();
+    compact_map.insert("a".to_string(), 1_i64.into());
+    compact_map.insert("b".to_string(), 2_i64.into());
+    let mut sparse_map = FxHashMap::default();
+    for i in 0..64 {
+        sparse_map.insert(format!("padding-{i}"), LoroValue::from(i));
+    }
+    for i in 0..64 {
+        sparse_map.remove(&format!("padding-{i}"));
+    }
+    sparse_map.insert("b".to_string(), 2_i64.into());
+    sparse_map.insert("a".to_string(), 1_i64.into());
+    let compact_value = LoroValue::Map(LoroMapValue::from(compact_map));
+    let sparse_value = LoroValue::Map(LoroMapValue::from(sparse_map));
+    assert_eq!(compact_value, sparse_value);
+    assert_eq!(value_hash(&compact_value), value_hash(&sparse_value));
     assert_eq!(serde_json::to_value(&string_value)?, json!("hello"));
     assert_eq!(
         serde_json::from_value::<LoroValue>(json!("hello"))?,
@@ -198,6 +244,8 @@ fn loro_value_contracts_roundtrip_for_scalars_collections_and_containers() -> an
     assert_eq!(bool::try_from(LoroValue::from(false)).unwrap(), false);
     assert_eq!(f64::try_from(LoroValue::from(1.5_f64)).unwrap(), 1.5);
     assert_eq!(i32::try_from(LoroValue::from(123_i64)).unwrap(), 123);
+    assert!(i32::try_from(LoroValue::from(i64::from(i32::MAX) + 1)).is_err());
+    assert!(i32::try_from(LoroValue::from(i64::from(i32::MIN) - 1)).is_err());
     assert_eq!(
         ContainerID::try_from(container_value.clone()).unwrap(),
         text.id()
@@ -219,6 +267,9 @@ fn loro_value_contracts_roundtrip_for_scalars_collections_and_containers() -> an
         Some(&LoroValue::from(vec![4_i64, 5_i64]))
     );
     assert_eq!(list_value.get_by_index(0), Some(&LoroValue::Null));
+    assert_eq!(list_value.get_by_index(-7), None);
+    assert_eq!(list_value.get_by_index(isize::MIN), None);
+    assert_eq!(LoroValue::Null.get_by_index(-1), None);
     assert_eq!(list_value[5], LoroValue::from(vec![4_i64, 5_i64]));
     assert_eq!(map_value["missing"], LoroValue::Null);
     assert_eq!(list_value[99], LoroValue::Null);
@@ -326,6 +377,149 @@ fn json_updates_roundtrip_nested_values_and_peer_compression() -> anyhow::Result
             .get_value_with_meta()
             .to_json_value(),
         tree.get_value_with_meta().to_json_value()
+    );
+
+    Ok(())
+}
+
+#[test]
+fn import_json_updates_accepts_reordered_op_fields() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(76)?;
+    let root = doc.get_map("root");
+    root.insert("key", "value")?;
+    doc.commit();
+
+    let json = doc
+        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv());
+    let value = serde_json::to_value(json)?;
+    let change = &value["changes"][0];
+    let op = &change["ops"][0];
+    let raw_json = format!(
+        r#"{{"schema_version":{},"start_version":{},"peers":{},"changes":[{{"id":{},"timestamp":{},"deps":{},"lamport":{},"msg":{},"ops":[{{"counter":{},"content":{},"container":{}}}]}}]}}"#,
+        serde_json::to_string(&value["schema_version"])?,
+        serde_json::to_string(&value["start_version"])?,
+        serde_json::to_string(&value["peers"])?,
+        serde_json::to_string(&change["id"])?,
+        serde_json::to_string(&change["timestamp"])?,
+        serde_json::to_string(&change["deps"])?,
+        serde_json::to_string(&change["lamport"])?,
+        serde_json::to_string(&change["msg"])?,
+        serde_json::to_string(&op["counter"])?,
+        serde_json::to_string(&op["content"])?,
+        serde_json::to_string(&op["container"])?,
+    );
+
+    let imported = LoroDoc::new();
+    imported.import_json_updates(raw_json)?;
+
+    assert_eq!(
+        imported.get_map("root").get_deep_value().to_json_value(),
+        root.get_deep_value().to_json_value()
+    );
+
+    Ok(())
+}
+
+#[test]
+fn import_json_updates_rejects_unsupported_schema_version() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.get_map("root").insert("key", "value")?;
+    doc.commit();
+
+    let mut json = doc
+        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv());
+    json.schema_version = 2;
+
+    let err = LoroDoc::new().import_json_updates(json).unwrap_err();
+    assert!(
+        err.to_string().contains("schema version"),
+        "expected schema version validation error, got {err:?}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn export_json_in_id_span_clamps_negative_counter_ranges() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(92)?;
+    doc.get_text("text").insert(0, "a")?;
+    doc.commit();
+
+    let changes = doc.export_json_in_id_span(IdSpan::new(92, i32::MIN, 1));
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].id.counter, 0);
+
+    let changes = doc.export_json_in_id_span(IdSpan::new(92, i32::MIN, -1));
+    assert!(changes.is_empty());
+
+    let changes = doc.export_json_in_id_span(IdSpan::new(92, 1, i32::MIN));
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].id.counter, 0);
+
+    Ok(())
+}
+
+#[test]
+fn export_json_updates_clamps_negative_version_ranges() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(93)?;
+    doc.get_text("text").insert(0, "a")?;
+    doc.commit();
+
+    let mut negative_start = VersionVector::new();
+    negative_start.insert(doc.peer_id(), i32::MIN);
+    let json = doc.export_json_updates(&negative_start, &doc.oplog_vv());
+    let restored = LoroDoc::new();
+    restored.import_json_updates(json)?;
+    assert_eq!(restored.get_text("text").to_string(), "a");
+
+    let mut negative_end = VersionVector::new();
+    negative_end.insert(doc.peer_id(), -1);
+    let json = doc.export_json_updates(&VersionVector::default(), &negative_end);
+    let restored = LoroDoc::new();
+    restored.import_json_updates(json)?;
+    assert_eq!(restored.get_text("text").to_string(), "");
+
+    Ok(())
+}
+
+#[test]
+fn import_json_updates_rejects_negative_op_counters() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.get_map("root").insert("key", "value")?;
+    doc.commit();
+
+    let mut json = doc
+        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv());
+    json.changes[0].id.counter = -1;
+    json.changes[0].ops[0].counter = -1;
+
+    let err = LoroDoc::new().import_json_updates(json).unwrap_err();
+    assert!(
+        err.to_string().contains("counter"),
+        "expected counter validation error, got {err:?}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn import_json_updates_rejects_negative_dependency_counters() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(77)?;
+    doc.get_map("root").insert("key", "value")?;
+    doc.commit();
+
+    let mut json = doc
+        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv());
+    json.changes[0].deps.push(ID::new(77, -1));
+
+    let err = LoroDoc::new().import_json_updates(json).unwrap_err();
+    assert!(
+        err.to_string().contains("counter"),
+        "expected counter validation error, got {err:?}"
     );
 
     Ok(())
@@ -493,6 +687,244 @@ fn json_update_schema_covers_list_map_text_tree_and_movable_list_ops() -> anyhow
             .get_value_with_meta()
             .to_json_value(),
         doc.get_tree("tree").get_value_with_meta().to_json_value()
+    );
+
+    Ok(())
+}
+
+#[test]
+fn import_json_updates_rejects_non_contiguous_op_counters() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(71)?;
+    doc.get_map("root").insert("key", "value")?;
+    doc.commit();
+
+    let mut json = doc
+        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv());
+    json.changes[0].ops[0].counter += 1;
+
+    let err = LoroDoc::new().import_json_updates(json).unwrap_err();
+    assert!(
+        err.to_string().contains("op counter"),
+        "expected op counter validation error, got {err:?}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn import_json_updates_rejects_mismatched_created_container_id() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(72)?;
+    doc.get_map("root")
+        .insert_container("child", LoroList::new())?;
+    doc.commit();
+
+    let mut json = doc
+        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv());
+    for op in &mut json.changes[0].ops {
+        if let JsonOpContent::Map(JsonMapOp::Insert {
+            value: LoroValue::Container(id),
+            ..
+        }) = &mut op.content
+        {
+            *id = ContainerID::new_normal(ID::new(72, op.counter + 10), ContainerType::List);
+            break;
+        }
+    }
+
+    let err = LoroDoc::new().import_json_updates(json).unwrap_err();
+    assert!(
+        err.to_string().contains("container id"),
+        "expected container id validation error, got {err:?}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn import_json_updates_rejects_mismatched_list_created_container_ids() -> anyhow::Result<()> {
+    let list_doc = LoroDoc::new();
+    list_doc.set_peer_id(74)?;
+    list_doc
+        .get_list("list")
+        .insert_container(0, LoroMap::new())?;
+    list_doc.commit();
+
+    let mut list_json = list_doc.export_json_updates_without_peer_compression(
+        &VersionVector::default(),
+        &list_doc.oplog_vv(),
+    );
+    for op in &mut list_json.changes[0].ops {
+        if let JsonOpContent::List(JsonListOp::Insert { value, .. }) = &mut op.content {
+            if let Some(LoroValue::Container(id)) = value.first_mut() {
+                *id = ContainerID::new_normal(ID::new(74, op.counter + 10), ContainerType::Map);
+                break;
+            }
+        }
+    }
+
+    let err = LoroDoc::new().import_json_updates(list_json).unwrap_err();
+    assert!(
+        err.to_string().contains("container id"),
+        "expected list container id validation error, got {err:?}"
+    );
+
+    let movable_doc = LoroDoc::new();
+    movable_doc.set_peer_id(75)?;
+    let movable = movable_doc.get_movable_list("movable");
+    movable.insert(0, "seed")?;
+    movable.set_container(0, LoroText::new())?;
+    movable_doc.commit();
+
+    let mut movable_json = movable_doc.export_json_updates_without_peer_compression(
+        &VersionVector::default(),
+        &movable_doc.oplog_vv(),
+    );
+    for op in &mut movable_json.changes[0].ops {
+        if let JsonOpContent::MovableList(JsonMovableListOp::Set {
+            value: LoroValue::Container(id),
+            ..
+        }) = &mut op.content
+        {
+            *id = ContainerID::new_normal(ID::new(75, op.counter + 10), ContainerType::Text);
+            break;
+        }
+    }
+
+    let err = LoroDoc::new()
+        .import_json_updates(movable_json)
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("container id"),
+        "expected movable list container id validation error, got {err:?}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn import_json_updates_rejects_tree_create_target_not_matching_op_id() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(73)?;
+    doc.get_tree("tree").create(None)?;
+    doc.commit();
+
+    let mut json = doc
+        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv());
+    for op in &mut json.changes[0].ops {
+        if let JsonOpContent::Tree(JsonTreeOp::Create { target, .. }) = &mut op.content {
+            *target = TreeID {
+                peer: 73,
+                counter: op.counter + 10,
+            };
+            break;
+        }
+    }
+
+    let err = LoroDoc::new().import_json_updates(json).unwrap_err();
+    assert!(
+        err.to_string().contains("tree target"),
+        "expected tree target validation error, got {err:?}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn import_json_updates_rejects_nested_container_values() -> anyhow::Result<()> {
+    fn nested_container_value(peer: u64, counter: i32) -> LoroValue {
+        LoroValue::from(HashMap::from([(
+            "nested".to_string(),
+            LoroValue::Container(ContainerID::new_normal(
+                ID::new(peer, counter),
+                ContainerType::Map,
+            )),
+        )]))
+    }
+
+    let doc = LoroDoc::new();
+    doc.set_peer_id(76)?;
+    doc.get_map("root").insert("key", "value")?;
+    doc.commit();
+
+    let mut json = doc
+        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv());
+    for op in &mut json.changes[0].ops {
+        if let JsonOpContent::Map(JsonMapOp::Insert { value, .. }) = &mut op.content {
+            *value = nested_container_value(76, op.counter);
+            break;
+        }
+    }
+
+    let err = LoroDoc::new().import_json_updates(json).unwrap_err();
+    assert!(
+        err.to_string().contains("container"),
+        "expected nested container validation error, got {err:?}"
+    );
+
+    let doc = LoroDoc::new();
+    doc.set_peer_id(77)?;
+    doc.get_list("list").insert(0, "value")?;
+    doc.commit();
+
+    let mut json = doc
+        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv());
+    for op in &mut json.changes[0].ops {
+        if let JsonOpContent::List(JsonListOp::Insert { value, .. }) = &mut op.content {
+            value[0] = nested_container_value(77, op.counter);
+            break;
+        }
+    }
+
+    let err = LoroDoc::new().import_json_updates(json).unwrap_err();
+    assert!(
+        err.to_string().contains("container"),
+        "expected nested list container validation error, got {err:?}"
+    );
+
+    let doc = LoroDoc::new();
+    doc.set_peer_id(78)?;
+    let text = doc.get_text("text");
+    text.insert(0, "a")?;
+    text.mark(0..1, "bold", true)?;
+    doc.commit();
+
+    let mut json = doc
+        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv());
+    for op in &mut json.changes[0].ops {
+        if let JsonOpContent::Text(JsonTextOp::Mark { style_value, .. }) = &mut op.content {
+            *style_value = nested_container_value(78, op.counter);
+            break;
+        }
+    }
+
+    let err = LoroDoc::new().import_json_updates(json).unwrap_err();
+    assert!(
+        err.to_string().contains("container"),
+        "expected nested text style container validation error, got {err:?}"
+    );
+
+    let doc = LoroDoc::new();
+    doc.set_peer_id(79)?;
+    let movable = doc.get_movable_list("movable");
+    movable.insert(0, "seed")?;
+    movable.set(0, "value")?;
+    doc.commit();
+
+    let mut json = doc
+        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv());
+    for op in &mut json.changes[0].ops {
+        if let JsonOpContent::MovableList(JsonMovableListOp::Set { value, .. }) = &mut op.content {
+            *value = nested_container_value(79, op.counter);
+            break;
+        }
+    }
+
+    let err = LoroDoc::new().import_json_updates(json).unwrap_err();
+    assert!(
+        err.to_string().contains("container"),
+        "expected nested movable list container validation error, got {err:?}"
     );
 
     Ok(())

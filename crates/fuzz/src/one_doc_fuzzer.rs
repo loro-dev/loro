@@ -646,7 +646,7 @@ impl OneDocFuzzer {
                     undo.clear();
                 }
             }
-            Action::ForkAt { site, to } => {
+            Action::ForkAt { site, to: _ } => {
                 let frontiers = self.branches[*site as usize].frontiers.clone();
                 let _forked = self.doc.fork_at(&frontiers);
             }

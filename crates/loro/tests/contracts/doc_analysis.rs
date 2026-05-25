@@ -165,6 +165,17 @@ fn change_traversal_exposes_changed_containers_and_id_spans() -> anyhow::Result<
     let changed_second = doc.get_changed_containers_in(second_change.id, second_change.len);
     assert!(changed_second.contains(&text.id()));
 
+    let first_counter = first_change.id.counter;
+    let changed_from_negative =
+        doc.get_changed_containers_in(ID::new(first_change.id.peer, first_counter - 1), 2);
+    assert_eq!(
+        changed_from_negative,
+        doc.get_changed_containers_in(first_change.id, 1)
+    );
+    assert!(doc
+        .get_changed_containers_in(ID::new(first_change.id.peer, i32::MAX), 1)
+        .is_empty());
+
     let between = doc.find_id_spans_between(&Frontiers::from_id(first), &Frontiers::from_id(third));
     assert_eq!(
         between.forward.get(&103).map(|span| (span.start, span.end)),

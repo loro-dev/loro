@@ -568,7 +568,7 @@ pub fn decode_block(
         keys,
     };
     let positions = PositionArena::decode_v2(&positions)?;
-    let positions = positions.parse_to_positions();
+    let positions = positions.try_parse_to_positions()?;
     let cids: &Vec<ContainerID> = header.cids.get_or_try_init(|| {
         ContainerArena::decode(&cids)?
             .iter()

@@ -36,7 +36,7 @@ fn js_wbg_ptr(js: &JsValue) -> JsResult<u32> {
 }
 
 fn validate_wbg_ptr_alignment<T>(ptr: u32) -> Result<(), &'static str> {
-    if (ptr as usize) % std::mem::align_of::<WasmRefCell<T>>() != 0 {
+    if !(ptr as usize).is_multiple_of(std::mem::align_of::<WasmRefCell<T>>()) {
         return Err("Invalid wasm-bindgen pointer alignment");
     }
 
