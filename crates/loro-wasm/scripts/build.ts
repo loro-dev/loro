@@ -5,7 +5,8 @@ import { getOctokit } from "npm:@actions/github";
 
 // Polyfill for missing performance.markResourceTiming function in Deno
 if (
-  typeof performance !== "undefined" && !(performance as any).markResourceTiming
+  typeof performance !== "undefined" &&
+  !(performance as any).markResourceTiming
 ) {
   (performance as any).markResourceTiming = () => {};
 }
@@ -38,8 +39,7 @@ const wasmPackageJson = JSON.parse(
 );
 const LoroWasmVersion = (wasmPackageJson as { version: string }).version;
 const MapPackageDir = path.resolve(__dirname, "../../loro-wasm-map");
-const WASM_SOURCEMAP_BASE =
-  `https://unpkg.com/loro-crdt-map@${LoroWasmVersion}`;
+const WASM_SOURCEMAP_BASE = `https://unpkg.com/loro-crdt-map@${LoroWasmVersion}`;
 const EMBED_SCRIPT = path.resolve(
   __dirname,
   "../../../scripts/embed-wasm-sourcemap.mjs",
@@ -144,7 +144,7 @@ async function build() {
 
           const sizeReportMarker = "<!-- loro-wasm-size-report -->";
           const existingComment = comments.find((comment) =>
-            comment.body?.includes(sizeReportMarker)
+            comment.body?.includes(sizeReportMarker),
           );
 
           if (existingComment) {
@@ -184,20 +184,21 @@ async function cargoBuild() {
     profile,
   ];
   console.log(cmd.join(" "));
-  const env: Record<string, string> | undefined = profile === "release"
-    ? (() => {
-      const existing = Deno.env.get("RUSTFLAGS");
-      const next = ["-C debuginfo=2"];
-      if (existing && existing.length > 0) {
-        next.unshift(existing);
-      }
-      return {
-        RUSTFLAGS: next.join(" "),
-        CARGO_PROFILE_RELEASE_DEBUG: "true",
-        CARGO_PROFILE_RELEASE_STRIP: "none",
-      };
-    })()
-    : undefined;
+  const env: Record<string, string> | undefined =
+    profile === "release"
+      ? (() => {
+          const existing = Deno.env.get("RUSTFLAGS");
+          const next = ["-C debuginfo=2"];
+          if (existing && existing.length > 0) {
+            next.unshift(existing);
+          }
+          return {
+            RUSTFLAGS: next.join(" "),
+            CARGO_PROFILE_RELEASE_DEBUG: "true",
+            CARGO_PROFILE_RELEASE_STRIP: "none",
+          };
+        })()
+      : undefined;
   const status = await Deno.run({
     cmd,
     cwd: LoroWasmDir,
@@ -226,8 +227,7 @@ async function buildTarget(target: string) {
 
   // TODO: polyfill FinalizationRegistry
   const bindgenTarget = target === "browser" ? "bundler" : target;
-  const cmd =
-    `wasm-bindgen --keep-debug --weak-refs --target ${bindgenTarget} --out-dir ${target} ${RawWasmPath}`;
+  const cmd = `wasm-bindgen --keep-debug --weak-refs --target ${bindgenTarget} --out-dir ${target} ${RawWasmPath}`;
   console.log(">", cmd);
   await Deno.run({ cmd: cmd.split(" "), cwd: LoroWasmDir }).status();
   console.log();
@@ -259,14 +259,66 @@ async function buildTarget(target: string) {
   }
   if (target === "browser") {
     console.log("🔨  Patching browser target");
-    const patch = await Deno.readTextFile(
+    const patchTemplate = await Deno.readTextFile(
       path.resolve(__dirname, "./browser_patch.js"),
     );
+    const wasmBg = await Deno.readTextFile(
+      path.resolve(targetDirPath, "loro_wasm_bg.js"),
+    );
+    const patch = renderBrowserPatch(patchTemplate, wasmBg);
     await Deno.writeTextFile(
       path.resolve(targetDirPath, "loro_wasm.js"),
       patch,
     );
   }
+}
+
+function renderBrowserPatch(template: string, wasmBg: string): string {
+  const names = extractExportNames(wasmBg);
+  if (!names.includes("__wbg_set_wasm")) {
+    throw new Error("loro_wasm_bg.js does not export __wbg_set_wasm");
+  }
+
+  const importNames = names.map((name) => `  ${name},`).join("\n");
+  const importObject = names.map((name) => `  ${name},`).join("\n");
+  const exportNames = names.map((name) => `  ${name},`).join("\n");
+
+  return template
+    .replace(
+      "/* __LORO_BROWSER_PATCH_IMPORTS__ */",
+      `import {\n${importNames}\n} from "./loro_wasm_bg.js";`,
+    )
+    .replace("/* __LORO_BROWSER_PATCH_IMPORT_OBJECT__ */", importObject)
+    .replace(
+      "/* __LORO_BROWSER_PATCH_EXPORTS__ */",
+      `export {\n${exportNames}\n};`,
+    );
+}
+
+function extractExportNames(source: string): string[] {
+  const names = new Set<string>();
+  const declaration =
+    /^export\s+(?:async\s+)?(?:function|class|const|let|var)\s+([A-Za-z_$][\w$]*)/gm;
+  let match: RegExpExecArray | null;
+
+  while ((match = declaration.exec(source)) != null) {
+    names.add(match[1]);
+  }
+
+  const exportList = /^export\s*\{\s*([^}]+)\s*\}/gm;
+  while ((match = exportList.exec(source)) != null) {
+    for (const part of match[1].split(",")) {
+      const name = part
+        .trim()
+        .split(/\s+as\s+/)
+        .pop();
+      if (name != null && /^[A-Za-z_$][\w$]*$/.test(name)) {
+        names.add(name);
+      }
+    }
+  }
+
+  return [...names].sort();
 }
 
 async function stripReferenceTypesFeatureHint() {
@@ -306,11 +358,7 @@ async function postProcessWasm(targetDirPath: string, target: string) {
   ]);
 
   if (profile === "release") {
-    await runWasmTools([
-      "strip-debug",
-      wasmPath,
-      wasmPath,
-    ]);
+    await runWasmTools(["strip-debug", wasmPath, wasmPath]);
   }
 }
 
