@@ -1,5 +1,15 @@
 # loro-crdt-map
 
+## 1.12.2
+
+### Patch Changes
+
+- cc587ed: Add a browser package remapping so Vite/Rolldown production builds load WASM without top-level await or circular wasm wrapper chunks.
+
+  Also make the base64 entry easier to bundle with plain esbuild, Rollup, and Next.js Webpack by avoiding static Node builtin `require()` calls and top-level await in browser bundles.
+
+- 8f57f4c: Reduce memory usage for read-only access to snapshot-imported documents by avoiding unnecessary lazy container state initialization.
+
 ## 1.12.0
 
 ### Minor Changes

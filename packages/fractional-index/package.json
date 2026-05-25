@@ -1,6 +1,6 @@
 {
   "name": "@loro-dev/fractional-index",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "TypeScript implementation of Loro's fractional index algorithm.",
   "keywords": [
     "fractional-index",
