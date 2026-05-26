@@ -189,22 +189,43 @@ impl<'a> PositionArena<'a> {
         Self { positions: ans }
     }
 
-    pub fn parse_to_positions(self) -> Vec<Vec<u8>> {
+    pub fn try_parse_to_positions(self) -> LoroResult<Vec<Vec<u8>>> {
         let mut ans: Vec<Vec<u8>> = Vec::with_capacity(self.positions.len());
         for PositionDelta {
             common_prefix_length,
             rest,
         } in self.positions
         {
+            if let Some(last_bytes) = ans.last() {
+                if common_prefix_length > last_bytes.len() {
+                    return Err(LoroError::DecodeError(
+                        "Decode position arena failed: common prefix out of range".into(),
+                    ));
+                }
+            } else if common_prefix_length != 0 {
+                return Err(LoroError::DecodeError(
+                    "Decode position arena failed: first common prefix is nonzero".into(),
+                ));
+            }
+
             // +1 for Fractional Index
-            let mut p = Vec::with_capacity(rest.len() + common_prefix_length + 1);
+            let capacity = rest
+                .len()
+                .checked_add(common_prefix_length)
+                .and_then(|len| len.checked_add(1))
+                .ok_or_else(|| {
+                    LoroError::DecodeError(
+                        "Decode position arena failed: position length overflow".into(),
+                    )
+                })?;
+            let mut p = Vec::with_capacity(capacity);
             if let Some(last_bytes) = ans.last() {
                 p.extend_from_slice(&last_bytes[0..common_prefix_length]);
             }
             p.extend_from_slice(rest.as_ref());
             ans.push(p);
         }
-        ans
+        Ok(ans)
     }
 
     pub fn encode(&self) -> Vec<u8> {
@@ -234,4 +255,23 @@ impl<'a> PositionArena<'a> {
 
 fn longest_common_prefix_length(a: &[u8], b: &[u8]) -> usize {
     a.iter().zip(b.iter()).take_while(|(x, y)| x == y).count()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::borrow::Cow;
+
+    use super::{PositionArena, PositionDelta};
+
+    #[test]
+    fn position_arena_rejects_invalid_common_prefix() {
+        let arena = PositionArena {
+            positions: vec![PositionDelta {
+                common_prefix_length: 1,
+                rest: Cow::Borrowed(&[]),
+            }],
+        };
+
+        assert!(arena.try_parse_to_positions().is_err());
+    }
 }

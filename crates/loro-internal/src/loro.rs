@@ -44,8 +44,8 @@ use crate::{
 };
 use either::Either;
 use loro_common::{
-    ContainerID, ContainerType, HasIdSpan, HasLamportSpan, IdSpan, LoroEncodeError, LoroResult,
-    LoroValue, ID,
+    ContainerID, ContainerType, HasCounterSpan, HasIdSpan, HasLamportSpan, IdSpan, LoroEncodeError,
+    LoroResult, LoroValue, ID,
 };
 use rle::HasLength;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -801,10 +801,18 @@ impl LoroDoc {
         }
 
         if !preflight.applies_to_dag {
+            let pending_root_containers = pending_root_containers_to_materialize(&oplog, &changes);
             let result = encoding::apply_decoded_changes_to_oplog(&mut oplog, changes);
             if result.has_deps_before_shallow_root {
                 oplog.arena.rollback(arena_checkpoint);
                 return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
+            }
+
+            if !pending_root_containers.is_empty() {
+                let mut state = self.state.lock();
+                for id in pending_root_containers {
+                    state.ensure_container(&id);
+                }
             }
 
             return Ok(result.status);
@@ -1001,9 +1009,17 @@ impl LoroDoc {
     #[inline]
     pub fn get_handler(&self, id: ContainerID) -> Option<Handler> {
         if self.has_container(&id) {
+            self.ensure_root_container(&id);
             Some(Handler::new_attached(id, self.clone()))
         } else {
             None
+        }
+    }
+
+    #[inline]
+    fn ensure_root_container(&self, id: &ContainerID) {
+        if id.is_root() {
+            self.state.lock().ensure_container(id);
         }
     }
 
@@ -1015,6 +1031,7 @@ impl LoroDoc {
         if !self.has_container(&id) {
             return None;
         }
+        self.ensure_root_container(&id);
         Handler::new_attached(id, self.clone()).into_text().ok()
     }
 
@@ -1034,6 +1051,7 @@ impl LoroDoc {
         if !self.has_container(&id) {
             return None;
         }
+        self.ensure_root_container(&id);
         Handler::new_attached(id, self.clone()).into_list().ok()
     }
 
@@ -1053,6 +1071,7 @@ impl LoroDoc {
         if !self.has_container(&id) {
             return None;
         }
+        self.ensure_root_container(&id);
         Handler::new_attached(id, self.clone())
             .into_movable_list()
             .ok()
@@ -1074,6 +1093,7 @@ impl LoroDoc {
         if !self.has_container(&id) {
             return None;
         }
+        self.ensure_root_container(&id);
         Handler::new_attached(id, self.clone()).into_map().ok()
     }
 
@@ -1093,6 +1113,7 @@ impl LoroDoc {
         if !self.has_container(&id) {
             return None;
         }
+        self.ensure_root_container(&id);
         Handler::new_attached(id, self.clone()).into_tree().ok()
     }
 
@@ -1113,6 +1134,7 @@ impl LoroDoc {
         if !self.has_container(&id) {
             return None;
         }
+        self.ensure_root_container(&id);
         Handler::new_attached(id, self.clone()).into_counter().ok()
     }
 
@@ -2365,6 +2387,36 @@ impl LoroDoc {
     }
 }
 
+fn pending_root_containers_to_materialize(oplog: &OpLog, changes: &[Change]) -> Vec<ContainerID> {
+    let mut roots = FxHashSet::default();
+    for change in changes {
+        if change.ctr_end() <= oplog.vv().get(&change.id.peer).copied().unwrap_or(0) {
+            continue;
+        }
+
+        if oplog.dag.is_before_shallow_root(&change.deps)
+            || oplog
+                .dag
+                .get_change_lamport_from_deps(&change.deps)
+                .is_some()
+        {
+            continue;
+        }
+
+        for op in change.ops.iter() {
+            let id = oplog
+                .arena
+                .get_container_id(op.container)
+                .expect("decoded op container should be registered");
+            if id.is_root() {
+                roots.insert(id);
+            }
+        }
+    }
+
+    roots.into_iter().collect()
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ChangeTravelError {
     #[error("Target id not found {0:?}")]
@@ -2451,9 +2503,23 @@ impl LoroDoc {
     pub fn get_changed_containers_in(&self, id: ID, len: usize) -> FxHashSet<ContainerID> {
         self.with_barrier(|| {
             let mut set = FxHashSet::default();
+            let len = i64::try_from(len).unwrap_or(i64::MAX);
+            let start = i64::from(id.counter);
+            let end = start.saturating_add(len);
+            if end <= 0 {
+                return set;
+            }
+
+            let start = start.max(0).min(i64::from(i32::MAX));
+            let end = end.max(0).min(i64::from(i32::MAX));
+            if start >= end {
+                return set;
+            }
+
             {
                 let oplog = self.oplog().lock();
-                for op in oplog.iter_ops(id.to_span(len)) {
+                let span = IdSpan::new(id.peer, start as i32, end as i32);
+                for op in oplog.iter_ops(span) {
                     let id = oplog.arena.get_container_id(op.container()).unwrap();
                     set.insert(id);
                 }
@@ -2476,11 +2542,14 @@ impl LoroDoc {
             return;
         };
 
+        self.config
+            .deleted_root_containers
+            .lock()
+            .insert(cid.clone());
         if let Err(e) = h.clear() {
+            self.config.deleted_root_containers.lock().remove(&cid);
             eprintln!("Failed to clear handler: {:?}", e);
-            return;
         }
-        self.config.deleted_root_containers.lock().insert(cid);
     }
 
     pub fn set_hide_empty_root_containers(&self, hide: bool) {

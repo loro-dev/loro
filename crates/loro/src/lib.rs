@@ -1467,6 +1467,7 @@ impl LoroDoc {
     /// Internally, it will apply the diff to the current state.
     #[inline]
     pub fn apply_diff(&self, diff: DiffBatch) -> LoroResult<()> {
+        diff.validate_for_apply()?;
         self.doc.apply_diff(diff.into())
     }
 

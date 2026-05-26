@@ -79,6 +79,14 @@ pub(super) fn _decode_snapshot_bytes(bytes: Bytes) -> LoroResult<Snapshot> {
         ));
     }
     let shallow_root_state_bytes = r.get_mut().copy_to_bytes(shallow_bytes_len);
+    if r.get_ref().has_remaining() {
+        return Err(LoroError::DecodeError(
+            "decode_snapshot: trailing bytes after snapshot"
+                .to_string()
+                .into_boxed_str(),
+        ));
+    }
+
     Ok(Snapshot {
         oplog_bytes,
         state_bytes,
@@ -100,6 +108,14 @@ pub(super) fn _decode_snapshot_meta_partial(bytes: &[u8]) -> LoroResult<(&[u8], 
     }
     r = &r[state_bytes_len..];
     let shallow_bytes_len = read_u32_le_slice(&mut r)? as usize;
+    if r.len() < shallow_bytes_len {
+        return Err(LoroError::DecodeDataCorruptionError);
+    }
+    r = &r[shallow_bytes_len..];
+    if !r.is_empty() {
+        return Err(LoroError::DecodeDataCorruptionError);
+    }
+
     Ok((oplog_bytes, shallow_bytes_len > 0))
 }
 
@@ -214,9 +230,6 @@ pub(crate) fn decode_snapshot_inner(
                 state.cache_current_as_shallow_latest(state_frontiers.clone());
             }
         }
-
-        // FIXME: we may need to extract the unknown containers here?
-        // Or we should lazy load it when the time comes?
 
         state.init_with_states_and_version(state_frontiers, &oplog, vec![], false, origin)?;
         Ok(())

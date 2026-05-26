@@ -1,0 +1,1 @@
+If you change WASM packaging or bundler-facing entrypoints, run `pnpm --dir examples/bundler-smoke-tests run test:browser` from the repo root to verify the package still builds and executes in real browsers.

@@ -2,6 +2,7 @@ node_modules/
 npm/
 nodejs/
 bundler/
+browser/
 web/
 docs/
 base64/

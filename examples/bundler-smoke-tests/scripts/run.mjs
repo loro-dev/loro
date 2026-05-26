@@ -21,6 +21,7 @@ const localLoroPackage = path.join(repoRoot, "crates/loro-wasm");
 const loroPackageSpec = normalizeLoroPackageSpec(
   process.env.LORO_SMOKE_PACKAGE ?? `file:${localLoroPackage}`,
 );
+const smokeMode = process.env.LORO_SMOKE_MODE ?? "default";
 
 function normalizeLoroPackageSpec(spec) {
   if (spec === "loro-crdt" || spec.startsWith("loro-crdt@")) {
@@ -30,7 +31,28 @@ function normalizeLoroPackageSpec(spec) {
   return spec;
 }
 
-const sharedApp = (importPath) => `import { LoroDoc } from "${importPath}";
+const sharedApp = (importPath) => {
+  if (smokeMode === "json") {
+    return `import { LoroDoc } from "${importPath}";
+
+const doc = new LoroDoc();
+doc.getText("t").insert(0, "hi");
+const value = doc.toJSON();
+
+if (value.t !== "hi" || Object.keys(value).length !== 1) {
+  throw new Error(\`Unexpected Loro JSON: \${JSON.stringify(value)}\`);
+}
+
+console.log(value);
+globalThis.__LORO_JSON_SMOKE__ = value;
+const app = document.getElementById("app");
+if (app) {
+  app.textContent = JSON.stringify(value);
+}
+`;
+  }
+
+  return `import { LoroDoc } from "${importPath}";
 
 const doc = new LoroDoc();
 const text = doc.getText("text");
@@ -47,6 +69,7 @@ if (app) {
   app.textContent = value;
 }
 `;
+};
 
 const html = `<!doctype html>
 <html>
@@ -332,7 +355,26 @@ export default function Page() {
   );
   await writeFile(
     path.join(dir, "components/Smoke.jsx"),
-    `"use client";
+    smokeMode === "json"
+      ? `"use client";
+
+import { LoroDoc } from "${importPath}";
+
+export default function Smoke() {
+  const doc = new LoroDoc();
+  doc.getText("t").insert(0, "hi");
+  const value = doc.toJSON();
+
+  if (value.t !== "hi" || Object.keys(value).length !== 1) {
+    throw new Error(\`Unexpected Loro JSON: \${JSON.stringify(value)}\`);
+  }
+
+  console.log(value);
+  globalThis.__LORO_JSON_SMOKE__ = value;
+  return <main>{JSON.stringify(value)}</main>;
+}
+`
+      : `"use client";
 
 import { LoroDoc } from "${importPath}";
 

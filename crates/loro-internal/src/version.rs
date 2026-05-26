@@ -76,7 +76,10 @@ impl VersionRange {
     pub fn from_vv(vv: &VersionVector) -> Self {
         let mut ans = Self::new();
         for (peer, counter) in vv.iter() {
-            ans.insert(*peer, 0, *counter);
+            let counter = normalize_vv_counter(*counter);
+            if counter > 0 {
+                ans.insert(*peer, 0, counter);
+            }
         }
         ans
     }
@@ -211,6 +214,16 @@ impl<'a> CausalVersion<'a> {
     }
 }
 
+#[inline]
+fn normalize_vv_counter(counter: Counter) -> Counter {
+    counter.max(0)
+}
+
+#[inline]
+fn last_id_to_vv_end(id: ID) -> Counter {
+    id.counter.saturating_add(1).max(0)
+}
+
 impl ImVersionVector {
     pub fn new() -> Self {
         Self(Default::default())
@@ -274,7 +287,13 @@ impl ImVersionVector {
         vv: impl Iterator<Item = (&'a PeerID, &'a Counter)>,
     ) {
         for (&client_id, &counter) in vv {
+            let counter = normalize_vv_counter(counter);
+            if counter == 0 {
+                continue;
+            }
+
             if let Some(my_counter) = self.0.get_mut(&client_id) {
+                *my_counter = normalize_vv_counter(*my_counter);
                 if *my_counter < counter {
                     *my_counter = counter;
                 }
@@ -296,35 +315,46 @@ impl ImVersionVector {
 
     #[inline]
     pub fn set_last(&mut self, id: ID) {
-        self.0.insert(id.peer, id.counter + 1);
+        let end = last_id_to_vv_end(id);
+        if end == 0 {
+            self.0.remove(&id.peer);
+        } else {
+            self.0.insert(id.peer, end);
+        }
     }
 
     pub fn extend_to_include_last_id(&mut self, id: ID) {
+        let end = last_id_to_vv_end(id);
+        if end == 0 {
+            return;
+        }
+
         if let Some(counter) = self.0.get_mut(&id.peer) {
-            if *counter <= id.counter {
-                *counter = id.counter + 1;
+            *counter = normalize_vv_counter(*counter);
+            if *counter < end {
+                *counter = end;
             }
         } else {
-            self.set_last(id)
+            self.0.insert(id.peer, end);
         }
     }
 
     pub(crate) fn includes_id(&self, x: ID) -> bool {
-        if self.is_empty() {
+        if self.is_empty() || x.counter < 0 {
             return false;
         }
 
-        self.get(&x.peer).copied().unwrap_or(0) > x.counter
+        normalize_vv_counter(self.get(&x.peer).copied().unwrap_or(0)) > x.counter
     }
 }
 
 impl PartialEq for VersionVector {
     fn eq(&self, other: &Self) -> bool {
-        self.iter()
-            .all(|(client, counter)| other.get(client).unwrap_or(&0) == counter)
-            && other
-                .iter()
-                .all(|(client, counter)| self.get(client).unwrap_or(&0) == counter)
+        self.iter().all(|(client, counter)| {
+            normalize_vv_counter(*other.get(client).unwrap_or(&0)) == normalize_vv_counter(*counter)
+        }) && other.iter().all(|(client, counter)| {
+            normalize_vv_counter(*self.get(client).unwrap_or(&0)) == normalize_vv_counter(*counter)
+        })
     }
 }
 
@@ -332,13 +362,13 @@ impl Eq for VersionVector {}
 
 impl PartialEq for ImVersionVector {
     fn eq(&self, other: &Self) -> bool {
-        self.0
-            .iter()
-            .all(|(client, counter)| other.0.get(client).unwrap_or(&0) == counter)
-            && other
-                .0
-                .iter()
-                .all(|(client, counter)| self.0.get(client).unwrap_or(&0) == counter)
+        self.0.iter().all(|(client, counter)| {
+            normalize_vv_counter(*other.0.get(client).unwrap_or(&0))
+                == normalize_vv_counter(*counter)
+        }) && other.0.iter().all(|(client, counter)| {
+            normalize_vv_counter(*self.0.get(client).unwrap_or(&0))
+                == normalize_vv_counter(*counter)
+        })
     }
 }
 
@@ -424,7 +454,9 @@ impl PartialOrd for VersionVector {
         let mut other_greater = true;
         let mut eq = true;
         for (client_id, other_end) in other.iter() {
+            let other_end = normalize_vv_counter(*other_end);
             if let Some(self_end) = self.get(client_id) {
+                let self_end = normalize_vv_counter(*self_end);
                 if self_end < other_end {
                     self_greater = false;
                     eq = false;
@@ -433,7 +465,7 @@ impl PartialOrd for VersionVector {
                     other_greater = false;
                     eq = false;
                 }
-            } else if *other_end > 0 {
+            } else if other_end > 0 {
                 self_greater = false;
                 eq = false;
             }
@@ -442,7 +474,7 @@ impl PartialOrd for VersionVector {
         for (client_id, self_end) in self.iter() {
             if other.contains_key(client_id) {
                 continue;
-            } else if *self_end > 0 {
+            } else if normalize_vv_counter(*self_end) > 0 {
                 other_greater = false;
                 eq = false;
             }
@@ -466,7 +498,9 @@ impl PartialOrd for ImVersionVector {
         let mut other_greater = true;
         let mut eq = true;
         for (client_id, other_end) in other.iter() {
+            let other_end = normalize_vv_counter(*other_end);
             if let Some(self_end) = self.get(client_id) {
+                let self_end = normalize_vv_counter(*self_end);
                 if self_end < other_end {
                     self_greater = false;
                     eq = false;
@@ -475,7 +509,7 @@ impl PartialOrd for ImVersionVector {
                     other_greater = false;
                     eq = false;
                 }
-            } else if *other_end > 0 {
+            } else if other_end > 0 {
                 self_greater = false;
                 eq = false;
             }
@@ -484,7 +518,7 @@ impl PartialOrd for ImVersionVector {
         for (client_id, self_end) in self.iter() {
             if other.contains_key(client_id) {
                 continue;
-            } else if *self_end > 0 {
+            } else if normalize_vv_counter(*self_end) > 0 {
                 other_greater = false;
                 eq = false;
             }
@@ -512,7 +546,9 @@ impl VersionVector {
     pub fn diff(&self, rhs: &Self) -> VersionVectorDiff {
         let mut ans: VersionVectorDiff = Default::default();
         for (client_id, &counter) in self.iter() {
+            let counter = normalize_vv_counter(counter);
             if let Some(&rhs_counter) = rhs.get(client_id) {
+                let rhs_counter = normalize_vv_counter(rhs_counter);
                 match counter.cmp(&rhs_counter) {
                     Ordering::Less => {
                         ans.forward.insert(
@@ -534,7 +570,7 @@ impl VersionVector {
                     }
                     Ordering::Equal => {}
                 }
-            } else {
+            } else if counter > 0 {
                 ans.retreat.insert(
                     *client_id,
                     CounterSpan {
@@ -545,7 +581,8 @@ impl VersionVector {
             }
         }
         for (client_id, &rhs_counter) in rhs.iter() {
-            if !self.contains_key(client_id) {
+            let rhs_counter = normalize_vv_counter(rhs_counter);
+            if rhs_counter > 0 && !self.contains_key(client_id) {
                 ans.forward.insert(
                     *client_id,
                     CounterSpan {
@@ -576,7 +613,9 @@ impl VersionVector {
     /// Returns the spans that are in `self` but not in `rhs`
     pub fn sub_iter<'a>(&'a self, rhs: &'a Self) -> impl Iterator<Item = IdSpan> + 'a {
         self.iter().filter_map(move |(peer, &counter)| {
+            let counter = normalize_vv_counter(counter);
             if let Some(&rhs_counter) = rhs.get(peer) {
+                let rhs_counter = normalize_vv_counter(rhs_counter);
                 if counter > rhs_counter {
                     Some(IdSpan {
                         peer: *peer,
@@ -608,7 +647,9 @@ impl VersionVector {
         rhs: &'a ImVersionVector,
     ) -> impl Iterator<Item = IdSpan> + 'a {
         self.iter().filter_map(move |(peer, &counter)| {
+            let counter = normalize_vv_counter(counter);
             if let Some(&rhs_counter) = rhs.get(peer) {
+                let rhs_counter = normalize_vv_counter(rhs_counter);
                 if counter > rhs_counter {
                     Some(IdSpan {
                         peer: *peer,
@@ -645,34 +686,37 @@ impl VersionVector {
     }
 
     pub fn distance_between(&self, other: &Self) -> usize {
-        let mut ans = 0;
+        let mut ans = 0usize;
         for (client_id, &counter) in self.iter() {
+            let counter = counter.max(0) as i64;
             if let Some(&other_counter) = other.get(client_id) {
-                ans += (counter - other_counter).abs();
-            } else if counter > 0 {
-                ans += counter;
+                let other_counter = other_counter.max(0) as i64;
+                ans += counter.abs_diff(other_counter) as usize;
+            } else {
+                ans += counter as usize;
             }
         }
 
         for (client_id, &counter) in other.iter() {
             if !self.contains_key(client_id) {
-                ans += counter;
+                ans += counter.max(0) as usize;
             }
         }
 
-        ans as usize
+        ans
     }
 
     pub fn to_spans(&self) -> IdSpanVector {
         self.iter()
-            .map(|(client_id, &counter)| {
-                (
+            .filter_map(|(client_id, &counter)| {
+                let counter = normalize_vv_counter(counter);
+                (counter > 0).then_some((
                     *client_id,
                     CounterSpan {
                         start: 0,
                         end: counter,
                     },
-                )
+                ))
             })
             .collect()
     }
@@ -701,14 +745,24 @@ impl VersionVector {
     /// set the inclusive ending point. target id will be included by self
     #[inline]
     pub fn set_last(&mut self, id: ID) {
-        self.0.insert(id.peer, id.counter + 1);
+        let end = last_id_to_vv_end(id);
+        if end == 0 {
+            self.0.remove(&id.peer);
+        } else {
+            self.0.insert(id.peer, end);
+        }
     }
 
     #[inline]
     pub fn get_last(&self, client_id: PeerID) -> Option<Counter> {
-        self.0
-            .get(&client_id)
-            .and_then(|&x| if x == 0 { None } else { Some(x - 1) })
+        self.0.get(&client_id).and_then(|&x| {
+            let x = normalize_vv_counter(x);
+            if x == 0 {
+                None
+            } else {
+                Some(x - 1)
+            }
+        })
     }
 
     /// set the exclusive ending point. target id will NOT be included by self
@@ -725,15 +779,24 @@ impl VersionVector {
     /// Return whether updated
     #[inline]
     pub fn try_update_last(&mut self, id: ID) -> bool {
+        let new_end = last_id_to_vv_end(id);
+        if new_end == 0 {
+            if self.0.get(&id.peer).is_some_and(|counter| *counter < 0) {
+                self.0.remove(&id.peer);
+            }
+            return false;
+        }
+
         if let Some(end) = self.0.get_mut(&id.peer) {
-            if *end < id.counter + 1 {
-                *end = id.counter + 1;
+            *end = normalize_vv_counter(*end);
+            if *end < new_end {
+                *end = new_end;
                 true
             } else {
                 false
             }
         } else {
-            self.0.insert(id.peer, id.counter + 1);
+            self.0.insert(id.peer, new_end);
             true
         }
     }
@@ -741,12 +804,17 @@ impl VersionVector {
     pub fn get_missing_span(&self, target: &Self) -> Vec<IdSpan> {
         let mut ans = vec![];
         for (client_id, other_end) in target.iter() {
-            if let Some(my_end) = self.get(client_id) {
-                if my_end < other_end {
-                    ans.push(IdSpan::new(*client_id, *my_end, *other_end));
-                }
-            } else {
-                ans.push(IdSpan::new(*client_id, 0, *other_end));
+            let other_end = normalize_vv_counter(*other_end);
+            if other_end == 0 {
+                continue;
+            }
+
+            let my_end = self
+                .get(client_id)
+                .map(|counter| normalize_vv_counter(*counter))
+                .unwrap_or(0);
+            if my_end < other_end {
+                ans.push(IdSpan::new(*client_id, my_end, other_end));
             }
         }
 
@@ -755,7 +823,13 @@ impl VersionVector {
 
     pub fn merge(&mut self, other: &Self) {
         for (&client_id, &other_end) in other.iter() {
+            let other_end = normalize_vv_counter(other_end);
+            if other_end == 0 {
+                continue;
+            }
+
             if let Some(my_end) = self.get_mut(&client_id) {
+                *my_end = normalize_vv_counter(*my_end);
                 if *my_end < other_end {
                     *my_end = other_end;
                 }
@@ -777,8 +851,12 @@ impl VersionVector {
     }
 
     pub fn includes_id(&self, id: ID) -> bool {
+        if id.counter < 0 {
+            return false;
+        }
+
         if let Some(end) = self.get(&id.peer) {
-            if *end > id.counter {
+            if normalize_vv_counter(*end) > id.counter {
                 return true;
             }
         }
@@ -787,10 +865,12 @@ impl VersionVector {
 
     pub fn intersect_span(&self, target: IdSpan) -> Option<CounterSpan> {
         if let Some(&end) = self.get(&target.peer) {
-            if end > target.ctr_start() {
-                let count_end = target.ctr_end();
+            let end = normalize_vv_counter(end);
+            let count_start = target.ctr_start().max(0);
+            let count_end = target.ctr_end().max(0);
+            if end > count_start && count_end > count_start {
                 return Some(CounterSpan {
-                    start: target.ctr_start(),
+                    start: count_start,
                     end: end.min(count_end),
                 });
             }
@@ -804,7 +884,13 @@ impl VersionVector {
         vv: impl Iterator<Item = (&'a PeerID, &'a Counter)>,
     ) {
         for (&client_id, &counter) in vv {
+            let counter = normalize_vv_counter(counter);
+            if counter == 0 {
+                continue;
+            }
+
             if let Some(my_counter) = self.get_mut(&client_id) {
+                *my_counter = normalize_vv_counter(*my_counter);
                 if *my_counter < counter {
                     *my_counter = counter;
                 }
@@ -815,44 +901,75 @@ impl VersionVector {
     }
 
     pub fn extend_to_include_last_id(&mut self, id: ID) {
+        let end = last_id_to_vv_end(id);
+        if end == 0 {
+            return;
+        }
+
         if let Some(counter) = self.get_mut(&id.peer) {
-            if *counter <= id.counter {
-                *counter = id.counter + 1;
+            *counter = normalize_vv_counter(*counter);
+            if *counter < end {
+                *counter = end;
             }
         } else {
-            self.set_last(id)
+            self.0.insert(id.peer, end);
         }
     }
 
     pub fn extend_to_include_end_id(&mut self, id: ID) {
+        let end = normalize_vv_counter(id.counter);
+        if end == 0 {
+            return;
+        }
+
         if let Some(counter) = self.get_mut(&id.peer) {
-            if *counter < id.counter {
-                *counter = id.counter;
+            *counter = normalize_vv_counter(*counter);
+            if *counter < end {
+                *counter = end;
             }
         } else {
-            self.set_end(id)
+            self.0.insert(id.peer, end);
         }
     }
 
     pub fn extend_to_include(&mut self, span: IdSpan) {
+        let end = normalize_vv_counter(span.counter.norm_end());
+        if end == 0 {
+            if self.0.get(&span.peer).is_some_and(|counter| *counter < 0) {
+                self.0.remove(&span.peer);
+            }
+            return;
+        }
+
         if let Some(counter) = self.get_mut(&span.peer) {
-            if *counter < span.counter.norm_end() {
-                *counter = span.counter.norm_end();
+            *counter = normalize_vv_counter(*counter);
+            if *counter < end {
+                *counter = end;
             }
         } else {
-            self.insert(span.peer, span.counter.norm_end());
+            self.insert(span.peer, end);
         }
     }
 
     pub fn shrink_to_exclude(&mut self, span: IdSpan) {
-        if span.counter.min() == 0 {
+        let start = normalize_vv_counter(span.counter.min());
+        let end = normalize_vv_counter(span.counter.norm_end());
+        if end <= start {
+            return;
+        }
+
+        if start == 0 {
             self.remove(&span.peer);
             return;
         }
 
         if let Some(counter) = self.get_mut(&span.peer) {
-            if *counter > span.counter.min() {
-                *counter = span.counter.min();
+            *counter = normalize_vv_counter(*counter);
+            if *counter > start {
+                *counter = start;
+            }
+            if *counter == 0 {
+                self.remove(&span.peer);
             }
         }
     }
@@ -878,7 +995,9 @@ impl VersionVector {
     pub fn intersection(&self, other: &VersionVector) -> VersionVector {
         let mut ans = VersionVector::new();
         for (client_id, &counter) in self.iter() {
+            let counter = normalize_vv_counter(counter);
             if let Some(&other_counter) = other.get(client_id) {
+                let other_counter = normalize_vv_counter(other_counter);
                 if counter < other_counter {
                     if counter != 0 {
                         ans.insert(*client_id, counter);
