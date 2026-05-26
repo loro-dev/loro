@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.12.3
+
+### Patch Changes
+
+- ebee770: Fix the browser WASM loader for remapped bundler builds. The browser entry now avoids setting `XMLHttpRequest.responseType` on synchronous document requests, which browsers reject, reads the WASM bytes through a one-byte text decoding path, and emits explicit WASM re-exports so Parcel scope-hoisted builds can run in the browser.
+- f3ece99: Fix published sourcemap `sources` pointing outside the package. The rollup TypeScript plugin's emitted maps were resolved by rollup against the `.ts` source directory, leaving `../../index.ts` in the published `sources`. Vite/Vitest warned about source files escaping the package. The sourcemap now resolves inside the package and `sourcesContent` is included so debuggers don't need to fetch the TypeScript source.
+
 ## 1.12.2
 
 ### Patch Changes
