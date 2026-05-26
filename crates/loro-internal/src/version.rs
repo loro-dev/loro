@@ -166,8 +166,11 @@ pub struct ImVersionVector(im::HashMap<PeerID, Counter, rustc_hash::FxBuildHashe
 /// A lightweight causal version used while replaying changes in causal order.
 ///
 /// It represents `base` plus the current peer advanced to at least `peer_end`.
-/// This avoids rebuilding a full mutable [VersionVector] for every replayed
-/// DAG node/op in checkout diff calculation.
+/// Version vector counters are exclusive upper bounds, so replaying an op at
+/// counter `c` uses `CausalVersion(base, peer, c)` as the before-op version:
+/// all deps and earlier same-peer ops are included, but the op at `c` is not.
+/// This avoids rebuilding a full mutable [VersionVector] for every replayed DAG
+/// node/op in checkout diff calculation.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct CausalVersion<'a> {
     base: &'a ImVersionVector,

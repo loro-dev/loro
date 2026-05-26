@@ -59,3 +59,42 @@ fn conflict_moves() -> Result<(), LoroError> {
 
     Ok(())
 }
+
+#[test]
+fn checkout_movable_list_multi_op_change_after_snapshot() -> Result<(), LoroError> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    let list = doc.get_movable_list("list");
+    list.insert(0, 0)?;
+    list.insert(1, 1)?;
+    list.insert(2, 2)?;
+    doc.commit();
+    let base = doc.state_frontiers();
+
+    doc.set_peer_id(2)?;
+    list.insert(0, 9)?;
+    list.mov(1, 3)?;
+    doc.commit();
+    let latest = doc.state_frontiers();
+    assert_eq!(
+        doc.get_deep_value().to_json_value(),
+        json!({
+            "list": [9, 1, 2, 0]
+        })
+    );
+
+    let restored = LoroDoc::new();
+    restored.import(&doc.export(ExportMode::Snapshot)?)?;
+    restored.checkout(&base)?;
+    assert_eq!(
+        restored.get_deep_value().to_json_value(),
+        json!({
+            "list": [0, 1, 2]
+        })
+    );
+
+    restored.checkout(&latest)?;
+    assert_eq!(restored.get_deep_value(), doc.get_deep_value());
+
+    Ok(())
+}

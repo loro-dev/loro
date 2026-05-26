@@ -348,7 +348,14 @@ impl DiffCalculator {
                         calculator.start_tracking(oplog, &lca, diff_mode);
                     }
 
-                    if visited.contains(&op.container) {
+                    // Movable-list move replay needs the before-op causal VV for
+                    // history-cache last_pos lookups. The tracker's materialized
+                    // version is only a container projection and may not include
+                    // causal deps that inserted the moved element, so it cannot
+                    // replace CausalVersion here.
+                    let should_reuse_container_checkout = visited.contains(&op.container)
+                        && !matches!(calculator, ContainerDiffCalculator::MovableList(_));
+                    if should_reuse_container_checkout {
                         // don't checkout if we have already checked out this container in this round
                         calculator.apply_change(oplog, RichOp::new_by_change(&change, op), None);
                     } else {
@@ -1706,6 +1713,12 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                                     let lookup_vv = causal_lookup_vv
                                         .as_ref()
                                         .unwrap_or(this.materialized.as_vv());
+                                    // Invariant: a valid move's elem_id must have a previous
+                                    // position in its before-op causal VV. The original insert
+                                    // causally precedes the move in full history; shallow docs
+                                    // seed visible root elements into the checkout history cache.
+                                    // Missing last_pos means either the op log or the replay VV is
+                                    // inconsistent, so failing fast is better than corrupting state.
                                     list.last_pos(
                                         *elem_id,
                                         lookup_vv,
@@ -1713,7 +1726,14 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                                         Lamport::MAX,
                                         oplog,
                                     )
-                                    .unwrap()
+                                    .unwrap_or_else(|| {
+                                        panic!(
+                                            "missing previous movable-list position: move_op={:?}, elem_id={:?}, lookup_vv={:?}",
+                                            op.id(),
+                                            elem_id,
+                                            lookup_vv
+                                        )
+                                    })
                                     .id()
                                 })
                             } else {
@@ -1843,9 +1863,17 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                         return false;
                     };
                     // TODO: PERF: Provide the lamport of to version
+                    // Invariant: if an element has a position at to_vv, it must also
+                    // have a value at to_vv. Full history falls back to the original
+                    // insert value; shallow roots record position and value together.
                     let value = checkout_index
                         .last_value(id, info.to_vv, Lamport::MAX, oplog)
-                        .unwrap();
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "missing movable-list value for positioned element: elem_id={:?}, to_vv={:?}",
+                                id, info.to_vv
+                            )
+                        });
                     // TODO: PERF: Provide the lamport of to version
                     let old_pos = checkout_index.last_pos(id, info.from_vv, Lamport::MAX, oplog);
                     // TODO: PERF: Provide the lamport of to version
