@@ -690,7 +690,7 @@ pub mod wasm {
 
     impl From<&ContainerID> for JsValue {
         fn from(id: &ContainerID) -> Self {
-            JsValue::from_str(id.to_string().as_str())
+            JsValue::from_str(id.to_string_fast().as_str())
         }
     }
 

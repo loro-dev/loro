@@ -359,16 +359,77 @@ pub(crate) fn convert(value: LoroValue) -> JsResult<JsValue> {
         LoroValue::String(s) => JsValue::from_str(&s),
         LoroValue::List(list) => {
             let arr = Array::new_with_length(list.len() as u32);
-            for (i, v) in list.as_ref().iter().cloned().enumerate() {
+            for (i, v) in list.unwrap().into_iter().enumerate() {
                 arr.set(i as u32, convert(v)?);
             }
             arr.into_js_result()?
         }
         LoroValue::Map(m) => {
             let map = Object::new();
-            for (k, v) in m.as_ref().iter() {
-                let str: &str = k;
-                js_sys::Reflect::set(&map, &JsValue::from_str(str), &convert(v.clone())?)?;
+            for (k, v) in m.unwrap() {
+                js_sys::Reflect::set(&map, &JsValue::from_str(&k), &convert(v)?)?;
+            }
+
+            map.into_js_result()?
+        }
+        LoroValue::Container(container_id) => JsValue::from(&container_id),
+        LoroValue::Binary(binary) => {
+            let arr = Uint8Array::new_with_length(binary.len() as u32);
+            for (i, v) in binary.iter().enumerate() {
+                arr.set_index(i as u32, *v);
+            }
+            arr.into_js_result()?
+        }
+    })
+}
+
+pub(crate) fn convert_mirror_value(value: LoroValue) -> JsResult<JsValue> {
+    let cid_descriptor = Object::new();
+    let cid_key = JsValue::from_str("$cid");
+    let value_key = JsValue::from_str("value");
+    convert_mirror_value_inner(value, &cid_descriptor, &cid_key, &value_key)
+}
+
+fn convert_mirror_value_inner(
+    value: LoroValue,
+    cid_descriptor: &Object,
+    cid_key: &JsValue,
+    value_key: &JsValue,
+) -> JsResult<JsValue> {
+    Ok(match value {
+        LoroValue::Null => JsValue::NULL,
+        LoroValue::Bool(b) => JsValue::from_bool(b),
+        LoroValue::Double(f) => JsValue::from_f64(f),
+        LoroValue::I64(i) => JsValue::from_f64(i as f64),
+        LoroValue::String(s) => JsValue::from_str(&s),
+        LoroValue::List(list) => {
+            let arr = Array::new_with_length(list.len() as u32);
+            for (i, v) in list.unwrap().into_iter().enumerate() {
+                arr.set(
+                    i as u32,
+                    convert_mirror_value_inner(v, cid_descriptor, cid_key, value_key)?,
+                );
+            }
+            arr.into_js_result()?
+        }
+        LoroValue::Map(m) => {
+            let map = Object::new();
+            let mut values = m.unwrap();
+            let cid = values.remove("$cid").and_then(|value| match value {
+                LoroValue::String(cid) => Some(cid.to_string()),
+                _ => None,
+            });
+            for (k, v) in values {
+                js_sys::Reflect::set(
+                    &map,
+                    &JsValue::from_str(&k),
+                    &convert_mirror_value_inner(v, cid_descriptor, cid_key, value_key)?,
+                )?;
+            }
+
+            if let Some(cid) = cid {
+                js_sys::Reflect::set(cid_descriptor, value_key, &JsValue::from_str(&cid))?;
+                Object::define_property(&map, cid_key, cid_descriptor);
             }
 
             map.into_js_result()?
@@ -447,10 +508,10 @@ pub(crate) fn handler_to_js_value(handler: Handler, for_json: bool) -> JsValue {
 
     match handler {
         Handler::Text(t) => LoroText { handler: t }.into(),
-        Handler::Map(m) => LoroMap { handler: m }.into(),
-        Handler::List(l) => LoroList { handler: l }.into(),
+        Handler::Map(m) => LoroMap::from_handler(m).into(),
+        Handler::List(l) => LoroList::from_handler(l).into(),
         Handler::Tree(t) => LoroTree { handler: t }.into(),
-        Handler::MovableList(m) => LoroMovableList { handler: m }.into(),
+        Handler::MovableList(m) => LoroMovableList::from_handler(m).into(),
         Handler::Counter(c) => LoroCounter { handler: c }.into(),
         Handler::Unknown(_) => unreachable!(),
     }

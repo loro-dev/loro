@@ -45,9 +45,9 @@ struct LazyContainerData {
 enum LazyDecodedValue {
     Value(LoroValue),
     Text {
-        value: LoroValue,
-        unicode_len: usize,
-        utf16_len: usize,
+        value: String,
+        unicode_len: OnceCell<usize>,
+        utf16_len: OnceCell<usize>,
     },
     Map {
         ordered: BTreeMap<String, LoroValue>,
@@ -56,20 +56,18 @@ enum LazyDecodedValue {
 }
 
 impl LazyDecodedValue {
-    fn text(value: LoroValue) -> Self {
-        let text = value
-            .as_string()
-            .expect("decoded text value should be a string");
+    fn text(value: String) -> Self {
         Self::Text {
-            unicode_len: count_unicode_chars(text.as_bytes()),
-            utf16_len: count_utf16_len(text.as_bytes()),
             value,
+            unicode_len: OnceCell::new(),
+            utf16_len: OnceCell::new(),
         }
     }
 
     fn to_loro_value(&self) -> LoroValue {
         match self {
-            Self::Value(value) | Self::Text { value, .. } => value.clone(),
+            Self::Value(value) => value.clone(),
+            Self::Text { value, .. } => LoroValue::String(value.clone().into()),
             Self::Map { ordered, value } => value
                 .get_or_init(|| {
                     LoroValue::Map(
@@ -90,16 +88,41 @@ impl LazyDecodedValue {
         }
     }
 
+    fn as_list(&self) -> Option<&[LoroValue]> {
+        match self {
+            Self::Value(LoroValue::List(list)) => Some(list.as_slice()),
+            _ => None,
+        }
+    }
+
     fn unicode_len(&self) -> Option<usize> {
         match self {
-            Self::Text { unicode_len, .. } => Some(*unicode_len),
+            Self::Text {
+                value, unicode_len, ..
+            } => Some(*unicode_len.get_or_init(|| count_unicode_chars(value.as_bytes()))),
+            _ => None,
+        }
+    }
+
+    fn utf8_len(&self) -> Option<usize> {
+        match self {
+            Self::Text { value, .. } => Some(value.len()),
+            _ => None,
+        }
+    }
+
+    fn text_string(&self) -> Option<String> {
+        match self {
+            Self::Text { value, .. } => Some(value.clone()),
             _ => None,
         }
     }
 
     fn utf16_len(&self) -> Option<usize> {
         match self {
-            Self::Text { utf16_len, .. } => Some(*utf16_len),
+            Self::Text {
+                value, utf16_len, ..
+            } => Some(*utf16_len.get_or_init(|| count_utf16_len(value.as_bytes()))),
             _ => None,
         }
     }
@@ -350,6 +373,46 @@ impl ContainerWrapper {
         }
     }
 
+    pub fn text_utf8_len(
+        &mut self,
+        idx: ContainerIdx,
+        ctx: ContainerCreationContext,
+    ) -> Option<usize> {
+        match &mut self.data {
+            ContainerData::State(state) => Some(state.as_richtext_state_mut().unwrap().len_utf8()),
+            ContainerData::Lazy(_) => {
+                self.decode_value(idx, ctx).unwrap();
+                match &mut self.data {
+                    ContainerData::State(state) => {
+                        Some(state.as_richtext_state_mut().unwrap().len_utf8())
+                    }
+                    ContainerData::Lazy(lazy) => lazy.value.as_ref()?.utf8_len(),
+                }
+            }
+        }
+    }
+
+    pub fn text_string(
+        &mut self,
+        idx: ContainerIdx,
+        ctx: ContainerCreationContext,
+    ) -> Option<String> {
+        match &mut self.data {
+            ContainerData::State(state) => {
+                Some(state.as_richtext_state_mut().unwrap().to_string_mut())
+            }
+            ContainerData::Lazy(_) => {
+                self.decode_value(idx, ctx).unwrap();
+                match &mut self.data {
+                    ContainerData::State(state) => {
+                        Some(state.as_richtext_state_mut().unwrap().to_string_mut())
+                    }
+                    ContainerData::Lazy(lazy) => lazy.value.as_ref()?.text_string(),
+                }
+            }
+        }
+    }
+
     pub fn text_utf16_len(
         &mut self,
         idx: ContainerIdx,
@@ -385,10 +448,23 @@ impl ContainerWrapper {
                     .cloned(),
                 _ => None,
             },
-            ContainerData::Lazy(_) => match self.get_value(idx, ctx) {
-                LoroValue::List(list) => list.get(index).cloned(),
-                _ => None,
-            },
+            ContainerData::Lazy(_) => {
+                self.decode_value(idx, ctx).unwrap();
+                match &self.data {
+                    ContainerData::Lazy(lazy) => {
+                        lazy.value.as_ref()?.as_list()?.get(index).cloned()
+                    }
+                    ContainerData::State(state) => match self.kind {
+                        ContainerType::List => state.as_list_state().unwrap().get(index).cloned(),
+                        ContainerType::MovableList => state
+                            .as_movable_list_state()
+                            .unwrap()
+                            .get(index, IndexType::ForUser)
+                            .cloned(),
+                        _ => None,
+                    },
+                }
+            }
         }
     }
 
@@ -399,10 +475,21 @@ impl ContainerWrapper {
                 ContainerType::MovableList => state.as_movable_list_state().unwrap().len(),
                 _ => 0,
             },
-            ContainerData::Lazy(_) => match self.get_value(idx, ctx) {
-                LoroValue::List(list) => list.len(),
-                _ => 0,
-            },
+            ContainerData::Lazy(_) => {
+                self.decode_value(idx, ctx).unwrap();
+                match &self.data {
+                    ContainerData::Lazy(lazy) => lazy
+                        .value
+                        .as_ref()
+                        .and_then(|v| v.as_list())
+                        .map_or(0, <[_]>::len),
+                    ContainerData::State(state) => match self.kind {
+                        ContainerType::List => state.as_list_state().unwrap().len(),
+                        ContainerType::MovableList => state.as_movable_list_state().unwrap().len(),
+                        _ => 0,
+                    },
+                }
+            }
         }
     }
 
@@ -422,10 +509,29 @@ impl ContainerWrapper {
                     .collect(),
                 _ => Vec::new(),
             },
-            ContainerData::Lazy(_) => match self.get_value(idx, ctx) {
-                LoroValue::List(list) => list.iter().cloned().collect(),
-                _ => Vec::new(),
-            },
+            ContainerData::Lazy(_) => {
+                self.decode_value(idx, ctx).unwrap();
+                match &self.data {
+                    ContainerData::Lazy(lazy) => lazy
+                        .value
+                        .as_ref()
+                        .and_then(|v| v.as_list())
+                        .map(|list| list.iter().cloned().collect())
+                        .unwrap_or_default(),
+                    ContainerData::State(state) => match self.kind {
+                        ContainerType::List => {
+                            state.as_list_state().unwrap().iter().cloned().collect()
+                        }
+                        ContainerType::MovableList => state
+                            .as_movable_list_state()
+                            .unwrap()
+                            .iter()
+                            .cloned()
+                            .collect(),
+                        _ => Vec::new(),
+                    },
+                }
+            }
         }
     }
 
@@ -485,7 +591,7 @@ impl ContainerWrapper {
             parent,
             data: ContainerData::Lazy(Box::new(LazyContainerData {
                 value: None,
-                bytes: Some(bytes.clone()),
+                bytes: Some(bytes),
                 bytes_offset_for_value: Some(size),
                 bytes_offset_for_state: None,
             })),
@@ -561,7 +667,7 @@ impl ContainerWrapper {
         let mut decoded_state = None;
         let (v, state_offset) = match self.kind {
             ContainerType::Text => {
-                let (v, rest) = RichtextState::decode_value(b)?;
+                let (v, rest) = RichtextState::decode_string_value(b)?;
                 (
                     LazyDecodedValue::text(v),
                     b.len() - rest.len() + value_offset,

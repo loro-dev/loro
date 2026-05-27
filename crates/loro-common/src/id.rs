@@ -9,25 +9,25 @@ use std::{
 
 impl Debug for ID {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(format!("{}@{}", self.counter, self.peer).as_str())
+        write!(f, "{}@{}", self.counter, self.peer)
     }
 }
 
 impl Debug for IdLp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(format!("L{}@{}", self.lamport, self.peer).as_str())
+        write!(f, "L{}@{}", self.lamport, self.peer)
     }
 }
 
 impl Display for ID {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(format!("{}@{}", self.counter, self.peer).as_str())
+        write!(f, "{}@{}", self.counter, self.peer)
     }
 }
 
 impl Display for IdLp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(format!("L{}@{}", self.lamport, self.peer).as_str())
+        write!(f, "L{}@{}", self.lamport, self.peer)
     }
 }
 

@@ -16,6 +16,7 @@ mod value;
 
 pub use error::{LoroEncodeError, LoroError, LoroResult, LoroTreeError};
 pub use internal_string::InternalString;
+#[allow(unused_imports)]
 pub use logging::log::*;
 #[doc(hidden)]
 pub use rustc_hash::FxHashMap;
@@ -191,6 +192,51 @@ pub enum ContainerID {
 }
 
 impl ContainerID {
+    pub fn to_string_fast(&self) -> String {
+        match self {
+            Self::Root {
+                name,
+                container_type,
+            } => {
+                if matches!(container_type, ContainerType::Unknown(_)) {
+                    return format!("{self}");
+                }
+
+                let container_type = container_type.display_name();
+                let mut output = String::with_capacity(10 + name.len() + container_type.len());
+                output.push_str("cid:root-");
+                output.push_str(name);
+                output.push(':');
+                output.push_str(container_type);
+                output
+            }
+            Self::Normal {
+                peer,
+                counter,
+                container_type,
+            } => {
+                if matches!(container_type, ContainerType::Unknown(_)) {
+                    return format!("{self}");
+                }
+
+                let container_type = container_type.display_name();
+                let mut counter_buf = itoa::Buffer::new();
+                let counter = counter_buf.format(*counter);
+                let mut peer_buf = itoa::Buffer::new();
+                let peer = peer_buf.format(*peer);
+                let mut output =
+                    String::with_capacity(6 + counter.len() + peer.len() + container_type.len());
+                output.push_str("cid:");
+                output.push_str(counter);
+                output.push('@');
+                output.push_str(peer);
+                output.push(':');
+                output.push_str(container_type);
+                output
+            }
+        }
+    }
+
     pub fn encode<W: Write>(&self, writer: &mut W) -> Result<(), std::io::Error> {
         match self {
             Self::Root {
@@ -335,6 +381,19 @@ pub enum ContainerType {
 }
 
 impl ContainerType {
+    fn display_name(&self) -> &'static str {
+        match self {
+            ContainerType::Map => "Map",
+            ContainerType::List => "List",
+            ContainerType::MovableList => "MovableList",
+            ContainerType::Text => "Text",
+            ContainerType::Tree => "Tree",
+            #[cfg(feature = "counter")]
+            ContainerType::Counter => "Counter",
+            ContainerType::Unknown(_) => "Unknown",
+        }
+    }
+
     #[cfg(feature = "counter")]
     pub const ALL_TYPES: [ContainerType; 6] = [
         ContainerType::Map,
@@ -518,16 +577,12 @@ mod container {
                 ContainerID::Root {
                     name,
                     container_type,
-                } => f.write_fmt(format_args!("cid:root-{name}:{container_type}"))?,
+                } => write!(f, "cid:root-{name}:{container_type}")?,
                 ContainerID::Normal {
                     peer,
                     counter,
                     container_type,
-                } => f.write_fmt(format_args!(
-                    "cid:{id}:{container_type}",
-                    id = ID::new(*peer, *counter),
-                    container_type = container_type
-                ))?,
+                } => write!(f, "cid:{counter}@{peer}:{container_type}")?,
             };
             Ok(())
         }

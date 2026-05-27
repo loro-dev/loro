@@ -101,6 +101,12 @@ impl RichtextState {
         self.state.get_mut().get_text_slice_by_event_index(pos, len)
     }
 
+    pub(crate) fn decode_string_value(bytes: &[u8]) -> LoroResult<(String, &[u8])> {
+        postcard::take_from_bytes(bytes).map_err(|_| {
+            LoroError::DecodeError("Decode text value failed".to_string().into_boxed_str())
+        })
+    }
+
     pub(crate) fn slice_delta(
         &mut self,
         start_index: usize,

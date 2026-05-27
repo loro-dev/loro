@@ -71,13 +71,13 @@ use std::sync::Arc;
 
 use fractional_index::FractionalIndex;
 use loro_common::{
-    ContainerID, Counter, HasCounterSpan, HasLamportSpan, InternalString, Lamport, LoroError,
-    LoroResult, PeerID, TreeID, ID,
+    ContainerID, ContainerType, Counter, HasCounterSpan, HasLamportSpan, InternalString, Lamport,
+    LoroError, LoroResult, PeerID, TreeID, ID,
 };
 use once_cell::sync::OnceCell;
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
-use serde_columnar::{columnar, AnyRleDecoder, DeltaOfDeltaDecoder, Itertools};
+use serde_columnar::{columnar, AnyRleDecoder, ColumnarError, DeltaOfDeltaDecoder, Itertools};
 use tracing::info;
 
 use super::block_meta_encode::decode_changes_header;
@@ -312,8 +312,8 @@ struct Registers {
 }
 
 use crate::encoding::value::{
-    RawTreeMove, Value, ValueDecodedArenasTrait, ValueEncodeRegister, ValueKind, ValueReader,
-    ValueWriter,
+    DecodedValueSummary, RawTreeMove, Value, ValueDecodedArenasTrait, ValueEncodeRegister,
+    ValueKind, ValueReader, ValueWriter,
 };
 use crate::oplog::change_store::block_meta_encode::encode_changes;
 use crate::version::Frontiers;
@@ -538,6 +538,18 @@ pub fn decode_block(
         header_on_stack = decode_header_from_doc(&doc)?;
         &header_on_stack
     };
+    header
+        .counters
+        .last()
+        .ok_or_else(|| LoroError::DecodeError("Decode block error: missing counters".into()))?;
+    header
+        .lamports
+        .first()
+        .ok_or_else(|| LoroError::DecodeError("Decode block error: missing lamports".into()))?;
+    header
+        .lamports
+        .last()
+        .ok_or_else(|| LoroError::DecodeError("Decode block error: missing lamports".into()))?;
     let EncodedBlock {
         n_changes,
         counter_start: first_counter,
@@ -697,6 +709,265 @@ pub fn decode_block(
     Ok(changes)
 }
 
+pub fn validate_block(m_bytes: &[u8], header: Option<&ChangesBlockHeader>) -> LoroResult<()> {
+    let doc = postcard::from_bytes(m_bytes)
+        .map_err(|e| LoroError::DecodeError(format!("Decode block error {e}").into_boxed_str()))?;
+    let header_on_stack;
+    let header = if let Some(header) = header {
+        header
+    } else {
+        header_on_stack = decode_header_from_doc(&doc)?;
+        &header_on_stack
+    };
+    header
+        .counters
+        .last()
+        .ok_or_else(|| LoroError::DecodeError("Decode block error: missing counters".into()))?;
+    header
+        .lamports
+        .first()
+        .ok_or_else(|| LoroError::DecodeError("Decode block error: missing lamports".into()))?;
+    header
+        .lamports
+        .last()
+        .ok_or_else(|| LoroError::DecodeError("Decode block error: missing lamports".into()))?;
+    let EncodedBlock {
+        n_changes,
+        counter_start: first_counter,
+        change_meta,
+        cids,
+        keys,
+        ops,
+        delete_start_ids,
+        values,
+        positions,
+        ..
+    } = doc;
+    let n_changes = n_changes as usize;
+    let mut timestamp_decoder = DeltaOfDeltaDecoder::<i64>::new(&change_meta)
+        .map_err(|_| LoroError::DecodeDataCorruptionError)?;
+    for _ in 0..n_changes {
+        timestamp_decoder
+            .next()
+            .transpose()
+            .map_err(|_| LoroError::DecodeDataCorruptionError)?
+            .ok_or(LoroError::DecodeDataCorruptionError)?;
+    }
+
+    let bytes = timestamp_decoder
+        .finalize()
+        .map_err(|_| LoroError::DecodeDataCorruptionError)?;
+    let mut commit_msg_len_decoder = AnyRleDecoder::<u32>::new(bytes);
+    let mut commit_msg_index = 0u32;
+    let mut commit_msg_ranges = Vec::new();
+    for _ in 0..n_changes {
+        let len = commit_msg_len_decoder
+            .try_next()
+            .map_err(|_| LoroError::DecodeDataCorruptionError)?
+            .ok_or(LoroError::DecodeDataCorruptionError)?;
+        if len == 0 {
+            continue;
+        }
+
+        let end = commit_msg_index
+            .checked_add(len)
+            .ok_or(LoroError::DecodeDataCorruptionError)?;
+        commit_msg_ranges.push(commit_msg_index as usize..end as usize);
+        commit_msg_index = end;
+    }
+    let commit_msgs = commit_msg_len_decoder
+        .finalize()
+        .map_err(|_| LoroError::DecodeDataCorruptionError)?;
+    if commit_msgs.len() < commit_msg_index as usize {
+        return Err(LoroError::DecodeDataCorruptionError);
+    }
+    for range in commit_msg_ranges {
+        std::str::from_utf8(&commit_msgs[range])
+            .map_err(|_| LoroError::DecodeDataCorruptionError)?;
+    }
+
+    let keys = header.keys.get_or_try_init(|| decode_keys(&keys))?;
+    let decode_arena = ValueDecodeArena {
+        peers: &header.peers,
+        keys,
+    };
+    let positions = PositionArena::decode_v2(&positions)?;
+    let positions = positions.try_parse_to_positions()?;
+    let cids: &Vec<ContainerID> = header.cids.get_or_try_init(|| {
+        ContainerArena::decode(&cids)?
+            .iter()
+            .map(|x| x.as_container_id(&decode_arena))
+            .try_collect()
+    })?;
+    let mut value_reader = ValueReader::new(&values);
+    let encoded_ops_iters = serde_columnar::iter_from_bytes::<EncodedOps>(&ops)?;
+    let op_iter = encoded_ops_iters.ops;
+    let encoded_delete_id_starts: EncodedDeleteStartIds = if delete_start_ids.is_empty() {
+        EncodedDeleteStartIds {
+            delete_start_ids: Vec::new(),
+        }
+    } else {
+        serde_columnar::from_bytes(&delete_start_ids)?
+    };
+    let mut del_iter = encoded_delete_id_starts
+        .delete_start_ids
+        .into_iter()
+        .map(Ok);
+    let mut counter = first_counter as Counter;
+    let mut change_index = 0;
+    let peer = header.peer;
+    for op in op_iter {
+        let EncodedOp {
+            container_index,
+            prop,
+            value_type,
+            len,
+        } = op?;
+        let op_id = ID::new(peer, counter);
+        let value = Value::validate_decode(
+            ValueKind::from_u8(value_type),
+            &mut value_reader,
+            &decode_arena,
+        )?;
+
+        let cid = cids
+            .get(container_index as usize)
+            .ok_or(LoroError::DecodeDataCorruptionError)?;
+        validate_decoded_op(
+            cid,
+            value,
+            &mut del_iter,
+            &decode_arena,
+            &positions,
+            prop,
+            op_id,
+        )?;
+
+        counter = counter
+            .checked_add(len as Counter)
+            .ok_or(LoroError::DecodeDataCorruptionError)?;
+        let next_counter = header
+            .counters
+            .get(change_index + 1)
+            .ok_or(LoroError::DecodeDataCorruptionError)?;
+        if counter >= *next_counter {
+            change_index += 1;
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_delete_start(
+    del_iter: &mut impl Iterator<Item = Result<EncodedDeleteStartId, ColumnarError>>,
+    arenas: &dyn ValueDecodedArenasTrait,
+) -> LoroResult<()> {
+    let del_start = del_iter
+        .next()
+        .ok_or(LoroError::DecodeDataCorruptionError)??;
+    arenas
+        .peers()
+        .get(del_start.peer_idx)
+        .ok_or(LoroError::DecodeDataCorruptionError)?;
+    Ok(())
+}
+
+fn validate_decoded_op(
+    cid: &ContainerID,
+    value: DecodedValueSummary,
+    del_iter: &mut impl Iterator<Item = Result<EncodedDeleteStartId, ColumnarError>>,
+    arenas: &dyn ValueDecodedArenasTrait,
+    positions: &[Vec<u8>],
+    prop: i32,
+    op_id: ID,
+) -> LoroResult<()> {
+    match cid.container_type() {
+        ContainerType::Text => match value {
+            DecodedValueSummary::Str
+            | DecodedValueSummary::MarkStart
+            | DecodedValueSummary::Null => Ok(()),
+            DecodedValueSummary::DeleteSeq => validate_delete_start(del_iter, arenas),
+            _ => Err(LoroError::DecodeDataCorruptionError),
+        },
+        ContainerType::Map => {
+            arenas
+                .keys()
+                .get(prop as usize)
+                .ok_or(LoroError::DecodeDataCorruptionError)?;
+            match value {
+                DecodedValueSummary::DeleteOnce | DecodedValueSummary::LoroValue(_) => Ok(()),
+                _ => Err(LoroError::DecodeDataCorruptionError),
+            }
+        }
+        ContainerType::List => match value {
+            DecodedValueSummary::LoroValue(loro_value_kind)
+                if matches!(loro_value_kind, crate::encoding::value::LoroValueKind::List) =>
+            {
+                Ok(())
+            }
+            DecodedValueSummary::DeleteSeq => validate_delete_start(del_iter, arenas),
+            _ => Err(LoroError::DecodeDataCorruptionError),
+        },
+        ContainerType::Tree => match value {
+            DecodedValueSummary::TreeMove(op) => {
+                arenas.decode_tree_op(positions, op, op_id).map(|_| ())
+            }
+            DecodedValueSummary::RawTreeMove(op) => {
+                arenas
+                    .peers()
+                    .get(op.subject_peer_idx)
+                    .ok_or(LoroError::DecodeDataCorruptionError)?;
+                if !op.is_parent_null {
+                    let parent_peer = arenas
+                        .peers()
+                        .get(op.parent_peer_idx)
+                        .ok_or(LoroError::DecodeDataCorruptionError)?;
+                    let parent = TreeID::new(*parent_peer, op.parent_cnt as Counter);
+                    if parent.is_deleted_root() {
+                        return Ok(());
+                    }
+                }
+
+                let bytes = positions
+                    .get(op.position_idx)
+                    .ok_or(LoroError::DecodeDataCorruptionError)?;
+                let _ = FractionalIndex::from_bytes(bytes.clone());
+                Ok(())
+            }
+            _ => Err(LoroError::DecodeDataCorruptionError),
+        },
+        ContainerType::MovableList => match value {
+            DecodedValueSummary::LoroValue(loro_value_kind)
+                if matches!(loro_value_kind, crate::encoding::value::LoroValueKind::List) =>
+            {
+                Ok(())
+            }
+            DecodedValueSummary::DeleteSeq => validate_delete_start(del_iter, arenas),
+            DecodedValueSummary::ListMove { from_idx } => {
+                arenas
+                    .peers()
+                    .get(from_idx)
+                    .ok_or(LoroError::DecodeDataCorruptionError)?;
+                Ok(())
+            }
+            DecodedValueSummary::ListSet { peer_idx } => {
+                arenas
+                    .peers()
+                    .get(peer_idx)
+                    .ok_or(LoroError::DecodeDataCorruptionError)?;
+                Ok(())
+            }
+            _ => Err(LoroError::DecodeDataCorruptionError),
+        },
+        #[cfg(feature = "counter")]
+        ContainerType::Counter => match value {
+            DecodedValueSummary::F64 | DecodedValueSummary::I64 => Ok(()),
+            _ => Err(LoroError::DecodeDataCorruptionError),
+        },
+        ContainerType::Unknown(_) => Ok(()),
+    }
+}
+
 #[cfg(test)]
 mod test {
     use std::{borrow::Cow, panic::AssertUnwindSafe};
@@ -728,6 +999,10 @@ mod test {
             decode_block(&corrupt, &oplog.arena, None)
         }));
         assert!(result.is_ok(), "corrupt block payload should not panic");
+        assert!(result.unwrap().is_err());
+
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| validate_block(&corrupt, None)));
+        assert!(result.is_ok(), "corrupt block validation should not panic");
         assert!(result.unwrap().is_err());
     }
 

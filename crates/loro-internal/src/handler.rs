@@ -232,6 +232,14 @@ impl<T> From<BasicHandler> for MaybeDetached<T> {
 }
 
 impl BasicHandler {
+    fn new(id: ContainerID, container_idx: ContainerIdx, doc: LoroDoc) -> Self {
+        Self {
+            id,
+            container_idx,
+            doc,
+        }
+    }
+
     pub(crate) fn doc(&self) -> LoroDoc {
         self.doc.clone()
     }
@@ -255,11 +263,7 @@ impl BasicHandler {
         let parent_id = self.doc.arena.get_container_id(parent_idx).unwrap();
         {
             let kind = parent_id.container_type();
-            let handler = BasicHandler {
-                container_idx: parent_idx,
-                id: parent_id,
-                doc: self.doc.clone(),
-            };
+            let handler = BasicHandler::new(parent_id, parent_idx, self.doc.clone());
 
             Some(match kind {
                 ContainerType::Map => Handler::Map(MapHandler {
@@ -1092,11 +1096,8 @@ impl HandlerTrait for Handler {
 impl Handler {
     pub(crate) fn new_attached(id: ContainerID, doc: LoroDoc) -> Self {
         let kind = id.container_type();
-        let handler = BasicHandler {
-            container_idx: doc.arena.register_container(&id),
-            id,
-            doc,
-        };
+        let container_idx = doc.arena.register_container(&id);
+        let handler = BasicHandler::new(id, container_idx, doc);
 
         match kind {
             ContainerType::Map => Self::Map(MapHandler {
@@ -1492,10 +1493,9 @@ impl TextHandler {
                 let t = t.lock();
                 t.value.len_utf8()
             }
-            MaybeDetached::Attached(a) if a.has_decoded_state() => {
-                a.with_state(|state| state.as_richtext_state_mut().unwrap().len_utf8())
+            MaybeDetached::Attached(a) => {
+                a.with_doc_state(|state| state.get_text_utf8_len(a.container_idx))
             }
-            MaybeDetached::Attached(a) => a.get_value().as_string().unwrap().len(),
         }
     }
 
@@ -2568,7 +2568,9 @@ impl TextHandler {
     pub fn to_string(&self) -> String {
         match &self.inner {
             MaybeDetached::Detached(t) => t.lock().value.to_string(),
-            MaybeDetached::Attached(a) => a.get_value().into_string().unwrap().unwrap(),
+            MaybeDetached::Attached(a) => {
+                a.with_doc_state(|state| state.get_text_string(a.container_idx))
+            }
         }
     }
 
@@ -4311,14 +4313,12 @@ impl MapHandler {
                     state
                         .get_map_entries(inner.container_idx)
                         .into_iter()
-                        .map(|(key, value)| {
-                            (key.to_string(), value_to_value_or_handler(inner, value))
-                        })
+                        .map(|(key, value)| (key, value_to_value_or_handler(inner, value)))
                         .collect::<Vec<_>>()
                 });
 
                 for (k, v) in temp.into_iter() {
-                    f(&k, v.clone());
+                    f(k.as_str(), v);
                 }
             }
         }

@@ -481,7 +481,7 @@ pub type PeerIdx = usize;
 #[derive(Debug, Clone)]
 pub(crate) struct EncodedDeleteStartId {
     #[columnar(strategy = "DeltaRle")]
-    peer_idx: usize,
+    pub(crate) peer_idx: usize,
     #[columnar(strategy = "DeltaRle")]
     counter: i32,
     #[columnar(strategy = "DeltaRle")]

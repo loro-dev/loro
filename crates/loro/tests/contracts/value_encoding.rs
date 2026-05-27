@@ -5,9 +5,9 @@ use std::{
 };
 
 use loro::{
-    ContainerID, ContainerTrait, ContainerType, IdSpan, JsonListOp, JsonMapOp, JsonMovableListOp,
-    JsonOpContent, JsonTextOp, JsonTreeOp, LoroDoc, LoroList, LoroMap, LoroMapValue,
-    LoroMovableList, LoroText, LoroTree, LoroValue, ToJson, TreeID, ValueOrContainer,
+    ContainerID, ContainerTrait, ContainerType, ExportMode, IdSpan, JsonListOp, JsonMapOp,
+    JsonMovableListOp, JsonOpContent, JsonTextOp, JsonTreeOp, LoroDoc, LoroList, LoroMap,
+    LoroMapValue, LoroMovableList, LoroText, LoroTree, LoroValue, ToJson, TreeID, ValueOrContainer,
     VersionVector, ID,
 };
 use pretty_assertions::assert_eq;
@@ -107,6 +107,36 @@ fn build_value_doc() -> anyhow::Result<(
 
     doc.commit();
     Ok((doc, root, list, mlist, text, tree))
+}
+
+#[test]
+fn snapshot_state_only_decode_reads_current_value_without_history() -> anyhow::Result<()> {
+    let (doc, root, list, _, _, _) = build_value_doc()?;
+    let snapshot = doc.export(ExportMode::Snapshot)?;
+    let restored = LoroDoc::from_snapshot(&snapshot)?;
+
+    assert_eq!(
+        LoroDoc::decode_snapshot_state_only_value(&snapshot)?,
+        restored.get_deep_value()
+    );
+    assert_eq!(
+        LoroDoc::decode_snapshot_state_only_value(&doc.export(ExportMode::StateOnly(None))?)?,
+        restored.get_deep_value()
+    );
+
+    let nested_map_id = match list.get(2).expect("list should contain a nested map") {
+        ValueOrContainer::Container(container) => container.id().to_string(),
+        ValueOrContainer::Value(_) => panic!("expected nested map container"),
+    };
+    let mirror_value = LoroDoc::decode_snapshot_state_only_mirror_value(&snapshot)?;
+    let mirror_json = mirror_value.to_json_value();
+    assert_eq!(mirror_value, restored.get_deep_value_with_map_id());
+
+    assert_eq!(mirror_json["root"]["$cid"], json!(root.id().to_string()));
+    assert_eq!(mirror_json["root"]["list"][2]["$cid"], json!(nested_map_id));
+    assert_eq!(mirror_json["root"]["text"], json!("Hello 🌍"));
+
+    Ok(())
 }
 
 #[test]

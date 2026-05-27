@@ -27,6 +27,7 @@ serde_columnar = { workspace = true }
 nonmax = "0.5.5"
 leb128 = "0.2.5"
 tracing = { workspace = true, optional = true }
+itoa = "1.0.11"
 
 [features]
 wasm = ["wasm-bindgen", "js-sys"]

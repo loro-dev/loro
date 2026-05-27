@@ -377,7 +377,13 @@ impl SsTable {
         let raw_meta = &bytes[meta_offset..data_len - SIZE_OF_U32];
         let meta = BlockMeta::decode_meta(raw_meta)?;
         Self::validate_block_ranges(&meta, meta_offset)?;
-        Self::validate_blocks(&meta, &bytes, meta_offset)?;
+        #[cfg(not(target_arch = "wasm32"))]
+        let decoded_blocks = Self::decode_and_validate_blocks(&meta, &bytes, meta_offset)?;
+        #[cfg(target_arch = "wasm32")]
+        let decoded_blocks = {
+            Self::validate_blocks(&meta, &bytes, meta_offset)?;
+            Vec::new()
+        };
         Self::check_block_checksum(&meta, &bytes, meta_offset)?;
         let first_key = meta
             .first()
@@ -391,13 +397,18 @@ impl SsTable {
                     .unwrap_or(meta.last().map(|m| m.first_key.clone()).unwrap_or_default())
             })
             .unwrap_or_default();
+        let block_cache = BlockCache::new(DEFAULT_CACHE_SIZE);
+        for (index, block) in decoded_blocks.into_iter().enumerate() {
+            block_cache.insert(index, block);
+        }
+
         let ans = Self {
             data: bytes,
             first_key,
             last_key,
             meta,
             meta_offset,
-            block_cache: BlockCache::new(DEFAULT_CACHE_SIZE),
+            block_cache,
         };
         Ok(ans)
     }
@@ -422,6 +433,49 @@ impl SsTable {
         Ok(())
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    fn decode_and_validate_blocks(
+        meta: &[BlockMeta],
+        bytes: &Bytes,
+        meta_offset: usize,
+    ) -> LoroResult<Vec<Arc<Block>>> {
+        let mut last_key = None;
+        let mut blocks = Vec::with_capacity(meta.len());
+        for i in 0..meta.len() {
+            let offset = meta[i].offset;
+            let offset_end = meta.get(i + 1).map_or(meta_offset, |m| m.offset);
+            let raw_block_and_check = bytes.slice(offset..offset_end);
+            let block = Arc::new(Block::try_decode(
+                raw_block_and_check,
+                meta[i].is_large,
+                meta[i].first_key.clone(),
+                meta[i].compression_type,
+            )?);
+
+            let block_last_key = block.last_key();
+            if meta[i].last_key.as_ref().unwrap_or(&meta[i].first_key) != &block_last_key {
+                return Err(LoroError::DecodeError("Invalid bytes".into()));
+            }
+
+            if meta[i].first_key > block_last_key {
+                return Err(LoroError::DecodeError("Invalid bytes".into()));
+            }
+
+            if last_key
+                .as_ref()
+                .is_some_and(|last_key| last_key >= &meta[i].first_key)
+            {
+                return Err(LoroError::DecodeError("Invalid bytes".into()));
+            }
+
+            last_key = Some(block_last_key);
+            blocks.push(block);
+        }
+
+        Ok(blocks)
+    }
+
+    #[cfg(target_arch = "wasm32")]
     fn validate_blocks(meta: &[BlockMeta], bytes: &Bytes, meta_offset: usize) -> LoroResult<()> {
         let mut last_key = None;
         for i in 0..meta.len() {

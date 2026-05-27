@@ -37,6 +37,7 @@ const CONTAINER_TYPES = [
   "MovableList",
   "Counter",
 ];
+const CONTAINER_KIND = Symbol("loro.containerKind");
 
 export function isContainerId(s: string): s is ContainerID {
   return s.startsWith("cid:");
@@ -64,12 +65,14 @@ export function isContainer(value: any): value is Container {
     return false;
   }
 
-  const p = Object.getPrototypeOf(value);
-  if (p == null || typeof p !== "object" || typeof p["kind"] !== "function") {
-    return false;
+  if ((value as { [CONTAINER_KIND]?: ContainerType })[CONTAINER_KIND]) {
+    return true;
   }
 
-  return CONTAINER_TYPES.includes(value.kind());
+  const kind = value.kind;
+  return (
+    typeof kind === "function" && CONTAINER_TYPES.includes(kind.call(value))
+  );
 }
 
 /**  Get the type of a value that may be a container.
@@ -419,6 +422,645 @@ export function idStrToId(idStr: `${number}@${PeerID}`): OpId {
     peer: peer as PeerID,
   };
 }
+
+const CONTAINER_READ_CACHE = Symbol("loro.containerReadCache");
+const CONTAINER_READ_CACHE_STORE = Symbol("loro.containerReadCacheStore");
+const CONTAINER_READ_CACHE_ID = Symbol("loro.containerReadCacheId");
+const CONTAINER_CACHED_ID = Symbol("loro.containerCachedId");
+const ENABLE_CONTAINER_OBJECT_CACHE = true;
+const ENABLE_SHARED_CONTAINER_READ_CACHE =
+  typeof (globalThis as { gc?: unknown }).gc !== "function";
+let containerReadCacheEpoch = 0;
+
+type MapReadCache =
+  | { type: "keys"; epoch: number; keys: string[] }
+  | {
+      type: "entries";
+      epoch: number;
+      keys: string[];
+      values: Map<string, unknown>;
+    };
+
+type ListReadCache<T = unknown> =
+  | { type: "length"; epoch: number; length: number }
+  | { type: "values"; epoch: number; values: T[] };
+
+type TextReadCache = { type: "text"; epoch: number; value: string };
+
+type ContainerReadCache = MapReadCache | ListReadCache | TextReadCache;
+type ContainerReadCacheStore = {
+  doc: CacheableDoc;
+  containers: Map<string, ContainerReadCache>;
+  containerObjects: Map<string, WeakRef<object>>;
+};
+
+type CacheableContainer = Container & {
+  id: string;
+  [CONTAINER_READ_CACHE]?: ContainerReadCache;
+  [CONTAINER_READ_CACHE_STORE]?: ContainerReadCacheStore;
+  [CONTAINER_READ_CACHE_ID]?: string;
+  [CONTAINER_CACHED_ID]?: string;
+};
+
+type CacheableDoc = LoroDoc & {
+  [CONTAINER_READ_CACHE_STORE]?: ContainerReadCacheStore;
+};
+
+function bumpContainerReadCacheEpoch(target?: unknown) {
+  containerReadCacheEpoch++;
+  const store = (
+    target as {
+      [CONTAINER_READ_CACHE_STORE]?: ContainerReadCacheStore;
+    } | null
+  )?.[CONTAINER_READ_CACHE_STORE];
+  if (store) {
+    store.containers.clear();
+    store.containerObjects.clear();
+  }
+}
+
+function ensureDocReadCacheStore(
+  doc: CacheableDoc,
+): ContainerReadCacheStore | undefined {
+  if (!ENABLE_SHARED_CONTAINER_READ_CACHE) {
+    return undefined;
+  }
+
+  return (doc[CONTAINER_READ_CACHE_STORE] ??= {
+    doc,
+    containers: new Map(),
+    containerObjects: new Map(),
+  });
+}
+
+function getContainerCacheStore(
+  container: CacheableContainer,
+): ContainerReadCacheStore | undefined {
+  return container[CONTAINER_READ_CACHE_STORE];
+}
+
+function getContainerCacheId(container: CacheableContainer): string {
+  return (container[CONTAINER_READ_CACHE_ID] ??= container.id);
+}
+
+function installContainerIdentityCache(prototype: object, kind: ContainerType) {
+  const typedPrototype = prototype as CacheableContainer & {
+    kind: () => ContainerType;
+  };
+  (prototype as { [CONTAINER_KIND]?: ContainerType })[CONTAINER_KIND] = kind;
+  typedPrototype.kind = function (): ContainerType {
+    return kind;
+  } as typeof typedPrototype.kind;
+
+  const idDescriptor = Object.getOwnPropertyDescriptor(prototype, "id");
+  if (idDescriptor?.get) {
+    const originalId = idDescriptor.get;
+    Object.defineProperty(prototype, "id", {
+      ...idDescriptor,
+      get: function (this: CacheableContainer) {
+        return (this[CONTAINER_CACHED_ID] ??= originalId.call(this));
+      },
+    });
+  }
+}
+
+function cacheContainerObject(
+  store: ContainerReadCacheStore | undefined,
+  id: string,
+  value: unknown,
+) {
+  if (
+    !ENABLE_CONTAINER_OBJECT_CACHE ||
+    !store ||
+    typeof value !== "object" ||
+    value == null
+  ) {
+    return;
+  }
+
+  const existing = store.containerObjects.get(id)?.deref();
+  if (existing === value) {
+    return;
+  }
+
+  const WeakRefCtor = (globalThis as { WeakRef?: typeof WeakRef }).WeakRef;
+  if (!WeakRefCtor) {
+    return;
+  }
+
+  store.containerObjects.set(id, new WeakRefCtor(value));
+}
+
+function getCachedContainerObject(
+  store: ContainerReadCacheStore | undefined,
+  id: string,
+): object | undefined {
+  if (!ENABLE_CONTAINER_OBJECT_CACHE) {
+    return undefined;
+  }
+
+  const cached = store?.containerObjects.get(id)?.deref();
+  if (cached == null) {
+    store?.containerObjects.delete(id);
+    return undefined;
+  }
+
+  return cached;
+}
+
+function getContainerReadCache<T extends ContainerReadCache>(
+  container: CacheableContainer,
+): T | undefined {
+  const store = getContainerCacheStore(container);
+  if (store) {
+    return store.containers.get(getContainerCacheId(container)) as
+      | T
+      | undefined;
+  }
+
+  return container[CONTAINER_READ_CACHE] as T | undefined;
+}
+
+function setContainerReadCache(
+  container: CacheableContainer,
+  cache: ContainerReadCache,
+) {
+  const store = getContainerCacheStore(container);
+  if (store) {
+    store.containers.set(getContainerCacheId(container), cache);
+  } else {
+    container[CONTAINER_READ_CACHE] = cache;
+  }
+}
+
+function toCachedReadValue(
+  value: unknown,
+  store: ContainerReadCacheStore | undefined,
+): unknown {
+  if (store && isContainer(value)) {
+    return tagContainerWithReadCacheStore(value, store);
+  }
+
+  return value;
+}
+
+function fromCachedReadValue(
+  value: unknown,
+  store: ContainerReadCacheStore | undefined,
+): unknown {
+  return tagContainerWithReadCacheStore(value, store);
+}
+
+function tagContainerWithReadCacheStore<T>(
+  value: T,
+  store: ContainerReadCacheStore | undefined,
+): T {
+  if (!store || !isContainer(value)) {
+    return value;
+  }
+
+  const container = value as CacheableContainer;
+  if (
+    container[CONTAINER_READ_CACHE_STORE] === store &&
+    !container[CONTAINER_CACHED_ID]
+  ) {
+    return value;
+  }
+
+  container[CONTAINER_READ_CACHE_STORE] = store;
+  if (container[CONTAINER_CACHED_ID]) {
+    cacheContainerObject(store, container[CONTAINER_CACHED_ID], container);
+  }
+  return value;
+}
+
+function tagContainerChildren<T>(
+  values: T[],
+  store: ContainerReadCacheStore | undefined,
+): T[] {
+  if (!store) {
+    return values;
+  }
+
+  for (const value of values) {
+    tagContainerWithReadCacheStore(value, store);
+  }
+  return values;
+}
+
+function tagMapEntries(
+  entries: [string, unknown][],
+  store: ContainerReadCacheStore | undefined,
+): [string, unknown][] {
+  if (!store) {
+    return entries;
+  }
+
+  for (const entry of entries) {
+    tagContainerWithReadCacheStore(entry[1], store);
+  }
+  return entries;
+}
+
+function wrapCacheInvalidatingMethods(
+  prototype: object,
+  methods: PropertyKey[],
+) {
+  for (const method of methods) {
+    const descriptor = Object.getOwnPropertyDescriptor(prototype, method);
+    if (!descriptor || typeof descriptor.value !== "function") {
+      continue;
+    }
+
+    const original = descriptor.value as (...args: unknown[]) => unknown;
+    Object.defineProperty(prototype, method, {
+      ...descriptor,
+      value: function (this: unknown, ...args: unknown[]) {
+        bumpContainerReadCacheEpoch(this);
+        return tagContainerWithReadCacheStore(
+          original.apply(this, args),
+          (
+            this as {
+              [CONTAINER_READ_CACHE_STORE]?: ContainerReadCacheStore;
+            } | null
+          )?.[CONTAINER_READ_CACHE_STORE],
+        );
+      },
+    });
+  }
+}
+
+function wrapContainerReturningMethods(
+  prototype: object,
+  methods: PropertyKey[],
+) {
+  for (const method of methods) {
+    const descriptor = Object.getOwnPropertyDescriptor(prototype, method);
+    if (!descriptor || typeof descriptor.value !== "function") {
+      continue;
+    }
+
+    const original = descriptor.value as (...args: unknown[]) => unknown;
+    Object.defineProperty(prototype, method, {
+      ...descriptor,
+      value: function (this: CacheableDoc, ...args: unknown[]) {
+        const store = ensureDocReadCacheStore(this);
+        if (method === "getContainerById" && typeof args[0] === "string") {
+          const cached = getCachedContainerObject(store, args[0]);
+          if (cached != null) {
+            return tagContainerWithReadCacheStore(cached, store);
+          }
+        }
+
+        const value = original.apply(this, args);
+        if (method === "getContainerById" && typeof args[0] === "string") {
+          cacheContainerObject(store, args[0], value);
+        }
+
+        return tagContainerWithReadCacheStore(value, store);
+      },
+    });
+  }
+}
+
+function installMapReadCache() {
+  const prototype = LoroMap.prototype as unknown as CacheableContainer & {
+    keys: () => string[];
+    entries: () => [string, unknown][];
+    values: () => unknown[];
+    get: (key: string) => unknown;
+    __entriesFlat?: () => unknown[];
+  };
+  const originalKeys = prototype.keys;
+  const originalEntries = prototype.entries;
+  const originalEntriesFlat = prototype.__entriesFlat;
+  const originalValues = prototype.values;
+  const originalGet = prototype.get;
+
+  const readFlatEntries = function (container: CacheableContainer) {
+    const store = getContainerCacheStore(container);
+    const values = new Map<string, unknown>();
+    const keys: string[] = [];
+
+    if (typeof originalEntriesFlat === "function") {
+      const flatEntries = originalEntriesFlat.call(container);
+      for (let index = 0; index + 1 < flatEntries.length; index += 2) {
+        const entryKey = flatEntries[index];
+        if (typeof entryKey !== "string") {
+          continue;
+        }
+
+        const value = tagContainerWithReadCacheStore(
+          flatEntries[index + 1],
+          store,
+        );
+        keys.push(entryKey);
+        values.set(entryKey, toCachedReadValue(value, store));
+      }
+    } else {
+      for (const [entryKey, value] of tagMapEntries(
+        originalEntries.call(container),
+        store,
+      )) {
+        keys.push(entryKey);
+        values.set(entryKey, toCachedReadValue(value, store));
+      }
+    }
+
+    const cache: MapReadCache = {
+      type: "entries",
+      epoch: containerReadCacheEpoch,
+      keys,
+      values,
+    };
+    setContainerReadCache(container, cache);
+    return cache;
+  };
+
+  prototype.keys = function () {
+    const cache = getContainerReadCache<MapReadCache>(this);
+    if (cache?.epoch === containerReadCacheEpoch) {
+      if (cache.type === "entries") {
+        return cache.keys.slice();
+      }
+
+      if (cache.type === "keys") {
+        return cache.keys.slice();
+      }
+    }
+
+    if (getContainerCacheStore(this)) {
+      return readFlatEntries(this).keys.slice();
+    }
+
+    const keys = originalKeys.call(this);
+    setContainerReadCache(this, {
+      type: "keys",
+      epoch: containerReadCacheEpoch,
+      keys: keys.slice(),
+    });
+    return keys;
+  };
+
+  prototype.get = function (key: string) {
+    const cache = getContainerReadCache<MapReadCache>(this);
+    if (cache?.type === "entries" && cache.epoch === containerReadCacheEpoch) {
+      return cache.values.has(key)
+        ? fromCachedReadValue(
+            cache.values.get(key),
+            getContainerCacheStore(this),
+          )
+        : undefined;
+    }
+
+    if (cache?.type === "keys" && cache.epoch === containerReadCacheEpoch) {
+      const entries = readFlatEntries(this);
+      const store = getContainerCacheStore(this);
+      return entries.values.has(key)
+        ? fromCachedReadValue(entries.values.get(key), store)
+        : undefined;
+    }
+
+    return originalGet.call(this, key);
+  };
+
+  prototype.entries = function () {
+    const cache = getContainerReadCache<MapReadCache>(this);
+    const store = getContainerCacheStore(this);
+    if (cache?.type === "entries" && cache.epoch === containerReadCacheEpoch) {
+      return cache.keys
+        .map((key) => [key, cache.values.get(key)] as [string, unknown])
+        .map(
+          ([key, value]) =>
+            [key, fromCachedReadValue(value, store)] as [string, unknown],
+        );
+    }
+
+    const entries = readFlatEntries(this);
+    return entries.keys.map(
+      (key) =>
+        [key, fromCachedReadValue(entries.values.get(key), store)] as [
+          string,
+          unknown,
+        ],
+    );
+  };
+
+  prototype.values = function () {
+    const cache = getContainerReadCache<MapReadCache>(this);
+    const store = getContainerCacheStore(this);
+    if (cache?.type === "entries" && cache.epoch === containerReadCacheEpoch) {
+      return cache.keys.map((key) =>
+        fromCachedReadValue(cache.values.get(key), store),
+      );
+    }
+
+    const values = originalValues.call(this);
+    tagContainerChildren(values, store);
+    return values;
+  };
+
+  wrapCacheInvalidatingMethods(prototype, [
+    "set",
+    "delete",
+    "getOrCreateContainer",
+    "setContainer",
+    "clear",
+  ]);
+}
+
+function installListReadCache(
+  prototype: object,
+  mutatingMethods: PropertyKey[],
+) {
+  const typedPrototype = prototype as CacheableContainer & {
+    toArray: () => unknown[];
+    get: (index: number) => unknown;
+  };
+  const lengthDescriptor = Object.getOwnPropertyDescriptor(prototype, "length");
+  const originalToArray = typedPrototype.toArray;
+  const originalGet = typedPrototype.get;
+
+  const readArrayValues = function (container: CacheableContainer) {
+    const store = getContainerCacheStore(container);
+    const values = tagContainerChildren(
+      originalToArray.call(container as typeof typedPrototype),
+      store,
+    );
+    const cachedValues = values.map((value) => toCachedReadValue(value, store));
+    const cache: ListReadCache = {
+      type: "values",
+      epoch: containerReadCacheEpoch,
+      values: cachedValues,
+    };
+    setContainerReadCache(container, cache);
+    return { values, cache };
+  };
+
+  if (lengthDescriptor?.get) {
+    const originalLength = lengthDescriptor.get;
+    Object.defineProperty(prototype, "length", {
+      ...lengthDescriptor,
+      get: function (this: typeof typedPrototype) {
+        const cache = getContainerReadCache<ListReadCache>(this);
+        if (cache?.epoch === containerReadCacheEpoch) {
+          return cache.type === "values" ? cache.values.length : cache.length;
+        }
+
+        if (getContainerCacheStore(this)) {
+          return readArrayValues(this).cache.values.length;
+        }
+
+        const length = originalLength.call(this);
+        setContainerReadCache(this, {
+          type: "length",
+          epoch: containerReadCacheEpoch,
+          length,
+        });
+        return length;
+      },
+    });
+  }
+
+  typedPrototype.get = function (index: number) {
+    const cache = getContainerReadCache<ListReadCache>(this);
+    const store = getContainerCacheStore(this);
+    if (cache?.type === "values" && cache.epoch === containerReadCacheEpoch) {
+      return index < cache.values.length
+        ? fromCachedReadValue(cache.values[index], store)
+        : undefined;
+    }
+
+    if (cache?.type === "length" && cache.epoch === containerReadCacheEpoch) {
+      const { values } = readArrayValues(this);
+      return index < values.length ? values[index] : undefined;
+    }
+
+    return originalGet.call(this, index);
+  };
+
+  typedPrototype.toArray = function () {
+    const cache = getContainerReadCache<ListReadCache>(this);
+    const store = getContainerCacheStore(this);
+    if (cache?.type === "values" && cache.epoch === containerReadCacheEpoch) {
+      return cache.values.map((value) => fromCachedReadValue(value, store));
+    }
+
+    const values = tagContainerChildren(originalToArray.call(this), store);
+    const cachedValues = values.map((value) => toCachedReadValue(value, store));
+    setContainerReadCache(this, {
+      type: "values",
+      epoch: containerReadCacheEpoch,
+      values: cachedValues,
+    });
+    return values.slice();
+  };
+
+  wrapCacheInvalidatingMethods(prototype, mutatingMethods);
+}
+
+function installTextReadCache() {
+  const prototype = LoroText.prototype as unknown as CacheableContainer & {
+    toString: () => string;
+    toJSON: () => string;
+    getShallowValue: () => string;
+  };
+  const originalToString = prototype.toString;
+
+  const readText = function (this: CacheableContainer) {
+    const cache = getContainerReadCache<TextReadCache>(this);
+    if (cache?.type === "text" && cache.epoch === containerReadCacheEpoch) {
+      return cache.value;
+    }
+
+    const value = originalToString.call(this);
+    setContainerReadCache(this, {
+      type: "text",
+      epoch: containerReadCacheEpoch,
+      value,
+    });
+    return value;
+  };
+
+  prototype.toString = readText;
+  prototype.toJSON = readText;
+  prototype.getShallowValue = readText;
+
+  wrapCacheInvalidatingMethods(prototype, [
+    "update",
+    "updateByLine",
+    "insert",
+    "insertUtf8",
+    "delete",
+    "deleteUtf8",
+    "splice",
+    "push",
+    "mark",
+    "unmark",
+  ]);
+}
+
+wrapContainerReturningMethods(LoroDoc.prototype, [
+  "getMap",
+  "getList",
+  "getMovableList",
+  "getText",
+  "getTree",
+  "getCounter",
+  "getByPath",
+  "getContainerById",
+]);
+installContainerIdentityCache(LoroMap.prototype, "Map");
+installContainerIdentityCache(LoroList.prototype, "List");
+installContainerIdentityCache(LoroMovableList.prototype, "MovableList");
+installContainerIdentityCache(LoroText.prototype, "Text");
+installContainerIdentityCache(LoroTree.prototype, "Tree");
+installContainerIdentityCache(LoroCounter.prototype, "Counter");
+installMapReadCache();
+installTextReadCache();
+installListReadCache(LoroList.prototype, [
+  "insert",
+  "delete",
+  "insertContainer",
+  "pushContainer",
+  "push",
+  "pop",
+  "clear",
+]);
+installListReadCache(LoroMovableList.prototype, [
+  "insert",
+  "delete",
+  "insertContainer",
+  "pushContainer",
+  "move",
+  "set",
+  "setContainer",
+  "push",
+  "pop",
+  "clear",
+]);
+wrapCacheInvalidatingMethods(LoroDoc.prototype, [
+  "setDetachedEditing",
+  "attach",
+  "detach",
+  "fork",
+  "forkAt",
+  "checkoutToLatest",
+  "checkout",
+  "commit",
+  "revertTo",
+  "export",
+  "exportJsonUpdates",
+  "exportJsonInIdSpan",
+  "importJsonUpdates",
+  "import",
+  "importUpdateBatch",
+  "importBatch",
+  "travelChangeAncestors",
+  "applyDiff",
+  "setPeerId",
+]);
+wrapCacheInvalidatingMethods(UndoManager.prototype, ["undo", "redo"]);
 
 const CALL_PENDING_EVENTS_WRAPPED = Symbol("loro.callPendingEventsWrapped");
 

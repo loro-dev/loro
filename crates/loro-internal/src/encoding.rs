@@ -15,7 +15,7 @@ use crate::change::Change;
 use crate::version::{Frontiers, VersionRange};
 use crate::LoroDoc;
 use crate::{oplog::OpLog, LoroError, VersionVector};
-use loro_common::{HasIdSpan, IdSpan, InternalString, LoroEncodeError, LoroResult, ID};
+use loro_common::{HasIdSpan, IdSpan, InternalString, LoroEncodeError, LoroResult, LoroValue, ID};
 use num_traits::{FromPrimitive, ToPrimitive};
 use std::borrow::Cow;
 
@@ -481,6 +481,36 @@ pub(crate) fn decode_snapshot(
         success: VersionRange::from_vv(&doc.oplog_vv()),
         pending: None,
     })
+}
+
+pub(crate) fn decode_snapshot_state_only_value(
+    bytes: &[u8],
+    include_container_id: bool,
+) -> LoroResult<LoroValue> {
+    let ParsedHeaderAndBody { mode, body, .. } = parse_header_and_body(bytes, true)?;
+    match mode {
+        EncodeMode::FastSnapshot => fast_snapshot::decode_snapshot_state_only_value(
+            body.to_vec().into(),
+            include_container_id,
+        ),
+        EncodeMode::OutdatedSnapshot => Err(LoroError::ImportUnsupportedEncodingMode),
+        _ => Err(LoroError::DecodeError(
+            format!("Invalid snapshot encoding mode: {mode:?}").into_boxed_str(),
+        )),
+    }
+}
+
+pub(crate) fn decode_snapshot_state_only_mirror_value(bytes: &[u8]) -> LoroResult<LoroValue> {
+    let ParsedHeaderAndBody { mode, body, .. } = parse_header_and_body(bytes, true)?;
+    match mode {
+        EncodeMode::FastSnapshot => {
+            fast_snapshot::decode_snapshot_state_only_mirror_value(body.to_vec().into())
+        }
+        EncodeMode::OutdatedSnapshot => Err(LoroError::ImportUnsupportedEncodingMode),
+        _ => Err(LoroError::DecodeError(
+            format!("Invalid snapshot encoding mode: {mode:?}").into_boxed_str(),
+        )),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

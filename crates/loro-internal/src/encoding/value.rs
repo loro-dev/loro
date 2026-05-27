@@ -58,7 +58,7 @@ pub enum ValueKind {
     RawTreeMove, // 17
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum LoroValueKind {
     Null,
     True,
@@ -189,6 +189,27 @@ pub enum Value<'a> {
         value: LoroValue,
     },
     Future(FutureValue<'a>),
+}
+
+pub(crate) enum DecodedValueSummary {
+    Null,
+    True,
+    False,
+    I64,
+    F64,
+    Str,
+    Binary,
+    ContainerIdx,
+    DeleteOnce,
+    DeleteSeq,
+    DeltaInt,
+    LoroValue(LoroValueKind),
+    MarkStart,
+    TreeMove(EncodedTreeMove),
+    RawTreeMove(RawTreeMove),
+    ListMove { from_idx: usize },
+    ListSet { peer_idx: usize },
+    Future,
 }
 
 #[derive(Debug)]
@@ -386,6 +407,71 @@ impl<'a> Value<'a> {
             }
             ValueKind::Future(future_kind) => {
                 Self::decode_without_arena(future_kind, value_reader)?
+            }
+        })
+    }
+
+    pub(crate) fn validate_decode(
+        kind: ValueKind,
+        value_reader: &mut ValueReader,
+        arenas: &dyn ValueDecodedArenasTrait,
+    ) -> LoroResult<DecodedValueSummary> {
+        Ok(match kind {
+            ValueKind::Null => DecodedValueSummary::Null,
+            ValueKind::True => DecodedValueSummary::True,
+            ValueKind::False => DecodedValueSummary::False,
+            ValueKind::I64 => {
+                value_reader.read_i64()?;
+                DecodedValueSummary::I64
+            }
+            ValueKind::F64 => {
+                value_reader.read_f64()?;
+                DecodedValueSummary::F64
+            }
+            ValueKind::Str => {
+                value_reader.read_str()?;
+                DecodedValueSummary::Str
+            }
+            ValueKind::Binary => {
+                value_reader.read_binary()?;
+                DecodedValueSummary::Binary
+            }
+            ValueKind::ContainerType => {
+                value_reader.read_usize()?;
+                DecodedValueSummary::ContainerIdx
+            }
+            ValueKind::DeleteOnce => DecodedValueSummary::DeleteOnce,
+            ValueKind::DeleteSeq => DecodedValueSummary::DeleteSeq,
+            ValueKind::DeltaInt => {
+                value_reader.read_i32()?;
+                DecodedValueSummary::DeltaInt
+            }
+            ValueKind::LoroValue => DecodedValueSummary::LoroValue(
+                value_reader.validate_value_type_and_content(arenas.keys())?,
+            ),
+            ValueKind::MarkStart => {
+                value_reader.validate_mark(arenas.keys())?;
+                DecodedValueSummary::MarkStart
+            }
+            ValueKind::TreeMove => DecodedValueSummary::TreeMove(value_reader.read_tree_move()?),
+            ValueKind::RawTreeMove => {
+                DecodedValueSummary::RawTreeMove(value_reader.read_raw_tree_move()?)
+            }
+            ValueKind::ListMove => {
+                value_reader.read_usize()?;
+                let from_idx = value_reader.read_usize()?;
+                value_reader.read_usize()?;
+                DecodedValueSummary::ListMove { from_idx }
+            }
+            ValueKind::ListSet => {
+                let peer_idx = value_reader.read_usize()?;
+                value_reader.read_usize()?;
+                value_reader.validate_value_type_and_content(arenas.keys())?;
+                DecodedValueSummary::ListSet { peer_idx }
+            }
+            ValueKind::Future(_) => {
+                value_reader.read_binary()?;
+                DecodedValueSummary::Future
             }
         })
     }
@@ -613,6 +699,129 @@ impl<'a> ValueReader<'a> {
         let kind = self.read_u8()?;
         let kind = LoroValueKind::from_u8(kind).ok_or(LoroError::DecodeDataCorruptionError)?;
         self.read_value_content(kind, keys, id)
+    }
+
+    pub(crate) fn validate_value_type_and_content(
+        &mut self,
+        keys: &[InternalString],
+    ) -> LoroResult<LoroValueKind> {
+        let kind = self.read_u8()?;
+        let root_kind = LoroValueKind::from_u8(kind).ok_or(LoroError::DecodeDataCorruptionError)?;
+        self.validate_value_content(root_kind, keys)?;
+        Ok(root_kind)
+    }
+
+    fn validate_value_content(
+        &mut self,
+        root_kind: LoroValueKind,
+        keys: &[InternalString],
+    ) -> LoroResult<()> {
+        match root_kind {
+            LoroValueKind::Null | LoroValueKind::True | LoroValueKind::False => return Ok(()),
+            LoroValueKind::I64 => {
+                self.read_i64()?;
+                return Ok(());
+            }
+            LoroValueKind::F64 => {
+                self.read_f64()?;
+                return Ok(());
+            }
+            LoroValueKind::Str => {
+                self.read_str()?;
+                return Ok(());
+            }
+            LoroValueKind::Binary => {
+                self.read_binary()?;
+                return Ok(());
+            }
+            LoroValueKind::ContainerType => {
+                self.read_u8()?;
+                return Ok(());
+            }
+            LoroValueKind::List | LoroValueKind::Map => {}
+        }
+
+        enum Frame {
+            List { left: usize },
+            Map { left: usize },
+        }
+
+        fn finish_value(stack: &mut Vec<Frame>) -> bool {
+            loop {
+                let Some(frame) = stack.last_mut() else {
+                    return true;
+                };
+                let left = match frame {
+                    Frame::List { left } | Frame::Map { left } => left,
+                };
+                *left -= 1;
+                if *left == 0 {
+                    stack.pop();
+                } else {
+                    return false;
+                }
+            }
+        }
+
+        let mut stack = Vec::new();
+        let mut next_kind = Some(root_kind);
+        loop {
+            if matches!(stack.last(), Some(Frame::Map { .. })) {
+                let key_idx = self.read_usize()?;
+                keys.get(key_idx)
+                    .ok_or(LoroError::DecodeDataCorruptionError)?;
+            }
+
+            let kind = if let Some(kind) = next_kind.take() {
+                kind
+            } else {
+                let kind = self.read_u8()?;
+                LoroValueKind::from_u8(kind).ok_or(LoroError::DecodeDataCorruptionError)?
+            };
+
+            match kind {
+                LoroValueKind::Null | LoroValueKind::True | LoroValueKind::False => {}
+                LoroValueKind::I64 => {
+                    self.read_i64()?;
+                }
+                LoroValueKind::F64 => {
+                    self.read_f64()?;
+                }
+                LoroValueKind::Str => {
+                    self.read_str()?;
+                }
+                LoroValueKind::List => {
+                    let len = self.read_usize()?;
+                    if len > MAX_COLLECTION_SIZE {
+                        return Err(LoroError::DecodeDataCorruptionError);
+                    }
+                    if len != 0 {
+                        stack.push(Frame::List { left: len });
+                        continue;
+                    }
+                }
+                LoroValueKind::Map => {
+                    let len = self.read_usize()?;
+                    if len > MAX_COLLECTION_SIZE {
+                        return Err(LoroError::DecodeDataCorruptionError);
+                    }
+                    if len != 0 {
+                        stack.push(Frame::Map { left: len });
+                        continue;
+                    }
+                }
+                LoroValueKind::Binary => {
+                    self.read_binary()?;
+                }
+                LoroValueKind::ContainerType => {
+                    self.read_u8()?;
+                }
+            }
+
+            if finish_value(&mut stack) {
+                return Ok(());
+            }
+        }
     }
 
     pub fn read_value_content(
@@ -951,6 +1160,16 @@ impl<'a> ValueReader<'a> {
             value,
             info,
         })
+    }
+
+    pub(crate) fn validate_mark(&mut self, keys: &[InternalString]) -> LoroResult<()> {
+        self.read_u8()?;
+        self.read_usize()?;
+        let key_idx = self.read_usize()?;
+        keys.get(key_idx)
+            .ok_or(LoroError::DecodeDataCorruptionError)?;
+        self.validate_value_type_and_content(keys)?;
+        Ok(())
     }
 
     pub fn read_tree_move(&mut self) -> LoroResult<EncodedTreeMove> {

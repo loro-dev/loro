@@ -20,7 +20,7 @@ use crate::{
     OpLog, VersionVector,
 };
 use bytes::{Buf, Bytes};
-use loro_common::{HasCounterSpan, IdSpan, InternalString, LoroError, LoroResult};
+use loro_common::{HasCounterSpan, IdSpan, InternalString, LoroError, LoroResult, LoroValue};
 
 use super::{EncodedBlobMode, ImportBlobMetadata, ParsedHeaderAndBody};
 pub(crate) const EMPTY_MARK: &[u8] = b"E";
@@ -145,6 +145,68 @@ pub(crate) fn decode_snapshot(
 ) -> LoroResult<()> {
     let snapshot = _decode_snapshot_bytes(bytes)?;
     decode_snapshot_inner(snapshot, doc, origin)
+}
+
+pub(crate) fn decode_snapshot_state_only_value(
+    bytes: Bytes,
+    include_container_id: bool,
+) -> LoroResult<LoroValue> {
+    let snapshot = _decode_snapshot_bytes(bytes)?;
+    decode_snapshot_state_only_value_inner(
+        snapshot,
+        if include_container_id {
+            StateOnlyValueMode::WithContainerId
+        } else {
+            StateOnlyValueMode::Plain
+        },
+    )
+}
+
+pub(crate) fn decode_snapshot_state_only_mirror_value(bytes: Bytes) -> LoroResult<LoroValue> {
+    let snapshot = _decode_snapshot_bytes(bytes)?;
+    decode_snapshot_state_only_value_inner(snapshot, StateOnlyValueMode::WithMapId)
+}
+
+#[derive(Clone, Copy)]
+enum StateOnlyValueMode {
+    Plain,
+    WithContainerId,
+    WithMapId,
+}
+
+fn decode_snapshot_state_only_value_inner(
+    snapshot: Snapshot,
+    mode: StateOnlyValueMode,
+) -> LoroResult<LoroValue> {
+    let Snapshot {
+        oplog_bytes: _,
+        state_bytes,
+        shallow_root_state_bytes,
+    } = snapshot;
+
+    let doc = LoroDoc::new();
+    let mut state = doc.app_state().lock();
+    state.check_before_decode_snapshot()?;
+    if shallow_root_state_bytes.is_empty() {
+        let state_bytes = state_bytes.ok_or_else(|| {
+            LoroError::DecodeError(
+                "state-only snapshot value decoding requires state bytes"
+                    .to_string()
+                    .into_boxed_str(),
+            )
+        })?;
+        state.store.decode(state_bytes)?;
+    } else {
+        state
+            .store
+            .decode_state_by_two_bytes(shallow_root_state_bytes, state_bytes.unwrap_or_default())?;
+    }
+
+    match mode {
+        StateOnlyValueMode::Plain => Ok(state.get_deep_value()),
+        StateOnlyValueMode::WithContainerId => Ok(state.get_deep_value_with_id()),
+        StateOnlyValueMode::WithMapId => Ok(state.get_deep_value_with_map_id()),
+    }
 }
 
 pub(crate) fn decode_snapshot_inner(

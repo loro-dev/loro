@@ -492,6 +492,18 @@ impl LoroDoc {
         }
     }
 
+    pub fn decode_snapshot_state_only_value(bytes: &[u8]) -> LoroResult<LoroValue> {
+        encoding::decode_snapshot_state_only_value(bytes, false)
+    }
+
+    pub fn decode_snapshot_state_only_value_with_id(bytes: &[u8]) -> LoroResult<LoroValue> {
+        encoding::decode_snapshot_state_only_value(bytes, true)
+    }
+
+    pub fn decode_snapshot_state_only_mirror_value(bytes: &[u8]) -> LoroResult<LoroValue> {
+        encoding::decode_snapshot_state_only_mirror_value(bytes)
+    }
+
     /// Is the document empty? (no ops)
     #[inline(always)]
     pub fn can_reset_with_snapshot(&self) -> bool {
@@ -1500,6 +1512,12 @@ impl LoroDoc {
     #[inline]
     pub fn get_deep_value_with_id(&self) -> LoroValue {
         self.state.lock().get_deep_value_with_id()
+    }
+
+    /// Get deep value of the document with `$cid` on map containers.
+    #[inline]
+    pub fn get_deep_value_with_map_id(&self) -> LoroValue {
+        self.state.lock().get_deep_value_with_map_id()
     }
 
     pub fn checkout_to_latest(&self) {

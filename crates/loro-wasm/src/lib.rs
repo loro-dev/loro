@@ -649,6 +649,22 @@ impl LoroDoc {
         })
     }
 
+    /// Decode the current state from a snapshot without constructing a live document.
+    ///
+    /// This is a read-only initialization fast path for mirror-style state hydration. It skips
+    /// snapshot history decoding and injects `$cid` fields into map containers.
+    #[wasm_bindgen(js_name = "decodeSnapshotStateOnlyMirrorValue")]
+    pub fn decode_snapshot_state_only_mirror_value(snapshot: &[u8]) -> JsResult<JsValue> {
+        let value = LoroDocInner::decode_snapshot_state_only_mirror_value(snapshot)?;
+        convert::convert_mirror_value(value)
+    }
+
+    /// Get the current state with `$cid` fields on map containers.
+    #[wasm_bindgen(js_name = "getDeepValueWithMapID")]
+    pub fn get_deep_value_with_map_id(&self) -> JsResult<JsValue> {
+        convert::convert_mirror_value(self.doc.get_deep_value_with_map_id())
+    }
+
     /// Attach the document state to the latest known version.
     ///
     /// > The document becomes detached during a `checkout` operation.
@@ -1052,9 +1068,7 @@ impl LoroDoc {
             return Err(JsValue::from_str("The container does not exist in the doc"));
         }
         ensure_expected_container_type(&container_id, ContainerType::Map)?;
-        Ok(LoroMap {
-            handler: self.doc.get_map(container_id),
-        })
+        Ok(LoroMap::from_handler(self.doc.get_map(container_id)))
     }
 
     /// Get a LoroList by container id
@@ -1078,9 +1092,7 @@ impl LoroDoc {
             return Err(JsValue::from_str("The container does not exist in the doc"));
         }
         ensure_expected_container_type(&container_id, ContainerType::List)?;
-        Ok(LoroList {
-            handler: self.doc.get_list(container_id),
-        })
+        Ok(LoroList::from_handler(self.doc.get_list(container_id)))
     }
 
     /// Get a LoroMovableList by container id
@@ -1104,9 +1116,9 @@ impl LoroDoc {
             return Err(JsValue::from_str("The container does not exist in the doc"));
         }
         ensure_expected_container_type(&container_id, ContainerType::MovableList)?;
-        Ok(LoroMovableList {
-            handler: self.doc.get_movable_list(container_id),
-        })
+        Ok(LoroMovableList::from_handler(
+            self.doc.get_movable_list(container_id),
+        ))
     }
 
     /// Get a LoroCounter by container id
@@ -1208,11 +1220,11 @@ impl LoroDoc {
         Ok(match ty {
             ContainerType::Map => {
                 let map = self.doc.get_map(container_id);
-                LoroMap { handler: map }.into()
+                LoroMap::from_handler(map).into()
             }
             ContainerType::List => {
                 let list = self.doc.get_list(container_id);
-                LoroList { handler: list }.into()
+                LoroList::from_handler(list).into()
             }
             ContainerType::Text => {
                 let richtext = self.doc.get_text(container_id);
@@ -1224,7 +1236,7 @@ impl LoroDoc {
             }
             ContainerType::MovableList => {
                 let list = self.doc.get_movable_list(container_id);
-                LoroMovableList { handler: list }.into()
+                LoroMovableList::from_handler(list).into()
             }
             ContainerType::Counter => {
                 let counter = self.doc.get_counter(container_id);
@@ -2841,7 +2853,7 @@ impl LoroText {
     #[allow(clippy::inherent_to_string)]
     #[wasm_bindgen(js_name = "toString")]
     pub fn to_string(&self) -> String {
-        self.handler.get_value().as_string().unwrap().to_string()
+        self.handler.to_string()
     }
 
     /// Get the text in [Delta](https://quilljs.com/docs/delta/) format.
@@ -3034,13 +3046,13 @@ impl LoroText {
     /// Get the shallow value of the text. This equals to `text.toString()`.
     #[wasm_bindgen(js_name = "getShallowValue")]
     pub fn get_shallow_value(&self) -> String {
-        self.handler.get_value().as_string().unwrap().to_string()
+        self.handler.to_string()
     }
 
     /// Get the JSON representation of the text.
     #[wasm_bindgen(js_name = "toJSON")]
     pub fn to_json(&self) -> JsValue {
-        self.handler.get_value().into()
+        JsValue::from_str(&self.handler.to_string())
     }
 }
 
@@ -3057,6 +3069,96 @@ impl Default for LoroText {
 #[wasm_bindgen]
 pub struct LoroMap {
     handler: MapHandler,
+    read_cache: RefCell<Option<LoroMapReadCache>>,
+}
+
+#[derive(Clone)]
+enum LoroMapReadCache {
+    KeysOnly {
+        version: usize,
+        length: usize,
+    },
+    Entries {
+        version: usize,
+        values: FxHashMap<String, ValueOrHandler>,
+    },
+}
+
+impl LoroMap {
+    pub(crate) fn from_handler(handler: MapHandler) -> Self {
+        Self {
+            handler,
+            read_cache: RefCell::new(None),
+        }
+    }
+
+    fn clear_read_cache(&self) {
+        *self.read_cache.borrow_mut() = None;
+    }
+
+    fn read_cache_version(&self) -> Option<usize> {
+        let doc = self.handler.doc()?;
+        if doc.is_detached() {
+            return None;
+        }
+
+        Some(doc.len_ops())
+    }
+
+    fn get_from_read_cache(&self, key: &str) -> Option<Option<ValueOrHandler>> {
+        let version = self.read_cache_version()?;
+        let should_prefetch = {
+            let cache = self.read_cache.borrow();
+            matches!(
+                cache.as_ref(),
+                Some(LoroMapReadCache::KeysOnly { version: cached, .. }) if *cached == version
+            )
+        };
+
+        if should_prefetch {
+            let length = match self.read_cache.borrow().as_ref() {
+                Some(LoroMapReadCache::KeysOnly { length, .. }) => *length,
+                _ => 0,
+            };
+            let mut values = FxHashMap::with_capacity_and_hasher(length, Default::default());
+            self.handler.for_each(|k, v| {
+                values.insert(k.to_string(), v);
+            });
+            *self.read_cache.borrow_mut() = Some(LoroMapReadCache::Entries { version, values });
+        }
+
+        let cache = self.read_cache.borrow();
+        let Some(LoroMapReadCache::Entries {
+            version: cached,
+            values,
+        }) = cache.as_ref()
+        else {
+            return None;
+        };
+
+        if *cached != version {
+            return None;
+        }
+
+        Some(values.get(key).cloned())
+    }
+
+    fn remember_keys_read_with_len(&self, length: usize) {
+        let Some(version) = self.read_cache_version() else {
+            self.clear_read_cache();
+            return;
+        };
+
+        let mut cache = self.read_cache.borrow_mut();
+        if matches!(
+            cache.as_ref(),
+            Some(LoroMapReadCache::Entries { version: cached, .. }) if *cached == version
+        ) {
+            return;
+        }
+
+        *cache = Some(LoroMapReadCache::KeysOnly { version, length });
+    }
 }
 
 #[wasm_bindgen]
@@ -3067,9 +3169,7 @@ impl LoroMap {
     /// To attach the container to the document, please insert it into an attached container.
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
-        Self {
-            handler: MapHandler::new_detached(),
-        }
+        Self::from_handler(MapHandler::new_detached())
     }
 
     /// "Map"
@@ -3094,6 +3194,7 @@ impl LoroMap {
     pub fn insert(&mut self, key: &str, value: JsLoroValue) -> JsResult<()> {
         let js_value: JsValue = value.into();
         let loro_value = js_value_to_loro_value(&js_value)?;
+        self.clear_read_cache();
         self.handler.insert(key, loro_value)?;
         Ok(())
     }
@@ -3110,6 +3211,7 @@ impl LoroMap {
     /// map.delete("foo");
     /// ```
     pub fn delete(&mut self, key: &str) -> JsResult<()> {
+        self.clear_read_cache();
         self.handler.delete(key)?;
         Ok(())
     }
@@ -3131,6 +3233,13 @@ impl LoroMap {
     /// ```
     #[wasm_bindgen(skip_typescript)]
     pub fn get(&self, key: &str) -> JsValueOrContainerOrUndefined {
+        if let Some(v) = self.get_from_read_cache(key) {
+            return v
+                .map(|v| loro_value_to_js_value_or_container(v, false))
+                .unwrap_or(JsValue::UNDEFINED)
+                .into();
+        }
+
         let v = self.handler.get_(key);
         (match v {
             Some(ValueOrHandler::Handler(c)) => handler_to_js_value(c, false),
@@ -3157,6 +3266,7 @@ impl LoroMap {
     #[wasm_bindgen(js_name = "getOrCreateContainer", skip_typescript)]
     pub fn get_or_create_container(&self, key: &str, child: JsContainer) -> JsResult<JsContainer> {
         let child = convert::js_to_container(child)?;
+        self.clear_read_cache();
         let handler = self
             .handler
             .get_or_create_container(key, child.to_handler())?;
@@ -3176,10 +3286,12 @@ impl LoroMap {
     /// const keys = map.keys(); // ["foo", "baz"]
     /// ```
     pub fn keys(&self) -> Vec<JsValue> {
-        let mut ans = Vec::with_capacity(self.handler.len());
-        self.handler.for_each(|k, _| {
-            ans.push(k.to_string().into());
-        });
+        let keys: Vec<_> = self.handler.keys().collect();
+        let mut ans = Vec::with_capacity(keys.len());
+        for key in keys {
+            ans.push(key.as_str().into());
+        }
+        self.remember_keys_read_with_len(ans.len());
         ans
     }
 
@@ -3197,7 +3309,7 @@ impl LoroMap {
     /// const values = map.values(); // ["bar", "bar"]
     /// ```
     pub fn values(&self) -> Vec<JsValue> {
-        let mut ans: Vec<JsValue> = Vec::with_capacity(self.handler.len());
+        let mut ans: Vec<JsValue> = Vec::new();
         self.handler.for_each(|_, v| {
             ans.push(loro_value_to_js_value_or_container(v, false));
         });
@@ -3218,13 +3330,23 @@ impl LoroMap {
     /// const entries = map.entries(); // [["foo", "bar"], ["baz", "bar"]]
     /// ```
     pub fn entries(&self) -> Vec<MapEntry> {
-        let mut ans: Vec<MapEntry> = Vec::with_capacity(self.handler.len());
+        let mut ans: Vec<MapEntry> = Vec::new();
         self.handler.for_each(|k, v| {
             let array = Array::new();
             array.push(&k.to_string().into());
             array.push(&loro_value_to_js_value_or_container(v, false));
             let v: JsValue = array.into();
             ans.push(v.into());
+        });
+        ans
+    }
+
+    #[wasm_bindgen(js_name = "__entriesFlat")]
+    pub fn entries_flat(&self) -> Vec<JsValue> {
+        let mut ans: Vec<JsValue> = Vec::new();
+        self.handler.for_each(|k, v| {
+            ans.push(JsValue::from_str(k));
+            ans.push(loro_value_to_js_value_or_container(v, false));
         });
         ans
     }
@@ -3270,6 +3392,7 @@ impl LoroMap {
     #[wasm_bindgen(js_name = "setContainer", skip_typescript)]
     pub fn insert_container(&mut self, key: &str, child: JsContainer) -> JsResult<JsContainer> {
         let child = convert::js_to_container(child)?;
+        self.clear_read_cache();
         let c = self.handler.insert_container(key, child.to_handler())?;
         Ok(handler_to_js_value(c, false).into())
     }
@@ -3371,6 +3494,7 @@ impl LoroMap {
 
     /// Delete all key-value pairs in the map.
     pub fn clear(&self) -> JsResult<()> {
+        self.clear_read_cache();
         self.handler.clear()?;
         Ok(())
     }
@@ -3432,6 +3556,94 @@ impl Default for LoroMap {
 #[wasm_bindgen]
 pub struct LoroList {
     handler: ListHandler,
+    read_cache: RefCell<Option<LoroListReadCache>>,
+}
+
+#[derive(Clone)]
+enum LoroListReadCache {
+    LengthOnly {
+        version: usize,
+        length: usize,
+    },
+    Values {
+        version: usize,
+        values: Vec<ValueOrHandler>,
+    },
+}
+
+impl LoroList {
+    pub(crate) fn from_handler(handler: ListHandler) -> Self {
+        Self {
+            handler,
+            read_cache: RefCell::new(None),
+        }
+    }
+
+    fn clear_read_cache(&self) {
+        *self.read_cache.borrow_mut() = None;
+    }
+
+    fn read_cache_version(&self) -> Option<usize> {
+        let doc = self.handler.doc()?;
+        if doc.is_detached() {
+            return None;
+        }
+
+        Some(doc.len_ops())
+    }
+
+    fn get_from_read_cache(&self, index: usize) -> Option<Option<ValueOrHandler>> {
+        let version = self.read_cache_version()?;
+        let should_prefetch = {
+            let cache = self.read_cache.borrow();
+            matches!(
+                cache.as_ref(),
+                Some(LoroListReadCache::LengthOnly { version: cached, .. }) if *cached == version
+            )
+        };
+
+        if should_prefetch {
+            let length = match self.read_cache.borrow().as_ref() {
+                Some(LoroListReadCache::LengthOnly { length, .. }) => *length,
+                _ => 0,
+            };
+            let mut values = Vec::with_capacity(length);
+            self.handler.for_each(|value| values.push(value));
+            *self.read_cache.borrow_mut() = Some(LoroListReadCache::Values { version, values });
+        }
+
+        let cache = self.read_cache.borrow();
+        let Some(LoroListReadCache::Values {
+            version: cached,
+            values,
+        }) = cache.as_ref()
+        else {
+            return None;
+        };
+
+        if *cached != version {
+            return None;
+        }
+
+        Some(values.get(index).cloned())
+    }
+
+    fn remember_length_read(&self, length: usize) {
+        let Some(version) = self.read_cache_version() else {
+            self.clear_read_cache();
+            return;
+        };
+
+        let mut cache = self.read_cache.borrow_mut();
+        if matches!(
+            cache.as_ref(),
+            Some(LoroListReadCache::Values { version: cached, .. }) if *cached == version
+        ) {
+            return;
+        }
+
+        *cache = Some(LoroListReadCache::LengthOnly { version, length });
+    }
 }
 
 #[wasm_bindgen]
@@ -3442,9 +3654,7 @@ impl LoroList {
     /// To attach the container to the document, please insert it into an attached container.
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
-        Self {
-            handler: ListHandler::new_detached(),
-        }
+        Self::from_handler(ListHandler::new_detached())
     }
 
     /// "List"
@@ -3469,6 +3679,7 @@ impl LoroList {
     pub fn insert(&mut self, index: usize, value: JsLoroValue) -> JsResult<()> {
         let js_value: JsValue = value.into();
         let loro_value = js_value_to_loro_value(&js_value)?;
+        self.clear_read_cache();
         self.handler.insert(index, loro_value)?;
         Ok(())
     }
@@ -3486,6 +3697,7 @@ impl LoroList {
     /// console.log(list.value);  // []
     /// ```
     pub fn delete(&mut self, index: usize, len: usize) -> JsResult<()> {
+        self.clear_read_cache();
         self.handler.delete(index, len)?;
         Ok(())
     }
@@ -3504,6 +3716,13 @@ impl LoroList {
     /// ```
     #[wasm_bindgen(skip_typescript)]
     pub fn get(&self, index: usize) -> JsValueOrContainerOrUndefined {
+        if let Some(v) = self.get_from_read_cache(index) {
+            return v
+                .map(|v| loro_value_to_js_value_or_container(v, false))
+                .unwrap_or(JsValue::UNDEFINED)
+                .into();
+        }
+
         let Some(v) = self.handler.get_(index) else {
             return JsValue::UNDEFINED.into();
         };
@@ -3539,7 +3758,7 @@ impl LoroList {
     /// ```
     #[wasm_bindgen(js_name = "toArray", skip_typescript)]
     pub fn to_array(&mut self) -> Vec<JsValueOrContainer> {
-        let mut arr: Vec<JsValueOrContainer> = Vec::with_capacity(self.length());
+        let mut arr: Vec<JsValueOrContainer> = Vec::new();
         self.handler.for_each(|x| {
             arr.push(match x {
                 ValueOrHandler::Value(v) => {
@@ -3591,6 +3810,7 @@ impl LoroList {
     #[wasm_bindgen(js_name = "insertContainer", skip_typescript)]
     pub fn insert_container(&mut self, index: usize, child: JsContainer) -> JsResult<JsContainer> {
         let child = js_to_container(child)?;
+        self.clear_read_cache();
         let c = self.handler.insert_container(index, child.to_handler())?;
         Ok(handler_to_js_value(c, false).into())
     }
@@ -3654,7 +3874,9 @@ impl LoroList {
     /// ```
     #[wasm_bindgen(js_name = "length", getter)]
     pub fn length(&self) -> usize {
-        self.handler.len()
+        let len = self.handler.len();
+        self.remember_length_read(len);
+        len
     }
 
     /// Get the parent container.
@@ -3716,12 +3938,14 @@ impl LoroList {
     pub fn push(&self, value: JsLoroValue) -> JsResult<()> {
         let js_value: JsValue = value.into();
         let loro_value = js_value_to_loro_value(&js_value)?;
+        self.clear_read_cache();
         self.handler.push(loro_value)?;
         Ok(())
     }
 
     /// Pop a value from the end of the list.
     pub fn pop(&self) -> JsResult<Option<JsLoroValue>> {
+        self.clear_read_cache();
         let v = self.handler.pop()?;
         if let Some(v) = v {
             let v: JsValue = v.into();
@@ -3733,6 +3957,7 @@ impl LoroList {
 
     /// Delete all elements in the list.
     pub fn clear(&self) -> JsResult<()> {
+        self.clear_read_cache();
         self.handler.clear()?;
         Ok(())
     }
@@ -3786,11 +4011,87 @@ impl Default for LoroList {
 #[wasm_bindgen]
 pub struct LoroMovableList {
     handler: MovableListHandler,
+    read_cache: RefCell<Option<LoroListReadCache>>,
 }
 
 impl Default for LoroMovableList {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl LoroMovableList {
+    pub(crate) fn from_handler(handler: MovableListHandler) -> Self {
+        Self {
+            handler,
+            read_cache: RefCell::new(None),
+        }
+    }
+
+    fn clear_read_cache(&self) {
+        *self.read_cache.borrow_mut() = None;
+    }
+
+    fn read_cache_version(&self) -> Option<usize> {
+        let doc = self.handler.doc()?;
+        if doc.is_detached() {
+            return None;
+        }
+
+        Some(doc.len_ops())
+    }
+
+    fn get_from_read_cache(&self, index: usize) -> Option<Option<ValueOrHandler>> {
+        let version = self.read_cache_version()?;
+        let should_prefetch = {
+            let cache = self.read_cache.borrow();
+            matches!(
+                cache.as_ref(),
+                Some(LoroListReadCache::LengthOnly { version: cached, .. }) if *cached == version
+            )
+        };
+
+        if should_prefetch {
+            let length = match self.read_cache.borrow().as_ref() {
+                Some(LoroListReadCache::LengthOnly { length, .. }) => *length,
+                _ => 0,
+            };
+            let mut values = Vec::with_capacity(length);
+            self.handler.for_each(|value| values.push(value));
+            *self.read_cache.borrow_mut() = Some(LoroListReadCache::Values { version, values });
+        }
+
+        let cache = self.read_cache.borrow();
+        let Some(LoroListReadCache::Values {
+            version: cached,
+            values,
+        }) = cache.as_ref()
+        else {
+            return None;
+        };
+
+        if *cached != version {
+            return None;
+        }
+
+        Some(values.get(index).cloned())
+    }
+
+    fn remember_length_read(&self, length: usize) {
+        let Some(version) = self.read_cache_version() else {
+            self.clear_read_cache();
+            return;
+        };
+
+        let mut cache = self.read_cache.borrow_mut();
+        if matches!(
+            cache.as_ref(),
+            Some(LoroListReadCache::Values { version: cached, .. }) if *cached == version
+        ) {
+            return;
+        }
+
+        *cache = Some(LoroListReadCache::LengthOnly { version, length });
     }
 }
 
@@ -3802,9 +4103,7 @@ impl LoroMovableList {
     /// To attach the container to the document, please insert it into an attached container.
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
-        Self {
-            handler: MovableListHandler::new_detached(),
-        }
+        Self::from_handler(MovableListHandler::new_detached())
     }
 
     /// "MovableList"
@@ -3829,6 +4128,7 @@ impl LoroMovableList {
     pub fn insert(&mut self, index: usize, value: JsLoroValue) -> JsResult<()> {
         let js_value: JsValue = value.into();
         let loro_value = js_value_to_loro_value(&js_value)?;
+        self.clear_read_cache();
         self.handler.insert(index, loro_value)?;
         Ok(())
     }
@@ -3846,6 +4146,7 @@ impl LoroMovableList {
     /// console.log(list.value);  // []
     /// ```
     pub fn delete(&mut self, index: usize, len: usize) -> JsResult<()> {
+        self.clear_read_cache();
         self.handler.delete(index, len)?;
         Ok(())
     }
@@ -3864,6 +4165,13 @@ impl LoroMovableList {
     /// ```
     #[wasm_bindgen(skip_typescript)]
     pub fn get(&self, index: usize) -> JsValueOrContainerOrUndefined {
+        if let Some(v) = self.get_from_read_cache(index) {
+            return v
+                .map(|v| loro_value_to_js_value_or_container(v, false))
+                .unwrap_or(JsValue::UNDEFINED)
+                .into();
+        }
+
         let Some(v) = self.handler.get_(index) else {
             return JsValue::UNDEFINED.into();
         };
@@ -3899,7 +4207,7 @@ impl LoroMovableList {
     /// ```
     #[wasm_bindgen(js_name = "toArray", skip_typescript)]
     pub fn to_array(&mut self) -> Vec<JsValueOrContainer> {
-        let mut arr: Vec<JsValueOrContainer> = Vec::with_capacity(self.length());
+        let mut arr: Vec<JsValueOrContainer> = Vec::new();
         self.handler.for_each(|x| {
             arr.push(match x {
                 ValueOrHandler::Value(v) => {
@@ -3951,6 +4259,7 @@ impl LoroMovableList {
     #[wasm_bindgen(js_name = "insertContainer", skip_typescript)]
     pub fn insert_container(&mut self, index: usize, child: JsContainer) -> JsResult<JsContainer> {
         let child = js_to_container(child)?;
+        self.clear_read_cache();
         let c = self.handler.insert_container(index, child.to_handler())?;
         Ok(handler_to_js_value(c, false).into())
     }
@@ -4015,7 +4324,9 @@ impl LoroMovableList {
     /// ```
     #[wasm_bindgen(js_name = "length", getter)]
     pub fn length(&self) -> usize {
-        self.handler.len()
+        let len = self.handler.len();
+        self.remember_length_read(len);
+        len
     }
 
     /// Get the parent container.
@@ -4081,6 +4392,7 @@ impl LoroMovableList {
     /// operations in a MovableList.
     #[wasm_bindgen(js_name = "move")]
     pub fn mov(&self, from: usize, to: usize) -> JsResult<()> {
+        self.clear_read_cache();
         self.handler.mov(from, to)?;
         Ok(())
     }
@@ -4098,6 +4410,7 @@ impl LoroMovableList {
     pub fn set(&self, pos: usize, value: JsLoroValue) -> JsResult<()> {
         let js_value: JsValue = value.into();
         let loro_value = js_value_to_loro_value(&js_value)?;
+        self.clear_read_cache();
         self.handler.set(pos, loro_value)?;
         Ok(())
     }
@@ -4106,6 +4419,7 @@ impl LoroMovableList {
     #[wasm_bindgen(skip_typescript)]
     pub fn setContainer(&self, pos: usize, child: JsContainer) -> JsResult<JsContainer> {
         let child = js_to_container(child)?;
+        self.clear_read_cache();
         let c = self.handler.set_container(pos, child.to_handler())?;
         Ok(handler_to_js_value(c, false).into())
     }
@@ -4115,12 +4429,14 @@ impl LoroMovableList {
     pub fn push(&self, value: JsLoroValue) -> JsResult<()> {
         let js_value: JsValue = value.into();
         let loro_value = js_value_to_loro_value(&js_value)?;
+        self.clear_read_cache();
         self.handler.push(loro_value)?;
         Ok(())
     }
 
     /// Pop a value from the end of the list.
     pub fn pop(&self) -> JsResult<Option<JsLoroValue>> {
+        self.clear_read_cache();
         let v = self.handler.pop()?;
         Ok(v.map(|v| {
             let v: JsValue = v.into();
@@ -4130,6 +4446,7 @@ impl LoroMovableList {
 
     /// Delete all elements in the list.
     pub fn clear(&self) -> JsResult<()> {
+        self.clear_read_cache();
         self.handler.clear()?;
         Ok(())
     }
@@ -4353,7 +4670,7 @@ impl LoroTreeNode {
     #[wasm_bindgen(getter, skip_typescript)]
     pub fn data(&self) -> JsResult<LoroMap> {
         let data = self.tree.get_meta(self.id)?;
-        let map = LoroMap { handler: data };
+        let map = LoroMap::from_handler(data);
         Ok(map)
     }
 

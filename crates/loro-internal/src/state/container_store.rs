@@ -161,6 +161,16 @@ impl ContainerStore {
             .with_container_for_read(idx, |c| c.text_unicode_len(idx, ctx!(self)))?
     }
 
+    pub fn text_utf8_len(&mut self, idx: ContainerIdx) -> Option<usize> {
+        self.store
+            .with_container_for_read(idx, |c| c.text_utf8_len(idx, ctx!(self)))?
+    }
+
+    pub fn text_string(&mut self, idx: ContainerIdx) -> Option<String> {
+        self.store
+            .with_container_for_read(idx, |c| c.text_string(idx, ctx!(self)))?
+    }
+
     pub fn text_utf16_len(&mut self, idx: ContainerIdx) -> Option<usize> {
         self.store
             .with_container_for_read(idx, |c| c.text_utf16_len(idx, ctx!(self)))?

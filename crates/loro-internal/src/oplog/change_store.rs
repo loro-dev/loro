@@ -1,4 +1,6 @@
-use self::block_encode::{decode_block, decode_header, encode_block, ChangesBlockHeader};
+use self::block_encode::{
+    decode_block, decode_header, encode_block, validate_block, ChangesBlockHeader,
+};
 use super::{loro_dag::AppDagNodeInner, AppDagNode};
 use crate::sync::Mutex;
 use crate::{
@@ -721,18 +723,13 @@ mod mut_external_kv {
         }
 
         fn validate_imported_change_blocks(&self) -> LoroResult<()> {
-            let blocks: Vec<(ID, Bytes)> = {
-                let kv_store = self.external_kv.lock();
-                kv_store
-                    .scan(Bound::Unbounded, Bound::Unbounded)
-                    .filter(|(id, _)| id.len() == 12)
-                    .map(|(id, bytes)| (ID::from_bytes(&id), bytes))
-                    .collect()
-            };
+            let kv_store = self.external_kv.lock();
+            for (key, bytes) in kv_store.scan(Bound::Unbounded, Bound::Unbounded) {
+                if key.len() != 12 {
+                    continue;
+                }
 
-            for (_id, bytes) in blocks {
-                let mut block = Arc::new(ChangesBlock::from_bytes(bytes)?);
-                block.ensure_changes(&self.arena)?;
+                validate_block(&bytes, None)?;
             }
 
             Ok(())

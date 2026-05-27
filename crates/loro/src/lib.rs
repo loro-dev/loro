@@ -685,6 +685,33 @@ impl LoroDoc {
         Ok(Self::_new(inner))
     }
 
+    /// Decode the current state from a snapshot without creating an editable [`LoroDoc`].
+    ///
+    /// This skips decoding the snapshot history and is intended for read-only initialization
+    /// paths that only need the complete current value. It supports fast snapshots that contain
+    /// state bytes, including snapshots exported with [`ExportMode::Snapshot`] and
+    /// [`ExportMode::StateOnly`].
+    pub fn decode_snapshot_state_only_value(bytes: &[u8]) -> LoroResult<LoroValue> {
+        InnerLoroDoc::decode_snapshot_state_only_value(bytes)
+    }
+
+    /// Decode the current state from a snapshot and include container IDs in the value tree.
+    ///
+    /// This has the same read-only constraints as [`Self::decode_snapshot_state_only_value`],
+    /// but uses the same wrapper shape as [`Self::get_deep_value_with_id`].
+    pub fn decode_snapshot_state_only_value_with_id(bytes: &[u8]) -> LoroResult<LoroValue> {
+        InnerLoroDoc::decode_snapshot_state_only_value_with_id(bytes)
+    }
+
+    /// Decode the current state from a snapshot in a mirror-friendly shape.
+    ///
+    /// This is a read-only fast path like [`Self::decode_snapshot_state_only_value`]. It returns
+    /// normal deep values but injects a string `$cid` field into map containers, matching the
+    /// container identity needed by mirror-style state initialization.
+    pub fn decode_snapshot_state_only_mirror_value(bytes: &[u8]) -> LoroResult<LoroValue> {
+        InnerLoroDoc::decode_snapshot_state_only_mirror_value(bytes)
+    }
+
     /// Import data exported by [`LoroDoc::export`].
     ///
     /// Use [`ExportMode::Snapshot`] for full-state snapshots, or
@@ -941,6 +968,11 @@ impl LoroDoc {
     /// Get the entire state of the current DocState with container id
     pub fn get_deep_value_with_id(&self) -> LoroValue {
         self.doc.app_state().lock().get_deep_value_with_id()
+    }
+
+    /// Get the entire state of the current DocState with `$cid` on map containers.
+    pub fn get_deep_value_with_map_id(&self) -> LoroValue {
+        self.doc.get_deep_value_with_map_id()
     }
 
     /// Get the `Frontiers` version of `OpLog`.

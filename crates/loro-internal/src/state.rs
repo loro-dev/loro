@@ -965,6 +965,14 @@ impl DocState {
         self.store.text_unicode_len(container_idx).unwrap_or(0)
     }
 
+    pub(crate) fn get_text_utf8_len(&mut self, container_idx: ContainerIdx) -> usize {
+        self.store.text_utf8_len(container_idx).unwrap_or(0)
+    }
+
+    pub(crate) fn get_text_string(&mut self, container_idx: ContainerIdx) -> String {
+        self.store.text_string(container_idx).unwrap_or_default()
+    }
+
     pub(crate) fn get_text_utf16_len(&mut self, container_idx: ContainerIdx) -> usize {
         self.store.text_utf16_len(container_idx).unwrap_or(0)
     }
@@ -1174,6 +1182,99 @@ impl DocState {
         }
 
         LoroValue::Map(ans.into())
+    }
+
+    pub fn get_deep_value_with_map_id(&mut self) -> LoroValue {
+        self.store.load_all();
+        let roots = self.preferred_root_containers();
+        let mut ans = FxHashMap::with_capacity_and_hasher(roots.len(), Default::default());
+        let binding = self.config.deleted_root_containers.clone();
+        let deleted_root_container = binding.lock();
+        let should_hide_empty_root_container = self
+            .config
+            .hide_empty_root_containers
+            .load(Ordering::Relaxed);
+        for root_idx in roots {
+            let id = self.arena.idx_to_id(root_idx).unwrap();
+            match id.clone() {
+                loro_common::ContainerID::Root { name, .. } => {
+                    let v = self.get_container_deep_value_with_map_id(root_idx, Some(id.clone()));
+                    if (should_hide_empty_root_container || deleted_root_container.contains(&id))
+                        && v.is_empty_collection()
+                    {
+                        continue;
+                    }
+
+                    ans.insert(name.to_string(), v);
+                }
+                loro_common::ContainerID::Normal { .. } => {
+                    unreachable!()
+                }
+            }
+        }
+
+        LoroValue::Map(ans.into())
+    }
+
+    pub(crate) fn get_container_deep_value_with_map_id(
+        &mut self,
+        container: ContainerIdx,
+        id: Option<ContainerID>,
+    ) -> LoroValue {
+        match container.get_type() {
+            ContainerType::Map => {
+                let id = id.unwrap_or_else(|| self.arena.idx_to_id(container).unwrap());
+                let entries = self.store.map_entries(container);
+                if entries.is_empty() && !self.store.contains_id(&id) {
+                    return ContainerType::Map.default_value();
+                }
+
+                let mut map =
+                    FxHashMap::with_capacity_and_hasher(entries.len() + 1, Default::default());
+                for (key, mut value) in entries {
+                    if let LoroValue::Container(child_id) = &value {
+                        let child_id = child_id.clone();
+                        let container_idx = self.arena.register_container(&child_id);
+                        value = self
+                            .get_container_deep_value_with_map_id(container_idx, Some(child_id));
+                    }
+
+                    map.insert(key.to_string(), value);
+                }
+
+                map.insert(
+                    "$cid".to_string(),
+                    LoroValue::String(id.to_string_fast().into()),
+                );
+                LoroValue::Map(map.into())
+            }
+            ContainerType::List | ContainerType::MovableList => {
+                let mut list = self.store.list_values(container);
+                for item in list.iter_mut() {
+                    if let LoroValue::Container(id) = item {
+                        let id = id.clone();
+                        let container_idx = self.arena.register_container(&id);
+                        *item = self.get_container_deep_value_with_map_id(container_idx, Some(id));
+                    }
+                }
+
+                LoroValue::List(list.into())
+            }
+            ContainerType::Tree => {
+                let Some(value) = self.store.get_value(container) else {
+                    return ContainerType::Tree.default_value();
+                };
+                let LoroValue::List(mut list) = value else {
+                    return value;
+                };
+                get_meta_value(list.make_mut(), self);
+                LoroValue::List(list)
+            }
+            _ => self
+                .store
+                .get_value(container)
+                .unwrap_or_else(|| container.get_type().default_value()),
+        }
     }
 
     pub(crate) fn preferred_root_containers(&mut self) -> Vec<ContainerIdx> {
