@@ -36,13 +36,21 @@ impl DocState {
                     break true;
                 };
                 if !parent_state.contains_child(&id) {
+                    // The parent has no edge to this child. For a mergeable child this means its
+                    // discriminator is no longer active at the key (it was deleted or its kind
+                    // changed), so the child is unreachable — exactly like a regular container
+                    // whose value slot was overwritten. Re-`get_mergeable_<kind>` rewrites the
+                    // discriminator and brings it back.
                     break true;
                 }
 
                 idx = parent_idx;
                 visited.push(idx);
             } else {
-                break !id.is_root();
+                // No parent in the arena: top-level Roots are always alive; anything else
+                // (including a mergeable Root whose parent edge was never wired) is treated
+                // as deleted.
+                break !id.is_root() || id.is_mergeable();
             }
         };
 
