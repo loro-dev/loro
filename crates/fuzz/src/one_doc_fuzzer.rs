@@ -420,6 +420,10 @@ impl OneDocFuzzer {
                                 let map = doc.get_map("map");
                                 map.clear().unwrap();
                             }
+                            // Mergeable containers exercise multi-peer convergence, which the
+                            // single-doc harness can't test; skip here.
+                            #[cfg(feature = "mergeable")]
+                            crate::actions::MapAction::GetMergeable { .. } => {}
                         },
                         crate::actions::ActionInner::Counter(counter_action) => {
                             let counter = doc.get_counter("counter");
