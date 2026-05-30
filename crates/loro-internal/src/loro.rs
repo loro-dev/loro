@@ -1095,7 +1095,7 @@ impl LoroDoc {
 
     #[must_use]
     pub fn has_container(&self, id: &ContainerID) -> bool {
-        if id.is_root() {
+        if id.is_root() && !id.is_mergeable() {
             return true;
         }
 
