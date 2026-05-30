@@ -1,0 +1,305 @@
+//! Coverage for the public `loro::LoroMap::get_mergeable_*` wrappers.
+//!
+//! The integration tests in `crates/loro-internal/tests/mergeable_container/*` exercise
+//! the underlying `MapHandler` directly. These tests confirm the public `loro` crate's
+//! wrapper methods on `LoroMap` forward to the handler correctly and that the returned
+//! `LoroCounter` / `LoroMap` / `LoroList` / `LoroMovableList` / `LoroText` / `LoroTree`
+//! values are usable end-to-end through the documented public API.
+
+use loro::{ContainerID, ContainerTrait, ContainerType, ExportMode, LoroDoc, ToJson, TreeParentId};
+use serde_json::json;
+use serial_test::parallel;
+
+fn doc(peer: u64) -> LoroDoc {
+    let d = LoroDoc::new();
+    d.set_peer_id(peer).unwrap();
+    d
+}
+
+fn sync(a: &LoroDoc, b: &LoroDoc) {
+    a.import(&b.export(ExportMode::updates(&a.oplog_vv())).unwrap())
+        .unwrap();
+    b.import(&a.export(ExportMode::updates(&b.oplog_vv())).unwrap())
+        .unwrap();
+}
+
+/// `LoroMap::get_mergeable_counter` returns a working `LoroCounter` whose increments
+/// converge across peers on concurrent first-create.
+#[test]
+#[parallel]
+#[cfg(feature = "counter")]
+fn loro_map_get_mergeable_counter_through_public_api() {
+    let a = doc(1);
+    let b = doc(2);
+
+    let a_counter = a
+        .get_map("state")
+        .get_mergeable_counter("revision")
+        .unwrap();
+    let b_counter = b
+        .get_map("state")
+        .get_mergeable_counter("revision")
+        .unwrap();
+    assert_eq!(
+        a_counter.id(),
+        b_counter.id(),
+        "both peers must produce the same deterministic cid via the public API"
+    );
+    assert!(a_counter.id().is_mergeable());
+
+    a_counter.increment(1.0).unwrap();
+    b_counter.increment(1.0).unwrap();
+    a.commit();
+    b.commit();
+    sync(&a, &b);
+
+    assert_eq!(
+        a.get_deep_value().to_json_value(),
+        json!({ "state": { "revision": 2.0 } })
+    );
+    assert_eq!(
+        b.get_deep_value().to_json_value(),
+        a.get_deep_value().to_json_value()
+    );
+}
+
+/// `LoroMap::get_mergeable_map` returns a working `LoroMap` that supports nested
+/// disjoint-key writes converging across peers.
+#[test]
+#[parallel]
+fn loro_map_get_mergeable_map_through_public_api() {
+    let a = doc(1);
+    let b = doc(2);
+
+    let a_profile = a.get_map("state").get_mergeable_map("profile").unwrap();
+    let b_profile = b.get_map("state").get_mergeable_map("profile").unwrap();
+    assert_eq!(a_profile.id(), b_profile.id());
+
+    a_profile.insert("name", "Ada").unwrap();
+    b_profile.insert("title", "Engineer").unwrap();
+    a.commit();
+    b.commit();
+    sync(&a, &b);
+
+    assert_eq!(
+        a.get_deep_value().to_json_value(),
+        json!({ "state": { "profile": { "name": "Ada", "title": "Engineer" } } })
+    );
+}
+
+/// `LoroMap::get_mergeable_list` returns a working `LoroList` whose concurrent inserts
+/// both survive after sync.
+#[test]
+#[parallel]
+fn loro_map_get_mergeable_list_through_public_api() {
+    let a = doc(1);
+    let b = doc(2);
+
+    let a_items = a.get_map("state").get_mergeable_list("items").unwrap();
+    let b_items = b.get_map("state").get_mergeable_list("items").unwrap();
+    assert_eq!(a_items.id(), b_items.id());
+
+    a_items.insert(0, "A").unwrap();
+    b_items.insert(0, "B").unwrap();
+    a.commit();
+    b.commit();
+    sync(&a, &b);
+
+    let value = a.get_deep_value().to_json_value();
+    assert!(
+        value == json!({ "state": { "items": ["A", "B"] } })
+            || value == json!({ "state": { "items": ["B", "A"] } }),
+        "both concurrent inserts must survive on the merged list; got {value}"
+    );
+    assert_eq!(b.get_deep_value().to_json_value(), value);
+}
+
+/// `LoroMap::get_mergeable_text` returns a working `LoroText` whose concurrent edits
+/// both survive after sync.
+#[test]
+#[parallel]
+fn loro_map_get_mergeable_text_through_public_api() {
+    let a = doc(1);
+    let b = doc(2);
+
+    let a_notes = a.get_map("state").get_mergeable_text("notes").unwrap();
+    let b_notes = b.get_map("state").get_mergeable_text("notes").unwrap();
+    assert_eq!(a_notes.id(), b_notes.id());
+
+    a_notes.insert(0, "A").unwrap();
+    b_notes.insert(0, "B").unwrap();
+    a.commit();
+    b.commit();
+    sync(&a, &b);
+
+    let value = a.get_deep_value().to_json_value();
+    assert!(
+        value == json!({ "state": { "notes": "AB" } })
+            || value == json!({ "state": { "notes": "BA" } }),
+        "both concurrent text edits must survive; got {value}"
+    );
+}
+
+/// `LoroMap::get_mergeable_movable_list` returns a working `LoroMovableList` whose
+/// concurrent first-create from two peers resolves to the same deterministic cid,
+/// and inserts on both peers survive after sync. Also exercises the `mov` operation
+/// on the returned handler to confirm the full public surface forwards correctly.
+#[test]
+#[parallel]
+fn loro_map_get_mergeable_movable_list_through_public_api() {
+    let a = doc(1);
+    let b = doc(2);
+
+    let a_items = a
+        .get_map("state")
+        .get_mergeable_movable_list("items")
+        .unwrap();
+    let b_items = b
+        .get_map("state")
+        .get_mergeable_movable_list("items")
+        .unwrap();
+    assert_eq!(
+        a_items.id(),
+        b_items.id(),
+        "both peers must produce the same deterministic mergeable MovableList cid"
+    );
+    assert!(a_items.id().is_mergeable());
+    assert_eq!(a_items.id().container_type(), ContainerType::MovableList);
+
+    a_items.insert(0, "first").unwrap();
+    a_items.insert(1, "second").unwrap();
+    b_items.insert(0, "from_b").unwrap();
+    a.commit();
+    b.commit();
+    sync(&a, &b);
+
+    let value = a.get_deep_value().to_json_value();
+    let items = value["state"]["items"]
+        .as_array()
+        .expect("items must be a list");
+    assert_eq!(
+        items.len(),
+        3,
+        "both peers' inserts must survive on the merged movable list; got {value}"
+    );
+    assert!(items.contains(&json!("first")));
+    assert!(items.contains(&json!("second")));
+    assert!(items.contains(&json!("from_b")));
+    assert_eq!(b.get_deep_value().to_json_value(), value);
+
+    // Exercise the MovableList-specific `mov` operation through the handler returned
+    // by the mergeable getter to confirm it's a fully-functional MovableList.
+    let pre_move = a.get_deep_value().to_json_value();
+    let a_items_again = a
+        .get_map("state")
+        .get_mergeable_movable_list("items")
+        .unwrap();
+    a_items_again.mov(0, a_items_again.len() - 1).unwrap();
+    a.commit();
+    let post_move = a.get_deep_value().to_json_value();
+    assert_ne!(
+        pre_move, post_move,
+        "mov on the returned MovableList handler must change order"
+    );
+}
+
+/// `LoroMap::get_mergeable_tree` returns a working `LoroTree` whose nodes are
+/// reachable through the deep value and whose tree operations forward correctly
+/// through the public API.
+#[test]
+#[parallel]
+fn loro_map_get_mergeable_tree_through_public_api() {
+    let a = doc(1);
+    let b = doc(2);
+
+    let a_tree = a.get_map("state").get_mergeable_tree("hierarchy").unwrap();
+    let b_tree = b.get_map("state").get_mergeable_tree("hierarchy").unwrap();
+    assert_eq!(
+        a_tree.id(),
+        b_tree.id(),
+        "both peers must produce the same deterministic mergeable Tree cid"
+    );
+    assert!(a_tree.id().is_mergeable());
+    assert_eq!(a_tree.id().container_type(), ContainerType::Tree);
+
+    // Exercise the Tree-specific create operation through the handler returned by
+    // the mergeable getter on both peers, then converge.
+    let a_root_node = a_tree.create(TreeParentId::Root).unwrap();
+    let _a_child = a_tree.create(TreeParentId::Node(a_root_node)).unwrap();
+    let _b_root_node = b_tree.create(TreeParentId::Root).unwrap();
+    a.commit();
+    b.commit();
+    sync(&a, &b);
+
+    let va = a.get_deep_value().to_json_value();
+    let vb = b.get_deep_value().to_json_value();
+    assert_eq!(va, vb, "Tree state must converge across peers after sync");
+
+    // Both root nodes must show up in the merged tree.
+    let hierarchy = &va["state"]["hierarchy"];
+    let roots = hierarchy.as_array().expect("tree value must be an array");
+    assert_eq!(
+        roots.len(),
+        2,
+        "both peers' root nodes must survive on the merged tree; got {va}"
+    );
+}
+
+/// Kind change through the public API: register one mergeable kind under a key,
+/// then ask for another. Requesting a different kind is a deliberate kind change
+/// that rewrites the `"🤝:<kind>"` discriminator, so the public
+/// `LoroMap::get_mergeable_*` wrappers succeed and the active child switches to
+/// the newly requested kind (mirroring
+/// `type_conflict::local_different_kind_request_rewrites_the_discriminator`).
+#[test]
+#[parallel]
+fn loro_map_get_mergeable_kind_change_through_public_api() {
+    let d = doc(1);
+    let root = d.get_map("state");
+
+    let text = root.get_mergeable_text("field").unwrap();
+    text.insert(0, "hello").unwrap();
+    d.commit();
+    assert_eq!(
+        d.get_deep_value().to_json_value(),
+        json!({ "state": { "field": "hello" } })
+    );
+
+    // Switch the kind: this rewrites the discriminator to Map.
+    let map = root.get_mergeable_map("field").unwrap();
+    map.insert("k", 1).unwrap();
+    d.commit();
+    assert_eq!(
+        d.get_deep_value().to_json_value(),
+        json!({ "state": { "field": { "k": 1 } } }),
+        "requesting a different kind rewrites the discriminator to that kind"
+    );
+}
+
+/// `LoroDoc::has_container` carve-out: a mergeable cid that has never been written
+/// must report `false`. After mutation, it must report `true`. This guards the
+/// short-circuit for plain `Root` ids from masking mergeable existence checks
+/// through the public API.
+#[test]
+#[parallel]
+#[cfg(feature = "counter")]
+fn loro_has_container_for_mergeable_cid_through_public_api() {
+    let d = doc(1);
+    let root = d.get_map("state");
+
+    let parent_id = root.id();
+    let unwritten_cid = ContainerID::new_mergeable(&parent_id, "revision", ContainerType::Counter);
+    assert!(unwritten_cid.is_mergeable());
+    assert!(
+        !d.has_container(&unwritten_cid),
+        "has_container must report false for an unwritten mergeable cid"
+    );
+
+    let counter = root.get_mergeable_counter("revision").unwrap();
+    counter.increment(1.0).unwrap();
+    assert_eq!(counter.id(), unwritten_cid);
+    assert!(
+        d.has_container(&unwritten_cid),
+        "has_container must report true after the mergeable child has state"
+    );
+}

@@ -2166,6 +2166,47 @@ impl LoroMap {
         ))
     }
 
+    /// Get or create a mergeable Counter at this map key.
+    #[cfg(feature = "counter")]
+    pub fn get_mergeable_counter(&self, key: &str) -> LoroResult<LoroCounter> {
+        Ok(LoroCounter::from_handler(
+            self.handler.get_mergeable_counter(key)?,
+        ))
+    }
+
+    /// Get or create a mergeable Map at this map key.
+    pub fn get_mergeable_map(&self, key: &str) -> LoroResult<LoroMap> {
+        Ok(LoroMap::from_handler(self.handler.get_mergeable_map(key)?))
+    }
+
+    /// Get or create a mergeable List at this map key.
+    pub fn get_mergeable_list(&self, key: &str) -> LoroResult<LoroList> {
+        Ok(LoroList::from_handler(
+            self.handler.get_mergeable_list(key)?,
+        ))
+    }
+
+    /// Get or create a mergeable MovableList at this map key.
+    pub fn get_mergeable_movable_list(&self, key: &str) -> LoroResult<LoroMovableList> {
+        Ok(LoroMovableList::from_handler(
+            self.handler.get_mergeable_movable_list(key)?,
+        ))
+    }
+
+    /// Get or create a mergeable Text at this map key.
+    pub fn get_mergeable_text(&self, key: &str) -> LoroResult<LoroText> {
+        Ok(LoroText::from_handler(
+            self.handler.get_mergeable_text(key)?,
+        ))
+    }
+
+    /// Get or create a mergeable Tree at this map key.
+    pub fn get_mergeable_tree(&self, key: &str) -> LoroResult<LoroTree> {
+        Ok(LoroTree::from_handler(
+            self.handler.get_mergeable_tree(key)?,
+        ))
+    }
+
     /// Delete all key-value pairs in the map.
     pub fn clear(&self) -> LoroResult<()> {
         self.handler.clear()
