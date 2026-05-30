@@ -4413,6 +4413,82 @@ impl MapHandler {
         self.insert_container(key, child)
     }
 
+    /// Shared implementation for all `get_mergeable_*` methods.
+    ///
+    /// For detached handlers (no doc state yet), falls back to
+    /// [`Self::get_or_create_container`].
+    ///
+    /// For attached handlers, computes a deterministic [`ContainerID::Root`] in
+    /// the mergeable namespace from `(parent.id, key, child.kind())` and
+    /// constructs the handler from it. Two peers calling this with the same
+    /// `(parent, key, kind)` receive handlers with identical container ids,
+    /// which is what makes the child container mergeable on concurrent
+    /// first-write.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LoroError::ArgErr`] if `C::from_handler` rejects the handler
+    /// built from the deterministic cid. By construction this is unreachable
+    /// because the cid carries `child.kind()`; the check guards against
+    /// future drift between `from_handler` and `kind`.
+    fn get_mergeable_container<C: HandlerTrait>(&self, key: &str, child: C) -> LoroResult<C> {
+        let MaybeDetached::Attached(parent) = &self.inner else {
+            return self.get_or_create_container(key, child);
+        };
+        let cid = ContainerID::new_mergeable(&parent.id, key, child.kind());
+
+        // Record which kind is active at `(parent, key)` by writing a discriminator string into
+        // the parent map's slot for `key`. The active mergeable child is whichever discriminator
+        // the parent map's regular LWW resolves to (see loro-dev/loro#759), so this op is what
+        // realizes the child and drives all read-time resolution, parent-edge registration
+        // (via the op-apply hook), and conflict resolution.
+        //
+        // Requesting a different kind under a key that already holds another kind's discriminator
+        // is a deliberate kind change: it overwrites the discriminator, exactly like setting a
+        // different value, and the previous kind's container stays reachable by its deterministic
+        // name so re-requesting it later resurfaces its preserved contents (the List -> Map ->
+        // List cycle). Idempotent for the same kind: `insert_with_txn` skips when the slot
+        // already holds the matching discriminator.
+        let discriminator = loro_common::mergeable_discriminator(child.kind());
+        self.insert(key, discriminator)?;
+
+        C::from_handler(create_handler(parent, cid.clone())).ok_or_else(|| {
+            LoroError::ArgErr(
+                format!(
+                    "Expected value type {} but found {}",
+                    child.kind(),
+                    cid.container_type()
+                )
+                .into_boxed_str(),
+            )
+        })
+    }
+
+    #[cfg(feature = "counter")]
+    pub fn get_mergeable_counter(&self, key: &str) -> LoroResult<counter::CounterHandler> {
+        self.get_mergeable_container(key, counter::CounterHandler::new_detached())
+    }
+
+    pub fn get_mergeable_map(&self, key: &str) -> LoroResult<MapHandler> {
+        self.get_mergeable_container(key, MapHandler::new_detached())
+    }
+
+    pub fn get_mergeable_list(&self, key: &str) -> LoroResult<ListHandler> {
+        self.get_mergeable_container(key, ListHandler::new_detached())
+    }
+
+    pub fn get_mergeable_movable_list(&self, key: &str) -> LoroResult<MovableListHandler> {
+        self.get_mergeable_container(key, MovableListHandler::new_detached())
+    }
+
+    pub fn get_mergeable_text(&self, key: &str) -> LoroResult<TextHandler> {
+        self.get_mergeable_container(key, TextHandler::new_detached())
+    }
+
+    pub fn get_mergeable_tree(&self, key: &str) -> LoroResult<TreeHandler> {
+        self.get_mergeable_container(key, TreeHandler::new_detached())
+    }
+
     pub fn contains_key(&self, key: &str) -> bool {
         self.get(key).is_some()
     }
