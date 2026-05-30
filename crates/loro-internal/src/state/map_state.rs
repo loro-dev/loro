@@ -145,6 +145,22 @@ impl Default for ChildContainers {
     }
 }
 
+enum ChildContainersIter<'a> {
+    Tiny(std::slice::Iter<'a, (ContainerID, InternalString)>),
+    Map(std::collections::hash_map::Iter<'a, ContainerID, InternalString>),
+}
+
+impl<'a> Iterator for ChildContainersIter<'a> {
+    type Item = (&'a ContainerID, &'a InternalString);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Tiny(iter) => iter.next().map(|(id, key)| (id, key)),
+            Self::Map(iter) => iter.next(),
+        }
+    }
+}
+
 impl ChildContainers {
     fn get(&self, id: &ContainerID) -> Option<&InternalString> {
         match self {
@@ -200,12 +216,28 @@ impl ChildContainers {
             }
         }
     }
+
+    fn iter(&self) -> ChildContainersIter<'_> {
+        match self {
+            Self::Tiny(entries) => ChildContainersIter::Tiny(entries.iter()),
+            Self::Map(map) => ChildContainersIter::Map(map.iter()),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct MapState {
     idx: ContainerIdx,
     map: MapEntries,
+    /// Parent-edge index for regular child containers (`MapValue::Container`).
+    ///
+    /// Mergeable children's *reachability* is NOT tracked here: it is derived from the
+    /// `"🤝:<kind>"` discriminator stored in `map` (resolved at read time by
+    /// `DocState::mergeable_children_from_value`). The discriminator is the single source of truth,
+    /// exactly as a regular child's value-table entry is for regular children. The parent-edge
+    /// index entries this map DOES hold for mergeable cids only wire a cid back to its key for
+    /// [`Self::get_child_index`] and [`Self::contains_child`]; they are seeded from the
+    /// discriminators and kept in sync with them.
     child_containers: ChildContainers,
     size: usize,
 }
@@ -331,6 +363,14 @@ impl ContainerState for MapState {
                 ans.push(x.clone());
             }
         }
+        // Mergeable children are tracked in `child_containers` (registered when their
+        // discriminator op applies, removed when a delete clears it), so they appear here
+        // for reachability / parent-edge wiring just like regular children.
+        for (id, _) in self.child_containers.iter() {
+            if id.is_mergeable() {
+                ans.push(id.clone());
+            }
+        }
         ans
     }
 
@@ -421,6 +461,43 @@ impl MapState {
 
     pub fn get_last_edit_peer(&self, key: &str) -> Option<PeerID> {
         self.map.get(&key.into()).map(|v| v.peer)
+    }
+
+    /// Register a mergeable child container's parent edge in `child_containers`.
+    ///
+    /// Mergeable children have deterministic [`ContainerID::Root`] ids derived from
+    /// `(parent_id, key, kind)` (see [`ContainerID::new_mergeable`]). Their *visibility* is
+    /// driven by the `"🤝:<kind>"` discriminator stored in `self.map` (resolved by
+    /// `DocState::mergeable_children_from_value`); this side-table entry only wires up the parent
+    /// edge so path resolution and reachability (`get_child_index`, `contains_child`) resolve
+    /// the cid to its logical key. Registration is kept in sync with the discriminator by the
+    /// DocState op-apply hook and the import walk.
+    pub fn register_mergeable_child(&mut self, key: InternalString, id: ContainerID) {
+        debug_assert!(
+            id.is_mergeable(),
+            "register_mergeable_child must only be called with mergeable container ids"
+        );
+        self.child_containers.insert(id, key);
+    }
+
+    /// Iterate `(key, cid)` pairs for mergeable parent edges currently in the side table. Used
+    /// by the DocState op-apply hook to find a stale mergeable edge to evict when a key's
+    /// discriminator is cleared.
+    pub(crate) fn iter_mergeable_children(
+        &self,
+    ) -> impl Iterator<Item = (&InternalString, &ContainerID)> {
+        self.child_containers
+            .iter()
+            .filter(|(id, _)| id.is_mergeable())
+            .map(|(id, key)| (key, id))
+    }
+
+    /// Evict a specific mergeable parent edge from the side table. Returns true if the cid was
+    /// registered and removed; false if it wasn't present. Called by the DocState op-apply hook
+    /// when a key's discriminator is cleared (a delete or an overwrite to a non-discriminator
+    /// value).
+    pub fn evict_mergeable_child_cid(&mut self, cid: &ContainerID) -> bool {
+        self.child_containers.remove(cid).is_some()
     }
 }
 
