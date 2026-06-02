@@ -138,4 +138,68 @@ mod tests {
             "reactivation must drop the stale deleted-cache entry"
         );
     }
+
+    /// The same stale-cache hazard exists when reactivation arrives from a *peer* via import,
+    /// not just from a local `get_mergeable_*` call. The update-import side-table rebuild
+    /// (`register_mergeable_children` -> `register_mergeable_edges_of_map`) re-registers the
+    /// active child, and must also clear the importing peer's poisoned deleted-cache entry.
+    ///
+    /// The scenario, with two peers A (author) and B (importer):
+    /// 1. A creates the mergeable counter and deletes the key, then exports.
+    /// 2. B imports A's updates so the child exists but is unreachable, and queries
+    ///    `is_deleted()` to poison B's `dead_containers_cache` with a `deleted` entry.
+    /// 3. A re-gets the counter (rewriting the discriminator, reactivating the child) and
+    ///    exports just that new update.
+    /// 4. B imports the reactivation update; the import path re-registers the parent edge.
+    /// 5. Assert B's cache no longer holds a `deleted` entry for that idx.
+    ///
+    /// Like the local-reactivation test, this asserts cache contents directly rather than
+    /// through `is_deleted()`, because `is_deleted()` only trusts the cache via a release-only
+    /// early return; a public-API assertion would pass in debug even with the bug present.
+    #[test]
+    fn imported_mergeable_child_reactivation_clears_dead_cache() {
+        use crate::loro::ExportMode;
+
+        let doc_a = LoroDoc::new_auto_commit();
+        doc_a.set_peer_id(1).unwrap();
+        let root_a = doc_a.get_map("state");
+        let counter_a = root_a.get_mergeable_counter("revision").unwrap();
+        counter_a.increment(1.0).unwrap();
+        doc_a.commit_then_renew();
+        root_a.delete("revision").unwrap();
+        doc_a.commit_then_renew();
+
+        let cid: ContainerID = counter_a.id();
+
+        // B imports A's history: the child exists but is unreachable (discriminator cleared).
+        let doc_b = LoroDoc::new_auto_commit();
+        doc_b.set_peer_id(2).unwrap();
+        doc_b
+            .import(&doc_a.export(ExportMode::all_updates()).unwrap())
+            .unwrap();
+
+        let idx = doc_b.state.lock().arena.id_to_idx(&cid).unwrap();
+        // Poison B's cache: querying the unreachable child records it as deleted.
+        assert!(doc_b.state.lock().is_deleted(idx));
+        assert_eq!(
+            doc_b.state.lock().dead_cache_entry(idx),
+            Some(true),
+            "import of a deleted child must record it as deleted in the cache"
+        );
+
+        // A reactivates the child locally and exports just the new update.
+        let vv_before = doc_a.oplog_vv();
+        root_a.get_mergeable_counter("revision").unwrap();
+        doc_a.commit_then_renew();
+        let reactivation = doc_a.export(ExportMode::updates(&vv_before)).unwrap();
+
+        // B imports the reactivation: the import path re-registers the parent edge and must
+        // drop the stale deleted-cache entry.
+        doc_b.import(&reactivation).unwrap();
+        assert_eq!(
+            doc_b.state.lock().dead_cache_entry(idx),
+            None,
+            "imported reactivation must drop the stale deleted-cache entry"
+        );
+    }
 }
