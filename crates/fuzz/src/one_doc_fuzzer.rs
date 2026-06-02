@@ -551,7 +551,11 @@ impl OneDocFuzzer {
                                         peer: before.0,
                                         counter: before.1,
                                     };
-                                    tree.mov_before(target, before).unwrap();
+                                    if let Err(LoroError::TreeError(e)) =
+                                        tree.mov_before(target, before)
+                                    {
+                                        tracing::warn!("move error {}", e);
+                                    }
                                 }
                                 crate::container::TreeActionInner::MoveAfter { target, after } => {
                                     let target = TreeID {
@@ -562,7 +566,11 @@ impl OneDocFuzzer {
                                         peer: after.0,
                                         counter: after.1,
                                     };
-                                    tree.mov_after(target, after).unwrap();
+                                    if let Err(LoroError::TreeError(e)) =
+                                        tree.mov_after(target, after)
+                                    {
+                                        tracing::warn!("move error {}", e);
+                                    }
                                 }
                                 crate::container::TreeActionInner::Meta { meta: (k, v) } => {
                                     let meta = tree.get_meta(target).unwrap();

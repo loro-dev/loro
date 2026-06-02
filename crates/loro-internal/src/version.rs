@@ -2,6 +2,7 @@ mod frontiers;
 pub use frontiers::Frontiers;
 
 use crate::{
+    dag::Dag,
     id::{Counter, ID},
     oplog::AppDag,
     span::{CounterSpan, IdSpan},
@@ -161,6 +162,60 @@ impl VersionRange {
 #[repr(transparent)]
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ImVersionVector(im::HashMap<PeerID, Counter, rustc_hash::FxBuildHasher>);
+
+/// A lightweight causal version used while replaying changes in causal order.
+///
+/// It represents `base` plus the current peer advanced to at least `peer_end`.
+/// Version vector counters are exclusive upper bounds, so replaying an op at
+/// counter `c` uses `CausalVersion(base, peer, c)` as the before-op version:
+/// all deps and earlier same-peer ops are included, but the op at `c` is not.
+/// This avoids rebuilding a full mutable [VersionVector] for every replayed DAG
+/// node/op in checkout diff calculation.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct CausalVersion<'a> {
+    base: &'a ImVersionVector,
+    peer: PeerID,
+    peer_end: Counter,
+}
+
+impl<'a> CausalVersion<'a> {
+    #[inline]
+    pub(crate) fn new(base: &'a ImVersionVector, peer: PeerID, peer_end: Counter) -> Self {
+        Self {
+            base,
+            peer,
+            peer_end,
+        }
+    }
+
+    #[inline]
+    #[allow(dead_code)]
+    pub(crate) fn base(&self) -> &'a ImVersionVector {
+        self.base
+    }
+
+    #[inline]
+    #[allow(dead_code)]
+    pub(crate) fn peer(&self) -> PeerID {
+        self.peer
+    }
+
+    #[inline]
+    #[allow(dead_code)]
+    pub(crate) fn peer_end(&self) -> Counter {
+        self.peer_end
+    }
+
+    #[inline]
+    pub(crate) fn end_for_peer(&self, peer: PeerID) -> Counter {
+        let base_end = self.base.get(&peer).copied().unwrap_or(0);
+        if peer == self.peer {
+            base_end.max(self.peer_end)
+        } else {
+            base_end
+        }
+    }
+}
 
 #[inline]
 fn normalize_vv_counter(counter: Counter) -> Counter {
@@ -982,6 +1037,13 @@ impl VersionVector {
 pub fn shrink_frontiers(last_ids: &Frontiers, dag: &AppDag) -> Result<Frontiers, ID> {
     // it only keep the ids of ops that are concurrent to each other
 
+    if !last_ids.is_empty() && dag.is_before_shallow_root(last_ids) {
+        return Err(last_ids
+            .iter()
+            .next()
+            .expect("non-empty frontiers should have at least one id"));
+    }
+
     if last_ids.len() <= 1 {
         return Ok(last_ids.clone());
     }
@@ -1004,6 +1066,30 @@ pub fn shrink_frontiers(last_ids: &Frontiers, dag: &AppDag) -> Result<Frontiers,
 
         last_ids
     };
+
+    if last_ids.len() > 1 {
+        let first_id = last_ids[0].id();
+        let Some(first_node) = dag.get(first_id) else {
+            return Err(first_id);
+        };
+        let first_deps = first_node.deps.clone();
+        let mut all_share_deps = true;
+        for id in &last_ids[1..] {
+            let frontier = id.id();
+            let Some(node) = dag.get(frontier) else {
+                return Err(frontier);
+            };
+            if node.deps != first_deps {
+                all_share_deps = false;
+                break;
+            }
+        }
+
+        if all_share_deps {
+            last_ids.sort_by_key(|x| x.lamport);
+            return Ok(last_ids.into_iter().rev().map(|x| x.id()).collect());
+        }
+    }
 
     let mut frontiers = Vec::new();
     // Iterate from the greatest lamport to the smallest

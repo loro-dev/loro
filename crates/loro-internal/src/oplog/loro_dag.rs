@@ -635,11 +635,16 @@ impl AppDag {
         self.frontiers = v.frontiers;
         if let Some((vv, f)) = v.start_version {
             if !f.is_empty() {
-                assert!(f.len() == 1);
-                let id = f.as_single().unwrap();
-                let node = self.get(id).unwrap();
-                assert!(node.cnt == id.counter);
-                self.shallow_root_frontiers_deps = node.deps.clone();
+                let deps: Frontiers = vv
+                    .iter()
+                    .filter_map(|(&peer, &counter)| {
+                        (counter > 0).then_some(ID::new(peer, counter - 1))
+                    })
+                    .collect();
+                for id in f.iter() {
+                    self.get(id).unwrap();
+                }
+                self.shallow_root_frontiers_deps = deps;
             }
             self.shallow_since_frontiers = f;
             self.shallow_since_vv = ImVersionVector::from_vv(&vv);
@@ -779,18 +784,34 @@ impl AppDag {
             return true;
         }
 
-        if deps.iter().any(|x| self.shallow_since_vv.includes_id(x)) {
+        let Some(vv) = self.frontiers_to_vv(deps) else {
+            return deps.iter().any(|id| {
+                self.shallow_since_vv.includes_id(id) || self.shallow_since_frontiers.contains(&id)
+            });
+        };
+
+        self.vv_is_before_shallow_root(&vv)
+    }
+
+    fn vv_is_before_shallow_root(&self, vv: &VersionVector) -> bool {
+        if self.shallow_since_vv.is_empty() {
+            return false;
+        }
+
+        if self
+            .shallow_since_vv
+            .iter()
+            .any(|(&peer, &counter)| vv.get(&peer).copied().unwrap_or(0) < counter)
+        {
             return true;
         }
 
-        if deps
+        // The shallow boundary can be a multi-frontier root. A target at that
+        // boundary must include every root frontier; a proper subset is not a
+        // representable state in the shallow history.
+        self.shallow_since_frontiers
             .iter()
-            .any(|x| self.shallow_since_frontiers.contains(&x))
-        {
-            return deps != &self.shallow_since_frontiers;
-        }
-
-        false
+            .any(|id| !vv.includes_id(id))
     }
 
     /// Travel the ancestors of the given id, and call the callback for each node
@@ -1074,6 +1095,10 @@ impl AppDag {
                 } else {
                     let mut all_deps_processed = true;
                     for id in top_node.deps.iter() {
+                        if self.shallow_since_vv.includes_id(id) {
+                            continue;
+                        }
+
                         let node = self.get(id).expect("deps should be in the dag");
                         if node.vv.get().is_none() {
                             if all_deps_processed {
@@ -1090,6 +1115,15 @@ impl AppDag {
                     }
 
                     for id in top_node.deps.iter() {
+                        if self.shallow_since_vv.includes_id(id) {
+                            if ans_vv.is_empty() {
+                                ans_vv = self.shallow_since_vv.clone();
+                            } else {
+                                ans_vv.extend_to_include_vv(self.shallow_since_vv.iter());
+                            }
+                            continue;
+                        }
+
                         let node = self.get(id).expect("deps should be in the dag");
                         let dep_vv = node.vv.get().unwrap();
                         if ans_vv.is_empty() {
@@ -1151,7 +1185,7 @@ impl AppDag {
     pub fn frontiers_to_vv(&self, frontiers: &Frontiers) -> Option<VersionVector> {
         if frontiers == &self.shallow_root_frontiers_deps {
             let vv = VersionVector::from_im_vv(&self.shallow_since_vv);
-            return Some(vv);
+            return (!self.vv_is_before_shallow_root(&vv)).then_some(vv);
         }
 
         let mut vv: VersionVector = Default::default();
@@ -1160,6 +1194,10 @@ impl AppDag {
             let target_vv = self.ensure_vv_for(&x);
             vv.extend_to_include_vv(target_vv.iter());
             vv.extend_to_include_last_id(id);
+        }
+
+        if self.vv_is_before_shallow_root(&vv) {
+            return None;
         }
 
         Some(vv)
@@ -1195,6 +1233,13 @@ impl AppDag {
     }
 
     pub fn im_vv_to_frontiers(&self, vv: &ImVersionVector) -> Frontiers {
+        if !self.shallow_since_vv.is_empty() {
+            let version = VersionVector::from_im_vv(vv);
+            if self.vv_is_before_shallow_root(&version) {
+                return self.shallow_since_frontiers.clone();
+            }
+        }
+
         if vv.is_empty() {
             return Default::default();
         }
@@ -1226,6 +1271,10 @@ impl AppDag {
     }
 
     pub fn vv_to_frontiers(&self, vv: &VersionVector) -> Frontiers {
+        if self.vv_is_before_shallow_root(vv) {
+            return self.shallow_since_frontiers.clone();
+        }
+
         if vv.is_empty() {
             return Default::default();
         }
@@ -1292,7 +1341,7 @@ impl AppDag {
     pub fn cmp_with_frontiers(&self, other: &Frontiers) -> Ordering {
         if &self.frontiers == other {
             Ordering::Equal
-        } else if other.iter().all(|id| self.vv.includes_id(id)) {
+        } else if self.frontiers_to_vv(other).is_some() {
             Ordering::Greater
         } else {
             Ordering::Less

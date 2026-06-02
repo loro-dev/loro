@@ -1,4 +1,5 @@
-use loro::{CommitOptions, LoroDoc, VersionVector, ID};
+use loro::{ChangeTravelError, CommitOptions, LoroDoc, VersionVector, ID};
+use std::ops::ControlFlow;
 
 #[test]
 fn explicit_empty_commit_swallow_options() {
@@ -49,6 +50,32 @@ fn implicit_empty_commit_preserves_options() {
     assert_eq!(first_change.timestamp(), 100);
     assert_eq!(second_change.message(), "second commit");
     assert_eq!(second_change.timestamp(), 200);
+}
+
+#[test]
+fn failed_travel_change_ancestors_preserves_next_commit_options() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+
+    doc.set_next_commit_message("after failed travel");
+    doc.set_next_commit_timestamp(42);
+
+    let mut noop = |_| ControlFlow::Continue(());
+    let err = doc
+        .travel_change_ancestors(&[ID::new(999, 0)], &mut noop)
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        ChangeTravelError::TargetIdNotFound(id) if id == ID::new(999, 0)
+    ));
+
+    let text = doc.get_text("text");
+    text.insert(0, "x").unwrap();
+    doc.commit();
+
+    let change = doc.get_change(ID::new(1, 0)).unwrap();
+    assert_eq!(change.message(), "after failed travel");
+    assert_eq!(change.timestamp(), 42);
 }
 
 #[test]

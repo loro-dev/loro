@@ -1,6 +1,6 @@
 use generic_btree::{rle::HasLength, rle::Sliceable as _, Cursor};
 use loro_common::{ContainerID, InternalString, LoroError, LoroResult, LoroValue, ID};
-use loro_delta::{DeltaRope, DeltaRopeBuilder};
+use loro_delta::{delta_trait::DeltaAttr, DeltaRope, DeltaRopeBuilder};
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::ops::Range;
@@ -42,6 +42,66 @@ pub struct RichtextState {
 struct Pos {
     entity_index: usize,
     event_index: usize,
+}
+
+fn flush_pending_style_delta(style_delta: &mut TextDiff, pending_delta: &mut TextDiff) {
+    if !pending_delta.is_empty() {
+        style_delta.compose(pending_delta);
+        *pending_delta = TextDiff::new();
+    }
+}
+
+fn try_append_retain_only_style_delta(
+    pending_delta: &mut TextDiff,
+    pending_len: &mut usize,
+    delta: &TextDiff,
+) -> bool {
+    // Adjacent, non-overlapping style retains can be composed once as a batch.
+    // Overlapping deltas are flushed to preserve the original compose order.
+    let mut index = 0;
+    let mut first_styled_start = None;
+    for item in delta.iter() {
+        match item {
+            loro_delta::DeltaItem::Retain { len, attr } => {
+                if !attr.attr_is_empty() {
+                    first_styled_start.get_or_insert(index);
+                }
+                index += len;
+            }
+            loro_delta::DeltaItem::Replace { .. } => return false,
+        }
+    }
+
+    let Some(first_styled_start) = first_styled_start else {
+        return true;
+    };
+
+    if first_styled_start < *pending_len {
+        return false;
+    }
+
+    index = 0;
+    for item in delta.iter() {
+        let loro_delta::DeltaItem::Retain { len, attr } = item else {
+            unreachable!("non-retain style deltas are rejected in the first pass")
+        };
+        if !attr.attr_is_empty() {
+            if index < *pending_len {
+                return false;
+            }
+
+            if index > *pending_len {
+                pending_delta.push_retain(index - *pending_len, Default::default());
+                *pending_len = index;
+            }
+
+            pending_delta.push_retain(*len, attr.clone());
+            *pending_len += len;
+        }
+        index += len;
+    }
+
+    true
 }
 
 impl RichtextState {
@@ -148,6 +208,11 @@ impl RichtextState {
         for c in iter {
             callback(c);
         }
+    }
+
+    #[cfg(feature = "test_utils")]
+    pub(crate) fn debug_counts(&mut self) -> (usize, usize, usize, usize, usize, usize) {
+        self.state.get_mut().debug_counts()
     }
 
     fn get_style_start(
@@ -566,9 +631,20 @@ impl ContainerState for RichtextState {
             }
         }
 
+        let mut pending_style_delta = TextDiff::new();
+        let mut pending_style_delta_len = 0;
         for s in new_style_deltas {
-            style_delta.compose(&s);
+            if !try_append_retain_only_style_delta(
+                &mut pending_style_delta,
+                &mut pending_style_delta_len,
+                &s,
+            ) {
+                flush_pending_style_delta(&mut style_delta, &mut pending_style_delta);
+                pending_style_delta_len = 0;
+                style_delta.compose(&s);
+            }
         }
+        flush_pending_style_delta(&mut style_delta, &mut pending_style_delta);
         // self.check_consistency_between_content_and_style_ranges();
         ans.compose(&style_delta);
         Diff::Text(ans)
@@ -591,57 +667,54 @@ impl ContainerState for RichtextState {
         // Rebuilding avoids repeated BTree queries and mutations when the delta is very "choppy"
         // (many small edit spans), but it allocates and clones chunks, so it can be slower for
         // small deltas. Use a cheap cost model to enable it only when it's likely beneficial.
-        let should_fast_apply = {
-            #[inline]
-            fn ilog2_ceil(x: usize) -> usize {
-                debug_assert!(x > 0);
-                (usize::BITS - (x - 1).leading_zeros()) as usize
-            }
+        #[inline]
+        fn ilog2_ceil(x: usize) -> usize {
+            debug_assert!(x > 0);
+            (usize::BITS - (x - 1).leading_zeros()) as usize
+        }
 
-            let state = self.state.get_mut();
-            if state.has_styles() {
-                false
-            } else {
-                // `edit_actions` approximates how many BTree mutations the incremental path will do:
-                // each Replace with delete>0 becomes a drain, and each Replace with value>0 becomes an insert.
-                let mut edit_actions: usize = 0;
-                let mut is_plain_text_delta = true;
-                for span in richtext.iter() {
-                    match span {
-                        loro_delta::DeltaItem::Retain { .. } => {}
-                        loro_delta::DeltaItem::Replace { value, delete, .. } => {
-                            if *delete > 0 {
-                                edit_actions += 1;
-                            }
-                            if value.rle_len() > 0 {
-                                if !matches!(value, RichtextStateChunk::Text(_)) {
-                                    is_plain_text_delta = false;
-                                    break;
-                                }
-                                edit_actions += 1;
-                            }
+        // `edit_actions` approximates how many BTree mutations the incremental path will do:
+        // each Replace with delete>0 becomes a drain, and each Replace with value>0 becomes an insert.
+        let mut edit_actions: usize = 0;
+        let mut is_plain_text_delta = true;
+        for span in richtext.iter() {
+            match span {
+                loro_delta::DeltaItem::Retain { .. } => {}
+                loro_delta::DeltaItem::Replace { value, delete, .. } => {
+                    if *delete > 0 {
+                        edit_actions += 1;
+                    }
+                    if value.rle_len() > 0 {
+                        if !matches!(value, RichtextStateChunk::Text(_)) {
+                            is_plain_text_delta = false;
+                            break;
                         }
+                        edit_actions += 1;
                     }
                 }
-
-                if !is_plain_text_delta || edit_actions == 0 {
-                    false
-                } else {
-                    let content_nodes = state.content_node_len().max(1);
-                    let log_n = ilog2_ceil(content_nodes + 1).max(1);
-                    let incremental_score = edit_actions.saturating_mul(log_n);
-                    let rebuild_score = content_nodes.saturating_add(edit_actions);
-
-                    let old_len = richtext.old_len().max(1);
-                    let avg_action_span = old_len / edit_actions;
-                    // A very rough proxy for "choppiness": many edit actions with small average span.
-                    // The thresholds are intentionally conservative to avoid rebuilding for small or
-                    // localized deltas.
-                    let is_choppy = edit_actions >= 256 && avg_action_span <= 32;
-
-                    is_choppy && incremental_score >= rebuild_score.saturating_mul(4)
-                }
             }
+        }
+
+        let state_has_styles = self.state.get_mut().has_styles();
+        let use_plain_text_no_event_path =
+            !state_has_styles && is_plain_text_delta && edit_actions > 0;
+        let should_fast_apply = if use_plain_text_no_event_path {
+            let state = self.state.get_mut();
+            let content_nodes = state.content_node_len().max(1);
+            let log_n = ilog2_ceil(content_nodes + 1).max(1);
+            let incremental_score = edit_actions.saturating_mul(log_n);
+            let rebuild_score = content_nodes.saturating_add(edit_actions);
+
+            let old_len = richtext.old_len().max(1);
+            let avg_action_span = old_len / edit_actions;
+            // A very rough proxy for "choppiness": many edit actions with small average span.
+            // The thresholds are intentionally conservative to avoid rebuilding for small or
+            // localized deltas.
+            let is_choppy = edit_actions >= 256 && avg_action_span <= 32;
+
+            is_choppy && incremental_score >= rebuild_score.saturating_mul(4)
+        } else {
+            false
         };
 
         if should_fast_apply {
@@ -739,18 +812,30 @@ impl ContainerState for RichtextState {
                 loro_delta::DeltaItem::Replace { value, delete, .. } => {
                     if *delete > 0 {
                         // Deletions
-                        self.state
-                            .get_mut()
-                            .drain_by_entity_index(entity_index, *delete, None);
+                        if use_plain_text_no_event_path {
+                            self.state
+                                .get_mut()
+                                .drain_plain_text_by_entity_index(entity_index, *delete);
+                        } else {
+                            self.state
+                                .get_mut()
+                                .drain_by_entity_index(entity_index, *delete, None);
+                        }
                     }
                     if value.rle_len() > 0 {
                         // Insertions
                         match value {
                             RichtextStateChunk::Text(s) => {
-                                self.state.get_mut().insert_elem_at_entity_index(
-                                    entity_index,
-                                    RichtextStateChunk::Text(s.clone()),
-                                );
+                                if use_plain_text_no_event_path {
+                                    self.state
+                                        .get_mut()
+                                        .insert_text_chunk_at_entity_index(entity_index, s.clone());
+                                } else {
+                                    self.state.get_mut().insert_elem_at_entity_index(
+                                        entity_index,
+                                        RichtextStateChunk::Text(s.clone()),
+                                    );
+                                }
                             }
                             RichtextStateChunk::Style { style, anchor_type } => {
                                 self.state.get_mut().insert_elem_at_entity_index(
@@ -804,6 +889,48 @@ impl ContainerState for RichtextState {
         }
 
         // self.check_consistency_between_content_and_style_ranges()
+        Ok(())
+    }
+
+    fn validate_diff(&self, diff: &InternalDiff) -> LoroResult<()> {
+        let InternalDiff::RichtextRaw(delta) = diff else {
+            unreachable!()
+        };
+
+        let mut cursor = 0usize;
+        let mut projected = self.len_entity();
+        for span in delta.iter() {
+            match span {
+                loro_delta::DeltaItem::Retain { len, .. } => {
+                    cursor += len;
+                    if cursor > projected {
+                        return Err(LoroError::internal(format!(
+                            "text diff retains {cursor} entities but state only has {projected}",
+                        )));
+                    }
+                }
+                loro_delta::DeltaItem::Replace { value, delete, .. } => {
+                    if cursor + delete > projected {
+                        return Err(LoroError::internal(format!(
+                            "text diff deletes {delete} entities at {cursor} but state only has {projected}",
+                        )));
+                    }
+
+                    projected -= delete;
+                    let len = value.rle_len();
+                    if len > 0 {
+                        if cursor > projected {
+                            return Err(LoroError::internal(format!(
+                                "text diff inserts at {cursor} but state only has {projected}",
+                            )));
+                        }
+                        cursor += len;
+                        projected += len;
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 

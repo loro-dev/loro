@@ -20,7 +20,7 @@ use loro_internal::{
     event::Index,
     handler::{
         Handler, ListHandler, MapHandler, TextDelta, TextHandler, TreeHandler, UpdateOptions,
-        ValueOrHandler,
+        UpdateTimeoutError, ValueOrHandler,
     },
     id::{Counter, PeerID, TreeID, ID},
     loro::{CommitOptions, ExportMode},
@@ -2490,6 +2490,13 @@ fn convert_container_path_to_js_value(path: &[(ContainerID, Index)]) -> JsContai
     v.into()
 }
 
+fn update_error_to_js(e: UpdateTimeoutError) -> JsValue {
+    match e {
+        UpdateTimeoutError::Timeout => JsError::new("Update timeout").into(),
+        err => JsError::new(&err.to_string()).into(),
+    }
+}
+
 /// The handler of a text container. It supports rich text CRDT.
 ///
 /// Learn more at https://loro.dev/docs/tutorial/text
@@ -2604,7 +2611,7 @@ impl LoroText {
         };
         self.handler
             .update(text, options)
-            .map_err(|_| JsError::new("Update timeout").into())
+            .map_err(update_error_to_js)
     }
 
     /// Update the current text to the target text, the difference is calculated line by line.
@@ -2634,7 +2641,7 @@ impl LoroText {
         };
         self.handler
             .update_by_line(text, options)
-            .map_err(|_| JsError::new("Update timeout").into())
+            .map_err(update_error_to_js)
     }
 
     /// Insert the string at the given index (utf-16 index).

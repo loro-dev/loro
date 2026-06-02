@@ -51,18 +51,26 @@ pub(crate) fn import_changes_to_oplog(
             continue;
         }
 
-        if oplog.dag.is_before_shallow_root(&change.deps) {
+        let deps_are_before_shallow_root = oplog.dag.is_before_shallow_root(&change.deps);
+        let deps_start_at_shallow_root = !change.deps.is_empty()
+            && change
+                .deps
+                .iter()
+                .all(|dep| oplog.shallow_since_frontiers().contains(&dep));
+        if deps_are_before_shallow_root && !deps_start_at_shallow_root {
             changes_before_shallow_root.push(change);
             continue;
         }
 
         latest_ids.push(change.id_last());
         // calc lamport or pending if its deps are not satisfied
-        match oplog.dag.get_change_lamport_from_deps(&change.deps) {
-            Some(lamport) => change.lamport = lamport,
-            None => {
-                pending_changes.push(change);
-                continue;
+        if !deps_are_before_shallow_root {
+            match oplog.dag.get_change_lamport_from_deps(&change.deps) {
+                Some(lamport) => change.lamport = lamport,
+                None => {
+                    pending_changes.push(change);
+                    continue;
+                }
             }
         }
 

@@ -18,7 +18,7 @@ use loro::{
     event::{Diff, DiffBatch, ListDiffItem},
     loro_value, CommitOptions, ContainerID, ContainerTrait, ContainerType, ExportMode, Frontiers,
     FrontiersNotIncluded, IdSpan, Index, LoroDoc, LoroError, LoroList, LoroMap, LoroMapValue,
-    LoroStringValue, LoroText, LoroValue, ToJson, TreeParentId,
+    LoroStringValue, LoroText, LoroValue, ToJson, TreeParentId, UpdateTimeoutError,
 };
 use loro_internal::{
     encoding::EncodedBlobMode, fx_map, handler::TextDelta, id::ID, version_range, vv, LoroResult,
@@ -1813,6 +1813,24 @@ fn perform_action_on_deleted_container_should_return_error() {
 
 #[test]
 #[parallel]
+fn update_deleted_text_should_return_error() {
+    let doc = LoroDoc::new();
+    let list = doc.get_movable_list("list");
+    let text = list.push_container(LoroText::new()).unwrap();
+    list.set(0, 1).unwrap();
+
+    assert!(matches!(
+        text.update("Hello", Default::default()),
+        Err(UpdateTimeoutError::ContainerDeleted { .. })
+    ));
+    assert!(matches!(
+        text.update_by_line("Hello", Default::default()),
+        Err(UpdateTimeoutError::ContainerDeleted { .. })
+    ));
+}
+
+#[test]
+#[parallel]
 fn checkout_should_reset_container_deleted_cache() {
     let doc = LoroDoc::new();
     let list = doc.get_movable_list("list");
@@ -1820,6 +1838,23 @@ fn checkout_should_reset_container_deleted_cache() {
     doc.commit();
     let f = doc.state_frontiers();
     list.set(0, 1).unwrap();
+    assert!(text.is_deleted());
+    doc.checkout(&f).unwrap();
+    assert!(!text.is_deleted());
+}
+
+#[test]
+#[parallel]
+fn checkout_forward_should_reset_container_deleted_cache() {
+    let doc = LoroDoc::new();
+    let list = doc.get_movable_list("list");
+    let text = list.push_container(LoroText::new()).unwrap();
+    doc.commit();
+    let f = doc.state_frontiers();
+
+    doc.checkout(&Frontiers::default()).unwrap();
+    // This populates the deleted-container cache. In debug builds, is_deleted()
+    // recomputes and repairs stale entries; release builds return from the cache.
     assert!(text.is_deleted());
     doc.checkout(&f).unwrap();
     assert!(!text.is_deleted());

@@ -625,13 +625,10 @@ impl DocState {
                 return Err(LoroError::internal("state apply failpoint"));
             }
         }
-        match diff_mode {
-            DiffMode::Checkout => {
-                self.dead_containers_cache.clear();
-            }
-            _ => {
-                self.dead_containers_cache.clear_alive();
-            }
+        if diff.by.is_checkout() || diff_mode == DiffMode::Checkout {
+            self.dead_containers_cache.clear();
+        } else {
+            self.dead_containers_cache.clear_alive();
         }
         self.pre_txn(diff.origin.clone(), diff.by);
 
@@ -1931,6 +1928,30 @@ impl DocState {
 
     pub(crate) fn shallow_root_store(&self) -> Option<&Arc<GcStore>> {
         self.store.shallow_root_store()
+    }
+
+    pub(crate) fn restore_to_shallow_root(&mut self) -> bool {
+        let Some(frontiers) = self.store.restore_to_shallow_root() else {
+            return false;
+        };
+
+        self.frontiers = frontiers;
+        self.dead_containers_cache.clear();
+        true
+    }
+
+    pub(crate) fn cache_current_as_shallow_latest(&mut self, frontiers: Frontiers) {
+        self.store.cache_current_as_shallow_latest(frontiers);
+    }
+
+    pub(crate) fn restore_to_shallow_latest(&mut self, frontiers: &Frontiers) -> bool {
+        if !self.store.restore_to_shallow_latest(frontiers) {
+            return false;
+        }
+
+        self.frontiers = frontiers.clone();
+        self.dead_containers_cache.clear();
+        true
     }
 }
 

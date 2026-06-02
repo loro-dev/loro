@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use super::gen_action;
-use loro::{ExportMode, LoroDoc};
+use loro::{ExportMode, Frontiers, LoroDoc};
 
 #[test]
 fn test_snapshot_at_with_multiple_actions() -> anyhow::Result<()> {
@@ -63,5 +63,31 @@ fn test_fork_at_target_frontiers() -> anyhow::Result<()> {
     new_doc.import(&doc.export(ExportMode::all_updates()).unwrap())?;
     assert_eq!(new_doc.get_deep_value(), doc.get_deep_value());
 
+    Ok(())
+}
+
+#[test]
+fn snapshot_at_normalizes_redundant_target_frontiers() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+
+    doc.set_peer_id(1)?;
+    doc.get_text("text").insert(0, "root")?;
+    doc.commit();
+    let root = doc.state_frontiers();
+
+    doc.set_peer_id(2)?;
+    doc.get_text("text").insert(4, " latest")?;
+    doc.commit();
+    let latest = doc.state_frontiers();
+    let expected = doc.get_deep_value();
+
+    let target = Frontiers::from([root.as_single().unwrap(), latest.as_single().unwrap()]);
+    let snapshot = doc.export(ExportMode::snapshot_at(&target))?;
+    let imported = LoroDoc::new();
+    imported.import(&snapshot)?;
+
+    assert_eq!(imported.oplog_frontiers(), latest);
+    assert_eq!(imported.get_deep_value(), expected);
+    imported.check_state_correctness_slow();
     Ok(())
 }

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use loro_common::{ContainerID, ID};
 
-use crate::{container::idx::ContainerIdx, event::InternalDiff, OpLog};
+use crate::{container::idx::ContainerIdx, event::InternalDiff, version::CausalVersion, OpLog};
 
 use super::{DiffCalcVersionInfo, DiffCalculatorTrait, DiffMode};
 
@@ -26,7 +26,7 @@ impl DiffCalculatorTrait for CounterDiffCalculator {
         &mut self,
         _oplog: &OpLog,
         op: crate::op::RichOp,
-        _vv: Option<&crate::VersionVector>,
+        _vv: Option<CausalVersion<'_>>,
     ) {
         let id = op.id();
         self.ops.insert(
