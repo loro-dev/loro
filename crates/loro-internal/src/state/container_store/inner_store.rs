@@ -367,6 +367,25 @@ impl InnerStore {
         self.load_state = LoadState::RootsLoaded;
     }
 
+    /// Scan KV keys for mergeable container ids without deserializing any container state.
+    ///
+    /// Mergeable children that have state entries round-trip through the snapshot as their own KV
+    /// entries; their cid alone encodes `(parent, key, kind)`. This decodes the cid from each KV
+    /// key (like `load_roots`) and keeps only the ones that parse as valid mergeable cids. It does
+    /// not load values, register containers, or change `load_state`.
+    pub(crate) fn mergeable_container_ids(&self) -> Vec<ContainerID> {
+        let mut ans = Vec::new();
+        self.kv.with_kv(|kv| {
+            for (k, _v) in kv.scan(Bound::Unbounded, Bound::Unbounded) {
+                let cid = ContainerID::from_bytes(&k);
+                if cid.is_mergeable() {
+                    ans.push(cid);
+                }
+            }
+        });
+        ans
+    }
+
     pub(crate) fn can_import_snapshot(&self) -> bool {
         if !self.kv.is_empty() {
             return false;

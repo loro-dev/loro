@@ -15,7 +15,7 @@
 //! [`MapState`]: super::map_state::MapState
 //! [`DocState::mergeable_children_from_value`]: super::DocState::mergeable_children_from_value
 
-use loro_common::{ContainerID, ContainerType, InternalString, LoroMapValue, LoroValue};
+use loro_common::{ContainerID, InternalString, LoroMapValue, LoroValue};
 use rustc_hash::FxHashSet;
 
 use crate::{
@@ -39,13 +39,28 @@ impl DocState {
     ///
     /// Called from [`Self::init_with_states_and_version`] right after a snapshot decode.
     pub(super) fn repopulate_mergeable_child_side_tables(&mut self, _oplog: &OpLog) {
-        let map_cids: Vec<ContainerID> = self
-            .store
-            .iter_all_container_ids()
-            .filter(|id| matches!(id.container_type(), ContainerType::Map))
-            .collect();
+        // Mergeable children that have state entries round-trip through the snapshot as their own
+        // KV entries, and their cid encodes `(parent, key, kind)`. Scan KV keys for those cids
+        // (no value decode, no `load_all`) instead of walking every Map and reading its value.
+        // Unmutated mergeable children have no state entry; they are reconstructed lazily by the
+        // read paths from the parent's discriminator, so they need no eager registration here.
+        let mergeable_cids = self.store.mergeable_container_ids();
 
-        for parent_id in map_cids {
+        // Group candidates by parent map so each parent's discriminators are read at most once.
+        // `register_mergeable_edges_of_map` re-derives the active children from the parent's value
+        // and only registers edges whose discriminator still matches, so a scanned cid whose slot
+        // was deleted or kind-changed is naturally dropped.
+        let mut parent_ids: Vec<ContainerID> = Vec::new();
+        let mut seen: FxHashSet<ContainerID> = FxHashSet::default();
+        for cid in mergeable_cids {
+            if let Some((parent_id, _key, _kind)) = cid.parse_mergeable() {
+                if seen.insert(parent_id.clone()) {
+                    parent_ids.push(parent_id);
+                }
+            }
+        }
+
+        for parent_id in parent_ids {
             self.register_mergeable_edges_of_map(&parent_id);
         }
     }
