@@ -772,7 +772,8 @@ mod container {
                 return None;
             }
             let key = String::from_utf8(key_bytes).ok()?;
-            Some((ContainerID::from_bytes(&parent_bytes), key, encoded_type))
+            let parent = ContainerID::try_from_bytes(&parent_bytes).ok()?;
+            Some((parent, key, encoded_type))
         }
     }
 
@@ -1006,6 +1007,54 @@ mod test {
         let parent = ContainerID::new_root("state", ContainerType::Map);
         let real = ContainerID::new_mergeable(&parent, "field", ContainerType::Map);
         assert!(real.is_mergeable(), "valid mergeable cid must remain mergeable");
+    }
+
+    /// A `🤝:` payload can be valid hex with a well-formed len-prefixed structure and a
+    /// valid trailing type byte, yet still carry a parent segment whose bytes do not decode
+    /// to a `ContainerID`. `parse_mergeable` returns `Option`, so such input must yield
+    /// `None`, never a panic from an internal `ContainerID::from_bytes` unwrap.
+    #[test]
+    fn parse_mergeable_rejects_undecodable_parent_bytes() {
+        // Hand-encode a payload whose parent segment is empty. An empty byte slice is a
+        // valid len-prefixed segment but `ContainerID::try_from_bytes(&[])` is an error.
+        let mut encoded = Vec::new();
+        crate::write_len_prefixed_segment(&mut encoded, &[]); // empty parent bytes
+        crate::write_len_prefixed_segment(&mut encoded, b"key");
+        encoded.push(ContainerType::Map.to_u8());
+
+        let name = format!(
+            "{}{}",
+            crate::MERGEABLE_NAMESPACE_PREFIX,
+            crate::hex_encode(&encoded)
+        );
+        let cid = ContainerID::Root {
+            name: name.into(),
+            container_type: ContainerType::Map,
+        };
+
+        assert_eq!(
+            cid.parse_mergeable(),
+            None,
+            "undecodable parent bytes must reject, not panic"
+        );
+        assert!(!cid.is_mergeable());
+
+        // A parent segment of arbitrary garbage bytes must also reject rather than panic.
+        let mut encoded = Vec::new();
+        crate::write_len_prefixed_segment(&mut encoded, &[0xff, 0xff, 0xff]);
+        crate::write_len_prefixed_segment(&mut encoded, b"key");
+        encoded.push(ContainerType::Map.to_u8());
+
+        let name = format!(
+            "{}{}",
+            crate::MERGEABLE_NAMESPACE_PREFIX,
+            crate::hex_encode(&encoded)
+        );
+        let cid = ContainerID::Root {
+            name: name.into(),
+            container_type: ContainerType::Map,
+        };
+        assert_eq!(cid.parse_mergeable(), None);
     }
 
     #[test]
