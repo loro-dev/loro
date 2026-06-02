@@ -15,6 +15,10 @@ impl DeadContainersCache {
     pub(crate) fn clear_alive(&mut self) {
         self.cache.retain(|_, is_deleted| *is_deleted);
     }
+
+    pub(crate) fn remove(&mut self, idx: ContainerIdx) {
+        self.cache.remove(&idx);
+    }
 }
 
 impl DocState {
@@ -72,5 +76,66 @@ impl DocState {
         }
 
         is_deleted
+    }
+
+    #[cfg(test)]
+    pub(crate) fn dead_cache_entry(&self, idx: ContainerIdx) -> Option<bool> {
+        self.dead_containers_cache.cache.get(&idx).copied()
+    }
+}
+
+#[cfg(test)]
+#[cfg(feature = "counter")]
+mod tests {
+    use loro_common::ContainerID;
+
+    use crate::{HandlerTrait, LoroDoc};
+
+    /// A mergeable child can be deleted and then reactivated: `delete(key)` clears its
+    /// discriminator (child unreachable), and a later `get_mergeable_<kind>(key)` writes the
+    /// discriminator back (child reachable again). While the child is unreachable, querying its
+    /// liveness records it in `dead_containers_cache` as deleted. This test verifies that
+    /// reactivation removes that entry, so the cache cannot keep reporting the resurrected child
+    /// as deleted.
+    ///
+    /// The scenario:
+    /// 1. Create the mergeable counter and capture its container idx.
+    /// 2. Delete the key, then query `is_deleted()` to poison the cache with a `deleted` entry.
+    /// 3. Re-get the counter to rewrite the discriminator and reactivate the child.
+    /// 4. Assert the cache no longer holds a `deleted` entry for that idx.
+    ///
+    /// It asserts the cache contents directly rather than going through `is_deleted()`, because
+    /// `is_deleted()` only trusts the cache via a release-only early return; a public-API
+    /// assertion would pass in debug even with the bug present. Inspecting the cache makes the
+    /// regression fail in both debug and release builds.
+    #[test]
+    fn reactivated_mergeable_child_has_no_stale_dead_cache_entry() {
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        let root = doc.get_map("state");
+        let counter = root.get_mergeable_counter("revision").unwrap();
+        counter.increment(1.0).unwrap();
+        doc.commit_then_renew();
+
+        let cid: ContainerID = counter.id();
+        let idx = doc.state.lock().arena.id_to_idx(&cid).unwrap();
+
+        root.delete("revision").unwrap();
+        doc.commit_then_renew();
+        // Poison the cache: querying the unreachable child records it as deleted.
+        assert!(counter.is_deleted());
+        assert_eq!(
+            doc.state.lock().dead_cache_entry(idx),
+            Some(true),
+            "delete must record the child as deleted in the cache"
+        );
+
+        root.get_mergeable_counter("revision").unwrap();
+        doc.commit_then_renew();
+        assert_eq!(
+            doc.state.lock().dead_cache_entry(idx),
+            None,
+            "reactivation must drop the stale deleted-cache entry"
+        );
     }
 }
