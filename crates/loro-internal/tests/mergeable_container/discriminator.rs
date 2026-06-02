@@ -10,7 +10,7 @@
 mod common;
 use common::{doc, sync};
 
-use loro_common::{mergeable_discriminator, ContainerType};
+use loro_common::{mergeable_discriminator, ContainerType, LoroError};
 use loro_internal::{HandlerTrait, ToJson};
 use serde_json::json;
 
@@ -30,6 +30,63 @@ fn get_mergeable_writes_discriminator_into_parent_slot() {
         Some(mergeable_discriminator(ContainerType::List)),
         "get_mergeable_list must write the List discriminator into the parent slot"
     );
+}
+
+/// `get_mergeable_<kind>(key)` must not silently clobber an existing non-mergeable value at the
+/// key. A plain scalar or a regular child container occupying the slot makes the call an error,
+/// so the discriminator-overwrite is never a hidden side effect of a `get_`-named API.
+#[test]
+fn get_mergeable_rejects_overwriting_a_scalar_value() {
+    let d = doc(1);
+    let root = d.get_map("state");
+    root.insert("field", 5).unwrap();
+
+    let err = root
+        .get_mergeable_list("field")
+        .expect_err("get_mergeable over a scalar must error");
+    assert!(
+        matches!(err, LoroError::ArgErr(_)),
+        "expected ArgErr, got {err:?}"
+    );
+    assert_eq!(
+        root.get("field"),
+        Some(5.into()),
+        "the existing scalar value must be left untouched"
+    );
+}
+
+/// The same guard applies when the slot holds a regular child container: requesting a mergeable
+/// child there is an error and must not overwrite the container reference.
+#[test]
+fn get_mergeable_rejects_overwriting_a_regular_child_container() {
+    let d = doc(1);
+    let root = d.get_map("state");
+    root.insert_container("field", loro_internal::handler::MapHandler::new_detached())
+        .unwrap();
+
+    let err = root
+        .get_mergeable_list("field")
+        .expect_err("get_mergeable over a regular child container must error");
+    assert!(
+        matches!(err, LoroError::ArgErr(_)),
+        "expected ArgErr, got {err:?}"
+    );
+}
+
+/// An empty slot, or a slot already holding a mergeable discriminator, is fair game:
+/// `get_mergeable_<kind>` creates on empty and is idempotent / kind-changes over an existing
+/// discriminator. Only non-mergeable occupants are rejected.
+#[test]
+fn get_mergeable_allows_empty_slot_and_existing_discriminator() {
+    let d = doc(1);
+    let root = d.get_map("state");
+
+    // Empty slot: creates.
+    let _list = root.get_mergeable_list("a").unwrap();
+    // Same kind again: idempotent, still Ok.
+    let _list2 = root.get_mergeable_list("a").unwrap();
+    // Different kind over an existing discriminator: kind change, still Ok.
+    let _map = root.get_mergeable_map("a").unwrap();
 }
 
 /// A second `get_mergeable_<kind>(key)` with the SAME kind is idempotent: it

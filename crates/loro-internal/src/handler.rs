@@ -4435,6 +4435,24 @@ impl MapHandler {
         let MaybeDetached::Attached(parent) = &self.inner else {
             return self.get_or_create_container(key, child);
         };
+
+        // The slot may only be empty or already hold a mergeable discriminator. A non-mergeable
+        // occupant (a scalar or a regular child container) would be silently clobbered by the
+        // discriminator write, so reject it rather than overwrite under a `get_`-named API.
+        if let Some(existing) = self.get(key) {
+            if !matches!(existing, LoroValue::Null)
+                && loro_common::parse_mergeable_discriminator(&existing).is_none()
+            {
+                return Err(LoroError::ArgErr(
+                    format!(
+                        "Cannot create a mergeable {} at key {key:?}: the key already holds a non-mergeable value",
+                        child.kind()
+                    )
+                    .into_boxed_str(),
+                ));
+            }
+        }
+
         let cid = ContainerID::new_mergeable(&parent.id, key, child.kind());
 
         // Record which kind is active at `(parent, key)` by writing a discriminator string into
