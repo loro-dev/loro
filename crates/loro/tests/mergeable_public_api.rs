@@ -303,3 +303,26 @@ fn loro_has_container_for_mergeable_cid_through_public_api() {
         "has_container must report true after the mergeable child has state"
     );
 }
+
+/// `get_mergeable_*` must not silently overwrite a non-mergeable value through the public API:
+/// a scalar already at the key makes the call an `ArgErr` and leaves the value in place.
+#[test]
+#[parallel]
+fn loro_map_get_mergeable_rejects_overwriting_scalar_through_public_api() {
+    use loro::LoroError;
+
+    let d = doc(1);
+    let root = d.get_map("state");
+    root.insert("field", 5).unwrap();
+
+    let err = root
+        .get_mergeable_list("field")
+        .expect_err("get_mergeable over a scalar must error");
+    assert!(matches!(err, LoroError::ArgErr(_)), "expected ArgErr, got {err:?}");
+    let still = root.get("field").expect("scalar must still be present");
+    assert_eq!(
+        still.get_deep_value(),
+        5.into(),
+        "the existing scalar value must be left untouched"
+    );
+}

@@ -3282,6 +3282,9 @@ impl LoroMap {
     /// clears that slot like any regular map key; re-calling `getMergeable*` rewrites the
     /// discriminator and resurfaces the preserved child state.
     ///
+    /// Throws if the key already holds a non-mergeable value (a plain scalar or a regular child
+    /// container); the existing value is left untouched.
+    ///
     /// @example
     /// ```ts
     /// import { LoroDoc } from "loro-crdt";
