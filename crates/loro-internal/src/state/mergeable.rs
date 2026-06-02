@@ -123,7 +123,11 @@ impl DocState {
             // walks, then record the parent-edge index entry on the MapState.
             self.store.ensure_container(parent_id);
             self.arena.register_container(parent_id);
-            self.arena.register_container(&cid);
+            let cid_idx = self.arena.register_container(&cid);
+            // The child is reachable again; drop any stale deleted-cache entry so release builds
+            // don't keep reporting it as deleted. This mirrors the local reactivation path in
+            // `sync_mergeable_side_table_for_op`, covering reactivation that arrives via import.
+            self.dead_containers_cache.remove(cid_idx);
             if let Some(state) = self.store.get_container_mut(parent_idx) {
                 if let Some(map) = state.as_map_state_mut() {
                     map.register_mergeable_child(key, cid);
