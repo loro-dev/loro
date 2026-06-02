@@ -262,7 +262,10 @@ impl DocState {
         // Register the parent edge for the kind the discriminator now selects.
         if let Some(kind) = new_kind {
             let cid = ContainerID::new_mergeable(&parent_id, key, kind);
-            self.arena.register_container(&cid);
+            let cid_idx = self.arena.register_container(&cid);
+            // The child is reachable again; drop any stale deleted-cache entry from a
+            // prior delete so release builds don't keep reporting it as deleted.
+            self.dead_containers_cache.remove(cid_idx);
             if let Some(map) = self
                 .store
                 .get_container_mut(op.container)
