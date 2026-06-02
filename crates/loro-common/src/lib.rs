@@ -167,7 +167,12 @@ pub fn parse_mergeable_discriminator(value: &LoroValue) -> Option<ContainerType>
     let suffix = s.as_str().strip_prefix(MERGEABLE_NAMESPACE_PREFIX)?;
     // `ContainerType::try_from` accepts the canonical `Display` names ("Map",
     // "List", ...) plus the `Unknown(n)` form. A bare/empty suffix is rejected.
-    ContainerType::try_from(suffix).ok()
+    // `Unknown(_)` is not a valid mergeable child kind, so it is rejected too.
+    let kind = ContainerType::try_from(suffix).ok()?;
+    if matches!(kind, ContainerType::Unknown(_)) {
+        return None;
+    }
+    Some(kind)
 }
 
 impl CompactId {
@@ -736,9 +741,12 @@ mod container {
             }
         }
 
-        /// Returns `true` if this is a mergeable container ID (i.e. created via `new_mergeable`).
+        /// Returns `true` if this is a valid mergeable container ID (i.e. created via
+        /// `new_mergeable`). A Root whose name merely starts with the reserved mergeable
+        /// prefix but does not decode to a valid `(parent, key, kind)` payload is an
+        /// ordinary root, not a mergeable container.
         pub fn is_mergeable(&self) -> bool {
-            matches!(self, Self::Root { name, .. } if name.starts_with(MERGEABLE_NAMESPACE_PREFIX))
+            self.parse_mergeable().is_some()
         }
 
         /// Decode a mergeable container ID back into its `(parent, key, container_type)` components.
@@ -975,6 +983,37 @@ mod test {
         // Non-string values are never discriminators.
         assert_eq!(parse_mergeable_discriminator(&LoroValue::Double(1.0)), None);
         assert_eq!(parse_mergeable_discriminator(&LoroValue::Null), None);
+    }
+
+    #[test]
+    fn is_mergeable_rejects_prefix_only_roots() {
+        let prefix_only = ContainerID::Root {
+            name: "🤝:abc".into(),
+            container_type: ContainerType::Map,
+        };
+        assert!(
+            !prefix_only.is_mergeable(),
+            "prefix-only root must not be mergeable"
+        );
+        assert!(prefix_only.parse_mergeable().is_none());
+
+        let bad_hex = ContainerID::Root {
+            name: "🤝:not-valid-hex".into(),
+            container_type: ContainerType::Map,
+        };
+        assert!(!bad_hex.is_mergeable(), "non-hex payload must not be mergeable");
+
+        let parent = ContainerID::new_root("state", ContainerType::Map);
+        let real = ContainerID::new_mergeable(&parent, "field", ContainerType::Map);
+        assert!(real.is_mergeable(), "valid mergeable cid must remain mergeable");
+    }
+
+    #[test]
+    fn parse_mergeable_discriminator_rejects_unknown_kind() {
+        assert_eq!(
+            parse_mergeable_discriminator(&LoroValue::String("🤝:Unknown(7)".into())),
+            None
+        );
     }
 
     #[test]
