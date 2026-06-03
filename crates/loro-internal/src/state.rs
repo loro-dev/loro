@@ -661,12 +661,6 @@ impl DocState {
         // Suppose A is revived and B is A's child, and B also needs to be revived; therefore,
         // we should process each level alternately.
 
-        // Capture the parent map idxs touched by the diff batch BEFORE the main loop mutates
-        // `diffs`. Used by the post-loop hook to register mergeable parent edges from the
-        // discriminators the batch just applied, keeping update-import cost proportional to the
-        // diff size.
-        let map_parent_idxs = self.capture_mergeable_diff_batch(&diffs);
-
         // We need to ensure diff is processed in order
         diffs.sort_by_cached_key(|diff| self.arena.get_depth(diff.idx));
         let mut to_revive_in_next_layer: FxHashSet<ContainerIdx> = FxHashSet::default();
@@ -820,21 +814,6 @@ impl DocState {
         diff.diff = diffs.into();
         self.frontiers = diff.new_version.clone().into_owned();
 
-        // Register mergeable parent edges from the discriminators the diff batch just applied to
-        // their parent maps. This is the update-import counterpart of
-        // `repopulate_mergeable_child_side_tables` (which fires on snapshot import). Without it, a
-        // peer that imports a discriminator op — without first locally calling `get_mergeable_*` —
-        // would resolve the child in deep value (which reads the discriminator directly) but miss
-        // the parent edge that path resolution and reachability use. The walk reads the current
-        // discriminators, so it naturally drops edges for keys whose discriminator was cleared.
-        if !map_parent_idxs.is_empty() {
-            let parent_ids: Vec<ContainerID> = map_parent_idxs
-                .iter()
-                .filter_map(|idx| self.arena.idx_to_id(*idx))
-                .collect();
-            self.register_mergeable_children(parent_ids);
-        }
-
         if self.is_recording() {
             self.record_diff(diff)
         }
@@ -869,10 +848,6 @@ impl DocState {
             self.dead_containers_cache.clear_alive();
         }
 
-        // Keep the mergeable parent-edge index in sync with the discriminator this op may have
-        // written or cleared on a parent map.
-        self.sync_mergeable_side_table_for_op(raw_op, op);
-
         Ok(())
     }
 
@@ -898,13 +873,16 @@ impl DocState {
     pub fn does_container_exist(&mut self, id: &ContainerID) -> bool {
         // A container may exist even if not yet registered in the arena.
         // Check arena first, then fall back to KV presence in the store.
-        if id.is_root() && !id.is_mergeable() {
+        let is_mergeable = id.is_mergeable();
+        if id.is_root() && !is_mergeable {
             return true;
         }
 
-        if let Some(idx) = self.arena.id_to_idx(id) {
-            if self.arena.get_depth(idx).is_some() {
-                return true;
+        if !is_mergeable {
+            if let Some(idx) = self.arena.id_to_idx(id) {
+                if self.arena.get_depth(idx).is_some() {
+                    return true;
+                }
             }
         }
 
@@ -1025,17 +1003,6 @@ impl DocState {
                 }
             }
         }
-
-        // Re-register mergeable child containers in their parent MapState's
-        // side table. Mergeable children are real containers with their own
-        // state entries in KV (so they round-trip through snapshot), but the
-        // `MapState::child_containers` side table that drives deep-value walks
-        // and path resolution is NOT serialized (see
-        // `MapState::encode_snapshot_fast`). After import we walk all known
-        // container IDs, find the mergeable ones, and call
-        // `register_mergeable_child` on their parent MapStates to rebuild
-        // that side table from the deterministic cids.
-        self.repopulate_mergeable_child_side_tables(oplog);
 
         if !unknown_containers.is_empty() {
             let mut diff_calc = DiffCalculator::new(false);
@@ -1659,12 +1626,13 @@ impl DocState {
             return true;
         }
 
-        // If not registered yet, check KV presence, then register lazily
+        // If not registered yet, check KV presence for ordinary containers, then register lazily.
+        // Mergeable children can be active through a parent discriminator before they have their
+        // own KV state, so their reachability must be resolved by the logical edge walk below.
         if self.arena.id_to_idx(id).is_none() {
-            if !self.does_container_exist(id) {
+            if !id.is_mergeable() && !self.does_container_exist(id) {
                 return false;
             }
-            // Ensure it is registered so ancestor walk can resolve parents via resolver
             self.arena.register_container(id);
         }
 
@@ -1672,10 +1640,7 @@ impl DocState {
         loop {
             let id = self.arena.idx_to_id(idx).unwrap();
             if let Some(parent_idx) = self.arena.get_parent(idx) {
-                let Some(parent_state) = self.store.get_container_mut(parent_idx) else {
-                    return false;
-                };
-                if !parent_state.contains_child(&id) {
+                if !self.contains_logical_child(parent_idx, &id) {
                     return false;
                 }
                 idx = parent_idx;
@@ -1695,12 +1660,8 @@ impl DocState {
         let mut idx = idx;
         loop {
             let id = self.arena.idx_to_id(idx).unwrap();
-            // Mergeable Roots are parented in the arena and their cid is registered in the parent
-            // MapState's child side table, so the normal `get_child_index` lookup below resolves
-            // the logical path entry without needing to decode `(parent, key)` from the cid here.
             if let Some(parent_idx) = self.arena.get_parent(idx) {
-                let parent_state = self.store.get_container_mut(parent_idx)?;
-                let Some(prop) = parent_state.get_child_index(&id) else {
+                let Some(prop) = self.get_logical_child_index(parent_idx, &id) else {
                     tracing::warn!("Missing in parent's children");
                     return None;
                 };
@@ -1708,6 +1669,10 @@ impl DocState {
                 idx = parent_idx;
             } else {
                 // this container may be deleted
+                if id.is_mergeable() {
+                    tracing::info!(id = %id, "Missing parent - mergeable container is inactive");
+                    return None;
+                }
                 let Ok(prop) = id.clone().into_root() else {
                     let id = format!("{}", &id);
                     tracing::info!(?id, "Missing parent - container is deleted");

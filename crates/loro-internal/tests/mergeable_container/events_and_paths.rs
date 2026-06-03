@@ -139,8 +139,8 @@ fn mergeable_child_subscription_receives_own_events() {
 }
 
 /// Mutations on a mergeable child must be undoable. Undoing reverts the
-/// child's value; the side-table registration persists (because it isn't
-/// itself an op).
+/// child's value; the parent discriminator persists (because it isn't the
+/// increment op being undone).
 #[test]
 #[cfg(feature = "counter")]
 fn undo_manager_reverts_mergeable_counter_mutation() {
@@ -242,7 +242,7 @@ fn has_container_reports_false_for_unwritten_mergeable_child() {
     let root = doc.get_map("state");
 
     // Build the deterministic mergeable cid by hand, WITHOUT calling
-    // get_mergeable_counter (which would register the side-table entry).
+    // get_mergeable_counter (which would write the discriminator).
     let parent_id = root.id();
     let unwritten_cid = ContainerID::new_mergeable(&parent_id, "revision", ContainerType::Counter);
     assert!(unwritten_cid.is_mergeable());

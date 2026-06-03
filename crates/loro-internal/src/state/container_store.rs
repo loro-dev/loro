@@ -254,10 +254,6 @@ impl ContainerStore {
         self.store.iter_all_container_ids()
     }
 
-    pub fn mergeable_container_ids(&self) -> Vec<ContainerID> {
-        self.store.mergeable_container_ids()
-    }
-
     pub fn load_all(&mut self) -> LoadAllFlag {
         self.store.load_all();
         LoadAllFlag

@@ -10,7 +10,7 @@
 mod common;
 use common::{doc, sync};
 
-use loro_internal::{cursor::PosType, loro::ExportMode, HandlerTrait, ToJson};
+use loro_internal::{cursor::PosType, event::Index, loro::ExportMode, HandlerTrait, ToJson};
 use serde_json::json;
 
 /// Requesting a different kind under a key that already holds another kind's discriminator is a
@@ -50,6 +50,7 @@ fn different_kind_collision_resolves_by_map_lww_at_import() {
     let a = doc(1);
     let a_text = a.get_map("state").get_mergeable_text("k").unwrap();
     a_text.insert(0, "from_a", PosType::Unicode).unwrap();
+    let a_text_id = a_text.id();
     a.commit_then_renew();
 
     // Peer B: map under "k", with a later lamport (advance B's clock first).
@@ -61,12 +62,31 @@ fn different_kind_collision_resolves_by_map_lww_at_import() {
     }
     let b_map = b_state.get_mergeable_map("k").unwrap();
     b_map.insert("from_b", true).unwrap();
+    let b_map_id = b_map.id();
     b.commit_then_renew();
 
     // B imports A's snapshot. The two discriminators ("🤝:Text" vs "🤝:Map") compete in B's map
     // slot for "k"; B's Map discriminator has the higher lamport, so Map wins.
     let snapshot = a.export(ExportMode::Snapshot).unwrap();
     b.import(&snapshot).unwrap();
+
+    // Check the direct cids before calling any getter. The losing Text cid must not have a logical
+    // path while the Map discriminator wins; the winning Map cid resolves from the discriminator.
+    assert!(
+        b.get_path_to_container(&a_text_id).is_none(),
+        "old Text cid must be inactive while the Map discriminator wins"
+    );
+    let map_path = b
+        .get_path_to_container(&b_map_id)
+        .expect("winning Map cid must resolve from the parent discriminator");
+    let indexes = map_path
+        .iter()
+        .map(|(_, index)| index.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        indexes,
+        vec![Index::Key("state".into()), Index::Key("k".into())]
+    );
 
     let value = b.get_deep_value().to_json_value();
     let k_value = &value["state"]["k"];
@@ -79,6 +99,7 @@ fn different_kind_collision_resolves_by_map_lww_at_import() {
     // The loser's Text container is still reachable by an explicit get_mergeable_text — which
     // rewrites the discriminator back to Text (a local kind change), so it now resurfaces.
     let b_text = b.get_map("state").get_mergeable_text("k").unwrap();
+    assert_eq!(b_text.id(), a_text_id);
     assert_eq!(
         b_text.get_value().to_json_value(),
         json!("from_a"),

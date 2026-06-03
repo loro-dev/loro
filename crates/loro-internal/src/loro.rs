@@ -1990,10 +1990,16 @@ impl LoroDoc {
     pub fn get_path_to_container(&self, id: &ContainerID) -> Option<Vec<(ContainerID, Index)>> {
         let mut state = self.state.lock();
         if state.arena.id_to_idx(id).is_none() {
-            if !state.does_container_exist(id) {
+            if id.is_mergeable() {
+                // Mergeable children can be logically active via the parent map discriminator
+                // before they have their own encoded state. Register only the arena edge; do not
+                // create container state or change `has_container` semantics.
+                state.arena.register_container(id);
+            } else if !state.does_container_exist(id) {
                 return None;
+            } else {
+                state.ensure_container(id);
             }
-            state.ensure_container(id);
         }
         let idx = state.arena.id_to_idx(id).unwrap();
         state.get_path(idx)

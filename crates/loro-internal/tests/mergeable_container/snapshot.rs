@@ -24,25 +24,14 @@ fn snapshot_roundtrip_preserves_mergeable_parent_edges_and_values() {
     nested.insert("name", "Ada").unwrap();
     let counter = nested.get_mergeable_counter("revision").unwrap();
     counter.increment(3.0).unwrap();
+    let counter_id = counter.id();
 
     let snapshot = source.export(ExportMode::Snapshot).unwrap();
     let imported = doc(2);
     imported.import(&snapshot).unwrap();
 
-    assert_eq!(
-        imported.get_deep_value().to_json_value(),
-        source.get_deep_value().to_json_value(),
-        "deep value of the imported doc must match the source after snapshot round-trip"
-    );
-
-    let imported_counter = imported
-        .get_map("state")
-        .get_mergeable_map("profile")
-        .unwrap()
-        .get_mergeable_counter("revision")
-        .unwrap();
     let path = imported
-        .get_path_to_container(&imported_counter.id())
+        .get_path_to_container(&counter_id)
         .expect("mergeable counter must have a logical path after snapshot import");
     let indexes = path
         .iter()
@@ -57,6 +46,20 @@ fn snapshot_roundtrip_preserves_mergeable_parent_edges_and_values() {
         ],
         "imported counter should walk logical parent edges across two mergeable hops"
     );
+
+    assert_eq!(
+        imported.get_deep_value().to_json_value(),
+        source.get_deep_value().to_json_value(),
+        "deep value of the imported doc must match the source after snapshot round-trip"
+    );
+
+    let imported_counter = imported
+        .get_map("state")
+        .get_mergeable_map("profile")
+        .unwrap()
+        .get_mergeable_counter("revision")
+        .unwrap();
+    assert_eq!(imported_counter.id(), counter_id);
 }
 
 /// Peer B imports updates that originated from peer A's `get_mergeable_counter`
@@ -65,7 +68,7 @@ fn snapshot_roundtrip_preserves_mergeable_parent_edges_and_values() {
 /// resolution for the mergeable child must all reflect the imported state.
 #[test]
 #[cfg(feature = "counter")]
-fn update_import_populates_mergeable_side_table_on_receiver() {
+fn update_import_resolves_mergeable_logical_edge_on_receiver() {
     let a = doc(1);
     let b = doc(2);
 
@@ -74,11 +77,21 @@ fn update_import_populates_mergeable_side_table_on_receiver() {
         .get_mergeable_counter("revision")
         .unwrap();
     a_counter.increment(5.0).unwrap();
+    let a_counter_id = a_counter.id();
     a.commit_then_renew();
 
     // Peer B imports A's updates WITHOUT first calling get_mergeable_counter.
     let updates = a.export(ExportMode::updates(&b.oplog_vv())).unwrap();
     b.import(&updates).unwrap();
+
+    // Path resolution must work directly from the deterministic cid. Calling the getter first
+    // would rewrite the discriminator and could hide resolver bugs after import.
+    let path = b.get_path_to_container(&a_counter_id).expect("path");
+    let indexes = path.iter().map(|(_, idx)| idx.clone()).collect::<Vec<_>>();
+    assert_eq!(
+        indexes,
+        vec![Index::Key("state".into()), Index::Key("revision".into())]
+    );
 
     assert_eq!(
         b.get_deep_value().to_json_value(),
@@ -92,16 +105,8 @@ fn update_import_populates_mergeable_side_table_on_receiver() {
         .get_map("state")
         .get_mergeable_counter("revision")
         .unwrap();
-    assert_eq!(b_counter.id(), a_counter.id());
+    assert_eq!(b_counter.id(), a_counter_id);
     assert_eq!(b_counter.get_value().to_json_value(), json!(5.0));
-
-    // Path resolution from peer B's side must walk through the parent map.
-    let path = b.get_path_to_container(&b_counter.id()).expect("path");
-    let indexes = path.iter().map(|(_, idx)| idx.clone()).collect::<Vec<_>>();
-    assert_eq!(
-        indexes,
-        vec![Index::Key("state".into()), Index::Key("revision".into())]
-    );
 }
 
 /// Create a mergeable counter but never mutate it, then export a snapshot.
@@ -114,16 +119,32 @@ fn update_import_populates_mergeable_side_table_on_receiver() {
 #[cfg(feature = "counter")]
 fn unmutated_mergeable_child_survives_snapshot_via_discriminator() {
     let a = doc(1);
-    let _counter = a
+    let counter = a
         .get_map("state")
         .get_mergeable_counter("revision")
         .unwrap();
+    let counter_id = counter.id();
     // Deliberately no increment. Commit anyway so any pending state is flushed.
     a.commit_then_renew();
 
     let snapshot = a.export(ExportMode::Snapshot).unwrap();
     let b = doc(2);
     b.import(&snapshot).unwrap();
+
+    let has_container_before_path = b.has_container(&counter_id);
+    let path = b
+        .get_path_to_container(&counter_id)
+        .expect("unmutated mergeable child must resolve from discriminator");
+    let indexes = path.iter().map(|(_, idx)| idx.clone()).collect::<Vec<_>>();
+    assert_eq!(
+        indexes,
+        vec![Index::Key("state".into()), Index::Key("revision".into())]
+    );
+    assert_eq!(
+        b.has_container(&counter_id),
+        has_container_before_path,
+        "path lookup must not change has_container semantics for mergeable cids"
+    );
 
     // The discriminator string rides through the snapshot as a normal map value, so B
     // resolves the same deterministic cid and renders it as an empty counter.
@@ -137,7 +158,7 @@ fn unmutated_mergeable_child_survives_snapshot_via_discriminator() {
         .get_map("state")
         .get_mergeable_counter("revision")
         .unwrap();
-    assert_eq!(b_counter.id(), _counter.id(), "cid still deterministic");
+    assert_eq!(b_counter.id(), counter_id, "cid still deterministic");
     assert_eq!(b_counter.get_value().to_json_value(), json!(0.0));
 }
 
@@ -278,6 +299,6 @@ fn shallow_snapshot_roundtrip_preserves_mergeable_child() {
     assert_eq!(
         b.get_deep_value().to_json_value(),
         json!({ "state": { "revision": 4.0 } }),
-        "shallow snapshot must carry mergeable child state and side-table reconstruction"
+        "shallow snapshot must carry mergeable child state and logical edge resolution"
     );
 }

@@ -1,4 +1,4 @@
-use super::{ContainerState, DocState};
+use super::DocState;
 use crate::container::idx::ContainerIdx;
 use rustc_hash::FxHashMap;
 
@@ -15,10 +15,6 @@ impl DeadContainersCache {
     pub(crate) fn clear_alive(&mut self) {
         self.cache.retain(|_, is_deleted| *is_deleted);
     }
-
-    pub(crate) fn remove(&mut self, idx: ContainerIdx) {
-        self.cache.remove(&idx);
-    }
 }
 
 impl DocState {
@@ -33,18 +29,14 @@ impl DocState {
 
         let mut visited = vec![idx];
         let mut idx = idx;
+        let mut depends_on_mergeable_edge = false;
         let is_deleted = loop {
             let id = self.arena.idx_to_id(idx).unwrap();
+            if id.is_mergeable() {
+                depends_on_mergeable_edge = true;
+            }
             if let Some(parent_idx) = self.arena.get_parent(idx) {
-                let Some(parent_state) = self.store.get_container_mut(parent_idx) else {
-                    break true;
-                };
-                if !parent_state.contains_child(&id) {
-                    // The parent has no edge to this child. For a mergeable child this means its
-                    // discriminator is no longer active at the key (it was deleted or its kind
-                    // changed), so the child is unreachable — exactly like a regular container
-                    // whose value slot was overwritten. Re-`get_mergeable_<kind>` rewrites the
-                    // discriminator and brings it back.
+                if !self.contains_logical_child(parent_idx, &id) {
                     break true;
                 }
 
@@ -60,9 +52,23 @@ impl DocState {
 
         #[cfg(debug_assertions)]
         {
-            if let Some(cached_is_deleted) = self.dead_containers_cache.cache.get(&idx) {
-                assert_eq!(is_deleted, *cached_is_deleted);
+            if !depends_on_mergeable_edge {
+                if let Some(cached_is_deleted) = self.dead_containers_cache.cache.get(&idx) {
+                    assert_eq!(is_deleted, *cached_is_deleted);
+                }
             }
+        }
+
+        // A mergeable ancestor can be deleted and later reactivated by changing the parent map's
+        // discriminator. Do not cache deletion for any descendant whose liveness depends on that
+        // logical edge, including ordinary children nested inside a mergeable map.
+        if depends_on_mergeable_edge {
+            if !is_deleted {
+                for idx in visited {
+                    self.dead_containers_cache.cache.remove(&idx);
+                }
+            }
+            return is_deleted;
         }
 
         if is_deleted {
@@ -89,25 +95,23 @@ impl DocState {
 mod tests {
     use loro_common::ContainerID;
 
-    use crate::{HandlerTrait, LoroDoc};
+    use crate::{cursor::PosType, HandlerTrait, LoroDoc, TextHandler};
 
     /// A mergeable child can be deleted and then reactivated: `delete(key)` clears its
     /// discriminator (child unreachable), and a later `get_mergeable_<kind>(key)` writes the
     /// discriminator back (child reachable again). While the child is unreachable, querying its
-    /// liveness records it in `dead_containers_cache` as deleted. This test verifies that
-    /// reactivation removes that entry, so the cache cannot keep reporting the resurrected child
-    /// as deleted.
+    /// liveness must not cache a `deleted` entry because that answer depends on the mutable
+    /// mergeable discriminator edge.
     ///
     /// The scenario:
     /// 1. Create the mergeable counter and capture its container idx.
-    /// 2. Delete the key, then query `is_deleted()` to poison the cache with a `deleted` entry.
+    /// 2. Delete the key, then query `is_deleted()`.
     /// 3. Re-get the counter to rewrite the discriminator and reactivate the child.
-    /// 4. Assert the cache no longer holds a `deleted` entry for that idx.
+    /// 4. Assert the cache never held a `deleted` entry for that idx.
     ///
-    /// It asserts the cache contents directly rather than going through `is_deleted()`, because
-    /// `is_deleted()` only trusts the cache via a release-only early return; a public-API
-    /// assertion would pass in debug even with the bug present. Inspecting the cache makes the
-    /// regression fail in both debug and release builds.
+    /// It asserts the cache contents directly because `is_deleted()` only trusts the cache via a
+    /// release-only early return; inspecting the cache makes stale-cache regressions fail in both
+    /// debug and release builds.
     #[test]
     fn reactivated_mergeable_child_has_no_stale_dead_cache_entry() {
         let doc = LoroDoc::new_auto_commit();
@@ -122,12 +126,11 @@ mod tests {
 
         root.delete("revision").unwrap();
         doc.commit_then_renew();
-        // Poison the cache: querying the unreachable child records it as deleted.
         assert!(counter.is_deleted());
         assert_eq!(
             doc.state.lock().dead_cache_entry(idx),
-            Some(true),
-            "delete must record the child as deleted in the cache"
+            None,
+            "mergeable-dependent deletion must not be cached"
         );
 
         root.get_mergeable_counter("revision").unwrap();
@@ -139,19 +142,55 @@ mod tests {
         );
     }
 
+    /// The no-cache rule also applies to ordinary descendants under a mergeable ancestor. A
+    /// regular child container can look cache-safe by cid shape, but its liveness still depends on
+    /// the ancestor's discriminator edge.
+    #[test]
+    fn ordinary_child_under_reactivated_mergeable_map_has_no_stale_dead_cache_entry() {
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        let root = doc.get_map("state");
+        let profile = root.get_mergeable_map("profile").unwrap();
+        let text = profile
+            .insert_container("bio", TextHandler::new_detached())
+            .unwrap();
+        text.insert(0, "Ada", PosType::Unicode).unwrap();
+        doc.commit_then_renew();
+
+        let text_id: ContainerID = text.id();
+        let text_idx = doc.state.lock().arena.id_to_idx(&text_id).unwrap();
+
+        root.delete("profile").unwrap();
+        doc.commit_then_renew();
+        assert!(text.is_deleted());
+        assert_eq!(
+            doc.state.lock().dead_cache_entry(text_idx),
+            None,
+            "ordinary descendants behind a mergeable edge must not be cached as deleted"
+        );
+
+        root.get_mergeable_map("profile").unwrap();
+        doc.commit_then_renew();
+        assert!(!text.is_deleted());
+        assert_eq!(
+            doc.state.lock().dead_cache_entry(text_idx),
+            None,
+            "reactivated ordinary descendant must not leave a stale cache entry"
+        );
+    }
+
     /// The same stale-cache hazard exists when reactivation arrives from a *peer* via import,
-    /// not just from a local `get_mergeable_*` call. The update-import side-table rebuild
-    /// (`register_mergeable_children` -> `register_mergeable_edges_of_map`) re-registers the
-    /// active child, and must also clear the importing peer's poisoned deleted-cache entry.
+    /// not just from a local `get_mergeable_*` call. The importing peer must not cache the
+    /// mergeable-dependent deleted result before the reactivation update arrives.
     ///
     /// The scenario, with two peers A (author) and B (importer):
     /// 1. A creates the mergeable counter and deletes the key, then exports.
     /// 2. B imports A's updates so the child exists but is unreachable, and queries
-    ///    `is_deleted()` to poison B's `dead_containers_cache` with a `deleted` entry.
+    ///    `is_deleted()`.
     /// 3. A re-gets the counter (rewriting the discriminator, reactivating the child) and
     ///    exports just that new update.
-    /// 4. B imports the reactivation update; the import path re-registers the parent edge.
-    /// 5. Assert B's cache no longer holds a `deleted` entry for that idx.
+    /// 4. B imports the reactivation update.
+    /// 5. Assert B's cache never held a `deleted` entry for that idx.
     ///
     /// Like the local-reactivation test, this asserts cache contents directly rather than
     /// through `is_deleted()`, because `is_deleted()` only trusts the cache via a release-only
@@ -179,12 +218,11 @@ mod tests {
             .unwrap();
 
         let idx = doc_b.state.lock().arena.id_to_idx(&cid).unwrap();
-        // Poison B's cache: querying the unreachable child records it as deleted.
         assert!(doc_b.state.lock().is_deleted(idx));
         assert_eq!(
             doc_b.state.lock().dead_cache_entry(idx),
-            Some(true),
-            "import of a deleted child must record it as deleted in the cache"
+            None,
+            "imported mergeable-dependent deletion must not be cached"
         );
 
         // A reactivates the child locally and exports just the new update.
@@ -193,8 +231,7 @@ mod tests {
         doc_a.commit_then_renew();
         let reactivation = doc_a.export(ExportMode::updates(&vv_before)).unwrap();
 
-        // B imports the reactivation: the import path re-registers the parent edge and must
-        // drop the stale deleted-cache entry.
+        // B imports the reactivation. There must be no stale deleted-cache entry left to mask it.
         doc_b.import(&reactivation).unwrap();
         assert_eq!(
             doc_b.state.lock().dead_cache_entry(idx),
