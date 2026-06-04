@@ -6,7 +6,10 @@
 //! `LoroCounter` / `LoroMap` / `LoroList` / `LoroMovableList` / `LoroText` / `LoroTree`
 //! values are usable end-to-end through the documented public API.
 
-use loro::{ContainerID, ContainerTrait, ContainerType, ExportMode, LoroDoc, ToJson, TreeParentId};
+use loro::{
+    ContainerID, ContainerTrait, ContainerType, ExportMode, Index, LoroDoc, ToJson, TreeParentId,
+    ValueOrContainer,
+};
 use serde_json::json;
 use serial_test::parallel;
 
@@ -247,10 +250,8 @@ fn loro_map_get_mergeable_tree_through_public_api() {
 
 /// Kind change through the public API: register one mergeable kind under a key,
 /// then ask for another. Requesting a different kind is a deliberate kind change
-/// that rewrites the `"🤝:<kind>"` discriminator, so the public
-/// `LoroMap::get_mergeable_*` wrappers succeed and the active child switches to
-/// the newly requested kind (mirroring
-/// `type_conflict::local_different_kind_request_rewrites_the_discriminator`).
+/// that rewrites the parent map marker, so the public `LoroMap::get_mergeable_*`
+/// wrappers succeed and the active child switches to the newly requested kind.
 #[test]
 #[parallel]
 fn loro_map_get_mergeable_kind_change_through_public_api() {
@@ -265,15 +266,97 @@ fn loro_map_get_mergeable_kind_change_through_public_api() {
         json!({ "state": { "field": "hello" } })
     );
 
-    // Switch the kind: this rewrites the discriminator to Map.
+    // Switch the kind: this rewrites the marker to Map.
     let map = root.get_mergeable_map("field").unwrap();
     map.insert("k", 1).unwrap();
     d.commit();
     assert_eq!(
         d.get_deep_value().to_json_value(),
         json!({ "state": { "field": { "k": 1 } } }),
-        "requesting a different kind rewrites the discriminator to that kind"
+        "requesting a different kind rewrites the marker to that kind"
     );
+}
+
+/// A logical path returned for a mergeable child must be accepted by `get_by_path`.
+/// The final map slot stores a binary marker internally, but public path lookup
+/// should return the child container, not that raw marker value.
+#[test]
+#[parallel]
+#[cfg(feature = "counter")]
+fn loro_get_by_path_round_trips_mergeable_final_child() {
+    let d = doc(1);
+    let root = d.get_map("state");
+    let counter = root.get_mergeable_counter("revision").unwrap();
+
+    let path = d
+        .get_path_to_container(&counter.id())
+        .expect("mergeable counter should have a logical path");
+    let indexes = path
+        .iter()
+        .map(|(_, index)| index.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        indexes,
+        vec![Index::Key("state".into()), Index::Key("revision".into())]
+    );
+
+    let value = d
+        .get_by_path(&indexes)
+        .expect("logical mergeable path should resolve");
+    let ValueOrContainer::Container(container) = value else {
+        panic!("expected mergeable child container from get_by_path");
+    };
+    assert_eq!(container.id(), counter.id());
+}
+
+/// Nested logical paths must resolve through mergeable map intermediates without
+/// materializing or re-getting them first.
+#[test]
+#[parallel]
+#[cfg(feature = "counter")]
+fn loro_get_by_path_round_trips_nested_mergeable_child() {
+    let d = doc(1);
+    let root = d.get_map("state");
+    let profile = root.get_mergeable_map("profile").unwrap();
+    let counter = profile.get_mergeable_counter("revision").unwrap();
+    counter.increment(7.0).unwrap();
+    d.commit();
+
+    let path = d
+        .get_path_to_container(&counter.id())
+        .expect("nested mergeable counter should have a logical path");
+    let indexes = path
+        .iter()
+        .map(|(_, index)| index.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        indexes,
+        vec![
+            Index::Key("state".into()),
+            Index::Key("profile".into()),
+            Index::Key("revision".into()),
+        ]
+    );
+
+    let value = d
+        .get_by_path(&indexes)
+        .expect("nested logical mergeable path should resolve");
+    let ValueOrContainer::Container(container) = value else {
+        panic!("expected nested mergeable child container from get_by_path");
+    };
+    assert_eq!(container.id(), counter.id());
+    let loro::Container::Counter(counter_from_path) = container else {
+        panic!("expected counter container from get_by_path");
+    };
+    assert_eq!(counter_from_path.get_value(), 7.0);
+
+    let profile_value = d
+        .get_by_path(&[Index::Key("state".into()), Index::Key("profile".into())])
+        .expect("mergeable map intermediate should resolve");
+    let ValueOrContainer::Container(container) = profile_value else {
+        panic!("expected mergeable map container from get_by_path");
+    };
+    assert_eq!(container.id(), profile.id());
 }
 
 /// `LoroDoc::has_container` carve-out: a mergeable cid that has never been written
@@ -318,7 +401,10 @@ fn loro_map_get_mergeable_rejects_overwriting_scalar_through_public_api() {
     let err = root
         .get_mergeable_list("field")
         .expect_err("get_mergeable over a scalar must error");
-    assert!(matches!(err, LoroError::ArgErr(_)), "expected ArgErr, got {err:?}");
+    assert!(
+        matches!(err, LoroError::ArgErr(_)),
+        "expected ArgErr, got {err:?}"
+    );
     let still = root.get("field").expect("scalar must still be present");
     assert_eq!(
         still.get_deep_value(),

@@ -47,10 +47,10 @@ fn deep_value_nests_mergeable_child_under_parent_and_hides_synthetic_root() {
     );
 }
 
-/// `get_mergeable_*` writes a discriminator op into the parent map, which
+/// `get_mergeable_*` writes a marker op into the parent map, which
 /// realizes the child immediately (loro-dev/loro#759). So an unmutated
 /// mergeable child IS visible in deep value, rendered as its empty default.
-/// Because the discriminator is a real op, every peer that imports it agrees
+/// Because the marker is a real op, every peer that imports it agrees
 /// on this view — there is no originating-peer divergence.
 #[test]
 fn deep_value_shows_unmutated_mergeable_child_as_empty() {
@@ -61,7 +61,7 @@ fn deep_value_shows_unmutated_mergeable_child_as_empty() {
     assert_eq!(
         a.get_deep_value().to_json_value(),
         json!({ "state": { "nested": {} } }),
-        "the discriminator realizes the child; it shows as its empty default",
+        "the marker realizes the child; it shows as its empty default",
     );
 }
 
@@ -139,8 +139,8 @@ fn mergeable_child_subscription_receives_own_events() {
 }
 
 /// Mutations on a mergeable child must be undoable. Undoing reverts the
-/// child's value; the side-table registration persists (because it isn't
-/// itself an op).
+/// child's value; the parent marker persists (because it isn't the
+/// increment op being undone).
 #[test]
 #[cfg(feature = "counter")]
 fn undo_manager_reverts_mergeable_counter_mutation() {
@@ -242,7 +242,7 @@ fn has_container_reports_false_for_unwritten_mergeable_child() {
     let root = doc.get_map("state");
 
     // Build the deterministic mergeable cid by hand, WITHOUT calling
-    // get_mergeable_counter (which would register the side-table entry).
+    // get_mergeable_counter (which would write the marker).
     let parent_id = root.id();
     let unwritten_cid = ContainerID::new_mergeable(&parent_id, "revision", ContainerType::Counter);
     assert!(unwritten_cid.is_mergeable());

@@ -193,7 +193,7 @@ fn three_peer_mergeable_counter_convergence() {
 /// After A and B sync once, both peers concurrently mutate the same
 /// mergeable counter again, then sync. Convergence must hold on the second
 /// round — the deterministic cid plus CRDT merge must keep working after
-/// the side table has been populated and used.
+/// the logical mergeable edge has already been resolved and used.
 #[test]
 #[cfg(feature = "counter")]
 fn post_merge_concurrent_counter_increments_converge() {

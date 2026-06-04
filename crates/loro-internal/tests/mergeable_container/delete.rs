@@ -1,9 +1,9 @@
 //! Delete semantics for mergeable children.
 //!
-//! `delete(key)` overwrites the `"🤝:<kind>"` discriminator in the parent map's value slot with
-//! `None`, exactly as deleting a regular child container clears its value-table entry. The child
+//! `delete(key)` overwrites the binary marker in the parent map's value slot with `None`, exactly
+//! as deleting a regular child container clears its value-table entry. The child
 //! becomes unreachable; its container state is preserved in history. Re-calling
-//! `get_mergeable_<kind>(key)` rewrites the discriminator and resurfaces the preserved state, and
+//! `get_mergeable_<kind>(key)` rewrites the marker and resurfaces the preserved state, and
 //! Map LWW resolves any concurrent delete-vs-recreate race — symmetric with normal Loro
 //! write/delete (loro-dev/loro#759).
 
@@ -14,12 +14,12 @@ use common::{doc, sync};
 use loro_internal::{loro::ExportMode, HandlerTrait, ToJson};
 use serde_json::json;
 
-/// `delete(key)` on a mergeable key clears the discriminator, so the child no longer appears in
+/// `delete(key)` on a mergeable key clears the marker, so the child no longer appears in
 /// deep value. The child's container state is preserved: re-getting it resolves to the same
 /// deterministic cid and resurfaces the prior value (delete detaches, it does not reset).
 #[test]
 #[cfg(feature = "counter")]
-fn delete_clears_discriminator_and_recreate_resurfaces_state() {
+fn delete_clears_marker_and_recreate_resurfaces_state() {
     let doc = doc(1);
     let root = doc.get_map("state");
     let counter = root.get_mergeable_counter("revision").unwrap();
@@ -40,7 +40,7 @@ fn delete_clears_discriminator_and_recreate_resurfaces_state() {
         "delete must clear the mergeable child from deep value"
     );
 
-    // Re-get rewrites the discriminator. The child resurfaces with its PRESERVED value (3.0),
+    // Re-get rewrites the marker. The child resurfaces with its PRESERVED value (3.0),
     // not a reset to 0.0 — delete detaches, it does not destroy the container state.
     let counter2 = root.get_mergeable_counter("revision").unwrap();
     doc.commit_then_renew();
@@ -48,7 +48,7 @@ fn delete_clears_discriminator_and_recreate_resurfaces_state() {
     assert_eq!(
         doc.get_deep_value().to_json_value(),
         json!({ "state": { "revision": 3.0 } }),
-        "re-get rewrites the discriminator and resurfaces the preserved state"
+        "re-get rewrites the marker and resurfaces the preserved state"
     );
 }
 
@@ -62,7 +62,7 @@ fn delete_leaves_no_value_at_key() {
     let counter = root.get_mergeable_counter("revision").unwrap();
     counter.increment(1.0).unwrap();
     doc.commit_then_renew();
-    assert!(root.get("revision").is_some(), "discriminator present");
+    assert!(root.get("revision").is_some(), "marker present");
 
     root.delete("revision").unwrap();
     doc.commit_then_renew();
@@ -100,13 +100,13 @@ fn local_delete_immediately_clears_mergeable_child() {
 }
 
 /// Recreate after seeing a delete wins: peer A deletes the key; peer B imports the delete (its
-/// slot is now cleared), then re-calls `get_mergeable_<kind>`, which re-emits a FRESH discriminator
-/// because the slot is empty. That discriminator's IdLp dominates the delete, so the child is
+/// slot is now cleared), then re-calls `get_mergeable_<kind>`, which re-emits a FRESH marker
+/// because the slot is empty. That marker's IdLp dominates the delete, so the child is
 /// visible again and its preserved state resurfaces — symmetric with re-`set_container` after a
 /// regular delete.
 ///
 /// (Note the symmetry: if B re-calls `get_mergeable_<kind>` while still holding the OLD
-/// discriminator it imported earlier — i.e. before seeing the delete — the call is idempotent and
+/// marker it imported earlier — i.e. before seeing the delete — the call is idempotent and
 /// emits no op, so the concurrent delete wins, exactly as a regular concurrent delete beats a
 /// stale local handle. That case is covered by `concurrent_delete_wins_against_earlier_increment`.)
 #[test]
@@ -131,7 +131,7 @@ fn recreate_after_seen_delete_resurfaces_preserved_state() {
         "B sees the cleared slot after importing the delete"
     );
 
-    // B re-creates: the slot is empty, so this re-emits a fresh discriminator dominating the
+    // B re-creates: the slot is empty, so this re-emits a fresh marker dominating the
     // delete. The preserved counter state (1.0) resurfaces, plus B's new increment.
     let b_counter = b
         .get_map("state")
@@ -153,7 +153,7 @@ fn recreate_after_seen_delete_resurfaces_preserved_state() {
 }
 
 /// Concurrent delete-wins: peer A increments, peer B deletes with a higher IdLp and never
-/// recreates. The delete dominates the discriminator via Map LWW, so the child is gone on both
+/// recreates. The delete dominates the marker via Map LWW, so the child is gone on both
 /// peers — symmetric with a concurrent delete winning over a regular write.
 #[test]
 #[cfg(feature = "counter")]
@@ -188,13 +188,13 @@ fn concurrent_delete_wins_against_earlier_increment() {
     assert_eq!(va, vb);
     assert!(
         va["state"].get("revision").is_none(),
-        "delete with higher IdLp must dominate the discriminator; got {va}"
+        "delete with higher IdLp must dominate the marker; got {va}"
     );
 }
 
 /// Remote delete clears the child on the receiver: peer B has a visible mergeable counter; peer A
 /// deletes the key with a higher IdLp. After sync, B's deep value drops the counter because A's
-/// delete wins the Map LWW for the discriminator slot.
+/// delete wins the Map LWW for the marker slot.
 #[test]
 #[cfg(feature = "counter")]
 fn remote_delete_clears_mergeable_child_on_receiver() {
