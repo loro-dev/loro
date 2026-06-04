@@ -53,6 +53,7 @@ mod run {
     use super::*;
     use bench_utils::TextAction;
     use loro_internal::{cursor::PosType, encoding::ExportMode, LoroDoc};
+    use std::hint::black_box;
 
     pub fn b4(c: &mut Criterion) {
         let loro = LoroDoc::default();
@@ -126,6 +127,84 @@ mod run {
             b.iter(|| {
                 let store2 = LoroDoc::default();
                 store2.import_json_updates(json.clone()).unwrap();
+            })
+        });
+    }
+
+    fn build_issue_992_source_doc(paragraphs: usize) -> LoroDoc {
+        let doc = LoroDoc::new();
+        doc.set_peer_id(1).unwrap();
+        let text = doc.get_text("codemirror");
+        let mut chunks = Vec::with_capacity(paragraphs);
+        for i in 0..paragraphs {
+            chunks.push(format!(
+                "# Section {i}\nParagraph {i} line A with repeated markdown content.\nParagraph {i} line B with **bold** and _italic_ markers.\n\n"
+            ));
+        }
+        text.insert(0, &chunks.concat(), PosType::Unicode).unwrap();
+        doc.commit_then_renew();
+
+        for i in 0..6 {
+            text.insert(
+                text.len_unicode(),
+                &format!("Tail block {i}: {}\n", "x".repeat(2048)),
+                PosType::Unicode,
+            )
+            .unwrap();
+            doc.commit_then_renew();
+        }
+
+        for i in 0..3 {
+            let current = text.to_string();
+            let next = current.replace(&format!("Section {i}"), &format!("Section {i} updated"))
+                + &format!("\nreplace-round-{i}:{}", "y".repeat(1024));
+            text.delete(0, text.len_unicode(), PosType::Unicode)
+                .unwrap();
+            text.insert(0, &next, PosType::Unicode).unwrap();
+            doc.commit_then_renew();
+        }
+
+        doc
+    }
+
+    fn clone_doc(doc: &LoroDoc) -> LoroDoc {
+        LoroDoc::from_snapshot(&doc.export(ExportMode::Snapshot).unwrap()).unwrap()
+    }
+
+    fn build_issue_992_shallow_tail_doc(paragraphs: usize, tail_rounds: usize) -> LoroDoc {
+        let source = build_issue_992_source_doc(paragraphs);
+        let source = clone_doc(&source);
+        let shallow_bytes = source
+            .export(ExportMode::shallow_snapshot(&source.oplog_frontiers()))
+            .unwrap();
+        let shallow_doc = LoroDoc::from_snapshot(&shallow_bytes).unwrap();
+        let text = shallow_doc.get_text("codemirror");
+
+        for i in 0..tail_rounds {
+            let current = text.to_string();
+            let next = current.replace(&format!("Section {i}"), &format!("Section {i} tail-{i}"))
+                + &format!("\npost-shallow-tail-{i}:{}", "z".repeat(4096));
+            text.delete(0, text.len_unicode(), PosType::Unicode)
+                .unwrap();
+            text.insert(0, &next, PosType::Unicode).unwrap();
+            shallow_doc.commit_then_renew();
+        }
+
+        shallow_doc
+    }
+
+    pub fn issue_992_shallow_snapshot_tail(c: &mut Criterion) {
+        let mut b = c.benchmark_group("encode_regression");
+        b.sample_size(10);
+
+        // This mirrors https://github.com/loro-dev/loro/issues/992: import a shallow
+        // snapshot, perform a few full-document text replacements, then export snapshot.
+        // The fixture is intentionally below the original report size so a regression is
+        // visible without making the default benchmark prohibitively slow.
+        let shallow_tail_doc = build_issue_992_shallow_tail_doc(1000, 2);
+        b.bench_function("issue_992_shallow_tail_snapshot_export", |b| {
+            b.iter(|| {
+                black_box(shallow_tail_doc.export(ExportMode::Snapshot).unwrap().len());
             })
         });
     }
@@ -305,6 +384,7 @@ pub fn dumb(_c: &mut Criterion) {}
 criterion_group!(
     benches,
     run::b4,
+    run::issue_992_shallow_snapshot_tail,
     sync::b4,
     import::causal_iter,
     import::import_regression
