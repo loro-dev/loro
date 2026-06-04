@@ -2,8 +2,13 @@
 //!
 //! Mergeable child containers (created via `MapHandler::get_mergeable_*`) use deterministic
 //! `ContainerID::Root` ids in a reserved namespace. The cid encodes `(parent, key, kind)`, while
-//! the parent map's compact binary marker is the single source of truth for whether that
-//! child is currently active.
+//! the parent map's compact binary child ref is the single source of truth for whether that child
+//! is currently active.
+//!
+//! The ref is intentionally stored as binary user data rather than a reserved string. This keeps
+//! user-editable strings from being reinterpreted as internal container topology, and lets the
+//! resolver fail closed unless the ref's digest matches the exact `(parent, key, kind)` being
+//! resolved.
 
 use loro_common::{ContainerID, ContainerType, InternalString, LoroMapValue};
 
@@ -16,7 +21,7 @@ impl DocState {
     ///
     /// Ordinary child containers use the materialized child index stored in their parent state.
     /// Mergeable children are resolved lazily from their deterministic cid plus the parent map's
-    /// current marker value, so snapshot/update import does not need any eager mergeable-edge
+    /// current binary child ref, so snapshot/update import does not need any eager mergeable-edge
     /// rebuild.
     pub(super) fn get_logical_child_index(
         &mut self,
@@ -69,7 +74,7 @@ impl DocState {
     ///
     /// This is used by deep-value and alive-container walks. It mirrors regular map semantics:
     /// the current value at a key determines which child is visible. For mergeable children, that
-    /// value is a compact binary marker rather than `LoroValue::Container`.
+    /// value is a compact binary child ref rather than `LoroValue::Container`.
     pub(super) fn mergeable_children_from_value(
         &self,
         parent_id: &ContainerID,

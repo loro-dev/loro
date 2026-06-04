@@ -4440,6 +4440,11 @@ impl MapHandler {
         // non-mergeable occupant (a scalar, arbitrary binary, or a regular child container) would
         // be silently clobbered by the marker write, so reject it rather than overwrite under a
         // `get_`-named API.
+        //
+        // This guard is also part of the marker-format safety story: user-editable fields should
+        // not become mergeable child edges just because they contain a reserved-looking value.
+        // Only the exact binary ref for this `(parent, key, kind)` is accepted as an existing
+        // mergeable occupant; everything else remains ordinary user data and blocks creation.
         if let Some(existing) = self.get(key) {
             if !matches!(existing, LoroValue::Null)
                 && loro_common::parse_mergeable_marker(&parent.id, key, &existing).is_none()
@@ -4456,10 +4461,18 @@ impl MapHandler {
 
         let cid = ContainerID::new_mergeable(&parent.id, key, child.kind());
 
-        // Record which kind is active at `(parent, key)` by writing a compact binary marker into
-        // the parent map's slot for `key`. The active mergeable child is whichever marker the
-        // parent map's regular LWW resolves to (see loro-dev/loro#759), so this op is what
-        // realizes the child and drives all read-time resolution and conflict resolution.
+        // Record which kind is active at `(parent, key)` by writing a compact binary
+        // mergeable-child ref into the parent map's slot for `key`. The active mergeable child is
+        // whichever ref the parent map's regular LWW resolves to (see loro-dev/loro#759), so this
+        // op is what realizes the child and drives all read-time resolution and conflict
+        // resolution.
+        //
+        // This is deliberately binary rather than a string sentinel. End users can often edit map
+        // fields such as titles or metadata directly; using a string-level reserved word would let
+        // curious or malicious user input collide with Loro's internal container-edge structure.
+        // The ref's small digest binds it to this exact `(parent, key, kind)`, which makes
+        // accidental construction or wrong-slot copying fail closed without storing the full child
+        // cid bytes.
         //
         // Requesting a different kind under a key that already holds another kind's marker is a
         // deliberate kind change: it overwrites the marker, exactly like setting a

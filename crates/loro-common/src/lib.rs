@@ -134,9 +134,20 @@ pub fn check_root_container_name(name: &str) -> bool {
 
 /// Binary marker stored in a parent map slot to activate a mergeable child.
 ///
-/// The marker is intentionally compact and is not an anti-forgery mechanism. It prevents ordinary
-/// user strings and old clients from accidentally creating mergeable children while still letting
-/// old clients treat the slot as an inert binary scalar.
+/// This is a compact mergeable-child container ref, not the child cid itself. The child cid is
+/// derived deterministically from `(parent, key, kind)`; this value only records that the parent map
+/// slot currently activates that child kind.
+///
+/// Design intent: do not reserve strings such as `"🤝:Map"` in user value space. Applications often
+/// let users edit titles, metadata, imported JSON, or other map fields directly. If an ordinary
+/// string could be parsed as an internal mergeable edge, curious or malicious user input could
+/// collide with Loro's reserved structure and make valid document data look like container
+/// topology. Storing the ref as binary avoids that string-level reserved word.
+///
+/// The digest is not an anti-forgery mechanism. It makes accidental construction or wrong-slot
+/// copying fail closed by binding the marker to `(parent, key, kind)` while keeping the value small.
+/// Old clients that do not understand mergeable containers should see an inert binary scalar rather
+/// than a fake child container edge or a reserved-looking user string.
 pub const MERGEABLE_MARKER_MAGIC: [u8; 4] = [0x00, b'L', b'M', 0x01];
 
 const MERGEABLE_MARKER_DIGEST_LEN: usize = 3;
@@ -162,7 +173,8 @@ pub fn mergeable_marker(
 /// Parse a parent map slot value back into the mergeable [`ContainerType`] it activates.
 ///
 /// The marker is bound to `(parent, key, kind)`, so copying it to another map/key does not activate
-/// a mergeable child there. Malformed markers are treated as ordinary binary values.
+/// a mergeable child there. Malformed markers and old textual sentinels are treated as ordinary
+/// user values.
 pub fn parse_mergeable_marker(
     parent: &ContainerID,
     key: &str,
