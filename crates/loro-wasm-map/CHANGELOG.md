@@ -1,5 +1,11 @@
 # loro-crdt-map
 
+## 1.12.4
+
+### Patch Changes
+
+- a6e23b6: Optimize snapshot export for shallow documents by reusing cached shallow-root state instead of checking out to the shallow root and back to latest.
+
 ## 1.12.2
 
 ### Patch Changes
