@@ -57,6 +57,13 @@ impl KvWrapper {
         f(&*kv)
     }
 
+    pub(crate) fn keys(&self) -> BTreeSet<Vec<u8>> {
+        let kv = self.kv.lock();
+        kv.scan(Bound::Unbounded, Bound::Unbounded)
+            .map(|(k, _)| k.to_vec())
+            .collect()
+    }
+
     pub fn set_all(&self, iter: impl Iterator<Item = (Bytes, Bytes)>) {
         let mut kv = self.kv.lock();
         for (k, v) in iter {
