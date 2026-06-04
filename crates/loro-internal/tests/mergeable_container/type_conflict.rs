@@ -1,9 +1,9 @@
-//! Concurrent different-kind creation, resolved by the parent map's discriminator LWW.
+//! Concurrent different-kind creation, resolved by the parent map's marker LWW.
 //!
-//! When two peers create different kinds under the same key, each writes a different `"🤝:<kind>"`
-//! discriminator string into the parent map's slot. The parent map's regular LWW deterministically
-//! resolves to one discriminator, so every peer surfaces the same kind; the loser's container stays
-//! reachable only by an explicit `get_mergeable_<kind>` lookup (which rewrites the discriminator).
+//! When two peers create different kinds under the same key, each writes a different binary marker
+//! into the parent map's slot. The parent map's regular LWW deterministically resolves to one
+//! marker, so every peer surfaces the same kind; the loser's container stays reachable only by an
+//! explicit `get_mergeable_<kind>` lookup (which rewrites the marker).
 //! See loro-dev/loro#759.
 
 #[path = "common.rs"]
@@ -13,11 +13,11 @@ use common::{doc, sync};
 use loro_internal::{cursor::PosType, event::Index, loro::ExportMode, HandlerTrait, ToJson};
 use serde_json::json;
 
-/// Requesting a different kind under a key that already holds another kind's discriminator is a
-/// deliberate, local kind change: it rewrites the discriminator. The new kind becomes active and
+/// Requesting a different kind under a key that already holds another kind's marker is a
+/// deliberate, local kind change: it rewrites the marker. The new kind becomes active and
 /// the new handler is usable. (This is the building block of the List -> Map -> List cycle.)
 #[test]
-fn local_different_kind_request_rewrites_the_discriminator() {
+fn local_different_kind_request_rewrites_the_marker() {
     let doc = doc(1);
     let root = doc.get_map("state");
 
@@ -29,18 +29,18 @@ fn local_different_kind_request_rewrites_the_discriminator() {
         json!({ "state": { "field": "hello" } })
     );
 
-    // Switch the kind: this rewrites the discriminator to Map.
+    // Switch the kind: this rewrites the marker to Map.
     let map = root.get_mergeable_map("field").unwrap();
     map.insert("k", 1).unwrap();
     doc.commit_then_renew();
     assert_eq!(
         doc.get_deep_value().to_json_value(),
         json!({ "state": { "field": { "k": 1 } } }),
-        "requesting a different kind rewrites the discriminator to that kind"
+        "requesting a different kind rewrites the marker to that kind"
     );
 }
 
-/// When two competing-kind discriminators land in the same parent's slot under the same key during
+/// When two competing-kind markers land in the same parent's slot under the same key during
 /// import, the parent map's regular LWW deterministically picks one. The visible kind is the same
 /// on every peer; the loser's container is still reachable by name but not surfaced by default.
 #[test]
@@ -65,20 +65,20 @@ fn different_kind_collision_resolves_by_map_lww_at_import() {
     let b_map_id = b_map.id();
     b.commit_then_renew();
 
-    // B imports A's snapshot. The two discriminators ("🤝:Text" vs "🤝:Map") compete in B's map
-    // slot for "k"; B's Map discriminator has the higher lamport, so Map wins.
+    // B imports A's snapshot. The Text and Map markers compete in B's map slot for "k"; B's Map
+    // marker has the higher lamport, so Map wins.
     let snapshot = a.export(ExportMode::Snapshot).unwrap();
     b.import(&snapshot).unwrap();
 
     // Check the direct cids before calling any getter. The losing Text cid must not have a logical
-    // path while the Map discriminator wins; the winning Map cid resolves from the discriminator.
+    // path while the Map marker wins; the winning Map cid resolves from the marker.
     assert!(
         b.get_path_to_container(&a_text_id).is_none(),
-        "old Text cid must be inactive while the Map discriminator wins"
+        "old Text cid must be inactive while the Map marker wins"
     );
     let map_path = b
         .get_path_to_container(&b_map_id)
-        .expect("winning Map cid must resolve from the parent discriminator");
+        .expect("winning Map cid must resolve from the parent marker");
     let indexes = map_path
         .iter()
         .map(|(_, index)| index.clone())
@@ -92,12 +92,12 @@ fn different_kind_collision_resolves_by_map_lww_at_import() {
     let k_value = &value["state"]["k"];
     assert!(
         k_value.is_object(),
-        "Map discriminator won the LWW; got {k_value:?}"
+        "Map marker won the LWW; got {k_value:?}"
     );
     assert_eq!(k_value["from_b"], json!(true));
 
     // The loser's Text container is still reachable by an explicit get_mergeable_text — which
-    // rewrites the discriminator back to Text (a local kind change), so it now resurfaces.
+    // rewrites the marker back to Text (a local kind change), so it now resurfaces.
     let b_text = b.get_map("state").get_mergeable_text("k").unwrap();
     assert_eq!(b_text.id(), a_text_id);
     assert_eq!(
@@ -108,7 +108,7 @@ fn different_kind_collision_resolves_by_map_lww_at_import() {
 }
 
 /// Three peers each create a different kind under the same key and mutate it once. After a full
-/// round-robin sync, every peer's parent-map LWW resolves to the same discriminator, so all agree
+/// round-robin sync, every peer's parent-map LWW resolves to the same marker, so all agree
 /// on exactly one visible kind.
 #[test]
 #[cfg(feature = "counter")]
@@ -150,7 +150,7 @@ fn three_peer_different_kind_conflict_converges() {
     );
 }
 
-/// Concurrent SAME-kind creation: both peers write the identical discriminator, so the Map LWW
+/// Concurrent SAME-kind creation: both peers write the identical marker, so the Map LWW
 /// merge is a no-op and both contributions land in the one deterministic cid.
 #[test]
 fn concurrent_same_kind_creation_converges() {

@@ -207,7 +207,7 @@ pub struct MapState {
     idx: ContainerIdx,
     map: MapEntries,
     /// Parent-edge index for regular child containers (`MapValue::Container`). Mergeable child
-    /// edges are resolved by `DocState` from their deterministic cid and this map's discriminator
+    /// edges are resolved by `DocState` from their deterministic cid and this map's marker
     /// value, not stored here.
     child_containers: ChildContainers,
     size: usize,

@@ -4436,12 +4436,13 @@ impl MapHandler {
             return self.get_or_create_container(key, child);
         };
 
-        // The slot may only be empty or already hold a mergeable discriminator. A non-mergeable
-        // occupant (a scalar or a regular child container) would be silently clobbered by the
-        // discriminator write, so reject it rather than overwrite under a `get_`-named API.
+        // The slot may only be empty or already hold a mergeable marker for this parent/key. A
+        // non-mergeable occupant (a scalar, arbitrary binary, or a regular child container) would
+        // be silently clobbered by the marker write, so reject it rather than overwrite under a
+        // `get_`-named API.
         if let Some(existing) = self.get(key) {
             if !matches!(existing, LoroValue::Null)
-                && loro_common::parse_mergeable_discriminator(&existing).is_none()
+                && loro_common::parse_mergeable_marker(&parent.id, key, &existing).is_none()
             {
                 return Err(LoroError::ArgErr(
                     format!(
@@ -4455,20 +4456,19 @@ impl MapHandler {
 
         let cid = ContainerID::new_mergeable(&parent.id, key, child.kind());
 
-        // Record which kind is active at `(parent, key)` by writing a discriminator string into
-        // the parent map's slot for `key`. The active mergeable child is whichever discriminator
-        // the parent map's regular LWW resolves to (see loro-dev/loro#759), so this op is what
-        // realizes the child and drives all read-time resolution, parent-edge registration
-        // (via the op-apply hook), and conflict resolution.
+        // Record which kind is active at `(parent, key)` by writing a compact binary marker into
+        // the parent map's slot for `key`. The active mergeable child is whichever marker the
+        // parent map's regular LWW resolves to (see loro-dev/loro#759), so this op is what
+        // realizes the child and drives all read-time resolution and conflict resolution.
         //
-        // Requesting a different kind under a key that already holds another kind's discriminator
-        // is a deliberate kind change: it overwrites the discriminator, exactly like setting a
+        // Requesting a different kind under a key that already holds another kind's marker is a
+        // deliberate kind change: it overwrites the marker, exactly like setting a
         // different value, and the previous kind's container stays reachable by its deterministic
         // name so re-requesting it later resurfaces its preserved contents (the List -> Map ->
         // List cycle). Idempotent for the same kind: `insert_with_txn` skips when the slot
-        // already holds the matching discriminator.
-        let discriminator = loro_common::mergeable_discriminator(child.kind());
-        self.insert(key, discriminator)?;
+        // already holds the matching marker.
+        let marker = loro_common::mergeable_marker(&parent.id, key, child.kind());
+        self.insert(key, marker)?;
 
         C::from_handler(create_handler(parent, cid.clone())).ok_or_else(|| {
             LoroError::ArgErr(

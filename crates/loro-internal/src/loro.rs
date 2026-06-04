@@ -1991,7 +1991,7 @@ impl LoroDoc {
         let mut state = self.state.lock();
         if state.arena.id_to_idx(id).is_none() {
             if id.is_mergeable() {
-                // Mergeable children can be logically active via the parent map discriminator
+                // Mergeable children can be logically active via the parent map marker
                 // before they have their own encoded state. Register only the arena edge; do not
                 // create container state or change `has_container` semantics.
                 state.arena.register_container(id);

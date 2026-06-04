@@ -2,7 +2,7 @@
 //!
 //! Mergeable child containers (created via `MapHandler::get_mergeable_*`) use deterministic
 //! `ContainerID::Root` ids in a reserved namespace. The cid encodes `(parent, key, kind)`, while
-//! the parent map's `"🤝:<kind>"` discriminator is the single source of truth for whether that
+//! the parent map's compact binary marker is the single source of truth for whether that
 //! child is currently active.
 
 use loro_common::{ContainerID, ContainerType, InternalString, LoroMapValue};
@@ -16,8 +16,8 @@ impl DocState {
     ///
     /// Ordinary child containers use the materialized child index stored in their parent state.
     /// Mergeable children are resolved lazily from their deterministic cid plus the parent map's
-    /// current discriminator value, so snapshot/update import does not need any eager
-    /// mergeable-edge rebuild.
+    /// current marker value, so snapshot/update import does not need any eager mergeable-edge
+    /// rebuild.
     pub(super) fn get_logical_child_index(
         &mut self,
         parent_idx: ContainerIdx,
@@ -57,7 +57,7 @@ impl DocState {
         }
 
         let value = self.store.map_get(parent_idx, key)?;
-        if loro_common::parse_mergeable_discriminator(&value) == Some(kind) {
+        if loro_common::parse_mergeable_marker(&actual_parent_id, key, &value) == Some(kind) {
             Some(Index::Key(key.into()))
         } else {
             None
@@ -69,7 +69,7 @@ impl DocState {
     ///
     /// This is used by deep-value and alive-container walks. It mirrors regular map semantics:
     /// the current value at a key determines which child is visible. For mergeable children, that
-    /// value is a discriminator string rather than `LoroValue::Container`.
+    /// value is a compact binary marker rather than `LoroValue::Container`.
     pub(super) fn mergeable_children_from_value(
         &self,
         parent_id: &ContainerID,
@@ -77,7 +77,7 @@ impl DocState {
     ) -> Vec<(InternalString, ContainerID)> {
         let mut ans = Vec::new();
         for (key, value) in map_value.iter() {
-            if let Some(kind) = loro_common::parse_mergeable_discriminator(value) {
+            if let Some(kind) = loro_common::parse_mergeable_marker(parent_id, key, value) {
                 let key_istr: InternalString = key.as_str().into();
                 let cid = ContainerID::new_mergeable(parent_id, key, kind);
                 ans.push((key_istr, cid));

@@ -132,47 +132,88 @@ pub fn check_root_container_name(name: &str) -> bool {
         && name.char_indices().all(|(_, x)| x != '/' && x != '\0')
 }
 
-/// Build the discriminator string a parent map stores at a mergeable key.
+/// Binary marker stored in a parent map slot to activate a mergeable child.
 ///
-/// The value written into the parent map's slot is `LoroValue::String("🤝:<kind>")`,
-/// reusing [`MERGEABLE_NAMESPACE_PREFIX`] so the string is recognizable as a
-/// mergeable sentinel (and so older clients that don't understand it at least
-/// see a value in the reserved namespace rather than a plausible user string).
-///
-/// The active mergeable child at `(parent, key)` is whichever discriminator the
-/// parent map's regular LWW resolves to; the corresponding deterministic cid is
-/// [`ContainerID::new_mergeable(parent, key, kind)`]. See loro-dev/loro#759.
-pub fn mergeable_discriminator_string(container_type: ContainerType) -> String {
-    format!("{}{}", MERGEABLE_NAMESPACE_PREFIX, container_type)
-}
+/// The marker is intentionally compact and is not an anti-forgery mechanism. It prevents ordinary
+/// user strings and old clients from accidentally creating mergeable children while still letting
+/// old clients treat the slot as an inert binary scalar.
+pub const MERGEABLE_MARKER_MAGIC: [u8; 4] = [0x00, b'L', b'M', 0x01];
+
+const MERGEABLE_MARKER_DIGEST_LEN: usize = 3;
+const MERGEABLE_MARKER_LEN: usize = 4 + 1 + MERGEABLE_MARKER_DIGEST_LEN;
+const MERGEABLE_MARKER_CRC_DOMAIN: &[u8] = b"loro.mergeable.marker.v1";
 
 /// Build the [`LoroValue`] a parent map stores at a mergeable key for `container_type`.
 ///
-/// This is the value form of [`mergeable_discriminator_string`]; it is what
-/// `get_mergeable_<kind>` writes via a `MapSet` op against the parent map.
-pub fn mergeable_discriminator(container_type: ContainerType) -> LoroValue {
-    LoroValue::String(mergeable_discriminator_string(container_type).into())
+/// Layout: `MAGIC[4] + KIND[1] + CRC24(parent_id, key, kind)[3]`.
+pub fn mergeable_marker(
+    parent: &ContainerID,
+    key: &str,
+    container_type: ContainerType,
+) -> LoroValue {
+    let mut marker = Vec::with_capacity(MERGEABLE_MARKER_LEN);
+    marker.extend_from_slice(&MERGEABLE_MARKER_MAGIC);
+    marker.push(container_type.to_u8());
+    let digest = mergeable_marker_crc24(parent, key, container_type);
+    marker.extend_from_slice(&digest);
+    LoroValue::Binary(marker.into())
 }
 
-/// Parse a parent map slot value back into the [`ContainerType`] it discriminates,
-/// or `None` if the value is not a recognized mergeable discriminator.
+/// Parse a parent map slot value back into the mergeable [`ContainerType`] it activates.
 ///
-/// Inverse of [`mergeable_discriminator`]. Returns `None` for non-string values,
-/// strings that don't carry the mergeable prefix, the bare prefix, and prefixed
-/// strings whose suffix is not a known container-type name.
-pub fn parse_mergeable_discriminator(value: &LoroValue) -> Option<ContainerType> {
-    let LoroValue::String(s) = value else {
+/// The marker is bound to `(parent, key, kind)`, so copying it to another map/key does not activate
+/// a mergeable child there. Malformed markers are treated as ordinary binary values.
+pub fn parse_mergeable_marker(
+    parent: &ContainerID,
+    key: &str,
+    value: &LoroValue,
+) -> Option<ContainerType> {
+    let LoroValue::Binary(bytes) = value else {
         return None;
     };
-    let suffix = s.as_str().strip_prefix(MERGEABLE_NAMESPACE_PREFIX)?;
-    // `ContainerType::try_from` accepts the canonical `Display` names ("Map",
-    // "List", ...) plus the `Unknown(n)` form. A bare/empty suffix is rejected.
-    // `Unknown(_)` is not a valid mergeable child kind, so it is rejected too.
-    let kind = ContainerType::try_from(suffix).ok()?;
+    if bytes.len() != MERGEABLE_MARKER_LEN || !bytes.starts_with(&MERGEABLE_MARKER_MAGIC) {
+        return None;
+    }
+
+    let kind = ContainerType::try_from_u8(bytes[MERGEABLE_MARKER_MAGIC.len()]).ok()?;
     if matches!(kind, ContainerType::Unknown(_)) {
         return None;
     }
+
+    let digest_start = MERGEABLE_MARKER_MAGIC.len() + 1;
+    let expected = mergeable_marker_crc24(parent, key, kind);
+    if &bytes[digest_start..] != expected.as_slice() {
+        return None;
+    }
+
     Some(kind)
+}
+
+fn mergeable_marker_crc24(parent: &ContainerID, key: &str, kind: ContainerType) -> [u8; 3] {
+    let mut input = Vec::new();
+    input.extend_from_slice(MERGEABLE_MARKER_CRC_DOMAIN);
+    write_len_prefixed_segment(&mut input, &parent.to_bytes());
+    write_len_prefixed_segment(&mut input, key.as_bytes());
+    input.push(kind.to_u8());
+
+    let crc = crc32(&input) & 0x00ff_ffff;
+    [
+        ((crc >> 16) & 0xff) as u8,
+        ((crc >> 8) & 0xff) as u8,
+        (crc & 0xff) as u8,
+    ]
+}
+
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc = 0xffff_ffff_u32;
+    for &byte in bytes {
+        crc ^= u32::from(byte);
+        for _ in 0..8 {
+            let mask = (crc & 1).wrapping_neg();
+            crc = (crc >> 1) ^ (0xedb8_8320 & mask);
+        }
+    }
+    !crc
 }
 
 impl CompactId {
@@ -915,12 +956,14 @@ pub mod wasm {
 #[cfg(test)]
 mod test {
     use crate::{
-        mergeable_discriminator, mergeable_discriminator_string, parse_mergeable_discriminator,
-        ContainerID, ContainerType, LoroValue, ID,
+        mergeable_marker, parse_mergeable_marker, ContainerID, ContainerType, LoroValue, ID,
+        MERGEABLE_MARKER_MAGIC,
     };
 
     #[test]
-    fn mergeable_discriminator_string_round_trips_every_kind() {
+    fn mergeable_marker_round_trips_every_kind() {
+        let parent = ContainerID::new_root("state", ContainerType::Map);
+        let key = "field";
         let kinds = [
             ContainerType::Map,
             ContainerType::List,
@@ -931,59 +974,94 @@ mod test {
             ContainerType::Counter,
         ];
         for kind in kinds {
-            let s = mergeable_discriminator_string(kind);
-            // The string reuses the reserved mergeable namespace prefix so older
-            // clients that don't understand it at least see it as a sentinel.
-            assert!(
-                s.starts_with(crate::MERGEABLE_NAMESPACE_PREFIX),
-                "discriminator {s:?} must start with the mergeable namespace prefix"
-            );
-            let value = mergeable_discriminator(kind);
-            assert_eq!(value, LoroValue::String(s.clone().into()));
             assert_eq!(
-                parse_mergeable_discriminator(&value),
+                parse_mergeable_marker(&parent, key, &mergeable_marker(&parent, key, kind)),
                 Some(kind),
-                "discriminator value {value:?} must parse back to {kind:?}"
+                "marker value must parse back to {kind:?}"
             );
         }
     }
 
     #[test]
-    fn mergeable_discriminator_exact_bytes() {
-        // The exact shape agreed upon in loro-dev/loro#759: `LoroValue::String("🤝:Map")`.
+    fn mergeable_marker_exact_layout() {
+        let parent = ContainerID::new_root("state", ContainerType::Map);
+        let value = mergeable_marker(&parent, "field", ContainerType::List);
+        let LoroValue::Binary(bytes) = value else {
+            panic!("mergeable marker must be a binary value");
+        };
+
+        assert_eq!(bytes.len(), 8);
         assert_eq!(
-            mergeable_discriminator(ContainerType::Map),
-            LoroValue::String("🤝:Map".into())
+            &bytes[..MERGEABLE_MARKER_MAGIC.len()],
+            MERGEABLE_MARKER_MAGIC
         );
         assert_eq!(
-            mergeable_discriminator(ContainerType::List),
-            LoroValue::String("🤝:List".into())
+            bytes[MERGEABLE_MARKER_MAGIC.len()],
+            ContainerType::List.to_u8()
         );
     }
 
     #[test]
-    fn parse_mergeable_discriminator_rejects_non_discriminators() {
-        // Plain user strings, even ones that look map-ish, are not discriminators.
+    fn parse_mergeable_marker_rejects_non_markers() {
+        let parent = ContainerID::new_root("state", ContainerType::Map);
+
+        // Plain user strings, even ones that look like the old sentinel, are never markers.
         assert_eq!(
-            parse_mergeable_discriminator(&LoroValue::String("Map".into())),
+            parse_mergeable_marker(&parent, "field", &LoroValue::String("Map".into())),
             None
         );
         assert_eq!(
-            parse_mergeable_discriminator(&LoroValue::String("hello".into())),
+            parse_mergeable_marker(&parent, "field", &LoroValue::String("🤝:Map".into())),
             None
         );
-        // The bare prefix with no/unknown kind is not a valid discriminator.
+
+        // Non-binary values are never markers.
         assert_eq!(
-            parse_mergeable_discriminator(&LoroValue::String("🤝:".into())),
+            parse_mergeable_marker(&parent, "field", &LoroValue::Double(1.0)),
             None
         );
         assert_eq!(
-            parse_mergeable_discriminator(&LoroValue::String("🤝:NotAKind".into())),
+            parse_mergeable_marker(&parent, "field", &LoroValue::Null),
             None
         );
-        // Non-string values are never discriminators.
-        assert_eq!(parse_mergeable_discriminator(&LoroValue::Double(1.0)), None);
-        assert_eq!(parse_mergeable_discriminator(&LoroValue::Null), None);
+
+        // Malformed binary values stay ordinary binary values.
+        assert_eq!(
+            parse_mergeable_marker(
+                &parent,
+                "field",
+                &LoroValue::Binary(vec![0x00, b'L', b'M'].into()),
+            ),
+            None
+        );
+
+        let mut wrong_magic = marker_bytes(mergeable_marker(&parent, "field", ContainerType::Map));
+        wrong_magic[0] = 0xff;
+        assert_eq!(
+            parse_mergeable_marker(&parent, "field", &LoroValue::Binary(wrong_magic.into()),),
+            None
+        );
+
+        let marker = mergeable_marker(&parent, "field", ContainerType::Map);
+        assert_eq!(
+            parse_mergeable_marker(&parent, "other", &marker),
+            None,
+            "marker digest binds the marker to its map key"
+        );
+
+        let other_parent = ContainerID::new_root("other", ContainerType::Map);
+        assert_eq!(
+            parse_mergeable_marker(&other_parent, "field", &marker),
+            None,
+            "marker digest binds the marker to its parent container"
+        );
+
+        let mut wrong_digest = marker_bytes(marker);
+        *wrong_digest.last_mut().unwrap() ^= 1;
+        assert_eq!(
+            parse_mergeable_marker(&parent, "field", &LoroValue::Binary(wrong_digest.into()),),
+            None
+        );
     }
 
     #[test]
@@ -1002,11 +1080,17 @@ mod test {
             name: "🤝:not-valid-hex".into(),
             container_type: ContainerType::Map,
         };
-        assert!(!bad_hex.is_mergeable(), "non-hex payload must not be mergeable");
+        assert!(
+            !bad_hex.is_mergeable(),
+            "non-hex payload must not be mergeable"
+        );
 
         let parent = ContainerID::new_root("state", ContainerType::Map);
         let real = ContainerID::new_mergeable(&parent, "field", ContainerType::Map);
-        assert!(real.is_mergeable(), "valid mergeable cid must remain mergeable");
+        assert!(
+            real.is_mergeable(),
+            "valid mergeable cid must remain mergeable"
+        );
     }
 
     /// A `🤝:` payload can be valid hex with a well-formed len-prefixed structure and a
@@ -1058,11 +1142,22 @@ mod test {
     }
 
     #[test]
-    fn parse_mergeable_discriminator_rejects_unknown_kind() {
+    fn parse_mergeable_marker_rejects_unknown_kind() {
+        let parent = ContainerID::new_root("state", ContainerType::Map);
+        let mut marker = marker_bytes(mergeable_marker(&parent, "field", ContainerType::Map));
+        marker[MERGEABLE_MARKER_MAGIC.len()] = u8::MAX;
+
         assert_eq!(
-            parse_mergeable_discriminator(&LoroValue::String("🤝:Unknown(7)".into())),
+            parse_mergeable_marker(&parent, "field", &LoroValue::Binary(marker.into())),
             None
         );
+    }
+
+    fn marker_bytes(value: LoroValue) -> Vec<u8> {
+        let LoroValue::Binary(bytes) = value else {
+            panic!("expected binary mergeable marker");
+        };
+        bytes.to_vec()
     }
 
     #[test]

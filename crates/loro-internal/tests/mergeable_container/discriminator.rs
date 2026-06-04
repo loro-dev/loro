@@ -1,23 +1,22 @@
-//! Discriminator-based mergeable type-conflict resolution.
+//! Marker-based mergeable type-conflict resolution.
 //!
 //! `get_mergeable_<kind>(key)` records which container kind is active at
-//! `(parent, key)` by writing a `MapSet { key, value: String("🤝:<kind>") }`
-//! op against the parent map. The active mergeable child is whichever
-//! discriminator the parent map's regular LWW resolves to. See
-//! loro-dev/loro#759.
+//! `(parent, key)` by writing a compact binary marker op against the parent map.
+//! The active mergeable child is whichever marker the parent map's regular LWW
+//! resolves to. See loro-dev/loro#759.
 
 #[path = "common.rs"]
 mod common;
 use common::{doc, sync};
 
-use loro_common::{mergeable_discriminator, ContainerType, LoroError};
+use loro_common::{mergeable_marker, ContainerType, LoroError, LoroValue, MERGEABLE_MARKER_MAGIC};
 use loro_internal::{HandlerTrait, ToJson};
 use serde_json::json;
 
-/// `get_mergeable_map(key)` writes the discriminator string into the parent
-/// map's slot at `key`, so a plain `map.get(key)` reads back `"🤝:Map"`.
+/// `get_mergeable_map(key)` writes the marker into the parent map's slot at
+/// `key`, so a plain `map.get(key)` reads back that binary value.
 #[test]
-fn get_mergeable_writes_discriminator_into_parent_slot() {
+fn get_mergeable_writes_marker_into_parent_slot() {
     let d = doc(1);
     let root = d.get_map("state");
 
@@ -27,14 +26,14 @@ fn get_mergeable_writes_discriminator_into_parent_slot() {
 
     assert_eq!(
         root.get("tags"),
-        Some(mergeable_discriminator(ContainerType::List)),
-        "get_mergeable_list must write the List discriminator into the parent slot"
+        Some(mergeable_marker(&root.id(), "tags", ContainerType::List)),
+        "get_mergeable_list must write the List marker into the parent slot"
     );
 }
 
 /// `get_mergeable_<kind>(key)` must not silently clobber an existing non-mergeable value at the
 /// key. A plain scalar or a regular child container occupying the slot makes the call an error,
-/// so the discriminator-overwrite is never a hidden side effect of a `get_`-named API.
+/// so the marker overwrite is never a hidden side effect of a `get_`-named API.
 #[test]
 fn get_mergeable_rejects_overwriting_a_scalar_value() {
     let d = doc(1);
@@ -73,11 +72,11 @@ fn get_mergeable_rejects_overwriting_a_regular_child_container() {
     );
 }
 
-/// An empty slot, or a slot already holding a mergeable discriminator, is fair game:
+/// An empty slot, or a slot already holding a mergeable marker, is fair game:
 /// `get_mergeable_<kind>` creates on empty and is idempotent / kind-changes over an existing
-/// discriminator. Only non-mergeable occupants are rejected.
+/// marker. Only non-mergeable occupants are rejected.
 #[test]
-fn get_mergeable_allows_empty_slot_and_existing_discriminator() {
+fn get_mergeable_allows_empty_slot_and_existing_marker() {
     let d = doc(1);
     let root = d.get_map("state");
 
@@ -85,13 +84,55 @@ fn get_mergeable_allows_empty_slot_and_existing_discriminator() {
     let _list = root.get_mergeable_list("a").unwrap();
     // Same kind again: idempotent, still Ok.
     let _list2 = root.get_mergeable_list("a").unwrap();
-    // Different kind over an existing discriminator: kind change, still Ok.
+    // Different kind over an existing marker: kind change, still Ok.
     let _map = root.get_mergeable_map("a").unwrap();
 }
 
+/// A user string that happens to look like the old textual sentinel must stay a plain scalar.
+#[test]
+fn user_string_that_looks_like_old_marker_is_not_mergeable() {
+    let d = doc(1);
+    let root = d.get_map("state");
+
+    root.insert("field", "🤝:Map").unwrap();
+    d.commit_then_renew();
+
+    assert_eq!(
+        d.get_deep_value().to_json_value(),
+        json!({ "state": { "field": "🤝:Map" } })
+    );
+    let err = root
+        .get_mergeable_map("field")
+        .expect_err("user string must not be treated as a mergeable marker");
+    assert!(
+        matches!(err, LoroError::ArgErr(_)),
+        "expected ArgErr, got {err:?}"
+    );
+}
+
+/// A marker is bound to its exact `(parent, key, kind)` by the digest. Copying
+/// the binary payload to another key leaves it as an inert user binary value.
+#[test]
+fn marker_for_another_key_is_not_mergeable() {
+    let d = doc(1);
+    let root = d.get_map("state");
+    let marker_for_other = mergeable_marker(&root.id(), "other", ContainerType::Map);
+
+    root.insert("field", marker_for_other.clone()).unwrap();
+    d.commit_then_renew();
+
+    assert_eq!(root.get("field"), Some(marker_for_other));
+    let err = root
+        .get_mergeable_map("field")
+        .expect_err("marker digest for another key must not activate this key");
+    assert!(
+        matches!(err, LoroError::ArgErr(_)),
+        "expected ArgErr, got {err:?}"
+    );
+}
+
 /// A second `get_mergeable_<kind>(key)` with the SAME kind is idempotent: it
-/// does not emit another op (the parent slot already holds the matching
-/// discriminator).
+/// does not emit another op (the parent slot already holds the matching marker).
 #[test]
 fn repeated_get_mergeable_same_kind_is_idempotent() {
     let d = doc(1);
@@ -111,11 +152,10 @@ fn repeated_get_mergeable_same_kind_is_idempotent() {
     );
 }
 
-/// The resolver substitutes the resolved child for the discriminator string
-/// in deep value: the (empty) child is visible immediately as its default,
-/// and the raw `"🤝:List"` string never leaks into the read view.
+/// The resolver substitutes the resolved child for the binary marker in deep value: the (empty)
+/// child is visible immediately as its default, and the raw marker never leaks into the read view.
 #[test]
-fn discriminator_resolves_to_child_in_deep_value() {
+fn marker_resolves_to_child_in_deep_value() {
     let d = doc(1);
     let root = d.get_map("state");
     let _list = root.get_mergeable_list("tags").unwrap();
@@ -124,7 +164,7 @@ fn discriminator_resolves_to_child_in_deep_value() {
     assert_eq!(
         d.get_deep_value().to_json_value(),
         json!({ "state": { "tags": [] } }),
-        "the discriminator must resolve to the child's value, not leak as a string"
+        "the marker must resolve to the child's value, not leak as a binary value"
     );
 
     // Now add an item; the resolved child must reflect it.
@@ -137,10 +177,9 @@ fn discriminator_resolves_to_child_in_deep_value() {
     );
 }
 
-/// A nested chain of mergeable children resolves at every hop: the
-/// intermediate mergeable map is visible (it has a discriminator on its
-/// parent) even though it never receives a direct content op — only its
-/// nested child does. This is the case the old `has_ops` gate broke.
+/// A nested chain of mergeable children resolves at every hop: the intermediate mergeable map is
+/// visible (it has a marker on its parent) even though it never receives a direct content op, only
+/// its nested child does. This is the case the old `has_ops` gate broke.
 #[test]
 #[cfg(feature = "counter")]
 fn nested_mergeable_chain_resolves_at_every_hop() {
@@ -153,15 +192,15 @@ fn nested_mergeable_chain_resolves_at_every_hop() {
     assert_eq!(
         d.get_deep_value().to_json_value(),
         json!({ "state": { "profile": { "revision": 5.0 } } }),
-        "intermediate mergeable map must be visible via its discriminator"
+        "intermediate mergeable map must be visible via its marker"
     );
 }
 
-/// Two peers concurrently create the SAME kind under the same key. Both write
-/// the identical discriminator string, so the Map LWW merge is a no-op and
-/// both peers' contributions land in the one deterministic cid.
+/// Two peers concurrently create the SAME kind under the same key. Both write the identical
+/// marker, so the Map LWW merge is a no-op and both peers' contributions land in the one
+/// deterministic cid.
 #[test]
-fn concurrent_same_kind_creation_merges_via_identical_discriminator() {
+fn concurrent_same_kind_creation_merges_via_identical_marker() {
     let a = doc(1);
     let b = doc(2);
 
@@ -194,8 +233,8 @@ fn concurrent_same_kind_creation_merges_via_identical_discriminator() {
 }
 
 /// Kind-change cycle: a key cycles List -> Map -> List. Each `get_mergeable_<kind>` rewrites the
-/// discriminator. When the discriminator returns to List, the ORIGINAL List's contents resurface
-/// (its container state was preserved by name across the cycle), proving the cycle is non-lossy.
+/// marker. When the marker returns to List, the ORIGINAL List's contents resurface (its container
+/// state was preserved by name across the cycle), proving the cycle is non-lossy.
 #[test]
 fn kind_change_cycle_resurfaces_original_list_contents() {
     let d = doc(1);
@@ -217,10 +256,10 @@ fn kind_change_cycle_resurfaces_original_list_contents() {
     assert_eq!(
         d.get_deep_value().to_json_value(),
         json!({ "state": { "field": { "k": 1 } } }),
-        "Map discriminator active; List hidden"
+        "Map marker active; List hidden"
     );
 
-    // v3: back to List. The discriminator returns to List and the ORIGINAL contents resurface.
+    // v3: back to List. The marker returns to List and the ORIGINAL contents resurface.
     let list_again = root.get_mergeable_list("field").unwrap();
     d.commit_then_renew();
     assert_eq!(
@@ -235,28 +274,25 @@ fn kind_change_cycle_resurfaces_original_list_contents() {
     );
 }
 
-/// Forward-compatibility envelope (issue #759 §5): the discriminator is a real Map value, so an
-/// older client that doesn't understand mergeable containers sees it as a plain string in toJSON
-/// output (a sentinel in the reserved namespace), rather than a plausible user value. We assert
-/// the discriminator string is observable as a raw value via `MapHandler::get` (the surface an
-/// older client's value-table read would hit).
+/// Forward-compatibility envelope: the marker is a real Map value, so an older client that doesn't
+/// understand mergeable containers sees it as an inert binary scalar. It does not look like a
+/// plausible user string and does not introduce a fake container edge.
 #[test]
-fn discriminator_is_observable_as_raw_string_for_old_clients() {
-    use loro_common::MERGEABLE_NAMESPACE_PREFIX;
-
+fn marker_is_observable_as_raw_binary_for_old_clients() {
     let d = doc(1);
     let root = d.get_map("state");
     let _list = root.get_mergeable_list("tags").unwrap();
     d.commit_then_renew();
 
-    // The raw slot value is the discriminator string in the reserved namespace.
+    // The raw slot value is the compact binary marker.
     let raw = root.get("tags").expect("slot has a value");
-    let loro_common::LoroValue::String(s) = &raw else {
-        panic!("discriminator must be a string value; got {raw:?}");
+    let LoroValue::Binary(bytes) = &raw else {
+        panic!("marker must be a binary value; got {raw:?}");
     };
-    assert!(
-        s.starts_with(MERGEABLE_NAMESPACE_PREFIX),
-        "old clients see the discriminator as a reserved-namespace sentinel string; got {s:?}"
+    assert_eq!(bytes.len(), 8);
+    assert!(bytes.starts_with(&MERGEABLE_MARKER_MAGIC));
+    assert_eq!(
+        bytes[MERGEABLE_MARKER_MAGIC.len()],
+        ContainerType::List.to_u8()
     );
-    assert_eq!(s.as_str(), "🤝:List");
 }

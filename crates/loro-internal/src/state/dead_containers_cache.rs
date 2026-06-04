@@ -60,7 +60,7 @@ impl DocState {
         }
 
         // A mergeable ancestor can be deleted and later reactivated by changing the parent map's
-        // discriminator. Do not cache deletion for any descendant whose liveness depends on that
+        // marker. Do not cache deletion for any descendant whose liveness depends on that
         // logical edge, including ordinary children nested inside a mergeable map.
         if depends_on_mergeable_edge {
             if !is_deleted {
@@ -98,15 +98,15 @@ mod tests {
     use crate::{cursor::PosType, HandlerTrait, LoroDoc, TextHandler};
 
     /// A mergeable child can be deleted and then reactivated: `delete(key)` clears its
-    /// discriminator (child unreachable), and a later `get_mergeable_<kind>(key)` writes the
-    /// discriminator back (child reachable again). While the child is unreachable, querying its
+    /// marker (child unreachable), and a later `get_mergeable_<kind>(key)` writes the
+    /// marker back (child reachable again). While the child is unreachable, querying its
     /// liveness must not cache a `deleted` entry because that answer depends on the mutable
-    /// mergeable discriminator edge.
+    /// mergeable marker edge.
     ///
     /// The scenario:
     /// 1. Create the mergeable counter and capture its container idx.
     /// 2. Delete the key, then query `is_deleted()`.
-    /// 3. Re-get the counter to rewrite the discriminator and reactivate the child.
+    /// 3. Re-get the counter to rewrite the marker and reactivate the child.
     /// 4. Assert the cache never held a `deleted` entry for that idx.
     ///
     /// It asserts the cache contents directly because `is_deleted()` only trusts the cache via a
@@ -144,7 +144,7 @@ mod tests {
 
     /// The no-cache rule also applies to ordinary descendants under a mergeable ancestor. A
     /// regular child container can look cache-safe by cid shape, but its liveness still depends on
-    /// the ancestor's discriminator edge.
+    /// the ancestor's marker edge.
     #[test]
     fn ordinary_child_under_reactivated_mergeable_map_has_no_stale_dead_cache_entry() {
         let doc = LoroDoc::new_auto_commit();
@@ -187,7 +187,7 @@ mod tests {
     /// 1. A creates the mergeable counter and deletes the key, then exports.
     /// 2. B imports A's updates so the child exists but is unreachable, and queries
     ///    `is_deleted()`.
-    /// 3. A re-gets the counter (rewriting the discriminator, reactivating the child) and
+    /// 3. A re-gets the counter (rewriting the marker, reactivating the child) and
     ///    exports just that new update.
     /// 4. B imports the reactivation update.
     /// 5. Assert B's cache never held a `deleted` entry for that idx.
@@ -210,7 +210,7 @@ mod tests {
 
         let cid: ContainerID = counter_a.id();
 
-        // B imports A's history: the child exists but is unreachable (discriminator cleared).
+        // B imports A's history: the child exists but is unreachable (marker cleared).
         let doc_b = LoroDoc::new_auto_commit();
         doc_b.set_peer_id(2).unwrap();
         doc_b

@@ -85,7 +85,7 @@ fn update_import_resolves_mergeable_logical_edge_on_receiver() {
     b.import(&updates).unwrap();
 
     // Path resolution must work directly from the deterministic cid. Calling the getter first
-    // would rewrite the discriminator and could hide resolver bugs after import.
+    // would rewrite the marker and could hide resolver bugs after import.
     let path = b.get_path_to_container(&a_counter_id).expect("path");
     let indexes = path.iter().map(|(_, idx)| idx.clone()).collect::<Vec<_>>();
     assert_eq!(
@@ -110,14 +110,14 @@ fn update_import_resolves_mergeable_logical_edge_on_receiver() {
 }
 
 /// Create a mergeable counter but never mutate it, then export a snapshot.
-/// `get_mergeable_*` writes a discriminator into the parent map's value table,
+/// `get_mergeable_*` writes a marker into the parent map's value table,
 /// which is ordinary map state and rides through the snapshot like any other
-/// value (loro-dev/loro#759). So the receiving peer resolves the discriminator
+/// value (loro-dev/loro#759). So the receiving peer resolves the marker
 /// to the same deterministic cid and sees the child as its empty default — no
 /// special recovery is needed.
 #[test]
 #[cfg(feature = "counter")]
-fn unmutated_mergeable_child_survives_snapshot_via_discriminator() {
+fn unmutated_mergeable_child_survives_snapshot_via_marker() {
     let a = doc(1);
     let counter = a
         .get_map("state")
@@ -134,7 +134,7 @@ fn unmutated_mergeable_child_survives_snapshot_via_discriminator() {
     let has_container_before_path = b.has_container(&counter_id);
     let path = b
         .get_path_to_container(&counter_id)
-        .expect("unmutated mergeable child must resolve from discriminator");
+        .expect("unmutated mergeable child must resolve from marker");
     let indexes = path.iter().map(|(_, idx)| idx.clone()).collect::<Vec<_>>();
     assert_eq!(
         indexes,
@@ -146,12 +146,12 @@ fn unmutated_mergeable_child_survives_snapshot_via_discriminator() {
         "path lookup must not change has_container semantics for mergeable cids"
     );
 
-    // The discriminator string rides through the snapshot as a normal map value, so B
+    // The binary marker rides through the snapshot as a normal map value, so B
     // resolves the same deterministic cid and renders it as an empty counter.
     assert_eq!(
         b.get_deep_value().to_json_value(),
         json!({ "state": { "revision": 0.0 } }),
-        "discriminator survives snapshot round-trip; child resolves to its empty default",
+        "marker survives snapshot round-trip; child resolves to its empty default",
     );
 
     let b_counter = b
@@ -193,9 +193,9 @@ fn snapshot_import_same_type_collision_converges() {
 }
 
 /// Snapshot import where the LOCAL peer registered a different kind for the same key than the
-/// SNAPSHOT peer. The two discriminators ("🤝:Text" vs "🤝:Map") compete in the parent map's slot
-/// for "k"; the parent map's regular LWW deterministically resolves to one, so exactly one kind
-/// is visible. Both containers' states are preserved; the loser is reachable by explicit lookup.
+/// SNAPSHOT peer. The two binary markers compete in the parent map's slot for "k"; the parent
+/// map's regular LWW deterministically resolves to one, so exactly one kind is visible. Both
+/// containers' states are preserved; the loser is reachable by explicit lookup.
 #[test]
 fn snapshot_import_different_type_collision_resolves_by_lww() {
     let a = doc(1);
@@ -216,7 +216,7 @@ fn snapshot_import_different_type_collision_resolves_by_lww() {
 
     b.import(&snapshot).expect("import must not fail");
 
-    // Exactly one kind is visible in deep value (whichever discriminator won the Map LWW).
+    // Exactly one kind is visible in deep value (whichever marker won the Map LWW).
     let value = b.get_deep_value().to_json_value();
     let k = &value["state"]["k"];
     let visible_kinds = [k.is_string(), k.is_object()];
@@ -226,16 +226,16 @@ fn snapshot_import_different_type_collision_resolves_by_lww() {
         "exactly one kind must be visible after LWW; got {k:?}"
     );
 
-    // Both getters still succeed (each rewrites the discriminator to its kind). Neither errors —
+    // Both getters still succeed (each rewrites the marker to its kind). Neither errors —
     // requesting a kind is a kind change, not a conflict.
     let _ = b.get_map("state").get_mergeable_text("k").unwrap();
     let _ = b.get_map("state").get_mergeable_map("k").unwrap();
 }
 
-/// After snapshot import resolves `"k"` to a Text discriminator on the receiver, a local
-/// `get_mergeable_map("k")` does NOT error — it rewrites the discriminator to Map (a deliberate
+/// After snapshot import resolves `"k"` to a Text marker on the receiver, a local
+/// `get_mergeable_map("k")` does NOT error — it rewrites the marker to Map (a deliberate
 /// kind change). The Text container stays reachable by name; requesting it again rewrites the
-/// discriminator back to Text and resurfaces its preserved contents.
+/// marker back to Text and resurfaces its preserved contents.
 #[test]
 fn different_kind_request_after_snapshot_is_a_kind_change() {
     let a = doc(1);
@@ -249,10 +249,10 @@ fn different_kind_request_after_snapshot_is_a_kind_change() {
     assert_eq!(
         b.get_deep_value().to_json_value(),
         json!({ "state": { "k": "x" } }),
-        "imported Text discriminator resolves to its content"
+        "imported Text marker resolves to its content"
     );
 
-    // Requesting a Map rewrites the discriminator to Map; no error.
+    // Requesting a Map rewrites the marker to Map; no error.
     let b_map = b.get_map("state").get_mergeable_map("k").unwrap();
     b_map.insert("flag", true).unwrap();
     b.commit_then_renew();
@@ -269,7 +269,7 @@ fn different_kind_request_after_snapshot_is_a_kind_change() {
     assert_eq!(
         b.get_deep_value().to_json_value(),
         json!({ "state": { "k": "x" } }),
-        "re-requesting Text rewrites the discriminator back and resurfaces preserved content"
+        "re-requesting Text rewrites the marker back and resurfaces preserved content"
     );
 }
 

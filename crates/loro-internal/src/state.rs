@@ -1341,11 +1341,11 @@ impl DocState {
                 )
             }
             LoroValue::Map(mut map) => {
-                // A map's mergeable children are encoded as `"🤝:<kind>"` discriminator
-                // strings in the map's own value table (loro-dev/loro#759), so they are
-                // already present in `map` here. Derive the active children straight from
-                // that value — re-fetching the `MapState` would force the snapshot-backed
-                // container to decode and break the lazy-value invariant for roots.
+                // A map's mergeable children are encoded as compact binary markers in the map's
+                // own value table (loro-dev/loro#759), so they are already present in `map` here.
+                // Derive the active children straight from that value — re-fetching the
+                // `MapState` would force the snapshot-backed container to decode and break the
+                // lazy-value invariant for roots.
                 let mergeable_children = self.mergeable_children_from_value(&id, &map);
 
                 let map_mut = map.make_mut();
@@ -1360,8 +1360,8 @@ impl DocState {
                         *value = new_value;
                     }
                 }
-                // Replace each discriminator string with the nested deep value of its
-                // resolved child, keyed under the same logical key.
+                // Replace each marker with the nested deep value of its resolved child, keyed
+                // under the same logical key.
                 for (key, cid) in mergeable_children {
                     let child_idx = self.arena.register_container(&cid);
                     let new_value = self.get_container_deep_value_with_id(child_idx, Some(cid));
@@ -1417,11 +1417,11 @@ impl DocState {
                 LoroValue::List(list)
             }
             LoroValue::Map(mut map) => {
-                // A map's mergeable children are encoded as `"🤝:<kind>"` discriminator
-                // strings in the map's own value table (loro-dev/loro#759), so they are
-                // already present in `map` here. Derive the active children straight from
-                // that value — re-fetching the `MapState` would force the snapshot-backed
-                // container to decode and break the lazy-value invariant for roots.
+                // A map's mergeable children are encoded as compact binary markers in the map's
+                // own value table (loro-dev/loro#759), so they are already present in `map` here.
+                // Derive the active children straight from that value — re-fetching the
+                // `MapState` would force the snapshot-backed container to decode and break the
+                // lazy-value invariant for roots.
                 let mergeable_children = self
                     .arena
                     .idx_to_id(container)
@@ -1441,8 +1441,8 @@ impl DocState {
                         *value = new_value;
                     }
                 }
-                // Replace each discriminator string with the nested deep value of its
-                // resolved child, keyed under the same logical key.
+                // Replace each marker with the nested deep value of its resolved child, keyed
+                // under the same logical key.
                 for (key, cid) in mergeable_children {
                     let child_idx = self.arena.register_container(&cid);
                     let new_value = self.get_container_deep_value(child_idx);
@@ -1513,14 +1513,13 @@ impl DocState {
                         ans.push(id.clone());
                     }
                 }
-                // Mergeable children are resolved from the discriminator strings stored in this
+                // Mergeable children are resolved from compact binary markers stored in this
                 // map's own value table (loro-dev/loro#759): the active child at each key is the
-                // deterministic cid for whichever `"🤝:<kind>"` discriminator the map's regular
-                // LWW resolved to. Derive them from the value we already fetched lazily above —
-                // re-reading the decoded `MapState` would force a snapshot-backed map to
-                // materialize its full state. Pull them in so alive-container walks (notably
-                // shallow snapshot export) include mergeable cids and don't filter their KV out by
-                // `retain_keys`.
+                // deterministic cid for whichever marker the map's regular LWW resolved to.
+                // Derive them from the value we already fetched lazily above — re-reading the
+                // decoded `MapState` would force a snapshot-backed map to materialize its full
+                // state. Pull them in so alive-container walks (notably shallow snapshot export)
+                // include mergeable cids and don't filter their KV out by `retain_keys`.
                 let mergeable_cids: Vec<ContainerID> = self
                     .arena
                     .idx_to_id(idx)
@@ -1627,7 +1626,7 @@ impl DocState {
         }
 
         // If not registered yet, check KV presence for ordinary containers, then register lazily.
-        // Mergeable children can be active through a parent discriminator before they have their
+        // Mergeable children can be active through a parent marker before they have their
         // own KV state, so their reachability must be resolved by the logical edge walk below.
         if self.arena.id_to_idx(id).is_none() {
             if !id.is_mergeable() && !self.does_container_exist(id) {
@@ -1860,13 +1859,14 @@ impl DocState {
             let index = &path[i];
             match state_idx {
                 CurContainer::Container(idx) => {
+                    let parent_id = self.arena.idx_to_id(idx);
                     let parent_state = self.store.get_container_mut(idx)?;
                     match parent_state {
                         State::ListState(l) => {
                             let Some(LoroValue::Container(c)) = l.get(*index.as_seq()?) else {
                                 return None;
                             };
-                            state_idx = CurContainer::Container(self.arena.register_container(c));
+                            state_idx = CurContainer::Container(self.arena.register_container(&c));
                         }
                         State::MovableListState(l) => {
                             let Some(LoroValue::Container(c)) =
@@ -1874,13 +1874,22 @@ impl DocState {
                             else {
                                 return None;
                             };
-                            state_idx = CurContainer::Container(self.arena.register_container(c));
+                            state_idx = CurContainer::Container(self.arena.register_container(&c));
                         }
                         State::MapState(m) => {
-                            let Some(LoroValue::Container(c)) = m.get(index.as_key()?) else {
-                                return None;
+                            let key = index.as_key()?;
+                            let value = m.get(key)?;
+                            let c = match value {
+                                LoroValue::Container(c) => c.clone(),
+                                value => {
+                                    let parent_id = parent_id?;
+                                    let kind = loro_common::parse_mergeable_marker(
+                                        &parent_id, key, value,
+                                    )?;
+                                    ContainerID::new_mergeable(&parent_id, key, kind)
+                                }
                             };
-                            state_idx = CurContainer::Container(self.arena.register_container(c));
+                            state_idx = CurContainer::Container(self.arena.register_container(&c));
                         }
                         State::RichtextState(_) => return None,
                         State::TreeState(_) => {
@@ -1953,14 +1962,27 @@ impl DocState {
             }
         };
 
-        let parent_state = self.store.get_or_create_mut(parent_idx);
         let index = path.last().unwrap();
+        let parent_id = self.arena.idx_to_id(parent_idx);
+        let parent_state = self.store.get_or_create_mut(parent_idx);
         let value: LoroValue = match parent_state {
             State::ListState(l) => l.get(*index.as_seq()?).cloned()?,
             State::MovableListState(l) => l.get(*index.as_seq()?, IndexType::ForUser).cloned()?,
             State::MapState(m) => {
                 if let Some(key) = index.as_key() {
-                    m.get(key).cloned()?
+                    let value = m.get(key).cloned()?;
+                    if let Some(parent_id) = &parent_id {
+                        if let Some(kind) =
+                            loro_common::parse_mergeable_marker(parent_id, key, &value)
+                        {
+                            let cid = ContainerID::new_mergeable(parent_id, key, kind);
+                            LoroValue::Container(cid)
+                        } else {
+                            value
+                        }
+                    } else {
+                        value
+                    }
                 } else if let CurContainer::TreeNode { tree, node } = state_idx {
                     match index {
                         Index::Seq(index) => {
