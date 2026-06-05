@@ -97,14 +97,14 @@ export function getType<T>(
 ): T extends LoroText
   ? "Text"
   : T extends LoroMap<any>
-    ? "Map"
-    : T extends LoroTree<any>
-      ? "Tree"
-      : T extends LoroList<any>
-        ? "List"
-        : T extends LoroCounter
-          ? "Counter"
-          : "Json" {
+  ? "Map"
+  : T extends LoroTree<any>
+  ? "Tree"
+  : T extends LoroList<any>
+  ? "List"
+  : T extends LoroCounter
+  ? "Counter"
+  : "Json" {
   if (isContainer(value)) {
     return value.kind() as unknown as any;
   }
@@ -427,6 +427,7 @@ const CONTAINER_READ_CACHE = Symbol("loro.containerReadCache");
 const CONTAINER_READ_CACHE_STORE = Symbol("loro.containerReadCacheStore");
 const CONTAINER_READ_CACHE_ID = Symbol("loro.containerReadCacheId");
 const CONTAINER_CACHED_ID = Symbol("loro.containerCachedId");
+const MISSING_MAP_VALUE = Symbol("loro.missingMapValue");
 const ENABLE_CONTAINER_OBJECT_CACHE = true;
 const ENABLE_SHARED_CONTAINER_READ_CACHE =
   typeof (globalThis as { gc?: unknown }).gc !== "function";
@@ -438,7 +439,9 @@ type MapReadCache =
       type: "entries";
       epoch: number;
       keys: string[];
-      values: Map<string, unknown>;
+      values: unknown[];
+      cursor: number;
+      valueByKey?: Map<string, unknown>;
     };
 
 type ListReadCache<T = unknown> =
@@ -450,7 +453,7 @@ type TextReadCache = { type: "text"; epoch: number; value: string };
 type ContainerReadCache = MapReadCache | ListReadCache | TextReadCache;
 type ContainerReadCacheStore = {
   doc: CacheableDoc;
-  containers: Map<string, ContainerReadCache>;
+  containers: Record<string, ContainerReadCache | undefined>;
   containerObjects: Map<string, WeakRef<object>>;
 };
 
@@ -474,7 +477,10 @@ function bumpContainerReadCacheEpoch(target?: unknown) {
     } | null
   )?.[CONTAINER_READ_CACHE_STORE];
   if (store) {
-    store.containers.clear();
+    store.containers = Object.create(null) as Record<
+      string,
+      ContainerReadCache | undefined
+    >;
     store.containerObjects.clear();
   }
 }
@@ -488,7 +494,10 @@ function ensureDocReadCacheStore(
 
   return (doc[CONTAINER_READ_CACHE_STORE] ??= {
     doc,
-    containers: new Map(),
+    containers: Object.create(null) as Record<
+      string,
+      ContainerReadCache | undefined
+    >,
     containerObjects: new Map(),
   });
 }
@@ -573,9 +582,7 @@ function getContainerReadCache<T extends ContainerReadCache>(
 ): T | undefined {
   const store = getContainerCacheStore(container);
   if (store) {
-    return store.containers.get(getContainerCacheId(container)) as
-      | T
-      | undefined;
+    return store.containers[getContainerCacheId(container)] as T | undefined;
   }
 
   return container[CONTAINER_READ_CACHE] as T | undefined;
@@ -587,21 +594,10 @@ function setContainerReadCache(
 ) {
   const store = getContainerCacheStore(container);
   if (store) {
-    store.containers.set(getContainerCacheId(container), cache);
+    store.containers[getContainerCacheId(container)] = cache;
   } else {
     container[CONTAINER_READ_CACHE] = cache;
   }
-}
-
-function toCachedReadValue(
-  value: unknown,
-  store: ContainerReadCacheStore | undefined,
-): unknown {
-  if (store && isContainer(value)) {
-    return tagContainerWithReadCacheStore(value, store);
-  }
-
-  return value;
 }
 
 function fromCachedReadValue(
@@ -739,8 +735,8 @@ function installMapReadCache() {
 
   const readFlatEntries = function (container: CacheableContainer) {
     const store = getContainerCacheStore(container);
-    const values = new Map<string, unknown>();
     const keys: string[] = [];
+    const values: unknown[] = [];
 
     if (typeof originalEntriesFlat === "function") {
       const flatEntries = originalEntriesFlat.call(container);
@@ -755,7 +751,7 @@ function installMapReadCache() {
           store,
         );
         keys.push(entryKey);
-        values.set(entryKey, toCachedReadValue(value, store));
+        values.push(value);
       }
     } else {
       for (const [entryKey, value] of tagMapEntries(
@@ -763,7 +759,7 @@ function installMapReadCache() {
         store,
       )) {
         keys.push(entryKey);
-        values.set(entryKey, toCachedReadValue(value, store));
+        values.push(value);
       }
     }
 
@@ -772,15 +768,37 @@ function installMapReadCache() {
       epoch: containerReadCacheEpoch,
       keys,
       values,
+      cursor: 0,
     };
     setContainerReadCache(container, cache);
     return cache;
+  };
+
+  const getCachedMapValue = function (
+    cache: Extract<MapReadCache, { type: "entries" }>,
+    key: string,
+  ): unknown {
+    if (cache.keys[cache.cursor] === key) {
+      return cache.values[cache.cursor++];
+    }
+
+    let valueByKey = cache.valueByKey;
+    if (!valueByKey) {
+      valueByKey = new Map();
+      for (let index = 0; index < cache.keys.length; index++) {
+        valueByKey.set(cache.keys[index], cache.values[index]);
+      }
+      cache.valueByKey = valueByKey;
+    }
+
+    return valueByKey.has(key) ? valueByKey.get(key) : MISSING_MAP_VALUE;
   };
 
   prototype.keys = function () {
     const cache = getContainerReadCache<MapReadCache>(this);
     if (cache?.epoch === containerReadCacheEpoch) {
       if (cache.type === "entries") {
+        cache.cursor = 0;
         return cache.keys.slice();
       }
 
@@ -805,20 +823,19 @@ function installMapReadCache() {
   prototype.get = function (key: string) {
     const cache = getContainerReadCache<MapReadCache>(this);
     if (cache?.type === "entries" && cache.epoch === containerReadCacheEpoch) {
-      return cache.values.has(key)
-        ? fromCachedReadValue(
-            cache.values.get(key),
-            getContainerCacheStore(this),
-          )
-        : undefined;
+      const value = getCachedMapValue(cache, key);
+      return value === MISSING_MAP_VALUE
+        ? undefined
+        : fromCachedReadValue(value, getContainerCacheStore(this));
     }
 
     if (cache?.type === "keys" && cache.epoch === containerReadCacheEpoch) {
       const entries = readFlatEntries(this);
       const store = getContainerCacheStore(this);
-      return entries.values.has(key)
-        ? fromCachedReadValue(entries.values.get(key), store)
-        : undefined;
+      const value = getCachedMapValue(entries, key);
+      return value === MISSING_MAP_VALUE
+        ? undefined
+        : fromCachedReadValue(value, store);
     }
 
     return originalGet.call(this, key);
@@ -828,18 +845,19 @@ function installMapReadCache() {
     const cache = getContainerReadCache<MapReadCache>(this);
     const store = getContainerCacheStore(this);
     if (cache?.type === "entries" && cache.epoch === containerReadCacheEpoch) {
-      return cache.keys
-        .map((key) => [key, cache.values.get(key)] as [string, unknown])
-        .map(
-          ([key, value]) =>
-            [key, fromCachedReadValue(value, store)] as [string, unknown],
-        );
+      return cache.keys.map(
+        (key, index) =>
+          [key, fromCachedReadValue(cache.values[index], store)] as [
+            string,
+            unknown,
+          ],
+      );
     }
 
     const entries = readFlatEntries(this);
     return entries.keys.map(
-      (key) =>
-        [key, fromCachedReadValue(entries.values.get(key), store)] as [
+      (key, index) =>
+        [key, fromCachedReadValue(entries.values[index], store)] as [
           string,
           unknown,
         ],
@@ -850,9 +868,7 @@ function installMapReadCache() {
     const cache = getContainerReadCache<MapReadCache>(this);
     const store = getContainerCacheStore(this);
     if (cache?.type === "entries" && cache.epoch === containerReadCacheEpoch) {
-      return cache.keys.map((key) =>
-        fromCachedReadValue(cache.values.get(key), store),
-      );
+      return cache.values.map((value) => fromCachedReadValue(value, store));
     }
 
     const values = originalValues.call(this);
@@ -887,11 +903,10 @@ function installListReadCache(
       originalToArray.call(container as typeof typedPrototype),
       store,
     );
-    const cachedValues = values.map((value) => toCachedReadValue(value, store));
     const cache: ListReadCache = {
       type: "values",
       epoch: containerReadCacheEpoch,
-      values: cachedValues,
+      values,
     };
     setContainerReadCache(container, cache);
     return { values, cache };
@@ -947,11 +962,10 @@ function installListReadCache(
     }
 
     const values = tagContainerChildren(originalToArray.call(this), store);
-    const cachedValues = values.map((value) => toCachedReadValue(value, store));
     setContainerReadCache(this, {
       type: "values",
       epoch: containerReadCacheEpoch,
-      values: cachedValues,
+      values,
     });
     return values.slice();
   };
