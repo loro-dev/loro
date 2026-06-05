@@ -89,6 +89,48 @@ pub(crate) fn export_shallow_snapshot_inner(
             ));
         }
     }
+    if &start_from == oplog.shallow_since_frontiers()
+        && state_frontiers == latest_frontiers
+        && ops_num > MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE
+    {
+        let mut state = doc.app_state().lock();
+        if let Some((shallow_root_state_bytes, shallow_root_state_kv)) =
+            state.store.shallow_root_state_for_export()
+        {
+            let mut alive_c_bytes = shallow_root_state_kv.keys();
+            if has_unknown_container_key(alive_c_bytes.iter()) {
+                return Err(LoroEncodeError::UnknownContainer);
+            }
+
+            state.ensure_all_alive_containers();
+            state.store.flush();
+
+            // All the containers that are created after start_from need to be encoded.
+            for cid in state.store.iter_all_container_ids() {
+                if let ContainerID::Normal { peer, counter, .. } = cid {
+                    let temp_id = ID::new(peer, counter);
+                    if !start_from.contains(&temp_id) {
+                        alive_c_bytes.insert(cid.to_bytes());
+                    }
+                } else {
+                    alive_c_bytes.insert(cid.to_bytes());
+                }
+            }
+
+            let new_kv = state.store.get_kv_clone();
+            new_kv.remove_same(&shallow_root_state_kv);
+            new_kv.retain_keys(&alive_c_bytes);
+
+            return Ok((
+                Snapshot {
+                    oplog_bytes,
+                    state_bytes: Some(new_kv.export()),
+                    shallow_root_state_bytes,
+                },
+                start_from,
+            ));
+        }
+    }
     drop(oplog);
     let result = (|| -> Result<Snapshot, LoroEncodeError> {
         doc._checkout_without_emitting(&start_from, false, false)
@@ -147,6 +189,10 @@ pub(crate) fn export_shallow_snapshot_inner(
 
 fn has_unknown_container<'a>(mut cids: impl Iterator<Item = &'a ContainerID>) -> bool {
     cids.any(|cid| matches!(cid.container_type(), ContainerType::Unknown(_)))
+}
+
+fn has_unknown_container_key<'a>(mut keys: impl Iterator<Item = &'a Vec<u8>>) -> bool {
+    keys.any(|key| ContainerID::from_bytes(key).is_unknown())
 }
 
 pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
