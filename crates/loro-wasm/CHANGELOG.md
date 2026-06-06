@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.12.5
+
+### Patch Changes
+
+- bd10411: Fix Vite dev server WASM resolution for bare `loro-crdt` imports by using conditional exports for browser development builds.
+
 ## 1.12.4
 
 ### Patch Changes
