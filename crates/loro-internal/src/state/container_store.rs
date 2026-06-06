@@ -128,12 +128,6 @@ impl ContainerStore {
             .unwrap_or_default()
     }
 
-    pub fn map_values(&mut self, idx: ContainerIdx) -> Vec<LoroValue> {
-        self.store
-            .with_container_for_read(idx, |c| c.map_values(idx, ctx!(self)))
-            .unwrap_or_default()
-    }
-
     pub fn map_entries(&mut self, idx: ContainerIdx) -> Vec<(InternalString, LoroValue)> {
         self.store
             .with_container_for_read(idx, |c| c.map_entries(idx, ctx!(self)))

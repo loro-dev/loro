@@ -939,10 +939,6 @@ impl DocState {
         self.store.map_keys(container_idx)
     }
 
-    pub(crate) fn get_map_values(&mut self, container_idx: ContainerIdx) -> Vec<LoroValue> {
-        self.store.map_values(container_idx)
-    }
-
     pub(crate) fn get_map_entries(
         &mut self,
         container_idx: ContainerIdx,

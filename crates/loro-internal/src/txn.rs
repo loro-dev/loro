@@ -894,16 +894,27 @@ fn change_to_diff(
                         ),
                     });
                 }
-                EventHint::Map { key, value } => ans.push(TxnContainerDiff {
-                    idx: container_idx,
-                    diff: Diff::Map(ResolvedMapDelta::new().with_entry(
-                        key,
-                        ResolvedMapValue {
-                            value: value.map(|v| ValueOrHandler::from_value(v, &doc)),
-                            idlp: IdLp::new(peer, lamport),
-                        },
-                    )),
-                }),
+                EventHint::Map { key, value } => {
+                    // Mirror `MapState::apply_diff_and_convert`: a marker write surfaces to
+                    // subscribers as the deterministic Container, not the raw binary value.
+                    let parent_id = doc.arena.idx_to_id(container_idx);
+                    let value = value.map(|v| match parent_id.as_ref() {
+                        Some(pid) => {
+                            loro_common::translate_mergeable_marker_value(pid, key.as_ref(), v)
+                        }
+                        None => v,
+                    });
+                    ans.push(TxnContainerDiff {
+                        idx: container_idx,
+                        diff: Diff::Map(ResolvedMapDelta::new().with_entry(
+                            key,
+                            ResolvedMapValue {
+                                value: value.map(|v| ValueOrHandler::from_value(v, &doc)),
+                                idlp: IdLp::new(peer, lamport),
+                            },
+                        )),
+                    });
+                }
                 EventHint::Tree(tree_diff) => {
                     let mut diff = TreeDiff::default();
                     diff.diff.extend(tree_diff);

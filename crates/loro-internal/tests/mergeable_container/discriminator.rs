@@ -13,8 +13,9 @@ use loro_common::{mergeable_marker, ContainerType, LoroError, LoroValue, MERGEAB
 use loro_internal::{HandlerTrait, ToJson};
 use serde_json::json;
 
-/// `ensure_mergeable_map(key)` writes the marker into the parent map's slot at
-/// `key`, so a plain `map.get(key)` reads back that binary value.
+/// `ensure_mergeable_list(key)` activates a List child at the parent map's slot. From the
+/// public API, `map.get(key)` reports it as a Container value carrying the deterministic
+/// mergeable cid — symmetric with what an explicit `set_container` would produce.
 #[test]
 fn ensure_mergeable_writes_marker_into_parent_slot() {
     let d = doc(1);
@@ -22,12 +23,12 @@ fn ensure_mergeable_writes_marker_into_parent_slot() {
 
     assert_eq!(root.get("tags"), None, "key starts empty");
 
-    let _list = root.ensure_mergeable_list("tags").unwrap();
+    let list = root.ensure_mergeable_list("tags").unwrap();
 
     assert_eq!(
         root.get("tags"),
-        Some(mergeable_marker(&root.id(), "tags", ContainerType::List)),
-        "ensure_mergeable_list must write the List marker into the parent slot"
+        Some(LoroValue::Container(list.id())),
+        "ensure_mergeable_list must surface the activated List child as a Container value"
     );
 }
 
@@ -274,9 +275,14 @@ fn kind_change_cycle_resurfaces_original_list_contents() {
     );
 }
 
-/// Forward-compatibility envelope: the marker is a real Map value, so an older client that doesn't
-/// understand mergeable containers sees it as an inert binary scalar. It does not look like a
-/// plausible user string and does not introduce a fake container edge.
+/// Forward-compatibility envelope: the marker is stored as a real `LoroValue::Binary` in the
+/// parent map's value table, so a client that doesn't understand mergeable containers — for
+/// example one that consumes only the shallow JSON value — sees it as an inert binary scalar
+/// rather than a fake container edge or a reserved-looking user string.
+///
+/// New clients translate that binary marker into a Container value at the `MapHandler` boundary
+/// (see `ensure_mergeable_writes_marker_into_parent_slot`); this test inspects the underlying
+/// representation via `get_value`, which preserves the wire-level form.
 #[test]
 fn marker_is_observable_as_raw_binary_for_old_clients() {
     let d = doc(1);
@@ -284,10 +290,15 @@ fn marker_is_observable_as_raw_binary_for_old_clients() {
     let _list = root.ensure_mergeable_list("tags").unwrap();
     d.commit_then_renew();
 
-    // The raw slot value is the compact binary marker.
-    let raw = root.get("tags").expect("slot has a value");
+    // `get_value` materializes the parent map as a `LoroValue::Map`, which preserves the raw
+    // binary marker the way it travels in snapshots and updates to older peers.
+    let shallow = root.get_value();
+    let LoroValue::Map(entries) = shallow else {
+        panic!("parent value must be a map");
+    };
+    let raw = entries.get("tags").expect("slot has a marker").clone();
     let LoroValue::Binary(bytes) = &raw else {
-        panic!("marker must be a binary value; got {raw:?}");
+        panic!("marker must be a binary value at the wire level; got {raw:?}");
     };
     assert_eq!(bytes.len(), 8);
     assert!(bytes.starts_with(&MERGEABLE_MARKER_MAGIC));
@@ -295,4 +306,8 @@ fn marker_is_observable_as_raw_binary_for_old_clients() {
         bytes[MERGEABLE_MARKER_MAGIC.len()],
         ContainerType::List.to_u8()
     );
+
+    // The same marker is the inputs to the public mergeable parser.
+    let expected = mergeable_marker(&root.id(), "tags", ContainerType::List);
+    assert_eq!(raw, expected);
 }

@@ -88,6 +88,21 @@ pub struct CompactId {
 /// over chains of mergeable-inside-mergeable.
 pub const MERGEABLE_NAMESPACE_PREFIX: &str = "🤝:";
 
+fn write_len_prefixed_segment(out: &mut Vec<u8>, bytes: &[u8]) {
+    leb128::write::unsigned(out, bytes.len() as u64).unwrap();
+    out.extend_from_slice(bytes);
+}
+
+fn read_len_prefixed_segment(input: &mut &[u8]) -> Option<Vec<u8>> {
+    let len = leb128::read::unsigned(input).ok()? as usize;
+    if input.len() < len {
+        return None;
+    }
+    let (segment, rest) = input.split_at(len);
+    *input = rest;
+    Some(segment.to_vec())
+}
+
 /// Fast structural check for a mergeable cid name. Returns `Some(())` if `name` starts with the
 /// mergeable namespace prefix and the hex payload decodes into exactly two length-prefixed
 /// segments (`parent_bytes`, `key_bytes`) with a parseable parent and a UTF-8 key.
@@ -112,21 +127,6 @@ fn validate_mergeable_payload(name: &str) -> Option<()> {
     std::str::from_utf8(key_bytes).ok()?;
     ContainerID::try_from_bytes(parent_bytes).ok()?;
     Some(())
-}
-
-fn write_len_prefixed_segment(out: &mut Vec<u8>, bytes: &[u8]) {
-    leb128::write::unsigned(out, bytes.len() as u64).unwrap();
-    out.extend_from_slice(bytes);
-}
-
-fn read_len_prefixed_segment(input: &mut &[u8]) -> Option<Vec<u8>> {
-    let len = leb128::read::unsigned(input).ok()? as usize;
-    if input.len() < len {
-        return None;
-    }
-    let (segment, rest) = input.split_at(len);
-    *input = rest;
-    Some(segment.to_vec())
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
@@ -227,6 +227,23 @@ pub fn parse_mergeable_marker(
     }
 
     Some(kind)
+}
+
+/// Translate a raw map slot value into the user-visible Container view for a Map at `parent`.
+///
+/// Mergeable child activation lives as a binary marker in the parent map's value table. This
+/// is the canonical conversion from that marker to the deterministic child cid; every read
+/// boundary (`MapHandler` getters, Map diff emission, local-event hints) goes through it so
+/// callers see the same shape as a regular child container.
+pub fn translate_mergeable_marker_value(
+    parent: &ContainerID,
+    key: &str,
+    value: LoroValue,
+) -> LoroValue {
+    match parse_mergeable_marker(parent, key, &value) {
+        Some(kind) => LoroValue::Container(ContainerID::new_mergeable(parent, key, kind)),
+        None => value,
+    }
 }
 
 fn mergeable_marker_crc24(parent: &ContainerID, key: &str, kind: ContainerType) -> [u8; 3] {

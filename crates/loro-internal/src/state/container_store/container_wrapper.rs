@@ -259,38 +259,6 @@ impl ContainerWrapper {
         }
     }
 
-    pub fn map_values(
-        &mut self,
-        idx: ContainerIdx,
-        ctx: ContainerCreationContext,
-    ) -> Vec<LoroValue> {
-        match &mut self.data {
-            ContainerData::State(state) => state
-                .as_map_state()
-                .unwrap()
-                .iter()
-                .filter_map(|(_, value)| value.value.clone())
-                .collect(),
-            ContainerData::Lazy(_) => {
-                self.decode_value(idx, ctx).unwrap();
-                match &self.data {
-                    ContainerData::Lazy(lazy) => lazy
-                        .value
-                        .as_ref()
-                        .and_then(|value| value.as_map())
-                        .map(|map| map.values().cloned().collect())
-                        .unwrap_or_default(),
-                    ContainerData::State(state) => state
-                        .as_map_state()
-                        .unwrap()
-                        .iter()
-                        .filter_map(|(_, value)| value.value.clone())
-                        .collect(),
-                }
-            }
-        }
-    }
-
     pub fn map_entries(
         &mut self,
         idx: ContainerIdx,
