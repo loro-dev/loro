@@ -266,22 +266,23 @@ fn nested_mergeable_concurrent_counter_converges() {
     );
 }
 
-/// A detached map handler (built without a parent doc) supports
-/// `ensure_mergeable_*` by falling back to `get_or_create_container`. The
-/// fallback path doesn't compute deterministic cids — that's intentional;
-/// determinism is meaningless until the handler attaches to a doc — but it
-/// must still return a working child handler that callers can mutate.
+/// `ensure_mergeable_*` cannot work on a detached handler: the deterministic cid is computed from
+/// the parent's cid, which a detached parent doesn't have. Falling back to a non-deterministic
+/// regular child would silently break the mergeable guarantee once the handler attaches, so the
+/// detached call must surface that misuse explicitly instead.
 #[test]
 #[cfg(feature = "counter")]
-fn detached_map_ensure_mergeable_counter_falls_back_cleanly() {
+fn detached_map_ensure_mergeable_counter_rejects_misuse() {
     use loro_internal::MapHandler;
     let detached = MapHandler::new_detached();
-    let counter = detached
+    let err = detached
         .ensure_mergeable_counter("revision")
-        .expect("detached fallback must succeed");
-    counter
-        .increment(7.0)
-        .expect("detached counter must be mutable");
-    // The detached handler still surfaces the value through its local state.
-    assert_eq!(counter.get_value().to_json_value(), json!(7.0));
+        .expect_err("detached ensure_mergeable_* must error");
+    assert!(
+        matches!(
+            err,
+            loro_common::LoroError::MisuseDetachedContainer { .. }
+        ),
+        "detached error must be MisuseDetachedContainer; got {err:?}"
+    );
 }

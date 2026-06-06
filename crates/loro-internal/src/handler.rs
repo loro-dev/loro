@@ -4415,25 +4415,26 @@ impl MapHandler {
 
     /// Shared implementation for all `ensure_mergeable_*` methods.
     ///
-    /// For detached handlers (no doc state yet), falls back to
-    /// [`Self::get_or_create_container`].
-    ///
-    /// For attached handlers, computes a deterministic [`ContainerID::Root`] in
-    /// the mergeable namespace from `(parent.id, key, child.kind())` and
-    /// constructs the handler from it. Two peers calling this with the same
-    /// `(parent, key, kind)` receive handlers with identical container ids,
-    /// which is what makes the child container mergeable on concurrent
-    /// first-write.
+    /// Computes a deterministic [`ContainerID::Root`] in the mergeable namespace from
+    /// `(parent.id, key, child.kind())` and constructs the handler from it. Two peers calling this
+    /// with the same `(parent, key, kind)` receive handlers with identical container ids, which is
+    /// what makes the child container mergeable on concurrent first-write.
     ///
     /// # Errors
     ///
-    /// Returns [`LoroError::ArgErr`] if `C::from_handler` rejects the handler
-    /// built from the deterministic cid. By construction this is unreachable
-    /// because the cid carries `child.kind()`; the check guards against
-    /// future drift between `from_handler` and `kind`.
+    /// Returns [`LoroError::MisuseDetachedContainer`] when called on a detached handler. The
+    /// deterministic cid is computed from the parent's cid, which a detached parent does not have
+    /// yet; falling back to a non-deterministic regular child would silently drop the mergeable
+    /// guarantee at attach time. Detached callers must attach the parent first.
+    ///
+    /// Returns [`LoroError::ArgErr`] if `C::from_handler` rejects the handler built from the
+    /// deterministic cid (unreachable by construction; guards against future drift between
+    /// `from_handler` and `kind`).
     fn ensure_mergeable_container<C: HandlerTrait>(&self, key: &str, child: C) -> LoroResult<C> {
         let MaybeDetached::Attached(parent) = &self.inner else {
-            return self.get_or_create_container(key, child);
+            return Err(LoroError::MisuseDetachedContainer {
+                method: "ensure_mergeable_container",
+            });
         };
 
         // The slot may only be empty or already hold a mergeable marker for this parent/key. A
