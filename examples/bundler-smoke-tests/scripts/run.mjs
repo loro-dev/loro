@@ -92,11 +92,15 @@ const cases = {
   "vite5-dev": viteDevCase("vite5-dev", "^5.4.21"),
   "vite6-dev": viteDevCase("vite6-dev", "^6.4.2"),
   "vite7-dev": viteDevCase("vite7-dev", "^7.3.2"),
+  "vite8-dev": viteDevCase("vite8-dev", "^8.0.10"),
   "vite5-web-mirror-dev": viteDevCase("vite5-web-mirror-dev", "^5.4.21", {
     setup: setupViteWebMirror,
     dependencies: { "loro-mirror": "^2.1.1" },
   }),
   "rolldown-vite": viteCase("rolldown-vite", "rolldown-vite", "^7.3.1"),
+  "rolldown-vite-dev": viteDevCase("rolldown-vite-dev", "^7.3.1", {
+    packageName: "rolldown-vite",
+  }),
   webpack5: {
     description: "Webpack 5 production build",
     dependencies: {},
@@ -108,8 +112,30 @@ const cases = {
     command: ["pnpm", "exec", "webpack", "--config", "webpack.config.cjs"],
     inspect: { dir: "dist", wasmAsset: true, noWasmWrapper: true },
   },
+  "webpack5-dev": {
+    description: "Webpack 5 dev server runtime",
+    dependencies: {},
+    devDependencies: {
+      webpack: "^5.106.2",
+      "webpack-cli": "^6.0.1",
+      "webpack-dev-server": "^5.2.2",
+    },
+    setup: setupWebpack,
+    command: ["pnpm", "exec", "webpack", "--config", "webpack.config.cjs"],
+    inspect: { dir: "dist", wasmAsset: true, noWasmWrapper: true },
+  },
   rsbuild2: {
     description: "Rsbuild 2 production build",
+    dependencies: {},
+    devDependencies: {
+      "@rsbuild/core": "^2.0.3",
+    },
+    setup: setupRsbuild,
+    command: ["pnpm", "exec", "rsbuild", "build"],
+    inspect: { dir: "dist", wasmAsset: true, noWasmWrapper: true },
+  },
+  "rsbuild2-dev": {
+    description: "Rsbuild 2 dev server runtime",
     dependencies: {},
     devDependencies: {
       "@rsbuild/core": "^2.0.3",
@@ -129,8 +155,39 @@ const cases = {
     command: ["pnpm", "exec", "rspack", "build", "--config", "rspack.config.cjs"],
     inspect: { dir: "dist", wasmAsset: true, noWasmWrapper: true },
   },
+  "rspack2-dev": {
+    description: "Rspack 2 dev server runtime",
+    dependencies: {},
+    devDependencies: {
+      "@rspack/cli": "^2.0.1",
+      "@rspack/core": "^2.0.1",
+      "@rspack/dev-server": "^2.0.1",
+    },
+    setup: setupRspack,
+    command: ["pnpm", "exec", "rspack", "build", "--config", "rspack.config.cjs"],
+    inspect: { dir: "dist", wasmAsset: true, noWasmWrapper: true },
+  },
   parcel2: {
     description: "Parcel 2 production build",
+    dependencies: {},
+    devDependencies: {
+      parcel: "^2.16.4",
+    },
+    setup: setupParcel,
+    command: [
+      "pnpm",
+      "exec",
+      "parcel",
+      "build",
+      "index.html",
+      "--dist-dir",
+      "dist",
+      "--no-cache",
+    ],
+    inspect: { dir: "dist", wasmAsset: true, noWasmWrapper: true },
+  },
+  "parcel2-dev": {
+    description: "Parcel 2 dev server runtime",
     dependencies: {},
     devDependencies: {
       parcel: "^2.16.4",
@@ -234,6 +291,30 @@ const cases = {
     command: ["pnpm", "exec", "next", "build", "--webpack"],
     inspect: { dir: ".next", noWasmAsset: true, noWasmWrapper: true },
   },
+  "next16-turbopack-dev": {
+    description: "Next 16 dev server runtime with default Turbopack",
+    dependencies: {
+      next: "^16.2.4",
+      react: "^19.2.1",
+      "react-dom": "^19.2.1",
+    },
+    devDependencies: {},
+    setup: setupNext,
+    command: ["pnpm", "exec", "next", "build"],
+    inspect: { dir: ".next", noWasmWrapper: true },
+  },
+  "next16-webpack-dev": {
+    description: "Next 16 dev server runtime with Webpack and base64 entry",
+    dependencies: {
+      next: "^16.2.4",
+      react: "^19.2.1",
+      "react-dom": "^19.2.1",
+    },
+    devDependencies: {},
+    setup: (dir) => setupNext(dir, "loro-crdt/base64"),
+    command: ["pnpm", "exec", "next", "build", "--webpack"],
+    inspect: { dir: ".next", noWasmAsset: true, noWasmWrapper: true },
+  },
 };
 
 function viteCase(name, packageName, version) {
@@ -251,11 +332,12 @@ function viteCase(name, packageName, version) {
 }
 
 function viteDevCase(name, version, options = {}) {
+  const packageName = options.packageName ?? "vite";
   return {
     description: `${name} dev server runtime`,
     dependencies: options.dependencies ?? {},
     devDependencies: {
-      vite: version,
+      [packageName]: version,
       "vite-plugin-wasm": "^3.6.0",
       "vite-plugin-top-level-await": "^1.6.0",
       rollup: "^4.60.2",
@@ -332,6 +414,7 @@ export default {
 
 async function setupWebpack(dir) {
   await setupBasic(dir, "loro-crdt");
+  await writeBundleHtml(dir);
   await writeFile(
     path.join(dir, "webpack.config.cjs"),
     `const path = require("node:path");
@@ -351,6 +434,7 @@ module.exports = {
 
 async function setupRspack(dir) {
   await setupBasic(dir, "loro-crdt");
+  await writeBundleHtml(dir);
   await writeFile(
     path.join(dir, "rspack.config.cjs"),
     `const path = require("node:path");
@@ -368,8 +452,41 @@ module.exports = {
   );
 }
 
+async function writeBundleHtml(dir) {
+  await mkdir(path.join(dir, "public"), { recursive: true });
+  await writeFile(
+    path.join(dir, "public/index.html"),
+    `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Loro bundler smoke</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script src="/bundle.js"></script>
+  </body>
+</html>
+`,
+  );
+}
+
 async function setupRsbuild(dir) {
   await setupBasic(dir, "loro-crdt");
+  await writeFile(
+    path.join(dir, "index.html"),
+    `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Loro bundler smoke</title>
+  </head>
+  <body>
+    <div id="app"></div>
+  </body>
+</html>
+`,
+  );
   await writeFile(
     path.join(dir, "rsbuild.config.mjs"),
     `export default {

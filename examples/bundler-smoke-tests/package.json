@@ -6,9 +6,10 @@
   "scripts": {
     "test": "node ./scripts/run.mjs",
     "pretest:browser": "playwright install chromium",
-    "test:browser": "LORO_SMOKE_MODE=json node ./scripts/run.mjs && LORO_SMOKE_MODE=json node ./scripts/browser-runtime.mjs",
+    "test:browser": "LORO_SMOKE_MODE=json node ./scripts/run.mjs vite5 vite6 vite7 vite8 rolldown-vite webpack5 rsbuild2 rspack2 parcel2 esbuild-default-copy esbuild-base64 rollup-default-copy rollup-base64 next16-turbopack next16-webpack && LORO_SMOKE_MODE=json node ./scripts/browser-runtime.mjs",
     "pretest:dev": "playwright install chromium",
-    "test:dev": "LORO_SMOKE_MODE=json node ./scripts/run.mjs vite5-dev vite6-dev vite7-dev vite5-web-mirror-dev && LORO_SMOKE_MODE=json node ./scripts/dev-runtime.mjs",
+    "test:dev": "LORO_SMOKE_MODE=json node ./scripts/run.mjs vite5-dev vite6-dev vite7-dev vite8-dev rolldown-vite-dev webpack5-dev rsbuild2-dev rspack2-dev parcel2-dev next16-turbopack-dev next16-webpack-dev vite5-web-mirror-dev && LORO_SMOKE_MODE=json node ./scripts/dev-runtime.mjs",
+    "test:smoke": "pnpm run test:browser && pnpm run test:dev",
     "test:fast": "node ./scripts/run.mjs vite5 vite6 vite7 vite8 rolldown-vite webpack5 rsbuild2 rspack2 esbuild-default-copy esbuild-base64 rollup-default-copy rollup-base64 parcel2",
     "test:next": "node ./scripts/run.mjs next16-turbopack next16-webpack",
     "list": "node ./scripts/run.mjs --list"

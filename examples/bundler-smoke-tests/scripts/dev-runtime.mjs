@@ -13,6 +13,14 @@ const defaultCases = [
   "vite5-dev",
   "vite6-dev",
   "vite7-dev",
+  "vite8-dev",
+  "rolldown-vite-dev",
+  "webpack5-dev",
+  "rsbuild2-dev",
+  "rspack2-dev",
+  "parcel2-dev",
+  "next16-turbopack-dev",
+  "next16-webpack-dev",
   "vite5-web-mirror-dev",
 ];
 
@@ -58,21 +66,81 @@ async function waitForHttp(url, child, logs, timeoutMs) {
   throw lastError ?? new Error(`Timed out waiting for ${url}`);
 }
 
-function startVite(caseDir, port) {
-  const child = spawn(
-    "pnpm",
-    ["exec", "vite", "--host", "127.0.0.1", "--port", String(port), "--strictPort"],
-    {
-      cwd: caseDir,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, FORCE_COLOR: "0" },
+function devCommand(name, port) {
+  const host = "127.0.0.1";
+  if (name.startsWith("vite") || name.startsWith("rolldown-vite")) {
+    return ["pnpm", "exec", "vite", "--host", host, "--port", String(port), "--strictPort"];
+  }
+  if (name.startsWith("webpack5")) {
+    return [
+      "pnpm",
+      "exec",
+      "webpack",
+      "serve",
+      "--config",
+      "webpack.config.cjs",
+      "--host",
+      host,
+      "--port",
+      String(port),
+    ];
+  }
+  if (name.startsWith("rsbuild2")) {
+    return ["pnpm", "exec", "rsbuild", "dev", "--host", host, "--port", String(port)];
+  }
+  if (name.startsWith("rspack2")) {
+    return [
+      "pnpm",
+      "exec",
+      "rspack",
+      "serve",
+      "--config",
+      "rspack.config.cjs",
+      "--host",
+      host,
+      "--port",
+      String(port),
+    ];
+  }
+  if (name.startsWith("parcel2")) {
+    return [
+      "pnpm",
+      "exec",
+      "parcel",
+      "index.html",
+      "--host",
+      host,
+      "--port",
+      String(port),
+      "--no-cache",
+    ];
+  }
+  if (name === "next16-webpack-dev") {
+    return ["pnpm", "exec", "next", "dev", "--webpack", "-H", host, "-p", String(port)];
+  }
+  if (name.startsWith("next16")) {
+    return ["pnpm", "exec", "next", "dev", "-H", host, "-p", String(port)];
+  }
+
+  throw new Error(`No dev command configured for ${name}`);
+}
+
+function startDevServer(name, caseDir, port) {
+  const [bin, ...args] = devCommand(name, port);
+  const child = spawn(bin, args, {
+    cwd: caseDir,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: {
+      ...process.env,
+      FORCE_COLOR: "0",
+      NEXT_TELEMETRY_DISABLED: "1",
     },
-  );
+  });
   const logs = [];
   child.stdout.on("data", (chunk) => logs.push(chunk.toString()));
   child.stderr.on("data", (chunk) => logs.push(chunk.toString()));
   child.once("exit", (code, signal) => {
-    logs.push(`\n[vite exited code=${code} signal=${signal}]\n`);
+    logs.push(`\n[dev server exited code=${code} signal=${signal}]\n`);
   });
 
   return { child, logs };
@@ -167,13 +235,13 @@ async function runCase(browser, name, index) {
 
   const port = await findFreePort(45200 + index * 10);
   const url = `http://127.0.0.1:${port}/`;
-  const server = startVite(caseDir, port);
+  const server = startDevServer(name, caseDir, port);
   try {
     await waitForHttp(url, server.child, server.logs, 60_000);
     const result = await verifyPage(browser, name, url);
     return { name, ...result };
   } catch (error) {
-    throw new Error(`${error.message}\nviteLogs=${server.logs.join("")}`);
+    throw new Error(`${error.message}\ndevServerLogs=${server.logs.join("")}`);
   } finally {
     if (server.child.exitCode == null) {
       server.child.kill("SIGTERM");
