@@ -9,7 +9,6 @@ const workspaceRoot = path.resolve(__dirname, "..");
 const packagesToPublish = [
   "crates/loro-wasm",
   "crates/loro-wasm-map",
-  "packages/fractional-index",
 ];
 
 function run(command, args, options = {}) {
