@@ -4502,6 +4502,11 @@ impl MapHandler {
         self.ensure_mergeable_container(key, counter::CounterHandler::new_detached())
     }
 
+    /// Ensure a mergeable Map child exists under `key` and return its handler.
+    ///
+    /// Prefer to avoid mergeable maps nested directly inside other mergeable maps: mergeable cids
+    /// embed their parent's cid bytes, so deep nesting inflates cid size (and every op/snapshot
+    /// reference to it). See [`MERGEABLE_NAMESPACE_PREFIX`](loro_common::MERGEABLE_NAMESPACE_PREFIX).
     pub fn ensure_mergeable_map(&self, key: &str) -> LoroResult<MapHandler> {
         self.ensure_mergeable_container(key, MapHandler::new_detached())
     }
