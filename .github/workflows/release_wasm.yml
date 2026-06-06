@@ -34,8 +34,7 @@ jobs:
 
       - name: Upgrade npm for trusted publishing
         run: |
-          corepack enable
-          corepack prepare npm@latest --activate
+          npm install -g npm@11
           npm --version
 
       - name: Setup Bun
