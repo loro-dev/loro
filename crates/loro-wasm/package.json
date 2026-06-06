@@ -15,6 +15,7 @@
     "url": "git+https://github.com/loro-dev/loro.git"
   },
   "main": "nodejs/index.js",
+  "browser": "browser/index.js",
   "module": "bundler/index.js",
   "types": "bundler/index.d.ts",
   "exports": {
