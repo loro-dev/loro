@@ -273,6 +273,61 @@ fn different_kind_request_after_snapshot_is_a_kind_change() {
     );
 }
 
+/// Shallow snapshot export must also preserve the LOSING kind's state in a concurrent-kind
+/// conflict. The loser is not reachable through the parent's winning marker — its only
+/// addressability is via the deterministic mergeable cid. The snapshot's alive-container walk has
+/// to include mergeable cids as retention roots, otherwise `retain_keys` would silently GC the
+/// loser, and a later `ensure_mergeable_<loser_kind>` on the receiver would resurface an empty
+/// child instead of preserved contents.
+#[test]
+fn shallow_snapshot_preserves_losing_kind_state() {
+    let a = doc(1);
+    let a_text = a.get_map("state").ensure_mergeable_text("k").unwrap();
+    a_text.insert(0, "from_a", PosType::Unicode).unwrap();
+    let a_text_id = a_text.id();
+    a.commit_then_renew();
+
+    // Advance A's clock past A's text marker, then rewrite the marker to Map (a kind change).
+    // The Map marker now wins LWW on A and is the visible kind; the Text child becomes the loser
+    // whose state lives only at its deterministic cid.
+    for i in 0..6 {
+        a.get_map("state")
+            .insert(&format!("noise_{i}"), i)
+            .unwrap();
+        a.commit_then_renew();
+    }
+    let a_map = a.get_map("state").ensure_mergeable_map("k").unwrap();
+    a_map.insert("from_a_map", true).unwrap();
+    a.commit_then_renew();
+
+    let frontiers = a.state_frontiers();
+    let snapshot = a
+        .export(ExportMode::ShallowSnapshot(std::borrow::Cow::Owned(
+            frontiers,
+        )))
+        .unwrap();
+
+    let b = doc(2);
+    b.import(&snapshot).unwrap();
+
+    // Sanity: Map marker won on B; Text is not the visible kind under "k".
+    let value = b.get_deep_value().to_json_value();
+    assert!(
+        value["state"]["k"].is_object(),
+        "Map marker wins on B; got {value}"
+    );
+
+    // The loser's Text state must have ridden through the shallow snapshot. Re-requesting it
+    // rewrites the marker to Text and resurfaces the preserved "from_a" content.
+    let b_text = b.get_map("state").ensure_mergeable_text("k").unwrap();
+    assert_eq!(b_text.id(), a_text_id, "deterministic cid is stable");
+    assert_eq!(
+        b_text.get_value().to_json_value(),
+        json!("from_a"),
+        "losing-kind state must survive shallow snapshot export"
+    );
+}
+
 /// Shallow snapshot export should preserve mergeable child state and parent
 /// edges on the receiver, the same as a full snapshot.
 #[test]

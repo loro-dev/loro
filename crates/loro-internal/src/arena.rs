@@ -97,9 +97,12 @@ impl ArenaContainers {
             self.parents.insert(idx, None);
             self.depth.push(NonZeroU16::new(1));
         } else if id.is_mergeable() {
-            // Mergeable Roots look like roots at the cid layer but conceptually live under a
-            // parent map. Push a placeholder depth so the vector stays in sync, then recurse to
-            // register the parent and link the edge via `set_parent`, which recomputes depth.
+            // Mergeable Roots are retention roots AND logical children. Push to `root_c_idx` so
+            // shallow snapshot's `retain_keys` does not GC the loser of a concurrent-kind conflict
+            // (whose state is reachable only by its deterministic cid, not through the parent
+            // marker); then `set_parent` for path/event resolution. `preferred_root_containers`
+            // filters them via `is_mergeable` so they stay out of top-level enumeration.
+            self.root_c_idx.push(idx);
             self.depth.push(None);
             if let Some((parent_id, _key, _kind)) = id.parse_mergeable() {
                 let parent_idx = self.register_container(&parent_id);
