@@ -7,6 +7,8 @@
     "test": "node ./scripts/run.mjs",
     "pretest:browser": "playwright install chromium",
     "test:browser": "LORO_SMOKE_MODE=json node ./scripts/run.mjs && LORO_SMOKE_MODE=json node ./scripts/browser-runtime.mjs",
+    "pretest:dev": "playwright install chromium",
+    "test:dev": "LORO_SMOKE_MODE=json node ./scripts/run.mjs vite5-dev vite6-dev vite7-dev vite5-web-mirror-dev && LORO_SMOKE_MODE=json node ./scripts/dev-runtime.mjs",
     "test:fast": "node ./scripts/run.mjs vite5 vite6 vite7 vite8 rolldown-vite webpack5 rsbuild2 rspack2 esbuild-default-copy esbuild-base64 rollup-default-copy rollup-base64 parcel2",
     "test:next": "node ./scripts/run.mjs next16-turbopack next16-webpack",
     "list": "node ./scripts/run.mjs --list"

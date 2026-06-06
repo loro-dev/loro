@@ -89,6 +89,13 @@ const cases = {
   vite6: viteCase("vite6", "vite", "^6.4.2"),
   vite7: viteCase("vite7", "vite", "^7.3.2"),
   vite8: viteCase("vite8", "vite", "^8.0.10"),
+  "vite5-dev": viteDevCase("vite5-dev", "^5.4.21"),
+  "vite6-dev": viteDevCase("vite6-dev", "^6.4.2"),
+  "vite7-dev": viteDevCase("vite7-dev", "^7.3.2"),
+  "vite5-web-mirror-dev": viteDevCase("vite5-web-mirror-dev", "^5.4.21", {
+    setup: setupViteWebMirror,
+    dependencies: { "loro-mirror": "^2.1.1" },
+  }),
   "rolldown-vite": viteCase("rolldown-vite", "rolldown-vite", "^7.3.1"),
   webpack5: {
     description: "Webpack 5 production build",
@@ -243,6 +250,24 @@ function viteCase(name, packageName, version) {
   };
 }
 
+function viteDevCase(name, version, options = {}) {
+  return {
+    description: `${name} dev server runtime`,
+    dependencies: options.dependencies ?? {},
+    devDependencies: {
+      vite: version,
+      "vite-plugin-wasm": "^3.6.0",
+      "vite-plugin-top-level-await": "^1.6.0",
+      rollup: "^4.60.2",
+      esbuild: "^0.27.7",
+      typescript: "^5.9.3",
+    },
+    setup: options.setup ?? setupViteDev,
+    command: ["pnpm", "exec", "vite", "build"],
+    inspect: { dir: "dist", wasmAsset: true },
+  };
+}
+
 async function setupBasic(dir, importPath) {
   await mkdir(path.join(dir, "src"), { recursive: true });
   await writeFile(path.join(dir, "index.html"), html);
@@ -254,6 +279,54 @@ async function setupVite(dir) {
   await writeFile(
     path.join(dir, "vite.config.js"),
     `export default { build: { outDir: "dist" } };\n`,
+  );
+}
+
+async function setupViteDev(dir) {
+  await setupBasic(dir, "loro-crdt");
+  await writeViteWasmConfig(dir);
+}
+
+async function setupViteWebMirror(dir) {
+  await mkdir(path.join(dir, "src"), { recursive: true });
+  await writeFile(path.join(dir, "index.html"), html);
+  await writeFile(
+    path.join(dir, "src/main.js"),
+    `import init, { LoroDoc } from "loro-crdt/web";
+import wasmUrl from "loro-crdt/web/loro_wasm_bg.wasm?url";
+import * as mirror from "loro-mirror";
+
+await init(wasmUrl);
+const doc = new LoroDoc();
+doc.getText("t").insert(0, "hi");
+const value = doc.toJSON();
+
+if (value.t !== "hi" || Object.keys(value).length !== 1) {
+  throw new Error(\`Unexpected Loro JSON: \${JSON.stringify(value)}\`);
+}
+
+globalThis.__LORO_JSON_SMOKE__ = value;
+globalThis.__LORO_MIRROR_KEYS__ = Object.keys(mirror);
+const app = document.getElementById("app");
+if (app) {
+  app.textContent = JSON.stringify(value);
+}
+`,
+  );
+  await writeViteWasmConfig(dir);
+}
+
+async function writeViteWasmConfig(dir) {
+  await writeFile(
+    path.join(dir, "vite.config.js"),
+    `import wasm from "vite-plugin-wasm";
+import topLevelAwait from "vite-plugin-top-level-await";
+
+export default {
+  plugins: [wasm(), topLevelAwait()],
+  build: { outDir: "dist", target: "esnext" },
+};
+`,
   );
 }
 

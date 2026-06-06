@@ -82,7 +82,7 @@ Load the source map in browser devtools; when devtools fetches the debug compani
 
 ## Bundler entries
 
-Bare `import { LoroDoc } from "loro-crdt"` in browser bundlers that respect the package `browser` field remaps the WASM glue to a synchronous browser build, which avoids Vite/Rolldown production chunk cycles around `.wasm` wrappers. Runtimes that need native `.wasm` module imports can still use the `bundler` entry, and apps that prefer explicit async initialization can use `loro-crdt/web`.
+Bare `import { LoroDoc } from "loro-crdt"` uses package conditional exports. Browser development builds can resolve the nested `browser` + `development` conditions to the bundler entry, while browser production builds can resolve the `browser` condition to a synchronous browser build that avoids Vite/Rolldown production chunk cycles around `.wasm` wrappers. Runtimes that need native `.wasm` module imports can still use the `bundler` entry, and apps that prefer explicit async initialization can use `loro-crdt/web`.
 
 Vite and Webpack understand `new URL("./loro_wasm_bg.wasm", import.meta.url)` and emit the WASM asset automatically. Plain esbuild and plain Rollup do not copy that asset by default. For those tools, either import `loro-crdt/base64` to inline the WASM into the JS bundle without top-level await, or keep the default `loro-crdt` import and copy `node_modules/loro-crdt/browser/loro_wasm_bg.wasm` next to the emitted JS bundle as a build step.
 

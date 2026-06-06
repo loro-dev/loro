@@ -37,6 +37,13 @@ pnpm --dir examples/bundler-smoke-tests run test:browser
 
 This command installs Playwright's Chromium browser if needed.
 
+To test Vite dev server dependency pre-bundling (`node_modules/.vite/deps`) in
+Chromium:
+
+```sh
+pnpm --dir examples/bundler-smoke-tests run test:dev
+```
+
 To test an already-published package instead of the local workspace build:
 
 ```sh
@@ -46,6 +53,11 @@ LORO_SMOKE_PACKAGE=loro-crdt@1.12.1 pnpm --dir examples/bundler-smoke-tests run 
 ## Matrix
 
 - `vite5`, `vite6`, `vite7`, `vite8`: bare `import "loro-crdt"`.
+- `vite5-dev`, `vite6-dev`, `vite7-dev`: bare `import "loro-crdt"` through
+  the Vite dev server with WASM/top-level-await plugins enabled.
+- `vite5-web-mirror-dev`: `import "loro-crdt/web"` plus `loro-mirror`, which
+  verifies that peer packages importing bare `loro-crdt` do not reintroduce a
+  broken dev-server WASM path.
 - `rolldown-vite`: bare `import "loro-crdt"` against Rolldown's Vite package.
 - `webpack5`: bare `import "loro-crdt"`.
 - `rsbuild2`: bare `import "loro-crdt"`.
