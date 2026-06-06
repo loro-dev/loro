@@ -37,6 +37,7 @@ mod counter_state;
 mod dead_containers_cache;
 mod list_state;
 mod map_state;
+mod mergeable;
 mod movable_list_state;
 mod richtext_state;
 mod tree_state;
@@ -812,6 +813,7 @@ impl DocState {
 
         diff.diff = diffs.into();
         self.frontiers = diff.new_version.clone().into_owned();
+
         if self.is_recording() {
             self.record_diff(diff)
         }
@@ -871,13 +873,16 @@ impl DocState {
     pub fn does_container_exist(&mut self, id: &ContainerID) -> bool {
         // A container may exist even if not yet registered in the arena.
         // Check arena first, then fall back to KV presence in the store.
-        if id.is_root() {
+        let is_mergeable = id.is_mergeable();
+        if id.is_root() && !is_mergeable {
             return true;
         }
 
-        if let Some(idx) = self.arena.id_to_idx(id) {
-            if self.arena.get_depth(idx).is_some() {
-                return true;
+        if !is_mergeable {
+            if let Some(idx) = self.arena.id_to_idx(id) {
+                if self.arena.get_depth(idx).is_some() {
+                    return true;
+                }
             }
         }
 
@@ -1192,6 +1197,17 @@ impl DocState {
             let Some(name) = self.root_container_name(idx) else {
                 continue;
             };
+            // Mergeable Roots live in a private cid namespace and are
+            // logically parented to a regular Map. They must not appear in
+            // the doc's top-level root enumeration — they are nested under
+            // their parent in deep value / events / paths.
+            if self
+                .arena
+                .idx_to_id(idx)
+                .is_some_and(|id| id.is_mergeable())
+            {
+                continue;
+            }
             let is_empty = self.root_container_is_empty(idx);
             match selected.entry(name.clone()) {
                 std::collections::hash_map::Entry::Vacant(entry) => {
@@ -1325,6 +1341,13 @@ impl DocState {
                 )
             }
             LoroValue::Map(mut map) => {
+                // A map's mergeable children are encoded as compact binary markers in the map's
+                // own value table (loro-dev/loro#759), so they are already present in `map` here.
+                // Derive the active children straight from that value — re-fetching the
+                // `MapState` would force the snapshot-backed container to decode and break the
+                // lazy-value invariant for roots.
+                let mergeable_children = self.mergeable_children_from_value(&id, &map);
+
                 let map_mut = map.make_mut();
                 for (_key, value) in map_mut.iter_mut() {
                     if value.is_container() {
@@ -1336,6 +1359,13 @@ impl DocState {
                         );
                         *value = new_value;
                     }
+                }
+                // Replace each marker with the nested deep value of its resolved child, keyed
+                // under the same logical key.
+                for (key, cid) in mergeable_children {
+                    let child_idx = self.arena.register_container(&cid);
+                    let new_value = self.get_container_deep_value_with_id(child_idx, Some(cid));
+                    map_mut.insert(key.to_string(), new_value);
                 }
 
                 LoroValue::Map(
@@ -1387,7 +1417,18 @@ impl DocState {
                 LoroValue::List(list)
             }
             LoroValue::Map(mut map) => {
-                if map.iter().all(|x| !x.1.is_container()) {
+                // A map's mergeable children are encoded as compact binary markers in the map's
+                // own value table (loro-dev/loro#759), so they are already present in `map` here.
+                // Derive the active children straight from that value — re-fetching the
+                // `MapState` would force the snapshot-backed container to decode and break the
+                // lazy-value invariant for roots.
+                let mergeable_children = self
+                    .arena
+                    .idx_to_id(container)
+                    .map(|parent_id| self.mergeable_children_from_value(&parent_id, &map))
+                    .unwrap_or_default();
+
+                if mergeable_children.is_empty() && map.iter().all(|x| !x.1.is_container()) {
                     return LoroValue::Map(map);
                 }
 
@@ -1399,6 +1440,13 @@ impl DocState {
                         let new_value = self.get_container_deep_value(container_idx);
                         *value = new_value;
                     }
+                }
+                // Replace each marker with the nested deep value of its resolved child, keyed
+                // under the same logical key.
+                for (key, cid) in mergeable_children {
+                    let child_idx = self.arena.register_container(&cid);
+                    let new_value = self.get_container_deep_value(child_idx);
+                    map_mut.insert(key.to_string(), new_value);
                 }
                 LoroValue::Map(map)
             }
@@ -1464,6 +1512,27 @@ impl DocState {
                     if let LoroValue::Container(id) = value {
                         ans.push(id.clone());
                     }
+                }
+                // Mergeable children are resolved from compact binary markers stored in this
+                // map's own value table (loro-dev/loro#759): the active child at each key is the
+                // deterministic cid for whichever marker the map's regular LWW resolved to.
+                // Derive them from the value we already fetched lazily above — re-reading the
+                // decoded `MapState` would force a snapshot-backed map to materialize its full
+                // state. Pull them in so alive-container walks (notably shallow snapshot export)
+                // include mergeable cids and don't filter their KV out by `retain_keys`.
+                let mergeable_cids: Vec<ContainerID> = self
+                    .arena
+                    .idx_to_id(idx)
+                    .map(|parent_id| {
+                        self.mergeable_children_from_value(&parent_id, &map)
+                            .into_iter()
+                            .map(|(_key, cid)| cid)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                for cid in mergeable_cids {
+                    self.arena.register_container(&cid);
+                    ans.push(cid);
                 }
             }
             _ => {}
@@ -1552,16 +1621,17 @@ impl DocState {
     }
 
     pub(crate) fn get_reachable(&mut self, id: &ContainerID) -> bool {
-        if matches!(id, ContainerID::Root { .. }) {
+        if id.is_root() && !id.is_mergeable() {
             return true;
         }
 
-        // If not registered yet, check KV presence, then register lazily
+        // If not registered yet, check KV presence for ordinary containers, then register lazily.
+        // Mergeable children can be active through a parent marker before they have their
+        // own KV state, so their reachability must be resolved by the logical edge walk below.
         if self.arena.id_to_idx(id).is_none() {
-            if !self.does_container_exist(id) {
+            if !id.is_mergeable() && !self.does_container_exist(id) {
                 return false;
             }
-            // Ensure it is registered so ancestor walk can resolve parents via resolver
             self.arena.register_container(id);
         }
 
@@ -1569,15 +1639,12 @@ impl DocState {
         loop {
             let id = self.arena.idx_to_id(idx).unwrap();
             if let Some(parent_idx) = self.arena.get_parent(idx) {
-                let Some(parent_state) = self.store.get_container_mut(parent_idx) else {
-                    return false;
-                };
-                if !parent_state.contains_child(&id) {
+                if !self.contains_logical_child(parent_idx, &id) {
                     return false;
                 }
                 idx = parent_idx;
             } else {
-                if id.is_root() {
+                if id.is_root() && !id.is_mergeable() {
                     return true;
                 }
 
@@ -1593,8 +1660,7 @@ impl DocState {
         loop {
             let id = self.arena.idx_to_id(idx).unwrap();
             if let Some(parent_idx) = self.arena.get_parent(idx) {
-                let parent_state = self.store.get_container_mut(parent_idx)?;
-                let Some(prop) = parent_state.get_child_index(&id) else {
+                let Some(prop) = self.get_logical_child_index(parent_idx, &id) else {
                     tracing::warn!("Missing in parent's children");
                     return None;
                 };
@@ -1602,6 +1668,10 @@ impl DocState {
                 idx = parent_idx;
             } else {
                 // this container may be deleted
+                if id.is_mergeable() {
+                    tracing::info!(id = %id, "Missing parent - mergeable container is inactive");
+                    return None;
+                }
                 let Ok(prop) = id.clone().into_root() else {
                     let id = format!("{}", &id);
                     tracing::info!(?id, "Missing parent - container is deleted");
@@ -1789,6 +1859,7 @@ impl DocState {
             let index = &path[i];
             match state_idx {
                 CurContainer::Container(idx) => {
+                    let parent_id = self.arena.idx_to_id(idx);
                     let parent_state = self.store.get_container_mut(idx)?;
                     match parent_state {
                         State::ListState(l) => {
@@ -1806,10 +1877,19 @@ impl DocState {
                             state_idx = CurContainer::Container(self.arena.register_container(c));
                         }
                         State::MapState(m) => {
-                            let Some(LoroValue::Container(c)) = m.get(index.as_key()?) else {
-                                return None;
+                            let key = index.as_key()?;
+                            let value = m.get(key)?;
+                            let c = match value {
+                                LoroValue::Container(c) => c.clone(),
+                                value => {
+                                    let parent_id = parent_id?;
+                                    let kind = loro_common::parse_mergeable_marker(
+                                        &parent_id, key, value,
+                                    )?;
+                                    ContainerID::new_mergeable(&parent_id, key, kind)
+                                }
                             };
-                            state_idx = CurContainer::Container(self.arena.register_container(c));
+                            state_idx = CurContainer::Container(self.arena.register_container(&c));
                         }
                         State::RichtextState(_) => return None,
                         State::TreeState(_) => {
@@ -1882,14 +1962,27 @@ impl DocState {
             }
         };
 
-        let parent_state = self.store.get_or_create_mut(parent_idx);
         let index = path.last().unwrap();
+        let parent_id = self.arena.idx_to_id(parent_idx);
+        let parent_state = self.store.get_or_create_mut(parent_idx);
         let value: LoroValue = match parent_state {
             State::ListState(l) => l.get(*index.as_seq()?).cloned()?,
             State::MovableListState(l) => l.get(*index.as_seq()?, IndexType::ForUser).cloned()?,
             State::MapState(m) => {
                 if let Some(key) = index.as_key() {
-                    m.get(key).cloned()?
+                    let value = m.get(key).cloned()?;
+                    if let Some(parent_id) = &parent_id {
+                        if let Some(kind) =
+                            loro_common::parse_mergeable_marker(parent_id, key, &value)
+                        {
+                            let cid = ContainerID::new_mergeable(parent_id, key, kind);
+                            LoroValue::Container(cid)
+                        } else {
+                            value
+                        }
+                    } else {
+                        value
+                    }
                 } else if let CurContainer::TreeNode { tree, node } = state_idx {
                     match index {
                         Index::Seq(index) => {

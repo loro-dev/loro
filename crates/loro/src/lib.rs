@@ -1986,6 +1986,23 @@ impl Default for LoroList {
 ///
 /// It's LWW(Last-Write-Win) Map. It can support Multi-Value Map in the future.
 ///
+/// # Mergeable child containers
+///
+/// The `ensure_mergeable_*` methods create deterministic child containers under a
+/// map key. If two peers independently call the same method with the same
+/// `(parent map, key, container type)`, they get the same child container id and
+/// their subsequent edits merge in that child.
+///
+/// Internally, activation writes a specially constructed `LoroValue::Binary`
+/// marker into the parent map slot. String values do not activate mergeable
+/// children. If the key already holds a non-mergeable value, `ensure_mergeable_*`
+/// returns an error and leaves the value unchanged.
+///
+/// Deleting the map key clears the ref and hides the mergeable child, but the
+/// child's state remains addressable by its deterministic id. Calling the same
+/// `ensure_mergeable_*` method again writes the ref back and resurfaces the
+/// preserved child state.
+///
 /// # Example
 /// ```
 /// # use loro::{LoroDoc, ToJson, ExpandType, LoroText, LoroValue};
@@ -2163,6 +2180,83 @@ impl LoroMap {
         Ok(C::from_handler(
             self.handler
                 .get_or_create_container(key, child.to_handler())?,
+        ))
+    }
+
+    /// Ensure a mergeable Counter exists at this map key and return it.
+    ///
+    /// See [`LoroMap`]'s [mergeable child containers](#mergeable-child-containers)
+    /// section for merge semantics.
+    ///
+    /// Returns [`LoroError::ArgErr`] if the key already holds a non-mergeable value; the existing
+    /// value is left unchanged.
+    #[cfg(feature = "counter")]
+    pub fn ensure_mergeable_counter(&self, key: &str) -> LoroResult<LoroCounter> {
+        Ok(LoroCounter::from_handler(
+            self.handler.ensure_mergeable_counter(key)?,
+        ))
+    }
+
+    /// Ensure a mergeable Map exists at this map key and return it.
+    ///
+    /// See [`LoroMap`]'s [mergeable child containers](#mergeable-child-containers)
+    /// section for merge semantics.
+    ///
+    /// Returns [`LoroError::ArgErr`] if the key already holds a non-mergeable value; the existing
+    /// value is left unchanged.
+    pub fn ensure_mergeable_map(&self, key: &str) -> LoroResult<LoroMap> {
+        Ok(LoroMap::from_handler(self.handler.ensure_mergeable_map(key)?))
+    }
+
+    /// Ensure a mergeable List exists at this map key and return it.
+    ///
+    /// See [`LoroMap`]'s [mergeable child containers](#mergeable-child-containers)
+    /// section for merge semantics.
+    ///
+    /// Returns [`LoroError::ArgErr`] if the key already holds a non-mergeable value; the existing
+    /// value is left unchanged.
+    pub fn ensure_mergeable_list(&self, key: &str) -> LoroResult<LoroList> {
+        Ok(LoroList::from_handler(
+            self.handler.ensure_mergeable_list(key)?,
+        ))
+    }
+
+    /// Ensure a mergeable MovableList exists at this map key and return it.
+    ///
+    /// See [`LoroMap`]'s [mergeable child containers](#mergeable-child-containers)
+    /// section for merge semantics.
+    ///
+    /// Returns [`LoroError::ArgErr`] if the key already holds a non-mergeable value; the existing
+    /// value is left unchanged.
+    pub fn ensure_mergeable_movable_list(&self, key: &str) -> LoroResult<LoroMovableList> {
+        Ok(LoroMovableList::from_handler(
+            self.handler.ensure_mergeable_movable_list(key)?,
+        ))
+    }
+
+    /// Ensure a mergeable Text exists at this map key and return it.
+    ///
+    /// See [`LoroMap`]'s [mergeable child containers](#mergeable-child-containers)
+    /// section for merge semantics.
+    ///
+    /// Returns [`LoroError::ArgErr`] if the key already holds a non-mergeable value; the existing
+    /// value is left unchanged.
+    pub fn ensure_mergeable_text(&self, key: &str) -> LoroResult<LoroText> {
+        Ok(LoroText::from_handler(
+            self.handler.ensure_mergeable_text(key)?,
+        ))
+    }
+
+    /// Ensure a mergeable Tree exists at this map key and return it.
+    ///
+    /// See [`LoroMap`]'s [mergeable child containers](#mergeable-child-containers)
+    /// section for merge semantics.
+    ///
+    /// Returns [`LoroError::ArgErr`] if the key already holds a non-mergeable value; the existing
+    /// value is left unchanged.
+    pub fn ensure_mergeable_tree(&self, key: &str) -> LoroResult<LoroTree> {
+        Ok(LoroTree::from_handler(
+            self.handler.ensure_mergeable_tree(key)?,
         ))
     }
 

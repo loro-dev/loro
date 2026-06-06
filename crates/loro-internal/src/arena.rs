@@ -92,10 +92,19 @@ impl ArenaContainers {
         self.container_idx_to_id.push(id.clone());
         let idx = ContainerIdx::from_index_and_type(idx as u32, id.container_type());
         self.container_id_to_idx.insert(id.clone(), idx);
-        if id.is_root() {
+        if id.is_root() && !id.is_mergeable() {
             self.root_c_idx.push(idx);
             self.parents.insert(idx, None);
             self.depth.push(NonZeroU16::new(1));
+        } else if id.is_mergeable() {
+            // Mergeable Roots look like roots at the cid layer but conceptually live under a
+            // parent map. Push a placeholder depth so the vector stays in sync, then recurse to
+            // register the parent and link the edge via `set_parent`, which recomputes depth.
+            self.depth.push(None);
+            if let Some((parent_id, _key, _kind)) = id.parse_mergeable() {
+                let parent_idx = self.register_container(&parent_id);
+                self.set_parent(idx, Some(parent_idx));
+            }
         } else {
             self.depth.push(None);
         }
@@ -337,7 +346,7 @@ impl SharedArena {
         let (child_id, resolver) = {
             let containers = self.inner.containers.read();
             let child_id = containers.container_id(child).unwrap();
-            if child_id.is_root() {
+            if child_id.is_root() && !child_id.is_mergeable() {
                 // TODO: PERF: we can speed this up by use a special bit in ContainerIdx to indicate
                 // whether the target is a root container
                 return None;
@@ -659,11 +668,11 @@ fn get_depth(
         *p
     } else {
         let id = idx_to_id.get(target.to_index() as usize).unwrap();
-        if id.is_root() {
+        if id.is_root() && !id.is_mergeable() {
             None
         } else if let Some(parent_resolver) = parent_resolver.as_ref() {
             let parent_id = parent_resolver(id.clone())?;
-            let parent_is_root = parent_id.is_root();
+            let parent_is_top_level_root = parent_id.is_root() && !parent_id.is_mergeable();
             let mut parent_was_new = false;
             // If the parent is not registered yet, register it lazily instead of unwrapping.
             let parent_idx = if let Some(idx) = id_to_idx.get(&parent_id).copied() {
@@ -675,7 +684,7 @@ fn get_depth(
                     ContainerIdx::from_index_and_type(new_index as u32, parent_id.container_type());
                 id_to_idx.insert(parent_id.clone(), new_idx);
                 // Keep depth vector in sync with containers list.
-                if parent_is_root {
+                if parent_is_top_level_root {
                     depth.push(NonZeroU16::new(1));
                 } else {
                     depth.push(None);
@@ -684,7 +693,7 @@ fn get_depth(
                 new_idx
             };
 
-            if parent_is_root {
+            if parent_is_top_level_root {
                 if parent_was_new {
                     parents.insert(parent_idx, None);
                     root_c_idx.push(parent_idx);
