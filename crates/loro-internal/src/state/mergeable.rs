@@ -1,11 +1,11 @@
 //! Mergeable-container edge resolution on `DocState`.
 //!
-//! Mergeable child containers (created via `MapHandler::get_mergeable_*`) use deterministic
+//! Mergeable child containers (created via `MapHandler::ensure_mergeable_*`) use deterministic
 //! `ContainerID::Root` ids in a reserved namespace. The cid encodes `(parent, key, kind)`, while
 //! the parent map's compact binary child ref is the single source of truth for whether that child
 //! is currently active.
 //!
-//! The ref is intentionally stored as binary user data rather than a reserved string. This keeps
+//! The ref is intentionally stored as a specially constructed binary marker value. This keeps
 //! user-editable strings from being reinterpreted as internal container topology, and lets the
 //! resolver fail closed unless the ref's digest matches the exact `(parent, key, kind)` being
 //! resolved.
@@ -29,7 +29,7 @@ impl DocState {
         child_id: &ContainerID,
     ) -> Option<Index> {
         if let Some((parent_id, key, kind)) = child_id.parse_mergeable() {
-            return self.get_mergeable_child_index(parent_idx, &parent_id, &key, kind);
+            return self.resolve_mergeable_child_index(parent_idx, &parent_id, &key, kind);
         }
 
         self.store
@@ -45,7 +45,7 @@ impl DocState {
         self.get_logical_child_index(parent_idx, child_id).is_some()
     }
 
-    fn get_mergeable_child_index(
+    fn resolve_mergeable_child_index(
         &mut self,
         parent_idx: ContainerIdx,
         encoded_parent_id: &ContainerID,

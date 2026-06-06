@@ -4413,7 +4413,7 @@ impl MapHandler {
         self.insert_container(key, child)
     }
 
-    /// Shared implementation for all `get_mergeable_*` methods.
+    /// Shared implementation for all `ensure_mergeable_*` methods.
     ///
     /// For detached handlers (no doc state yet), falls back to
     /// [`Self::get_or_create_container`].
@@ -4431,7 +4431,7 @@ impl MapHandler {
     /// built from the deterministic cid. By construction this is unreachable
     /// because the cid carries `child.kind()`; the check guards against
     /// future drift between `from_handler` and `kind`.
-    fn get_mergeable_container<C: HandlerTrait>(&self, key: &str, child: C) -> LoroResult<C> {
+    fn ensure_mergeable_container<C: HandlerTrait>(&self, key: &str, child: C) -> LoroResult<C> {
         let MaybeDetached::Attached(parent) = &self.inner else {
             return self.get_or_create_container(key, child);
         };
@@ -4442,9 +4442,10 @@ impl MapHandler {
         // `get_`-named API.
         //
         // This guard is also part of the marker-format safety story: user-editable fields should
-        // not become mergeable child edges just because they contain a reserved-looking value.
-        // Only the exact binary ref for this `(parent, key, kind)` is accepted as an existing
-        // mergeable occupant; everything else remains ordinary user data and blocks creation.
+        // not become mergeable child edges just because they contain a user-authored string or
+        // arbitrary bytes. Only the exact binary ref for this `(parent, key, kind)` is accepted as
+        // an existing mergeable occupant; everything else remains ordinary user data and blocks
+        // creation.
         if let Some(existing) = self.get(key) {
             if !matches!(existing, LoroValue::Null)
                 && loro_common::parse_mergeable_marker(&parent.id, key, &existing).is_none()
@@ -4467,9 +4468,9 @@ impl MapHandler {
         // op is what realizes the child and drives all read-time resolution and conflict
         // resolution.
         //
-        // This is deliberately binary rather than a string sentinel. End users can often edit map
-        // fields such as titles or metadata directly; using a string-level reserved word would let
-        // curious or malicious user input collide with Loro's internal container-edge structure.
+        // This is deliberately a specially constructed binary value. End users can often edit map
+        // fields such as titles or metadata directly; those strings must stay user data instead of
+        // being treated as internal container-edge structure.
         // The ref's small digest binds it to this exact `(parent, key, kind)`, which makes
         // accidental construction or wrong-slot copying fail closed without storing the full child
         // cid bytes.
@@ -4496,28 +4497,28 @@ impl MapHandler {
     }
 
     #[cfg(feature = "counter")]
-    pub fn get_mergeable_counter(&self, key: &str) -> LoroResult<counter::CounterHandler> {
-        self.get_mergeable_container(key, counter::CounterHandler::new_detached())
+    pub fn ensure_mergeable_counter(&self, key: &str) -> LoroResult<counter::CounterHandler> {
+        self.ensure_mergeable_container(key, counter::CounterHandler::new_detached())
     }
 
-    pub fn get_mergeable_map(&self, key: &str) -> LoroResult<MapHandler> {
-        self.get_mergeable_container(key, MapHandler::new_detached())
+    pub fn ensure_mergeable_map(&self, key: &str) -> LoroResult<MapHandler> {
+        self.ensure_mergeable_container(key, MapHandler::new_detached())
     }
 
-    pub fn get_mergeable_list(&self, key: &str) -> LoroResult<ListHandler> {
-        self.get_mergeable_container(key, ListHandler::new_detached())
+    pub fn ensure_mergeable_list(&self, key: &str) -> LoroResult<ListHandler> {
+        self.ensure_mergeable_container(key, ListHandler::new_detached())
     }
 
-    pub fn get_mergeable_movable_list(&self, key: &str) -> LoroResult<MovableListHandler> {
-        self.get_mergeable_container(key, MovableListHandler::new_detached())
+    pub fn ensure_mergeable_movable_list(&self, key: &str) -> LoroResult<MovableListHandler> {
+        self.ensure_mergeable_container(key, MovableListHandler::new_detached())
     }
 
-    pub fn get_mergeable_text(&self, key: &str) -> LoroResult<TextHandler> {
-        self.get_mergeable_container(key, TextHandler::new_detached())
+    pub fn ensure_mergeable_text(&self, key: &str) -> LoroResult<TextHandler> {
+        self.ensure_mergeable_container(key, TextHandler::new_detached())
     }
 
-    pub fn get_mergeable_tree(&self, key: &str) -> LoroResult<TreeHandler> {
-        self.get_mergeable_container(key, TreeHandler::new_detached())
+    pub fn ensure_mergeable_tree(&self, key: &str) -> LoroResult<TreeHandler> {
+        self.ensure_mergeable_container(key, TreeHandler::new_detached())
     }
 
     pub fn contains_key(&self, key: &str) -> bool {

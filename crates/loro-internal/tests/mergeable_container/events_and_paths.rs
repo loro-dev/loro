@@ -14,7 +14,7 @@ use serde_json::json;
 fn get_path_returns_logical_parent_path_for_mergeable_child() {
     let doc = doc(1);
     let root = doc.get_map("state");
-    let counter = root.get_mergeable_counter("revision").unwrap();
+    let counter = root.ensure_mergeable_counter("revision").unwrap();
     // Exercise the cid path directly; child-side wiring needed to keep
     // mutating ops alive arrives in a later commit.
     let _ = counter.increment(1.0);
@@ -38,7 +38,7 @@ fn get_path_returns_logical_parent_path_for_mergeable_child() {
 fn deep_value_nests_mergeable_child_under_parent_and_hides_synthetic_root() {
     let doc = doc(1);
     let root = doc.get_map("state");
-    let counter = root.get_mergeable_counter("revision").unwrap();
+    let counter = root.ensure_mergeable_counter("revision").unwrap();
     counter.increment(2.0).unwrap();
 
     assert_eq!(
@@ -47,7 +47,7 @@ fn deep_value_nests_mergeable_child_under_parent_and_hides_synthetic_root() {
     );
 }
 
-/// `get_mergeable_*` writes a marker op into the parent map, which
+/// `ensure_mergeable_*` writes a marker op into the parent map, which
 /// realizes the child immediately (loro-dev/loro#759). So an unmutated
 /// mergeable child IS visible in deep value, rendered as its empty default.
 /// Because the marker is a real op, every peer that imports it agrees
@@ -55,7 +55,7 @@ fn deep_value_nests_mergeable_child_under_parent_and_hides_synthetic_root() {
 #[test]
 fn deep_value_shows_unmutated_mergeable_child_as_empty() {
     let a = doc(1);
-    let _child = a.get_map("state").get_mergeable_map("nested").unwrap();
+    let _child = a.get_map("state").ensure_mergeable_map("nested").unwrap();
     a.commit_then_renew();
 
     assert_eq!(
@@ -74,7 +74,7 @@ fn deep_value_shows_unmutated_mergeable_child_as_empty() {
 fn parent_map_subscription_receives_mergeable_child_events() {
     let doc = doc(1);
     let root = doc.get_map("state");
-    let counter = root.get_mergeable_counter("revision").unwrap();
+    let counter = root.ensure_mergeable_counter("revision").unwrap();
 
     let received: Arc<Mutex<Vec<Vec<Index>>>> = Arc::new(Mutex::new(Vec::new()));
     let received_clone = received.clone();
@@ -114,7 +114,7 @@ fn mergeable_child_subscription_receives_own_events() {
     let doc = doc(1);
     let counter = doc
         .get_map("state")
-        .get_mergeable_counter("revision")
+        .ensure_mergeable_counter("revision")
         .unwrap();
 
     let count: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
@@ -149,7 +149,7 @@ fn undo_manager_reverts_mergeable_counter_mutation() {
     let doc = doc(1);
     let counter = doc
         .get_map("state")
-        .get_mergeable_counter("revision")
+        .ensure_mergeable_counter("revision")
         .unwrap();
     let undo = UndoManager::new(&doc);
 
@@ -186,7 +186,7 @@ fn top_level_root_enumeration_skips_mergeable_roots() {
 
     let doc = doc(1);
     let root = doc.get_map("state");
-    let counter = root.get_mergeable_counter("revision").unwrap();
+    let counter = root.ensure_mergeable_counter("revision").unwrap();
     counter.increment(1.0).unwrap();
     doc.commit_then_renew();
 
@@ -242,7 +242,7 @@ fn has_container_reports_false_for_unwritten_mergeable_child() {
     let root = doc.get_map("state");
 
     // Build the deterministic mergeable cid by hand, WITHOUT calling
-    // get_mergeable_counter (which would write the marker).
+    // ensure_mergeable_counter (which would write the marker).
     let parent_id = root.id();
     let unwritten_cid = ContainerID::new_mergeable(&parent_id, "revision", ContainerType::Counter);
     assert!(unwritten_cid.is_mergeable());
@@ -252,7 +252,7 @@ fn has_container_reports_false_for_unwritten_mergeable_child() {
     );
 
     // Now actually create and mutate the child. has_container must flip to true.
-    let counter = root.get_mergeable_counter("revision").unwrap();
+    let counter = root.ensure_mergeable_counter("revision").unwrap();
     counter.increment(1.0).unwrap();
     assert_eq!(counter.id(), unwritten_cid, "cid is deterministic");
     assert!(

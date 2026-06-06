@@ -97,7 +97,7 @@ pub enum MapAction {
     },
     Clear,
     #[cfg(feature = "mergeable")]
-    GetMergeable {
+    EnsureMergeable {
         key: u8,
         kind: ContainerType,
     },
@@ -116,9 +116,9 @@ impl Debug for MapAction {
             MapAction::Delete { key } => write!(f, "MapAction::Delete {{ key: {} }}", key),
             MapAction::Clear => write!(f, "MapAction::Clear"),
             #[cfg(feature = "mergeable")]
-            MapAction::GetMergeable { key, kind } => write!(
+            MapAction::EnsureMergeable { key, kind } => write!(
                 f,
-                "MapAction::GetMergeable {{ key: {}, kind: {:?} }}",
+                "MapAction::EnsureMergeable {{ key: {}, kind: {:?} }}",
                 key, kind
             ),
         }
@@ -132,7 +132,7 @@ impl MapAction {
             MapAction::Delete { key, .. } => *key,
             MapAction::Clear => 0,
             #[cfg(feature = "mergeable")]
-            MapAction::GetMergeable { key, .. } => *key,
+            MapAction::EnsureMergeable { key, .. } => *key,
         }
     }
 
@@ -142,7 +142,7 @@ impl MapAction {
             MapAction::Delete { .. } => "null".to_string(),
             MapAction::Clear => "null".to_string(),
             #[cfg(feature = "mergeable")]
-            MapAction::GetMergeable { kind, .. } => format!("mergeable {:?}", kind),
+            MapAction::EnsureMergeable { kind, .. } => format!("mergeable {:?}", kind),
         }
     }
 }
@@ -163,7 +163,7 @@ impl FromGenericAction for MapAction {
             },
             2 => MapAction::Clear,
             #[cfg(feature = "mergeable")]
-            3 => MapAction::GetMergeable {
+            3 => MapAction::EnsureMergeable {
                 key: (action.key % 256) as u8,
                 kind: match action.value {
                     FuzzValue::Container(c) => c,
@@ -204,26 +204,26 @@ impl Actionable for MapAction {
                 None
             }
             #[cfg(feature = "mergeable")]
-            MapAction::GetMergeable { key, kind } => {
+            MapAction::EnsureMergeable { key, kind } => {
                 let key = &key.to_string();
                 // Type-conflict rejection (`ArgErr`) is an expected outcome — swallow it
                 // here rather than via `unwrap` so unrelated `ArgErr` sources still panic.
                 let result = match kind {
-                    ContainerType::Map => handler.get_mergeable_map(key).map(|m| m.to_container()),
+                    ContainerType::Map => handler.ensure_mergeable_map(key).map(|m| m.to_container()),
                     ContainerType::List => {
-                        handler.get_mergeable_list(key).map(|l| l.to_container())
+                        handler.ensure_mergeable_list(key).map(|l| l.to_container())
                     }
                     ContainerType::MovableList => handler
-                        .get_mergeable_movable_list(key)
+                        .ensure_mergeable_movable_list(key)
                         .map(|l| l.to_container()),
                     ContainerType::Text => {
-                        handler.get_mergeable_text(key).map(|t| t.to_container())
+                        handler.ensure_mergeable_text(key).map(|t| t.to_container())
                     }
                     ContainerType::Tree => {
-                        handler.get_mergeable_tree(key).map(|t| t.to_container())
+                        handler.ensure_mergeable_tree(key).map(|t| t.to_container())
                     }
                     ContainerType::Counter => {
-                        handler.get_mergeable_counter(key).map(|c| c.to_container())
+                        handler.ensure_mergeable_counter(key).map(|c| c.to_container())
                     }
                     ContainerType::Unknown(_) => return None,
                 };
@@ -245,7 +245,7 @@ impl Actionable for MapAction {
             MapAction::Delete { .. } => None,
             MapAction::Clear => None,
             #[cfg(feature = "mergeable")]
-            MapAction::GetMergeable { kind, .. } => Some(kind),
+            MapAction::EnsureMergeable { kind, .. } => Some(kind),
         }
     }
 

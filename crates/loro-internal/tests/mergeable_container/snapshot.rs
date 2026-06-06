@@ -20,9 +20,9 @@ use serde_json::json;
 fn snapshot_roundtrip_preserves_mergeable_parent_edges_and_values() {
     let source = doc(1);
     let root = source.get_map("state");
-    let nested = root.get_mergeable_map("profile").unwrap();
+    let nested = root.ensure_mergeable_map("profile").unwrap();
     nested.insert("name", "Ada").unwrap();
-    let counter = nested.get_mergeable_counter("revision").unwrap();
+    let counter = nested.ensure_mergeable_counter("revision").unwrap();
     counter.increment(3.0).unwrap();
     let counter_id = counter.id();
 
@@ -55,15 +55,15 @@ fn snapshot_roundtrip_preserves_mergeable_parent_edges_and_values() {
 
     let imported_counter = imported
         .get_map("state")
-        .get_mergeable_map("profile")
+        .ensure_mergeable_map("profile")
         .unwrap()
-        .get_mergeable_counter("revision")
+        .ensure_mergeable_counter("revision")
         .unwrap();
     assert_eq!(imported_counter.id(), counter_id);
 }
 
-/// Peer B imports updates that originated from peer A's `get_mergeable_counter`
-/// + `increment` calls, but peer B never locally called `get_mergeable_*`.
+/// Peer B imports updates that originated from peer A's `ensure_mergeable_counter`
+/// + `increment` calls, but peer B never locally called `ensure_mergeable_*`.
 /// After import, peer B's deep value, container enumeration, and path
 /// resolution for the mergeable child must all reflect the imported state.
 #[test]
@@ -74,13 +74,13 @@ fn update_import_resolves_mergeable_logical_edge_on_receiver() {
 
     let a_counter = a
         .get_map("state")
-        .get_mergeable_counter("revision")
+        .ensure_mergeable_counter("revision")
         .unwrap();
     a_counter.increment(5.0).unwrap();
     let a_counter_id = a_counter.id();
     a.commit_then_renew();
 
-    // Peer B imports A's updates WITHOUT first calling get_mergeable_counter.
+    // Peer B imports A's updates WITHOUT first calling ensure_mergeable_counter.
     let updates = a.export(ExportMode::updates(&b.oplog_vv())).unwrap();
     b.import(&updates).unwrap();
 
@@ -103,14 +103,14 @@ fn update_import_resolves_mergeable_logical_edge_on_receiver() {
     // the same cid as the one peer A wrote, and the existing value.
     let b_counter = b
         .get_map("state")
-        .get_mergeable_counter("revision")
+        .ensure_mergeable_counter("revision")
         .unwrap();
     assert_eq!(b_counter.id(), a_counter_id);
     assert_eq!(b_counter.get_value().to_json_value(), json!(5.0));
 }
 
 /// Create a mergeable counter but never mutate it, then export a snapshot.
-/// `get_mergeable_*` writes a marker into the parent map's value table,
+/// `ensure_mergeable_*` writes a marker into the parent map's value table,
 /// which is ordinary map state and rides through the snapshot like any other
 /// value (loro-dev/loro#759). So the receiving peer resolves the marker
 /// to the same deterministic cid and sees the child as its empty default — no
@@ -121,7 +121,7 @@ fn unmutated_mergeable_child_survives_snapshot_via_marker() {
     let a = doc(1);
     let counter = a
         .get_map("state")
-        .get_mergeable_counter("revision")
+        .ensure_mergeable_counter("revision")
         .unwrap();
     let counter_id = counter.id();
     // Deliberately no increment. Commit anyway so any pending state is flushed.
@@ -156,7 +156,7 @@ fn unmutated_mergeable_child_survives_snapshot_via_marker() {
 
     let b_counter = b
         .get_map("state")
-        .get_mergeable_counter("revision")
+        .ensure_mergeable_counter("revision")
         .unwrap();
     assert_eq!(b_counter.id(), counter_id, "cid still deterministic");
     assert_eq!(b_counter.get_value().to_json_value(), json!(0.0));
@@ -168,13 +168,13 @@ fn unmutated_mergeable_child_survives_snapshot_via_marker() {
 #[test]
 fn snapshot_import_same_type_collision_converges() {
     let a = doc(1);
-    let a_text = a.get_map("state").get_mergeable_text("notes").unwrap();
+    let a_text = a.get_map("state").ensure_mergeable_text("notes").unwrap();
     a_text.insert(0, "A", PosType::Unicode).unwrap();
     a.commit_then_renew();
     let snapshot = a.export(ExportMode::Snapshot).unwrap();
 
     let b = doc(2);
-    let b_text = b.get_map("state").get_mergeable_text("notes").unwrap();
+    let b_text = b.get_map("state").ensure_mergeable_text("notes").unwrap();
     b_text.insert(0, "B", PosType::Unicode).unwrap();
     b.commit_then_renew();
     assert_eq!(a_text.id(), b_text.id(), "cids must match before import");
@@ -199,13 +199,13 @@ fn snapshot_import_same_type_collision_converges() {
 #[test]
 fn snapshot_import_different_type_collision_resolves_by_lww() {
     let a = doc(1);
-    let a_text = a.get_map("state").get_mergeable_text("k").unwrap();
+    let a_text = a.get_map("state").ensure_mergeable_text("k").unwrap();
     a_text.insert(0, "hello", PosType::Unicode).unwrap();
     a.commit_then_renew();
     let snapshot = a.export(ExportMode::Snapshot).unwrap();
 
     let b = doc(2);
-    let b_map = b.get_map("state").get_mergeable_map("k").unwrap();
+    let b_map = b.get_map("state").ensure_mergeable_map("k").unwrap();
     b_map.insert("flag", true).unwrap();
     b.commit_then_renew();
     assert_ne!(
@@ -228,18 +228,18 @@ fn snapshot_import_different_type_collision_resolves_by_lww() {
 
     // Both getters still succeed (each rewrites the marker to its kind). Neither errors —
     // requesting a kind is a kind change, not a conflict.
-    let _ = b.get_map("state").get_mergeable_text("k").unwrap();
-    let _ = b.get_map("state").get_mergeable_map("k").unwrap();
+    let _ = b.get_map("state").ensure_mergeable_text("k").unwrap();
+    let _ = b.get_map("state").ensure_mergeable_map("k").unwrap();
 }
 
 /// After snapshot import resolves `"k"` to a Text marker on the receiver, a local
-/// `get_mergeable_map("k")` does NOT error — it rewrites the marker to Map (a deliberate
+/// `ensure_mergeable_map("k")` does NOT error — it rewrites the marker to Map (a deliberate
 /// kind change). The Text container stays reachable by name; requesting it again rewrites the
 /// marker back to Text and resurfaces its preserved contents.
 #[test]
 fn different_kind_request_after_snapshot_is_a_kind_change() {
     let a = doc(1);
-    let a_text = a.get_map("state").get_mergeable_text("k").unwrap();
+    let a_text = a.get_map("state").ensure_mergeable_text("k").unwrap();
     a_text.insert(0, "x", PosType::Unicode).unwrap();
     a.commit_then_renew();
     let snapshot = a.export(ExportMode::Snapshot).unwrap();
@@ -253,7 +253,7 @@ fn different_kind_request_after_snapshot_is_a_kind_change() {
     );
 
     // Requesting a Map rewrites the marker to Map; no error.
-    let b_map = b.get_map("state").get_mergeable_map("k").unwrap();
+    let b_map = b.get_map("state").ensure_mergeable_map("k").unwrap();
     b_map.insert("flag", true).unwrap();
     b.commit_then_renew();
     assert_eq!(
@@ -263,7 +263,7 @@ fn different_kind_request_after_snapshot_is_a_kind_change() {
     );
 
     // The Text is still reachable; requesting it again resurfaces its preserved content.
-    let b_text = b.get_map("state").get_mergeable_text("k").unwrap();
+    let b_text = b.get_map("state").ensure_mergeable_text("k").unwrap();
     assert_eq!(b_text.id(), a_text.id());
     b.commit_then_renew();
     assert_eq!(
@@ -281,7 +281,7 @@ fn shallow_snapshot_roundtrip_preserves_mergeable_child() {
     let a = doc(1);
     let counter = a
         .get_map("state")
-        .get_mergeable_counter("revision")
+        .ensure_mergeable_counter("revision")
         .unwrap();
     counter.increment(4.0).unwrap();
     a.commit_then_renew();

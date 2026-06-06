@@ -3,7 +3,7 @@
 //! When two peers create different kinds under the same key, each writes a different binary marker
 //! into the parent map's slot. The parent map's regular LWW deterministically resolves to one
 //! marker, so every peer surfaces the same kind; the loser's container stays reachable only by an
-//! explicit `get_mergeable_<kind>` lookup (which rewrites the marker).
+//! explicit `ensure_mergeable_<kind>` lookup (which rewrites the marker).
 //! See loro-dev/loro#759.
 
 #[path = "common.rs"]
@@ -21,7 +21,7 @@ fn local_different_kind_request_rewrites_the_marker() {
     let doc = doc(1);
     let root = doc.get_map("state");
 
-    let text = root.get_mergeable_text("field").unwrap();
+    let text = root.ensure_mergeable_text("field").unwrap();
     text.insert(0, "hello", PosType::Unicode).unwrap();
     doc.commit_then_renew();
     assert_eq!(
@@ -30,7 +30,7 @@ fn local_different_kind_request_rewrites_the_marker() {
     );
 
     // Switch the kind: this rewrites the marker to Map.
-    let map = root.get_mergeable_map("field").unwrap();
+    let map = root.ensure_mergeable_map("field").unwrap();
     map.insert("k", 1).unwrap();
     doc.commit_then_renew();
     assert_eq!(
@@ -48,7 +48,7 @@ fn local_different_kind_request_rewrites_the_marker() {
 fn different_kind_collision_resolves_by_map_lww_at_import() {
     // Peer A: text under "k", low lamport.
     let a = doc(1);
-    let a_text = a.get_map("state").get_mergeable_text("k").unwrap();
+    let a_text = a.get_map("state").ensure_mergeable_text("k").unwrap();
     a_text.insert(0, "from_a", PosType::Unicode).unwrap();
     let a_text_id = a_text.id();
     a.commit_then_renew();
@@ -60,7 +60,7 @@ fn different_kind_collision_resolves_by_map_lww_at_import() {
         b_state.insert(&format!("filler_{i}"), i).unwrap();
         b.commit_then_renew();
     }
-    let b_map = b_state.get_mergeable_map("k").unwrap();
+    let b_map = b_state.ensure_mergeable_map("k").unwrap();
     b_map.insert("from_b", true).unwrap();
     let b_map_id = b_map.id();
     b.commit_then_renew();
@@ -96,9 +96,9 @@ fn different_kind_collision_resolves_by_map_lww_at_import() {
     );
     assert_eq!(k_value["from_b"], json!(true));
 
-    // The loser's Text container is still reachable by an explicit get_mergeable_text — which
+    // The loser's Text container is still reachable by an explicit ensure_mergeable_text — which
     // rewrites the marker back to Text (a local kind change), so it now resurfaces.
-    let b_text = b.get_map("state").get_mergeable_text("k").unwrap();
+    let b_text = b.get_map("state").ensure_mergeable_text("k").unwrap();
     assert_eq!(b_text.id(), a_text_id);
     assert_eq!(
         b_text.get_value().to_json_value(),
@@ -117,15 +117,15 @@ fn three_peer_different_kind_conflict_converges() {
     let b = doc(2);
     let c = doc(3);
 
-    let a_text = a.get_map("state").get_mergeable_text("k").unwrap();
+    let a_text = a.get_map("state").ensure_mergeable_text("k").unwrap();
     a_text.insert(0, "from_a", PosType::Unicode).unwrap();
     a.commit_then_renew();
 
-    let b_map = b.get_map("state").get_mergeable_map("k").unwrap();
+    let b_map = b.get_map("state").ensure_mergeable_map("k").unwrap();
     b_map.insert("from_b", true).unwrap();
     b.commit_then_renew();
 
-    let c_list = c.get_map("state").get_mergeable_list("k").unwrap();
+    let c_list = c.get_map("state").ensure_mergeable_list("k").unwrap();
     c_list.insert(0, "from_c").unwrap();
     c.commit_then_renew();
 
@@ -157,11 +157,11 @@ fn concurrent_same_kind_creation_converges() {
     let a = doc(1);
     let b = doc(2);
 
-    let a_list = a.get_map("state").get_mergeable_list("k").unwrap();
+    let a_list = a.get_map("state").ensure_mergeable_list("k").unwrap();
     a_list.insert(0, "from_a").unwrap();
     a.commit_then_renew();
 
-    let b_list = b.get_map("state").get_mergeable_list("k").unwrap();
+    let b_list = b.get_map("state").ensure_mergeable_list("k").unwrap();
     b_list.insert(0, "from_b").unwrap();
     b.commit_then_renew();
 

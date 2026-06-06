@@ -16,8 +16,8 @@ fn concurrent_counter_increments_show_current_lost_update_bug() {
     let a_root = a.get_map("state");
     let b_root = b.get_map("state");
 
-    let a_counter = a_root.get_mergeable_counter("revision").unwrap();
-    let b_counter = b_root.get_mergeable_counter("revision").unwrap();
+    let a_counter = a_root.ensure_mergeable_counter("revision").unwrap();
+    let b_counter = b_root.ensure_mergeable_counter("revision").unwrap();
 
     assert_eq!(
         a_counter.id(),
@@ -62,8 +62,8 @@ fn concurrent_counter_increments_show_current_lost_update_bug() {
 fn concurrent_text_updates_show_current_lost_update_bug() {
     let a = doc(1);
     let b = doc(2);
-    let a_text = a.get_map("state").get_mergeable_text("notes").unwrap();
-    let b_text = b.get_map("state").get_mergeable_text("notes").unwrap();
+    let a_text = a.get_map("state").ensure_mergeable_text("notes").unwrap();
+    let b_text = b.get_map("state").ensure_mergeable_text("notes").unwrap();
 
     assert_eq!(
         a_text.id(),
@@ -91,8 +91,8 @@ fn concurrent_text_updates_show_current_lost_update_bug() {
 fn concurrent_list_inserts_show_current_lost_update_bug() {
     let a = doc(1);
     let b = doc(2);
-    let a_list = a.get_map("state").get_mergeable_list("items").unwrap();
-    let b_list = b.get_map("state").get_mergeable_list("items").unwrap();
+    let a_list = a.get_map("state").ensure_mergeable_list("items").unwrap();
+    let b_list = b.get_map("state").ensure_mergeable_list("items").unwrap();
 
     assert_eq!(
         a_list.id(),
@@ -116,7 +116,7 @@ fn concurrent_list_inserts_show_current_lost_update_bug() {
     );
 }
 
-/// Two peers each obtain the "profile" Map via `get_mergeable_map` and write
+/// Two peers each obtain the "profile" Map via `ensure_mergeable_map` and write
 /// to *different* keys. With non-mergeable child Maps, each peer creates a
 /// distinct peer-specific cid, so LWW drops one peer's Map entirely even
 /// though the key sets are disjoint. Once child Maps are mergeable the merged
@@ -125,8 +125,8 @@ fn concurrent_list_inserts_show_current_lost_update_bug() {
 fn concurrent_map_writes_show_current_lost_update_bug() {
     let a = doc(1);
     let b = doc(2);
-    let a_map = a.get_map("state").get_mergeable_map("profile").unwrap();
-    let b_map = b.get_map("state").get_mergeable_map("profile").unwrap();
+    let a_map = a.get_map("state").ensure_mergeable_map("profile").unwrap();
+    let b_map = b.get_map("state").ensure_mergeable_map("profile").unwrap();
 
     assert_eq!(
         a_map.id(),
@@ -161,15 +161,15 @@ fn three_peer_mergeable_counter_convergence() {
 
     let a_counter = a
         .get_map("state")
-        .get_mergeable_counter("revision")
+        .ensure_mergeable_counter("revision")
         .unwrap();
     let b_counter = b
         .get_map("state")
-        .get_mergeable_counter("revision")
+        .ensure_mergeable_counter("revision")
         .unwrap();
     let c_counter = c
         .get_map("state")
-        .get_mergeable_counter("revision")
+        .ensure_mergeable_counter("revision")
         .unwrap();
     assert_eq!(a_counter.id(), b_counter.id());
     assert_eq!(b_counter.id(), c_counter.id());
@@ -202,11 +202,11 @@ fn post_merge_concurrent_counter_increments_converge() {
 
     let a_counter = a
         .get_map("state")
-        .get_mergeable_counter("revision")
+        .ensure_mergeable_counter("revision")
         .unwrap();
     let b_counter = b
         .get_map("state")
-        .get_mergeable_counter("revision")
+        .ensure_mergeable_counter("revision")
         .unwrap();
     a_counter.increment(1.0).unwrap();
     b_counter.increment(1.0).unwrap();
@@ -237,12 +237,12 @@ fn nested_mergeable_concurrent_counter_converges() {
     let a = doc(1);
     let b = doc(2);
 
-    let a_profile = a.get_map("state").get_mergeable_map("profile").unwrap();
-    let b_profile = b.get_map("state").get_mergeable_map("profile").unwrap();
+    let a_profile = a.get_map("state").ensure_mergeable_map("profile").unwrap();
+    let b_profile = b.get_map("state").ensure_mergeable_map("profile").unwrap();
     assert_eq!(a_profile.id(), b_profile.id());
 
-    let a_rev = a_profile.get_mergeable_counter("revision").unwrap();
-    let b_rev = b_profile.get_mergeable_counter("revision").unwrap();
+    let a_rev = a_profile.ensure_mergeable_counter("revision").unwrap();
+    let b_rev = b_profile.ensure_mergeable_counter("revision").unwrap();
     assert_eq!(a_rev.id(), b_rev.id());
 
     a_rev.increment(1.0).unwrap();
@@ -267,17 +267,17 @@ fn nested_mergeable_concurrent_counter_converges() {
 }
 
 /// A detached map handler (built without a parent doc) supports
-/// `get_mergeable_*` by falling back to `get_or_create_container`. The
+/// `ensure_mergeable_*` by falling back to `get_or_create_container`. The
 /// fallback path doesn't compute deterministic cids — that's intentional;
 /// determinism is meaningless until the handler attaches to a doc — but it
 /// must still return a working child handler that callers can mutate.
 #[test]
 #[cfg(feature = "counter")]
-fn detached_map_get_mergeable_counter_falls_back_cleanly() {
+fn detached_map_ensure_mergeable_counter_falls_back_cleanly() {
     use loro_internal::MapHandler;
     let detached = MapHandler::new_detached();
     let counter = detached
-        .get_mergeable_counter("revision")
+        .ensure_mergeable_counter("revision")
         .expect("detached fallback must succeed");
     counter
         .increment(7.0)

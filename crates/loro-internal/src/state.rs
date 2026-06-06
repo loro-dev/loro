@@ -1866,7 +1866,7 @@ impl DocState {
                             let Some(LoroValue::Container(c)) = l.get(*index.as_seq()?) else {
                                 return None;
                             };
-                            state_idx = CurContainer::Container(self.arena.register_container(&c));
+                            state_idx = CurContainer::Container(self.arena.register_container(c));
                         }
                         State::MovableListState(l) => {
                             let Some(LoroValue::Container(c)) =
@@ -1874,7 +1874,7 @@ impl DocState {
                             else {
                                 return None;
                             };
-                            state_idx = CurContainer::Container(self.arena.register_container(&c));
+                            state_idx = CurContainer::Container(self.arena.register_container(c));
                         }
                         State::MapState(m) => {
                             let key = index.as_key()?;

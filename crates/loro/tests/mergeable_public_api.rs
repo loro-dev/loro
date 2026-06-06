@@ -1,4 +1,4 @@
-//! Coverage for the public `loro::LoroMap::get_mergeable_*` wrappers.
+//! Coverage for the public `loro::LoroMap::ensure_mergeable_*` wrappers.
 //!
 //! The integration tests in `crates/loro-internal/tests/mergeable_container/*` exercise
 //! the underlying `MapHandler` directly. These tests confirm the public `loro` crate's
@@ -26,22 +26,22 @@ fn sync(a: &LoroDoc, b: &LoroDoc) {
         .unwrap();
 }
 
-/// `LoroMap::get_mergeable_counter` returns a working `LoroCounter` whose increments
+/// `LoroMap::ensure_mergeable_counter` returns a working `LoroCounter` whose increments
 /// converge across peers on concurrent first-create.
 #[test]
 #[parallel]
 #[cfg(feature = "counter")]
-fn loro_map_get_mergeable_counter_through_public_api() {
+fn loro_map_ensure_mergeable_counter_through_public_api() {
     let a = doc(1);
     let b = doc(2);
 
     let a_counter = a
         .get_map("state")
-        .get_mergeable_counter("revision")
+        .ensure_mergeable_counter("revision")
         .unwrap();
     let b_counter = b
         .get_map("state")
-        .get_mergeable_counter("revision")
+        .ensure_mergeable_counter("revision")
         .unwrap();
     assert_eq!(
         a_counter.id(),
@@ -66,16 +66,16 @@ fn loro_map_get_mergeable_counter_through_public_api() {
     );
 }
 
-/// `LoroMap::get_mergeable_map` returns a working `LoroMap` that supports nested
+/// `LoroMap::ensure_mergeable_map` returns a working `LoroMap` that supports nested
 /// disjoint-key writes converging across peers.
 #[test]
 #[parallel]
-fn loro_map_get_mergeable_map_through_public_api() {
+fn loro_map_ensure_mergeable_map_through_public_api() {
     let a = doc(1);
     let b = doc(2);
 
-    let a_profile = a.get_map("state").get_mergeable_map("profile").unwrap();
-    let b_profile = b.get_map("state").get_mergeable_map("profile").unwrap();
+    let a_profile = a.get_map("state").ensure_mergeable_map("profile").unwrap();
+    let b_profile = b.get_map("state").ensure_mergeable_map("profile").unwrap();
     assert_eq!(a_profile.id(), b_profile.id());
 
     a_profile.insert("name", "Ada").unwrap();
@@ -90,16 +90,16 @@ fn loro_map_get_mergeable_map_through_public_api() {
     );
 }
 
-/// `LoroMap::get_mergeable_list` returns a working `LoroList` whose concurrent inserts
+/// `LoroMap::ensure_mergeable_list` returns a working `LoroList` whose concurrent inserts
 /// both survive after sync.
 #[test]
 #[parallel]
-fn loro_map_get_mergeable_list_through_public_api() {
+fn loro_map_ensure_mergeable_list_through_public_api() {
     let a = doc(1);
     let b = doc(2);
 
-    let a_items = a.get_map("state").get_mergeable_list("items").unwrap();
-    let b_items = b.get_map("state").get_mergeable_list("items").unwrap();
+    let a_items = a.get_map("state").ensure_mergeable_list("items").unwrap();
+    let b_items = b.get_map("state").ensure_mergeable_list("items").unwrap();
     assert_eq!(a_items.id(), b_items.id());
 
     a_items.insert(0, "A").unwrap();
@@ -117,16 +117,16 @@ fn loro_map_get_mergeable_list_through_public_api() {
     assert_eq!(b.get_deep_value().to_json_value(), value);
 }
 
-/// `LoroMap::get_mergeable_text` returns a working `LoroText` whose concurrent edits
+/// `LoroMap::ensure_mergeable_text` returns a working `LoroText` whose concurrent edits
 /// both survive after sync.
 #[test]
 #[parallel]
-fn loro_map_get_mergeable_text_through_public_api() {
+fn loro_map_ensure_mergeable_text_through_public_api() {
     let a = doc(1);
     let b = doc(2);
 
-    let a_notes = a.get_map("state").get_mergeable_text("notes").unwrap();
-    let b_notes = b.get_map("state").get_mergeable_text("notes").unwrap();
+    let a_notes = a.get_map("state").ensure_mergeable_text("notes").unwrap();
+    let b_notes = b.get_map("state").ensure_mergeable_text("notes").unwrap();
     assert_eq!(a_notes.id(), b_notes.id());
 
     a_notes.insert(0, "A").unwrap();
@@ -143,23 +143,23 @@ fn loro_map_get_mergeable_text_through_public_api() {
     );
 }
 
-/// `LoroMap::get_mergeable_movable_list` returns a working `LoroMovableList` whose
+/// `LoroMap::ensure_mergeable_movable_list` returns a working `LoroMovableList` whose
 /// concurrent first-create from two peers resolves to the same deterministic cid,
 /// and inserts on both peers survive after sync. Also exercises the `mov` operation
 /// on the returned handler to confirm the full public surface forwards correctly.
 #[test]
 #[parallel]
-fn loro_map_get_mergeable_movable_list_through_public_api() {
+fn loro_map_ensure_mergeable_movable_list_through_public_api() {
     let a = doc(1);
     let b = doc(2);
 
     let a_items = a
         .get_map("state")
-        .get_mergeable_movable_list("items")
+        .ensure_mergeable_movable_list("items")
         .unwrap();
     let b_items = b
         .get_map("state")
-        .get_mergeable_movable_list("items")
+        .ensure_mergeable_movable_list("items")
         .unwrap();
     assert_eq!(
         a_items.id(),
@@ -195,7 +195,7 @@ fn loro_map_get_mergeable_movable_list_through_public_api() {
     let pre_move = a.get_deep_value().to_json_value();
     let a_items_again = a
         .get_map("state")
-        .get_mergeable_movable_list("items")
+        .ensure_mergeable_movable_list("items")
         .unwrap();
     a_items_again.mov(0, a_items_again.len() - 1).unwrap();
     a.commit();
@@ -206,17 +206,17 @@ fn loro_map_get_mergeable_movable_list_through_public_api() {
     );
 }
 
-/// `LoroMap::get_mergeable_tree` returns a working `LoroTree` whose nodes are
+/// `LoroMap::ensure_mergeable_tree` returns a working `LoroTree` whose nodes are
 /// reachable through the deep value and whose tree operations forward correctly
 /// through the public API.
 #[test]
 #[parallel]
-fn loro_map_get_mergeable_tree_through_public_api() {
+fn loro_map_ensure_mergeable_tree_through_public_api() {
     let a = doc(1);
     let b = doc(2);
 
-    let a_tree = a.get_map("state").get_mergeable_tree("hierarchy").unwrap();
-    let b_tree = b.get_map("state").get_mergeable_tree("hierarchy").unwrap();
+    let a_tree = a.get_map("state").ensure_mergeable_tree("hierarchy").unwrap();
+    let b_tree = b.get_map("state").ensure_mergeable_tree("hierarchy").unwrap();
     assert_eq!(
         a_tree.id(),
         b_tree.id(),
@@ -250,15 +250,15 @@ fn loro_map_get_mergeable_tree_through_public_api() {
 
 /// Kind change through the public API: register one mergeable kind under a key,
 /// then ask for another. Requesting a different kind is a deliberate kind change
-/// that rewrites the parent map marker, so the public `LoroMap::get_mergeable_*`
+/// that rewrites the parent map marker, so the public `LoroMap::ensure_mergeable_*`
 /// wrappers succeed and the active child switches to the newly requested kind.
 #[test]
 #[parallel]
-fn loro_map_get_mergeable_kind_change_through_public_api() {
+fn loro_map_ensure_mergeable_kind_change_through_public_api() {
     let d = doc(1);
     let root = d.get_map("state");
 
-    let text = root.get_mergeable_text("field").unwrap();
+    let text = root.ensure_mergeable_text("field").unwrap();
     text.insert(0, "hello").unwrap();
     d.commit();
     assert_eq!(
@@ -267,7 +267,7 @@ fn loro_map_get_mergeable_kind_change_through_public_api() {
     );
 
     // Switch the kind: this rewrites the marker to Map.
-    let map = root.get_mergeable_map("field").unwrap();
+    let map = root.ensure_mergeable_map("field").unwrap();
     map.insert("k", 1).unwrap();
     d.commit();
     assert_eq!(
@@ -286,7 +286,7 @@ fn loro_map_get_mergeable_kind_change_through_public_api() {
 fn loro_get_by_path_round_trips_mergeable_final_child() {
     let d = doc(1);
     let root = d.get_map("state");
-    let counter = root.get_mergeable_counter("revision").unwrap();
+    let counter = root.ensure_mergeable_counter("revision").unwrap();
 
     let path = d
         .get_path_to_container(&counter.id())
@@ -317,8 +317,8 @@ fn loro_get_by_path_round_trips_mergeable_final_child() {
 fn loro_get_by_path_round_trips_nested_mergeable_child() {
     let d = doc(1);
     let root = d.get_map("state");
-    let profile = root.get_mergeable_map("profile").unwrap();
-    let counter = profile.get_mergeable_counter("revision").unwrap();
+    let profile = root.ensure_mergeable_map("profile").unwrap();
+    let counter = profile.ensure_mergeable_counter("revision").unwrap();
     counter.increment(7.0).unwrap();
     d.commit();
 
@@ -378,7 +378,7 @@ fn loro_has_container_for_mergeable_cid_through_public_api() {
         "has_container must report false for an unwritten mergeable cid"
     );
 
-    let counter = root.get_mergeable_counter("revision").unwrap();
+    let counter = root.ensure_mergeable_counter("revision").unwrap();
     counter.increment(1.0).unwrap();
     assert_eq!(counter.id(), unwritten_cid);
     assert!(
@@ -387,11 +387,11 @@ fn loro_has_container_for_mergeable_cid_through_public_api() {
     );
 }
 
-/// `get_mergeable_*` must not silently overwrite a non-mergeable value through the public API:
+/// `ensure_mergeable_*` must not silently overwrite a non-mergeable value through the public API:
 /// a scalar already at the key makes the call an `ArgErr` and leaves the value in place.
 #[test]
 #[parallel]
-fn loro_map_get_mergeable_rejects_overwriting_scalar_through_public_api() {
+fn loro_map_ensure_mergeable_rejects_overwriting_scalar_through_public_api() {
     use loro::LoroError;
 
     let d = doc(1);
@@ -399,8 +399,8 @@ fn loro_map_get_mergeable_rejects_overwriting_scalar_through_public_api() {
     root.insert("field", 5).unwrap();
 
     let err = root
-        .get_mergeable_list("field")
-        .expect_err("get_mergeable over a scalar must error");
+        .ensure_mergeable_list("field")
+        .expect_err("ensure_mergeable over a scalar must error");
     assert!(
         matches!(err, LoroError::ArgErr(_)),
         "expected ArgErr, got {err:?}"

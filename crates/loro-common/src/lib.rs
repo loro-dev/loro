@@ -1,3 +1,5 @@
+#![allow(unused_assignments)]
+
 use std::{fmt::Display, io::Write};
 
 use arbitrary::Arbitrary;
@@ -138,14 +140,7 @@ pub fn check_root_container_name(name: &str) -> bool {
 /// derived deterministically from `(parent, key, kind)`; this value only records that the parent map
 /// slot currently activates that child kind.
 ///
-/// Design intent: do not reserve strings such as `"🤝:Map"` in user value space. Applications often
-/// let users edit titles, metadata, imported JSON, or other map fields directly. If an ordinary
-/// string could be parsed as an internal mergeable edge, curious or malicious user input could
-/// collide with Loro's reserved structure and make valid document data look like container
-/// topology. Storing the ref as binary avoids that string-level reserved word.
-///
-/// The digest is not an anti-forgery mechanism. It makes accidental construction or wrong-slot
-/// copying fail closed by binding the marker to `(parent, key, kind)` while keeping the value small.
+/// Only this specially constructed binary value activates a mergeable child.
 /// Old clients that do not understand mergeable containers should see an inert binary scalar rather
 /// than a fake child container edge or a reserved-looking user string.
 pub const MERGEABLE_MARKER_MAGIC: [u8; 4] = [0x00, b'L', b'M', 0x01];
@@ -173,8 +168,8 @@ pub fn mergeable_marker(
 /// Parse a parent map slot value back into the mergeable [`ContainerType`] it activates.
 ///
 /// The marker is bound to `(parent, key, kind)`, so copying it to another map/key does not activate
-/// a mergeable child there. Malformed markers and old textual sentinels are treated as ordinary
-/// user values.
+/// a mergeable child there. Malformed markers and arbitrary non-marker values are treated as
+/// ordinary user values.
 pub fn parse_mergeable_marker(
     parent: &ContainerID,
     key: &str,
@@ -1017,13 +1012,13 @@ mod test {
     fn parse_mergeable_marker_rejects_non_markers() {
         let parent = ContainerID::new_root("state", ContainerType::Map);
 
-        // Plain user strings, even ones that look like the old sentinel, are never markers.
+        // Plain user strings are never markers.
         assert_eq!(
             parse_mergeable_marker(&parent, "field", &LoroValue::String("Map".into())),
             None
         );
         assert_eq!(
-            parse_mergeable_marker(&parent, "field", &LoroValue::String("🤝:Map".into())),
+            parse_mergeable_marker(&parent, "field", &LoroValue::String("not-a-marker".into())),
             None
         );
 

@@ -423,7 +423,7 @@ impl OneDocFuzzer {
                             // Mergeable containers exercise multi-peer convergence, which the
                             // single-doc harness can't test; skip here.
                             #[cfg(feature = "mergeable")]
-                            crate::actions::MapAction::GetMergeable { .. } => {}
+                            crate::actions::MapAction::EnsureMergeable { .. } => {}
                         },
                         crate::actions::ActionInner::Counter(counter_action) => {
                             let counter = doc.get_counter("counter");

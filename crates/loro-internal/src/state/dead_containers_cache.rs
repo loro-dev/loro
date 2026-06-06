@@ -98,7 +98,7 @@ mod tests {
     use crate::{cursor::PosType, HandlerTrait, LoroDoc, TextHandler};
 
     /// A mergeable child can be deleted and then reactivated: `delete(key)` clears its
-    /// marker (child unreachable), and a later `get_mergeable_<kind>(key)` writes the
+    /// marker (child unreachable), and a later `ensure_mergeable_<kind>(key)` writes the
     /// marker back (child reachable again). While the child is unreachable, querying its
     /// liveness must not cache a `deleted` entry because that answer depends on the mutable
     /// mergeable marker edge.
@@ -117,7 +117,7 @@ mod tests {
         let doc = LoroDoc::new_auto_commit();
         doc.set_peer_id(1).unwrap();
         let root = doc.get_map("state");
-        let counter = root.get_mergeable_counter("revision").unwrap();
+        let counter = root.ensure_mergeable_counter("revision").unwrap();
         counter.increment(1.0).unwrap();
         doc.commit_then_renew();
 
@@ -133,7 +133,7 @@ mod tests {
             "mergeable-dependent deletion must not be cached"
         );
 
-        root.get_mergeable_counter("revision").unwrap();
+        root.ensure_mergeable_counter("revision").unwrap();
         doc.commit_then_renew();
         assert_eq!(
             doc.state.lock().dead_cache_entry(idx),
@@ -150,7 +150,7 @@ mod tests {
         let doc = LoroDoc::new_auto_commit();
         doc.set_peer_id(1).unwrap();
         let root = doc.get_map("state");
-        let profile = root.get_mergeable_map("profile").unwrap();
+        let profile = root.ensure_mergeable_map("profile").unwrap();
         let text = profile
             .insert_container("bio", TextHandler::new_detached())
             .unwrap();
@@ -169,7 +169,7 @@ mod tests {
             "ordinary descendants behind a mergeable edge must not be cached as deleted"
         );
 
-        root.get_mergeable_map("profile").unwrap();
+        root.ensure_mergeable_map("profile").unwrap();
         doc.commit_then_renew();
         assert!(!text.is_deleted());
         assert_eq!(
@@ -180,7 +180,7 @@ mod tests {
     }
 
     /// The same stale-cache hazard exists when reactivation arrives from a *peer* via import,
-    /// not just from a local `get_mergeable_*` call. The importing peer must not cache the
+    /// not just from a local `ensure_mergeable_*` call. The importing peer must not cache the
     /// mergeable-dependent deleted result before the reactivation update arrives.
     ///
     /// The scenario, with two peers A (author) and B (importer):
@@ -202,7 +202,7 @@ mod tests {
         let doc_a = LoroDoc::new_auto_commit();
         doc_a.set_peer_id(1).unwrap();
         let root_a = doc_a.get_map("state");
-        let counter_a = root_a.get_mergeable_counter("revision").unwrap();
+        let counter_a = root_a.ensure_mergeable_counter("revision").unwrap();
         counter_a.increment(1.0).unwrap();
         doc_a.commit_then_renew();
         root_a.delete("revision").unwrap();
@@ -227,7 +227,7 @@ mod tests {
 
         // A reactivates the child locally and exports just the new update.
         let vv_before = doc_a.oplog_vv();
-        root_a.get_mergeable_counter("revision").unwrap();
+        root_a.ensure_mergeable_counter("revision").unwrap();
         doc_a.commit_then_renew();
         let reactivation = doc_a.export(ExportMode::updates(&vv_before)).unwrap();
 

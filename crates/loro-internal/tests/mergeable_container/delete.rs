@@ -3,7 +3,7 @@
 //! `delete(key)` overwrites the binary marker in the parent map's value slot with `None`, exactly
 //! as deleting a regular child container clears its value-table entry. The child
 //! becomes unreachable; its container state is preserved in history. Re-calling
-//! `get_mergeable_<kind>(key)` rewrites the marker and resurfaces the preserved state, and
+//! `ensure_mergeable_<kind>(key)` rewrites the marker and resurfaces the preserved state, and
 //! Map LWW resolves any concurrent delete-vs-recreate race — symmetric with normal Loro
 //! write/delete (loro-dev/loro#759).
 
@@ -22,7 +22,7 @@ use serde_json::json;
 fn delete_clears_marker_and_recreate_resurfaces_state() {
     let doc = doc(1);
     let root = doc.get_map("state");
-    let counter = root.get_mergeable_counter("revision").unwrap();
+    let counter = root.ensure_mergeable_counter("revision").unwrap();
     counter.increment(3.0).unwrap();
     doc.commit_then_renew();
     assert_eq!(
@@ -42,7 +42,7 @@ fn delete_clears_marker_and_recreate_resurfaces_state() {
 
     // Re-get rewrites the marker. The child resurfaces with its PRESERVED value (3.0),
     // not a reset to 0.0 — delete detaches, it does not destroy the container state.
-    let counter2 = root.get_mergeable_counter("revision").unwrap();
+    let counter2 = root.ensure_mergeable_counter("revision").unwrap();
     doc.commit_then_renew();
     assert_eq!(counter2.id(), counter.id(), "deterministic cid is stable");
     assert_eq!(
@@ -59,7 +59,7 @@ fn delete_clears_marker_and_recreate_resurfaces_state() {
 fn delete_leaves_no_value_at_key() {
     let doc = doc(1);
     let root = doc.get_map("state");
-    let counter = root.get_mergeable_counter("revision").unwrap();
+    let counter = root.ensure_mergeable_counter("revision").unwrap();
     counter.increment(1.0).unwrap();
     doc.commit_then_renew();
     assert!(root.get("revision").is_some(), "marker present");
@@ -81,7 +81,7 @@ fn delete_leaves_no_value_at_key() {
 fn local_delete_immediately_clears_mergeable_child() {
     let doc = doc(1);
     let root = doc.get_map("state");
-    let counter = root.get_mergeable_counter("revision").unwrap();
+    let counter = root.ensure_mergeable_counter("revision").unwrap();
     counter.increment(1.0).unwrap();
     doc.commit_then_renew();
     assert_eq!(
@@ -100,12 +100,12 @@ fn local_delete_immediately_clears_mergeable_child() {
 }
 
 /// Recreate after seeing a delete wins: peer A deletes the key; peer B imports the delete (its
-/// slot is now cleared), then re-calls `get_mergeable_<kind>`, which re-emits a FRESH marker
+/// slot is now cleared), then re-calls `ensure_mergeable_<kind>`, which re-emits a FRESH marker
 /// because the slot is empty. That marker's IdLp dominates the delete, so the child is
 /// visible again and its preserved state resurfaces — symmetric with re-`set_container` after a
 /// regular delete.
 ///
-/// (Note the symmetry: if B re-calls `get_mergeable_<kind>` while still holding the OLD
+/// (Note the symmetry: if B re-calls `ensure_mergeable_<kind>` while still holding the OLD
 /// marker it imported earlier — i.e. before seeing the delete — the call is idempotent and
 /// emits no op, so the concurrent delete wins, exactly as a regular concurrent delete beats a
 /// stale local handle. That case is covered by `concurrent_delete_wins_against_earlier_increment`.)
@@ -116,7 +116,7 @@ fn recreate_after_seen_delete_resurfaces_preserved_state() {
     let b = doc(2);
 
     let a_root = a.get_map("state");
-    let a_counter = a_root.get_mergeable_counter("revision").unwrap();
+    let a_counter = a_root.ensure_mergeable_counter("revision").unwrap();
     a_counter.increment(1.0).unwrap();
     a.commit_then_renew();
     sync(&a, &b);
@@ -135,7 +135,7 @@ fn recreate_after_seen_delete_resurfaces_preserved_state() {
     // delete. The preserved counter state (1.0) resurfaces, plus B's new increment.
     let b_counter = b
         .get_map("state")
-        .get_mergeable_counter("revision")
+        .ensure_mergeable_counter("revision")
         .unwrap();
     b_counter.increment(100.0).unwrap();
     b.commit_then_renew();
@@ -162,14 +162,14 @@ fn concurrent_delete_wins_against_earlier_increment() {
     let b = doc(2);
 
     let a_root = a.get_map("state");
-    let a_counter = a_root.get_mergeable_counter("revision").unwrap();
+    let a_counter = a_root.ensure_mergeable_counter("revision").unwrap();
     a_counter.increment(1.0).unwrap();
     a.commit_then_renew();
     sync(&a, &b);
 
     // B increments first (low IdLp).
     let b_root = b.get_map("state");
-    let b_counter = b_root.get_mergeable_counter("revision").unwrap();
+    let b_counter = b_root.ensure_mergeable_counter("revision").unwrap();
     b_counter.increment(100.0).unwrap();
     b.commit_then_renew();
 
@@ -202,7 +202,7 @@ fn remote_delete_clears_mergeable_child_on_receiver() {
     let b = doc(2);
 
     let b_root = b.get_map("state");
-    let b_counter = b_root.get_mergeable_counter("revision").unwrap();
+    let b_counter = b_root.ensure_mergeable_counter("revision").unwrap();
     b_counter.increment(1.0).unwrap();
     b.commit_then_renew();
     sync(&a, &b);
@@ -241,7 +241,7 @@ fn three_peer_delete_then_recreate_converges() {
 
     let b_counter = b
         .get_map("state")
-        .get_mergeable_counter("revision")
+        .ensure_mergeable_counter("revision")
         .unwrap();
     b_counter.increment(1.0).unwrap();
     b.commit_then_renew();
@@ -261,7 +261,7 @@ fn three_peer_delete_then_recreate_converges() {
     sync(&a, &c);
 
     // C recreates "revision" as a text with a post-delete IdLp.
-    let c_text = c.get_map("state").get_mergeable_text("revision").unwrap();
+    let c_text = c.get_map("state").ensure_mergeable_text("revision").unwrap();
     c_text.insert(0, "after-delete", PosType::Unicode).unwrap();
     c.commit_then_renew();
 
@@ -293,7 +293,7 @@ fn three_peer_delete_then_recreate_converges() {
 fn snapshot_roundtrip_preserves_delete() {
     let a = doc(1);
     let a_root = a.get_map("state");
-    let a_counter = a_root.get_mergeable_counter("revision").unwrap();
+    let a_counter = a_root.ensure_mergeable_counter("revision").unwrap();
     a_counter.increment(5.0).unwrap();
     a_root.delete("revision").unwrap();
     a.commit_then_renew();
@@ -322,7 +322,7 @@ fn snapshot_roundtrip_preserves_delete() {
 fn delete_on_mergeable_key_emits_only_existing_op_types() {
     let doc = doc(1);
     let root = doc.get_map("state");
-    let counter = root.get_mergeable_counter("revision").unwrap();
+    let counter = root.ensure_mergeable_counter("revision").unwrap();
     counter.increment(1.0).unwrap();
     doc.commit_then_renew();
     let counter_before = doc.oplog_vv().get(&1).copied().unwrap_or(0);
