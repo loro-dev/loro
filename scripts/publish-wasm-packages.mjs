@@ -87,10 +87,11 @@ async function publishPackage(packageDir) {
   }
 
   const access = packageJson.publishConfig?.access ?? "public";
+  const publishPath = path.join(workspaceRoot, packageDir);
   console.log(`publishing ${name}@${version} from ${packageDir}`);
   const result = await run("npm", [
     "publish",
-    packageDir,
+    publishPath,
     "--access",
     access,
     "--tag",
