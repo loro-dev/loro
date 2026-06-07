@@ -91,6 +91,21 @@ pub struct StrAllocResult {
 }
 
 impl ArenaContainers {
+    /// Add a freshly-registered cid to the retention-root tracking vectors.
+    ///
+    /// Centralizes the `root_c_idx ⊇ top_level_root_c_idx` invariant: `root_c_idx` is the set of
+    /// retention roots (top-level user roots **and** mergeable cids) that seed the alive-walk for
+    /// shallow snapshot; `top_level_root_c_idx` is the user-visible subset enumerated by
+    /// `preferred_root_containers` etc. Every push to either vector should go through this method,
+    /// so the invariant is maintained by construction rather than by remembering to push to two
+    /// vectors at every call site.
+    fn push_root(&mut self, idx: ContainerIdx, is_mergeable: bool) {
+        self.root_c_idx.push(idx);
+        if !is_mergeable {
+            self.top_level_root_c_idx.push(idx);
+        }
+    }
+
     fn register_container(&mut self, id: &ContainerID) -> ContainerIdx {
         if let Some(&idx) = self.container_id_to_idx.get(id) {
             return idx;
@@ -109,8 +124,7 @@ impl ArenaContainers {
         };
         match (id.is_root(), mergeable_parts) {
             (true, None) => {
-                self.root_c_idx.push(idx);
-                self.top_level_root_c_idx.push(idx);
+                self.push_root(idx, false);
                 self.parents.insert(idx, None);
                 self.depth.push(NonZeroU16::new(1));
             }
@@ -121,7 +135,7 @@ impl ArenaContainers {
                 // the parent marker); then `set_parent` for path/event resolution. They are
                 // deliberately absent from `top_level_root_c_idx` so user-facing root
                 // enumeration does not have to filter them out.
-                self.root_c_idx.push(idx);
+                self.push_root(idx, true);
                 self.depth.push(None);
                 let parent_idx = self.register_container(&parent_id);
                 self.set_parent(idx, Some(parent_idx));
@@ -150,17 +164,58 @@ impl ArenaContainers {
         }
     }
 
-    fn get_depth(&mut self, container: ContainerIdx) -> Option<NonZeroU16> {
-        get_depth(
-            container,
-            &mut self.depth,
-            &mut self.parents,
-            &self.parent_resolver,
-            &mut self.container_idx_to_id,
-            &mut self.container_id_to_idx,
-            &mut self.root_c_idx,
-            &mut self.top_level_root_c_idx,
-        )
+    fn get_depth(&mut self, target: ContainerIdx) -> Option<NonZeroU16> {
+        if let Some(d) = self.depth[target.to_index() as usize] {
+            return Some(d);
+        }
+
+        let parent: Option<ContainerIdx> = if let Some(p) = self.parents.get(&target) {
+            *p
+        } else {
+            let id = self
+                .container_idx_to_id
+                .get(target.to_index() as usize)
+                .unwrap()
+                .clone();
+            if id.is_root() && !id.is_mergeable() {
+                None
+            } else {
+                // Mergeable Roots get registered via the main `register_container` path, which
+                // already wires their parent edge — they should never reach here with a missing
+                // `parents` entry. But for ordinary children whose parent isn't in the arena
+                // yet, fall back to the resolver.
+                let resolver = self.parent_resolver.clone()?;
+                let parent_id = resolver(id)?;
+                // Route through `register_container` so a freshly-discovered parent (especially
+                // a mergeable cid) lands in `root_c_idx`, gets its own parent edge wired up,
+                // and has `parents` initialized — instead of being half-registered with just
+                // `idx_to_id` / `id_to_idx` / `depth` and silently missing from retention walks.
+                let parent_idx = if let Some(idx) =
+                    self.container_id_to_idx.get(&parent_id).copied()
+                {
+                    // Already in the arena. For a top-level root that was hand-registered
+                    // somewhere else without a `parents` entry, ensure it has one.
+                    if parent_id.is_root() && !parent_id.is_mergeable() {
+                        self.parents.entry(idx).or_insert(None);
+                        if self.depth[idx.to_index() as usize].is_none() {
+                            self.depth[idx.to_index() as usize] = NonZeroU16::new(1);
+                        }
+                    }
+                    idx
+                } else {
+                    self.register_container(&parent_id)
+                };
+
+                Some(parent_idx)
+            }
+        };
+
+        let d = match parent {
+            Some(p) => NonZeroU16::new(self.get_depth(p)?.get() + 1),
+            None => NonZeroU16::new(1),
+        };
+        self.depth[target.to_index() as usize] = d;
+        d
     }
 
     fn container_id(&self, idx: ContainerIdx) -> Option<ContainerID> {
@@ -692,97 +747,6 @@ fn _slice_str(range: Range<usize>, s: &mut StrArena) -> String {
     ans
 }
 
-#[allow(clippy::too_many_arguments)]
-fn get_depth(
-    target: ContainerIdx,
-    depth: &mut Vec<Option<NonZeroU16>>,
-    parents: &mut FxHashMap<ContainerIdx, Option<ContainerIdx>>,
-    parent_resolver: &Option<Arc<ParentResolver>>,
-    idx_to_id: &mut Vec<ContainerID>,
-    id_to_idx: &mut FxHashMap<ContainerID, ContainerIdx>,
-    root_c_idx: &mut Vec<ContainerIdx>,
-    top_level_root_c_idx: &mut Vec<ContainerIdx>,
-) -> Option<NonZeroU16> {
-    let mut d = depth[target.to_index() as usize];
-    if d.is_some() {
-        return d;
-    }
-
-    let parent: Option<ContainerIdx> = if let Some(p) = parents.get(&target) {
-        *p
-    } else {
-        let id = idx_to_id.get(target.to_index() as usize).unwrap();
-        if id.is_root() && !id.is_mergeable() {
-            None
-        } else if let Some(parent_resolver) = parent_resolver.as_ref() {
-            let parent_id = parent_resolver(id.clone())?;
-            let parent_is_top_level_root = parent_id.is_root() && !parent_id.is_mergeable();
-            let mut parent_was_new = false;
-            // If the parent is not registered yet, register it lazily instead of unwrapping.
-            let parent_idx = if let Some(idx) = id_to_idx.get(&parent_id).copied() {
-                idx
-            } else {
-                let new_index = idx_to_id.len();
-                idx_to_id.push(parent_id.clone());
-                let new_idx =
-                    ContainerIdx::from_index_and_type(new_index as u32, parent_id.container_type());
-                id_to_idx.insert(parent_id.clone(), new_idx);
-                // Keep depth vector in sync with containers list.
-                if parent_is_top_level_root {
-                    depth.push(NonZeroU16::new(1));
-                } else {
-                    depth.push(None);
-                }
-                parent_was_new = true;
-                new_idx
-            };
-
-            if parent_is_top_level_root {
-                if parent_was_new {
-                    parents.insert(parent_idx, None);
-                    root_c_idx.push(parent_idx);
-                    top_level_root_c_idx.push(parent_idx);
-                } else {
-                    parents.entry(parent_idx).or_insert(None);
-                }
-                if depth[parent_idx.to_index() as usize].is_none() {
-                    depth[parent_idx.to_index() as usize] = NonZeroU16::new(1);
-                }
-            }
-
-            Some(parent_idx)
-        } else {
-            return None;
-        }
-    };
-
-    match parent {
-        Some(p) => {
-            d = NonZeroU16::new(
-                get_depth(
-                    p,
-                    depth,
-                    parents,
-                    parent_resolver,
-                    idx_to_id,
-                    id_to_idx,
-                    root_c_idx,
-                    top_level_root_c_idx,
-                )?
-                .get()
-                    + 1,
-            );
-            depth[target.to_index() as usize] = d;
-        }
-        None => {
-            depth[target.to_index() as usize] = NonZeroU16::new(1);
-            d = NonZeroU16::new(1);
-        }
-    }
-
-    d
-}
-
 impl SharedArena {
     /// Register or clear a resolver to lazily determine a container's parent when missing.
     ///
@@ -795,5 +759,69 @@ impl SharedArena {
     {
         self.inner.containers.write().parent_resolver =
             resolver.map(|f| Arc::new(f) as Arc<ParentResolver>);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use loro_common::ContainerType;
+
+    /// When a non-mergeable child is registered, then later asks for its depth and the parent
+    /// resolver yields a mergeable cid, the mergeable parent must be registered through the
+    /// retention-root path (push to `root_c_idx`, recursively link its own parent) — exactly the
+    /// same way the main `register_container` path would handle a freshly-encountered mergeable
+    /// cid. Without this, shallow snapshot's alive-walk would silently GC the mergeable parent's
+    /// state.
+    #[test]
+    fn get_depth_resolver_registers_mergeable_parent_as_retention_root() {
+        let arena = SharedArena::new();
+
+        let top_root = ContainerID::new_root("state", ContainerType::Map);
+        let mergeable_parent =
+            ContainerID::new_mergeable(&top_root, "profile", ContainerType::Map);
+        let child = ContainerID::new_normal(
+            loro_common::ID::new(1, 0),
+            ContainerType::Counter,
+        );
+
+        let mergeable_parent_for_resolver = mergeable_parent.clone();
+        let child_for_resolver = child.clone();
+        arena.set_parent_resolver(Some(move |q: ContainerID| {
+            if q == child_for_resolver {
+                Some(mergeable_parent_for_resolver.clone())
+            } else {
+                None
+            }
+        }));
+
+        let child_idx = arena.register_container(&child);
+        let _ = arena.get_depth(child_idx);
+
+        let flag = LoadAllFlag;
+        let mergeable_idx = arena
+            .id_to_idx(&mergeable_parent)
+            .expect("resolver should have registered the mergeable parent");
+        assert!(
+            arena.root_containers(flag).contains(&mergeable_idx),
+            "mergeable parent discovered via resolver must be a retention root"
+        );
+
+        let flag = LoadAllFlag;
+        assert!(
+            !arena.top_level_root_containers(flag).contains(&mergeable_idx),
+            "mergeable parent must not appear in user-facing top-level enumeration"
+        );
+
+        let flag = LoadAllFlag;
+        let top_root_idx = arena
+            .id_to_idx(&top_root)
+            .expect("mergeable parent's own grandparent must also be registered");
+        assert!(
+            arena
+                .top_level_root_containers(flag)
+                .contains(&top_root_idx),
+            "the mergeable parent's grandparent (a top-level root) must be in the top-level list"
+        );
     }
 }
