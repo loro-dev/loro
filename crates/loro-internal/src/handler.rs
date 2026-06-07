@@ -4312,7 +4312,9 @@ impl MapHandler {
                         .get_map_entries(inner.container_idx)
                         .into_iter()
                         .map(|(key, value)| {
-                            (key.to_string(), value_to_value_or_handler(inner, value))
+                            let translated =
+                                loro_common::translate_mergeable_marker_value(&inner.id, key.as_ref(), value);
+                            (key.to_string(), value_to_value_or_handler(inner, translated))
                         })
                         .collect::<Vec<_>>()
                 });
@@ -4370,7 +4372,9 @@ impl MapHandler {
                 m.value.get(key).map(|v| v.to_value())
             }
             MaybeDetached::Attached(inner) => {
-                inner.with_doc_state(|state| state.get_map_value_by_key(inner.container_idx, key))
+                let value = inner
+                    .with_doc_state(|state| state.get_map_value_by_key(inner.container_idx, key))?;
+                Some(loro_common::translate_mergeable_marker_value(&inner.id, key, value))
             }
         }
     }
@@ -4384,8 +4388,9 @@ impl MapHandler {
             }
             MaybeDetached::Attached(inner) => {
                 let value = inner
-                    .with_doc_state(|state| state.get_map_value_by_key(inner.container_idx, key));
-                value.map(|value| value_to_value_or_handler(inner, value))
+                    .with_doc_state(|state| state.get_map_value_by_key(inner.container_idx, key))?;
+                let value = loro_common::translate_mergeable_marker_value(&inner.id, key, value);
+                Some(value_to_value_or_handler(inner, value))
             }
         }
     }
@@ -4415,40 +4420,42 @@ impl MapHandler {
 
     /// Shared implementation for all `ensure_mergeable_*` methods.
     ///
-    /// For detached handlers (no doc state yet), falls back to
-    /// [`Self::get_or_create_container`].
-    ///
-    /// For attached handlers, computes a deterministic [`ContainerID::Root`] in
-    /// the mergeable namespace from `(parent.id, key, child.kind())` and
-    /// constructs the handler from it. Two peers calling this with the same
-    /// `(parent, key, kind)` receive handlers with identical container ids,
-    /// which is what makes the child container mergeable on concurrent
-    /// first-write.
+    /// Computes a deterministic [`ContainerID::Root`] in the mergeable namespace from
+    /// `(parent.id, key, child.kind())` and constructs the handler from it. Two peers calling this
+    /// with the same `(parent, key, kind)` receive handlers with identical container ids, which is
+    /// what makes the child container mergeable on concurrent first-write.
     ///
     /// # Errors
     ///
-    /// Returns [`LoroError::ArgErr`] if `C::from_handler` rejects the handler
-    /// built from the deterministic cid. By construction this is unreachable
-    /// because the cid carries `child.kind()`; the check guards against
-    /// future drift between `from_handler` and `kind`.
+    /// Returns [`LoroError::MisuseDetachedContainer`] when called on a detached handler. The
+    /// deterministic cid is computed from the parent's cid, which a detached parent does not have
+    /// yet; falling back to a non-deterministic regular child would silently drop the mergeable
+    /// guarantee at attach time. Detached callers must attach the parent first.
+    ///
+    /// Returns [`LoroError::ArgErr`] if the parent slot already holds a non-mergeable value, or if
+    /// `C::from_handler` rejects the handler built from the deterministic cid (unreachable by
+    /// construction; guards against future drift between `from_handler` and `kind`).
     fn ensure_mergeable_container<C: HandlerTrait>(&self, key: &str, child: C) -> LoroResult<C> {
         let MaybeDetached::Attached(parent) = &self.inner else {
-            return self.get_or_create_container(key, child);
+            return Err(LoroError::MisuseDetachedContainer {
+                method: "ensure_mergeable_container",
+            });
         };
 
-        // The slot may only be empty or already hold a mergeable marker for this parent/key. A
-        // non-mergeable occupant (a scalar, arbitrary binary, or a regular child container) would
-        // be silently clobbered by the marker write, so reject it rather than overwrite under a
-        // `get_`-named API.
-        //
-        // This guard is also part of the marker-format safety story: user-editable fields should
-        // not become mergeable child edges just because they contain a user-authored string or
-        // arbitrary bytes. Only the exact binary ref for this `(parent, key, kind)` is accepted as
-        // an existing mergeable occupant; everything else remains ordinary user data and blocks
-        // creation.
-        if let Some(existing) = self.get(key) {
+        // Compare against the raw marker bytes (skipping `MapHandler::get`'s user-facing
+        // marker → Container translation) so the non-mergeable-occupant guard sees the real
+        // slot value and the same-kind idempotent-skip can match.
+        let existing_raw = parent.with_doc_state(|state| {
+            state.get_map_value_by_key(parent.container_idx, key)
+        });
+
+        // A non-mergeable occupant (scalar, arbitrary binary, regular child container) would be
+        // silently clobbered by the marker write, so reject rather than overwrite under a
+        // `get_`-named API. Only the exact binary marker for this `(parent, key, kind)` is
+        // accepted as an existing mergeable occupant.
+        if let Some(existing) = &existing_raw {
             if !matches!(existing, LoroValue::Null)
-                && loro_common::parse_mergeable_marker(&parent.id, key, &existing).is_none()
+                && loro_common::parse_mergeable_marker(&parent.id, key, existing).is_none()
             {
                 return Err(LoroError::ArgErr(
                     format!(
@@ -4461,28 +4468,14 @@ impl MapHandler {
         }
 
         let cid = ContainerID::new_mergeable(&parent.id, key, child.kind());
-
-        // Record which kind is active at `(parent, key)` by writing a compact binary
-        // mergeable-child ref into the parent map's slot for `key`. The active mergeable child is
-        // whichever ref the parent map's regular LWW resolves to (see loro-dev/loro#759), so this
-        // op is what realizes the child and drives all read-time resolution and conflict
-        // resolution.
-        //
-        // This is deliberately a specially constructed binary value. End users can often edit map
-        // fields such as titles or metadata directly; those strings must stay user data instead of
-        // being treated as internal container-edge structure.
-        // The ref's small digest binds it to this exact `(parent, key, kind)`, which makes
-        // accidental construction or wrong-slot copying fail closed without storing the full child
-        // cid bytes.
-        //
-        // Requesting a different kind under a key that already holds another kind's marker is a
-        // deliberate kind change: it overwrites the marker, exactly like setting a
-        // different value, and the previous kind's container stays reachable by its deterministic
-        // name so re-requesting it later resurfaces its preserved contents (the List -> Map ->
-        // List cycle). Idempotent for the same kind: `insert_with_txn` skips when the slot
-        // already holds the matching marker.
         let marker = loro_common::mergeable_marker(&parent.id, key, child.kind());
-        self.insert(key, marker)?;
+
+        // Idempotent-skip on same marker: `MapHandler::get` translates markers to Container, so
+        // `insert_with_txn`'s equality check can't see this collision — do it directly.
+        // A different-kind marker is a deliberate kind change; let the insert through.
+        if existing_raw.as_ref() != Some(&marker) {
+            self.insert(key, marker)?;
+        }
 
         C::from_handler(create_handler(parent, cid.clone())).ok_or_else(|| {
             LoroError::ArgErr(
@@ -4501,6 +4494,11 @@ impl MapHandler {
         self.ensure_mergeable_container(key, counter::CounterHandler::new_detached())
     }
 
+    /// Ensure a mergeable Map child exists under `key` and return its handler.
+    ///
+    /// Prefer to avoid mergeable maps nested directly inside other mergeable maps: mergeable cids
+    /// embed their parent's cid bytes, so deep nesting inflates cid size (and every op/snapshot
+    /// reference to it). See [`MERGEABLE_NAMESPACE_PREFIX`](loro_common::MERGEABLE_NAMESPACE_PREFIX).
     pub fn ensure_mergeable_map(&self, key: &str) -> LoroResult<MapHandler> {
         self.ensure_mergeable_container(key, MapHandler::new_detached())
     }
@@ -4594,10 +4592,17 @@ impl MapHandler {
                 m.value.values().cloned().collect()
             }
             MaybeDetached::Attached(a) => a.with_doc_state(|state| {
+                // A mergeable child's marker lives in the parent map's value table; iterate
+                // entries (key + value) so the user-boundary translation can resolve each marker
+                // to the deterministic child cid before wrapping into a handler.
                 state
-                    .get_map_values(a.container_idx)
+                    .get_map_entries(a.container_idx)
                     .into_iter()
-                    .map(|value| value_to_value_or_handler(a, value))
+                    .map(|(key, value)| {
+                        let translated =
+                            loro_common::translate_mergeable_marker_value(&a.id, key.as_ref(), value);
+                        value_to_value_or_handler(a, translated)
+                    })
                     .collect()
             }),
         };

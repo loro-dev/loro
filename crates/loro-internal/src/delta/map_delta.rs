@@ -1,4 +1,4 @@
-use std::{hash::Hash, sync::Weak};
+use std::hash::Hash;
 
 use loro_common::IdLp;
 use rustc_hash::FxHashMap;
@@ -6,7 +6,7 @@ use serde::{ser::SerializeStruct, Serialize};
 
 use crate::{
     change::Lamport, handler::ValueOrHandler, id::PeerID, span::HasLamport, InternalString,
-    LoroDocInner, LoroValue,
+    LoroValue,
 };
 
 #[derive(Default, Debug, Clone, Serialize)]
@@ -63,14 +63,6 @@ pub struct ResolvedMapValue {
 }
 
 impl ResolvedMapValue {
-    pub(crate) fn from_map_value(v: MapValue, doc: &Weak<LoroDocInner>) -> Self {
-        let doc = &doc.upgrade().unwrap();
-        ResolvedMapValue {
-            idlp: IdLp::new(v.peer, v.lamp),
-            value: v.value.map(|v| ValueOrHandler::from_value(v, doc)),
-        }
-    }
-
     /// This is used to indicate that the entry is unset. (caused by checkout to before the entry is created)
     pub fn new_unset() -> Self {
         ResolvedMapValue {

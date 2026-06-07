@@ -26,6 +26,10 @@ fn user_root_names_cannot_use_mergeable_namespace() {
 /// `parse_mergeable` is a pure decoder and must return `None` (not panic, not
 /// silently misinterpret) for every malformed payload. This guards against
 /// future drift in the encoder + decoder pair.
+///
+/// The cid does NOT encode the container kind in its name — kind already lives in
+/// `ContainerID::Root::container_type`. Distinct kinds at the same `(parent, key)` therefore share
+/// the same name string but compare unequal at the `ContainerID` level, which is what callers see.
 #[test]
 #[cfg(feature = "counter")]
 fn parse_mergeable_rejects_malformed_payloads() {
@@ -55,7 +59,7 @@ fn parse_mergeable_rejects_malformed_payloads() {
         "empty payload must reject"
     );
 
-    // Mergeable prefix, valid hex, but trailing garbage after the type byte.
+    // Mergeable prefix, valid hex, but trailing garbage past the (parent, key) segments.
     let parent = ContainerID::new_root("state", ContainerType::Map);
     let cid = ContainerID::new_mergeable(&parent, "k", ContainerType::Counter);
     let mut name = match &cid {
@@ -69,21 +73,7 @@ fn parse_mergeable_rejects_malformed_payloads() {
     };
     assert!(
         with_garbage.parse_mergeable().is_none(),
-        "trailing bytes after type byte must reject"
-    );
-
-    // Mergeable prefix and a payload that decodes correctly, BUT the
-    // encoded type byte disagrees with the Root's container_type field.
-    let mismatched = ContainerID::Root {
-        name: match &cid {
-            ContainerID::Root { name, .. } => name.clone(),
-            _ => unreachable!(),
-        },
-        container_type: ContainerType::Map, // payload says Counter
-    };
-    assert!(
-        mismatched.parse_mergeable().is_none(),
-        "type-byte mismatch with Root.container_type must reject"
+        "trailing bytes after the (parent, key) segments must reject"
     );
 }
 

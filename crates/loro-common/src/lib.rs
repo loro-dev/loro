@@ -72,18 +72,48 @@ pub struct CompactId {
 
 /// Namespace prefix used to encode mergeable container IDs into Root container names.
 ///
-/// The 🤝 ("handshake") sentinel mirrors Loro's existing 🦜 brand convention
+/// The 🤝 ("handshake") sentinel mirrors Loro's `🦜:` brand convention
 /// (`crates/loro-common/src/value.rs::LORO_CONTAINER_ID_PREFIX`) and signals
 /// "two peers agreeing on the same cid." The trailing `:` separates the brand
-/// from the hex-encoded `(parent, key, container_type)` payload; hex characters
+/// from the hex-encoded `(parent, key)` payload; the container kind is carried
+/// on the `Root` itself and is not duplicated in the name. Hex characters
 /// (`0-9a-f`) cannot collide with the prefix bytes, so no closing sentinel is
-/// needed. User-created root container names are rejected by
-/// `check_root_container_name` if they start with this prefix.
+/// needed. `check_root_container_name` rejects user-created root names that
+/// start with this prefix.
+///
+/// **Cost of nesting mergeable maps inside mergeable maps**: the payload embeds
+/// `parent_cid_bytes`, which can itself be another mergeable cid. Names grow
+/// roughly linearly with nesting depth × average key length and ride through
+/// every op header, snapshot, and event path. Prefer flatter mergeable maps
+/// over chains of mergeable-inside-mergeable.
 pub const MERGEABLE_NAMESPACE_PREFIX: &str = "🤝:";
 
 fn write_len_prefixed_segment(out: &mut Vec<u8>, bytes: &[u8]) {
     leb128::write::unsigned(out, bytes.len() as u64).unwrap();
     out.extend_from_slice(bytes);
+}
+
+/// Append a `(leb128 length, bytes)` segment to `out` as a sequence of lowercase hex chars,
+/// without going through an intermediate `Vec<u8>` buffer. Used by [`ContainerID::new_mergeable`]
+/// on the hot path so each mergeable cid construction skips two allocations (the encoded
+/// payload buffer and the separate hex string).
+fn push_len_prefixed_segment_hex(out: &mut String, bytes: &[u8]) {
+    let mut len_buf = [0u8; 10];
+    let mut writer = &mut len_buf[..];
+    let writer_start_len = writer.len();
+    leb128::write::unsigned(&mut writer, bytes.len() as u64).unwrap();
+    let len_bytes_written = writer_start_len - writer.len();
+    push_hex_bytes(out, &len_buf[..len_bytes_written]);
+    push_hex_bytes(out, bytes);
+}
+
+fn push_hex_bytes(out: &mut String, bytes: &[u8]) {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    out.reserve(bytes.len() * 2);
+    for &byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
 }
 
 fn read_len_prefixed_segment(input: &mut &[u8]) -> Option<Vec<u8>> {
@@ -96,6 +126,35 @@ fn read_len_prefixed_segment(input: &mut &[u8]) -> Option<Vec<u8>> {
     Some(segment.to_vec())
 }
 
+/// Fast structural check for a mergeable cid name. Returns `Some(())` if `name` starts with the
+/// mergeable namespace prefix and the hex payload decodes into exactly two length-prefixed
+/// segments (`parent_bytes`, `key_bytes`) with a parseable parent and a UTF-8 key.
+///
+/// Used by [`ContainerID::is_mergeable`]. The prefix check short-circuits non-mergeable names
+/// without allocating; for actual mergeable names we pay one `Vec` allocation sized to the
+/// decoded payload (small — recursively-encoded parent + utf8 key) and the recursive parent
+/// `ContainerID::try_from_bytes`.
+fn validate_mergeable_payload(name: &str) -> Option<()> {
+    let payload = name.strip_prefix(MERGEABLE_NAMESPACE_PREFIX)?;
+    let decoded = hex_decode(payload)?;
+    let mut input = decoded.as_slice();
+    let parent_len = leb128::read::unsigned(&mut input).ok()? as usize;
+    if input.len() < parent_len {
+        return None;
+    }
+    let (parent_bytes, rest) = input.split_at(parent_len);
+    input = rest;
+    let key_len = leb128::read::unsigned(&mut input).ok()? as usize;
+    if input.len() != key_len {
+        return None;
+    }
+    let key_bytes = input;
+    std::str::from_utf8(key_bytes).ok()?;
+    ContainerID::try_from_bytes(parent_bytes).ok()?;
+    Some(())
+}
+
+#[cfg(test)]
 fn hex_encode(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(bytes.len() * 2);
@@ -194,6 +253,23 @@ pub fn parse_mergeable_marker(
     }
 
     Some(kind)
+}
+
+/// Translate a raw map slot value into the user-visible Container view for a Map at `parent`.
+///
+/// Mergeable child activation lives as a binary marker in the parent map's value table. This
+/// is the canonical conversion from that marker to the deterministic child cid; every read
+/// boundary (`MapHandler` getters, Map diff emission, local-event hints) goes through it so
+/// callers see the same shape as a regular child container.
+pub fn translate_mergeable_marker_value(
+    parent: &ContainerID,
+    key: &str,
+    value: LoroValue,
+) -> LoroValue {
+    match parse_mergeable_marker(parent, key, &value) {
+        Some(kind) => LoroValue::Container(ContainerID::new_mergeable(parent, key, kind)),
+        None => value,
+    }
 }
 
 fn mergeable_marker_crc24(parent: &ContainerID, key: &str, kind: ContainerType) -> [u8; 3] {
@@ -769,19 +845,35 @@ mod container {
         }
 
         /// Create a mergeable container ID for the given parent, key, and container type.
-        /// The ID is encoded as a Root container with a reserved namespace prefix so that
-        /// two peers calling this with the same arguments produce the identical `ContainerID`.
+        ///
+        /// The cid is a Root container with a reserved namespace prefix and a hex-encoded
+        /// `(parent, key)` payload, so two peers calling this with the same arguments produce
+        /// the identical `ContainerID`.
+        ///
+        /// The container kind is intentionally *not* hex-encoded into the name: it already
+        /// lives in `ContainerID::Root::container_type`, so encoding it twice would waste two
+        /// hex chars per cid, and `ContainerID` equality already keeps two `(parent, key)`
+        /// mergeable cids of different kinds distinct.
+        ///
+        /// Hot path: `MapHandler::values` / `for_each` / Map diff emission can call this once
+        /// per active mergeable child per read, so the body writes the name string directly
+        /// instead of materializing an intermediate `Vec` for the encoded payload, a separate
+        /// hex `String`, and a `format!` concatenation.
         pub fn new_mergeable(
             parent: &ContainerID,
             key: &str,
             container_type: ContainerType,
         ) -> Self {
-            let mut encoded = Vec::new();
-            write_len_prefixed_segment(&mut encoded, &parent.to_bytes());
-            write_len_prefixed_segment(&mut encoded, key.as_bytes());
-            encoded.push(container_type.to_u8());
-
-            let name = format!("{}{}", MERGEABLE_NAMESPACE_PREFIX, hex_encode(&encoded));
+            let parent_bytes = parent.to_bytes();
+            let key_bytes = key.as_bytes();
+            // Bound generously: leb128 of either length fits in 10 bytes; each payload byte
+            // produces 2 hex chars.
+            let cap = MERGEABLE_NAMESPACE_PREFIX.len()
+                + (parent_bytes.len() + key_bytes.len() + 20) * 2;
+            let mut name = String::with_capacity(cap);
+            name.push_str(MERGEABLE_NAMESPACE_PREFIX);
+            push_len_prefixed_segment_hex(&mut name, &parent_bytes);
+            push_len_prefixed_segment_hex(&mut name, key_bytes);
 
             Self::Root {
                 name: name.into(),
@@ -790,15 +882,30 @@ mod container {
         }
 
         /// Returns `true` if this is a valid mergeable container ID (i.e. created via
-        /// `new_mergeable`). A Root whose name merely starts with the reserved mergeable
-        /// prefix but does not decode to a valid `(parent, key, kind)` payload is an
-        /// ordinary root, not a mergeable container.
+        /// `new_mergeable`).
+        ///
+        /// A Root whose name merely starts with the reserved mergeable prefix but does not
+        /// decode to a valid `(parent, key)` payload is an ordinary root, not a mergeable
+        /// container. The check is structural; a fabricated `"🤝:not-valid-hex"` Root is not
+        /// treated as mergeable.
+        ///
+        /// Constant-time short-circuit when the name doesn't start with the mergeable prefix
+        /// (most container ids). For names that do match the prefix, runs one `Vec` allocation
+        /// for the hex decode plus a recursive `ContainerID::try_from_bytes` on the parent
+        /// segment — cheaper than `parse_mergeable` (which additionally allocates a `String`
+        /// for the key) but not free.
         pub fn is_mergeable(&self) -> bool {
-            self.parse_mergeable().is_some()
+            let Self::Root { name, .. } = self else {
+                return false;
+            };
+            validate_mergeable_payload(name).is_some()
         }
 
         /// Decode a mergeable container ID back into its `(parent, key, container_type)` components.
-        /// Returns `None` if this is not a valid mergeable container ID.
+        ///
+        /// Returns `None` if this is not a valid mergeable container ID. The returned
+        /// `container_type` is the type carried on the `Root` itself; the encoded payload only
+        /// carries `(parent, key)`.
         pub fn parse_mergeable(&self) -> Option<(ContainerID, String, ContainerType)> {
             let Self::Root {
                 name,
@@ -812,16 +919,12 @@ mod container {
             let mut input = decoded.as_slice();
             let parent_bytes = read_len_prefixed_segment(&mut input)?;
             let key_bytes = read_len_prefixed_segment(&mut input)?;
-            if input.len() != 1 {
-                return None;
-            }
-            let encoded_type = ContainerType::try_from_u8(input[0]).ok()?;
-            if encoded_type != *container_type {
+            if !input.is_empty() {
                 return None;
             }
             let key = String::from_utf8(key_bytes).ok()?;
             let parent = ContainerID::try_from_bytes(&parent_bytes).ok()?;
-            Some((parent, key, encoded_type))
+            Some((parent, key, *container_type))
         }
     }
 
@@ -1100,10 +1203,10 @@ mod test {
         );
     }
 
-    /// A `🤝:` payload can be valid hex with a well-formed len-prefixed structure and a
-    /// valid trailing type byte, yet still carry a parent segment whose bytes do not decode
-    /// to a `ContainerID`. `parse_mergeable` returns `Option`, so such input must yield
-    /// `None`, never a panic from an internal `ContainerID::from_bytes` unwrap.
+    /// A `🤝:` payload can be valid hex with a well-formed len-prefixed structure, yet still carry
+    /// a parent segment whose bytes do not decode to a `ContainerID`. `parse_mergeable` returns
+    /// `Option`, so such input must yield `None`, never a panic from an internal
+    /// `ContainerID::from_bytes` unwrap.
     #[test]
     fn parse_mergeable_rejects_undecodable_parent_bytes() {
         // Hand-encode a payload whose parent segment is empty. An empty byte slice is a
@@ -1111,7 +1214,6 @@ mod test {
         let mut encoded = Vec::new();
         crate::write_len_prefixed_segment(&mut encoded, &[]); // empty parent bytes
         crate::write_len_prefixed_segment(&mut encoded, b"key");
-        encoded.push(ContainerType::Map.to_u8());
 
         let name = format!(
             "{}{}",
@@ -1134,7 +1236,6 @@ mod test {
         let mut encoded = Vec::new();
         crate::write_len_prefixed_segment(&mut encoded, &[0xff, 0xff, 0xff]);
         crate::write_len_prefixed_segment(&mut encoded, b"key");
-        encoded.push(ContainerType::Map.to_u8());
 
         let name = format!(
             "{}{}",
