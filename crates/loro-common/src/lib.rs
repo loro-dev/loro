@@ -154,6 +154,7 @@ fn validate_mergeable_payload(name: &str) -> Option<()> {
     Some(())
 }
 
+#[cfg(test)]
 fn hex_encode(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(bytes.len() * 2);
@@ -888,8 +889,11 @@ mod container {
         /// container. The check is structural; a fabricated `"🤝:not-valid-hex"` Root is not
         /// treated as mergeable.
         ///
-        /// This is called on most container-id lookups, so it is implemented as a non-allocating
-        /// in-place validator rather than going through `parse_mergeable`'s component decode.
+        /// Constant-time short-circuit when the name doesn't start with the mergeable prefix
+        /// (most container ids). For names that do match the prefix, runs one `Vec` allocation
+        /// for the hex decode plus a recursive `ContainerID::try_from_bytes` on the parent
+        /// segment — cheaper than `parse_mergeable` (which additionally allocates a `String`
+        /// for the key) but not free.
         pub fn is_mergeable(&self) -> bool {
             let Self::Root { name, .. } = self else {
                 return false;
