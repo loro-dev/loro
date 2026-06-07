@@ -1179,7 +1179,10 @@ impl DocState {
 
     pub(crate) fn preferred_root_containers(&mut self) -> Vec<ContainerIdx> {
         let flag = self.store.load_root_containers();
-        let roots = self.arena.root_containers(flag);
+        // Mergeable cids live in a private namespace and are logically children of a regular
+        // Map — they must not appear here. `top_level_root_containers` already excludes them,
+        // so this loop is O(top_level_roots) regardless of the number of mergeable cids.
+        let roots = self.arena.top_level_root_containers(flag);
         let mut selected = FxHashMap::default();
         let mut names = Vec::new();
 
@@ -1193,17 +1196,6 @@ impl DocState {
             let Some(name) = self.root_container_name(idx) else {
                 continue;
             };
-            // Mergeable Roots live in a private cid namespace and are
-            // logically parented to a regular Map. They must not appear in
-            // the doc's top-level root enumeration — they are nested under
-            // their parent in deep value / events / paths.
-            if self
-                .arena
-                .idx_to_id(idx)
-                .is_some_and(|id| id.is_mergeable())
-            {
-                continue;
-            }
             let is_empty = self.root_container_is_empty(idx);
             match selected.entry(name.clone()) {
                 std::collections::hash_map::Entry::Vacant(entry) => {
@@ -1232,7 +1224,8 @@ impl DocState {
         root_index: &InternalString,
     ) -> Option<ContainerIdx> {
         let flag = self.store.load_root_containers();
-        let roots = self.arena.root_containers(flag);
+        // Same reasoning as `preferred_root_containers`: only top-level roots are eligible.
+        let roots = self.arena.top_level_root_containers(flag);
         let mut selected = None;
 
         for idx in roots {

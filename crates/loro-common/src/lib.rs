@@ -107,8 +107,10 @@ fn read_len_prefixed_segment(input: &mut &[u8]) -> Option<Vec<u8>> {
 /// mergeable namespace prefix and the hex payload decodes into exactly two length-prefixed
 /// segments (`parent_bytes`, `key_bytes`) with a parseable parent and a UTF-8 key.
 ///
-/// Used by [`ContainerID::is_mergeable`], which is on hot lookup paths. Avoids allocating a
-/// `String` for the key and a parsed `ContainerID` for the parent on every call.
+/// Used by [`ContainerID::is_mergeable`]. The prefix check short-circuits non-mergeable names
+/// without allocating; for actual mergeable names we pay one `Vec` allocation sized to the
+/// decoded payload (small — recursively-encoded parent + utf8 key) and the recursive parent
+/// `ContainerID::try_from_bytes`.
 fn validate_mergeable_payload(name: &str) -> Option<()> {
     let payload = name.strip_prefix(MERGEABLE_NAMESPACE_PREFIX)?;
     let decoded = hex_decode(payload)?;

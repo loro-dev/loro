@@ -34,7 +34,14 @@ struct ArenaContainers {
     container_id_to_idx: FxHashMap<ContainerID, ContainerIdx>,
     /// The parent of each container.
     parents: FxHashMap<ContainerIdx, Option<ContainerIdx>>,
+    /// All retention roots: top-level user roots **and** mergeable cids. Used by
+    /// alive-container / shallow-snapshot retention walks that must see both.
     root_c_idx: Vec<ContainerIdx>,
+    /// Subset of `root_c_idx` containing only top-level (non-mergeable) roots. This is the
+    /// list user-facing APIs enumerate (`preferred_root_containers`, `get_value`,
+    /// `get_deep_value`, jsonpath, ...). Keeping it pre-filtered means those paths do
+    /// not pay a per-mergeable `is_mergeable()` (and its hex-decode) on every call.
+    top_level_root_c_idx: Vec<ContainerIdx>,
     /// Optional resolver used when querying parent for a container that has not been registered yet.
     /// If set, `get_parent` will try this resolver to lazily fetch and register the parent.
     parent_resolver: Option<Arc<ParentResolver>>,
@@ -70,6 +77,7 @@ pub struct SharedArena {
 pub(crate) struct SharedArenaRollback {
     container_len: usize,
     root_len: usize,
+    top_level_root_len: usize,
     values_len: usize,
     str: StrArenaCheckpoint,
 }
@@ -92,24 +100,35 @@ impl ArenaContainers {
         self.container_idx_to_id.push(id.clone());
         let idx = ContainerIdx::from_index_and_type(idx as u32, id.container_type());
         self.container_id_to_idx.insert(id.clone(), idx);
-        if id.is_root() && !id.is_mergeable() {
-            self.root_c_idx.push(idx);
-            self.parents.insert(idx, None);
-            self.depth.push(NonZeroU16::new(1));
-        } else if id.is_mergeable() {
-            // Mergeable Roots are retention roots AND logical children. Push to `root_c_idx` so
-            // shallow snapshot's `retain_keys` does not GC the loser of a concurrent-kind conflict
-            // (whose state is reachable only by its deterministic cid, not through the parent
-            // marker); then `set_parent` for path/event resolution. `preferred_root_containers`
-            // filters them via `is_mergeable` so they stay out of top-level enumeration.
-            self.root_c_idx.push(idx);
-            self.depth.push(None);
-            if let Some((parent_id, _key, _kind)) = id.parse_mergeable() {
+        // Resolve the cid's kind once. `is_mergeable` is non-trivial (it hex-decodes the cid
+        // name), so we avoid calling it twice on the same id.
+        let mergeable_parts = if id.is_root() {
+            id.parse_mergeable()
+        } else {
+            None
+        };
+        match (id.is_root(), mergeable_parts) {
+            (true, None) => {
+                self.root_c_idx.push(idx);
+                self.top_level_root_c_idx.push(idx);
+                self.parents.insert(idx, None);
+                self.depth.push(NonZeroU16::new(1));
+            }
+            (true, Some((parent_id, _key, _kind))) => {
+                // Mergeable Roots are retention roots AND logical children. Push to `root_c_idx`
+                // so shallow snapshot's `retain_keys` does not GC the loser of a concurrent-kind
+                // conflict (whose state is reachable only by its deterministic cid, not through
+                // the parent marker); then `set_parent` for path/event resolution. They are
+                // deliberately absent from `top_level_root_c_idx` so user-facing root
+                // enumeration does not have to filter them out.
+                self.root_c_idx.push(idx);
+                self.depth.push(None);
                 let parent_idx = self.register_container(&parent_id);
                 self.set_parent(idx, Some(parent_idx));
             }
-        } else {
-            self.depth.push(None);
+            (false, _) => {
+                self.depth.push(None);
+            }
         }
         idx
     }
@@ -140,6 +159,7 @@ impl ArenaContainers {
             &mut self.container_idx_to_id,
             &mut self.container_id_to_idx,
             &mut self.root_c_idx,
+            &mut self.top_level_root_c_idx,
         )
     }
 
@@ -183,6 +203,7 @@ impl SharedArena {
                         container_id_to_idx: containers.container_id_to_idx.clone(),
                         parents: containers.parents.clone(),
                         root_c_idx: containers.root_c_idx.clone(),
+                        top_level_root_c_idx: containers.top_level_root_c_idx.clone(),
                         parent_resolver: containers.parent_resolver.clone(),
                     }
                 }),
@@ -196,12 +217,14 @@ impl SharedArena {
         let containers = self.inner.containers.read();
         let container_len = containers.container_idx_to_id.len();
         let root_len = containers.root_c_idx.len();
+        let top_level_root_len = containers.top_level_root_c_idx.len();
         drop(containers);
         let values_len = self.inner.values.lock().len();
         let str = self.inner.str.lock().checkpoint();
         SharedArenaRollback {
             container_len,
             root_len,
+            top_level_root_len,
             values_len,
             str,
         }
@@ -217,6 +240,9 @@ impl SharedArena {
         }
         containers.depth.truncate(checkpoint.container_len);
         containers.root_c_idx.truncate(checkpoint.root_len);
+        containers
+            .top_level_root_c_idx
+            .truncate(checkpoint.top_level_root_len);
         containers.parents.retain(|child, parent| {
             let child_is_kept = (child.to_index() as usize) < checkpoint.container_len;
             let parent_is_kept = parent
@@ -582,9 +608,22 @@ impl SharedArena {
     ///
     /// We need to load all the cached kv in DocState before we can ensure all root contains are covered.
     /// So we need the flag type here.
+    ///
+    /// This includes mergeable cids (which are also retention roots). Callers that only want
+    /// user-visible top-level roots should use [`Self::top_level_root_containers`].
     #[inline]
     pub(crate) fn root_containers(&self, _f: LoadAllFlag) -> Vec<ContainerIdx> {
         self.inner.containers.read().root_c_idx.clone()
+    }
+
+    /// Returns only the user-visible top-level root containers (excludes mergeable cids).
+    ///
+    /// Used by `preferred_root_containers`, `get_value` / `get_deep_value`, jsonpath, etc. —
+    /// any path that enumerates the doc's top-level roots. Pre-filtering at registration time
+    /// keeps these calls O(top_level_roots) instead of O(top_level_roots + mergeable_cids).
+    #[inline]
+    pub(crate) fn top_level_root_containers(&self, _f: LoadAllFlag) -> Vec<ContainerIdx> {
+        self.inner.containers.read().top_level_root_c_idx.clone()
     }
 
     // TODO: this can return a u16 directly now, since the depths are always valid
@@ -653,6 +692,7 @@ fn _slice_str(range: Range<usize>, s: &mut StrArena) -> String {
     ans
 }
 
+#[allow(clippy::too_many_arguments)]
 fn get_depth(
     target: ContainerIdx,
     depth: &mut Vec<Option<NonZeroU16>>,
@@ -661,6 +701,7 @@ fn get_depth(
     idx_to_id: &mut Vec<ContainerID>,
     id_to_idx: &mut FxHashMap<ContainerID, ContainerIdx>,
     root_c_idx: &mut Vec<ContainerIdx>,
+    top_level_root_c_idx: &mut Vec<ContainerIdx>,
 ) -> Option<NonZeroU16> {
     let mut d = depth[target.to_index() as usize];
     if d.is_some() {
@@ -700,6 +741,7 @@ fn get_depth(
                 if parent_was_new {
                     parents.insert(parent_idx, None);
                     root_c_idx.push(parent_idx);
+                    top_level_root_c_idx.push(parent_idx);
                 } else {
                     parents.entry(parent_idx).or_insert(None);
                 }
@@ -725,6 +767,7 @@ fn get_depth(
                     idx_to_id,
                     id_to_idx,
                     root_c_idx,
+                    top_level_root_c_idx,
                 )?
                 .get()
                     + 1,

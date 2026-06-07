@@ -1873,7 +1873,7 @@ checksum = "3f3d053a135388e6b1df14e8af1212af5064746e9b87a06a345a7a779ee9695a"
 
 [[package]]
 name = "loro-wasm"
-version = "1.12.4"
+version = "1.12.5"
 dependencies = [
  "console_error_panic_hook",
  "js-sys",
