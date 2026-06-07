@@ -93,6 +93,29 @@ fn write_len_prefixed_segment(out: &mut Vec<u8>, bytes: &[u8]) {
     out.extend_from_slice(bytes);
 }
 
+/// Append a `(leb128 length, bytes)` segment to `out` as a sequence of lowercase hex chars,
+/// without going through an intermediate `Vec<u8>` buffer. Used by [`ContainerID::new_mergeable`]
+/// on the hot path so each mergeable cid construction skips two allocations (the encoded
+/// payload buffer and the separate hex string).
+fn push_len_prefixed_segment_hex(out: &mut String, bytes: &[u8]) {
+    let mut len_buf = [0u8; 10];
+    let mut writer = &mut len_buf[..];
+    let writer_start_len = writer.len();
+    leb128::write::unsigned(&mut writer, bytes.len() as u64).unwrap();
+    let len_bytes_written = writer_start_len - writer.len();
+    push_hex_bytes(out, &len_buf[..len_bytes_written]);
+    push_hex_bytes(out, bytes);
+}
+
+fn push_hex_bytes(out: &mut String, bytes: &[u8]) {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    out.reserve(bytes.len() * 2);
+    for &byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+}
+
 fn read_len_prefixed_segment(input: &mut &[u8]) -> Option<Vec<u8>> {
     let len = leb128::read::unsigned(input).ok()? as usize;
     if input.len() < len {
@@ -830,16 +853,26 @@ mod container {
         /// lives in `ContainerID::Root::container_type`, so encoding it twice would waste two
         /// hex chars per cid, and `ContainerID` equality already keeps two `(parent, key)`
         /// mergeable cids of different kinds distinct.
+        ///
+        /// Hot path: `MapHandler::values` / `for_each` / Map diff emission can call this once
+        /// per active mergeable child per read, so the body writes the name string directly
+        /// instead of materializing an intermediate `Vec` for the encoded payload, a separate
+        /// hex `String`, and a `format!` concatenation.
         pub fn new_mergeable(
             parent: &ContainerID,
             key: &str,
             container_type: ContainerType,
         ) -> Self {
-            let mut encoded = Vec::new();
-            write_len_prefixed_segment(&mut encoded, &parent.to_bytes());
-            write_len_prefixed_segment(&mut encoded, key.as_bytes());
-
-            let name = format!("{}{}", MERGEABLE_NAMESPACE_PREFIX, hex_encode(&encoded));
+            let parent_bytes = parent.to_bytes();
+            let key_bytes = key.as_bytes();
+            // Bound generously: leb128 of either length fits in 10 bytes; each payload byte
+            // produces 2 hex chars.
+            let cap = MERGEABLE_NAMESPACE_PREFIX.len()
+                + (parent_bytes.len() + key_bytes.len() + 20) * 2;
+            let mut name = String::with_capacity(cap);
+            name.push_str(MERGEABLE_NAMESPACE_PREFIX);
+            push_len_prefixed_segment_hex(&mut name, &parent_bytes);
+            push_len_prefixed_segment_hex(&mut name, key_bytes);
 
             Self::Root {
                 name: name.into(),

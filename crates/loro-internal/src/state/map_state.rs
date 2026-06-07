@@ -330,16 +330,27 @@ impl ContainerState for MapState {
     fn to_diff(&mut self, doc: &Weak<LoroDocInner>) -> Diff {
         let doc_strong = doc.upgrade().unwrap();
         let parent_id = doc_strong.arena.idx_to_id(self.idx);
+        // Build resolved values directly instead of going through
+        // `ResolvedMapValue::from_map_value`: that path forced a full `MapValue` clone per entry
+        // just to overwrite `.value` with the translated form. Cloning only the inner
+        // `Option<LoroValue>` is enough and saves an alloc per entry on every state-to-diff.
         Diff::Map(ResolvedMapDelta {
             updated: self
                 .map
                 .iter()
                 .map(|(k, v)| {
-                    let mut v = v.clone();
-                    v.value = v
+                    let value = v
                         .value
-                        .map(|val| translate_with_parent(parent_id.as_ref(), k, val));
-                    (k.clone(), ResolvedMapValue::from_map_value(v, doc))
+                        .clone()
+                        .map(|val| translate_with_parent(parent_id.as_ref(), k, val))
+                        .map(|val| ValueOrHandler::from_value(val, &doc_strong));
+                    (
+                        k.clone(),
+                        ResolvedMapValue {
+                            idlp: IdLp::new(v.peer, v.lamp),
+                            value,
+                        },
+                    )
                 })
                 .collect::<FxHashMap<_, _>>(),
         })
