@@ -173,7 +173,7 @@ fn undo_manager_reverts_mergeable_counter_mutation() {
 /// but they are conceptually parented to a regular Map. The top-level root enumeration
 /// (driven by `DocState::preferred_root_containers`, surfaced through
 /// `LoroDoc::get_value`) must NOT include the synthetic mergeable Root — otherwise
-/// the doc would expose a top-level key with a `🤝:...` hex name alongside the real
+/// the doc would expose a top-level key in the `🤝:` namespace alongside the real
 /// roots.
 ///
 /// This guards the `id.is_mergeable()` skip in `preferred_root_containers` against
@@ -195,7 +195,7 @@ fn top_level_root_enumeration_skips_mergeable_roots() {
     assert!(mergeable_cid.is_mergeable());
 
     // `get_value()` returns a Map keyed by top-level root names. The mergeable cid's
-    // synthetic Root name (🤝:<hex>) must NOT appear here.
+    // synthetic Root name must NOT appear here.
     let top_level = doc.get_value().to_json_value();
     let map = top_level
         .as_object()

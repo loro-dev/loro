@@ -40,7 +40,7 @@ struct ArenaContainers {
     /// Subset of `root_c_idx` containing only top-level (non-mergeable) roots. This is the
     /// list user-facing APIs enumerate (`preferred_root_containers`, `get_value`,
     /// `get_deep_value`, jsonpath, ...). Keeping it pre-filtered means those paths do
-    /// not pay a per-mergeable `is_mergeable()` (and its hex-decode) on every call.
+    /// not pay a per-mergeable `is_mergeable()` parse on every call.
     top_level_root_c_idx: Vec<ContainerIdx>,
     /// Optional resolver used when querying parent for a container that has not been registered yet.
     /// If set, `get_parent` will try this resolver to lazily fetch and register the parent.
@@ -115,8 +115,8 @@ impl ArenaContainers {
         self.container_idx_to_id.push(id.clone());
         let idx = ContainerIdx::from_index_and_type(idx as u32, id.container_type());
         self.container_id_to_idx.insert(id.clone(), idx);
-        // Resolve the cid's kind once. `is_mergeable` is non-trivial (it hex-decodes the cid
-        // name), so we avoid calling it twice on the same id.
+        // Resolve the cid's kind once. `is_mergeable` is non-trivial for mergeable names,
+        // so we avoid calling it twice on the same id.
         let mergeable_parts = if id.is_root() {
             id.parse_mergeable()
         } else {

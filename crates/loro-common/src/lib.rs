@@ -75,17 +75,14 @@ pub struct CompactId {
 /// The 🤝 ("handshake") sentinel mirrors Loro's `🦜:` brand convention
 /// (`crates/loro-common/src/value.rs::LORO_CONTAINER_ID_PREFIX`) and signals
 /// "two peers agreeing on the same cid." The trailing `:` separates the brand
-/// from the hex-encoded `(parent, key)` payload; the container kind is carried
-/// on the `Root` itself and is not duplicated in the name. Hex characters
-/// (`0-9a-f`) cannot collide with the prefix bytes, so no closing sentinel is
-/// needed. `check_root_container_name` rejects user-created root names that
-/// start with this prefix.
+/// from the flattened path payload; the container kind is carried on the
+/// `Root` itself and is not duplicated in the name. `check_root_container_name`
+/// rejects user-created root names that start with this prefix.
 ///
 /// **Cost of nesting mergeable maps inside mergeable maps**: the payload embeds
-/// `parent_cid_bytes`, which can itself be another mergeable cid. Names grow
-/// roughly linearly with nesting depth × average key length and ride through
-/// every op header, snapshot, and event path. Prefer flatter mergeable maps
-/// over chains of mergeable-inside-mergeable.
+/// the nearest non-mergeable map ancestor once, followed by escaped map keys.
+/// Names grow linearly with nesting depth × average key length and ride through
+/// every op header, snapshot, and event path.
 pub const MERGEABLE_NAMESPACE_PREFIX: &str = "🤝:";
 
 fn write_len_prefixed_segment(out: &mut Vec<u8>, bytes: &[u8]) {
@@ -93,97 +90,285 @@ fn write_len_prefixed_segment(out: &mut Vec<u8>, bytes: &[u8]) {
     out.extend_from_slice(bytes);
 }
 
-/// Append a `(leb128 length, bytes)` segment to `out` as a sequence of lowercase hex chars,
-/// without going through an intermediate `Vec<u8>` buffer. Used by [`ContainerID::new_mergeable`]
-/// on the hot path so each mergeable cid construction skips two allocations (the encoded
-/// payload buffer and the separate hex string).
-fn push_len_prefixed_segment_hex(out: &mut String, bytes: &[u8]) {
-    let mut len_buf = [0u8; 10];
-    let mut writer = &mut len_buf[..];
-    let writer_start_len = writer.len();
-    leb128::write::unsigned(&mut writer, bytes.len() as u64).unwrap();
-    let len_bytes_written = writer_start_len - writer.len();
-    push_hex_bytes(out, &len_buf[..len_bytes_written]);
-    push_hex_bytes(out, bytes);
-}
-
-fn push_hex_bytes(out: &mut String, bytes: &[u8]) {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    out.reserve(bytes.len() * 2);
-    for &byte in bytes {
-        out.push(HEX[(byte >> 4) as usize] as char);
-        out.push(HEX[(byte & 0x0f) as usize] as char);
+fn push_mergeable_escaped(out: &mut String, segment: &str) {
+    for ch in segment.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '>' => out.push_str("\\>"),
+            '/' => out.push_str("\\s"),
+            '\0' => out.push_str("\\0"),
+            _ => out.push(ch),
+        }
     }
 }
 
-fn read_len_prefixed_segment(input: &mut &[u8]) -> Option<Vec<u8>> {
-    let len = leb128::read::unsigned(input).ok()? as usize;
-    if input.len() < len {
-        return None;
-    }
-    let (segment, rest) = input.split_at(len);
-    *input = rest;
-    Some(segment.to_vec())
-}
-
-/// Fast structural check for a mergeable cid name. Returns `Some(())` if `name` starts with the
-/// mergeable namespace prefix and the hex payload decodes into exactly two length-prefixed
-/// segments (`parent_bytes`, `key_bytes`) with a parseable parent and a UTF-8 key.
-///
-/// Used by [`ContainerID::is_mergeable`]. The prefix check short-circuits non-mergeable names
-/// without allocating; for actual mergeable names we pay one `Vec` allocation sized to the
-/// decoded payload (small — recursively-encoded parent + utf8 key) and the recursive parent
-/// `ContainerID::try_from_bytes`.
-fn validate_mergeable_payload(name: &str) -> Option<()> {
-    let payload = name.strip_prefix(MERGEABLE_NAMESPACE_PREFIX)?;
-    let decoded = hex_decode(payload)?;
-    let mut input = decoded.as_slice();
-    let parent_len = leb128::read::unsigned(&mut input).ok()? as usize;
-    if input.len() < parent_len {
-        return None;
-    }
-    let (parent_bytes, rest) = input.split_at(parent_len);
-    input = rest;
-    let key_len = leb128::read::unsigned(&mut input).ok()? as usize;
-    if input.len() != key_len {
-        return None;
-    }
-    let key_bytes = input;
-    std::str::from_utf8(key_bytes).ok()?;
-    ContainerID::try_from_bytes(parent_bytes).ok()?;
-    Some(())
-}
-
-#[cfg(test)]
-fn hex_encode(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push(HEX[(byte >> 4) as usize] as char);
-        out.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    out
-}
-
-fn hex_decode(s: &str) -> Option<Vec<u8>> {
-    fn value(byte: u8) -> Option<u8> {
-        match byte {
-            b'0'..=b'9' => Some(byte - b'0'),
-            b'a'..=b'f' => Some(byte - b'a' + 10),
-            b'A'..=b'F' => Some(byte - b'A' + 10),
-            _ => None,
+fn decode_mergeable_segment(segment: &str) -> Option<String> {
+    let mut out = String::with_capacity(segment.len());
+    let mut chars = segment.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => {
+                let escaped = chars.next()?;
+                match escaped {
+                    '\\' => out.push('\\'),
+                    '>' => out.push('>'),
+                    's' => out.push('/'),
+                    '0' => out.push('\0'),
+                    _ => return None,
+                }
+            }
+            '/' | '\0' => return None,
+            _ => out.push(ch),
         }
     }
 
-    if !s.len().is_multiple_of(2) {
+    Some(out)
+}
+
+fn find_first_mergeable_separator(payload: &str) -> Option<usize> {
+    let mut escaped = false;
+    for (idx, ch) in payload.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+
+        match ch {
+            '\\' => escaped = true,
+            '>' => return Some(idx),
+            _ => {}
+        }
+    }
+
+    None
+}
+
+fn find_last_mergeable_separator(payload: &str) -> Option<usize> {
+    let mut last = None;
+    let mut escaped = false;
+    for (idx, ch) in payload.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+
+        match ch {
+            '\\' => escaped = true,
+            '>' => last = Some(idx),
+            _ => {}
+        }
+    }
+
+    if escaped {
+        None
+    } else {
+        last
+    }
+}
+
+fn push_u64_base36(out: &mut String, mut value: u64) {
+    const DIGITS: &[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    if value == 0 {
+        out.push('0');
+        return;
+    }
+
+    let mut buf = [0u8; 13];
+    let mut idx = buf.len();
+    while value > 0 {
+        idx -= 1;
+        buf[idx] = DIGITS[(value % 36) as usize];
+        value /= 36;
+    }
+
+    out.push_str(std::str::from_utf8(&buf[idx..]).unwrap());
+}
+
+fn push_i32_base36(out: &mut String, value: i32) {
+    if value < 0 {
+        out.push('-');
+    }
+    let magnitude = if value < 0 {
+        (-(i64::from(value))) as u64
+    } else {
+        value as u64
+    };
+    push_u64_base36(out, magnitude);
+}
+
+fn parse_base36_digit(byte: u8) -> Option<u64> {
+    match byte {
+        b'0'..=b'9' => Some(u64::from(byte - b'0')),
+        b'a'..=b'z' => Some(u64::from(byte - b'a' + 10)),
+        _ => None,
+    }
+}
+
+fn parse_u64_base36(s: &str) -> Option<u64> {
+    if s.is_empty() {
+        return None;
+    }
+    if s.len() > 1 && s.starts_with('0') {
         return None;
     }
 
-    let mut out = Vec::with_capacity(s.len() / 2);
-    for pair in s.as_bytes().chunks_exact(2) {
-        out.push((value(pair[0])? << 4) | value(pair[1])?);
+    let mut value = 0u64;
+    for byte in s.bytes() {
+        value = value.checked_mul(36)?;
+        value = value.checked_add(parse_base36_digit(byte)?)?;
     }
-    Some(out)
+    Some(value)
+}
+
+fn parse_i32_base36(s: &str) -> Option<i32> {
+    if let Some(rest) = s.strip_prefix('-') {
+        let value = parse_u64_base36(rest)?;
+        if value == 0 {
+            return None;
+        }
+        let signed = -(i64::try_from(value).ok()?);
+        i32::try_from(signed).ok()
+    } else {
+        let value = parse_u64_base36(s)?;
+        i32::try_from(value).ok()
+    }
+}
+
+fn parse_mergeable_base_parent(segment: &str) -> Option<ContainerID> {
+    let mut chars = segment.chars();
+    match chars.next()? {
+        '$' => {
+            let name = &segment['$'.len_utf8()..];
+            if !check_root_container_name(name) {
+                return None;
+            }
+            Some(ContainerID::Root {
+                name: name.into(),
+                container_type: ContainerType::Map,
+            })
+        }
+        '@' => {
+            let rest = &segment['@'.len_utf8()..];
+            let (peer, counter) = rest.split_once(':')?;
+            Some(ContainerID::Normal {
+                peer: parse_u64_base36(peer)?,
+                counter: parse_i32_base36(counter)?,
+                container_type: ContainerType::Map,
+            })
+        }
+        _ => None,
+    }
+}
+
+fn validate_mergeable_payload(payload: &str) -> Option<()> {
+    let separator = find_first_mergeable_separator(payload)?;
+    validate_mergeable_base_parent(&payload[..separator])?;
+    validate_mergeable_key_path(&payload[separator + '>'.len_utf8()..])
+}
+
+fn validate_mergeable_base_parent(segment: &str) -> Option<()> {
+    match segment.as_bytes().first().copied()? {
+        b'$' => validate_mergeable_root_base_parent(&segment['$'.len_utf8()..]),
+        b'@' => validate_mergeable_normal_base_parent(&segment['@'.len_utf8()..]),
+        _ => None,
+    }
+}
+
+fn validate_mergeable_root_base_parent(name: &str) -> Option<()> {
+    if name.is_empty() || name.starts_with(MERGEABLE_NAMESPACE_PREFIX) {
+        return None;
+    }
+
+    let mut chars = name.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => match chars.next()? {
+                '\\' | '>' => {}
+                // Root container names cannot contain slash or NUL after decoding.
+                's' | '0' => return None,
+                _ => return None,
+            },
+            '/' | '\0' => return None,
+            _ => {}
+        }
+    }
+
+    Some(())
+}
+
+fn validate_mergeable_normal_base_parent(segment: &str) -> Option<()> {
+    let (peer, counter) = segment.split_once(':')?;
+    parse_u64_base36(peer)?;
+    parse_i32_base36(counter)?;
+    Some(())
+}
+
+fn validate_mergeable_key_path(path: &str) -> Option<()> {
+    let mut chars = path.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => match chars.next()? {
+                '\\' | '>' | 's' | '0' => {}
+                _ => return None,
+            },
+            '/' | '\0' => return None,
+            _ => {}
+        }
+    }
+
+    Some(())
+}
+
+fn parse_mergeable_payload(payload: &str) -> Option<(ContainerID, String)> {
+    validate_mergeable_payload(payload)?;
+    let separator = find_last_mergeable_separator(payload)?;
+    let parent_payload = &payload[..separator];
+    let key = decode_mergeable_segment(&payload[separator + '>'.len_utf8()..])?;
+
+    let parent = if find_last_mergeable_separator(parent_payload).is_some() {
+        ContainerID::Root {
+            name: format!("{MERGEABLE_NAMESPACE_PREFIX}{parent_payload}").into(),
+            container_type: ContainerType::Map,
+        }
+    } else {
+        let parent_segment = decode_mergeable_segment(parent_payload)?;
+        parse_mergeable_base_parent(&parent_segment)?
+    };
+
+    Some((parent, key))
+}
+
+fn mergeable_payload_for_parent(parent: &ContainerID) -> Option<&str> {
+    let ContainerID::Root {
+        name,
+        container_type: ContainerType::Map,
+    } = parent
+    else {
+        return None;
+    };
+    let payload = name.as_str().strip_prefix(MERGEABLE_NAMESPACE_PREFIX)?;
+    validate_mergeable_payload(payload)?;
+    Some(payload)
+}
+
+fn push_mergeable_parent(out: &mut String, parent: &ContainerID) {
+    if let Some(payload) = mergeable_payload_for_parent(parent) {
+        out.push_str(payload);
+        return;
+    }
+
+    match parent {
+        ContainerID::Root { name, .. } => {
+            out.push('$');
+            push_mergeable_escaped(out, name.as_str());
+        }
+        ContainerID::Normal { peer, counter, .. } => {
+            out.push('@');
+            push_u64_base36(out, *peer);
+            out.push(':');
+            push_i32_base36(out, *counter);
+        }
+    }
 }
 
 /// Return whether the given name is a valid root container name.
@@ -846,34 +1031,39 @@ mod container {
 
         /// Create a mergeable container ID for the given parent, key, and container type.
         ///
-        /// The cid is a Root container with a reserved namespace prefix and a hex-encoded
-        /// `(parent, key)` payload, so two peers calling this with the same arguments produce
-        /// the identical `ContainerID`.
+        /// The cid is a Root container with a reserved namespace prefix and a flattened
+        /// map-path payload, so two peers calling this with the same arguments produce the
+        /// identical `ContainerID`.
         ///
-        /// The container kind is intentionally *not* hex-encoded into the name: it already
+        /// The container kind is intentionally *not* encoded into the name: it already
         /// lives in `ContainerID::Root::container_type`, so encoding it twice would waste two
-        /// hex chars per cid, and `ContainerID` equality already keeps two `(parent, key)`
+        /// bytes per cid, and `ContainerID` equality already keeps two `(parent, key)`
         /// mergeable cids of different kinds distinct.
         ///
-        /// Hot path: `MapHandler::values` / `for_each` / Map diff emission can call this once
-        /// per active mergeable child per read, so the body writes the name string directly
-        /// instead of materializing an intermediate `Vec` for the encoded payload, a separate
-        /// hex `String`, and a `format!` concatenation.
+        /// Only maps can be mergeable parents. The encoded payload records the nearest
+        /// non-mergeable map ancestor (`$root-name` or `@peer:counter`) once, then appends
+        /// escaped map keys separated by `>`. This keeps nested mergeable map names linear
+        /// in path length instead of recursively embedding the full parent cid.
         pub fn new_mergeable(
             parent: &ContainerID,
             key: &str,
             container_type: ContainerType,
         ) -> Self {
-            let parent_bytes = parent.to_bytes();
-            let key_bytes = key.as_bytes();
-            // Bound generously: leb128 of either length fits in 10 bytes; each payload byte
-            // produces 2 hex chars.
-            let cap = MERGEABLE_NAMESPACE_PREFIX.len()
-                + (parent_bytes.len() + key_bytes.len() + 20) * 2;
+            assert_eq!(
+                parent.container_type(),
+                ContainerType::Map,
+                "mergeable child parent must be a map"
+            );
+            let parent_len_hint = match parent {
+                ContainerID::Root { name, .. } => name.len(),
+                ContainerID::Normal { .. } => 24,
+            };
+            let cap = MERGEABLE_NAMESPACE_PREFIX.len() + parent_len_hint + key.len() + 16;
             let mut name = String::with_capacity(cap);
             name.push_str(MERGEABLE_NAMESPACE_PREFIX);
-            push_len_prefixed_segment_hex(&mut name, &parent_bytes);
-            push_len_prefixed_segment_hex(&mut name, key_bytes);
+            push_mergeable_parent(&mut name, parent);
+            name.push('>');
+            push_mergeable_escaped(&mut name, key);
 
             Self::Root {
                 name: name.into(),
@@ -885,20 +1075,21 @@ mod container {
         /// `new_mergeable`).
         ///
         /// A Root whose name merely starts with the reserved mergeable prefix but does not
-        /// decode to a valid `(parent, key)` payload is an ordinary root, not a mergeable
-        /// container. The check is structural; a fabricated `"🤝:not-valid-hex"` Root is not
+        /// decode to a valid path payload is an ordinary root, not a mergeable
+        /// container. The check is structural; a fabricated `"🤝:not-valid"` Root is not
         /// treated as mergeable.
         ///
         /// Constant-time short-circuit when the name doesn't start with the mergeable prefix
-        /// (most container ids). For names that do match the prefix, runs one `Vec` allocation
-        /// for the hex decode plus a recursive `ContainerID::try_from_bytes` on the parent
-        /// segment — cheaper than `parse_mergeable` (which additionally allocates a `String`
-        /// for the key) but not free.
+        /// (most container ids). For names that do match the prefix, validates segment
+        /// escaping and the compact base-parent encoding.
         pub fn is_mergeable(&self) -> bool {
             let Self::Root { name, .. } = self else {
                 return false;
             };
-            validate_mergeable_payload(name).is_some()
+            name.as_str()
+                .strip_prefix(MERGEABLE_NAMESPACE_PREFIX)
+                .and_then(validate_mergeable_payload)
+                .is_some()
         }
 
         /// Decode a mergeable container ID back into its `(parent, key, container_type)` components.
@@ -915,15 +1106,7 @@ mod container {
                 return None;
             };
             let payload = name.strip_prefix(MERGEABLE_NAMESPACE_PREFIX)?;
-            let decoded = hex_decode(payload)?;
-            let mut input = decoded.as_slice();
-            let parent_bytes = read_len_prefixed_segment(&mut input)?;
-            let key_bytes = read_len_prefixed_segment(&mut input)?;
-            if !input.is_empty() {
-                return None;
-            }
-            let key = String::from_utf8(key_bytes).ok()?;
-            let parent = ContainerID::try_from_bytes(&parent_bytes).ok()?;
+            let (parent, key) = parse_mergeable_payload(payload)?;
             Some((parent, key, *container_type))
         }
     }
@@ -1176,23 +1359,23 @@ mod test {
 
     #[test]
     fn is_mergeable_rejects_prefix_only_roots() {
-        let prefix_only = ContainerID::Root {
-            name: "🤝:abc".into(),
+        let missing_key = ContainerID::Root {
+            name: "🤝:$state".into(),
             container_type: ContainerType::Map,
         };
         assert!(
-            !prefix_only.is_mergeable(),
-            "prefix-only root must not be mergeable"
+            !missing_key.is_mergeable(),
+            "payload without a key segment must not be mergeable"
         );
-        assert!(prefix_only.parse_mergeable().is_none());
+        assert!(missing_key.parse_mergeable().is_none());
 
-        let bad_hex = ContainerID::Root {
-            name: "🤝:not-valid-hex".into(),
+        let bad_escape = ContainerID::Root {
+            name: "🤝:$state>not\\xvalid".into(),
             container_type: ContainerType::Map,
         };
         assert!(
-            !bad_hex.is_mergeable(),
-            "non-hex payload must not be mergeable"
+            !bad_escape.is_mergeable(),
+            "unknown escapes in the payload must not be mergeable"
         );
 
         let parent = ContainerID::new_root("state", ContainerType::Map);
@@ -1203,50 +1386,35 @@ mod test {
         );
     }
 
-    /// A `🤝:` payload can be valid hex with a well-formed len-prefixed structure, yet still carry
-    /// a parent segment whose bytes do not decode to a `ContainerID`. `parse_mergeable` returns
-    /// `Option`, so such input must yield `None`, never a panic from an internal
-    /// `ContainerID::from_bytes` unwrap.
+    /// A `🤝:` payload can be malformed in several ways. `parse_mergeable` returns
+    /// `Option`, so such input must yield `None`, never panic.
     #[test]
-    fn parse_mergeable_rejects_undecodable_parent_bytes() {
-        // Hand-encode a payload whose parent segment is empty. An empty byte slice is a
-        // valid len-prefixed segment but `ContainerID::try_from_bytes(&[])` is an error.
-        let mut encoded = Vec::new();
-        crate::write_len_prefixed_segment(&mut encoded, &[]); // empty parent bytes
-        crate::write_len_prefixed_segment(&mut encoded, b"key");
-
-        let name = format!(
-            "{}{}",
-            crate::MERGEABLE_NAMESPACE_PREFIX,
-            crate::hex_encode(&encoded)
-        );
-        let cid = ContainerID::Root {
-            name: name.into(),
-            container_type: ContainerType::Map,
-        };
-
-        assert_eq!(
-            cid.parse_mergeable(),
-            None,
-            "undecodable parent bytes must reject, not panic"
-        );
-        assert!(!cid.is_mergeable());
-
-        // A parent segment of arbitrary garbage bytes must also reject rather than panic.
-        let mut encoded = Vec::new();
-        crate::write_len_prefixed_segment(&mut encoded, &[0xff, 0xff, 0xff]);
-        crate::write_len_prefixed_segment(&mut encoded, b"key");
-
-        let name = format!(
-            "{}{}",
-            crate::MERGEABLE_NAMESPACE_PREFIX,
-            crate::hex_encode(&encoded)
-        );
-        let cid = ContainerID::Root {
-            name: name.into(),
-            container_type: ContainerType::Map,
-        };
-        assert_eq!(cid.parse_mergeable(), None);
+    fn parse_mergeable_rejects_malformed_path_payloads() {
+        for name in [
+            "🤝:",
+            "🤝:$>key",
+            "🤝:%state>key",
+            "🤝:@1>key",
+            "🤝:@:1>key",
+            "🤝:@1:zzzzzzzzzzzzzz>key",
+            "🤝:@Z:0>key",
+            "🤝:@001:0>key",
+            "🤝:@1:00>key",
+            "🤝:@1:-0>key",
+            "🤝:$root\\sname>key",
+            "🤝:$root\\0name>key",
+            "🤝:$state>dangling\\",
+            "🤝:$state>unknown\\xescape",
+            "🤝:$state>raw/slash",
+            "🤝:$state>raw\0nul",
+        ] {
+            let cid = ContainerID::Root {
+                name: name.into(),
+                container_type: ContainerType::Map,
+            };
+            assert_eq!(cid.parse_mergeable(), None, "payload {name:?}");
+            assert!(!cid.is_mergeable(), "payload {name:?}");
+        }
     }
 
     #[test]

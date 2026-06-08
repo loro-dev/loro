@@ -3314,9 +3314,9 @@ impl LoroMap {
     /// If the key already holds a non-mergeable value, this throws and leaves
     /// the value unchanged.
     ///
-    /// Prefer to avoid mergeable maps nested directly inside other mergeable maps:
-    /// mergeable cids embed their parent's cid bytes, so deep nesting inflates
-    /// cid size and every op/snapshot reference to it.
+    /// Prefer to avoid very deep mergeable-map chains: mergeable cids encode
+    /// their flattened logical path, so cid size still grows with depth and
+    /// rides through every op/snapshot reference to it.
     #[wasm_bindgen(js_name = "ensureMergeableMap")]
     pub fn ensure_mergeable_map(&self, key: &str) -> JsResult<LoroMap> {
         let handler = self.handler.ensure_mergeable_map(key)?;
