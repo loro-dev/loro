@@ -9,6 +9,8 @@ import { chromium } from "playwright";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const packageDir = path.resolve(__dirname, "..");
 const tmpRoot = path.join(packageDir, ".tmp");
+const expectedSmokeJson = { map: { text: "mergeable-smoke" } };
+const expectedSmokeJsonLiteral = JSON.stringify(expectedSmokeJson);
 
 const defaultCases = [
   "vite5",
@@ -228,11 +230,11 @@ async function verifyPage(browser, name, url) {
     }
 
     await page.waitForFunction(
-      () => {
+      (expected) => {
         const value = globalThis.__LORO_JSON_SMOKE__;
-        return value?.t === "hi" && Object.keys(value).length === 1;
+        return JSON.stringify(value) === JSON.stringify(expected);
       },
-      null,
+      expectedSmokeJson,
       { timeout: 60_000 },
     );
     await page.waitForTimeout(250);
@@ -254,17 +256,15 @@ async function verifyPage(browser, name, url) {
       );
     }
 
-    if (JSON.stringify(jsonSmokeValue) !== JSON.stringify({ t: "hi" })) {
+    if (JSON.stringify(jsonSmokeValue) !== expectedSmokeJsonLiteral) {
       throw new Error(
         `${name}: unexpected JSON smoke value ${JSON.stringify(jsonSmokeValue)}`,
       );
     }
 
-    if (!bodyText.includes('{"t":"hi"}')) {
+    if (!bodyText.includes(expectedSmokeJsonLiteral)) {
       throw new Error(
-        `${name}: expected body to include {"t":"hi"}, got ${JSON.stringify(
-          bodyText,
-        )}`,
+        `${name}: expected body to include ${expectedSmokeJsonLiteral}, got ${JSON.stringify(bodyText)}`,
       );
     }
 
