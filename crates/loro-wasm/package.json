@@ -25,6 +25,7 @@
         "development": "./bundler/index.js",
         "default": "./browser/index.js"
       },
+      "node": "./nodejs/index.js",
       "import": "./bundler/index.js",
       "require": "./nodejs/index.js",
       "default": "./bundler/index.js"

@@ -21,7 +21,8 @@ const localLoroPackage = path.join(repoRoot, "crates/loro-wasm");
 const loroPackageSpec = normalizeLoroPackageSpec(
   process.env.LORO_SMOKE_PACKAGE ?? `file:${localLoroPackage}`,
 );
-const smokeMode = process.env.LORO_SMOKE_MODE ?? "default";
+const expectedSmokeJson = { map: { text: "mergeable-smoke" } };
+const expectedSmokeJsonLiteral = JSON.stringify(expectedSmokeJson);
 
 function normalizeLoroPackageSpec(spec) {
   if (spec === "loro-crdt" || spec.startsWith("loro-crdt@")) {
@@ -31,43 +32,33 @@ function normalizeLoroPackageSpec(spec) {
   return spec;
 }
 
-const sharedApp = (importPath) => {
-  if (smokeMode === "json") {
-    return `import { LoroDoc } from "${importPath}";
-
-const doc = new LoroDoc();
-doc.getText("t").insert(0, "hi");
+function loroSmokeBody({ renderToDom = true } = {}) {
+  return `const doc = new Loro();
+const map = doc.getMap("map");
+const text = map.ensureMergeableText("text");
+text.insert(0, "mergeable-smoke");
 const value = doc.toJSON();
+const expected = ${expectedSmokeJsonLiteral};
 
-if (value.t !== "hi" || Object.keys(value).length !== 1) {
+if (JSON.stringify(value) !== JSON.stringify(expected)) {
   throw new Error(\`Unexpected Loro JSON: \${JSON.stringify(value)}\`);
 }
 
-console.log(value);
 globalThis.__LORO_JSON_SMOKE__ = value;
-const app = document.getElementById("app");
+globalThis.__LORO_SMOKE__ = value.map.text;
+${renderToDom
+    ? `const app = document.getElementById("app");
 if (app) {
   app.textContent = JSON.stringify(value);
 }
-`;
-  }
-
-  return `import { LoroDoc } from "${importPath}";
-
-const doc = new LoroDoc();
-const text = doc.getText("text");
-text.insert(0, "bundler-smoke");
-
-const value = doc.toJSON().text;
-if (value !== "bundler-smoke") {
-  throw new Error(\`Unexpected Loro value: \${value}\`);
+`
+    : ""}`;
 }
 
-globalThis.__LORO_SMOKE__ = value;
-const app = document.getElementById("app");
-if (app) {
-  app.textContent = value;
-}
+const sharedApp = (importPath) => {
+  return `import { Loro } from "${importPath}";
+
+${loroSmokeBody()}
 `;
 };
 
@@ -85,6 +76,15 @@ const html = `<!doctype html>
 `;
 
 const cases = {
+  "vitest-node": {
+    description: "Vitest Node runtime with bare loro-crdt import",
+    dependencies: {},
+    devDependencies: {
+      vitest: "3.2.6",
+    },
+    setup: setupVitestNode,
+    command: ["pnpm", "exec", "vitest", "run"],
+  },
   vite5: viteCase("vite5", "vite", "^5.4.21"),
   vite6: viteCase("vite6", "vite", "^6.4.2"),
   vite7: viteCase("vite7", "vite", "^7.3.2"),
@@ -356,6 +356,22 @@ async function setupBasic(dir, importPath) {
   await writeFile(path.join(dir, "src/main.js"), sharedApp(importPath));
 }
 
+async function setupVitestNode(dir) {
+  await writeFile(
+    path.join(dir, "loro.test.ts"),
+    `import { describe, expect, it } from "vitest";
+import { Loro } from "loro-crdt";
+
+describe("loro-crdt", () => {
+  it("runs the mergeable text smoke test", () => {
+    ${loroSmokeBody({ renderToDom: false }).replaceAll("\n", "\n    ")}
+    expect(value).toStrictEqual(${expectedSmokeJsonLiteral});
+  });
+});
+`,
+  );
+}
+
 async function setupVite(dir) {
   await setupBasic(dir, "loro-crdt");
   await writeFile(
@@ -374,25 +390,13 @@ async function setupViteWebMirror(dir) {
   await writeFile(path.join(dir, "index.html"), html);
   await writeFile(
     path.join(dir, "src/main.js"),
-    `import init, { LoroDoc } from "loro-crdt/web";
+    `import init, { Loro } from "loro-crdt/web";
 import wasmUrl from "loro-crdt/web/loro_wasm_bg.wasm?url";
 import * as mirror from "loro-mirror";
 
 await init(wasmUrl);
-const doc = new LoroDoc();
-doc.getText("t").insert(0, "hi");
-const value = doc.toJSON();
-
-if (value.t !== "hi" || Object.keys(value).length !== 1) {
-  throw new Error(\`Unexpected Loro JSON: \${JSON.stringify(value)}\`);
-}
-
-globalThis.__LORO_JSON_SMOKE__ = value;
+${loroSmokeBody()}
 globalThis.__LORO_MIRROR_KEYS__ = Object.keys(mirror);
-const app = document.getElementById("app");
-if (app) {
-  app.textContent = JSON.stringify(value);
-}
 `,
   );
   await writeViteWasmConfig(dir);
@@ -545,34 +549,13 @@ export default function Page() {
   );
   await writeFile(
     path.join(dir, "components/Smoke.jsx"),
-    smokeMode === "json"
-      ? `"use client";
+    `"use client";
 
-import { LoroDoc } from "${importPath}";
+import { Loro } from "${importPath}";
 
 export default function Smoke() {
-  const doc = new LoroDoc();
-  doc.getText("t").insert(0, "hi");
-  const value = doc.toJSON();
-
-  if (value.t !== "hi" || Object.keys(value).length !== 1) {
-    throw new Error(\`Unexpected Loro JSON: \${JSON.stringify(value)}\`);
-  }
-
-  console.log(value);
-  globalThis.__LORO_JSON_SMOKE__ = value;
+  ${loroSmokeBody({ renderToDom: false }).replaceAll("\n", "\n  ")}
   return <main>{JSON.stringify(value)}</main>;
-}
-`
-      : `"use client";
-
-import { LoroDoc } from "${importPath}";
-
-export default function Smoke() {
-  const doc = new LoroDoc();
-  const text = doc.getText("text");
-  text.insert(0, "bundler-smoke");
-  return <main>{doc.toJSON().text}</main>;
 }
 `,
   );
@@ -661,7 +644,9 @@ async function runCase(name, testCase) {
   if (testCase.afterBuild) {
     await testCase.afterBuild(dir);
   }
-  await inspectOutput(dir, testCase.inspect);
+  if (testCase.inspect) {
+    await inspectOutput(dir, testCase.inspect);
+  }
   console.log(`[${name}] ok`);
 }
 

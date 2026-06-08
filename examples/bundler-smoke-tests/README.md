@@ -59,6 +59,8 @@ LORO_SMOKE_PACKAGE=loro-crdt@1.12.1 pnpm --dir examples/bundler-smoke-tests run 
 
 - `vite5`, `vite6`, `vite7`, `vite8`: Vite production builds with bare
   `import "loro-crdt"`.
+- `vitest-node`: Vitest Node runtime with bare `import "loro-crdt"`, covering
+  package conditional exports as seen by test runners.
 - `vite5-dev`, `vite6-dev`, `vite7-dev`, `vite8-dev`: Vite dev servers with
   bare `import "loro-crdt"` and WASM/top-level-await plugins enabled.
 - `vite5-web-mirror-dev`: `import "loro-crdt/web"` plus `loro-mirror`, which
