@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.13.1
+
+### Patch Changes
+
+- c1e05bf: Fix Node and Vitest bare imports by resolving the package root to the Node.js
+  WASM entry under the `node` export condition.
+
 ## 1.13.0
 
 ### Minor Changes
