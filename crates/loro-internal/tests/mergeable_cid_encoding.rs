@@ -81,6 +81,17 @@ fn parse_mergeable_rejects_malformed_payloads() {
     };
     assert!(dangling.parse_mergeable().is_none());
 
+    for name in ["🤝:$root\\sname>key", "🤝:$root\\0name>key"] {
+        let invalid_root_name = ContainerID::Root {
+            name: name.into(),
+            container_type: ContainerType::Counter,
+        };
+        assert!(
+            invalid_root_name.parse_mergeable().is_none(),
+            "root base parent must reject decoded slash/NUL: {name:?}"
+        );
+    }
+
     for name in [
         "🤝:@Z:0>key",
         "🤝:@001:0>key",

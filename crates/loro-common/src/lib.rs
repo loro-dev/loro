@@ -125,32 +125,22 @@ fn decode_mergeable_segment(segment: &str) -> Option<String> {
     Some(out)
 }
 
-fn split_mergeable_payload(payload: &str) -> Option<Vec<String>> {
-    let mut segments = Vec::new();
-    let mut current = String::new();
-    let mut chars = payload.chars();
-    while let Some(ch) = chars.next() {
+fn find_first_mergeable_separator(payload: &str) -> Option<usize> {
+    let mut escaped = false;
+    for (idx, ch) in payload.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+
         match ch {
-            '\\' => {
-                let escaped = chars.next()?;
-                match escaped {
-                    '\\' => current.push('\\'),
-                    '>' => current.push('>'),
-                    's' => current.push('/'),
-                    '0' => current.push('\0'),
-                    _ => return None,
-                }
-            }
-            '>' => {
-                segments.push(current);
-                current = String::new();
-            }
-            '/' | '\0' => return None,
-            _ => current.push(ch),
+            '\\' => escaped = true,
+            '>' => return Some(idx),
+            _ => {}
         }
     }
-    segments.push(current);
-    Some(segments)
+
+    None
 }
 
 fn find_last_mergeable_separator(payload: &str) -> Option<usize> {
@@ -271,12 +261,61 @@ fn parse_mergeable_base_parent(segment: &str) -> Option<ContainerID> {
 }
 
 fn validate_mergeable_payload(payload: &str) -> Option<()> {
-    let segments = split_mergeable_payload(payload)?;
-    if segments.len() < 2 {
+    let separator = find_first_mergeable_separator(payload)?;
+    validate_mergeable_base_parent(&payload[..separator])?;
+    validate_mergeable_key_path(&payload[separator + '>'.len_utf8()..])
+}
+
+fn validate_mergeable_base_parent(segment: &str) -> Option<()> {
+    match segment.as_bytes().first().copied()? {
+        b'$' => validate_mergeable_root_base_parent(&segment['$'.len_utf8()..]),
+        b'@' => validate_mergeable_normal_base_parent(&segment['@'.len_utf8()..]),
+        _ => None,
+    }
+}
+
+fn validate_mergeable_root_base_parent(name: &str) -> Option<()> {
+    if name.is_empty() || name.starts_with(MERGEABLE_NAMESPACE_PREFIX) {
         return None;
     }
 
-    parse_mergeable_base_parent(&segments[0])?;
+    let mut chars = name.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => match chars.next()? {
+                '\\' | '>' => {}
+                // Root container names cannot contain slash or NUL after decoding.
+                's' | '0' => return None,
+                _ => return None,
+            },
+            '/' | '\0' => return None,
+            _ => {}
+        }
+    }
+
+    Some(())
+}
+
+fn validate_mergeable_normal_base_parent(segment: &str) -> Option<()> {
+    let (peer, counter) = segment.split_once(':')?;
+    parse_u64_base36(peer)?;
+    parse_i32_base36(counter)?;
+    Some(())
+}
+
+fn validate_mergeable_key_path(path: &str) -> Option<()> {
+    let mut chars = path.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => match chars.next()? {
+                '\\' | '>' | 's' | '0' => {}
+                _ => return None,
+            },
+            '/' | '\0' => return None,
+            _ => {}
+        }
+    }
+
     Some(())
 }
 
@@ -1362,6 +1401,8 @@ mod test {
             "🤝:@001:0>key",
             "🤝:@1:00>key",
             "🤝:@1:-0>key",
+            "🤝:$root\\sname>key",
+            "🤝:$root\\0name>key",
             "🤝:$state>dangling\\",
             "🤝:$state>unknown\\xescape",
             "🤝:$state>raw/slash",
