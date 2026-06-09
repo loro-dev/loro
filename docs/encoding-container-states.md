@@ -90,6 +90,11 @@ struct EncodedId {
 ## MapState Snapshot
 
 Map container stores key-value pairs with CRDT metadata.
+Mergeable child containers appear in map state as compact binary activation
+markers bound to the parent map, key, and child type. New clients translate a
+valid marker to the deterministic mergeable child container; older clients keep
+it as ordinary binary data. See
+[`mergeable-container-id.md`](../crates/loro-internal/docs/mergeable-container-id.md).
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────┐
