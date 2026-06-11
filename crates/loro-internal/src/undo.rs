@@ -402,6 +402,14 @@ impl Stack {
     }
 
     pub fn compose_remote_event(&mut self, diff: &[&ContainerDiff]) {
+        self.compose_remote_event_excluding(diff, &FxHashSet::default());
+    }
+
+    pub fn compose_remote_event_excluding(
+        &mut self,
+        diff: &[&ContainerDiff],
+        exclude: &FxHashSet<ContainerID>,
+    ) {
         if self.is_empty() {
             return;
         }
@@ -409,6 +417,17 @@ impl Stack {
         let remote_diff = &mut self.stack.back_mut().unwrap().1;
         let mut remote_diff = remote_diff.lock();
         for e in diff {
+            if exclude.contains(&e.id) {
+                continue;
+            }
+            // Skip containers whose path passes through an excluded container: they
+            // are part of the same bring-back subtree emitted by the diff calculator.
+            if e.path
+                .iter()
+                .any(|(ancestor, _)| exclude.contains(ancestor))
+            {
+                continue;
+            }
             if let Some(d) = remote_diff.cid_to_events.get_mut(&e.id) {
                 d.compose_ref(&e.diff);
             } else {
@@ -638,8 +657,30 @@ impl UndoManager {
                 let lock = inner_clone.lock();
                 let mut inner = lock.borrow_mut();
 
+                // When the diff calculator checks out from the LCA forward to the
+                // import frontier, a tree node that is alive on both sides can appear
+                // as Delete then Create in the same external TreeDiff (e.g. due to
+                // concurrent sibling insertions changing node ordering). In that case
+                // TreeDiffCalculator marks the node's associated_meta_container as a
+                // new container and emits full-state bring-back diffs for the entire
+                // metadata subtree. Those diffs look like concurrent insertions to the
+                // undo transform but carry no real new content.
+                //
+                // Note: same-target Delete+Create can also represent genuine
+                // delete-then-resurrect sequences. The exclusion below applies only to
+                // the metadata subtree's *bring-back* content; real edits to those
+                // containers within the same import batch are an edge case that could
+                // still be over-excluded. This heuristic is correct for the common case
+                // (issue #915) where no concurrent edits touch the subtree.
+                let mut revived_meta_containers: FxHashSet<ContainerID> = FxHashSet::default();
                 for e in event.events {
                     if let Diff::Tree(tree) = &e.diff {
+                        let mut deleted: FxHashSet<loro_common::TreeID> = FxHashSet::default();
+                        for item in &tree.diff {
+                            if let TreeExternalDiff::Delete { .. } = &item.action {
+                                deleted.insert(item.target);
+                            }
+                        }
                         for item in &tree.diff {
                             let target = item.target;
                             if let TreeExternalDiff::Create { .. } = &item.action {
@@ -648,6 +689,15 @@ impl UndoManager {
                                 remap_containers_clone
                                     .lock()
                                     .remove(&target.associated_meta_container());
+
+                                if deleted.contains(&target) {
+                                    // Same-target Delete+Create in one diff: the diff
+                                    // calculator emitted full-state bring-back diffs for
+                                    // this node's metadata subtree. Exclude those from
+                                    // remote_diff so they don't corrupt undo transforms.
+                                    revived_meta_containers
+                                        .insert(target.associated_meta_container());
+                                }
                             }
                         }
                     }
@@ -655,8 +705,12 @@ impl UndoManager {
 
                 let is_import_disjoint = inner.is_disjoint_with_group(event.events);
 
-                inner.undo_stack.compose_remote_event(event.events);
-                inner.redo_stack.compose_remote_event(event.events);
+                inner
+                    .undo_stack
+                    .compose_remote_event_excluding(event.events, &revived_meta_containers);
+                inner
+                    .redo_stack
+                    .compose_remote_event_excluding(event.events, &revived_meta_containers);
 
                 // If the import is not disjoint, we end the active group
                 // all subsequent changes will be new undo items
