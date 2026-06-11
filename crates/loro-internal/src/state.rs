@@ -886,7 +886,13 @@ impl DocState {
             }
         }
 
-        self.store.contains_id(id)
+        if self.store.contains_id(id) {
+            return true;
+        }
+
+        // An ensured-but-empty mergeable child has no ops or KV state of its own yet;
+        // the parent map's binary child ref is the source of truth for its existence.
+        is_mergeable && self.get_reachable(id)
     }
 
     pub(crate) fn commit_txn(&mut self, new_frontiers: Frontiers, diff: Option<InternalDocDiff>) {

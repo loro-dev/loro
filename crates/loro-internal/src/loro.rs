@@ -964,7 +964,10 @@ impl LoroDoc {
 
     #[inline]
     fn ensure_root_container(&self, id: &ContainerID) {
-        if id.is_root() {
+        // Mergeable roots stay lazily materialized: their existence is derived from the
+        // parent map's child ref, and their state is only created on first op (or at
+        // export via the alive-container walk).
+        if id.is_root() && !id.is_mergeable() {
             self.state.lock().ensure_container(id);
         }
     }
