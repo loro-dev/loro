@@ -1536,11 +1536,42 @@ impl LoroDoc {
         &self,
         to_commit_then_renew: bool,
     ) -> LoroResult<()> {
+        self._checkout_to_latest_without_commit_with_event(
+            to_commit_then_renew,
+            "checkout".into(),
+            EventTriggerKind::Checkout,
+        )
+    }
+
+    pub(crate) fn _checkout_to_latest_without_commit_as_import(
+        &self,
+        to_commit_then_renew: bool,
+        origin: InternalString,
+    ) -> LoroResult<()> {
+        self._checkout_to_latest_without_commit_with_event(
+            to_commit_then_renew,
+            origin,
+            EventTriggerKind::Import,
+        )
+    }
+
+    fn _checkout_to_latest_without_commit_with_event(
+        &self,
+        to_commit_then_renew: bool,
+        origin: InternalString,
+        triggered_by: EventTriggerKind,
+    ) -> LoroResult<()> {
         tracing::info_span!("CheckoutToLatest", peer = self.peer_id()).in_scope(|| {
             let f = self.oplog_frontiers();
             let this = &self;
             let frontiers = &f;
-            this._checkout_without_emitting(frontiers, false, to_commit_then_renew)?;
+            this._checkout_without_emitting_with_event(
+                frontiers,
+                false,
+                to_commit_then_renew,
+                origin,
+                triggered_by,
+            )?;
             // We don't need to shrink frontiers because oplog's frontiers are already shrinked.
             this.emit_events();
             if this.config.detached_editing() {
@@ -1587,6 +1618,23 @@ impl LoroDoc {
         frontiers: &Frontiers,
         to_shrink_frontiers: bool,
         to_commit_then_renew: bool,
+    ) -> Result<(), LoroError> {
+        self._checkout_without_emitting_with_event(
+            frontiers,
+            to_shrink_frontiers,
+            to_commit_then_renew,
+            "checkout".into(),
+            EventTriggerKind::Checkout,
+        )
+    }
+
+    fn _checkout_without_emitting_with_event(
+        &self,
+        frontiers: &Frontiers,
+        to_shrink_frontiers: bool,
+        _to_commit_then_renew: bool,
+        origin: InternalString,
+        triggered_by: EventTriggerKind,
     ) -> Result<(), LoroError> {
         if !self.txn.is_locked() {
             return Err(LoroError::TransactionError(
@@ -1650,9 +1698,9 @@ impl LoroDoc {
             calc.calc_diff_internal(&oplog, &before, &state.frontiers, after, &frontiers, None);
         state.apply_diff(
             InternalDocDiff {
-                origin: "checkout".into(),
+                origin,
                 diff: Cow::Owned(diff),
-                by: EventTriggerKind::Checkout,
+                by: triggered_by,
                 new_version: Cow::Owned(frontiers.clone()),
             },
             diff_mode,
