@@ -1,6 +1,6 @@
 [package]
 name = "loro-wasm"
-version = "1.13.2"
+version = "1.13.3"
 edition = "2021"
 publish = false
 repository = "https://github.com/loro-dev/loro/"
