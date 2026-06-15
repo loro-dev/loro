@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.13.3
+
+### Patch Changes
+
+- 32700ba: Fix undo recording for the first local commit after importing shallow snapshots that need import-time state materialization.
+
 ## 1.13.2
 
 ### Patch Changes
