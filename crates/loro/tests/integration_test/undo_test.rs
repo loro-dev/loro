@@ -4,8 +4,8 @@ use std::sync::{
 };
 
 use loro::{
-    undo::UndoItemMeta, ContainerTrait as _, ExportMode, LoroDoc, LoroError, LoroList, LoroMap,
-    LoroResult, LoroText, LoroValue, StyleConfigMap, ToJson, UndoManager,
+    undo::UndoItemMeta, ContainerTrait as _, ExportMode, Frontiers, LoroDoc, LoroError, LoroList,
+    LoroMap, LoroResult, LoroText, LoroValue, StyleConfigMap, ToJson, UndoManager,
 };
 use loro_internal::{configure::StyleConfig, id::ID, loro::CommitOptions};
 use serde_json::json;
@@ -41,6 +41,60 @@ fn basic_list_undo_insertion() -> Result<(), LoroError> {
             "list": []
         })
     );
+
+    Ok(())
+}
+
+#[test]
+fn undo_records_first_local_commit_after_shallow_snapshot_import() -> LoroResult<()> {
+    fn assert_first_post_import_commit_is_undoable(name: &str, bytes: Vec<u8>) -> LoroResult<()> {
+        let doc = LoroDoc::new();
+        doc.set_peer_id(2)?;
+        let mut undo = UndoManager::new(&doc);
+
+        doc.import(&bytes)?;
+        let before = doc.get_deep_value().to_json_value();
+        doc.get_text("t").insert(0, "x")?;
+        doc.commit();
+
+        assert!(
+            undo.can_undo(),
+            "first local commit after {name} import should be undoable"
+        );
+        assert!(undo.undo()?, "undo should execute after {name} import");
+        assert_eq!(doc.get_deep_value().to_json_value(), before);
+        Ok(())
+    }
+
+    let source = LoroDoc::new();
+    source.set_peer_id(1)?;
+    source.get_text("t").insert(0, "synced text")?;
+    source.commit();
+
+    assert_first_post_import_commit_is_undoable(
+        "full snapshot",
+        source.export(ExportMode::Snapshot)?,
+    )?;
+    assert_first_post_import_commit_is_undoable(
+        "shallow snapshot at genesis",
+        source.export(ExportMode::shallow_snapshot(&Frontiers::default()))?,
+    )?;
+    assert_first_post_import_commit_is_undoable(
+        "shallow snapshot at tip",
+        source.export(ExportMode::shallow_snapshot(&source.oplog_frontiers()))?,
+    )?;
+
+    let source = LoroDoc::new();
+    source.set_peer_id(1)?;
+    source.get_text("t").insert(0, "synced text")?;
+    source.commit();
+    let non_tip_anchor = source.oplog_frontiers();
+    source.get_text("t").insert(11, " second")?;
+    source.commit();
+    assert_first_post_import_commit_is_undoable(
+        "shallow snapshot at non-tip",
+        source.export(ExportMode::shallow_snapshot(&non_tip_anchor))?,
+    )?;
 
     Ok(())
 }
