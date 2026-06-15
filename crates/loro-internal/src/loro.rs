@@ -2160,7 +2160,15 @@ fn pending_root_containers_to_materialize(oplog: &OpLog, changes: &[Change]) -> 
                 .arena
                 .get_container_id(op.container)
                 .expect("decoded op container should be registered");
-            if id.is_root() {
+            // Mergeable containers share the `ContainerID::Root` namespace but are logical
+            // *children*: their existence is governed by their parent map's marker, and their
+            // parent can be any (possibly not-yet-imported) map. Eagerly materializing one
+            // while its causal dependencies are still pending has no valid parent edge to
+            // resolve its depth against, which used to panic in `ContainerWrapper::new`.
+            // They get materialized correctly through the normal diff path once the creating
+            // change applies, so skip them here (mirrors the `!is_mergeable()` guard in
+            // `ensure_root_container`). See the `mergeable_container::pending` regression test.
+            if id.is_root() && !id.is_mergeable() {
                 roots.insert(id);
             }
         }

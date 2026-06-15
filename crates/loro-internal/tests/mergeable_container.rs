@@ -9,6 +9,8 @@ mod delete;
 mod discriminator;
 #[path = "mergeable_container/events_and_paths.rs"]
 mod events_and_paths;
+#[path = "mergeable_container/pending.rs"]
+mod pending;
 #[path = "mergeable_container/snapshot.rs"]
 mod snapshot;
 #[path = "mergeable_container/type_conflict.rs"]
