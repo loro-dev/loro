@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.13.3
+
+### Patch Changes
+
+- 8d258cb: Fix `unreachable` panic when importing an out-of-order update whose op targets a mergeable child container before its creation (or its parent map) has arrived. Such ops are now buffered as pending and applied once the creating change is imported.
+- 32700ba: Fix undo recording for the first local commit after importing shallow snapshots that need import-time state materialization.
+
 ## 1.13.2
 
 ### Patch Changes
