@@ -1,5 +1,5 @@
 use dev_utils::{get_mem_usage, ByteSize};
-use loro::{CommitOptions, LoroCounter, LoroDoc, LoroMap};
+use loro::{CommitOptions, LoroCounter, LoroDoc};
 
 #[derive(Debug)]
 struct NewProject {
@@ -20,12 +20,10 @@ pub fn main() {
 
     for i in 0..n {
         let project = projects
-            .insert_container(&format!("project_{i}"), LoroMap::new())
+            .ensure_mergeable_map(&format!("project_{i}"))
             .unwrap();
         project.insert("name", format!("project_{i}")).unwrap();
-        let counter = project
-            .insert_container("used_time", LoroCounter::new())
-            .unwrap();
+        let counter = project.ensure_mergeable_counter("used_time").unwrap();
         all_projects.push(NewProject {
             // m: project,
             c: counter,

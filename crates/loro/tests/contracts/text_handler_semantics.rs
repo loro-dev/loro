@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use loro::{
     cursor::{Cursor, PosType, Side},
     Container, ContainerTrait, ExportMode, LoroDoc, LoroList, LoroMap, LoroResult, LoroText,

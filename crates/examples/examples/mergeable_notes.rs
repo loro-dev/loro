@@ -36,9 +36,7 @@ fn build_mergeable(n: usize) -> LoroDoc {
     let notes: LoroMap = doc.get_map("notes");
     let mut rng = StdRng::seed_from_u64(SEED);
     for i in 0..n {
-        let note = notes
-            .insert_container(&format!("n{i}"), LoroMap::new())
-            .unwrap();
+        let note = notes.ensure_mergeable_map(&format!("n{i}")).unwrap();
         let text: LoroText = note.ensure_mergeable_text("body").unwrap();
         text.insert(0, &make_payload(&mut rng)).unwrap();
     }
