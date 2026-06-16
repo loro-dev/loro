@@ -560,7 +560,7 @@ mod text_chunk {
             }
 
             // Fast path for ASCII text: unicode index == byte index, and utf16 index == unicode index.
-            if self.bytes.len() as i32 == self.unicode_len {
+            if self.is_all_ascii() {
                 let ans = Self {
                     unicode_len: range.len() as i32,
                     bytes: self.bytes.slice_clone(range.start..range.end),
@@ -2400,10 +2400,6 @@ impl RichtextState {
     /// caches from the resulting cursor, instead of materializing the whole
     /// prefix string.
     pub fn event_index_to_index(&self, event_index: usize, pos_type: PosType) -> usize {
-        if let PosType::Event = pos_type {
-            return event_index;
-        }
-
         if self.tree.is_empty() {
             return 0;
         }

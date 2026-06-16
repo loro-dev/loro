@@ -1575,8 +1575,7 @@ impl DocState {
                 // cloned the growing accumulator), which is hit whenever a
                 // subscriber is attached and many edits land on one container
                 // in a single event batch.
-                let prev =
-                    std::mem::replace(last_container_diff, crate::event::DiffVariant::None);
+                let prev = std::mem::take(last_container_diff);
                 *last_container_diff = prev.compose(container_diff.diff).unwrap();
             }
         }
