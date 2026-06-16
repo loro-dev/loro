@@ -2783,43 +2783,30 @@ impl TextHandler {
             PosType::Unicode => Some(unicode_index),
             PosType::Event => Some(event_index),
             PosType::Bytes | PosType::Utf16 => {
-                // Use the prefix text to compute target offset.
-                let prefix = match &self.inner {
+                // Map the event-index position onto the target coordinate via the
+                // rope's prefix caches. This is O(log n); materializing the prefix
+                // string would be O(n) and makes repeated edits O(n^2).
+                match &self.inner {
                     MaybeDetached::Detached(t) => {
                         let t = t.lock();
                         if event_index > t.value.len_event() {
                             return None;
                         }
-                        t.value.get_text_slice_by_event_index(0, event_index).ok()?
+                        Some(t.value.event_index_to_index(event_index, to))
                     }
-                    MaybeDetached::Attached(a) if a.has_decoded_state() => {
-                        let res: Result<String, ()> = a.with_state(|state| {
-                            let state = state.as_richtext_state_mut().unwrap();
-                            if event_index > state.len_event() {
-                                return Err(());
-                            }
-                            state
-                                .get_text_slice_by_event_index(0, event_index)
-                                .map_err(|_| ())
-                        });
-
-                        match res {
-                            Ok(v) => v,
-                            Err(_) => return None,
+                    MaybeDetached::Attached(a) if a.has_decoded_state() => a.with_state(|state| {
+                        let state = state.as_richtext_state_mut().unwrap();
+                        if event_index > state.len_event() {
+                            return None;
                         }
-                    }
+                        Some(state.event_index_to_index(event_index, to))
+                    }),
                     MaybeDetached::Attached(a) => {
                         let value = a.get_value();
                         let s = value.as_string().unwrap();
-                        return unicode_to_text_pos(s, unicode_index, to);
+                        unicode_to_text_pos(s, unicode_index, to)
                     }
-                };
-
-                Some(match to {
-                    PosType::Bytes => prefix.len(),
-                    PosType::Utf16 => count_utf16_len(prefix.as_bytes()),
-                    _ => unreachable!(),
-                })
+                }
             }
             PosType::Entity => None,
         };

@@ -1570,11 +1570,13 @@ impl DocState {
 
                     continue;
                 };
-                // TODO: PERF avoid this clone
-                *last_container_diff = last_container_diff
-                    .clone()
-                    .compose(container_diff.diff)
-                    .unwrap();
+                // Compose in place. Cloning the accumulated diff here made a
+                // batch of N same-container fragments O(N^2) (each compose
+                // cloned the growing accumulator), which is hit whenever a
+                // subscriber is attached and many edits land on one container
+                // in a single event batch.
+                let prev = std::mem::take(last_container_diff);
+                *last_container_diff = prev.compose(container_diff.diff).unwrap();
             }
         }
         let mut diff: Vec<_> = containers
