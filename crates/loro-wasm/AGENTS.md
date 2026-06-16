@@ -46,9 +46,10 @@ can:
 - apply diffs (`revertTo`, `applyDiff`), or
 - change ephemeral store state that has JS subscribers.
 
-If yes, add the JS method name to the relevant `decorateMethods(...)` allowlist
-near the bottom of `index.ts` (`LoroDoc.prototype`, container prototypes,
-`EphemeralStoreWasm.prototype`, or `UndoManager.prototype`). Pure read/query APIs
+If yes, add the JS method name to the relevant installed `decorateMethods(...)`
+allowlist near the bottom of `index.ts`. Today those wrappers cover
+`LoroDoc.prototype`, `EphemeralStoreWasm.prototype`, and `UndoManager.prototype`;
+add another prototype only when the wrapper is wired there. Pure read/query APIs
 should not be decorated.
 
 A quick behavioral check is to run with an active `doc.subscribe(...)` or

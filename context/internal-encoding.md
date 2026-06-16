@@ -103,6 +103,10 @@ document's original state and attached/detached status. It must not split rich
 text style start/end ops across the shallow root. Unknown container types block
 shallow/state snapshot export through `LoroEncodeError::UnknownContainer`.
 
+Pre-shallow frontier safety lives in `loro.rs`: `checkout`, `diff`, and
+`revert_to` must return `SwitchToVersionBeforeShallowRoot` instead of traversing
+history before the shallow root.
+
 ## JSON Updates
 
 `json_schema.rs` is not wrapped in the binary `loro` envelope. Its
@@ -121,6 +125,9 @@ when changing JSON import validation or rollback behavior.
 
 - Binary malformed input or rollback: `cargo test -p loro-internal import_atomicity`
 - Truncated fast updates: `cargo test -p loro-internal decode_updates_rejects_truncated_block`
+- Pre-shallow checkout/diff/revert behavior:
+  `cargo test -p loro --test issue issue_928` and
+  `cargo test -p loro --test contracts shallow`
 - Snapshot retention that might involve mergeable containers:
   `cargo test -p loro-internal --test mergeable_container`
 - Shared behavior: root `pnpm test`

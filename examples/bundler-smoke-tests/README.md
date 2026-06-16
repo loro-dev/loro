@@ -29,7 +29,7 @@ pnpm --dir examples/bundler-smoke-tests run test:next
 ```
 
 To also launch each production-built app in Chromium and verify `doc.toJSON()`
-returns `{ t: "hi" }` in a real browser:
+returns `{ map: { text: "mergeable-smoke" } }` in a real browser:
 
 ```sh
 pnpm --dir examples/bundler-smoke-tests run test:browser
