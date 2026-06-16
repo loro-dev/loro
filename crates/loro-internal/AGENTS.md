@@ -13,14 +13,17 @@ over graceful degradation.
   checksum verification, `EncodeMode` dispatch, import metadata, and the bridge
   from decoded changes into `OpLog`.
 - `src/encoding/`: concrete binary and JSON encoding implementations. Read
-  `src/encoding/AGENTS.md` before changing binary layout, JSON schema, import
-  metadata, shallow snapshot, or op/value encoding.
+  `src/encoding/AGENTS.md` and
+  [../../context/internal-encoding.md](../../context/internal-encoding.md)
+  before changing binary layout, JSON schema, import metadata, shallow snapshot,
+  or op/value encoding.
 - `src/oplog/` and `src/dag/`: change storage, dependency ordering, pending
   changes, version vectors/frontiers, shallow roots, and history traversal.
 - `src/state.rs` and `src/state/`: materialized document state, container stores,
   diff application, checkout/replay, deep value, dead-container tracking, and
-  mergeable container visibility. Read `src/state/AGENTS.md` before changing
-  mergeable containers.
+  mergeable container visibility. Read `src/state/AGENTS.md` and
+  [../../context/mergeable-containers.md](../../context/mergeable-containers.md)
+  before changing mergeable containers.
 - `src/handler.rs`: typed container handlers, local operation creation, and
   `MapHandler::ensure_mergeable_*`.
 - `src/diff_calc/`: diff calculation when moving between versions.
