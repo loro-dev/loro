@@ -364,6 +364,68 @@ mod text_chunk {
             }
         }
 
+        /// Whether every char in this chunk is in the Basic Multilingual Plane,
+        /// i.e. each char is a single UTF-16 code unit. When true, UTF-16 offsets
+        /// equal unicode offsets, so conversions are O(1) instead of O(offset).
+        #[inline]
+        fn is_all_bmp(&self) -> bool {
+            self.utf16_len == self.unicode_len
+        }
+
+        /// Whether this chunk is pure ASCII, i.e. each char is a single byte.
+        /// When true, byte offsets equal unicode offsets.
+        #[inline]
+        fn is_all_ascii(&self) -> bool {
+            self.bytes.len() as i32 == self.unicode_len
+        }
+
+        /// Convert a UTF-16 offset within this chunk to a unicode offset.
+        ///
+        /// O(1) when the chunk has no astral-plane characters; otherwise it
+        /// scans up to `utf16_offset` chars. Mirrors [`utf16_to_unicode_index`].
+        pub fn utf16_offset_to_unicode(&self, utf16_offset: usize) -> Result<usize, usize> {
+            if self.is_all_bmp() {
+                return Ok(utf16_offset);
+            }
+            super::utf16_to_unicode_index(self.as_str(), utf16_offset)
+        }
+
+        /// Convert a UTF-8 (byte) offset within this chunk to a unicode offset.
+        /// O(1) when the chunk is pure ASCII.
+        pub fn utf8_offset_to_unicode(&self, utf8_offset: usize) -> Result<usize, usize> {
+            if self.is_all_ascii() {
+                return Ok(utf8_offset);
+            }
+            super::utf8_to_unicode_index(self.as_str(), utf8_offset)
+        }
+
+        /// Convert a unicode offset within this chunk to a UTF-16 offset.
+        /// O(1) when the chunk has no astral-plane characters.
+        pub fn unicode_offset_to_utf16(&self, unicode_offset: usize) -> Option<usize> {
+            if self.is_all_bmp() {
+                return Some(unicode_offset);
+            }
+            super::unicode_to_utf16_index(self.as_str(), unicode_offset)
+        }
+
+        /// Convert a unicode offset within this chunk to a UTF-8 (byte) offset.
+        /// O(1) when the chunk is pure ASCII.
+        pub fn unicode_offset_to_utf8(&self, unicode_offset: usize) -> Option<usize> {
+            if self.is_all_ascii() {
+                return Some(unicode_offset);
+            }
+            super::unicode_to_utf8_index(self.as_str(), unicode_offset)
+        }
+
+        /// Slice this chunk by unicode offsets, returning the substring.
+        /// O(1) byte lookup when the chunk is pure ASCII.
+        pub fn unicode_slice(&self, start: usize, end: usize) -> Result<&str, ()> {
+            if self.is_all_ascii() {
+                return self.as_str().get(start..end).ok_or(());
+            }
+            super::unicode_slice(self.as_str(), start, end)
+        }
+
         pub(crate) fn delete_by_entity_index(
             &mut self,
             unicode_offset: usize,
@@ -1220,7 +1282,7 @@ mod query {
                     // Allow left to not at the correct utf16 boundary. If so fallback to the last position.
                     // TODO: if we remove the use of query(pos-1), we won't need this fallback behavior
                     // WARNING: Unable to report error!!!
-                    let offset = utf16_to_unicode_index(s.as_str(), left).unwrap_or_else(|e| e);
+                    let offset = s.utf16_offset_to_unicode(left).unwrap_or_else(|e| e);
                     (offset, true)
                 }
                 RichtextStateChunk::Style { .. } => (1, false),
@@ -1300,7 +1362,7 @@ mod query {
                     // Allow left to not at the correct utf16 boundary. If so fallback to the last position.
                     // TODO: if we remove the use of query(pos-1), we won't need this fallback behavior
                     // WARNING: Unable to report error!!!
-                    let offset = utf8_to_unicode_index(s.as_str(), left).unwrap_or_else(|e| e);
+                    let offset = s.utf8_offset_to_unicode(left).unwrap_or_else(|e| e);
                     (offset, true)
                 }
                 RichtextStateChunk::Style { .. } => (1, false),
@@ -1954,7 +2016,7 @@ impl RichtextState {
                 }
 
                 if let RichtextStateChunk::Text(s) = span.elem {
-                    match unicode_slice(s.as_str(), start, end) {
+                    match s.unicode_slice(start, end) {
                         Ok(x) => ans.push_str(x),
                         Err(()) => {
                             return Err(LoroError::UTF16InUnicodeCodePoint { pos: pos + len })
@@ -2094,7 +2156,7 @@ impl RichtextState {
                             let slice_start = span.start.unwrap_or(0) + processed_len;
                             let slice_end = slice_start + take_len;
 
-                            let text_content = unicode_slice(t.as_str(), slice_start, slice_end)
+                            let text_content = t.unicode_slice(slice_start, slice_end)
                                 .map_err(|_| LoroError::OutOfBound {
                                     pos: slice_end,
                                     len: t.unicode_len() as usize,
@@ -2762,7 +2824,7 @@ fn entity_offset_to_pos_type_offset(
 ) -> usize {
     match pos_type {
         PosType::Bytes => match elem {
-            RichtextStateChunk::Text(t) => unicode_to_utf8_index(t.as_str(), offset).unwrap(),
+            RichtextStateChunk::Text(t) => t.unicode_offset_to_utf8(offset).unwrap(),
             RichtextStateChunk::Style { .. } => 0,
         },
         PosType::Unicode => match elem {
@@ -2770,14 +2832,14 @@ fn entity_offset_to_pos_type_offset(
             RichtextStateChunk::Style { .. } => 0,
         },
         PosType::Utf16 => match elem {
-            RichtextStateChunk::Text(t) => unicode_to_utf16_index(t.as_str(), offset).unwrap(),
+            RichtextStateChunk::Text(t) => t.unicode_offset_to_utf16(offset).unwrap(),
             RichtextStateChunk::Style { .. } => 0,
         },
         PosType::Entity => offset,
         PosType::Event => match elem {
             RichtextStateChunk::Text(t) => {
                 if cfg!(feature = "wasm") {
-                    unicode_to_utf16_index(t.as_str(), offset).unwrap()
+                    t.unicode_offset_to_utf16(offset).unwrap()
                 } else {
                     offset
                 }
@@ -2794,7 +2856,7 @@ fn pos_type_offset_to_entity_offset(
 ) -> Option<usize> {
     match pos_type {
         PosType::Bytes => match elem {
-            RichtextStateChunk::Text(t) => utf8_to_unicode_index(t.as_str(), offset).ok(),
+            RichtextStateChunk::Text(t) => t.utf8_offset_to_unicode(offset).ok(),
             RichtextStateChunk::Style { .. } => {
                 if offset > 0 {
                     None
@@ -2805,7 +2867,7 @@ fn pos_type_offset_to_entity_offset(
         },
         PosType::Unicode => Some(offset),
         PosType::Utf16 => match elem {
-            RichtextStateChunk::Text(t) => utf16_to_unicode_index(t.as_str(), offset).ok(),
+            RichtextStateChunk::Text(t) => t.utf16_offset_to_unicode(offset).ok(),
             RichtextStateChunk::Style { .. } => {
                 if offset > 0 {
                     None
@@ -2824,7 +2886,7 @@ fn pos_type_offset_to_entity_offset(
         PosType::Event => match elem {
             RichtextStateChunk::Text(t) => {
                 if cfg!(feature = "wasm") {
-                    utf16_to_unicode_index(t.as_str(), offset).ok()
+                    t.utf16_offset_to_unicode(offset).ok()
                 } else if offset < t.unicode_len() as usize {
                     Some(offset)
                 } else {

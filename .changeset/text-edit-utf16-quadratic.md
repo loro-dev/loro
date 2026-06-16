@@ -16,3 +16,10 @@ Fix two O(n^2) editing slowdowns.
    writes), building the event cloned the growing accumulated diff on every
    compose — O(n^2) in the number of fragments. The diffs are now composed in
    place. This affected text, map and list events.
+
+3. Converting a UTF-16 / UTF-8 position within a text chunk to a unicode offset
+   scanned the chunk char-by-char, so editing/slicing a large contiguous chunk
+   (a big insert, a loaded document, or a long run of typed text that merges into
+   one chunk) was O(chunk length) per op. Chunks that contain no astral-plane
+   characters (UTF-16) or are pure ASCII (UTF-8) now convert in O(1), covering
+   essentially all real-world text (ASCII/Latin/CJK).
