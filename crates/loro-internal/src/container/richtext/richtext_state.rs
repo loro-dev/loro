@@ -2156,11 +2156,13 @@ impl RichtextState {
                             let slice_start = span.start.unwrap_or(0) + processed_len;
                             let slice_end = slice_start + take_len;
 
-                            let text_content = t.unicode_slice(slice_start, slice_end)
-                                .map_err(|_| LoroError::OutOfBound {
-                                    pos: slice_end,
-                                    len: t.unicode_len() as usize,
-                                    info: "Slice delta out of bound".into(),
+                            let text_content =
+                                t.unicode_slice(slice_start, slice_end).map_err(|_| {
+                                    LoroError::OutOfBound {
+                                        pos: slice_end,
+                                        len: t.unicode_len() as usize,
+                                        info: "Slice delta out of bound".into(),
+                                    }
                                 })?;
 
                             let styles = cur_styles.as_ref().unwrap();

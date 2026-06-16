@@ -50,7 +50,14 @@ fn batched_same_container_edits_emit_correct_event() {
         let pos = (seed as usize) % (len + 1);
         let ch = (b'a' + (i % 26) as u8) as char;
         text.insert(pos, &ch.to_string()).unwrap();
-        expected.insert(expected.char_indices().nth(pos).map(|(b, _)| b).unwrap_or(expected.len()), ch);
+        expected.insert(
+            expected
+                .char_indices()
+                .nth(pos)
+                .map(|(b, _)| b)
+                .unwrap_or(expected.len()),
+            ch,
+        );
     }
     doc.commit();
 

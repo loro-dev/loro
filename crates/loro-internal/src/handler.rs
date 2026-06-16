@@ -2794,15 +2794,13 @@ impl TextHandler {
                         }
                         Some(t.value.event_index_to_index(event_index, to))
                     }
-                    MaybeDetached::Attached(a) if a.has_decoded_state() => {
-                        a.with_state(|state| {
-                            let state = state.as_richtext_state_mut().unwrap();
-                            if event_index > state.len_event() {
-                                return None;
-                            }
-                            Some(state.event_index_to_index(event_index, to))
-                        })
-                    }
+                    MaybeDetached::Attached(a) if a.has_decoded_state() => a.with_state(|state| {
+                        let state = state.as_richtext_state_mut().unwrap();
+                        if event_index > state.len_event() {
+                            return None;
+                        }
+                        Some(state.event_index_to_index(event_index, to))
+                    }),
                     MaybeDetached::Attached(a) => {
                         let value = a.get_value();
                         let s = value.as_string().unwrap();
