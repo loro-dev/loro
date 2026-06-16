@@ -11,6 +11,9 @@ TypeScript, and MoonBit packaging around the Rust core.
   behavior.
 - `crates/loro-wasm`: `loro-crdt` WASM/TypeScript package. Read its nested
   `AGENTS.md` before changing WASM bindings, package exports, or JS wrappers.
+- `crates/loro-internal`: core CRDT implementation. Read its nested `AGENTS.md`
+  before changing encoding, import/export, state, diff, or mergeable container
+  behavior.
 - `crates/delta`, `crates/rle`, `crates/kv-store`, `crates/fractional_index`,
   and `crates/loro-common`: shared primitives used by the core crates.
 - `packages/fractional-index`: TypeScript package for the fractional index
@@ -134,6 +137,8 @@ editing this area.
 - Start with `git status --short --branch` and treat uncommitted changes as user
   work unless you made them in the current turn.
 - Read the nearest `AGENTS.md` before editing a subtree.
+- Keep `CLAUDE.md` as a symlink to the nearest `AGENTS.md` when adding agent
+  instructions, so Claude and Codex read the same durable context.
 - Use `rg` / `rg --files` for search and repository mapping.
 - Load `skills/loro` for user-facing Loro usage, CRDT modeling, sync,
   persistence, editor integration, or performance guidance. Load
