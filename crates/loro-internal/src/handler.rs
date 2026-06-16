@@ -1504,10 +1504,9 @@ impl TextHandler {
                 let t = t.lock();
                 t.value.len_utf8()
             }
-            MaybeDetached::Attached(a) if a.has_decoded_state() => {
-                a.with_state(|state| state.as_richtext_state_mut().unwrap().len_utf8())
+            MaybeDetached::Attached(a) => {
+                a.with_doc_state(|state| state.get_text_len(a.container_idx, PosType::Bytes))
             }
-            MaybeDetached::Attached(a) => a.get_value().as_string().unwrap().len(),
         }
     }
 

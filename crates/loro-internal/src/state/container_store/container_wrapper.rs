@@ -103,6 +103,15 @@ impl LazyDecodedValue {
             _ => None,
         }
     }
+
+    fn utf8_len(&self) -> Option<usize> {
+        match self {
+            // The decoded text value is the string itself, so its byte length
+            // is a cheap `str::len` — no need to cache a separate field.
+            Self::Text { value, .. } => value.as_string().map(|s| s.len()),
+            _ => None,
+        }
+    }
 }
 
 impl ContainerWrapper {
@@ -332,6 +341,25 @@ impl ContainerWrapper {
                         Some(state.as_richtext_state_mut().unwrap().len_utf16())
                     }
                     ContainerData::Lazy(lazy) => lazy.value.as_ref()?.utf16_len(),
+                }
+            }
+        }
+    }
+
+    pub fn text_utf8_len(
+        &mut self,
+        idx: ContainerIdx,
+        ctx: ContainerCreationContext,
+    ) -> Option<usize> {
+        match &mut self.data {
+            ContainerData::State(state) => Some(state.as_richtext_state_mut().unwrap().len_utf8()),
+            ContainerData::Lazy(_) => {
+                self.decode_value(idx, ctx).unwrap();
+                match &mut self.data {
+                    ContainerData::State(state) => {
+                        Some(state.as_richtext_state_mut().unwrap().len_utf8())
+                    }
+                    ContainerData::Lazy(lazy) => lazy.value.as_ref()?.utf8_len(),
                 }
             }
         }

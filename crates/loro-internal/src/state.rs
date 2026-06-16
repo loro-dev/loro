@@ -976,6 +976,10 @@ impl DocState {
         self.store.text_utf16_len(container_idx).unwrap_or(0)
     }
 
+    pub(crate) fn get_text_utf8_len(&mut self, container_idx: ContainerIdx) -> usize {
+        self.store.text_utf8_len(container_idx).unwrap_or(0)
+    }
+
     pub(crate) fn has_decoded_container_state(&mut self, container_idx: ContainerIdx) -> bool {
         self.store.has_decoded_state(container_idx)
     }
@@ -996,10 +1000,7 @@ impl DocState {
             PosType::Utf16 => self.get_text_utf16_len(container_idx),
             PosType::Event if cfg!(feature = "wasm") => self.get_text_utf16_len(container_idx),
             PosType::Event => self.get_text_unicode_len(container_idx),
-            PosType::Bytes => self
-                .get_value_by_idx(container_idx)
-                .as_string()
-                .map_or(0, |s| s.len()),
+            PosType::Bytes => self.get_text_utf8_len(container_idx),
             PosType::Entity => self.with_state_mut(container_idx, |state| {
                 state.as_richtext_state_mut().unwrap().len(PosType::Entity)
             }),
