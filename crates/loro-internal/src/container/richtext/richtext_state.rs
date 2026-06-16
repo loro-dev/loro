@@ -2332,6 +2332,24 @@ impl RichtextState {
         self.cursor_to_unicode_index(cursor.cursor)
     }
 
+    /// Convert an event-index position into the index of `pos_type`.
+    ///
+    /// This runs in O(log n) by querying the tree once and reading the prefix
+    /// caches from the resulting cursor, instead of materializing the whole
+    /// prefix string.
+    pub fn event_index_to_index(&self, event_index: usize, pos_type: PosType) -> usize {
+        if let PosType::Event = pos_type {
+            return event_index;
+        }
+
+        if self.tree.is_empty() {
+            return 0;
+        }
+
+        let cursor = self.tree.query::<EventIndexQuery>(&event_index).unwrap();
+        self.get_index_from_cursor(cursor.cursor, pos_type).unwrap()
+    }
+
     #[allow(unused)]
     pub(crate) fn check(&self) {
         if !cfg!(any(debug_assertions, test)) {

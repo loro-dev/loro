@@ -14,6 +14,80 @@ fn utf16_pos(s: &str, char_index: usize) -> usize {
     s.chars().take(char_index).map(|c| c.len_utf16()).sum()
 }
 
+// Regression guard for the O(n^2) text-edit perf bug: `convert_pos` must map
+// every coordinate pair correctly via the O(log n) cursor path. We check the
+// result against a reference computed directly from the prefix string for a
+// mix of ASCII, multi-byte, and surrogate-pair characters.
+#[test]
+fn convert_pos_matches_prefix_reference_all_coords() {
+    let content = "A😀B汉ñC🎉De";
+    let doc = LoroDoc::new();
+    let text = doc.get_text("text");
+    text.insert(0, content).unwrap();
+
+    let chars: Vec<char> = content.chars().collect();
+    let unicode_len = chars.len();
+
+    // Reference prefix lengths keyed by unicode position.
+    let mut uni_to_utf16 = Vec::with_capacity(unicode_len + 1);
+    let mut uni_to_bytes = Vec::with_capacity(unicode_len + 1);
+    let (mut u16acc, mut byteacc) = (0usize, 0usize);
+    for i in 0..=unicode_len {
+        uni_to_utf16.push(u16acc);
+        uni_to_bytes.push(byteacc);
+        if i < unicode_len {
+            u16acc += chars[i].len_utf16();
+            byteacc += chars[i].len_utf8();
+        }
+    }
+
+    for u in 0..=unicode_len {
+        // Unicode -> {Utf16, Bytes, Event}
+        assert_eq!(
+            text.convert_pos(u, PosType::Unicode, PosType::Utf16),
+            Some(uni_to_utf16[u]),
+            "unicode {u} -> utf16"
+        );
+        assert_eq!(
+            text.convert_pos(u, PosType::Unicode, PosType::Bytes),
+            Some(uni_to_bytes[u]),
+            "unicode {u} -> bytes"
+        );
+
+        // Round-trips back to the original coordinate.
+        let utf16 = uni_to_utf16[u];
+        let bytes = uni_to_bytes[u];
+        assert_eq!(
+            text.convert_pos(utf16, PosType::Utf16, PosType::Unicode),
+            Some(u),
+            "utf16 {utf16} -> unicode"
+        );
+        assert_eq!(
+            text.convert_pos(bytes, PosType::Bytes, PosType::Unicode),
+            Some(u),
+            "bytes {bytes} -> unicode"
+        );
+        assert_eq!(
+            text.convert_pos(bytes, PosType::Bytes, PosType::Utf16),
+            Some(utf16),
+            "bytes {bytes} -> utf16"
+        );
+        assert_eq!(
+            text.convert_pos(utf16, PosType::Utf16, PosType::Bytes),
+            Some(bytes),
+            "utf16 {utf16} -> bytes"
+        );
+    }
+
+    // Positions inside a surrogate pair / multi-byte char must be rejected by
+    // the editing API (boundary validation), not silently snapped.
+    // 😀 is at unicode index 1; its utf16 span is [1, 3) and byte span is [1, 5).
+    assert!(text.insert_utf16(2, "x").is_err());
+    assert!(text.insert_utf8(2, "x").is_err());
+    assert!(text.delete_utf16(2, 1).is_err());
+    assert!(text.delete_utf8(2, 1).is_err());
+}
+
 #[test]
 fn test_slice_delta() {
     let doc = LoroDoc::new();

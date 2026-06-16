@@ -1065,6 +1065,12 @@ impl RichtextState {
             .get_mut()
             .event_index_to_unicode_index(event_index)
     }
+
+    pub(crate) fn event_index_to_index(&mut self, event_index: usize, pos_type: PosType) -> usize {
+        self.state
+            .get_mut()
+            .event_index_to_index(event_index, pos_type)
+    }
 }
 
 #[derive(Debug, Default, Clone)]
