@@ -39,6 +39,18 @@ const REGULAR_CONTAINER_VALUE_ARG_ERROR: &str =
 mod text_update;
 
 fn ensure_no_regular_container_value(value: &LoroValue) -> LoroResult<()> {
+    // Fast path: scalar values can never transitively hold a container, so we
+    // skip the heap allocation + traversal below. This is the common case on
+    // the per-op insert hot path (inserting numbers/strings/bools), where the
+    // previous unconditional `vec![value]` allocation showed up as a measurable
+    // regression.
+    if !matches!(
+        value,
+        LoroValue::Container(_) | LoroValue::List(_) | LoroValue::Map(_)
+    ) {
+        return Ok(());
+    }
+
     let mut stack = vec![value];
     while let Some(value) = stack.pop() {
         match value {
@@ -1506,7 +1518,7 @@ impl TextHandler {
                 t.value.len_utf16()
             }
             MaybeDetached::Attached(a) => {
-                a.with_doc_state(|state| state.get_text_utf16_len(a.container_idx))
+                a.with_doc_state(|state| state.get_text_len(a.container_idx, PosType::Utf16))
             }
         }
     }
@@ -1518,7 +1530,7 @@ impl TextHandler {
                 t.value.len_unicode()
             }
             MaybeDetached::Attached(a) => {
-                a.with_doc_state(|state| state.get_text_unicode_len(a.container_idx))
+                a.with_doc_state(|state| state.get_text_len(a.container_idx, PosType::Unicode))
             }
         }
     }
@@ -1536,25 +1548,9 @@ impl TextHandler {
     fn len(&self, pos_type: PosType) -> usize {
         match &self.inner {
             MaybeDetached::Detached(t) => t.lock().value.len(pos_type),
-            MaybeDetached::Attached(a) if a.has_decoded_state() || pos_type == PosType::Entity => {
-                a.with_state(|state| state.as_richtext_state_mut().unwrap().len(pos_type))
+            MaybeDetached::Attached(a) => {
+                a.with_doc_state(|state| state.get_text_len(a.container_idx, pos_type))
             }
-            MaybeDetached::Attached(a) => match pos_type {
-                PosType::Bytes => a.get_value().as_string().unwrap().len(),
-                PosType::Unicode => {
-                    a.with_doc_state(|state| state.get_text_unicode_len(a.container_idx))
-                }
-                PosType::Utf16 => {
-                    a.with_doc_state(|state| state.get_text_utf16_len(a.container_idx))
-                }
-                PosType::Event if cfg!(feature = "wasm") => {
-                    a.with_doc_state(|state| state.get_text_utf16_len(a.container_idx))
-                }
-                PosType::Event => {
-                    a.with_doc_state(|state| state.get_text_unicode_len(a.container_idx))
-                }
-                PosType::Entity => unreachable!("entity length is handled by the state path"),
-            },
         }
     }
 

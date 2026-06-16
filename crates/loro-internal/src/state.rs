@@ -17,7 +17,7 @@ use tracing::{info_span, instrument, warn};
 use crate::{
     configure::{Configure, DefaultRandom, SecureRandomGenerator},
     container::{idx::ContainerIdx, richtext::config::StyleConfigMap},
-    cursor::Cursor,
+    cursor::{Cursor, PosType},
     delta::TreeExternalDiff,
     diff_calc::{DiffCalculator, DiffMode},
     event::{Diff, EventTriggerKind, Index, InternalContainerDiff, InternalDiff},
@@ -978,6 +978,32 @@ impl DocState {
 
     pub(crate) fn has_decoded_container_state(&mut self, container_idx: ContainerIdx) -> bool {
         self.store.has_decoded_state(container_idx)
+    }
+
+    /// Length of a text container in the given `pos_type`, taking a single
+    /// `DocState` lock and a single container-store lookup.
+    ///
+    /// The per-`pos_type` store helpers already branch on decoded-vs-lazy
+    /// internally, and their lazy branch reads the cheap length metadata
+    /// without materializing the full richtext state — preserving the
+    /// lazy-snapshot memory behavior. Callers previously took two separate
+    /// locks (one to check decoded-ness, one to query), which showed up as a
+    /// per-op regression on the text editing hot path. Only `Entity` length has
+    /// no store helper and falls back to the state path.
+    pub(crate) fn get_text_len(&mut self, container_idx: ContainerIdx, pos_type: PosType) -> usize {
+        match pos_type {
+            PosType::Unicode => self.get_text_unicode_len(container_idx),
+            PosType::Utf16 => self.get_text_utf16_len(container_idx),
+            PosType::Event if cfg!(feature = "wasm") => self.get_text_utf16_len(container_idx),
+            PosType::Event => self.get_text_unicode_len(container_idx),
+            PosType::Bytes => self
+                .get_value_by_idx(container_idx)
+                .as_string()
+                .map_or(0, |s| s.len()),
+            PosType::Entity => self.with_state_mut(container_idx, |state| {
+                state.as_richtext_state_mut().unwrap().len(PosType::Entity)
+            }),
+        }
     }
 
     /// Set the state of the container with the given container idx.
