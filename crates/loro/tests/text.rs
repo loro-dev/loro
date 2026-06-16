@@ -14,6 +14,51 @@ fn utf16_pos(s: &str, char_index: usize) -> usize {
     s.chars().take(char_index).map(|c| c.len_utf16()).sum()
 }
 
+// Regression guard for the second O(n^2) bug: when a subscriber is attached and
+// many edits to the same container accumulate in one event batch, `diffs_to_event`
+// used to clone the growing accumulated diff on every compose. The fix composes in
+// place; this test pins that the resulting event still reflects the final text.
+#[test]
+fn batched_same_container_edits_emit_correct_event() {
+    use std::sync::{Arc, Mutex};
+
+    let doc = LoroDoc::new();
+    let last_text = Arc::new(Mutex::new(String::new()));
+    let captured = last_text.clone();
+    let _sub = doc.subscribe_root(Arc::new(move |e| {
+        for container in e.events {
+            if let loro::event::Diff::Text(deltas) = &container.diff {
+                let mut s = String::new();
+                for d in deltas {
+                    if let TextDelta::Insert { insert, .. } = d {
+                        s.push_str(insert);
+                    }
+                }
+                *captured.lock().unwrap() = s;
+            }
+        }
+    }));
+
+    let text = doc.get_text("text");
+    // Many non-adjacent inserts in one batch => many same-container fragments
+    // that must be composed correctly into a single event.
+    let mut seed: u64 = 1;
+    let mut expected = String::new();
+    for i in 0..400 {
+        let len = text.len_unicode();
+        seed = (seed.wrapping_mul(1103515245).wrapping_add(12345)) & 0x7fffffff;
+        let pos = (seed as usize) % (len + 1);
+        let ch = (b'a' + (i % 26) as u8) as char;
+        text.insert(pos, &ch.to_string()).unwrap();
+        expected.insert(expected.char_indices().nth(pos).map(|(b, _)| b).unwrap_or(expected.len()), ch);
+    }
+    doc.commit();
+
+    assert_eq!(text.to_string(), expected);
+    // The event's reconstructed insert content must equal the final document.
+    assert_eq!(*last_text.lock().unwrap(), expected);
+}
+
 // Regression guard for the O(n^2) text-edit perf bug: `convert_pos` must map
 // every coordinate pair correctly via the O(log n) cursor path. We check the
 // result against a reference computed directly from the prefix string for a
