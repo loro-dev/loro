@@ -1572,7 +1572,12 @@ impl TextHandler {
             return Ok(());
         };
 
-        if pos > self.len(pos_type) {
+        let len = self.len(pos_type);
+        if pos > len {
+            return Ok(());
+        }
+
+        if self.all_text_positions_are_boundaries(pos_type, len) {
             return Ok(());
         }
 
@@ -1584,6 +1589,15 @@ impl TextHandler {
         }
 
         Ok(())
+    }
+
+    fn all_text_positions_are_boundaries(&self, pos_type: PosType, len: usize) -> bool {
+        match pos_type {
+            PosType::Bytes => len == self.len_unicode(),
+            PosType::Utf16 => len == self.len_unicode(),
+            PosType::Event if cfg!(feature = "wasm") => len == self.len_unicode(),
+            _ => false,
+        }
     }
 
     pub fn diagnose(&self) {
@@ -1851,18 +1865,18 @@ impl TextHandler {
     ///
     /// This method requires auto_commit to be enabled.
     pub fn insert(&self, pos: usize, s: &str, pos_type: PosType) -> LoroResult<()> {
-        let len = self.len(pos_type);
-        if pos > len {
-            return Err(LoroError::OutOfBound {
-                pos,
-                len,
-                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-            });
-        }
-        self.validate_text_boundary(pos, pos_type)?;
-
         match &self.inner {
             MaybeDetached::Detached(t) => {
+                let len = self.len(pos_type);
+                if pos > len {
+                    return Err(LoroError::OutOfBound {
+                        pos,
+                        len,
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                    });
+                }
+                self.validate_text_boundary(pos, pos_type)?;
+
                 let mut t = t.lock();
                 let (index, _) = t
                     .value
@@ -1876,6 +1890,19 @@ impl TextHandler {
                 Ok(())
             }
             MaybeDetached::Attached(a) => {
+                if s.is_empty() {
+                    let len = self.len(pos_type);
+                    if pos > len {
+                        return Err(LoroError::OutOfBound {
+                            pos,
+                            len,
+                            info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                        });
+                    }
+                    self.validate_text_boundary(pos, pos_type)?;
+                    return Ok(());
+                }
+
                 a.with_txn(|txn| self.insert_with_txn(txn, pos, s, pos_type))
             }
         }

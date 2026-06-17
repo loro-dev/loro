@@ -782,7 +782,7 @@ mod tests {
             ContainerID::new_mergeable(&top_root, "profile", ContainerType::Map);
         let child = ContainerID::new_normal(
             loro_common::ID::new(1, 0),
-            ContainerType::Counter,
+            ContainerType::List,
         );
 
         let mergeable_parent_for_resolver = mergeable_parent.clone();
