@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.13.6
+
+### Patch Changes
+
+- a4e6174: Fix undo/redo restoring mergeable map children as regular non-mergeable containers.
+- 78f6c8a: Fix a potential deadlock when lazy snapshot loading resolves mergeable container parent depths.
+
 ## 1.13.5
 
 ### Patch Changes
