@@ -1102,6 +1102,28 @@ impl HandlerTrait for Handler {
 }
 
 impl Handler {
+    fn apply_map_container_diff_value(
+        map: &MapHandler,
+        key: &str,
+        old_id: ContainerID,
+        on_container_remap: &mut dyn FnMut(ContainerID, ContainerID),
+    ) -> LoroResult<()> {
+        if old_id.is_mergeable() {
+            let parent_id = map.id();
+            let kind = old_id.container_type();
+            let new_id = ContainerID::new_mergeable(&parent_id, key, kind);
+            let marker = loro_common::mergeable_marker(&parent_id, key, kind);
+            map.insert_without_skipping(key, marker)?;
+            on_container_remap(old_id, new_id);
+            return Ok(());
+        }
+
+        let new_h = map.insert_container(key, Handler::new_unattached(old_id.container_type()))?;
+        let new_id = new_h.id();
+        on_container_remap(old_id, new_id);
+        Ok(())
+    }
+
     pub(crate) fn new_attached(id: ContainerID, doc: LoroDoc) -> Self {
         let kind = id.container_type();
         let handler = BasicHandler {
@@ -1225,21 +1247,20 @@ impl Handler {
                 for (key, value) in diff.updated.into_iter() {
                     match value.value {
                         Some(ValueOrHandler::Handler(h)) => {
-                            let old_id = h.id();
-                            let new_h = x.insert_container(
+                            Self::apply_map_container_diff_value(
+                                x,
                                 &key,
-                                Handler::new_unattached(old_id.container_type()),
+                                h.id(),
+                                on_container_remap,
                             )?;
-                            let new_id = new_h.id();
-                            on_container_remap(old_id, new_id);
                         }
                         Some(ValueOrHandler::Value(LoroValue::Container(old_id))) => {
-                            let new_h = x.insert_container(
+                            Self::apply_map_container_diff_value(
+                                x,
                                 &key,
-                                Handler::new_unattached(old_id.container_type()),
+                                old_id,
+                                on_container_remap,
                             )?;
-                            let new_id = new_h.id();
-                            on_container_remap(old_id, new_id);
                         }
                         Some(ValueOrHandler::Value(v)) => {
                             x.insert_without_skipping(&key, v)?;
