@@ -4,7 +4,6 @@ use crate::{
 };
 use bytes::Bytes;
 use loro_common::ContainerID;
-use std::ops::Bound;
 
 use super::ContainerWrapper;
 
@@ -298,21 +297,19 @@ impl InnerStore {
             .import(bytes_b)
             .map_err(|e| loro_common::LoroError::DecodeError(e.into_boxed_str()))?;
         self.kv.remove(FRONTIERS_KEY);
+        let entries = self.kv.scan_all_entries();
         let store = &mut self.store;
         let arena = &self.arena;
-        self.kv.with_kv(|kv| {
-            arena.with_guards(|guards| {
-                let iter = kv.scan(Bound::Unbounded, Bound::Unbounded);
-                for (k, v) in iter {
-                    let cid = ContainerID::from_bytes(&k);
-                    let c = ContainerWrapper::new_from_bytes(v);
-                    let parent = c.parent();
-                    let idx = guards.register_container(&cid);
-                    let p = parent.as_ref().map(|p| guards.register_container(p));
-                    guards.set_parent(idx, p);
-                    if Self::insert_entry(store, idx, c).is_some() {}
-                }
-            });
+        arena.with_guards(|guards| {
+            for (k, v) in entries {
+                let cid = ContainerID::from_bytes(&k);
+                let c = ContainerWrapper::new_from_bytes(v);
+                let parent = c.parent();
+                let idx = guards.register_container(&cid);
+                let p = parent.as_ref().map(|p| guards.register_container(p));
+                guards.set_parent(idx, p);
+                if Self::insert_entry(store, idx, c).is_some() {}
+            }
         });
 
         self.load_state = LoadState::AllLoaded;
@@ -324,24 +321,22 @@ impl InnerStore {
             return;
         }
 
+        let entries = self.kv.scan_all_entries();
         let store = &mut self.store;
         let arena = &self.arena;
-        self.kv.with_kv(|kv| {
-            let iter = kv.scan(Bound::Unbounded, Bound::Unbounded);
-            arena.with_guards(|guards| {
-                for (k, v) in iter {
-                    let cid = ContainerID::from_bytes(&k);
-                    let idx = guards.register_container(&cid);
-                    if Self::contains_idx_in(store, idx) {
-                        // the container is already loaded
-                        // the content in `store` is guaranteed to be newer than the content in `kv`
-                        continue;
-                    }
-
-                    let container = ContainerWrapper::new_from_bytes(v);
-                    Self::insert_entry(store, idx, container);
+        arena.with_guards(|guards| {
+            for (k, v) in entries {
+                let cid = ContainerID::from_bytes(&k);
+                let idx = guards.register_container(&cid);
+                if Self::contains_idx_in(store, idx) {
+                    // the container is already loaded
+                    // the content in `store` is guaranteed to be newer than the content in `kv`
+                    continue;
                 }
-            });
+
+                let container = ContainerWrapper::new_from_bytes(v);
+                Self::insert_entry(store, idx, container);
+            }
         });
 
         self.load_state = LoadState::AllLoaded;
@@ -353,16 +348,14 @@ impl InnerStore {
         }
 
         let arena = &self.arena;
-        self.kv.with_kv(|kv| {
-            let iter = kv.scan(Bound::Unbounded, Bound::Unbounded);
-            arena.with_guards(|guards| {
-                for (k, _) in iter {
-                    let cid = ContainerID::from_bytes(&k);
-                    if cid.is_root() {
-                        guards.register_container(&cid);
-                    }
+        let keys = self.kv.scan_all_keys();
+        arena.with_guards(|guards| {
+            for k in keys {
+                let cid = ContainerID::from_bytes(&k);
+                if cid.is_root() {
+                    guards.register_container(&cid);
                 }
-            });
+            }
         });
         self.load_state = LoadState::RootsLoaded;
     }
@@ -409,33 +402,10 @@ impl InnerStore {
 mod tests {
     use super::*;
     use loro_common::{ContainerType, ID};
-    use std::{
-        panic::{catch_unwind, AssertUnwindSafe},
-        sync::{
-            atomic::{AtomicBool, Ordering},
-            mpsc, Arc,
-        },
-        time::Duration,
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
     };
-
-    fn assert_completes_without_deadlock(name: &'static str, f: impl FnOnce() + Send + 'static) {
-        let (tx, rx) = mpsc::channel();
-        std::thread::spawn(move || {
-            let result = catch_unwind(AssertUnwindSafe(f));
-            let _ = tx.send(result);
-        });
-
-        match rx.recv_timeout(Duration::from_secs(2)) {
-            Ok(Ok(())) => {}
-            Ok(Err(payload)) => std::panic::resume_unwind(payload),
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                panic!("{name} did not complete; possible recursive KV lock deadlock")
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                panic!("{name} thread disconnected without a result")
-            }
-        }
-    }
 
     fn encoded_container_header(kind: ContainerType, parent: Option<ContainerID>) -> Bytes {
         let mut output = Vec::new();
@@ -452,14 +422,19 @@ mod tests {
         (child_id, value)
     }
 
-    fn install_reentrant_parent_resolver(arena: &SharedArena, kv: KvWrapper) -> Arc<AtomicBool> {
+    fn install_parent_resolver_guard(
+        arena: &SharedArena,
+        loading: Arc<AtomicBool>,
+    ) -> Arc<AtomicBool> {
         let resolver_called = Arc::new(AtomicBool::new(false));
         let called = resolver_called.clone();
-        arena.set_parent_resolver(Some(move |child_id: ContainerID| {
+        arena.set_parent_resolver(Some(move |_child_id: ContainerID| {
+            assert!(
+                !loading.load(Ordering::SeqCst),
+                "lazy parent resolver must not run while loading from KV"
+            );
             called.store(true, Ordering::SeqCst);
-            let value = kv.get(&child_id.to_bytes())?;
-            let container = ContainerWrapper::new_from_bytes(value);
-            container.parent().cloned()
+            None
         }));
         resolver_called
     }
@@ -471,71 +446,77 @@ mod tests {
     }
 
     #[test]
-    fn load_all_does_not_resolve_parent_while_kv_lock_is_held() {
+    fn load_all_does_not_resolve_parent_while_loading_from_kv() {
         let arena = SharedArena::new();
         let mut store = InnerStore::new(arena.clone(), Configure::default());
-        let resolver_called = install_reentrant_parent_resolver(&arena, store.kv.arc_clone());
+        let loading = Arc::new(AtomicBool::new(false));
+        let resolver_called = install_parent_resolver_guard(&arena, loading.clone());
         let (child_id, value) = mergeable_child_entry();
         let child_id_for_depth = child_id.clone();
-        let arena_for_depth = arena.clone();
         store.load_state = LoadState::Lazy;
         store
             .kv
             .set_all(vec![(Bytes::from(child_id.to_bytes()), value)]);
 
-        assert_completes_without_deadlock("load_all", move || {
-            store.load_all();
-            let child_idx = arena_for_depth.id_to_idx(&child_id_for_depth).unwrap();
-            let _ = arena_for_depth.get_depth(child_idx);
-            assert!(
-                resolver_called.load(Ordering::SeqCst),
-                "lazy parent resolver should still work after load_all returns"
-            );
-        });
+        loading.store(true, Ordering::SeqCst);
+        store.load_all();
+        loading.store(false, Ordering::SeqCst);
+        assert!(!resolver_called.load(Ordering::SeqCst));
+
+        let child_idx = arena.id_to_idx(&child_id_for_depth).unwrap();
+        let _ = arena.get_depth(child_idx);
+        assert!(
+            resolver_called.load(Ordering::SeqCst),
+            "lazy parent resolver should still work after load_all returns"
+        );
     }
 
     #[test]
-    fn load_roots_does_not_resolve_parent_while_kv_lock_is_held() {
+    fn load_roots_does_not_resolve_parent_while_loading_from_kv() {
         let arena = SharedArena::new();
         let mut store = InnerStore::new(arena.clone(), Configure::default());
-        let resolver_called = install_reentrant_parent_resolver(&arena, store.kv.arc_clone());
+        let loading = Arc::new(AtomicBool::new(false));
+        let resolver_called = install_parent_resolver_guard(&arena, loading.clone());
         let (child_id, value) = mergeable_child_entry();
         let child_id_for_depth = child_id.clone();
-        let arena_for_depth = arena.clone();
         store.load_state = LoadState::Lazy;
         store
             .kv
             .set_all(vec![(Bytes::from(child_id.to_bytes()), value)]);
 
-        assert_completes_without_deadlock("load_roots", move || {
-            store.load_roots();
-            let child_idx = arena_for_depth.id_to_idx(&child_id_for_depth).unwrap();
-            let _ = arena_for_depth.get_depth(child_idx);
-            assert!(
-                resolver_called.load(Ordering::SeqCst),
-                "lazy parent resolver should still work after load_roots returns"
-            );
-        });
+        loading.store(true, Ordering::SeqCst);
+        store.load_roots();
+        loading.store(false, Ordering::SeqCst);
+        assert!(!resolver_called.load(Ordering::SeqCst));
+
+        let child_idx = arena.id_to_idx(&child_id_for_depth).unwrap();
+        let _ = arena.get_depth(child_idx);
+        assert!(
+            resolver_called.load(Ordering::SeqCst),
+            "lazy parent resolver should still work after load_roots returns"
+        );
     }
 
     #[test]
-    fn decode_twice_does_not_resolve_parent_while_kv_lock_is_held() {
+    fn decode_twice_does_not_resolve_parent_while_loading_from_kv() {
         let arena = SharedArena::new();
         let mut store = InnerStore::new(arena.clone(), Configure::default());
-        let resolver_called = install_reentrant_parent_resolver(&arena, store.kv.arc_clone());
+        let loading = Arc::new(AtomicBool::new(false));
+        let resolver_called = install_parent_resolver_guard(&arena, loading.clone());
         let (child_id, value) = mergeable_child_entry();
         let child_id_for_depth = child_id.clone();
-        let arena_for_depth = arena.clone();
         let bytes = kv_bytes_with_entry(child_id, value);
 
-        assert_completes_without_deadlock("decode_twice", move || {
-            store.decode_twice(bytes, Bytes::new()).unwrap();
-            let child_idx = arena_for_depth.id_to_idx(&child_id_for_depth).unwrap();
-            let _ = arena_for_depth.get_depth(child_idx);
-            assert!(
-                resolver_called.load(Ordering::SeqCst),
-                "lazy parent resolver should still work after decode_twice returns"
-            );
-        });
+        loading.store(true, Ordering::SeqCst);
+        store.decode_twice(bytes, Bytes::new()).unwrap();
+        loading.store(false, Ordering::SeqCst);
+        assert!(!resolver_called.load(Ordering::SeqCst));
+
+        let child_idx = arena.id_to_idx(&child_id_for_depth).unwrap();
+        let _ = arena.get_depth(child_idx);
+        assert!(
+            resolver_called.load(Ordering::SeqCst),
+            "lazy parent resolver should still work after decode_twice returns"
+        );
     }
 }

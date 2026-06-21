@@ -52,15 +52,26 @@ impl KvWrapper {
         kv.get(key)
     }
 
-    pub fn with_kv<R>(&self, f: impl FnOnce(&dyn KvStore) -> R) -> R {
-        let kv = self.kv.lock();
-        f(&*kv)
-    }
-
     pub(crate) fn keys(&self) -> BTreeSet<Vec<u8>> {
         let kv = self.kv.lock();
         kv.scan(Bound::Unbounded, Bound::Unbounded)
             .map(|(k, _)| k.to_vec())
+            .collect()
+    }
+
+    /// Snapshot all entries while holding only the KV lock.
+    ///
+    /// Callers that also need the arena lock must use this instead of entering arena code from
+    /// inside a KV-locked closure. Lazy arena parent resolution can acquire this same KV lock.
+    pub(crate) fn scan_all_entries(&self) -> Vec<(Bytes, Bytes)> {
+        let kv = self.kv.lock();
+        kv.scan(Bound::Unbounded, Bound::Unbounded).collect()
+    }
+
+    pub(crate) fn scan_all_keys(&self) -> Vec<Bytes> {
+        let kv = self.kv.lock();
+        kv.scan(Bound::Unbounded, Bound::Unbounded)
+            .map(|(k, _)| k)
             .collect()
     }
 
@@ -77,14 +88,21 @@ impl KvWrapper {
     }
 
     pub(crate) fn remove_same(&self, old_kv: &KvWrapper) {
-        let old_entries = {
-            let other = old_kv.kv.lock();
-            other
+        if Arc::ptr_eq(&self.kv, &old_kv.kv) {
+            let mut this = self.kv.lock();
+            let keys = this
                 .scan(Bound::Unbounded, Bound::Unbounded)
-                .collect::<Vec<_>>()
-        };
+                .map(|(k, _)| k)
+                .collect::<Vec<_>>();
+            for k in keys {
+                this.remove(&k);
+            }
+            return;
+        }
+
+        let other = old_kv.kv.lock();
         let mut this = self.kv.lock();
-        for (k, v) in old_entries {
+        for (k, v) in other.scan(Bound::Unbounded, Bound::Unbounded) {
             if this.get(&k) == Some(v) {
                 this.remove(&k);
             }
@@ -122,52 +140,30 @@ impl KvWrapper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{
-        panic::{catch_unwind, AssertUnwindSafe},
-        sync::mpsc,
-        time::Duration,
-    };
-
-    fn assert_completes_without_deadlock(name: &'static str, f: impl FnOnce() + Send + 'static) {
-        let (tx, rx) = mpsc::channel();
-        std::thread::spawn(move || {
-            let result = catch_unwind(AssertUnwindSafe(f));
-            let _ = tx.send(result);
-        });
-
-        match rx.recv_timeout(Duration::from_secs(2)) {
-            Ok(Ok(())) => {}
-            Ok(Err(payload)) => std::panic::resume_unwind(payload),
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                panic!("{name} did not complete; possible recursive KV lock deadlock")
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                panic!("{name} thread disconnected without a result")
-            }
-        }
-    }
 
     #[test]
     fn set_all_applies_precollected_updates() {
         let kv = KvWrapper::new_mem();
 
-        assert_completes_without_deadlock("set_all", move || {
-            kv.set_all(vec![(
-                Bytes::from_static(b"key"),
-                Bytes::from_static(b"value"),
-            )]);
-            assert_eq!(kv.get(b"key"), Some(Bytes::from_static(b"value")));
-        });
+        kv.set_all(vec![(
+            Bytes::from_static(b"key"),
+            Bytes::from_static(b"value"),
+        )]);
+        assert_eq!(kv.get(b"key"), Some(Bytes::from_static(b"value")));
     }
 
     #[test]
-    fn remove_same_can_compare_a_store_with_itself() {
+    fn remove_same_streams_different_stores() {
         let kv = KvWrapper::new_mem();
-        kv.insert(b"key", Bytes::from_static(b"value"));
+        let old_kv = KvWrapper::new_mem();
+        kv.insert(b"same", Bytes::from_static(b"value"));
+        kv.insert(b"changed", Bytes::from_static(b"new"));
+        old_kv.insert(b"same", Bytes::from_static(b"value"));
+        old_kv.insert(b"changed", Bytes::from_static(b"old"));
 
-        assert_completes_without_deadlock("remove_same", move || {
-            kv.remove_same(&kv);
-            assert_eq!(kv.get(b"key"), None);
-        });
+        kv.remove_same(&old_kv);
+
+        assert_eq!(kv.get(b"same"), None);
+        assert_eq!(kv.get(b"changed"), Some(Bytes::from_static(b"new")));
     }
 }

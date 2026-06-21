@@ -29,7 +29,8 @@ type ParentResolver = dyn Fn(ContainerID) -> Option<ContainerID> + Send + Sync +
 #[derive(Default)]
 struct ArenaContainers {
     container_idx_to_id: Vec<ContainerID>,
-    // 0 stands for unknown, 1 stands for root containers
+    /// Cached container depth. `None` means unknown or waiting on an unknown parent depth.
+    /// Use `get_depth()` for authoritative reads; direct access is only a cache fast path.
     depth: Vec<Option<NonZeroU16>>,
     container_id_to_idx: FxHashMap<ContainerID, ContainerIdx>,
     /// The parent of each container.
@@ -44,6 +45,9 @@ struct ArenaContainers {
     top_level_root_c_idx: Vec<ContainerIdx>,
     /// Optional resolver used when querying parent for a container that has not been registered yet.
     /// If set, `get_parent` will try this resolver to lazily fetch and register the parent.
+    ///
+    /// Locking: the resolver may read the state KV store. Code that loads from KV must snapshot
+    /// KV data and release the KV lock before taking the arena lock.
     parent_resolver: Option<Arc<ParentResolver>>,
 }
 
@@ -152,8 +156,10 @@ impl ArenaContainers {
 
         match parent {
             Some(p) => {
-                // Keep parent linking side-effect free: resolving a missing parent depth may
-                // re-enter lazy storage while callers are already holding unrelated locks.
+                // Keep parent linking side-effect free. Calling `get_depth()` here may invoke the
+                // lazy parent resolver, which can acquire the state KV lock. Import/load paths may
+                // be assembling parent edges from KV snapshots, so resolving depth here would make
+                // arena -> KV and KV -> arena lock orders coexist.
                 if let Some(d) = self.depth[p.to_index() as usize] {
                     self.depth[child.to_index() as usize] = NonZeroU16::new(d.get() + 1);
                 } else {
