@@ -1505,6 +1505,11 @@ impl LoroDoc {
     /// the mergeable child has materialized state. Parent map marker visibility
     /// and child state existence are tracked separately.
     ///
+    /// A mergeable container (created via `LoroMap::ensure_mergeable_*`) exists once it
+    /// has been ensured — even before any op is written into it — for as long as the
+    /// parent map's child ref is alive, or once it has state of its own. A mergeable cid
+    /// that was never ensured on this doc does not exist.
+    ///
     /// # Examples
     /// ```
     /// use loro::{LoroDoc, LoroText, LoroList, ExportMode};

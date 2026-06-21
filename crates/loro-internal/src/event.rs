@@ -369,10 +369,9 @@ impl InternalDiff {
             (InternalDiff::ListRaw(a), InternalDiff::ListRaw(b)) => {
                 Ok(InternalDiff::ListRaw(a.compose(b)))
             }
-            (InternalDiff::RichtextRaw(a), InternalDiff::RichtextRaw(b)) => {
-                let mut ans = a.clone();
-                ans.compose(&b);
-                Ok(InternalDiff::RichtextRaw(ans))
+            (InternalDiff::RichtextRaw(mut a), InternalDiff::RichtextRaw(b)) => {
+                a.compose(&b);
+                Ok(InternalDiff::RichtextRaw(a))
             }
             (InternalDiff::Map(a), InternalDiff::Map(b)) => Ok(InternalDiff::Map(a.compose(b))),
             (InternalDiff::Tree(a), InternalDiff::Tree(b)) => Ok(InternalDiff::Tree(a.compose(b))),
@@ -383,7 +382,6 @@ impl InternalDiff {
 
 impl Diff {
     pub fn compose_ref(&mut self, diff: &Diff) {
-        // PERF: avoid clone
         match (self, diff) {
             (Diff::List(a), Diff::List(b)) => {
                 a.compose(b);
@@ -392,10 +390,12 @@ impl Diff {
                 a.compose(b);
             }
             (Diff::Map(a), Diff::Map(b)) => {
-                *a = a.clone().compose(b.clone());
+                // Move the accumulator out instead of cloning it, so composing
+                // a long run of fragments stays linear rather than O(n^2).
+                *a = std::mem::take(a).compose(b.clone());
             }
             (Diff::Tree(a), Diff::Tree(b)) => {
-                *a = a.clone().compose(b.clone());
+                *a = std::mem::take(a).compose(b.clone());
             }
             #[cfg(feature = "counter")]
             (Diff::Counter(a), Diff::Counter(b)) => *a += b,

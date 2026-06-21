@@ -52,11 +52,6 @@ impl KvWrapper {
         kv.get(key)
     }
 
-    pub fn with_kv<R>(&self, f: impl FnOnce(&dyn KvStore) -> R) -> R {
-        let kv = self.kv.lock();
-        f(&*kv)
-    }
-
     pub(crate) fn keys(&self) -> BTreeSet<Vec<u8>> {
         let kv = self.kv.lock();
         kv.scan(Bound::Unbounded, Bound::Unbounded)
@@ -64,9 +59,25 @@ impl KvWrapper {
             .collect()
     }
 
-    pub fn set_all(&self, iter: impl Iterator<Item = (Bytes, Bytes)>) {
+    /// Snapshot all entries while holding only the KV lock.
+    ///
+    /// Callers that also need the arena lock must use this instead of entering arena code from
+    /// inside a KV-locked closure. Lazy arena parent resolution can acquire this same KV lock.
+    pub(crate) fn scan_all_entries(&self) -> Vec<(Bytes, Bytes)> {
+        let kv = self.kv.lock();
+        kv.scan(Bound::Unbounded, Bound::Unbounded).collect()
+    }
+
+    pub(crate) fn scan_all_keys(&self) -> Vec<Bytes> {
+        let kv = self.kv.lock();
+        kv.scan(Bound::Unbounded, Bound::Unbounded)
+            .map(|(k, _)| k)
+            .collect()
+    }
+
+    pub fn set_all(&self, updates: Vec<(Bytes, Bytes)>) {
         let mut kv = self.kv.lock();
-        for (k, v) in iter {
+        for (k, v) in updates {
             kv.set(&k, v);
         }
     }
@@ -77,6 +88,18 @@ impl KvWrapper {
     }
 
     pub(crate) fn remove_same(&self, old_kv: &KvWrapper) {
+        if Arc::ptr_eq(&self.kv, &old_kv.kv) {
+            let mut this = self.kv.lock();
+            let keys = this
+                .scan(Bound::Unbounded, Bound::Unbounded)
+                .map(|(k, _)| k)
+                .collect::<Vec<_>>();
+            for k in keys {
+                this.remove(&k);
+            }
+            return;
+        }
+
         let other = old_kv.kv.lock();
         let mut this = self.kv.lock();
         for (k, v) in other.scan(Bound::Unbounded, Bound::Unbounded) {
@@ -111,5 +134,36 @@ impl KvWrapper {
 
     pub(crate) fn is_empty(&self) -> bool {
         self.kv.lock().is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn set_all_applies_precollected_updates() {
+        let kv = KvWrapper::new_mem();
+
+        kv.set_all(vec![(
+            Bytes::from_static(b"key"),
+            Bytes::from_static(b"value"),
+        )]);
+        assert_eq!(kv.get(b"key"), Some(Bytes::from_static(b"value")));
+    }
+
+    #[test]
+    fn remove_same_streams_different_stores() {
+        let kv = KvWrapper::new_mem();
+        let old_kv = KvWrapper::new_mem();
+        kv.insert(b"same", Bytes::from_static(b"value"));
+        kv.insert(b"changed", Bytes::from_static(b"new"));
+        old_kv.insert(b"same", Bytes::from_static(b"value"));
+        old_kv.insert(b"changed", Bytes::from_static(b"old"));
+
+        kv.remove_same(&old_kv);
+
+        assert_eq!(kv.get(b"same"), None);
+        assert_eq!(kv.get(b"changed"), Some(Bytes::from_static(b"new")));
     }
 }

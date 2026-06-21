@@ -29,7 +29,8 @@ type ParentResolver = dyn Fn(ContainerID) -> Option<ContainerID> + Send + Sync +
 #[derive(Default)]
 struct ArenaContainers {
     container_idx_to_id: Vec<ContainerID>,
-    // 0 stands for unknown, 1 stands for root containers
+    /// Cached container depth. `None` means unknown or waiting on an unknown parent depth.
+    /// Use `get_depth()` for authoritative reads; direct access is only a cache fast path.
     depth: Vec<Option<NonZeroU16>>,
     container_id_to_idx: FxHashMap<ContainerID, ContainerIdx>,
     /// The parent of each container.
@@ -44,6 +45,9 @@ struct ArenaContainers {
     top_level_root_c_idx: Vec<ContainerIdx>,
     /// Optional resolver used when querying parent for a container that has not been registered yet.
     /// If set, `get_parent` will try this resolver to lazily fetch and register the parent.
+    ///
+    /// Locking: the resolver may read the state KV store. Code that loads from KV must snapshot
+    /// KV data and release the KV lock before taking the arena lock.
     parent_resolver: Option<Arc<ParentResolver>>,
 }
 
@@ -152,7 +156,11 @@ impl ArenaContainers {
 
         match parent {
             Some(p) => {
-                if let Some(d) = self.get_depth(p) {
+                // Keep parent linking side-effect free. Calling `get_depth()` here may invoke the
+                // lazy parent resolver, which can acquire the state KV lock. Import/load paths may
+                // be assembling parent edges from KV snapshots, so resolving depth here would make
+                // arena -> KV and KV -> arena lock orders coexist.
+                if let Some(d) = self.depth[p.to_index() as usize] {
                     self.depth[child.to_index() as usize] = NonZeroU16::new(d.get() + 1);
                 } else {
                     self.depth[child.to_index() as usize] = None;
@@ -190,21 +198,20 @@ impl ArenaContainers {
                 // a mergeable cid) lands in `root_c_idx`, gets its own parent edge wired up,
                 // and has `parents` initialized — instead of being half-registered with just
                 // `idx_to_id` / `id_to_idx` / `depth` and silently missing from retention walks.
-                let parent_idx = if let Some(idx) =
-                    self.container_id_to_idx.get(&parent_id).copied()
-                {
-                    // Already in the arena. For a top-level root that was hand-registered
-                    // somewhere else without a `parents` entry, ensure it has one.
-                    if parent_id.is_root() && !parent_id.is_mergeable() {
-                        self.parents.entry(idx).or_insert(None);
-                        if self.depth[idx.to_index() as usize].is_none() {
-                            self.depth[idx.to_index() as usize] = NonZeroU16::new(1);
+                let parent_idx =
+                    if let Some(idx) = self.container_id_to_idx.get(&parent_id).copied() {
+                        // Already in the arena. For a top-level root that was hand-registered
+                        // somewhere else without a `parents` entry, ensure it has one.
+                        if parent_id.is_root() && !parent_id.is_mergeable() {
+                            self.parents.entry(idx).or_insert(None);
+                            if self.depth[idx.to_index() as usize].is_none() {
+                                self.depth[idx.to_index() as usize] = NonZeroU16::new(1);
+                            }
                         }
-                    }
-                    idx
-                } else {
-                    self.register_container(&parent_id)
-                };
+                        idx
+                    } else {
+                        self.register_container(&parent_id)
+                    };
 
                 Some(parent_idx)
             }
@@ -766,6 +773,10 @@ impl SharedArena {
 mod tests {
     use super::*;
     use loro_common::ContainerType;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
 
     /// When a non-mergeable child is registered, then later asks for its depth and the parent
     /// resolver yields a mergeable cid, the mergeable parent must be registered through the
@@ -778,12 +789,8 @@ mod tests {
         let arena = SharedArena::new();
 
         let top_root = ContainerID::new_root("state", ContainerType::Map);
-        let mergeable_parent =
-            ContainerID::new_mergeable(&top_root, "profile", ContainerType::Map);
-        let child = ContainerID::new_normal(
-            loro_common::ID::new(1, 0),
-            ContainerType::Counter,
-        );
+        let mergeable_parent = ContainerID::new_mergeable(&top_root, "profile", ContainerType::Map);
+        let child = ContainerID::new_normal(loro_common::ID::new(1, 0), ContainerType::List);
 
         let mergeable_parent_for_resolver = mergeable_parent.clone();
         let child_for_resolver = child.clone();
@@ -809,7 +816,9 @@ mod tests {
 
         let flag = LoadAllFlag;
         assert!(
-            !arena.top_level_root_containers(flag).contains(&mergeable_idx),
+            !arena
+                .top_level_root_containers(flag)
+                .contains(&mergeable_idx),
             "mergeable parent must not appear in user-facing top-level enumeration"
         );
 
@@ -822,6 +831,26 @@ mod tests {
                 .top_level_root_containers(flag)
                 .contains(&top_root_idx),
             "the mergeable parent's grandparent (a top-level root) must be in the top-level list"
+        );
+    }
+
+    #[test]
+    fn set_parent_does_not_resolve_missing_parent_depth() {
+        let arena = SharedArena::new();
+        let parent = ContainerID::new_normal(loro_common::ID::new(1, 0), ContainerType::Map);
+        let child = ContainerID::new_mergeable(&parent, "field", ContainerType::Text);
+        let resolver_called = Arc::new(AtomicBool::new(false));
+        let called = resolver_called.clone();
+        arena.set_parent_resolver(Some(move |_| {
+            called.store(true, Ordering::SeqCst);
+            None
+        }));
+
+        arena.register_container(&child);
+
+        assert!(
+            !resolver_called.load(Ordering::SeqCst),
+            "registering a mergeable child must not invoke the lazy parent resolver"
         );
     }
 }

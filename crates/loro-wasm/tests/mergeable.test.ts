@@ -55,6 +55,34 @@ describe("mergeable containers (WASM bindings)", () => {
     expect(doc.toJSON()).toEqual({ state: { revision: 13 } });
   });
 
+  test("getContainerById resolves an ensured-but-empty mergeable child", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId("1");
+    const note = doc.getMap("records").ensureMergeableMap("note");
+
+    // Resolvable right after ensure, before any op is written and before commit.
+    expect(doc.toJSON()).toEqual({ records: { note: {} } });
+    expect(doc.hasContainer(note.id)).toBe(true);
+    const retrieved = doc.getContainerById(note.id);
+    expect(retrieved).toBeDefined();
+    expect(retrieved!.id).toBe(note.id);
+
+    // A mergeable cid that was never ensured must not resolve.
+    const phantom = doc
+      .getMap("records")
+      .ensureMergeableMap("note")
+      .id.replace("note", "phantom");
+    expect(doc.getContainerById(phantom as any)).toBeUndefined();
+
+    // The ensured-but-empty state must also resolve by id on a remote peer.
+    doc.commit();
+    const peer = new LoroDoc();
+    peer.setPeerId("2");
+    peer.import(doc.export({ mode: "update" }));
+    expect(peer.toJSON()).toEqual({ records: { note: {} } });
+    expect(peer.getContainerById(note.id)).toBeDefined();
+  });
+
   test("ensureMergeableMap, ensureMergeableList, ensureMergeableText smoke", () => {
     const doc = new LoroDoc();
     doc.setPeerId("1");

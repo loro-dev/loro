@@ -1188,6 +1188,11 @@ impl LoroDoc {
     ///
     /// If the container does not exist, it returns `undefined`.
     ///
+    /// A mergeable container (created via `ensureMergeableMap` and friends) is resolvable
+    /// right after it has been ensured — even before any op is written into it — for as
+    /// long as the parent map's child ref is alive. A mergeable container id that was
+    /// never ensured on this doc resolves to `undefined`.
+    ///
     /// @example
     /// ```ts
     /// import { LoroDoc } from "loro-crdt";

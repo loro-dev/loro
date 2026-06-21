@@ -1,5 +1,70 @@
 # Changelog
 
+## 1.13.5
+
+### Patch Changes
+
+- 1727258: Improve text insert and snapshot import performance by avoiding duplicate text boundary validation and skipping eager imported change block parsing.
+- 52d8168: Recover two per-operation editing slowdowns regressed since 1.11.
+
+  Both are constant-factor regressions on the per-op (auto-commit) editing path
+  introduced by the lazy-snapshot work in #985, measured against the 1.11.1
+  release.
+
+  1. Every `MapHandler`/`ListHandler`/`MovableListHandler` insert validated its
+     value with `ensure_no_regular_container_value`, which heap-allocated a `Vec`
+     on each call even for scalar values (the common case). A scalar fast-path now
+     skips the allocation and traversal entirely. `map create 10^4 key`:
+     ~19.4ms -> ~10.7ms.
+  2. The per-op text bounds check (`TextHandler::len`/`len_unicode`/`len_utf16`)
+     took two `DocState` locks — one to check whether the container state was
+     decoded, then another to query the length. These are now consolidated into a
+     single `DocState::get_text_len` that takes one lock and one container-store
+     lookup. The lazy-snapshot memory behavior is preserved: a still-lazy
+     container reads its cached length metadata without materializing the full
+     richtext state. `bench_text B4 apply` (per-op text editing): ~389ms -> ~352ms.
+
+## 1.13.4
+
+### Patch Changes
+
+- 4d577ad: Fix two O(n^2) editing slowdowns.
+
+  1. Editing with UTF-16 / UTF-8 (byte) positions (the default in the JS binding)
+     validated each position by materializing the entire `[0, pos)` prefix string,
+     making every `insert`/`delete`/`splice`/`mark` O(n) and a run of edits O(n^2)
+     (regression since 1.12.0). The boundary check now reads the rope's prefix
+     caches via the cursor (O(log n)). Unicode-indexed editing was unaffected.
+  2. When a subscriber is attached and many edits land on the same container within
+     one event batch (e.g. random-position inserts, or many distinct map-key
+     writes), building the event cloned the growing accumulated diff on every
+     compose — O(n^2) in the number of fragments. The diffs are now composed in
+     place. This affected text, map and list events.
+  3. Converting a UTF-16 / UTF-8 position within a text chunk to a unicode offset
+     scanned the chunk char-by-char, so editing/slicing a large contiguous chunk
+     (a big insert, a loaded document, or a long run of typed text that merges into
+     one chunk) was O(chunk length) per op. Chunks that contain no astral-plane
+     characters (UTF-16) or are pure ASCII (UTF-8) now convert in O(1), covering
+     essentially all real-world text (ASCII/Latin/CJK).
+
+## 1.13.3
+
+### Patch Changes
+
+- 8d258cb: Fix `unreachable` panic when importing an out-of-order update whose op targets a mergeable child container before its creation (or its parent map) has arrived. Such ops are now buffered as pending and applied once the creating change is imported.
+- 32700ba: Fix undo recording for the first local commit after importing shallow snapshots that need import-time state materialization.
+
+## 1.13.2
+
+### Patch Changes
+
+- 9d7d5c8: Fix `getContainerById` / `hasContainer` for ensured-but-empty mergeable containers.
+  After `ensureMergeableMap` (and friends), the child was visible via `map.get(key)`
+  and `toJSON()` but its id did not resolve until the first op was written into it —
+  locally and on remote peers after sync. The id now resolves as long as the parent
+  map's child ref is alive; a mergeable cid that was never ensured still resolves to
+  `undefined`.
+
 ## 1.13.1
 
 ### Patch Changes

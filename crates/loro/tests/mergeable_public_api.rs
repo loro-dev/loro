@@ -359,10 +359,10 @@ fn loro_get_by_path_round_trips_nested_mergeable_child() {
     assert_eq!(container.id(), profile.id());
 }
 
-/// `LoroDoc::has_container` carve-out: a mergeable cid that has never been written
-/// must report `false`. After mutation, it must report `true`. This guards the
-/// short-circuit for plain `Root` ids from masking mergeable existence checks
-/// through the public API.
+/// `LoroDoc::has_container` for mergeable cids: a never-ensured mergeable cid must
+/// report `false`, but once `ensure_mergeable_*` has written the parent's child ref the
+/// id must resolve — before any op is written into the child and before commit. This
+/// aligns id lookup with `map.get(key)` and `toJSON()`, which already expose the child.
 #[test]
 #[parallel]
 #[cfg(feature = "counter")]
@@ -375,15 +375,108 @@ fn loro_has_container_for_mergeable_cid_through_public_api() {
     assert!(unwritten_cid.is_mergeable());
     assert!(
         !d.has_container(&unwritten_cid),
-        "has_container must report false for an unwritten mergeable cid"
+        "has_container must report false for a never-ensured mergeable cid"
+    );
+    assert!(
+        d.get_container(unwritten_cid.clone()).is_none(),
+        "get_container must report None for a never-ensured mergeable cid"
     );
 
     let counter = root.ensure_mergeable_counter("revision").unwrap();
-    counter.increment(1.0).unwrap();
     assert_eq!(counter.id(), unwritten_cid);
     assert!(
         d.has_container(&unwritten_cid),
+        "has_container must report true right after ensure, before any op or commit"
+    );
+
+    counter.increment(1.0).unwrap();
+    assert!(
+        d.has_container(&unwritten_cid),
         "has_container must report true after the mergeable child has state"
+    );
+}
+
+/// An ensured-but-empty mergeable child must be retrievable by id through
+/// `LoroDoc::get_container`, and the returned handler must be the same container
+/// (writes through it converge with the original handle).
+#[test]
+#[parallel]
+fn loro_get_container_resolves_ensured_but_empty_mergeable_child() {
+    let d = doc(1);
+    let records = d.get_map("records");
+    let note = records.ensure_mergeable_map("note").unwrap();
+
+    let retrieved = d
+        .get_container(note.id())
+        .expect("ensured-but-empty mergeable child must resolve by id");
+    let loro::Container::Map(retrieved) = retrieved else {
+        panic!("expected a map container");
+    };
+    assert_eq!(retrieved.id(), note.id());
+
+    retrieved.insert("title", "hello").unwrap();
+    assert_eq!(
+        d.get_deep_value().to_json_value(),
+        json!({ "records": { "note": { "title": "hello" } } })
+    );
+}
+
+/// The ensured-but-empty state must resolve by id on a remote peer too: peer A ensures
+/// an empty mergeable child and syncs; peer B sees it in `toJSON()` and must also be
+/// able to resolve the same cid via `has_container` / `get_container`.
+#[test]
+#[parallel]
+fn loro_get_container_resolves_ensured_but_empty_mergeable_child_on_remote_peer() {
+    let a = doc(1);
+    let b = doc(2);
+
+    let note = a.get_map("records").ensure_mergeable_map("note").unwrap();
+    a.commit();
+    sync(&a, &b);
+
+    assert_eq!(
+        b.get_deep_value().to_json_value(),
+        json!({ "records": { "note": {} } })
+    );
+    assert!(
+        b.has_container(&note.id()),
+        "remote peer must resolve an ensured-but-empty mergeable child by id"
+    );
+    let retrieved = b
+        .get_container(note.id())
+        .expect("remote peer must resolve an ensured-but-empty mergeable child by id");
+    assert_eq!(retrieved.id(), note.id());
+}
+
+/// Deletion semantics: an ensured-but-empty mergeable child whose parent ref is removed
+/// has no state anywhere, so its id stops resolving. A mergeable child that already has
+/// ops keeps resolving after the ref is removed — matching how ordinary deleted
+/// containers stay retrievable by id.
+#[test]
+#[parallel]
+fn loro_get_container_for_deleted_mergeable_children() {
+    let d = doc(1);
+    let root = d.get_map("state");
+
+    let empty = root.ensure_mergeable_map("empty").unwrap();
+    let written = root.ensure_mergeable_map("written").unwrap();
+    written.insert("x", 1).unwrap();
+    d.commit();
+    assert!(d.has_container(&empty.id()));
+    assert!(d.has_container(&written.id()));
+
+    root.delete("empty").unwrap();
+    root.delete("written").unwrap();
+    d.commit();
+
+    assert!(
+        !d.has_container(&empty.id()),
+        "an ensured-but-empty mergeable child must stop resolving once its ref is removed"
+    );
+    assert!(
+        d.has_container(&written.id()),
+        "a mergeable child with its own state must stay resolvable after deletion, \
+         matching ordinary deleted-container semantics"
     );
 }
 
