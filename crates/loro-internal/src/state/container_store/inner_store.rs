@@ -250,7 +250,7 @@ impl InnerStore {
         for cid in deleted_roots {
             self.kv.remove(&cid);
         }
-        self.kv.set_all(updates.into_iter());
+        self.kv.set_all(updates);
     }
 
     pub(crate) fn get_kv_clone(&self) -> KvWrapper {
@@ -402,5 +402,140 @@ impl InnerStore {
         let mut new_store = Self::new(arena, config.clone());
         new_store.decode(bytes).unwrap();
         new_store
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use loro_common::{ContainerType, ID};
+    use std::{
+        panic::{catch_unwind, AssertUnwindSafe},
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            mpsc, Arc,
+        },
+        time::Duration,
+    };
+
+    fn assert_completes_without_deadlock(name: &'static str, f: impl FnOnce() + Send + 'static) {
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let result = catch_unwind(AssertUnwindSafe(f));
+            let _ = tx.send(result);
+        });
+
+        match rx.recv_timeout(Duration::from_secs(2)) {
+            Ok(Ok(())) => {}
+            Ok(Err(payload)) => std::panic::resume_unwind(payload),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                panic!("{name} did not complete; possible recursive KV lock deadlock")
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                panic!("{name} thread disconnected without a result")
+            }
+        }
+    }
+
+    fn encoded_container_header(kind: ContainerType, parent: Option<ContainerID>) -> Bytes {
+        let mut output = Vec::new();
+        output.push(kind.to_u8());
+        leb128::write::unsigned(&mut output, 2).unwrap();
+        postcard::to_io(&parent, &mut output).unwrap();
+        output.into()
+    }
+
+    fn mergeable_child_entry() -> (ContainerID, Bytes) {
+        let parent_id = ContainerID::new_normal(ID::new(1, 0), ContainerType::Map);
+        let child_id = ContainerID::new_mergeable(&parent_id, "field", ContainerType::Text);
+        let value = encoded_container_header(ContainerType::Text, Some(parent_id));
+        (child_id, value)
+    }
+
+    fn install_reentrant_parent_resolver(arena: &SharedArena, kv: KvWrapper) -> Arc<AtomicBool> {
+        let resolver_called = Arc::new(AtomicBool::new(false));
+        let called = resolver_called.clone();
+        arena.set_parent_resolver(Some(move |child_id: ContainerID| {
+            called.store(true, Ordering::SeqCst);
+            let value = kv.get(&child_id.to_bytes())?;
+            let container = ContainerWrapper::new_from_bytes(value);
+            container.parent().cloned()
+        }));
+        resolver_called
+    }
+
+    fn kv_bytes_with_entry(cid: ContainerID, value: Bytes) -> Bytes {
+        let kv = KvWrapper::new_mem();
+        kv.set_all(vec![(Bytes::from(cid.to_bytes()), value)]);
+        kv.export()
+    }
+
+    #[test]
+    fn load_all_does_not_resolve_parent_while_kv_lock_is_held() {
+        let arena = SharedArena::new();
+        let mut store = InnerStore::new(arena.clone(), Configure::default());
+        let resolver_called = install_reentrant_parent_resolver(&arena, store.kv.arc_clone());
+        let (child_id, value) = mergeable_child_entry();
+        let child_id_for_depth = child_id.clone();
+        let arena_for_depth = arena.clone();
+        store.load_state = LoadState::Lazy;
+        store
+            .kv
+            .set_all(vec![(Bytes::from(child_id.to_bytes()), value)]);
+
+        assert_completes_without_deadlock("load_all", move || {
+            store.load_all();
+            let child_idx = arena_for_depth.id_to_idx(&child_id_for_depth).unwrap();
+            let _ = arena_for_depth.get_depth(child_idx);
+            assert!(
+                resolver_called.load(Ordering::SeqCst),
+                "lazy parent resolver should still work after load_all returns"
+            );
+        });
+    }
+
+    #[test]
+    fn load_roots_does_not_resolve_parent_while_kv_lock_is_held() {
+        let arena = SharedArena::new();
+        let mut store = InnerStore::new(arena.clone(), Configure::default());
+        let resolver_called = install_reentrant_parent_resolver(&arena, store.kv.arc_clone());
+        let (child_id, value) = mergeable_child_entry();
+        let child_id_for_depth = child_id.clone();
+        let arena_for_depth = arena.clone();
+        store.load_state = LoadState::Lazy;
+        store
+            .kv
+            .set_all(vec![(Bytes::from(child_id.to_bytes()), value)]);
+
+        assert_completes_without_deadlock("load_roots", move || {
+            store.load_roots();
+            let child_idx = arena_for_depth.id_to_idx(&child_id_for_depth).unwrap();
+            let _ = arena_for_depth.get_depth(child_idx);
+            assert!(
+                resolver_called.load(Ordering::SeqCst),
+                "lazy parent resolver should still work after load_roots returns"
+            );
+        });
+    }
+
+    #[test]
+    fn decode_twice_does_not_resolve_parent_while_kv_lock_is_held() {
+        let arena = SharedArena::new();
+        let mut store = InnerStore::new(arena.clone(), Configure::default());
+        let resolver_called = install_reentrant_parent_resolver(&arena, store.kv.arc_clone());
+        let (child_id, value) = mergeable_child_entry();
+        let child_id_for_depth = child_id.clone();
+        let arena_for_depth = arena.clone();
+        let bytes = kv_bytes_with_entry(child_id, value);
+
+        assert_completes_without_deadlock("decode_twice", move || {
+            store.decode_twice(bytes, Bytes::new()).unwrap();
+            let child_idx = arena_for_depth.id_to_idx(&child_id_for_depth).unwrap();
+            let _ = arena_for_depth.get_depth(child_idx);
+            assert!(
+                resolver_called.load(Ordering::SeqCst),
+                "lazy parent resolver should still work after decode_twice returns"
+            );
+        });
     }
 }

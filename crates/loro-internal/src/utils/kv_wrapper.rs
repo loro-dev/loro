@@ -64,9 +64,9 @@ impl KvWrapper {
             .collect()
     }
 
-    pub fn set_all(&self, iter: impl Iterator<Item = (Bytes, Bytes)>) {
+    pub fn set_all(&self, updates: Vec<(Bytes, Bytes)>) {
         let mut kv = self.kv.lock();
-        for (k, v) in iter {
+        for (k, v) in updates {
             kv.set(&k, v);
         }
     }
@@ -77,9 +77,14 @@ impl KvWrapper {
     }
 
     pub(crate) fn remove_same(&self, old_kv: &KvWrapper) {
-        let other = old_kv.kv.lock();
+        let old_entries = {
+            let other = old_kv.kv.lock();
+            other
+                .scan(Bound::Unbounded, Bound::Unbounded)
+                .collect::<Vec<_>>()
+        };
         let mut this = self.kv.lock();
-        for (k, v) in other.scan(Bound::Unbounded, Bound::Unbounded) {
+        for (k, v) in old_entries {
             if this.get(&k) == Some(v) {
                 this.remove(&k);
             }
@@ -111,5 +116,58 @@ impl KvWrapper {
 
     pub(crate) fn is_empty(&self) -> bool {
         self.kv.lock().is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        panic::{catch_unwind, AssertUnwindSafe},
+        sync::mpsc,
+        time::Duration,
+    };
+
+    fn assert_completes_without_deadlock(name: &'static str, f: impl FnOnce() + Send + 'static) {
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let result = catch_unwind(AssertUnwindSafe(f));
+            let _ = tx.send(result);
+        });
+
+        match rx.recv_timeout(Duration::from_secs(2)) {
+            Ok(Ok(())) => {}
+            Ok(Err(payload)) => std::panic::resume_unwind(payload),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                panic!("{name} did not complete; possible recursive KV lock deadlock")
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                panic!("{name} thread disconnected without a result")
+            }
+        }
+    }
+
+    #[test]
+    fn set_all_applies_precollected_updates() {
+        let kv = KvWrapper::new_mem();
+
+        assert_completes_without_deadlock("set_all", move || {
+            kv.set_all(vec![(
+                Bytes::from_static(b"key"),
+                Bytes::from_static(b"value"),
+            )]);
+            assert_eq!(kv.get(b"key"), Some(Bytes::from_static(b"value")));
+        });
+    }
+
+    #[test]
+    fn remove_same_can_compare_a_store_with_itself() {
+        let kv = KvWrapper::new_mem();
+        kv.insert(b"key", Bytes::from_static(b"value"));
+
+        assert_completes_without_deadlock("remove_same", move || {
+            kv.remove_same(&kv);
+            assert_eq!(kv.get(b"key"), None);
+        });
     }
 }
