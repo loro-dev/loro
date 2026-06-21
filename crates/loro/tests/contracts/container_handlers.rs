@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use std::collections::BTreeSet;
 
 use loro::{

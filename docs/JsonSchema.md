@@ -79,6 +79,13 @@ type ContainerID =
   | `cid:${number}@${PeerID}:${ContainerType}`;
 ```
 
+Mergeable child containers use reserved synthetic root-name container IDs under
+the internal mergeable namespace, plus binary markers in parent map slots to
+control visibility. They still fit the `cid:root-${string}:${ContainerType}`
+shape in exported JSON. See
+[`mergeable-container-id.md`](../crates/loro-internal/docs/mergeable-container-id.md)
+for the reserved namespace and marker details.
+
 - `container`: the `ContainerID` of the container that created this `Op`, represented by a string starts with `cid:`.
 - `counter`: the counter part of the OpID
 - `content`: the semantic content of the `Op`, it is different for each field depending on the `Container`.

@@ -5,7 +5,7 @@
 //!      mergeable-map nesting depth and key length. Cids are embedded in op headers, snapshots,
 //!      and event payloads, so this scales with every op that references the cid.
 //!   2. **Snapshot size** — how a snapshot containing N mergeable counters compares to one with
-//!      N regular `set_container`'d counters, to surface the on-disk overhead.
+//!      N regular `insert_container` child counters, to surface the on-disk overhead.
 //!
 //! This is a measurement bench, not a perf bench: it prints sizes to stdout and exits. Run with
 //! `cargo run --release --bin mergeable_size --manifest-path crates/examples/Cargo.toml` after

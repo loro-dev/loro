@@ -34,7 +34,7 @@ mod movable_list_apply_delta;
 mod tree;
 
 const REGULAR_CONTAINER_VALUE_ARG_ERROR: &str =
-    "Cannot use a LoroValue::Container as a regular value. To create child container, use insert_container or set_container";
+    "Cannot use a LoroValue::Container as a regular value. To create a child container, use insert_container/set_container, or ensure_mergeable_* on maps for mergeable children";
 
 mod text_update;
 
@@ -4342,9 +4342,15 @@ impl MapHandler {
                         .get_map_entries(inner.container_idx)
                         .into_iter()
                         .map(|(key, value)| {
-                            let translated =
-                                loro_common::translate_mergeable_marker_value(&inner.id, key.as_ref(), value);
-                            (key.to_string(), value_to_value_or_handler(inner, translated))
+                            let translated = loro_common::translate_mergeable_marker_value(
+                                &inner.id,
+                                key.as_ref(),
+                                value,
+                            );
+                            (
+                                key.to_string(),
+                                value_to_value_or_handler(inner, translated),
+                            )
                         })
                         .collect::<Vec<_>>()
                 });
@@ -4404,7 +4410,9 @@ impl MapHandler {
             MaybeDetached::Attached(inner) => {
                 let value = inner
                     .with_doc_state(|state| state.get_map_value_by_key(inner.container_idx, key))?;
-                Some(loro_common::translate_mergeable_marker_value(&inner.id, key, value))
+                Some(loro_common::translate_mergeable_marker_value(
+                    &inner.id, key, value,
+                ))
             }
         }
     }
@@ -4425,6 +4433,15 @@ impl MapHandler {
         }
     }
 
+    /// Get or create a regular child container at `key`.
+    ///
+    /// This legacy method creates regular op-id child containers when the key is empty or `null`.
+    /// It is not mergeable: concurrent first creation at the same map key can fork child state and
+    /// leave one branch hidden by map conflict resolution. Prefer `ensure_mergeable_*` for lazy
+    /// map-key child creation.
+    #[deprecated(
+        note = "use ensure_mergeable_map/list/movable_list/text/tree/counter for lazy map-key child creation; this method creates regular op-id children"
+    )]
     pub fn get_or_create_container<C: HandlerTrait>(&self, key: &str, child: C) -> LoroResult<C> {
         if let Some(ans) = self.get_(key) {
             if let ValueOrHandler::Handler(h) = ans {
@@ -4475,9 +4492,8 @@ impl MapHandler {
         // Compare against the raw marker bytes (skipping `MapHandler::get`'s user-facing
         // marker → Container translation) so the non-mergeable-occupant guard sees the real
         // slot value and the same-kind idempotent-skip can match.
-        let existing_raw = parent.with_doc_state(|state| {
-            state.get_map_value_by_key(parent.container_idx, key)
-        });
+        let existing_raw =
+            parent.with_doc_state(|state| state.get_map_value_by_key(parent.container_idx, key));
 
         // A non-mergeable occupant (scalar, arbitrary binary, regular child container) would be
         // silently clobbered by the marker write, so reject rather than overwrite under a
@@ -4520,11 +4536,22 @@ impl MapHandler {
     }
 
     #[cfg(feature = "counter")]
+    /// Ensure a mergeable Counter child exists under `key` and return its handler.
+    ///
+    /// Returns [`LoroError::MisuseDetachedContainer`] when called on a detached map.
+    /// Returns [`LoroError::ArgErr`] if the parent slot already holds a non-mergeable value.
+    /// Repeated same-kind calls are idempotent; different mergeable kinds deliberately rewrite
+    /// the active marker while preserving each mergeable child's deterministic state.
     pub fn ensure_mergeable_counter(&self, key: &str) -> LoroResult<counter::CounterHandler> {
         self.ensure_mergeable_container(key, counter::CounterHandler::new_detached())
     }
 
     /// Ensure a mergeable Map child exists under `key` and return its handler.
+    ///
+    /// Returns [`LoroError::MisuseDetachedContainer`] when called on a detached map.
+    /// Returns [`LoroError::ArgErr`] if the parent slot already holds a non-mergeable value.
+    /// Repeated same-kind calls are idempotent; different mergeable kinds deliberately rewrite
+    /// the active marker while preserving each mergeable child's deterministic state.
     ///
     /// Prefer to avoid very deep mergeable-map chains: mergeable cids encode their flattened
     /// logical path, so cid size still grows with depth and rides through every op/snapshot
@@ -4533,18 +4560,42 @@ impl MapHandler {
         self.ensure_mergeable_container(key, MapHandler::new_detached())
     }
 
+    /// Ensure a mergeable List child exists under `key` and return its handler.
+    ///
+    /// Returns [`LoroError::MisuseDetachedContainer`] when called on a detached map.
+    /// Returns [`LoroError::ArgErr`] if the parent slot already holds a non-mergeable value.
+    /// Repeated same-kind calls are idempotent; different mergeable kinds deliberately rewrite
+    /// the active marker while preserving each mergeable child's deterministic state.
     pub fn ensure_mergeable_list(&self, key: &str) -> LoroResult<ListHandler> {
         self.ensure_mergeable_container(key, ListHandler::new_detached())
     }
 
+    /// Ensure a mergeable MovableList child exists under `key` and return its handler.
+    ///
+    /// Returns [`LoroError::MisuseDetachedContainer`] when called on a detached map.
+    /// Returns [`LoroError::ArgErr`] if the parent slot already holds a non-mergeable value.
+    /// Repeated same-kind calls are idempotent; different mergeable kinds deliberately rewrite
+    /// the active marker while preserving each mergeable child's deterministic state.
     pub fn ensure_mergeable_movable_list(&self, key: &str) -> LoroResult<MovableListHandler> {
         self.ensure_mergeable_container(key, MovableListHandler::new_detached())
     }
 
+    /// Ensure a mergeable Text child exists under `key` and return its handler.
+    ///
+    /// Returns [`LoroError::MisuseDetachedContainer`] when called on a detached map.
+    /// Returns [`LoroError::ArgErr`] if the parent slot already holds a non-mergeable value.
+    /// Repeated same-kind calls are idempotent; different mergeable kinds deliberately rewrite
+    /// the active marker while preserving each mergeable child's deterministic state.
     pub fn ensure_mergeable_text(&self, key: &str) -> LoroResult<TextHandler> {
         self.ensure_mergeable_container(key, TextHandler::new_detached())
     }
 
+    /// Ensure a mergeable Tree child exists under `key` and return its handler.
+    ///
+    /// Returns [`LoroError::MisuseDetachedContainer`] when called on a detached map.
+    /// Returns [`LoroError::ArgErr`] if the parent slot already holds a non-mergeable value.
+    /// Repeated same-kind calls are idempotent; different mergeable kinds deliberately rewrite
+    /// the active marker while preserving each mergeable child's deterministic state.
     pub fn ensure_mergeable_tree(&self, key: &str) -> LoroResult<TreeHandler> {
         self.ensure_mergeable_container(key, TreeHandler::new_detached())
     }
@@ -4629,8 +4680,11 @@ impl MapHandler {
                     .get_map_entries(a.container_idx)
                     .into_iter()
                     .map(|(key, value)| {
-                        let translated =
-                            loro_common::translate_mergeable_marker_value(&a.id, key.as_ref(), value);
+                        let translated = loro_common::translate_mergeable_marker_value(
+                            &a.id,
+                            key.as_ref(),
+                            value,
+                        );
                         value_to_value_or_handler(a, translated)
                     })
                     .collect()
