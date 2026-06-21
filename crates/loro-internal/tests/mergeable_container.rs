@@ -15,3 +15,5 @@ mod pending;
 mod snapshot;
 #[path = "mergeable_container/type_conflict.rs"]
 mod type_conflict;
+#[path = "mergeable_container/undo_redo.rs"]
+mod undo_redo;
