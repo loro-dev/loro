@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.13.7
+
+### Patch Changes
+
+- 3986805: Improve snapshot import performance by skipping eager SSTable block metadata validation on fast imports while still verifying block checksums.
+
 ## 1.13.6
 
 ### Patch Changes
