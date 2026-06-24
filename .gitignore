@@ -16,3 +16,4 @@ trace-*.json
 loom_test.json
 .env
 sponsorkit/.cache.json
+.claude/
