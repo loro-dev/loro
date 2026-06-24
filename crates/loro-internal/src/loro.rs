@@ -1018,7 +1018,10 @@ impl LoroDoc {
 
     #[inline]
     fn ensure_root_container(&self, id: &ContainerID) {
-        if id.is_root() {
+        // Mergeable roots stay lazily materialized: their existence is derived from the
+        // parent map's child ref, and their state is only created on first op (or at
+        // export via the alive-container walk).
+        if id.is_root() && !id.is_mergeable() {
             self.state.lock().ensure_container(id);
         }
     }
@@ -1149,7 +1152,7 @@ impl LoroDoc {
 
     #[must_use]
     pub fn has_container(&self, id: &ContainerID) -> bool {
-        if id.is_root() {
+        if id.is_root() && !id.is_mergeable() {
             return true;
         }
 
@@ -1587,11 +1590,42 @@ impl LoroDoc {
         &self,
         to_commit_then_renew: bool,
     ) -> LoroResult<()> {
+        self._checkout_to_latest_without_commit_with_event(
+            to_commit_then_renew,
+            "checkout".into(),
+            EventTriggerKind::Checkout,
+        )
+    }
+
+    pub(crate) fn _checkout_to_latest_without_commit_as_import(
+        &self,
+        to_commit_then_renew: bool,
+        origin: InternalString,
+    ) -> LoroResult<()> {
+        self._checkout_to_latest_without_commit_with_event(
+            to_commit_then_renew,
+            origin,
+            EventTriggerKind::Import,
+        )
+    }
+
+    fn _checkout_to_latest_without_commit_with_event(
+        &self,
+        to_commit_then_renew: bool,
+        origin: InternalString,
+        triggered_by: EventTriggerKind,
+    ) -> LoroResult<()> {
         tracing::info_span!("CheckoutToLatest", peer = self.peer_id()).in_scope(|| {
             let f = self.oplog_frontiers();
             let this = &self;
             let frontiers = &f;
-            this._checkout_without_emitting(frontiers, false, to_commit_then_renew)?;
+            this._checkout_without_emitting_with_event(
+                frontiers,
+                false,
+                to_commit_then_renew,
+                origin,
+                triggered_by,
+            )?;
             // We don't need to shrink frontiers because oplog's frontiers are already shrinked.
             this.emit_events();
             if this.config.detached_editing() {
@@ -1699,6 +1733,23 @@ impl LoroDoc {
         to_shrink_frontiers: bool,
         to_commit_then_renew: bool,
     ) -> Result<(), LoroError> {
+        self._checkout_without_emitting_with_event(
+            frontiers,
+            to_shrink_frontiers,
+            to_commit_then_renew,
+            "checkout".into(),
+            EventTriggerKind::Checkout,
+        )
+    }
+
+    fn _checkout_without_emitting_with_event(
+        &self,
+        frontiers: &Frontiers,
+        to_shrink_frontiers: bool,
+        to_commit_then_renew: bool,
+        origin: InternalString,
+        triggered_by: EventTriggerKind,
+    ) -> Result<(), LoroError> {
         if !self.txn.is_locked() {
             return Err(LoroError::TransactionError(
                 "checkout requires the transaction mutex to be held"
@@ -1781,9 +1832,9 @@ impl LoroDoc {
         };
         state.apply_diff(
             InternalDocDiff {
-                origin: "checkout".into(),
+                origin,
                 diff: Cow::Owned(diff),
-                by: EventTriggerKind::Checkout,
+                by: triggered_by,
                 new_version: Cow::Owned(frontiers.clone()),
             },
             diff_mode,
@@ -2274,10 +2325,16 @@ impl LoroDoc {
     pub fn get_path_to_container(&self, id: &ContainerID) -> Option<Vec<(ContainerID, Index)>> {
         let mut state = self.state.lock();
         if state.arena.id_to_idx(id).is_none() {
-            if !state.does_container_exist(id) {
+            if id.is_mergeable() {
+                // Mergeable children can be logically active via the parent map marker
+                // before they have their own encoded state. Register only the arena edge; do not
+                // create container state or change `has_container` semantics.
+                state.arena.register_container(id);
+            } else if !state.does_container_exist(id) {
                 return None;
+            } else {
+                state.ensure_container(id);
             }
-            state.ensure_container(id);
         }
         let idx = state.arena.id_to_idx(id).unwrap();
         state.get_path(idx)
@@ -2408,7 +2465,15 @@ fn pending_root_containers_to_materialize(oplog: &OpLog, changes: &[Change]) -> 
                 .arena
                 .get_container_id(op.container)
                 .expect("decoded op container should be registered");
-            if id.is_root() {
+            // Mergeable containers share the `ContainerID::Root` namespace but are logical
+            // *children*: their existence is governed by their parent map's marker, and their
+            // parent can be any (possibly not-yet-imported) map. Eagerly materializing one
+            // while its causal dependencies are still pending has no valid parent edge to
+            // resolve its depth against, which used to panic in `ContainerWrapper::new`.
+            // They get materialized correctly through the normal diff path once the creating
+            // change applies, so skip them here (mirrors the `!is_mergeable()` guard in
+            // `ensure_root_container`). See the `mergeable_container::pending` regression test.
+            if id.is_root() && !id.is_mergeable() {
                 roots.insert(id);
             }
         }

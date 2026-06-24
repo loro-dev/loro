@@ -13,6 +13,9 @@ libfuzzer-sys = "0.4"
 [dependencies.fuzz]
 path = ".."
 
+[features]
+mergeable = ["fuzz/mergeable"]
+
 [dependencies.loro]
 path = "../../loro"
 
@@ -87,5 +90,11 @@ doc = false
 [[bin]]
 name = "random_import"
 path = "fuzz_targets/random_import.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "mergeable"
+path = "fuzz_targets/mergeable.rs"
 test = false
 doc = false

@@ -3,7 +3,9 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use loro::{Container, ContainerID, ContainerType, LoroDoc, LoroMap, LoroValue};
+#[cfg(feature = "mergeable")]
+use loro::LoroError;
+use loro::{Container, ContainerID, ContainerTrait, ContainerType, LoroDoc, LoroMap, LoroValue};
 
 use crate::{
     actions::{Actionable, FromGenericAction, GenericAction},
@@ -60,6 +62,11 @@ impl MapActor {
 
 impl ActorTrait for MapActor {
     fn add_new_container(&mut self, container: Container) {
+        // Dedup by cid so mergeable children don't bias the dispatch index.
+        let cid = container.id();
+        if self.containers.iter().any(|c| c.id() == cid) {
+            return;
+        }
         self.containers.push(container.into_map().unwrap());
     }
 
@@ -81,9 +88,19 @@ impl ActorTrait for MapActor {
 
 #[derive(Clone)]
 pub enum MapAction {
-    Insert { key: u8, value: FuzzValue },
-    Delete { key: u8 },
+    Insert {
+        key: u8,
+        value: FuzzValue,
+    },
+    Delete {
+        key: u8,
+    },
     Clear,
+    #[cfg(feature = "mergeable")]
+    EnsureMergeable {
+        key: u8,
+        kind: ContainerType,
+    },
 }
 
 impl Debug for MapAction {
@@ -98,6 +115,12 @@ impl Debug for MapAction {
             }
             MapAction::Delete { key } => write!(f, "MapAction::Delete {{ key: {} }}", key),
             MapAction::Clear => write!(f, "MapAction::Clear"),
+            #[cfg(feature = "mergeable")]
+            MapAction::EnsureMergeable { key, kind } => write!(
+                f,
+                "MapAction::EnsureMergeable {{ key: {}, kind: {:?} }}",
+                key, kind
+            ),
         }
     }
 }
@@ -108,6 +131,8 @@ impl MapAction {
             MapAction::Insert { key, .. } => *key,
             MapAction::Delete { key, .. } => *key,
             MapAction::Clear => 0,
+            #[cfg(feature = "mergeable")]
+            MapAction::EnsureMergeable { key, .. } => *key,
         }
     }
 
@@ -116,13 +141,19 @@ impl MapAction {
             MapAction::Insert { value, .. } => value.to_string(),
             MapAction::Delete { .. } => "null".to_string(),
             MapAction::Clear => "null".to_string(),
+            #[cfg(feature = "mergeable")]
+            MapAction::EnsureMergeable { kind, .. } => format!("mergeable {:?}", kind),
         }
     }
 }
 
 impl FromGenericAction for MapAction {
     fn from_generic_action(action: &GenericAction) -> Self {
-        match action.prop % 3 {
+        #[cfg(not(feature = "mergeable"))]
+        let modulus = 3;
+        #[cfg(feature = "mergeable")]
+        let modulus = 4;
+        match action.prop % modulus {
             0 => MapAction::Insert {
                 key: (action.key % 256) as u8,
                 value: action.value,
@@ -131,6 +162,14 @@ impl FromGenericAction for MapAction {
                 key: (action.key % 256) as u8,
             },
             2 => MapAction::Clear,
+            #[cfg(feature = "mergeable")]
+            3 => MapAction::EnsureMergeable {
+                key: (action.key % 256) as u8,
+                kind: match action.value {
+                    FuzzValue::Container(c) => c,
+                    FuzzValue::I32(_) => ContainerType::Map,
+                },
+            },
             _ => unreachable!(),
         }
     }
@@ -164,6 +203,38 @@ impl Actionable for MapAction {
                 unwrap(handler.clear());
                 None
             }
+            #[cfg(feature = "mergeable")]
+            MapAction::EnsureMergeable { key, kind } => {
+                let key = &key.to_string();
+                // Type-conflict rejection (`ArgErr`) is an expected outcome — swallow it
+                // here rather than via `unwrap` so unrelated `ArgErr` sources still panic.
+                let result = match kind {
+                    ContainerType::Map => {
+                        handler.ensure_mergeable_map(key).map(|m| m.to_container())
+                    }
+                    ContainerType::List => {
+                        handler.ensure_mergeable_list(key).map(|l| l.to_container())
+                    }
+                    ContainerType::MovableList => handler
+                        .ensure_mergeable_movable_list(key)
+                        .map(|l| l.to_container()),
+                    ContainerType::Text => {
+                        handler.ensure_mergeable_text(key).map(|t| t.to_container())
+                    }
+                    ContainerType::Tree => {
+                        handler.ensure_mergeable_tree(key).map(|t| t.to_container())
+                    }
+                    ContainerType::Counter => handler
+                        .ensure_mergeable_counter(key)
+                        .map(|c| c.to_container()),
+                    ContainerType::Unknown(_) => return None,
+                };
+                match result {
+                    Ok(c) => Some(c),
+                    Err(LoroError::ArgErr(_)) => None,
+                    Err(e) => panic!("Error: {}", e),
+                }
+            }
         }
     }
 
@@ -175,6 +246,8 @@ impl Actionable for MapAction {
             },
             MapAction::Delete { .. } => None,
             MapAction::Clear => None,
+            #[cfg(feature = "mergeable")]
+            MapAction::EnsureMergeable { kind, .. } => Some(kind),
         }
     }
 

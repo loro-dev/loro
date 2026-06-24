@@ -58,6 +58,7 @@ impl std::fmt::Debug for ContainerStore {
 #[derive(Debug)]
 pub(crate) struct GcStore {
     pub shallow_root_frontiers: Frontiers,
+    pub encoded_state_bytes: Bytes,
     pub store: Mutex<InnerStore>,
 }
 
@@ -129,12 +130,6 @@ impl ContainerStore {
             .unwrap_or_default()
     }
 
-    pub fn map_values(&mut self, idx: ContainerIdx) -> Vec<LoroValue> {
-        self.store
-            .with_container_for_read(idx, |c| c.map_values(idx, ctx!(self)))
-            .unwrap_or_default()
-    }
-
     pub fn map_entries(&mut self, idx: ContainerIdx) -> Vec<(InternalString, LoroValue)> {
         self.store
             .with_container_for_read(idx, |c| c.map_entries(idx, ctx!(self)))
@@ -168,6 +163,11 @@ impl ContainerStore {
             .with_container_for_read(idx, |c| c.text_utf16_len(idx, ctx!(self)))?
     }
 
+    pub fn text_utf8_len(&mut self, idx: ContainerIdx) -> Option<usize> {
+        self.store
+            .with_container_for_read(idx, |c| c.text_utf8_len(idx, ctx!(self)))?
+    }
+
     pub fn has_decoded_state(&mut self, idx: ContainerIdx) -> bool {
         self.store.has_decoded_state(idx)
     }
@@ -188,12 +188,13 @@ impl ContainerStore {
 
     pub(crate) fn encode_shallow_root_state(&self) -> Option<Bytes> {
         let shallow_root = self.shallow_root_store.as_ref()?;
+        Some(shallow_root.encoded_state_bytes.clone())
+    }
+
+    pub(crate) fn shallow_root_state_for_export(&self) -> Option<(Bytes, KvWrapper)> {
+        let shallow_root = self.shallow_root_store.as_ref()?;
         let shallow_root_kv = shallow_root.store.lock().get_kv_clone();
-        shallow_root_kv.insert(
-            FRONTIERS_KEY,
-            shallow_root.shallow_root_frontiers.encode().into(),
-        );
-        Some(shallow_root_kv.export())
+        Some((shallow_root.encoded_state_bytes.clone(), shallow_root_kv))
     }
 
     pub(crate) fn restore_to_shallow_root(&mut self) -> Option<Frontiers> {
@@ -208,6 +209,7 @@ impl ContainerStore {
     pub(crate) fn cache_current_as_shallow_latest(&mut self, frontiers: Frontiers) {
         self.shallow_latest_store = Some(Arc::new(GcStore {
             shallow_root_frontiers: frontiers,
+            encoded_state_bytes: Bytes::new(),
             store: Mutex::new(self.store.fork(self.arena.clone(), &self.conf)),
         }));
     }
@@ -239,9 +241,18 @@ impl ContainerStore {
     ) -> LoroResult<Option<Frontiers>> {
         assert!(self.shallow_root_store.is_none());
         let mut inner = InnerStore::new(self.arena.clone(), config);
+        let encoded_state_bytes = shallow_bytes.clone();
         let f = inner.decode(shallow_bytes)?;
+        let encoded_state_bytes = if f.as_ref() == Some(&start_frontiers) {
+            encoded_state_bytes
+        } else {
+            let kv = inner.get_kv_clone();
+            kv.insert(FRONTIERS_KEY, start_frontiers.encode().into());
+            kv.export()
+        };
         self.shallow_root_store = Some(Arc::new(GcStore {
             shallow_root_frontiers: start_frontiers,
+            encoded_state_bytes,
             store: Mutex::new(inner),
         }));
         Ok(f)

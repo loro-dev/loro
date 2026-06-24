@@ -14,6 +14,132 @@ fn utf16_pos(s: &str, char_index: usize) -> usize {
     s.chars().take(char_index).map(|c| c.len_utf16()).sum()
 }
 
+// Regression guard for the second O(n^2) bug: when a subscriber is attached and
+// many edits to the same container accumulate in one event batch, `diffs_to_event`
+// used to clone the growing accumulated diff on every compose. The fix composes in
+// place; this test pins that the resulting event still reflects the final text.
+#[test]
+fn batched_same_container_edits_emit_correct_event() {
+    use std::sync::{Arc, Mutex};
+
+    let doc = LoroDoc::new();
+    let last_text = Arc::new(Mutex::new(String::new()));
+    let captured = last_text.clone();
+    let _sub = doc.subscribe_root(Arc::new(move |e| {
+        for container in e.events {
+            if let loro::event::Diff::Text(deltas) = &container.diff {
+                let mut s = String::new();
+                for d in deltas {
+                    if let TextDelta::Insert { insert, .. } = d {
+                        s.push_str(insert);
+                    }
+                }
+                *captured.lock().unwrap() = s;
+            }
+        }
+    }));
+
+    let text = doc.get_text("text");
+    // Many non-adjacent inserts in one batch => many same-container fragments
+    // that must be composed correctly into a single event.
+    let mut seed: u64 = 1;
+    let mut expected = String::new();
+    for i in 0..400 {
+        let len = text.len_unicode();
+        seed = (seed.wrapping_mul(1103515245).wrapping_add(12345)) & 0x7fffffff;
+        let pos = (seed as usize) % (len + 1);
+        let ch = (b'a' + (i % 26) as u8) as char;
+        text.insert(pos, &ch.to_string()).unwrap();
+        expected.insert(
+            expected
+                .char_indices()
+                .nth(pos)
+                .map(|(b, _)| b)
+                .unwrap_or(expected.len()),
+            ch,
+        );
+    }
+    doc.commit();
+
+    assert_eq!(text.to_string(), expected);
+    // The event's reconstructed insert content must equal the final document.
+    assert_eq!(*last_text.lock().unwrap(), expected);
+}
+
+// Regression guard for the O(n^2) text-edit perf bug: `convert_pos` must map
+// every coordinate pair correctly via the O(log n) cursor path. We check the
+// result against a reference computed directly from the prefix string for a
+// mix of ASCII, multi-byte, and surrogate-pair characters.
+#[test]
+fn convert_pos_matches_prefix_reference_all_coords() {
+    let content = "A😀B汉ñC🎉De";
+    let doc = LoroDoc::new();
+    let text = doc.get_text("text");
+    text.insert(0, content).unwrap();
+
+    let chars: Vec<char> = content.chars().collect();
+    let unicode_len = chars.len();
+
+    // Reference prefix lengths keyed by unicode position.
+    let mut uni_to_utf16 = Vec::with_capacity(unicode_len + 1);
+    let mut uni_to_bytes = Vec::with_capacity(unicode_len + 1);
+    let (mut u16acc, mut byteacc) = (0usize, 0usize);
+    for i in 0..=unicode_len {
+        uni_to_utf16.push(u16acc);
+        uni_to_bytes.push(byteacc);
+        if i < unicode_len {
+            u16acc += chars[i].len_utf16();
+            byteacc += chars[i].len_utf8();
+        }
+    }
+
+    for u in 0..=unicode_len {
+        // Unicode -> {Utf16, Bytes, Event}
+        assert_eq!(
+            text.convert_pos(u, PosType::Unicode, PosType::Utf16),
+            Some(uni_to_utf16[u]),
+            "unicode {u} -> utf16"
+        );
+        assert_eq!(
+            text.convert_pos(u, PosType::Unicode, PosType::Bytes),
+            Some(uni_to_bytes[u]),
+            "unicode {u} -> bytes"
+        );
+
+        // Round-trips back to the original coordinate.
+        let utf16 = uni_to_utf16[u];
+        let bytes = uni_to_bytes[u];
+        assert_eq!(
+            text.convert_pos(utf16, PosType::Utf16, PosType::Unicode),
+            Some(u),
+            "utf16 {utf16} -> unicode"
+        );
+        assert_eq!(
+            text.convert_pos(bytes, PosType::Bytes, PosType::Unicode),
+            Some(u),
+            "bytes {bytes} -> unicode"
+        );
+        assert_eq!(
+            text.convert_pos(bytes, PosType::Bytes, PosType::Utf16),
+            Some(utf16),
+            "bytes {bytes} -> utf16"
+        );
+        assert_eq!(
+            text.convert_pos(utf16, PosType::Utf16, PosType::Bytes),
+            Some(bytes),
+            "utf16 {utf16} -> bytes"
+        );
+    }
+
+    // Positions inside a surrogate pair / multi-byte char must be rejected by
+    // the editing API (boundary validation), not silently snapped.
+    // 😀 is at unicode index 1; its utf16 span is [1, 3) and byte span is [1, 5).
+    assert!(text.insert_utf16(2, "x").is_err());
+    assert!(text.insert_utf8(2, "x").is_err());
+    assert!(text.delete_utf16(2, 1).is_err());
+    assert!(text.delete_utf8(2, 1).is_err());
+}
+
 #[test]
 fn test_slice_delta() {
     let doc = LoroDoc::new();

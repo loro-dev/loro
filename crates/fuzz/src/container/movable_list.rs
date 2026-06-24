@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use loro::{Container, ContainerID, ContainerType, LoroDoc, LoroMovableList};
+use loro::{Container, ContainerID, ContainerTrait, ContainerType, LoroDoc, LoroMovableList};
 
 use crate::{
     actions::{Actionable, FromGenericAction, GenericAction},
@@ -92,6 +92,11 @@ impl ActorTrait for MovableListActor {
     }
 
     fn add_new_container(&mut self, container: Container) {
+        // Dedup by cid so mergeable children don't bias the dispatch index.
+        let cid = container.id();
+        if self.containers.iter().any(|c| c.id() == cid) {
+            return;
+        }
         self.containers.push(container.into_movable_list().unwrap());
     }
 }

@@ -1,113 +1,84 @@
 # Repository Guidelines
 
-## Project Structure & Module Organization
+## Project Snapshot
 
-This is a Rust workspace with JS/WASM packaging around the core CRDT library.
-Key crates live under `crates/`: `loro` is the public Rust API, `loro-internal`
-contains core CRDT logic, `loro-wasm` exposes the WASM/TypeScript package, and
-`delta`, `rle`, `kv-store`, and `fractional_index` hold shared primitives.
-Integration and regression tests are mostly in `crates/loro/tests` and
-`crates/loro-internal/tests`; WASM tests and package files are in
-`crates/loro-wasm`. Examples live in `examples/` and `crates/examples`.
+Loro is a Rust CRDT workspace with JS/WASM packaging and a MoonBit codec.
 
-## Build, Test, and Development Commands
+- `crates/loro`: public Rust API; avoid breaking downstream users.
+- `crates/loro-internal`: core CRDT logic. Read its
+  [AGENTS.md](crates/loro-internal/AGENTS.md) before changing import/export,
+  encoding, state, diff, checkout, or replay behavior.
+- `crates/loro-wasm`: `loro-crdt` WASM/TypeScript package. Read its
+  [AGENTS.md](crates/loro-wasm/AGENTS.md) before changing bindings, exports,
+  wrappers, or build scripts.
+- `crates/delta`, `crates/rle`, `crates/kv-store`, `crates/fractional_index`,
+  `crates/loro-common`, and `packages/fractional-index`: shared primitives and
+  packages.
+- `moon/`: MoonBit Loro binary codec; use [skills/moonbit/SKILL.md](skills/moonbit/SKILL.md).
 
-- `cargo build`: build the Rust workspace.
-- `cargo check -p loro-internal`: quickly validate core internals.
-- `cargo test -p loro-internal --doc`: run Rust doctests for internal APIs.
-- `pnpm test`: run the main Rust test suite via nextest plus doctests.
-- `pnpm check`: run clippy with all features and deny warnings.
-- `pnpm release-wasm`: sync versions and build the release WASM package.
-- `pnpm test-loom`: run loom concurrency tests for `crates/loro/tests/multi_thread_test.rs`.
+## Context Index
 
-## Coding Style & Naming Conventions
+- Encoding/import/export modes, current vs outdated formats, shallow snapshots:
+  [context/internal-encoding.md](context/internal-encoding.md).
+- Mergeable container model, marker/cid rules, tests, and common pitfalls:
+  [context/mergeable-containers.md](context/mergeable-containers.md).
+- User-facing Loro usage, sync, editor integration, and performance guidance:
+  [skills/loro/SKILL.md](skills/loro/SKILL.md).
+- Context backlog: [context/CONTEXT-GAPS.md](context/CONTEXT-GAPS.md).
 
-Use standard Rust formatting with `rustfmt`; keep imports and chained calls formatted
-by the tool. Prefer explicit, small APIs and existing crate-local helpers over new
-abstractions. Rust items use `snake_case` for functions/modules and `CamelCase` for
-types. JS/TS bindings in `loro-wasm` should preserve the established exported API
-names used by tests and docs.
+## Commands
 
-## Testing Guidelines
+- JS deps: `pnpm install --frozen-lockfile`.
+- Rust build/check/format/lint: `cargo build`, `cargo check -p loro-internal`,
+  `cargo fmt --all`, `pnpm check`.
+- Rust tests: `pnpm test`; internal doctests: `cargo test -p loro-internal --doc`.
+- Loom: `pnpm test-loom`.
+- WASM: `pnpm release-wasm`, or `pnpm -C crates/loro-wasm build-dev`.
+- Bundlers after WASM packaging changes: `pnpm test-bundlers`; browser runtime:
+  `pnpm --dir examples/bundler-smoke-tests run test:browser`.
+- Fractional-index TS: `pnpm test-fractional-index`.
+- Fuzz smoke: `pnpm run-fuzz-corpus`.
+- MoonBit codec, when `moon` is available: from `moon/`, run `moon check`,
+  `moon test`, `moon fmt`.
 
-Add regression tests near the behavior being fixed: Rust API tests in
-`crates/loro/tests`, internal tests in `crates/loro-internal/tests` or module tests,
-and WASM behavior in `crates/loro-wasm/tests`. For import/encoding bugs, prefer
-fixture-based tests with small binary fixtures. Run the narrow package test first,
-then `pnpm test` when the change affects shared behavior. For changes touching
-internal diff calculation, checkout, import, or state-replay logic, also consider
-the fuzz targets in `crates/fuzz`; ask whether to run the broader `fuzz all`
-target before spending the extra time.
+Use narrow checks first. Ask before broad fuzzing or long browser matrices.
 
-## Commit & Pull Request Guidelines
+## Working Rules
 
-History uses short imperative commits, often prefixed by scope such as `fix:`,
-`test:`, `chore:`, or `refactor:`. Keep commits focused and include fixtures or
-tests with fixes. PRs should describe what changed, why, validation commands, and
-linked issues or production traces when relevant. Add a changeset when publishing
-behavior or package output changes.
+- Start with `git status --short --branch`; treat uncommitted changes as user
+  work unless you made them.
+- Before editing, read every `AGENTS.md` from root to target directory. Keep
+  `CLAUDE.md` as a symlink to the nearest `AGENTS.md`.
+- Use `rg` / `rg --files` for search.
+- Public API changes in `loro` or `loro-crdt` should be backward-compatible when
+  possible. Prefer new `try_*` APIs over breaking signatures.
+- Internal corruption should fail fast; invalid external input should return
+  `Err`. Returning wrong state is worse than panicking on an impossible internal
+  invariant.
+- Add regression tests near behavior: `crates/loro/tests`,
+  `crates/loro-internal/tests`, module tests, `crates/loro-wasm/tests`, or
+  `moon/loro_codec/*_test.mbt`.
+- Add a changeset for publishing behavior or package output changes.
+- Do not hand-edit generated WASM package output; regenerate it with package
+  scripts.
 
-## Agent-Specific Notes
+## Self-Maintained Agent Context
 
-### Principle: Avoid Breaking Changes Unless Absolutely Necessary
+- Treat "why was that hard to find?" as a context bug. Add a nearby
+  `AGENTS.md` pointer or a `context/` article, or append a line to
+  [context/CONTEXT-GAPS.md](context/CONTEXT-GAPS.md).
+- Keep root context short. If an `AGENTS.md` grows past about 4000 characters, move
+  detail into a linked `context/` article.
+- Header context articles with `Verified against code YYYY-MM-DD`, anchor claims
+  to files/symbols, and link them from root plus the nearest per-directory
+  `AGENTS.md`.
+- If code changes make an `AGENTS.md` or context article stale, update the docs
+  in the same change.
+- When a commit needs non-obvious rationale, land that rationale in the nearest
+  context file and keep the commit message as a pointer.
 
-The `loro` crate is a public library with downstream users. When fixing panics or bugs,
-prefer non-breaking solutions:
+## Commit And PR Notes
 
-- Add `try_*` methods that return `Option` or `Result` instead of changing existing
-  method signatures.
-- Replace `assert!` / `unwrap()` / `unreachable!()` with descriptive `expect()` messages
-  when the method must remain panicking for backward compatibility.
-- Only introduce breaking signature changes (e.g., changing a return type from `T` to
-  `Option<T>`) when there is no safe backward-compatible alternative and the breakage
-  is justified by a critical correctness or safety issue.
-
-### Principle: Internal Invariant Preservation Over Graceful Degradation
-
-When an internal invariant is violated (e.g., a state lookup that should always succeed
-returns `None`, an event batch has an unexpected structure, or a diff cannot be composed),
-the priority is:
-
-1. **Do not let the system continue in a corrupted or inconsistent state.**
-   Prefer `panic!` / `unwrap()` / `expect()` over silently skipping, returning a default,
-   or returning success when the internal state is known to be wrong.
-2. **Preserve the correctness of public API contracts.**
-   A public method should not return a value that violates its documented contract
-   (e.g., returning an empty list when nodes actually exist).
-3. **Avoid panics on valid user input.**
-   Malformed external input (decode errors, invalid JSON schema, out-of-bounds indices)
-   should return `Err`. But do not replace internal-safety panics with silent skips
-   just to avoid crashing.
-
-In short: internal corruption → fail-fast (panic); invalid user input → `Result::Err`;
-returning wrong data is worse than panicking.
-
-### Invariant: Flush Pending Events In `loro-wasm`
-
-In `crates/loro-wasm/src/lib.rs`, subscription callbacks (`subscribe*`,
-container `subscribe`, etc.) do not call user JS immediately. The binding
-enqueues JS calls into a global pending queue and schedules a microtask check.
-If the microtask runs before `callPendingEvents()` flushes the queue, it logs:
-
-- `[LORO_INTERNAL_ERROR] Event not called`
-
-Any WASM-exposed API that can enqueue subscription events must flush pending
-events before returning control to JS. To avoid adding overhead to every op, only
-a small JS-side allowlist is wrapped; the wrapper calls `callPendingEvents()` in
-a `finally` block.
-
-When adding or changing a `#[wasm_bindgen]` API in `crates/loro-wasm/src/lib.rs`
-that can mutate document state, check whether it can trigger an implicit commit
-or barrier (`commit`, `with_barrier`, `implicit_commit_then_stop`), emit events
-(`emit_events`), or apply diffs (`revertTo`, `applyDiff`). If so, add its JS
-name to the allowlist near the bottom of `crates/loro-wasm/index.ts`:
-`decorateMethods(LoroDoc.prototype, [...])` or the relevant prototype allowlist.
-Pure read/query APIs should not be decorated.
-
-Quick check with active subscriptions (`doc.subscribe(...)` or container
-`subscribe(...)`): mutating APIs should not produce the error above. A useful
-local check is:
-
-```sh
-pnpm -C crates/loro-wasm build-release
-```
+History uses short imperative commits, often prefixed by `fix:`, `test:`,
+`chore:`, or `refactor:`. PRs should include summary, rationale, validation, and
+linked issues or traces when relevant.

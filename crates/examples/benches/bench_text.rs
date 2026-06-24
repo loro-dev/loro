@@ -7,7 +7,7 @@ use std::{
 use bench_utils::TextAction;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use dev_utils::ByteSize;
-use loro::LoroDoc;
+use loro::{LoroDoc, LoroList, LoroMap, LoroText, ToJson};
 use rand::Rng;
 
 fn bench_text(c: &mut Criterion) {
@@ -197,6 +197,111 @@ fn bench_update_text(c: &mut Criterion) {
     });
 }
 
+fn bench_large_snapshot_decode(c: &mut Criterion) {
+    let snapshot: OnceCell<Vec<u8>> = OnceCell::new();
+    let mut g = c.benchmark_group("large_snapshot_decode");
+    g.sample_size(10);
+
+    g.bench_function("mixed doc import snapshot", |b| {
+        b.iter_batched(
+            || large_doc_snapshot(&snapshot),
+            |snapshot| {
+                let doc = LoroDoc::new();
+                doc.import(snapshot).unwrap();
+                black_box(doc);
+            },
+            criterion::BatchSize::LargeInput,
+        )
+    });
+
+    g.bench_function("mixed doc from_snapshot", |b| {
+        b.iter_batched(
+            || large_doc_snapshot(&snapshot),
+            |snapshot| {
+                let doc = LoroDoc::from_snapshot(snapshot).unwrap();
+                black_box(doc);
+            },
+            criterion::BatchSize::LargeInput,
+        )
+    });
+
+    g.bench_function("mixed doc from_snapshot + toJSON", |b| {
+        b.iter_batched(
+            || large_doc_snapshot(&snapshot),
+            |snapshot| {
+                let doc = LoroDoc::from_snapshot(snapshot).unwrap();
+                black_box(doc.get_deep_value().to_json_value());
+            },
+            criterion::BatchSize::LargeInput,
+        )
+    });
+}
+
+fn large_doc_snapshot(snapshot: &OnceCell<Vec<u8>>) -> &[u8] {
+    snapshot
+        .get_or_init(|| {
+            let doc = build_large_mixed_doc();
+            let snapshot = doc.export(loro::ExportMode::Snapshot).unwrap();
+            println!(
+                "large mixed doc snapshot size: {:?}",
+                ByteSize(snapshot.len())
+            );
+            snapshot
+        })
+        .as_slice()
+}
+
+fn build_large_mixed_doc() -> LoroDoc {
+    const SECTIONS: usize = 256;
+    const ITEMS_PER_SECTION: usize = 64;
+    const BODY_REPEAT: usize = 8;
+
+    let doc = LoroDoc::new();
+    let root = doc.get_map("workspace");
+    root.insert("title", "large snapshot decode fixture")
+        .unwrap();
+    root.insert("section_count", SECTIONS as i64).unwrap();
+    let sections = root.insert_container("sections", LoroList::new()).unwrap();
+
+    for section_idx in 0..SECTIONS {
+        let section = sections.push_container(LoroMap::new()).unwrap();
+        section
+            .insert("id", format!("section-{section_idx:04}"))
+            .unwrap();
+        section.insert("archived", section_idx % 11 == 0).unwrap();
+        let body = section.insert_container("body", LoroText::new()).unwrap();
+        body.insert(0, &large_body(section_idx, BODY_REPEAT))
+            .unwrap();
+
+        let items = section.insert_container("items", LoroList::new()).unwrap();
+        for item_idx in 0..ITEMS_PER_SECTION {
+            let item = items.push_container(LoroMap::new()).unwrap();
+            item.insert("id", format!("{section_idx:04}-{item_idx:02}"))
+                .unwrap();
+            item.insert("rank", item_idx as i64).unwrap();
+            item.insert("done", (section_idx + item_idx) % 7 == 0)
+                .unwrap();
+            item.insert(
+                "label",
+                format!("section {section_idx} item {item_idx} repeated metadata"),
+            )
+            .unwrap();
+        }
+    }
+
+    doc
+}
+
+fn large_body(section_idx: usize, repeat: usize) -> String {
+    let mut body = String::new();
+    for i in 0..repeat {
+        body.push_str(&format!(
+            "section={section_idx}; paragraph={i}; lorem ipsum dolor sit amet, consectetur adipiscing elit. "
+        ));
+    }
+    body
+}
+
 fn apply_text_actions(actions: &[bench_utils::TextAction], n: usize) -> LoroDoc {
     let loro = LoroDoc::new();
     let text = loro.get_text("text");
@@ -209,5 +314,10 @@ fn apply_text_actions(actions: &[bench_utils::TextAction], n: usize) -> LoroDoc 
     loro
 }
 
-criterion_group!(benches, bench_text, bench_update_text);
+criterion_group!(
+    benches,
+    bench_text,
+    bench_update_text,
+    bench_large_snapshot_decode
+);
 criterion_main!(benches);

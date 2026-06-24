@@ -7,6 +7,10 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write
+      contents: write
     if: |
       github.event.pull_request.merged == true &&
       startsWith(github.event.pull_request.title, 'chore: release rust crates v')
@@ -25,9 +29,13 @@ jobs:
         with:
           components: rustfmt
 
+      - name: Authenticate with crates.io
+        uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+
       - name: Publish to crates.io
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: |
           echo "${{ steps.extract_flags.outputs.EXCLUDED_FLAGS }}"
           cargo install cargo-release

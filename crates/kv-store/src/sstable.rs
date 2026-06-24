@@ -341,14 +341,16 @@ impl SsTable {
         SsTableIter::new(self)
     }
 
-    ///
+    /// When `validate_blocks` is true, this eagerly decodes every block to
+    /// validate block metadata and key ordering. Block checksums are always
+    /// verified.
     ///
     /// # Errors
     /// - [LoroError::DecodeChecksumMismatchError]
     /// - [LoroError::DecodeError]
     ///    - "Invalid magic number"
     ///    - "Invalid schema version"
-    pub fn import_all(bytes: Bytes, _check_checksum: bool) -> LoroResult<Self> {
+    pub fn import_all(bytes: Bytes, validate_blocks: bool) -> LoroResult<Self> {
         // magic number + schema version + meta offset
         if bytes.len() < SIZE_OF_U32 + SIZE_OF_U8 + SIZE_OF_U32 {
             return Err(LoroError::DecodeError("Invalid sstable bytes".into()));
@@ -377,7 +379,9 @@ impl SsTable {
         let raw_meta = &bytes[meta_offset..data_len - SIZE_OF_U32];
         let meta = BlockMeta::decode_meta(raw_meta)?;
         Self::validate_block_ranges(&meta, meta_offset)?;
-        Self::validate_blocks(&meta, &bytes, meta_offset)?;
+        if validate_blocks {
+            Self::validate_blocks(&meta, &bytes, meta_offset)?;
+        }
         Self::check_block_checksum(&meta, &bytes, meta_offset)?;
         let first_key = meta
             .first()
@@ -1274,9 +1278,7 @@ mod test {
             last_key: Some(first_key),
         }];
         let checksum_only = xxhash_rust::xxh32::xxh32(&[], XXH_SEED).to_le_bytes();
-        assert!(
-            SsTable::import_all(malformed_sstable_bytes(&checksum_only, &meta), false).is_err()
-        );
+        assert!(SsTable::import_all(malformed_sstable_bytes(&checksum_only, &meta), true).is_err());
     }
 
     #[test]
@@ -1292,7 +1294,7 @@ mod test {
 
         assert!(SsTable::import_all(
             malformed_sstable_bytes(&normal_block_bytes(b"key", b"value"), &meta),
-            false
+            true
         )
         .is_err());
     }
@@ -1321,7 +1323,7 @@ mod test {
         let mut block_bytes = first_block;
         block_bytes.extend_from_slice(&second_block);
 
-        assert!(SsTable::import_all(malformed_sstable_bytes(&block_bytes, &meta), false).is_err());
+        assert!(SsTable::import_all(malformed_sstable_bytes(&block_bytes, &meta), true).is_err());
     }
 
     #[test]
@@ -1336,7 +1338,7 @@ mod test {
             last_key: Some(Bytes::from_static(b"b")),
         }];
 
-        assert!(SsTable::import_all(malformed_sstable_bytes(&block_bytes, &meta), false).is_err());
+        assert!(SsTable::import_all(malformed_sstable_bytes(&block_bytes, &meta), true).is_err());
     }
 
     #[test]
@@ -1351,9 +1353,24 @@ mod test {
 
         assert!(SsTable::import_all(
             malformed_sstable_bytes(&large_block_bytes(b"value"), &meta),
-            false
+            true
         )
         .is_err());
+    }
+
+    #[test]
+    fn sstable_import_fast_path_skips_block_validation() {
+        let first_key = Bytes::from_static(b"key");
+        let meta = [BlockMeta {
+            offset: SIZE_OF_U32 + SIZE_OF_U8,
+            is_large: false,
+            compression_type: CompressionType::None,
+            first_key: first_key.clone(),
+            last_key: Some(Bytes::from_static(b"a")),
+        }];
+
+        let bytes = malformed_sstable_bytes(&normal_block_bytes(b"key", b"value"), &meta);
+        assert!(SsTable::import_all(bytes, false).is_ok());
     }
 
     #[test]

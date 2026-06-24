@@ -32,6 +32,7 @@ Loro is a high‑performance CRDT framework for local‑first apps that keeps st
 
 - Ordered lists: [`get_list`](struct.LoroDoc.html#method.get_list) - Arrays with [`push`](struct.LoroList.html#method.push), [`insert`](struct.LoroList.html#method.insert), [`delete`](struct.LoroList.html#method.delete)
 - Key-value maps: [`get_map`](struct.LoroDoc.html#method.get_map) - Objects with [`insert`](struct.LoroMap.html#method.insert), [`get`](struct.LoroMap.html#method.get), [`delete`](struct.LoroMap.html#method.delete)
+- Mergeable map-key children: [`ensure_mergeable_text`](struct.LoroMap.html#method.ensure_mergeable_text), [`ensure_mergeable_map`](struct.LoroMap.html#method.ensure_mergeable_map), and related `ensure_mergeable_*` methods - Lazy child containers that converge when peers create the same map-key child concurrently
 - Hierarchical trees: [`get_tree`](struct.LoroDoc.html#method.get_tree) - Trees with [`create`](struct.LoroTree.html#method.create), [`mov`](struct.LoroTree.html#method.mov), [`mov_to`](struct.LoroTree.html#method.mov_to)
 - Reorderable lists: [`get_movable_list`](struct.LoroDoc.html#method.get_movable_list) - Drag-and-drop with [`mov`](struct.LoroMovableList.html#method.mov), [`set`](struct.LoroMovableList.html#method.set)
 - Counters: [`get_counter` (feature "counter")](struct.LoroDoc.html#method.get_counter) - Distributed counters with [`increment`](struct.LoroCounter.html#method.increment)

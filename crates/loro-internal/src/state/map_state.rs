@@ -19,6 +19,21 @@ use super::{ApplyLocalOpReturn, ContainerState, DiffApplyContext};
 
 const TINY_MAP_MAX: usize = 4;
 
+/// Apply the mergeable marker → `Container` boundary translation when a parent cid is known.
+///
+/// `MapState` is used both with and without a registered parent cid (e.g. during decode), so the
+/// translation no-ops when the parent is missing — markers stay as their stored `Binary` form.
+fn translate_with_parent(
+    parent_id: Option<&ContainerID>,
+    key: &InternalString,
+    value: LoroValue,
+) -> LoroValue {
+    match parent_id {
+        Some(parent) => loro_common::translate_mergeable_marker_value(parent, key.as_ref(), value),
+        None => value,
+    }
+}
+
 #[derive(Debug, Clone)]
 enum MapEntries {
     SortedTiny(SmallVec<[(InternalString, MapValue); 1]>),
@@ -206,6 +221,9 @@ impl ChildContainers {
 pub struct MapState {
     idx: ContainerIdx,
     map: MapEntries,
+    /// Parent-edge index for regular child containers (`MapValue::Container`). Mergeable child
+    /// edges are resolved by `DocState` from their deterministic cid and this map's marker
+    /// value, not stored here.
     child_containers: ChildContainers,
     size: usize,
 }
@@ -228,6 +246,9 @@ impl ContainerState for MapState {
             unreachable!()
         };
         let doc = &doc.upgrade().unwrap();
+        // The parent cid is the binding side of a mergeable child marker. Cached here so we
+        // translate marker values into Container values once per delta apply instead of per entry.
+        let parent_id = doc.arena.idx_to_id(self.idx);
         let force = matches!(mode, DiffMode::Checkout | DiffMode::Linear);
         let mut resolved_delta = ResolvedMapDelta::new();
         for (key, value) in delta.updated.into_iter() {
@@ -255,10 +276,13 @@ impl ContainerState for MapState {
 
             if changed {
                 resolved_delta = resolved_delta.with_entry(
-                    key,
+                    key.clone(),
                     ResolvedMapValue {
                         idlp: IdLp::new(value.peer, value.lamp),
-                        value: value.value.map(|v| ValueOrHandler::from_value(v, doc)),
+                        value: value
+                            .value
+                            .map(|v| translate_with_parent(parent_id.as_ref(), &key, v))
+                            .map(|v| ValueOrHandler::from_value(v, doc)),
                     },
                 )
             }
@@ -302,11 +326,30 @@ impl ContainerState for MapState {
     #[doc = " Convert a state to a diff that when apply this diff on a empty state,"]
     #[doc = " the state will be the same as this state."]
     fn to_diff(&mut self, doc: &Weak<LoroDocInner>) -> Diff {
+        let doc_strong = doc.upgrade().unwrap();
+        let parent_id = doc_strong.arena.idx_to_id(self.idx);
+        // Build resolved values directly instead of going through
+        // `ResolvedMapValue::from_map_value`: that path forced a full `MapValue` clone per entry
+        // just to overwrite `.value` with the translated form. Cloning only the inner
+        // `Option<LoroValue>` is enough and saves an alloc per entry on every state-to-diff.
         Diff::Map(ResolvedMapDelta {
             updated: self
                 .map
                 .iter()
-                .map(|(k, v)| (k.clone(), ResolvedMapValue::from_map_value(v.clone(), doc)))
+                .map(|(k, v)| {
+                    let value = v
+                        .value
+                        .clone()
+                        .map(|val| translate_with_parent(parent_id.as_ref(), k, val))
+                        .map(|val| ValueOrHandler::from_value(val, &doc_strong));
+                    (
+                        k.clone(),
+                        ResolvedMapValue {
+                            idlp: IdLp::new(v.peer, v.lamp),
+                            value,
+                        },
+                    )
+                })
                 .collect::<FxHashMap<_, _>>(),
         })
     }

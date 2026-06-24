@@ -1,3 +1,5 @@
+#![allow(unused_assignments)]
+
 use std::{fmt::Display, io::Write};
 
 use arbitrary::Arbitrary;
@@ -68,9 +70,418 @@ pub struct CompactId {
     pub counter: NonMaxI32,
 }
 
+/// Namespace prefix used to encode mergeable container IDs into Root container names.
+///
+/// The 🤝 ("handshake") sentinel mirrors Loro's `🦜:` brand convention
+/// (`crates/loro-common/src/value.rs::LORO_CONTAINER_ID_PREFIX`) and signals
+/// "two peers agreeing on the same cid." The trailing `:` separates the brand
+/// from the flattened path payload; the container kind is carried on the
+/// `Root` itself and is not duplicated in the name. `check_root_container_name`
+/// rejects user-created root names that start with this prefix.
+///
+/// **Cost of nesting mergeable maps inside mergeable maps**: the payload embeds
+/// the nearest non-mergeable map ancestor once, followed by escaped map keys.
+/// Names grow linearly with nesting depth × average key length and ride through
+/// every op header, snapshot, and event path.
+pub const MERGEABLE_NAMESPACE_PREFIX: &str = "🤝:";
+
+fn write_len_prefixed_segment(out: &mut Vec<u8>, bytes: &[u8]) {
+    leb128::write::unsigned(out, bytes.len() as u64).unwrap();
+    out.extend_from_slice(bytes);
+}
+
+fn push_mergeable_escaped(out: &mut String, segment: &str) {
+    for ch in segment.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '>' => out.push_str("\\>"),
+            '/' => out.push_str("\\s"),
+            '\0' => out.push_str("\\0"),
+            _ => out.push(ch),
+        }
+    }
+}
+
+fn decode_mergeable_segment(segment: &str) -> Option<String> {
+    let mut out = String::with_capacity(segment.len());
+    let mut chars = segment.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => {
+                let escaped = chars.next()?;
+                match escaped {
+                    '\\' => out.push('\\'),
+                    '>' => out.push('>'),
+                    's' => out.push('/'),
+                    '0' => out.push('\0'),
+                    _ => return None,
+                }
+            }
+            '/' | '\0' => return None,
+            _ => out.push(ch),
+        }
+    }
+
+    Some(out)
+}
+
+fn find_first_mergeable_separator(payload: &str) -> Option<usize> {
+    let mut escaped = false;
+    for (idx, ch) in payload.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+
+        match ch {
+            '\\' => escaped = true,
+            '>' => return Some(idx),
+            _ => {}
+        }
+    }
+
+    None
+}
+
+fn find_last_mergeable_separator(payload: &str) -> Option<usize> {
+    let mut last = None;
+    let mut escaped = false;
+    for (idx, ch) in payload.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+
+        match ch {
+            '\\' => escaped = true,
+            '>' => last = Some(idx),
+            _ => {}
+        }
+    }
+
+    if escaped {
+        None
+    } else {
+        last
+    }
+}
+
+fn push_u64_base36(out: &mut String, mut value: u64) {
+    const DIGITS: &[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    if value == 0 {
+        out.push('0');
+        return;
+    }
+
+    let mut buf = [0u8; 13];
+    let mut idx = buf.len();
+    while value > 0 {
+        idx -= 1;
+        buf[idx] = DIGITS[(value % 36) as usize];
+        value /= 36;
+    }
+
+    out.push_str(std::str::from_utf8(&buf[idx..]).unwrap());
+}
+
+fn push_i32_base36(out: &mut String, value: i32) {
+    if value < 0 {
+        out.push('-');
+    }
+    let magnitude = if value < 0 {
+        (-(i64::from(value))) as u64
+    } else {
+        value as u64
+    };
+    push_u64_base36(out, magnitude);
+}
+
+fn parse_base36_digit(byte: u8) -> Option<u64> {
+    match byte {
+        b'0'..=b'9' => Some(u64::from(byte - b'0')),
+        b'a'..=b'z' => Some(u64::from(byte - b'a' + 10)),
+        _ => None,
+    }
+}
+
+fn parse_u64_base36(s: &str) -> Option<u64> {
+    if s.is_empty() {
+        return None;
+    }
+    if s.len() > 1 && s.starts_with('0') {
+        return None;
+    }
+
+    let mut value = 0u64;
+    for byte in s.bytes() {
+        value = value.checked_mul(36)?;
+        value = value.checked_add(parse_base36_digit(byte)?)?;
+    }
+    Some(value)
+}
+
+fn parse_i32_base36(s: &str) -> Option<i32> {
+    if let Some(rest) = s.strip_prefix('-') {
+        let value = parse_u64_base36(rest)?;
+        if value == 0 {
+            return None;
+        }
+        let signed = -(i64::try_from(value).ok()?);
+        i32::try_from(signed).ok()
+    } else {
+        let value = parse_u64_base36(s)?;
+        i32::try_from(value).ok()
+    }
+}
+
+fn parse_mergeable_base_parent(segment: &str) -> Option<ContainerID> {
+    let mut chars = segment.chars();
+    match chars.next()? {
+        '$' => {
+            let name = &segment['$'.len_utf8()..];
+            if !check_root_container_name(name) {
+                return None;
+            }
+            Some(ContainerID::Root {
+                name: name.into(),
+                container_type: ContainerType::Map,
+            })
+        }
+        '@' => {
+            let rest = &segment['@'.len_utf8()..];
+            let (peer, counter) = rest.split_once(':')?;
+            Some(ContainerID::Normal {
+                peer: parse_u64_base36(peer)?,
+                counter: parse_i32_base36(counter)?,
+                container_type: ContainerType::Map,
+            })
+        }
+        _ => None,
+    }
+}
+
+fn validate_mergeable_payload(payload: &str) -> Option<()> {
+    let separator = find_first_mergeable_separator(payload)?;
+    validate_mergeable_base_parent(&payload[..separator])?;
+    validate_mergeable_key_path(&payload[separator + '>'.len_utf8()..])
+}
+
+fn validate_mergeable_base_parent(segment: &str) -> Option<()> {
+    match segment.as_bytes().first().copied()? {
+        b'$' => validate_mergeable_root_base_parent(&segment['$'.len_utf8()..]),
+        b'@' => validate_mergeable_normal_base_parent(&segment['@'.len_utf8()..]),
+        _ => None,
+    }
+}
+
+fn validate_mergeable_root_base_parent(name: &str) -> Option<()> {
+    if name.is_empty() || name.starts_with(MERGEABLE_NAMESPACE_PREFIX) {
+        return None;
+    }
+
+    let mut chars = name.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => match chars.next()? {
+                '\\' | '>' => {}
+                // Root container names cannot contain slash or NUL after decoding.
+                's' | '0' => return None,
+                _ => return None,
+            },
+            '/' | '\0' => return None,
+            _ => {}
+        }
+    }
+
+    Some(())
+}
+
+fn validate_mergeable_normal_base_parent(segment: &str) -> Option<()> {
+    let (peer, counter) = segment.split_once(':')?;
+    parse_u64_base36(peer)?;
+    parse_i32_base36(counter)?;
+    Some(())
+}
+
+fn validate_mergeable_key_path(path: &str) -> Option<()> {
+    let mut chars = path.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => match chars.next()? {
+                '\\' | '>' | 's' | '0' => {}
+                _ => return None,
+            },
+            '/' | '\0' => return None,
+            _ => {}
+        }
+    }
+
+    Some(())
+}
+
+fn parse_mergeable_payload(payload: &str) -> Option<(ContainerID, String)> {
+    validate_mergeable_payload(payload)?;
+    let separator = find_last_mergeable_separator(payload)?;
+    let parent_payload = &payload[..separator];
+    let key = decode_mergeable_segment(&payload[separator + '>'.len_utf8()..])?;
+
+    let parent = if find_last_mergeable_separator(parent_payload).is_some() {
+        ContainerID::Root {
+            name: format!("{MERGEABLE_NAMESPACE_PREFIX}{parent_payload}").into(),
+            container_type: ContainerType::Map,
+        }
+    } else {
+        let parent_segment = decode_mergeable_segment(parent_payload)?;
+        parse_mergeable_base_parent(&parent_segment)?
+    };
+
+    Some((parent, key))
+}
+
+fn mergeable_payload_for_parent(parent: &ContainerID) -> Option<&str> {
+    let ContainerID::Root {
+        name,
+        container_type: ContainerType::Map,
+    } = parent
+    else {
+        return None;
+    };
+    let payload = name.as_str().strip_prefix(MERGEABLE_NAMESPACE_PREFIX)?;
+    validate_mergeable_payload(payload)?;
+    Some(payload)
+}
+
+fn push_mergeable_parent(out: &mut String, parent: &ContainerID) {
+    if let Some(payload) = mergeable_payload_for_parent(parent) {
+        out.push_str(payload);
+        return;
+    }
+
+    match parent {
+        ContainerID::Root { name, .. } => {
+            out.push('$');
+            push_mergeable_escaped(out, name.as_str());
+        }
+        ContainerID::Normal { peer, counter, .. } => {
+            out.push('@');
+            push_u64_base36(out, *peer);
+            out.push(':');
+            push_i32_base36(out, *counter);
+        }
+    }
+}
+
 /// Return whether the given name is a valid root container name.
 pub fn check_root_container_name(name: &str) -> bool {
-    !name.is_empty() && name.char_indices().all(|(_, x)| x != '/' && x != '\0')
+    !name.is_empty()
+        && !name.starts_with(MERGEABLE_NAMESPACE_PREFIX)
+        && name.char_indices().all(|(_, x)| x != '/' && x != '\0')
+}
+
+/// Binary marker stored in a parent map slot to activate a mergeable child.
+///
+/// This is a compact mergeable-child container ref, not the child cid itself. The child cid is
+/// derived deterministically from `(parent, key, kind)`; this value only records that the parent map
+/// slot currently activates that child kind.
+///
+/// Only this specially constructed binary value activates a mergeable child.
+/// Old clients that do not understand mergeable containers should see an inert binary scalar rather
+/// than a fake child container edge or a reserved-looking user string.
+pub const MERGEABLE_MARKER_MAGIC: [u8; 4] = [0x00, b'L', b'M', 0x01];
+
+const MERGEABLE_MARKER_DIGEST_LEN: usize = 3;
+const MERGEABLE_MARKER_LEN: usize = 4 + 1 + MERGEABLE_MARKER_DIGEST_LEN;
+const MERGEABLE_MARKER_CRC_DOMAIN: &[u8] = b"loro.mergeable.marker.v1";
+
+/// Build the [`LoroValue`] a parent map stores at a mergeable key for `container_type`.
+///
+/// Layout: `MAGIC[4] + KIND[1] + CRC24(parent_id, key, kind)[3]`.
+pub fn mergeable_marker(
+    parent: &ContainerID,
+    key: &str,
+    container_type: ContainerType,
+) -> LoroValue {
+    let mut marker = Vec::with_capacity(MERGEABLE_MARKER_LEN);
+    marker.extend_from_slice(&MERGEABLE_MARKER_MAGIC);
+    marker.push(container_type.to_u8());
+    let digest = mergeable_marker_crc24(parent, key, container_type);
+    marker.extend_from_slice(&digest);
+    LoroValue::Binary(marker.into())
+}
+
+/// Parse a parent map slot value back into the mergeable [`ContainerType`] it activates.
+///
+/// The marker is bound to `(parent, key, kind)`, so copying it to another map/key does not activate
+/// a mergeable child there. Malformed markers and arbitrary non-marker values are treated as
+/// ordinary user values.
+pub fn parse_mergeable_marker(
+    parent: &ContainerID,
+    key: &str,
+    value: &LoroValue,
+) -> Option<ContainerType> {
+    let LoroValue::Binary(bytes) = value else {
+        return None;
+    };
+    if bytes.len() != MERGEABLE_MARKER_LEN || !bytes.starts_with(&MERGEABLE_MARKER_MAGIC) {
+        return None;
+    }
+
+    let kind = ContainerType::try_from_u8(bytes[MERGEABLE_MARKER_MAGIC.len()]).ok()?;
+    if matches!(kind, ContainerType::Unknown(_)) {
+        return None;
+    }
+
+    let digest_start = MERGEABLE_MARKER_MAGIC.len() + 1;
+    let expected = mergeable_marker_crc24(parent, key, kind);
+    if &bytes[digest_start..] != expected.as_slice() {
+        return None;
+    }
+
+    Some(kind)
+}
+
+/// Translate a raw map slot value into the user-visible Container view for a Map at `parent`.
+///
+/// Mergeable child activation lives as a binary marker in the parent map's value table. This
+/// is the canonical conversion from that marker to the deterministic child cid; every read
+/// boundary (`MapHandler` getters, Map diff emission, local-event hints) goes through it so
+/// callers see the same shape as a regular child container.
+pub fn translate_mergeable_marker_value(
+    parent: &ContainerID,
+    key: &str,
+    value: LoroValue,
+) -> LoroValue {
+    match parse_mergeable_marker(parent, key, &value) {
+        Some(kind) => LoroValue::Container(ContainerID::new_mergeable(parent, key, kind)),
+        None => value,
+    }
+}
+
+fn mergeable_marker_crc24(parent: &ContainerID, key: &str, kind: ContainerType) -> [u8; 3] {
+    let mut input = Vec::new();
+    input.extend_from_slice(MERGEABLE_MARKER_CRC_DOMAIN);
+    write_len_prefixed_segment(&mut input, &parent.to_bytes());
+    write_len_prefixed_segment(&mut input, key.as_bytes());
+    input.push(kind.to_u8());
+
+    let crc = crc32(&input) & 0x00ff_ffff;
+    [
+        ((crc >> 16) & 0xff) as u8,
+        ((crc >> 8) & 0xff) as u8,
+        (crc & 0xff) as u8,
+    ]
+}
+
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc = 0xffff_ffff_u32;
+    for &byte in bytes {
+        crc ^= u32::from(byte);
+        for _ in 0..8 {
+            let mask = (crc & 1).wrapping_neg();
+            crc = (crc >> 1) ^ (0xedb8_8320 & mask);
+        }
+    }
+    !crc
 }
 
 impl CompactId {
@@ -637,6 +1048,87 @@ mod container {
         pub fn is_unknown(&self) -> bool {
             matches!(self.container_type(), ContainerType::Unknown(_))
         }
+
+        /// Create a mergeable container ID for the given parent, key, and container type.
+        ///
+        /// The cid is a Root container with a reserved namespace prefix and a flattened
+        /// map-path payload, so two peers calling this with the same arguments produce the
+        /// identical `ContainerID`.
+        ///
+        /// The container kind is intentionally *not* encoded into the name: it already
+        /// lives in `ContainerID::Root::container_type`, so encoding it twice would waste two
+        /// bytes per cid, and `ContainerID` equality already keeps two `(parent, key)`
+        /// mergeable cids of different kinds distinct.
+        ///
+        /// Only maps can be mergeable parents. The encoded payload records the nearest
+        /// non-mergeable map ancestor (`$root-name` or `@peer:counter`) once, then appends
+        /// escaped map keys separated by `>`. This keeps nested mergeable map names linear
+        /// in path length instead of recursively embedding the full parent cid.
+        pub fn new_mergeable(
+            parent: &ContainerID,
+            key: &str,
+            container_type: ContainerType,
+        ) -> Self {
+            assert_eq!(
+                parent.container_type(),
+                ContainerType::Map,
+                "mergeable child parent must be a map"
+            );
+            let parent_len_hint = match parent {
+                ContainerID::Root { name, .. } => name.len(),
+                ContainerID::Normal { .. } => 24,
+            };
+            let cap = MERGEABLE_NAMESPACE_PREFIX.len() + parent_len_hint + key.len() + 16;
+            let mut name = String::with_capacity(cap);
+            name.push_str(MERGEABLE_NAMESPACE_PREFIX);
+            push_mergeable_parent(&mut name, parent);
+            name.push('>');
+            push_mergeable_escaped(&mut name, key);
+
+            Self::Root {
+                name: name.into(),
+                container_type,
+            }
+        }
+
+        /// Returns `true` if this is a valid mergeable container ID (i.e. created via
+        /// `new_mergeable`).
+        ///
+        /// A Root whose name merely starts with the reserved mergeable prefix but does not
+        /// decode to a valid path payload is an ordinary root, not a mergeable
+        /// container. The check is structural; a fabricated `"🤝:not-valid"` Root is not
+        /// treated as mergeable.
+        ///
+        /// Constant-time short-circuit when the name doesn't start with the mergeable prefix
+        /// (most container ids). For names that do match the prefix, validates segment
+        /// escaping and the compact base-parent encoding.
+        pub fn is_mergeable(&self) -> bool {
+            let Self::Root { name, .. } = self else {
+                return false;
+            };
+            name.as_str()
+                .strip_prefix(MERGEABLE_NAMESPACE_PREFIX)
+                .and_then(validate_mergeable_payload)
+                .is_some()
+        }
+
+        /// Decode a mergeable container ID back into its `(parent, key, container_type)` components.
+        ///
+        /// Returns `None` if this is not a valid mergeable container ID. The returned
+        /// `container_type` is the type carried on the `Root` itself; the encoded payload only
+        /// carries `(parent, key)`.
+        pub fn parse_mergeable(&self) -> Option<(ContainerID, String, ContainerType)> {
+            let Self::Root {
+                name,
+                container_type,
+            } = self
+            else {
+                return None;
+            };
+            let payload = name.strip_prefix(MERGEABLE_NAMESPACE_PREFIX)?;
+            let (parent, key) = parse_mergeable_payload(payload)?;
+            Some((parent, key, *container_type))
+        }
     }
 
     impl TryFrom<&str> for ContainerType {
@@ -776,7 +1268,193 @@ pub mod wasm {
 
 #[cfg(test)]
 mod test {
-    use crate::{ContainerID, ContainerType, ID};
+    use crate::{
+        mergeable_marker, parse_mergeable_marker, ContainerID, ContainerType, LoroValue, ID,
+        MERGEABLE_MARKER_MAGIC,
+    };
+
+    #[test]
+    fn mergeable_marker_round_trips_every_kind() {
+        let parent = ContainerID::new_root("state", ContainerType::Map);
+        let key = "field";
+        let kinds = [
+            ContainerType::Map,
+            ContainerType::List,
+            ContainerType::Text,
+            ContainerType::Tree,
+            ContainerType::MovableList,
+            #[cfg(feature = "counter")]
+            ContainerType::Counter,
+        ];
+        for kind in kinds {
+            assert_eq!(
+                parse_mergeable_marker(&parent, key, &mergeable_marker(&parent, key, kind)),
+                Some(kind),
+                "marker value must parse back to {kind:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn mergeable_marker_exact_layout() {
+        let parent = ContainerID::new_root("state", ContainerType::Map);
+        let value = mergeable_marker(&parent, "field", ContainerType::List);
+        let LoroValue::Binary(bytes) = value else {
+            panic!("mergeable marker must be a binary value");
+        };
+
+        assert_eq!(bytes.len(), 8);
+        assert_eq!(
+            &bytes[..MERGEABLE_MARKER_MAGIC.len()],
+            MERGEABLE_MARKER_MAGIC
+        );
+        assert_eq!(
+            bytes[MERGEABLE_MARKER_MAGIC.len()],
+            ContainerType::List.to_u8()
+        );
+    }
+
+    #[test]
+    fn parse_mergeable_marker_rejects_non_markers() {
+        let parent = ContainerID::new_root("state", ContainerType::Map);
+
+        // Plain user strings are never markers.
+        assert_eq!(
+            parse_mergeable_marker(&parent, "field", &LoroValue::String("Map".into())),
+            None
+        );
+        assert_eq!(
+            parse_mergeable_marker(&parent, "field", &LoroValue::String("not-a-marker".into())),
+            None
+        );
+
+        // Non-binary values are never markers.
+        assert_eq!(
+            parse_mergeable_marker(&parent, "field", &LoroValue::Double(1.0)),
+            None
+        );
+        assert_eq!(
+            parse_mergeable_marker(&parent, "field", &LoroValue::Null),
+            None
+        );
+
+        // Malformed binary values stay ordinary binary values.
+        assert_eq!(
+            parse_mergeable_marker(
+                &parent,
+                "field",
+                &LoroValue::Binary(vec![0x00, b'L', b'M'].into()),
+            ),
+            None
+        );
+
+        let mut wrong_magic = marker_bytes(mergeable_marker(&parent, "field", ContainerType::Map));
+        wrong_magic[0] = 0xff;
+        assert_eq!(
+            parse_mergeable_marker(&parent, "field", &LoroValue::Binary(wrong_magic.into()),),
+            None
+        );
+
+        let marker = mergeable_marker(&parent, "field", ContainerType::Map);
+        assert_eq!(
+            parse_mergeable_marker(&parent, "other", &marker),
+            None,
+            "marker digest binds the marker to its map key"
+        );
+
+        let other_parent = ContainerID::new_root("other", ContainerType::Map);
+        assert_eq!(
+            parse_mergeable_marker(&other_parent, "field", &marker),
+            None,
+            "marker digest binds the marker to its parent container"
+        );
+
+        let mut wrong_digest = marker_bytes(marker);
+        *wrong_digest.last_mut().unwrap() ^= 1;
+        assert_eq!(
+            parse_mergeable_marker(&parent, "field", &LoroValue::Binary(wrong_digest.into()),),
+            None
+        );
+    }
+
+    #[test]
+    fn is_mergeable_rejects_prefix_only_roots() {
+        let missing_key = ContainerID::Root {
+            name: "🤝:$state".into(),
+            container_type: ContainerType::Map,
+        };
+        assert!(
+            !missing_key.is_mergeable(),
+            "payload without a key segment must not be mergeable"
+        );
+        assert!(missing_key.parse_mergeable().is_none());
+
+        let bad_escape = ContainerID::Root {
+            name: "🤝:$state>not\\xvalid".into(),
+            container_type: ContainerType::Map,
+        };
+        assert!(
+            !bad_escape.is_mergeable(),
+            "unknown escapes in the payload must not be mergeable"
+        );
+
+        let parent = ContainerID::new_root("state", ContainerType::Map);
+        let real = ContainerID::new_mergeable(&parent, "field", ContainerType::Map);
+        assert!(
+            real.is_mergeable(),
+            "valid mergeable cid must remain mergeable"
+        );
+    }
+
+    /// A `🤝:` payload can be malformed in several ways. `parse_mergeable` returns
+    /// `Option`, so such input must yield `None`, never panic.
+    #[test]
+    fn parse_mergeable_rejects_malformed_path_payloads() {
+        for name in [
+            "🤝:",
+            "🤝:$>key",
+            "🤝:%state>key",
+            "🤝:@1>key",
+            "🤝:@:1>key",
+            "🤝:@1:zzzzzzzzzzzzzz>key",
+            "🤝:@Z:0>key",
+            "🤝:@001:0>key",
+            "🤝:@1:00>key",
+            "🤝:@1:-0>key",
+            "🤝:$root\\sname>key",
+            "🤝:$root\\0name>key",
+            "🤝:$state>dangling\\",
+            "🤝:$state>unknown\\xescape",
+            "🤝:$state>raw/slash",
+            "🤝:$state>raw\0nul",
+        ] {
+            let cid = ContainerID::Root {
+                name: name.into(),
+                container_type: ContainerType::Map,
+            };
+            assert_eq!(cid.parse_mergeable(), None, "payload {name:?}");
+            assert!(!cid.is_mergeable(), "payload {name:?}");
+        }
+    }
+
+    #[test]
+    fn parse_mergeable_marker_rejects_unknown_kind() {
+        let parent = ContainerID::new_root("state", ContainerType::Map);
+        let mut marker = marker_bytes(mergeable_marker(&parent, "field", ContainerType::Map));
+        marker[MERGEABLE_MARKER_MAGIC.len()] = u8::MAX;
+
+        assert_eq!(
+            parse_mergeable_marker(&parent, "field", &LoroValue::Binary(marker.into())),
+            None
+        );
+    }
+
+    fn marker_bytes(value: LoroValue) -> Vec<u8> {
+        let LoroValue::Binary(bytes) = value else {
+            panic!("expected binary mergeable marker");
+        };
+        bytes.to_vec()
+    }
 
     #[test]
     fn test_container_id_convert_to_and_from_str() {

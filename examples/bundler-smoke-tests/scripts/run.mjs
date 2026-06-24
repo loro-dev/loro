@@ -21,7 +21,8 @@ const localLoroPackage = path.join(repoRoot, "crates/loro-wasm");
 const loroPackageSpec = normalizeLoroPackageSpec(
   process.env.LORO_SMOKE_PACKAGE ?? `file:${localLoroPackage}`,
 );
-const smokeMode = process.env.LORO_SMOKE_MODE ?? "default";
+const expectedSmokeJson = { map: { text: "mergeable-smoke" } };
+const expectedSmokeJsonLiteral = JSON.stringify(expectedSmokeJson);
 
 function normalizeLoroPackageSpec(spec) {
   if (spec === "loro-crdt" || spec.startsWith("loro-crdt@")) {
@@ -31,43 +32,33 @@ function normalizeLoroPackageSpec(spec) {
   return spec;
 }
 
-const sharedApp = (importPath) => {
-  if (smokeMode === "json") {
-    return `import { LoroDoc } from "${importPath}";
-
-const doc = new LoroDoc();
-doc.getText("t").insert(0, "hi");
+function loroSmokeBody({ renderToDom = true } = {}) {
+  return `const doc = new Loro();
+const map = doc.getMap("map");
+const text = map.ensureMergeableText("text");
+text.insert(0, "mergeable-smoke");
 const value = doc.toJSON();
+const expected = ${expectedSmokeJsonLiteral};
 
-if (value.t !== "hi" || Object.keys(value).length !== 1) {
+if (JSON.stringify(value) !== JSON.stringify(expected)) {
   throw new Error(\`Unexpected Loro JSON: \${JSON.stringify(value)}\`);
 }
 
-console.log(value);
 globalThis.__LORO_JSON_SMOKE__ = value;
-const app = document.getElementById("app");
+globalThis.__LORO_SMOKE__ = value.map.text;
+${renderToDom
+    ? `const app = document.getElementById("app");
 if (app) {
   app.textContent = JSON.stringify(value);
 }
-`;
-  }
-
-  return `import { LoroDoc } from "${importPath}";
-
-const doc = new LoroDoc();
-const text = doc.getText("text");
-text.insert(0, "bundler-smoke");
-
-const value = doc.toJSON().text;
-if (value !== "bundler-smoke") {
-  throw new Error(\`Unexpected Loro value: \${value}\`);
+`
+    : ""}`;
 }
 
-globalThis.__LORO_SMOKE__ = value;
-const app = document.getElementById("app");
-if (app) {
-  app.textContent = value;
-}
+const sharedApp = (importPath) => {
+  return `import { Loro } from "${importPath}";
+
+${loroSmokeBody()}
 `;
 };
 
@@ -85,11 +76,31 @@ const html = `<!doctype html>
 `;
 
 const cases = {
+  "vitest-node": {
+    description: "Vitest Node runtime with bare loro-crdt import",
+    dependencies: {},
+    devDependencies: {
+      vitest: "3.2.6",
+    },
+    setup: setupVitestNode,
+    command: ["pnpm", "exec", "vitest", "run"],
+  },
   vite5: viteCase("vite5", "vite", "^5.4.21"),
   vite6: viteCase("vite6", "vite", "^6.4.2"),
   vite7: viteCase("vite7", "vite", "^7.3.2"),
   vite8: viteCase("vite8", "vite", "^8.0.10"),
+  "vite5-dev": viteDevCase("vite5-dev", "^5.4.21"),
+  "vite6-dev": viteDevCase("vite6-dev", "^6.4.2"),
+  "vite7-dev": viteDevCase("vite7-dev", "^7.3.2"),
+  "vite8-dev": viteDevCase("vite8-dev", "^8.0.10"),
+  "vite5-web-mirror-dev": viteDevCase("vite5-web-mirror-dev", "^5.4.21", {
+    setup: setupViteWebMirror,
+    dependencies: { "loro-mirror": "^2.1.1" },
+  }),
   "rolldown-vite": viteCase("rolldown-vite", "rolldown-vite", "^7.3.1"),
+  "rolldown-vite-dev": viteDevCase("rolldown-vite-dev", "^7.3.1", {
+    packageName: "rolldown-vite",
+  }),
   webpack5: {
     description: "Webpack 5 production build",
     dependencies: {},
@@ -101,8 +112,30 @@ const cases = {
     command: ["pnpm", "exec", "webpack", "--config", "webpack.config.cjs"],
     inspect: { dir: "dist", wasmAsset: true, noWasmWrapper: true },
   },
+  "webpack5-dev": {
+    description: "Webpack 5 dev server runtime",
+    dependencies: {},
+    devDependencies: {
+      webpack: "^5.106.2",
+      "webpack-cli": "^6.0.1",
+      "webpack-dev-server": "^5.2.2",
+    },
+    setup: setupWebpack,
+    command: ["pnpm", "exec", "webpack", "--config", "webpack.config.cjs"],
+    inspect: { dir: "dist", wasmAsset: true, noWasmWrapper: true },
+  },
   rsbuild2: {
     description: "Rsbuild 2 production build",
+    dependencies: {},
+    devDependencies: {
+      "@rsbuild/core": "^2.0.3",
+    },
+    setup: setupRsbuild,
+    command: ["pnpm", "exec", "rsbuild", "build"],
+    inspect: { dir: "dist", wasmAsset: true, noWasmWrapper: true },
+  },
+  "rsbuild2-dev": {
+    description: "Rsbuild 2 dev server runtime",
     dependencies: {},
     devDependencies: {
       "@rsbuild/core": "^2.0.3",
@@ -122,8 +155,39 @@ const cases = {
     command: ["pnpm", "exec", "rspack", "build", "--config", "rspack.config.cjs"],
     inspect: { dir: "dist", wasmAsset: true, noWasmWrapper: true },
   },
+  "rspack2-dev": {
+    description: "Rspack 2 dev server runtime",
+    dependencies: {},
+    devDependencies: {
+      "@rspack/cli": "^2.0.1",
+      "@rspack/core": "^2.0.1",
+      "@rspack/dev-server": "^2.0.1",
+    },
+    setup: setupRspack,
+    command: ["pnpm", "exec", "rspack", "build", "--config", "rspack.config.cjs"],
+    inspect: { dir: "dist", wasmAsset: true, noWasmWrapper: true },
+  },
   parcel2: {
     description: "Parcel 2 production build",
+    dependencies: {},
+    devDependencies: {
+      parcel: "^2.16.4",
+    },
+    setup: setupParcel,
+    command: [
+      "pnpm",
+      "exec",
+      "parcel",
+      "build",
+      "index.html",
+      "--dist-dir",
+      "dist",
+      "--no-cache",
+    ],
+    inspect: { dir: "dist", wasmAsset: true, noWasmWrapper: true },
+  },
+  "parcel2-dev": {
+    description: "Parcel 2 dev server runtime",
     dependencies: {},
     devDependencies: {
       parcel: "^2.16.4",
@@ -227,6 +291,30 @@ const cases = {
     command: ["pnpm", "exec", "next", "build", "--webpack"],
     inspect: { dir: ".next", noWasmAsset: true, noWasmWrapper: true },
   },
+  "next16-turbopack-dev": {
+    description: "Next 16 dev server runtime with default Turbopack",
+    dependencies: {
+      next: "^16.2.4",
+      react: "^19.2.1",
+      "react-dom": "^19.2.1",
+    },
+    devDependencies: {},
+    setup: setupNext,
+    command: ["pnpm", "exec", "next", "build"],
+    inspect: { dir: ".next", noWasmWrapper: true },
+  },
+  "next16-webpack-dev": {
+    description: "Next 16 dev server runtime with Webpack and base64 entry",
+    dependencies: {
+      next: "^16.2.4",
+      react: "^19.2.1",
+      "react-dom": "^19.2.1",
+    },
+    devDependencies: {},
+    setup: (dir) => setupNext(dir, "loro-crdt/base64"),
+    command: ["pnpm", "exec", "next", "build", "--webpack"],
+    inspect: { dir: ".next", noWasmAsset: true, noWasmWrapper: true },
+  },
 };
 
 function viteCase(name, packageName, version) {
@@ -243,10 +331,45 @@ function viteCase(name, packageName, version) {
   };
 }
 
+function viteDevCase(name, version, options = {}) {
+  const packageName = options.packageName ?? "vite";
+  return {
+    description: `${name} dev server runtime`,
+    dependencies: options.dependencies ?? {},
+    devDependencies: {
+      [packageName]: version,
+      "vite-plugin-wasm": "^3.6.0",
+      "vite-plugin-top-level-await": "^1.6.0",
+      rollup: "^4.60.2",
+      esbuild: "^0.27.7",
+      typescript: "^5.9.3",
+    },
+    setup: options.setup ?? setupViteDev,
+    command: ["pnpm", "exec", "vite", "build"],
+    inspect: { dir: "dist", wasmAsset: true },
+  };
+}
+
 async function setupBasic(dir, importPath) {
   await mkdir(path.join(dir, "src"), { recursive: true });
   await writeFile(path.join(dir, "index.html"), html);
   await writeFile(path.join(dir, "src/main.js"), sharedApp(importPath));
+}
+
+async function setupVitestNode(dir) {
+  await writeFile(
+    path.join(dir, "loro.test.ts"),
+    `import { describe, expect, it } from "vitest";
+import { Loro } from "loro-crdt";
+
+describe("loro-crdt", () => {
+  it("runs the mergeable text smoke test", () => {
+    ${loroSmokeBody({ renderToDom: false }).replaceAll("\n", "\n    ")}
+    expect(value).toStrictEqual(${expectedSmokeJsonLiteral});
+  });
+});
+`,
+  );
 }
 
 async function setupVite(dir) {
@@ -257,8 +380,45 @@ async function setupVite(dir) {
   );
 }
 
+async function setupViteDev(dir) {
+  await setupBasic(dir, "loro-crdt");
+  await writeViteWasmConfig(dir);
+}
+
+async function setupViteWebMirror(dir) {
+  await mkdir(path.join(dir, "src"), { recursive: true });
+  await writeFile(path.join(dir, "index.html"), html);
+  await writeFile(
+    path.join(dir, "src/main.js"),
+    `import init, { Loro } from "loro-crdt/web";
+import wasmUrl from "loro-crdt/web/loro_wasm_bg.wasm?url";
+import * as mirror from "loro-mirror";
+
+await init(wasmUrl);
+${loroSmokeBody()}
+globalThis.__LORO_MIRROR_KEYS__ = Object.keys(mirror);
+`,
+  );
+  await writeViteWasmConfig(dir);
+}
+
+async function writeViteWasmConfig(dir) {
+  await writeFile(
+    path.join(dir, "vite.config.js"),
+    `import wasm from "vite-plugin-wasm";
+import topLevelAwait from "vite-plugin-top-level-await";
+
+export default {
+  plugins: [wasm(), topLevelAwait()],
+  build: { outDir: "dist", target: "esnext" },
+};
+`,
+  );
+}
+
 async function setupWebpack(dir) {
   await setupBasic(dir, "loro-crdt");
+  await writeBundleHtml(dir);
   await writeFile(
     path.join(dir, "webpack.config.cjs"),
     `const path = require("node:path");
@@ -278,6 +438,7 @@ module.exports = {
 
 async function setupRspack(dir) {
   await setupBasic(dir, "loro-crdt");
+  await writeBundleHtml(dir);
   await writeFile(
     path.join(dir, "rspack.config.cjs"),
     `const path = require("node:path");
@@ -295,8 +456,41 @@ module.exports = {
   );
 }
 
+async function writeBundleHtml(dir) {
+  await mkdir(path.join(dir, "public"), { recursive: true });
+  await writeFile(
+    path.join(dir, "public/index.html"),
+    `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Loro bundler smoke</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script src="/bundle.js"></script>
+  </body>
+</html>
+`,
+  );
+}
+
 async function setupRsbuild(dir) {
   await setupBasic(dir, "loro-crdt");
+  await writeFile(
+    path.join(dir, "index.html"),
+    `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Loro bundler smoke</title>
+  </head>
+  <body>
+    <div id="app"></div>
+  </body>
+</html>
+`,
+  );
   await writeFile(
     path.join(dir, "rsbuild.config.mjs"),
     `export default {
@@ -355,34 +549,13 @@ export default function Page() {
   );
   await writeFile(
     path.join(dir, "components/Smoke.jsx"),
-    smokeMode === "json"
-      ? `"use client";
+    `"use client";
 
-import { LoroDoc } from "${importPath}";
+import { Loro } from "${importPath}";
 
 export default function Smoke() {
-  const doc = new LoroDoc();
-  doc.getText("t").insert(0, "hi");
-  const value = doc.toJSON();
-
-  if (value.t !== "hi" || Object.keys(value).length !== 1) {
-    throw new Error(\`Unexpected Loro JSON: \${JSON.stringify(value)}\`);
-  }
-
-  console.log(value);
-  globalThis.__LORO_JSON_SMOKE__ = value;
+  ${loroSmokeBody({ renderToDom: false }).replaceAll("\n", "\n  ")}
   return <main>{JSON.stringify(value)}</main>;
-}
-`
-      : `"use client";
-
-import { LoroDoc } from "${importPath}";
-
-export default function Smoke() {
-  const doc = new LoroDoc();
-  const text = doc.getText("text");
-  text.insert(0, "bundler-smoke");
-  return <main>{doc.toJSON().text}</main>;
 }
 `,
   );
@@ -471,7 +644,9 @@ async function runCase(name, testCase) {
   if (testCase.afterBuild) {
     await testCase.afterBuild(dir);
   }
-  await inspectOutput(dir, testCase.inspect);
+  if (testCase.inspect) {
+    await inspectOutput(dir, testCase.inspect);
+  }
   console.log(`[${name}] ok`);
 }
 

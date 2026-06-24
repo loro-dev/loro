@@ -37,3 +37,7 @@ harness = false
 [[bench]]
 name = "fork"
 harness = false
+
+[[bench]]
+name = "mergeable_size"
+harness = false

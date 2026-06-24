@@ -34,11 +34,23 @@ mod movable_list_apply_delta;
 mod tree;
 
 const REGULAR_CONTAINER_VALUE_ARG_ERROR: &str =
-    "Cannot use a LoroValue::Container as a regular value. To create child container, use insert_container or set_container";
+    "Cannot use a LoroValue::Container as a regular value. To create a child container, use insert_container/set_container, or ensure_mergeable_* on maps for mergeable children";
 
 mod text_update;
 
 fn ensure_no_regular_container_value(value: &LoroValue) -> LoroResult<()> {
+    // Fast path: scalar values can never transitively hold a container, so we
+    // skip the heap allocation + traversal below. This is the common case on
+    // the per-op insert hot path (inserting numbers/strings/bools), where the
+    // previous unconditional `vec![value]` allocation showed up as a measurable
+    // regression.
+    if !matches!(
+        value,
+        LoroValue::Container(_) | LoroValue::List(_) | LoroValue::Map(_)
+    ) {
+        return Ok(());
+    }
+
     let mut stack = vec![value];
     while let Some(value) = stack.pop() {
         match value {
@@ -1090,6 +1102,28 @@ impl HandlerTrait for Handler {
 }
 
 impl Handler {
+    fn apply_map_container_diff_value(
+        map: &MapHandler,
+        key: &str,
+        old_id: ContainerID,
+        on_container_remap: &mut dyn FnMut(ContainerID, ContainerID),
+    ) -> LoroResult<()> {
+        if old_id.is_mergeable() {
+            let parent_id = map.id();
+            let kind = old_id.container_type();
+            let new_id = ContainerID::new_mergeable(&parent_id, key, kind);
+            let marker = loro_common::mergeable_marker(&parent_id, key, kind);
+            map.insert_without_skipping(key, marker)?;
+            on_container_remap(old_id, new_id);
+            return Ok(());
+        }
+
+        let new_h = map.insert_container(key, Handler::new_unattached(old_id.container_type()))?;
+        let new_id = new_h.id();
+        on_container_remap(old_id, new_id);
+        Ok(())
+    }
+
     pub(crate) fn new_attached(id: ContainerID, doc: LoroDoc) -> Self {
         let kind = id.container_type();
         let handler = BasicHandler {
@@ -1213,21 +1247,20 @@ impl Handler {
                 for (key, value) in diff.updated.into_iter() {
                     match value.value {
                         Some(ValueOrHandler::Handler(h)) => {
-                            let old_id = h.id();
-                            let new_h = x.insert_container(
+                            Self::apply_map_container_diff_value(
+                                x,
                                 &key,
-                                Handler::new_unattached(old_id.container_type()),
+                                h.id(),
+                                on_container_remap,
                             )?;
-                            let new_id = new_h.id();
-                            on_container_remap(old_id, new_id);
                         }
                         Some(ValueOrHandler::Value(LoroValue::Container(old_id))) => {
-                            let new_h = x.insert_container(
+                            Self::apply_map_container_diff_value(
+                                x,
                                 &key,
-                                Handler::new_unattached(old_id.container_type()),
+                                old_id,
+                                on_container_remap,
                             )?;
-                            let new_id = new_h.id();
-                            on_container_remap(old_id, new_id);
                         }
                         Some(ValueOrHandler::Value(v)) => {
                             x.insert_without_skipping(&key, v)?;
@@ -1492,10 +1525,9 @@ impl TextHandler {
                 let t = t.lock();
                 t.value.len_utf8()
             }
-            MaybeDetached::Attached(a) if a.has_decoded_state() => {
-                a.with_state(|state| state.as_richtext_state_mut().unwrap().len_utf8())
+            MaybeDetached::Attached(a) => {
+                a.with_doc_state(|state| state.get_text_len(a.container_idx, PosType::Bytes))
             }
-            MaybeDetached::Attached(a) => a.get_value().as_string().unwrap().len(),
         }
     }
 
@@ -1506,7 +1538,7 @@ impl TextHandler {
                 t.value.len_utf16()
             }
             MaybeDetached::Attached(a) => {
-                a.with_doc_state(|state| state.get_text_utf16_len(a.container_idx))
+                a.with_doc_state(|state| state.get_text_len(a.container_idx, PosType::Utf16))
             }
         }
     }
@@ -1518,7 +1550,7 @@ impl TextHandler {
                 t.value.len_unicode()
             }
             MaybeDetached::Attached(a) => {
-                a.with_doc_state(|state| state.get_text_unicode_len(a.container_idx))
+                a.with_doc_state(|state| state.get_text_len(a.container_idx, PosType::Unicode))
             }
         }
     }
@@ -1536,25 +1568,9 @@ impl TextHandler {
     fn len(&self, pos_type: PosType) -> usize {
         match &self.inner {
             MaybeDetached::Detached(t) => t.lock().value.len(pos_type),
-            MaybeDetached::Attached(a) if a.has_decoded_state() || pos_type == PosType::Entity => {
-                a.with_state(|state| state.as_richtext_state_mut().unwrap().len(pos_type))
+            MaybeDetached::Attached(a) => {
+                a.with_doc_state(|state| state.get_text_len(a.container_idx, pos_type))
             }
-            MaybeDetached::Attached(a) => match pos_type {
-                PosType::Bytes => a.get_value().as_string().unwrap().len(),
-                PosType::Unicode => {
-                    a.with_doc_state(|state| state.get_text_unicode_len(a.container_idx))
-                }
-                PosType::Utf16 => {
-                    a.with_doc_state(|state| state.get_text_utf16_len(a.container_idx))
-                }
-                PosType::Event if cfg!(feature = "wasm") => {
-                    a.with_doc_state(|state| state.get_text_utf16_len(a.container_idx))
-                }
-                PosType::Event => {
-                    a.with_doc_state(|state| state.get_text_unicode_len(a.container_idx))
-                }
-                PosType::Entity => unreachable!("entity length is handled by the state path"),
-            },
         }
     }
 
@@ -1572,7 +1588,12 @@ impl TextHandler {
             return Ok(());
         };
 
-        if pos > self.len(pos_type) {
+        let len = self.len(pos_type);
+        if pos > len {
+            return Ok(());
+        }
+
+        if self.all_text_positions_are_boundaries(pos_type, len) {
             return Ok(());
         }
 
@@ -1584,6 +1605,15 @@ impl TextHandler {
         }
 
         Ok(())
+    }
+
+    fn all_text_positions_are_boundaries(&self, pos_type: PosType, len: usize) -> bool {
+        match pos_type {
+            PosType::Bytes => len == self.len_unicode(),
+            PosType::Utf16 => len == self.len_unicode(),
+            PosType::Event if cfg!(feature = "wasm") => len == self.len_unicode(),
+            _ => false,
+        }
     }
 
     pub fn diagnose(&self) {
@@ -1851,18 +1881,18 @@ impl TextHandler {
     ///
     /// This method requires auto_commit to be enabled.
     pub fn insert(&self, pos: usize, s: &str, pos_type: PosType) -> LoroResult<()> {
-        let len = self.len(pos_type);
-        if pos > len {
-            return Err(LoroError::OutOfBound {
-                pos,
-                len,
-                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-            });
-        }
-        self.validate_text_boundary(pos, pos_type)?;
-
         match &self.inner {
             MaybeDetached::Detached(t) => {
+                let len = self.len(pos_type);
+                if pos > len {
+                    return Err(LoroError::OutOfBound {
+                        pos,
+                        len,
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                    });
+                }
+                self.validate_text_boundary(pos, pos_type)?;
+
                 let mut t = t.lock();
                 let (index, _) = t
                     .value
@@ -1876,6 +1906,19 @@ impl TextHandler {
                 Ok(())
             }
             MaybeDetached::Attached(a) => {
+                if s.is_empty() {
+                    let len = self.len(pos_type);
+                    if pos > len {
+                        return Err(LoroError::OutOfBound {
+                            pos,
+                            len,
+                            info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                        });
+                    }
+                    self.validate_text_boundary(pos, pos_type)?;
+                    return Ok(());
+                }
+
                 a.with_txn(|txn| self.insert_with_txn(txn, pos, s, pos_type))
             }
         }
@@ -2795,43 +2838,30 @@ impl TextHandler {
             PosType::Unicode => Some(unicode_index),
             PosType::Event => Some(event_index),
             PosType::Bytes | PosType::Utf16 => {
-                // Use the prefix text to compute target offset.
-                let prefix = match &self.inner {
+                // Map the event-index position onto the target coordinate via the
+                // rope's prefix caches. This is O(log n); materializing the prefix
+                // string would be O(n) and makes repeated edits O(n^2).
+                match &self.inner {
                     MaybeDetached::Detached(t) => {
                         let t = t.lock();
                         if event_index > t.value.len_event() {
                             return None;
                         }
-                        t.value.get_text_slice_by_event_index(0, event_index).ok()?
+                        Some(t.value.event_index_to_index(event_index, to))
                     }
-                    MaybeDetached::Attached(a) if a.has_decoded_state() => {
-                        let res: Result<String, ()> = a.with_state(|state| {
-                            let state = state.as_richtext_state_mut().unwrap();
-                            if event_index > state.len_event() {
-                                return Err(());
-                            }
-                            state
-                                .get_text_slice_by_event_index(0, event_index)
-                                .map_err(|_| ())
-                        });
-
-                        match res {
-                            Ok(v) => v,
-                            Err(_) => return None,
+                    MaybeDetached::Attached(a) if a.has_decoded_state() => a.with_state(|state| {
+                        let state = state.as_richtext_state_mut().unwrap();
+                        if event_index > state.len_event() {
+                            return None;
                         }
-                    }
+                        Some(state.event_index_to_index(event_index, to))
+                    }),
                     MaybeDetached::Attached(a) => {
                         let value = a.get_value();
                         let s = value.as_string().unwrap();
-                        return unicode_to_text_pos(s, unicode_index, to);
+                        unicode_to_text_pos(s, unicode_index, to)
                     }
-                };
-
-                Some(match to {
-                    PosType::Bytes => prefix.len(),
-                    PosType::Utf16 => count_utf16_len(prefix.as_bytes()),
-                    _ => unreachable!(),
-                })
+                }
             }
             PosType::Entity => None,
         };
@@ -4324,7 +4354,15 @@ impl MapHandler {
                         .get_map_entries(inner.container_idx)
                         .into_iter()
                         .map(|(key, value)| {
-                            (key.to_string(), value_to_value_or_handler(inner, value))
+                            let translated = loro_common::translate_mergeable_marker_value(
+                                &inner.id,
+                                key.as_ref(),
+                                value,
+                            );
+                            (
+                                key.to_string(),
+                                value_to_value_or_handler(inner, translated),
+                            )
                         })
                         .collect::<Vec<_>>()
                 });
@@ -4382,7 +4420,11 @@ impl MapHandler {
                 m.value.get(key).map(|v| v.to_value())
             }
             MaybeDetached::Attached(inner) => {
-                inner.with_doc_state(|state| state.get_map_value_by_key(inner.container_idx, key))
+                let value = inner
+                    .with_doc_state(|state| state.get_map_value_by_key(inner.container_idx, key))?;
+                Some(loro_common::translate_mergeable_marker_value(
+                    &inner.id, key, value,
+                ))
             }
         }
     }
@@ -4396,12 +4438,22 @@ impl MapHandler {
             }
             MaybeDetached::Attached(inner) => {
                 let value = inner
-                    .with_doc_state(|state| state.get_map_value_by_key(inner.container_idx, key));
-                value.map(|value| value_to_value_or_handler(inner, value))
+                    .with_doc_state(|state| state.get_map_value_by_key(inner.container_idx, key))?;
+                let value = loro_common::translate_mergeable_marker_value(&inner.id, key, value);
+                Some(value_to_value_or_handler(inner, value))
             }
         }
     }
 
+    /// Get or create a regular child container at `key`.
+    ///
+    /// This legacy method creates regular op-id child containers when the key is empty or `null`.
+    /// It is not mergeable: concurrent first creation at the same map key can fork child state and
+    /// leave one branch hidden by map conflict resolution. Prefer `ensure_mergeable_*` for lazy
+    /// map-key child creation.
+    #[deprecated(
+        note = "use ensure_mergeable_map/list/movable_list/text/tree/counter for lazy map-key child creation; this method creates regular op-id children"
+    )]
     pub fn get_or_create_container<C: HandlerTrait>(&self, key: &str, child: C) -> LoroResult<C> {
         if let Some(ans) = self.get_(key) {
             if let ValueOrHandler::Handler(h) = ans {
@@ -4423,6 +4475,141 @@ impl MapHandler {
         }
 
         self.insert_container(key, child)
+    }
+
+    /// Shared implementation for all `ensure_mergeable_*` methods.
+    ///
+    /// Computes a deterministic [`ContainerID::Root`] in the mergeable namespace from
+    /// `(parent.id, key, child.kind())` and constructs the handler from it. Two peers calling this
+    /// with the same `(parent, key, kind)` receive handlers with identical container ids, which is
+    /// what makes the child container mergeable on concurrent first-write.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LoroError::MisuseDetachedContainer`] when called on a detached handler. The
+    /// deterministic cid is computed from the parent's cid, which a detached parent does not have
+    /// yet; falling back to a non-deterministic regular child would silently drop the mergeable
+    /// guarantee at attach time. Detached callers must attach the parent first.
+    ///
+    /// Returns [`LoroError::ArgErr`] if the parent slot already holds a non-mergeable value, or if
+    /// `C::from_handler` rejects the handler built from the deterministic cid (unreachable by
+    /// construction; guards against future drift between `from_handler` and `kind`).
+    fn ensure_mergeable_container<C: HandlerTrait>(&self, key: &str, child: C) -> LoroResult<C> {
+        let MaybeDetached::Attached(parent) = &self.inner else {
+            return Err(LoroError::MisuseDetachedContainer {
+                method: "ensure_mergeable_container",
+            });
+        };
+
+        // Compare against the raw marker bytes (skipping `MapHandler::get`'s user-facing
+        // marker → Container translation) so the non-mergeable-occupant guard sees the real
+        // slot value and the same-kind idempotent-skip can match.
+        let existing_raw =
+            parent.with_doc_state(|state| state.get_map_value_by_key(parent.container_idx, key));
+
+        // A non-mergeable occupant (scalar, arbitrary binary, regular child container) would be
+        // silently clobbered by the marker write, so reject rather than overwrite under a
+        // `get_`-named API. Only the exact binary marker for this `(parent, key, kind)` is
+        // accepted as an existing mergeable occupant.
+        if let Some(existing) = &existing_raw {
+            if !matches!(existing, LoroValue::Null)
+                && loro_common::parse_mergeable_marker(&parent.id, key, existing).is_none()
+            {
+                return Err(LoroError::ArgErr(
+                    format!(
+                        "Cannot create a mergeable {} at key {key:?}: the key already holds a non-mergeable value",
+                        child.kind()
+                    )
+                    .into_boxed_str(),
+                ));
+            }
+        }
+
+        let cid = ContainerID::new_mergeable(&parent.id, key, child.kind());
+        let marker = loro_common::mergeable_marker(&parent.id, key, child.kind());
+
+        // Idempotent-skip on same marker: `MapHandler::get` translates markers to Container, so
+        // `insert_with_txn`'s equality check can't see this collision — do it directly.
+        // A different-kind marker is a deliberate kind change; let the insert through.
+        if existing_raw.as_ref() != Some(&marker) {
+            self.insert(key, marker)?;
+        }
+
+        C::from_handler(create_handler(parent, cid.clone())).ok_or_else(|| {
+            LoroError::ArgErr(
+                format!(
+                    "Expected value type {} but found {}",
+                    child.kind(),
+                    cid.container_type()
+                )
+                .into_boxed_str(),
+            )
+        })
+    }
+
+    #[cfg(feature = "counter")]
+    /// Ensure a mergeable Counter child exists under `key` and return its handler.
+    ///
+    /// Returns [`LoroError::MisuseDetachedContainer`] when called on a detached map.
+    /// Returns [`LoroError::ArgErr`] if the parent slot already holds a non-mergeable value.
+    /// Repeated same-kind calls are idempotent; different mergeable kinds deliberately rewrite
+    /// the active marker while preserving each mergeable child's deterministic state.
+    pub fn ensure_mergeable_counter(&self, key: &str) -> LoroResult<counter::CounterHandler> {
+        self.ensure_mergeable_container(key, counter::CounterHandler::new_detached())
+    }
+
+    /// Ensure a mergeable Map child exists under `key` and return its handler.
+    ///
+    /// Returns [`LoroError::MisuseDetachedContainer`] when called on a detached map.
+    /// Returns [`LoroError::ArgErr`] if the parent slot already holds a non-mergeable value.
+    /// Repeated same-kind calls are idempotent; different mergeable kinds deliberately rewrite
+    /// the active marker while preserving each mergeable child's deterministic state.
+    ///
+    /// Prefer to avoid very deep mergeable-map chains: mergeable cids encode their flattened
+    /// logical path, so cid size still grows with depth and rides through every op/snapshot
+    /// reference to it. See [`MERGEABLE_NAMESPACE_PREFIX`](loro_common::MERGEABLE_NAMESPACE_PREFIX).
+    pub fn ensure_mergeable_map(&self, key: &str) -> LoroResult<MapHandler> {
+        self.ensure_mergeable_container(key, MapHandler::new_detached())
+    }
+
+    /// Ensure a mergeable List child exists under `key` and return its handler.
+    ///
+    /// Returns [`LoroError::MisuseDetachedContainer`] when called on a detached map.
+    /// Returns [`LoroError::ArgErr`] if the parent slot already holds a non-mergeable value.
+    /// Repeated same-kind calls are idempotent; different mergeable kinds deliberately rewrite
+    /// the active marker while preserving each mergeable child's deterministic state.
+    pub fn ensure_mergeable_list(&self, key: &str) -> LoroResult<ListHandler> {
+        self.ensure_mergeable_container(key, ListHandler::new_detached())
+    }
+
+    /// Ensure a mergeable MovableList child exists under `key` and return its handler.
+    ///
+    /// Returns [`LoroError::MisuseDetachedContainer`] when called on a detached map.
+    /// Returns [`LoroError::ArgErr`] if the parent slot already holds a non-mergeable value.
+    /// Repeated same-kind calls are idempotent; different mergeable kinds deliberately rewrite
+    /// the active marker while preserving each mergeable child's deterministic state.
+    pub fn ensure_mergeable_movable_list(&self, key: &str) -> LoroResult<MovableListHandler> {
+        self.ensure_mergeable_container(key, MovableListHandler::new_detached())
+    }
+
+    /// Ensure a mergeable Text child exists under `key` and return its handler.
+    ///
+    /// Returns [`LoroError::MisuseDetachedContainer`] when called on a detached map.
+    /// Returns [`LoroError::ArgErr`] if the parent slot already holds a non-mergeable value.
+    /// Repeated same-kind calls are idempotent; different mergeable kinds deliberately rewrite
+    /// the active marker while preserving each mergeable child's deterministic state.
+    pub fn ensure_mergeable_text(&self, key: &str) -> LoroResult<TextHandler> {
+        self.ensure_mergeable_container(key, TextHandler::new_detached())
+    }
+
+    /// Ensure a mergeable Tree child exists under `key` and return its handler.
+    ///
+    /// Returns [`LoroError::MisuseDetachedContainer`] when called on a detached map.
+    /// Returns [`LoroError::ArgErr`] if the parent slot already holds a non-mergeable value.
+    /// Repeated same-kind calls are idempotent; different mergeable kinds deliberately rewrite
+    /// the active marker while preserving each mergeable child's deterministic state.
+    pub fn ensure_mergeable_tree(&self, key: &str) -> LoroResult<TreeHandler> {
+        self.ensure_mergeable_container(key, TreeHandler::new_detached())
     }
 
     pub fn contains_key(&self, key: &str) -> bool {
@@ -4498,10 +4685,20 @@ impl MapHandler {
                 m.value.values().cloned().collect()
             }
             MaybeDetached::Attached(a) => a.with_doc_state(|state| {
+                // A mergeable child's marker lives in the parent map's value table; iterate
+                // entries (key + value) so the user-boundary translation can resolve each marker
+                // to the deterministic child cid before wrapping into a handler.
                 state
-                    .get_map_values(a.container_idx)
+                    .get_map_entries(a.container_idx)
                     .into_iter()
-                    .map(|value| value_to_value_or_handler(a, value))
+                    .map(|(key, value)| {
+                        let translated = loro_common::translate_mergeable_marker_value(
+                            &a.id,
+                            key.as_ref(),
+                            value,
+                        );
+                        value_to_value_or_handler(a, translated)
+                    })
                     .collect()
             }),
         };

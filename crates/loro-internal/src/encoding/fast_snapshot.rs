@@ -187,6 +187,7 @@ pub(crate) fn decode_snapshot_inner(
         ));
     }
     let need_calc = state_bytes.is_none();
+    let checkout_origin = origin.clone();
 
     let arena_checkpoint = oplog.arena.checkpoint_for_rollback();
     let decode_result = (|| -> LoroResult<()> {
@@ -244,7 +245,7 @@ pub(crate) fn decode_snapshot_inner(
     drop(oplog);
     if need_calc {
         doc.set_detached(true);
-        if let Err(e) = doc._checkout_to_latest_without_commit(false) {
+        if let Err(e) = doc._checkout_to_latest_without_commit_as_import(false, checkout_origin) {
             doc.set_detached(false);
             doc.app_state()
                 .lock()
