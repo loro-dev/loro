@@ -1,7 +1,8 @@
 use std::sync::{Arc, Mutex};
 
 use loro::{
-    event::Diff, Container, ContainerID, ContainerType, ExportMode, LoroCounter, LoroDoc, LoroValue,
+    event::Diff, Container, ContainerID, ContainerTrait, ContainerType, ExportMode, LoroCounter,
+    LoroDoc, LoroValue,
 };
 use tracing::debug_span;
 
@@ -152,6 +153,11 @@ impl ActorTrait for CounterActor {
     }
 
     fn add_new_container(&mut self, container: Container) {
+        // Dedup by cid so mergeable children don't bias the dispatch index.
+        let cid = container.id();
+        if self.containers.iter().any(|c| c.id() == cid) {
+            return;
+        }
         self.containers.push(container.into_counter().unwrap());
     }
 }

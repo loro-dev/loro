@@ -97,6 +97,17 @@ mod snapshot {
         }
 
         fn decode_value(bytes: &[u8]) -> LoroResult<(LoroValue, &[u8])> {
+            // Builds without the counter feature can re-export an untouched counter as header only.
+            if bytes.is_empty() {
+                return Ok((LoroValue::Double(0.0), bytes));
+            }
+
+            if bytes.len() != 8 {
+                return Err(loro_common::LoroError::DecodeError(
+                    "Decode counter value failed".to_string().into_boxed_str(),
+                ));
+            }
+
             let value = f64::from_le_bytes(bytes[..8].try_into().unwrap());
             Ok((LoroValue::Double(value), &bytes[8..]))
         }
@@ -109,6 +120,12 @@ mod snapshot {
         where
             Self: Sized,
         {
+            if !v.1.is_empty() {
+                return Err(loro_common::LoroError::DecodeError(
+                    "Decode counter state failed".to_string().into_boxed_str(),
+                ));
+            }
+
             let mut counter = CounterState::new(idx);
             counter.value = *v.0.as_double().unwrap();
             Ok(counter)

@@ -19,6 +19,7 @@ use std::ops::Deref;
 use std::sync::Arc;
 
 use crate::ValueOrContainer;
+use crate::{LoroError, LoroResult};
 
 /// A subscriber to the event.
 #[allow(clippy::unused_unit)]
@@ -287,6 +288,59 @@ impl DiffBatch {
             }
         }
     }
+
+    pub(crate) fn validate_for_apply(&self) -> LoroResult<()> {
+        for (_, diff) in self.iter() {
+            validate_diff_for_apply(diff)?;
+        }
+
+        Ok(())
+    }
+}
+
+fn validate_diff_for_apply(diff: &Diff<'_>) -> LoroResult<()> {
+    let mut index = 0usize;
+    match diff {
+        Diff::Text(delta) => {
+            for item in delta {
+                match item {
+                    TextDelta::Retain { retain, .. } => {
+                        index = checked_apply_diff_index_end(index, *retain)?;
+                    }
+                    TextDelta::Delete { delete } => {
+                        index = checked_apply_diff_index_end(index, *delete)?;
+                    }
+                    TextDelta::Insert { .. } => {}
+                }
+            }
+        }
+        Diff::List(delta) => {
+            for item in delta {
+                match item {
+                    ListDiffItem::Retain { retain } => {
+                        index = checked_apply_diff_index_end(index, *retain)?;
+                    }
+                    ListDiffItem::Delete { delete } => {
+                        index = checked_apply_diff_index_end(index, *delete)?;
+                    }
+                    ListDiffItem::Insert { .. } => {}
+                }
+            }
+        }
+        Diff::Map(_) | Diff::Tree(_) | Diff::Unknown => {}
+        #[cfg(feature = "counter")]
+        Diff::Counter(_) => {}
+    }
+
+    Ok(())
+}
+
+fn checked_apply_diff_index_end(pos: usize, len: usize) -> LoroResult<usize> {
+    pos.checked_add(len).ok_or_else(|| LoroError::OutOfBound {
+        pos: usize::MAX,
+        len: usize::MAX,
+        info: "apply_diff".into(),
+    })
 }
 
 impl From<InnerDiffBatch> for DiffBatch {

@@ -689,6 +689,7 @@ impl OpLog {
             .flat_map(move |span| self.change_store.iter_changes(span))
     }
 
+    #[allow(dead_code)]
     pub(crate) fn iter_changes_causally_rev<'a>(
         &'a self,
         from: &VersionVector,

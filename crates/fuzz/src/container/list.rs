@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use loro::{Container, ContainerID, ContainerType, LoroDoc, LoroList};
+use loro::{Container, ContainerID, ContainerTrait, ContainerType, LoroDoc, LoroList};
 use tracing::debug_span;
 
 use crate::{
@@ -82,6 +82,11 @@ impl ActorTrait for ListActor {
     }
 
     fn add_new_container(&mut self, container: Container) {
+        // Dedup by cid so mergeable children don't bias the dispatch index.
+        let cid = container.id();
+        if self.containers.iter().any(|c| c.id() == cid) {
+            return;
+        }
         self.containers.push(container.into_list().unwrap());
     }
 }

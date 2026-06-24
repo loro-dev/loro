@@ -60,6 +60,7 @@ Loro is a [CRDTs(Conflict-free Replicated Data Types)](https://crdt.tech/) libra
 - 🌲 [Moveable Tree](https://loro.dev/docs/tutorial/tree)
 - 🚗 [Moveable List](https://loro.dev/docs/tutorial/list)
 - 🗺️ [Last-Write-Wins Map](https://loro.dev/docs/tutorial/map)
+- 🤝 Mergeable map-key children via `ensureMergeable*` for lazy child container creation
 
 **Advanced Features in Loro**
 
@@ -79,6 +80,14 @@ The standard build pipeline (`deno run -A ./scripts/build.ts dev|release`) now k
 - `loro_wasm_bg.wasm.map` &mdash; a v3 source map derived from DWARF so that Chrome, Edge, and Firefox can show original Rust locations when inspecting stack traces.
 
 Load the source map in browser devtools; when devtools fetches the debug companion it can map instructions back to Rust source files and line numbers without inflating the shipped `.wasm`.
+
+## Bundler entries
+
+Bare `import { LoroDoc } from "loro-crdt"` uses package conditional exports. Browser development builds can resolve the nested `browser` + `development` conditions to the bundler entry, while browser production builds can resolve the `browser` condition to a synchronous browser build that avoids Vite/Rolldown production chunk cycles around `.wasm` wrappers. A legacy `browser` string field also points to the browser entry for bundlers that still consult it. Runtimes that need native `.wasm` module imports can still use the `bundler` entry, and apps that prefer explicit async initialization can use `loro-crdt/web`.
+
+Vite and Webpack understand `new URL("./loro_wasm_bg.wasm", import.meta.url)` and emit the WASM asset automatically. Plain esbuild and plain Rollup do not copy that asset by default. For those tools, either import `loro-crdt/base64` to inline the WASM into the JS bundle without top-level await, or keep the default `loro-crdt` import and copy `node_modules/loro-crdt/browser/loro_wasm_bg.wasm` next to the emitted JS bundle as a build step.
+
+Next.js Turbopack can use the default browser entry. If a Next.js Webpack build resolves the `bundler` entry instead of the package `browser` remap, use `loro-crdt/base64`.
 
 # Example
 

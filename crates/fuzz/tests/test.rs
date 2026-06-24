@@ -33,6 +33,42 @@ fn test_empty() {
 }
 
 #[test]
+fn all_fuzz_lazy_richtext_append_style_anchor() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 0,
+                    pos: 0,
+                    length: 0,
+                    prop: 2962851221704015872,
+                }),
+            },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 59,
+                    pos: 15950377895847788544,
+                    length: 18386260117272886751,
+                    prop: 4251980913,
+                }),
+            },
+        ],
+    )
+}
+
+#[test]
 fn all_fuzz_text_update_deleted_container() {
     test_multi_sites(
         5,

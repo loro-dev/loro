@@ -399,6 +399,12 @@ The document state is stored as a KV Store where each container's state is a sep
 
 ### ContainerID Encoding
 
+Mergeable child containers are encoded as reserved synthetic Root container IDs
+whose names carry mergeable path data. Parent `Map` slots store a compact binary
+marker that activates the mergeable child for a specific `(parent, key, type)`;
+the full child `ContainerID` is derived from that context. See
+[`mergeable-container-id.md`](../crates/loro-internal/docs/mergeable-container-id.md).
+
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    ContainerID Encoding                          │

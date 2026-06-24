@@ -216,14 +216,14 @@ impl ContainerHistoryCache {
                     ContainerType::Tree => {}
                 }
 
-                let state = c.get_state_mut(*idx, default_ctx);
+                let state = c.get_state_mut(idx, default_ctx);
 
                 match state {
                     crate::state::State::MapState(m) => {
                         if for_checkout {
                             let c = self.for_checkout.as_mut().unwrap();
                             for (k, v) in m.iter() {
-                                c.map.record_shallow_root_state_entry(*idx, k, v);
+                                c.map.record_shallow_root_state_entry(idx, k, v);
                             }
                         }
                     }
@@ -244,7 +244,7 @@ impl ContainerHistoryCache {
                     crate::state::State::TreeState(t) => {
                         if for_importing {
                             let c = self.for_importing.as_mut().unwrap();
-                            let tree = c.entry(*idx).or_insert_with(|| {
+                            let tree = c.entry(idx).or_insert_with(|| {
                                 HistoryCacheForImporting::Tree(Default::default())
                             });
                             tree.as_tree_mut().unwrap().record_shallow_root_state(

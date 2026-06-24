@@ -64,6 +64,7 @@ Loro is a [CRDTs(Conflict-free Replicated Data Types)](https://crdt.tech/) libra
 - 🌲 [Moveable Tree](https://loro.dev/docs/tutorial/tree)
 - 🚗 [Moveable List](https://loro.dev/docs/tutorial/list)
 - 🗺️ [Last-Write-Wins Map](https://loro.dev/docs/tutorial/map)
+- 🤝 Mergeable map-key children via `ensureMergeable*` / `ensure_mergeable_*` for lazy child container creation
 
 **Advanced Features in Loro**
 

@@ -215,6 +215,41 @@ fn export_snapshot_on_shallow_doc_with_small_tail_updates() -> anyhow::Result<()
 }
 
 #[test]
+fn export_snapshot_on_shallow_doc_with_large_tail_updates() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    let text = doc.get_text("text");
+    text.insert(0, &"a".repeat(64))?;
+    doc.commit();
+
+    let shallow_frontiers = doc.oplog_frontiers();
+    let shallow_value = doc.get_deep_value();
+    let shallow_bytes = doc.export(ExportMode::shallow_snapshot(&shallow_frontiers))?;
+
+    let shallow_doc = LoroDoc::new();
+    shallow_doc.import(&shallow_bytes)?;
+    let text = shallow_doc.get_text("text");
+    text.delete(0, text.len_unicode())?;
+    text.insert(0, &format!("{}{}", "b".repeat(64), "c".repeat(64)))?;
+    shallow_doc.commit();
+    assert!(shallow_doc.len_ops() > 16);
+    let latest_value = shallow_doc.get_deep_value();
+
+    let snapshot_from_shallow = shallow_doc.export(ExportMode::Snapshot)?;
+    let restored = LoroDoc::new();
+    restored.import(&snapshot_from_shallow)?;
+
+    assert!(restored.is_shallow());
+    assert_eq!(restored.shallow_since_frontiers(), shallow_frontiers);
+    assert_eq!(restored.get_deep_value(), latest_value);
+    restored.checkout(&shallow_frontiers)?;
+    assert_eq!(restored.get_deep_value(), shallow_value);
+    restored.checkout_to_latest();
+    assert_eq!(restored.get_deep_value(), latest_value);
+    Ok(())
+}
+
+#[test]
 fn test_richtext_gc() -> anyhow::Result<()> {
     let doc = LoroDoc::new();
     doc.set_peer_id(1)?;

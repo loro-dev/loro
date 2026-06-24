@@ -54,8 +54,10 @@ impl InnerContent {
                 }
             }
             crate::op::InnerContent::Tree(t) => {
-                let id = t.target().associated_meta_container();
-                f(&id);
+                if let TreeOp::Create { target, .. } = t.as_ref() {
+                    let id = target.associated_meta_container();
+                    f(&id);
+                }
             }
             crate::op::InnerContent::Future(f) => match &f {
                 #[cfg(feature = "counter")]
@@ -446,6 +448,22 @@ mod tests {
         let mut children = Vec::new();
         tree.visit_created_children(&arena, &mut |id| children.push(id.clone()));
         assert_eq!(children, vec![tree_target.associated_meta_container()]);
+
+        for tree in [
+            TreeOp::Move {
+                target: tree_target,
+                parent: None,
+                position: FractionalIndex::default(),
+            },
+            TreeOp::Delete {
+                target: tree_target,
+            },
+        ] {
+            let tree = InnerContent::Tree(Arc::new(tree));
+            let mut children = Vec::new();
+            tree.visit_created_children(&arena, &mut |id| children.push(id.clone()));
+            assert!(children.is_empty());
+        }
 
         let future = InnerContent::Future(FutureInnerContent::Unknown {
             prop: 1,

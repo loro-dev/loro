@@ -7,7 +7,7 @@ use crate::{
 };
 use bytes::Bytes;
 use inner_store::InnerStore;
-use loro_common::{ContainerID, LoroResult, LoroValue};
+use loro_common::{ContainerID, InternalString, LoroResult, LoroValue};
 use std::sync::Arc;
 
 pub(crate) use container_wrapper::ContainerWrapper;
@@ -57,6 +57,7 @@ impl std::fmt::Debug for ContainerStore {
 #[derive(Debug)]
 pub(crate) struct GcStore {
     pub shallow_root_frontiers: Frontiers,
+    pub encoded_state_bytes: Bytes,
     pub store: Mutex<InnerStore>,
 }
 
@@ -107,8 +108,66 @@ impl ContainerStore {
 
     pub fn get_value(&mut self, idx: ContainerIdx) -> Option<LoroValue> {
         self.store
-            .get_mut(idx)
-            .map(|c| c.get_value(idx, ctx!(self)))
+            .with_container_for_read(idx, |c| c.get_value(idx, ctx!(self)))
+    }
+
+    pub fn map_get(&mut self, idx: ContainerIdx, key: &str) -> Option<LoroValue> {
+        self.store
+            .with_container_for_read(idx, |c| c.map_get(idx, ctx!(self), key))?
+    }
+
+    pub fn map_len(&mut self, idx: ContainerIdx) -> usize {
+        self.store
+            .with_container_for_read(idx, |c| c.map_len(idx, ctx!(self)))
+            .unwrap_or(0)
+    }
+
+    pub fn map_keys(&mut self, idx: ContainerIdx) -> Vec<InternalString> {
+        self.store
+            .with_container_for_read(idx, |c| c.map_keys(idx, ctx!(self)))
+            .unwrap_or_default()
+    }
+
+    pub fn map_entries(&mut self, idx: ContainerIdx) -> Vec<(InternalString, LoroValue)> {
+        self.store
+            .with_container_for_read(idx, |c| c.map_entries(idx, ctx!(self)))
+            .unwrap_or_default()
+    }
+
+    pub fn list_get(&mut self, idx: ContainerIdx, index: usize) -> Option<LoroValue> {
+        self.store
+            .with_container_for_read(idx, |c| c.list_get(idx, ctx!(self), index))?
+    }
+
+    pub fn list_len(&mut self, idx: ContainerIdx) -> usize {
+        self.store
+            .with_container_for_read(idx, |c| c.list_len(idx, ctx!(self)))
+            .unwrap_or(0)
+    }
+
+    pub fn list_values(&mut self, idx: ContainerIdx) -> Vec<LoroValue> {
+        self.store
+            .with_container_for_read(idx, |c| c.list_values(idx, ctx!(self)))
+            .unwrap_or_default()
+    }
+
+    pub fn text_unicode_len(&mut self, idx: ContainerIdx) -> Option<usize> {
+        self.store
+            .with_container_for_read(idx, |c| c.text_unicode_len(idx, ctx!(self)))?
+    }
+
+    pub fn text_utf16_len(&mut self, idx: ContainerIdx) -> Option<usize> {
+        self.store
+            .with_container_for_read(idx, |c| c.text_utf16_len(idx, ctx!(self)))?
+    }
+
+    pub fn text_utf8_len(&mut self, idx: ContainerIdx) -> Option<usize> {
+        self.store
+            .with_container_for_read(idx, |c| c.text_utf8_len(idx, ctx!(self)))?
+    }
+
+    pub fn has_decoded_state(&mut self, idx: ContainerIdx) -> bool {
+        self.store.has_decoded_state(idx)
     }
 
     pub fn encode(&mut self) -> Bytes {
@@ -127,12 +186,13 @@ impl ContainerStore {
 
     pub(crate) fn encode_shallow_root_state(&self) -> Option<Bytes> {
         let shallow_root = self.shallow_root_store.as_ref()?;
+        Some(shallow_root.encoded_state_bytes.clone())
+    }
+
+    pub(crate) fn shallow_root_state_for_export(&self) -> Option<(Bytes, KvWrapper)> {
+        let shallow_root = self.shallow_root_store.as_ref()?;
         let shallow_root_kv = shallow_root.store.lock().get_kv_clone();
-        shallow_root_kv.insert(
-            FRONTIERS_KEY,
-            shallow_root.shallow_root_frontiers.encode().into(),
-        );
-        Some(shallow_root_kv.export())
+        Some((shallow_root.encoded_state_bytes.clone(), shallow_root_kv))
     }
 
     pub(crate) fn decode(&mut self, bytes: Bytes) -> LoroResult<Option<Frontiers>> {
@@ -147,9 +207,18 @@ impl ContainerStore {
     ) -> LoroResult<Option<Frontiers>> {
         assert!(self.shallow_root_store.is_none());
         let mut inner = InnerStore::new(self.arena.clone(), config);
+        let encoded_state_bytes = shallow_bytes.clone();
         let f = inner.decode(shallow_bytes)?;
+        let encoded_state_bytes = if f.as_ref() == Some(&start_frontiers) {
+            encoded_state_bytes
+        } else {
+            let kv = inner.get_kv_clone();
+            kv.insert(FRONTIERS_KEY, start_frontiers.encode().into());
+            kv.export()
+        };
         self.shallow_root_store = Some(Arc::new(GcStore {
             shallow_root_frontiers: start_frontiers,
+            encoded_state_bytes,
             store: Mutex::new(inner),
         }));
         Ok(f)
@@ -168,7 +237,7 @@ impl ContainerStore {
     pub fn iter_and_decode_all(&mut self) -> impl Iterator<Item = &mut State> {
         self.store.iter_all_containers_mut().map(|(idx, v)| {
             v.get_state_mut(
-                *idx,
+                idx,
                 ContainerCreationContext {
                     configure: &self.conf,
                     peer: self.peer.load(std::sync::atomic::Ordering::Relaxed),
@@ -187,7 +256,7 @@ impl ContainerStore {
 
     pub fn iter_all_containers(
         &mut self,
-    ) -> impl Iterator<Item = (&ContainerIdx, &mut ContainerWrapper)> {
+    ) -> impl Iterator<Item = (ContainerIdx, &mut ContainerWrapper)> {
         self.store.iter_all_containers_mut()
     }
 
@@ -197,6 +266,11 @@ impl ContainerStore {
 
     pub fn load_all(&mut self) -> LoadAllFlag {
         self.store.load_all();
+        LoadAllFlag
+    }
+
+    pub fn load_root_containers(&mut self) -> LoadAllFlag {
+        self.store.load_roots();
         LoadAllFlag
     }
 
@@ -256,7 +330,7 @@ impl ContainerStore {
     #[allow(unused)]
     fn check_eq_after_parsing(&mut self, other: &mut ContainerStore) {
         for (idx, container) in self.store.iter_all_containers_mut() {
-            let id = self.arena.get_container_id(*idx).unwrap();
+            let id = self.arena.get_container_id(idx).unwrap();
             let other_idx = other.arena.register_container(&id);
             let other_container = other
                 .store
@@ -269,7 +343,7 @@ impl ContainerStore {
                 id, other_id
             );
             assert_eq!(
-                container.get_value(*idx, ctx!(self)),
+                container.get_value(idx, ctx!(self)),
                 other_container.get_value(other_idx, ctx!(other)),
                 "value mismatch"
             );
@@ -299,7 +373,8 @@ impl ContainerStore {
 mod test {
     use super::*;
     use crate::{
-        cursor::PosType, state::TreeParentId, ListHandler, LoroDoc, MapHandler, MovableListHandler,
+        cursor::PosType, state::TreeParentId, ContainerType, ListHandler, LoroDoc, MapHandler,
+        MovableListHandler,
     };
 
     fn decode_container_store(bytes: Bytes) -> ContainerStore {
@@ -348,12 +423,31 @@ mod test {
         doc
     }
 
+    fn export_container_store(doc: &LoroDoc) -> Bytes {
+        let mut state = doc.app_state().lock();
+        state.ensure_all_alive_containers();
+        state.store.encode()
+    }
+
     #[test]
     fn test_container_store_exports_imports() {
         let doc = init_doc();
-        let mut s = doc.app_state().lock();
-        let bytes = s.store.encode();
+        let bytes = export_container_store(&doc);
         let mut new_store = decode_container_store(bytes);
+        let mut s = doc.app_state().lock();
         s.store.check_eq_after_parsing(&mut new_store);
+    }
+
+    #[test]
+    fn first_lazy_read_caches_value() {
+        let doc = init_doc();
+        let bytes = export_container_store(&doc);
+        let mut store = decode_container_store(bytes);
+        let map_id = ContainerID::new_root("map", ContainerType::Map);
+        let map_idx = store.arena.register_container(&map_id);
+
+        assert!(!store.store.has_cached_value_for_test(map_idx));
+        assert_eq!(store.map_len(map_idx), 2);
+        assert!(store.store.has_cached_value_for_test(map_idx));
     }
 }

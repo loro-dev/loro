@@ -1,7 +1,15 @@
 packages:
   - "loro-js"
+  - "packages/*"
   - "crates/loro-wasm"
   - "crates/loro-wasm-map"
   - "examples/loro-quill"
+  - "examples/bundler-smoke-tests"
   - "examples/test-rsbuild"
   - "examples/test-esbuild"
+
+allowBuilds:
+  "@swc/core": true
+  core-js: true
+  esbuild: true
+  sharp: true

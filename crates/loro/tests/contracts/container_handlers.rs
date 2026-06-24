@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use std::collections::BTreeSet;
 
 use loro::{
@@ -165,6 +167,58 @@ fn map_contracts_cover_iteration_lookup_and_root_hiding() -> LoroResult<()> {
 
     let snapshot = doc.export(ExportMode::Snapshot)?;
     let _restored = LoroDoc::from_snapshot(&snapshot)?;
+
+    Ok(())
+}
+
+#[test]
+fn imported_lazy_maps_iterate_in_key_order() -> LoroResult<()> {
+    fn insert_entries(map: &LoroMap, entries: &[&str]) -> LoroResult<()> {
+        for key in entries {
+            map.insert(*key, format!("{key}-value"))?;
+        }
+        Ok(())
+    }
+
+    fn assert_map_order(map: &LoroMap, expected: &[&str]) {
+        let keys = map.keys().map(|key| key.to_string()).collect::<Vec<_>>();
+        assert_eq!(keys, expected);
+
+        let values = map
+            .values()
+            .map(|value| value.get_deep_value().to_json_value())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            values,
+            expected
+                .iter()
+                .map(|key| json!(format!("{key}-value")))
+                .collect::<Vec<_>>()
+        );
+
+        let mut entries = Vec::new();
+        map.for_each(|key, value| {
+            entries.push((key.to_string(), value.get_deep_value().to_json_value()));
+        });
+        assert_eq!(
+            entries,
+            expected
+                .iter()
+                .map(|key| (key.to_string(), json!(format!("{key}-value"))))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    let doc = LoroDoc::new();
+    insert_entries(&doc.get_map("small"), &["z", "a", "m", "b"])?;
+    insert_entries(&doc.get_map("large"), &["z", "a", "m", "b", "q"])?;
+    doc.commit();
+
+    let snapshot = doc.export(ExportMode::Snapshot)?;
+    let restored = LoroDoc::from_snapshot(&snapshot)?;
+
+    assert_map_order(&restored.get_map("small"), &["a", "b", "m", "z"]);
+    assert_map_order(&restored.get_map("large"), &["a", "b", "m", "q", "z"]);
 
     Ok(())
 }

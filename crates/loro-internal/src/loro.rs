@@ -44,8 +44,8 @@ use crate::{
 };
 use either::Either;
 use loro_common::{
-    ContainerID, ContainerType, HasIdSpan, HasLamportSpan, IdSpan, LoroEncodeError, LoroResult,
-    LoroValue, ID,
+    ContainerID, ContainerType, HasCounterSpan, HasIdSpan, HasLamportSpan, IdSpan, LoroEncodeError,
+    LoroResult, LoroValue, ID,
 };
 use rle::HasLength;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -345,14 +345,12 @@ impl LoroDoc {
                     options = None;
                 }
             }
-            if config.immediate_renew {
-                if self.can_edit() {
-                    let mut t = self.txn().unwrap();
-                    if let Some(options) = options.as_ref() {
-                        t.set_options(options.clone());
-                    }
-                    *txn_guard = Some(t);
+            if config.immediate_renew && self.can_edit() {
+                let mut t = self.txn().unwrap();
+                if let Some(options) = options.as_ref() {
+                    t.set_options(options.clone());
                 }
+                *txn_guard = Some(t);
             }
 
             if let Some(on_commit) = on_commit {
@@ -750,10 +748,18 @@ impl LoroDoc {
         }
 
         if !preflight.applies_to_dag {
+            let pending_root_containers = pending_root_containers_to_materialize(&oplog, &changes);
             let result = encoding::apply_decoded_changes_to_oplog(&mut oplog, changes);
             if result.has_deps_before_shallow_root {
                 oplog.arena.rollback(arena_checkpoint);
                 return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
+            }
+
+            if !pending_root_containers.is_empty() {
+                let mut state = self.state.lock();
+                for id in pending_root_containers {
+                    state.ensure_container(&id);
+                }
             }
 
             return Ok(result.status);
@@ -949,9 +955,20 @@ impl LoroDoc {
     #[inline]
     pub fn get_handler(&self, id: ContainerID) -> Option<Handler> {
         if self.has_container(&id) {
+            self.ensure_root_container(&id);
             Some(Handler::new_attached(id, self.clone()))
         } else {
             None
+        }
+    }
+
+    #[inline]
+    fn ensure_root_container(&self, id: &ContainerID) {
+        // Mergeable roots stay lazily materialized: their existence is derived from the
+        // parent map's child ref, and their state is only created on first op (or at
+        // export via the alive-container walk).
+        if id.is_root() && !id.is_mergeable() {
+            self.state.lock().ensure_container(id);
         }
     }
 
@@ -963,6 +980,7 @@ impl LoroDoc {
         if !self.has_container(&id) {
             return None;
         }
+        self.ensure_root_container(&id);
         Handler::new_attached(id, self.clone()).into_text().ok()
     }
 
@@ -982,6 +1000,7 @@ impl LoroDoc {
         if !self.has_container(&id) {
             return None;
         }
+        self.ensure_root_container(&id);
         Handler::new_attached(id, self.clone()).into_list().ok()
     }
 
@@ -1001,6 +1020,7 @@ impl LoroDoc {
         if !self.has_container(&id) {
             return None;
         }
+        self.ensure_root_container(&id);
         Handler::new_attached(id, self.clone())
             .into_movable_list()
             .ok()
@@ -1022,6 +1042,7 @@ impl LoroDoc {
         if !self.has_container(&id) {
             return None;
         }
+        self.ensure_root_container(&id);
         Handler::new_attached(id, self.clone()).into_map().ok()
     }
 
@@ -1041,6 +1062,7 @@ impl LoroDoc {
         if !self.has_container(&id) {
             return None;
         }
+        self.ensure_root_container(&id);
         Handler::new_attached(id, self.clone()).into_tree().ok()
     }
 
@@ -1061,6 +1083,7 @@ impl LoroDoc {
         if !self.has_container(&id) {
             return None;
         }
+        self.ensure_root_container(&id);
         Handler::new_attached(id, self.clone()).into_counter().ok()
     }
 
@@ -1075,7 +1098,7 @@ impl LoroDoc {
 
     #[must_use]
     pub fn has_container(&self, id: &ContainerID) -> bool {
-        if id.is_root() {
+        if id.is_root() && !id.is_mergeable() {
             return true;
         }
 
@@ -1513,11 +1536,42 @@ impl LoroDoc {
         &self,
         to_commit_then_renew: bool,
     ) -> LoroResult<()> {
+        self._checkout_to_latest_without_commit_with_event(
+            to_commit_then_renew,
+            "checkout".into(),
+            EventTriggerKind::Checkout,
+        )
+    }
+
+    pub(crate) fn _checkout_to_latest_without_commit_as_import(
+        &self,
+        to_commit_then_renew: bool,
+        origin: InternalString,
+    ) -> LoroResult<()> {
+        self._checkout_to_latest_without_commit_with_event(
+            to_commit_then_renew,
+            origin,
+            EventTriggerKind::Import,
+        )
+    }
+
+    fn _checkout_to_latest_without_commit_with_event(
+        &self,
+        to_commit_then_renew: bool,
+        origin: InternalString,
+        triggered_by: EventTriggerKind,
+    ) -> LoroResult<()> {
         tracing::info_span!("CheckoutToLatest", peer = self.peer_id()).in_scope(|| {
             let f = self.oplog_frontiers();
             let this = &self;
             let frontiers = &f;
-            this._checkout_without_emitting(frontiers, false, to_commit_then_renew)?;
+            this._checkout_without_emitting_with_event(
+                frontiers,
+                false,
+                to_commit_then_renew,
+                origin,
+                triggered_by,
+            )?;
             // We don't need to shrink frontiers because oplog's frontiers are already shrinked.
             this.emit_events();
             if this.config.detached_editing() {
@@ -1564,6 +1618,23 @@ impl LoroDoc {
         frontiers: &Frontiers,
         to_shrink_frontiers: bool,
         to_commit_then_renew: bool,
+    ) -> Result<(), LoroError> {
+        self._checkout_without_emitting_with_event(
+            frontiers,
+            to_shrink_frontiers,
+            to_commit_then_renew,
+            "checkout".into(),
+            EventTriggerKind::Checkout,
+        )
+    }
+
+    fn _checkout_without_emitting_with_event(
+        &self,
+        frontiers: &Frontiers,
+        to_shrink_frontiers: bool,
+        _to_commit_then_renew: bool,
+        origin: InternalString,
+        triggered_by: EventTriggerKind,
     ) -> Result<(), LoroError> {
         if !self.txn.is_locked() {
             return Err(LoroError::TransactionError(
@@ -1628,9 +1699,9 @@ impl LoroDoc {
             calc.calc_diff_internal(&oplog, &before, &state.frontiers, after, &frontiers, None);
         state.apply_diff(
             InternalDocDiff {
-                origin: "checkout".into(),
+                origin,
                 diff: Cow::Owned(diff),
-                by: EventTriggerKind::Checkout,
+                by: triggered_by,
                 new_version: Cow::Owned(frontiers.clone()),
             },
             diff_mode,
@@ -1971,10 +2042,16 @@ impl LoroDoc {
     pub fn get_path_to_container(&self, id: &ContainerID) -> Option<Vec<(ContainerID, Index)>> {
         let mut state = self.state.lock();
         if state.arena.id_to_idx(id).is_none() {
-            if !state.does_container_exist(id) {
+            if id.is_mergeable() {
+                // Mergeable children can be logically active via the parent map marker
+                // before they have their own encoded state. Register only the arena edge; do not
+                // create container state or change `has_container` semantics.
+                state.arena.register_container(id);
+            } else if !state.does_container_exist(id) {
                 return None;
+            } else {
+                state.ensure_container(id);
             }
-            state.ensure_container(id);
         }
         let idx = state.arena.id_to_idx(id).unwrap();
         state.get_path(idx)
@@ -2063,6 +2140,44 @@ impl LoroDoc {
     }
 }
 
+fn pending_root_containers_to_materialize(oplog: &OpLog, changes: &[Change]) -> Vec<ContainerID> {
+    let mut roots = FxHashSet::default();
+    for change in changes {
+        if change.ctr_end() <= oplog.vv().get(&change.id.peer).copied().unwrap_or(0) {
+            continue;
+        }
+
+        if oplog.dag.is_before_shallow_root(&change.deps)
+            || oplog
+                .dag
+                .get_change_lamport_from_deps(&change.deps)
+                .is_some()
+        {
+            continue;
+        }
+
+        for op in change.ops.iter() {
+            let id = oplog
+                .arena
+                .get_container_id(op.container)
+                .expect("decoded op container should be registered");
+            // Mergeable containers share the `ContainerID::Root` namespace but are logical
+            // *children*: their existence is governed by their parent map's marker, and their
+            // parent can be any (possibly not-yet-imported) map. Eagerly materializing one
+            // while its causal dependencies are still pending has no valid parent edge to
+            // resolve its depth against, which used to panic in `ContainerWrapper::new`.
+            // They get materialized correctly through the normal diff path once the creating
+            // change applies, so skip them here (mirrors the `!is_mergeable()` guard in
+            // `ensure_root_container`). See the `mergeable_container::pending` regression test.
+            if id.is_root() && !id.is_mergeable() {
+                roots.insert(id);
+            }
+        }
+    }
+
+    roots.into_iter().collect()
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ChangeTravelError {
     #[error("Target id not found {0:?}")]
@@ -2146,9 +2261,23 @@ impl LoroDoc {
     pub fn get_changed_containers_in(&self, id: ID, len: usize) -> FxHashSet<ContainerID> {
         self.with_barrier(|| {
             let mut set = FxHashSet::default();
+            let len = i64::try_from(len).unwrap_or(i64::MAX);
+            let start = i64::from(id.counter);
+            let end = start.saturating_add(len);
+            if end <= 0 {
+                return set;
+            }
+
+            let start = start.max(0).min(i64::from(i32::MAX));
+            let end = end.max(0).min(i64::from(i32::MAX));
+            if start >= end {
+                return set;
+            }
+
             {
                 let oplog = self.oplog().lock();
-                for op in oplog.iter_ops(id.to_span(len)) {
+                let span = IdSpan::new(id.peer, start as i32, end as i32);
+                for op in oplog.iter_ops(span) {
                     let id = oplog.arena.get_container_id(op.container()).unwrap();
                     set.insert(id);
                 }
@@ -2171,11 +2300,14 @@ impl LoroDoc {
             return;
         };
 
+        self.config
+            .deleted_root_containers
+            .lock()
+            .insert(cid.clone());
         if let Err(e) = h.clear() {
+            self.config.deleted_root_containers.lock().remove(&cid);
             eprintln!("Failed to clear handler: {:?}", e);
-            return;
         }
-        self.config.deleted_root_containers.lock().insert(cid);
     }
 
     pub fn set_hide_empty_root_containers(&self, hide: bool) {
@@ -2185,26 +2317,48 @@ impl LoroDoc {
     }
 }
 
-// FIXME: PERF: This method is quite slow because it iterates all the changes
 fn find_last_delete_op(oplog: &OpLog, id: ID, idx: ContainerIdx) -> Option<ID> {
+    // Any delete op that covers `id` must have observed it, so its peer's counter
+    // at delete time was > id.counter. start_vv (the vv at `id`) is therefore a
+    // valid lower bound: changes at or before start_vv[peer] predate `id` and can
+    // be skipped. We scan peer-by-peer rather than using the DAG-ordered
+    // iter_changes_causally_rev, which is O(total changes).
+    //
+    // We choose the matching delete op with the greatest (op_lamport, peer, counter)
+    // ordering. op_lamport is the Lamport of the specific op within the change
+    // (change.lamport + op offset), not just the change's starting Lamport, so
+    // concurrent deletes with equal change Lamports are broken deterministically.
     let start_vv = oplog
         .dag
         .frontiers_to_vv(&id.into())
         .unwrap_or_else(|| oplog.shallow_since_vv().to_vv());
-    for change in oplog.iter_changes_causally_rev(&start_vv, oplog.vv()) {
-        for op in change.ops.iter().rev() {
+
+    // (op_lamport, peer) gives a deterministic total order for concurrent deletes.
+    // A single peer cannot produce two ops with the same lamport, so peer suffices
+    // as a tie-breaker.
+    let mut best: Option<((loro_common::Lamport, loro_common::PeerID), ID)> = None;
+
+    for change in oplog.iter_changes_peer_by_peer(&start_vv, oplog.vv()) {
+        let peer = change.peer();
+        for op in change.ops.iter() {
             if op.container != idx {
                 continue;
             }
             if let InnerContent::List(InnerListOp::Delete(d)) = &op.content {
                 if d.id_start.to_span(d.atom_len()).contains(id) {
-                    return Some(ID::new(change.peer(), op.counter));
+                    debug_assert!(op.counter >= change.id().counter);
+                    let op_lamport =
+                        change.lamport + (op.counter - change.id().counter) as loro_common::Lamport;
+                    let key = (op_lamport, peer);
+                    if best.is_none_or(|(bk, _)| key > bk) {
+                        best = Some((key, ID::new(peer, op.counter)));
+                    }
                 }
             }
         }
     }
 
-    None
+    best.map(|(_, op_id)| op_id)
 }
 
 #[derive(Debug)]

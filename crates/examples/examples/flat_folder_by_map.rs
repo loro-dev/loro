@@ -11,6 +11,9 @@ pub fn main() {
         let doc = LoroDoc::new();
         let files = doc.get_map("files");
         let mut nodes = vec![];
+        // This benchmark intentionally measures regular op-created child maps.
+        // App models with lazy peer-created map-key children should prefer
+        // `ensure_mergeable_map`.
         for i in 0..node_num {
             if i % 1000 == 0 {
                 doc.set_peer_id(i).unwrap();

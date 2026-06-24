@@ -9,6 +9,12 @@ release = false
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+default = []
+# Enable the mergeable-container fuzz surface (MapAction::GetMergeable etc.).
+# Off by default so the saved-seed corpus decodes identically to today.
+mergeable = []
+
 [dependencies]
 loro = { path = "../loro", features = ["counter", "logging"], package = "loro" }
 loro-without-counter = { git = "https://github.com/loro-dev/loro.git", rev = "c897c346d9fd46dccf44de7ef4e72799fa9c9769", package = "loro", default-features = false }

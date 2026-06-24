@@ -392,13 +392,11 @@ impl<V: DeltaValue + PartialEq, Attr: DeltaAttr + PartialEq> PartialEq for Delta
                         b.next_with(len).unwrap();
                     }
                 }
-                (DeltaItem::Retain { attr, .. }, DeltaItem::Retain { attr: b_attr, .. }) => {
-                    if *attr == *b_attr {
-                        a.next_with(len).unwrap();
-                        b.next_with(len).unwrap();
-                    } else {
-                        return false;
-                    }
+                (DeltaItem::Retain { attr, .. }, DeltaItem::Retain { attr: b_attr, .. })
+                    if *attr == *b_attr =>
+                {
+                    a.next_with(len).unwrap();
+                    b.next_with(len).unwrap();
                 }
                 _ => return false,
             }

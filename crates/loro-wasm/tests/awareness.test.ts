@@ -28,6 +28,15 @@ describe("Awareness", () => {
     expect(awarenessB.getAllStates()).toEqual({ "123": { foo: "bar" } });
   });
 
+  it("rejects invalid payloads", () => {
+    const awareness = new AwarenessWasm("123", 30_000);
+
+    expect(() => awareness.apply(Uint8Array.from([0xff, 0xff, 0xff, 0xff]))).toThrow(
+      /Failed to decode awareness data/,
+    );
+    expect(awareness.getAllStates()).toEqual({});
+  });
+
   it("not sync if peer is not in sync list", () => {
     const awareness = new AwarenessWasm("123", 30_000);
     awareness.setLocalState({ foo: "bar" });

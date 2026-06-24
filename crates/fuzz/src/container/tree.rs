@@ -5,8 +5,8 @@ use std::{
 };
 
 use loro::{
-    event::Diff, Container, ContainerID, ContainerType, LoroDoc, LoroError, LoroTree, LoroValue,
-    TreeExternalDiff, TreeID,
+    event::Diff, Container, ContainerID, ContainerTrait, ContainerType, LoroDoc, LoroError,
+    LoroTree, LoroValue, TreeExternalDiff, TreeID,
 };
 use rustc_hash::FxHashMap;
 
@@ -167,6 +167,11 @@ impl ActorTrait for TreeActor {
     }
 
     fn add_new_container(&mut self, container: Container) {
+        // Dedup by cid so mergeable children don't bias the dispatch index.
+        let cid = container.id();
+        if self.containers.iter().any(|c| c.id() == cid) {
+            return;
+        }
         self.containers.push(container.into_tree().unwrap());
     }
 }

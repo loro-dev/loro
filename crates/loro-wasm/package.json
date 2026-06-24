@@ -1,6 +1,6 @@
 {
   "name": "loro-crdt",
-  "version": "1.12.1",
+  "version": "1.13.6",
   "description": "Loro CRDTs is a high-performance CRDT framework that makes your app state synchronized, collaborative and maintainable effortlessly.",
   "keywords": [
     "crdt",
@@ -15,10 +15,57 @@
     "url": "git+https://github.com/loro-dev/loro.git"
   },
   "main": "nodejs/index.js",
+  "browser": "browser/index.js",
   "module": "bundler/index.js",
   "types": "bundler/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./bundler/index.d.ts",
+      "browser": {
+        "development": "./bundler/index.js",
+        "default": "./browser/index.js"
+      },
+      "node": "./nodejs/index.js",
+      "import": "./bundler/index.js",
+      "require": "./nodejs/index.js",
+      "default": "./bundler/index.js"
+    },
+    "./web": {
+      "types": "./web/index.d.ts",
+      "import": "./web/index.js",
+      "default": "./web/index.js"
+    },
+    "./base64": {
+      "types": "./base64/index.d.ts",
+      "import": "./base64/index.js",
+      "default": "./base64/index.js"
+    },
+    "./bundler": {
+      "types": "./bundler/index.d.ts",
+      "import": "./bundler/index.js",
+      "default": "./bundler/index.js"
+    },
+    "./browser": {
+      "types": "./browser/index.d.ts",
+      "import": "./browser/index.js",
+      "default": "./browser/index.js"
+    },
+    "./nodejs": {
+      "types": "./nodejs/index.d.ts",
+      "import": "./nodejs/index.js",
+      "require": "./nodejs/index.js",
+      "default": "./nodejs/index.js"
+    },
+    "./bundler/*": "./bundler/*",
+    "./browser/*": "./browser/*",
+    "./web/*": "./web/*",
+    "./base64/*": "./base64/*",
+    "./nodejs/*": "./nodejs/*",
+    "./package.json": "./package.json"
+  },
   "files": [
     "./bundler",
+    "./browser",
     "./nodejs",
     "./web",
     "./base64",

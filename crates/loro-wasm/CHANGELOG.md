@@ -1,5 +1,121 @@
 # Changelog
 
+## 1.13.6
+
+### Patch Changes
+
+- a4e6174: Fix undo/redo restoring mergeable map children as regular non-mergeable containers.
+- 78f6c8a: Fix a potential deadlock when lazy snapshot loading resolves mergeable container parent depths.
+
+## 1.13.5
+
+### Patch Changes
+
+- 1727258: Improve text insert and snapshot import performance by avoiding duplicate text boundary validation and skipping eager imported change block parsing.
+- 52d8168: Recover two per-operation editing slowdowns regressed since 1.11.
+
+  Both are constant-factor regressions on the per-op (auto-commit) editing path
+  introduced by the lazy-snapshot work in #985, measured against the 1.11.1
+  release.
+
+  1. Every `MapHandler`/`ListHandler`/`MovableListHandler` insert validated its
+     value with `ensure_no_regular_container_value`, which heap-allocated a `Vec`
+     on each call even for scalar values (the common case). A scalar fast-path now
+     skips the allocation and traversal entirely. `map create 10^4 key`:
+     ~19.4ms -> ~10.7ms.
+  2. The per-op text bounds check (`TextHandler::len`/`len_unicode`/`len_utf16`)
+     took two `DocState` locks — one to check whether the container state was
+     decoded, then another to query the length. These are now consolidated into a
+     single `DocState::get_text_len` that takes one lock and one container-store
+     lookup. The lazy-snapshot memory behavior is preserved: a still-lazy
+     container reads its cached length metadata without materializing the full
+     richtext state. `bench_text B4 apply` (per-op text editing): ~389ms -> ~352ms.
+
+## 1.13.4
+
+### Patch Changes
+
+- 4d577ad: Fix two O(n^2) editing slowdowns.
+
+  1. Editing with UTF-16 / UTF-8 (byte) positions (the default in the JS binding)
+     validated each position by materializing the entire `[0, pos)` prefix string,
+     making every `insert`/`delete`/`splice`/`mark` O(n) and a run of edits O(n^2)
+     (regression since 1.12.0). The boundary check now reads the rope's prefix
+     caches via the cursor (O(log n)). Unicode-indexed editing was unaffected.
+  2. When a subscriber is attached and many edits land on the same container within
+     one event batch (e.g. random-position inserts, or many distinct map-key
+     writes), building the event cloned the growing accumulated diff on every
+     compose — O(n^2) in the number of fragments. The diffs are now composed in
+     place. This affected text, map and list events.
+  3. Converting a UTF-16 / UTF-8 position within a text chunk to a unicode offset
+     scanned the chunk char-by-char, so editing/slicing a large contiguous chunk
+     (a big insert, a loaded document, or a long run of typed text that merges into
+     one chunk) was O(chunk length) per op. Chunks that contain no astral-plane
+     characters (UTF-16) or are pure ASCII (UTF-8) now convert in O(1), covering
+     essentially all real-world text (ASCII/Latin/CJK).
+
+## 1.13.3
+
+### Patch Changes
+
+- 8d258cb: Fix `unreachable` panic when importing an out-of-order update whose op targets a mergeable child container before its creation (or its parent map) has arrived. Such ops are now buffered as pending and applied once the creating change is imported.
+- 32700ba: Fix undo recording for the first local commit after importing shallow snapshots that need import-time state materialization.
+
+## 1.13.2
+
+### Patch Changes
+
+- 9d7d5c8: Fix `getContainerById` / `hasContainer` for ensured-but-empty mergeable containers.
+  After `ensureMergeableMap` (and friends), the child was visible via `map.get(key)`
+  and `toJSON()` but its id did not resolve until the first op was written into it —
+  locally and on remote peers after sync. The id now resolves as long as the parent
+  map's child ref is alive; a mergeable cid that was never ensured still resolves to
+  `undefined`.
+
+## 1.13.1
+
+### Patch Changes
+
+- c1e05bf: Fix Node and Vitest bare imports by resolving the package root to the Node.js
+  WASM entry under the `node` export condition.
+
+## 1.13.0
+
+### Minor Changes
+
+- fa888d8: Add mergeable child containers: child containers created under a map key that converge across peers on concurrent first-write instead of forking. Exposed as `ensureMergeable{Counter,Map,List,MovableList,Text,Tree}` on `LoroMap`. A mergeable child lives at a deterministic `ContainerID` derived from `(parent, key, kind)`, and its visibility is driven by a binary ref the parent map stores at the key, so deletes and kind conflicts resolve through the map's regular LWW. `getOrCreateContainer` is deprecated for lazy map-child creation; migrate those call sites to `ensureMergeable*`. `setContainer` and `insertContainer` regular semantics are unchanged.
+
+## 1.12.5
+
+### Patch Changes
+
+- bd10411: Fix Vite dev server WASM resolution for bare `loro-crdt` imports by using conditional exports for browser development builds.
+
+## 1.12.4
+
+### Patch Changes
+
+- a6e23b6: Optimize snapshot export for shallow documents by reusing cached shallow-root state instead of checking out to the shallow root and back to latest.
+
+## 1.12.3
+
+### Patch Changes
+
+- ebee770: Fix the browser WASM loader for remapped bundler builds. The browser entry now avoids setting `XMLHttpRequest.responseType` on synchronous document requests, which browsers reject, reads the WASM bytes through a one-byte text decoding path, and emits explicit WASM re-exports so Parcel scope-hoisted builds can run in the browser.
+- f3ece99: Fix published sourcemap `sources` pointing outside the package. The rollup TypeScript plugin's emitted maps were resolved by rollup against the `.ts` source directory, leaving `../../index.ts` in the published `sources`. Vite/Vitest warned about source files escaping the package. The sourcemap now resolves inside the package and `sourcesContent` is included so debuggers don't need to fetch the TypeScript source.
+
+## 1.12.2
+
+### Patch Changes
+
+- cc587ed: Add a browser package remapping so Vite/Rolldown production builds load WASM without top-level await or circular wasm wrapper chunks.
+
+  Also make the base64 entry easier to bundle with plain esbuild, Rollup, and Next.js Webpack by avoiding static Node builtin `require()` calls and top-level await in browser bundles.
+
+- 5bfffd7: Fix panic in `UndoManager` when `maxUndoSteps` trimming encounters an empty front stack row left by a prior undo with remote diffs.
+- 8f57f4c: Reduce memory usage for read-only access to snapshot-imported documents by avoiding unnecessary lazy container state initialization.
+- eb9c18a: Fix WASI builds by using native calls instead of js-only wasm32 bindings (`Date.now`, `getrandom`)
+
 ## 1.12.1
 
 ### Patch Changes

@@ -2,6 +2,7 @@ use std::{collections::BTreeMap, sync::Weak};
 
 use loro_common::{ContainerID, IdLp, LoroResult, PeerID};
 use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 
 use crate::{
     configure::Configure,
@@ -16,11 +17,216 @@ use crate::{
 
 use super::{ApplyLocalOpReturn, ContainerState, DiffApplyContext};
 
+const TINY_MAP_MAX: usize = 4;
+
+/// Apply the mergeable marker → `Container` boundary translation when a parent cid is known.
+///
+/// `MapState` is used both with and without a registered parent cid (e.g. during decode), so the
+/// translation no-ops when the parent is missing — markers stay as their stored `Binary` form.
+fn translate_with_parent(
+    parent_id: Option<&ContainerID>,
+    key: &InternalString,
+    value: LoroValue,
+) -> LoroValue {
+    match parent_id {
+        Some(parent) => {
+            loro_common::translate_mergeable_marker_value(parent, key.as_ref(), value)
+        }
+        None => value,
+    }
+}
+
+#[derive(Debug, Clone)]
+enum MapEntries {
+    SortedTiny(SmallVec<[(InternalString, MapValue); 1]>),
+    Tree(BTreeMap<InternalString, MapValue>),
+}
+
+impl Default for MapEntries {
+    fn default() -> Self {
+        Self::SortedTiny(SmallVec::new())
+    }
+}
+
+enum MapEntriesIter<'a> {
+    SortedTiny(std::slice::Iter<'a, (InternalString, MapValue)>),
+    Tree(std::collections::btree_map::Iter<'a, InternalString, MapValue>),
+}
+
+impl<'a> Iterator for MapEntriesIter<'a> {
+    type Item = (&'a InternalString, &'a MapValue);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::SortedTiny(iter) => iter.next().map(|(key, value)| (key, value)),
+            Self::Tree(iter) => iter.next(),
+        }
+    }
+}
+
+impl MapEntries {
+    fn debug_assert_sorted_tiny(entries: &[(InternalString, MapValue)]) {
+        debug_assert!(entries.windows(2).all(|pair| {
+            let left = &pair[0].0;
+            let right = &pair[1].0;
+            left < right
+        }));
+    }
+
+    fn is_empty(&self) -> bool {
+        match self {
+            Self::SortedTiny(entries) => entries.is_empty(),
+            Self::Tree(map) => map.is_empty(),
+        }
+    }
+
+    fn get(&self, key: &InternalString) -> Option<&MapValue> {
+        match self {
+            Self::SortedTiny(entries) => {
+                Self::debug_assert_sorted_tiny(entries);
+                entries
+                    .binary_search_by(|(entry_key, _)| entry_key.cmp(key))
+                    .ok()
+                    .map(|index| &entries[index].1)
+            }
+            Self::Tree(map) => map.get(key),
+        }
+    }
+
+    fn insert(&mut self, key: InternalString, value: MapValue) -> Option<MapValue> {
+        match self {
+            Self::SortedTiny(entries) => {
+                Self::debug_assert_sorted_tiny(entries);
+                match entries.binary_search_by(|(entry_key, _)| entry_key.cmp(&key)) {
+                    Ok(index) => return Some(std::mem::replace(&mut entries[index].1, value)),
+                    Err(index) if entries.len() < TINY_MAP_MAX => {
+                        entries.insert(index, (key, value));
+                        Self::debug_assert_sorted_tiny(entries);
+                        return None;
+                    }
+                    Err(_) => {}
+                }
+
+                let mut map = BTreeMap::new();
+                for (key, value) in entries.drain(..) {
+                    map.insert(key, value);
+                }
+                let result = map.insert(key, value);
+                *self = Self::Tree(map);
+                result
+            }
+            Self::Tree(map) => map.insert(key, value),
+        }
+    }
+
+    fn remove(&mut self, key: &InternalString) -> Option<MapValue> {
+        match self {
+            Self::SortedTiny(entries) => {
+                Self::debug_assert_sorted_tiny(entries);
+                entries
+                    .binary_search_by(|(entry_key, _)| entry_key.cmp(key))
+                    .ok()
+                    .map(|index| entries.remove(index).1)
+            }
+            Self::Tree(map) => {
+                let result = map.remove(key);
+                if result.is_some() && map.len() <= TINY_MAP_MAX {
+                    let entries = std::mem::take(map).into_iter().collect();
+                    *self = Self::SortedTiny(entries);
+                }
+                result
+            }
+        }
+    }
+
+    fn iter(&self) -> MapEntriesIter<'_> {
+        match self {
+            Self::SortedTiny(entries) => {
+                Self::debug_assert_sorted_tiny(entries);
+                MapEntriesIter::SortedTiny(entries.iter())
+            }
+            Self::Tree(map) => MapEntriesIter::Tree(map.iter()),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+enum ChildContainers {
+    Tiny(SmallVec<[(ContainerID, InternalString); 1]>),
+    Map(FxHashMap<ContainerID, InternalString>),
+}
+
+impl Default for ChildContainers {
+    fn default() -> Self {
+        Self::Tiny(SmallVec::new())
+    }
+}
+
+impl ChildContainers {
+    fn get(&self, id: &ContainerID) -> Option<&InternalString> {
+        match self {
+            Self::Tiny(entries) => entries
+                .iter()
+                .find_map(|(entry_id, key)| (entry_id == id).then_some(key)),
+            Self::Map(map) => map.get(id),
+        }
+    }
+
+    fn contains_key(&self, id: &ContainerID) -> bool {
+        self.get(id).is_some()
+    }
+
+    fn insert(&mut self, id: ContainerID, key: InternalString) -> Option<InternalString> {
+        match self {
+            Self::Tiny(entries) => {
+                if let Some((_, old_key)) = entries.iter_mut().find(|(entry_id, _)| entry_id == &id)
+                {
+                    return Some(std::mem::replace(old_key, key));
+                }
+
+                if entries.len() < TINY_MAP_MAX {
+                    entries.push((id, key));
+                    return None;
+                }
+
+                let mut map = FxHashMap::default();
+                for (id, key) in entries.drain(..) {
+                    map.insert(id, key);
+                }
+                let result = map.insert(id, key);
+                *self = Self::Map(map);
+                result
+            }
+            Self::Map(map) => map.insert(id, key),
+        }
+    }
+
+    fn remove(&mut self, id: &ContainerID) -> Option<InternalString> {
+        match self {
+            Self::Tiny(entries) => entries
+                .iter()
+                .position(|(entry_id, _)| entry_id == id)
+                .map(|index| entries.swap_remove(index).1),
+            Self::Map(map) => {
+                let result = map.remove(id);
+                if result.is_some() && map.len() <= TINY_MAP_MAX {
+                    let entries = std::mem::take(map).into_iter().collect();
+                    *self = Self::Tiny(entries);
+                }
+                result
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct MapState {
     idx: ContainerIdx,
-    map: BTreeMap<InternalString, MapValue>,
-    child_containers: FxHashMap<ContainerID, InternalString>,
+    map: MapEntries,
+    /// Parent-edge index for regular child containers (`MapValue::Container`). Mergeable child
+    /// edges are resolved by `DocState` from their deterministic cid and this map's marker
+    /// value, not stored here.
+    child_containers: ChildContainers,
     size: usize,
 }
 
@@ -42,6 +248,9 @@ impl ContainerState for MapState {
             unreachable!()
         };
         let doc = &doc.upgrade().unwrap();
+        // The parent cid is the binding side of a mergeable child marker. Cached here so we
+        // translate marker values into Container values once per delta apply instead of per entry.
+        let parent_id = doc.arena.idx_to_id(self.idx);
         let force = matches!(mode, DiffMode::Checkout | DiffMode::Linear);
         let mut resolved_delta = ResolvedMapDelta::new();
         for (key, value) in delta.updated.into_iter() {
@@ -69,10 +278,13 @@ impl ContainerState for MapState {
 
             if changed {
                 resolved_delta = resolved_delta.with_entry(
-                    key,
+                    key.clone(),
                     ResolvedMapValue {
                         idlp: IdLp::new(value.peer, value.lamp),
-                        value: value.value.map(|v| ValueOrHandler::from_value(v, doc)),
+                        value: value
+                            .value
+                            .map(|v| translate_with_parent(parent_id.as_ref(), &key, v))
+                            .map(|v| ValueOrHandler::from_value(v, doc)),
                     },
                 )
             }
@@ -116,12 +328,30 @@ impl ContainerState for MapState {
     #[doc = " Convert a state to a diff that when apply this diff on a empty state,"]
     #[doc = " the state will be the same as this state."]
     fn to_diff(&mut self, doc: &Weak<LoroDocInner>) -> Diff {
+        let doc_strong = doc.upgrade().unwrap();
+        let parent_id = doc_strong.arena.idx_to_id(self.idx);
+        // Build resolved values directly instead of going through
+        // `ResolvedMapValue::from_map_value`: that path forced a full `MapValue` clone per entry
+        // just to overwrite `.value` with the translated form. Cloning only the inner
+        // `Option<LoroValue>` is enough and saves an alloc per entry on every state-to-diff.
         Diff::Map(ResolvedMapDelta {
             updated: self
                 .map
-                .clone()
-                .into_iter()
-                .map(|(k, v)| (k, ResolvedMapValue::from_map_value(v, doc)))
+                .iter()
+                .map(|(k, v)| {
+                    let value = v
+                        .value
+                        .clone()
+                        .map(|val| translate_with_parent(parent_id.as_ref(), k, val))
+                        .map(|val| ValueOrHandler::from_value(val, &doc_strong));
+                    (
+                        k.clone(),
+                        ResolvedMapValue {
+                            idlp: IdLp::new(v.peer, v.lamp),
+                            value,
+                        },
+                    )
+                })
                 .collect::<FxHashMap<_, _>>(),
         })
     }
@@ -176,18 +406,14 @@ impl MapState {
         }
 
         match (&result, value_yes) {
-            (Some(x), true) => {
-                if x.value.is_none() {
-                    self.size += 1;
-                }
+            (Some(x), true) if x.value.is_none() => {
+                self.size += 1;
             }
             (None, true) => {
                 self.size += 1;
             }
-            (Some(x), false) => {
-                if x.value.is_some() {
-                    self.size -= 1;
-                }
+            (Some(x), false) if x.value.is_some() => {
+                self.size -= 1;
             }
             _ => {}
         };
@@ -207,7 +433,7 @@ impl MapState {
         };
     }
 
-    pub fn iter(&self) -> std::collections::btree_map::Iter<'_, InternalString, MapValue> {
+    pub fn iter(&self) -> impl Iterator<Item = (&InternalString, &MapValue)> {
         self.map.iter()
     }
 
@@ -245,6 +471,8 @@ impl MapState {
 
 mod snapshot {
 
+    use std::collections::BTreeMap;
+
     use loro_common::{InternalString, LoroValue};
     use rustc_hash::{FxHashMap, FxHashSet};
     use serde_columnar::Itertools;
@@ -252,7 +480,10 @@ mod snapshot {
     use crate::{
         delta::MapValue,
         encoding::value_register::ValueRegister,
-        state::{ContainerCreationContext, ContainerState, FastStateSnapshot},
+        state::{
+            decode_peer_from_table, decode_peer_table, read_state_leb_u64, state_decode_error,
+            ContainerCreationContext, ContainerState, FastStateSnapshot,
+        },
     };
 
     use super::MapState;
@@ -274,7 +505,7 @@ mod snapshot {
                 .collect_vec();
             postcard::to_io(&keys_with_none_value, &mut w).unwrap();
             let mut peer_register = ValueRegister::new();
-            for v in self.map.values() {
+            for (_, v) in self.map.iter() {
                 peer_register.register(&v.peer);
             }
 
@@ -282,7 +513,7 @@ mod snapshot {
             for p in peer_register.vec() {
                 w.write_all(&p.to_le_bytes()).unwrap();
             }
-            let mut keys: Vec<&InternalString> = self.map.keys().collect();
+            let mut keys: Vec<&InternalString> = self.map.iter().map(|(key, _)| key).collect();
             keys.sort_unstable();
             for key in keys.into_iter() {
                 let value = self.map.get(key).unwrap();
@@ -323,13 +554,7 @@ mod snapshot {
             let keys_with_none_value: FxHashSet<_> = keys_with_none_value.into_iter().collect();
 
             // peers
-            let peer_count = leb128::read::unsigned(&mut bytes).unwrap() as usize;
-            let mut peers = Vec::with_capacity(peer_count);
-            for _ in 0..peer_count {
-                let peer = u64::from_le_bytes(bytes[..8].try_into().unwrap());
-                bytes = &bytes[8..];
-                peers.push(peer);
-            }
+            let peers = decode_peer_table(&mut bytes, "Decode map state failed")?;
 
             //
             let mut ans = MapState::new(idx);
@@ -338,9 +563,17 @@ mod snapshot {
             keys.sort_unstable();
 
             for key in keys {
-                let peer_idx = leb128::read::unsigned(&mut bytes).unwrap() as usize;
-                let lamp = leb128::read::unsigned(&mut bytes).unwrap() as u32;
-                let peer = peers[peer_idx];
+                let peer_idx =
+                    usize::try_from(read_state_leb_u64(&mut bytes, "Decode map state failed")?)
+                        .map_err(|_| {
+                            state_decode_error("Decode map state failed: peer index overflow")
+                        })?;
+                let lamp =
+                    u32::try_from(read_state_leb_u64(&mut bytes, "Decode map state failed")?)
+                        .map_err(|_| {
+                            state_decode_error("Decode map state failed: lamport overflow")
+                        })?;
+                let peer = decode_peer_from_table(&peers, peer_idx, "Decode map state failed")?;
 
                 if keys_with_none_value.contains(&key) {
                     ans.insert(
@@ -364,7 +597,27 @@ mod snapshot {
                 }
             }
 
+            if !bytes.is_empty() {
+                return Err(loro_common::LoroError::DecodeError(
+                    "Decode map state failed".to_string().into_boxed_str(),
+                ));
+            }
+
             Ok(ans)
+        }
+    }
+
+    impl MapState {
+        pub(crate) fn decode_value_as_btree_map(
+            bytes: &[u8],
+        ) -> loro_common::LoroResult<(BTreeMap<String, LoroValue>, &[u8])> {
+            let (value, bytes) = postcard::take_from_bytes::<BTreeMap<String, LoroValue>>(bytes)
+                .map_err(|_| {
+                    loro_common::LoroError::DecodeError(
+                        "Decode map value failed".to_string().into_boxed_str(),
+                    )
+                })?;
+            Ok((value, bytes))
         }
     }
 
@@ -446,6 +699,25 @@ mod snapshot {
                     peer: 1,
                 }
             );
+        }
+
+        #[test]
+        fn map_fast_snapshot_rejects_corrupt_state_metadata() {
+            let idx = ContainerIdx::from_index_and_type(0, loro_common::ContainerType::Map);
+            let ctx = ContainerCreationContext {
+                configure: &Default::default(),
+                peer: 0,
+            };
+            let value = LoroValue::from(std::collections::HashMap::from([(
+                "key".to_string(),
+                LoroValue::I64(1),
+            )]));
+
+            let mut empty = MapState::new(idx);
+            let mut bytes = Vec::new();
+            empty.encode_snapshot_fast(&mut bytes);
+            let (_, state_bytes) = MapState::decode_value(&bytes).unwrap();
+            assert!(MapState::decode_snapshot_fast(idx, (value, state_bytes), ctx).is_err());
         }
     }
 }

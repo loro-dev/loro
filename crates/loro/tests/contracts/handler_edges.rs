@@ -1,10 +1,13 @@
-use std::collections::BTreeSet;
+#![allow(deprecated)]
+
+use std::collections::{BTreeSet, HashMap};
 
 use loro::{
     cursor::{PosType, Side},
-    Container, ContainerTrait, ExpandType, Index, LoroDoc, LoroError, LoroList, LoroMap,
-    LoroMovableList, LoroResult, LoroText, LoroTree, LoroValue, StyleConfig, StyleConfigMap,
-    TextDelta, ToJson, TreeParentId, ValueOrContainer,
+    event::{Diff, DiffBatch, ListDiffItem},
+    Container, ContainerID, ContainerTrait, ExpandType, Index, LoroDoc, LoroError, LoroList,
+    LoroMap, LoroMovableList, LoroResult, LoroText, LoroTree, LoroValue, StyleConfig,
+    StyleConfigMap, TextDelta, ToJson, TreeParentId, ValueOrContainer,
 };
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -61,6 +64,180 @@ fn assert_container_deleted<T>(result: LoroResult<T>) {
         Err(LoroError::ContainerDeleted { .. }) => {}
         _ => panic!("expected ContainerDeleted error"),
     }
+}
+
+fn value_with_nested_container(id: ContainerID) -> LoroValue {
+    LoroValue::from(HashMap::from([(
+        "nested".to_string(),
+        LoroValue::Container(id),
+    )]))
+}
+
+fn assert_arg_error(result: LoroResult<()>) {
+    match result {
+        Err(LoroError::ArgErr(_)) => {}
+        other => panic!("expected ArgErr, got {other:?}"),
+    }
+}
+
+fn assert_out_of_bound<T: std::fmt::Debug>(result: LoroResult<T>) {
+    match result {
+        Err(LoroError::OutOfBound { .. }) => {}
+        other => panic!("expected OutOfBound, got {other:?}"),
+    }
+}
+
+#[test]
+fn regular_value_writes_reject_nested_container_refs() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    let root = doc.get_map("root");
+    let child = root.insert_container("child", LoroMap::new())?;
+    let value = value_with_nested_container(child.id());
+
+    assert_arg_error(root.insert("bad", value.clone()));
+
+    let list = doc.get_list("list");
+    assert_arg_error(list.insert(0, value.clone()));
+
+    let movable = doc.get_movable_list("movable");
+    movable.insert(0, "seed")?;
+    assert_arg_error(movable.insert(1, value.clone()));
+    assert_arg_error(movable.set(0, value.clone()));
+    assert_arg_error(movable.set(0, LoroValue::Container(child.id())));
+
+    let text = doc.get_text("text");
+    text.insert(0, "a")?;
+    assert_arg_error(text.mark(0..1, "bold", value.clone()));
+
+    let detached_map = LoroMap::new();
+    assert_arg_error(detached_map.insert("bad", value.clone()));
+
+    let detached_list = LoroList::new();
+    assert_arg_error(detached_list.insert(0, value.clone()));
+
+    let detached_movable = LoroMovableList::new();
+    detached_movable.insert(0, "seed")?;
+    assert_arg_error(detached_movable.insert(1, value.clone()));
+    assert_arg_error(detached_movable.set(0, value.clone()));
+
+    let detached_text = LoroText::new();
+    detached_text.insert(0, "a")?;
+    assert_arg_error(detached_text.mark(0..1, "bold", value));
+
+    Ok(())
+}
+
+#[test]
+fn range_mutations_reject_overflowing_delete_lengths() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+
+    let text = doc.get_text("text");
+    text.insert(0, "abc")?;
+    assert_out_of_bound(text.delete(usize::MAX, 1));
+    assert_out_of_bound(text.delete(1, usize::MAX));
+    assert_out_of_bound(text.splice(usize::MAX, 1, "x"));
+    assert_out_of_bound(text.splice(1, usize::MAX, "x"));
+
+    let list = doc.get_list("list");
+    list.push(1)?;
+    assert_out_of_bound(list.delete(usize::MAX, 1));
+    assert_out_of_bound(list.delete(1, usize::MAX));
+
+    let movable = doc.get_movable_list("movable");
+    movable.push(1)?;
+    assert_out_of_bound(movable.delete(usize::MAX, 1));
+    assert_out_of_bound(movable.delete(1, usize::MAX));
+
+    let detached_text = LoroText::new();
+    detached_text.insert(0, "abc")?;
+    assert_out_of_bound(detached_text.delete(usize::MAX, 1));
+    assert_out_of_bound(detached_text.delete(1, usize::MAX));
+    assert_out_of_bound(detached_text.splice(usize::MAX, 1, "x"));
+    assert_out_of_bound(detached_text.splice(1, usize::MAX, "x"));
+
+    let detached_list = LoroList::new();
+    detached_list.push(1)?;
+    assert_out_of_bound(detached_list.delete(usize::MAX, 1));
+    assert_out_of_bound(detached_list.delete(1, usize::MAX));
+
+    let detached_movable = LoroMovableList::new();
+    detached_movable.push(1)?;
+    assert_out_of_bound(detached_movable.delete(usize::MAX, 1));
+    assert_out_of_bound(detached_movable.delete(1, usize::MAX));
+
+    Ok(())
+}
+
+#[test]
+fn text_apply_delta_rejects_overflowing_retain_positions() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    let text = doc.get_text("text");
+    text.insert(0, "a")?;
+
+    assert_out_of_bound(text.apply_delta(&[
+        TextDelta::Retain {
+            retain: usize::MAX,
+            attributes: None,
+        },
+        TextDelta::Insert {
+            insert: "x".to_string(),
+            attributes: None,
+        },
+    ]));
+
+    assert_out_of_bound(text.apply_delta(&[
+        TextDelta::Retain {
+            retain: usize::MAX,
+            attributes: None,
+        },
+        TextDelta::Retain {
+            retain: 1,
+            attributes: Some([("bold".to_string(), true.into())].into_iter().collect()),
+        },
+    ]));
+
+    Ok(())
+}
+
+#[test]
+fn doc_apply_diff_rejects_overflowing_text_and_list_positions() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    let text = doc.get_text("text");
+    text.insert(0, "a")?;
+
+    let mut text_batch = DiffBatch::default();
+    text_batch
+        .push(
+            text.id(),
+            Diff::Text(vec![
+                TextDelta::Retain {
+                    retain: usize::MAX,
+                    attributes: None,
+                },
+                TextDelta::Retain {
+                    retain: 1,
+                    attributes: None,
+                },
+            ]),
+        )
+        .unwrap();
+    assert_out_of_bound(doc.apply_diff(text_batch));
+
+    let list = doc.get_list("list");
+    list.push(1)?;
+    let mut list_batch = DiffBatch::default();
+    list_batch
+        .push(
+            list.id(),
+            Diff::List(vec![
+                ListDiffItem::Retain { retain: usize::MAX },
+                ListDiffItem::Retain { retain: 1 },
+            ]),
+        )
+        .unwrap();
+    assert_out_of_bound(doc.apply_diff(list_batch));
+
+    Ok(())
 }
 
 #[test]

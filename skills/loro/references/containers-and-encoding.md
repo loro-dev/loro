@@ -27,13 +27,16 @@
 - Attached containers belong to a document and have stable `ContainerID`s.
 - Adding a detached container to a document returns an attached version; the original object remains detached.
 - Root containers come from `doc.getMap(...)`, `doc.getText(...)`, `doc.getList(...)`, `doc.getTree(...)`, and so on.
-- Use `setContainer(...)` and `insertContainer(...)` for nesting, not plain `set(...)` or `insert(...)`.
+- For map-key children that may be lazily created by multiple peers, use `ensureMergeable*` in JS/TS or `ensure_mergeable_*` in Rust.
+- Use `setContainer(...)` / `insertContainer(...)` for regular child creation or replacement; list-position `insertContainer(...)` is unchanged.
 
-## Container ID And Overwrite Hazards
+## Mergeable Map Children And Overwrite Hazards
 
 - Root container IDs derive from root name plus type.
-- Child container IDs derive from the operation that created them.
-- Avoid concurrent creation of different child containers under the same map key. Container IDs differ, so one branch can appear overwritten.
+- Regular child container IDs derive from the operation that created them.
+- Mergeable map-key child IDs derive from the parent map, key, and type, so concurrent first creation at the same key converges to the same child.
+- Prefer `ensureMergeableText`, `ensureMergeableMap`, `ensureMergeableList`, `ensureMergeableMovableList`, `ensureMergeableTree`, or `ensureMergeableCounter` for dynamic fields, lazy migrations, per-date lists, and other map-key children that should behave as one shared child.
+- `getOrCreateContainer` / `get_or_create_container` is legacy regular child creation; do not recommend it for lazy map-key children.
 
 ## Tree Specifics
 

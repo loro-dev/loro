@@ -476,10 +476,18 @@ pub fn decode_block_range(
         ));
     }
 
-    let counter_start = leb128::read::unsigned(&mut bytes).unwrap() as Counter;
-    let counter_len = leb128::read::unsigned(&mut bytes).unwrap() as Counter;
-    let lamport_start = leb128::read::unsigned(&mut bytes).unwrap() as Lamport;
-    let lamport_len = leb128::read::unsigned(&mut bytes).unwrap() as Lamport;
+    let counter_start = leb128::read::unsigned(&mut bytes).map_err(|e| {
+        LoroError::DecodeError(format!("Failed to read counter start: {e}").into_boxed_str())
+    })? as Counter;
+    let counter_len = leb128::read::unsigned(&mut bytes).map_err(|e| {
+        LoroError::DecodeError(format!("Failed to read counter length: {e}").into_boxed_str())
+    })? as Counter;
+    let lamport_start = leb128::read::unsigned(&mut bytes).map_err(|e| {
+        LoroError::DecodeError(format!("Failed to read lamport start: {e}").into_boxed_str())
+    })? as Lamport;
+    let lamport_len = leb128::read::unsigned(&mut bytes).map_err(|e| {
+        LoroError::DecodeError(format!("Failed to read lamport length: {e}").into_boxed_str())
+    })? as Lamport;
     Ok((
         (counter_start, counter_start + counter_len),
         (lamport_start, lamport_start + lamport_len),
@@ -568,7 +576,7 @@ pub fn decode_block(
         keys,
     };
     let positions = PositionArena::decode_v2(&positions)?;
-    let positions = positions.parse_to_positions();
+    let positions = positions.try_parse_to_positions()?;
     let cids: &Vec<ContainerID> = header.cids.get_or_try_init(|| {
         ContainerArena::decode(&cids)?
             .iter()
