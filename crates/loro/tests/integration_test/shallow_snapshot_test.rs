@@ -4,7 +4,224 @@ use std::{
 };
 
 use super::gen_action;
-use loro::{cursor::CannotFindRelativePosition, ExportMode, Frontiers, LoroDoc, ID};
+use loro::{cursor::CannotFindRelativePosition, ExportMode, Frontiers, LoroDoc, VersionVector, ID};
+
+fn multi_frontier_shallow_snapshot() -> anyhow::Result<(Vec<u8>, Frontiers, loro::LoroValue)> {
+    let doc = LoroDoc::new();
+    doc.set_detached_editing(true);
+
+    doc.set_peer_id(1)?;
+    doc.get_text("left").insert(0, "left")?;
+    doc.commit();
+    let left = doc.state_frontiers();
+
+    doc.checkout(&Frontiers::default())?;
+    doc.set_peer_id(2)?;
+    doc.get_text("right").insert(0, "right")?;
+    doc.commit();
+    let right = doc.state_frontiers();
+
+    let mut shallow_root = left.clone();
+    shallow_root.merge_with_greater(&right);
+    let shallow_root = doc
+        .minimize_frontiers(&shallow_root)
+        .expect("frontiers should be reachable");
+    doc.checkout(&shallow_root)?;
+    let expected = doc.get_deep_value();
+
+    let bytes = doc.export(ExportMode::shallow_snapshot(&shallow_root))?;
+    Ok((bytes, shallow_root, expected))
+}
+
+fn three_frontier_shallow_snapshot() -> anyhow::Result<(Vec<u8>, Frontiers, loro::LoroValue)> {
+    let doc = LoroDoc::new();
+    doc.set_detached_editing(true);
+
+    let mut root = Frontiers::default();
+    for peer in 1..=3 {
+        doc.checkout(&Frontiers::default())?;
+        doc.set_peer_id(peer)?;
+        doc.get_text(format!("text_{peer}"))
+            .insert(0, &format!("value_{peer}"))?;
+        doc.commit();
+        root.merge_with_greater(&doc.state_frontiers());
+    }
+
+    let root = doc
+        .minimize_frontiers(&root)
+        .expect("frontiers should be reachable");
+    assert_eq!(root.len(), 3);
+    doc.checkout(&root)?;
+    let expected = doc.get_deep_value();
+
+    let bytes = doc.export(ExportMode::shallow_snapshot(&root))?;
+    Ok((bytes, root, expected))
+}
+
+#[test]
+fn import_three_frontier_shallow_root_snapshot_does_not_crash() -> anyhow::Result<()> {
+    const CHILD_ENV: &str = "LORO_IMPORT_THREE_FRONTIER_SHALLOW_ROOT_CHILD";
+    const TEST_NAME: &str =
+        "integration_test::shallow_snapshot_test::import_three_frontier_shallow_root_snapshot_does_not_crash";
+
+    if std::env::var_os(CHILD_ENV).is_some() {
+        return import_three_frontier_shallow_root_snapshot_does_not_crash_inner();
+    }
+
+    let output = std::process::Command::new(std::env::current_exe()?)
+        .arg("--exact")
+        .arg(TEST_NAME)
+        .arg("--nocapture")
+        .env(CHILD_ENV, "1")
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "importing a three-frontier shallow root snapshot should not crash\nstatus: {}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(())
+}
+
+fn import_three_frontier_shallow_root_snapshot_does_not_crash_inner() -> anyhow::Result<()> {
+    let (bytes, shallow_root, expected) = three_frontier_shallow_snapshot()?;
+    let meta = LoroDoc::decode_import_blob_meta(&bytes, false)?;
+    assert_eq!(meta.start_frontiers, shallow_root);
+    let imported = LoroDoc::new();
+    imported.import(&bytes)?;
+
+    assert!(imported.is_shallow());
+    assert_eq!(imported.shallow_since_frontiers(), shallow_root);
+    assert_eq!(imported.get_deep_value(), expected);
+    imported.check_state_correctness_slow();
+    Ok(())
+}
+
+#[test]
+fn import_random_multi_frontier_shallow_snapshot_does_not_crash() -> anyhow::Result<()> {
+    const CHILD_ENV: &str = "LORO_IMPORT_RANDOM_MULTI_FRONTIER_SHALLOW_CHILD";
+    const TEST_NAME: &str =
+        "integration_test::shallow_snapshot_test::import_random_multi_frontier_shallow_snapshot_does_not_crash";
+
+    if std::env::var_os(CHILD_ENV).is_some() {
+        return import_random_multi_frontier_shallow_snapshot_does_not_crash_inner();
+    }
+
+    let output = std::process::Command::new(std::env::current_exe()?)
+        .arg("--exact")
+        .arg(TEST_NAME)
+        .arg("--nocapture")
+        .env(CHILD_ENV, "1")
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "importing random multi-frontier shallow snapshots should not crash\nstatus: {}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(())
+}
+
+fn import_random_multi_frontier_shallow_snapshot_does_not_crash_inner() -> anyhow::Result<()> {
+    use rand::{Rng, SeedableRng};
+
+    let doc = LoroDoc::new();
+    doc.set_detached_editing(true);
+    doc.set_change_merge_interval(0);
+    let text = doc.get_text("text");
+    let list = doc.get_list("list");
+    let map = doc.get_map("map");
+    let mut rng = rand::rngs::StdRng::seed_from_u64(0x5a11_0cab);
+    let mut recorded = vec![(doc.state_frontiers(), doc.get_deep_value())];
+
+    for step in 0..80 {
+        let base_idx = rng.gen_range(0..recorded.len());
+        doc.checkout(&recorded[base_idx].0)?;
+        doc.set_peer_id((step + 10) as u64)?;
+
+        for _ in 0..rng.gen_range(1..=3) {
+            match rng.gen_range(0..8) {
+                0 | 1 => {
+                    let pos = rng.gen_range(0..=text.len_unicode());
+                    text.insert(pos, ["a", "b", "中"][rng.gen_range(0..3)])?;
+                }
+                2 => {
+                    if text.len_unicode() > 0 {
+                        text.delete(rng.gen_range(0..text.len_unicode()), 1)?;
+                    }
+                }
+                3 => {
+                    let pos = rng.gen_range(0..=list.len());
+                    list.insert(pos, step as i32)?;
+                }
+                4 => {
+                    if !list.is_empty() {
+                        list.delete(rng.gen_range(0..list.len()), 1)?;
+                    }
+                }
+                5 | 6 => {
+                    map.insert(&format!("k{}", rng.gen_range(0..12)), step as i32)?;
+                }
+                _ => {}
+            }
+        }
+
+        doc.commit();
+        recorded.push((doc.state_frontiers(), doc.get_deep_value()));
+    }
+
+    doc.checkout_to_latest();
+    let mut checked = 0;
+    for _ in 0..120 {
+        let mut target = Frontiers::default();
+        for _ in 0..rng.gen_range(2..=5) {
+            let id = recorded[rng.gen_range(0..recorded.len())].0.iter().next();
+            if let Some(id) = id {
+                target.push(id);
+            }
+        }
+
+        let Ok(target) = doc.minimize_frontiers(&target) else {
+            continue;
+        };
+        if target.is_empty() || target.len() < 2 {
+            continue;
+        }
+
+        let latest_frontiers = doc.oplog_frontiers();
+        doc.checkout(&latest_frontiers)?;
+        let latest_value = doc.get_deep_value();
+
+        doc.checkout(&target)?;
+        let bytes = doc.export(ExportMode::shallow_snapshot(&target))?;
+        let meta = LoroDoc::decode_import_blob_meta(&bytes, false)?;
+        doc.checkout(&meta.start_frontiers)?;
+        let shallow_root_value = doc.get_deep_value();
+        doc.checkout(&target)?;
+
+        let imported = LoroDoc::new();
+        imported.import(&bytes)?;
+        assert_eq!(imported.shallow_since_frontiers(), meta.start_frontiers);
+        assert_eq!(imported.get_deep_value(), latest_value);
+        let root_state_only =
+            imported.export(ExportMode::state_only(Some(&meta.start_frontiers)))?;
+        let root_doc = LoroDoc::new();
+        root_doc.import(&root_state_only)?;
+        imported.checkout(&meta.start_frontiers)?;
+        assert_eq!(imported.get_deep_value(), shallow_root_value);
+        assert_eq!(root_doc.get_deep_value(), shallow_root_value);
+        imported.checkout_to_latest();
+        assert_eq!(imported.get_deep_value(), latest_value);
+        checked += 1;
+    }
+
+    assert!(checked > 0);
+    Ok(())
+}
 
 #[test]
 fn state_only_at_concurrent_frontiers_excludes_later_ops() -> anyhow::Result<()> {
@@ -37,6 +254,501 @@ fn state_only_at_concurrent_frontiers_excludes_later_ops() -> anyhow::Result<()>
     new_doc.import(&bytes)?;
 
     assert_eq!(new_doc.get_deep_value(), expected);
+    Ok(())
+}
+
+#[test]
+fn state_only_import_allows_frontiers_that_include_shallow_root() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    doc.set_change_merge_interval(0);
+
+    let text = doc.get_text("text");
+    text.insert(0, "root")?;
+    doc.commit();
+    let shallow_root = doc.state_frontiers();
+
+    doc.set_peer_id(2)?;
+    text.insert(text.len_unicode(), " latest")?;
+    doc.commit();
+    let latest = doc.state_frontiers();
+    let expected = doc.get_deep_value();
+
+    let target = Frontiers::from([
+        shallow_root.as_single().unwrap(),
+        latest.as_single().unwrap(),
+    ]);
+    let bytes = doc.export(ExportMode::state_only(Some(&target)))?;
+    let new_doc = LoroDoc::new();
+    new_doc.import(&bytes)?;
+
+    assert!(new_doc.is_shallow());
+    assert_eq!(new_doc.shallow_since_frontiers(), shallow_root);
+    assert_eq!(new_doc.oplog_frontiers(), latest);
+    assert_eq!(new_doc.get_deep_value(), expected);
+    new_doc.check_state_correctness_slow();
+    Ok(())
+}
+
+#[test]
+fn checkout_subset_of_multi_frontier_shallow_root_should_error() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_detached_editing(true);
+
+    doc.set_peer_id(1)?;
+    doc.get_text("left").insert(0, "left")?;
+    doc.commit();
+    let left = doc.state_frontiers();
+
+    doc.checkout(&Frontiers::default())?;
+    doc.set_peer_id(2)?;
+    doc.get_text("right").insert(0, "right")?;
+    doc.commit();
+    let right = doc.state_frontiers();
+
+    let mut shallow_root = left.clone();
+    shallow_root.merge_with_greater(&right);
+    let shallow_root = doc
+        .minimize_frontiers(&shallow_root)
+        .expect("frontiers should be reachable");
+    assert_eq!(shallow_root.len(), 2);
+
+    doc.checkout(&shallow_root)?;
+    let bytes = doc.export(ExportMode::shallow_snapshot(&shallow_root))?;
+    let shallow_doc = LoroDoc::new();
+    shallow_doc.import(&bytes)?;
+
+    let subset = Frontiers::from([shallow_root.iter().next().unwrap()]);
+    assert!(shallow_doc.checkout(&subset).is_err());
+    Ok(())
+}
+
+#[test]
+fn frontiers_to_vv_rejects_unrepresentable_shallow_root_versions() -> anyhow::Result<()> {
+    let (bytes, shallow_root, _) = multi_frontier_shallow_snapshot()?;
+    let shallow_doc = LoroDoc::new();
+    shallow_doc.import(&bytes)?;
+
+    let subset = Frontiers::from([shallow_root.iter().next().unwrap()]);
+    assert!(shallow_doc.frontiers_to_vv(&Frontiers::default()).is_none());
+    assert!(shallow_doc.frontiers_to_vv(&subset).is_none());
+    assert!(shallow_doc
+        .cmp_frontiers(&Frontiers::default(), &shallow_root)
+        .is_err());
+    assert!(shallow_doc.cmp_frontiers(&subset, &shallow_root).is_err());
+    assert!(shallow_doc.minimize_frontiers(&subset).is_err());
+    assert_eq!(
+        shallow_doc.cmp_with_frontiers(&Frontiers::default()),
+        std::cmp::Ordering::Less
+    );
+    assert_eq!(
+        shallow_doc.cmp_with_frontiers(&subset),
+        std::cmp::Ordering::Less
+    );
+
+    let shallow_root_vv = shallow_doc
+        .frontiers_to_vv(&shallow_root)
+        .expect("complete shallow root should be included");
+    assert_eq!(
+        shallow_doc.vv_to_frontiers(&VersionVector::default()),
+        shallow_root
+    );
+    assert_eq!(shallow_doc.vv_to_frontiers(&shallow_root_vv), shallow_root);
+    let mut subset_vv = VersionVector::new();
+    subset_vv.set_last(subset.as_single().unwrap());
+    assert_eq!(shallow_doc.vv_to_frontiers(&subset_vv), shallow_root);
+    assert_eq!(
+        shallow_doc
+            .cmp_frontiers(&shallow_root, &shallow_root)
+            .expect("complete shallow root should be comparable"),
+        Some(std::cmp::Ordering::Equal)
+    );
+    Ok(())
+}
+
+#[test]
+fn frontiers_to_vv_rejects_shallow_root_deps() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    doc.get_text("text").insert(0, "abcdef")?;
+    doc.commit();
+
+    let shallow_root = Frontiers::from_id(ID::new(1, 3));
+    let before_root = Frontiers::from_id(ID::new(1, 2));
+    let bytes = doc.export(ExportMode::shallow_snapshot(&shallow_root))?;
+    let shallow_doc = LoroDoc::new();
+    shallow_doc.import(&bytes)?;
+
+    assert_eq!(shallow_doc.shallow_since_frontiers(), shallow_root);
+    assert!(shallow_doc.checkout(&before_root).is_err());
+    assert!(shallow_doc
+        .export(ExportMode::shallow_snapshot(&before_root))
+        .is_err());
+    assert!(shallow_doc
+        .export(ExportMode::state_only(Some(&before_root)))
+        .is_err());
+    assert!(shallow_doc.frontiers_to_vv(&before_root).is_none());
+    assert!(shallow_doc
+        .cmp_frontiers(&before_root, &shallow_root)
+        .is_err());
+    assert!(shallow_doc.minimize_frontiers(&before_root).is_err());
+    assert_eq!(
+        shallow_doc.cmp_with_frontiers(&before_root),
+        std::cmp::Ordering::Less
+    );
+    Ok(())
+}
+
+#[test]
+fn frontiers_to_vv_rejects_empty_deps_before_initial_shallow_root() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    doc.get_text("text").insert(0, "a")?;
+    doc.commit();
+    let shallow_root = doc.state_frontiers();
+
+    let bytes = doc.export(ExportMode::shallow_snapshot(&shallow_root))?;
+    let shallow_doc = LoroDoc::new();
+    shallow_doc.import(&bytes)?;
+
+    assert_eq!(shallow_doc.shallow_since_frontiers(), shallow_root);
+    assert!(shallow_doc.frontiers_to_vv(&Frontiers::default()).is_none());
+    assert!(shallow_doc.checkout(&Frontiers::default()).is_err());
+    assert!(shallow_doc
+        .export(ExportMode::state_only(Some(&Frontiers::default())))
+        .is_err());
+    Ok(())
+}
+
+#[test]
+fn reexport_multi_frontier_shallow_root_snapshot_imports() -> anyhow::Result<()> {
+    let (bytes, shallow_root, expected) = multi_frontier_shallow_snapshot()?;
+    let imported = LoroDoc::new();
+    imported.import(&bytes)?;
+
+    let reexported = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        imported.export(ExportMode::shallow_snapshot(&shallow_root))
+    })) {
+        Ok(result) => result?,
+        Err(_) => {
+            std::mem::forget(imported);
+            panic!("re-exporting a multi-frontier shallow root snapshot should not panic");
+        }
+    };
+    let imported_again = LoroDoc::new();
+    imported_again.import(&reexported)?;
+
+    assert!(imported_again.is_shallow());
+    assert_eq!(imported_again.shallow_since_frontiers(), shallow_root);
+    assert_eq!(imported_again.get_deep_value(), expected);
+    Ok(())
+}
+
+#[test]
+fn snapshot_export_preserves_multi_frontier_shallow_root() -> anyhow::Result<()> {
+    let (bytes, shallow_root, expected) = multi_frontier_shallow_snapshot()?;
+    let imported = LoroDoc::new();
+    imported.import(&bytes)?;
+
+    let snapshot = imported.export(ExportMode::Snapshot)?;
+    let imported_again = LoroDoc::new();
+    imported_again.import(&snapshot)?;
+
+    assert!(imported_again.is_shallow());
+    assert_eq!(imported_again.shallow_since_frontiers(), shallow_root);
+    assert_eq!(imported_again.get_deep_value(), expected);
+    Ok(())
+}
+
+#[test]
+fn state_only_export_preserves_multi_frontier_shallow_root() -> anyhow::Result<()> {
+    let (bytes, shallow_root, expected) = multi_frontier_shallow_snapshot()?;
+    let imported = LoroDoc::new();
+    imported.import(&bytes)?;
+
+    let state_only = imported.export(ExportMode::state_only(Some(&shallow_root)))?;
+    let imported_again = LoroDoc::new();
+    imported_again.import(&state_only)?;
+
+    assert!(imported_again.is_shallow());
+    assert_eq!(imported_again.shallow_since_frontiers(), shallow_root);
+    assert_eq!(imported_again.get_deep_value(), expected);
+    Ok(())
+}
+
+#[test]
+fn state_only_multi_frontier_shallow_root_can_accept_local_edits() -> anyhow::Result<()> {
+    let (bytes, shallow_root, _) = multi_frontier_shallow_snapshot()?;
+    let imported = LoroDoc::new();
+    imported.import(&bytes)?;
+    let state_only = imported.export(ExportMode::state_only(Some(&shallow_root)))?;
+
+    let edited = LoroDoc::new();
+    edited.import(&state_only)?;
+    edited.set_peer_id(3)?;
+    edited.get_text("tail").insert(0, "tail")?;
+    edited.commit();
+
+    assert!(edited.is_shallow());
+    assert_eq!(edited.shallow_since_frontiers(), shallow_root);
+    assert_eq!(edited.get_text("tail").to_string(), "tail");
+    Ok(())
+}
+
+#[test]
+fn state_correctness_check_handles_multi_frontier_shallow_root() -> anyhow::Result<()> {
+    let (bytes, _, _) = multi_frontier_shallow_snapshot()?;
+    let imported = LoroDoc::new();
+    imported.import(&bytes)?;
+
+    imported.check_state_correctness_slow();
+    Ok(())
+}
+
+#[test]
+fn reexport_shallow_snapshot_with_redundant_root_frontier_imports() -> anyhow::Result<()> {
+    let (bytes, shallow_root, _) = multi_frontier_shallow_snapshot()?;
+    let imported = LoroDoc::new();
+    imported.import(&bytes)?;
+    imported.set_detached_editing(true);
+
+    imported.checkout(&shallow_root)?;
+    imported.set_peer_id(3)?;
+    imported.get_text("tail").insert(0, "tail")?;
+    imported.commit();
+    let tail = imported.state_frontiers();
+    let expected = imported.get_deep_value();
+
+    let mut redundant_target = tail.clone();
+    redundant_target.push(shallow_root.iter().next().unwrap());
+    let minimized_target = imported
+        .minimize_frontiers(&redundant_target)
+        .expect("target should be reachable");
+    assert_ne!(minimized_target, redundant_target);
+
+    let snapshot = imported.export(ExportMode::shallow_snapshot(&redundant_target))?;
+    let imported_again = LoroDoc::new();
+    imported_again.import(&snapshot)?;
+
+    assert!(imported_again.is_shallow());
+    assert_eq!(imported_again.shallow_since_frontiers(), minimized_target);
+    assert_eq!(imported_again.get_deep_value(), expected);
+    assert!(imported_again.frontiers_to_vv(&minimized_target).is_some());
+    Ok(())
+}
+
+#[test]
+fn state_only_from_shallow_doc_normalizes_redundant_target_frontiers() -> anyhow::Result<()> {
+    let (bytes, shallow_root, _) = multi_frontier_shallow_snapshot()?;
+    let imported = LoroDoc::new();
+    imported.import(&bytes)?;
+    imported.set_detached_editing(true);
+
+    imported.checkout(&shallow_root)?;
+    imported.set_peer_id(3)?;
+    imported.get_text("tail").insert(0, "tail")?;
+    imported.commit();
+    let tail = imported.state_frontiers();
+    let expected = imported.get_deep_value();
+
+    let mut redundant_target = tail.clone();
+    redundant_target.push(shallow_root.iter().next().unwrap());
+    let minimized_target = imported
+        .minimize_frontiers(&redundant_target)
+        .expect("target should be reachable");
+    assert_eq!(minimized_target, tail);
+    assert_ne!(minimized_target, redundant_target);
+
+    let state_only = imported.export(ExportMode::state_only(Some(&redundant_target)))?;
+    let imported_again = LoroDoc::new();
+    imported_again.import(&state_only)?;
+
+    assert!(imported_again.is_shallow());
+    assert_eq!(imported_again.shallow_since_frontiers(), minimized_target);
+    assert_eq!(imported_again.get_deep_value(), expected);
+    imported_again.check_state_correctness_slow();
+    Ok(())
+}
+
+#[test]
+fn find_id_spans_between_normalizes_redundant_shallow_doc_frontiers() -> anyhow::Result<()> {
+    let (bytes, shallow_root, _) = multi_frontier_shallow_snapshot()?;
+    let imported = LoroDoc::new();
+    imported.import(&bytes)?;
+    imported.set_detached_editing(true);
+
+    imported.checkout(&shallow_root)?;
+    imported.set_peer_id(3)?;
+    imported.get_text("tail").insert(0, "tail")?;
+    imported.commit();
+    let tail = imported.state_frontiers();
+
+    let mut redundant_target = tail.clone();
+    redundant_target.push(shallow_root.iter().next().unwrap());
+    let minimized_target = imported
+        .minimize_frontiers(&redundant_target)
+        .expect("target should be reachable");
+    assert_eq!(minimized_target, tail);
+
+    let expected = imported.find_id_spans_between(&shallow_root, &tail);
+    let actual = imported.find_id_spans_between(&shallow_root, &redundant_target);
+
+    assert_eq!(actual, expected);
+    assert!(actual.forward.contains_key(&3));
+    Ok(())
+}
+
+#[test]
+fn shallow_snapshot_export_normalizes_redundant_target_frontiers() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_detached_editing(true);
+
+    doc.set_peer_id(1)?;
+    doc.get_text("left").insert(0, "left")?;
+    doc.commit();
+    let left = doc.state_frontiers();
+
+    doc.checkout(&Frontiers::default())?;
+    doc.set_peer_id(2)?;
+    doc.get_text("right").insert(0, "right")?;
+    doc.commit();
+    let right = doc.state_frontiers();
+
+    let mut root = left.clone();
+    root.merge_with_greater(&right);
+    let root = doc
+        .minimize_frontiers(&root)
+        .expect("root should be reachable");
+    doc.checkout(&root)?;
+
+    doc.set_peer_id(3)?;
+    doc.get_text("tail").insert(0, "tail")?;
+    doc.commit();
+    let tail = doc.state_frontiers();
+    let expected = doc.get_deep_value();
+
+    let mut redundant_target = tail.clone();
+    redundant_target.push(left.as_single().unwrap());
+    let minimized_target = doc
+        .minimize_frontiers(&redundant_target)
+        .expect("target should be reachable");
+    assert_eq!(minimized_target, tail);
+    assert_ne!(minimized_target, redundant_target);
+
+    let snapshot = doc.export(ExportMode::shallow_snapshot(&redundant_target))?;
+    let imported = LoroDoc::new();
+    imported.import(&snapshot)?;
+
+    assert!(imported.is_shallow());
+    assert_eq!(imported.shallow_since_frontiers(), minimized_target);
+    assert_eq!(imported.get_deep_value(), expected);
+    Ok(())
+}
+
+#[test]
+fn shallow_doc_with_multi_frontier_root_can_export_concurrent_tail() -> anyhow::Result<()> {
+    let (bytes, shallow_root, _) = multi_frontier_shallow_snapshot()?;
+    let imported = LoroDoc::new();
+    imported.import(&bytes)?;
+    imported.set_detached_editing(true);
+
+    imported.checkout(&shallow_root)?;
+    imported.set_peer_id(3)?;
+    imported.get_text("tail_a").insert(0, "a")?;
+    imported.get_tree("tail_tree").create(None)?;
+    imported.commit();
+    let tail_a = imported.state_frontiers();
+
+    imported.checkout(&shallow_root)?;
+    imported.set_peer_id(4)?;
+    imported.get_text("tail_b").insert(0, "b")?;
+    imported.get_tree("tail_tree").create(None)?;
+    imported.commit();
+    let tail_b = imported.state_frontiers();
+
+    let mut target = tail_a;
+    target.merge_with_greater(&tail_b);
+    let target = imported
+        .minimize_frontiers(&target)
+        .expect("tail frontiers should be reachable");
+    imported.checkout(&target)?;
+    let expected = imported.get_deep_value();
+
+    imported.checkout(&shallow_root)?;
+    imported.checkout(&target)?;
+    assert_eq!(imported.get_deep_value(), expected);
+
+    let root_to_target = imported.find_id_spans_between(&shallow_root, &target);
+    assert!(root_to_target.retreat.is_empty());
+    assert!(root_to_target.forward.contains_key(&3));
+    assert!(root_to_target.forward.contains_key(&4));
+
+    let clamped_start_to_target = imported.find_id_spans_between(&Frontiers::default(), &target);
+    assert_eq!(clamped_start_to_target, root_to_target);
+
+    let target_to_root = imported.find_id_spans_between(&target, &shallow_root);
+    assert!(target_to_root.forward.is_empty());
+    assert!(target_to_root.retreat.contains_key(&3));
+    assert!(target_to_root.retreat.contains_key(&4));
+
+    let target_to_clamped_start = imported.find_id_spans_between(&target, &Frontiers::default());
+    assert_eq!(target_to_clamped_start, target_to_root);
+
+    let tail_updates = imported.export(ExportMode::updates_in_range(
+        root_to_target.get_id_spans_right().collect::<Vec<_>>(),
+    ))?;
+    let updated_from_root = LoroDoc::new();
+    updated_from_root.import(&bytes)?;
+    updated_from_root.import(&tail_updates)?;
+    assert_eq!(updated_from_root.get_deep_value(), expected);
+
+    let root_vv = imported
+        .frontiers_to_vv(&shallow_root)
+        .expect("shallow root should be included");
+    let target_vv = imported
+        .frontiers_to_vv(&target)
+        .expect("target should be included");
+    let tail_json = imported.export_json_updates(&root_vv, &target_vv);
+    assert_eq!(tail_json.start_version, shallow_root);
+    let json_updated_from_root = LoroDoc::new();
+    json_updated_from_root.import(&bytes)?;
+    json_updated_from_root.import_json_updates(tail_json)?;
+    assert_eq!(json_updated_from_root.get_deep_value(), expected);
+
+    let all_tail_json = imported.export_json_updates(&Default::default(), &target_vv);
+    assert_eq!(all_tail_json.start_version, shallow_root);
+    let json_all_updated_from_root = LoroDoc::new();
+    json_all_updated_from_root.import(&bytes)?;
+    json_all_updated_from_root.import_json_updates(all_tail_json)?;
+    assert_eq!(json_all_updated_from_root.get_deep_value(), expected);
+
+    let bytes = imported.export(ExportMode::shallow_snapshot(&target))?;
+    let imported_again = LoroDoc::new();
+    imported_again.import(&bytes)?;
+
+    assert!(imported_again.is_shallow());
+    assert_eq!(imported_again.get_deep_value(), expected);
+
+    let state_only = imported.export(ExportMode::state_only(Some(&target)))?;
+    let state_only_imported = LoroDoc::new();
+    state_only_imported.import(&state_only)?;
+
+    assert!(state_only_imported.is_shallow());
+    assert_eq!(state_only_imported.get_deep_value(), expected);
+
+    let latest_state_only = imported.export(ExportMode::state_only(None))?;
+    let latest_state_only_imported = LoroDoc::new();
+    latest_state_only_imported.import(&latest_state_only)?;
+
+    assert!(latest_state_only_imported.is_shallow());
+    assert_eq!(latest_state_only_imported.get_deep_value(), expected);
+
+    let snapshot = imported.export(ExportMode::Snapshot)?;
+    let snapshot_imported = LoroDoc::new();
+    snapshot_imported.import(&snapshot)?;
+
+    assert!(snapshot_imported.is_shallow());
+    assert_eq!(snapshot_imported.get_deep_value(), expected);
     Ok(())
 }
 
@@ -267,6 +979,47 @@ fn test_richtext_gc() -> anyhow::Result<()> {
     assert_eq!(new_doc.get_text("text").to_string(), "321");
     new_doc.checkout_to_latest();
     assert_eq!(new_doc.get_text("text").to_string(), "321456");
+    Ok(())
+}
+
+#[test]
+fn reexport_shallow_doc_at_style_start_advances_to_style_end() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    let text = doc.get_text("text");
+    text.insert(0, "1")?; // 0
+    text.insert(0, "2")?; // 1
+    text.insert(0, "3")?; // 2
+    doc.commit();
+    text.mark(0..2, "bold", "value")?; // 3, 4
+    text.insert(3, "456")?; // 5, 6, 7
+
+    let bytes = doc.export(loro::ExportMode::shallow_snapshot_since(ID::new(1, 2)))?;
+    let shallow_doc = LoroDoc::new();
+    shallow_doc.import(&bytes)?;
+
+    let reexported = shallow_doc.export(loro::ExportMode::shallow_snapshot_since(ID::new(1, 3)))?;
+    let imported = LoroDoc::new();
+    imported.import(&reexported)?;
+
+    assert_eq!(
+        imported.shallow_since_frontiers(),
+        Frontiers::from_id(ID::new(1, 4))
+    );
+    imported.checkout(&Frontiers::from_id(ID::new(1, 4)))?;
+    assert_eq!(imported.get_text("text").to_string(), "321");
+    imported.checkout_to_latest();
+    assert_eq!(imported.get_text("text").to_string(), "321456");
+
+    let style_start = Frontiers::from_id(ID::new(1, 3));
+    let state_only = shallow_doc.export(ExportMode::state_only(Some(&style_start)))?;
+    let state_only_imported = LoroDoc::new();
+    state_only_imported.import(&state_only)?;
+    assert_eq!(
+        state_only_imported.shallow_since_frontiers(),
+        Frontiers::from_id(ID::new(1, 4))
+    );
+    state_only_imported.check_state_correctness_slow();
     Ok(())
 }
 

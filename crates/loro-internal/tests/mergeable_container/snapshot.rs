@@ -291,9 +291,7 @@ fn shallow_snapshot_preserves_losing_kind_state() {
     // The Map marker now wins LWW on A and is the visible kind; the Text child becomes the loser
     // whose state lives only at its deterministic cid.
     for i in 0..6 {
-        a.get_map("state")
-            .insert(&format!("noise_{i}"), i)
-            .unwrap();
+        a.get_map("state").insert(&format!("noise_{i}"), i).unwrap();
         a.commit_then_renew();
     }
     let a_map = a.get_map("state").ensure_mergeable_map("k").unwrap();

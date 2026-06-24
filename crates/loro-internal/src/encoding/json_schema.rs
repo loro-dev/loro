@@ -564,6 +564,7 @@ fn decode_changes(json: JsonSchema, arena: &SharedArena) -> LoroResult<Vec<Chang
     {
         let id = convert_id(&id, &peers)?;
         validate_json_id_counter(id, "change id")?;
+        validate_text_mark_pairs(&json_ops)?;
         let mut ops: RleVec<[Op; 1]> = RleVec::new();
         let mut expected_counter = id.counter;
         if json_ops.is_empty() {
@@ -599,6 +600,53 @@ fn decode_changes(json: JsonSchema, arena: &SharedArena) -> LoroResult<Vec<Chang
         ans.push(change);
     }
     Ok(ans)
+}
+
+fn validate_text_mark_pairs(ops: &[json::JsonOp]) -> LoroResult<()> {
+    for (i, op) in ops.iter().enumerate() {
+        let JsonOpContent::Text(text) = &op.content else {
+            continue;
+        };
+
+        match text {
+            json::TextOp::Mark { .. } => {
+                let Some(next) = ops.get(i + 1) else {
+                    return Err(LoroError::DecodeError(
+                        "text mark must be immediately followed by mark end".into(),
+                    ));
+                };
+
+                if next.container != op.container
+                    || !matches!(&next.content, JsonOpContent::Text(json::TextOp::MarkEnd))
+                {
+                    return Err(LoroError::DecodeError(
+                        "text mark must be immediately followed by mark end".into(),
+                    ));
+                }
+            }
+            json::TextOp::MarkEnd => {
+                let Some(prev) = i.checked_sub(1).and_then(|i| ops.get(i)) else {
+                    return Err(LoroError::DecodeError(
+                        "text mark end must immediately follow text mark".into(),
+                    ));
+                };
+
+                if prev.container != op.container
+                    || !matches!(
+                        &prev.content,
+                        JsonOpContent::Text(json::TextOp::Mark { .. })
+                    )
+                {
+                    return Err(LoroError::DecodeError(
+                        "text mark end must immediately follow text mark".into(),
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(())
 }
 
 fn validate_json_frontiers(frontiers: &Frontiers) -> LoroResult<()> {
@@ -824,13 +872,21 @@ fn decode_op(op: json::JsonOp, arena: &SharedArena, peers: &Option<Vec<PeerID>>)
                     style_key,
                     style_value,
                     info,
-                } => InnerContent::List(InnerListOp::StyleStart {
-                    start,
-                    end,
-                    key: style_key.into(),
-                    value: style_value,
-                    info: TextStyleInfoFlag::from_byte(info),
-                }),
+                } => {
+                    if start >= end {
+                        return Err(LoroError::DecodeError(
+                            "text mark start must be less than end".into(),
+                        ));
+                    }
+
+                    InnerContent::List(InnerListOp::StyleStart {
+                        start,
+                        end,
+                        key: style_key.into(),
+                        value: style_value,
+                        info: TextStyleInfoFlag::from_byte(info),
+                    })
+                }
                 json::TextOp::MarkEnd => InnerContent::List(InnerListOp::StyleEnd),
             },
             _ => {

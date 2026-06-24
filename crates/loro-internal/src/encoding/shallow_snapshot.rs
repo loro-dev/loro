@@ -9,7 +9,7 @@ use crate::{
     dag::DagUtils,
     encoding::fast_snapshot::{_encode_snapshot, Snapshot},
     state::container_store::FRONTIERS_KEY,
-    version::{Frontiers, VersionVector},
+    version::{shrink_frontiers, Frontiers, VersionVector},
     LoroDoc,
 };
 
@@ -33,32 +33,13 @@ pub(crate) fn export_shallow_snapshot_inner(
     doc: &LoroDoc,
     start_from: &Frontiers,
 ) -> Result<(Snapshot, Frontiers), LoroEncodeError> {
+    let requested_start_from_len = start_from.len();
     let oplog = doc.oplog().lock();
     let start_from = calc_shallow_doc_start(&oplog, start_from);
     let mut start_vv = frontiers_to_vv_for_export(&oplog, &start_from, "export_shallow_snapshot")?;
     for id in start_from.iter() {
         // we need to include the ops in start_from, this can make things easier
         start_vv.insert(id.peer, id.counter);
-    }
-
-    #[cfg(debug_assertions)]
-    {
-        use crate::dag::Dag;
-        if !start_from.is_empty() {
-            assert!(start_from.len() == 1);
-            let id = start_from.as_single().unwrap();
-            let node = oplog.dag.get(id).unwrap();
-            if id.counter == node.cnt {
-                let vv = oplog.dag().frontiers_to_vv(&node.deps).unwrap();
-                assert_eq!(vv, start_vv);
-            } else {
-                let vv = oplog
-                    .dag()
-                    .frontiers_to_vv(&Frontiers::from(id.inc(-1)))
-                    .unwrap();
-                assert_eq!(vv, start_vv);
-            }
-        }
     }
 
     loro_common::debug!(
@@ -147,7 +128,10 @@ pub(crate) fn export_shallow_snapshot_inner(
         drop(state);
         doc._checkout_without_emitting(&latest_frontiers, false, false)
             .map_err(LoroEncodeError::from)?;
-        let state_bytes = if ops_num > MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE {
+        let should_encode_latest_state = requested_start_from_len > 1
+            || start_from.len() > 1
+            || ops_num > MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE;
+        let state_bytes = if should_encode_latest_state {
             let mut state = doc.app_state().lock();
             state.ensure_all_alive_containers();
             state.store.encode();
@@ -201,9 +185,11 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
     w: &mut W,
 ) -> Result<Frontiers, LoroEncodeError> {
     let oplog = doc.oplog().lock();
-    let start_from = calc_shallow_doc_start(&oplog, target_frontiers);
-    let mut start_vv =
+    let target_frontiers = normalize_state_only_target_frontiers(&oplog, target_frontiers);
+    let start_from = calc_state_only_doc_start(&oplog, &target_frontiers);
+    let start_inclusive_vv =
         frontiers_to_vv_for_export(&oplog, &start_from, "export_state_only_snapshot")?;
+    let mut start_vv = start_inclusive_vv.clone();
     for id in start_from.iter() {
         // we need to include the ops in start_from, this can make things easier
         start_vv.insert(id.peer, id.counter);
@@ -215,10 +201,13 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
         &start_from,
     );
 
-    let to_vv = frontiers_to_vv_for_export(&oplog, target_frontiers, "export_state_only_snapshot")?;
+    let mut to_vv =
+        frontiers_to_vv_for_export(&oplog, &target_frontiers, "export_state_only_snapshot")?;
+    to_vv.merge(&start_inclusive_vv);
+    let to_frontiers = oplog.dag().vv_to_frontiers(&to_vv);
 
     let oplog_bytes =
-        oplog.export_change_store_in_range(&start_vv, &start_from, &to_vv, target_frontiers);
+        oplog.export_change_store_in_range(&start_vv, &start_from, &to_vv, &to_frontiers);
     let state_frontiers = doc.state_frontiers();
     let is_attached = !doc.is_detached();
     drop(oplog);
@@ -290,9 +279,66 @@ fn restore_export_doc_state(
 /// It should be the LCA of the user given version and the latest version.
 /// Otherwise, users cannot replay the history from the initial version till the latest version.
 fn calc_shallow_doc_start(oplog: &crate::OpLog, frontiers: &Frontiers) -> Frontiers {
+    let frontiers = shrink_frontiers_preserving_shallow_root(oplog, frontiers);
+    calc_shallow_doc_start_from(oplog, frontiers)
+}
+
+fn calc_state_only_doc_start(oplog: &crate::OpLog, frontiers: &Frontiers) -> Frontiers {
+    let shrunk = shrink_frontiers(frontiers, oplog.dag()).unwrap_or_else(|_| frontiers.clone());
+    if shrunk == *frontiers {
+        // A canonical state-only target should become the shallow root itself.
+        // Lowering a concurrent target to its LCA would require replaying ops back
+        // to the target and can lose the exact target-state boundary.
+        advance_style_start_frontiers(oplog, frontiers.clone())
+    } else {
+        // Non-canonical targets are used to spell "this shallow root plus later
+        // frontiers"; preserve that explicit root boundary.
+        calc_shallow_doc_start_from(oplog, frontiers.clone())
+    }
+}
+
+fn normalize_state_only_target_frontiers(oplog: &crate::OpLog, frontiers: &Frontiers) -> Frontiers {
+    if oplog.is_shallow() {
+        shrink_frontiers_preserving_shallow_root(oplog, frontiers)
+    } else {
+        frontiers.clone()
+    }
+}
+
+fn shrink_frontiers_preserving_shallow_root(
+    oplog: &crate::OpLog,
+    frontiers: &Frontiers,
+) -> Frontiers {
+    if oplog.is_shallow() && frontiers_eq_unordered(frontiers, oplog.shallow_since_frontiers()) {
+        return oplog.shallow_since_frontiers().clone();
+    }
+
+    let shrunk = shrink_frontiers(frontiers, oplog.dag()).unwrap_or_else(|_| frontiers.clone());
+    if oplog.is_shallow()
+        && oplog.dag().is_before_shallow_root(&shrunk)
+        && !oplog.dag().is_before_shallow_root(frontiers)
+    {
+        frontiers.clone()
+    } else {
+        shrunk
+    }
+}
+
+fn frontiers_eq_unordered(a: &Frontiers, b: &Frontiers) -> bool {
+    a.len() == b.len() && a.iter().all(|id| b.contains(&id))
+}
+
+fn calc_shallow_doc_start_from(oplog: &crate::OpLog, frontiers: Frontiers) -> Frontiers {
+    if !oplog.shallow_since_vv().is_empty() {
+        // The target frontiers have already been checked by the caller. On a
+        // shallow doc, searching for a lower GCA can walk into trimmed history.
+        // Keep the requested boundary.
+        return advance_style_start_frontiers(oplog, frontiers);
+    }
+
     // Find the LCA of the given frontiers by iteratively pairwise GCA.
     // This converges to a single frontier or empty if there is no common ancestor.
-    let mut current = frontiers.clone();
+    let mut current = frontiers;
     while current.len() > 1 {
         let ids: Vec<ID> = current.iter().collect();
         let mut next = Frontiers::new();
@@ -302,24 +348,35 @@ fn calc_shallow_doc_start(oplog: &crate::OpLog, frontiers: &Frontiers) -> Fronti
                 let (gca, _) = oplog
                     .dag()
                     .find_common_ancestor(&Frontiers::from(ids[i]), &Frontiers::from(ids[i + 1]));
-                for id in gca.iter() {
-                    next.push(id);
+                if gca.is_empty() {
+                    next.push(ids[i]);
+                    next.push(ids[i + 1]);
+                } else {
+                    for id in gca.iter() {
+                        next.push(id);
+                    }
                 }
             } else {
                 next.push(ids[i]);
             }
             i += 2;
         }
-        if next == current {
-            // Cannot converge further (pairwise GCAs are the nodes themselves).
-            // Fall back to empty frontiers, meaning export full history.
-            return Frontiers::default();
+        if next.is_empty() || next == current {
+            // Cannot converge further (no non-empty GCA, or pairwise GCAs are
+            // the nodes themselves).
+            // Keep the multi-frontier start so the shallow root still represents
+            // the complete boundary instead of falling back to full history.
+            break;
         }
         current = next;
     }
 
+    advance_style_start_frontiers(oplog, current)
+}
+
+fn advance_style_start_frontiers(oplog: &crate::OpLog, frontiers: Frontiers) -> Frontiers {
     let mut ans = Frontiers::new();
-    for id in current.iter() {
+    for id in frontiers.iter() {
         let mut processed = false;
         if let Some(op) = oplog.get_op_that_includes(id) {
             if let crate::op::InnerContent::List(InnerListOp::StyleStart { .. }) = &op.content {
@@ -366,10 +423,11 @@ pub(crate) fn encode_snapshot_at<W: std::io::Write>(
                 "encode_snapshot_at: state is unexpectedly still in a transaction",
             ));
         }
-        let Some(oplog_bytes) = oplog.fork_changes_up_to(frontiers) else {
+        let target_frontiers = state.frontiers.clone();
+        let Some(oplog_bytes) = oplog.fork_changes_up_to(&target_frontiers) else {
             break 'block Err(LoroEncodeError::FrontiersNotFound(format!(
                 "frontiers: {:?} when export in SnapshotAt mode",
-                frontiers
+                target_frontiers
             )));
         };
 

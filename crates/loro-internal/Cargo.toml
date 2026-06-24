@@ -102,6 +102,10 @@ name = "text_r"
 harness = false
 
 [[bench]]
+name = "text_checkout"
+harness = false
+
+[[bench]]
 name = "list"
 harness = false
 

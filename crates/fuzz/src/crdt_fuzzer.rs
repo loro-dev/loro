@@ -731,6 +731,15 @@ pub fn test_multi_sites_with_gc(
                 let (a, b) = array_mut_ref!(&mut this.actors, [i, j]);
                 let a_doc = &mut a.loro;
                 let b_doc = &mut b.loro;
+                let a_shallow = a_doc.is_shallow();
+                let b_shallow = b_doc.is_shallow();
+                // Shallow docs cannot export ops before the shallow root, so
+                // they cannot sync complete history to empty peers. This mirrors
+                // the non-GC `check_equal` guard.
+                if a_shallow || b_shallow {
+                    continue;
+                }
+
                 info_span!("Attach", peer = i).in_scope(|| {
                     a_doc.attach();
                 });

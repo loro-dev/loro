@@ -41,6 +41,7 @@ pub(crate) struct ContainerStore {
     arena: SharedArena,
     store: InnerStore,
     shallow_root_store: Option<Arc<GcStore>>,
+    shallow_latest_store: Option<Arc<GcStore>>,
     conf: Configure,
     peer: Arc<AtomicU64>,
 }
@@ -77,6 +78,7 @@ impl ContainerStore {
             arena,
             conf,
             shallow_root_store: None,
+            shallow_latest_store: None,
             peer,
         }
     }
@@ -193,6 +195,38 @@ impl ContainerStore {
         let shallow_root = self.shallow_root_store.as_ref()?;
         let shallow_root_kv = shallow_root.store.lock().get_kv_clone();
         Some((shallow_root.encoded_state_bytes.clone(), shallow_root_kv))
+    }
+
+    pub(crate) fn restore_to_shallow_root(&mut self) -> Option<Frontiers> {
+        let shallow_root = self.shallow_root_store.as_ref()?;
+        self.store = shallow_root
+            .store
+            .lock()
+            .fork(self.arena.clone(), &self.conf);
+        Some(shallow_root.shallow_root_frontiers.clone())
+    }
+
+    pub(crate) fn cache_current_as_shallow_latest(&mut self, frontiers: Frontiers) {
+        self.shallow_latest_store = Some(Arc::new(GcStore {
+            shallow_root_frontiers: frontiers,
+            encoded_state_bytes: Bytes::new(),
+            store: Mutex::new(self.store.fork(self.arena.clone(), &self.conf)),
+        }));
+    }
+
+    pub(crate) fn restore_to_shallow_latest(&mut self, frontiers: &Frontiers) -> bool {
+        let Some(shallow_latest) = self.shallow_latest_store.as_ref() else {
+            return false;
+        };
+        if &shallow_latest.shallow_root_frontiers != frontiers {
+            return false;
+        }
+
+        self.store = shallow_latest
+            .store
+            .lock()
+            .fork(self.arena.clone(), &self.conf);
+        true
     }
 
     pub(crate) fn decode(&mut self, bytes: Bytes) -> LoroResult<Option<Frontiers>> {
@@ -324,6 +358,7 @@ impl ContainerStore {
             conf: config,
             peer,
             shallow_root_store: None,
+            shallow_latest_store: None,
         }
     }
 

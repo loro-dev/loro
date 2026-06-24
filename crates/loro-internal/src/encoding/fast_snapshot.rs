@@ -228,6 +228,7 @@ pub(crate) fn decode_snapshot_inner(
             } else {
                 ensure_cov::notify_cov("shallow_snapshot::dont_need_calc");
                 state_frontiers = oplog.frontiers().clone();
+                state.cache_current_as_shallow_latest(state_frontiers.clone());
             }
         }
 

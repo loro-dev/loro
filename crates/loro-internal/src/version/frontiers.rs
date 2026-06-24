@@ -335,33 +335,13 @@ impl Frontiers {
 }
 impl From<&[ID]> for Frontiers {
     fn from(ids: &[ID]) -> Self {
-        match ids.len() {
-            0 => Frontiers::None,
-            1 => Frontiers::ID(ids[0]),
-            _ => {
-                let mut map = InternalMap::new();
-                for &id in ids {
-                    map.insert(id);
-                }
-                Frontiers::Map(map)
-            }
-        }
+        ids.iter().copied().collect()
     }
 }
 
 impl From<Vec<ID>> for Frontiers {
     fn from(ids: Vec<ID>) -> Self {
-        match ids.len() {
-            0 => Frontiers::None,
-            1 => Frontiers::ID(ids[0]),
-            _ => {
-                let mut map = InternalMap::new();
-                for id in ids {
-                    map.insert(id);
-                }
-                Frontiers::Map(map)
-            }
-        }
+        ids.into_iter().collect()
     }
 }
 
@@ -392,33 +372,13 @@ impl From<Option<ID>> for Frontiers {
 
 impl<const N: usize> From<[ID; N]> for Frontiers {
     fn from(value: [ID; N]) -> Self {
-        match N {
-            0 => Frontiers::None,
-            1 => Frontiers::ID(value[0]),
-            _ => {
-                let mut map = InternalMap::new();
-                for id in value {
-                    map.insert(id);
-                }
-                Frontiers::Map(map)
-            }
-        }
+        value.into_iter().collect()
     }
 }
 
 impl From<&Vec<ID>> for Frontiers {
     fn from(ids: &Vec<ID>) -> Self {
-        match ids.len() {
-            0 => Frontiers::None,
-            1 => Frontiers::ID(ids[0]),
-            _ => {
-                let mut map = InternalMap::new();
-                for id in ids {
-                    map.insert(*id);
-                }
-                Frontiers::Map(map)
-            }
-        }
+        ids.iter().copied().collect()
     }
 }
 

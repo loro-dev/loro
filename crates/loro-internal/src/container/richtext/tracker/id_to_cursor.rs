@@ -200,11 +200,15 @@ impl IdToCursor {
     }
 
     pub fn iter(&self, mut iter_id_span: IdSpan) -> impl Iterator<Item = IterCursor> + '_ {
+        #[cfg(feature = "test_utils")]
+        crate::diff_calc::profiling::record_richtext_id_to_cursor_iter_call();
         iter_id_span.normalize_();
         let list = self.map.get(&iter_id_span.peer).unwrap_or(&EMPTY_VEC);
         // Index in the list
         let mut index = 0;
         let mut insert_set_iter: Option<Box<dyn Iterator<Item = IterCursor>>> = None;
+        #[cfg(feature = "test_utils")]
+        let mut yielded = false;
 
         if !list.is_empty() {
             index = match list.binary_search_by_key(&iter_id_span.counter.start, |x| x.counter) {
@@ -215,6 +219,10 @@ impl IdToCursor {
 
         std::iter::from_fn(move || loop {
             if index >= list.len() {
+                #[cfg(feature = "test_utils")]
+                if !yielded {
+                    crate::diff_calc::profiling::record_richtext_id_to_cursor_empty_iter();
+                }
                 return None;
             }
 
@@ -227,12 +235,20 @@ impl IdToCursor {
                     continue;
                 };
 
+                #[cfg(feature = "test_utils")]
+                {
+                    yielded = true;
+                }
                 return Some(next);
             }
 
             let f = &list[index];
             let iter_counter = f.counter;
             if iter_counter >= iter_id_span.counter.end {
+                #[cfg(feature = "test_utils")]
+                if !yielded {
+                    crate::diff_calc::profiling::record_richtext_id_to_cursor_empty_iter();
+                }
                 return None;
             }
 
@@ -262,11 +278,19 @@ impl IdToCursor {
                         continue;
                     }
 
+                    #[cfg(feature = "test_utils")]
+                    {
+                        yielded = true;
+                    }
                     return Some(IterCursor::Delete(span.slice(from as usize, to as usize)));
                 }
                 Cursor::Move { from, to } => {
                     index += 1;
                     let op_id = ID::new(iter_id_span.peer, f.counter);
+                    #[cfg(feature = "test_utils")]
+                    {
+                        yielded = true;
+                    }
                     return Some(IterCursor::Move {
                         from_id: *from,
                         to_leaf: *to,

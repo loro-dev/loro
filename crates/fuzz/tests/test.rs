@@ -173,6 +173,163 @@ fn all_fuzz_state_only_before_shallow_root() {
 }
 
 #[test]
+fn all_fuzz_state_only_roundtrip_after_diff_apply_text_update() {
+    test_multi_sites(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            Handle {
+                site: 196,
+                target: 0,
+                container: 151,
+                action: Generic(GenericAction {
+                    value: Container(List),
+                    bool: true,
+                    key: 1835887981,
+                    pos: 15359179523395251565,
+                    length: 6845301837235606980,
+                    prop: 4959913191460359423,
+                }),
+            },
+            SyncAll,
+            SyncAll,
+            SetCommitOptions {
+                site: 255,
+                origin: 255,
+                msg: 93,
+            },
+            Handle {
+                site: 0,
+                target: 0,
+                container: 0,
+                action: Generic(GenericAction {
+                    value: Container(Unknown(255)),
+                    bool: true,
+                    key: 4294967295,
+                    pos: 3225938275189391359,
+                    length: 7885078839350357357,
+                    prop: 3617008642897571181,
+                }),
+            },
+            DiffApply { from: 125, to: 178 },
+            SetCommitOptions {
+                site: 242,
+                origin: 242,
+                msg: 242,
+            },
+            DiffApply { from: 255, to: 255 },
+            SetCommitOptions {
+                site: 109,
+                origin: 109,
+                msg: 109,
+            },
+            SyncAll,
+            ForkAt {
+                site: 109,
+                to: 1835887981,
+            },
+            SyncAll,
+            SyncAll,
+            SyncAll,
+            SyncAll,
+            SyncAll,
+            SyncAll,
+            SyncAll,
+            SyncAll,
+            Sync { from: 91, to: 91 },
+            Sync { from: 91, to: 91 },
+            SyncAll,
+            StateOnlyRoundTrip { site: 213 },
+            SyncAll,
+            StateOnlyRoundTrip { site: 255 },
+        ],
+    )
+}
+
+#[test]
+fn all_fuzz_one_doc_ignores_cyclic_move_before_error() {
+    test_multi_sites_on_one_doc(
+        5,
+        &mut [
+            Handle {
+                site: 11,
+                target: 148,
+                container: 148,
+                action: Generic(GenericAction {
+                    value: I32(0),
+                    bool: false,
+                    key: 65296,
+                    pos: 18446744073709551600,
+                    length: 18446744073709551615,
+                    prop: 11240984665823117311,
+                }),
+            },
+            Query {
+                site: 125,
+                target: 125,
+                query_type: 119,
+            },
+            Handle {
+                site: 0,
+                target: 125,
+                container: 125,
+                action: Generic(GenericAction {
+                    value: I32(2105376125),
+                    bool: true,
+                    key: 2105376125,
+                    pos: 9042521604759584125,
+                    length: 9042521604759584125,
+                    prop: 9042521604759584125,
+                }),
+            },
+            ForkAt {
+                site: 125,
+                to: 2105376125,
+            },
+            Query {
+                site: 155,
+                target: 155,
+                query_type: 155,
+            },
+            SyncAll,
+            SyncAll,
+            SyncAll,
+            SyncAll,
+            SyncAll,
+            SyncAll,
+            SyncAll,
+            Handle {
+                site: 3,
+                target: 136,
+                container: 107,
+                action: Generic(GenericAction {
+                    value: I32(1802075016),
+                    bool: true,
+                    key: 1802201963,
+                    pos: 7740429931049413483,
+                    length: 285424485,
+                    prop: 29704420010754048,
+                }),
+            },
+            SyncAll,
+            Handle {
+                site: 3,
+                target: 136,
+                container: 107,
+                action: Generic(GenericAction {
+                    value: I32(1802070920),
+                    bool: true,
+                    key: 1929407339,
+                    pos: 3026537059180544374,
+                    length: 232891317779694337,
+                    prop: 3124043742624574344,
+                }),
+            },
+        ],
+    )
+}
+
+#[test]
 fn test_local_events() {
     fuzz_local_events(vec![
         Handle {
@@ -10049,6 +10206,35 @@ fn shallow_arb_test() {
     }
 
     arbtest::builder().budget_ms(1000).run(|u| prop(u, 5))
+}
+
+#[test]
+fn shallow_import_after_empty_shallow_export_and_text_edit_converges() {
+    test_multi_sites_with_gc(
+        5,
+        vec![FuzzTarget::All],
+        &mut [
+            Commit { site: 54 },
+            ExportShallow { site: 160 },
+            Handle {
+                site: 85,
+                target: 222,
+                container: 228,
+                action: Generic(GenericAction {
+                    value: Container(Map),
+                    bool: false,
+                    key: 441515985,
+                    pos: 11802333225252155855,
+                    length: 9719789893245689708,
+                    prop: 1572726038975133702,
+                }),
+            },
+            ImportShallow {
+                site: 21,
+                from: 240,
+            },
+        ],
+    )
 }
 
 #[test]

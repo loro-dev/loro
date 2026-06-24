@@ -346,6 +346,33 @@ impl ContainerHistoryCache {
         ans
     }
 
+    pub(crate) fn text_chunks_at_shallow_root(
+        &self,
+        idx: ContainerIdx,
+    ) -> Option<Vec<RichtextStateChunk>> {
+        ensure_cov::notify_cov("loro_internal::history_cache::text_chunks_at_shallow_root");
+        let state = self.shallow_root_state.as_ref()?;
+        let mut binding = state.store.lock();
+        let Some(text) = binding.get_mut(idx) else {
+            return Some(Vec::new());
+        };
+
+        let text_state = text
+            .get_state(
+                idx,
+                ContainerCreationContext {
+                    configure: &Default::default(),
+                    peer: 0,
+                },
+            )
+            .as_richtext_state()
+            .unwrap();
+
+        let mut ans = Vec::new();
+        text_state.iter_raw(&mut |chunk| ans.push(chunk.clone()));
+        Some(ans)
+    }
+
     pub(crate) fn find_list_chunks_in(
         &self,
         idx: ContainerIdx,

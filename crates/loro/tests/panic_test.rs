@@ -3,9 +3,11 @@
 
 #![allow(unexpected_cfgs)]
 use serial_test::parallel;
+use std::mem::ManuallyDrop;
+use std::panic::AssertUnwindSafe;
 
 use loro::event::{Diff, DiffBatch};
-use loro::json::{JsonChange, JsonOp, JsonOpContent, JsonSchema, MapOp};
+use loro::json::{JsonChange, JsonOp, JsonOpContent, JsonSchema, MapOp, TextOp};
 use loro::{CommitOptions, Container, ContainerID, ContainerType, LoroDoc, LoroList, ID};
 use loro::{Frontiers, LoroValue};
 
@@ -250,6 +252,158 @@ fn import_json_updates_with_short_peers_array_no_longer_panics() {
     // The import may fail for other reasons (unknown peer, missing deps, etc.)
     // but it must NOT panic on the out-of-bounds peer index.
     let _ = doc.import_json_updates(schema);
+}
+
+#[test]
+#[parallel]
+fn import_json_updates_with_text_insert_out_of_bounds_should_error_without_mutating_doc() {
+    let src = LoroDoc::new();
+    src.set_peer_id(31).unwrap();
+    src.get_text("text").insert(0, "a").unwrap();
+    src.commit();
+
+    let mut json = src.export_json_updates(&Default::default(), &src.oplog_vv());
+    match &mut json.changes[0].ops[0].content {
+        JsonOpContent::Text(TextOp::Insert { pos, .. }) => {
+            *pos = 1_000;
+        }
+        other => panic!("expected text insert, got {other:?}"),
+    }
+
+    let dst = LoroDoc::new();
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| dst.import_json_updates(json)));
+    assert!(
+        result.is_ok(),
+        "malformed text JSON import should not panic"
+    );
+    assert!(
+        result.unwrap().is_err(),
+        "malformed text JSON import unexpectedly succeeded; imported value = {:?}",
+        dst.get_deep_value()
+    );
+    assert_eq!(dst.get_deep_value(), LoroValue::Map(Default::default()));
+}
+
+#[test]
+#[parallel]
+fn import_json_updates_with_text_mark_empty_range_should_error_without_panic() {
+    let src = LoroDoc::new();
+    src.set_peer_id(33).unwrap();
+    let text = src.get_text("text");
+    text.insert(0, "abc").unwrap();
+    src.commit();
+    let first = src.export_json_updates(&Default::default(), &src.oplog_vv());
+    let first_vv = src.oplog_vv();
+
+    text.mark(0..2, "bold", true).unwrap();
+    src.commit();
+    let mut suffix = src.export_json_updates(&first_vv, &src.oplog_vv());
+    match &mut suffix.changes[0].ops[0].content {
+        JsonOpContent::Text(TextOp::Mark { start, end, .. }) => {
+            *start = 2;
+            *end = 2;
+        }
+        other => panic!("expected text mark, got {other:?}"),
+    }
+
+    let dst = ManuallyDrop::new(LoroDoc::new());
+    dst.import_json_updates(first).unwrap();
+    let before_vv = dst.oplog_vv();
+    let before_frontiers = dst.oplog_frontiers();
+    let before_value = dst.get_deep_value();
+
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| dst.import_json_updates(suffix)));
+    assert!(
+        result.is_ok(),
+        "malformed text mark JSON import should not panic"
+    );
+    assert!(
+        result.unwrap().is_err(),
+        "malformed text mark JSON import unexpectedly succeeded; imported value = {:?}",
+        dst.get_deep_value()
+    );
+    assert_eq!(dst.oplog_vv(), before_vv);
+    assert_eq!(dst.oplog_frontiers(), before_frontiers);
+    assert_eq!(dst.get_deep_value(), before_value);
+}
+
+#[test]
+#[parallel]
+fn import_json_updates_with_text_mark_end_without_mark_should_error_without_panic() {
+    let src = LoroDoc::new();
+    src.set_peer_id(34).unwrap();
+    let text = src.get_text("text");
+    text.insert(0, "abc").unwrap();
+    src.commit();
+    let first = src.export_json_updates(&Default::default(), &src.oplog_vv());
+    let first_vv = src.oplog_vv();
+
+    text.mark(0..2, "bold", true).unwrap();
+    src.commit();
+    let mut suffix = src.export_json_updates(&first_vv, &src.oplog_vv());
+    match &mut suffix.changes[0].ops[0].content {
+        content @ JsonOpContent::Text(TextOp::Mark { .. }) => {
+            *content = JsonOpContent::Text(TextOp::MarkEnd);
+        }
+        other => panic!("expected text mark, got {other:?}"),
+    }
+
+    let dst = ManuallyDrop::new(LoroDoc::new());
+    dst.import_json_updates(first).unwrap();
+    let before_vv = dst.oplog_vv();
+    let before_frontiers = dst.oplog_frontiers();
+    let before_value = dst.get_deep_value();
+
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| dst.import_json_updates(suffix)));
+    assert!(
+        result.is_ok(),
+        "malformed text MarkEnd JSON import should not panic"
+    );
+    assert!(
+        result.unwrap().is_err(),
+        "malformed text MarkEnd JSON import unexpectedly succeeded; imported value = {:?}",
+        dst.get_deep_value()
+    );
+    assert_eq!(dst.oplog_vv(), before_vv);
+    assert_eq!(dst.oplog_frontiers(), before_frontiers);
+    assert_eq!(dst.get_deep_value(), before_value);
+}
+
+#[test]
+#[parallel]
+fn import_json_updates_with_text_mark_end_counter_gap_should_error_without_panic() {
+    let src = LoroDoc::new();
+    src.set_peer_id(35).unwrap();
+    let text = src.get_text("text");
+    text.insert(0, "abc").unwrap();
+    src.commit();
+    let first = src.export_json_updates(&Default::default(), &src.oplog_vv());
+    let first_vv = src.oplog_vv();
+
+    text.mark(0..2, "bold", true).unwrap();
+    src.commit();
+    let mut suffix = src.export_json_updates(&first_vv, &src.oplog_vv());
+    suffix.changes[0].ops[1].counter += 1;
+
+    let dst = ManuallyDrop::new(LoroDoc::new());
+    dst.import_json_updates(first).unwrap();
+    let before_vv = dst.oplog_vv();
+    let before_frontiers = dst.oplog_frontiers();
+    let before_value = dst.get_deep_value();
+
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| dst.import_json_updates(suffix)));
+    assert!(
+        result.is_ok(),
+        "malformed text MarkEnd counter JSON import should not panic"
+    );
+    assert!(
+        result.unwrap().is_err(),
+        "malformed text MarkEnd counter JSON import unexpectedly succeeded; imported value = {:?}",
+        dst.get_deep_value()
+    );
+    assert_eq!(dst.oplog_vv(), before_vv);
+    assert_eq!(dst.oplog_frontiers(), before_frontiers);
+    assert_eq!(dst.get_deep_value(), before_value);
 }
 
 // ---------------------------------------------------------------------------

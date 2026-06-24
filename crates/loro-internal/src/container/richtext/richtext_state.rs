@@ -1384,6 +1384,40 @@ impl RichtextState {
         }
     }
 
+    #[cfg(feature = "test_utils")]
+    pub(crate) fn debug_counts(&self) -> (usize, usize, usize, usize, usize, usize) {
+        let mut chunk_count = 0;
+        let mut text_chunk_count = 0;
+        let mut style_anchor_count = 0;
+        for chunk in self.tree.iter() {
+            chunk_count += 1;
+            match chunk {
+                RichtextStateChunk::Text(_) => text_chunk_count += 1,
+                RichtextStateChunk::Style { .. } => style_anchor_count += 1,
+            }
+        }
+
+        let style_range_tree_node_count = self
+            .style_ranges
+            .as_ref()
+            .map(|x| x.debug_node_len())
+            .unwrap_or(0);
+        let style_range_chunk_count = self
+            .style_ranges
+            .as_ref()
+            .map(|x| x.debug_chunk_len())
+            .unwrap_or(0);
+
+        (
+            self.tree.node_len(),
+            chunk_count,
+            text_chunk_count,
+            style_anchor_count,
+            style_range_tree_node_count,
+            style_range_chunk_count,
+        )
+    }
+
     pub(crate) fn get_entity_index_for_text_insert(
         &mut self,
         pos: usize,
@@ -1541,6 +1575,29 @@ impl RichtextState {
         );
         self.check_cache();
         result
+    }
+
+    /// Plain-text insertion path for internal diff application when no style/event data is needed.
+    pub(crate) fn insert_text_chunk_at_entity_index(
+        &mut self,
+        entity_index: usize,
+        text: TextChunk,
+    ) {
+        self.check_cache();
+        {
+            debug_assert!(self.style_ranges.as_ref().is_none_or(|x| !x.has_style()));
+            let elem = RichtextStateChunk::Text(text);
+            self.clear_cache();
+            match self.tree.query::<EntityQuery>(&entity_index) {
+                Some(result) => {
+                    self.tree.insert_by_path(result.cursor, elem);
+                }
+                None => {
+                    self.tree.push(elem);
+                }
+            }
+        }
+        self.check_cache();
     }
 
     /// This is used to accept changes from DiffCalculator.
@@ -2357,6 +2414,44 @@ impl RichtextState {
             }
         };
         result
+    }
+
+    /// Plain-text deletion path for internal diff application when no style/event data is needed.
+    #[instrument(skip(self))]
+    pub(crate) fn drain_plain_text_by_entity_index(&mut self, pos: usize, len: usize) {
+        if len == 0 {
+            return;
+        }
+
+        assert!(
+            pos + len <= self.len_entity(),
+            "pos: {}, len: {}, self.len(): {}",
+            pos,
+            len,
+            &self.len_entity(),
+        );
+        debug_assert!(self.style_ranges.as_ref().is_none_or(|x| !x.has_style()));
+
+        self.clear_cache();
+        let range = pos..pos + len;
+        let start = self.tree.query::<EntityQuery>(&range.start);
+        let start_cursor = start.unwrap().cursor();
+        let elem = self.tree.get_elem(start_cursor.leaf).unwrap();
+        if elem.rle_len() >= start_cursor.offset + len {
+            self.tree.update_leaf(start_cursor.leaf, |elem| match elem {
+                RichtextStateChunk::Text(text) => {
+                    let (next, _) = text.delete_by_entity_index(start_cursor.offset, len);
+                    (true, next.map(RichtextStateChunk::Text), None)
+                }
+                RichtextStateChunk::Style { .. } => {
+                    *elem = RichtextStateChunk::Text(TextChunk::new_empty());
+                    (true, None, None)
+                }
+            });
+        } else {
+            let end = self.tree.query::<EntityQuery>(&range.end);
+            for _ in generic_btree::iter::Drain::new(&mut self.tree, start, end) {}
+        }
     }
 
     pub fn entity_index_to_event_index(&self, index: usize) -> usize {

@@ -5,9 +5,7 @@ mod pending_changes;
 use crate::sync::{AtomicUsize, Mutex};
 use bytes::Bytes;
 use std::borrow::Cow;
-use std::cell::RefCell;
 use std::cmp::Ordering;
-use std::rc::Rc;
 use std::sync::Arc;
 use tracing::trace_span;
 
@@ -28,7 +26,7 @@ use crate::span::{HasCounterSpan, HasLamportSpan};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
 use change_store::{BlockOpRef, ChangeStoreRollback};
-use loro_common::{ContainerType, HasIdSpan, IdLp, IdSpan};
+use loro_common::{HasIdSpan, IdLp, IdSpan};
 use rle::{HasLength, RleVec, Sliceable};
 use smallvec::SmallVec;
 
@@ -233,26 +231,32 @@ impl OpLog {
                 continue;
             }
 
-            if self.dag.is_before_shallow_root(&change.deps) {
+            let deps_are_before_shallow_root = self.dag.is_before_shallow_root(&change.deps);
+            let deps_start_at_shallow_root = !change.deps.is_empty()
+                && change
+                    .deps
+                    .iter()
+                    .all(|dep| self.shallow_since_frontiers().contains(&dep));
+            if deps_are_before_shallow_root && !deps_start_at_shallow_root {
                 ans.has_deps_before_shallow_root = true;
                 continue;
             }
 
-            if self
-                .dag
-                .get_change_lamport_from_deps(&change.deps)
-                .is_none()
+            if !deps_are_before_shallow_root
+                && self
+                    .dag
+                    .get_change_lamport_from_deps(&change.deps)
+                    .is_none()
             {
                 continue;
             }
 
             ans.applies_to_dag = true;
-            if change.ops.iter().any(|op| {
-                matches!(
-                    op.container.get_type(),
-                    ContainerType::List | ContainerType::Tree
-                )
-            }) {
+            if change
+                .ops
+                .iter()
+                .any(|op| op.container.get_type().may_need_state_apply_rollback())
+            {
                 ans.needs_state_apply_rollback = true;
             }
         }
@@ -562,7 +566,7 @@ impl OpLog {
 
     /// iterates over all changes between LCA(common ancestors) to the merged version of (`from` and `to`) causally
     ///
-    /// Tht iterator will include a version vector when the change is applied
+    /// The iterator includes the causal base version and frontiers before each change is applied.
     ///
     /// returns: (common_ancestor_vv, iterator)
     ///
@@ -584,36 +588,39 @@ impl OpLog {
                 Item = (
                     BlockChangeRef,
                     (Counter, Counter),
-                    Rc<RefCell<VersionVector>>,
+                    ImVersionVector,
+                    Frontiers,
                 ),
             > + '_,
     ) {
         let mut merged_vv = from.clone();
         merged_vv.merge(to);
         loro_common::debug!("to_frontiers={:?} vv={:?}", &to_frontiers, to);
-        let (common_ancestors, mut diff_mode) =
-            self.dag.find_common_ancestor(from_frontiers, to_frontiers);
-        if diff_mode == DiffMode::Checkout && to > from {
-            diff_mode = DiffMode::Import;
-        }
-
-        let common_ancestors_vv = self.dag.frontiers_to_vv(&common_ancestors).unwrap();
+        let (common_ancestors, diff_mode) =
+            self.find_common_ancestor_for_diff(from, from_frontiers, to, to_frontiers);
+        let common_ancestors_vv = self
+            .dag
+            .frontiers_to_vv(&common_ancestors)
+            .expect("common ancestors should be representable in the current DAG");
         // go from lca to merged_vv
         let diff = common_ancestors_vv.diff(&merged_vv).forward;
         let mut iter = self.dag.iter_causal(common_ancestors, diff);
         let mut node = iter.next();
         let mut cur_cnt = 0;
-        let vv = Rc::new(RefCell::new(VersionVector::default()));
         (
             common_ancestors_vv.clone(),
             diff_mode,
             std::iter::from_fn(move || {
                 if let Some(inner) = &node {
-                    let mut inner_vv = vv.borrow_mut();
-                    // FIXME: PERF: it looks slow for large vv, like 10000+ entries
-                    inner_vv.clear();
-                    self.dag.ensure_vv_for(&inner.data);
-                    inner_vv.extend_to_include_vv(inner.data.vv.get().unwrap().iter());
+                    #[cfg(feature = "test_utils")]
+                    let vv_prepare_start = std::time::Instant::now();
+                    let base_vv = self.dag.ensure_vv_for(&inner.data);
+                    #[cfg(feature = "test_utils")]
+                    crate::diff_calc::profiling::record_causal_vv_materialize(
+                        vv_prepare_start.elapsed(),
+                        base_vv.len(),
+                    );
+                    let base_frontiers = inner.data.deps.clone();
                     let peer = inner.data.peer;
                     let cnt = inner
                         .data
@@ -631,14 +638,49 @@ impl OpLog {
                         cur_cnt = 0;
                     }
 
-                    inner_vv.extend_to_include_end_id(change.id);
-
-                    Some((change, (cnt, dag_node_end), vv.clone()))
+                    Some((change, (cnt, dag_node_end), base_vv, base_frontiers))
                 } else {
                     None
                 }
             }),
         )
+    }
+
+    pub(crate) fn find_common_ancestor_for_diff(
+        &self,
+        from: &VersionVector,
+        from_frontiers: &Frontiers,
+        to: &VersionVector,
+        to_frontiers: &Frontiers,
+    ) -> (Frontiers, DiffMode) {
+        let shallow_root_frontiers = self.dag.shallow_since_frontiers();
+        if !shallow_root_frontiers.is_empty() {
+            if from_frontiers == shallow_root_frontiers && to.includes_vv(from) {
+                return (from_frontiers.clone(), DiffMode::Import);
+            }
+
+            if to_frontiers == shallow_root_frontiers && from.includes_vv(to) {
+                return (to_frontiers.clone(), DiffMode::Checkout);
+            }
+        }
+
+        let (mut common_ancestors, mut diff_mode) =
+            self.dag.find_common_ancestor(from_frontiers, to_frontiers);
+        if diff_mode == DiffMode::Checkout && to > from {
+            diff_mode = DiffMode::Import;
+        }
+
+        if self.dag.frontiers_to_vv(&common_ancestors).is_none() {
+            if to.includes_vv(from) {
+                common_ancestors = from_frontiers.clone();
+                diff_mode = DiffMode::Import;
+            } else if from.includes_vv(to) {
+                common_ancestors = to_frontiers.clone();
+                diff_mode = DiffMode::Checkout;
+            }
+        }
+
+        (common_ancestors, diff_mode)
     }
 
     pub fn len_changes(&self) -> usize {
