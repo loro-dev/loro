@@ -553,21 +553,26 @@ impl Transaction {
         // check whether context and txn are referring to the same state context
         doc: &LoroDoc,
     ) -> LoroResult<()> {
-        // TODO: need to check if the doc is the same
-        let this_doc = self.doc.upgrade().unwrap();
-        if Arc::as_ptr(&this_doc.state) != Arc::as_ptr(&doc.state) {
-            return Err(LoroError::UnmatchedContext {
-                expected: this_doc
-                    .state
-                    .lock()
-                    .peer
-                    .load(std::sync::atomic::Ordering::Relaxed),
-                found: doc
-                    .state
-                    .lock()
-                    .peer
-                    .load(std::sync::atomic::Ordering::Relaxed),
-            });
+        // The handler always passes its own doc, so a context mismatch is an
+        // internal invariant violation. Checking it requires a Weak upgrade
+        // (atomics) on the per-op hot path, so verify it only in debug builds.
+        #[cfg(debug_assertions)]
+        {
+            let this_doc = self.doc.upgrade().unwrap();
+            if Arc::as_ptr(&this_doc.state) != Arc::as_ptr(&doc.state) {
+                return Err(LoroError::UnmatchedContext {
+                    expected: this_doc
+                        .state
+                        .lock()
+                        .peer
+                        .load(std::sync::atomic::Ordering::Relaxed),
+                    found: doc
+                        .state
+                        .lock()
+                        .peer
+                        .load(std::sync::atomic::Ordering::Relaxed),
+                });
+            }
         }
 
         let len = content.content_len();

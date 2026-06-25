@@ -2019,6 +2019,57 @@ impl TextHandler {
             return Ok(Vec::new());
         }
 
+        // Fast path: plain-text insert into a style-free document (non-wasm).
+        // With no style anchors, entity_index == unicode pos and the event index
+        // equals the unicode index, so bounds + no-styles are checked in a single
+        // state access and the entire read phase (cursor location + two
+        // visit_previous_caches walks + styles lookup) is skipped; apply_local_op
+        // then locates the cursor exactly once.
+        #[cfg(not(feature = "wasm"))]
+        if attr.is_none() && pos_type == PosType::Unicode {
+            let inner = self.inner.try_attached_state()?;
+            let fast = inner.with_state(|state| {
+                let rt = state.as_richtext_state_mut().unwrap();
+                if rt.has_styles() {
+                    return Ok(false);
+                }
+                let len = rt.len_unicode();
+                if pos > len {
+                    return Err(LoroError::OutOfBound {
+                        pos,
+                        len,
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                    });
+                }
+                Ok(true)
+            })?;
+            if fast {
+                let unicode_len = s.chars().count();
+                txn.apply_local_op(
+                    inner.container_idx,
+                    crate::op::RawOpContent::List(
+                        crate::container::list::list_op::ListOp::Insert {
+                            slice: ListSlice::RawStr {
+                                str: Cow::Borrowed(s),
+                                unicode_len,
+                            },
+                            // entity_index == unicode pos (no style anchors)
+                            pos,
+                        },
+                    ),
+                    EventHint::InsertText {
+                        // event index == unicode index (non-wasm)
+                        pos: pos as u32,
+                        styles: StyleMeta::empty(),
+                        unicode_len: unicode_len as u32,
+                        event_len: unicode_len as u32,
+                    },
+                    &inner.doc,
+                )?;
+                return Ok(Vec::new());
+            }
+        }
+
         match pos_type {
             PosType::Event => {
                 if pos > self.len_event() {
@@ -2202,9 +2253,20 @@ impl TextHandler {
         let mut event_len = 0;
         let ranges = inner.with_state(|state| {
             let richtext_state = state.as_richtext_state_mut().unwrap();
-            event_pos = richtext_state.index_to_event_index(pos, pos_type);
-            let event_end = richtext_state.index_to_event_index(end, pos_type);
-            event_len = event_end - event_pos;
+            // Fast path: with no style anchors (non-wasm), the event index equals
+            // the unicode index, so the two index_to_event_index walks collapse to
+            // identity.
+            let fast = cfg!(not(feature = "wasm"))
+                && pos_type == PosType::Unicode
+                && !richtext_state.has_styles();
+            if fast {
+                event_pos = pos;
+                event_len = len;
+            } else {
+                event_pos = richtext_state.index_to_event_index(pos, pos_type);
+                let event_end = richtext_state.index_to_event_index(end, pos_type);
+                event_len = event_end - event_pos;
+            }
 
             richtext_state.get_text_entity_ranges_in_event_index_range(event_pos, event_len)
         })?;
