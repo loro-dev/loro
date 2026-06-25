@@ -342,8 +342,16 @@ impl SsTable {
     }
 
     /// When `validate_blocks` is true, this eagerly decodes every block to
-    /// validate block metadata and key ordering. Block checksums are always
-    /// verified.
+    /// validate block metadata and key ordering, and verifies each block's
+    /// checksum.
+    ///
+    /// Pass `false` only when the blob's integrity is already guaranteed by an
+    /// outer checksum (e.g. Loro verifies a document-wide checksum over the whole
+    /// snapshot body in `parse_header_and_body` before reaching here). In that
+    /// case per-block validation is skipped, since re-hashing every block would
+    /// redundantly cover bytes the outer checksum already protects — this was
+    /// ~38% of B4 snapshot-import time. The cheap structural `validate_block_ranges`
+    /// check below always runs.
     ///
     /// # Errors
     /// - [LoroError::DecodeChecksumMismatchError]
@@ -381,8 +389,8 @@ impl SsTable {
         Self::validate_block_ranges(&meta, meta_offset)?;
         if validate_blocks {
             Self::validate_blocks(&meta, &bytes, meta_offset)?;
+            Self::check_block_checksum(&meta, &bytes, meta_offset)?;
         }
-        Self::check_block_checksum(&meta, &bytes, meta_offset)?;
         let first_key = meta
             .first()
             .map(|m| m.first_key.clone())
@@ -1374,7 +1382,11 @@ mod test {
     }
 
     #[test]
-    fn sstable_import_rejects_block_checksum_mismatch_when_outer_checksum_is_skipped() {
+    fn sstable_import_block_checksum_only_checked_when_validating() {
+        // A corrupted block checksum is detected when `validate_blocks = true`,
+        // and intentionally skipped when `false` (the caller is then responsible
+        // for integrity via an outer checksum). This is the redundant-checksum
+        // skip that makes full snapshot import faster.
         let first_key = Bytes::from_static(b"key");
         let mut block_bytes = normal_block_bytes(b"key", b"value");
         *block_bytes.last_mut().unwrap() ^= 0xff;
@@ -1386,6 +1398,8 @@ mod test {
             last_key: Some(first_key),
         }];
 
-        assert!(SsTable::import_all(malformed_sstable_bytes(&block_bytes, &meta), false).is_err());
+        let bytes = malformed_sstable_bytes(&block_bytes, &meta);
+        assert!(SsTable::import_all(bytes.clone(), true).is_err());
+        assert!(SsTable::import_all(bytes, false).is_ok());
     }
 }

@@ -610,7 +610,9 @@ impl Transaction {
                 self.next_lamport,
                 len,
             );
-            oplog.refresh_visible_op_count();
+            // Local ops are always visible; bump the cached count incrementally
+            // instead of recomputing it from the version vectors every op.
+            oplog.inc_visible_op_count(len);
             self.next_lamport += len as Lamport;
             // set frontiers to the last op id
             let last_id = start_id.inc(len as Counter - 1);

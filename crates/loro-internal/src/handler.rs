@@ -83,18 +83,20 @@ fn checked_range_end(
     pos: usize,
     len: usize,
     container_len: usize,
-    info: Box<str>,
+    // Lazily built: this is on the per-op edit hot path, so the position-context
+    // string must only be allocated when a bound check actually fails.
+    info: impl Fn() -> Box<str>,
 ) -> LoroResult<usize> {
     let end = pos.checked_add(len).ok_or_else(|| LoroError::OutOfBound {
         pos: usize::MAX,
         len: container_len,
-        info: info.clone(),
+        info: info(),
     })?;
     if end > container_len {
         return Err(LoroError::OutOfBound {
             pos: end,
             len: container_len,
-            info,
+            info: info(),
         });
     }
 
@@ -1856,7 +1858,7 @@ impl TextHandler {
             pos,
             len,
             self.len(pos_type),
-            format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+            || format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
         )?;
         let x = self.slice(pos, end, pos_type)?;
         self.delete(pos, len, pos_type)?;
@@ -1970,7 +1972,7 @@ impl TextHandler {
             pos,
             len,
             text_len,
-            format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+            || format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
         )?;
         self.validate_text_boundary(pos, pos_type)?;
         self.validate_text_boundary(end, pos_type)?;
@@ -2187,7 +2189,7 @@ impl TextHandler {
             pos,
             len,
             text_len,
-            format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+            || format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
         )
         .inspect_err(|_| error!("pos={} len={} len={}", pos, len, text_len))?;
         self.validate_text_boundary(pos, pos_type)?;
@@ -3185,7 +3187,7 @@ impl ListHandler {
                     pos,
                     len,
                     list.value.len(),
-                    format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                    || format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                 )?;
                 list.value.drain(pos..end);
                 Ok(())
@@ -3204,7 +3206,7 @@ impl ListHandler {
             pos,
             len,
             list_len,
-            format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+            || format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
         )?;
 
         let inner = self.inner.try_attached_state()?;
@@ -3859,7 +3861,7 @@ impl MovableListHandler {
                     pos,
                     len,
                     d.value.len(),
-                    format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                    || format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                 )?;
                 d.value.drain(pos..end);
                 Ok(())
@@ -3879,7 +3881,7 @@ impl MovableListHandler {
             pos,
             len,
             list_len,
-            format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+            || format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
         )?;
 
         let (ids, new_poses) = self.with_state(|state| {
